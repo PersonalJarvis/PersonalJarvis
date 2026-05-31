@@ -1,0 +1,47 @@
+{
+ "signatures": [
+  {
+   "keyid": "offline_ceremony",
+   "sig": "2e41f1b3cd0198361649ae03fce2ee54b89311379f609f51fb5711a26aa66ee68fe8bac5afd195939fa006eedf495546b1b939d3f60b142048a45f27451fbb07"
+  }
+ ],
+ "signed": {
+  "_comment": "TUF metadata signing axis: this targets.json is signed by 'offline_ceremony' (Ed25519) only. The 'fulcio_oidc' axis listed in 1.root.json with threshold=2 signs the actual binary blobs out-of-band via cosign in .github/workflows/sign-installer.yml. The verifier therefore requires BOTH (a) a valid TUF metadata chain signed by 'offline_ceremony' AND (b) a Sigstore signature on each artifact verifiable under the 'fulcio_oidc' identity regex. See install/TRUST_ROOT.md \u00a73 and install/tuf/SIGNING.md.",
+  "_type": "targets",
+  "expires": "2026-08-24T21:15:21Z",
+  "spec_version": "1.0.31",
+  "targets": {
+   "install-verify.ps1": {
+    "hashes": {
+     "sha256": "72155f67ade7e61a85d62f7fa106883b6d49035a8fa0062db0bd4c296f715ceb"
+    },
+    "length": 8516
+   },
+   "install-verify.sh": {
+    "hashes": {
+     "sha256": "d933d747a123030561a16dbc937d5b639d4bd219a9e7143cdaa84f3ace525c39"
+    },
+    "length": 13196
+   },
+   "install.ps1": {
+    "hashes": {
+     "sha256": "0a3adcfe6b5532d41c68075875bd7c1aa82384ba0ab7659064c9b7b86d2f8a89"
+    },
+    "length": 6193
+   },
+   "install.sh": {
+    "hashes": {
+     "sha256": "712c68224f3ed72e37bc3e502df4ade55050b9d408a0a2efc644fad9c941d324"
+    },
+    "length": 5044
+   },
+   "installer.py": {
+    "hashes": {
+     "sha256": "fbacdf598b04329354889a625ae0b94227b61fc17f69eed3dcab3f883fafec8c"
+    },
+    "length": 10799
+   }
+  },
+  "version": 1
+ }
+}

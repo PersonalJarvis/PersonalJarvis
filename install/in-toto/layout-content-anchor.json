@@ -1,0 +1,103 @@
+{
+  "_type": "content-anchor",
+  "expires": "2027-05-27T00:00:00Z",
+  "readme": "Content-anchored layout assertion for personal-jarvis/personal-jarvis. WAVE-5 HONESTY NOTE (audit Finding 3): this file is NOT a signed in-toto layout as the in-toto v1.0.0 spec defines it — it has no `signatures` field and was never signed by an in-toto-keygen-produced functionary key. It is an UNSIGNED CONTENT-ANCHOR document. Authenticity comes from the verifier (install-verify.sh / install-verify.ps1, both signed Wave 1+2+4) byte-comparing this file's `identity_regexp` against a hard-coded constant (EXPECTED_INTOTO_IDENTITY_REGEXP) baked into the signed verifier source. Any tamper with this file is caught because the constant inside the verifier does not match. This is defensible defense-in-depth, not spec-compliant in-toto. Layout-shape data is preserved (`_type` changed from `layout` to `content-anchor` to make the divergence machine-readable) so a future migration to real in-toto (with in-toto-keygen-produced layout signatures verified by the offline-ceremony key) is incremental. Re-issue this document if the functionary regexp ever changes (verifier and document must be updated together). Spec-version reference: this document mirrors the SHAPE of in-toto v1.0.0 (June 2023) but does not satisfy its signature requirements.",
+  "keys": {
+    "github-actions-sign-installer-yml-tag-push": {
+      "keyid": "github-actions-sign-installer-yml-tag-push",
+      "keyid_hash_algorithms": ["sha256"],
+      "keytype": "sigstore-oidc",
+      "scheme": "ecdsa-sha2-nistp256",
+      "keyval": {
+        "issuer": "https://token.actions.githubusercontent.com",
+        "identity": "https://github.com/personal-jarvis/personal-jarvis/.github/workflows/sign-installer.yml@refs/tags/v*",
+        "identity_regexp": "^https://github\\.com/personal-jarvis/personal-jarvis/\\.github/workflows/sign-installer\\.yml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+(-[A-Za-z0-9._-]+)?$",
+        "fulcio_url": "https://fulcio.sigstore.dev",
+        "rekor_url": "https://rekor.sigstore.dev"
+      }
+    }
+  },
+  "steps": [
+    {
+      "_type": "step",
+      "name": "build-and-sign-installers",
+      "threshold": 1,
+      "expected_materials": [
+        ["MATCH", "install/install.sh", "WITH", "PRODUCTS", "FROM", "source-checkout"],
+        ["MATCH", "install/install.ps1", "WITH", "PRODUCTS", "FROM", "source-checkout"],
+        ["MATCH", "install/installer.py", "WITH", "PRODUCTS", "FROM", "source-checkout"],
+        ["MATCH", "install/install-verify.sh", "WITH", "PRODUCTS", "FROM", "source-checkout"],
+        ["MATCH", "install/install-verify.ps1", "WITH", "PRODUCTS", "FROM", "source-checkout"],
+        ["DISALLOW", "*"]
+      ],
+      "expected_products": [
+        ["ALLOW", "install.sh"],
+        ["ALLOW", "install.ps1"],
+        ["ALLOW", "installer.py"],
+        ["ALLOW", "install-verify.sh"],
+        ["ALLOW", "install-verify.ps1"],
+        ["ALLOW", "install.sh.sig"],
+        ["ALLOW", "install.ps1.sig"],
+        ["ALLOW", "installer.py.sig"],
+        ["ALLOW", "install-verify.sh.sig"],
+        ["ALLOW", "install-verify.ps1.sig"],
+        ["ALLOW", "install.sh.pem"],
+        ["ALLOW", "install.ps1.pem"],
+        ["ALLOW", "installer.py.pem"],
+        ["ALLOW", "install-verify.sh.pem"],
+        ["ALLOW", "install-verify.ps1.pem"],
+        ["ALLOW", "install.sh.bundle"],
+        ["ALLOW", "install.ps1.bundle"],
+        ["ALLOW", "installer.py.bundle"],
+        ["ALLOW", "install-verify.sh.bundle"],
+        ["ALLOW", "install-verify.ps1.bundle"],
+        ["ALLOW", "install.sh.cosign.sig"],
+        ["ALLOW", "install.ps1.cosign.sig"],
+        ["ALLOW", "installer.py.cosign.sig"],
+        ["ALLOW", "install-verify.sh.cosign.sig"],
+        ["ALLOW", "install-verify.ps1.cosign.sig"],
+        ["ALLOW", "payload-commit.txt"],
+        ["ALLOW", "payload-commit.txt.sig"],
+        ["ALLOW", "payload-commit.txt.pem"],
+        ["ALLOW", "payload-commit.txt.bundle"],
+        ["ALLOW", "payload-commit.txt.cosign.sig"],
+        ["ALLOW", "payload-commit.txt.mldsa.sig"],
+        ["ALLOW", "checksums.txt"],
+        ["ALLOW", "personal-jarvis-installers.intoto.jsonl"],
+        ["DISALLOW", "*"]
+      ],
+      "pubkeys": ["github-actions-sign-installer-yml-tag-push"],
+      "expected_command": [
+        "cosign",
+        "sign-blob",
+        "--yes",
+        "--output-signature",
+        "<file>.sig",
+        "--output-certificate",
+        "<file>.pem",
+        "--bundle",
+        "<file>.bundle",
+        "<file>"
+      ]
+    }
+  ],
+  "inspect": [
+    {
+      "_type": "inspection",
+      "name": "verify-cross-runner-agreement",
+      "expected_materials": [
+        ["MATCH", "manifest.txt", "WITH", "PRODUCTS", "FROM", "build-and-sign-installers"],
+        ["DISALLOW", "*"]
+      ],
+      "expected_products": [
+        ["ALLOW", "manifest.txt"],
+        ["DISALLOW", "*"]
+      ],
+      "run": [
+        "sha256sum",
+        "-c",
+        "manifest.txt"
+      ]
+    }
+  ]
+}

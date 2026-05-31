@@ -1,0 +1,179 @@
+# SLSA L3 provenance generation — Wave 3.
+#
+# STATUS: STANDALONE — workflow_dispatch only.
+#
+# Wave 3 SA-5 integration consolidated provenance generation into
+# sign-installer.yml's `provenance` job (it calls the same
+# slsa-github-generator reusable workflow at the same 40-char SHA pin,
+# but with `base64-subjects` sourced from the cross-runner-verified
+# JSON via the cross-runner-hash workflow_call gate).
+#
+# Running this workflow ALSO on tag push would produce a DUPLICATE
+# provenance file with the same name and lose the
+# cross-runner-agreement provenance binding — so the `push: tags`
+# trigger has been removed. This file is preserved for manual
+# `workflow_dispatch` use (e.g. re-issuing provenance for a
+# previously-signed release) and for documentation of the
+# pin/permissions contract that sign-installer.yml mirrors.
+#
+# What this workflow defines:
+#   1. The exact slsa-github-generator reusable workflow pin (40-char
+#      commit SHA, NOT a tag — see CVE-2025-30066, March 2025, the
+#      `tj-actions/changed-files` lesson).
+#   2. The `permissions:` block the reusable workflow demands at L3.
+#   3. The input shape: a base64-encoded `subjects` list mapping each
+#      install/* artifact to its SHA-256, computed by a preceding job
+#      (the matrix-hash job from cross-runner-hash.yml.tmpl).
+#   4. Release-upload settings: provenance is attached to the GitHub
+#      release for the tag.
+#
+# What SA-2 must wire in when activating this:
+#   - Job dependency: `needs: [cross-runner-hash, build-subjects]`.
+#   - The `base64-subjects` input is produced by `build-subjects` after
+#     the cross-runner-hash check has succeeded.
+#   - The provenance asset goes into the same GitHub Release as the
+#     Wave 1 + Wave 2 signatures (softprops/action-gh-release step in
+#     sign-installer.yml, already pinned).
+#   - The verifier (install-verify.sh) needs an axis-3 check using
+#     slsa-verifier — that is SA-3's brief.
+#
+# Pinned slsa-github-generator commit:
+#   f7dd8c54c2067bafc12ca7a55595d5ee9b75204a
+#     -> resolves to v2.1.0 (released 2025-02-24).
+#     -> verified via: `gh api repos/slsa-framework/slsa-github-generator/git/ref/tags/v2.1.0`
+#     -> next bump requires re-running the four-step audit in
+#        wave3-reproducibility-protocol.md §6.
+
+name: SLSA L3 provenance (standalone — manual dispatch only)
+
+on:
+  # Tag-push trigger removed in Wave 3 SA-5 integration to prevent a
+  # duplicate generator run alongside sign-installer.yml's `provenance`
+  # job. Use sign-installer.yml for tag-cut provenance; use this file
+  # only via manual workflow_dispatch for re-issuance.
+  workflow_dispatch: {}
+
+# The slsa-github-generator reusable workflow REQUIRES these
+# permissions on the caller. id-token=write is the L3 secret-
+# protection contract (the OIDC token is minted in the isolated
+# generator job, never exposed to user-controlled steps).
+permissions:
+  id-token: write   # OIDC for Sigstore Fulcio (mandatory for L3 keyless)
+  contents: write   # to upload the .intoto.jsonl provenance to the release
+  actions: read     # to read the workflow definition into the provenance subject
+
+jobs:
+  # --------------------------------------------------------------------
+  # Job 1: build-subjects
+  #
+  # Computes SHA-256 of the five install/* artifacts and emits a
+  # base64-encoded subjects manifest that the generator job consumes.
+  # This job is the binding between the cross-runner-hash matrix
+  # (which proves three OS images agree) and the SLSA provenance
+  # (which signs the hashes the matrix agreed on).
+  #
+  # SA-2 must add `needs: cross-runner-hash` here so this job only
+  # runs after the matrix has confirmed agreement. The placeholder
+  # `needs:` line is commented out below.
+  # --------------------------------------------------------------------
+  build-subjects:
+    runs-on: ubuntu-latest
+    # needs: cross-runner-hash   # SA-2 uncomments after wiring the matrix job in
+    outputs:
+      base64-subjects: ${{ steps.compute.outputs.base64-subjects }}
+    steps:
+      - name: Checkout tag (read-only)
+        # pin: actions/checkout@v4.2.2 — pinned by 40-char SHA.
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Compute SHA-256 subjects manifest
+        id: compute
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd install
+          # sha256sum emits 'SHA256  NAME' which is the format the
+          # generator wants. We base64-encode the whole manifest so
+          # the reusable workflow's `base64-subjects` input can
+          # consume it without quoting headaches.
+          MANIFEST=$(sha256sum install.sh install.ps1 installer.py install-verify.sh install-verify.ps1)
+          echo "----- subjects manifest (sha256sum format) -----"
+          echo "$MANIFEST"
+          echo "------------------------------------------------"
+          B64=$(printf '%s\n' "$MANIFEST" | base64 -w0)
+          echo "base64-subjects=$B64" >> "$GITHUB_OUTPUT"
+
+  # --------------------------------------------------------------------
+  # Job 2: provenance
+  #
+  # Calls the slsa-github-generator reusable workflow at the pinned
+  # 40-char commit SHA. This runs in an ISOLATED job (architectural
+  # property of the reusable workflow — see SLSA v1.0 L3 build-isolation
+  # requirement, wave3-reproducibility-protocol.md §5.1) and mints a
+  # signed in-toto v1.0 provenance document that:
+  #   - subject: the five install/* artifacts + their SHA-256s
+  #   - builder: github.com/slsa-framework/slsa-github-generator at SHA
+  #   - invocation: this workflow file at this tag's commit SHA
+  #   - signed by: a Fulcio cert bound to this caller's OIDC identity
+  #
+  # The reusable workflow uploads the provenance file
+  # `<repo>-<tag>.intoto.jsonl` to the GitHub Release if
+  # upload-assets: true.
+  # --------------------------------------------------------------------
+  provenance:
+    needs: build-subjects
+    permissions:
+      id-token: write
+      contents: write
+      actions: read
+    # NOTE: pinned by 40-char commit SHA, NOT by @v2.1.0.
+    # The tag would resolve today — but tags are mutable and the
+    # tj-actions/changed-files (CVE-2025-30066, March 2025) precedent
+    # is exactly why this line MUST be a SHA. See
+    # docs/supply-chain/wave3-reproducibility-protocol.md §6 for the
+    # rotation procedure.
+    # Pin via tag @v2.1.0 (SHA: f7dd8c54c2067bafc12ca7a55595d5ee9b75204a, 2025-02-24).
+    # slsa-github-generator's generate-builder.sh rejects @<40-char-SHA>
+    # refs — see PIN POLICY EXCEPTION block in sign-installer.yml.
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: ${{ needs.build-subjects.outputs.base64-subjects }}
+      # Upload the .intoto.jsonl to the GitHub Release for the tag.
+      # The verifier (install-verify.sh, modified by SA-3) downloads
+      # this and runs `slsa-verifier verify-artifact ...` against it.
+      upload-assets: true
+      # Default provenance filename: `<first-subject>.intoto.jsonl`.
+      # We pin to a stable name so install-verify.sh can hardcode it.
+      provenance-name: "personal-jarvis.intoto.jsonl"
+      # `compile-generator: false` (default) — use the pre-compiled
+      # binary from the release. Compiling from source on the runner
+      # is L4-territory and not required for L3.
+
+# --------------------------------------------------------------------
+# Integration notes for SA-2 (cross-reference comments in
+# sign-installer.yml when this template lands as .yml):
+#
+# 1. The signing job in sign-installer.yml currently runs unconditionally
+#    on tag push. After Wave 3 activation, it must `needs: [cross-runner-hash, provenance]`
+#    so the signed artifacts cannot be released without both the
+#    cross-runner agreement AND the SLSA L3 provenance attestation.
+#
+# 2. The release-upload step in sign-installer.yml must add
+#    `personal-jarvis.intoto.jsonl` and
+#    `personal-jarvis.intoto.jsonl.sig` to its `files:`
+#    list — the slsa-github-generator places those in the workflow's
+#    artifacts; download them via actions/download-artifact (pinned
+#    by SHA in this template if SA-2 ports the pattern).
+#
+# 3. SA-3 modifies install-verify.sh to add the axis-3 check:
+#       slsa-verifier verify-artifact \
+#         --provenance-path personal-jarvis.intoto.jsonl \
+#         --source-uri github.com/personal-jarvis/personal-jarvis \
+#         --source-tag "$TAG" \
+#         install.sh install.ps1 installer.py install-verify.sh install-verify.ps1
+#    The slsa-verifier binary download must itself be SHA-pinned in
+#    the verifier script (mirror the pattern used for cosign).
+# --------------------------------------------------------------------

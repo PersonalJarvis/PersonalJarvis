@@ -1,0 +1,226 @@
+import {
+  MessageSquare,
+  Users,
+  Puzzle,
+  Blocks,
+  BookOpen,
+  Plug,
+  Globe,
+  KeyRound,
+  Settings,
+  Activity,
+  TerminalSquare,
+  UserCircle2,
+  ListTodo,
+  FolderOpen,
+  Notebook,
+  Sparkles,
+  Mic,
+  Phone,
+  ShieldCheck,
+  Terminal,
+  Wand2,
+  type LucideIcon,
+  ChevronRight,
+} from "lucide-react";
+import { useEventStore, type SectionId } from "@/store/events";
+import { cn } from "@/lib/utils";
+import { useMemo } from "react";
+import { MascotGigi } from "@/components/MascotGigi";
+import { useT } from "@/i18n";
+
+interface NavItem {
+  id: SectionId;
+  labelKey: string;
+  icon: LucideIcon;
+}
+
+const NAV_ITEMS: NavItem[] = [
+  { id: "chats", labelKey: "nav.chats", icon: MessageSquare },
+  { id: "agents", labelKey: "nav.agents", icon: Users },
+  { id: "skills", labelKey: "nav.skills", icon: Puzzle },
+  { id: "plugins", labelKey: "nav.plugins", icon: Blocks },
+  { id: "docs", labelKey: "nav.docs", icon: BookOpen },
+  { id: "mcps", labelKey: "nav.mcps", icon: Plug },
+  { id: "tasks", labelKey: "nav.tasks", icon: ListTodo },
+  { id: "review", labelKey: "nav.review", icon: ShieldCheck },
+  { id: "sessions", labelKey: "nav.sessions", icon: Mic },
+  { id: "terminal", labelKey: "nav.terminal", icon: TerminalSquare },
+  { id: "clis", labelKey: "nav.clis", icon: Terminal },
+  { id: "cli-test-hub", labelKey: "nav.cli_test_hub", icon: Wand2 },
+  { id: "board", labelKey: "nav.board", icon: Sparkles },
+  { id: "languages", labelKey: "nav.languages", icon: Globe },
+  { id: "profile", labelKey: "nav.profile", icon: UserCircle2 },
+  { id: "memory", labelKey: "nav.wiki", icon: Notebook },
+  { id: "apikeys", labelKey: "nav.apikeys", icon: KeyRound },
+  { id: "telephony", labelKey: "nav.telephony", icon: Phone },
+  { id: "settings", labelKey: "nav.settings", icon: Settings },
+  { id: "debug", labelKey: "nav.debug", icon: Activity },
+  { id: "outputs", labelKey: "nav.outputs", icon: FolderOpen },
+];
+
+const VOICE_STATE_STYLE: Record<string, { dot: string; pulse: boolean }> = {
+  idle: { dot: "bg-muted-foreground/50", pulse: false },
+  listening: { dot: "bg-emerald-400", pulse: true },
+  thinking: { dot: "bg-primary", pulse: true },
+  speaking: { dot: "bg-primary", pulse: true },
+  error: { dot: "bg-destructive", pulse: false },
+};
+
+export function Sidebar() {
+  const t = useT();
+  const active = useEventStore((s) => s.activeSection);
+  const setActive = useEventStore((s) => s.setActiveSection);
+  const voiceState = useEventStore((s) => s.voiceState);
+  const transcription = useEventStore((s) => s.transcription);
+  const transcriptionFinal = useEventStore((s) => s.transcriptionFinal);
+  const connected = useEventStore((s) => s.connected);
+  const brainProvider = useEventStore((s) => s.brainProvider);
+  const agentsCount = useEventStore((s) =>
+    s.events.filter((e) => e.name === "AgentStateChange").length > 0 ? undefined : 0,
+  );
+
+  const vs = VOICE_STATE_STYLE[voiceState] ?? VOICE_STATE_STYLE.idle;
+  const voiceLabel = connected ? t(`voice_state.${voiceState}`) : t("voice_state.offline");
+
+  const providerLabel = useMemo(() => prettyProviderName(brainProvider), [brainProvider]);
+
+  return (
+    <aside className="flex h-full w-[280px] shrink-0 flex-col border-r border-border bg-card/40 backdrop-blur">
+      <div className="border-b border-border px-4 py-4">
+        <div className="flex items-center gap-3">
+          {/* enableComments={false}: the mascot's floating speech-bubble is
+              anchored beside a free-standing mascot, but here the mascot hugs
+              the window edge — the listening bubble slid off-screen and only
+              its yellow border + glow bled back in (the spurious "yellow
+              frame"). The sidebar already surfaces voice status + the live
+              transcript in its own boxes below, so the bubble is redundant. */}
+          <MascotGigi size={44} enableComments={false} />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <span className="font-display text-sm font-semibold tracking-tight">
+              Jarvis
+            </span>
+            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              {voiceLabel}
+            </span>
+          </div>
+          <span
+            className={cn(
+              "h-2 w-2 rounded-full",
+              vs.dot,
+              vs.pulse && "animate-jarvis-pulse",
+            )}
+            aria-hidden
+          />
+        </div>
+        <div className="mt-3 min-h-[20px] rounded-md bg-background/40 px-2 py-1.5 text-xs text-muted-foreground">
+          {transcription ? (
+            <span className={cn("font-mono", !transcriptionFinal && "italic")}>
+              {truncate(transcription, 48)}
+            </span>
+          ) : (
+            <span className="text-muted-foreground/50">{t("sidebar.wake_hint")}</span>
+          )}
+        </div>
+      </div>
+
+      <nav className="flex-1 overflow-y-auto scrollbar-jarvis p-2">
+        <ul className="space-y-0.5">
+          {NAV_ITEMS.map((item) => (
+            <NavRow
+              key={item.id}
+              item={item}
+              label={t(item.labelKey)}
+              active={item.id === active}
+              badge={item.id === "agents" ? agentsCount : undefined}
+              onClick={() => setActive(item.id)}
+            />
+          ))}
+        </ul>
+      </nav>
+
+      <div className="border-t border-border p-3">
+        <button
+          type="button"
+          onClick={() => setActive("apikeys")}
+          className="group flex w-full items-center gap-3 rounded-lg border border-border bg-background/40 px-3 py-2 text-left transition-colors hover:border-primary/40 hover:bg-background/60"
+          title={t("sidebar.brain_tooltip")}
+        >
+          <div className="h-2 w-2 rounded-full bg-primary shadow-[0_0_8px_rgba(255,214,10,0.7)]" />
+          <div className="flex-1 min-w-0">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              {t("sidebar.brain_label")}
+            </div>
+            <div className="text-xs font-medium truncate">{providerLabel}</div>
+          </div>
+          <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+function NavRow({
+  item,
+  label,
+  active,
+  badge,
+  onClick,
+}: {
+  item: NavItem;
+  label: string;
+  active: boolean;
+  badge?: number;
+  onClick: () => void;
+}) {
+  const Icon = item.icon;
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onClick}
+        className={cn(
+          "group relative flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all",
+          "hover:bg-background/60",
+          active
+            ? "bg-background text-foreground shadow-[inset_2px_0_0_hsl(var(--primary))]"
+            : "text-muted-foreground hover:text-foreground",
+        )}
+      >
+        <Icon
+          className={cn(
+            "h-4 w-4 shrink-0 transition-colors",
+            active ? "text-primary" : "text-muted-foreground group-hover:text-foreground",
+          )}
+        />
+        <span className="flex-1 text-left">{label}</span>
+        {badge !== undefined && badge > 0 && (
+          <span className="rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+            {badge}
+          </span>
+        )}
+      </button>
+    </li>
+  );
+}
+
+function truncate(s: string, n: number): string {
+  if (s.length <= n) return s;
+  return s.slice(0, n - 1) + "…";
+}
+
+function prettyProviderName(id: string): string {
+  const map: Record<string, string> = {
+    "claude-api": "Claude (API)",
+    "openrouter": "OpenRouter",
+    "ollama-local": "Ollama (lokal)",
+    "ollama-cloud": "Ollama (Cloud)",
+    "gemini": "Gemini",
+    "openai": "OpenAI",
+    "codex": "Codex",
+    "grok": "Grok",
+    "mock": "Mock-Brain",
+    "unknown": "—",
+  };
+  return map[id] ?? id;
+}

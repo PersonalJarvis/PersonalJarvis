@@ -1,0 +1,578 @@
+"""Phase-6 Bootstrap — wires all mission components at app startup.
+
+Called by ``jarvis/ui/web/server.py::start()`` (or a standalone CLI).
+Returns a dict with all instantiated components that the caller can store
+in ``app.state.<key>``.
+
+Startup order per plan §"Block D":
+1. cleanup.startup_sweep
+2. MissionManager + start (Recovery)
+3. BudgetTracker (with emitter -> store.append_and_publish)
+4. WorktreeManager (driven by cfg)
+5. CriticRunner
+6. MissionDecomposer (optional brain)
+7. Kontrollierer (wires everything + safety_enabled)
+8. ConnectionManager-Bus-Bridge — already done in Phase-4 server.py
+9. MissionVoiceListener (when TTS is available)
+10. daily_cleanup_task (when config.daily=true)
+
+Each step is optional via a cfg flag. Default values come from jarvis.toml
+[phase6.*] (see the section defaults there).
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable
+from pathlib import Path
+from typing import Any
+
+# Speech-bus type for the optional MissionAnnouncer (Wave-4 Y).
+# A lazy import via the TYPE_CHECKING pattern would be preferred, but EventBus is
+# lightweight and already imported everywhere in the project.
+from jarvis.core.bus import EventBus as _SpeechEventBus
+
+from .budget import BudgetTracker
+from .cleanup import daily_cleanup_task, startup_sweep
+from .critic.runner import CriticRunner
+from .event_bus import MissionBus
+from .isolation.env import build_worker_env, read_live_claude_oauth_token
+from .isolation.worktree import WorktreeManager
+from .kontrollierer.decomposer import MissionDecomposer
+from .kontrollierer.orchestrator import Kontrollierer
+from .manager import MissionManager
+from .voice.announcer import MissionAnnouncer
+from .voice.listener import MissionVoiceListener
+from .voice.readback import MissionReadback
+from .workers.claude_direct_worker import ClaudeDirectWorker
+from .workers.codex_direct_worker import CodexDirectWorker
+from .workers.gemini_worker import GeminiWorker
+
+logger = logging.getLogger(__name__)
+
+
+# Type aliases
+TTSSpeakFn = Callable[[str, str], Awaitable[None]]
+BrainCallerFn = Callable[[str], Awaitable[str]]
+
+
+def _resolve_readback_mode(
+    *, tts_speak_fn: object | None, speech_bus: object | None
+) -> str:
+    """Decide which mission voice-readback path is active — exactly one.
+
+    Starting BOTH the MissionVoiceListener (direct-TTS callback) and the
+    MissionAnnouncer (mission-bus -> speech-bus bridge) makes every
+    completion spoken twice (announcer docstring: "gleichzeitig beide
+    aktivieren = Doppel-Ansage" — 2026-05-27 finding #6). The announcer wins
+    whenever a ``speech_bus`` is available because it feeds the
+    ``scrub_for_voice`` UI/pipeline path; the listener is the fallback for
+    callers that only supply a direct TTS callback.
+
+    Returns ``"announcer"``, ``"listener"``, or ``"none"``.
+    """
+    if speech_bus is not None:
+        return "announcer"
+    if tts_speak_fn is not None:
+        return "listener"
+    return "none"
+
+
+def _assemble_worker_mcp_servers(token_store=None, mcp_json_servers=None):  # noqa: ANN001, ANN201
+    """Build the claude-cli ``mcpServers`` map for the delegated worker.
+
+    Two sources, both reaching the worker identically:
+      1. Connected Marketplace plugins (saved tokens + catalog mcp_server spec).
+      2. Self-added MCP servers from ``mcp.json`` (the "MCPs" section), converted
+         via :func:`jarvis.mcp.claude_export.mcp_json_to_claude_servers`.
+
+    Never raises: a marketplace / keyring / mcp.json hiccup degrades to an
+    empty (or partial) map so mission dispatch is never blocked.
+    """
+    try:
+        from jarvis.marketplace.catalog_data import load_catalog
+        from jarvis.marketplace.mcp_bridge import assemble_claude_mcp_servers
+        from jarvis.marketplace.token_store import TokenStore
+
+        store = token_store if token_store is not None else TokenStore()
+
+        # mcp.json (self-added MCP servers) -> claude-cli shape -> extra_servers
+        if mcp_json_servers is None:
+            try:
+                from jarvis.mcp.state import load_config as _load_mcp_json
+
+                mcp_json_servers = (_load_mcp_json() or {}).get("mcpServers", {})
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("missions: mcp.json read failed (%s)", exc)
+                mcp_json_servers = {}
+        try:
+            from jarvis.mcp.claude_export import mcp_json_to_claude_servers
+
+            extra = mcp_json_to_claude_servers(mcp_json_servers)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("missions: mcp.json -> claude config failed (%s)", exc)
+            extra = {}
+
+        return assemble_claude_mcp_servers(
+            load_catalog(), store, extra_servers=extra
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "missions: MCP-config assembly failed (%s) — worker runs without "
+            "plugins / mcp.json servers",
+            exc,
+        )
+        return {}
+
+
+def _select_subagent_worker_kind(
+    sub_jarvis_provider: str | None, step_model: str
+) -> str:
+    """Pure routing decision for the Heavy-Task subagent worker.
+
+    Returns one of ``"claude_direct"`` | ``"codex_direct"`` | ``"subjarvis"``
+    | ``"gemini"``.
+
+    Defense-in-depth (2026-05-29, user mandate: heavy tasks run on the
+    configured provider — claude-api -> Claude Max OAuth — and Gemini must
+    NEVER be a silent fallback): when a subagent provider IS configured it is
+    the single source of truth. A per-step ``model`` string can never divert
+    heavy work to the Gemini API key — the configured provider wins. The bare
+    ``gemini`` branch is reachable ONLY when no provider is configured at all,
+    and the caller logs that case so a Gemini spawn is never silent.
+
+    Note that choosing ``"gemini"`` as the *subagent provider* routes through
+    OpenClaw (``"subjarvis"``), NOT the direct ``GeminiWorker`` API path — the
+    latter is purely the legacy no-provider fallback.
+    """
+    if sub_jarvis_provider == "claude-api":
+        return "claude_direct"
+    if sub_jarvis_provider == "openclaw-claude":
+        return "subjarvis"
+    if sub_jarvis_provider in ("chatgpt", "openai-codex"):
+        return "codex_direct"
+    if sub_jarvis_provider:
+        return "subjarvis"
+    # No subagent provider configured — legacy default path.
+    if (step_model or "").lower().startswith("gemini"):
+        return "gemini"
+    return "subjarvis"
+
+
+async def bootstrap_missions(
+    *,
+    db_path: Path,
+    isolation_root: Path,
+    repo_root: Path | None = None,
+    bus: MissionBus | None = None,
+    tts_speak_fn: TTSSpeakFn | None = None,
+    brain_caller: BrainCallerFn | None = None,
+    # Safety flags (from [phase6.safety])
+    safety_enabled: bool = True,
+    extra_blocked_globs: tuple[str, ...] = (),
+    # Budget flags (from [phase6.budget])
+    per_mission_usd: float = 5.0,
+    daily_usd: float = 50.0,
+    warn_pct: tuple[int, ...] = (50, 80),
+    # Voice flags (from [phase6.voice])
+    voice_announce_critic_loop: bool = False,
+    voice_language_default: str = "de",
+    # Cleanup flags (from [phase6.cleanup])
+    cleanup_days: int = 14,
+    cleanup_startup_sweep: bool = True,
+    cleanup_daily: bool = False,
+    # Orchestrator flags (from [phase6.orchestrator])
+    max_workers: int = 5,
+    # Wave-4 Y: speech bus for MissionAnnouncer (Mission-Bus -> Speech-Bus bridge).
+    # When None: no announcer is started — Wave-3 behaviour.
+    speech_bus: _SpeechEventBus | None = None,
+    # ``speech_bus`` carries milestone + boundary events to ack_brain and
+    # selects the MissionAnnouncer readback path (see _resolve_readback_mode).
+    # ``brain_manager_resolver`` is a reserved lazy-resolver hook (same pattern
+    # as ``_resolve_mission_manager`` in jarvis/brain/factory.py); currently
+    # unused by the bootstrap but kept on the signature for callers.
+    brain_manager_resolver: Callable[[], Any | None] | None = None,
+    # Fix #2 (2026-05-29): recovery-sweep ownership. Only the PRIMARY
+    # (single-instance-lock-holding) process may run startup_recover — a
+    # secondary/dev (--no-lock) instance's sweep would mark the primary's
+    # in-flight missions as crash_recovery and kill live work. The caller
+    # (server._init_mission_stack) passes False for non-primary instances.
+    recover_missions: bool = True,
+) -> dict[str, Any]:
+    """Boot the entire Phase-6 subsystem.
+
+    Args:
+        db_path: Path to missions.db (typically ``data/missions.db``).
+        isolation_root: ``sub-agents-outputs/`` (mission-root container).
+        repo_root: optional, used for git-worktree operations + cleanup.
+        bus: optional external bus; otherwise MissionManager uses its own.
+        tts_speak_fn: optional ``async fn(text, lang) -> None`` for voice readback.
+            When None: no VoiceListener is started.
+        brain_caller: optional ``async fn(prompt) -> str`` for the LLM decomposer.
+            When None: decomposer operates in heuristic-only mode (1-step plans).
+        safety_enabled: enables the PostToolUse scanner + path guard in the orchestrator.
+        ... (cfg-specific flags, default values from jarvis.toml)
+
+    Returns:
+        dict with keys: manager, kontrollierer, budget, voice_listener,
+        cleanup_task, sweep_stats. The caller stores these in ``app.state.<key>``.
+    """
+    isolation_root.mkdir(parents=True, exist_ok=True)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # 1. Startup sweep (before MissionManager — do not interfere with running worktrees)
+    sweep_stats: dict[str, int] = {"scanned": 0, "removed": 0, "errors": 0}
+    if cleanup_startup_sweep:
+        sweep_stats = await startup_sweep(
+            isolation_root=isolation_root,
+            cleanup_days=cleanup_days,
+            repo_root=repo_root,
+        )
+
+    # 2. MissionManager + Recovery (only the primary instance sweeps — #2)
+    manager = MissionManager(db_path, bus=bus)
+    recovered = await manager.start(recover=recover_missions)
+    if recovered:
+        logger.info("Phase-6 startup-recover: %d stale missions -> FAILED", len(recovered))
+    elif not recover_missions:
+        logger.info(
+            "Phase-6 startup-recover skipped — secondary instance "
+            "(not the single-instance-lock holder)"
+        )
+
+    # 3. BudgetTracker (emitter = store.append_and_publish so warnings persist)
+    budget = BudgetTracker(
+        per_mission_usd=per_mission_usd,
+        daily_usd=daily_usd,
+        warn_pct=warn_pct,
+        emitter=manager.store.append_and_publish,
+    )
+    # Auto-track WorkerDraftReady events
+    budget.bind_to_event_bus(manager.bus)
+
+    # 4. WorktreeManager
+    if repo_root is None:
+        repo_root = Path.cwd()
+    worktree_mgr = WorktreeManager(
+        repo_root=repo_root,
+        outputs_root=isolation_root,
+    )
+
+    # H6 (2026-05-17 audit): one-shot boot-time sweep of leaked worktree
+    # dirs that crashed/force-quit/race-blocked sessions left behind.
+    # Audit-4 counted ~60 of these on disk. Best-effort, never raises;
+    # `prune_and_sweep_leaked` swallows its own errors and returns a
+    # telemetry dict that we log for forensics.
+    try:
+        sweep_report = worktree_mgr.prune_and_sweep_leaked(max_age_hours=6.0)
+        if (
+            sweep_report.get("swept_run_dirs", 0) > 0
+            or sweep_report.get("errors", 0) > 0
+        ):
+            logger.info(
+                "worktree-sweep at bootstrap: %s", sweep_report,
+            )
+    except Exception:  # noqa: BLE001
+        logger.warning("worktree-sweep at bootstrap failed", exc_info=True)
+
+    # 5. CriticRunner
+    critic_runner = CriticRunner()
+
+    # 6. MissionDecomposer
+    decomposer = MissionDecomposer(brain=brain_caller)
+
+    # Read brain primary AND sub_jarvis-provider once at bootstrap so
+    # worker_factory + env_builder both make the same choice. Lazy-imported
+    # so the missions module stays importable in test environments where
+    # the global Jarvis config isn't loaded.
+    brain_primary = "gemini"
+    brain_deep_model = "sonnet"
+    sub_jarvis_provider: str | None = None
+    try:
+        from jarvis.core.config import load_config
+
+        cfg = load_config()
+        brain_primary = (cfg.brain.primary or "claude-api").lower()
+        # deep_model is the per-provider field; resolve via providers map.
+        provider_cfg = (cfg.brain.providers or {}).get(brain_primary)
+        if provider_cfg is not None:
+            brain_deep_model = (
+                getattr(provider_cfg, "deep_model", None)
+                or getattr(provider_cfg, "model", None)
+                or brain_deep_model
+            )
+        # [brain.sub_jarvis] is the SOURCE OF TRUTH for the OpenClaw worker
+        # selection (post-Welle-4). If present and provider is set, every
+        # mission step routes to SubJarvisWorker — regardless of brain.primary.
+        sub_cfg = getattr(cfg.brain, "sub_jarvis", None)
+        if sub_cfg is not None:
+            raw_provider = getattr(sub_cfg, "provider", None)
+            if raw_provider:
+                sub_jarvis_provider = str(raw_provider).strip().lower() or None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "missions: brain config lookup failed (%s) — defaulting to "
+            "openclaw-backed worker routing", exc,
+        )
+
+    # 7. Kontrollierer
+    def _env_builder(mission_dir: Path) -> dict[str, str]:
+        # Each worker CLI reads its own API-key env
+        # var. Pull all three from Jarvis' secret store (Windows Credential
+        # Manager → ENV → .env) so a config-driven worker switch doesn't
+        # require a separate bootstrap pass. The relevant key actually
+        # reaches the worker because build_worker_env sets ANTHROPIC_,
+        # GEMINI_/GOOGLE_, OPENAI_API_KEY explicitly — none of them leak
+        # to a worker that doesn't need them.
+        anthropic_key: str | None = None
+        openai_key: str | None = None
+        gemini_key: str | None = None
+        xai_key: str | None = None
+        openrouter_key: str | None = None
+        try:
+            from jarvis.core.config import get_secret
+
+            anthropic_key = get_secret(
+                "anthropic_api_key", env_fallback="ANTHROPIC_API_KEY"
+            )
+            openai_key = get_secret(
+                "openai_api_key", env_fallback="OPENAI_API_KEY"
+            )
+            gemini_key = get_secret(
+                "gemini_api_key", env_fallback="GEMINI_API_KEY"
+            ) or get_secret(
+                "google_api_key", env_fallback="GOOGLE_API_KEY"
+            )
+            # Grok / xAI: Jarvis stores under ``grok_api_key`` in the
+            # credential manager (ENV fallback ``GROK_API_KEY``); we set
+            # both XAI_API_KEY + GROK_API_KEY on the worker side so
+            # OpenClaw (XAI_API_KEY) and any legacy SDK (GROK_API_KEY)
+            # both find it.
+            xai_key = get_secret(
+                "grok_api_key", env_fallback="GROK_API_KEY"
+            ) or get_secret(
+                "xai_api_key", env_fallback="XAI_API_KEY"
+            )
+            openrouter_key = get_secret(
+                "openrouter_api_key", env_fallback="OPENROUTER_API_KEY"
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "missions: secret lookup failed (%s) — worker will hit "
+                "authentication_failed", exc,
+            )
+
+        # Prefer the LIVE Claude Max OAuth token. `claude` refreshes its access
+        # token in ~/.claude/.credentials.json, but get_secret may return a
+        # STALE oat token from the credential manager / .env. Pre-fix that was
+        # harmless (the worker read the user's config dir directly); now that
+        # every worker is pinned to an isolated CLAUDE_CONFIG_DIR, the env token
+        # is the only auth surface and a stale one 401s. A classic API key
+        # (sk-ant-api03) from get_secret is left untouched.
+        live_oat = read_live_claude_oauth_token()
+        if live_oat and (
+            anthropic_key is None or anthropic_key.startswith("sk-ant-oat")
+        ):
+            anthropic_key = live_oat
+
+        return build_worker_env(
+            run_dir=mission_dir,
+            anthropic_api_key=anthropic_key,
+            openai_api_key=openai_key,
+            gemini_api_key=gemini_key,
+            xai_api_key=xai_key,
+            openrouter_api_key=openrouter_key,
+        )
+
+    def _worker_factory(step):  # noqa: ANN001 — Step type local
+        # Worker routing post-Welle-4:
+        #
+        # 1. If ``[brain.sub_jarvis].provider`` is set in jarvis.toml,
+        #    every mission step routes to SubJarvisWorker (which drives
+        #    the provider-agnostic OpenClaw CLI). This is the documented
+        #    OpenClaw-bridge migration path and the way the user switches
+        #    between grok / gemini / openai / claude-api / openrouter as
+        #    the Heavy-Worker provider without code changes.
+        #
+        # 2. Otherwise use SubJarvisWorker as the default heavy worker.
+        #    That keeps complex work on the provider-agnostic OpenClaw path
+        #    instead of spawning a vendor-specific code CLI.
+        # BUG-023 fix (2026-05-16): OpenClaw 2026.5.7 silently swallows
+        # `cliBackends["claude-cli"].args` injection, so Sonnet via OpenClaw
+        # never gets file_write tools (verified live in mission_019e3236).
+        # When the configured provider is `claude-api`, bypass OpenClaw and
+        # drive the `claude` CLI directly — that path was empirically
+        # proven to actually invoke Write tools (see /tmp/probe5 + /tmp/probe6
+        # on 2026-05-16). Other providers (grok / gemini / openai / openrouter)
+        # still go through SubJarvisWorker / OpenClaw because OpenClaw is the
+        # right surface for them.
+        # Welle 7 (2026-05-20): two opt-in routes coexist for the claude-cli
+        # backend.
+        #   - "claude-api": direct claude CLI via ClaudeDirectWorker
+        #     (BUG-023-era shortcut, retained for back-compat).
+        #   - "openclaw-claude": real OpenClaw subprocess (`openclaw agent
+        #     --local --json --model claude-cli/<model>`). Empirically
+        #     verified 2026-05-20 via the probe at ~/openclaw-probe-*: file
+        #     write succeeded once SubJarvisWorker.spawn sets
+        #     agents.defaults.workspace to the per-mission worktree. The
+        #     SubJarvisWorker resolves "openclaw-claude" to the claude-api
+        #     OpenClaw provider via _resolve_provider_chain's
+        #     primary_provider remap below.
+        # Welle 6 (2026-05-18): user switched from Claude Max to ChatGPT
+        # subscription. ``chatgpt`` / ``openai-codex`` route through the
+        # codex CLI's ChatGPT-OAuth path -- no API key, no OpenClaw, just
+        # `codex exec --json --skip-git-repo-check ...`. Both slug names
+        # are accepted so a future jarvis.toml renames don't break boot.
+        #
+        # The (provider, step_model) -> worker-kind decision is a pure,
+        # unit-tested function (``_select_subagent_worker_kind``) so the
+        # worker that runs can never drift from the configured provider —
+        # in particular a configured ``claude-api`` is a HARD LOCK that no
+        # per-step model can divert to the Gemini API key (anti-silent-Gemini
+        # defense-in-depth, 2026-05-29).
+        kind = _select_subagent_worker_kind(
+            sub_jarvis_provider, getattr(step, "model", "") or ""
+        )
+        if kind == "claude_direct":
+            # Give the delegated worker the connected marketplace plugins as a
+            # claude-cli MCP config so it can issue the plugin tool calls (AD-OE4).
+            return ClaudeDirectWorker(mcp_servers=_assemble_worker_mcp_servers())
+        if kind == "codex_direct":
+            return CodexDirectWorker()
+        if kind == "gemini":
+            # Reached ONLY when no [brain.sub_jarvis].provider is configured.
+            # Make it LOUD — this runs on the Gemini API key, NOT the Claude
+            # Max subscription. A silent Gemini fallback is exactly the trap
+            # the user flagged.
+            logger.warning(
+                "Mission worker -> GeminiWorker (step model=%r) because no "
+                "[brain.sub_jarvis].provider is configured. This uses the "
+                "Gemini API key, NOT the Claude Max subscription.",
+                getattr(step, "model", ""),
+            )
+            return GeminiWorker()
+        # The legacy ``"subjarvis"`` kind (openclaw-claude / unknown provider /
+        # unset default) routed to the OpenClaw subprocess worker, which was
+        # removed (it caused the ~92% nested-claude hang; see docs/BUGS.md).
+        # All of those cases now fall back to the proven direct Opus worker.
+        return ClaudeDirectWorker(mcp_servers=_assemble_worker_mcp_servers())
+
+    def _job_factory():
+        # Lazy import so Linux tests do not crash
+        import sys
+
+        from .isolation.job_object import (
+            AlwaysOpenJobObject,
+            WindowsJobObject,
+        )
+        if sys.platform == "win32":
+            return WindowsJobObject()
+        return AlwaysOpenJobObject()
+
+    kontrollierer = Kontrollierer(
+        manager=manager,
+        decomposer=decomposer,
+        critic_runner=critic_runner,
+        worktree_mgr=worktree_mgr,
+        env_builder=_env_builder,
+        budget=budget,
+        worker_factory=_worker_factory,
+        job_factory=_job_factory,
+        isolation_root=isolation_root,
+        max_workers=max_workers,
+        safety_enabled=safety_enabled,
+        extra_blocked_globs=extra_blocked_globs,
+    )
+
+    # 8. VoiceListener / Announcer — mutually exclusive (2026-05-27 finding
+    # #6): exactly one readback path runs, else every completion is spoken
+    # twice. The announcer wins when a speech_bus is present (production),
+    # the listener is the direct-TTS fallback.
+    _readback_mode = _resolve_readback_mode(
+        tts_speak_fn=tts_speak_fn, speech_bus=speech_bus
+    )
+
+    voice_listener: MissionVoiceListener | None = None
+    if _readback_mode == "listener":
+        voice_listener = MissionVoiceListener(
+            bus=manager.bus,
+            store=manager.store,
+            readback=MissionReadback(),
+            tts_speak_fn=tts_speak_fn,
+            announce_critic_loop=voice_announce_critic_loop,
+            language_default=voice_language_default,  # type: ignore[arg-type]
+        )
+        await voice_listener.start()
+        logger.info("Phase-6 voice listener active (direct-TTS readback)")
+    elif _readback_mode == "announcer" and tts_speak_fn is not None:
+        logger.info(
+            "Phase-6 voice listener suppressed — speech_bus present, "
+            "MissionAnnouncer owns readback (avoids double announcement)"
+        )
+    else:
+        logger.info("Phase-6 voice listener disabled (no tts_speak_fn provided)")
+
+    # 8b. MissionAnnouncer (Wave-4 Y): Mission-Bus -> Speech-Bus bridge for
+    # AnnouncementRequested events. Activates only when a speech bus is provided
+    # (typically the global UI/pipeline bus). Without this bridge, mission-completion
+    # events never reach the scrub_for_voice path.
+    mission_announcer: MissionAnnouncer | None = None
+    if _readback_mode == "announcer":
+        mission_announcer = MissionAnnouncer(
+            bus=manager.bus,
+            store=manager.store,
+            speech_bus=speech_bus,
+            announce_critic_loop=voice_announce_critic_loop,
+            language_default=voice_language_default,  # type: ignore[arg-type]
+        )
+        await mission_announcer.start()
+        logger.info("Phase-6 mission-announcer active (mission-bus -> speech-bus)")
+    else:
+        logger.info("Phase-6 mission-announcer disabled (no speech_bus provided)")
+
+    # 9. Daily cleanup task (opt-in)
+    cleanup_task: asyncio.Task[None] | None = None
+    if cleanup_daily:
+        cleanup_task = asyncio.create_task(
+            daily_cleanup_task(
+                isolation_root=isolation_root,
+                cleanup_days=cleanup_days,
+                repo_root=repo_root,
+            ),
+            name="phase6-daily-cleanup",
+        )
+        logger.info("Phase-6 daily-cleanup-task scheduled")
+
+    return {
+        "manager": manager,
+        "kontrollierer": kontrollierer,
+        "budget": budget,
+        "voice_listener": voice_listener,
+        "mission_announcer": mission_announcer,
+        "cleanup_task": cleanup_task,
+        "sweep_stats": sweep_stats,
+        "recovered_mission_ids": recovered,
+        "decomposer": decomposer,
+        "worktree_manager": worktree_mgr,
+    }
+
+
+async def shutdown_missions(bootstrap_result: dict[str, Any]) -> None:
+    """Clean shutdown of the Phase-6 stack.
+
+    Cancels the cleanup task and closes the MissionManager (DB).
+    """
+    cleanup_task = bootstrap_result.get("cleanup_task")
+    if cleanup_task is not None:
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
+
+    manager = bootstrap_result.get("manager")
+    if manager is not None:
+        await manager.stop()
+
+
+__all__ = ["bootstrap_missions", "shutdown_missions"]

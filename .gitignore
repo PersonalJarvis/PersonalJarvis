@@ -1,0 +1,169 @@
+# Secrets (nie committen — Secrets liegen im Windows Credential Manager)
+.env
+.env.local
+.env.*.local
+# Local plaintext API-key snapshot — developer convenience file, must stay local
+apikeys-snapshot.md
+*.pem
+# Exception: supply-chain PUBLIC keys live in install/keys/ and MUST be
+# committed plain so the verifier can pin them. Encrypted *.enc private
+# keys are also committed (passphrase lives in GH Actions secrets / pw mgr).
+!install/keys/*.pub.pem
+!install/keys/*.pub
+!install/keys/*.enc
+
+# Config-Drift-Guard temp backups (never commit)
+jarvis.toml.tmp
+*.toml.tmp
+*.key
+secrets/
+credentials/
+service-account*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Node
+node_modules/
+dist/
+build/
+
+# Jarvis Runtime-Daten (nie committen)
+data/*
+data/**/
+*.db
+*.sqlite
+*.sqlite3
+
+# Wake-Word Custom-Models + Whisper-Cache
+*.ppn
+*.onnx
+models/
+
+# Audio-Blobs + Flight-Recorder-Traces
+blobs/
+traces/
+logs/
+
+# Stray screenshots & test artefacts (UI captures, GitHub shots, debug frames,
+# Browser-MCP screenshots, smoke-test backend logs). Root-level images are
+# throwaway scratch and must never be committed. Load-bearing images live under
+# jarvis/ui/web/frontend/public, jarvis/ui/web/dist, assets/icons, the mascot
+# art, and OS-Level/.../mascot-fallback.png — never at the repo root.
+/*.png
+/*.jpg
+/*.jpeg
+/*.gif
+/*.webp
+/*.bmp
+/*.mp4
+/*.mov
+/*.log
+# OS screenshot dumps anywhere in the tree (Windows / macOS naming).
+Screenshot *.png
+Bildschirmfoto *.png
+Screen Shot *.png
+
+# Canonical home for development/verification screenshots (see CLAUDE.md).
+# The app's boot sweep consolidates stray root captures here and auto-prunes
+# them after 10 days (jarvis/core/screenshots.py). Folder is created on boot.
+/screenshots/
+
+# Sub-Agent-Sandbox-Outputs (Research-/Demo-Drops, kein Projekt-Code)
+examples/
+github-research/
+# Phase-6 worker-isolation parent (worktrees + per-mission OpenClaw state).
+# Each mission gets a fresh `git worktree` under here; never commit.
+sub-agents-outputs/
+
+# Generated test inventory (refreshed by tooling, never reviewed by hand).
+all-tests.list
+
+# Wiki auto-backups (rolling tarballs from the backup scheduler; never reviewed).
+wiki/wiki-backups/
+
+# Excalidraw export scratch + diagram-capture screenshots under scripts/.
+scripts/_*.png
+scripts/_*.json
+scripts/_flow_in_browser.png
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+
+# Runtime-Artefakte (Claude Code + Playwright-MCP)
+.claude/*
+# Subagents, Slash-Commands und Skills sind Team-Knowledge und werden versioniert
+!.claude/agents/
+!.claude/commands/
+!.claude/skills/
+.playwright-mcp/
+
+# TypeScript incremental build cache (regenerated on every `tsc --build`)
+*.tsbuildinfo
+
+# Standalone sibling project — versioned in its own repo
+jarvis-promo-video/
+
+# Obsidian transient workspace state (plugin configs ARE committed)
+wiki/obsidian-vault/.obsidian/workspace.json
+wiki/obsidian-vault/.obsidian/workspace-mobile.json
+wiki/obsidian-vault/.obsidian/workspaces.json
+wiki/obsidian-vault/.trash/
+
+# Generated worktree inventory (ephemeral)
+git-worktree-status.csv
+
+# ============================================================
+# Open-source separation (Wave 0, 2026-05-30): personal state stays
+# local, only shared code + an empty seed scaffold ship. The files below
+# were `git rm --cached`-ed (kept on disk, removed from tracking). See
+# Downloads/Open-Source-Privacy-Separation.md for the full plan.
+# ============================================================
+
+# Personal config instance — ship jarvis.toml.example instead. Jarvis already
+# boots with NO jarvis.toml (pure Pydantic defaults, core/config.py).
+/jarvis.toml
+# Per-user MCP server config — ship mcp.json.example instead.
+/mcp.json
+
+# Personal knowledge-vault CONTENT. The vault self-creates on first run
+# (jarvis/memory/wiki/integration.py seeds schema.md); only the empty skeleton
+# (schema.md, README.md, 00-index/, 99-templates/) ships as a seed.
+wiki/obsidian-vault/sessions/
+wiki/obsidian-vault/_archive/
+wiki/obsidian-vault/entities/
+wiki/obsidian-vault/concepts/
+wiki/obsidian-vault/projects/
+wiki/obsidian-vault/log.md
+# Personal Obsidian UI state (theme + plugin-config defaults stay tracked as a seed).
+wiki/obsidian-vault/.obsidian/graph.json
+wiki/obsidian-vault/.obsidian/hotkeys.json
+
+# Dev scratch & personal incident reports (pytest dumps, recovery notes).
+/_*.txt
+/claude-progress.txt
+/macicon-candidates.json
+/RECOVERY.md
+/recovery-report.md
+/restore-report.md
+
+# Misc per-user state the code may write into the repo tree.
+state/
