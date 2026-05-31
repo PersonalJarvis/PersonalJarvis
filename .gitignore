@@ -20,6 +20,19 @@ secrets/
 credentials/
 service-account*.json
 
+# Personal / instance state — the operator's data, NEVER committed (OpenClaw model).
+# Enforced by tests/unit/test_no_personal_state_tracked.py. See CLAUDE.md privacy contract.
+jarvis.toml
+!jarvis.toml.example
+mcp.json
+!mcp.json.example
+# Memory/knowledge: only generic example notes ship; the operator's notes never do.
+wiki/obsidian-vault/sessions/
+wiki/obsidian-vault/_archive/
+# Profile / avatar / per-user assets
+**/avatar.*
+profiles/*.json
+
 # Python
 __pycache__/
 *.py[cod]

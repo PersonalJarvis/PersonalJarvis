@@ -4,6 +4,36 @@ Guidance for OpenClaw (claude.ai/code) and any sub-agent working in this reposit
 
 ---
 
+## Repository Identity & Privacy Contract (READ FIRST — HIGHEST PRIORITY)
+
+**This repository is `personal-jarvis/PersonalJarvis`** — the clean, public-bound
+distribution build of Personal Jarvis, and the **single repository we develop in**.
+The historical repo `personal-jarvis/personal-jarvis` is frozen/archived — do not
+push there. **This repo will become public.** Treat every commit as if it were
+already public.
+
+**The OpenClaw model:** we ship CODE, never the operator's data. A consumer clones
+this repo and supplies their OWN keys and config via `python -m jarvis --wizard`.
+Nothing personal to the maintainer is ever committed, staged, or pushed.
+
+**Never commit / stage / push** (enforced by `.gitignore` + the CI guard
+`tests/unit/test_no_personal_state_tracked.py` — do not weaken either):
+
+- **Secrets:** API keys, tokens, `.env` (only `.env.example` ships), `apikeys-snapshot.md`, `*.key`, private `*.pem`.
+- **Real config:** `jarvis.toml` (only `jarvis.toml.example` with `CHANGEME` placeholders ships); same for `mcp.json` → `mcp.json.example`.
+- **Memory / knowledge data:** `wiki/obsidian-vault/sessions/**`, `wiki/obsidian-vault/_archive/**`, the operator's personal notes (only generic example notes ship).
+- **Runtime / user state:** `data/**`, `*.db` / `*.sqlite`, chat history, profile, avatar.
+- **Personal identifiers:** the maintainer's real name, email, or home path (`C:\Users\...`). Use neutral placeholders — `the maintainer`, `you@example.com`, `<your-home>`.
+
+**Before any push**, verify nothing personal is staged: `git diff --cached --stat`
+and run `pytest tests/unit/test_no_personal_state_tracked.py`. If unsure whether
+something is personal: **do not commit it — ask.**
+
+Non-Claude agents (Codex, Cursor, Copilot, Gemini, …) read [`AGENTS.md`](AGENTS.md),
+which mirrors this contract.
+
+---
+
 ## Output Language Policy (HIGHEST PRIORITY)
 
 **Every artifact an agent produces in this repo is English.** No exceptions.
