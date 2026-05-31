@@ -72,26 +72,59 @@ def test_context_hints_are_included() -> None:
 
 def test_no_action_falls_back_to_raw_utterance() -> None:
     """Force-spawn path passes action='' — there is no interpretation, so the
-    mission prompt is the raw utterance verbatim (unchanged behaviour)."""
+    mission prompt carries the raw utterance verbatim (no Aufgabe/action
+    enrichment), led by the standing quality directive."""
     prompt = _build_mission_prompt(
         utterance="lies die Datei x und fasse sie zusammen", action=""
     )
-    assert prompt == "lies die Datei x und fasse sie zusammen"
+    assert "lies die Datei x und fasse sie zusammen" in prompt
+    assert "Aufgabe:" not in prompt  # no interpretation enrichment
 
 
 def test_generic_default_action_is_not_treated_as_interpretation() -> None:
     """The generic ACK filler ('einer komplexen Aufgabe nachgeht') is NOT a
     real interpretation — it must not become the worker's task; fall back to
-    the verbatim utterance."""
+    the verbatim utterance (still led by the quality directive)."""
     prompt = _build_mission_prompt(
         utterance="mach das für mich",
         action="einer komplexen Aufgabe nachgeht",
     )
-    assert prompt == "mach das für mich"
+    assert "mach das für mich" in prompt
+    assert "Aufgabe:" not in prompt
+    assert "komplexen Aufgabe nachgeht" not in prompt
 
 
 def test_empty_everything_returns_empty() -> None:
     assert _build_mission_prompt(utterance="", action="") == ""
+
+
+def test_mission_prompt_carries_quality_directive() -> None:
+    """Live incident 2026-05-31 (mission 019e7e04): the router's brief told the
+    worker to build a 'Grundgerüst', the worker (Opus) obeyed and shipped a
+    12-line stub, and the mission passed. Every dispatched mission prompt must
+    lead with a standing quality directive so a lazy/minimal brief cannot
+    downgrade the deliverable to a stub."""
+    prompt = _build_mission_prompt(
+        utterance="bau mir eine schöne Landingpage",
+        action="eine Landingpage baut",
+    )
+    low = prompt.lower()
+    assert "production-quality" in low or "complete" in low
+    assert "skeleton" in low or "stub" in low or "placeholder" in low
+    assert "failure" in low, "a stub must be named as a failure"
+    # The actual task still survives.
+    assert "Landingpage" in prompt
+
+
+def test_quality_directive_present_on_forcespawn_path() -> None:
+    """Force-spawn (action='') passes the raw utterance — it too must carry the
+    quality directive, not just the enriched-action path."""
+    prompt = _build_mission_prompt(
+        utterance="lies die Datei x und fasse sie zusammen", action=""
+    )
+    low = prompt.lower()
+    assert "skeleton" in low or "stub" in low or "placeholder" in low
+    assert "lies die Datei x und fasse sie zusammen" in prompt
 
 
 @pytest.mark.asyncio

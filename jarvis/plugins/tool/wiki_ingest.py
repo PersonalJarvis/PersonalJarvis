@@ -98,7 +98,7 @@ class WikiIngestTool:
         {
             "text": (
                 "Joy hat am 14. August Geburtstag. Sie ist die juengere "
-                "Schwester von Harald."
+                "Schwester von Sam."
             ),
             "source": "voice:user-direct",
         },

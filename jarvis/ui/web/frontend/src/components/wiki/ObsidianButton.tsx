@@ -18,7 +18,7 @@ import { useEventStore } from "@/store/events";
  * "Open vault in Obsidian" button in the wiki tab header).
  */
 export interface ObsidianButtonProps {
-  /** Vault-relative POSIX path, e.g. `"entities/harald.md"`. Empty opens the root. */
+  /** Vault-relative POSIX path, e.g. `"entities/sam.md"`. Empty opens the root. */
   vaultRelPath: string;
   /** Use the compact "sm" button size — useful inside dense panels. */
   size?: "default" | "sm";

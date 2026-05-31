@@ -48,7 +48,7 @@ log = logging.getLogger(__name__)
 def _wikilink_for(path: Path, vault_root: Path) -> str:
     """Render a vault-relative wikilink for the ``log.md`` entry.
 
-    ``vault_root/entities/the maintainer.md`` → ``[[entities/the maintainer]]``. The
+    ``vault_root/entities/alex.md`` → ``[[entities/alex]]``. The
     log writer accepts plain strings and rounds them through unchanged
     so we hand it the already-rendered link form here.
     """
@@ -152,7 +152,7 @@ class WikiCurator:
         )
 
         # The LLM is taught (via schema.md) to emit vault-relative targets
-        # like "entities/the maintainer.md". Python's Path() treats that as a
+        # like "entities/alex.md". Python's Path() treats that as a
         # relative path, which the atomic writer then resolves against the
         # process CWD and rejects as out-of-vault. Anchor every relative
         # target to the vault root here, so the writer always sees an
@@ -198,7 +198,7 @@ class WikiCurator:
         """Resolve a vault-relative ``target_path`` against the vault root.
 
         The schema instructs the LLM to use vault-relative paths like
-        ``entities/the maintainer.md``. A bare relative ``Path`` resolves against
+        ``entities/alex.md``. A bare relative ``Path`` resolves against
         the process CWD when the writer normalises it, which is wrong
         — the file must end up inside the vault. If the LLM ever emits
         an already-absolute path, we leave it untouched (the writer's

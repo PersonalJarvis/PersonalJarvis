@@ -7,6 +7,41 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
+## [v0.1.0] — 2026-06-01
+
+First git-tagged release of the public distribution snapshot (the prior
+snapshot was untagged). The version matches the in-code `__version__`. This
+distribution is built from the maintainer's working tree by a deterministic
+privacy gate: only git-tracked files are exported, an internal-docs denylist
+and a PII scrub are applied, and a fail-closed secret/PII scan must pass
+before anything ships.
+
+### Added
+
+- `jarvis/plugins/tts/fallback_tts.py` — a `FallbackTTS` wrapper that fails
+  over to a secondary TTS provider when the primary returns empty or erroring
+  audio, with unit tests.
+- `docs/supply-chain/wave2-key-ceremony.md` — Wave-2 signing key-ceremony
+  documentation (companion to `install/TRUST_ROOT.md`).
+- Additional regression tests: smalltalk tool visibility, tool-use-loop image
+  feedback, and idle spawn-in-flight voice handling.
+
+### Changed
+
+- Broad updates across the voice pipeline, on-demand vision gating, the
+  mission/critic loop, and the router, synced from the current working tree.
+- Example and placeholder identities used in samples, prompts, and test
+  fixtures were neutralized for the public distribution.
+
+### Removed
+
+- 100+ internal development-process documents (planning specs, design
+  handoffs, diagnostics) are now excluded from the public distribution by the
+  tightened denylist; they remain only in the maintainer's private repo.
+- The repository `.mailmap` is no longer shipped in the distribution.
+
+---
+
 ## [v1.0.0-board] — 2026-04-25
 
 First consolidated release of the **Jarvis Board**: Phase A through D.

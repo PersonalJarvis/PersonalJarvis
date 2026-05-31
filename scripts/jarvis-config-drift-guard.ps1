@@ -27,7 +27,7 @@
       versucht (silent fallback bei Fehler).
 
 .PARAMETER RepoRoot
-    Pfad zum Repo-Root. Default: <your-home>\Desktop\Personal Jarvis
+    Pfad zum Repo-Root. Default: <USER_HOME>\Desktop\Personal Jarvis
 
 .PARAMETER SollFile
     Pfad zur Soll-JSON. Default: $RepoRoot\scripts\config-soll.json
@@ -47,7 +47,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$RepoRoot      = "<your-home>\Desktop\Personal Jarvis",
+    [string]$RepoRoot      = "<USER_HOME>\Desktop\Personal Jarvis",
     [string]$SollFile      = "",
     [switch]$DryRun,
     [switch]$ToastOnDrift

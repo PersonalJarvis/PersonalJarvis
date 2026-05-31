@@ -19,7 +19,7 @@ Dry-run by default — prints what WOULD change and touches nothing. Pass
 
     python scripts/wiki_relink_sessions.py                 # dry-run, default vault
     python scripts/wiki_relink_sessions.py --apply
-    python scripts/wiki_relink_sessions.py --vault path/to/vault --user-slug the maintainer --apply
+    python scripts/wiki_relink_sessions.py --vault path/to/vault --user-slug alex --apply
 """
 from __future__ import annotations
 
@@ -86,7 +86,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--user-slug",
-        default="the maintainer",
+        default="alex",
         help="slug of the user entity to link in every session footer",
     )
     parser.add_argument(

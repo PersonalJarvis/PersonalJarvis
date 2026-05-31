@@ -101,14 +101,14 @@ class TestPersonSlug:
         assert person_slug("???") == "unknown"
 
     def test_leading_trailing_whitespace_stripped(self) -> None:
-        assert person_slug("  the maintainer  ") == "the maintainer"
+        assert person_slug("  Alex  ") == "alex"
 
     def test_sharp_s_expanded_to_ss(self) -> None:
         assert person_slug("Weißbier") == "weissbier"
 
     def test_case_insensitive_result(self) -> None:
-        assert person_slug("the maintainer") == "the maintainer"
-        assert person_slug("the maintainer") == "the maintainer"
+        assert person_slug("RUBEN") == "alex"
+        assert person_slug("alex") == "alex"
 
 
 # ======================================================================

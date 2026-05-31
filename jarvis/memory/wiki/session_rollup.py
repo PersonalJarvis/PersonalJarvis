@@ -687,7 +687,7 @@ class SessionRollupWorker:
 def _read_aliases(path: Path) -> list[str]:
     """Return the ``aliases:`` frontmatter values of a page, or ``[]``.
 
-    Tolerant: handles both list form (``aliases: [the maintainer, the user]``) and a
+    Tolerant: handles both list form (``aliases: [Alex, the user]``) and a
     bare single value. A missing or unreadable file yields ``[]`` rather than
     raising — the scan must never crash a rollup.
     """

@@ -238,8 +238,8 @@ class VaultIndex:
 def _slug_of_link(link: str) -> str:
     """Canonicalise a wikilink target to its bare slug.
 
-    ``entities/the maintainer`` and ``concepts/awareness-layer`` both reduce to
-    the trailing path segment. A plain ``the maintainer`` is returned unchanged.
+    ``entities/alex`` and ``concepts/awareness-layer`` both reduce to
+    the trailing path segment. A plain ``alex`` is returned unchanged.
     An aliased form (``slug|alias``) drops the alias.
     """
     bare = link.split("|", 1)[0].strip()

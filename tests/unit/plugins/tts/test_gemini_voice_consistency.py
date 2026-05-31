@@ -206,6 +206,67 @@ def test_factory_vertex_defaults_off_for_legacy_cfg() -> None:
     assert tts._vertex_location == "us-central1"  # harmless default
 
 
+def test_vertex_ensure_client_derives_project_from_sa_when_empty(monkeypatch, tmp_path) -> None:
+    """When vertex_project is empty (the JARVIS__TTS__VERTEX_PROJECT env
+    override was never set after a clean clone), the project must be derived
+    from the `project_id` field of the service-account JSON we already load.
+
+    This is the BUG fix for the silent-TTS regression: use_vertex=True with an
+    empty vertex_project used to raise RuntimeError on every sentence, leaving
+    Jarvis mute ("hears + thinks but never answers")."""
+    import json
+
+    sa_path = tmp_path / "vertex-sa.json"
+    sa_path.write_text(
+        json.dumps({"type": "service_account", "project_id": "derived-proj-123"}),
+        encoding="utf-8",
+    )
+
+    captured: dict = {}
+
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    class _FakeGenAI:
+        Client = _FakeClient
+
+    import google  # type: ignore
+    monkeypatch.setattr(google, "genai", _FakeGenAI(), raising=False)
+
+    tts = GeminiFlashTTS(
+        use_vertex=True,
+        vertex_project="",  # empty — the env override was missing
+        vertex_location="us-central1",
+        service_account_path=str(sa_path),
+    )
+    tts._ensure_client()
+
+    assert captured.get("project") == "derived-proj-123"
+    assert tts._vertex_project == "derived-proj-123"
+
+
+def test_vertex_ensure_client_raises_when_project_empty_and_sa_lacks_project_id(
+    monkeypatch, tmp_path
+) -> None:
+    """If the SA file cannot supply a project_id either, fail loudly rather
+    than building a Vertex client with no project."""
+    import json
+
+    sa_path = tmp_path / "vertex-sa.json"
+    sa_path.write_text(json.dumps({"type": "service_account"}), encoding="utf-8")
+
+    tts = GeminiFlashTTS(
+        use_vertex=True,
+        vertex_project="",
+        service_account_path=str(sa_path),
+    )
+    import pytest as _pytest
+
+    with _pytest.raises(RuntimeError, match="vertex_project"):
+        tts._ensure_client()
+
+
 def test_vertex_ensure_client_expands_tilde_in_sa_path(monkeypatch, tmp_path) -> None:
     """Config can carry the cross-platform convention path ~/.config/jarvis/...
     The plugin must expand ~ so Google's auth chain (which does not expand

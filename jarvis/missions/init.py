@@ -174,6 +174,10 @@ async def bootstrap_missions(
     per_mission_usd: float = 5.0,
     daily_usd: float = 50.0,
     warn_pct: tuple[int, ...] = (50, 80),
+    # When False the BudgetTracker is a no-op (no cost cap, no abort). User
+    # mandate 2026-05-31 ("überhaupt kein Budget"). Default True keeps the
+    # cap for other installs / the cloud-first €5-VPS profile.
+    budget_enabled: bool = True,
     # Voice flags (from [phase6.voice])
     voice_announce_critic_loop: bool = False,
     voice_language_default: str = "de",
@@ -246,6 +250,7 @@ async def bootstrap_missions(
         daily_usd=daily_usd,
         warn_pct=warn_pct,
         emitter=manager.store.append_and_publish,
+        enabled=budget_enabled,
     )
     # Auto-track WorkerDraftReady events
     budget.bind_to_event_bus(manager.bus)

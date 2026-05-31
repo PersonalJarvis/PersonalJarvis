@@ -168,7 +168,7 @@ async def test_pad_thai_lands_in_wiki_without_brain_ack(stack) -> None:
         operation="create",
         new_body=_entity_body(
             "carlos",
-            "Carlos went out for Pad Thai with the maintainer on 2026-05-14.",
+            "Carlos went out for Pad Thai with Alex on 2026-05-14.",
         ),
         reason="new fact about a person",
     )
@@ -284,25 +284,25 @@ async def test_ack_path_still_fires_when_brain_says_notiert(stack) -> None:
     )
     bridge.start()
 
-    harald_update = PageUpdate(
-        target_path=vault_root / "entities" / "harald.md",
+    sam_update = PageUpdate(
+        target_path=vault_root / "entities" / "sam.md",
         operation="create",
-        new_body=_entity_body("harald", "Harald wurde 1976 geboren."),
+        new_body=_entity_body("sam", "Sam wurde 1976 geboren."),
         reason="explicit user note",
     )
 
     with patch.object(
-        curator._llm, "propose_updates", return_value=[harald_update],
+        curator._llm, "propose_updates", return_value=[sam_update],
     ):
         await _drive_voice_turn(
             bus,
-            user_text="Harald wurde 1976 geboren.",   # 26 chars -- below aggressive min
+            user_text="Sam wurde 1976 geboren.",   # 26 chars -- below aggressive min
             brain_text="Notiert.",                     # explicit ack keyword
         )
 
     bridge.stop()
 
-    page = vault_root / "entities" / "harald.md"
+    page = vault_root / "entities" / "sam.md"
     assert page.is_file(), (
         "ack path must still fire for fact-shaped texts even when they "
         "are below the aggressive-path min_user_chars threshold"
@@ -327,9 +327,9 @@ async def test_ack_path_and_aggressive_path_do_not_double_ingest(stack) -> None:
     bridge.start()
 
     update = PageUpdate(
-        target_path=vault_root / "entities" / "the maintainer.md",
+        target_path=vault_root / "entities" / "alex.md",
         operation="create",
-        new_body=_entity_body("the maintainer", "the maintainer rebuilt the wiki system."),
+        new_body=_entity_body("alex", "Alex rebuilt the wiki system."),
         reason="ack path fact",
     )
 

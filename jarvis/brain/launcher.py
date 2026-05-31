@@ -5,7 +5,7 @@
     python -m jarvis.brain.launcher --list-providers
     python -m jarvis.brain.launcher --prompt "öffne Notepad"              (with tools)
     python -m jarvis.brain.launcher --prompt "formatiere C:"             (blacklist deny)
-    python -m jarvis.brain.launcher --prompt "merk dir: ich heiße Harald" --save-memory
+    python -m jarvis.brain.launcher --prompt "merk dir: ich heiße Sam" --save-memory
 
 The launcher bypasses the voice pipeline entirely. It is the primary
 verification CLI for Phase 2 and remains permanently useful as a debug tool.

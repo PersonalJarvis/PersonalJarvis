@@ -2,7 +2,7 @@
 import os
 import re
 
-BASE = "<your-home>/Desktop/Personal Jarvis/jarvis/ui/web/frontend/src"
+BASE = "<USER_HOME>/Desktop/Personal Jarvis/jarvis/ui/web/frontend/src"
 
 def patch_file(rel_path, replacements, ensure_imports=None, ensure_hooks=None):
     fp = os.path.join(BASE, rel_path).replace("\\", "/")

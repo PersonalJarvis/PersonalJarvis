@@ -169,7 +169,7 @@ The assertions are behavioral, but the chain being asserted only contains mock c
 ============================= test session starts =============================
 platform win32 -- Python 3.11.9, pytest-9.0.3, pluggy-1.6.0 -- ...python.exe
 cachedir: .pytest_cache
-rootdir: <your-home>\Desktop\Personal Jarvis\skillbook
+rootdir: <USER_HOME>\Desktop\Personal Jarvis\skillbook
 configfile: pyproject.toml
 plugins: asyncio-1.4.0, timeout-2.4.0
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function

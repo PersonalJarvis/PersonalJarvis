@@ -3,7 +3,7 @@ title: "ADR-0008: Computer-Use in-process"
 slug: adr-0008-computer-use-harness-in-process
 diataxis: adr
 status: active
-owner: harald
+owner: sam
 last_reviewed: 2026-04-29
 phase: 5
 audience: developer

@@ -34,13 +34,13 @@ async def test_append_creates_file_when_missing(tmp_path: Path) -> None:
     await writer.append_log_entry(
         verb="ingest",
         subject="first entry",
-        pages_touched=["entities/the maintainer"],
+        pages_touched=["entities/alex"],
         source="unit test",
         summary="a first entry was appended to a fresh log.",
     )
     content = log_path.read_text(encoding="utf-8")
     assert "## [2026-05-11 19:42] ingest | first entry" in content
-    assert "- pages touched: [[entities/the maintainer]]" in content
+    assert "- pages touched: [[entities/alex]]" in content
     assert "- source: unit test" in content
     assert "- summary: a first entry was appended to a fresh log." in content
 
@@ -111,13 +111,13 @@ async def test_pages_touched_wraps_bare_slugs(tmp_path: Path) -> None:
     await writer.append_log_entry(
         verb="ingest",
         subject="s",
-        pages_touched=["the maintainer", "awareness-layer.md", "[[wiki-curator]]"],
+        pages_touched=["alex", "awareness-layer.md", "[[wiki-curator]]"],
         source="s",
         summary="t.",
     )
     content = log_path.read_text(encoding="utf-8")
     assert (
-        "- pages touched: [[the maintainer]], [[awareness-layer]], [[wiki-curator]]"
+        "- pages touched: [[alex]], [[awareness-layer]], [[wiki-curator]]"
         in content
     )
 

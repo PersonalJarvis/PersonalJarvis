@@ -76,6 +76,9 @@ class WSCommand(BaseModel):
         "terminal.input",
         "terminal.resize",
         "terminal.close",
+        # Chat mic-dictation: payload {"mode": "start" | "stop"}. Transcribe-only
+        # into the chat input — never reaches the brain.
+        "stt_dictate",
     ]
     payload: dict[str, Any] = Field(default_factory=dict)
 

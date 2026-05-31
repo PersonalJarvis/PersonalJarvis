@@ -6,7 +6,7 @@
 
 Personal Jarvis can — and routinely does — confirm actions it is not capable of
 performing. Classic example from production: a user says "Schick eine Email an
-Harald" and the Ack-Brain replies "wird erledigt" while no email capability
+Sam" and the Ack-Brain replies "wird erledigt" while no email capability
 exists anywhere in the running process. The TTS happily reads the phantom
 success; the mail is never sent; the user is deceived.
 

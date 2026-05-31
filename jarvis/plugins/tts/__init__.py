@@ -47,19 +47,52 @@ def _resolve_voice_for_provider(
 def build_tts_from_config(tts_cfg: Any) -> Any:
     """Erzeugt den TTS-Provider entsprechend `config.tts.provider`.
 
+    Honors `[tts].fallback`: when a fallback provider is configured (and differs
+    from the primary), the primary is wrapped in a ``FallbackTTS`` so a
+    primary-provider failure or an empty synthesis degrades to the backup voice
+    instead of leaving Jarvis mute (AD-OE6 zero-silent-drops). Without a
+    configured fallback the raw provider instance is returned unchanged, so
+    legacy call-sites / test doubles see identical behaviour.
+
     Args:
         tts_cfg: `TTSConfig`-Instanz aus `jarvis.core.config`.
 
     Returns:
-        Instanz des gewaehlten TTS-Plugins (implementiert `TTSProvider`).
+        Instanz des gewaehlten TTS-Plugins (implementiert `TTSProvider`), oder
+        ein `FallbackTTS` der primär + fallback umschliesst.
 
     Raises:
-        RuntimeError: wenn das gewaehlte Plugin nicht importierbar ist
+        RuntimeError: wenn das primaere Plugin nicht importierbar ist
             (z.B. weil das Modul gar nicht installiert wurde). Frueher
             knallte hier ein nackter ImportError, den `desktop_app.py`
             via blanket-except verschluckte → ganze Speech-Pipeline weg.
+            Ein nicht-baubarer *Fallback* degradiert dagegen nur (Warnung +
+            primary-only), damit eine Fallback-Fehlkonfig den Ton nicht killt.
     """
-    provider = (tts_cfg.provider or "gemini-flash-tts").lower()
+    primary_name = (tts_cfg.provider or "gemini-flash-tts").lower()
+    primary = _build_provider(tts_cfg, primary_name)
+
+    fallback_name = (getattr(tts_cfg, "fallback", "") or "").strip().lower()
+    if not fallback_name or fallback_name == primary_name:
+        return primary
+
+    try:
+        secondary = _build_provider(tts_cfg, fallback_name)
+    except Exception as exc:  # noqa: BLE001 — a bad fallback must not kill audio
+        log.warning(
+            "TTS fallback provider %r not buildable (%s) — running primary %r only.",
+            fallback_name, exc, primary_name,
+        )
+        return primary
+
+    from jarvis.plugins.tts.fallback_tts import FallbackTTS
+
+    log.info("TTS fallback active: primary=%r → fallback=%r", primary_name, fallback_name)
+    return FallbackTTS(primary, secondary)
+
+
+def _build_provider(tts_cfg: Any, provider: str) -> Any:
+    """Build a single TTS provider instance for ``provider`` (no fallback wrap)."""
     allow_sapi5 = bool(getattr(tts_cfg, "allow_sapi5_fallback", False))
 
     if provider in ("elevenlabs", "eleven-labs", "eleven_labs", "11labs"):

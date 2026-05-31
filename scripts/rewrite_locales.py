@@ -2,7 +2,7 @@
 import json
 import os
 
-BASE = "<your-home>/Desktop/Personal Jarvis/jarvis/ui/web/frontend/src/i18n/locales"
+BASE = "<USER_HOME>/Desktop/Personal Jarvis/jarvis/ui/web/frontend/src/i18n/locales"
 
 # Single source of truth - English. Keys are mirrored in de.json and es.json.
 EN = {

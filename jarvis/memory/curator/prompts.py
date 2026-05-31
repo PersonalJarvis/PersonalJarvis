@@ -68,8 +68,8 @@ ein `person:<Name>`, NICHT der User.
 - `{"subject": "person:Laura", "cluster": "identity", "field": "name", "value": "Laura", "relationship": "partner", "confidence": 1.0, ...}`
 - KEINESFALLS `{"subject": "user", "field": "name", "value": "Laura"}` — das waere ein krasser Fehler!
 
-**Input:** User sagt "Ich heisse the maintainer."
-**Output:** `{"subject": "user", "cluster": "identity", "field": "name", "value": "the maintainer", ...}`
+**Input:** User sagt "Ich heisse Alex."
+**Output:** `{"subject": "user", "cluster": "identity", "field": "name", "value": "Alex", ...}`
 
 **Input:** User sagt "Mein Kollege Paul hasst Emojis."
 **Output:** Beobachtung ueber Paul (subject=person:Paul), NICHT ueber den User.
@@ -138,7 +138,7 @@ def build_extraction_prompt(user_text: str, assistant_text: str,
 
     We provide the LLM with context about already-known entities so that it
     can disambiguate more reliably. If it already knows, e.g., "The user is
-    called the maintainer, Laura is his girlfriend", it will not make the mistake shown
+    called Alex, Laura is his girlfriend", it will not make the mistake shown
     in the Golden-Rule example.
     """
     ctx_lines = []

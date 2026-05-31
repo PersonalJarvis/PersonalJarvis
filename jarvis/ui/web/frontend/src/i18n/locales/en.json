@@ -49,6 +49,9 @@
       "2": "Work in folder C:\\Projects\\Foo"
     },
     "input_placeholder": "Message Jarvis… (Enter to send)",
+    "dictation_start": "Dictate",
+    "dictation_stop": "Stop dictation",
+    "dictation_listening": "Listening… speak now",
     "history": "History",
     "new_chat": "New chat",
     "speak": "Speak in this conversation",

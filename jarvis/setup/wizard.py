@@ -192,7 +192,7 @@ SECRETS: list[SecretSpec] = [
         required_for="Phase 5 — Admin-Ops (winget, services, registry, firewall)",
         optional=True,
     ),
-    # === F-FRIENDS [F1] · feature/friends-section · the maintainer-2026-04-30 ===
+    # === F-FRIENDS [F1] · feature/friends-section · alex-2026-04-30 ===
     # Phase F1 — Telegram-Channel-Bot-Token. User legt einen Bot via
     # @BotFather an, bekommt ein Token wie ``123456:ABC-DEF...``, traegt es
     # hier ein. ``getMe``-Validation passiert beim TelegramChannel.start().

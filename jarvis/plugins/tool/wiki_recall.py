@@ -69,7 +69,7 @@ class WikiRecallTool:
         "required": ["query"],
     }
     input_examples: list[dict[str, Any]] = [
-        {"query": "Harald birthday"},
+        {"query": "Sam birthday"},
         {"query": "Personal Jarvis architecture"},
     ]
 
@@ -82,11 +82,11 @@ class WikiRecallTool:
         Output format::
 
             ## Wiki hits for "<query>"
-            - **<title>** — <snippet>… (10-notes/Harald.md)
+            - **<title>** — <snippet>… (10-notes/Sam.md)
             - …
 
         Paths are rendered relative to ``vault_root`` so the brain sees
-        ``10-notes/Harald.md``, not an absolute Windows path.
+        ``10-notes/Sam.md``, not an absolute Windows path.
 
         Returns
         -------

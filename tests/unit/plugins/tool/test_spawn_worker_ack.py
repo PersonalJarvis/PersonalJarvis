@@ -1,6 +1,6 @@
 """Tests for ``_build_context_ack`` — the spoken spawn acknowledgement.
 
-Live regression 2026-05-26: the maintainer heard the same long template phrase every
+Live regression 2026-05-26: Alex heard the same long template phrase every
 time a sub-agent was force-spawned:
 
     "Mach ich, ich kümmere mich im Hintergrund darum, den vom User
@@ -55,7 +55,7 @@ def test_empty_action_with_target_still_returns_variant() -> None:
 
 def test_no_variant_contains_the_old_workflow_phrase() -> None:
     """Regression guard: the old standard phrase must NOT reappear in any
-    variant. the maintainer specifically complained about that wording."""
+    variant. Alex specifically complained about that wording."""
     forbidden = "vom User beschriebenen Workflow"
     for variant in _GENERIC_ACK_VARIANTS:
         assert forbidden not in variant, (

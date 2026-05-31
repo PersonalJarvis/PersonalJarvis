@@ -73,13 +73,13 @@ describe("WikiGraph", () => {
           JSON.stringify({
             ok: true,
             nodes: [
-              { id: "harald", kind: "entity", title: "Harald" },
-              { id: "the maintainer", kind: "entity", title: "the maintainer" },
+              { id: "sam", kind: "entity", title: "Sam" },
+              { id: "alex", kind: "entity", title: "Alex" },
               { id: "pixel-art-editor", kind: "project", title: "Pixel Art Editor" },
             ],
             edges: [
-              { source: "the maintainer", target: "harald", context: "Father" },
-              { source: "the maintainer", target: "pixel-art-editor", context: "Working on" },
+              { source: "alex", target: "sam", context: "Father" },
+              { source: "alex", target: "pixel-art-editor", context: "Working on" },
             ],
             broken: [],
           }),
@@ -99,7 +99,7 @@ describe("WikiGraph", () => {
     const ids = screen
       .getAllByTestId("wiki-graph-node")
       .map((el) => el.getAttribute("data-node-id"));
-    expect(ids).toEqual(["harald", "the maintainer", "pixel-art-editor"]);
+    expect(ids).toEqual(["sam", "alex", "pixel-art-editor"]);
   });
 
   it("invokes onNodeClick(slug) when a node is clicked", async () => {
@@ -109,7 +109,7 @@ describe("WikiGraph", () => {
         new Response(
           JSON.stringify({
             ok: true,
-            nodes: [{ id: "harald", kind: "entity", title: "Harald" }],
+            nodes: [{ id: "sam", kind: "entity", title: "Sam" }],
             edges: [],
             broken: [],
           }),
@@ -127,8 +127,8 @@ describe("WikiGraph", () => {
     await waitFor(() => {
       expect(screen.getByTestId("wiki-graph-node")).toBeDefined();
     });
-    fireEvent.click(screen.getByRole("button", { name: /Harald/i }));
-    expect(onNodeClick).toHaveBeenCalledWith("harald");
+    fireEvent.click(screen.getByRole("button", { name: /Sam/i }));
+    expect(onNodeClick).toHaveBeenCalledWith("sam");
   });
 
   it("renders highlighted node with 1.5x radius", async () => {
@@ -139,11 +139,11 @@ describe("WikiGraph", () => {
           JSON.stringify({
             ok: true,
             nodes: [
-              { id: "harald", kind: "entity", title: "Harald" },
-              { id: "the maintainer", kind: "entity", title: "the maintainer" },
+              { id: "sam", kind: "entity", title: "Sam" },
+              { id: "alex", kind: "entity", title: "Alex" },
             ],
-            // the maintainer → harald gives harald 1 backlink (radius = 10), zero for the maintainer (radius = 8)
-            edges: [{ source: "the maintainer", target: "harald", context: "Father" }],
+            // alex → sam gives sam 1 backlink (radius = 10), zero for alex (radius = 8)
+            edges: [{ source: "alex", target: "sam", context: "Father" }],
             broken: [],
           }),
           { status: 200, headers: { "content-type": "application/json" } },
@@ -153,24 +153,24 @@ describe("WikiGraph", () => {
     const client = makeClient();
     render(
       <Wrapper client={client}>
-        <WikiGraph onNodeClick={() => {}} highlightSlug="harald" />
+        <WikiGraph onNodeClick={() => {}} highlightSlug="sam" />
       </Wrapper>,
     );
     await waitFor(() => {
       expect(screen.getAllByTestId("wiki-graph-node")).toHaveLength(2);
     });
-    const haraldNode = screen
+    const samNode = screen
       .getAllByTestId("wiki-graph-node")
-      .find((el) => el.getAttribute("data-node-id") === "harald");
-    const rubenNode = screen
+      .find((el) => el.getAttribute("data-node-id") === "sam");
+    const alexNode = screen
       .getAllByTestId("wiki-graph-node")
-      .find((el) => el.getAttribute("data-node-id") === "the maintainer");
-    expect(haraldNode?.getAttribute("data-node-active")).toBe("true");
-    expect(rubenNode?.getAttribute("data-node-active")).toBe("false");
-    const haraldRadius = Number(haraldNode?.getAttribute("data-node-radius"));
-    const rubenRadius = Number(rubenNode?.getAttribute("data-node-radius"));
-    // harald: base 10 * 1.5 = 15. the maintainer: base 8.
-    expect(haraldRadius).toBe(15);
-    expect(rubenRadius).toBe(8);
+      .find((el) => el.getAttribute("data-node-id") === "alex");
+    expect(samNode?.getAttribute("data-node-active")).toBe("true");
+    expect(alexNode?.getAttribute("data-node-active")).toBe("false");
+    const samRadius = Number(samNode?.getAttribute("data-node-radius"));
+    const alexRadius = Number(alexNode?.getAttribute("data-node-radius"));
+    // sam: base 10 * 1.5 = 15. alex: base 8.
+    expect(samRadius).toBe(15);
+    expect(alexRadius).toBe(8);
   });
 });

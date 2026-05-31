@@ -37,7 +37,7 @@ from jarvis.memory.wiki.session_links import (
     ("Windows Terminal", "windows-terminal"),
     ("RazerAppEngine.exe", "razerappengine-exe"),
     ("Visual Studio Code", "visual-studio-code"),
-    ("the maintainer", "the maintainer"),
+    ("alex", "alex"),
     ("  Mixed   Spaces  ", "mixed-spaces"),
     ("Personal_Jarvis", "personal-jarvis"),
     ("Über Café", "uber-cafe"),
@@ -62,7 +62,7 @@ def test_strips_unclosed_link_midtext_before_next_link() -> None:
 
 
 def test_keeps_well_formed_links() -> None:
-    text = "See [[entities/the maintainer]] and [[projects/x|X]]."
+    text = "See [[entities/alex]] and [[projects/x|X]]."
     assert strip_dangling_wikilinks(text) == text
 
 
@@ -77,7 +77,7 @@ def test_strip_is_noop_without_brackets() -> None:
 
 def _index() -> SlugIndex:
     return SlugIndex.from_pages([
-        ("entities", "the maintainer", ["the maintainer", "the user"]),
+        ("entities", "alex", ["Alex", "the user"]),
         ("entities", "obsidian", ["Obsidian"]),
         ("projects", "personal-jarvis", ["Personal Jarvis"]),
         ("concepts", "wiki-curator", []),
@@ -85,11 +85,11 @@ def _index() -> SlugIndex:
 
 
 def test_resolve_bare_slug() -> None:
-    assert _index().resolve("the maintainer") == "entities/the maintainer"
+    assert _index().resolve("alex") == "entities/alex"
 
 
 def test_resolve_dir_prefixed() -> None:
-    assert _index().resolve("entities/the maintainer") == "entities/the maintainer"
+    assert _index().resolve("entities/alex") == "entities/alex"
     assert _index().resolve("projects/personal-jarvis") == "projects/personal-jarvis"
 
 
@@ -99,7 +99,7 @@ def test_resolve_title_case_via_slugify() -> None:
 
 
 def test_resolve_via_alias() -> None:
-    assert _index().resolve("the user") == "entities/the maintainer"
+    assert _index().resolve("the user") == "entities/alex"
 
 
 def test_resolve_unknown_returns_none() -> None:
@@ -130,24 +130,24 @@ def test_rewrite_demotes_unresolvable_link_to_plain_text() -> None:
 def test_rewrite_preserves_alias_display() -> None:
     text = "Talked to [[the user]] about it."
     out, _ = rewrite_body_links(text, _index())
-    assert "[[entities/the maintainer|the user]]" in out
+    assert "[[entities/alex|the user]]" in out
 
 
 def test_rewrite_short_form_when_display_equals_slug() -> None:
-    text = "See [[entities/the maintainer]]."
+    text = "See [[entities/alex]]."
     out, resolved = rewrite_body_links(text, _index())
     # Already canonical and display is the typed slug -> keep typed form.
-    assert "[[entities/the maintainer]]" in out
-    assert resolved == ["entities/the maintainer"]
+    assert "[[entities/alex]]" in out
+    assert resolved == ["entities/alex"]
 
 
 def test_rewrite_mixed_keeps_resolvable_drops_ghosts() -> None:
-    text = "In [[Personal Jarvis]] I used [[Cursor]] and pinged [[the maintainer]]."
+    text = "In [[Personal Jarvis]] I used [[Cursor]] and pinged [[Alex]]."
     out, resolved = rewrite_body_links(text, _index())
     assert "[[projects/personal-jarvis|Personal Jarvis]]" in out
-    assert "[[entities/the maintainer|the maintainer]]" in out
+    assert "[[entities/alex|Alex]]" in out
     assert "Cursor" in out and "[[Cursor]]" not in out
-    assert set(resolved) == {"projects/personal-jarvis", "entities/the maintainer"}
+    assert set(resolved) == {"projects/personal-jarvis", "entities/alex"}
 
 
 # ---------------------------------------------------------------------------
@@ -156,15 +156,15 @@ def test_rewrite_mixed_keeps_resolvable_drops_ghosts() -> None:
 
 def test_footer_lists_hubs_and_resolved_targets() -> None:
     footer = build_related_footer(
-        hub_links=["entities/the maintainer", "projects/personal-jarvis"],
-        resolved_targets=["concepts/wiki-curator", "entities/the maintainer"],
+        hub_links=["entities/alex", "projects/personal-jarvis"],
+        resolved_targets=["concepts/wiki-curator", "entities/alex"],
     )
     assert footer.startswith("## Related")
-    assert "[[entities/the maintainer]]" in footer
+    assert "[[entities/alex]]" in footer
     assert "[[projects/personal-jarvis]]" in footer
     assert "[[concepts/wiki-curator]]" in footer
-    # the maintainer appears once (dedup across hubs + resolved)
-    assert footer.count("[[entities/the maintainer]]") == 1
+    # alex appears once (dedup across hubs + resolved)
+    assert footer.count("[[entities/alex]]") == 1
 
 
 def test_footer_empty_when_nothing_to_link() -> None:
@@ -173,8 +173,8 @@ def test_footer_empty_when_nothing_to_link() -> None:
 
 def test_footer_short_form_typed() -> None:
     """Hub/resolved links render as typed [[dir/slug]] (always resolvable)."""
-    footer = build_related_footer(hub_links=["entities/the maintainer"], resolved_targets=[])
-    assert "- [[entities/the maintainer]]" in footer
+    footer = build_related_footer(hub_links=["entities/alex"], resolved_targets=[])
+    assert "- [[entities/alex]]" in footer
 
 
 # ---------------------------------------------------------------------------
@@ -186,41 +186,41 @@ def test_relink_demotes_ghosts_strips_dangling_and_adds_footer() -> None:
         "# Session\n\nThe user worked in [[Personal Jarvis]] using [[PowerShell]] "
         "and opened [[Snipping Tool"
     )
-    new_body, stats = relink_session_body(body, _index(), user_slug="the maintainer")
+    new_body, stats = relink_session_body(body, _index(), user_slug="alex")
     # Ghost demoted, dangling stripped, resolvable canonicalised, footer added.
     assert "[[PowerShell]]" not in new_body
     assert "[[Snipping Tool" not in new_body and "Snipping Tool" in new_body
     assert "[[projects/personal-jarvis|Personal Jarvis]]" in new_body
     assert "## Related" in new_body
-    assert "[[entities/the maintainer]]" in new_body
+    assert "[[entities/alex]]" in new_body
     assert stats["changed"] is True
 
 
 def test_relink_idempotent_does_not_double_footer() -> None:
-    body = "# Session\n\nWorked on [[Personal Jarvis]].\n\n## Related\n\n- [[entities/the maintainer]]\n"
-    new_body, stats = relink_session_body(body, _index(), user_slug="the maintainer")
+    body = "# Session\n\nWorked on [[Personal Jarvis]].\n\n## Related\n\n- [[entities/alex]]\n"
+    new_body, stats = relink_session_body(body, _index(), user_slug="alex")
     assert new_body.count("## Related") == 1
 
 
 def test_relink_clean_body_is_unchanged() -> None:
-    body = "# Session\n\nWorked on [[projects/personal-jarvis]].\n\n## Related\n\n- [[entities/the maintainer]]\n"
-    new_body, stats = relink_session_body(body, _index(), user_slug="the maintainer")
+    body = "# Session\n\nWorked on [[projects/personal-jarvis]].\n\n## Related\n\n- [[entities/alex]]\n"
+    new_body, stats = relink_session_body(body, _index(), user_slug="alex")
     assert stats["changed"] is False
     assert new_body == body
 
 
 def test_footer_order_is_deterministic() -> None:
     a = build_related_footer(
-        hub_links=["entities/the maintainer", "projects/personal-jarvis"],
+        hub_links=["entities/alex", "projects/personal-jarvis"],
         resolved_targets=["concepts/wiki-curator"],
     )
     b = build_related_footer(
-        hub_links=["projects/personal-jarvis", "entities/the maintainer"],
+        hub_links=["projects/personal-jarvis", "entities/alex"],
         resolved_targets=["concepts/wiki-curator"],
     )
     # Hubs keep caller order; the rendered block is stable for a given input.
     assert a == build_related_footer(
-        hub_links=["entities/the maintainer", "projects/personal-jarvis"],
+        hub_links=["entities/alex", "projects/personal-jarvis"],
         resolved_targets=["concepts/wiki-curator"],
     )
     assert "[[projects/personal-jarvis]]" in b

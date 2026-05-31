@@ -3,7 +3,7 @@ title: "ADR-0003: Task-Queue in Memory-DB"
 slug: adr-0003-task-queue-storage
 diataxis: adr
 status: active
-owner: harald
+owner: sam
 last_reviewed: 2026-04-29
 phase: 5
 audience: developer

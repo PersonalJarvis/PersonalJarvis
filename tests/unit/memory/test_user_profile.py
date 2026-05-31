@@ -19,16 +19,16 @@ from jarvis.memory.workspace import Workspace
 
 class TestSetAndGet:
     def test_set_new_value_returns_true(self, profile: UserProfile) -> None:
-        assert profile.set("identity", "name", "the maintainer") is True
-        assert profile.get("identity", "name") == "the maintainer"
+        assert profile.set("identity", "name", "Alex") is True
+        assert profile.get("identity", "name") == "Alex"
 
     def test_set_same_value_returns_false(self, profile: UserProfile) -> None:
-        profile.set("identity", "name", "the maintainer")
+        profile.set("identity", "name", "Alex")
         # Gleicher Wert → kein Change
-        assert profile.set("identity", "name", "the maintainer") is False
+        assert profile.set("identity", "name", "Alex") is False
 
     def test_set_overwrites_existing_value(self, profile: UserProfile) -> None:
-        profile.set("identity", "name", "the maintainer")
+        profile.set("identity", "name", "Alex")
         assert profile.set("identity", "name", "Paul") is True
         assert profile.get("identity", "name") == "Paul"
 
@@ -78,7 +78,7 @@ class TestAppendList:
 
 class TestPersistence:
     def test_save_and_reload_roundtrip(self, profile: UserProfile) -> None:
-        profile.set("identity", "name", "the maintainer")
+        profile.set("identity", "name", "Alex")
         profile.set("identity", "preferred_address", "Chef")
         profile.append_list("values", "pet_peeves", "buzzwords")
         profile.append_list("communication", "humor_types", "dry")
@@ -86,13 +86,13 @@ class TestPersistence:
 
         # Frisch laden → alle Werte wieder da
         reloaded = UserProfile.load(profile.path)
-        assert reloaded.get("identity", "name") == "the maintainer"
+        assert reloaded.get("identity", "name") == "Alex"
         assert reloaded.get("identity", "preferred_address") == "Chef"
         assert reloaded.get("values", "pet_peeves") == ["buzzwords"]
         assert reloaded.get("communication", "humor_types") == ["dry"]
 
     def test_save_updates_last_updated_timestamp(self, profile: UserProfile) -> None:
-        profile.set("identity", "name", "the maintainer")
+        profile.set("identity", "name", "Alex")
         profile.save()
         reloaded = UserProfile.load(profile.path)
         # last_updated wird automatisch bei jedem save gesetzt
@@ -163,15 +163,15 @@ class TestAppendObservation:
 
 class TestRenderForPrompt:
     def test_render_includes_name_when_set(self, profile: UserProfile) -> None:
-        profile.set("identity", "name", "the maintainer")
+        profile.set("identity", "name", "Alex")
         out = profile.render_for_prompt()
-        assert "the maintainer" in out
+        assert "Alex" in out
         # Header bleibt dabei
         assert "Ueber den User" in out
 
     def test_render_stays_within_budget(self, profile: UserProfile) -> None:
         """Selbst mit viel Content darf das Rendering den Budget-Cap nicht sprengen."""
-        profile.set("identity", "name", "the maintainer")
+        profile.set("identity", "name", "Alex")
         profile.set("communication", "verbosity", "deep-dive")
         profile.append_list("communication", "humor_types", "dry")
         profile.append_list("communication", "humor_types", "nerdy")
@@ -189,7 +189,7 @@ class TestRenderForPrompt:
         assert len(out) <= MAX_PROMPT_CHARS
 
     def test_render_respects_custom_max_chars(self, profile: UserProfile) -> None:
-        profile.set("identity", "name", "the maintainer")
+        profile.set("identity", "name", "Alex")
         short = profile.render_for_prompt(max_chars=80)
         assert len(short) <= 80
 

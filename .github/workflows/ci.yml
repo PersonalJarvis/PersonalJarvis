@@ -28,31 +28,22 @@ on:
   push:
     branches:
       - main
+      - "wip/cross-platform-cloud-first-20260529"
   pull_request:
 
 permissions:
   contents: read
 
-# Cost control: cancel an in-flight run when a newer commit lands on the same
-# ref, so a burst of pushes does not fan out N parallel matrix runs against the
-# shared org Actions-minutes quota. Per-ref group, so a PR and a branch push do
-# not cancel each other.
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   test:
     name: test (${{ matrix.os }})
     strategy:
-      fail-fast: false # we want to see ALL OS legs on a PR, not just the first red one
+      fail-fast: false # we want to see ALL three OS legs, not just the first red one
       matrix:
-        # Cost control: the full 3-OS matrix runs ONLY on pull_request, where a
-        # cross-platform regression must be caught before merge. On push (main /
-        # branch) we run ONLY ubuntu-latest -- macOS bills at 10x and Windows at
-        # 2x the Linux minute rate, and the BLOCKING min-passed floor is the
-        # Linux leg anyway. So a routine push costs ~1 leg instead of ~13x.
-        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest", "macos-latest", "windows-latest"]') || fromJSON('["ubuntu-latest"]') }}
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
 

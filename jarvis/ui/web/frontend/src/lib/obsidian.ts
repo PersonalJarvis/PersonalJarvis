@@ -24,7 +24,7 @@ export const VAULT_NAME = "obsidian-vault";
  *   correctly through Obsidian's URL handler.
  *
  * @param vaultRelPath - Vault-relative POSIX path such as
- *   `"entities/harald.md"`. May be the empty string to open the root.
+ *   `"entities/sam.md"`. May be the empty string to open the root.
  */
 export function buildObsidianUrl(vaultRelPath: string): string {
   const base = `obsidian://open?vault=${encodeURIComponent(VAULT_NAME)}`;

@@ -13,7 +13,7 @@ Design notes
   The naming matches the existing migration backup pattern in
   ``scripts/wiki_migrate_v0_to_v1.py:make_backup`` so operators only have
   one mental model for "backup files of the wiki".
-* Archive member names are **vault-relative** (``entities/the maintainer.md`` —
+* Archive member names are **vault-relative** (``entities/alex.md`` —
   *not* the absolute path on the operator's disk). This makes restore
   straightforward and prevents leaking the host filesystem layout.
 * ``_archive/`` and ``attachments/`` are skipped — they can be large and
@@ -159,7 +159,7 @@ class BackupManager:
         """Restore one vault-relative file from a snapshot.
 
         ``target_relpath`` is the vault-relative POSIX path as it was
-        stored in the archive (e.g. ``entities/the maintainer.md``). The file is
+        stored in the archive (e.g. ``entities/alex.md``). The file is
         written to ``<vault_root>/<target_relpath>`` via tempfile +
         :func:`os.replace`, so the restore is atomic on the same drive.
 

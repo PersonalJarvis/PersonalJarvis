@@ -131,6 +131,20 @@ export function useWebSocket(): void {
           }
         }
 
+        if (env.event_name === "DictationTranscript") {
+          // Chat mic-dictation — transcribe-only. Interim partials overwrite the
+          // live tail; the final one is committed (appended to the chat input).
+          // Separate from TranscriptionUpdate so live-voice transcripts never
+          // leak into the text box. Uses getState() to stay out of the deps array.
+          const p = env.payload as { text?: string; is_final?: boolean };
+          const text = typeof p.text === "string" ? p.text : "";
+          if (p.is_final) {
+            useEventStore.getState().commitDictation(text);
+          } else {
+            useEventStore.getState().setDictationInterim(text);
+          }
+        }
+
         if (env.event_name === "NavigateSidebar") {
           const p = env.payload as { section?: string };
           if (isSectionId(p.section)) {

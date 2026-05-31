@@ -26,10 +26,10 @@ def test_extracts_tool_calls_and_final_answer() -> None:
         ]}},
         {"type": "user", "message": {"content": [
             {"type": "tool_result", "content": [
-                {"type": "text", "text": '{"login":"your-username"}'}]}]}},
+                {"type": "text", "text": '{"login":"octocat"}'}]}]}},
         {"type": "assistant", "message": {"content": [
             {"type": "tool_use", "name": "mcp__github__search_repositories",
-             "input": {"query": "user:your-username"}}]}},
+             "input": {"query": "user:octocat"}}]}},
         {"type": "user", "message": {"content": [
             {"type": "tool_result", "content": [
                 {"type": "text", "text": '{"total_count":32}'}]}]}},

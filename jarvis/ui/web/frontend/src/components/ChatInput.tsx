@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { Send } from "lucide-react";
+import { Mic, Send, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getWSClient } from "@/hooks/useWebSocket";
 import { useEventStore } from "@/store/events";
+import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
 // Safety-Net: wenn das Brain in 60s nicht antwortet (kein Reply, kein Fehler-Event),
@@ -16,7 +17,17 @@ export function ChatInput() {
   const connected = useEventStore((s) => s.connected);
   const chatThinking = useEventStore((s) => s.chatThinking);
   const setChatThinking = useEventStore((s) => s.setChatThinking);
+  // Mic-dictation: live transcript streams into the box as the user speaks.
+  const dictating = useEventStore((s) => s.dictating);
+  const dictationText = useEventStore((s) => s.dictationText);
+  const dictationCommitSeq = useEventStore((s) => s.dictationCommitSeq);
+  const setDictating = useEventStore((s) => s.setDictating);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The textarea content captured at dictation-start; interim transcripts are
+  // rendered as `base + interim` so letters appear live without clobbering what
+  // the user had already typed.
+  const dictationBaseRef = useRef("");
+  const lastCommitSeqRef = useRef(dictationCommitSeq);
 
   useEffect(() => {
     return () => {
@@ -24,9 +35,30 @@ export function ChatInput() {
     };
   }, []);
 
+  // While dictating, mirror the live interim tail into the textarea in real time.
+  useEffect(() => {
+    if (!dictating) return;
+    const base = dictationBaseRef.current;
+    const sep = base && dictationText ? " " : "";
+    setValue(base + sep + dictationText);
+  }, [dictating, dictationText]);
+
+  // On a final dictation transcript, append it to the box exactly once (the seq
+  // bump is the one-shot signal) and end the live-mirror.
+  useEffect(() => {
+    if (dictationCommitSeq === lastCommitSeqRef.current) return;
+    lastCommitSeqRef.current = dictationCommitSeq;
+    const finalText = useEventStore.getState().dictationCommitText;
+    const base = dictationBaseRef.current;
+    const sep = base && finalText ? " " : "";
+    setValue(base + sep + finalText);
+  }, [dictationCommitSeq]);
+
   async function send() {
     const content = value.trim();
     if (!content) return;
+    // A pending dictation must not bleed into the next turn.
+    if (dictating) stopDictation();
     const client = getWSClient();
     // Route the message into the active conversation so the brain (seeded on
     // resume) and the persisted thread line up. ensureActiveThread() lazily
@@ -51,14 +83,37 @@ export function ChatInput() {
       payload: { content },
     });
     setChatThinking(true);
-    console.log("[ChatThinking] submit → true");
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     timeoutRef.current = setTimeout(() => {
       setChatThinking(false);
-      console.log("[ChatThinking] timeout → false");
       timeoutRef.current = null;
     }, THINKING_TIMEOUT_MS);
     setValue("");
+  }
+
+  function startDictation() {
+    // Capture the current text so the live transcript appends, not overwrites.
+    dictationBaseRef.current = value;
+    setDictating(true);
+    getWSClient()?.send({
+      type: "command",
+      action: "stt_dictate",
+      payload: { mode: "start" },
+    });
+  }
+
+  function stopDictation() {
+    getWSClient()?.send({
+      type: "command",
+      action: "stt_dictate",
+      payload: { mode: "stop" },
+    });
+    setDictating(false);
+  }
+
+  function toggleDictation() {
+    if (dictating) stopDictation();
+    else startDictation();
   }
 
   function onKeyDown(ev: KeyboardEvent<HTMLTextAreaElement>) {
@@ -81,7 +136,20 @@ export function ChatInput() {
             <span className="h-1.5 w-1.5 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]" />
             <span className="h-1.5 w-1.5 rounded-full bg-primary animate-bounce" />
           </div>
-          <span className="font-medium">Jarvis denkt nach…</span>
+          <span className="font-medium">{t("chats_view.thinking_label")}</span>
+        </div>
+      )}
+      {dictating && (
+        <div
+          className="flex items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs text-primary"
+          role="status"
+          aria-live="polite"
+        >
+          <span className="relative flex h-2 w-2" aria-hidden>
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/70" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+          </span>
+          <span className="font-medium">{t("chats_view.dictation_listening")}</span>
         </div>
       )}
       <div className="flex items-end gap-2">
@@ -94,6 +162,18 @@ export function ChatInput() {
           rows={2}
           className="flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
         />
+        <Button
+          type="button"
+          onClick={toggleDictation}
+          disabled={!connected}
+          size="icon"
+          variant={dictating ? "default" : "outline"}
+          aria-label={dictating ? t("chats_view.dictation_stop") : t("chats_view.dictation_start")}
+          title={dictating ? t("chats_view.dictation_stop") : t("chats_view.dictation_start")}
+          className={cn(dictating && "animate-jarvis-pulse")}
+        >
+          {dictating ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+        </Button>
         <Button
           onClick={send}
           disabled={!connected || !value.trim()}

@@ -41,25 +41,25 @@ async def test_scan_tolerates_missing_directory(
 ) -> None:
     """A fresh vault may not have ``sessions/`` yet — scan must not raise."""
     (tmp_path / "entities").mkdir()
-    write_page(tmp_path, "entity", "the maintainer")
+    write_page(tmp_path, "entity", "alex")
     # No concepts/, projects/, sessions/ directories
     await index.scan(tmp_path)
     pages = index.pages_by_type("entity")
     assert len(pages) == 1
-    assert pages[0].slug == "the maintainer"
+    assert pages[0].slug == "alex"
 
 
 async def test_scan_picks_up_all_four_page_types(
     index: VaultIndex, vault_root: Path
 ) -> None:
-    write_page(vault_root, "entity", "the maintainer")
+    write_page(vault_root, "entity", "alex")
     write_page(vault_root, "entity", "claude")
     write_page(vault_root, "concept", "awareness-layer")
     write_page(vault_root, "project", "wiki-curator")
     write_page(vault_root, "session", "2026-05-11-abc")
 
     await index.scan(vault_root)
-    assert {p.slug for p in index.pages_by_type("entity")} == {"the maintainer", "claude"}
+    assert {p.slug for p in index.pages_by_type("entity")} == {"alex", "claude"}
     assert [p.slug for p in index.pages_by_type("concept")] == ["awareness-layer"]
     assert [p.slug for p in index.pages_by_type("project")] == ["wiki-curator"]
     assert [p.slug for p in index.pages_by_type("session")] == ["2026-05-11-abc"]
@@ -79,7 +79,7 @@ async def test_pages_by_type_is_alphabetically_sorted(
 async def test_pages_by_type_returns_empty_for_unknown(
     index: VaultIndex, vault_root: Path
 ) -> None:
-    write_page(vault_root, "entity", "the maintainer")
+    write_page(vault_root, "entity", "alex")
     await index.scan(vault_root)
     assert index.pages_by_type("nonsense") == []
 
@@ -87,11 +87,11 @@ async def test_pages_by_type_returns_empty_for_unknown(
 async def test_find_by_slug_returns_page(
     index: VaultIndex, vault_root: Path
 ) -> None:
-    write_page(vault_root, "entity", "the maintainer")
+    write_page(vault_root, "entity", "alex")
     await index.scan(vault_root)
-    page = index.find_by_slug("the maintainer")
+    page = index.find_by_slug("alex")
     assert page is not None
-    assert page.slug == "the maintainer"
+    assert page.slug == "alex"
     assert page.page_type == "entity"
 
 
@@ -105,22 +105,22 @@ async def test_find_by_slug_returns_none_on_unknown(
 async def test_backlinks_are_populated_after_scan(
     index: VaultIndex, vault_root: Path
 ) -> None:
-    write_page(vault_root, "entity", "the maintainer")
+    write_page(vault_root, "entity", "alex")
     write_page(
         vault_root,
         "concept",
         "voice-pipeline",
-        body="The voice path runs through [[the maintainer]]'s setup.",
+        body="The voice path runs through [[alex]]'s setup.",
     )
     write_page(
         vault_root,
         "project",
         "wiki-curator",
-        body="Driven by [[the maintainer]].",
+        body="Driven by [[alex]].",
     )
     await index.scan(vault_root)
 
-    backlinks = index.backlinks_to("the maintainer")
+    backlinks = index.backlinks_to("alex")
     assert len(backlinks) == 2
     assert {p.slug for p in backlinks} == {"voice-pipeline", "wiki-curator"}
 
@@ -128,42 +128,42 @@ async def test_backlinks_are_populated_after_scan(
 async def test_backlinks_handle_prefixed_wikilink_form(
     index: VaultIndex, vault_root: Path
 ) -> None:
-    write_page(vault_root, "entity", "the maintainer")
+    write_page(vault_root, "entity", "alex")
     write_page(
         vault_root,
         "concept",
         "voice-pipeline",
-        body="Linked via [[entities/the maintainer]].",
+        body="Linked via [[entities/alex]].",
     )
     await index.scan(vault_root)
-    backlinks = index.backlinks_to("the maintainer")
+    backlinks = index.backlinks_to("alex")
     assert [p.slug for p in backlinks] == ["voice-pipeline"]
 
 
 async def test_backlinks_handle_aliased_form(
     index: VaultIndex, vault_root: Path
 ) -> None:
-    write_page(vault_root, "entity", "the maintainer")
+    write_page(vault_root, "entity", "alex")
     write_page(
         vault_root,
         "concept",
         "voice-pipeline",
-        body="Linked via [[the maintainer|the user]].",
+        body="Linked via [[alex|the user]].",
     )
     await index.scan(vault_root)
-    backlinks = index.backlinks_to("the maintainer")
+    backlinks = index.backlinks_to("alex")
     assert [p.slug for p in backlinks] == ["voice-pipeline"]
 
 
 async def test_backlinks_alphabetically_sorted(
     index: VaultIndex, vault_root: Path
 ) -> None:
-    write_page(vault_root, "entity", "the maintainer")
-    write_page(vault_root, "concept", "zeta", body="[[the maintainer]]")
-    write_page(vault_root, "concept", "alpha", body="[[the maintainer]]")
-    write_page(vault_root, "concept", "mid", body="[[the maintainer]]")
+    write_page(vault_root, "entity", "alex")
+    write_page(vault_root, "concept", "zeta", body="[[alex]]")
+    write_page(vault_root, "concept", "alpha", body="[[alex]]")
+    write_page(vault_root, "concept", "mid", body="[[alex]]")
     await index.scan(vault_root)
-    sources = [p.slug for p in index.backlinks_to("the maintainer")]
+    sources = [p.slug for p in index.backlinks_to("alex")]
     assert sources == ["alpha", "mid", "zeta"]
 
 
@@ -211,10 +211,10 @@ async def test_stale_rescan_picks_up_changed_file(
 ) -> None:
     """Editing a page on disk surfaces via find_by_slug on the next call."""
     path = write_page(
-        vault_root, "entity", "the maintainer", body="Initial body."
+        vault_root, "entity", "alex", body="Initial body."
     )
     await index.scan(vault_root)
-    first = index.find_by_slug("the maintainer")
+    first = index.find_by_slug("alex")
     assert first is not None
     assert "Initial body." in first.body
 
@@ -227,7 +227,7 @@ async def test_stale_rescan_picks_up_changed_file(
     future = time.time() + 5
     os.utime(path, (future, future))
 
-    second = index.find_by_slug("the maintainer")
+    second = index.find_by_slug("alex")
     assert second is not None
     assert "Updated body." in second.body
 
@@ -236,16 +236,16 @@ async def test_stale_rescan_updates_backlinks_when_links_change(
     index: VaultIndex, vault_root: Path
 ) -> None:
     """Re-parsing a page rebuilds the backlink table accordingly."""
-    write_page(vault_root, "entity", "the maintainer")
+    write_page(vault_root, "entity", "alex")
     write_page(vault_root, "entity", "claude")
     source_path = write_page(
         vault_root,
         "concept",
         "voice-pipeline",
-        body="Initial reference to [[the maintainer]].",
+        body="Initial reference to [[alex]].",
     )
     await index.scan(vault_root)
-    assert {p.slug for p in index.backlinks_to("the maintainer")} == {"voice-pipeline"}
+    assert {p.slug for p in index.backlinks_to("alex")} == {"voice-pipeline"}
     assert index.backlinks_to("claude") == []
 
     # Rewrite the page so the wikilink now points to claude instead.
@@ -259,7 +259,7 @@ async def test_stale_rescan_updates_backlinks_when_links_change(
     # Trigger a refresh via the public API.
     _ = index.find_by_slug("voice-pipeline")
 
-    assert index.backlinks_to("the maintainer") == []
+    assert index.backlinks_to("alex") == []
     assert {p.slug for p in index.backlinks_to("claude")} == {"voice-pipeline"}
 
 
@@ -267,28 +267,28 @@ async def test_deleted_file_is_dropped_on_next_access(
     index: VaultIndex, vault_root: Path
 ) -> None:
     """If the user deletes a page in Obsidian, the index drops it."""
-    path = write_page(vault_root, "entity", "the maintainer")
+    path = write_page(vault_root, "entity", "alex")
     await index.scan(vault_root)
-    assert index.find_by_slug("the maintainer") is not None
+    assert index.find_by_slug("alex") is not None
 
     path.unlink()
     # Force the stale-refresh path to notice the missing file.
-    assert index.find_by_slug("the maintainer") is None
+    assert index.find_by_slug("alex") is None
 
 
 async def test_rescan_clears_old_state(
     index: VaultIndex, vault_root: Path
 ) -> None:
     """A fresh scan replaces the previous in-memory state wholesale."""
-    write_page(vault_root, "entity", "the maintainer")
+    write_page(vault_root, "entity", "alex")
     await index.scan(vault_root)
-    assert index.find_by_slug("the maintainer") is not None
+    assert index.find_by_slug("alex") is not None
 
     # Remove the page on disk and re-scan
-    (vault_root / "entities" / "the maintainer.md").unlink()
+    (vault_root / "entities" / "alex.md").unlink()
     write_page(vault_root, "entity", "claude")
     await index.scan(vault_root)
-    assert index.find_by_slug("the maintainer") is None
+    assert index.find_by_slug("alex") is None
     assert index.find_by_slug("claude") is not None
 
 
@@ -296,13 +296,13 @@ async def test_duplicate_wikilinks_count_once_per_source(
     index: VaultIndex, vault_root: Path
 ) -> None:
     """``backlinks_to`` deduplicates the source list."""
-    write_page(vault_root, "entity", "the maintainer")
+    write_page(vault_root, "entity", "alex")
     write_page(
         vault_root,
         "concept",
         "voice-pipeline",
-        body="Refs [[the maintainer]] and again [[the maintainer]] later.",
+        body="Refs [[alex]] and again [[alex]] later.",
     )
     await index.scan(vault_root)
-    sources = index.backlinks_to("the maintainer")
+    sources = index.backlinks_to("alex")
     assert [p.slug for p in sources] == ["voice-pipeline"]

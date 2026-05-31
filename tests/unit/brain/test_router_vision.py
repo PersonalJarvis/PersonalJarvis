@@ -275,8 +275,11 @@ async def test_router_continues_on_vision_failure(caplog: pytest.LogCaptureFixtu
     provider = _FakeVisionProvider(raise_on_current=RuntimeError("engine kaputt"))
     router, recorder = _build_router(vision_provider=provider)
 
+    # The utterance must carry a visual marker so the attach-on-reference gate
+    # enters the vision path at all — otherwise the screenshot is skipped (by
+    # design) and the failure under test never fires.
     with caplog.at_level(logging.WARNING, logger="jarvis.brain.router"):
-        deltas = [d async for d in router.handle("trotzdem weiter")]
+        deltas = [d async for d in router.handle("was siehst du hier")]
 
     assert len(recorder.calls) == 1
     assert recorder.calls[0]["images"] == ()

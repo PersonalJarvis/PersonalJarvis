@@ -68,7 +68,7 @@ class DocFrontmatter(BaseModel):
     slug: str
     diataxis: DocDiataxis = DocDiataxis.UNCLASSIFIED
     status: DocStatus = DocStatus.DRAFT
-    owner: str = "harald"
+    owner: str = "sam"
     last_reviewed: date | None = None
     phase: str = "-"
     audience: DocAudience = "developer"

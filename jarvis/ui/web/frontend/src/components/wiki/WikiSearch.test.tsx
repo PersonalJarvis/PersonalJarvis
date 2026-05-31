@@ -55,8 +55,8 @@ function seedTreeCache(client: QueryClient) {
         kind: "entity",
         count: 2,
         files: [
-          { slug: "the maintainer", title: "the maintainer", mtime: 2000, size: 412 },
-          { slug: "harald", title: "Harald", mtime: 1000, size: 289 },
+          { slug: "alex", title: "Alex", mtime: 2000, size: 412 },
+          { slug: "sam", title: "Sam", mtime: 1000, size: 289 },
         ],
       },
     ],
@@ -158,9 +158,9 @@ describe("WikiSearch", () => {
     });
     const items = screen.getAllByTestId("wiki-search-recent-item");
     expect(items).toHaveLength(2);
-    // Sorted by mtime desc — the maintainer first (mtime=2000), harald second.
-    expect(items[0].getAttribute("data-slug")).toBe("the maintainer");
-    expect(items[1].getAttribute("data-slug")).toBe("harald");
+    // Sorted by mtime desc — alex first (mtime=2000), sam second.
+    expect(items[0].getAttribute("data-slug")).toBe("alex");
+    expect(items[1].getAttribute("data-slug")).toBe("sam");
   });
 
   it("clicking a result calls onResultClick(slug)", async () => {
@@ -182,6 +182,6 @@ describe("WikiSearch", () => {
     await act(async () => {
       fireEvent.click(items[0]);
     });
-    expect(onResultClick).toHaveBeenCalledWith("the maintainer");
+    expect(onResultClick).toHaveBeenCalledWith("alex");
   });
 });

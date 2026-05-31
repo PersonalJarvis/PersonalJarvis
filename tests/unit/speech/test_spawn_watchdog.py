@@ -234,3 +234,60 @@ async def test_completion_after_watchdog_fires_is_still_clean() -> None:
     await bus.publish(OpenClawBackgroundCompleted(success=True, summary="ok"))
     await asyncio.sleep(0.05)
     assert pipe._spawn_watchdog_tasks == []
+
+
+@pytest.mark.asyncio
+async def test_fired_watchdog_self_removes_from_inflight_list() -> None:
+    """Bound for the idle-timeout / finish-after-response override.
+
+    In production a *successful* background mission never publishes
+    ``OpenClawBackgroundCompleted`` — the readback travels the MissionAnnouncer
+    path (MissionApproved → AnnouncementRequested), and ``_on_background_completed``
+    (the only code that pops ``_spawn_watchdog_tasks``) fires solely on the crash
+    path. So the watchdog is never *cancelled*; it simply *fires* after the delay.
+
+    A fired watchdog MUST drop itself from ``_spawn_watchdog_tasks`` (via its own
+    self-removal, surfaced through ``_live_spawn_watchdogs``); otherwise a
+    done-but-listed task keeps the voice session open forever.
+    """
+    bus = EventBus()
+    pipe = _pipeline(bus, watchdog_delay_s=0.05)
+
+    await bus.publish(OpenClawAnnouncement(action="bauen", target="x"))
+    await asyncio.sleep(0.02)
+    assert len(pipe._spawn_watchdog_tasks) == 1, "spawn must arm a watchdog"
+
+    # Let the watchdog fire its single progress phrase. NO completion event is
+    # published — this is the production success path.
+    await asyncio.sleep(0.25)
+
+    assert pipe._live_spawn_watchdogs() == [], (
+        "a fired watchdog must self-remove; otherwise the done task lingers and "
+        "the idle-timeout override keeps the session listening forever"
+    )
+
+
+@pytest.mark.asyncio
+async def test_finish_after_response_hangs_up_once_watchdog_has_fired() -> None:
+    """Consumer-level proof of the "not forever" bound.
+
+    Single-turn mode: while a mission is genuinely in flight (watchdog still
+    counting down) ``_finish_after_response`` keeps the turn open. Once the
+    watchdog has fired — the mission had its full grace window and the user was
+    reassured with "Bin noch dran." — a leaked done-task must NOT keep the turn
+    open. Pre-fix the done task lingered and ``_finish_after_response`` returned
+    ``True`` (keep listening) on every subsequent turn forever.
+    """
+    bus = EventBus()
+    pipe = _pipeline(bus, watchdog_delay_s=0.05)
+    pipe._continue_listening_after_response = False  # single-turn mode
+
+    await bus.publish(OpenClawAnnouncement(action="bauen", target="x"))
+    await asyncio.sleep(0.02)
+    assert await pipe._finish_after_response(barged=False) is True  # in flight
+
+    await asyncio.sleep(0.25)  # watchdog fires (no completion event ever arrives)
+    assert await pipe._finish_after_response(barged=False) is False, (
+        "with the watchdog fired and no live mission, single-turn mode must "
+        "hang up again instead of listening forever"
+    )

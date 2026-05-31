@@ -40,6 +40,7 @@ from jarvis.core.events import (
     AnnouncementRequested,
     AudioOutFirst,
     BrainTTFT,
+    DictationTranscript,
     ListeningStarted,
     OpenClawAnnouncement,
     OpenClawBackgroundCompleted,
@@ -116,11 +117,11 @@ async def _echo_brain(text: str) -> str:
 # voice-output policy; only artifacts must be English.)
 _BRAIN_UNAVAILABLE_PHRASE: dict[str, str] = {
     "de": (
-        "Entschuldige, the maintainer — ich erreiche gerade keines meiner Sprachmodelle. "
+        "Entschuldige, Alex — ich erreiche gerade keines meiner Sprachmodelle. "
         "Bitte prüf kurz, ob bei den Anbietern noch Guthaben ist."
     ),
     "en": (
-        "Sorry, the maintainer — I can't reach any of my language models right now. "
+        "Sorry, Alex — I can't reach any of my language models right now. "
         "Please check whether your providers still have credit."
     ),
 }
@@ -142,8 +143,8 @@ _STT_UNAVAILABLE_PHRASE: dict[str, str] = {
 # pre-empted brain_timeout, so the turn just hung up with no feedback). Short,
 # bilingual, TTS-clean (``_speak`` does not scrub).
 _BRAIN_TIMEOUT_PHRASE: dict[str, str] = {
-    "de": "Das hat gerade zu lange gedauert, the maintainer. Sag es bitte noch einmal.",
-    "en": "That took too long just now, the maintainer. Could you say it again?",
+    "de": "Das hat gerade zu lange gedauert, Alex. Sag es bitte noch einmal.",
+    "en": "That took too long just now, Alex. Could you say it again?",
 }
 
 # Transient STT failures worth a retry: cloud rate-limit (429) and transient
@@ -361,8 +362,8 @@ def _smalltalk_fallback_for_non_substantive(prompt: str, lang: str) -> str | Non
     if not any(marker in low for marker in wellbeing_markers):
         return None
     if lang.lower().startswith("de"):
-        return "Mir geht's gut, the maintainer. Was machen wir als Naechstes?"
-    return "I'm good, the maintainer. What's next?"
+        return "Mir geht's gut, Alex. Was machen wir als Naechstes?"
+    return "I'm good, Alex. What's next?"
 
 
 _INCOMPLETE_TAIL_RE = re.compile(
@@ -626,6 +627,12 @@ class SpeechPipeline:
         # the VAD, so it has no probe — this is its own lightweight live feed.
         # One cloud-STT call per interval while holding; 0 disables the feed.
         self._ptt_partial_interval_s = 1.2
+        # Chat mic-dictation: transcribe-only into the chat input box, never to
+        # the brain. A SEPARATE lane from the voice path — its own stop event +
+        # task so it can never touch ``_handle_utterance`` / the wake loop.
+        self._dictation_stop_event = asyncio.Event()
+        self._dictation_task: asyncio.Task[None] | None = None
+        self._dictation_max_s = 300.0
         # ``self._stt`` is the LOCAL FasterWhisperProvider used by the wake
         # backstop + VAD endpoint-probe (many calls/sec, a cloud round-trip
         # would be too slow). In the cloud-first lightweight path it is None:
@@ -1885,39 +1892,77 @@ class SpeechPipeline:
         )
         self._spawn_watchdog_tasks.append(task)
 
+    def _live_spawn_watchdogs(self) -> list[asyncio.Task[None]]:
+        """Drop finished spawn-watchdog tasks; return the still-live ones.
+
+        A watchdog counts as a "background mission in flight" only while it is
+        still counting down toward its single progress phrase. Once it has fired
+        (or been cancelled) it is ``done()`` and must no longer hold the voice
+        session open — otherwise the idle-timeout override in ``_active_session``
+        and the keep-listening branch in ``_finish_after_response`` would keep
+        the session in LISTENING *forever* after a force-spawn. In production the
+        success path never publishes ``OpenClawBackgroundCompleted`` (the
+        readback travels the MissionAnnouncer → ``AnnouncementRequested`` path,
+        and ``_on_background_completed`` — the only code that pops the list —
+        fires solely on the crash path), so the list is otherwise never drained.
+        Pruning bounds the in-flight extension to the watchdog lifetime.
+        """
+        self._spawn_watchdog_tasks[:] = [
+            t for t in self._spawn_watchdog_tasks if not t.done()
+        ]
+        return self._spawn_watchdog_tasks
+
     async def _spawn_watchdog_body(self) -> None:
         """Sleep ``_spawn_watchdog_delay_s`` then fire one progress phrase.
 
         Quietly exits on CancelledError (happy path: mission finished
         before the timer fired). Respects the global voice mute --
         muted users get no surprise speech.
+
+        On EVERY terminal path (fired, muted-skip, bus-None, cancelled) the task
+        removes itself from ``_spawn_watchdog_tasks``. That list is the
+        "background mission in flight" signal read by ``_active_session``'s
+        idle-timeout override and by ``_finish_after_response``; a
+        done-but-still-listed task would hold the voice session open forever,
+        because the success path never publishes the
+        ``OpenClawBackgroundCompleted`` event that would otherwise drain it.
         """
         try:
-            await asyncio.sleep(self._spawn_watchdog_delay_s)
-        except asyncio.CancelledError:
-            return
-        if getattr(self, "_muted", False):
-            log.debug("Spawn-watchdog: muted, skipping progress phrase")
-            return
-        if self._bus is None:
-            return
-        log.info(
-            "Spawn-watchdog: mission >%.0fs ohne Completion — sage 'Bin noch dran.'",
-            self._spawn_watchdog_delay_s,
-        )
-        try:
-            await self._bus.publish(
-                AnnouncementRequested(
-                    text="Bin noch dran.",
-                    language="de",
-                    priority="normal",
+            try:
+                await asyncio.sleep(self._spawn_watchdog_delay_s)
+            except asyncio.CancelledError:
+                return
+            if getattr(self, "_muted", False):
+                log.debug("Spawn-watchdog: muted, skipping progress phrase")
+                return
+            if self._bus is None:
+                return
+            log.info(
+                "Spawn-watchdog: mission >%.0fs ohne Completion — sage 'Bin noch dran.'",
+                self._spawn_watchdog_delay_s,
+            )
+            try:
+                await self._bus.publish(
+                    AnnouncementRequested(
+                        text="Bin noch dran.",
+                        language="de",
+                        priority="normal",
+                    )
                 )
-            )
-        except Exception:  # noqa: BLE001
-            log.warning(
-                "Spawn-watchdog: AnnouncementRequested publish failed",
-                exc_info=True,
-            )
+            except Exception:  # noqa: BLE001
+                log.warning(
+                    "Spawn-watchdog: AnnouncementRequested publish failed",
+                    exc_info=True,
+                )
+        finally:
+            # Self-remove on every exit. _on_background_completed may have
+            # already popped this task (FIFO cancel) — remove() is then a
+            # harmless no-op (ValueError swallowed).
+            me = asyncio.current_task()
+            try:
+                self._spawn_watchdog_tasks.remove(me)
+            except ValueError:
+                pass
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -2236,7 +2281,7 @@ class SpeechPipeline:
         ``_hangup_event`` gate on the bus-driven announcement handlers.
 
         ``stop_player=False`` is used when the brain itself emitted the
-        farewell ("Goodbye, the maintainer.") — we let that final utterance play.
+        farewell ("Goodbye, Alex.") — we let that final utterance play.
         """
         if stop_player:
             try:
@@ -2633,39 +2678,80 @@ class SpeechPipeline:
             vad_iter = self._vad.utterances(
                 self._session_input_stream(mic.stream())
             ).__aiter__()
-            while not self._hangup_event.is_set():
-                await self._set_turn_state(TurnTakingState.LISTENING)
-                await self._publish_event(ListeningStarted(source_layer="speech"))
-                next_task = asyncio.create_task(vad_iter.__anext__())
-                hangup_task = asyncio.create_task(self._hangup_event.wait())
-                try:
-                    done, pending = await asyncio.wait(
-                        {next_task, hangup_task},
-                        timeout=self._idle_timeout_s,
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                except asyncio.CancelledError:
+            # The VAD ``__anext__`` task PERSISTS across idle windows. Cancelling
+            # it kills the underlying async generator (the next ``__anext__``
+            # raises ``StopAsyncIteration``), so when a background mission keeps
+            # the session open past the idle timeout we must re-await the SAME
+            # pending task — never recreate it on the dead generator (that was
+            # the spawn-in-flight override no-op: it ``continue``d, the loop top
+            # recreated ``__anext__`` on a cancelled generator, and the session
+            # hung up with HANGUP_SHUTDOWN anyway). The task is recreated only
+            # after it has yielded an utterance.
+            next_task: asyncio.Task[bytes] | None = None
+            try:
+                while not self._hangup_event.is_set():
+                    await self._set_turn_state(TurnTakingState.LISTENING)
+                    await self._publish_event(ListeningStarted(source_layer="speech"))
+                    if next_task is None:
+                        next_task = asyncio.create_task(vad_iter.__anext__())
+                    hangup_task = asyncio.create_task(self._hangup_event.wait())
+                    try:
+                        done, _pending = await asyncio.wait(
+                            {next_task, hangup_task},
+                            timeout=self._idle_timeout_s,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                    except asyncio.CancelledError:
+                        next_task.cancel()
+                        hangup_task.cancel()
+                        raise
+                    # The hangup waiter is recreated each iteration — always drop
+                    # it. The VAD task is preserved unless it actually completed.
+                    if hangup_task not in done:
+                        hangup_task.cancel()
+                    if hangup_task in done:
+                        next_task.cancel()
+                        return HANGUP_HOTKEY
+                    if next_task not in done:
+                        # Idle timeout — the VAD is still waiting for speech.
+                        # ``_live_spawn_watchdogs`` prunes fired/cancelled
+                        # watchdogs (the watchdog self-removes after its single
+                        # progress phrase), so this extension is bounded to the
+                        # watchdog lifetime and can never wedge the session open
+                        # forever. While a mission is genuinely in flight, keep
+                        # ``next_task`` pending so the generator survives the
+                        # next idle window and the readback lands in a live
+                        # session.
+                        if self._live_spawn_watchdogs():
+                            log.info(
+                                "Idle-Timeout reached but a background mission is "
+                                "in flight - keeping the voice session open."
+                            )
+                            continue
+                        log.info("⏲ Idle-Timeout — lege auf.")
+                        next_task.cancel()
+                        return HANGUP_IDLE_TIMEOUT
+                    # The VAD yielded (or raised) — consume it, then recreate the
+                    # task on the next loop iteration.
+                    try:
+                        utterance_pcm: bytes = next_task.result()
+                    except StopAsyncIteration:
+                        next_task = None
+                        return HANGUP_SHUTDOWN
+                    except Exception as exc:  # noqa: BLE001
+                        log.exception("VAD-Fehler: %s", exc)
+                        next_task = None
+                        continue
+                    next_task = None
+                    await self._set_turn_state(TurnTakingState.WAITING_FOR_FINAL_TRANSCRIPT)
+                    await self._publish_utterance_captured(utterance_pcm)
+                    if not await self._handle_utterance(utterance_pcm):
+                        return self._session_end_reason or HANGUP_VOICE_PATTERN
+            finally:
+                # A still-pending VAD task (idle hangup, exception, app cancel)
+                # must be cancelled so the generator + mic stream unwind cleanly.
+                if next_task is not None and not next_task.done():
                     next_task.cancel()
-                    hangup_task.cancel()
-                    raise
-                for t in pending:
-                    t.cancel()
-                if not done:
-                    log.info("⏲ Idle-Timeout — lege auf.")
-                    return HANGUP_IDLE_TIMEOUT
-                if hangup_task in done:
-                    return HANGUP_HOTKEY
-                try:
-                    utterance_pcm: bytes = next_task.result()
-                except StopAsyncIteration:
-                    return HANGUP_SHUTDOWN
-                except Exception as exc:  # noqa: BLE001
-                    log.exception("VAD-Fehler: %s", exc)
-                    continue
-                await self._set_turn_state(TurnTakingState.WAITING_FOR_FINAL_TRANSCRIPT)
-                await self._publish_utterance_captured(utterance_pcm)
-                if not await self._handle_utterance(utterance_pcm):
-                    return self._session_end_reason or HANGUP_VOICE_PATTERN
         return HANGUP_HOTKEY
 
     async def _ptt_session(self) -> str:
@@ -2815,6 +2901,168 @@ class SpeechPipeline:
         except asyncio.CancelledError:
             pass
 
+    # ------------------------------------------------------------------
+    # Chat mic-dictation (transcribe-only → chat input, never the brain)
+    # ------------------------------------------------------------------
+
+    def dictation_available(self) -> bool:
+        """True if the server can run mic-dictation (a mic + an STT exist).
+
+        Lets the UI hide the mic button on a headless host with no capture
+        device (cloud-first: a missing capability is a clean no-op, AD-OE6).
+        """
+        return self._utterance_stt is not None and self._input_device != "none"
+
+    def start_dictation(self) -> bool:
+        """Begin a transcribe-only dictation session (idempotent-safe).
+
+        Returns ``False`` when it cannot start — a voice/PTT session is active,
+        the pipeline is busy, dictation is already running, or no STT is wired.
+        The caller (WS handler) turns ``False`` into an honest UI message rather
+        than silently doing nothing.
+
+        This NEVER routes to the brain: it spawns ``_dictation_session`` which
+        only publishes ``DictationTranscript`` events.
+        """
+        if self._utterance_stt is None:
+            log.info("start_dictation ignored: no STT provider.")
+            return False
+        if self._dictation_task is not None and not self._dictation_task.done():
+            log.info("start_dictation ignored: dictation already running.")
+            return False
+        if self._ptt_mode or self._state != PipelineState.IDLE:
+            log.info("start_dictation ignored: pipeline not idle.")
+            return False
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            log.warning("start_dictation: no running loop.")
+            return False
+        self._dictation_stop_event = asyncio.Event()
+        self._dictation_task = loop.create_task(
+            self._dictation_session(), name="chat-dictation"
+        )
+        log.info("🎙️ dictation started (transcribe-only → chat input).")
+        return True
+
+    def stop_dictation(self) -> bool:
+        """Signal the active dictation session to finish (best-effort)."""
+        if self._dictation_task is None or self._dictation_task.done():
+            return False
+        self._dictation_stop_event.set()
+        return True
+
+    async def _dictation_session(self) -> None:
+        """Capture mic audio and stream live transcripts to the chat input.
+
+        A stripped-down ``_ptt_session``: open the mic, drain into a buffer,
+        transcribe the held-so-far buffer every ``_ptt_partial_interval_s`` and
+        publish a non-final ``DictationTranscript``; on the stop event (or the
+        max-duration cap) transcribe once more and publish the final one. It
+        deliberately does NOT use the VAD, the brain, TTS, or the turn-state
+        machine — the whole thing is wrapped fail-open so a dictation error can
+        never break a later real voice turn (BUG-020 discipline).
+        """
+        stt = self._utterance_stt
+        if stt is None:
+            return
+        buffer = bytearray()
+        interval = self._ptt_partial_interval_s if self._ptt_partial_interval_s > 0 else 1.2
+        # Sub-0.4s of audio is almost always a near-silence Whisper
+        # hallucination; wait until enough has accumulated before transcribing.
+        min_bytes = int(0.4 * 16_000 * 2)
+        last_published = ""
+
+        async def _probe() -> None:
+            """Periodic non-final transcript of the held-so-far buffer."""
+            nonlocal last_published
+            try:
+                while True:
+                    await asyncio.sleep(interval)
+                    pcm = bytes(buffer)
+                    if len(pcm) < min_bytes:
+                        continue
+                    try:
+                        transcript = await stt.transcribe_pcm(pcm)
+                    except Exception as exc:  # noqa: BLE001 — cosmetic, keep going
+                        log.debug("dictation probe failed: %s", exc)
+                        continue
+                    text = (getattr(transcript, "text", "") or "").strip()
+                    if not text or text == last_published:
+                        continue
+                    last_published = text
+                    try:
+                        await self._publish_event(
+                            DictationTranscript(
+                                source_layer="speech.dictation",
+                                text=text,
+                                is_final=False,
+                            )
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        log.debug("dictation partial publish failed: %s", exc)
+            except asyncio.CancelledError:
+                pass
+
+        try:
+            async with MicrophoneCapture(device=self._input_device) as mic:
+
+                async def _drain() -> None:
+                    async for chunk in mic.stream():
+                        buffer.extend(chunk.pcm)
+
+                drain_task = asyncio.create_task(_drain(), name="dictation-drain")
+                probe_task = asyncio.create_task(_probe(), name="dictation-probe")
+                stop_task = asyncio.create_task(self._dictation_stop_event.wait())
+                hangup_task = asyncio.create_task(self._hangup_event.wait())
+                wait_set = {stop_task, hangup_task, drain_task}
+                all_tasks = [drain_task, probe_task, stop_task, hangup_task]
+                try:
+                    await asyncio.wait(
+                        wait_set,
+                        timeout=self._dictation_max_s,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                finally:
+                    for t in all_tasks:
+                        t.cancel()
+                    for t in all_tasks:
+                        try:
+                            await t
+                        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                            pass
+
+            # One final transcription of the whole capture.
+            pcm = bytes(buffer)
+            final_text = ""
+            if len(pcm) >= min_bytes:
+                try:
+                    transcript = await stt.transcribe_pcm(pcm)
+                    final_text = (getattr(transcript, "text", "") or "").strip()
+                except Exception as exc:  # noqa: BLE001
+                    log.debug("dictation final transcribe failed: %s", exc)
+            try:
+                await self._publish_event(
+                    DictationTranscript(
+                        source_layer="speech.dictation",
+                        text=final_text,
+                        is_final=True,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.debug("dictation final publish failed: %s", exc)
+            log.info("🎙️ dictation ended (%d chars).", len(final_text))
+        except Exception:  # noqa: BLE001 — dictation must never break voice
+            log.warning("dictation session crashed (non-fatal)", exc_info=True)
+            try:
+                await self._publish_event(
+                    DictationTranscript(
+                        source_layer="speech.dictation", text="", is_final=True
+                    )
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
     async def _session_input_stream(
         self, chunks: AsyncIterator[AudioChunk]
     ) -> AsyncIterator[AudioChunk]:
@@ -2866,7 +3114,7 @@ class SpeechPipeline:
         if (
             barged
             or self._continue_listening_after_response
-            or self._spawn_watchdog_tasks
+            or self._live_spawn_watchdogs()
         ):
             await self._set_turn_state(TurnTakingState.LISTENING)
             return True
@@ -3101,7 +3349,7 @@ class SpeechPipeline:
                     log.warning("Vision-pause() fehlgeschlagen: %s", exc)
                 await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
                 try:
-                    await self._speak("Ja, the maintainer.", language=lang)
+                    await self._speak("Ja, Alex.", language=lang)
                 except Exception as exc:  # noqa: BLE001
                     log.warning("Privacy-ACK-speak fehlgeschlagen: %s", exc)
                 await self._set_turn_state(TurnTakingState.LISTENING)
@@ -3376,15 +3624,18 @@ class SpeechPipeline:
                 )
                 return flushed
             if verdict is None:
-                # Combined COMPLETE — apply short conversational grace before
-                # dispatch (lets the user keep chaining additional sentences).
-                self._buffer_is_complete = True
+                # Combined now COMPLETE → dispatch the joined text IMMEDIATELY.
+                # No grace-hold: holding a completed prompt with the mic open is
+                # the "Jarvis keeps listening and never answers" regression (see
+                # the fresh-COMPLETE note below).
+                flushed = buffer.flush()
+                self._buffer_is_complete = False
                 log.info(
-                    "✅ Combined COMPLETE (chain=%d) → short grace before dispatch",
+                    "✅ Combined COMPLETE (chain=%d) → dispatch %r",
                     buffer.chain_count,
+                    (flushed or "")[:80],
                 )
-                self._schedule_completion_timeout(lang, is_complete=True)
-                return None
+                return flushed
             # Still dangling — long wait for the next continuation.
             self._buffer_is_complete = False
             log.info(
@@ -3397,14 +3648,20 @@ class SpeechPipeline:
         # --- Fresh turn path -----------------------------------------------
         verdict = is_incomplete(text, language=lang)
         if verdict is None:
-            # Fresh COMPLETE: park in buffer + short grace, so a conversational
-            # follow-up ("Was geht ab? [pause] Ich wollte wissen ...") chains
-            # into ONE merged turn instead of two separate brain calls.
-            log.info("✅ Fresh COMPLETE → short grace before dispatch (%r)", text[:60])
-            buffer.start(text, language=lang)
-            self._buffer_is_complete = True
-            self._schedule_completion_timeout(lang, is_complete=True)
-            return None
+            # Precision-over-recall + latency doctrine (CLAUDE.md intent→ACK
+            # budget): a COMPLETE utterance goes STRAIGHT to the brain — no
+            # buffering, no grace-hold, no added latency. completion.py's own
+            # contract is "a complete prompt must NEVER be held back".
+            #
+            # The 2026-05-26 "grace-on-COMPLETE" experiment parked every complete
+            # command in WAITING_FOR_COMPLETION for complete_grace_ms; while that
+            # mic stayed open, room noise / TTS-tail extended the buffer into an
+            # INCOMPLETE tail, which the timeout then SILENTLY DISCARDED — the
+            # user-reported "Jarvis keeps listening and never answers" regression
+            # (same class as BUG Voice-Turn-2026-05-02, guarded by
+            # test_complete_text_returns_unchanged). Dispatch now; merge only
+            # genuinely dangling fragments via the INCOMPLETE path below.
+            return text
         log.info(
             "⏳ Pending completion — incomplete utterance buffered "
             "(reason=%s marker=%r)",

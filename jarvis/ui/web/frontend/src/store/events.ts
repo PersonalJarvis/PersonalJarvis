@@ -160,6 +160,15 @@ interface EventStore {
   // weil der auch durch Voice-Pipeline-Turns gesetzt wird (kein Text-Chat-Wait).
   chatThinking: boolean;
   brainProvider: string;
+  // Chat mic-dictation (transcribe-only). ``dictating`` is true while the mic
+  // session runs; ``dictationText`` is the live interim tail (overwritten by
+  // each partial). A final transcript bumps ``dictationCommitSeq`` and carries
+  // its text in ``dictationCommitText`` — ChatInput watches the seq to append
+  // the finalized text to its textarea exactly once.
+  dictating: boolean;
+  dictationText: string;
+  dictationCommitSeq: number;
+  dictationCommitText: string;
   pendingTerminalCommand: PendingTerminalCommand | null;
   cliConnectCoach: CliConnectCoach | null;
   // Wenn der User aus ClisView heraus eine CLI installieren laesst (Klick
@@ -184,6 +193,9 @@ interface EventStore {
   ensureActiveThread: () => Promise<string>;
   setChatThinking: (thinking: boolean) => void;
   setBrainProvider: (p: string) => void;
+  setDictating: (b: boolean) => void;
+  setDictationInterim: (text: string) => void;
+  commitDictation: (text: string) => void;
   setPendingTerminalCommand: (cmd: PendingTerminalCommand | null) => void;
   setCliConnectCoach: (coach: CliConnectCoach | null) => void;
   setPendingInstallCliName: (name: string | null) => void;
@@ -207,6 +219,10 @@ export const useEventStore = create<EventStore>((set, get) => ({
   activeKind: "text",
   chatThinking: false,
   brainProvider: "unknown",
+  dictating: false,
+  dictationText: "",
+  dictationCommitSeq: 0,
+  dictationCommitText: "",
   pendingTerminalCommand: null,
   cliConnectCoach: null,
   pendingInstallCliName: null,
@@ -282,6 +298,17 @@ export const useEventStore = create<EventStore>((set, get) => ({
   setChatThinking: (thinking) => set({ chatThinking: thinking }),
 
   setBrainProvider: (p) => set({ brainProvider: p }),
+
+  setDictating: (b) =>
+    set(b ? { dictating: true, dictationText: "" } : { dictating: false }),
+  setDictationInterim: (text) => set({ dictationText: text }),
+  commitDictation: (text) =>
+    set((s) => ({
+      dictationCommitText: text,
+      dictationCommitSeq: s.dictationCommitSeq + 1,
+      dictationText: "",
+      dictating: false,
+    })),
 
   setPendingTerminalCommand: (cmd) => set({ pendingTerminalCommand: cmd }),
 

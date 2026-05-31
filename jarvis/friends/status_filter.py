@@ -1,4 +1,4 @@
-# === F-FRIENDS [F4] · feature/friends-section · the maintainer-2026-05-01 ===
+# === F-FRIENDS [F4] · feature/friends-section · alex-2026-05-01 ===
 """StatusFilter: hardcoded profile whitelists and an absolute hard blacklist.
 
 Architecture (plan F4 + Phase-7 plan AP-1/AP-11):

@@ -32,8 +32,8 @@ from jarvis.plugins.tool.wiki_page_read import WikiPageReadTool
 def vault(tmp_path: Path) -> Path:
     """Build a minimal vault with a couple of pages for path-read tests."""
     (tmp_path / "people").mkdir()
-    (tmp_path / "people" / "harald.md").write_text(
-        "# Harald\n\nA person Jarvis knows.\n",
+    (tmp_path / "people" / "sam.md").write_text(
+        "# Sam\n\nA person Jarvis knows.\n",
         encoding="utf-8",
     )
     (tmp_path / "people" / "joy.md").write_text(
@@ -65,12 +65,12 @@ def test_wiki_page_read_surface(vault: Path) -> None:
 @pytest.mark.asyncio
 async def test_wiki_page_read_returns_full_content(vault: Path) -> None:
     tool = WikiPageReadTool(vault_root=vault)
-    result = await tool.execute({"path": "people/harald.md"}, ctx=None)
+    result = await tool.execute({"path": "people/sam.md"}, ctx=None)
     assert result.success is True
-    assert "Harald" in result.output
+    assert "Sam" in result.output
     assert "A person Jarvis knows." in result.output
     # Header prefix tags the source with its vault-relative path.
-    assert result.output.startswith("# people/harald.md")
+    assert result.output.startswith("# people/sam.md")
 
 
 @pytest.mark.asyncio
@@ -100,7 +100,7 @@ async def test_wiki_page_read_rejects_traversal(vault: Path) -> None:
 @pytest.mark.asyncio
 async def test_wiki_page_read_rejects_absolute_path(vault: Path) -> None:
     tool = WikiPageReadTool(vault_root=vault)
-    abs_path = str(vault / "people" / "harald.md")
+    abs_path = str(vault / "people" / "sam.md")
     result = await tool.execute({"path": abs_path}, ctx=None)
     assert result.success is False
 

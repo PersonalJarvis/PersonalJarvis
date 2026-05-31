@@ -49,6 +49,9 @@
       "2": "Arbeite in Ordner C:\\Projekte\\Foo"
     },
     "input_placeholder": "Nachricht an Jarvis… (Enter zum Senden)",
+    "dictation_start": "Diktieren",
+    "dictation_stop": "Diktat stoppen",
+    "dictation_listening": "Höre zu… sprich jetzt",
     "history": "Verlauf",
     "new_chat": "Neuer Chat",
     "speak": "In dieser Unterhaltung sprechen",

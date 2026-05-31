@@ -55,13 +55,24 @@ class BudgetTracker:
         daily_usd: float = DEFAULT_DAILY_USD,
         warn_pct: tuple[int, ...] = DEFAULT_WARN_PCT,
         emitter: EventEmitterFn | None = None,
+        enabled: bool = True,
     ) -> None:
-        if per_mission_usd <= 0 or daily_usd <= 0:
+        # enabled=False turns the whole tracker into a no-op: no cost
+        # accumulation, no warnings, no hard cap — a mission is NEVER aborted
+        # for cost. User mandate 2026-05-31 ("überhaupt kein Budget",
+        # frontier-quality-over-cost). The caps are inert when disabled, so
+        # their positive-value validation is skipped (a disabled tracker may be
+        # built with 0 caps). Code default stays True so other installs /
+        # the cloud-first €5-VPS profile keep the safety cap unless they opt
+        # out at the wiring layer (server._init_mission_stack).
+        if enabled and (per_mission_usd <= 0 or daily_usd <= 0):
             raise ValueError("Budget-Caps muessen > 0 sein")
-        for p in warn_pct:
-            if not (0 < p < 100):
-                raise ValueError(f"warn_pct {p} muss in (0, 100) liegen")
+        if enabled:
+            for p in warn_pct:
+                if not (0 < p < 100):
+                    raise ValueError(f"warn_pct {p} muss in (0, 100) liegen")
 
+        self._enabled = enabled
         self._per_mission_usd = per_mission_usd
         self._daily_usd = daily_usd
         self._warn_pct = tuple(sorted(set(warn_pct)))  # dedup + sorted
@@ -98,6 +109,9 @@ class BudgetTracker:
             cost_usd: Increment (positive). 0 or negative is logged as a
                 no-op but not raised.
         """
+        if not self._enabled:
+            # Budget disabled — never accumulate, warn, or raise.
+            return
         if cost_usd <= 0:
             logger.debug("BudgetTracker.record: ignoring non-positive cost %s", cost_usd)
             return
@@ -133,6 +147,9 @@ class BudgetTracker:
         Call from the orchestrator before every worker spawn — prevents a
         worker from starting when the budget is already exhausted.
         """
+        if not self._enabled:
+            # Budget disabled — never block a spawn.
+            return
         self._maybe_reset_daily()
         cur = self._per_mission_costs.get(mission_id, 0.0)
         if cur >= self._per_mission_usd:

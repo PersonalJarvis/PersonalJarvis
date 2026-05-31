@@ -85,13 +85,13 @@ def test_register_succeeds_with_admin_token(client: TestClient) -> None:
     _, pub = generate_keypair()
     resp = client.post(
         "/api/v1/identity/register",
-        json={"pubkey": pub, "display_name": "the maintainer"},
+        json={"pubkey": pub, "display_name": "Alex"},
         headers={"X-Admin-Token": "test-admin"},
     )
     assert resp.status_code == 200
     body = resp.json()
     assert body["pubkey"] == pub
-    assert body["display_name"] == "the maintainer"
+    assert body["display_name"] == "Alex"
 
 
 def test_register_rejects_non_hex_pubkey(client: TestClient) -> None:
@@ -292,13 +292,13 @@ def test_pushlog_contains_no_payload_inhalte(client: TestClient) -> None:
 
 def test_me_returns_identity_after_register(client: TestClient) -> None:
     priv, pub = generate_keypair()
-    _register(client, pubkey=pub, name="the maintainer")
+    _register(client, pubkey=pub, name="Alex")
     payload = {"ts_ms": _now_ms()}
     resp = _signed_get(client, "/api/v1/me", priv=priv, pub=pub, payload=payload)
     assert resp.status_code == 200
     body = resp.json()
     assert body["pubkey"] == pub
-    assert body["display_name"] == "the maintainer"
+    assert body["display_name"] == "Alex"
     assert body["push_count"] == 0
 
 

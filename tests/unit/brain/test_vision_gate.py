@@ -1,35 +1,68 @@
-"""Tests for the conservative skip-when-safe vision gate (Wave 1).
+"""Tests for the visual-reference vision gate (Hybrid — attach-only-on-reference).
 
-Contract: the screenshot is dropped ONLY for confidently text-only turns
-(smalltalk / simple Q&A) that contain no visual-reference marker. Anything
-not classified as smalltalk, and anything with a deictic/visual marker, keeps
-the image. This is the anti-regression stance after the 2026-04-28 incident
-where on-demand-only vision made the router hallucinate a blank desktop.
+Contract (inverted from the old skip-when-safe default): a screenshot is
+attached ONLY when the utterance clearly refers to the screen (deictic pointer,
+screen noun, look/click verb, read-out/diagnosis). A plain content question —
+even a non-smalltalk one — gets NO screenshot, so the conversation history stays
+the model's primary context. The on-demand screenshot tool (Wave 2) is the
+safety net for references the markers miss, replacing the old conservative
+attach-on-every-non-smalltalk stance that buried the conversation under the
+current screen.
 """
 from __future__ import annotations
 
+import pytest
+
 from jarvis.brain.vision_gate import has_visual_marker, should_attach_screenshot
 
+# Turns that clearly refer to the screen -> attach.
+_VISUAL = [
+    "was siehst du hier",
+    "schau mal das hier",
+    "klick auf den Button",
+    "warum ist das rot?",
+    "lies mir die Fehlermeldung vor",
+    "was steht da auf dem Bildschirm",
+    "mach das Fenster zu",
+    "was ist das da",
+    "klick das weg",
+    "look at this window",
+    # live 2026-05-31 failures: spatial + read-out references the old list missed
+    "vor was genau da steht da oben links",
+    "liest es mir vor",
+    "was steht oben links",
+    "lies mir vor was da unten steht",
+]
 
-def test_smalltalk_without_marker_drops_image() -> None:
-    # The headline win: "what time is it" no longer pays the vision tax.
-    assert should_attach_screenshot("wie spät ist es", is_smalltalk=True) is False
-    assert should_attach_screenshot("hallo jarvis", is_smalltalk=True) is False
-    assert should_attach_screenshot("danke dir", is_smalltalk=True) is False
+# Turns that are conversational / factual / a plain action -> no screenshot,
+# even though they are not "smalltalk". This is the user's reported case.
+_NON_VISUAL = [
+    "was haben wir gerade besprochen?",
+    "erklär mir nochmal das Thema",
+    "erklär mir was ein vektor ist",
+    "wie spät ist es",
+    "was ist die Hauptstadt von Frankreich",
+    "warum ist das so wichtig?",  # "warum ist das" is NOT a marker without a colour
+    "fass das bitte zusammen",
+    "hallo jarvis",
+    "danke dir",
+    "wir hatten einen langen Dialog darüber",  # "dialog" alone must NOT fire (DE = conversation)
+    "was steht heute an?",  # "steht an" = scheduled, NOT a screen read-out
+]
 
 
-def test_non_smalltalk_always_keeps_image() -> None:
-    # Action / screen-ref / unknown intent: keep the image (conservative).
-    assert should_attach_screenshot("öffne den browser", is_smalltalk=False) is True
-    assert should_attach_screenshot("was siehst du hier", is_smalltalk=False) is True
-    assert should_attach_screenshot("erklär mir was ein vektor ist", is_smalltalk=False) is True
+@pytest.mark.parametrize("text", _VISUAL)
+def test_visual_reference_attaches(text: str) -> None:
+    # A visual reference attaches regardless of the smalltalk classification.
+    assert should_attach_screenshot(text, is_smalltalk=False) is True
+    assert should_attach_screenshot(text, is_smalltalk=True) is True
 
 
-def test_visual_marker_beats_smalltalk_classification() -> None:
-    # Even if the classifier called it smalltalk, a visual reference keeps the image.
-    assert should_attach_screenshot("schau mal das hier", is_smalltalk=True) is True
-    assert should_attach_screenshot("was ist das da", is_smalltalk=True) is True
-    assert should_attach_screenshot("klick das weg", is_smalltalk=True) is True
+@pytest.mark.parametrize("text", _NON_VISUAL)
+def test_non_visual_skips(text: str) -> None:
+    # Inverted logic: a non-smalltalk content question no longer auto-attaches.
+    assert should_attach_screenshot(text, is_smalltalk=False) is False
+    assert should_attach_screenshot(text, is_smalltalk=True) is False
 
 
 def test_visual_marker_detection_is_case_insensitive() -> None:
@@ -38,6 +71,12 @@ def test_visual_marker_detection_is_case_insensitive() -> None:
     assert has_visual_marker("auf dem Bildschirm") is True
 
 
-def test_plain_smalltalk_has_no_marker() -> None:
+def test_plain_text_has_no_marker() -> None:
     assert has_visual_marker("wie geht es dir") is False
     assert has_visual_marker("guten morgen") is False
+    assert has_visual_marker("was haben wir besprochen") is False
+
+
+def test_has_visual_marker_examples() -> None:
+    assert has_visual_marker("klick drauf") is True
+    assert has_visual_marker("erklär mir das Thema") is False

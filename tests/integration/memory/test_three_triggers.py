@@ -247,7 +247,7 @@ async def stack(tmp_path: Path):
     fake_rollup_brain = _FakeStreamBrain(
         text=(
             "User worked on the wiki memory rebuild, with focus on "
-            "[[entities/the maintainer]] preferences and [[projects/wiki-memory]] iterations."
+            "[[entities/alex]] preferences and [[projects/wiki-memory]] iterations."
         ),
     )
     registry = _SpyRegistry(fake_rollup_brain)
@@ -300,11 +300,11 @@ async def test_voice_fact_becomes_context_on_next_turn(stack) -> None:
     vault_root = s["vault_root"]
 
     update = PageUpdate(
-        target_path=vault_root / "entities" / "the maintainer.md",
+        target_path=vault_root / "entities" / "alex.md",
         operation="create",
         new_body=_entity_body(
-            "the maintainer",
-            "the maintainer's favourite movie is Inception by Christopher Nolan.",
+            "alex",
+            "Alex's favourite movie is Inception by Christopher Nolan.",
             facts=["Lieblingsfilm: Inception", "Nolan-Fan since 2010"],
         ),
         reason="user identity fact",
@@ -317,7 +317,7 @@ async def test_voice_fact_becomes_context_on_next_turn(stack) -> None:
             brain_text="Cool, Nolan ist wirklich stark.",  # no ack -> aggressive path
         )
 
-    page = vault_root / "entities" / "the maintainer.md"
+    page = vault_root / "entities" / "alex.md"
     assert page.is_file(), "voice fact should have produced a wiki page"
 
     # Next turn: the injector finds the freshly-written page and
@@ -415,23 +415,23 @@ async def test_ack_path_alone_creates_page(stack) -> None:
     s = stack
     vault_root = s["vault_root"]
 
-    harald_update = PageUpdate(
-        target_path=vault_root / "entities" / "harald.md",
+    sam_update = PageUpdate(
+        target_path=vault_root / "entities" / "sam.md",
         operation="create",
-        new_body=_entity_body("harald", "Harald wurde 1976 geboren."),
+        new_body=_entity_body("sam", "Sam wurde 1976 geboren."),
         reason="ack-path fact",
     )
 
     with patch.object(
-        s["curator"]._llm, "propose_updates", return_value=[harald_update],
+        s["curator"]._llm, "propose_updates", return_value=[sam_update],
     ):
         await _drive_voice_turn(
             s["bus"],
-            user_text="Harald wurde 1976 geboren.",   # 26 chars -- below aggressive min
+            user_text="Sam wurde 1976 geboren.",   # 26 chars -- below aggressive min
             brain_text="Notiert.",                     # explicit ack keyword
         )
 
-    assert (vault_root / "entities" / "harald.md").is_file()
+    assert (vault_root / "entities" / "sam.md").is_file()
     assert telemetry.get("voice_turns_ingested_ack") == 1
     assert telemetry.get("voice_turns_ingested_aggressive") == 0
 
@@ -452,7 +452,7 @@ async def test_aggressive_path_alone_creates_page(stack) -> None:
         operation="create",
         new_body=_entity_body(
             "carlos",
-            "Carlos went out for Pad Thai with the maintainer on 2026-05-14.",
+            "Carlos went out for Pad Thai with Alex on 2026-05-14.",
         ),
         reason="aggressive-path fact",
     )
@@ -485,9 +485,9 @@ async def test_voice_path_handlers_do_not_block_voice(stack) -> None:
     vault_root = s["vault_root"]
 
     update = PageUpdate(
-        target_path=vault_root / "entities" / "the maintainer.md",
+        target_path=vault_root / "entities" / "alex.md",
         operation="create",
-        new_body=_entity_body("the maintainer", "Test latency fact."),
+        new_body=_entity_body("alex", "Test latency fact."),
         reason="latency test",
     )
 
@@ -521,10 +521,10 @@ async def test_voice_path_handlers_do_not_block_voice(stack) -> None:
 
     # And to prove the ingest still runs eventually:
     for _ in range(20):
-        if (vault_root / "entities" / "the maintainer.md").exists():
+        if (vault_root / "entities" / "alex.md").exists():
             break
         await asyncio.sleep(0.05)
-    assert (vault_root / "entities" / "the maintainer.md").exists(), (
+    assert (vault_root / "entities" / "alex.md").exists(), (
         "the slow ingest must still complete in the background"
     )
 
@@ -556,9 +556,9 @@ async def test_curator_failure_does_not_break_voice_path(stack) -> None:
     # ...but the bridge handlers returned cleanly. We prove that by
     # firing another turn and asserting the bridge still works.
     rescue_update = PageUpdate(
-        target_path=vault_root / "entities" / "the maintainer.md",
+        target_path=vault_root / "entities" / "alex.md",
         operation="create",
-        new_body=_entity_body("the maintainer", "Recovery turn after curator crash."),
+        new_body=_entity_body("alex", "Recovery turn after curator crash."),
         reason="recovery",
     )
     with patch.object(
@@ -569,7 +569,7 @@ async def test_curator_failure_does_not_break_voice_path(stack) -> None:
             user_text="Test ob das System nach dem Crash noch funktioniert.",
             brain_text="Klar, alles laeuft.",
         )
-    assert (vault_root / "entities" / "the maintainer.md").is_file()
+    assert (vault_root / "entities" / "alex.md").is_file()
 
 
 # ===========================================================================
@@ -605,9 +605,9 @@ async def test_rollup_failure_does_not_break_voice_path(stack) -> None:
 
     # Voice path still works:
     fact_update = PageUpdate(
-        target_path=vault_root / "entities" / "the maintainer.md",
+        target_path=vault_root / "entities" / "alex.md",
         operation="create",
-        new_body=_entity_body("the maintainer", "Voice path survives rollup crash."),
+        new_body=_entity_body("alex", "Voice path survives rollup crash."),
         reason="resilience proof",
     )
     with patch.object(
@@ -618,7 +618,7 @@ async def test_rollup_failure_does_not_break_voice_path(stack) -> None:
             user_text="Test ob die Voice-Pipeline trotz Rollup-Crash noch laeuft.",
             brain_text="Klar, antworte ich.",
         )
-    assert (vault_root / "entities" / "the maintainer.md").is_file()
+    assert (vault_root / "entities" / "alex.md").is_file()
 
 
 # ===========================================================================
@@ -643,9 +643,9 @@ async def test_voice_turn_during_rollup_both_finish(stack) -> None:
         )
 
     voice_update = PageUpdate(
-        target_path=vault_root / "entities" / "the maintainer.md",
+        target_path=vault_root / "entities" / "alex.md",
         operation="create",
-        new_body=_entity_body("the maintainer", "Concurrent voice fact during rollup."),
+        new_body=_entity_body("alex", "Concurrent voice fact during rollup."),
         reason="race test",
     )
 
@@ -668,7 +668,7 @@ async def test_voice_turn_during_rollup_both_finish(stack) -> None:
         f"got status={rollup_result.status}"
     )
     # Both pages on disk:
-    assert (vault_root / "entities" / "the maintainer.md").is_file(), (
+    assert (vault_root / "entities" / "alex.md").is_file(), (
         "voice fact must land even when a rollup is running"
     )
     assert list((vault_root / "sessions").glob("*.md")), (
@@ -690,11 +690,11 @@ async def test_fresh_triggers_recover_existing_vault_state(stack) -> None:
 
     # 1) First "run" writes a page through the bridge.
     update = PageUpdate(
-        target_path=vault_root / "entities" / "the maintainer.md",
+        target_path=vault_root / "entities" / "alex.md",
         operation="create",
         new_body=_entity_body(
-            "the maintainer",
-            "the maintainer built the three-trigger regression suite. Coffee with milk.",
+            "alex",
+            "Alex built the three-trigger regression suite. Coffee with milk.",
             facts=["Lieblingsgetraenk: Cafe Latte"],
         ),
         reason="pre-restart fact",
@@ -705,7 +705,7 @@ async def test_fresh_triggers_recover_existing_vault_state(stack) -> None:
             user_text="Mein Lieblingsgetraenk ist Cafe Latte mit Hafermilch.",
             brain_text="Schoen zu wissen.",
         )
-    assert (vault_root / "entities" / "the maintainer.md").is_file()
+    assert (vault_root / "entities" / "alex.md").is_file()
 
     # 2) "Restart": stop the bridge / rollup, build fresh equivalents
     #    against the SAME tmp vault.

@@ -32,7 +32,7 @@ POSITIVE_CASES = [
     ),
     pytest.param("Soll ich den Termin verschieben?", id="shall-i-question"),
     pytest.param("Es ist warm draussen.", id="weather-fact"),
-    pytest.param("Goodbye, the maintainer.", id="hangup-contract"),
+    pytest.param("Goodbye, Alex.", id="hangup-contract"),
 ]
 
 
@@ -301,7 +301,7 @@ def test_empty_input_returns_empty() -> None:
 
 
 def test_sir_anrede_is_removed() -> None:
-    """A1: 'Sir' als Anrede wird gescrubbt — Mandat A1 (the maintainer statt Sir)."""
+    """A1: 'Sir' als Anrede wird gescrubbt — Mandat A1 (Alex statt Sir)."""
     text = "Sir, ich starte die Analyse."
     result = scrub_for_voice(text)
     low = result.cleaned.lower()
@@ -648,9 +648,9 @@ def test_openclaw_subagenten_plural_also_scrubbed() -> None:
 def test_scrub_strips_end_call_sentinel() -> None:
     from jarvis.speech.hangup import END_CALL_SIGNAL
 
-    result = scrub_for_voice(f"Bis später, the maintainer. {END_CALL_SIGNAL}", language="de")
+    result = scrub_for_voice(f"Bis später, Alex. {END_CALL_SIGNAL}", language="de")
     assert END_CALL_SIGNAL not in result.cleaned
-    assert result.cleaned.strip() == "Bis später, the maintainer."
+    assert result.cleaned.strip() == "Bis später, Alex."
     assert "stripped_end_signal" in result.actions
 
 

@@ -13,13 +13,13 @@ Background: On 2026-05-01 a restore went well only because you instinctively set
 In PowerShell (no admin required):
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "<your-home>\Desktop\Personal Jarvis\scripts\install-auto-push-task.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "<USER_HOME>\Desktop\Personal Jarvis\scripts\install-auto-push-task.ps1"
 ```
 
 Default: daily at 22:00. Different time:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "<your-home>\Desktop\Personal Jarvis\scripts\install-auto-push-task.ps1" -Time "23:30"
+powershell -NoProfile -ExecutionPolicy Bypass -File "<USER_HOME>\Desktop\Personal Jarvis\scripts\install-auto-push-task.ps1" -Time "23:30"
 ```
 
 ---
@@ -27,7 +27,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "<your-home>\Desktop\Persona
 ## Deactivate (1 command)
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "<your-home>\Desktop\Personal Jarvis\scripts\uninstall-auto-push-task.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "<USER_HOME>\Desktop\Personal Jarvis\scripts\uninstall-auto-push-task.ps1"
 ```
 
 ---
@@ -41,13 +41,13 @@ Start-ScheduledTask -TaskName "Personal-Jarvis-EoD-Push"
 Or run the script directly (even without an installed task):
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "<your-home>\Desktop\Personal Jarvis\scripts\auto-push-eod.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "<USER_HOME>\Desktop\Personal Jarvis\scripts\auto-push-eod.ps1"
 ```
 
 **Dry run** (only shows what would be done, pushes nothing):
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "<your-home>\Desktop\Personal Jarvis\scripts\auto-push-eod.ps1" -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File "<USER_HOME>\Desktop\Personal Jarvis\scripts\auto-push-eod.ps1" -DryRun
 ```
 
 ### Hotkey idea (optional, nice-to-have)
@@ -59,7 +59,7 @@ Place a small `.lnk` shortcut to the script on the desktop, then assign a hotkey
 ## Where is the log?
 
 ```
-<your-home>\Desktop\Personal Jarvis\logs\auto-push-eod.log
+<USER_HOME>\Desktop\Personal Jarvis\logs\auto-push-eod.log
 ```
 
 Format: `[YYYY-MM-DD HH:MM:SS] [LEVEL] message`. Levels:
@@ -92,7 +92,7 @@ Or set a new Personal Access Token in `git credential manager`.
 Someone (or another agent) pushed to the same branch. The script **never pushes with `--force`**. You have to decide manually:
 
 ```powershell
-cd "<your-home>\Desktop\Personal Jarvis"
+cd "<USER_HOME>\Desktop\Personal Jarvis"
 git checkout <branch>
 git pull --rebase   # or: git merge origin/<branch>
 ```

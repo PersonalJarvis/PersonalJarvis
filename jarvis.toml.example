@@ -1,1137 +1,144 @@
-# Example config. Copy to jarvis.toml and fill in, or run:
-#   python -m jarvis --wizard
-# Secrets (API keys) NEVER live here - they go in your OS keyring / .env.
-
-# Personal Jarvis — Default-Konfiguration
-# Wird überschrieben durch: profiles/<aktiv>.yaml → ENV (JARVIS__*)
-# Secrets sind NICHT hier — die liegen im Windows Credential Manager (keyring)
+# ============================================================
+#  Personal Jarvis — configuration TEMPLATE
+# ------------------------------------------------------------
+#  This file is OPTIONAL. Jarvis boots with no jarvis.toml at all
+#  (every value below has a built-in default in jarvis/core/config.py).
+#  Copy this to `jarvis.toml` only if you want to override defaults:
+#      cp jarvis.toml.example jarvis.toml
+#
+#  SECRETS DO NOT GO HERE. API keys live in your OS credential manager
+#  (run `python -m jarvis --wizard`) or in `.env` (see .env.example).
+#  Never commit a real jarvis.toml — it is gitignored.
+#
+#  Overrides cascade: jarvis.toml  →  ENV (JARVIS__SECTION__KEY=...)
+#  Any section you delete falls back to the code defaults.
+#  This template ships cloud-first defaults (no GPU, no local model,
+#  no microphone required) so it runs on a 1 vCPU / 1 GB VPS.
+# ============================================================
 
 [profile]
-name = "CHANGEME"
-language = "CHANGEME"
+name = "default"
+language = "auto"            # "de" | "en" | "auto" (bilingual auto-detect)
 
+[persona]
+# The assistant's name. Empty -> derived from the wake-word phrase below.
+name = "Jarvis"
+
+# ── Voice trigger (optional; irrelevant on a headless/browser-only host) ──
 [trigger]
-# wake_word_enabled controls the always-on wake detectors (openWakeWord +
-# rolling-whisper). When false, the mic only opens during active turns
-# (hotkey or mascot-click triggered), which lets USB combo headsets like
-# the Logitech PRO X drop into power-save in idle - eliminates the audible
-# DAC noise floor. Set to true to bring "Hey Jarvis" back; expect the
-# headset to be powered (and softly humming) the entire time Jarvis runs.
-wake_word_enabled = true
-hotkey = "CHANGEME"
-# single_turn_mode (user mandate 2026-05-18): when true, every voice turn
-# ends after Jarvis finishes speaking and a fresh "Hey Jarvis" wake is
-# required to start the next turn. The mic closes between turns, so
-# background TV, room-mates, and the user's own off-topic remarks cannot
-# accidentally drive a turn. Set to false to bring back the 2026-05-05
-# conversation mode where the session stays open until "auflegen", the
-# 30 s idle timeout, or the F1+F2 hotkey ends it.
-single_turn_mode = false
+wake_word_enabled = true     # always-on "Hey Jarvis" listener (needs a mic)
+hotkey = "ctrl+right_alt+j"  # push-to-talk; safe combo on all OSes
+single_turn_mode = false     # false = conversation stays open until "hang up"/idle
 
 [trigger.wake_word]
-# The wake word you say to activate voice mode. Edit `phrase` here or use the
-# desktop Settings -> Wake Word panel. `engine = "auto"` resolves the best
-# detector for the phrase:
-#   - "Hey Jarvis" / "Alexa" / "Hey Mycroft" / "Rhasspy" -> instant pretrained
-#     openWakeWord model (CPU-only, offline, no download).
-#   - any other phrase ("Computer", "Athena", ...) -> local-Whisper transcript
-#     match (needs the local-Whisper extra; auto-enabled when present).
-#   - on a box without local Whisper an unknown phrase falls back to
-#     "Hey Jarvis" with a clear message (never a silent dead listener).
-# See docs/local-wakeword/CUSTOM-WAKE-WORD-DESIGN.md.
-phrase = "CHANGEME"
-engine = "CHANGEME"
-custom_model_path = "CHANGEME"
-sensitivity = "CHANGEME"
-fuzzy_match_ratio = "CHANGEME"
+phrase = "Hey Jarvis"        # any phrase; "Hey Jarvis"/"Alexa"/"Hey Mycroft" use the offline CPU model
+engine = "auto"              # auto | openwakeword | stt_match | custom_onnx
+sensitivity = 0.5
 
-[turn]
-# Phase L.2 — End-of-Turn Detection. AD-L-4 Variante A:
-#   provider = "flux_integrated" → STT-Plugin (Deepgram Flux) liefert EOT direkt.
-# Variante B (Plan-B):
-#   provider = "smart_turn_v3"  + [stt] provider = "deepgram-nova3"
-# Last-Resort:
-#   provider = "silero_only"
-provider = "CHANGEME"
-fallback = "CHANGEME"
-# Hinweis: [audio] sample_rate = 16000 ist verpflichtend (siehe AP-L-16).
-
+# ── Speech-to-Text ──
 [stt]
-provider = "CHANGEME"
-# Phase L.3 — Cloud-STT mit integriertem EOT bevorzugt; lokales faster-whisper
-# als Offline-Fallback (Plan-AC L.3, AP-L-14).
-fallback = "CHANGEME"
-# Active-Provider-Switch via JARVIS_STT_PROVIDER ENV (Plan §6.1 L.3).
-# WICHTIG: distil-large-v3 ist ENGLISH-ONLY (Distil-Whisper-Dataset nur Englisch).
-# Für deutsche Sprache MUSS ein multilinguales Model genutzt werden, sonst
-# halluziniert Whisper auf Deutsch Phrasen wie "Thank you" / "I want this".
-# large-v3-turbo = multilingual, ~2× schneller als large-v3, 800MB Download beim 1. Start.
-model = "CHANGEME"
-device = "CHANGEME"
-compute_type = "CHANGEME"
-language = "CHANGEME"
-# Wake-Detektor separat fixieren: auto-detect auf 1.8s-Wake-Chunks kippt oft
-# fälschlich auf EN → "Hey Jarvis" wird zu "Thank you" halluziniert.
-wake_language = "CHANGEME"
-# Whisper-prompt vocabulary biasing. The cloud STT plugin (Groq) feeds this
-# verbatim into Whisper's ``prompt`` field — the same trick dictation tools
-# (e.g. Wispr Flow) use to keep proper nouns and domain vocabulary stable
-# instead of falling onto phonetically nearby everyday words ("Cloud" → "Students",
-# "Stand des Denkens" → "Stand der Denken").
-# Keep it as a comma-separated word list — Whisper interprets it as recent
-# conversational context, so full sentences risk being re-emitted verbatim.
-# Hard cap inside the plugin is 1024 chars (~224 tokens).
-bias_prompt = "CHANGEME"
+provider = "groq-api"        # groq-api | openai-api | deepgram-flux | deepgram-nova3 | faster-whisper
+fallback = "faster-whisper"  # offline fallback (needs the [desktop] local-whisper extra)
+device = "cpu"               # cpu | cuda — keep "cpu" unless you have a local GPU
+language = "auto"            # "de" | "en" | "auto"
+bias_prompt = ""             # optional comma-separated vocab to stabilize proper nouns
 
+# ── Text-to-Speech ──
+# Cloud default = Gemini Flash TTS (reuses your GEMINI_API_KEY). Alternatives:
+#   provider = "cartesia"    (Sonic 3.5, 42 languages — needs CARTESIA_API_KEY + [tts.cartesia] voice ids)
+#   provider = "grok-voice"  (reuses GROK_API_KEY)
+#   provider = "elevenlabs"  (needs ELEVENLABS_API_KEY)
 [tts]
-# User-Entscheidung 2026-04-22: ElevenLabs statt Gemini-TTS.
-# Begruendung: Gemini Flash-TTS-Preview lieferte zu oft safety-blocked
-# candidates + Quota-Issues. ElevenLabs "Daniel" ist die Jarvis-Butler-
-# Stimme (British, autoritativ, ruhig) und spricht DE+EN nativ via
-# eleven_flash_v2_5 (~75ms First-Chunk-Latenz).
-#
-# Alternative seit 2026-04-25: xAI Grok Voice ("Think Fast 1.0", 5 Stimmen,
-# 20+ Sprachen mit auto-detect, $4.20 / 1M chars). Zum Wechseln:
-#   provider = "grok-voice"
-#   voice_de = "leo"           # leo|rex|sal|ara|eve (leo = JARVIS-Butler)
-#   language_code = "auto"     # auto-detect (de/en) — empfohlen
-# Der Grok-Brain-API-Key (grok_api_key) wird automatisch wiederverwendet.
-# 2026-05-14 16:45: switched to gemini-flash-tts (user mandate). xAI
-# team on 429 (credits exhausted) means grok-voice falls into a 4-7s
-# fallback path. Gemini Flash TTS Preview (gemini-3.1-flash-tts-preview)
-# measured live: cold ~7.6s, warm 2.0-2.6s, voice "Charon" (Butler).
-# Fallback chain keeps grok-voice as backup once credits are topped up.
-provider = "CHANGEME"
-fallback = "CHANGEME"
-# 2026-05-14 21:25: USER MANDATE — stick with gemini-3.1-flash-tts-preview.
-# A 100 RPD cap is currently visible on Google's quota dashboard for this
-# model (live-tested → HTTP 429 RESOURCE_EXHAUSTED at 21:13). User has
-# topped up the paid account; the cap should lift once the project's
-# tier promotion catches up. If you still get 429 after midnight UTC:
-# go to https://aistudio.google.com/app/usage and request a tier upgrade
-# specifically for gemini-3.1-flash-tts (Pay-as-you-go billing alone
-# does not auto-promote new Preview models).
-model = "CHANGEME"
-# Generic voice_id slot used by some legacy TTS providers. Cartesia reads its
-# voice_id from [tts.cartesia].voice_id instead — leave this empty.
-voice_id = "CHANGEME"
-voice_de = "CHANGEME"
-voice_en = "CHANGEME"
-language_code = "CHANGEME"
-style_prompt = "CHANGEME"
-voice_auto_switch = "CHANGEME"
-speed = 1.0
-streaming = "CHANGEME"
-stability = "CHANGEME"
-similarity_boost = "CHANGEME"
-style = "CHANGEME"
-# 2026-05-24 Voice-consistency fix: Gemini TTS is generative; these stop the
-# per-call voice drift WITHOUT leaving Charon. Drift-guarded via config-soll.json.
-chunk_by_sentence = "CHANGEME"
-seed = "CHANGEME"
-temperature = "CHANGEME"
-# 2026-05-26 Vertex AI path: routes Gemini Flash TTS through Vertex AI on
-# the user's billed GCP project instead of AI Studio. AI Studio enforces a
-# hard 100-RPD cap on the Preview model gemini-3.1-flash-tts-preview,
-# independent of Pay-as-you-go billing — once hit, the Sibling-Bridge
-# auto-switches to gemini-2.5-flash-preview-tts and the perceived Charon
-# voice shifts mid-session. Vertex on a billed project has no Preview RPD
-# cap.
-#
-# How to set this up after cloning:
-#   1. Create a service account in your GCP project with the role
-#      `roles/aiplatform.user` (Vertex AI User).
-#   2. Generate a JSON key for that SA and save it to the path below
-#      (~/.config/jarvis/vertex-sa.json — the plugin expands the tilde
-#      cross-platform).
-#   3. Set the user-scope env var JARVIS__TTS__VERTEX_PROJECT to your GCP
-#      project ID. The plugin reads it at boot via _apply_env_overrides()
-#      and overrides the empty `vertex_project` field below.
-#
-# vertex_project is deliberately empty here — set it via the env var so
-# project-specific identifiers stay out of the tracked config. The plugin
-# raises RuntimeError when it stays empty at runtime, so misconfiguration
-# fails loudly rather than silently routing onto AI Studio.
-use_vertex = true
-vertex_project = "CHANGEME"
-vertex_location = "CHANGEME"
-service_account_path = "CHANGEME"
+provider = "gemini-flash-tts"
+fallback = "grok-voice"
+model = "gemini-3.1-flash-tts-preview"
+voice_de = "Charon"
+voice_en = "Charon"
+language_code = "auto"
+streaming = true
+# Vertex AI routing avoids the AI-Studio preview RPD cap. Off by default;
+# set JARVIS__TTS__VERTEX_PROJECT (env) + the SA path to enable.
+use_vertex = false
+vertex_project = ""
+service_account_path = "~/.config/jarvis/vertex-sa.json"
 
-# ── Cartesia.ai Sonic TTS ─────────────────────────────────────────────
-# Selectable in the desktop app under API Keys → TTS. Sonic 3.5 supports
-# 42 languages including German. Endpoint POST api.cartesia.ai/tts/bytes
-# returns raw pcm_s16le @ 24 kHz mono — same format Jarvis already accepts
-# from Gemini and Grok, no decoder/resampler required.
-# ENV overrides (drift-guard-safe):
-#   JARVIS__TTS__CARTESIA__MODEL_ID
-#   JARVIS__TTS__CARTESIA__VOICE_ID
-# Find voice UUIDs at https://play.cartesia.ai/voices.
-[tts.cartesia]
-model_id = "CHANGEME"
-# Per-language native voices (Butler-Pattern: maskulin, autoritativ).
-# voice_id = generic fallback when language is unknown.
-# voice_id_<lang> = pinned native voice that follows the user's reply_language
-# setting AND the per-utterance language auto-detect. Find more UUIDs at
-# https://play.cartesia.ai/voices (filter by language).
-voice_id = "CHANGEME"
-voice_id_de = "CHANGEME"
-voice_id_en = "CHANGEME"
-voice_id_es = "CHANGEME"
-language = "CHANGEME"
-chunk_by_sentence = true
-speed = 1.0
-allow_sapi5_fallback = false
-
-# Brain: Multi-Provider. Primary wird zur Runtime gewechselt via:
-#   "Jarvis, wechsel auf Gemini"  → primary = "grok"
+# ── Brain (multi-provider; never hardcode a single vendor) ──
+# Cloud-reachable default = Gemini (needs only GEMINI_API_KEY). Switch the
+# whole stack by changing these four to "claude-api" | "openai" | "grok" |
+# "openrouter" and supplying that provider's key.
 [brain]
-# User-Entscheidung 2026-04-22: primary = "claude-api" (direkte Anthropic-API
-# mit OAuth-Token aus ~/.claude/.credentials.json). KEIN CLI-Harness wie gemini,
-# deshalb keine Spawn-Latenz — ganz normales POST an api.anthropic.com.
-# Fallback-Chain: claude-api → claude-api → gemini → openrouter.
-#
-# Phase L.5 (Plan AD-L-6): Hot-Path-Modell ist Sonnet 4.6 (Migration auf 4.7
-# nach 14 Tagen Stabilitaet). Haiku/Opus bleiben fuer Sub-Tasks.
-# JARVIS_BRAIN_MODEL ENV-Override moeglich.
-# Plan-Spec verlangt Anthropic im Hot-Path (1h Prompt-Cache via Beta-Header).
-# Grok-Switch nur wenn Anthropic-Outage — siehe Fallback-Chain unten.
-primary = "CHANGEME"
-fallback = "CHANGEME"
-deep_brain = "CHANGEME"
-routing_provider = "CHANGEME"
-routing_model = "CHANGEME"
-local_fallback = "CHANGEME"
-local_fallback_model = "CHANGEME"
-# Phase L.5 (AD-L-2, AP-L-15): 1h-TTL fuer Anthropic-Prompt-Cache; Beta-Header
-# wird in _anthropic_base.stream_complete automatisch gesetzt.
-cache_ttl = "CHANGEME"
-keepalive = true
-
-[brain.providers.claude-api]
-auth_mode = "CHANGEME"
-# Frontier 2026-Q2: Haiku 4.5 als Router-Tier-Default (Latenz-First),
-# Opus 4.8 als Deep-Tier (2026-05-28 upgrade from 4.7 — current Anthropic
-# frontier). This deep_model is the SOURCE for the sub-agent heavy worker:
-# [brain.sub_jarvis].model="" -> _resolve_subjarvis_chain falls back here
-# -> ClaudeDirectWorker spawns `claude --model claude-opus-4-8`.
-# Stable-Aliases — keine datierten Snapshots, sonst rotiert die ID bei
-# jedem Anthropic-Release.
-model = "CHANGEME"
-deep_model = "CHANGEME"
-
-[brain.providers.openrouter]
-model = "CHANGEME"
-base_url = "CHANGEME"
-
-[brain.providers.openai]
-# Frontier 2026-Q2: GPT-5.5 (released 2026-04-23) — gleiche per-Token-Latenz
-# wie GPT-5.4, hoehere Intelligenz. GPT-5.5 Pro fuer Deep-Reasoning.
-model = "CHANGEME"
-deep_model = "CHANGEME"
+primary = "gemini"
+fallback = "gemini"
+deep_brain = "gemini"
+routing_provider = "gemini"
+routing_model = "gemini-3.5-flash"
 
 [brain.providers.gemini]
-# Google AI Studio (API-Key via GEMINI_API_KEY / GOOGLE_AIStudio_API_KEY).
-# Frontier 2026-Q2 (updated 2026-05-20): Gemini 3.5 Flash (Main Jarvis fast
-# tier — GA since Google I/O 2026-05-19, 1M-token context, knowledge cutoff
-# Jan 2026, 4x faster than 3.1 Pro on agentic benchmarks).
-# Gemini 3.1 Pro Preview (Worker/Critic deep tier).
-# Spezialvarianten (lite/image/vision/tts/audio) explizit ausgeschlossen.
-model = "CHANGEME"
-# 2026-05-16: deep_model is gemini-3.1-pro-preview (the Worker/Critic
-# deep tier and the Computer-Use vision-eye both need Pro), aligned with
-# scripts/config-soll.json which the drift-guard reverts to every 5
-# minutes. The 2026-05-14 gemini-cli hang workaround (Critic timeouts at
-# 240s on Pro) is preserved upstream of this file: the Critic now reaches
-# Gemini via direct REST, not via gemini-cli subprocess. If the Critic
-# ever regresses on Pro again, fix at the call-site (Critic runner) rather
-# than re-dropping deep_model here.
-deep_model = "CHANGEME"
-# Latenz-Sprint-1 (2026-04-30, korrigiert): KEIN Thinking-Cap.
-# User-Mandat: Frontier behaelt volle Reasoning-Tiefe; Latenz wird ueber
-# Streaming + Caching adressiert, nicht ueber Reasoning-Drosselung. Wenn
-# Feld weggelassen, nutzt das SDK den Default ("Dynamic Auto" — Modell
-# entscheidet pro Request, was Smalltalk schnell und Reasoning gruendlich
-# laesst).
+model = "gemini-3.5-flash"          # fast router/voice tier
+deep_model = "gemini-3.1-pro-preview"  # heavy worker/critic tier
+
+[brain.providers.claude-api]
+auth_mode = "api_key"               # uses ANTHROPIC_API_KEY
+model = "claude-haiku-4-5-20251001"
+deep_model = "claude-opus-4-8"
+
+[brain.providers.openai]
+model = "gpt-5.5"
+deep_model = "gpt-5.5-pro"
 
 [brain.providers.grok]
-# Frontier seit 2026-04-30: grok-4.3 ist sowohl schnellstes als auch
-# intelligentestes Grok-Modell (xAI-Empfehlung); ersetzt sowohl
-# grok-4.1-fast (Router-Default) als auch grok-4.20 (Sub-Jarvis-Default).
-# 1M Context-Window, $1.25 / $2.50 pro M Input/Output (verdoppelt ab 200k
-# Input). Nativ Image- und Video-Input.
-# Spezialvarianten (code, multi-agent, vision, image) werden NICHT als
-# general-purpose Brain genutzt.
-# Hinweis: User-Account benoetigt xAI-Tier mit 4.3-Zugriff. Ohne Zugriff
-# meldet die API 404 — dann ist ein Account-Upgrade noetig.
-model = "CHANGEME"
-deep_model = "CHANGEME"
+model = "grok-4.3"
+deep_model = "grok-4.3"
 
-# Ollama-Provider entfernt — wird nicht mehr genutzt.
+[brain.providers.openrouter]
+model = "anthropic/claude-opus-4.8"
+base_url = "https://openrouter.ai/api/v1"
 
-[brain.policy]
-use_routing_model_for_intent = true
-use_realtime_for_smalltalk = "CHANGEME"
-prompt_cache_heartbeat_seconds = 240
-voice_switch_patterns = "CHANGEME"
-
-# Phase 5 — Tiered Routing & Sub-Jarvis (User-Entscheidung 2026-04-22).
-# [brain.router]      = Hauptjarvis (klassifiziert Utterance, <1s First-Token)
-# [brain.sub_jarvis]  = Sub-Jarvis (on-demand, Opus 4.7 fuer Reasoning/Code)
-# healthcheck_on_start probed alle konfigurierten Provider mit 1-Token-Call
-# beim Bootstrap; Fehler -> BrainConfigError statt stilles Fallback.
-
-# ────────────────────────────────────────────────────────────────────
-# Tier-Config (Phase 5.5 Multi-Provider)
-# ────────────────────────────────────────────────────────────────────
-# Der Main-Jarvis laeuft im Router-Tier (schnell, Tool-Choice),
-# schwere Aufgaben gehen an den Sub-Jarvis-Tier (Frontier-Reasoning).
-#
-# Provider-Wechsel:
-#   provider = "gemini"  # alt: "claude-api"
-#   model    = ""        # leer = Default fuer den neuen Provider ziehen
-# Siehe jarvis/brain/manager.py:TIER_DEFAULTS_BY_PROVIDER fuer die
-# aktuellen Empfehlungen pro Provider (Router = Fast-Modell, Sub-
-# Jarvis = Frontier-Modell). Explizites `model = "..."` ueberschreibt
-# den Default.
-
-[brain.router]
-provider = "CHANGEME"
-model = "CHANGEME"
-fallback_provider = "CHANGEME"
-fallback_model = "CHANGEME"
-
-[brain.router.policy]
-escalate_on_uncertainty = true
-default_intent_on_low_confidence = "CHANGEME"
-
-# Permanent-Vision (Wave-1 B4) — Dauer-Screenshot-Feed fuer den Router.
-# capture_mode: "screenshot" = ein ganzer Screen; "composite" = mehrere Monitore.
-# voice_pause_phrase_*: Sprach-Phrasen die den Feed pausieren (Privacy-Mode).
-#
-# enabled = true (2026-04-28): Permanent-Vision wieder aktiv, weil
-# on-demand-only nicht zuverlaessig war — der Router rief das screenshot-
-# Tool nicht proaktiv auf, was zu Halluzinationen ("Browser sichtbar"
-# statt "8 Terminals") fuehrte. Plus monitor_strategy = "foreground"
-# damit Jarvis IMMER den Monitor sieht, auf dem der User gerade arbeitet
-# (Multi-Monitor-Mandat). Bei Bedarf via Voice-Phrase pausierbar.
-[brain.router.vision]
-enabled = true
-refresh_interval_s = 2.0
-max_staleness_s = 2.0
-capture_mode = "CHANGEME"
-monitor_strategy = "CHANGEME"
-max_image_kb = 500
-pause_on_idle = "CHANGEME"
-voice_pause_phrase_de = "CHANGEME"
-voice_pause_phrase_en = "CHANGEME"
-voice_resume_phrase_de = "CHANGEME"
-voice_resume_phrase_en = "CHANGEME"
-
-[brain.sub_jarvis]
-# Source-of-truth for the OpenClaw / Sub-Jarvis heavy-worker provider
-# (resolved at bootstrap by `jarvis.missions.init._worker_factory` ->
-# `SubJarvisWorker`). User-mandate 2026-05-13: stay on Frontier models,
-# user picks the provider here. Allowed values: grok | openai | gemini |
-# claude-api | openrouter (all mapped in
-# `jarvis.missions.openclaw.provider_map.MAPPINGS`).
-#
-# 2026-05-16: switched to claude-api so the worker routes through
-# ClaudeDirectWorker (bypasses OpenClaw, see BUG-023). Uses the user's
-# Claude Max OAuth via ~/.claude/.credentials.json. Fallbacks remain on
-# Gemini so the chain still works if the OAuth token expires or rate-limits.
-# 2026-05-18 (Welle 6): user switched from Claude Max to ChatGPT Plus/Pro.
-# Worker + Critic now route through CodexDirectWorker / Codex-direct-critic
-# which spawn `codex exec --json` directly via ChatGPT-OAuth from
-# ~/.codex/auth.json. Empty model leaves codex on its default
-# (configured under ~/.codex/config.toml or "gpt-5-codex" as ChatGPT default).
-# 2026-05-20 (HTML-news goal): forensics showed ChatGPT path hits usage-limit
-# + "sonnet model not supported on ChatGPT account" HTTP 400 + 630s timeout.
-# Switched back to claude-api so missions route through ClaudeDirectWorker
-# (BUG-023 fix). Claude Max OAuth is present in ~/.claude/.credentials.json
-# and ClaudeDirectWorker pulls deep_model (claude-opus-4-7) from
-# [brain.providers.claude-api].
-# 2026-05-20 (Welle 7): user mandate requires the real OpenClaw subprocess
-# (not the ClaudeDirectWorker shortcut). Switching to the new sentinel
-# "openclaw-claude" which routes through SubJarvisWorker → `openclaw agent
-# --local --json --model claude-cli/<model>` subprocess. Empirically
-# verified 2026-05-20: file writes succeed once SubJarvisWorker sets
-# agents.defaults.workspace to the per-mission worktree.
-# 2026-05-24 (REVERSAL of Welle 7): the real OpenClaw subprocess hangs ~480s.
-# It spawns a nested `claude` WITHOUT --permission-mode bypassPermissions and
-# never answers the permission-prompt frame -> FailoverError, mission dies
-# (~92% failure rate, 211/231 in missions.db). Routing the heavy worker through
-# ClaudeDirectWorker instead: `claude --print --permission-mode bypassPermissions`
-# direct, Claude Max OAuth on disk, NO Anthropic API. Same Opus 4.7, no wrapper.
-# Root-cause report: docs/plans/mission-failure-rootcause-2026-05-24/REPORT.html
-provider = "CHANGEME"
-model = "CHANGEME"
-fallback_provider = "CHANGEME"
-fallback_model = "CHANGEME"
-fallback_provider_2 = "CHANGEME"
-fallback_model_2 = "CHANGEME"
-
-[brain.routing]
-# Persona-Mandat Phase 3 — deterministische Spawn-Heuristik fuer den Router.
-# Router-Brain = Pure Dispatcher. Wenn ein Verb oder externer-System-Marker
-# trifft UND der Utterance NICHT in der Smalltalk-Allowlist ist, wird
-# spawn_openclaw verbatim (ohne LLM-Tool-Choice) aufgerufen.
-#
-# Defaults werden aus jarvis/core/config.py:BrainRoutingConfig geladen, wenn
-# diese Listen weggelassen oder leer sind. Die folgenden Eintraege sind
-# explizite Beispiele; loesche sie, um die Code-Defaults zu nehmen.
-spawn_verbs = "CHANGEME"
-    # Reparatur/Implementierung
-    "umsetz", "reparier", "fix", "behebe", "korrigier",
-    "implementier", "entwickel", "refactor", "debug", "repair",
-    # Analyse/Untersuchung — explizite Spawn-Trigger, sonst fragt das LLM
-    # ("Soll ich OpenClaw ranlassen?") statt direkt zu spawnen.
-    "analysier", "analyz", "untersuche", "untersuch", "pruefe", "prüfe",
-    "investigate", "examine", "inspect",
-    # Datei-/System-Aktion
-    "lies", "lese", "liest", "schreib", "schreibe", "schreibt",
-    "bau", "baue", "baut", "oeffne", "öffne", "oeffnet", "öffnet",
-    "installier", "deinstallier", "deploy",
-    "zeig", "zeige", "zeigt",
-    "mach", "mache", "macht", "machen",
-    # Englisch
-    "read", "write", "build", "open", "install", "show", "make",
-    # Spawn-Imperative — User sagt das Wort direkt. Voice-Session
-    # 2026-05-11 17:22: "Kannst du bitte einen Subagenten spawnen, welcher..."
-    # fiel ohne Match auf den LLM-Pfad zurueck und hing 40s im Gemini-
-    # CachedContent-Timeout. "spawn" + Konjugationen sind expliziter Trigger,
-    # damit die Latenz unter 2s bleibt.
-    "spawn", "starte", "start", "starten", "startet",
-    "delegier",
-]
-external_system_markers = "CHANGEME"
-    "pr", "prs", "issue", "issues", "repo", "repository",
-    "github", "gitlab", "branch",
-    # Subagent-Worte — Welle-4-Migration. User redet ueber den Worker,
-    # nicht ueber ein konkretes Verb ("einen Subagenten fuer Recherche").
-    # Marker greift auch ohne Verb-Hit; Smalltalk-Allowlist gewinnt
-    # weiterhin gegen Marker.
-    "subagent", "subagenten", "sub-agent", "sub-agents",
-    "openclaw", "open-claw",
-]
-smalltalk_allowlist = "CHANGEME"
-    "hallo", "hi", "hey", "moin", "guten morgen", "guten abend",
-    "auf wiedersehen", "tschuess", "tschüss", "bye",
-    "goodbye", "good morning", "good evening",
-    "wie geht", "how are you", "how's it going",
-    "was machst du", "was machen wir",
-    "danke", "thank you", "thanks",
-    "wie spaet", "wie spät", "what time",
-    "welcher tag", "what day",
-    "hauptstadt", "capital",
-    # 2026-05-01 — Phrasen die in der Praxis durchgerutscht sind und zu
-    # ungewollten Sub-Jarvis-Spawns gefuehrt haben (Voice-Session 2026-04-30
-    # 22:38, "es geht ab" → halluzinierter spawn_sub_jarvis).
-    "was geht", "es geht ab", "geht ab",
-    "alles gut", "alles fit", "alles klar", "passt schon",
-    "what's up", "whats up", "sup",
-]
-
-[brain.plausibility]
-# Persona-Mandat Phase 4 — Plausibilitaets-Schwellwerte vor Tool-Execution.
-# Greift NUR fuer ``risk_tier ∈ {ask, monitor}``. Whitelist-downgraded Tools
-# (effective tier ``safe``) laufen ohne Plausibility-Check durch — sonst
-# wuerde der Guard die Whitelist-Logik kaputtmachen.
-#
-# confidence_threshold: STT-Confidence < diesem Wert zaehlt als unsicher.
-#   Whisper liefert i.d.R. 0.6–0.95 fuer klare Aussprache; 0.5 ist eine
-#   defensive Schwelle. Bei 0.7+ wird selbst klare Aussprache haeufig
-#   als unsicher klassifiziert — nur erhoehen wenn man wirklich strikter
-#   sein will.
-#
-# stale_wake_seconds: Sekunden seit letztem Wake-Trigger, ab denen die
-#   aktuelle Utterance als stale gilt. Default 30s deckt das uebliche
-#   Voice-Session-Fenster ab.
-#
-# Failure-Mode 3 (Mandat): Manche STT-Provider (z.B. Grok-Voice-STT)
-# liefern keine Confidence. ``None`` wird konservativ als 0.0 behandelt —
-# triggert die Schwelle bei ``ask`` und fordert eine Bestaetigung.
-confidence_threshold = "CHANGEME"
-stale_wake_seconds = 30.0
-
-# OpenClaw-Bridge — default on since Welle 4 merged (commit 9dc37eca).
-# Vollstaendige Architektur: docs/openclaw-bridge.md (AD-1..AD-24, AP-OC1..AP-OC15).
-#
-# WICHTIG zum ``model``-Feld: Default ist leer (auskommentiert). Die Bridge
-# resolved bei leerem Feld den Frontier-Pro des aktiven Personal-Jarvis-
-# Providers ueber das AD-6-Mapping (gemini→google/gemini-3.1-pro-preview,
-# claude-api→anthropic/claude-opus-4-7, grok→xai/grok-4-fast, ...). So
-# folgt OpenClaw automatisch der Provider-Wahl unter [brain].primary; kein
-# Anthropic-Lock.
-#
-# AD-21 Pin-Version: ``version`` muss explizit gesetzt sein. Vor jedem Bump
-# Welle-1-Spike + Bridge-Tests laufen lassen, sonst Drift-Risiko.
-[harness.openclaw]
-enabled = "CHANGEME"
-version = "CHANGEME"
-binary_path = "CHANGEME"
-# model = "google/gemini-3.1-pro-preview"      # auskommentiert = folgt brain.primary
-time_cap_min = "CHANGEME"
-concurrency = "CHANGEME"
-# cost_cap_eur = 5.0                           # AD-20 reserved fuer v2-Cap
-state_dir_root = "CHANGEME"
-
-[harness.openclaw.notification]
-via = "CHANGEME"
-toast = "CHANGEME"
-voice_when_active = "CHANGEME"
-
-# Latenz-Sprint-1+2 (2026-04-30) — Master-Switches fuer Performance-Hebel.
-# Rollback-Strategie: jede Option auf `false` setzen + Voice-App neu starten,
-# dann laeuft der alte Pfad bit-identisch zur Vor-Sprint-Version.
-[performance]
-# A1 Sentence-Streaming-TTS (Sprint 1, live seit 2026-04-30):
-# Brain-Output wird Satz-fuer-Satz an die TTS gereicht waehrend das Brain
-# noch generiert. Time-to-First-Audio sinkt erfahrungsgemaess von ~9 s auf
-# ~2-3 s; Total-Latency von ~22 s auf ~6-8 s.
-# Bei `false` laeuft der klassische Pfad: Brain komplett -> Filter -> Speak.
-streaming_tts = true
-
-# B1 Anthropic Prompt-Caching (Sprint 2, Test-Branch latency-sprint-2-caching):
-# Setzt cache_control auf System-Prompt + letztes Tool-Schema, plus
-# Beta-Header fuer 1h-TTL. Bei Cache-Hit ~80 % TTFT-Reduktion auf
-# Anthropic-Calls; Cost auf gecachten Tokens auf 10 %. Quality identisch.
-# Default false, weil Test-Modus.
-anthropic_prompt_cache = true
-
-# B2 Gemini Context-Caching (Sprint 2):
-# Erstellt einmal beim ersten Brain-Call einen Cache-Eintrag mit System+Tools,
-# referenziert ihn in Folge-Calls. TTL 1h. Spart bei Voice-Sessions die
-# 20k-Token-Vorverarbeitung pro Turn — TTFT auf Gemini Pro fallt ~50 %.
-# Bei Quality-Drift, Cache-Init-Fehler oder unter-4096-Token-Prefix faellt
-# der Code automatisch auf den Direct-Pfad zurueck (kein Brain-Crash).
-gemini_context_cache = true
-
-[memory]
-recall_store = "CHANGEME"
-archival_store = "CHANGEME"
-embedding_model = "CHANGEME"
-retention_days_recall = 90
-data_dir = "CHANGEME"
-
-[memory.legacy_curator]
-# B4 Soft-Disable (2026-05-17). The Phase 0-2 Curator wrote facts to
-# data/workspace/{USER.md,SOUL.md,people/*.md}. Since B1 the WikiCurator
-# writes the same facts into wiki/obsidian-vault/. Running both produces
-# two diverging notebooks. Flip to true to bring the legacy writer back;
-# the legacy package and its files remain on disk either way so a Hart-
-# Cut migration can still be done later. Pinned in
-# scripts/config-soll.json to survive the drift-guard.
-enabled = false
-
-[memory.wiki.curator]
-# Long-term wiki curator (Phase B1). Provider-agnostic by design:
-# empty `provider` falls back to `brain.primary` so the wiki follows the
-# user's chosen Brain provider (currently `gemini`). Empty `model` falls
-# back to the resolved provider's `model` field under `brain.providers`.
-provider = "CHANGEME"
-model = "CHANGEME"
-max_input_tokens = "CHANGEME"
-max_output_tokens = "CHANGEME"
-timeout_s = 90.0
-
-[memory.wiki.session_rollup]
-# Mid-term memory tier (Phase B7). The rollup worker subscribes to the
-# `IdleEntered` bus event and digests the L2 episodes of a single work
-# session into a Markdown page under `data/workspace/sessions/`.
-#
-# session_idle_threshold_minutes:
-#     Idle longer than this marks "session ended". 120 (2h) bridges
-#     short breaks without flushing, captures end-of-day naturally.
-# min_episodes_for_rollup:
-#     Single-episode sessions rarely justify a digest. Skip them.
-# max_active_sessions:
-#     Sessions older than this rolling cap are moved to
-#     `_archive/sessions/`. Plan §1 says 5.
-enabled = true
-provider = "CHANGEME"
-model = "CHANGEME"
-session_idle_threshold_minutes = "CHANGEME"
-min_episodes_for_rollup = 1
-max_active_sessions = 5
-max_output_tokens = "CHANGEME"
-timeout_s = 30.0
-
-[wiki_integration]
-# Phase B5 — wiki write-wiring. Controls whether SessionRollupWorker (B7)
-# and WikiCurator (B1) are wired into the app startup and subscribed to
-# IdleEntered.
-enabled = true
-# Vault root relative to the repo root (same location as wiki/obsidian-vault/).
-vault_root = "CHANGEME"
-# Subscribe to IdleEntered — set false to disable automatic session rollup.
-subscribe_idle = "CHANGEME"
-# When Agent D's CuratorScheduler is not yet merged, fall back to calling
-# WikiCurator.ingest() directly (bypasses lock + cooldown).
-fallback_to_direct_ingest = "CHANGEME"
-
+# ── Safety: anti-confirmation-fatigue whitelist + hard blacklist ──
 [safety]
-default_tier = "CHANGEME"
-always_confirm_tiers = "CHANGEME"
-always_block_tiers = "CHANGEME"
+default_tier = "safe"
+always_confirm_tiers = ["ask"]
+always_block_tiers = ["block"]
 
 [safety.whitelist]
-# User-Preference: "Bypass-Permissions" für Standard-System-Aktionen.
-# Jede Zeile ist ein fnmatch-Pattern gegen "<tool_name> <serialisierte-args>".
-commands = "CHANGEME"
-    # Native Phase-2-Tools — alle ohne Approval auf safe downgraded
-    "open_app *",
-    "type_text *",
-    "run_shell *",
-    "search_web *",
-    "remember *",
-    # Phase-4 Harness-Dispatch — alle Sub-Agent-Calls ohne Approval
-    "dispatch_to_harness *",
-    # Phase-5.5 Sub-Agent-Dashboard — Router-Tools ohne Approval (sonst
-    # fragt Jarvis bei jedem Spawn nach, das ist explizit nicht erwuenscht)
-    "screenshot *",
-    "multi_spawn *",
-    "spawn_sub_jarvis *",
-    # Classic Tool-Patterns
-    "browser-use *",    "python *.py",
-    "python -c*",
-    "git status",
-    "git log *",
-    "git diff *",
+# fnmatch patterns against "<tool_name> <args>"; a match downgrades to "safe".
+commands = [
+    "open_app *", "type_text *", "run_shell *", "search_web *", "remember *",
+    "dispatch_to_harness *", "screenshot *",
+    "git status", "git log *", "git diff *",
 ]
 
 [safety.blacklist]
-commands = "CHANGEME"
-    "format *",
-    "rm -rf /",
-    "del /f /s /q C:\\",
-    "shutdown /p",
-    "reg delete HKLM\\*",
-]
+commands = ["format *", "rm -rf /", "del /f /s /q C:\\", "shutdown /p", "reg delete HKLM\\*"]
 
+# ── Audio I/O ──
 [audio]
-input_device = "CHANGEME"
-output_device = "CHANGEME"
+input_device = "auto"        # "auto" | shortest-unique device-name token (e.g. "PRO X")
+output_device = "auto"
 echo_cancellation = true
-sample_rate = 16000
-frame_ms = 10
+sample_rate = 16000          # mandatory 16 kHz (AP-L-16)
 
+# ── UI / tray ──
 [ui]
 tray_enabled = true
 admin_api_port = 47821
 startup_chime = true
-# Overlay-Style: nur "mascot" ist gueltig; alte "orb"-Requests werden ignoriert.
-# ENV JARVIS_ORB_STYLE ueberschreibt diesen Wert zur Laufzeit.
-orb_style = "CHANGEME"
-orb_mascot_path = "CHANGEME"
 
-[telemetry]
-flight_recorder = true
-otel_endpoint = "CHANGEME"
-metrics_port = 9090
-log_level = "CHANGEME"
+# ── Memory ──
+[memory]
+recall_store = "sqlite"
+archival_store = "chroma"
+data_dir = "./data"          # per-user runtime data (gitignored)
 
-[sessions]
-# Voice-Session-Recording (Transcription-View). Schreibt jede Voice-Session
-# (Wake -> Hangup) inkl. User-Transkripten, Jarvis-Antworten, Tool-Calls
-# und Latenzen in eine SQLite-DB. UI-Tab "Transkription" zeigt sie an.
-# Read-only zum Voice-Hot-Path — der Recorder hoert nur am EventBus mit.
+# ── Knowledge wiki (Obsidian vault) — self-creates an empty vault on first run ──
+[wiki_integration]
 enabled = true
-db_path = "CHANGEME"
-retention_days = "CHANGEME"
+vault_root = "wiki/obsidian-vault"
 
-[security]
-# Admin-Pass fuer sensitive UI-Aktionen (aktuell: Bearbeiten von Builtin-Skills).
-# Leer = Feature gesperrt. Zum Aktivieren den SHA-256-Hex des Passworts eintragen, z.B.:
-#   python -c "import hashlib; print(hashlib.sha256(b'mein-pass').hexdigest())"
-# Die Desktop-App fragt das Passwort dann bei jedem Builtin-Edit ab.
-admin_password_hash = "CHANGEME"
-
-# ======================================================================
-# Phase 5 — Sehen / Handeln / Admin / Async / Kontrolle
-# ======================================================================
-# Alle Sections default `enabled = false`, damit bestehende Installationen
-# ohne Eingriff weiterlaufen. User schaltet Features einzeln frei.
-
-[vision]
-enabled = false
-# Persona-Mandat Phase 5 — Vision-Antizipation beim Sub-Jarvis-Spawn.
-# Default OFF: Active-Window-Hint kostet 200-400 ms zusaetzliche UIA-Tree-
-# Latenz pro Spawn, lohnt sich nicht fuer jeden User-Turn. Aktivierung
-# wahlweise via ENV ``JARVIS_VISION_CONTEXT=1`` oder hier:
-#   context_hint_on_spawn = true
-# Latenz-Cap pro Probe (Mandat: 250 ms). Bei Timeout oder pywinauto-Crash
-# (Failure-Mode 4) faellt der Spawn auf no-hint zurueck.
-context_hint_on_spawn = false
-timeout_s = 0.25
-
-[vision.pruning]
-max_depth = 6
-max_nodes = 150
-fallback_to_screenshot_if_overflow = true
-
-[computer_use]
-# 2026-04-29: Phase 5/6 produktiv geschaltet. pyautogui installiert,
-# Wiring auf Pydantic-Model ComputerUseConfig (jarvis/core/config.py).
-enabled = true
-max_steps = 20
-max_replans = 2
-per_step_timeout_s = 30.0
-verify_after_each_step = true
-# Empty = auto: the CU loop resolves the planner model from
-# manager._deep_model(active_provider) at runtime, so a "wechsel auf
-# gemini" voice command picks the Gemini deep model automatically. Pin
-# a value here only when you want to force a specific planner; the
-# override is silently discarded when its provider-family does not
-# match active_provider (e.g. "claude-opus-4-7" only takes effect when
-# brain.primary is a claude-* provider).
-plan_model = "CHANGEME"
-step_model = "CHANGEME"
-# 2026-05-29: reverted to false. The native Gemini computer_use engine
-# (jarvis/harness/native_computer_use.py, Wave 3) cannot yet emit a
-# terminal done/fail action (map_native_action has no done/fail mapping),
-# so a native-driven loop never terminates on success — it runs the full
-# step budget and exits budget-exhausted (exit 4 = failure) even after the
-# task is visibly done, and on a desktop goal the browser-environment model
-# launches Chrome via open_web_browser. Keep false until native can
-# terminate and uses a desktop environment. Mirrored in config-soll.json.
-prefer_native = false
-
-[awareness]
-# Phase A0+ (Continuous Context Layer). Hot-disable via enabled=false:
-# Factory baut den AwarenessManager dann gar nicht erst.
-enabled = true
-
-[awareness.watchers]
-# Werden ab Phase A1 vom AwarenessManager gestartet.
-enable_window = true
-enable_idle = "CHANGEME"
-idle_threshold_minutes = "CHANGEME"
-
-[awareness.quotas]
-# Mirror der StorageQuota-Defaults; ab Phase A2 vom StoryTracker konsumiert.
-max_bytes = "CHANGEME"
-max_episodes = 1000
-
-[awareness.privacy]
-# SYSTEM-Patterns. User kann via preferences.toml additiv blocken
-# (nicht entfernen) — analog zu jarvis/safety/risk_tier.py.
-blocked_processes = "CHANGEME"
-blocked_title_patterns = "CHANGEME"
-    "*Banking*", "*PayPal*", "*Stripe*Dashboard*",
-    "*Sparkasse*", "*Postbank*", "*Online-Banking*",
-    "*Passwort*", "*Password*Manager*",
-    "*Inkognito*", "*Private Browsing*",
-]
-allowed_processes = "CHANGEME"
-default_when_unknown = "CHANGEME"
-
-[awareness.verdichter]
-# Phase A2 (Plan §6 D-A4): Episode-Summary via DIREKTER Haiku-Call.
-# NICHT via spawn_sub_jarvis — siehe Hard Negative §6. Verdichter holt
-# sich seine Brain-Instance ueber BrainProviderRegistry und ruft
-# brain.complete() mit asyncio.wait_for(timeout_s) Cap.
-enabled = true
-provider = "CHANGEME"
-model = "CHANGEME"
-max_input_tokens = "CHANGEME"
-max_output_tokens = "CHANGEME"
-timeout_s = 5.0
-
-[awareness.story]
-# Phase A2 (Plan §6): StoryTracker-Trigger-Logik. Subscriben auf FrameUpdated/
-# IdleEntered/ResponseGenerated, akkumulieren in EpisodeBuilder, flush bei
-# Trigger (App-Switch / Idle / Hard-Timer). enabled=false haelt L1 (Watchers)
-# am Leben aber persistiert keine Episoden — Privacy-Modus / Debug ohne LLM-Cost.
-enabled = true
-buffer_max = 200
-episode_min_duration_s = 60
-episode_max_duration_min = 30
-hard_timer_min = 5
-
-[awareness.probes]
-# Phase A5-Lite (Plan §9): GitProbe + FileSystemProbe reichern FrameSnapshot
-# mit git_branch + open_file_hint an. Probes laufen parallel mit 200ms total
-# budget. Hard-Negative: Probe-Errors propagieren NIE in den Watcher-Pfad.
-# MCP+LSP sind nach Phase 6 verschoben (Plan §9 sanktioniert "Optional").
-enabled = true
-enable_git = true
-enable_filesystem = true
-total_budget_ms = 200
-fs_max_watched_roots = "CHANGEME"
-
-[admin_helper]
-enabled = false
-# Named-Pipe-Name kann leer bleiben — der Client bildet
-# \\.\pipe\jarvis-admin-<user-sid> automatisch.
-pipe_name = "CHANGEME"
-
-[task_queue]
-enabled = false
-startup_cleanup = true
-retention_days_completed = 30
-
-[kill_switch]
-enabled = false
-hotkey = "CHANGEME"
-enable_voice = "CHANGEME"
-enable_tray = true
-
-[cost]
-enabled = false
-per_task_eur = 2.0
-per_day_eur = 30.0
-cooldown_minutes = 60
-warn_at_fraction = 0.8
-eur_per_usd = 0.92
-
-[cost.prices."claude-haiku-4-5-20251001"]
-usd_per_1m_input = 1.0
-usd_per_1m_output = 5.0
-
-[cost.prices."claude-opus-4-8"]
-usd_per_1m_input = 15.0
-usd_per_1m_output = 75.0
-
-[cost.prices."claude-opus-4-7"]
-usd_per_1m_input = 15.0
-usd_per_1m_output = 75.0
-
-[cost.prices."claude-sonnet-4-6"]
-usd_per_1m_input = 3.0
-usd_per_1m_output = 15.0
-
-[cost.prices."gemini-2.5-flash"]
-usd_per_1m_input = 0.30
-usd_per_1m_output = 2.50
-
-[cost.prices."gemini-2.5-pro"]
-usd_per_1m_input = 1.25
-usd_per_1m_output = 10.0
-
-[cost.prices."gpt-4o"]
-usd_per_1m_input = 5.0
-usd_per_1m_output = 20.0
-
-[sub_agents]
-github_auto_push = false
-github_repo_url = "CHANGEME"
-max_verification_iterations = 3
-output_dir_mirror_desktop = "CHANGEME"
-
-[telemetry.flight_recorder_v2]
-# Phase-5 Flight-Recorder (JSONL tagesrotiert, Blob-Externalisierung).
-# Der alte `[telemetry] flight_recorder = true` bleibt fuer Kompatibilitaet.
-# Phase 8.0: enabled=true ist Default — die Subscriber-Anbindung passiert
-# in jarvis/ui/web/server.py:WebServer.__init__ (Wildcard auf bus).
-# Wenn deaktiviert, wird kein Recorder erzeugt, keine JSONL geschrieben.
-enabled = true
-data_dir = "CHANGEME"
-retention_days = 14
-blob_inline_limit_bytes = 65536
-rotation_size_bytes = 524288000
-
-[board]
-
-[board.federation]
-# Federation-Backend (Phase C). Default off — User muss das Backend
-# selbst deployen und enabled = true setzen.
-#
-# Admin-Token + Privkey liegen im Credential Manager:
-#   - JARVIS_BOARD_ADMIN_TOKEN      (Initial-Pairing only)
-#   - JARVIS_BOARD_SYNC_PRIVKEY_HEX (Push-Signatur)
-#
-# Wenn der Privkey-Key fehlt, generiert sync.py beim ersten Start ein
-# neues Ed25519-Paar und speichert es im Credential Manager. Der Pubkey
-# wird dann automatisch via Admin-Token registriert.
-enabled = false
-backend_url = "CHANGEME"
-sync_interval_s = 60
-display_name = "CHANGEME"
-
-# ======================================================================
-# Phase 6 — Self-Healing Worker-Critic-Loop (ADR-0009)
-# ======================================================================
-# Worker-Layer (T1 isolation + T2 workers) ist additiv zu Phase 5 und
-# default off — neue Sub-Agent-Missions laufen weiterhin via Phase-5-
-# `SubJarvisManager`, bis der MissionManager (Prompt 1+) live ist.
-#
-# MAX_CRITIC_LOOPS ist absichtlich NICHT hier konfigurierbar — siehe
-# ADR-0009 §2: hardcoded auf 3, weil parametrisieren Cost-Drift einlaedt.
-
-[phase6.orchestrator]
-# Gleichzeitige Mission-Caps (Single-User-Workstation, RTX 5070 Ti, 32 GB).
-max_missions = 8
-max_workers_per_mission = 5
-default_idle_timeout_seconds = "CHANGEME"
-default_hard_timeout_seconds = "CHANGEME"
-heartbeat_interval_seconds = "CHANGEME"
-
-[phase6.budget]
-# Cost-Discipline aus ADR-0009 §4 + Research-Doc Decision Point #9.
-# Per-Mission Hard-Cap, Daily-Cap quer ueber alle Missions.
-per_mission_usd = 5.0
-daily_usd = 50.0
-warn_pct = "CHANGEME"
-
-[phase6.models]
-# Worker = Sonnet (Default), Critic-Eskalation Sonnet -> Opus auf Iter 2,
-# Log-Triage = Haiku (cheap pre-summarize). Hauptjarvis bleibt unveraendert.
-worker_default = "CHANGEME"
-critic_default = "CHANGEME"
-critic_escalated = "CHANGEME"
-log_triage = "CHANGEME"
-
-[phase6.isolation]
-# Worktree-Wurzel relativ zum repo_parent (Research-Doc §E):
-#   <repo_parent>/sub-agents-outputs/<run-dir>/tasks/<NN>__<slug>/workspace/
-worktree_root = "CHANGEME"
-windows_job_objects = "CHANGEME"
-defender_exclusions = "CHANGEME"
-
-[phase6.safety]
-# PostToolUse-Scanner gegen Prompt-Injection in Worker-Output (Risk #7).
-# high+critical-Severity blockt; med/low werden geloggt aber nicht geblockt.
-injection_scanner_enabled = true
-# Block-Liste fuer geschuetzte File-Pfade (zusaetzlich zur Default-Liste in
-# jarvis/missions/safety/path_guard.py — SSH/AWS/.env/Cert-Keys etc.).
-# Format: fnmatch-Globs gegen normalisierte Posix-Pfade.
-extra_blocked_globs = "CHANGEME"
-# Pre-Mission-Gate fuer destruktive Patterns (rm -rf, drop table, force-push).
-# UI zeigt AlertDialog bei Match; Voice-Confirm-Pfad ist deferred (Phase 7).
-destructive_confirm_enabled = true
-
-[phase6.voice]
-# Decision §1: Voice-Readback nur fuer voice-getriggerte Missions
-# (source_actor=hauptjarvis). UI-getriggerte Missions kriegen Toast.
-announce_voice_only = "CHANGEME"
-# ADR-0009 §"Offen" — default OFF damit der User nicht bei jeder Iteration
-# "naechster Versuch laeuft" hoert. Opt-in fuer Forensik-Modus.
-announce_critic_loop = false
-language_default = "CHANGEME"
-
-[phase6.cleanup]
-# Verzeichnisse aelter als N Tage werden bei Startup-Sweep (oder daily, opt-in)
-# entfernt. Default 14 — passt zu typischer Code-Review-Zyklus-Laenge.
-days = 14
-# Decision §4: Startup-Sweep IMMER. Daily-Cron nur opt-in (kein Daemon-Overhead).
-startup_sweep = true
-daily = false
-
-# Phase P.7 (Plan-Modus AD-P-7 + AD-P-10).
-[plan]
-# Optional Audio-Hinweis beim Plan-Modus-Eintritt ("Lass mich kurz mit dir
-# planen…"). Default off — Orb-Color + Chime sind genug Multi-Modal-Signal.
-enter_announcement = false
-# Audit-JSONL-Append in data/self_mod.log (AD-P-7-Schema). Default on.
-audit_enabled = true
-# JSON-File pro Session in data/plan_sessions/. AP-P-4: immer persistieren.
-persistence_enabled = true
-# Chime + Orb-Color-Wechsel beim Plan-Mode-Enter (AP-P-10 Multi-Modal).
-ux_enabled = true
-
-
-# ════════════════════════════════════════════════════════════════════
-# [review] — Quality-Gate-Pipeline (Phase 8, ADR-Plan §6.4)
-# ════════════════════════════════════════════════════════════════════
-# Selektive Review-Pipeline für Sub-Jarvis-Outputs. NICHT für Smalltalk
-# oder Tool-Routing — Hauptjarvis ruft `dispatch_with_review` explizit auf.
-# Mutation dieser Werte ist NICHT in der Self-Mod-Allowlist (Plan §AD-1).
-
-[review]
-enabled = true
-max_iterations = 3
-hard_ceiling = 5
-worker_model = "CHANGEME"
-reviewer_model = "CHANGEME"
-reviewer_provider = "CHANGEME"
-output_dir = "CHANGEME"
-audit_log = "CHANGEME"
-gc_after_days = 30
-default_rubric = "CHANGEME"
-
-[review.rubrics.default]
-items = "CHANGEME"
-    "task_completion",
-    "tool_output_fidelity",
-    "completeness",
-    "voice_friendliness",
-    "tool_use_efficiency",
-]
-
-[review.rubrics.code_generation]
-items = "CHANGEME"
-    "task_completion",
-    "no_stub_code",
-    "tests_pass_locally",
-    "no_secret_leakage",
-    "voice_friendliness",
-]
-
-[review.rubrics.skill_authoring]
-items = "CHANGEME"
-    "frontmatter_valid",
-    "trigger_keywords_unique",
-    "instructions_actionable",
-    "no_malicious_bash",
-]
-
-[review.rubrics.research]
-items = "CHANGEME"
-    "task_completion",
-    "factual_accuracy",
-    "source_citation",
-    "voice_friendliness",
-]
-
-# ============================================================
-# Phase 9 Overlay (Edge-Glow + Mascot)
-# ============================================================
-[overlay]
-# BUG-013-Workaround (2026-05-10): Edge-Glow-Subprocess crashloopt
-# mit Heartbeat-Timeout — Subprocess-WSClient-Watchdog feuert nach 3s.
-# Der Mascot-Orb laeuft als Tk-Window im Hauptprozess
-# (siehe DesktopApp._start_speech_and_orb) und ist davon unabhaengig.
-# Re-enable wenn der Heartbeat-Bug in jarvis/overlay/bridge.py gefixt ist.
-enabled = false
-edge_glow_enabled = false
-mascot_enabled = true
-all_monitors = false
-hide_on_fullscreen = "CHANGEME"
-hide_from_capture = "CHANGEME"
-respect_reduced_motion = true
-animations_enabled = true
-
-# ============================================================
-# Pre-Thinking Ack Flash-Brain (parallel butler-style ack LLM)
-# ============================================================
-# Spec: docs/superpowers/specs/2026-05-11-pre-thinking-ack-flash-brain-design.md
-[ack_brain]
-# Feature on by default — Etappen 1..5 (foundation, prompts, circuit
-# breaker, provider adapters, voice-pipeline wiring) are committed.
-# Disable here only for A/B comparisons.
-enabled = true
-# 2026-05-14 16:30: HARD-PINNED to "gemini" per user mandate.
-# Live ListModels call surfaced that BUG-017 (403) is effectively
-# resolved — generateContent against Gemini Flash works. There is
-# NO plain `gemini-3.1-flash` model on the API; the actual 3.1
-# flash variant is `gemini-3.1-flash-lite` (set below). Latency
-# 1100-1400ms warm (close to 1500ms timeout), so timeout_ms raised
-# to 2500 for safety margin.
-provider = "CHANGEME"
-# 2026-05-14 17:05: bumped from 2500 to 4000ms — live voice-test at 17:00
-# showed 1 timeout where Gemini Flash Lite took 3100ms (likely cold-spike
-# or API load). 4000ms catches the long-tail without blocking the
-# suppress-gate too long.
-timeout_ms = 4000
-on_failure = "CHANGEME"
-circuit_breaker_threshold = 3
-circuit_breaker_cooldown_s = 60
-# User-Wunsch 2026-05-13: Flash-Brain-Ack soll NICHT bei schnellen Direkt-
-# Antworten triggern (er fuehlt sich dann redundant an). Nach Generierung
-# des Ack wartet die Speech-Pipeline diese Zeit; wenn das Haupt-Brain in
-# der Zeit anfaengt zu antworten (turn-state -> JARVIS_SPEAKING/LISTENING),
-# wird der Ack still gedroppt. Nur wenn Brain laenger braucht, kommt der
-# Ack als "ich arbeite noch dran"-Hinweis. 0 deaktiviert den Gate.
-suppress_if_brain_faster_than_ms = 2000
-
-[ack_brain.providers.gemini]
-# 2026-05-14 16:30: user wants "Gemini 3.1 Flash". The actual model name
-# on Google's /v1beta is `gemini-3.1-flash-lite` (no plain ...-flash for
-# 3.1 — only -lite/-image/-tts variants exist). Empirical latency from
-# live ListModels test: 1100-1400ms warm. Output: "Guten Tag, wie kann
-# ich helfen?" (German native, persona-compatible). max_output_tokens
-# raised to 60 because 40 truncated a sentence mid-word in testing.
-model = "CHANGEME"
-api_key_secret = "CHANGEME"
-temperature = 0.6
-max_output_tokens = "CHANGEME"
-
-[ack_brain.providers.grok]
-# 2026-05-13: "grok-4-flash" returns 400 "Model not found" from xAI.
-# Valid fast variant is "grok-4-fast-non-reasoning" (empirically
-# validated by the parallel persona-v2.1 smoke battery).
-model = "CHANGEME"
-api_key_secret = "CHANGEME"
-temperature = 0.6
-max_output_tokens = "CHANGEME"
-
-[ack_brain.providers.openai]
-model = "CHANGEME"
-api_key_secret = "CHANGEME"
-temperature = 0.6
-max_output_tokens = "CHANGEME"
-
-[ack_brain.providers.ollama]
-# 2026-05-14: qwen2.5:7b is the actually-installed model on this box
-# (`ollama list` confirms). llama3.1:8b is NOT installed — using it
-# would 404 the entire flash-brain. qwen2.5:7b runs in 800-1000ms warm,
-# speaks German natively, and fits the 1500ms timeout.
-model = "CHANGEME"
-endpoint = "CHANGEME"
-temperature = 0.6
-max_output_tokens = "CHANGEME"
-
-[local_action]
-enabled = true
-direct_timeout_s = "CHANGEME"
-harness_timeout_s = 30.0
-
-[overlay.mascot]
-# Pin keys (position_monitor / position_x_relative / position_y_relative)
-# are written by the orb on a successful drag and re-read on boot.
-# Cleared 2026-05-18 (BUG-027): a stale pin on DISPLAY2 made the orb spawn
-# invisibly. Leave this section empty unless you want to override the
-# defense via `allow_secondary_monitor_pin = true`.
-
-# ============================================================
-# Speech pipeline sub-configs
-# ============================================================
-
-[speech]
-# Container for speech sub-configs. Speech surface settings that already
-# have dedicated top-level blocks (stt, tts, trigger) are unchanged; new
-# sub-systems live here to avoid polluting the root namespace.
-
-[speech.completeness]
-# Utterance-completeness pre-processing classifier.
-# Spec: docs/superpowers/specs/2026-05-25-utterance-completeness-design.md §6
-#
-# When enabled, a fast deterministic classifier (regex/heuristic, no LLM)
-# runs before the main agent on every finalized transcript.  Incomplete or
-# aborted utterances emit a short signal and stay in LISTENING instead of
-# executing a half-command.  The "when in doubt, execute" bias means the
-# classifier only fires on clear incomplete/abort signals; the gray zone
-# always flows through to the brain.
-enabled = true
-signal_mode = "CHANGEME"
-pending_discard_s = "CHANGEME"
-max_pending_fragments = 2
-llm_escalation_enabled = "CHANGEME"
-
-# ============================================================
-# Latency instrumentation (LATENCY_REPORT_001 — Wave 0 baseline)
-# ============================================================
-#
-# Per-turn voice hotpath telemetry. Subscribes to LatencyTurnComplete and
-# appends one self-contained row per turn to state/latency_log.jsonl.
-#
-# Activation precondition for the live 10-turn baseline:
-#   docs/diagnostics/LATENCY_REPORT_001.md §4 (activation runbook).
-#
-# Aggregation:
-#   python -m jarvis.tools.latency_report --last 10 --markdown
-#
-# The writer is off-by-default everywhere except this branch; pinned to
-# true here AND mirrored in scripts/config-soll.json so the Drift-Guard
-# (BUG-010 defense) does not roll it back between turns.
-
-[latency]
-enabled = true
-log_jsonl = true
-log_path = "CHANGEME"
-
-[persona]
-name = "CHANGEME"
-
+# ── Login autostart — OFF by default; enable per machine ──
 [autostart]
-enabled = true
+enabled = false
+
+# Phase-5/6 features (vision, computer_use, admin, missions, board, telephony)
+# default to enabled = false in code. Enable them individually once configured;
+# see jarvis/core/config.py for every available section and its defaults.

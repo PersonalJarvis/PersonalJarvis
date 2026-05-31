@@ -118,7 +118,7 @@ async def test_approved_emits_announcement(store_and_bus) -> None:
     # verbatim (ADR-0009). The summary is name-neutral: it carries the
     # status phrase, no owner name, and never "Sir".
     assert ann.text == "Mission abgeschlossen."
-    assert "the maintainer" not in ann.text
+    assert "Alex" not in ann.text
     assert "Sir" not in ann.text
     assert ann.language == "de"
     assert ann.priority == "normal"

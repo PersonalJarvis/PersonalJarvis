@@ -99,7 +99,7 @@ class WhoAmITool:
 
         Strategie: wir sammeln die staerksten Signale (Name, Kommunikationsstil,
         Werte, Pet Peeves) in natuerlichen Saetzen. Kein "Laut Profil...",
-        sondern direkt "Du heisst the maintainer und magst direkte Antworten."
+        sondern direkt "Du heisst Alex und magst direkte Antworten."
         """
         identity = meta.get("identity", {}) or {}
         communication = meta.get("communication", {}) or {}

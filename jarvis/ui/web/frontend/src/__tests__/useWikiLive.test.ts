@@ -88,8 +88,8 @@ describe("useWikiLive", () => {
     await act(async () => {
       MockWebSocket.instances[0].deliver({
         type: "page_changed",
-        slug: "harald",
-        path: "entities/harald.md",
+        slug: "sam",
+        path: "entities/sam.md",
         kind: "modified",
       });
       await Promise.resolve();
@@ -99,9 +99,9 @@ describe("useWikiLive", () => {
     expect(keys).toEqual(
       expect.arrayContaining([
         ["wiki", "tree"],
-        ["wiki", "page", "harald"],
+        ["wiki", "page", "sam"],
         ["wiki", "graph"],
-        ["wiki", "backlinks", "harald"],
+        ["wiki", "backlinks", "sam"],
       ]),
     );
     expect(result.current.lastEventAt).not.toBeNull();

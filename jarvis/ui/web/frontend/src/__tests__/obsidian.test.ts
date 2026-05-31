@@ -3,10 +3,10 @@ import { buildObsidianUrl, VAULT_NAME } from "@/lib/obsidian";
 
 describe("buildObsidianUrl", () => {
   it("builds the expected URL for a simple vault-relative path", () => {
-    const url = buildObsidianUrl("entities/harald.md");
+    const url = buildObsidianUrl("entities/sam.md");
     expect(url).toBe(
       `obsidian://open?vault=${encodeURIComponent(VAULT_NAME)}&file=${encodeURIComponent(
-        "entities/harald.md",
+        "entities/sam.md",
       )}`,
     );
   });

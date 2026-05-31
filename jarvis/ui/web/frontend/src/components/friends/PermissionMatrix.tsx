@@ -1,4 +1,4 @@
-// === F-FRIENDS [F4] · feature/friends-section · the maintainer-2026-05-01 ===
+// === F-FRIENDS [F4] · feature/friends-section · alex-2026-05-01 ===
 import { cn } from "@/lib/utils";
 import type { StatusProfile } from "@/hooks/useFriends";
 

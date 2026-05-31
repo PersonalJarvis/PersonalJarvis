@@ -19,11 +19,29 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import UUID, uuid4
 
-from jarvis.core.protocols import Brain, BrainMessage, BrainRequest, Tool
+from jarvis.core.protocols import Brain, BrainMessage, BrainRequest, ImageBlock, Tool
 from jarvis.safety.tool_executor import ToolExecutor
 
 from .iteration_budget import IterationBudget
 from .streaming import StreamingAggregate, aggregate, aggregate_with_consumer
+
+
+def _images_from_artifacts(artifacts: object) -> list[ImageBlock]:
+    """Extract ImageBlocks from a tool's artifacts (Wave 2 on-demand vision).
+
+    A vision-capable tool (e.g. the screenshot tool) returns
+    ``artifacts=({"type": "image", "mime": ..., "data": <base64>},)``. Each image
+    artifact becomes an ImageBlock so it can ride on a user-role message back into
+    the conversation. Non-image / malformed artifacts are skipped.
+    """
+    blocks: list[ImageBlock] = []
+    for art in artifacts or ():
+        if isinstance(art, dict) and art.get("type") == "image" and art.get("data"):
+            blocks.append(ImageBlock(
+                mime=str(art.get("mime") or "image/jpeg"),
+                data_b64=str(art["data"]),
+            ))
+    return blocks
 
 log = logging.getLogger(__name__)
 
@@ -66,7 +84,7 @@ _INSTRUCTIONAL_QUESTION_RE = re.compile(
 # These utterances must NEVER trigger side-effect tools — the Curator
 # (jarvis/memory/curator/) extracts the facts automatically in the background
 # and merges them into USER.md. Observation 2026-05-05: Gemini-3-Flash-Preview
-# interpreted "Ich heiße the maintainer" as a task and spawned a Phase-6
+# interpreted "Ich heiße Personal Jarvis Maintainer" as a task and spawned a Phase-6
 # worker for a manual USER.md edit (failed with exit_code=1) —
 # a clear tool-choice misfire in weaker models.
 _SELF_IDENTIFICATION_RE = re.compile(
@@ -357,6 +375,10 @@ class ToolUseLoop:
                 tool_args = tc.get("input", {})
                 call_id = tc.get("id", "")
                 final_agg.tool_calls.append(dict(tc))
+                # Wave 2: reset per tool-call so a guard/refusal branch on a
+                # later iteration cannot reuse a stale executor result when we
+                # check for image artifacts below.
+                result = None
 
                 tool = self._tools.get(tool_name)
                 stt_blocked, stt_reason = (
@@ -532,6 +554,24 @@ class ToolUseLoop:
                     tool_call_id=call_id,
                     name=tool_name,
                 ))
+
+                # Wave 2 (vision-on-demand): if the tool returned image
+                # artifact(s), feed them back as a user-role message so a
+                # vision-capable provider can actually see them on the next
+                # iteration. A tool-role message becomes a Gemini functionResponse
+                # (no image support), so the image MUST ride on a user message.
+                # Gated on a real execution — the refusal/guard branches above
+                # leave result=None, so this only fires for tools that ran.
+                if result is not None:
+                    _img_blocks = _images_from_artifacts(
+                        getattr(result, "artifacts", ()) or ()
+                    )
+                    if _img_blocks:
+                        current_messages.append(BrainMessage(
+                            role="user",
+                            content="(Tool screenshot — describe or use it as needed.)",
+                            images=tuple(_img_blocks),
+                        ))
 
             # Budget check after execution
             if self._budget.exceeded():

@@ -22,8 +22,13 @@ from typing import Any
 
 import pytest
 
-from jarvis.missions.critic.runner import CriticRunner
-from jarvis.missions.critic.verdict import REQUIRED_AXES
+from jarvis.missions.critic.runner import (
+    CriticRunner,
+    _iter_balanced_json_objects,
+    _strip_json_fences,
+    _validate_verdict_tolerant,
+)
+from jarvis.missions.critic.verdict import REQUIRED_AXES, CriticVerdict
 
 
 def _valid_verdict_json(verdict: str = "approve") -> str:
@@ -343,3 +348,178 @@ async def test_claude_direct_skips_openclaw_json_materialisation(
     assert not (state_dir / "openclaw.json").exists(), (
         "claude-direct branch must not touch the OpenClaw state dir"
     )
+
+
+# ---------------------------------------------------------------------------
+# Over-long TTS summary regression (mission 019e7f6d, 2026-05-31 21:08/21:09).
+#
+# The critic returned a fully valid `approve` verdict over a rich 597-line
+# HTML deliverable, but `summary` (322 chars) and `summary_de` (322 chars)
+# exceeded the `max_length=280` TTS cap on `CriticVerdict`. Pydantic rejected
+# the whole object on BOTH the first attempt and the adversarial-reframe
+# retry, the runner returned None twice, and the mission was marked
+# `critic_unavailable` -- discarding the worker's real work. The richer the
+# worker output, the longer the critic summary prose, so this false-negative
+# bites MORE often as worker quality improves.
+# ---------------------------------------------------------------------------
+
+
+def _verdict_dict(
+    *,
+    verdict: str = "approve",
+    summary: str = "ok",
+    summary_de: str = "ok",
+) -> dict:
+    """A schema-valid CriticVerdict dict with configurable summary fields."""
+    return {
+        "verdict": verdict,
+        "axes": {
+            ax: {"status": "pass", "evidence": ["src/x.py:1"]}
+            for ax in REQUIRED_AXES
+        },
+        "issues": [],
+        "correction_instruction": "",
+        "summary": summary,
+        "summary_de": summary_de,
+        "confidence": 0.92,
+        "suggested_next_action": "accept",
+    }
+
+
+class TestValidateVerdictTolerant:
+    """`_validate_verdict_tolerant` truncates only the over-long TTS summary
+    fields and never weakens any other schema check."""
+
+    def test_within_cap_is_unchanged(self) -> None:
+        payload = json.dumps(_verdict_dict(summary="short", summary_de="kurz"))
+        verdict = _validate_verdict_tolerant(payload)
+        assert verdict.verdict == "approve"
+        assert verdict.summary == "short"
+        assert verdict.summary_de == "kurz"
+
+    def test_over_long_summary_is_truncated_not_rejected(self) -> None:
+        long_en = "A" * 322  # the real mission's summary length
+        long_de = "B" * 322  # the real mission's summary_de length
+        payload = json.dumps(_verdict_dict(summary=long_en, summary_de=long_de))
+        verdict = _validate_verdict_tolerant(payload)
+        assert verdict.verdict == "approve"
+        assert len(verdict.summary) <= 280
+        assert len(verdict.summary_de) <= 280
+        assert verdict.summary.startswith("AAA")
+        assert verdict.summary_de.startswith("BBB")
+
+    def test_only_summary_de_over_long(self) -> None:
+        payload = json.dumps(_verdict_dict(summary="fine", summary_de="C" * 400))
+        verdict = _validate_verdict_tolerant(payload)
+        assert verdict.summary == "fine"
+        assert len(verdict.summary_de) <= 280
+
+    def test_other_validation_error_still_raises(self) -> None:
+        # Missing the required `confidence` field -- NOT a summary problem.
+        bad = _verdict_dict()
+        del bad["confidence"]
+        bad["summary"] = "Z" * 400  # also over-long, but a real error coexists
+        with pytest.raises(ValueError):
+            _validate_verdict_tolerant(json.dumps(bad))
+
+    def test_bad_enum_still_raises(self) -> None:
+        bad = _verdict_dict()
+        bad["suggested_next_action"] = "not_a_real_action"
+        bad["summary"] = "Z" * 400
+        with pytest.raises(ValueError):
+            _validate_verdict_tolerant(json.dumps(bad))
+
+    def test_invalid_json_raises_value_error(self) -> None:
+        with pytest.raises(ValueError):
+            _validate_verdict_tolerant("{ this is not json")
+
+
+def _parse_like_claude_direct(raw: str) -> CriticVerdict | None:
+    """Mirror `_invoke_via_claude_direct`'s fast + recovery parse path."""
+    cleaned = _strip_json_fences(raw.strip())
+    try:
+        return _validate_verdict_tolerant(cleaned)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    for candidate in reversed(_iter_balanced_json_objects(raw)):
+        try:
+            return _validate_verdict_tolerant(_strip_json_fences(candidate))
+        except (json.JSONDecodeError, ValueError):
+            continue
+    return None
+
+
+@pytest.mark.asyncio
+async def test_claude_direct_accepts_verdict_with_over_long_summary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """End-to-end reproduction of mission 019e7f6d: a real approve verdict
+    whose summary fields exceed the TTS cap must be ACCEPTED (truncated), not
+    rejected into critic_unavailable."""
+    over_long = json.dumps(
+        _verdict_dict(
+            summary=(
+                "Single self-contained static HTML page on Synthwave with 8 "
+                "well-structured sections covering definition, history, "
+                "sub-genres, artists, and influence. All content factually "
+                "accurate, valid HTML5, no security concerns. Minor: inline "
+                "CSS instead of external sheet (acceptable for single-file "
+                "deliverable)."
+            ),
+            summary_de=(
+                "Die Datei synthwave.html enthaelt eine vollstaendige, "
+                "sachlich korrekte HTML-Seite ueber Synthwave mit acht klar "
+                "gegliederten Abschnitten zu Definition, Geschichte, "
+                "Sub-Genres, Kuenstlern und Einfluss. Sauberes, valides "
+                "HTML5 ohne Sicherheitsprobleme. Kleiner Hinweis: Inline-CSS "
+                "statt externer Datei, bei Einzeldatei aber akzeptabel und "
+                "nicht blockierend."
+            ),
+        )
+    )
+    # Sanity: the fixture must actually exceed the cap (otherwise the test is
+    # vacuous and would pass even with the bug present).
+    _d = json.loads(over_long)
+    assert len(_d["summary"]) > 280
+    assert len(_d["summary_de"]) > 280
+
+    _patch_direct(monkeypatch, stdout=over_long)
+
+    verdict = await CriticRunner().run(
+        mission_prompt="Create an HTML page about Synthwave",
+        worker_diff="+<!DOCTYPE html> ... 597 lines",
+        worker_log="file_change synthwave.html",
+        prior_reflections="",
+        iteration=0,
+        worktree=tmp_path,
+        env={},
+    )
+    assert verdict.verdict == "approve"
+    assert len(verdict.summary) <= 280
+    assert len(verdict.summary_de) <= 280
+
+
+@pytest.mark.asyncio
+async def test_claude_direct_recovers_over_long_summary_from_narration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The recovery (balanced-object) path must also tolerate an over-long
+    summary when the verdict is preceded by agent narration."""
+    over_long_obj = json.dumps(_verdict_dict(summary="D" * 350))
+    narrated = (
+        "Direct verification complete. Issuing the JSON verdict:\n"
+        + over_long_obj
+    )
+    _patch_direct(monkeypatch, stdout=narrated)
+
+    verdict = await CriticRunner().run(
+        mission_prompt="Build X",
+        worker_diff="diff",
+        worker_log="file_change",
+        prior_reflections="",
+        iteration=0,
+        worktree=tmp_path,
+        env={},
+    )
+    assert verdict.verdict == "approve"
+    assert len(verdict.summary) <= 280

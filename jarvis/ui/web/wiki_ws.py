@@ -7,8 +7,8 @@ Protocol
 - Server -> Client: one JSON message per debounced :class:`WikiPageChanged`
   event::
 
-      {"type": "page_changed", "slug": "harald",
-       "path": "entities/harald.md", "kind": "modified"}
+      {"type": "page_changed", "slug": "sam",
+       "path": "entities/sam.md", "kind": "modified"}
 
 - Client -> Server: no inbound messages are expected. The frontend uses
   this as a subscribe-only stream and re-fetches via REST after each

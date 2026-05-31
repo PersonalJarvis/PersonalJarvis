@@ -639,7 +639,7 @@ This means:
   trust root. Wave 2 mitigates with threshold signing (2-of-N maintainer
   keys, with one off-network).
 
-Today (Wave 1), the maintainer set is `@RubenLuetke` (repo owner) plus any
+Today (Wave 1), the maintainer set is `@AlexMaintainer` (repo owner) plus any
 collaborators added under
 https://github.com/personal-jarvis/personal-jarvis/settings/access. The
 expectation is that this list is short and audited.
@@ -650,7 +650,7 @@ expectation is that this list is short and audited.
 
 | Date | What changed | By whom | Verification evidence |
 |---|---|---|---|
-| 2026-05-26 | Initial Wave 1 pin: cosign `v2.4.1`, Linux/Darwin/Windows hashes, action SHAs (checkout `11bd7190…`, cosign-installer `dc72c7d5…`, action-gh-release `c95fe148…`). | @RubenLuetke + Claude (audit) | `cosign_checksums.txt` for v2.4.1 fetched from `github.com/sigstore/cosign/releases/download/v2.4.1/cosign_checksums.txt`; action SHAs resolved via `api.github.com/repos/<org>/<repo>/git/refs/tags/<tag>`. |
+| 2026-05-26 | Initial Wave 1 pin: cosign `v2.4.1`, Linux/Darwin/Windows hashes, action SHAs (checkout `11bd7190…`, cosign-installer `dc72c7d5…`, action-gh-release `c95fe148…`). | @AlexMaintainer + Claude (audit) | `cosign_checksums.txt` for v2.4.1 fetched from `github.com/sigstore/cosign/releases/download/v2.4.1/cosign_checksums.txt`; action SHAs resolved via `api.github.com/repos/<org>/<repo>/git/refs/tags/<tag>`. |
 
 (Append a row per rotation. Do not edit old rows — they are the audit trail.)
 
@@ -784,7 +784,7 @@ Implementation:
   `docs/supply-chain/wave5-audit-fixes-validation.md`. Any field that
   fails because of GitHub-plan restrictions is documented honestly.
 - **Bot-identity migration** is explicitly OUT OF SCOPE for Wave 5.
-  The signing actor remains `@RubenLuetke` (personal account, not a
+  The signing actor remains `@AlexMaintainer` (personal account, not a
   protected bot identity). This is tracked as Wave 6 — requires
   separate GH account setup with hardware-token MFA and an isolated
   PAT scoped only to `id-token: write` on this repo.

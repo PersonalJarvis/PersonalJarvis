@@ -110,7 +110,7 @@ async def test_speak_does_not_cancel_playback_when_barge_monitor_returns_false()
 
     pipe._barge_monitor = _barge_monitor  # type: ignore[method-assign]
 
-    barged = await pipe._speak("Hallo the maintainer.", language="de")
+    barged = await pipe._speak("Hallo Alex.", language="de")
 
     assert barged is False
     assert player.completed is True
@@ -200,7 +200,7 @@ async def test_wellbeing_prompt_gets_voice_fallback_when_brain_returns_filler() 
     keep_session = await pipe._handle_utterance(b"\x01\x00" * 1024)
 
     assert keep_session is False
-    assert pipe._spoken == [("Mir geht's gut, the maintainer. Was machen wir als Naechstes?", "de")]
+    assert pipe._spoken == [("Mir geht's gut, Alex. Was machen wir als Naechstes?", "de")]
     assert pipe._turn_state == TurnTakingState.IDLE
     assert pipe._session_end_reason == "turn_complete"
 
@@ -481,6 +481,35 @@ def _make_streaming_pipeline(
 
     pipe._config = _Cfg()
 
+    # The streaming play path is ``self._tts.synthesize(sentence)`` -> chunks ->
+    # ``self._player.play_chunks(_merged_chunks())`` — NOT ``_speak``. A unit pipe
+    # has ``_player = None`` and no ``_tts``, so that path raised AttributeError,
+    # which derailed the total-failure fallback and hung the sentinel test.
+    # Capturing fakes run the path deterministically: every synthesized sentence
+    # is recorded on ``pipe._synthesized`` (assert spoken text there — the
+    # streaming path bypasses ``_spoken``); the player just drains the chunks.
+    synthesized: list[str] = []
+
+    class _CapturingTTS:
+        async def synthesize(self, text: str, language_code: str | None = None):
+            synthesized.append(text)
+            yield AudioChunk(pcm=b"\x00\x00", sample_rate=24_000, timestamp_ns=0)
+
+    class _DrainPlayer:
+        def __init__(self) -> None:
+            self.stop_calls = 0
+
+        async def play_chunks(self, chunks) -> None:
+            async for _ in chunks:
+                pass
+
+        def stop(self) -> None:
+            self.stop_calls += 1
+
+    pipe._tts = _CapturingTTS()
+    pipe._player = _DrainPlayer()
+    pipe._synthesized = synthesized
+
     class _StreamBrain:
         _last_turn_all_failed = all_failed
 
@@ -688,14 +717,14 @@ async def test_brain_end_call_sentinel_hangs_up_and_is_not_spoken() -> None:
     # command, so the brain decides — and signals end via the sentinel.
     pipe = _make_pipeline(
         FakeSTT(text="Ich glaube wir sind durch"),
-        brain_response="Bis später, the maintainer. [[END_CALL]]",
+        brain_response="Bis später, Alex. [[END_CALL]]",
         continue_listening_after_response=True,  # prove hangup overrides stay-open
     )
 
     keep_session = await pipe._handle_utterance(b"\x01\x00" * 1024)
 
     assert keep_session is False
-    assert pipe._spoken == [("Bis später, the maintainer.", "de")]  # sentinel stripped
+    assert pipe._spoken == [("Bis später, Alex.", "de")]  # sentinel stripped
     assert pipe._session_end_reason == "voice_pattern"
     assert pipe._hangup_event.is_set()
 
@@ -707,7 +736,7 @@ async def test_polite_thanks_no_longer_auto_hangs_up() -> None:
     # sentinel) keeps the conversation open. Realizes "stay on when unsure".
     pipe = _make_pipeline(
         FakeSTT(text="Vielen Dank"),
-        brain_response="Gern geschehen, the maintainer.",
+        brain_response="Gern geschehen, Alex.",
         continue_listening_after_response=True,
     )
 
@@ -732,21 +761,21 @@ async def test_explicit_auflegen_still_hard_hangs_up_via_regex() -> None:
 
 @pytest.mark.asyncio
 async def test_brain_streaming_strips_sentinel_but_keeps_it_in_full_text() -> None:
-    pipe = _make_pipeline(FakeSTT(text="x"))
-    pipe._latency_tracker = None
-
-    class _StreamBrain:
-        async def generate_stream(self, _text: str, **_kw):
-            for ch in ["Alles erledigt. ", "Bis später, the maintainer. ", "[[END_CALL]]"]:
-                yield ch
-
-    pipe._brain = _StreamBrain()
+    pipe = _make_streaming_pipeline(
+        FakeSTT(text="x"),
+        stream_chunks=["Alles erledigt. ", "Bis später, Alex. ", "[[END_CALL]]"],
+        all_failed=False,
+    )
 
     full, _barged = await pipe._brain_streaming("x", "de")
 
-    assert "[[END_CALL]]" in full  # detection in _handle_utterance reads this
-    assert all("[[END_CALL]]" not in t for (t, _l) in pipe._spoken)  # never spoken
-    assert any("Bis später" in t for (t, _l) in pipe._spoken)
+    # The sentinel survives in the returned full text (so _handle_utterance can
+    # read the hang-up intent) but is scrubbed out of every synthesized sentence.
+    # The streaming path speaks via self._tts.synthesize -> self._player, so the
+    # spoken text is captured on pipe._synthesized, NOT on _spoken.
+    assert "[[END_CALL]]" in full
+    assert all("[[END_CALL]]" not in t for t in pipe._synthesized)  # never spoken
+    assert any("Bis später" in t for t in pipe._synthesized)
 
 
 @pytest.mark.asyncio

@@ -68,7 +68,7 @@ def build_frontmatter(adr_num: str, title: str, slug: str) -> str:
         f"slug: {slug}\n"
         "diataxis: adr\n"
         "status: active\n"
-        "owner: harald\n"
+        "owner: sam\n"
         f"last_reviewed: {TODAY}\n"
         f"phase: {phase}\n"
         "audience: developer\n"

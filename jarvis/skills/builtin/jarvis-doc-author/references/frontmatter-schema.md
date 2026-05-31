@@ -13,7 +13,7 @@ title: "Concept: Router-Discipline"
 slug: router-discipline
 diataxis: explanation
 status: active
-owner: harald
+owner: sam
 last_reviewed: 2026-04-28
 phase: 5
 ---
@@ -29,7 +29,7 @@ title: "How-To: Einen neuen Brain-Provider hinzufuegen"
 slug: brain-provider-hinzufuegen
 diataxis: howto
 status: active
-owner: harald
+owner: sam
 last_reviewed: 2026-04-28
 phase: 4
 audience: developer
@@ -127,8 +127,8 @@ docs land in history via ``git rm``.)
 ### ``owner`` (string)
 
 Who is responsible for the correctness of the doc? In Personal Jarvis
-currently always ``harald``. Future-proof: later several owners can be set
-via a list (``owner: [harald, claude]``); for now a single string.
+currently always ``sam``. Future-proof: later several owners can be set
+via a list (``owner: [sam, claude]``); for now a single string.
 
 ### ``last_reviewed`` (ISO date YYYY-MM-DD)
 
@@ -314,7 +314,7 @@ title: "ADR-0009: Self-Healing Worker-Critic"
 slug: adr-0009-self-healing
 diataxis: adr
 status: active             # or accepted / superseded / deprecated
-owner: harald
+owner: sam
 last_reviewed: 2026-04-28
 phase: 6
 related:

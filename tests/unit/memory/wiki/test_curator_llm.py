@@ -162,9 +162,9 @@ def _ok_response() -> str:
 
     return json.dumps([
         {
-            "target": "entities/the maintainer-luetke.md",
+            "target": "entities/personal-jarvis-maintainer.md",
             "operation": "update",
-            "new_body": "---\ntype: entity\nslug: the maintainer-luetke\n---\n\n# the maintainer\n",
+            "new_body": "---\ntype: entity\nslug: personal-jarvis-maintainer\n---\n\n# Personal Jarvis Maintainer\n",
             "rename_from": None,
             "reason": "added phase B1 milestone",
         }
@@ -183,9 +183,9 @@ def test_parse_updates_happy_path() -> None:
     updates = _parse_updates(raw)
     assert len(updates) == 1
     assert isinstance(updates[0], PageUpdate)
-    assert updates[0].target_path == Path("entities/the maintainer-luetke.md")
+    assert updates[0].target_path == Path("entities/personal-jarvis-maintainer.md")
     assert updates[0].operation == "update"
-    assert "the maintainer" in updates[0].new_body
+    assert "Alex" in updates[0].new_body
 
 
 def test_parse_updates_tolerates_code_fence() -> None:
@@ -282,13 +282,13 @@ async def test_propose_updates_returns_parsed_updates(tmp_path: Path, monkeypatc
         registry=registry,
     )
     updates = await llm.propose_updates(
-        "the maintainer fixed a bug today.",
+        "Alex fixed a bug today.",
         "BrainTurnCompleted",
         repo=FakeRepo(),
         vault=FakeVault(),
     )
     assert len(updates) == 1
-    assert updates[0].target_path == Path("entities/the maintainer-luetke.md")
+    assert updates[0].target_path == Path("entities/personal-jarvis-maintainer.md")
 
 
 @pytest.mark.asyncio

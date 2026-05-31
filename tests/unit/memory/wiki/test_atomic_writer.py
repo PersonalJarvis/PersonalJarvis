@@ -97,7 +97,7 @@ def test_recently_touched_page_is_skipped(
     surfaces in ``WriteResult.skipped_due_to_recent_edit`` and the file
     contents on disk stay unchanged.
     """
-    target = write_page(vault_root, "entity", "the maintainer", body="user just typed this")
+    target = write_page(vault_root, "entity", "alex", body="user just typed this")
     original = target.read_text(encoding="utf-8")
 
     # Force the file mtime to "5 seconds ago" — well inside the lock.
@@ -107,7 +107,7 @@ def test_recently_touched_page_is_skipped(
     update = PageUpdate(
         target_path=target,
         operation="update",
-        new_body=_valid_entity_body("the maintainer", body="curator-overwritten body"),
+        new_body=_valid_entity_body("alex", body="curator-overwritten body"),
         reason="should be skipped",
     )
 
@@ -125,7 +125,7 @@ def test_recently_touched_page_is_skipped(
 def test_old_mtime_passes_lock(
     writer: AtomicWriter, vault_root: Path, fake_repo: FakePageRepository
 ) -> None:
-    target = write_page(vault_root, "entity", "the maintainer", body="old content")
+    target = write_page(vault_root, "entity", "alex", body="old content")
     # Make the file 5 minutes old — well past the lock.
     five_minutes_ago = time.time() - 300.0
     os.utime(target, (five_minutes_ago, five_minutes_ago))
@@ -133,7 +133,7 @@ def test_old_mtime_passes_lock(
     update = PageUpdate(
         target_path=target,
         operation="update",
-        new_body=_valid_entity_body("the maintainer", body="updated"),
+        new_body=_valid_entity_body("alex", body="updated"),
     )
     result = asyncio.run(writer.apply([update], repo=fake_repo))
 
@@ -311,8 +311,8 @@ def test_backup_rotation_keeps_max_backups(
     vault_root: Path, tmp_path: Path, fake_repo: FakePageRepository
 ) -> None:
     """After 11 applies with max_backups=10, exactly 10 archives remain."""
-    write_page(vault_root, "entity", "the maintainer", body="seed")
-    target = vault_root / "entities" / "the maintainer.md"
+    write_page(vault_root, "entity", "alex", body="seed")
+    target = vault_root / "entities" / "alex.md"
 
     writer_small = AtomicWriter(
         vault_root=vault_root,
@@ -326,7 +326,7 @@ def test_backup_rotation_keeps_max_backups(
         update = PageUpdate(
             target_path=target,
             operation="update",
-            new_body=_valid_entity_body("the maintainer", body=f"iteration {i}"),
+            new_body=_valid_entity_body("alex", body=f"iteration {i}"),
         )
         asyncio.run(writer_small.apply([update], repo=fake_repo))
         time.sleep(0.02)  # keep snapshot mtimes distinct on coarse FS
@@ -405,14 +405,14 @@ def test_allowed_operations_set_matches_protocol(
 def test_rename_writes_new_path_and_unlinks_old(
     writer: AtomicWriter, vault_root: Path, fake_repo: FakePageRepository
 ) -> None:
-    old = write_page(vault_root, "entity", "luetke", body="old slug")
+    old = write_page(vault_root, "entity", "maintainer", body="old slug")
     os.utime(old, (time.time() - 600, time.time() - 600))
-    new = vault_root / "entities" / "the maintainer-luetke.md"
+    new = vault_root / "entities" / "personal-jarvis-maintainer.md"
 
     update = PageUpdate(
         target_path=new,
         operation="rename",
-        new_body=_valid_entity_body("the maintainer-luetke", body="new slug"),
+        new_body=_valid_entity_body("personal-jarvis-maintainer", body="new slug"),
         rename_from=old,
     )
     result = asyncio.run(writer.apply([update], repo=fake_repo))

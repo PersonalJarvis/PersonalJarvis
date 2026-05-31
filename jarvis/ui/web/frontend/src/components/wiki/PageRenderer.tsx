@@ -192,7 +192,7 @@ export function PageRenderer({ slug, onWikilinkClick }: PageRendererProps) {
 /**
  * Convert `[[slug]]`, `[[entities/slug]]`, `[[slug|label]]` markers into
  * regular markdown links pointing at `#wiki:<slug>`. The slug component is
- * the last path segment (so `entities/harald` → `harald`).
+ * the last path segment (so `entities/sam` → `sam`).
  */
 export function preprocessWikilinks(body: string): string {
   return body.replace(WIKILINK_RE, (_match, target: string, label?: string) => {

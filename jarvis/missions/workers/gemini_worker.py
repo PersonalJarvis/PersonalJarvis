@@ -1,7 +1,7 @@
 """GeminiWorker — wrapt `gemini -p ... --yolo` als Phase-6-Worker-Subprocess.
 
 Driven by the Gemini CLI
-(<your-home>\\AppData\\Roaming\\npm\\gemini.cmd, ships via
+(C:\\Users\\Administrator\\AppData\\Roaming\\npm\\gemini.cmd, ships via
 `@google/gemini-cli`). Lets a mission honor the brain provider the user
 selected in the desktop app (`jarvis.toml [brain] primary = "gemini"`)
 instead of always falling back to Claude.

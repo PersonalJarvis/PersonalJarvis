@@ -64,7 +64,7 @@ dependencies = [
     "watchdog>=5.0",
     # Atomare TOML-Edits aus der Desktop-App (Phase 1b: Provider-Persistenz)
     "tomlkit>=0.12",
-    # === F-FRIENDS [F0+F1] · feature/friends-section · the maintainer-2026-04-30 ===
+    # === F-FRIENDS [F0+F1] · feature/friends-section · alex-2026-04-30 ===
     # Phase F0 — async SQLite fuer FriendRegistry (vorher transitive via chromadb).
     "aiosqlite>=0.21",
     # Phase F1 — Telegram-Channel-Bot via long-polling (ChannelAdapter).
@@ -187,7 +187,7 @@ screenshot = "jarvis.plugins.harness.computer_use:ComputerUseHarness"
 # Transport-Adapter zwischen UI-Layer und Orchestrator (Plan §17.3).
 # Web-Channel ist der erste; Telegram/WhatsApp folgen in Phase 8+.
 web = "jarvis.channels.web:WebChannel"
-# === F-FRIENDS [F1] · feature/friends-section · the maintainer-2026-04-30 ===
+# === F-FRIENDS [F1] · feature/friends-section · alex-2026-04-30 ===
 # Phase F1 — bidirektionaler Telegram-Bot-Channel (long-polling).
 # Token via Credential Manager (Key "telegram_bot_token" / ENV TELEGRAM_BOT_TOKEN).
 telegram = "jarvis.channels.telegram:TelegramChannel"

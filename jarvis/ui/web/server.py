@@ -724,7 +724,7 @@ class WebServer:
         async def get_memory_facts() -> dict[str, Any]:
             """Liefert das Core-Memory (Persona, User-Facts, Preferences).
 
-            Frontend zeigt das in der Notizen-View, damit the maintainer sieht,
+            Frontend zeigt das in der Notizen-View, damit Alex sieht,
             was Jarvis sich gemerkt hat. core_memory.json wird beim
             naechsten Brain-Call automatisch in den System-Prompt
             injiziert — die View ist also Read-Only-Spiegel auf den
@@ -986,8 +986,55 @@ class WebServer:
             self._handle_terminal_resize(cmd.payload)
         elif cmd.action == "terminal.close":
             self._handle_terminal_close(cmd.payload)
+        elif cmd.action == "stt_dictate":
+            await self._handle_dictation(cmd.payload)
         # provider_switch/set_state laufen jetzt über REST (POST /api/brain/switch
         # bzw. POST /api/secrets/{key}). Doppelte Code-Pfade hier entfernt.
+
+    async def _handle_dictation(self, payload: dict[str, Any]) -> None:
+        """Start/stop chat mic-dictation on the live SpeechPipeline.
+
+        Transcribe-only: the pipeline streams ``DictationTranscript`` events
+        (forwarded to the browser by the wildcard subscriber) straight into the
+        chat input — it never reaches the brain. Resolves the pipeline via
+        ``runtime_refs``; if there is none (headless / voice disabled) it emits a
+        recoverable error + a toast instead of crashing (cloud-first no-op).
+        """
+        from jarvis.core.runtime_refs import get_speech_pipeline
+
+        mode = str(payload.get("mode", "start"))
+        pipeline = get_speech_pipeline()
+        if pipeline is None:
+            # Headless / voice disabled — no server mic. Recoverable, not fatal:
+            # surface it as an ErrorOccurred (the frontend already handles that
+            # event) and return. Cloud-first no-op.
+            await self.bus.publish(
+                ErrorOccurred(
+                    layer="ui.web.dictation",
+                    error_type="DictationUnavailable",
+                    message="Dictation needs a server microphone (not available in this mode).",
+                    recoverable=True,
+                    source_layer="ui.web.ws",
+                )
+            )
+            return
+        try:
+            if mode == "stop":
+                pipeline.stop_dictation()
+            else:
+                started = pipeline.start_dictation()
+                if not started:
+                    await self.bus.publish(
+                        ErrorOccurred(
+                            layer="ui.web.dictation",
+                            error_type="DictationBusy",
+                            message="Mic is busy — can't start dictation right now.",
+                            recoverable=True,
+                            source_layer="ui.web.ws",
+                        )
+                    )
+        except Exception as exc:  # noqa: BLE001 — never crash the WS loop
+            logger.warning("dictation command failed", error=str(exc))
 
     # ------------------------------------------------------------------
     # Terminal-Command-Handler
@@ -1470,6 +1517,11 @@ class WebServer:
             speech_bus=self.bus,
             # Defaults aus jarvis.toml [phase6.*] (alle ueberschreibbar via cfg later)
             safety_enabled=True,
+            # User mandate 2026-05-31 ("überhaupt kein Budget", frontier-quality-
+            # over-cost): the per-mission/daily cost cap is DISABLED so a long,
+            # high-quality Opus mission is never aborted mid-work for cost. The
+            # per_mission_usd/daily_usd values below are inert while disabled.
+            budget_enabled=False,
             per_mission_usd=5.0,
             daily_usd=50.0,
             cleanup_days=14,

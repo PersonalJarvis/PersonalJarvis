@@ -42,7 +42,7 @@ def vault(tmp_path: Path) -> Path:
     (root / "schema.md").write_text("schema body", encoding="utf-8")
     (root / "index.md").write_text("# index", encoding="utf-8")
     (root / "log.md").write_text("# log", encoding="utf-8")
-    (root / "entities" / "the maintainer.md").write_text("entity the maintainer", encoding="utf-8")
+    (root / "entities" / "alex.md").write_text("entity alex", encoding="utf-8")
     (root / "concepts" / "wiki.md").write_text("concept wiki", encoding="utf-8")
     (root / "_archive" / "old.md").write_text("archived — should be excluded", encoding="utf-8")
     (root / "attachments" / "big.bin").write_bytes(b"\x00" * 1024)
@@ -75,7 +75,7 @@ def test_snapshot_excludes_archive_and_attachments(manager: BackupManager) -> No
     with tarfile.open(out, "r:gz") as tar:
         members = sorted(m.name for m in tar.getmembers() if m.isfile())
     assert "schema.md" in members
-    assert "entities/the maintainer.md" in members
+    assert "entities/alex.md" in members
     assert "concepts/wiki.md" in members
     # Hard-negative: nothing under _archive/ or attachments/ may leak.
     assert not any(m.startswith("_archive/") for m in members)
@@ -120,26 +120,26 @@ def test_snapshot_raises_when_vault_missing(tmp_path: Path) -> None:
 
 def test_restore_round_trips_a_modified_page(manager: BackupManager, vault: Path) -> None:
     out = manager.snapshot()
-    target = vault / "entities" / "the maintainer.md"
+    target = vault / "entities" / "alex.md"
     target.write_text("local edit, must be reverted", encoding="utf-8")
 
-    restored = manager.restore(out, "entities/the maintainer.md")
+    restored = manager.restore(out, "entities/alex.md")
     assert restored == target.resolve()
-    assert target.read_text(encoding="utf-8") == "entity the maintainer"
+    assert target.read_text(encoding="utf-8") == "entity alex"
 
 
 def test_restore_creates_missing_subdirs(manager: BackupManager, vault: Path) -> None:
     # Snapshot, then delete the file and its parent dir.
     out = manager.snapshot()
-    target = vault / "entities" / "the maintainer.md"
+    target = vault / "entities" / "alex.md"
     target.unlink()
     # Parent dir survives because vault still has other entities, but
     # the restore path must work when the parent is also gone.
     (vault / "entities").rmdir()
 
-    restored = manager.restore(out, "entities/the maintainer.md")
+    restored = manager.restore(out, "entities/alex.md")
     assert restored.exists()
-    assert restored.read_text(encoding="utf-8") == "entity the maintainer"
+    assert restored.read_text(encoding="utf-8") == "entity alex"
 
 
 def test_restore_refuses_path_traversal(manager: BackupManager) -> None:

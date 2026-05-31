@@ -45,6 +45,8 @@ export const WSCommand = z.object({
     "terminal.input",
     "terminal.resize",
     "terminal.close",
+    // Chat mic-dictation: payload {mode:"start"|"stop"} — transcribe-only.
+    "stt_dictate",
   ]),
   payload: z.record(z.unknown()).default({}),
 });

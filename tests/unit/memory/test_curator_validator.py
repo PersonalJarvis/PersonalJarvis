@@ -30,10 +30,10 @@ def _user_cand(
     *,
     cluster: str = "identity",
     field: str = "name",
-    value: Any = "the maintainer",
+    value: Any = "Alex",
     confidence: float = 0.9,
     operation: str = "set",
-    evidence: str = "User: 'ich heisse the maintainer'",
+    evidence: str = "User: 'ich heisse Alex'",
 ) -> Candidate:
     return Candidate(
         subject="user",
@@ -134,13 +134,13 @@ class TestLauraScenario:
         _, reason = result.rejected[0]
         assert "kollision" in reason.lower() or "name-koll" in reason.lower()
 
-    def test_ruben_as_user_name_is_accepted_even_with_laura_person_present(
+    def test_alex_as_user_name_is_accepted_even_with_laura_person_present(
         self, validator: Validator, person_store
     ) -> None:
         """Gegenprobe: fremde Person-Namen blocken nicht den echten User-Namen."""
         person_store.get_or_create("Laura", relationship="partner")
 
-        cand = _user_cand(field="name", value="the maintainer", confidence=0.95)
+        cand = _user_cand(field="name", value="Alex", confidence=0.95)
         result = validator.validate([cand])
         assert len(result.accepted) == 1
 
@@ -187,9 +187,9 @@ class TestSubjectSanity:
         assert len(result.rejected) == 1
 
     def test_rejects_person_equal_to_user_name(self, validator: Validator, profile) -> None:
-        """Wenn User "the maintainer" heisst, darf subject=person:the maintainer nicht akzeptiert werden."""
-        profile.set("identity", "name", "the maintainer")
-        cand = _person_cand("the maintainer", confidence=0.9)
+        """Wenn User "Alex" heisst, darf subject=person:Alex nicht akzeptiert werden."""
+        profile.set("identity", "name", "Alex")
+        cand = _person_cand("Alex", confidence=0.9)
         result = validator.validate([cand])
         assert len(result.rejected) == 1
 
@@ -254,8 +254,8 @@ class TestOverwriteProtection:
     def test_existing_name_new_value_below_overwrite_threshold_goes_to_review(
         self, validator: Validator, profile
     ) -> None:
-        """Bestehender Name 'the maintainer', neuer Name 'Paul' mit conf=0.75 → REVIEW."""
-        profile.set("identity", "name", "the maintainer")
+        """Bestehender Name 'Alex', neuer Name 'Paul' mit conf=0.75 → REVIEW."""
+        profile.set("identity", "name", "Alex")
 
         cand = _user_cand(field="name", value="Paul", confidence=0.75)
         result = validator.validate([cand])
@@ -263,13 +263,13 @@ class TestOverwriteProtection:
         assert len(result.review) == 1, f"Erwarte review, got: {result}"
         assert len(result.accepted) == 0
         _, reason = result.review[0]
-        assert "ueberschreibung" in reason.lower() or "the maintainer" in reason.lower()
+        assert "ueberschreibung" in reason.lower() or "alex" in reason.lower()
 
     def test_existing_name_new_value_at_overwrite_threshold_is_accepted(
         self, validator: Validator, profile
     ) -> None:
         """Bestehender Name + neuer Name bei conf=0.9 → accepted."""
-        profile.set("identity", "name", "the maintainer")
+        profile.set("identity", "name", "Alex")
 
         cand = _user_cand(
             field="name",
@@ -283,8 +283,8 @@ class TestOverwriteProtection:
         self, validator: Validator, profile
     ) -> None:
         """Neuer Name == existierender Name → kein Konflikt."""
-        profile.set("identity", "name", "the maintainer")
-        cand = _user_cand(field="name", value="the maintainer", confidence=0.9)
+        profile.set("identity", "name", "Alex")
+        cand = _user_cand(field="name", value="Alex", confidence=0.9)
         result = validator.validate([cand])
         assert len(result.accepted) == 1
 

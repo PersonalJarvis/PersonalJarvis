@@ -122,7 +122,7 @@ function buildPills(fm: Record<string, string | string[]>): Pill[] {
 }
 
 function breadcrumbFromPath(relPath: string): string[] {
-  // "entities/harald.md" → ["entities", "harald.md"]
+  // "entities/sam.md" → ["entities", "sam.md"]
   const parts = relPath.split(/[\\/]/).filter(Boolean);
   return parts.length > 0 ? parts : [relPath];
 }

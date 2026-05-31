@@ -190,7 +190,7 @@ def test_time_cap_detection():
 
 async def test_brain_end_call_sentinel_ends_call_after_speaking():
     sink = _Sink()
-    brain = FakeBrain("Auf Wiedersehen, the maintainer. [[END_CALL]]")
+    brain = FakeBrain("Auf Wiedersehen, Alex. [[END_CALL]]")
     tts = FakeTTS(ms_per_char=2)
     session = _make_session(
         sink,

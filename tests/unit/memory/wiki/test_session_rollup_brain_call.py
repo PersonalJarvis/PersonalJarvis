@@ -151,11 +151,11 @@ async def stack(tmp_path: Path):
         (vault_root / sub).mkdir(parents=True)
     (vault_root / "schema.md").write_text("# stub\n", encoding="utf-8")
     (vault_root / "log.md").write_text("# Wiki Log\n", encoding="utf-8")
-    # Seed the user entity so the rollup's [[entities/the maintainer]] reference
+    # Seed the user entity so the rollup's [[entities/alex]] reference
     # resolves and survives post-processing as a real graph edge (links to
     # non-existent pages are demoted to plain text).
-    (vault_root / "entities" / "the maintainer.md").write_text(
-        "---\ntype: entity\nslug: the maintainer\naliases: [the maintainer]\n---\n# the maintainer\n\n## Summary\nThe user.\n",
+    (vault_root / "entities" / "alex.md").write_text(
+        "---\ntype: entity\nslug: alex\naliases: [Alex]\n---\n# Alex\n\n## Summary\nThe user.\n",
         encoding="utf-8",
     )
 
@@ -411,7 +411,7 @@ async def test_multi_chunk_stream_concatenates(stack):
     brain = FakeBrain([
         BrainDelta(content="First part of "),
         BrainDelta(content="the rollup paragraph "),
-        BrainDelta(content="with [[entities/the maintainer]] reference."),
+        BrainDelta(content="with [[entities/alex]] reference."),
         BrainDelta(finish_reason="stop", usage={"output_tokens": 14}),
     ])
     _attach_brain(worker, brain)
@@ -420,4 +420,4 @@ async def test_multi_chunk_stream_concatenates(stack):
     assert result.status == "ok"
     assert result.page_path is not None
     body = result.page_path.read_text(encoding="utf-8")
-    assert "First part of the rollup paragraph with [[entities/the maintainer]] reference." in body
+    assert "First part of the rollup paragraph with [[entities/alex]] reference." in body

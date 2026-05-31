@@ -24,7 +24,7 @@ title: "Concept: <Noun form>"
 slug: <kebab-case-slug>
 diataxis: explanation
 status: draft
-owner: harald
+owner: sam
 last_reviewed: <YYYY-MM-DD>
 phase: <Phase>
 audience: developer
@@ -76,7 +76,7 @@ title: "How-To: <Imperative verb> <Object>"
 slug: <verb-object-kebab>
 diataxis: howto
 status: draft
-owner: harald
+owner: sam
 last_reviewed: <YYYY-MM-DD>
 phase: <Phase>
 audience: developer
@@ -146,7 +146,7 @@ title: "Tutorial: <Learning objective as noun phrase>"
 slug: tutorial-<learning-objective-kebab>
 diataxis: tutorial
 status: draft
-owner: harald
+owner: sam
 last_reviewed: <YYYY-MM-DD>
 phase: <Phase>
 audience: developer
@@ -211,7 +211,7 @@ title: "Reference: <Subsystem or schema>"
 slug: reference-<subsystem-kebab>
 diataxis: reference
 status: draft
-owner: harald
+owner: sam
 last_reviewed: <YYYY-MM-DD>
 phase: <Phase>
 audience: developer
@@ -259,7 +259,7 @@ title: "Troubleshooting: <Subsystem or symptom area>"
 slug: troubleshooting-<area-kebab>
 diataxis: troubleshooting
 status: draft
-owner: harald
+owner: sam
 last_reviewed: <YYYY-MM-DD>
 phase: <Phase or ->
 audience: developer
@@ -311,7 +311,7 @@ title: "ADR-NNNN: <Decision as noun phrase>"
 slug: adr-NNNN-<decision-kebab>
 diataxis: adr
 status: draft
-owner: harald
+owner: sam
 last_reviewed: <YYYY-MM-DD>
 phase: <Phase>
 audience: developer

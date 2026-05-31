@@ -70,7 +70,7 @@ function installFetchMock(routes: Record<string, () => RouteResult>) {
 }
 
 const PROFILE_OK = {
-  user: { name: "the maintainer", meta: {}, path: "data/workspace/USER.md" },
+  user: { name: "Alex", meta: {}, path: "data/workspace/USER.md" },
   people: [],
   reviews_count: 0,
 };

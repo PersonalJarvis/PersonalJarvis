@@ -3,7 +3,7 @@ title: "ADR-0010: Output-Filter Pattern-based"
 slug: adr-0010-output-filter-pattern-based
 diataxis: adr
 status: active
-owner: harald
+owner: sam
 last_reviewed: 2026-04-29
 phase: 1
 audience: developer

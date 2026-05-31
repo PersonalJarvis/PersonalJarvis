@@ -12,7 +12,7 @@
     Trigger-Zeit im Format HH:mm. Default: 22:00.
 
 .PARAMETER RepoRoot
-    Pfad zum Repo-Root. Default: <your-home>\Desktop\Personal Jarvis
+    Pfad zum Repo-Root. Default: <USER_HOME>\Desktop\Personal Jarvis
 
 .EXAMPLE
     powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-auto-push-task.ps1
@@ -22,7 +22,7 @@
 [CmdletBinding()]
 param(
     [string]$Time     = "22:00",
-    [string]$RepoRoot = "<your-home>\Desktop\Personal Jarvis"
+    [string]$RepoRoot = "<USER_HOME>\Desktop\Personal Jarvis"
 )
 
 $ErrorActionPreference = "Stop"

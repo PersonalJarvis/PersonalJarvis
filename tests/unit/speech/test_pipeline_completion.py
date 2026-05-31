@@ -7,9 +7,13 @@ helpers per
 Top directives under test:
 
 * **Precision over recall** — a complete prompt must return unchanged (zero
-  added latency, zero held-back prompts).
-* **AD-OE6 / zero silent drops** — the per-gap timeout MUST result in Jarvis
-  saying *something* (a short follow-up cue), never silent discard.
+  added latency, zero held-back prompts). Holding a completed prompt with the
+  mic open is the "Jarvis keeps listening and never answers" regression.
+* **Silent-discard on the INCOMPLETE per-gap timeout** — user-mandated
+  2026-05-26: a never-continued dangling fragment is dropped silently (a spoken
+  cue mid-pause was experienced as Jarvis interrupting). The open mic + orb
+  bubble already carry the "still listening" signal. This is NOT an AD-OE6
+  violation — an abandoned half-sentence is not a command awaiting an answer.
 * **Hangup takes precedence** (delegated to the existing ``HANGUP_RE`` path,
   not exercised here).
 * **Max-chain bound** — no infinite chained waits.
@@ -166,38 +170,30 @@ async def test_cancel_phrase_during_pending_clears_buffer_silently() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Timeout — the critical safety test (AD-OE6 / zero silent drops)              #
+# Timeout — the INCOMPLETE per-gap policy (silent discard, user-mandated)       #
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
-async def test_timeout_fires_and_speaks_fallback_in_german() -> None:
+async def test_incomplete_timeout_discards_silently_without_interrupting() -> None:
+    # A dangling fragment that is never continued must be dropped SILENTLY when
+    # the per-gap timer fires (user mandate 2026-05-26 — a spoken cue mid-pause
+    # felt like Jarvis interrupting). No TTS, no JARVIS_SPEAKING, no state ping.
     pipe = _make_pipe(wait_ms=80)  # very short for test speed
     await pipe._complete_or_buffer_context("Erinnere mich daran, dass", lang="de")
-    # Let the timer fire.
-    await asyncio.sleep(0.3)
-    # AD-OE6: SOMETHING was spoken — no silent drop.
-    assert len(pipe._spoken) >= 1
-    spoken_text, spoken_lang = pipe._spoken[0]
-    assert isinstance(spoken_text, str) and spoken_text
-    assert spoken_lang == "de"
-    # Buffer cleared.
-    assert pipe._completion_buffer.is_pending is False
-    # State machine surfaced JARVIS_SPEAKING during the fallback and ended at LISTENING.
-    assert TurnTakingState.JARVIS_SPEAKING in pipe._state_history
-    assert pipe._state_history[-1] == TurnTakingState.LISTENING
+    await asyncio.sleep(0.3)  # let the timer fire
+    assert pipe._spoken == []  # nothing spoken — no interruption
+    assert pipe._completion_buffer.is_pending is False  # fragment dropped
+    assert TurnTakingState.JARVIS_SPEAKING not in pipe._state_history
 
 
 @pytest.mark.asyncio
-async def test_timeout_speaks_fallback_in_english_when_lang_en() -> None:
+async def test_incomplete_timeout_silent_discard_also_in_english() -> None:
     pipe = _make_pipe(wait_ms=80)
     await pipe._complete_or_buffer_context("Remind me tomorrow that", lang="en")
     await asyncio.sleep(0.3)
-    assert len(pipe._spoken) >= 1
-    spoken_text, spoken_lang = pipe._spoken[0]
-    assert spoken_lang == "en"
-    # The fallback wording differs from German.
-    assert spoken_text.isascii(), f"EN fallback should be ASCII English, got {spoken_text!r}"
+    assert pipe._spoken == []
+    assert pipe._completion_buffer.is_pending is False
 
 
 @pytest.mark.asyncio

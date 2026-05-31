@@ -27,7 +27,7 @@ pytestmark = pytest.mark.asyncio
 async def populated_index(
     vault_root: Path, fake_repo: FakePageRepository
 ) -> VaultIndex:
-    write_page(vault_root, "entity", "the maintainer")
+    write_page(vault_root, "entity", "alex")
     write_page(vault_root, "entity", "claude")
     write_page(vault_root, "concept", "awareness-layer")
     write_page(vault_root, "concept", "voice-pipeline")
@@ -56,8 +56,8 @@ async def test_render_lists_pages_alphabetically(
     # backticked ``## Entities`` reference inside the preamble.
     entities_block = output.split("\n## Entities\n", 1)[1].split("\n## ", 1)[0]
     claude_idx = entities_block.index("[[claude]]")
-    ruben_idx = entities_block.index("[[the maintainer]]")
-    assert claude_idx < ruben_idx
+    alex_idx = entities_block.index("[[alex]]")
+    assert claude_idx < alex_idx
 
 
 async def test_render_uses_short_wikilink_form(
@@ -65,22 +65,22 @@ async def test_render_uses_short_wikilink_form(
 ) -> None:
     builder = IndexBuilder(vault=populated_index)
     output = await builder.render_index_md()
-    assert "[[the maintainer]]" in output
+    assert "[[alex]]" in output
     assert "[[awareness-layer]]" in output
     # Not the prefixed form
-    assert "[[entities/the maintainer]]" not in output
+    assert "[[entities/alex]]" not in output
 
 
 async def test_render_handles_empty_categories(
     vault_root: Path, fake_repo: FakePageRepository
 ) -> None:
-    write_page(vault_root, "entity", "the maintainer")
+    write_page(vault_root, "entity", "alex")
     # No concepts, projects, or sessions on disk
     idx = VaultIndex(repo=fake_repo)
     await idx.scan(vault_root)
     builder = IndexBuilder(vault=idx)
     output = await builder.render_index_md()
-    assert "[[the maintainer]]" in output
+    assert "[[alex]]" in output
     # Empty categories are rendered with a placeholder
     concepts_block = output.split("\n## Concepts\n", 1)[1].split("\n## ", 1)[0]
     assert "(empty)" in concepts_block
@@ -119,7 +119,7 @@ async def test_render_preserves_human_preamble(
     # Old auto-content is gone.
     assert "[[stale]]" not in output
     # New content is present
-    assert "[[the maintainer]]" in output
+    assert "[[alex]]" in output
 
 
 async def test_render_handles_missing_existing_file(
@@ -131,7 +131,7 @@ async def test_render_handles_missing_existing_file(
         existing_path=tmp_path / "no_such_file.md"
     )
     assert "Knowledge Vault — Index" in output
-    assert "[[the maintainer]]" in output
+    assert "[[alex]]" in output
 
 
 async def test_render_handles_existing_without_boundary(
@@ -148,7 +148,7 @@ async def test_render_handles_existing_without_boundary(
     output = await builder.render_index_md(existing_path=existing)
     assert "All content lives above the heading." in output
     assert "## Entities" in output
-    assert "[[the maintainer]]" in output
+    assert "[[alex]]" in output
 
 
 async def test_render_is_deterministic(populated_index: VaultIndex) -> None:

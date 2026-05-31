@@ -23,7 +23,7 @@ class TestParseAndWrite:
     def test_roundtrip_preserves_data(self) -> None:
         meta = {
             "schema_version": 1,
-            "identity": {"name": "the maintainer", "languages": ["de", "en"]},
+            "identity": {"name": "Alex", "languages": ["de", "en"]},
         }
         body = "# Body\n\nSome text."
         text = write_frontmatter(meta, body)

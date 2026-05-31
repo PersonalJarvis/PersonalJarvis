@@ -130,14 +130,14 @@ async def test_create_md_file_emits_created_event(watcher_stack):
     """Writing a fresh .md file produces exactly one created event."""
     _, bus, vault = watcher_stack
 
-    target = vault / "entities" / "the maintainer.md"
-    target.write_text("# the maintainer\n\nFresh page.\n", encoding="utf-8")
+    target = vault / "entities" / "alex.md"
+    target.write_text("# Alex\n\nFresh page.\n", encoding="utf-8")
 
     events = await _wait_quiescent(bus)
     assert len(events) == 1, f"expected one event, got {events!r}"
     event = events[0]
-    assert event.slug == "the maintainer"
-    assert event.path == "entities/the maintainer.md"
+    assert event.slug == "alex"
+    assert event.path == "entities/alex.md"
     assert event.kind in ("created", "modified")
     # Path is vault-relative POSIX — no backslashes leak through on
     # Windows.
@@ -148,15 +148,15 @@ async def test_create_md_file_emits_created_event(watcher_stack):
 async def test_modify_md_file_emits_modified_event(watcher_stack):
     """Re-writing an existing page produces one modified event."""
     _, bus, vault = watcher_stack
-    target = vault / "entities" / "harald.md"
-    target.write_text("# Harald\n", encoding="utf-8")
+    target = vault / "entities" / "sam.md"
+    target.write_text("# Sam\n", encoding="utf-8")
     # Drain the creation event.
     await _wait_quiescent(bus)
 
-    target.write_text("# Harald\n\nUpdated.\n", encoding="utf-8")
+    target.write_text("# Sam\n\nUpdated.\n", encoding="utf-8")
     events = await _wait_quiescent(bus)
     assert len(events) == 1, f"expected one event, got {events!r}"
-    assert events[0].slug == "harald"
+    assert events[0].slug == "sam"
     assert events[0].kind in ("modified", "created")
 
 

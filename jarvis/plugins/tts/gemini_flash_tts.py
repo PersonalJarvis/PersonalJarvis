@@ -174,6 +174,7 @@ class GeminiFlashTTS:
             # means the Cloud SDK auth chain picks it up even if the launcher
             # was started before the env was set.
             import os
+            resolved: str | None = None
             if self._service_account_path:
                 # Expand ~ so a config value like "~/.config/jarvis/vertex-sa.json"
                 # resolves to the user's home dir cross-platform — Google's auth
@@ -192,11 +193,31 @@ class GeminiFlashTTS:
             # 100-RPD cap. Strip them defensively at client-build time.
             for k in ("GOOGLE_API_KEY", "GEMINI_API_KEY"):
                 os.environ.pop(k, None)
+            # vertex_project is deliberately empty in the tracked config; the
+            # project ID is meant to arrive via the JARVIS__TTS__VERTEX_PROJECT
+            # env override (kept out of version control). When that override is
+            # missing after a clean clone, fall back to the project_id inside
+            # the service-account JSON we just resolved — that file is the
+            # authoritative owner of the Vertex project, so deriving from it
+            # removes a drift-prone second config knob. Without this, an empty
+            # project raised on every sentence and left Jarvis mute (it would
+            # hear + think but never speak). Only fail loudly if neither the
+            # config nor the SA file can supply a project.
+            if not self._vertex_project and resolved:
+                derived = self._project_id_from_sa(resolved)
+                if derived:
+                    self._vertex_project = derived
+                    logging.getLogger("jarvis.tts").info(
+                        "Gemini-TTS Vertex: vertex_project was empty — derived "
+                        "'%s' from service-account file %s.", derived, resolved,
+                    )
             if not self._vertex_project:
                 raise RuntimeError(
-                    "use_vertex=True but vertex_project is empty. Set "
-                    "[tts].vertex_project in jarvis.toml (e.g. the GCP "
-                    "project ID that owns the aiplatform.googleapis.com API)."
+                    "use_vertex=True but vertex_project is empty and no "
+                    "project_id could be read from the service-account file. "
+                    "Set the JARVIS__TTS__VERTEX_PROJECT env var (or "
+                    "[tts].vertex_project in jarvis.toml) to the GCP project "
+                    "ID that owns the aiplatform.googleapis.com API."
                 )
             self._client = genai.Client(
                 vertexai=True,
@@ -209,6 +230,26 @@ class GeminiFlashTTS:
             )
             return
         self._client = genai.Client(api_key=self._resolve_api_key())
+
+    @staticmethod
+    def _project_id_from_sa(path: str) -> str | None:
+        """Best-effort read of `project_id` from a service-account JSON file.
+
+        Returns None on any problem (missing file, malformed JSON, absent
+        field) so a broken key degrades to the loud RuntimeError in
+        ``_ensure_client`` rather than crashing client construction with an
+        unexpected traceback.
+        """
+        try:
+            import json
+            from pathlib import Path
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        project = data.get("project_id")
+        return project if isinstance(project, str) and project else None
 
     def _build_config(self, voice: str) -> Any:
         from google.genai import types

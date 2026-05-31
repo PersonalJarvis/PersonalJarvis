@@ -17,7 +17,7 @@ And produces the new layout:
     ├── index.md           (existing — updated with new entity links)
     ├── log.md             (existing — appended)
     └── entities/
-        ├── the maintainer.md       (from USER.md)
+        ├── alex.md       (from USER.md)
         ├── jarvis-persona.md  (from SOUL.md)
         └── <name>.md      (one per people/*.md)
 
@@ -146,11 +146,11 @@ def plan_migrations(source_dir: Path, target_dir: Path) -> list[MigrationPlan]:
     plans: list[MigrationPlan] = []
     entities_dir = target_dir / "entities"
 
-    # USER.md → entities/the maintainer.md (or whatever the user's name is)
+    # USER.md → entities/alex.md (or whatever the user's name is)
     user_md = source_dir / "USER.md"
     if user_md.exists():
         doc = parse_legacy_doc(user_md)
-        name = doc.frontmatter.get("name") or "the maintainer"
+        name = doc.frontmatter.get("name") or "alex"
         plans.append(
             MigrationPlan(
                 source=user_md,

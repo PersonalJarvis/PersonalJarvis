@@ -97,7 +97,7 @@ def test_json_has_field_username_bad_json_unknown() -> None:
 
 def test_text_contains_email_connected() -> None:
     assert (
-        _apply_parse_strategy("text_contains_email", "Logged in as the maintainer@example.com", "", 0)
+        _apply_parse_strategy("text_contains_email", "Logged in as alex@example.com", "", 0)
         == "connected"
     )
 

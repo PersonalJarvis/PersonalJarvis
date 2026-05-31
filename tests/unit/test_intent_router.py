@@ -17,7 +17,7 @@ from jarvis.brain.intent_router import classify
     "mach den Browser auf",
     "starte Chrome",
     "klick auf submit",
-    "merk dir ich heiße Harald",
+    "merk dir ich heiße Sam",
     "sag hi",
     "wie spät ist es?",
     "hallo",

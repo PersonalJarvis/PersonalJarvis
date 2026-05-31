@@ -14,7 +14,7 @@ from jarvis.core.config import load_config
 
 _AWARE_A = "Active window: Code.exe — main.py"
 _AWARE_B = "Active window: chrome.exe — youtube.com"
-_WIKI = "WIKI_CONTEXT_MARKER: the maintainer prefers synthwave."
+_WIKI = "WIKI_CONTEXT_MARKER: Alex prefers synthwave."
 
 
 class _FakeAwarenessState:

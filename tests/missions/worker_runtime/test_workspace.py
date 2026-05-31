@@ -49,6 +49,31 @@ def test_agents_contract_still_carries_file_write_obligation() -> None:
     assert "write tool" in md.lower()
 
 
+def test_agents_contract_sets_quality_bar_no_stub() -> None:
+    """Live incident 2026-05-31 (mission 019e7e04): the router brief said
+    'Erstelle ein sinnvolles HTML-Grundgerüst', the Opus worker obeyed and
+    shipped a 12-line stub, and the mission passed. The contract must set a
+    quality floor: a complete, production-quality artefact is required and a
+    skeleton/stub/placeholder is a FAILURE — even when a hint sounds minimal."""
+    md = _agents_md("019e0000-1111-2222-3333-444444444444")
+    low = md.lower()
+    assert "quality" in low, "contract must state a quality bar"
+    assert "skeleton" in low or "stub" in low or "placeholder" in low, (
+        "contract must name a stub/skeleton as the failure mode"
+    )
+    # A minimal hint is a floor, not a ceiling — neutralises a lazy router brief.
+    assert "floor" in low and "ceiling" in low
+
+
+def test_agents_contract_quality_bar_does_not_override_no_features_rule() -> None:
+    """Regression: the quality bar must raise execution depth WITHOUT licensing
+    unrequested features — Rule 4 (no self-invention) must still hold so the
+    worker builds the requested thing fully, not a different/bigger thing."""
+    md = _agents_md("019e0000-1111-2222-3333-444444444444")
+    assert "unrequested features" in md
+    assert "Do not invent" in md or "do not invent" in md.lower()
+
+
 # --- prepare_workspace ---
 
 

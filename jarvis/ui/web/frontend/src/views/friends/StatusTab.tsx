@@ -1,4 +1,4 @@
-// === F-FRIENDS [F4] · feature/friends-section · the maintainer-2026-05-01 ===
+// === F-FRIENDS [F4] · feature/friends-section · alex-2026-05-01 ===
 import { Loader2, Radio, ShieldAlert } from "lucide-react";
 
 import { PermissionMatrix } from "@/components/friends/PermissionMatrix";

@@ -3,7 +3,7 @@ title: "ADR-0011: Pure Dispatcher (4 Tools)"
 slug: adr-0011-router-pure-dispatcher
 diataxis: adr
 status: active
-owner: harald
+owner: sam
 last_reviewed: 2026-04-29
 phase: 5
 audience: developer

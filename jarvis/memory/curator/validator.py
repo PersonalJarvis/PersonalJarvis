@@ -129,7 +129,7 @@ class Validator:
                             f"bei confidence {cand.confidence:.2f} < {CONFIDENCE_OVERWRITE}"
                         )
                 # If the new name collides with a known person name
-                # → most likely an LLM slip (the Laura-as-the maintainer problem)
+                # → most likely an LLM slip (the Laura-as-Alex problem)
                 person = self._people.find_by_alias(new_val)
                 if person is not None:
                     return "reject", (

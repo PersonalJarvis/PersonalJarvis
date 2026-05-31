@@ -79,6 +79,24 @@ class TranscriptionUpdate(Event):
     is_final: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class DictationTranscript(Event):
+    """Live transcript from the chat composer's mic-dictation button.
+
+    Deliberately a SEPARATE event from ``TranscriptionUpdate`` (which rides the
+    live voice critical path). Dictation only fills the chat text input — it
+    never reaches the brain — so keeping it on its own event name means the
+    frontend can route it straight to the textarea without ever confusing it
+    with a real voice turn, and the voice hot-path event stays untouched.
+
+    ``is_final=False`` interim hypotheses overwrite the live tail; the single
+    ``is_final=True`` is appended to the input box and ends the dictation.
+    """
+
+    text: str = ""
+    is_final: bool = False
+
+
 # ----------------------------------------------------------------------
 # Intent & Routing
 # ----------------------------------------------------------------------
@@ -1006,7 +1024,7 @@ class WikiPageChanged(Event):
     desktop wiki view's WebSocket endpoint forwards this event to the
     frontend so React Query caches can be invalidated immediately.
 
-    ``path`` is the vault-relative POSIX path (e.g. ``"entities/harald.md"``)
+    ``path`` is the vault-relative POSIX path (e.g. ``"entities/sam.md"``)
     so the frontend can use the string as-is regardless of the host
     operating system path separator.
 

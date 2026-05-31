@@ -44,7 +44,11 @@ TASK: Evaluate the worker output across four axes. For each axis, output PASS
 or FAIL with cited evidence (file:line, log_line:N, or test:name). If you
 cannot find any issue on an axis, briefly justify why each plausible failure
 mode does NOT apply — your justifications also count as evidence and MUST be
-non-empty. Output ONLY the JSON object matching the schema — no prose, no
+non-empty. Cite at most THREE concise ``file:line — brief note`` items per
+axis (twelve words max each); never paste file contents or long excerpts.
+Keep the whole verdict SHORT — an over-long response can be cut off by the
+output limit and then cannot be parsed, which wrongly fails the mission.
+Output ONLY the JSON object matching the schema — no prose, no
 markdown, no code fences.
 
 AXES:
@@ -138,14 +142,24 @@ believed the log and approved with confidence=0.9):
 
 # The adversarial reframing prefix is prepended when the runner detects an
 # empty-evidence approval or JSONDecodeError and issues one retry.
+#
+# CRITICAL (2026-05-31, mission 019e7f6d): this retry MUST stay terse. The old
+# version demanded "three independent pieces of evidence per axis" + "explain
+# in detail", which made the retry output even LONGER than the first attempt.
+# When the original failure was truncation (a verbose verdict cut off by the
+# output limit), a more-verbose retry re-truncates → both attempts return None
+# → a good mission is wrongly failed as critic_unavailable. The reframe keeps
+# its skeptical, default-FAIL stance but now demands brevity + JSON-only so the
+# retry actually fits and parses.
 ADVERSARIAL_REFRAME_PREFIX: Final[str] = """\
 PREVIOUS RESPONSE WAS REJECTED BECAUSE: it returned an approval without
-specific evidence references, or failed to produce valid JSON output. This
-is the hallmark of a sycophantic critic. Re-evaluate from scratch with
-maximum skepticism. Your default position is now FAIL — only approve if you
-can cite three independent pieces of evidence per axis. If you still cannot
-find issues, explain in detail why each of the four axes is bulletproof,
-citing exact file:line refs.
+specific evidence references, or its output could not be parsed as one valid
+JSON object — often because it was too long and got cut off. This is the
+hallmark of a sycophantic or runaway critic. Re-evaluate from scratch with
+maximum skepticism. Your default position is now FAIL — only approve if every
+axis has concrete evidence. Cite at most THREE concise ``file:line`` items per
+axis; do NOT paste file contents or write prose. Output ONLY the JSON object,
+nothing before or after it — keeping it short is what lets it be parsed.
 
 """
 

@@ -175,7 +175,7 @@ def test_readiness_phrase_is_non_substantive():
 def test_wellbeing_question_gets_smalltalk_fallback():
     assert (
         _smalltalk_fallback_for_non_substantive("Wie geht's dir?", "de")
-        == "Mir geht's gut, the maintainer. Was machen wir als Naechstes?"
+        == "Mir geht's gut, Alex. Was machen wir als Naechstes?"
     )
 
 

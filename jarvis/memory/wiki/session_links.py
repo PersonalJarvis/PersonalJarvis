@@ -127,8 +127,8 @@ class SlugIndex:
     def resolve(self, raw_link: str) -> str | None:
         """Return the canonical ``dir/slug`` for ``raw_link`` or ``None``.
 
-        Accepts a dir-prefixed form (``entities/the maintainer``), a bare slug
-        (``the maintainer``), a Title-Case display name (``Personal Jarvis``), or a
+        Accepts a dir-prefixed form (``entities/alex``), a bare slug
+        (``alex``), a Title-Case display name (``Personal Jarvis``), or a
         registered alias (``the user``). Only returns a value when the target
         page actually exists in the index.
         """

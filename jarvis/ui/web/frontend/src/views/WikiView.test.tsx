@@ -84,8 +84,8 @@ const POPULATED_TREE: WikiTreeResponse = {
       kind: "entity",
       count: 2,
       files: [
-        { slug: "the maintainer", title: "the maintainer", mtime: 1, size: 100 },
-        { slug: "harald", title: "Harald", mtime: 2, size: 200 },
+        { slug: "alex", title: "Alex", mtime: 1, size: 100 },
+        { slug: "sam", title: "Sam", mtime: 2, size: 200 },
       ],
     },
     { name: "concepts", kind: "concept", count: 0, files: [] },
@@ -104,31 +104,31 @@ const POPULATED_TREE: WikiTreeResponse = {
 
 const HARALD_PAGE: WikiPageResponse = {
   ok: true,
-  slug: "harald",
+  slug: "sam",
   kind: "entity",
-  title: "Harald",
-  path: "entities/harald.md",
+  title: "Sam",
+  path: "entities/sam.md",
   frontmatter: {
     type: "entity",
     entity_kind: "person",
-    slug: "harald",
+    slug: "sam",
     aliases: [],
     created: "2026-05-13",
     updated: "2026-05-13",
   },
-  body_md: "# Harald\n\n## Relationships\n\nFather of [[the maintainer]] — established via voice fact.\n",
-  wikilinks: ["the maintainer"],
+  body_md: "# Sam\n\n## Relationships\n\nFather of [[alex]] — established via voice fact.\n",
+  wikilinks: ["alex"],
   stats: { words: 17, bytes: 289, mtime: 1 },
 };
 
 const HARALD_BACKLINKS: WikiBacklinksResponse = {
   ok: true,
-  slug: "harald",
+  slug: "sam",
   backlinks: [
     {
-      slug: "the maintainer",
-      title: "the maintainer",
-      snippet: "...Father is [[harald]] — born 1976...",
+      slug: "alex",
+      title: "Alex",
+      snippet: "...Father is [[sam]] — born 1976...",
     },
   ],
 };
@@ -171,8 +171,8 @@ describe("WikiView — populated tree", () => {
     // Three populated leaves are visible because entities and projects open
     // by default (per mockup contract).
     await waitFor(() => {
-      expect(screen.getByText("the maintainer.md")).toBeDefined();
-      expect(screen.getByText("harald.md")).toBeDefined();
+      expect(screen.getByText("alex.md")).toBeDefined();
+      expect(screen.getByText("sam.md")).toBeDefined();
       expect(screen.getByText("pixel-art-editor.md")).toBeDefined();
     });
 
@@ -188,39 +188,39 @@ describe("WikiView — populated tree", () => {
     renderWithClient(<WikiView />);
 
     await waitFor(() => {
-      expect(screen.getByText("harald.md")).toBeDefined();
+      expect(screen.getByText("sam.md")).toBeDefined();
     });
 
-    fireEvent.click(screen.getByText("harald.md"));
+    fireEvent.click(screen.getByText("sam.md"));
 
     await waitFor(() => {
       expect(screen.getByTestId("wiki-page-renderer")).toBeDefined();
     });
-    expect(screen.getByTestId("wiki-page-title").textContent).toBe("Harald");
+    expect(screen.getByTestId("wiki-page-title").textContent).toBe("Sam");
   });
 });
 
 describe("PageRenderer — wikilink behaviour", () => {
   it("preprocessWikilinks rewrites [[slug]] / [[folder/slug]] / [[slug|label]]", () => {
-    expect(preprocessWikilinks("see [[the maintainer]] here")).toBe(
-      "see [the maintainer](#wiki:the maintainer) here",
+    expect(preprocessWikilinks("see [[alex]] here")).toBe(
+      "see [alex](#wiki:alex) here",
     );
-    expect(preprocessWikilinks("see [[entities/the maintainer]] here")).toBe(
-      "see [the maintainer](#wiki:the maintainer) here",
+    expect(preprocessWikilinks("see [[entities/alex]] here")).toBe(
+      "see [alex](#wiki:alex) here",
     );
-    expect(preprocessWikilinks("see [[the maintainer|the son]] here")).toBe(
-      "see [the son](#wiki:the maintainer) here",
+    expect(preprocessWikilinks("see [[alex|the son]] here")).toBe(
+      "see [the son](#wiki:alex) here",
     );
   });
 
   it("clicking a wikilink fires onWikilinkClick with the target slug", async () => {
     installFetchMock({
       "/api/wiki/tree": () => POPULATED_TREE,
-      "/api/wiki/page/harald": () => HARALD_PAGE,
+      "/api/wiki/page/sam": () => HARALD_PAGE,
     });
     const onClick = vi.fn();
     renderWithClient(
-      <PageRenderer slug="harald" onWikilinkClick={onClick} />,
+      <PageRenderer slug="sam" onWikilinkClick={onClick} />,
     );
 
     await waitFor(() => {
@@ -228,11 +228,11 @@ describe("PageRenderer — wikilink behaviour", () => {
     });
 
     const link = document.querySelector(
-      "a.wikilink[data-target-slug='the maintainer']",
+      "a.wikilink[data-target-slug='alex']",
     ) as HTMLAnchorElement | null;
     expect(link).not.toBeNull();
     fireEvent.click(link!);
-    expect(onClick).toHaveBeenCalledWith("the maintainer");
+    expect(onClick).toHaveBeenCalledWith("alex");
   });
 
   it("renders a broken wikilink with the `.broken` class when the slug is unknown", async () => {
@@ -243,10 +243,10 @@ describe("PageRenderer — wikilink behaviour", () => {
     };
     installFetchMock({
       "/api/wiki/tree": () => POPULATED_TREE,
-      "/api/wiki/page/harald": () => brokenPage,
+      "/api/wiki/page/sam": () => brokenPage,
     });
     renderWithClient(
-      <PageRenderer slug="harald" onWikilinkClick={vi.fn()} />,
+      <PageRenderer slug="sam" onWikilinkClick={vi.fn()} />,
     );
 
     await waitFor(() => {
@@ -265,18 +265,18 @@ describe("PageHeader — frontmatter pills", () => {
   it("renders pills for known frontmatter keys and skips slug + aliases", () => {
     render(
       <PageHeader
-        slug="harald"
+        slug="sam"
         kind="entity"
-        title="Harald"
+        title="Sam"
         frontmatter={{
           type: "entity",
           entity_kind: "person",
-          slug: "harald",
+          slug: "sam",
           aliases: ["herry", "h"],
           created: "2026-05-13",
           updated: "2026-05-13",
         }}
-        vaultRelPath="entities/harald.md"
+        vaultRelPath="entities/sam.md"
       />,
     );
 

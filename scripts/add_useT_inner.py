@@ -1,7 +1,7 @@
 """Add useT() to inner component functions that need it."""
 import os, re
 
-BASE = "<your-home>/Desktop/Personal Jarvis/jarvis/ui/web/frontend/src"
+BASE = "<USER_HOME>/Desktop/Personal Jarvis/jarvis/ui/web/frontend/src"
 
 def add_to_function(rel, func_name_pattern):
     fp = os.path.join(BASE, rel).replace("\\", "/")

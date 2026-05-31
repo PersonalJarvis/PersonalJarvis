@@ -1,4 +1,4 @@
-# === F-FRIENDS [F4] · feature/friends-section · the maintainer-2026-05-01 ===
+# === F-FRIENDS [F4] · feature/friends-section · alex-2026-05-01 ===
 """Pydantic schemas for outbound status updates sent to friends.
 
 A :class:`StatusUpdate` is the canonical outbound representation of a

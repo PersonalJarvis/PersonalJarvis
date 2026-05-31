@@ -1,4 +1,4 @@
-// === F-FRIENDS [F2] · feature/friends-section · the maintainer-2026-04-30 ===
+// === F-FRIENDS [F2] · feature/friends-section · alex-2026-04-30 ===
 /**
  * Chat-Thread-Hooks fuer einen Friend (Phase F2).
  *

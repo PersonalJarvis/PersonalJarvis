@@ -19,7 +19,7 @@ from jarvis.missions.voice.readback import (
 
 def _assert_no_owner_name(out: str) -> None:
     """Guard: the spoken text must be name-neutral and never use 'Sir'."""
-    for forbidden in ("the maintainer", "Sir", "Mr. Stark", "Tony", "boss"):
+    for forbidden in ("Alex", "Sir", "Mr. Stark", "Tony", "boss"):
         assert forbidden not in out, f"owner/forbidden name leaked: {out!r}"
 
 

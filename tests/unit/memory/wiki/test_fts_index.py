@@ -79,8 +79,8 @@ def test_index_vault_three_pages(tmp_path: Path) -> None:
 
     # Page 1: has frontmatter with simple scalar values.
     _write_md(
-        entities / "the maintainer.md",
-        "---\ntype: entity\nslug: the maintainer\n---\n# the maintainer\nThis is the body.\n",
+        entities / "alex.md",
+        "---\ntype: entity\nslug: alex\n---\n# Alex\nThis is the body.\n",
     )
 
     # Page 2: no frontmatter at all.

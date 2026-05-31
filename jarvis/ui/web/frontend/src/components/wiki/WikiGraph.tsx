@@ -6,7 +6,7 @@
 // landing view inside the Wiki tab, so it stays minimal and fast.
 //
 // Visual contract: docs/plans/b3/00-OVERVIEW.md §3 + the HTML mockup at
-// <your-home>\Desktop\b3-wiki-view-mockup.html. Node colours live in
+// <USER_HOME>\Desktop\b3-wiki-view-mockup.html. Node colours live in
 // `lib/wikiGraph.ts:NODE_COLOUR` — never hardcoded here.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";

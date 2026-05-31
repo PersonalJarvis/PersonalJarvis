@@ -313,10 +313,10 @@ async def test_announcement_regression_no_speak_api() -> None:
     _make_pipeline(tts, bus, player)
 
     await bus.publish(
-        AnnouncementRequested(text="zu diensten the maintainer", language="de")
+        AnnouncementRequested(text="zu diensten alex", language="de")
     )
 
-    assert tts.calls == [("zu diensten the maintainer", "de-DE")], (
+    assert tts.calls == [("zu diensten alex", "de-DE")], (
         "Announcement muss ueber synthesize() laufen, nicht tts.speak()"
     )
     assert player.plays == 1

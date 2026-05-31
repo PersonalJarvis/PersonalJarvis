@@ -20,7 +20,7 @@ def test_frontmatter_minimal_valid() -> None:
     assert fm.slug == "hello-world"
     assert fm.diataxis == DocDiataxis.UNCLASSIFIED
     assert fm.status == DocStatus.DRAFT
-    assert fm.owner == "harald"
+    assert fm.owner == "sam"
     assert fm.phase == "-"
     assert fm.tags == []
 

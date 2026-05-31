@@ -70,3 +70,16 @@ async def test_marker_keeps_screenshot_even_if_smalltalk(tmp_path) -> None:
         trace_id=uuid4(), user_text="schau mal das hier", is_smalltalk=True
     )
     assert len(imgs) == 1
+
+
+async def test_conversation_recall_skips_screenshot(tmp_path) -> None:
+    """The reported bug: a 'what did we discuss?' turn must NOT attach a screenshot,
+    so the conversation history is the brain's context, not the current screen.
+    This is a content question (is_smalltalk=False) yet carries no visual marker."""
+    m = _manager(_make_obs(tmp_path))
+    imgs = await m._collect_vision_images(
+        trace_id=uuid4(),
+        user_text="was haben wir gerade besprochen?",
+        is_smalltalk=False,
+    )
+    assert imgs == ()

@@ -221,7 +221,7 @@ SPAWN_INPUTS = [
     "Bau eine Landingpage",
     "Wie viele PRs sind in jarvis-repo offen?",
     "Mach einen Screenshot und sag mir was du siehst",
-    # Regression — Voice-Session 2026-05-11 17:22 (Bug-Report von the maintainer):
+    # Regression — Voice-Session 2026-05-11 17:22 (Bug-Report von Alex):
     # "Kannst du bitte einen Subagenten spawnen, welcher..." fiel ohne
     # Match auf den LLM-Pfad zurueck (40s Gemini-Stream-Timeout). "spawn"
     # als Verb-Trigger plus "Subagent"-Marker fangen beide unabhaengig.
@@ -1012,7 +1012,7 @@ def test_check_unsupported_intent_fires_for_unregistered_action() -> None:
     sys.modules["jarvis.core.capabilities"] = mock_module
     try:
         manager, _executor = _manager_with_spawn()
-        result = manager._check_unsupported_intent("Schick bitte eine E-Mail an Harald")
+        result = manager._check_unsupported_intent("Schick bitte eine E-Mail an Sam")
         assert result is not None, (
             "_check_unsupported_intent must return refusal for unregistered action"
         )
@@ -1106,7 +1106,7 @@ class _FakeProfileForPrompt:
     """Minimal UserProfile stand-in: only render_for_prompt is exercised."""
 
     def render_for_prompt(self, *, max_chars: int = 2000) -> str:
-        return "## Ueber den User\n- **Name:** the maintainer"
+        return "## Ueber den User\n- **Name:** Alex"
 
 
 class _FakeUpdateProfileTool:

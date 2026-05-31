@@ -3,7 +3,7 @@ title: "ADR-0002: UIA-Tree-Pruning"
 slug: adr-0002-uia-tree-pruning
 diataxis: adr
 status: active
-owner: harald
+owner: sam
 last_reviewed: 2026-04-29
 phase: 5
 audience: developer

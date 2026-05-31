@@ -214,8 +214,8 @@ def _walk_vault(vault_root: Path) -> list[Path]:
 def _relative_posix(vault_root: Path, abs_path: Path) -> str:
     """Return a vault-root-relative POSIX path string.
 
-    Example: ``vault_root=/vault``, ``abs_path=/vault/entities/the maintainer.md``
-    → ``"entities/the maintainer.md"``.
+    Example: ``vault_root=/vault``, ``abs_path=/vault/entities/alex.md``
+    → ``"entities/alex.md"``.
 
     Falls back to the absolute POSIX path if *abs_path* is not under
     *vault_root* (should not happen in practice).

@@ -17,7 +17,7 @@
     upstream pusht. Mit -OpenClawWarnOnly wird nur gewarnt statt geskippt.
 
 .PARAMETER RepoRoot
-    Pfad zum Repo-Root. Default: <your-home>\Desktop\Personal Jarvis
+    Pfad zum Repo-Root. Default: <USER_HOME>\Desktop\Personal Jarvis
 
 .PARAMETER DryRun
     Nur loggen was getan wuerde, kein Tag und kein Push.
@@ -40,7 +40,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$RepoRoot = "<your-home>\Desktop\Personal Jarvis",
+    [string]$RepoRoot = "<USER_HOME>\Desktop\Personal Jarvis",
     [switch]$DryRun,
     [int]$OpenClawActiveMinutes = 30,
     [switch]$OpenClawWarnOnly

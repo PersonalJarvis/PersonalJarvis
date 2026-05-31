@@ -71,22 +71,22 @@ def _write_page(
 
 @pytest.fixture
 def populated_vault(tmp_path: Path) -> Path:
-    """Three-page vault: the maintainer -> harald, the maintainer -> pixel-art-editor."""
+    """Three-page vault: alex -> sam, alex -> pixel-art-editor."""
     vault = tmp_path / "vault"
     _write_page(
         vault,
         "entities",
-        "harald",
+        "sam",
         page_type="entity",
-        body="# Harald\n\n## Summary\nHarald is a person born in 1976.\n\n## Facts\n- Born in 1976.\n",
+        body="# Sam\n\n## Summary\nSam is a person born in 1976.\n\n## Facts\n- Born in 1976.\n",
     )
     _write_page(
         vault,
         "entities",
-        "the maintainer",
+        "alex",
         page_type="entity",
         body=(
-            "# the maintainer\n\n## Summary\nFather is [[harald]].\n\n"
+            "# Alex\n\n## Summary\nFather is [[sam]].\n\n"
             "## Facts\n- Working on [[pixel-art-editor]].\n"
             "- Favorite food is Pizza (source: voice-fact:demo).\n"
         ),
@@ -128,12 +128,12 @@ def test_tree_with_three_pages_lists_files_and_counts(populated_vault: Path) -> 
     assert folders_by_name["concepts"]["count"] == 0
     assert folders_by_name["sessions"]["count"] == 0
     slugs = {f["slug"] for f in folders_by_name["entities"]["files"]}
-    assert slugs == {"harald", "the maintainer"}
+    assert slugs == {"sam", "alex"}
     sample_file = folders_by_name["entities"]["files"][0]
     assert "mtime" in sample_file and isinstance(sample_file["mtime"], float)
     assert "size" in sample_file and sample_file["size"] > 0
     assert body["stats"]["total_pages"] == 3
-    # the maintainer has 2 outbound wikilinks (harald, pixel-art-editor)
+    # alex has 2 outbound wikilinks (sam, pixel-art-editor)
     assert body["stats"]["total_links"] >= 2
 
 
@@ -169,18 +169,18 @@ def test_tree_with_missing_vault_returns_empty_ok_response(tmp_path: Path) -> No
 def test_page_happy_path_returns_frontmatter_body_wikilinks(populated_vault: Path) -> None:
     app = _make_app(populated_vault)
     with TestClient(app) as client:
-        r = client.get("/api/wiki/page/the maintainer")
+        r = client.get("/api/wiki/page/alex")
     body = r.json()
     assert body["ok"] is True
-    assert body["slug"] == "the maintainer"
+    assert body["slug"] == "alex"
     assert body["kind"] == "entity"
     assert body["frontmatter_valid"] is True
     assert body["frontmatter"]["type"] == "entity"
-    assert "Father is [[harald]]" in body["body_md"]
-    assert set(body["wikilinks"]) == {"harald", "pixel-art-editor"}
+    assert "Father is [[sam]]" in body["body_md"]
+    assert set(body["wikilinks"]) == {"sam", "pixel-art-editor"}
     assert body["stats"]["bytes"] > 0
     assert body["stats"]["words"] > 0
-    assert body["path"].endswith("entities/the maintainer.md")
+    assert body["path"].endswith("entities/alex.md")
 
 
 def test_page_unknown_slug_returns_not_found_envelope(populated_vault: Path) -> None:
@@ -240,10 +240,10 @@ def test_graph_with_linked_pages_produces_nodes_and_edges(populated_vault: Path)
     body = r.json()
     assert body["ok"] is True
     node_ids = {n["id"] for n in body["nodes"]}
-    assert node_ids == {"harald", "the maintainer", "pixel-art-editor"}
+    assert node_ids == {"sam", "alex", "pixel-art-editor"}
     edge_pairs = {(e["source"], e["target"]) for e in body["edges"]}
-    assert ("the maintainer", "harald") in edge_pairs
-    assert ("the maintainer", "pixel-art-editor") in edge_pairs
+    assert ("alex", "sam") in edge_pairs
+    assert ("alex", "pixel-art-editor") in edge_pairs
     assert body["broken"] == []
     # Edge contexts include the wikilink in question.
     for edge in body["edges"]:
@@ -275,17 +275,17 @@ def test_graph_with_broken_wikilink_lists_it_in_broken_bucket(tmp_path: Path) ->
 # ----------------------------------------------------------------------
 
 
-def test_backlinks_for_harald_includes_ruben_with_snippet(populated_vault: Path) -> None:
+def test_backlinks_for_sam_includes_alex_with_snippet(populated_vault: Path) -> None:
     app = _make_app(populated_vault)
     with TestClient(app) as client:
-        r = client.get("/api/wiki/backlinks/harald")
+        r = client.get("/api/wiki/backlinks/sam")
     body = r.json()
     assert body["ok"] is True
-    assert body["slug"] == "harald"
+    assert body["slug"] == "sam"
     backlinks_by_slug = {b["slug"]: b for b in body["backlinks"]}
-    assert "the maintainer" in backlinks_by_slug
-    snippet = backlinks_by_slug["the maintainer"]["snippet"]
-    assert "harald" in snippet.lower()
+    assert "alex" in backlinks_by_slug
+    snippet = backlinks_by_slug["alex"]["snippet"]
+    assert "sam" in snippet.lower()
 
 
 def test_backlinks_for_unreferenced_slug_returns_empty_list(populated_vault: Path) -> None:
@@ -331,7 +331,7 @@ def test_search_happy_path_returns_scored_hits(
     assert body["query"] == "pizza"
     assert len(body["hits"]) >= 1
     top_hit = body["hits"][0]
-    assert top_hit["slug"] == "the maintainer"
+    assert top_hit["slug"] == "alex"
     assert 0.0 <= top_hit["score"] <= 1.0
     assert top_hit["path"].endswith(".md")
     assert "pizza" in top_hit["snippet"].lower()
@@ -353,12 +353,12 @@ def test_search_with_fts5_syntax_chars_is_sanitised(populated_vault: Path) -> No
     with TestClient(app) as client:
         r = client.get(
             "/api/wiki/search",
-            params={"q": 'pizza" AND (the maintainer*)'},
+            params={"q": 'pizza" AND (alex*)'},
         )
     body = r.json()
     assert r.status_code == 200
     assert body["ok"] is True
-    assert body["query"] == "pizza AND the maintainer"
+    assert body["query"] == "pizza AND alex"
 
 
 def test_search_k_parameter_caps_results(populated_vault: Path) -> None:

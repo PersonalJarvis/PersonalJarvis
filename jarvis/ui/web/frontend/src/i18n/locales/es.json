@@ -49,6 +49,9 @@
       "2": "Trabaja en la carpeta C:\\Proyectos\\Foo"
     },
     "input_placeholder": "Mensaje a Jarvis… (Enter para enviar)",
+    "dictation_start": "Dictar",
+    "dictation_stop": "Detener dictado",
+    "dictation_listening": "Escuchando… habla ahora",
     "history": "Historial",
     "new_chat": "Nuevo chat",
     "speak": "Hablar en esta conversación",

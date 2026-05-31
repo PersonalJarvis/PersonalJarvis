@@ -20,21 +20,6 @@ secrets/
 credentials/
 service-account*.json
 
-# Personal / instance state — the operator's data, NEVER committed (OpenClaw model).
-# Enforced by tests/unit/test_no_personal_state_tracked.py. See CLAUDE.md privacy contract.
-jarvis.toml
-!jarvis.toml.example
-mcp.json
-!mcp.json.example
-# Memory/knowledge: only generic example notes ship; the operator's notes never do.
-wiki/obsidian-vault/sessions/
-wiki/obsidian-vault/_archive/
-# Profile / avatar / per-user assets (root-anchored so deep source like
-# jarvis/.../ProfileView.tsx is NOT caught on case-insensitive filesystems).
-/profile*
-/avatar*
-/avatar-cache/
-
 # Python
 __pycache__/
 *.py[cod]
@@ -179,6 +164,14 @@ wiki/obsidian-vault/.obsidian/hotkeys.json
 /RECOVERY.md
 /recovery-report.md
 /restore-report.md
+# One-off scratch experiments at the repo root (cookie-transplant utilities,
+# promo-video brand drops, ad-hoc probes). Anything named `scratch_*` /
+# `scratch/` is personal throwaway work and must never be committed.
+/scratch_*
+/scratch/
 
 # Misc per-user state the code may write into the repo tree.
 state/
+
+# TypeScript incremental build cache — regenerated every build
+*.tsbuildinfo

@@ -306,8 +306,8 @@ def test_mascot_respawn_false_positive_corpus(text: str) -> None:
 @pytest.mark.parametrize(
     "text",
     [
-        "schick eine email an harald@example.com",
-        "Schick eine Email an harald@example.com",
+        "schick eine email an sam@gmx.de",
+        "Schick eine Email an sam@gmx.de",
         "trag einen termin morgen 10 uhr ein",
         "Trag einen Termin morgen 10 Uhr ein",
         "sende eine whatsapp an mama",

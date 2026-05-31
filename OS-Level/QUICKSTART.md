@@ -13,14 +13,14 @@ This document walks you through testing the feature in 4 steps.
 
 ```powershell
 # 1. Install the overlay package once
-cd "<your-home>\Desktop\Personal Jarvis-main\OS-Level"
+cd "<USER_HOME>\Desktop\Personal Jarvis-main\OS-Level"
 pip install -e .
 
 # 2. Smoke test (5-second sign of life)
 python -m overlay --smoke
 
 # 3. Production test with the main Jarvis
-cd "<your-home>\Desktop\Personal Jarvis-main"
+cd "<USER_HOME>\Desktop\Personal Jarvis-main"
 run.bat --debug
 ```
 
@@ -36,7 +36,7 @@ If, after step 2, the **mascot appears in the top-left of your primary monitor**
 Run once:
 
 ```powershell
-cd "<your-home>\Desktop\Personal Jarvis-main\OS-Level"
+cd "<USER_HOME>\Desktop\Personal Jarvis-main\OS-Level"
 pip install -e .
 ```
 
@@ -46,7 +46,7 @@ along with it.
 
 ### b) Enable `jarvis.toml`
 
-Open `<your-home>\Desktop\Personal Jarvis-main\jarvis.toml`
+Open `<USER_HOME>\Desktop\Personal Jarvis-main\jarvis.toml`
 and make sure the `[overlay]` section looks like this (or add it):
 
 ```toml
@@ -66,7 +66,7 @@ overlay should still start (see plan §21.4).
 The renderer HTML/JS/CSS must be built:
 
 ```powershell
-cd "<your-home>\Desktop\Personal Jarvis-main\OS-Level\overlay-ui"
+cd "<USER_HOME>\Desktop\Personal Jarvis-main\OS-Level\overlay-ui"
 npm install                   # once
 npm run build                 # produces dist/edge-glow.html + dist/mascot.html
 ```
@@ -81,7 +81,7 @@ asset bundles in the `dist/assets/` folder. **0 warnings** is expected.
 Test 1 checks whether the overlay starts on its own (without the main Jarvis):
 
 ```powershell
-cd "<your-home>\Desktop\Personal Jarvis-main\OS-Level"
+cd "<USER_HOME>\Desktop\Personal Jarvis-main\OS-Level"
 python -m overlay --smoke
 ```
 
@@ -112,7 +112,7 @@ python -m overlay --smoke
 Test 2 checks whether the main Jarvis spawns + controls the overlay correctly:
 
 ```powershell
-cd "<your-home>\Desktop\Personal Jarvis-main"
+cd "<USER_HOME>\Desktop\Personal Jarvis-main"
 run.bat --debug
 ```
 

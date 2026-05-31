@@ -3,7 +3,7 @@ title: "ADR-0004: Kill-Switch < 2s"
 slug: adr-0004-kill-propagation
 diataxis: adr
 status: active
-owner: harald
+owner: sam
 last_reviewed: 2026-04-29
 phase: 5
 audience: developer

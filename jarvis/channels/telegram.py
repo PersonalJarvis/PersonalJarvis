@@ -1,4 +1,4 @@
-# === F-FRIENDS [F1] · feature/friends-section · the maintainer-2026-04-30 ===
+# === F-FRIENDS [F1] · feature/friends-section · alex-2026-04-30 ===
 """TelegramChannel: bidirectional ChannelAdapter via the Telegram Bot API.
 
 Architecture (Phase F1):
@@ -24,7 +24,7 @@ from uuid import UUID, uuid4
 
 from jarvis.channels.base import ChannelMessage, ChannelSession
 
-# === F-FRIENDS [F1] · feature/friends-section · the maintainer-2026-04-30 ===
+# === F-FRIENDS [F1] · feature/friends-section · alex-2026-04-30 ===
 # Branch-portable import: ``output_filter`` exists in later branches
 # (Phase 5+) but not yet in skills-brain-integration. Fallback is identity —
 # Telegram outbound then goes out unscrubbed (acceptable for F2 scope).
@@ -373,7 +373,7 @@ class TelegramChannel:
         except Exception as exc:  # noqa: BLE001
             log.warning("Telegram send_message failed (chat=%s): %s", chat_id, exc)
 
-    # === F-FRIENDS [F4] · feature/friends-section · the maintainer-2026-05-01 ===
+    # === F-FRIENDS [F4] · feature/friends-section · alex-2026-05-01 ===
     async def send_status_card(
         self, chat_id: int, update: "StatusUpdate"
     ) -> None:

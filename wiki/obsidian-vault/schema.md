@@ -140,8 +140,8 @@ and projects via `[[wikilinks]]`. Older than 7 days → move to `_archive/sessio
 
 ## Wikilinks
 
-Use double-bracket syntax `[[entities/the maintainer]]` or short form `[[the maintainer]]`
-when the slug is globally unique. Aliased links `[[entities/the maintainer|the user]]`
+Use double-bracket syntax `[[entities/alex]]` or short form `[[alex]]`
+when the slug is globally unique. Aliased links `[[entities/alex|the user]]`
 are allowed but discouraged — prefer adding the alias to the entity's
 frontmatter and using the canonical short form.
 

@@ -157,6 +157,28 @@ def _build_context_ack(action: str, target: str) -> str:
 _GENERIC_ACTION_FALLBACK: Final[str] = "einer komplexen Aufgabe nachgeht"
 
 
+# Standing quality directive prepended to EVERY dispatched mission prompt.
+# Live incident 2026-05-31 (mission 019e7e04): the user's voice request was
+# VAD-truncated ("... wie soll"), the Gemini-Flash router tier compressed it
+# into a minimal brief ("Erstelle ein sinnvolles HTML-Grundgerüst oder frage
+# den User nach Details"), and the frontier Opus worker faithfully shipped a
+# 12-line `Hallo Welt / Inhalt folgt` stub that passed the (structural-only)
+# critic. The worker is not lazy — it executes the brief it is handed. This
+# directive is the worker-side floor that overrides a lazy/minimal brief from
+# the cheap router tier, independent of which backend (Claude / Gemini /
+# Codex) runs the task: a stub is never an acceptable answer.
+_QUALITY_DIRECTIVE: Final[str] = (
+    "Deliver a complete, polished, production-quality result that fully "
+    'satisfies the request. A skeleton, stub, placeholder, or "content '
+    'follows" / "Inhalt folgt" shell is a FAILURE — never ship one. If a '
+    "detail is unspecified, pick a rich, sensible default and build the "
+    "finished artefact; never downgrade the task to a minimal version, and "
+    'treat any hint (even one that says "Grundgerüst" / "skeleton") as a '
+    "floor, not a ceiling. This raises the quality of exactly what was asked "
+    "— it does not add unrequested features."
+)
+
+
 def _build_mission_prompt(
     utterance: str,
     action: str,
@@ -183,20 +205,28 @@ def _build_mission_prompt(
     if not action or action == _GENERIC_ACTION_FALLBACK:
         # Force-spawn / no interpretation — the verbatim utterance is all we
         # have, and it is the full user turn on that path.
-        return utterance
-    parts = [f"Aufgabe: {action}."]
-    if target:
-        parts.append(f"Zielort/Kontext: {target}.")
-    hints = [
-        h.strip()
-        for h in (context_hints or [])
-        if isinstance(h, str) and h.strip()
-    ]
-    if hints:
-        parts.append("Hinweise: " + "; ".join(hints) + ".")
-    if utterance:
-        parts.append(f'Wortlaut des Nutzers: "{utterance}".')
-    return "\n".join(parts)
+        body = utterance
+    else:
+        parts = [f"Aufgabe: {action}."]
+        if target:
+            parts.append(f"Zielort/Kontext: {target}.")
+        hints = [
+            h.strip()
+            for h in (context_hints or [])
+            if isinstance(h, str) and h.strip()
+        ]
+        if hints:
+            parts.append("Hinweise: " + "; ".join(hints) + ".")
+        if utterance:
+            parts.append(f'Wortlaut des Nutzers: "{utterance}".')
+        body = "\n".join(parts)
+    if not body:
+        # Nothing to dispatch — keep the empty-in/empty-out contract so the
+        # caller's empty-utterance guard still short-circuits cleanly.
+        return ""
+    # Prepend the standing quality directive so a lazy/minimal brief from the
+    # router tier cannot downgrade the deliverable to a stub (2026-05-31 fix).
+    return f"{_QUALITY_DIRECTIVE}\n\n{body}"
 
 
 class SpawnWorkerTool:

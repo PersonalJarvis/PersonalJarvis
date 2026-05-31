@@ -100,7 +100,7 @@ SCENARIOS: tuple[Scenario, ...] = (
         "hangup",
         "Das war's, danke.",
         "That's all, thanks.",
-        "Exakt der Hangup-Contract: „Auf Wiedersehen, the maintainer.\"",
+        "Exakt der Hangup-Contract: „Auf Wiedersehen, Alex.\"",
     ),
 )
 

@@ -127,7 +127,7 @@ async def test_voice_mission_triggers_tts(store_and_bus) -> None:
     # (F-AUDIT-2) is applied on top — "Sir" would be scrubbed anyway.
     assert "Fertig" in text or "Erledigt" in text or "Abgeschlossen" in text
     assert "erledigt" in text.lower()  # the signed summary survives
-    assert "the maintainer" not in text
+    assert "Alex" not in text
     assert "Sir" not in text
     assert lang == "de"
 
@@ -178,7 +178,7 @@ async def test_failed_routes_to_render_failed(store_and_bus) -> None:
     text, _ = tts.calls[-1]
     # Name-neutral contract: failure phrasing, no owner name, never "Sir".
     assert "gescheitert" in text.lower() or "fehl" in text.lower()
-    assert "the maintainer" not in text
+    assert "Alex" not in text
     assert "Sir" not in text
 
 
@@ -221,7 +221,7 @@ async def test_budget_warn_50_routes_correctly(store_and_bus) -> None:
     assert tts.calls
     text, _ = tts.calls[-1]
     assert "halb" in text.lower() or "fuenfzig" in text.lower() or "50" in text
-    assert "the maintainer" not in text
+    assert "Alex" not in text
     assert "Sir" not in text
 
 
@@ -242,7 +242,7 @@ async def test_budget_warn_80_routes_correctly(store_and_bus) -> None:
     assert tts.calls
     text, _ = tts.calls[-1]
     assert "achtzig" in text.lower() or "80" in text or "knapp" in text.lower()
-    assert "the maintainer" not in text
+    assert "Alex" not in text
     assert "Sir" not in text
 
 

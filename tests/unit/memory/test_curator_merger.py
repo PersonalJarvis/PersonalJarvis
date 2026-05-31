@@ -54,16 +54,16 @@ def _cand(
 class TestUserScalarMerge:
     @pytest.mark.asyncio
     async def test_sets_user_identity_name(self, merger: Merger, profile: UserProfile) -> None:
-        cand = _cand("user", "identity", "name", "the maintainer")
+        cand = _cand("user", "identity", "name", "Alex")
         report = await merger.apply([cand])
         assert report.applied == 1
         assert report.failed == 0
 
         # In-Memory gesetzt
-        assert profile.get("identity", "name") == "the maintainer"
+        assert profile.get("identity", "name") == "Alex"
         # Persistenz: frisch laden
         reloaded = UserProfile.load(profile.path)
-        assert reloaded.get("identity", "name") == "the maintainer"
+        assert reloaded.get("identity", "name") == "Alex"
 
     @pytest.mark.asyncio
     async def test_also_writes_observation_log_for_scalar_set(
@@ -71,23 +71,23 @@ class TestUserScalarMerge:
     ) -> None:
         """Bei jedem Scalar-Set zusaetzlich Observations-Append fuer Audit-Trail."""
         cand = _cand(
-            "user", "identity", "name", "the maintainer", evidence="User: 'ich bin the maintainer'"
+            "user", "identity", "name", "Alex", evidence="User: 'ich bin Alex'"
         )
         await merger.apply([cand])
 
         text = profile.path.read_text(encoding="utf-8")
         # Observation steht im Body
-        assert "identity.name: the maintainer" in text
+        assert "identity.name: Alex" in text
 
     @pytest.mark.asyncio
     async def test_same_value_counts_as_skipped(
         self, merger: Merger, profile: UserProfile
     ) -> None:
         """Wenn der Wert schon gesetzt ist, erhoeht der Merger report.skipped."""
-        profile.set("identity", "name", "the maintainer")
+        profile.set("identity", "name", "Alex")
         profile.save()
 
-        cand = _cand("user", "identity", "name", "the maintainer")
+        cand = _cand("user", "identity", "name", "Alex")
         report = await merger.apply([cand])
 
         assert report.skipped == 1
@@ -209,7 +209,7 @@ class TestBusEvents:
     async def test_emits_profile_updated_event_for_user_fact(
         self, merger: Merger, fake_bus
     ) -> None:
-        cand = _cand("user", "identity", "name", "the maintainer")
+        cand = _cand("user", "identity", "name", "Alex")
         await merger.apply([cand])
 
         assert len(fake_bus.published) == 1
@@ -239,10 +239,10 @@ class TestBusEvents:
         self, merger: Merger, fake_bus, profile: UserProfile
     ) -> None:
         """Bei `applied == 0` duerfen keine Events publiziert werden."""
-        profile.set("identity", "name", "the maintainer")
+        profile.set("identity", "name", "Alex")
         profile.save()
         # Candidate setzt den gleichen Wert → skipped, nicht applied
-        cand = _cand("user", "identity", "name", "the maintainer")
+        cand = _cand("user", "identity", "name", "Alex")
         report = await merger.apply([cand])
 
         assert report.applied == 0
@@ -254,7 +254,7 @@ class TestBusEvents:
         self, merger: Merger, fake_bus
     ) -> None:
         cands = [
-            _cand("user", "identity", "name", "the maintainer"),
+            _cand("user", "identity", "name", "Alex"),
             _cand(
                 "user", "values", "pet_peeves", "buzzwords", operation="append"
             ),

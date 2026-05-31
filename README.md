@@ -9,7 +9,7 @@
 
 - **Base runtime:** Linux / macOS / Windows with Python 3.11+ and a network connection. Headless VPS + browser UI is a first-class deployment target.
 - **Maintainer's reference machine** (the project is developed on, but **does not require**, this hardware): RTX 5070 Ti, 32 GB RAM, CUDA 12.8, Windows 11 Pro — unlocks the optional `[desktop]` extras.
-- **Repo root** (maintainer's workstation; not relevant to consumers): `<your-home>\Desktop\Personal Jarvis`
+- **Repo root** (maintainer's workstation; not relevant to consumers): `<USER_HOME>\Desktop\Personal Jarvis`
 - **Binding plan:** `~/.claude/plans/also-er-muss-auch-lexical-pond.md` (plan wins on plan-vs-code conflict).
 - **Binding doctrine:** [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md) (cloud-first; wins over the binding plan when the two disagree on hardware assumptions).
 
@@ -693,7 +693,7 @@ Neither blocks anything — but a fresh chat parroting CLAUDE.md verbatim will b
 - [`docs/self_mod.md`](docs/self_mod.md) — Phase 7 self-mod user guide
 - [`docs/obsidian-setup.md`](docs/obsidian-setup.md) — Wiki vault registration walkthrough
 - `~/.claude/plans/also-er-muss-auch-lexical-pond.md` — binding master plan
-- `~/.claude/projects/C--Users-Administrator-Desktop-Personal-Jarvis/memory/MEMORY.md` — auto-memory with stable user preferences (multi-provider brain, no-Anthropic-API, bilingual, anti-confirmation-fatigue, frontier-quality-before-cost)
+- `~/.claude/projects/<your-claude-project-dir>/memory/MEMORY.md` — auto-memory with stable user preferences (multi-provider brain, no-Anthropic-API, bilingual, anti-confirmation-fatigue, frontier-quality-before-cost)
 
 ---
 

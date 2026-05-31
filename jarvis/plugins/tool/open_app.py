@@ -202,7 +202,7 @@ class OpenAppTool:
                 error=(
                     f"App-Name '{app_name[:80]}' abgelehnt ({reason}). "
                     f"Wahrscheinlich STT-Misshearing. Frage den User kurz: "
-                    f"'Welche App genau, the maintainer?' — rufe open_app NICHT erneut "
+                    f"'Welche App genau, Alex?' — rufe open_app NICHT erneut "
                     f"mit dem selben Wert auf."
                 ),
             )

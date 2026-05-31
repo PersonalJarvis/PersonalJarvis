@@ -90,11 +90,11 @@ async def worker_stack(tmp_path: Path):
     # Seed the durable hub pages the session worker links into. A real vault
     # always has a user entity and at least one active project; the session
     # rollup demotes links to pages that do NOT exist, so these must be
-    # present for the fake-brain's [[entities/the maintainer]] /
+    # present for the fake-brain's [[entities/alex]] /
     # [[projects/wiki-memory-rebuild]] references to survive as graph edges.
-    (vault_root / "entities" / "the maintainer.md").write_text(
-        "---\ntype: entity\nslug: the maintainer\naliases: [the maintainer, the user]\n---\n"
-        "# the maintainer\n\n## Summary\nThe user.\n",
+    (vault_root / "entities" / "alex.md").write_text(
+        "---\ntype: entity\nslug: alex\naliases: [Alex, the user]\n---\n"
+        "# Alex\n\n## Summary\nThe user.\n",
         encoding="utf-8",
     )
     (vault_root / "projects" / "wiki-memory-rebuild.md").write_text(
@@ -135,7 +135,7 @@ async def worker_stack(tmp_path: Path):
     # always streams a fixed paragraph as a BrainDelta sequence — same
     # shape as a real provider's async generator.
     fake_brain = _FakeBrain(
-        "User worked across [[entities/the maintainer]] context with several "
+        "User worked across [[entities/alex]] context with several "
         "[[projects/wiki-memory-rebuild]] iterations. Main decisions: "
         "settle on Karpathy pattern, ship Wave 2 integration, defer "
         "B5 to next session. Open thread: B7 itself."
@@ -345,7 +345,7 @@ async def test_graph_connectivity_postprocesses_links(worker_stack):
     assert "[[projects/wiki-memory-rebuild]]" in content
     # Deterministic backbone footer wires the session to the user hub.
     assert "## Related" in content
-    assert "[[entities/the maintainer]]" in content
+    assert "[[entities/alex]]" in content
 
 
 @pytest.mark.asyncio
@@ -364,7 +364,7 @@ async def test_log_entry_links_durable_hubs(worker_stack):
 
     await worker.flush_session()
     log_content = (vault_root / "log.md").read_text(encoding="utf-8")
-    assert "[[entities/the maintainer]]" in log_content
+    assert "[[entities/alex]]" in log_content
 
 
 @pytest.mark.asyncio

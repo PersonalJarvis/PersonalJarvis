@@ -1,4 +1,4 @@
-# === F-FRIENDS [F0] · feature/friends-section · the maintainer-2026-04-30 ===
+# === F-FRIENDS [F0] · feature/friends-section · alex-2026-04-30 ===
 """Bootstrap helper for the channel system.
 
 A single function (:func:`bootstrap_channels`) that the caller

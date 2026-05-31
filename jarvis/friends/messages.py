@@ -1,4 +1,4 @@
-# === F-FRIENDS [F3] · feature/friends-section · the maintainer-2026-05-01 ===
+# === F-FRIENDS [F3] · feature/friends-section · alex-2026-05-01 ===
 """DirectMessageStore: local persistence for direct messages.
 
 Branch-portable: writes to the same ``friends.db`` as :class:`FriendRegistry`

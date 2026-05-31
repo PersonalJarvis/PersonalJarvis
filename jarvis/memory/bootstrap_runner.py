@@ -87,21 +87,21 @@ _FAREWELL = (
 # Parser regexes
 # ----------------------------------------------------------------------
 
-# "Ich heisse the maintainer", "ich heiße the maintainer", "mein Name ist the maintainer",
-# "ich bin Harald". Case-insensitive. Capture group = name remainder.
+# "Ich heisse Alex", "ich heiße alex", "mein Name ist Personal Jarvis Maintainer",
+# "ich bin Sam". Case-insensitive. Capture group = name remainder.
 _NAME_INTRO_RE = re.compile(
     r"(?:ich\s+heisse|ich\s+heiße|mein\s+name\s+ist|ich\s+bin|my\s+name\s+is|i\s+am|i'm)\s+(.+)",
     re.IGNORECASE,
 )
 
-# "Nenn mich the maintainer", "ruf mich X", "call me X" — explicit form-of-address preference
+# "Nenn mich Alex", "ruf mich X", "call me X" — explicit form-of-address preference
 _ADDRESS_RE = re.compile(
     r"(?:nenn(?:e)?\s+mich|ruf(?:e)?\s+mich|call\s+me|sag(?:e)?\s+(?:einfach\s+)?)\s+(.+)",
     re.IGNORECASE,
 )
 
-# Strip trailing junk after the actual name (e.g. "the maintainer, aber nenn
-# mich gerne Rube" → we want "the maintainer"). Cut at first comma / " aber ".
+# Strip trailing junk after the actual name (e.g. "Alex, aber nenn
+# mich gerne Rube" → we want "Alex"). Cut at first comma / " aber ".
 _NAME_TRAIL_RE = re.compile(r"[,;.!?]|\s+aber\s+|\s+und\s+|\s+but\s+", re.IGNORECASE)
 
 # Language keywords → ISO-639-1. Key match is case-insensitive substring.
@@ -295,7 +295,7 @@ class BootstrapRunner:
         if ma:
             address_candidate = ma.group(1).strip()
             # If _NAME_INTRO_RE found nothing but the user wrote
-            # "Ich bin the maintainer, nenn mich Rube": the address group can overlap the
+            # "Ich bin Alex, nenn mich Rube": the address group can overlap the
             # name — we keep both.
 
         # Remove trailing junk (comma, "aber ...", "und ...")
@@ -423,9 +423,9 @@ def _trim_name(raw: str | None) -> str:
     """Strips trailing junk after the name and capitalizes it.
 
     Examples:
-        "the maintainer, aber nenn mich rube" → "the maintainer"
-        "the maintainer"                → "the maintainer"
-        "  harald  "                 → "Harald"
+        "alex, aber nenn mich rube" → "Alex"
+        "Personal Jarvis Maintainer"                → "Personal Jarvis Maintainer"
+        "  sam  "                 → "Sam"
     """
     if not raw:
         return ""
@@ -561,9 +561,9 @@ if __name__ == "__main__":  # pragma: no cover
         assert _QUESTIONS[0] in greeting
 
         # --- Stage 0 → 1: name ---
-        r = runner.handle_answer("Ich heisse the maintainer, aber nenn mich Rube")
-        print(f"[A1] the maintainer -> next: {r}")
-        assert profile.get("identity", "name") == "the maintainer", profile.get("identity", "name")
+        r = runner.handle_answer("Ich heisse Alex, aber nenn mich Rube")
+        print(f"[A1] Alex -> next: {r}")
+        assert profile.get("identity", "name") == "Alex", profile.get("identity", "name")
         assert profile.get("identity", "preferred_address") == "Rube"
         assert r == _QUESTIONS[1]
 
@@ -603,7 +603,7 @@ if __name__ == "__main__":  # pragma: no cover
 
         # Reload from disk → round-trip is consistent
         reloaded = UserProfile.load(ws.user_path)
-        assert reloaded.get("identity", "name") == "the maintainer"
+        assert reloaded.get("identity", "name") == "Alex"
         assert reloaded.get("identity", "preferred_address") == "Rube"
         assert reloaded.get("communication", "directness") == 5
 

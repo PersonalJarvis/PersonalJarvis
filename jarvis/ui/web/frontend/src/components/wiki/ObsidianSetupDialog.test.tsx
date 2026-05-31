@@ -41,7 +41,7 @@ const STATUS_NOT_INSTALLED: ObsidianStatus = {
   version: null,
   config_exists: false,
   vault_registered: false,
-  vault_path: "<your-home>/wiki/obsidian-vault",
+  vault_path: "<USER_HOME>/wiki/obsidian-vault",
   recommended_action: "install_obsidian",
 };
 
@@ -50,7 +50,7 @@ const STATUS_NOT_REGISTERED: ObsidianStatus = {
   version: "1.7.4",
   config_exists: true,
   vault_registered: false,
-  vault_path: "<your-home>/wiki/obsidian-vault",
+  vault_path: "<USER_HOME>/wiki/obsidian-vault",
   recommended_action: "register_vault",
 };
 
@@ -59,7 +59,7 @@ const STATUS_OK: ObsidianStatus = {
   version: "1.7.4",
   config_exists: true,
   vault_registered: true,
-  vault_path: "<your-home>/wiki/obsidian-vault",
+  vault_path: "<USER_HOME>/wiki/obsidian-vault",
   recommended_action: "ok",
 };
 

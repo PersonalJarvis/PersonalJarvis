@@ -1,4 +1,4 @@
-# === F-FRIENDS [F0] · feature/friends-section · the maintainer-2026-04-30 ===
+# === F-FRIENDS [F0] · feature/friends-section · alex-2026-04-30 ===
 """Friends layer: local persistence for friends and channel associations.
 
 A friend is a real person (Telegram contact, another Jarvis user, or a

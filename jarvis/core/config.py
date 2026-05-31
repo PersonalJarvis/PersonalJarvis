@@ -554,7 +554,7 @@ class SessionRollupConfig(BaseModel):
         Outer ``asyncio.wait_for`` cap on the brain call.
 
     ``user_entity_slug``
-        Slug of the user's own entity page (schema default ``the maintainer``).
+        Slug of the user's own entity page (schema default ``alex``).
         Every session page links it in the ``## Related`` backbone footer
         when the page exists, so each session is wired into the graph
         through the shared user hub instead of floating as an island.
@@ -570,7 +570,7 @@ class SessionRollupConfig(BaseModel):
     max_active_sessions: int = 5
     max_output_tokens: int = 600
     timeout_s: float = 30.0
-    user_entity_slug: str = "the maintainer"
+    user_entity_slug: str = "alex"
 
 
 class SchedulerConfig(BaseModel):

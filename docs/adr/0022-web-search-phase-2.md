@@ -4,7 +4,7 @@ slug: adr-022-web-search-phase-2
 diataxis: adr
 status: proposed
 date: 2026-05-27
-owner: harald
+owner: sam
 phase: skills
 audience: developer
 supersedes: none

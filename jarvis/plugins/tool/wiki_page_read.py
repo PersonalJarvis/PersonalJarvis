@@ -53,7 +53,7 @@ class WikiPageReadTool:
         "Use this after wiki-recall when you need the complete content of one "
         "page (e.g. the user asks to 'read me everything about Joy' or wants "
         "a summary that needs more than the 240-char snippet). The path is "
-        "vault-relative, e.g. 'people/harald.md'."
+        "vault-relative, e.g. 'people/sam.md'."
     )
     risk_tier: str = "safe"
     schema: dict[str, Any] = {
@@ -62,7 +62,7 @@ class WikiPageReadTool:
             "path": {
                 "type": "string",
                 "description": (
-                    "Vault-relative path to the page, e.g. 'people/harald.md'. "
+                    "Vault-relative path to the page, e.g. 'people/sam.md'. "
                     "Use the path returned by wiki-recall verbatim."
                 ),
             },
@@ -70,7 +70,7 @@ class WikiPageReadTool:
         "required": ["path"],
     }
     input_examples: list[dict[str, Any]] = [
-        {"path": "people/harald.md"},
+        {"path": "people/sam.md"},
         {"path": "people/joy.md"},
     ]
 

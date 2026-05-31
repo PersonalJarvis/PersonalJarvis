@@ -58,8 +58,8 @@ async def stack_with_fast_clock(tmp_path: Path):
 
     # Plant an entity page on disk *before* the writer is created so we
     # can simulate "user just edited this page" by setting its mtime.
-    pre_existing = vault_root / "entities" / "the maintainer.md"
-    pre_existing.write_text(_entity_body("the maintainer", "Original content."), encoding="utf-8")
+    pre_existing = vault_root / "entities" / "alex.md"
+    pre_existing.write_text(_entity_body("alex", "Original content."), encoding="utf-8")
 
     repo = MarkdownPageRepository()
     vault = VaultIndex(repo=repo)
@@ -104,7 +104,7 @@ async def test_concurrent_edit_lock_skips_recently_touched_page(
         PageUpdate(
             target_path=pre_existing,
             operation="update",
-            new_body=_entity_body("the maintainer", "Updated by curator — should be skipped."),
+            new_body=_entity_body("alex", "Updated by curator — should be skipped."),
             reason="user-edited recently",
         ),
         PageUpdate(
@@ -121,8 +121,8 @@ async def test_concurrent_edit_lock_skips_recently_touched_page(
             source_label="cli-ingest:concurrent.md",
         )
 
-    # the maintainer's page survived untouched.
-    surviving = (vault_root / "entities" / "the maintainer.md").read_text(encoding="utf-8")
+    # Alex's page survived untouched.
+    surviving = (vault_root / "entities" / "alex.md").read_text(encoding="utf-8")
     assert "Original content." in surviving
     assert "should be skipped" not in surviving
 
@@ -133,5 +133,5 @@ async def test_concurrent_edit_lock_skips_recently_touched_page(
     assert len(result.applied) == 1
     assert result.applied[0].name == "newpage.md"
     assert len(result.skipped_due_to_recent_edit) == 1
-    assert result.skipped_due_to_recent_edit[0].name == "the maintainer.md"
+    assert result.skipped_due_to_recent_edit[0].name == "alex.md"
     assert result.failed_validation == []

@@ -1447,6 +1447,26 @@ class BrainManager:
         _, _, smalltalk_re = self._get_routing_patterns()
         return bool(smalltalk_re.search(t))
 
+    # Read-only tools that stay visible even on a smalltalk turn. The toolless
+    # smalltalk path (2026-05-01) exists to stop the LLM hallucinating a
+    # spawn_worker on chit-chat — that risk is the spawn/action tools, NOT the
+    # read-only screenshot tool. Keeping `screenshot` visible lets the brain
+    # look at the screen on demand (Wave 2) even on a greeting-prefixed turn,
+    # e.g. "Hallo, lies mir vor was oben links steht" (live failure 2026-05-31).
+    _SMALLTALK_SAFE_TOOLS: frozenset[str] = frozenset({"screenshot"})
+
+    def _smalltalk_tool_override(self) -> dict[str, "Tool"]:
+        """Tool set visible on a smalltalk turn: only the read-only safe tools.
+
+        Returns ``{}`` when none of the safe tools are registered — identical to
+        the previous full-hide behaviour for deployments without a screenshot
+        tool, so the anti-fake-spawn guard is unchanged there.
+        """
+        return {
+            n: t for n, t in self._tools.items()
+            if n in self._SMALLTALK_SAFE_TOOLS
+        }
+
     def _should_force_spawn(self, user_text: str) -> bool:
         """Deterministic spawn guard for action requests.
 
@@ -2157,15 +2177,21 @@ class BrainManager:
             if self._cost_meter.over_daily_budget():
                 return "Tagesbudget ueberschritten."
 
-        # Smalltalk toolless path (bug fix 2026-05-01): on clearly identified
-        # smalltalk, tools are hidden for this turn — the LLM cannot be tempted
-        # to hallucinate "spawn_worker" (see voice session 2026-04-30 22:38,
-        # "es geht ab" → fake spawn). Force-spawn already ran (smalltalk wins
-        # there against verb match); now we also block the LLM tool-choice path.
-        # Quality risk = 0 because smalltalk replies need no tools.
+        # Smalltalk near-toolless path (bug fix 2026-05-01): on clearly
+        # identified smalltalk the spawn/action tools are hidden so the LLM
+        # cannot be tempted to hallucinate "spawn_worker" (see voice session
+        # 2026-04-30 22:38, "es geht ab" → fake spawn). The read-only screenshot
+        # tool stays visible (see _smalltalk_tool_override) so the brain can
+        # still look at the screen on demand even on a greeting-prefixed turn
+        # like "Hallo, lies mir vor was oben links steht" (live failure
+        # 2026-05-31). Force-spawn already ran (smalltalk wins there against verb
+        # match); now we also constrain the LLM tool-choice path.
         is_smalltalk_turn = self._is_smalltalk(user_text)
         if is_smalltalk_turn:
-            log.info("Smalltalk-Turn → Tools fuer LLM versteckt: %r", user_text[:80])
+            log.info(
+                "Smalltalk-Turn → nur read-only Tools fuer LLM sichtbar: %r",
+                user_text[:80],
+            )
 
         # 2. Router: which level applies?
         decision = self._picked_level(user_text)
@@ -2279,7 +2305,9 @@ class BrainManager:
 
             disp = self._build_dispatcher(
                 brain,
-                tools_override={} if is_smalltalk_turn else None,
+                tools_override=(
+                    self._smalltalk_tool_override() if is_smalltalk_turn else None
+                ),
             )
             try:
                 # CostMeter: start per-trace tracking (idempotent if already started).

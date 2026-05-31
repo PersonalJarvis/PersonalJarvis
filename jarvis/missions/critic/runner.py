@@ -30,6 +30,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
+from pydantic import ValidationError
+
 from .escalation import choose_critic_model
 from .log_summarizer import TriageFn, summarize_log
 from .prompts import render_critic_prompt
@@ -1057,7 +1059,7 @@ class CriticRunner:
         # often honours it (possibly wrapped in ```json fences -- stripped).
         cleaned = _strip_json_fences(stdout_text.strip())
         try:
-            return CriticVerdict.model_validate_json(cleaned)
+            return _validate_verdict_tolerant(cleaned)
         except (json.JSONDecodeError, ValueError):
             pass
         # Recovery path: under bypassPermissions claude runs as an agent and
@@ -1067,9 +1069,7 @@ class CriticRunner:
         # final balanced object, after any tool-call narration.
         for candidate in reversed(_iter_balanced_json_objects(stdout_text)):
             try:
-                return CriticVerdict.model_validate_json(
-                    _strip_json_fences(candidate)
-                )
+                return _validate_verdict_tolerant(_strip_json_fences(candidate))
             except (json.JSONDecodeError, ValueError):
                 continue
         logger.warning(
@@ -1261,8 +1261,9 @@ class CriticRunner:
             flat = json.loads(cleaned)
             if isinstance(flat, dict) and "verdict" in flat and "axes" not in flat:
                 return _verdict_from_codex_flat(flat)
-            # Already a full verdict shape (or unexpected) -- validate as-is.
-            return CriticVerdict.model_validate_json(cleaned)
+            # Already a full verdict shape (or unexpected) -- validate as-is,
+            # tolerating only an over-long TTS summary field.
+            return _validate_verdict_tolerant(cleaned)
         except (json.JSONDecodeError, ValueError) as exc:
             logger.warning(
                 "CriticRunner: codex-direct JSON-parse failed: %s "
@@ -1358,6 +1359,82 @@ def _strip_json_fences(text: str) -> str:
                 stripped = stripped[:-3].rstrip()
             break
     return stripped
+
+
+# Fields whose ``max_length`` is a presentation cap (TTS readback), not a
+# correctness invariant. An over-long value here must NOT sink an otherwise
+# valid verdict — see ``_validate_verdict_tolerant``.
+_TRUNCATABLE_VERDICT_FIELDS: Final[tuple[str, ...]] = ("summary", "summary_de")
+
+
+def _field_max_length(field_name: str) -> int | None:
+    """Return the ``max_length`` declared on a CriticVerdict string field."""
+    field_info = CriticVerdict.model_fields.get(field_name)
+    if field_info is None:
+        return None
+    for meta in field_info.metadata:
+        max_len = getattr(meta, "max_length", None)
+        if max_len is not None:
+            return int(max_len)
+    return None
+
+
+def _validate_verdict_tolerant(payload: str) -> CriticVerdict:
+    """Validate critic JSON, tolerating only over-long TTS summary fields.
+
+    Live root cause (mission 019e7f6d, 2026-05-31 21:08/21:09): the critic
+    returned a fully valid ``approve`` verdict over a rich 597-line HTML
+    deliverable, but ``summary`` (322 chars) and ``summary_de`` (322 chars)
+    exceeded the ``max_length=280`` TTS cap on ``CriticVerdict``. Pydantic
+    rejected the entire object, the runner returned ``None`` on both the first
+    attempt and the adversarial-reframe retry, and the mission was marked
+    ``critic_unavailable`` — discarding the worker's real work. The richer the
+    worker output, the longer the critic's summary prose, so this
+    false-negative bites *more* often as worker quality improves.
+
+    Strategy: try a strict validation first. If it fails *only* because one or
+    more of the presentation-only summary fields are too long, truncate those
+    fields to their declared cap and re-validate. Any other validation error
+    (missing axes, bad enum, out-of-range confidence, wrong types) is re-raised
+    unchanged — a genuinely malformed verdict still fails, and the empty-
+    evidence / aggregation checks downstream are untouched.
+
+    Raises:
+        json.JSONDecodeError: ``payload`` is not valid JSON.
+        ValidationError: the verdict is invalid for a reason other than an
+            over-long summary field.
+    """
+    try:
+        return CriticVerdict.model_validate_json(payload)
+    except ValidationError as exc:
+        def _is_truncatable(err: dict) -> bool:
+            loc = err.get("loc") or ()
+            return (
+                bool(loc)
+                and loc[0] in _TRUNCATABLE_VERDICT_FIELDS
+                and err.get("type") == "string_too_long"
+            )
+
+        errors = exc.errors()
+        offending = {err["loc"][0] for err in errors if _is_truncatable(err)}
+        # Re-raise unless EVERY error is an over-long summary field.
+        if not offending or any(not _is_truncatable(err) for err in errors):
+            raise
+
+        data = json.loads(payload)  # already valid JSON (pydantic parsed it)
+        for field_name in offending:
+            cap = _field_max_length(field_name) or 280
+            value = data.get(field_name)
+            if isinstance(value, str) and len(value) > cap:
+                # Keep the leading content, leave room for an ellipsis so the
+                # truncation is visible rather than a silent cut.
+                data[field_name] = value[: cap - 1].rstrip() + "…"
+        logger.info(
+            "CriticRunner: truncated over-long verdict summary field(s) %s to "
+            "the TTS cap to preserve an otherwise valid verdict",
+            sorted(offending),
+        )
+        return CriticVerdict.model_validate(data)
 
 
 def _iter_balanced_json_objects(text: str) -> list[str]:

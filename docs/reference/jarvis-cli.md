@@ -3,7 +3,7 @@ title: "Reference: Jarvis-CLI"
 slug: reference-jarvis-cli
 diataxis: reference
 status: active
-owner: harald
+owner: sam
 last_reviewed: 2026-04-29
 phase: "-"
 audience: developer

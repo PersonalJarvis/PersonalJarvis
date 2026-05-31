@@ -195,6 +195,53 @@ async def test_assert_under_limit_blocks_after_exceeded() -> None:
         bt.assert_under_limit("m1")
 
 
+# --- enabled=False: budget fully disabled (user mandate 2026-05-31) ---
+
+
+@pytest.mark.asyncio
+async def test_disabled_budget_never_raises_per_mission() -> None:
+    """enabled=False turns the tracker into a no-op: record() far past the
+    nominal cap must NOT raise BudgetExceeded — a mission is never aborted for
+    cost (frontier-quality-over-cost mandate)."""
+    bt = BudgetTracker(per_mission_usd=5.0, enabled=False)
+    await bt.record("m1", 1000.0)  # 200x the nominal cap — must not raise
+
+
+@pytest.mark.asyncio
+async def test_disabled_budget_never_raises_daily() -> None:
+    bt = BudgetTracker(per_mission_usd=100.0, daily_usd=10.0, enabled=False)
+    await bt.record("m1", 5.0)
+    await bt.record("m2", 9999.0)  # blows the daily cap — must not raise
+
+
+@pytest.mark.asyncio
+async def test_disabled_budget_assert_under_limit_never_blocks() -> None:
+    bt = BudgetTracker(per_mission_usd=5.0, enabled=False)
+    await bt.record("m1", 1000.0)
+    bt.assert_under_limit("m1")  # must not raise despite being far over nominal
+
+
+@pytest.mark.asyncio
+async def test_disabled_budget_emits_no_warnings() -> None:
+    captured: list[EventEnvelope] = []
+
+    async def emitter(env: EventEnvelope) -> int:
+        captured.append(env)
+        return 1
+
+    bt = BudgetTracker(per_mission_usd=10.0, emitter=emitter, enabled=False)
+    await bt.record("m1", 9.9)  # would be 99% if enabled
+    assert captured == [], "disabled budget must emit no warnings"
+
+
+def test_disabled_budget_skips_cap_validation() -> None:
+    """When disabled, the positive-cap validation is skipped — the caps are
+    inert, so a 0 cap must not raise at construction (the enabled-default path
+    still rejects 0, see test_invalid_per_mission_rejected)."""
+    bt = BudgetTracker(per_mission_usd=0, daily_usd=0, enabled=False)
+    assert bt is not None
+
+
 # --- bind_to_event_bus ---
 
 

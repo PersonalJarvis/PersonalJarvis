@@ -47,8 +47,8 @@
   <Actions Context="Author">
     <Exec>
       <Command>powershell.exe</Command>
-      <Arguments>-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "C:\Users\Administrator\Desktop\Personal Jarvis\scripts\jarvis-config-drift-guard.ps1"</Arguments>
-      <WorkingDirectory>C:\Users\Administrator\Desktop\Personal Jarvis</WorkingDirectory>
+      <Arguments>-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "<USER_HOME>\Desktop\Personal Jarvis\scripts\jarvis-config-drift-guard.ps1"</Arguments>
+      <WorkingDirectory><USER_HOME>\Desktop\Personal Jarvis</WorkingDirectory>
     </Exec>
   </Actions>
 </Task>

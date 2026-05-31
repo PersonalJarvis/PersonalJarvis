@@ -25,7 +25,7 @@ tools he uses.
    for personal use and works offline. No account required.
 2. Launch Obsidian and pick "Open folder as vault".
 3. Point it at this directory:
-   `<your-home>\Desktop\Personal Jarvis\data\workspace`
+   `<USER_HOME>\Desktop\Personal Jarvis\data\workspace`
 4. Optional but useful core plugins (toggle in Settings → Core plugins):
    Graph view, Backlinks, Outgoing links, Page preview, Templates,
    Quick switcher.

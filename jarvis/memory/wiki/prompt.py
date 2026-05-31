@@ -106,21 +106,21 @@ dismiss them as smalltalk:
 
 - **User identity facts**: preferences, hobbies, habits, opinions,
   dietary restrictions, schedule patterns, working style.  These
-  belong on the user's own entity page (default slug `entities/the maintainer.md`,
+  belong on the user's own entity page (default slug `entities/alex.md`,
   create if missing).  Examples that MUST persist:
-    * "Mein Lieblingsessen ist Pizza"      → entities/the maintainer.md, Facts/Preferences
-    * "Ich hasse fruehe Meetings"          → entities/the maintainer.md, Facts/Schedule
-    * "Ich arbeite immer mit Spotify"      → entities/the maintainer.md, Facts/Habits
+    * "Mein Lieblingsessen ist Pizza"      → entities/alex.md, Facts/Preferences
+    * "Ich hasse fruehe Meetings"          → entities/alex.md, Facts/Schedule
+    * "Ich arbeite immer mit Spotify"      → entities/alex.md, Facts/Habits
 - **Other-person identity facts**: same shape, just on their own
   entity page.
-    * "Harald wurde 1976 geboren"          → entities/harald.md
+    * "Sam wurde 1976 geboren"          → entities/sam.md
     * "Mein Boss heisst Tom"               → entities/tom.md + relationship
 - **Active projects / undertakings**: anything the user describes as
   current work-in-progress.
     * "Ich arbeite an einem Pixel-Art-Editor" → projects/pixel-art-editor.md
 - **Dated commitments / decisions / rules**: things with a temporal
   anchor or a "from now on" flavour.
-    * "Naechste Woche fahre ich nach Berlin"  → entities/the maintainer.md, Schedule
+    * "Naechste Woche fahre ich nach Berlin"  → entities/alex.md, Schedule
     * "Ab heute nutze ich nur noch Provider X" → concepts/<decision>.md
 
 ## What to skip

@@ -3,7 +3,7 @@
 **Status:** Draft 1.0 — ready for prompt-chain derivation
 **Scope:** Phase 9 (sequential, after the Phase 8 review pipeline)
 **Language:** English
-**Intended readers:** OpenClaw (autonomous implementer) and the maintainer (owner/reviewer)
+**Intended readers:** OpenClaw (autonomous implementer) and Alex (owner/reviewer)
 
 > This document is an **engineering spec**, not a prompt chain. It describes **what** is built and **why** — not **when** and in what order. The prompt chain with phases, definition-of-done per phase, and commit points is generated separately in the second step.
 
@@ -88,17 +88,17 @@ The effect is not primarily decorative. It is a **status signal with perceptual 
 
 ### 1.6 Concrete user stories
 
-**US-1.** *As the maintainer I use the voice command "open my mail client and reply to the last email from Anna with a polite 'Sounds good, let's do it'." The Hauptjarvis then starts Browser-Use, navigates to GMX, clicks its way through. I see the glow around the screen, see a yellow ripple on every click, and a sweep at the bottom edge when it types. At any time I can recognize whether Jarvis is still active or already finished.*
+**US-1.** *As Alex I use the voice command "open my mail client and reply to the last email from Anna with a polite 'Sounds good, let's do it'." The Hauptjarvis then starts Browser-Use, navigates to GMX, clicks its way through. I see the glow around the screen, see a yellow ripple on every click, and a sweep at the bottom edge when it types. At any time I can recognize whether Jarvis is still active or already finished.*
 
-**US-2.** *As the maintainer I start a fullscreen game. The overlay disappears automatically, without me having to do anything. As soon as I leave the game, it is back.*
+**US-2.** *As Alex I start a fullscreen game. The overlay disappears automatically, without me having to do anything. As soon as I leave the game, it is back.*
 
-**US-3.** *As the maintainer I start a Zoom call and share my screen. The glow is visible on my screen, but not in the transmission to the call participants. I can explicitly disable this privacy default setting if I want to record the overlay.*
+**US-3.** *As Alex I start a Zoom call and share my screen. The glow is visible on my screen, but not in the transmission to the call participants. I can explicitly disable this privacy default setting if I want to record the overlay.*
 
-**US-4.** *As the maintainer I say "start 5 sub-agents in parallel to research". The Hauptjarvis spawns 5 Sub-Jarvis subprocesses. The glow does NOT appear — no sub-agent is "on my computer", they run in subprocesses. When the Hauptjarvis later aggregates the results and reads them out to me, the glow stays off.*
+**US-4.** *As Alex I say "start 5 sub-agents in parallel to research". The Hauptjarvis spawns 5 Sub-Jarvis subprocesses. The glow does NOT appear — no sub-agent is "on my computer", they run in subprocesses. When the Hauptjarvis later aggregates the results and reads them out to me, the glow stays off.*
 
-**US-5.** *As the maintainer I right-click on the mascot → "Hide". The mascot disappears. On the next Jarvis start it is still hidden (persistence). I can show it again at any time via the tray menu.*
+**US-5.** *As Alex I right-click on the mascot → "Hide". The mascot disappears. On the next Jarvis start it is still hidden (persistence). I can show it again at any time via the tray menu.*
 
-**US-6.** *As the maintainer I drag the mascot to my second monitor. On the next start it is there again. When I unplug the second monitor, the mascot cleanly jumps to the first monitor (instead of ending up off-screen) and I get no crashes.*
+**US-6.** *As Alex I drag the mascot to my second monitor. On the next start it is there again. When I unplug the second monitor, the mascot cleanly jumps to the first monitor (instead of ending up off-screen) and I get no crashes.*
 
 ### 1.7 Non-goals (see also §2.2)
 
@@ -2056,9 +2056,9 @@ This section explicitly lists choices left open. OpenClaw chooses these without 
 ## Document Status
 
 - **Version:** Draft 1.0
-- **Author:** Joint output of Claude Opus 4.7 + the maintainer (Personal Jarvis Project Owner)
+- **Author:** Joint output of Claude Opus 4.7 + Alex (Personal Jarvis Project Owner)
 - **Date:** 2026-05-01
 - **Next step:** Prompt-chain derivation in a separate session. This plan file is the single source of truth against which the prompt chain is verified.
-- **Review cycle:** Before the implementation starts, the maintainer should go through the plan completely once and respond either with a ✅ approve or with an issue list.
+- **Review cycle:** Before the implementation starts, Alex should go through the plan completely once and respond either with a ✅ approve or with an issue list.
 
 ---
