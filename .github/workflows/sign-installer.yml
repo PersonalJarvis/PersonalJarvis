@@ -241,7 +241,7 @@ jobs:
         # OS images (ubuntu/macos/windows) agreed byte-for-byte on the
         # SHA-256 of the five install/* artifacts. We download it here
         # and use it as the canonical source for the SLSA subjects.
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: hashes-cross-runner-verified.json
           path: cross-runner
@@ -872,7 +872,7 @@ jobs:
     steps:
       - name: Download signed bundle
         # pin: actions/download-artifact@v4.1.8 — pinned by commit SHA.
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: signed-bundle
           path: bundle
