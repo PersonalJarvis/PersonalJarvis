@@ -29,9 +29,11 @@ mcp.json
 # Memory/knowledge: only generic example notes ship; the operator's notes never do.
 wiki/obsidian-vault/sessions/
 wiki/obsidian-vault/_archive/
-# Profile / avatar / per-user assets
-**/avatar.*
-profiles/*.json
+# Profile / avatar / per-user assets (root-anchored so deep source like
+# jarvis/.../ProfileView.tsx is NOT caught on case-insensitive filesystems).
+/profile*
+/avatar*
+/avatar-cache/
 
 # Python
 __pycache__/
