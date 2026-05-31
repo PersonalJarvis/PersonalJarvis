@@ -30,7 +30,7 @@ keyring>=25.5
 
 # Audio I/O
 sounddevice>=0.5
-numpy>=1.26,<2.2
+numpy>=1.26,<2.5
 scipy>=1.14
 silero-vad>=5.1
 webrtcvad-wheels>=2.0
