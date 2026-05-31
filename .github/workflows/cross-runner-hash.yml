@@ -214,7 +214,7 @@ jobs:
 
       - name: Upload per-runner hashes artifact
         # actions/upload-artifact v4.4.3 — pinned by 40-char SHA.
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: hashes-${{ matrix.os }}.txt
           path: ${{ runner.temp }}/hashes.txt
@@ -353,7 +353,7 @@ jobs:
 
       - name: Upload verified-hashes JSON
         # actions/upload-artifact v4.4.3 — pinned by 40-char SHA.
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: hashes-cross-runner-verified.json
           path: hashes-cross-runner-verified.json
