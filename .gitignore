@@ -171,7 +171,9 @@ wiki/obsidian-vault/.obsidian/hotkeys.json
 /scratch/
 
 # Misc per-user state the code may write into the repo tree.
-state/
+# Anchored to the repo root so it does NOT also match the tracked `jarvis/state/`
+# package (an unanchored `state/` silently dropped it from a fresh-clone release).
+/state/
 
 # TypeScript incremental build cache — regenerated every build
 *.tsbuildinfo
