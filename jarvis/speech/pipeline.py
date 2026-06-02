@@ -29,6 +29,7 @@ from uuid import uuid4
 
 import numpy as np
 
+from jarvis.audio import mic_level
 from jarvis.audio.capture import MicrophoneCapture, pcm_bytes_to_np
 from jarvis.audio.chime import CHIME_PCM, CHIME_SAMPLE_RATE, DISCONNECT_PCM, READY_PCM
 from jarvis.audio.device_init import wait_for_stable_audio_devices
@@ -157,6 +158,18 @@ _STT_TRANSIENT_STATUS: frozenset[int] = frozenset({429, 500, 502, 503, 504})
 _STT_FINAL_RETRIES: int = 2
 _STT_RETRY_BASE_S: float = 0.4
 _STT_RETRY_CAP_S: float = 2.0
+
+# Hard ceiling on a single TTS playback. PortAudio's blocking ``stream.write``
+# waits for output-buffer room, and a flaky output device can make it (or a
+# stalled TTS chunk generator) block forever — observed live as a 10 s
+# OutputStream stall plus ``Invalid sample rate -9997`` retries. Without a
+# bound, ``_speak`` never returns, which wedges ``_handle_utterance`` ->
+# ``_active_session`` so the ``_state_loop`` finally that resets
+# ``self._state`` to IDLE never runs and the wake loop stops re-arming
+# ("Hey Jarvis" goes permanently deaf until restart). The ceiling is generous:
+# a normal spoken turn finishes well below it; it only fires on a genuine
+# stall. AD-OE6 — recover, never silently hang.
+_TTS_PLAYBACK_CEILING_S: float = 120.0
 
 
 def _stt_error_status(exc: BaseException) -> int | None:
@@ -541,16 +554,37 @@ class SpeechPipeline:
         brain_callback: BrainCallback | None = None,
         vad_silence_ms: int = 1200,   # User-Feedback 2026-04-22 (2): 350ms schnitt bei Denkpausen ab. 1200ms erlaubt Atempausen. Kurze Commands wie 'auflegen' bleiben schnell, weil HANGUP_RE vor dem Brain-Call greift.
         stt_final_timeout_s: float = 8.0,
-        # Hard cap on a single brain call. Without this, a stalled provider
-        # (Gemini hang, OAuth refresh stuck, network blip) leaves the
-        # pipeline forever in PROCESSING — exact user-reported symptom
-        # "Jarvis stopped thinking and never replied". Well above the
-        # 95th-percentile Sonnet/Gemini turn (~6 s with tool use).
-        # MUST be < idle_timeout_s (30 s): live bug 2026-05-29 had this at 40 s,
-        # so when "Claude Code öffnen" stalled the Gemini stream, the 30 s idle
-        # timeout tore the session down BEFORE this 40 s cap fired its spoken
-        # fallback → silent hangup. At 25 s the timeout fires first and speaks.
-        brain_timeout_s: float = 25.0,
+        # No-PROGRESS (stall) window for a streaming brain turn — NOT a total
+        # wall-clock cap. The deadline resets every time the turn makes progress
+        # (a streamed text chunk OR a tool-use-loop boundary, see
+        # ``_run_brain_with_stall_guard`` + ``_mark_brain_progress``). It fires
+        # the spoken fallback only when the provider is genuinely STALLED — no
+        # progress at all for this long — which is the original liveness guard
+        # ("Jarvis stopped thinking and never replied"). Live bug 2026-06-01:
+        # this used to be a TOTAL cap (25 s), so a vision question that ran a
+        # Gemini tool-use loop (image upload + context cache + function_call +
+        # tool execution) legitimately exceeded it and was guillotined mid-work —
+        # Jarvis looked lazy while it was still working. Idle-hangup is no longer
+        # a coupling concern (the old "MUST be < idle_timeout" rule): the brain
+        # turn is awaited INLINE in ``_active_session`` (pipeline.py ~2748), so
+        # the idle timer never ticks during PROCESSING — which frees us to widen
+        # this from 25 s to 30 s (2x the observed worst-case no-progress gap of
+        # ~15 s, still below the provider's own ~40 s stream timeout so the
+        # provider's error path wins on a true hang). KNOWN LIMITATION: the
+        # window also covers a single model round's *pre-first-output* think time
+        # (image processing before the first delta). If that ever exceeds this
+        # value the fallback still fires — there is no progress signal during the
+        # in-flight HTTP request. Raise this (not the ceiling) for a
+        # consistently-slow vision profile.
+        brain_timeout_s: float = 30.0,
+        # Absolute ceiling backstop for a brain turn that keeps drip-feeding
+        # progress forever (pathological). Bounds the worst case so the session
+        # can never wedge in PROCESSING. Generous: real vision+tool turns finish
+        # well under it; only a misbehaving provider ever reaches it.
+        brain_hard_timeout_s: float = 90.0,
+        # Poll cadence for the stall guard. Small + cheap (only runs during an
+        # in-flight brain turn). Sub-second so the spoken fallback is timely.
+        brain_stall_poll_s: float = 0.5,
         # Auto-flush pending fragments collected by `_complete_or_buffer_context`
         # if no follow-up arrives within this window. Prevents the silent
         # listening-trap where STT delivered "Jarvis wenn ..." once and then
@@ -745,6 +779,22 @@ class SpeechPipeline:
         self._buffer_is_complete: bool = False
         self._stt_final_timeout_s = stt_final_timeout_s
         self._brain_timeout_s = max(1.0, float(brain_timeout_s))
+        # Stall guard (see _run_brain_with_stall_guard). Ceiling is clamped to be
+        # >= the stall window so the two never invert.
+        self._brain_hard_timeout_s = max(
+            self._brain_timeout_s, float(brain_hard_timeout_s)
+        )
+        self._brain_stall_poll_s = max(0.05, float(brain_stall_poll_s))
+        self._brain_last_progress = time.monotonic()
+        # True once the streaming turn has handed a real sentence to TTS. Read
+        # by the stall-fallback guard so a canned timeout phrase is never
+        # stacked on top of an answer the user is already hearing (live bug
+        # 2026-06-02). Reset at the start of every _brain_streaming turn.
+        self._spoke_this_turn = False
+        # Hard ceiling on a single TTS playback (see _TTS_PLAYBACK_CEILING_S).
+        # Guards against a stalled output device / TTS stream wedging _speak —
+        # which would freeze the voice session and stop the wake loop re-arming.
+        self._speak_playback_ceiling_s = _TTS_PLAYBACK_CEILING_S
         self._pending_context_flush_s = max(0.5, float(pending_context_flush_s))
         self._pending_flush_task: asyncio.Task[None] | None = None
         self._vad = SileroEndpointer(
@@ -2270,6 +2320,35 @@ class SpeechPipeline:
         self._call_event.set()
         return True
 
+    def request_hangup(self) -> None:
+        """End the live voice session from outside the audio path.
+
+        The whisper-bar's hover-to-close cross calls this (and any future UI
+        close affordance). Thread-safe like ``request_voice_session``: it routes
+        through the single hangup chokepoint, whose primitives (``Event.set``,
+        player stop, CU-cancel) are safe to invoke from the Tk thread. A no-op
+        in practice when no session is active — the never-consumed event is
+        cleared at the next session start.
+        """
+        log.info("📵 request_hangup — closing the voice session")
+        self._trigger_voice_hangup()
+
+    def request_ptt_toggle(self) -> None:
+        """Toggle endpoint-free dictation — the whisper-bar's square button.
+
+        First call opens a mic with NO silence-endpoint (speak as long as you
+        want, pauses included); the second call submits. Thread-safe like the
+        other request_* entries: it just drives the existing PTT press/release
+        edges, whose primitives (``Event.set``, bool flags) are safe from the
+        Tk thread. ``_on_ptt_press`` is a no-op unless idle; ``_on_ptt_release``
+        is a no-op unless a PTT recording is armed — so a stray toggle never
+        misbehaves.
+        """
+        if self._ptt_mode:
+            self._on_ptt_release()  # submit what was dictated
+        else:
+            self._on_ptt_press()    # open an endpoint-free mic
+
     def _trigger_voice_hangup(self, *, stop_player: bool = True) -> None:
         """Hard-stop the voice channel — the single hangup chokepoint.
 
@@ -2778,6 +2857,17 @@ class SpeechPipeline:
                 # holding the key with deliberate intent to record now.
                 async for chunk in mic.stream():
                     buffer.extend(chunk.pcm)
+                    # PTT bypasses the VAD, where mic_level.feed normally lives,
+                    # so feed the live loudness here too — otherwise the overlay
+                    # dictation bars stay flat and you cannot tell it is hearing
+                    # you. Same normalized RMS as the VAD; zero-cost when no
+                    # overlay is subscribed.
+                    if mic_level.has_subscribers():
+                        samples = pcm_bytes_to_np(chunk.pcm)
+                        if samples.size:
+                            mic_level.feed(
+                                float(np.sqrt(np.mean(np.square(samples))))
+                            )
 
             drain_task = asyncio.create_task(_drain(), name="ptt-drain")
             release_task = asyncio.create_task(self._ptt_release_event.wait())
@@ -3436,19 +3526,36 @@ class SpeechPipeline:
         # Master-Switch in [performance].streaming_tts (Default: True).
         if self._streaming_enabled():
             try:
-                response, barged = await asyncio.wait_for(
-                    self._brain_streaming(text, lang),
-                    timeout=self._brain_timeout_s,
+                # No-progress (stall) guard instead of a total wall-clock cap:
+                # a vision/tool turn that keeps working is never guillotined
+                # mid-work; only a genuinely stalled provider speaks the
+                # fallback (live bug 2026-06-01, see _run_brain_with_stall_guard).
+                response, barged = await self._run_brain_with_stall_guard(
+                    self._brain_streaming(text, lang)
                 )
             except TimeoutError:
-                log.warning(
-                    "Brain-Stream timed out after %.1fs — speaking fallback",
-                    self._brain_timeout_s,
-                )
-                # AD-OE6 zero-silent-drop: a stalled brain must be SPOKEN, not
-                # dropped back to LISTENING in silence (live bug 2026-05-29:
-                # "Claude Code öffnen" stalled and hung up with no feedback).
-                await self._speak_brain_timeout(lang)
+                if self._should_speak_stall_fallback():
+                    log.warning(
+                        "Brain-Stream stalled (no progress for %.1fs / ceiling "
+                        "%.1fs) — speaking fallback",
+                        self._brain_timeout_s,
+                        self._brain_hard_timeout_s,
+                    )
+                    # AD-OE6 zero-silent-drop: a stalled brain that said NOTHING
+                    # must be SPOKEN, not dropped to LISTENING in silence (live
+                    # bug 2026-05-29: "Claude Code öffnen" stalled, hung up mute).
+                    await self._speak_brain_timeout(lang)
+                else:
+                    # Real answer already (partially) spoken this turn — prefer
+                    # it; a canned phrase on top would overlap/garble the output
+                    # the user is already hearing (live bug 2026-06-02).
+                    log.warning(
+                        "Brain-Stream stalled (no progress for %.1fs / ceiling "
+                        "%.1fs) — real output already spoken, suppressing "
+                        "fallback phrase",
+                        self._brain_timeout_s,
+                        self._brain_hard_timeout_s,
+                    )
                 await self._set_turn_state(TurnTakingState.LISTENING)
                 return True
             except Exception as exc:  # noqa: BLE001
@@ -3477,13 +3584,20 @@ class SpeechPipeline:
             return await self._finish_after_response(barged=barged)
 
         try:
+            # Non-streaming fallback path (no ``generate_stream`` on the brain,
+            # or ``[performance].streaming_tts=false``). There is no per-chunk /
+            # tool-boundary progress signal here, so ``brain_timeout_s`` is
+            # necessarily applied as a TOTAL wall-clock cap — unlike the streaming
+            # path above, which uses it as a no-progress (stall) window. This path
+            # is a production minority; the stall fix lives on the streaming path.
             response = await asyncio.wait_for(
                 self._brain_with_ack(text, lang),
                 timeout=self._brain_timeout_s,
             )
         except TimeoutError:
             log.warning(
-                "Brain-Call timed out after %.1fs — speaking fallback",
+                "Brain-Call timed out after %.1fs (non-streaming total cap) — "
+                "speaking fallback",
                 self._brain_timeout_s,
             )
             # AD-OE6 zero-silent-drop: speak the timeout instead of silent LISTENING.
@@ -3954,7 +4068,13 @@ class SpeechPipeline:
             await self._set_turn_state(TurnTakingState.PROCESSING)
             log.info("→ Brain (from completion buffer)…")
             if self._streaming_enabled():
-                await self._brain_streaming(text, lang)
+                # Same stall guard as the primary dispatch path — a buffered
+                # completion must not be able to hang the session either. A true
+                # stall here surfaces as TimeoutError, caught + logged below
+                # (this secondary path stays silent on stall by design).
+                await self._run_brain_with_stall_guard(
+                    self._brain_streaming(text, lang)
+                )
             else:
                 reply = await self._brain.generate(text)
                 if reply:
@@ -4089,6 +4209,11 @@ class SpeechPipeline:
         full_text_parts: list[str] = []
         sentence_buffer = ""
         spoken_anything = False
+        # Turn-level mirror of ``spoken_anything`` that survives this coroutine
+        # being cancelled by the stall guard — the caller's ``except
+        # TimeoutError`` reads it to decide whether a canned fallback phrase
+        # would overlap the real answer. Reset so every streaming turn is clean.
+        self._spoke_this_turn = False
         paraphrase_stripped = False
         brain_first_token_marked = False
         barged = False
@@ -4165,6 +4290,9 @@ class SpeechPipeline:
             if not spoken_anything:
                 await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
                 spoken_anything = True
+                # Real output is now committed to TTS — suppress any later
+                # stall-fallback phrase so it can't be stacked on top.
+                self._spoke_this_turn = True
             channel: asyncio.Queue = asyncio.Queue()
             synth_tasks.append(
                 asyncio.create_task(_synth_into(channel, cleaned), name="tts-synth")
@@ -4175,9 +4303,21 @@ class SpeechPipeline:
         async def _produce() -> None:
             nonlocal sentence_buffer, paraphrase_stripped, brain_first_token_marked
             try:
-                async for chunk in self._brain.generate_stream(text):
+                # Pass the stall-guard heartbeat down so the tool-use loop can
+                # ping it on each model-round + tool boundary (a vision/tool turn
+                # streams little text — see _run_brain_with_stall_guard). Older
+                # fakes / providers without the kwarg fall back transparently.
+                try:
+                    stream = self._brain.generate_stream(
+                        text, on_progress=self._mark_brain_progress
+                    )
+                except TypeError:
+                    stream = self._brain.generate_stream(text)
+                async for chunk in stream:
                     if not chunk:
                         continue
+                    # Any streamed text is also progress — reset the deadline.
+                    self._mark_brain_progress()
                     # Wave 0 (omni-latency): first real brain token = brain TTFT.
                     if not brain_first_token_marked:
                         brain_first_token_marked = True
@@ -4225,12 +4365,46 @@ class SpeechPipeline:
             self._player.play_chunks(_merged_chunks()), name="tts-play-turn"
         )
         barge_task = asyncio.create_task(self._barge_monitor(), name="barge-monitor-turn")
+        # Hangup is the hard kill-switch ("auflegen"): when the user hangs up
+        # MID-TURN, ``_player.stop()`` alone does not free this wait — a tool-use
+        # turn whose brain stream is still open keeps ``_merged_chunks`` waiting
+        # for its end-sentinel, so ``play_task`` never completes. Without a
+        # hangup waiter here the wait blocks until the (long) ceiling, so
+        # ``_handle_utterance`` never returns, ``_active_session`` never reaches
+        # its IDLE finally, and the supervisor — and the UI voice-state — wedge
+        # on SPEAKING forever (live bug 2026-06-01: "shows SPEAKING the whole
+        # time"; the user pressed hangup repeatedly with no effect). Treat it
+        # exactly like a barge-in: stop the player and unwind the turn at once.
+        # getattr-fallback: test fixtures build the pipeline via ``__new__`` and
+        # don't set ``_hangup_event`` — a fresh never-set Event keeps the
+        # behaviour identical to pre-fix (the waiter simply never fires).
+        hangup_event = getattr(self, "_hangup_event", None) or asyncio.Event()
+        hangup_task = asyncio.create_task(
+            hangup_event.wait(), name="hangup-during-tts"
+        )
 
+        # Hard ceiling: a stalled output device (blocking ``stream.write``) or a
+        # stalled producer can wedge playback forever. Bound the wait so the
+        # turn always unwinds and the voice session can never freeze with
+        # ``self._state`` stuck at ACTIVE (the wake loop only re-arms in IDLE).
+        ceiling = getattr(self, "_speak_playback_ceiling_s", _TTS_PLAYBACK_CEILING_S)
         try:
             done, _pending = await asyncio.wait(
-                {play_task, barge_task}, return_when=asyncio.FIRST_COMPLETED
+                {play_task, barge_task, hangup_task},
+                timeout=ceiling,
+                return_when=asyncio.FIRST_COMPLETED,
             )
-            if (
+            if not done:
+                log.warning(
+                    "Streaming-TTS playback exceeded %.0fs ceiling — aborting "
+                    "(stalled audio device or producer).", ceiling,
+                )
+                self._player.stop()
+            elif hangup_task in done and not hangup_task.cancelled():
+                log.info("📵 Hangup während TTS — Turn abbrechen")
+                barged = True
+                self._player.stop()
+            elif (
                 barge_task in done
                 and not barge_task.cancelled()
                 and barge_task.result()
@@ -4251,10 +4425,10 @@ class SpeechPipeline:
             # the user barged over) and the merged consumer; on normal end
             # these are already done. ``player.stop()`` (above) aborts the
             # OutputStream so the cancelled play_task unwinds immediately.
-            for t in (produce_task, play_task, barge_task, *synth_tasks):
+            for t in (produce_task, play_task, barge_task, hangup_task, *synth_tasks):
                 if not t.done():
                     t.cancel()
-            for t in (produce_task, play_task, barge_task, *synth_tasks):
+            for t in (produce_task, play_task, barge_task, hangup_task, *synth_tasks):
                 try:
                     await t
                 except (asyncio.CancelledError, Exception):  # noqa: BLE001
@@ -4321,6 +4495,86 @@ class SpeechPipeline:
             await self._speak(phrase, language=picker_lang)
         except Exception as exc:  # noqa: BLE001
             log.warning("STT-unavailable fallback speak failed: %s", exc)
+
+    def _mark_brain_progress(self) -> None:
+        """Record that the in-flight brain turn just made progress.
+
+        Called on every streamed text chunk (``_brain_streaming``) and at every
+        tool-use-loop boundary (``on_progress`` threaded down to ``ToolUseLoop``).
+        Resets the stall deadline in ``_run_brain_with_stall_guard`` so a slow-
+        but-working turn (vision upload + Gemini tool-use loop) is never cut off
+        mid-work. Cheap + synchronous, so it is safe to call from the brain
+        producer task (same event loop, single attribute write).
+        """
+        self._brain_last_progress = time.monotonic()
+
+    def _should_speak_stall_fallback(self) -> bool:
+        """Whether a stalled streaming turn should speak the canned timeout phrase.
+
+        False once the real answer has already (partially) reached TTS this
+        turn — a canned phrase on top would overlap / garble the output the user
+        is already hearing (live bug 2026-06-02: real answer + standard phrase
+        combined). True otherwise, so a genuinely silent stall is still spoken
+        (AD-OE6 zero-silent-drop, live bug 2026-05-29). Defaults to True on a
+        bare instance so the safe (spoken) branch wins when the flag is absent.
+        """
+        return not getattr(self, "_spoke_this_turn", False)
+
+    async def _run_brain_with_stall_guard(
+        self, coro: Awaitable[tuple[str, bool]]
+    ) -> tuple[str, bool]:
+        """Await a streaming brain turn with a *no-progress* (stall) timeout
+        instead of a hard total-wall-clock cap.
+
+        Live bug 2026-06-01: a vision question ("Was ist das hier?") triggered a
+        Gemini tool-use loop (image upload + context cache + function_call + tool
+        execution). The whole turn legitimately exceeded the old 25 s TOTAL cap,
+        so ``asyncio.wait_for`` cancelled the in-flight turn mid-work and spoke
+        "That took too long, say it again" — Jarvis looked lazy while it was
+        actually still working. Root cause: a single wall-clock cap cannot tell a
+        genuinely STALLED provider (no progress, ever) apart from a slow-but-
+        working one (steady tool/token progress).
+
+        Fix: the deadline resets every time the turn makes progress
+        (``_mark_brain_progress``). The fallback fires only after
+        ``_brain_timeout_s`` of TRUE silence, or at the absolute
+        ``_brain_hard_timeout_s`` ceiling (pathological drip-feed backstop).
+
+        Raises ``TimeoutError`` on a true stall or at the hard ceiling — the same
+        contract the caller's ``except TimeoutError`` fallback already expects.
+        A brain coroutine that raises has its exception propagated unchanged.
+        """
+        # Defensive getattr: test fixtures build the pipeline via
+        # ``SpeechPipeline.__new__`` and don't set every ctor attribute (same
+        # pattern as ``_ack_brain``/``_muted`` elsewhere). Fall back to the ctor
+        # defaults so the guard is self-sufficient on a bare instance.
+        poll_s = getattr(self, "_brain_stall_poll_s", 0.5)
+        stall_s = getattr(self, "_brain_timeout_s", 30.0)
+        ceiling_s = getattr(self, "_brain_hard_timeout_s", 90.0)
+        self._mark_brain_progress()
+        start = time.monotonic()
+        task: asyncio.Task[tuple[str, bool]] = asyncio.ensure_future(coro)
+        try:
+            while True:
+                done, _pending = await asyncio.wait({task}, timeout=poll_s)
+                if task in done:
+                    return task.result()
+                now = time.monotonic()
+                stalled = (now - self._brain_last_progress) >= stall_s
+                ceiling_hit = (now - start) >= ceiling_s
+                if stalled or ceiling_hit:
+                    raise TimeoutError
+        finally:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                # CancelledError is the EXPECTED outcome here (we just cancelled
+                # the task because a TimeoutError is already propagating); it is
+                # intentionally swallowed rather than re-raised so the caller sees
+                # the TimeoutError, not the cancellation noise.
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                    log.debug("stall-guard: brain task cleanup raised", exc_info=True)
 
     async def _speak_brain_timeout(self, lang: str) -> None:
         """Zero-silent-drop (AD-OE6) for a brain turn that timed out: say it took
@@ -4419,27 +4673,76 @@ class SpeechPipeline:
 
         play_task = asyncio.create_task(self._player.play_chunks(chunks), name="tts-play")
         barge_task = asyncio.create_task(self._barge_monitor(), name="barge-monitor")
+        # Hangup is the hard kill-switch ("auflegen"): a hangup mid-phrase must
+        # abort _speak at once. Without watching the event here, a stalled
+        # output device — or a hangup fired during a fallback phrase
+        # (_speak_brain_unavailable / _speak_brain_timeout) — keeps ``play_task``
+        # pending until the (120 s) ceiling, so ``_speak`` never returns and the
+        # voice session wedges in JARVIS_SPEAKING (same root cause as
+        # _brain_streaming; live bug 2026-06-01). Treat it like a barge-in.
+        # getattr-fallback: test fixtures build the pipeline via ``__new__``
+        # and don't set ``_hangup_event`` — a fresh never-set Event keeps the
+        # behaviour identical to pre-fix (the waiter simply never fires).
+        hangup_event = getattr(self, "_hangup_event", None) or asyncio.Event()
+        hangup_task = asyncio.create_task(
+            hangup_event.wait(), name="hangup-during-speak"
+        )
         barged = False
+        # Hard ceiling: a stalled output device (blocking ``stream.write``) or a
+        # stalled TTS stream can wedge ``play_chunks`` forever. Bound it so
+        # ``_speak`` always returns and the voice session can never freeze with
+        # ``self._state`` stuck at ACTIVE (the wake loop only re-arms in IDLE).
+        ceiling = getattr(self, "_speak_playback_ceiling_s", _TTS_PLAYBACK_CEILING_S)
         try:
             done, _pending = await asyncio.wait(
-                {play_task, barge_task}, return_when=asyncio.FIRST_COMPLETED
+                {play_task, barge_task, hangup_task},
+                timeout=ceiling,
+                return_when=asyncio.FIRST_COMPLETED,
             )
-            if barge_task in done and not barge_task.cancelled():
-                if barge_task.result():
-                    log.info("🛑 Barge-in — stoppe TTS-Playback")
-                    self._player.stop()
-                    barged = True
-            if (
-                barge_task in done
-                and not barge_task.cancelled()
-                and not barged
-                and not play_task.done()
-            ):
-                await play_task
+            if not done:
+                log.warning(
+                    "TTS playback exceeded %.0fs ceiling — aborting (stalled "
+                    "audio device or TTS stream).", ceiling,
+                )
+                self._player.stop()
+            elif hangup_task in done and not hangup_task.cancelled():
+                log.info("📵 Hangup während TTS — Turn abbrechen")
+                self._player.stop()
+                barged = True
+            else:
+                if barge_task in done and not barge_task.cancelled():
+                    if barge_task.result():
+                        log.info("🛑 Barge-in — stoppe TTS-Playback")
+                        self._player.stop()
+                        barged = True
+                if (
+                    barge_task in done
+                    and not barge_task.cancelled()
+                    and not barged
+                    and not play_task.done()
+                ):
+                    # Barge monitor returned without barging (mic ended/error)
+                    # but playback is still running — wait it out, still bounded,
+                    # but still abortable by a hangup (reuse the pending waiter).
+                    tail_done, _tail = await asyncio.wait(
+                        {play_task, hangup_task},
+                        timeout=ceiling,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if play_task not in tail_done:
+                        if hangup_task in tail_done:
+                            log.info("📵 Hangup während TTS — Turn abbrechen")
+                            barged = True
+                        else:
+                            log.warning(
+                                "TTS playback did not finish within %.0fs ceiling "
+                                "— aborting.", ceiling,
+                            )
+                        self._player.stop()
         except Exception as exc:  # noqa: BLE001
             log.exception("Playback-Fehler: %s", exc)
         finally:
-            for t in (play_task, barge_task):
+            for t in (play_task, barge_task, hangup_task):
                 if not t.done():
                     t.cancel()
                 try:
@@ -4555,7 +4858,7 @@ async def _main() -> None:
     pipeline = SpeechPipeline(
         call_hotkeys=_call_hk,
         ptt_hotkeys=_ptt_hk,
-        hangup_hotkeys=("f1+f2",),
+        hangup_hotkeys=(config.trigger.hotkey_hangup,),
         wake_keywords=("hey_jarvis",),
         wake_threshold=0.15,
         stt=stt,

@@ -138,6 +138,12 @@ class WakeWordConfig(BaseModel):
 class TriggerConfig(BaseModel):
     wake_word_enabled: bool = False
     hotkey: str = "ctrl+right_alt+j"
+    # Call/answer toggle key. Was hardcoded "f3+f4" in resolve_hotkeys() and at
+    # the SpeechPipeline call sites; now user-editable via /api/settings/keybinds.
+    hotkey_call: str = "f3+f4"
+    # Hangup key. Was hardcoded ("f1+f2",) at the SpeechPipeline call sites; now
+    # user-editable via /api/settings/keybinds. Read directly at bootstrap.
+    hotkey_hangup: str = "f1+f2"
     wake_word: WakeWordConfig = Field(default_factory=WakeWordConfig)
     # When true (default), every voice turn ends after Jarvis finishes
     # speaking and a fresh "Hey Jarvis" wake is required to start the
@@ -163,13 +169,15 @@ class TriggerConfig(BaseModel):
         for ``SpeechPipeline``.
 
         With ``push_to_talk`` on (default), the configured ``hotkey`` becomes a
-        true push-to-talk key (hold = record, release = submit) and F3+F4 stays
-        a quick wake-style toggle. With it off, the configured hotkey is a
-        toggle alongside F3+F4 and there is no PTT (the pre-2026-05-29 wiring).
+        true push-to-talk key (hold = record, release = submit) and ``hotkey_call``
+        stays a quick wake-style toggle. With it off, ``hotkey`` is a toggle
+        alongside ``hotkey_call`` and there is no PTT (the pre-2026-05-29 wiring).
+        Hangup is a separate value read from ``hotkey_hangup`` at the
+        SpeechPipeline call sites.
         """
         if self.push_to_talk:
-            return ("f3+f4",), (self.hotkey,)
-        return (self.hotkey, "f3+f4"), ()
+            return (self.hotkey_call,), (self.hotkey,)
+        return (self.hotkey, self.hotkey_call), ()
     # When False (default), the local wake path is lightweight: openWakeWord
     # only (~3.5 MB ONNX, CPU-only, bundled in jarvis/assets/wakeword/), no
     # faster-whisper anywhere — no GPU, no ~1 GB model download. When True, the
@@ -481,6 +489,15 @@ class BrainConfig(BaseModel):
     local_fallback_model: str = "claude-haiku-4-5-20251001"
     providers: dict[str, BrainProviderConfig] = Field(default_factory=dict)
     policy: BrainPolicyConfig = Field(default_factory=BrainPolicyConfig)
+    # Per-response output ceiling (tokens) for every spoken/chat reply. This is
+    # a SAFETY CEILING, not a target: the model still stops on its own
+    # (``finish_reason == "stop"``), so a short question keeps its short answer.
+    # The ceiling only bites a genuinely long answer — without it the provider
+    # stops at the cap and the reply is read aloud truncated mid-sentence (the
+    # voice path sets no continuation). Raised 4096 -> 8192 on 2026-06-01 after
+    # a live cut-off report; kept configurable so an operator can trade speech
+    # length against latency/cost. ~8192 tokens ≈ several minutes of speech.
+    max_tokens: int = Field(default=8192, ge=256, le=32_768)
     # Phase 5 tiered routing — Wave-4 migration: the ``sub_jarvis`` tier was
     # replaced by the OpenClaw bridge (see docs/openclaw-bridge.md §11).
     # Only ``router`` remains as a tier; the heavy worker runs as an external
@@ -792,6 +809,8 @@ class AudioConfig(BaseModel):
 
 
 class UIConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     tray_enabled: bool = True
     admin_api_port: int = 47821
     startup_chime: bool = True
@@ -804,10 +823,33 @@ class UIConfig(BaseModel):
     # Default: JARVIS_UI_TOKEN. The token is freshly generated at startup
     # and pywebview injects it via evaluate_js into window.__JARVIS_TOKEN.
     auth_token_env: str = "JARVIS_UI_TOKEN"
-    # Mascot overlay style. The legacy procedural orb is no longer valid.
-    orb_style: str = "mascot"
+    # On-screen overlay style: "whisper_bar" (slim default), "mascot" (ghost
+    # orb), or "none". The mascot remains fully selectable.
+    orb_style: str = "whisper_bar"
     # Optional explicit path to the mascot PNG. Empty = search for default asset.
     orb_mascot_path: str = ""
+    # Whisper bar: persistent (always-visible dots pill) vs only-when-active.
+    bar_persistent: bool = True
+    # Hex accent the bar lights up with during activity (gold on-brand).
+    bar_accent: str = "#e7c46e"
+
+
+class DuckingConfig(BaseModel):
+    """Audio ducking — "Mute music while dictating" (Taskbar section).
+
+    When ``enabled``, the audio-duck controller mutes every OTHER app's audio
+    session for the duration of a voice session (excluding Jarvis's own PID, so
+    the TTS voice is never muted) and restores them when the session ends.
+    Windows-only (pycaw); a graceful no-op elsewhere. Default off (opt-in).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = False
+    # Grace before restoring other apps' volume (lets the TTS tail finish).
+    restore_delay_ms: int = 400
+    # App process names never to mute (e.g. "Discord.exe"). Empty = mute all others.
+    never_mute: list[str] = Field(default_factory=list)
 
 
 class AutostartConfig(BaseModel):
@@ -893,6 +935,10 @@ class TelegramConfig(BaseModel):
     require_mention: bool = True
     polling_interval_s: float = 1.0
     auto_register_friends: bool = False
+    # Marketplace connect cannot know the user's Telegram ID. On the first
+    # private message, an otherwise empty allowlist is claimed by that sender
+    # and persisted to jarvis.toml.
+    pair_on_first_private_message: bool = True
 
 
 class TwilioConfig(BaseModel):
@@ -934,15 +980,52 @@ class TwilioConfig(BaseModel):
     max_call_seconds: int = 600     # safety cap to end runaway calls
 
 
+class DiscordConfig(BaseModel):
+    """Discord integration: bidirectional chat channel via a Discord bot.
+
+    Like Telegram, Discord is a *communication channel*: a user messages the
+    bot (DM or a guild channel) and the message is forwarded into the normal
+    Jarvis chat path — chatting with the bot is the same as prompting Jarvis.
+
+    The bot token lives in the Credential Manager (key ``discord_bot_token``,
+    ENV fallback ``DISCORD_BOT_TOKEN``) — never in this config file.
+
+    Setup steps for the user:
+      1. Create an application + bot at https://discord.com/developers/applications.
+      2. Enable the **Message Content Intent** (Bot → Privileged Gateway
+         Intents) — without it the bot cannot read message text.
+      3. ``python -m jarvis --wizard`` — stores the bot token in the
+         Credential Manager.
+      4. Invite the bot to a server, or open a DM with it.
+      5. Set ``enabled = true`` in this config.
+
+    Security default: ``allowed_user_ids = []`` with ``guild_policy =
+    "allowlist"`` means the bot replies to nothing until you explicitly allow a
+    user id or channel id. ``pair_on_first_dm`` claims the empty allowlist for
+    the first direct-message sender so the common "invite + DM" setup is not
+    silently dropped.
+    """
+
+    enabled: bool = False
+    allowed_user_ids: list[int] = Field(default_factory=list)
+    allowed_channel_ids: list[int] = Field(default_factory=list)
+    guild_policy: str = "allowlist"  # "open" | "allowlist" | "disabled"
+    require_mention: bool = True
+    auto_register_friends: bool = False
+    pair_on_first_dm: bool = True
+
+
 class IntegrationsConfig(BaseModel):
-    """External service integrations (Telegram, WhatsApp, Twilio, ...)."""
+    """External service integrations (Telegram, Discord, WhatsApp, Twilio, ...)."""
 
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
+    discord: DiscordConfig = Field(default_factory=DiscordConfig)
     twilio: TwilioConfig = Field(default_factory=TwilioConfig)
 
 
 CHANNEL_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
     "telegram": (("telegram_bot_token", "TELEGRAM_BOT_TOKEN"),),
+    "discord": (("discord_bot_token", "DISCORD_BOT_TOKEN"),),
     "twilio": (("twilio_auth_token", "TWILIO_AUTH_TOKEN"),),
 }
 
@@ -1340,6 +1423,27 @@ class MarketplaceConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class PointerConfig(BaseModel):
+    """[pointer] — AI Pointer: understand what the mouse cursor points at.
+
+    The deictic-gated context provider resolves the on-screen element under the
+    cursor via the OS accessibility tree (not blind screenshots) and rides it on
+    the turn only when the utterance points at the cursor. ``extra="allow"`` so a
+    future key cannot break the self-mod pre-validate pipeline (AP-16).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = True
+    # Hard wall-clock budget for the off-hot-path cursor resolution (AP-9). On
+    # timeout the turn proceeds with no pointer context. ElementFromPoint is a
+    # single OS hit-test, so 120 ms is a generous ceiling.
+    timeout_s: float = 0.12
+    # Half-side (px) of the tight crop captured around the cursor. 110 px (220 px
+    # square) is readable for a word in a terminal/editor while staying focused.
+    crop_radius: int = 110
+
+
 class JarvisConfig(BaseModel):
     """Root config model."""
     profile: ProfileConfig = Field(default_factory=ProfileConfig)
@@ -1354,6 +1458,8 @@ class JarvisConfig(BaseModel):
     mcp_server: MCPServerConfig = Field(default_factory=MCPServerConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
     ui: UIConfig = Field(default_factory=UIConfig)
+    # Audio ducking — "Mute music while dictating" (Taskbar section).
+    ducking: DuckingConfig = Field(default_factory=DuckingConfig)
     # Cross-platform login autostart (Windows .lnk / macOS LaunchAgent / Linux
     # XDG .desktop). Default ON; headless host = graceful no-op.
     autostart: AutostartConfig = Field(default_factory=AutostartConfig)
@@ -1401,6 +1507,9 @@ class JarvisConfig(BaseModel):
     # Voice-flow knobs (incomplete-prompt completion buffer settings).
     # Spec: docs/superpowers/specs/2026-05-25-incomplete-prompt-completion-design.md
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
+    # AI Pointer — deictic-gated "what is under the mouse cursor" context.
+    # Spec: docs/plans/ai-pointer/DESIGN.md
+    pointer: PointerConfig = Field(default_factory=PointerConfig)
 
 
 # ----------------------------------------------------------------------

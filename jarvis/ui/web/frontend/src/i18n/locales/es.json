@@ -21,7 +21,88 @@
     "settings": "Ajustes",
     "telephony": "Telefonía",
     "debug": "Depuración",
-    "outputs": "Salidas"
+    "outputs": "Salidas",
+    "socials": "Redes",
+    "taskbar": "Barra",
+    "contacts": "Contactos"
+  },
+  "taskbar_view": {
+    "subtitle": "Apariencia del overlay en pantalla y comportamiento al dictar.",
+    "appearance_title": "Apariencia",
+    "behavior_title": "Comportamiento",
+    "restart_required": "Guardado: reinicia Jarvis para aplicar.",
+    "restart_now": "Reiniciar ahora",
+    "restarting": "Reiniciando Jarvis…",
+    "bar_persistent": {
+      "title": "Mostrar la barra siempre",
+      "description": "Mantén la barra en pantalla incluso inactiva. Desactivado: sin standby — solo aparece cuando dices \"Hey Jarvis\".",
+      "saved": "Visibilidad de la barra actualizada."
+    },
+    "mute_music": {
+      "title": "Silenciar música al dictar",
+      "description": "Silencia otras apps (Spotify, navegador…) mientras hablas con Jarvis y las restaura después. La voz de Jarvis nunca se silencia.",
+      "enabled_toast": "La música se silenciará mientras hablas con Jarvis.",
+      "disabled_toast": "Silenciado de música desactivado."
+    }
+  },
+  "socials": {
+    "subtitle": "Enlaces a nuestra comunidad y perfiles.",
+    "add": "Añadir enlace",
+    "empty": "Aún no hay enlaces — añade el primero.",
+    "edit": "Editar",
+    "delete": "Eliminar",
+    "open": "Abrir",
+    "dialogAddTitle": "Añadir enlace social",
+    "dialogEditTitle": "Editar enlace",
+    "platform": "Plataforma",
+    "label": "Etiqueta",
+    "url": "URL",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "hidden": "Oculto",
+    "visible": "Visible",
+    "links": "Enlaces",
+    "back": "Atrás"
+  },
+  "contacts": {
+    "subtitle": "Tu agenda personal — nombres, datos de contacto y una nota breve por persona.",
+    "add": "Añadir contacto",
+    "empty": "Aún no hay contactos — añade el primero.",
+    "noMatches": "Ningún contacto coincide con la búsqueda.",
+    "search": "Buscar contactos…",
+    "selectHint": "Selecciona un contacto para ver los detalles.",
+    "edit": "Editar",
+    "delete": "Eliminar",
+    "deleteTitle": "Eliminar contacto",
+    "deleteConfirm": "Eliminar",
+    "cancel": "Cancelar",
+    "save": "Guardar",
+    "name": "Nombre",
+    "nameRequired": "Se requiere un nombre.",
+    "aliases": "Alias",
+    "relationship": "Relación",
+    "emails": "Correos",
+    "phones": "Teléfonos",
+    "addEmail": "Añadir correo",
+    "addPhone": "Añadir teléfono",
+    "address": "Dirección",
+    "street": "Calle",
+    "postalCode": "Código postal",
+    "city": "Ciudad",
+    "country": "País",
+    "readme": "README",
+    "readmePlaceholder": "Una nota breve sobre esta persona…",
+    "words": "palabras",
+    "dialogAddTitle": "Añadir contacto",
+    "dialogEditTitle": "Editar contacto",
+    "rel": {
+      "family": "Familia",
+      "friend": "Amigo",
+      "colleague": "Colega",
+      "partner": "Pareja",
+      "acquaintance": "Conocido",
+      "other": "Otro"
+    }
   },
   "voice_state": {
     "idle": "Listo",
@@ -65,7 +146,8 @@
     "select_or_new": "Elige una conversación a la izquierda o empieza una nueva.",
     "group_today": "Hoy",
     "group_yesterday": "Ayer",
-    "group_earlier": "Antes"
+    "group_earlier": "Antes",
+    "resize_hint": "Arrastra para redimensionar · doble clic para restablecer"
   },
   "subagents_view": {
     "title": "Sub-Agentes",
@@ -477,6 +559,19 @@
       "disabled_toast": "Inicio automático desactivado.",
       "unsupported": "El inicio automático no está disponible en este host (p. ej. un servidor sin escritorio)."
     },
+    "overlay_style": {
+      "title": "Estilo de visualización",
+      "description": "Elige cómo aparece Jarvis en pantalla durante la actividad de voz. La barra es el valor predeterminado; el mascota es el orbe clásico; o ocúltalo por completo.",
+      "label": "Estilo",
+      "save": "Guardar",
+      "saved": "Estilo de visualización cambiado.",
+      "restart_required": "Guardado: reinicia Jarvis para aplicar.",
+      "options": {
+        "whisper_bar": "Barra (predeterminado)",
+        "mascot": "Orbe mascota",
+        "none": "Ninguno (oculto)"
+      }
+    },
     "assistant_name": {
       "title": "Nombre del asistente",
       "description": "Cómo se llama el asistente a sí mismo en las respuestas. Déjalo vacío para seguir la palabra de activación.",
@@ -495,6 +590,19 @@
       "suggestions_label": "Sugerencias",
       "save": "Guardar atajo",
       "saved": "Atajo guardado",
+      "restart_required": "Reinicio necesario para que surta efecto."
+    },
+    "keybinds": {
+      "title": "Atajos de voz",
+      "description": "Configura las teclas para Llamar, Colgar y Hablar (pulsar para hablar). Pulsa Grabar y presiona tu combinación, o restablece el valor predeterminado. Los cambios se aplican tras reiniciar.",
+      "call_label": "Llamar (responder / empezar a hablar)",
+      "hangup_label": "Colgar",
+      "talk_label": "Hablar / Pulsar para hablar",
+      "record": "Grabar",
+      "recording": "Presiona tus teclas ahora… (Esc para cancelar)",
+      "save": "Guardar",
+      "saved": "Atajo guardado",
+      "reset": "Restablecer predeterminado",
       "restart_required": "Reinicio necesario para que surta efecto."
     },
     "codex_title": "OpenAI Codex CLI",

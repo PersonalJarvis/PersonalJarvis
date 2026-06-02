@@ -249,6 +249,21 @@ class SystemStateChanged(Event):
     previous: str = "IDLE"
 
 
+@dataclass(frozen=True, slots=True)
+class NavigateSidebar(Event):
+    """Ask the desktop UI to switch the active sidebar section.
+
+    Emitted by the ``navigate`` router tool so a spoken/typed command
+    ("zeig die Socials", "open settings") moves the UI. The frontend
+    (``useWebSocket.ts``) listens for event_name ``NavigateSidebar`` and calls
+    ``setActiveSection`` when ``section`` is a known ``SectionId``; an unknown
+    id is a graceful no-op there. ``section`` mirrors the frontend
+    ``SECTION_IDS`` (``store/events.ts``) — kept in sync via the navigate tool's
+    parity test.
+    """
+    section: str = ""
+
+
 # ----------------------------------------------------------------------
 # UI / Chat
 # ----------------------------------------------------------------------
@@ -348,6 +363,25 @@ class VoiceMuteToggleRequested(Event):
 
     ``source`` is free-form for telemetry / forensic replay
     (e.g. ``"mascot_dblclick"``, ``"orb_dblclick_double"``, ``"hotkey"``).
+    """
+    source: str = ""
+
+
+# Show / raise the main desktop window (user-facing gesture, e.g. an overlay
+# right-click).
+
+@dataclass(frozen=True, slots=True)
+class ShowWindowRequested(Event):
+    """User asked to bring the Jarvis desktop window to the foreground.
+
+    Publishers: the overlay right-click gesture for BOTH surfaces — the
+    whisper-bar and the mascot orb — wired through ``OrbBusBridge``
+    (``ui/orb/bus_bridge.py``). The DesktopApp owns the actual window raise
+    in ``_on_show_window_requested`` → ``_safe_window_show`` and is null-safe
+    when there is no window (headless / VPS), so an unwired publish is a no-op.
+
+    ``source`` is free-form for telemetry / forensic replay
+    (e.g. ``"overlay_rightclick"``).
     """
     source: str = ""
 

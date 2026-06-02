@@ -127,6 +127,21 @@ believed the log and approved with confidence=0.9):
   absolute path outside the worktree, e.g. the user's Desktop; live false-
   negative mission_019e7abd, 2026-05-30, failed 3× this way despite a correct
   file existing on disk.)
+- EXCEPTION — verified command execution (git / GitHub side-effects): a
+  `diff --command-evidence` block, marked `# verified-command-execution`, is
+  ALSO ground truth and is NOT an empty diff. A "commit and push" / "open a PR"
+  task leaves NO worktree file change — the deliverable is a commit or a remote
+  ref update done through the shell. The `+`-prefixed lines under the block are
+  the REAL subprocess output (e.g. `main -> main`, a PR URL), captured from a
+  non-errored git/`gh` tool call — NOT a log claim or worker self-report. Judge
+  whether those commands satisfy the original goal (e.g. the push landed, the
+  PR was opened). A diff that contains at least one such block is NOT empty —
+  do not veto it under the empty-diff rule. An output line reading
+  `(command succeeded; no output captured)` means the command exited cleanly
+  with no stdout (e.g. `git push -q`) — treat that as a successful command, not
+  as missing evidence. (Dominant Git/GitHub false-negative:
+  "commit and push" / "open PRs" missions failed 3× with critic_loop_exhausted
+  because the work left no file diff.)
 - A log entry like `toolSummary: write tool was called` is NOT evidence
   that any file was actually created — it is the worker's self-report.
   Evidence strings that only cite `log_line:N` without a corresponding
@@ -155,7 +170,7 @@ ADVERSARIAL_REFRAME_PREFIX: Final[str] = """\
 PREVIOUS RESPONSE WAS REJECTED BECAUSE: it returned an approval without
 specific evidence references, or its output could not be parsed as one valid
 JSON object — often because it was too long and got cut off. This is the
-hallmark of a sycophantic or runaway critic. Re-evaluate from scratch with
+hallmark of a sycophantic critic (or a runaway one). Re-evaluate from scratch with
 maximum skepticism. Your default position is now FAIL — only approve if every
 axis has concrete evidence. Cite at most THREE concise ``file:line`` items per
 axis; do NOT paste file contents or write prose. Output ONLY the JSON object,

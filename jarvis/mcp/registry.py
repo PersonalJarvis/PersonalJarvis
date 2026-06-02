@@ -149,6 +149,14 @@ class MCPRegistry:
         a single broken server must not block the entire pipeline.
         """
         from .client import MCPClient  # local import to avoid circular dependency
+        from .notification_filter import install_notification_log_filter
+
+        # A server may emit a non-standard notification method (observed live:
+        # ``method='log'``) that the SDK's strict ``ServerNotification`` union
+        # rejects, spamming the log with a 19-error Pydantic dump per frame.
+        # Installing the tolerant filter before any client starts keeps that
+        # quiet (idempotent — safe to call on every start).
+        install_notification_log_filter()
 
         async def _start_one(spec: MCPServerSpec) -> None:
             # Pull env overrides from mcp.json — allows setting OAuth tokens

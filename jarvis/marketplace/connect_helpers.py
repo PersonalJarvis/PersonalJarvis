@@ -62,9 +62,14 @@ def build_handler_from_catalog(plugin_id: str) -> AuthHandler | None:
                 authorization_url=auth.authorization_url,
                 token_url=auth.token_url,
                 client_id=auth.client_id,
+                client_secret=auth.client_secret,
                 callback_port=auth.callback_port or 0,
                 scopes=list(auth.scopes),
+                scope_separator=auth.scope_separator,
                 scope_param_name="user_scope" if auth.user_scopes_only else "scope",
+                callback_path=auth.callback_path,
+                resource=auth.resource,
+                offline_access=auth.offline_access,
             )
         )
     return None  # pat_paste / allowlist — no refreshable OAuth handler

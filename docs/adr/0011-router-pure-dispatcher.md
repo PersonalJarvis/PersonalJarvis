@@ -419,3 +419,107 @@ tool. The primary examples (switch Grok->Gemini, update settings, update the MCP
 config) do not hit a marker. A settings-intent allowlist for the gate is deferred.
 
 Spec: `docs/superpowers/specs/2026-05-31-app-control-tools-design.md`.
+
+## Amendment: AI Pointer Router Tool (`inspect-pointer`, 2026-06-01)
+
+`inspect-pointer` is added to `ROUTER_TOOLS` (risk `safe`, read-only). It
+resolves the on-screen UI element under the mouse cursor via the OS
+accessibility tree (`IUIAutomation.ElementFromPoint` / `AXUIElement​
+CopyElementAtPosition` / AT-SPI `getAccessibleAtPoint`) — not a blind
+screenshot — and returns its name/role/value/app. It is a **direct safe-gated
+read, never a spawn**, so it never enters a worker tool set (AP-5/AP-14).
+
+This is the *pull* path for deictic questions ("what is this?", "was ist das
+da?"). The *push* path is separate and lives off the router schema: a fast
+regex deictic gate (`jarvis.pointer.intent`) in `BrainManager.generate()` rides
+the resolved element (+ a tight crop only for unlabeled graphics) on the turn
+context, off the voice hot path with a hard timeout (AP-9). The gate vetoes
+demonstratives completed by a concrete noun ("was ist das *für ein Wetter*"), so
+unrelated turns never receive cursor context — the "no context-less garbage"
+contract. Every backend degrades to a logged null fallback (AD-6); the headless
+€5-VPS path resolves no cursor and the brain says so.
+
+Spec: `docs/plans/ai-pointer/DESIGN.md`. Regression guards:
+`tests/unit/brain/test_routing.py` (`inspect-pointer` in the dispatcher set),
+`tests/unit/pointer/`, `tests/unit/brain/test_manager_pointer.py`.
+
+## Amendment: Navigate tool (`navigate`, 2026-06-02)
+
+`navigate` is added to `ROUTER_TOOLS` (risk `safe`). It moves the desktop UI to a
+sidebar section in response to a spoken/typed command ("zeig die Socials", "open
+settings", "show the agents", "geh zu den Aufgaben"). The tool takes a `section`
+argument, normalizes natural-language aliases (DE + EN) to a canonical section
+id, and publishes a `NavigateSidebar` event on the shared bus. The WS forwarder
+streams it to the frontend (`event_name = "NavigateSidebar"`), whose existing
+listener (`useWebSocket.ts`) calls `setActiveSection` when the id is a known
+`SectionId` and otherwise no-ops gracefully.
+
+It is a **pure UI action with no side effects beyond switching the visible
+screen** — a direct safe-gated action, **never a spawn**, so it never enters a
+worker tool set (AP-5/AP-14). This is why it belongs in `ROUTER_TOOLS` and
+nowhere else: the router is the only tier that talks to the UI; a worker runs in
+an isolated worktree and has no UI bus.
+
+Anti-drift: the tool's `KNOWN` section ids mirror the frontend `SECTION_IDS`
+(`jarvis/ui/web/frontend/src/store/events.ts`); a parity test reads the TS array
+and asserts equality, so a new section added on one side without the other fails
+CI (the wire-format-enum guard from `docs/anti-drift-three-layer.md`). The
+frontend's `isSectionId` check is the second layer of defense — an unknown id is
+ignored, never a crash.
+
+Regression guards: `tests/unit/brain/test_routing.py`
+(`test_navigate_in_router_tools`), `tests/unit/plugins/tool/test_navigate.py`
+(alias normalization, unknown-section failure, SECTION_IDS parity).
+
+## Amendment: Contacts Tools (`contact-lookup`, `contact-upsert`, `call-contact`, 2026-06-02)
+
+Three tools are added to `ROUTER_TOOLS` for the `jarvis-contacts` feature (the
+user-curated contact book + acting on a person by name). This is **Chunk B** of
+the plan `hallo-es-geht-darum-rosy-hinton.md`; it consumes two frozen contracts
+(`ContactStore`, owned by Chunk A; `place_call`, owned by Chunk C) and degrades
+gracefully when either is absent (cloud-first €5-VPS no-op).
+
+- **`contact-lookup`** (risk `safe`, read-only) — resolves a name/alias to the
+  contact's e-mails/phones/address/README via `ContactStore.find_by_alias`. The
+  brain calls it FIRST whenever the user names a person for an action, then
+  chains into `gmail` or `call-contact`.
+- **`contact-upsert`** (risk `monitor`, deterministic write) — saves/updates a
+  contact by voice ("merk dir Christophs Nummer ist …"). Logged, no confirmation
+  nag (anti-confirmation-fatigue), mirroring `wiki-ingest`. Deletion stays
+  UI-only in v1.
+- **`call-contact`** (risk `ask`, echo-confirm) — resolves the contact's phone
+  and places a **real outbound call** via the telephony engine (`place_call`,
+  Contract 2). Telephony absent/unconfigured → a clear English no-op pointing at
+  the Telephony section.
+
+All three are **direct safe/monitor/ask-gated actions, never a spawn**, so they
+never enter a worker tool-set (AP-5/AP-14). E-mail-by-name needs **no new tool**:
+a system-prompt rule in `manager._build_system_prompt()` (emitted only when
+`contact-lookup` AND `gmail` are both wired) tells the brain to resolve the name
+via `contact-lookup`, then send via the existing `gmail` tool.
+
+**Capability coupling (the BUG-class fix).** The three tools are also registered
+as capabilities in `capabilities_seed.py` (`tool.contact-lookup`/`-upsert`/
+`-call-contact`). This is load-bearing: without the `call-contact` capability,
+`resolve_intent("ruf Christoph an")` returns `None`, so
+`BrainManager._is_generic_subagent_work` treats it as generic work and
+**force-spawns a contextless worker** that cannot place a call — the live BUG
+documented in `project_bug_subagent_not_natively_recognized`. Registering the
+capability makes `resolve_intent` return `tool.call-contact`, which flips the
+verdict from spawn to no-spawn so the utterance stays router-tier. The contact
+verbs deliberately EXCLUDE the dispatch hard-negative verbs
+(schick/sende/trag/bestelle/poste) so the anti-hallucination contract
+(`test_capability_coupling_e2e`) is preserved — the canonical "schick eine Email
+an …" / "trag einen Termin ein" still resolve to `None` and stay UNSUPPORTED.
+
+Regression guards: `tests/unit/brain/test_routing.py`
+(`test_contact_tools_in_router_tools`,
+`test_factory_wires_contact_tools_into_router_set`,
+`test_capability_seed_registers_contact_capabilities`,
+`test_contact_capabilities_do_not_resolve_external_hard_negatives`, and the
+PFLICHT routing tests `test_mail_by_name_stays_router_tier` /
+`test_call_by_name_stays_router_tier` / `test_voice_save_contact_stays_router_tier`),
+`tests/unit/plugins/tool/test_contact_lookup.py`,
+`tests/unit/plugins/tool/test_contact_upsert.py`,
+`tests/unit/plugins/tool/test_call_contact.py`,
+`tests/unit/brain/test_contacts_integration.py`.

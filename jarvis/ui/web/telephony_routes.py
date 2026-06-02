@@ -44,6 +44,7 @@ from jarvis.telephony.constants import (
     CALL_IN_PROGRESS,
     CallStatusLiteral,
 )
+from jarvis.telephony.provisioning import TelephonyProvisionError
 from jarvis.telephony.security import (
     constant_time_equals,
     generate_call_secret,
@@ -452,6 +453,83 @@ async def get_scripts(request: Request) -> JSONResponse:
 
 
 # ---------------------------------------------------------------------------
+# UI-facing: place an outbound call (Chunk C)
+# ---------------------------------------------------------------------------
+
+
+class OutboundCall(BaseModel):
+    to: str
+    opening: str = ""
+
+
+@router.post("/outbound")
+async def post_outbound(request: Request, body: OutboundCall) -> JSONResponse:
+    """Place a real outbound call to a raw E.164 number; speak ``opening`` first.
+
+    Contact-agnostic seam (Chunk C): the body is a bare number, never a name —
+    name resolution lives in Chunk B. Reads the Twilio config + the auth token
+    (``get_secret``) and delegates to ``outbound.place_call`` (Contract 2).
+
+    Graceful degradation (cloud-first): when the ``twilio`` extra is absent the
+    route returns ``200`` with ``ok=false`` and a clear English hint rather than
+    crashing; when the account is not fully configured it returns ``409``.
+    """
+    to = (body.to or "").strip()
+    if not _E164_RE.match(to):
+        return JSONResponse(
+            {"ok": False, "error": "to must be E.164, e.g. +4915112345678"},
+            status_code=422,
+        )
+
+    if not is_available():
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "twilio package not installed (pip install -e .[telephony])",
+            }
+        )
+
+    twilio = _twilio_cfg(request)
+    if not getattr(twilio, "enabled", False):
+        return JSONResponse({"ok": False, "error": "Telephony is disabled."}, status_code=409)
+
+    account_sid = getattr(twilio, "account_sid", "") or ""
+    from_number = getattr(twilio, "phone_number", "") or ""
+    public_base_url = getattr(twilio, "public_base_url", "") or ""
+    token = _auth_token()
+    if not (account_sid and from_number and public_base_url and token):
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": (
+                    "Telephony is not fully configured "
+                    "(needs account SID, phone number, public base URL, and auth token)."
+                ),
+            },
+            status_code=409,
+        )
+
+    try:
+        from jarvis.telephony.outbound import place_call
+
+        call_sid = place_call(
+            to=to,
+            opening=(body.opening or "").strip(),
+            account_sid=account_sid,
+            auth_token=token,
+            from_number=from_number,
+            public_base_url=public_base_url,
+        )
+    except TelephonyProvisionError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=409)
+    except Exception as exc:  # noqa: BLE001 - never 500 a UI button
+        log.warning("telephony outbound call failed: %s", exc)
+        return JSONResponse({"ok": False, "error": f"outbound call failed: {exc}"}, status_code=409)
+
+    return JSONResponse({"ok": True, "call_sid": call_sid})
+
+
+# ---------------------------------------------------------------------------
 # Twilio-facing: voice webhook
 # ---------------------------------------------------------------------------
 
@@ -484,6 +562,11 @@ async def post_voice(request: Request) -> Response:
     if not skip_check:
         signature = request.headers.get("X-Twilio-Signature", "")
         public_voice_url = public_url_for(public_base_url, "/api/telephony/voice")
+        # Outbound calls (Chunk C) reach this webhook with an ``?opening=…`` query
+        # string; Twilio signs over the full URL incl. query. Inbound requests
+        # carry no query, so this leaves the inbound signature byte-identical.
+        if request.url.query:
+            public_voice_url = f"{public_voice_url}?{request.url.query}"
         valid = validate_twilio_signature(
             auth_token=_auth_token(),
             signature=signature,
@@ -500,12 +583,21 @@ async def post_voice(request: Request) -> Response:
     secret = generate_call_secret()
     mgr.register_pending(call_sid, secret, from_number=from_number, to_number=to_number)
 
+    # Outbound branch (Chunk C): a call placed via ``place_call`` reaches this same
+    # webhook with ``Direction=outbound-api`` and an ``opening`` query param. We
+    # bake ``direction=outbound`` + ``opening`` into the TwiML so the session
+    # speaks it first. Inbound (no query, Direction=inbound) is unchanged.
+    opening = request.query_params.get("opening", "")
+    is_outbound = bool(opening) or params.get("Direction", "").lower().startswith("outbound")
+
     wss_url = public_wss_url(public_base_url, "/api/telephony/media")
     twiml = build_connect_stream_twiml(
         wss_url=wss_url,
         secret=secret,
         call_sid=call_sid,
         language_code=getattr(twilio, "language_code", "de-DE") or "de-DE",
+        direction="outbound" if is_outbound else "",
+        opening=opening if is_outbound else "",
     )
     return Response(content=twiml, media_type="text/xml")
 
@@ -565,6 +657,10 @@ async def media_socket(ws: WebSocket) -> None:
                 language = custom.get("language", "") or (
                     getattr(twilio, "language_code", "de-DE") if twilio else "de-DE"
                 )
+                # Outbound (Chunk C): direction/opening ride along in the TwiML
+                # custom parameters; absent for inbound (-> defaults below).
+                direction = custom.get("direction", "") or "inbound"
+                opening = custom.get("opening", "")
 
                 # Validate the per-call WS secret unless skipped for tests.
                 skip = bool(getattr(state, "telephony_skip_signature", False))
@@ -595,6 +691,8 @@ async def media_socket(ws: WebSocket) -> None:
                     to_number=to_number,
                     language_code=language,
                     send=_send,
+                    direction=direction,
+                    opening=opening,
                 )
                 if session is None:
                     record_status = CALL_FAILED
@@ -603,15 +701,16 @@ async def media_socket(ws: WebSocket) -> None:
                 mgr.register_active(call_sid, session)
                 started_at = time.time()
                 _publish_start(bus, call_sid, from_number, to_number, stream_sid)
-                # Speak the greeting off the receive loop so we keep draining
+                # Speak the call-opening off the receive loop so we keep draining
                 # inbound media (and can detect barge-in). Awaiting it inline
                 # would backpressure the socket against a client that is still
-                # sending audio.
+                # sending audio. ``speak_intro`` speaks the outbound opening for
+                # an outbound call and the greeting otherwise (inbound unchanged).
                 import asyncio as _asyncio
 
                 async def _greet(sess=session) -> None:
                     try:
-                        await sess.speak_greeting()
+                        await sess.speak_intro()
                     except Exception as exc:  # noqa: BLE001
                         log.debug("telephony greeting failed: %s", exc)
 
@@ -684,18 +783,23 @@ def _build_session(
     to_number: str,
     language_code: str,
     send,
+    direction: str = "inbound",
+    opening: str = "",
 ):
     """Build a TelephonyCallSession with per-call brain + shared STT/TTS.
 
     Returns ``None`` when the speech stack cannot be constructed (e.g. no
-    provider key) — the caller then closes the socket cleanly.
+    provider key) — the caller then closes the socket cleanly. ``direction`` /
+    ``opening`` carry the Chunk-C outbound metadata (inbound -> defaults).
     """
     from jarvis.telephony.session import TelephonyCallSession
 
-    # An integration test can inject a pre-built session factory.
+    # An integration test can inject a pre-built session factory. The factory
+    # signature is a frozen test seam, so the outbound metadata is set on the
+    # returned session afterwards rather than threaded through the factory.
     factory = getattr(state, "telephony_session_factory", None)
     if factory is not None:
-        return factory(
+        session = factory(
             call_sid=call_sid,
             stream_sid=stream_sid,
             from_number=from_number,
@@ -703,6 +807,10 @@ def _build_session(
             language_code=language_code,
             send=send,
         )
+        if session is not None:
+            session.direction = direction or "inbound"
+            session.opening = opening
+        return session
 
     try:
         from jarvis.brain.factory import build_default_brain
@@ -727,6 +835,8 @@ def _build_session(
         to_number=to_number,
         language_code=language_code or "de-DE",
         greeting=getattr(twilio, "greeting", "") if twilio else "",
+        direction=direction or "inbound",
+        opening=opening,
         max_call_seconds=int(getattr(twilio, "max_call_seconds", 600) or 600) if twilio else 600,
         bus=bus,
     )

@@ -11,6 +11,7 @@ import { ChatInput } from "@/components/ChatInput";
 import { MascotGigi } from "@/components/MascotGigi";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
+import { useResizablePane } from "@/hooks/useResizablePane";
 import {
   ChatsApiError,
   deleteTextConversation,
@@ -34,6 +35,15 @@ export function ChatsView() {
   const setMessages = useEventStore((s) => s.setMessages);
   const pushToast = useEventStore((s) => s.pushToast);
   const endRef = useRef<HTMLDivElement | null>(null);
+
+  // Drag-resizable history pane. Width persists across reloads (localStorage);
+  // bounds keep it from collapsing or swallowing the chat column.
+  const listPane = useResizablePane({
+    storageKey: "chats.listWidth.v1",
+    defaultWidth: 260,
+    min: 200,
+    max: 560,
+  });
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -107,11 +117,18 @@ export function ChatsView() {
   return (
     <div className="flex h-full min-h-0">
       <ConversationList
+        width={listPane.width}
         conversations={conversations}
         activeId={activeThreadId}
         onOpen={openConversation}
         onNew={newChat}
         onDelete={removeConversation}
+      />
+
+      <PaneResizer
+        onPointerDown={listPane.startResize}
+        onDoubleClick={listPane.reset}
+        active={listPane.isResizing}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -168,12 +185,14 @@ export function ChatsView() {
 // ----------------------------------------------------------------------
 
 function ConversationList({
+  width,
   conversations,
   activeId,
   onOpen,
   onNew,
   onDelete,
 }: {
+  width: number;
   conversations: ConversationSummary[];
   activeId: string | null;
   onOpen: (kind: ConversationKind, id: string) => void;
@@ -184,7 +203,10 @@ function ConversationList({
   const groups = groupByDay(conversations, t);
 
   return (
-    <aside className="flex h-full w-[260px] shrink-0 flex-col border-r border-border bg-card/30">
+    <aside
+      style={{ width }}
+      className="flex h-full shrink-0 flex-col bg-card/30"
+    >
       <div className="flex items-center justify-between border-b border-border px-3 py-3">
         <span className="font-display text-sm font-semibold tracking-tight">
           {t("chats_view.history")}
@@ -229,6 +251,43 @@ function ConversationList({
         </ScrollArea>
       )}
     </aside>
+  );
+}
+
+/**
+ * Vertical drag handle between the history list and the chat column.
+ *
+ * The visible seam is a 1px line (matching the old ``border-r``), but the hit
+ * target is a wider 6px column so the grip is easy to catch. It lights up gold
+ * on hover and while dragging. ``role="separator"`` keeps it accessible.
+ */
+function PaneResizer({
+  onPointerDown,
+  onDoubleClick,
+  active,
+}: {
+  onPointerDown: (e: React.PointerEvent) => void;
+  onDoubleClick: () => void;
+  active: boolean;
+}) {
+  const t = useT();
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      title={t("chats_view.resize_hint")}
+      onPointerDown={onPointerDown}
+      onDoubleClick={onDoubleClick}
+      className="group relative z-10 flex w-1.5 shrink-0 cursor-col-resize touch-none select-none items-stretch"
+    >
+      <span
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors",
+          active ? "bg-primary" : "bg-border group-hover:bg-primary/60",
+        )}
+      />
+    </div>
   );
 }
 

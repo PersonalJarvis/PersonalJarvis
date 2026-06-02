@@ -8,9 +8,10 @@ Verifiziert die T1+T2-API-Surface in einem realistischen Mini-Lauf:
    frischen Branch + Workspace-Verzeichnis an.
 4. `WindowsJobObject('smoke-p2')` als async-Context-Manager — auf Nicht-Windows
    No-Op, der Smoke laeuft trotzdem (Worker spawnt regulaer, kein Reaping).
-5. `OpenClawWorker.spawn(prompt, ..., max_turns=3)` mit Cost-Cap (--max-turns
+5. `ClaudeDirectWorker.spawn(prompt, ..., max_turns=3)` mit Cost-Cap (--max-turns
    ist Cost-Guardrail #1 laut Research-Doc §B). Stream wird gedrained bis
-   `result`-Event.
+   `result`-Event. (OpenClawWorker wurde im OpenClaw/UFO3-Removal entfernt —
+   `f9fa1c2f`; ClaudeDirectWorker ist der produktive claude-CLI-Worker.)
 6. Verifiziere `(workspace / 'hello.txt').exists()` UND content == 'world'
    (mit/ohne Trailing-Newline).
 7. Verifiziere via `psutil.pid_exists(pid)`, dass der Worker-Subprocess sauber
@@ -81,7 +82,9 @@ async def smoke() -> int:
         WorktreeManager,
         build_worker_env,
     )
-    from jarvis.missions.workers import OpenClawWorker  # noqa: PLC0415
+    from jarvis.missions.workers.claude_direct_worker import (  # noqa: PLC0415
+        ClaudeDirectWorker,
+    )
 
     repo_root = _repo_root()
     print(f"{OK} repo_root = {repo_root}")
@@ -98,7 +101,7 @@ async def smoke() -> int:
     log_dir = workspace.parent / "logs"
     env = build_worker_env(run_dir=workspace.parent.parent)
 
-    worker = OpenClawWorker()
+    worker = ClaudeDirectWorker()
     result_event = None
     event_count = 0
     auth_failed = False

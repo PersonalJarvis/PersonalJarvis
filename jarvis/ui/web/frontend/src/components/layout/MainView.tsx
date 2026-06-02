@@ -20,6 +20,9 @@ import { CliTestHubView } from "@/views/CliTestHubView";
 import { OutputsView } from "@/views/OutputsView";
 import { ReviewView } from "@/views/ReviewView";
 import { SessionsView } from "@/views/SessionsView";
+import { SocialsView } from "@/views/socials/SocialsView";
+import { TaskbarView } from "@/views/taskbar/TaskbarView";
+import { ContactsView } from "@/views/contacts/ContactsView";
 import { TelephonyView } from "@/views/TelephonyView";
 import { useEffect, useState } from "react";
 
@@ -127,6 +130,12 @@ function SwitchOnActiveSection({ active }: { active: string }) {
       return <OutputsView />;
     case "review":
       return <ReviewView />;
+    case "socials":
+      return <SocialsView />;
+    case "taskbar":
+      return <TaskbarView />;
+    case "contacts":
+      return <ContactsView />;
     default:
       return <ChatsView />;
   }

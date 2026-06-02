@@ -15,7 +15,13 @@ import { Button } from "@/components/ui/button";
 import { BackendConnectionSection } from "@/components/board/BackendConnectionSection";
 import { setCodexBinaryPath, useProviders } from "@/hooks/useProviders";
 import { useWakeWord, type WakeWordSaveResult } from "@/hooks/useWakeWord";
-import { useHotkey, eventToCombo } from "@/hooks/useHotkey";
+import {
+  useKeybinds,
+  eventToCombo,
+  type KeybindAction,
+  type KeybindsConfig,
+  type KeybindSaveResult,
+} from "@/hooks/useHotkey";
 import { useAssistantName } from "@/hooks/useAssistantName";
 import { useAutostart } from "@/hooks/useAutostart";
 import { WAKE_ENGINES, WAKE_ENGINE_I18N_KEY } from "@/constants/wakeEngines";
@@ -87,7 +93,7 @@ export function SettingsView() {
         <AssistantNamePanel />
         <AutostartPanel />
         <WakeWordPanel />
-        <HotkeyPanel />
+        <KeybindsPanel />
 
         <ul className="mt-2 space-y-2">
           {rows.map((r) => (
@@ -567,17 +573,70 @@ function formatCombo(combo: string): string {
     .join(" + ");
 }
 
+const _KEYBIND_ROWS: { action: KeybindAction; labelKey: string }[] = [
+  { action: "call", labelKey: "settings_view.keybinds.call_label" },
+  { action: "hangup", labelKey: "settings_view.keybinds.hangup_label" },
+  { action: "ptt", labelKey: "settings_view.keybinds.talk_label" },
+];
+
 /**
- * Editable push-to-talk hotkey panel. The user clicks "record", presses a key
- * combination (captured live via eventToCombo), or picks a safe suggestion
- * chip, then saves. The backend validator is the authority — an unsafe combo
- * is rejected with a reason shown inline. A successful save surfaces a
- * restart-required hint (bindings are armed once at pipeline start).
+ * Editable voice keybinds: Call / Hangup / Talk-PTT, one row each. The user
+ * clicks Record and presses a combination (captured via eventToCombo), or
+ * resets to default, then saves. The backend validator is the authority — an
+ * unsafe combo or a collision with another action is rejected with a reason
+ * shown as a toast. A successful save surfaces a restart-required hint.
  */
-function HotkeyPanel() {
+export function KeybindsPanel() {
   const t = useT();
-  const { config, loading, error, saveHotkey } = useHotkey();
+  const { config, loading, error, saveKeybind } = useKeybinds();
+
+  return (
+    <div className="mt-2 rounded-lg border border-border bg-card/60 p-4">
+      <div className="flex items-start gap-3">
+        <Keyboard className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+        <div className="min-w-0 flex-1">
+          <h4 className="font-display text-sm font-semibold">
+            {t("settings_view.keybinds.title")}
+          </h4>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t("settings_view.keybinds.description")}
+          </p>
+          {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
+          <div className="mt-4 space-y-3">
+            {_KEYBIND_ROWS.map((row) => (
+              <KeybindRow
+                key={row.action}
+                action={row.action}
+                label={t(row.labelKey)}
+                config={config}
+                loading={loading}
+                onSave={saveKeybind}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function KeybindRow({
+  action,
+  label,
+  config,
+  loading,
+  onSave,
+}: {
+  action: KeybindAction;
+  label: string;
+  config: KeybindsConfig | null;
+  loading: boolean;
+  onSave: (a: KeybindAction, h: string) => Promise<KeybindSaveResult>;
+}) {
+  const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
+  const current = config?.keybinds[action] ?? "";
+  const def = config?.defaults[action];
 
   const [combo, setCombo] = useState("");
   const [capturing, setCapturing] = useState(false);
@@ -585,8 +644,8 @@ function HotkeyPanel() {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    if (config) setCombo(config.hotkey);
-  }, [config]);
+    if (config) setCombo(config.keybinds[action]);
+  }, [config, action]);
 
   function onCaptureKeyDown(e: React.KeyboardEvent) {
     if (!capturing) return;
@@ -604,114 +663,81 @@ function HotkeyPanel() {
     }
   }
 
-  async function onSave() {
+  async function onSaveClick() {
     const trimmed = combo.trim().toLowerCase();
     if (!trimmed) return;
     setSaving(true);
     setSaved(false);
     try {
-      const res = await saveHotkey(trimmed);
+      const res = await onSave(action, trimmed);
       setSaved(res.restart_required);
-      pushToast("success", t("settings_view.hotkey.saved"));
+      pushToast("success", t("settings_view.keybinds.saved"));
     } catch (e) {
-      // Backend rejected the combo (unsafe / unusable) — show its reason.
+      // Backend rejected the combo (unsafe / collision) — show its reason.
       pushToast("error", (e as Error).message);
     } finally {
       setSaving(false);
     }
   }
 
-  const suggestions = config?.suggestions ?? [];
-  const dirty = !!config && combo.trim().toLowerCase() !== config.hotkey;
+  const dirty = !!config && combo.trim().toLowerCase() !== current;
+  const showReset = !!def && combo.trim().toLowerCase() !== def;
 
   return (
-    <div className="mt-2 rounded-lg border border-border bg-card/60 p-4">
-      <div className="flex items-start gap-3">
-        <Keyboard className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-        <div className="min-w-0 flex-1">
-          <h4 className="font-display text-sm font-semibold">
-            {t("settings_view.hotkey.title")}
-          </h4>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {t("settings_view.hotkey.description")}
-          </p>
-
-          {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
-
-          {/* Capture field */}
-          <div className="mt-4 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setCapturing(true)}
-              onKeyDown={onCaptureKeyDown}
-              onBlur={() => setCapturing(false)}
-              disabled={loading}
-              className={`flex-1 rounded-md border px-3 py-2 text-left font-mono text-sm transition-colors focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 ${
-                capturing
-                  ? "border-primary bg-primary/10 text-primary"
-                  : "border-input bg-background"
-              }`}
-            >
-              {capturing
-                ? t("settings_view.hotkey.recording")
-                : combo
-                  ? formatCombo(combo)
-                  : "—"}
-            </button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setCapturing(true)}
-              disabled={loading}
-            >
-              {t("settings_view.hotkey.record")}
-            </Button>
-          </div>
-
-          {/* Quick-pick suggestions */}
-          {suggestions.length > 0 && (
-            <div className="mt-3">
-              <span className="text-xs text-muted-foreground">
-                {t("settings_view.hotkey.suggestions_label")}
-              </span>
-              <div className="mt-1.5 flex flex-wrap gap-1.5">
-                {suggestions.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => {
-                      setCombo(s);
-                      setSaved(false);
-                    }}
-                    className={`rounded border px-2 py-1 font-mono text-xs transition-colors ${
-                      combo.trim().toLowerCase() === s
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-border bg-background text-muted-foreground hover:border-primary/60 hover:text-foreground"
-                    }`}
-                  >
-                    {formatCombo(s)}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Save */}
-          <div className="mt-4 flex items-center gap-3">
-            <Button size="sm" onClick={onSave} disabled={saving || loading || !dirty}>
-              {saving ? t("settings_view.saving") : t("settings_view.hotkey.save")}
-            </Button>
-          </div>
-
-          {saved && (
-            <div className="mt-3 rounded-md border border-primary/40 bg-primary/10 p-3 text-xs text-foreground">
-              <p className="text-muted-foreground">
-                {t("settings_view.hotkey.restart_required")}
-              </p>
-            </div>
-          )}
-        </div>
+    <div className="rounded-md border border-border/60 bg-background/40 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-semibold text-foreground">{label}</span>
+        {showReset && (
+          <button
+            type="button"
+            className="text-[11px] text-muted-foreground underline hover:text-foreground"
+            onClick={() => {
+              if (def) {
+                setCombo(def);
+                setSaved(false);
+              }
+            }}
+          >
+            {t("settings_view.keybinds.reset")}
+          </button>
+        )}
       </div>
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setCapturing(true)}
+          onKeyDown={onCaptureKeyDown}
+          onBlur={() => setCapturing(false)}
+          disabled={loading}
+          className={`flex-1 rounded-md border px-3 py-2 text-left font-mono text-sm transition-colors focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 ${
+            capturing
+              ? "border-primary bg-primary/10 text-primary"
+              : "border-input bg-background"
+          }`}
+        >
+          {capturing
+            ? t("settings_view.keybinds.recording")
+            : combo
+              ? formatCombo(combo)
+              : "—"}
+        </button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setCapturing(true)}
+          disabled={loading}
+        >
+          {t("settings_view.keybinds.record")}
+        </Button>
+        <Button size="sm" onClick={onSaveClick} disabled={saving || loading || !dirty}>
+          {saving ? t("settings_view.saving") : t("settings_view.keybinds.save")}
+        </Button>
+      </div>
+      {saved && (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          {t("settings_view.keybinds.restart_required")}
+        </p>
+      )}
     </div>
   );
 }

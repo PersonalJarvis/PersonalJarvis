@@ -128,8 +128,15 @@ class VisionContextProvider:
         )
         if need_fresh:
             obs = await self._engine.observe(mode=self._capture_mode)
-            self._latest = obs
-            return obs
+            if obs is not None:
+                # None = transient BitBlt skip; keep the stale observation
+                # rather than replacing with None (caller gets something useful).
+                self._latest = obs
+            if self._latest is None:
+                # No good observation yet AND current grab also failed —
+                # propagate None so the caller can decide (e.g. skip vision context).
+                return None  # type: ignore[return-value]
+            return self._latest
         return self._latest
 
     def pause(self) -> None:
@@ -172,19 +179,29 @@ class VisionContextProvider:
         werden nur als `warning` ohne Trace reported, damit die Logs nicht
         fluten (typischer Fall: mss scheitert wegen RDP-Lock-Screen und
         wiederholt sich alle 2s bis zum Unlock).
+
+        None return from engine.observe(): ScreenshotSource already handled the
+        BitBlt error (logged once), returning None means "skip this frame".
+        We keep _latest as-is (last good observation), increment no error
+        counter, and do NOT log here — the screenshot source owns that log.
         """
         consecutive_errors = 0
         while not self._stopping:
             try:
                 if not self._paused:
                     obs = await self._engine.observe(mode=self._capture_mode)
-                    self._latest = obs
-                    if consecutive_errors > 0:
-                        log.info(
-                            "VisionContextProvider recovered nach %d Fehlern.",
-                            consecutive_errors,
-                        )
-                    consecutive_errors = 0
+                    if obs is None:
+                        # Transient BitBlt skip — keep last good observation,
+                        # do not count as a loop error (already logged at source).
+                        pass
+                    else:
+                        self._latest = obs
+                        if consecutive_errors > 0:
+                            log.info(
+                                "VisionContextProvider recovered nach %d Fehlern.",
+                                consecutive_errors,
+                            )
+                        consecutive_errors = 0
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001

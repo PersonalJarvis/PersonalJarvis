@@ -16,6 +16,7 @@ from collections.abc import AsyncIterator, Callable
 
 import numpy as np
 
+from jarvis.audio import mic_level
 from jarvis.audio.capture import pcm_bytes_to_np
 from jarvis.audio.vad_reasons import (
     VAD_REASON_FALSE_START,
@@ -152,6 +153,11 @@ class SileroEndpointer:
             for frame in frames:
                 prob = self._prob(frame)
                 rms = float(np.sqrt(np.mean(np.square(frame))))
+                # Live mic loudness → overlay equalizer bars (zero-cost when no
+                # overlay is subscribed). Taps the audio already flowing to STT,
+                # so no second mic stream is opened (BUG: bars never reacted).
+                if mic_level.has_subscribers():
+                    mic_level.feed(rms)
                 vad_speech = prob >= self._threshold and rms >= self._min_speech_rms
                 relative_silence_rms = max(
                     self._min_speech_rms * 1.5,

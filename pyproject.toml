@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-jarvis"
-version = "0.0.1"
+version = "0.1.0"
 description = "Voice-gesteuerter Meta-Orchestrator für Windows 11"
 requires-python = ">=3.11"
 readme = "README.md"
@@ -91,6 +91,15 @@ telephony = [
     "twilio>=8.0",
     "audioop-lts; python_version>='3.13'",
 ]
+# Chat-channel bot libraries. Cloud-first doctrine (CLAUDE.md, RULE #1): the
+# base install must boot on a headless Linux VPS without these, so discord.py is
+# an OPTIONAL extra. `jarvis.channels.discord` lazy-imports it and degrades to a
+# clear English ChannelStartError when absent. (python-telegram-bot is a
+# grandfathered base dependency above; new channel libs go here instead.)
+# Discord runs fine headless on a VPS, so this is intentionally NOT in [desktop].
+channels = [
+    "discord.py>=2,<3",
+]
 # Desktop / tray / overlay extras. Cloud-first doctrine (CLAUDE.md): the base
 # install must boot on a headless Linux VPS without these. Windows-only
 # packages carry an explicit ``sys_platform`` marker so a ``pip install
@@ -105,6 +114,10 @@ desktop = [
     # so the version floor is relaxed from the original >=0.1.3 pin which
     # no PyPI version satisfies.
     "win10toast-click>=0.1.2; sys_platform == 'win32'",
+    # Per-app audio ducking ("Mute music while dictating", Taskbar section):
+    # Windows Core Audio session control. comtypes is pycaw's COM backend.
+    "pycaw>=20240210; sys_platform == 'win32'",
+    "comtypes>=1.2; sys_platform == 'win32'",
     "pystray>=0.19",
     "pywebview>=5.3",
     # Cross-platform ports (Wave 1, AD-14): pynput = global hotkey on macOS/Linux
@@ -191,6 +204,11 @@ web = "jarvis.channels.web:WebChannel"
 # Phase F1 — bidirektionaler Telegram-Bot-Channel (long-polling).
 # Token via Credential Manager (Key "telegram_bot_token" / ENV TELEGRAM_BOT_TOKEN).
 telegram = "jarvis.channels.telegram:TelegramChannel"
+# Bidirectional Discord bot channel (gateway). Mirrors Telegram: a DM/guild
+# message is bridged into the normal Jarvis chat path. discord.py lives in the
+# optional [channels] extra; token via Credential Manager (key "discord_bot_token"
+# / ENV DISCORD_BOT_TOKEN). Enable [Message Content Intent] in the bot settings.
+discord = "jarvis.channels.discord:DiscordChannel"
 
 [project.entry-points."jarvis.tool"]
 open-app = "jarvis.plugins.tool.open_app:OpenAppTool"
@@ -199,6 +217,11 @@ hotkey = "jarvis.plugins.tool.hotkey:HotkeyTool"
 click = "jarvis.plugins.tool.click:ClickTool"
 run-shell = "jarvis.plugins.tool.run_shell:RunShellTool"
 search-web = "jarvis.plugins.tool.search_web:SearchWebTool"
+# Gmail (marketplace plugin, 2026-06-01) — read + send mail via the Gmail REST
+# API using the marketplace-stored OAuth token. Router-tier (persona-mandate
+# set), risk_tier "ask": send is consequential. A direct safe/ask-gated action,
+# never a spawn (AP-5/AP-14). See docs/superpowers/specs/2026-06-01-marketplace-coming-soon-plugins-design.md.
+gmail = "jarvis.plugins.tool.gmail_rest:GmailRestTool"
 screen-snapshot = "jarvis.plugins.tool.screen_snapshot:ScreenSnapshotTool"
 move-mouse = "jarvis.plugins.tool.move_mouse:MoveMouseTool"
 switch-window = "jarvis.plugins.tool.switch_window:SwitchWindowTool"
@@ -230,6 +253,7 @@ dispatch-with-review = "jarvis.plugins.tool.dispatch_with_review:DispatchWithRev
 # bus-connected CliToolRegistry so the brain and the safety layer see the
 # same connected CLIs. See ADR-0011 amendment "CLI-Integration".
 cli-tools = "jarvis.clis.loader:CliToolLoader"
+plugin-tools = "jarvis.marketplace.plugin_loader:PluginToolLoader"
 # NOTE (2026-05-24): the former ``spawn-cli-worker`` entry point was REMOVED.
 # It pointed at jarvis.plugins.tool.spawn_cli_worker:SpawnCliWorkerTool, a file
 # that never existed (dead entry point). Single-step CLI work is now served
@@ -242,6 +266,14 @@ cli-tools = "jarvis.clis.loader:CliToolLoader"
 verify-via-curl = "jarvis.plugins.tool.verify_via_curl:VerifyViaCurlTool"
 verify-localhost = "jarvis.plugins.tool.verify_localhost:VerifyLocalhostTool"
 start-preview-server = "jarvis.plugins.tool.start_preview_server:StartPreviewServerTool"
+# AI Pointer — resolve the element under the mouse cursor via the OS
+# accessibility tree (router-tier, read-only). Pull path for deictic questions.
+inspect-pointer = "jarvis.plugins.tool.inspect_pointer:InspectPointerTool"
+# UI navigation (2026-06-02) — switch the active sidebar section by voice/chat
+# ("zeig die Socials", "open settings"). Router-tier, risk safe (pure UI move).
+# Publishes NavigateSidebar; the frontend switches the section. Never a spawn
+# (AP-5/AP-14). See ADR-0011 amendment "Navigate tool".
+navigate = "jarvis.plugins.tool.navigate:NavigateTool"
 # Phase A1 — Awareness-Layer L1 (synchroner State-Read fuer Router).
 awareness-snapshot = "jarvis.plugins.tool.awareness_snapshot:AwarenessSnapshotTool"
 # Phase A3 — Awareness-Layer L3 (BM25 search across recent episodes).
@@ -277,6 +309,16 @@ manage-mcp-server = "jarvis.plugins.tool.manage_mcp_server:ManageMcpServerTool"
 # a stored API key ("AIz...xQ2"), never the full value. monitor-tier (logged, no
 # nag). Narrow, safe exception to AP-2; the full-key refusal lives in router.py.
 reveal-key-preview = "jarvis.plugins.tool.reveal_key_preview:RevealKeyPreviewTool"
+# Chunk B jarvis-contacts (2026-06-02) — three contact-action router tools.
+# contact-lookup (safe, read) resolves a name/alias to e-mail/phone/address;
+# contact-upsert (monitor, deterministic write) saves a contact by voice;
+# call-contact (ask, echo-confirm) places a real outbound call via the telephony
+# engine. Direct safe/monitor/ask-gated actions, never a spawn (AP-5/AP-14); they
+# degrade to a clean no-op when Chunk A's ContactStore / Chunk C's telephony
+# engine is absent. See ADR-0011 amendment "Contacts Tools".
+contact-lookup = "jarvis.plugins.tool.contact_lookup:ContactLookupTool"
+contact-upsert = "jarvis.plugins.tool.contact_upsert:ContactUpsertTool"
+call-contact = "jarvis.plugins.tool.call_contact:CallContactTool"
 
 [tool.setuptools.packages.find]
 where = ["."]

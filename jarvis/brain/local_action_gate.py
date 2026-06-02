@@ -272,6 +272,71 @@ def _unsupported_response(text: str, lang: str) -> str:
     )
 
 
+# A DISPATCH verb: the user wants to drive a real external system (send, play,
+# post, book, order, call), not merely build/analyse/parse something. This is
+# the disambiguator that separates "schick eine Email" (real dispatch) from
+# "implementier eine Email-Validation" (coding task that just NAMES the domain).
+# Deliberately excludes ambiguous build/write verbs (schreib/baue/mach) — those
+# are generic sub-agent work even next to an integration name.
+_EXTERNAL_DISPATCH_VERB_RE = re.compile(
+    r"\b("
+    r"schick\w*|sende[nt]?|send|verschick\w*|"          # send
+    r"poste[nt]?|post|tweete[nt]?|"                      # post
+    r"spiel\w*|play|"                                    # play media
+    r"trag\w*|eintrag\w*|book|buch\w*|bestell\w*|order[ns]?|"  # book/order/enter
+    r"reservier\w*|reserve|"
+    r"ruf\w*\s+an|ruf\s+\w+\s+an|call|anruf\w*|"         # call
+    r"like[nt]?|liken|folge[nt]?|abonnier\w*"            # social interact
+    r")\b",
+    re.I,
+)
+
+# A SPECIFIC external integration noun a generic sub-agent worker cannot reach
+# without a dedicated MCP/connector — a real inbox, calendar, Spotify session,
+# social account, or delivery service. The noun ALONE is not enough (a coding
+# task may merely mention it); a dispatch verb must also be present. git/GitHub
+# is deliberately absent — the worker has git + gh natively.
+_EXTERNAL_INTEGRATION_NOUN_RE = re.compile(
+    r"\b("
+    # Mail
+    r"e-?mails?|gmail|outlook|postfach|"
+    # Messaging
+    r"whats-?app|telegram|signal|imessage|sms|"
+    # Calendar
+    r"kalender|calendar|termine?|appointments?|"
+    # Music
+    r"spotify|"
+    # Social
+    r"tweets?|twitter|instagram|facebook|linkedin|tiktok|"
+    # Real-world commerce / transport
+    r"pizza|uber\s*eats|lyft|doordash|lieferando"
+    r")\b",
+    re.I,
+)
+
+
+def requires_external_integration(text: str) -> bool:
+    """True iff the utterance asks to DRIVE a specific external system a generic
+    sub-agent worker cannot reach (send mail, play Spotify, post a tweet, book a
+    table, order food).
+
+    Both signals are required: a SPECIFIC integration noun AND a real DISPATCH
+    verb. The noun alone is not enough — a coding task that merely mentions the
+    domain ("implementier eine Email-Validation", "baue einen Kalender-Parser",
+    "schreib Code der Spotify-Playlists liest") is generic sub-agent work and
+    must NOT be refused. git/GitHub is never matched (the worker drives them).
+
+    Used by the capability gate AND the force-spawn heuristic to draw the single
+    line between "refuse honestly (no tool exists)" and "delegate to the
+    sub-agent (the universal capability for generic work)".
+    """
+    t = text or ""
+    return bool(
+        _EXTERNAL_INTEGRATION_NOUN_RE.search(t)
+        and _EXTERNAL_DISPATCH_VERB_RE.search(t)
+    )
+
+
 def _get_capability_registry() -> _CapabilityRegistryLike | None:
     """Return the global capability registry singleton, or *None* if Agent A's
     module has not been installed yet.
@@ -338,6 +403,12 @@ def match_local_action(
             # canned refusal (live bug 2026-05-25: "oeffne WhatsApp und schreib"
             # was refused with "das kann ich noch nicht").
             and not _looks_like_desktop_control(normalized)
+            # 2026-06-01: only a SPECIFIC external integration (mail/calendar/
+            # Spotify/social/delivery) is genuinely unsupported. Generic work
+            # (analyse/build/fix/code/research/git) is sub-agent-fulfillable, so
+            # it must NOT be refused here — it falls through to the force-spawn
+            # path (the sub-agent is the universal capability for generic work).
+            and requires_external_integration(normalized)
         ):
             return LocalActionPlan(
                 mode=LocalActionMode.UNSUPPORTED,

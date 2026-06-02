@@ -21,7 +21,88 @@
     "settings": "Settings",
     "telephony": "Telephony",
     "debug": "Debug",
-    "outputs": "Outputs"
+    "outputs": "Outputs",
+    "socials": "Socials",
+    "taskbar": "Taskbar",
+    "contacts": "Contacts"
+  },
+  "taskbar_view": {
+    "subtitle": "On-screen overlay appearance and dictation behaviour.",
+    "appearance_title": "Appearance",
+    "behavior_title": "Behavior",
+    "restart_required": "Saved — restart Jarvis to apply.",
+    "restart_now": "Restart now",
+    "restarting": "Restarting Jarvis…",
+    "bar_persistent": {
+      "title": "Show bar at all times",
+      "description": "Keep the bar on screen even when idle. Off: no standby — it only appears when you say \"Hey Jarvis\".",
+      "saved": "Bar visibility updated."
+    },
+    "mute_music": {
+      "title": "Mute music while dictating",
+      "description": "Mute other apps (Spotify, browser…) while you talk to Jarvis, then restore them after. Jarvis's own voice is never muted.",
+      "enabled_toast": "Music will mute while you talk to Jarvis.",
+      "disabled_toast": "Music mute disabled."
+    }
+  },
+  "socials": {
+    "subtitle": "Links to our community and profiles.",
+    "add": "Add link",
+    "empty": "No social links yet — add your first one.",
+    "edit": "Edit",
+    "delete": "Delete",
+    "open": "Open",
+    "dialogAddTitle": "Add social link",
+    "dialogEditTitle": "Edit link",
+    "platform": "Platform",
+    "label": "Label",
+    "url": "URL",
+    "save": "Save",
+    "cancel": "Cancel",
+    "hidden": "Hidden",
+    "visible": "Visible",
+    "links": "Links",
+    "back": "Back"
+  },
+  "contacts": {
+    "subtitle": "Your personal address book — names, contact details, and a short note per person.",
+    "add": "Add contact",
+    "empty": "No contacts yet — add your first one.",
+    "noMatches": "No contacts match your search.",
+    "search": "Search contacts…",
+    "selectHint": "Select a contact to see details.",
+    "edit": "Edit",
+    "delete": "Delete",
+    "deleteTitle": "Delete contact",
+    "deleteConfirm": "Delete",
+    "cancel": "Cancel",
+    "save": "Save",
+    "name": "Name",
+    "nameRequired": "A name is required.",
+    "aliases": "Aliases",
+    "relationship": "Relationship",
+    "emails": "Emails",
+    "phones": "Phones",
+    "addEmail": "Add email",
+    "addPhone": "Add phone",
+    "address": "Address",
+    "street": "Street",
+    "postalCode": "Postal code",
+    "city": "City",
+    "country": "Country",
+    "readme": "README",
+    "readmePlaceholder": "A short note about this person…",
+    "words": "words",
+    "dialogAddTitle": "Add contact",
+    "dialogEditTitle": "Edit contact",
+    "rel": {
+      "family": "Family",
+      "friend": "Friend",
+      "colleague": "Colleague",
+      "partner": "Partner",
+      "acquaintance": "Acquaintance",
+      "other": "Other"
+    }
   },
   "voice_state": {
     "idle": "Ready",
@@ -65,7 +146,8 @@
     "select_or_new": "Pick a conversation on the left, or start a new one.",
     "group_today": "Today",
     "group_yesterday": "Yesterday",
-    "group_earlier": "Earlier"
+    "group_earlier": "Earlier",
+    "resize_hint": "Drag to resize · double-click to reset"
   },
   "subagents_view": {
     "title": "Sub-Agents",
@@ -477,6 +559,19 @@
       "disabled_toast": "Autostart disabled.",
       "unsupported": "Autostart is not available on this host (e.g. a headless server with no desktop session)."
     },
+    "overlay_style": {
+      "title": "Display style",
+      "description": "Choose how Jarvis appears on screen during voice activity. The bar is the slim default; the mascot is the classic orb; or hide it entirely.",
+      "label": "Style",
+      "save": "Save",
+      "saved": "Display style switched.",
+      "restart_required": "Saved — restart Jarvis to apply.",
+      "options": {
+        "whisper_bar": "Bar (default)",
+        "mascot": "Mascot orb",
+        "none": "None (hidden)"
+      }
+    },
     "assistant_name": {
       "title": "Assistant Name",
       "description": "How the assistant refers to itself in replies. Leave empty to follow the wake word.",
@@ -495,6 +590,19 @@
       "suggestions_label": "Suggestions",
       "save": "Save hotkey",
       "saved": "Hotkey saved",
+      "restart_required": "Restart required to take effect."
+    },
+    "keybinds": {
+      "title": "Voice Keybinds",
+      "description": "Set the keys for Call, Hangup and Talk (push-to-talk). Click Record and press your combination, or reset to default. Changes apply after a restart.",
+      "call_label": "Call (answer / start talking)",
+      "hangup_label": "Hangup",
+      "talk_label": "Talk / Push-to-talk",
+      "record": "Record",
+      "recording": "Press your keys now… (Esc to cancel)",
+      "save": "Save",
+      "saved": "Keybind saved",
+      "reset": "Reset to default",
       "restart_required": "Restart required to take effect."
     },
     "codex_title": "OpenAI Codex CLI",

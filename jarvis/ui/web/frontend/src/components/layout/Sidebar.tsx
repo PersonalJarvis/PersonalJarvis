@@ -20,6 +20,9 @@ import {
   ShieldCheck,
   Terminal,
   Wand2,
+  Share2,
+  PanelBottom,
+  Contact,
   type LucideIcon,
   ChevronRight,
 } from "lucide-react";
@@ -51,12 +54,17 @@ const NAV_ITEMS: NavItem[] = [
   { id: "board", labelKey: "nav.board", icon: Sparkles },
   { id: "languages", labelKey: "nav.languages", icon: Globe },
   { id: "profile", labelKey: "nav.profile", icon: UserCircle2 },
+  { id: "contacts", labelKey: "nav.contacts", icon: Contact },
   { id: "memory", labelKey: "nav.wiki", icon: Notebook },
   { id: "apikeys", labelKey: "nav.apikeys", icon: KeyRound },
   { id: "telephony", labelKey: "nav.telephony", icon: Phone },
   { id: "settings", labelKey: "nav.settings", icon: Settings },
   { id: "debug", labelKey: "nav.debug", icon: Activity },
   { id: "outputs", labelKey: "nav.outputs", icon: FolderOpen },
+  // Taskbar — the on-screen overlay appearance + dictation behaviour.
+  { id: "taskbar", labelKey: "nav.taskbar", icon: PanelBottom },
+  // Socials — pinned at the very bottom: the project's social-media links.
+  { id: "socials", labelKey: "nav.socials", icon: Share2 },
 ];
 
 const VOICE_STATE_STYLE: Record<string, { dot: string; pulse: boolean }> = {

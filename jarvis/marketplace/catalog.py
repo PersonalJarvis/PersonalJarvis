@@ -8,7 +8,7 @@ discriminated union over the `mode` field.
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -27,6 +27,11 @@ class PatPasteAuth(_BaseAuth):
     token_prefix: str
     validation_endpoint: str
     instruction_md: str
+    # How to present the pasted token when validating + wiring downstream:
+    #   bearer        -> Authorization: Bearer <token>  (GitHub/Vercel/Supabase)
+    #   bot           -> Authorization: Bot <token>      (Discord)
+    #   telegram_path -> token spliced into the URL {token}, no header; body ok==true
+    auth_scheme: Literal["bearer", "bot", "telegram_path"] = "bearer"
 
 
 class OAuthDeviceFlowAuth(_BaseAuth):
@@ -56,11 +61,19 @@ class OAuthPkceLoopbackAuth(_BaseAuth):
     token_url: str
     revocation_url: str | None = None
     client_id: str
+    client_secret: str | None = Field(default=None, exclude=True)
     callback_port: int = 0
+    callback_path: str = "/oauth/callback"
     scopes: list[str]
+    scope_separator: Literal["comma", "space"] = "comma"
     user_scopes_only: bool = False
     refresh_supported: bool = False
     refresh_token_ttl_days: int | None = None
+    # RFC 8707 resource indicator (Asana V2 MCP needs resource=…/v2).
+    resource: str | None = None
+    # Google desktop clients need access_type=offline + prompt=consent to
+    # return a refresh token.
+    offline_access: bool = False
 
 
 class HostedMcpAllowlistAuth(_BaseAuth):
@@ -70,13 +83,11 @@ class HostedMcpAllowlistAuth(_BaseAuth):
 
 
 AuthConfig = Annotated[
-    Union[
-        PatPasteAuth,
-        OAuthDeviceFlowAuth,
-        HostedMcpOAuthDcrAuth,
-        OAuthPkceLoopbackAuth,
-        HostedMcpAllowlistAuth,
-    ],
+    PatPasteAuth
+    | OAuthDeviceFlowAuth
+    | HostedMcpOAuthDcrAuth
+    | OAuthPkceLoopbackAuth
+    | HostedMcpAllowlistAuth,
     Field(discriminator="mode"),
 ]
 
@@ -101,6 +112,9 @@ class PluginSpec(_BaseAuth):
     # and rejecting unknown subkeys here would just force a schema bump every
     # time a new transport variant lands. Keep it loosely typed.
     mcp_server: dict[str, Any] | None = None
+    # Native in-process router tool backing this plugin when no MCP server
+    # exists (Gmail uses the REST API directly with marketplace-stored tokens).
+    native_tool: str | None = None
     post_install_hint_md: str | None = None
     future_v2_note: str | None = None
 

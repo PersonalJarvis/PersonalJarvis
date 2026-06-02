@@ -32,6 +32,7 @@ import asyncio
 import logging
 import random
 import re
+import time
 from typing import TYPE_CHECKING, Any
 
 from jarvis.core.events import (
@@ -40,6 +41,7 @@ from jarvis.core.events import (
     OpenClawBackgroundCompleted,
     OrbResetRequested,
     ResponseGenerated,
+    ShowWindowRequested,
     SystemStateChanged,
     TranscriptionUpdate,
     UserVisibleFeedback,
@@ -160,7 +162,13 @@ class OrbBusBridge:
     ) -> None:
         self._bus = bus
         self._orb = orb
-        self._mic = None  # MicListener | None
+        self._mic_level_unsub = None  # mic_level subscription (registered in attach)
+        self._tts_recency_unsub = None  # level_tap subscription (TTS-active tracker)
+        # Monotonic time of the last TTS output level. The state label
+        # (LISTENING/SPEAKING) flips to LISTENING while TTS audio is still
+        # playing (continue-listening), so we gate mic routing on "is TTS
+        # actually producing sound" instead — whoever makes sound drives bars.
+        self._last_tts_level_t = 0.0
         self._last_state: str = "IDLE"
         self._idle_task: asyncio.Task | None = None
         self._idle_enabled = idle_animations_enabled
@@ -230,11 +238,40 @@ class OrbBusBridge:
             feedback_setter = getattr(self._orb, "set_feedback_publisher", None)
             if feedback_setter is not None:
                 feedback_setter(self._publish_visible_feedback)
+            # Wire the overlay's right-click gesture (bar AND mascot) to a bus
+            # publish. The surface fires the callback from the Tk main-thread;
+            # we marshal onto the asyncio loop (EventBus.publish is a coroutine),
+            # exactly like the mute-toggle path. Defensive getattr keeps older
+            # surface test doubles without the setter working.
+            show_window_setter = getattr(self._orb, "set_on_show_window", None)
+            if show_window_setter is not None:
+                show_window_setter(self._publish_show_window)
+            # Live mic loudness → equalizer bars during LISTENING. The VAD frame
+            # loop feeds jarvis.audio.mic_level from the audio already captured
+            # for STT — no second mic stream. One subscription for the bridge's
+            # whole life; it forwards to whichever surface is current.
+            try:
+                from jarvis.audio import mic_level
+
+                self._mic_level_unsub = mic_level.subscribe(self._on_mic_level)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("OrbBridge mic_level subscribe failed: %s", exc)
+            # Track TTS-output activity so the (silent) mic does not clobber
+            # Jarvis's voice level on the shared set_level while TTS plays. The
+            # surface's OWN level_tap subscription does the actual SPEAKING
+            # set_level; here we only note the recency.
+            try:
+                from jarvis.audio import level_tap
+
+                self._tts_recency_unsub = level_tap.subscribe(self._note_tts_level)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("OrbBridge level_tap recency subscribe failed: %s", exc)
             log.info(
                 "OrbBridge subscribed auf SystemStateChanged + VoiceSessionStarted "
                 "+ VoiceSessionEnded + ListeningStarted + TranscriptionUpdate "
                 "+ ResponseGenerated + AudioOutFirst + OrbResetRequested "
-                "+ mute-toggle gesture + visible-feedback contract."
+                "+ mute-toggle gesture + show-window gesture "
+                "+ visible-feedback contract."
             )
         except Exception as exc:  # noqa: BLE001
             log.exception("OrbBridge.attach() fehlgeschlagen: %s", exc)
@@ -310,6 +347,27 @@ class OrbBusBridge:
             asyncio.run(coro)
         except RuntimeError as exc:
             log.warning("mute-toggle publish dropped: %s", exc)
+
+    def _publish_show_window(self) -> None:
+        """Called from the surface's Tk main-thread on a right-click. Publishes
+        ``ShowWindowRequested`` so the DesktopApp raises its window.
+
+        Same Tk→asyncio marshal pattern as ``_publish_mute_toggle``: hop onto
+        the running loop if there is one, else a one-shot ``asyncio.run`` so the
+        gesture is never silently swallowed.
+        """
+        coro = self._bus.publish(ShowWindowRequested(source="overlay_rightclick"))
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.run_coroutine_threadsafe(coro, loop)
+                return
+        except RuntimeError:
+            pass
+        try:
+            asyncio.run(coro)
+        except RuntimeError as exc:
+            log.warning("show-window publish dropped: %s", exc)
 
     async def _on_session_started(self, event: VoiceSessionStarted) -> None:
         """A genuine new voice session began (wake-word / hotkey / call).
@@ -653,31 +711,54 @@ class OrbBusBridge:
         except asyncio.CancelledError:
             pass
 
-    # --- Mic-Lifecycle -------------------------------------------------
+    # --- Live loudness → equalizer bars (mic + TTS precedence) ---------
 
-    def _start_mic(self) -> None:
-        if self._mic is not None:
+    _TTS_OWNS_BARS_S = 0.5  # mic is muted this long after the last TTS level
+
+    def _note_tts_level(self, _level: float) -> None:
+        """Recency tracker only: TTS just produced an output level, so it is
+        making sound now. The surface's own ``level_tap`` subscription does the
+        actual SPEAKING ``set_level``; we just remember the time so the mic does
+        not clobber it."""
+        self._last_tts_level_t = time.monotonic()
+
+    def _on_mic_level(self, level: float) -> None:
+        """Forward the live mic loudness to the active surface's bars.
+
+        The level comes from ``jarvis.audio.mic_level`` (the VAD feeds it from
+        the audio already captured for STT — no second stream). It is forwarded
+        only when (a) NO TTS output is currently playing — Jarvis's voice owns
+        the bars while it speaks, and the state label is unreliable because
+        continue-listening flips to LISTENING mid-playback — and (b) the coarse
+        state is LISTENING. Works for whichever surface is current."""
+        if time.monotonic() - self._last_tts_level_t < self._TTS_OWNS_BARS_S:
+            return  # TTS is making sound → it drives the bars, not the silent mic
+        if self._last_state != "LISTENING":
             return
         try:
-            from ui.orb.mic_listener import MicListener
-            self._mic = MicListener(on_level=self._orb.set_level)
-            self._mic.start()
-        except Exception as exc:
-            # Mic ist nicht zwingend — Orb funktioniert auch ohne Pulsieren
-            log.warning("OrbBridge Mic konnte nicht starten: %s", exc)
-            self._mic = None
+            self._orb.set_level(level)
+        except Exception:  # noqa: BLE001
+            log.debug("mic level forward to surface failed", exc_info=True)
 
-    def _stop_mic(self) -> None:
-        if self._mic is None:
-            return
-        try:
-            self._mic.stop()
-        except Exception:
-            pass
-        self._mic = None
-        # Letztes Level auf 0 setzen, damit Orb nicht mit altem Wert
-        # "eingefroren" aussieht
-        try:
-            self._orb.set_level(0.0)
-        except Exception:
-            pass
+    # --- Live surface swap (display-style toggle) ----------------------
+
+    def set_surface(self, surface) -> None:
+        """Repoint the bridge at a NEW overlay surface for a live style swap.
+
+        Reuses the single bridge — no second subscription, no detach. Swaps the
+        ``_orb`` reference and re-injects the mute-toggle + visible-feedback
+        publishers. The mic-level subscription (registered once in ``attach``)
+        forwards to whichever surface is current, so there is nothing to rebind.
+        The caller tears the old surface down afterwards.
+        """
+        self._orb = surface
+        setter = getattr(surface, "set_on_mute_toggle", None)
+        if callable(setter):
+            setter(self._publish_mute_toggle)
+        feedback_setter = getattr(surface, "set_feedback_publisher", None)
+        if callable(feedback_setter):
+            feedback_setter(self._publish_visible_feedback)
+        show_window_setter = getattr(surface, "set_on_show_window", None)
+        if callable(show_window_setter):
+            show_window_setter(self._publish_show_window)
+        log.info("OrbBridge surface swapped (last_state=%s)", self._last_state)

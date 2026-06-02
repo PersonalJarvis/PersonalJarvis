@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from collections.abc import AsyncIterator
 from typing import Any
 from uuid import uuid4
@@ -116,7 +117,52 @@ _GEMINI_FORBIDDEN_SCHEMA_KEYS: frozenset[str] = frozenset({
     "additional_properties",  # google-genai may receive pydantic's snake_case form
     "$schema",           # JSON-Schema meta
     "$id",
+    # JSON-schema keywords the google-genai Schema model (extra="forbid")
+    # rejects. The Schema model accepts only its documented subset — verified
+    # 2026-06-01 against google-genai 1.67 (types.Schema.model_fields). The
+    # ``exclusive*`` bounds below are first CONVERTED to ``minimum``/``maximum``
+    # in ``_sanitize_for_gemini`` (constraint-preserving) and only then dropped
+    # here; the rest are simply not part of Gemini's schema dialect.
+    "exclusiveMinimum",  # Pydantic Field(gt=N) — converted to ``minimum``
+    "exclusiveMaximum",  # Pydantic Field(lt=N) — converted to ``maximum``
+    "exclusive_minimum",  # snake_case variant
+    "exclusive_maximum",  # snake_case variant
+    "$defs",             # Pydantic emits these for nested models / refs
+    "definitions",       # draft-07 definitions block
+    "examples",          # plural — Gemini only accepts singular ``example``
+    "const",             # not in Gemini's subset
 })
+
+
+def _convert_exclusive_bounds(schema: dict[str, Any]) -> dict[str, Any]:
+    """Convert JSON-schema ``exclusive{Minimum,Maximum}`` to ``{minimum,maximum}``.
+
+    Pydantic ``Field(gt=N)`` / ``Field(lt=N)`` emit ``exclusiveMinimum`` /
+    ``exclusiveMaximum`` (draft 2020-12 numeric form). Gemini's Schema model
+    only knows the inclusive ``minimum`` / ``maximum``, so we down-convert —
+    a pragmatic, well-known fix that keeps the bound essentially in place
+    (``> 0`` becomes ``>= 0``) rather than silently dropping the constraint.
+
+    Rules:
+      * numeric ``exclusiveMinimum`` → ``minimum`` (only if no explicit
+        ``minimum`` already present — an inclusive bound must never be
+        weakened by the conversion);
+      * numeric ``exclusiveMaximum`` → ``maximum`` (same guard);
+      * boolean ``exclusive*`` (draft-04 flag form) carries no numeric value,
+        so it is left in the dict and dropped later by the forbidden-key pass.
+
+    The originating ``exclusive*`` key itself stays in the returned dict; it is
+    removed by ``_sanitize_for_gemini`` (it lives in
+    ``_GEMINI_FORBIDDEN_SCHEMA_KEYS``). Mutates a shallow copy, not the input.
+    """
+    out = dict(schema)
+    excl_min = out.get("exclusiveMinimum", out.get("exclusive_minimum"))
+    if isinstance(excl_min, (int, float)) and not isinstance(excl_min, bool):
+        out.setdefault("minimum", excl_min)
+    excl_max = out.get("exclusiveMaximum", out.get("exclusive_maximum"))
+    if isinstance(excl_max, (int, float)) and not isinstance(excl_max, bool):
+        out.setdefault("maximum", excl_max)
+    return out
 
 
 def _sanitize_for_gemini(schema: dict[str, Any]) -> dict[str, Any]:
@@ -128,9 +174,15 @@ def _sanitize_for_gemini(schema: dict[str, Any]) -> dict[str, Any]:
     erlaubt. Statt einen Tool-Call ohne Tools zu liefern, strippen wir die
     Felder out — die Tools selbst funktionieren unveraendert, nur die
     OpenAI-spezifischen Hints sind weg.
+
+    Exclusive numeric bounds (``exclusiveMinimum``/``exclusiveMaximum`` from
+    Pydantic ``Field(gt=...)``/``Field(lt=...)``) are first converted to the
+    inclusive ``minimum``/``maximum`` Gemini accepts, then the exclusive key is
+    stripped via ``_GEMINI_FORBIDDEN_SCHEMA_KEYS``.
     """
     if not isinstance(schema, dict):
         return schema
+    schema = _convert_exclusive_bounds(schema)
     out: dict[str, Any] = {}
     for k, v in schema.items():
         if k in _GEMINI_FORBIDDEN_SCHEMA_KEYS:
@@ -147,19 +199,94 @@ def _sanitize_for_gemini(schema: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _tools_gemini_format(tools: tuple[dict[str, Any], ...]) -> list[dict[str, Any]] | None:
+# Gemini function-name rule (live forensic 2026-06-01, data/jarvis_desktop.log
+# 23:34:57): names must match ^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$. Connected
+# MCP/marketplace plugin tools (the "plugin-tools" virtual loader) carry names
+# that violate this — spaces, slashes, leading digits, over-length. Left raw,
+# Gemini rejects the WHOLE request (400 INVALID_ARGUMENT on every offending
+# function_declaration[i]); the active provider then fails over into the dead
+# fallback chain (claude-api 401 / grok 403) and the chain-error diagnostic is
+# spoken aloud. We coerce names to the rule and keep a reverse map so an
+# inbound function_call still resolves to the original tool — the executor
+# only knows the original name.
+_GEMINI_NAME_FORBIDDEN_RE = re.compile(r"[^A-Za-z0-9_.:-]")
+# 1 leading char + up to 127 trailing = 128 total (Gemini rule {0,127}).
+_GEMINI_NAME_MAXLEN = 128
+
+
+def _sanitize_gemini_function_name(name: str, taken: set[str]) -> str:
+    """Coerce ``name`` to the Gemini function-name rule, unique vs ``taken``.
+
+    Deterministic and identity-preserving for already-valid names (so the
+    common case — the router tools — round-trips for free). Collisions get a
+    short numeric suffix so the original→sanitized map stays bijective; tool-
+    call resolution depends on that round-trip.
+    """
+    cleaned = _GEMINI_NAME_FORBIDDEN_RE.sub("_", name or "")
+    if not cleaned or not (cleaned[0].isalpha() or cleaned[0] == "_"):
+        cleaned = "_" + cleaned
+    if len(cleaned) > _GEMINI_NAME_MAXLEN:
+        cleaned = cleaned[:_GEMINI_NAME_MAXLEN]
+    if cleaned not in taken:
+        return cleaned
+    base = cleaned
+    i = 1
+    while cleaned in taken:
+        suffix = f"_{i}"
+        cleaned = base[: _GEMINI_NAME_MAXLEN - len(suffix)] + suffix
+        i += 1
+    return cleaned
+
+
+def _gemini_tool_name_map(tools: tuple[dict[str, Any], ...]) -> dict[str, str]:
+    """Deterministic original→Gemini-safe tool-name map.
+
+    Single source of truth for both ``_tools_gemini_format`` (outbound
+    declarations) and ``complete()`` (inbound function_call back-translation).
+    Idempotent: re-running on the same tuple yields the same mapping, so the
+    forward build and the reverse build always agree.
+    """
+    taken: set[str] = set()
+    mapping: dict[str, str] = {}
+    for t in tools or ():
+        original = t.get("name", "")
+        safe = _sanitize_gemini_function_name(original, taken)
+        taken.add(safe)
+        mapping[original] = safe
+    return mapping
+
+
+def _build_gemini_tool_declarations(
+    tools: tuple[dict[str, Any], ...],
+) -> tuple[list[dict[str, Any]] | None, dict[str, str]]:
+    """Build Gemini ``functionDeclarations`` AND the original→safe name map in
+    a single pass.
+
+    Returning both from one call is the single source of truth: the outbound
+    declarations (sanitized names) and the inbound function_call back-
+    translation in ``complete()`` (reverse of this map) can never disagree, and
+    the per-turn tool list is iterated only once.
+    """
     if not tools:
-        return None
+        return None, {}
+    name_map = _gemini_tool_name_map(tools)
     declarations = []
     for t in tools:
         raw_schema = t.get("input_schema") or t.get("parameters") or t.get("schema") or {}
         schema = _sanitize_for_gemini(raw_schema) if raw_schema else {}
+        original = t.get("name", "")
         declarations.append({
-            "name": t["name"],
+            "name": name_map.get(original, original),
             "description": t.get("description", ""),
             "parameters": schema if schema else {"type": "object", "properties": {}},
         })
-    return [{"functionDeclarations": declarations}]
+    return [{"functionDeclarations": declarations}], name_map
+
+
+def _tools_gemini_format(tools: tuple[dict[str, Any], ...]) -> list[dict[str, Any]] | None:
+    """Backward-compatible wrapper — declarations payload only (no name map)."""
+    payload, _ = _build_gemini_tool_declarations(tools)
+    return payload
 
 
 class GeminiBrain:
@@ -281,7 +408,12 @@ class GeminiBrain:
             "max_output_tokens": req.max_tokens,
         }
         system_text = "\n\n".join(system_parts) if system_parts else ""
-        tools_payload = _tools_gemini_format(req.tools)
+        # One pass builds both the outbound declarations and the name map.
+        tools_payload, _tool_name_map = _build_gemini_tool_declarations(req.tools)
+        # Inbound resolution: Gemini calls back the SANITIZED name; the tool
+        # executor only knows the original. Invert the forward map (empty when
+        # there are no tools). See _build_gemini_tool_declarations.
+        tool_name_reverse = {safe: original for original, safe in _tool_name_map.items()}
 
         # Latenz-Sprint-2: Wenn Caching aktiviert ist, versuche System+Tools
         # in einen Cache-Eintrag zu legen. Bei Erfolg: ``cached_content``
@@ -446,7 +578,7 @@ class GeminiBrain:
                                 args = dict(args)
                             yield BrainDelta(tool_call={
                                 "id": f"gemini_{uuid4().hex[:8]}",
-                                "name": name,
+                                "name": tool_name_reverse.get(name, name),
                                 "input": args,
                             })
                         finish = getattr(cand, "finish_reason", None)

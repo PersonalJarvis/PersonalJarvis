@@ -912,6 +912,130 @@ async def test_critic_timeout_retries_then_approves(
     assert len(critic.calls) == 2
 
 
+class _AlwaysTimeoutWorkerWithDiff:
+    """Yields a timeout-error event on every spawn, simulating a long Git/build
+    task that completed its file writes and THEN hit the wall-clock cap. The
+    on-disk work is modelled via a monkeypatched ``_capture_diff`` in the test
+    (the worker itself can't write a real git diff in the fake worktree)."""
+
+    cli = "claude"
+
+    def __init__(self) -> None:
+        self.last_pid = 555
+        self.spawn_calls: list[dict[str, Any]] = []
+
+    async def spawn(self, prompt, *, worktree, env, job, worker_id, log_dir, **kw):  # type: ignore[no-untyped-def]
+        self.spawn_calls.append(dict(kw))
+        log_dir.mkdir(parents=True, exist_ok=True)
+        (log_dir / "stream.jsonl").write_text(
+            '{"type":"result"}\n', encoding="utf-8"
+        )
+        yield _FakeTimeoutEvent()
+
+
+@pytest.mark.asyncio
+async def test_timeout_with_real_diff_is_graded_not_discarded(
+    manager: MissionManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Worker killed by the wall-clock cap that still left real files on disk
+    (non-empty diff) must be GRADED by the critic, not discarded as task_error.
+
+    Live false-negative E1: a long Git/build task ("open PRs", "commit and
+    push") completes its writes, then ``communicate()`` hits the 630s cap and
+    the worker is killed. The old loop returned TaskOutcome.ERROR immediately,
+    throwing the real on-disk work away and reporting task_error. The critic is
+    the ground-truth judge — let it grade the partial deliverable instead."""
+    worker = _AlwaysTimeoutWorkerWithDiff()
+    critic = FakeCriticRunner(_make_approve_verdict())
+    k = _make_kontrollierer(
+        manager=manager, tmp_path=tmp_path, critic=critic,
+        worker_factory_fn=lambda step: worker,
+    )
+    # Simulate the worker having written a real file before the cap fired.
+    monkeypatch.setattr(
+        Kontrollierer,
+        "_capture_diff",
+        lambda self, wt: (
+            "diff --git a/out.html b/out.html\n"
+            "@@ -0,0 +1 @@\n"
+            "+<html>built before the timeout</html>\n"
+        ),
+    )
+
+    mid = await manager.dispatch(prompt="long build that times out after writing")
+    end = await k.run_mission(mid)
+
+    assert end == MissionState.APPROVED, (
+        "a timeout-killed worker that produced a real diff must be graded "
+        "by the critic, not failed as task_error"
+    )
+    # Graded on the very first iteration — no wasteful retry of a task that
+    # already produced output.
+    assert len(critic.calls) >= 1
+    assert len(worker.spawn_calls) == 1
+
+
+class _GitPushWorker:
+    """Worker stub for a 'commit and push' task: empty worktree diff (the work
+    is a remote ref update, not a file change) but a real, non-errored git-push
+    tool_use in the stream — the dominant Git/GitHub critic_loop_exhausted
+    false-negative shape."""
+
+    cli = "claude"
+
+    def __init__(self) -> None:
+        self.last_pid = 666
+        self.spawn_calls: list[dict[str, Any]] = []
+
+    async def spawn(self, prompt, *, worktree, env, job, worker_id, log_dir, **kw):  # type: ignore[no-untyped-def]
+        import json as _json
+
+        self.spawn_calls.append(dict(kw))
+        log_dir.mkdir(parents=True, exist_ok=True)
+        lines = [
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": "g1", "name": "Bash",
+                 "input": {"command": "git push origin main"}}]}},
+            {"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "g1",
+                 "content": "To github.com:me/repo.git\n   abc..def  main -> main"}]}},
+            {"type": "result", "subtype": "success", "result": "Pushed."},
+        ]
+        (log_dir / "stream.jsonl").write_text(
+            "\n".join(_json.dumps(line) for line in lines), encoding="utf-8"
+        )
+        yield _FakeWorkerEvent()
+
+
+@pytest.mark.asyncio
+async def test_git_push_evidence_reaches_critic_as_nonempty_diff(
+    manager: MissionManager, tmp_path: Path
+) -> None:
+    """A 'commit and push' task leaves an empty worktree diff but a verified
+    git-push tool call. The critic must SEE a non-empty diff carrying the
+    command evidence (so its empty-diff GROUND-TRUTH veto no longer fires) and
+    the mission can succeed instead of failing critic_loop_exhausted."""
+    from jarvis.missions.kontrollierer.orchestrator import _real_diff_is_empty
+
+    worker = _GitPushWorker()
+    critic = FakeCriticRunner(_make_approve_verdict())
+    k = _make_kontrollierer(
+        manager=manager, tmp_path=tmp_path, critic=critic,
+        worker_factory_fn=lambda step: worker,
+    )
+    mid = await manager.dispatch(prompt="commit and push to main")
+    end = await k.run_mission(mid)
+
+    assert end == MissionState.APPROVED
+    # The critic was called with a diff that carries the command evidence.
+    assert len(critic.calls) == 1
+    reviewed_diff = critic.calls[0]["worker_diff"]
+    assert "verified-command-execution" in reviewed_diff
+    assert "main -> main" in reviewed_diff
+    # And that augmented diff is NOT considered empty (no blind veto).
+    assert not _real_diff_is_empty(reviewed_diff)
+
+
 @pytest.mark.asyncio
 async def test_default_max_concurrent_missions_is_one(
     manager: MissionManager, tmp_path: Path

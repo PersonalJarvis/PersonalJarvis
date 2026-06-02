@@ -50,6 +50,7 @@ interface CatalogPlugin {
   featured?: boolean;
   auth: { mode: AuthMode; [key: string]: unknown };
   status: PluginStatus;
+  live_callable?: boolean;
 }
 
 interface CatalogResponse {
@@ -81,6 +82,7 @@ interface Plugin {
   authConfig: { mode: AuthMode; [key: string]: unknown };
   status: PluginStatus;
   featured?: boolean;
+  liveCallable?: boolean;
 }
 
 function adapt(p: CatalogPlugin): Plugin {
@@ -96,6 +98,7 @@ function adapt(p: CatalogPlugin): Plugin {
     authConfig: p.auth,
     status: p.status,
     featured: p.featured ?? false,
+    liveCallable: p.live_callable ?? false,
   };
 }
 
@@ -129,8 +132,135 @@ const COMING_SOON = [
   "Asana",
 ];
 
-type TabId = "browse" | "installed";
+type TabId = "browse" | "installed" | "roadmap";
 type FilterId = "all" | Category;
+
+interface RoadmapItem {
+  name: string;
+  description: string;
+  group: string;
+}
+
+const JARVIS_PLUGIN_ROADMAP: RoadmapItem[] = [
+  {
+    name: "Stripe",
+    description: "Customers, products, subscriptions, invoices and webhook events.",
+    group: "Payments",
+  },
+  {
+    name: "Cloudflare",
+    description: "Workers, Pages, DNS, R2, D1, logs and deploy automation.",
+    group: "Developer",
+  },
+  {
+    name: "Discord",
+    description: "Servers, channels, DMs, moderation context and bot workflows.",
+    group: "Communication",
+  },
+  {
+    name: "Google Drive",
+    description: "Files, folders, document lookup, sharing and workspace search.",
+    group: "Productivity",
+  },
+  {
+    name: "Gmail",
+    description: "Inbox triage, search, drafts, send actions and follow-up queues.",
+    group: "Productivity",
+  },
+  {
+    name: "Telegram",
+    description: "Personal chat channel, notifications and remote Jarvis commands.",
+    group: "Communication",
+  },
+  {
+    name: "Asana",
+    description: "Tasks, projects, assignees, due dates and team status updates.",
+    group: "Productivity",
+  },
+];
+
+const CODEX_PLUGIN_ROADMAP: RoadmapItem[] = [
+  {
+    name: "Browser",
+    description: "Open, inspect, click, type and screenshot local web targets.",
+    group: "Local testing",
+  },
+  {
+    name: "Build iOS Apps",
+    description: "Xcode simulator builds, SwiftUI UI work, App Intents and profiling.",
+    group: "Apple",
+  },
+  {
+    name: "Build macOS Apps",
+    description: "macOS SwiftUI and AppKit build, run, debug and packaging workflows.",
+    group: "Apple",
+  },
+  {
+    name: "Cloudflare",
+    description: "Workers, Pages, Durable Objects, Wrangler and Agents SDK workflows.",
+    group: "Cloud",
+  },
+  {
+    name: "Codex Security",
+    description: "Security scans, PR diff reviews, threat models and finding fixes.",
+    group: "Security",
+  },
+  {
+    name: "Documents",
+    description: "Create, edit, redline and export Word-style document artifacts.",
+    group: "Office",
+  },
+  {
+    name: "GitHub",
+    description: "Repositories, issues, pull requests, CI triage and publishing.",
+    group: "Developer",
+  },
+  {
+    name: "Hugging Face",
+    description: "Models, datasets, Spaces, papers, training and evaluation workflows.",
+    group: "AI",
+  },
+  {
+    name: "HyperFrames by HeyGen",
+    description: "HTML video compositions, GSAP motion, captions and voiceovers.",
+    group: "Video",
+  },
+  {
+    name: "OpenAI Developers",
+    description: "OpenAI APIs, Agents SDK, ChatGPT Apps and platform key setup.",
+    group: "AI",
+  },
+  {
+    name: "Presentations",
+    description: "PowerPoint and slide deck creation, verification and export.",
+    group: "Office",
+  },
+  {
+    name: "Remotion",
+    description: "Programmatic React videos, animations, captions and rendering.",
+    group: "Video",
+  },
+  {
+    name: "Spreadsheets",
+    description: "Workbook creation, sheet edits, analysis, charts and exports.",
+    group: "Office",
+  },
+  {
+    name: "Supabase",
+    description: "Projects, Auth, Postgres, Edge Functions and database workflows.",
+    group: "Database",
+  },
+  {
+    name: "Superpowers",
+    description: "Planning, TDD, debugging, review and verification workflows.",
+    group: "Workflow",
+  },
+  {
+    name: "Test Android Apps",
+    description: "Emulator QA, screenshots, UI inspection, logs and performance checks.",
+    group: "Android",
+  },
+];
 
 const FILTERS: { id: FilterId; label: string }[] = [
   { id: "all", label: "All" },
@@ -145,6 +275,9 @@ export function PluginsView() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterId>("all");
   const [connectingPlugin, setConnectingPlugin] = useState<Plugin | null>(null);
+  // Plugin awaiting a "really disconnect?" confirmation. Removing a plugin is
+  // destructive (tokens dropped, brain tools re-expanded), so it must ask first.
+  const [disconnectingPlugin, setDisconnectingPlugin] = useState<Plugin | null>(null);
 
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ["marketplace-plugins"],
@@ -177,7 +310,10 @@ export function PluginsView() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["marketplace-plugins"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["marketplace-plugins"] });
+      setDisconnectingPlugin(null);
+    },
   });
 
   // OAuth-redirect flow (DCR): kick off /connect/start, open URL in browser,
@@ -295,9 +431,18 @@ export function PluginsView() {
     () => allPlugins.filter((p) => p.status === "connected"),
     [allPlugins],
   );
+  const availablePluginNames = useMemo(
+    () => new Set(allPlugins.map((p) => p.name)),
+    [allPlugins],
+  );
+  const plannedIntegrations = useMemo(
+    () => JARVIS_PLUGIN_ROADMAP.filter((p) => !availablePluginNames.has(p.name)),
+    [availablePluginNames],
+  );
+  const roadmapCount = plannedIntegrations.length + CODEX_PLUGIN_ROADMAP.length;
 
   const visible = useMemo(() => {
-    const base = tab === "browse" ? allPlugins : installed;
+    const base = tab === "installed" ? installed : allPlugins;
     const q = query.trim().toLowerCase();
     return base.filter((p) => {
       if (filter !== "all" && p.category !== filter) return false;
@@ -307,7 +452,7 @@ export function PluginsView() {
   }, [tab, query, filter, allPlugins, installed]);
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col bg-background">
       <ViewHeader
         icon={<Blocks className="h-4 w-4 text-primary" />}
         title="Plugins"
@@ -344,12 +489,19 @@ export function PluginsView() {
           active={tab === "installed"}
           onClick={() => setTab("installed")}
         />
+        <Tab
+          label="Roadmap"
+          count={roadmapCount}
+          active={tab === "roadmap"}
+          onClick={() => setTab("roadmap")}
+        />
       </div>
 
       <ScrollArea className="flex-1">
-        <SideSpotlights />
         <div className="relative mx-auto max-w-3xl px-6 pb-20 pt-14">
-          {tab === "browse" ? (
+          {tab === "roadmap" ? (
+            <RoadmapLayout plannedIntegrations={plannedIntegrations} />
+          ) : tab === "browse" ? (
             <BrowseLayout
               plugins={visible}
               query={query}
@@ -357,7 +509,10 @@ export function PluginsView() {
               filter={filter}
               setFilter={setFilter}
               onConnect={handleConnect}
-              onDisconnect={(id) => disconnectMutation.mutate(id)}
+              onDisconnect={(id) =>
+                setDisconnectingPlugin(allPlugins.find((p) => p.id === id) ?? null)
+              }
+              onOpenRoadmap={() => setTab("roadmap")}
             />
           ) : (
             <InstalledLayout
@@ -368,7 +523,9 @@ export function PluginsView() {
               filter={filter}
               setFilter={setFilter}
               onConnect={handleConnect}
-              onDisconnect={(id) => disconnectMutation.mutate(id)}
+              onDisconnect={(id) =>
+                setDisconnectingPlugin(allPlugins.find((p) => p.id === id) ?? null)
+              }
             />
           )}
         </div>
@@ -388,6 +545,23 @@ export function PluginsView() {
           errorMessage={
             connectMutation.error instanceof Error
               ? connectMutation.error.message
+              : null
+          }
+        />
+      )}
+
+      {disconnectingPlugin && (
+        <DisconnectConfirmDialog
+          plugin={disconnectingPlugin}
+          isPending={disconnectMutation.isPending}
+          onCancel={() => {
+            setDisconnectingPlugin(null);
+            disconnectMutation.reset();
+          }}
+          onConfirm={() => disconnectMutation.mutate(disconnectingPlugin.id)}
+          errorMessage={
+            disconnectMutation.error instanceof Error
+              ? disconnectMutation.error.message
               : null
           }
         />
@@ -455,7 +629,8 @@ function BrowseLayout({
   setFilter,
   onConnect,
   onDisconnect,
-}: { plugins: Plugin[] } & SearchControlsProps & ConnectHandlers) {
+  onOpenRoadmap,
+}: { plugins: Plugin[]; onOpenRoadmap: () => void } & SearchControlsProps & ConnectHandlers) {
   return (
     <>
       <Hero query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} />
@@ -466,7 +641,7 @@ function BrowseLayout({
         onConnect={onConnect}
         onDisconnect={onDisconnect}
       />
-      <ComingSoonStrip taken={plugins.map((p) => p.name)} />
+      <ComingSoonStrip taken={plugins.map((p) => p.name)} onOpenRoadmap={onOpenRoadmap} />
     </>
   );
 }
@@ -502,6 +677,40 @@ function InstalledLayout({
         />
       )}
     </>
+  );
+}
+
+function RoadmapLayout({
+  plannedIntegrations,
+}: {
+  plannedIntegrations: RoadmapItem[];
+}) {
+  return (
+    <div className="space-y-10">
+      <header className="text-center">
+        <h1 className="font-display text-2xl font-semibold tracking-tight sm:text-3xl">
+          Plugin roadmap
+        </h1>
+        <p className="mx-auto mt-2 max-w-lg text-xs leading-relaxed text-muted-foreground">
+          Planned Jarvis connectors and the plugin bundles currently available in this
+          Codex session.
+        </p>
+      </header>
+
+      <RoadmapSection
+        title="Planned Jarvis integrations"
+        count={plannedIntegrations.length}
+        items={plannedIntegrations}
+        status="Planned"
+      />
+
+      <RoadmapSection
+        title="ChatGPT Codex plugins"
+        count={CODEX_PLUGIN_ROADMAP.length}
+        items={CODEX_PLUGIN_ROADMAP}
+        status="Available"
+      />
+    </div>
   );
 }
 
@@ -826,6 +1035,71 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 // PluginRow — bigger tile + bigger icon for multicolor logos
 // ---------------------------------------------------------------------------
 
+function RoadmapSection({
+  title,
+  count,
+  items,
+  status,
+}: {
+  title: string;
+  count: number;
+  items: RoadmapItem[];
+  status: string;
+}) {
+  return (
+    <section>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="font-display text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          {title}
+        </h2>
+        <span className="rounded-full border border-border/70 bg-card/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+          {count}
+        </span>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {items.map((item) => (
+          <RoadmapCard key={`${status}-${item.name}`} item={item} status={status} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function RoadmapCard({ item, status }: { item: RoadmapItem; status: string }) {
+  return (
+    <article className="flex min-h-[92px] items-start gap-3 rounded-lg border border-border bg-card/40 px-3 py-3">
+      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border/60 bg-background/60 text-xs font-semibold text-primary">
+        {initials(item.name)}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="text-sm font-semibold tracking-tight text-foreground">
+            {item.name}
+          </h3>
+          <span className="rounded-full bg-secondary/70 px-2 py-0.5 text-[9px] font-medium uppercase tracking-wider text-muted-foreground">
+            {status}
+          </span>
+        </div>
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+          {item.description}
+        </p>
+        <p className="mt-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+          {item.group}
+        </p>
+      </div>
+    </article>
+  );
+}
+
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+}
+
 function PluginRow({
   plugin,
   onConnect,
@@ -860,6 +1134,11 @@ function PluginRow({
           {isConnected && (
             <span className="text-[9px] font-medium uppercase tracking-wider text-primary">
               · Connected
+            </span>
+          )}
+          {isConnected && plugin.liveCallable && (
+            <span className="text-[9px] font-medium uppercase tracking-wider text-emerald-400">
+              · Live
             </span>
           )}
         </div>
@@ -943,7 +1222,13 @@ function EmptyInstalled({ totalAvailable }: { totalAvailable: number }) {
   );
 }
 
-function ComingSoonStrip({ taken = [] }: { taken?: string[] }) {
+function ComingSoonStrip({
+  taken = [],
+  onOpenRoadmap,
+}: {
+  taken?: string[];
+  onOpenRoadmap: () => void;
+}) {
   // Drop any teaser that now has a real catalog entry, so a newly-added
   // connector (e.g. Linear) never shows as both connectable and "coming soon".
   const upcoming = COMING_SOON.filter((name) => !taken.includes(name));
@@ -963,10 +1248,14 @@ function ComingSoonStrip({ taken = [] }: { taken?: string[] }) {
           </span>
         ))}
       </div>
-      <p className="mt-3 text-[10px] uppercase tracking-wider text-muted-foreground/60">
+      <button
+        type="button"
+        onClick={onOpenRoadmap}
+        className="mt-3 inline-flex items-center text-[10px] uppercase tracking-wider text-muted-foreground/60 transition-colors hover:text-primary"
+      >
         Vote on the roadmap
         <ArrowRight className="ml-1 inline h-3 w-3" />
-      </p>
+      </button>
     </section>
   );
 }
@@ -1321,18 +1610,116 @@ function DeviceCodeDialog({
   );
 }
 
-function SideSpotlights() {
+// ---------------------------------------------------------------------------
+// Disconnect Confirm Dialog — guards the destructive "remove plugin" action.
+// Clicking the connected ✓ no longer disconnects immediately; it asks first.
+// ---------------------------------------------------------------------------
+
+function DisconnectConfirmDialog({
+  plugin,
+  isPending,
+  onCancel,
+  onConfirm,
+  errorMessage,
+}: {
+  plugin: Plugin;
+  isPending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+  errorMessage: string | null;
+}) {
+  // Close on Escape (unless a removal is in flight).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !isPending) onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel, isPending]);
+
   return (
-    <>
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-y-0 left-0 w-40 bg-gradient-to-r from-primary/[0.04] to-transparent"
-      />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-y-0 right-0 w-40 bg-gradient-to-l from-primary/[0.04] to-transparent"
-      />
-    </>
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="disconnect-dialog-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isPending) onCancel();
+      }}
+    >
+      <div className="relative w-full max-w-sm overflow-hidden rounded-2xl border border-border bg-card shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
+        <header className="flex items-center justify-between border-b border-border px-5 py-4">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border/60 bg-background/60">
+              <img
+                src={resolveLogoUrl(plugin)}
+                alt=""
+                className={cn(plugin.logoUrl ? "h-7 w-7" : "h-5 w-5")}
+              />
+            </div>
+            <div>
+              <h2
+                id="disconnect-dialog-title"
+                className="font-display text-base font-semibold tracking-tight"
+              >
+                Remove {plugin.name}?
+              </h2>
+              <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                Disconnect plugin
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={isPending}
+            className="grid h-7 w-7 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-30"
+            aria-label="Cancel"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </header>
+
+        <div className="px-5 py-5">
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            This disconnects{" "}
+            <span className="font-medium text-foreground">{plugin.name}</span> and
+            deletes its stored credentials. Jarvis loses access until you reconnect it.
+          </p>
+          {errorMessage && (
+            <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              {errorMessage}
+            </div>
+          )}
+        </div>
+
+        <footer className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={isPending}
+            className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-30"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={isPending}
+            className="inline-flex items-center gap-1.5 rounded-md bg-destructive px-3.5 py-1.5 text-xs font-semibold text-destructive-foreground transition-all hover:bg-destructive/90 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {isPending ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Removing…
+              </>
+            ) : (
+              "Remove"
+            )}
+          </button>
+        </footer>
+      </div>
+    </div>
   );
 }
 

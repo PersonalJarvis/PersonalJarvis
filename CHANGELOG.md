@@ -7,20 +7,54 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
-## [0.0.1] — 2026-06-01
+## [v0.1.0] — 2026-06-02
 
-First public, fully depersonalized snapshot of the distribution repo. Supersedes
-the withdrawn `v0.1.0` tag, which shipped without the `jarvis/state` package and
-was therefore boot-incomplete.
+Feature-rich public snapshot building on the first corrected release (v0.0.1):
+contacts, outbound telephony, an AI pointer, the plugin marketplace connect
+flow, audio ducking, chat channels, and several new UI sections — plus a broad
+sweep of voice-path and mission reliability fixes. Fully depersonalized.
 
 ### Added
-- `jarvis/state/` package (chat store, supervisor, conversation constants) — the
-  text/voice conversation-manager backend.
 
-### Fixed
-- Release integrity: the public snapshot now contains every git-tracked module. A
-  fresh-clone `git add` had previously dropped `jarvis/state/` via an unanchored
-  `state/` ignore rule.
+- **Contacts** — a user-curated address book (`jarvis/contacts/`) kept separate
+  from the memory Curator's "people", with a master-detail UI and three
+  router-tier tools (`contact-lookup`, `contact-upsert`, `call-contact`).
+- **Outbound telephony** (`jarvis/telephony/`) — contact-agnostic E.164 dialing
+  that reuses the inbound call loop and speaks an opening line first.
+- **AI Pointer** (`jarvis/pointer/`) — deictically-gated cursor-element
+  inspection via the cross-platform accessibility tree.
+- **Plugin marketplace connect flow** (`jarvis/marketplace/`) — OAuth DCR + PKCE
+  loopback, a hosted callback server, a token store with refresh scheduling,
+  and "coming-soon" catalog entries for common providers.
+- **Audio ducking** (`jarvis/audio/`) — mutes other applications' audio while
+  dictating, excluding Jarvis' own process so TTS is never silenced.
+- **Chat channels** (`jarvis/channels/`) — Discord and Telegram adapters that
+  pump inbound messages through the Brain and stream replies back.
+- **Socials**, **Taskbar**, and **Contacts** UI sections, plus a slim animated
+  **whisper-bar overlay** as the new default surface and a two-pane **Chats**
+  conversation manager (text + voice history, resume, speak-in-conversation).
+- **Configurable voice keybinds** (call / hang-up / talk) and cross-platform
+  autostart.
+- Self-tidying screenshot retention (10-day auto-prune).
+
+### Changed
+
+- **Voice path reliability**: stall-guard timeout that no longer kills a working
+  vision/tool turn, hang-up-during-TTS now aborts the turn, bounded TTS playback
+  so a stalled output device can't wedge the session, and a configurable
+  `max_tokens` so long answers are not truncated.
+- **Routing**: sub-agent work is recognized natively; force-spawn is gated by
+  registered capabilities to avoid contextless workers.
+- **Gemini provider**: tool-schema `exclusiveMinimum` conversion and a
+  tool-name sanitizer so tool turns no longer fall back to a billing-error read-out.
+- **Missions**: external-write verification, truncated-verdict guards in the
+  critic, and activity-aware recovery that no longer sweeps a live mission.
+- **TTS**: a `FallbackTTS` wrapper and a Vertex project-id fix for silent output.
+- **Cross-platform**: platform capability detection and probes (`jarvis/platform/`).
+
+### Removed
+
+- Stale mascot concept art under `assets/mascot-concepts/`.
 
 ## [v1.0.0-board] — 2026-04-25
 

@@ -28,6 +28,7 @@ class Capabilities:
     has_overlay: bool
     has_pty: bool
     has_elevation: bool
+    has_cursor: bool
     display_present: bool
     is_wayland: bool
     ax_permission_granted: bool | None
@@ -43,6 +44,7 @@ def detect_capabilities() -> Capabilities:
         has_overlay=probes.has_overlay(),
         has_pty=probes.has_pty(),
         has_elevation=probes.has_elevation(),
+        has_cursor=probes.has_cursor(),
         display_present=probes.display_present(),
         is_wayland=probes.is_wayland(),
         ax_permission_granted=probes.ax_permission_granted(),

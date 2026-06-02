@@ -85,6 +85,8 @@ class OAuthCallbackServer:
         """
         if not expected_state:
             raise ValueError("expected_state must be non-empty")
+        if callback_path and not callback_path.startswith("/"):
+            raise ValueError("callback_path must be empty or start with '/'")
         self._expected_state = expected_state
         self._timeout = timeout_seconds
         self._path = callback_path
@@ -141,7 +143,7 @@ class OAuthCallbackServer:
             raise RuntimeError("server not started")
         try:
             return await asyncio.wait_for(self._future, timeout=self._timeout)
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             raise CallbackTimeoutError(
                 f"no callback received within {self._timeout}s"
             ) from exc
@@ -157,8 +159,9 @@ class OAuthCallbackServer:
 
     def _build_app(self) -> FastAPI:
         app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+        route_path = self._path or "/"
 
-        @app.get(self._path, response_model=None)
+        @app.get(route_path, response_model=None)
         async def callback(request: Request):
             params = request.query_params
             error = params.get("error")

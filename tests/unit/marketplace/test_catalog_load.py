@@ -52,3 +52,51 @@ def test_catalog_serializes_to_frontend_wire_shape() -> None:
         for required_key in ("id", "display_name", "description", "category", "logo_slug", "auth"):
             assert required_key in wire, f"{plugin.id}: wire shape missing {required_key}"
         assert "mode" in wire["auth"], f"{plugin.id}: auth block missing 'mode'"
+        assert "client_secret" not in wire["auth"], (
+            f"{plugin.id}: frontend wire shape must not expose OAuth client_secret"
+        )
+
+
+def test_pkce_client_secret_is_server_only() -> None:
+    from jarvis.marketplace.catalog import OAuthPkceLoopbackAuth
+
+    test_client_secret = "unit-test-client-secret"  # noqa: S105
+    auth = OAuthPkceLoopbackAuth(
+        mode="oauth_pkce_loopback",
+        authorization_url="https://accounts.example/auth",
+        token_url="https://accounts.example/token",  # noqa: S106
+        client_id="cid",
+        client_secret=test_client_secret,
+        scopes=["scope"],
+    )
+
+    assert auth.client_secret == test_client_secret
+    assert "client_secret" not in auth.model_dump(mode="json")
+
+
+def test_pat_auth_scheme_defaults_to_bearer() -> None:
+    from jarvis.marketplace.catalog import PatPasteAuth
+
+    a = PatPasteAuth(
+        mode="pat_paste",
+        token_creation_url="https://x",  # noqa: S106
+        token_prefix="",
+        validation_endpoint="https://x",
+        instruction_md="md",
+    )
+    assert a.auth_scheme == "bearer"
+
+
+def test_pat_auth_scheme_accepts_bot_and_telegram_path() -> None:
+    from jarvis.marketplace.catalog import PatPasteAuth
+
+    for scheme in ("bot", "telegram_path"):
+        a = PatPasteAuth(
+            mode="pat_paste",
+            token_creation_url="https://x",  # noqa: S106
+            token_prefix="",
+            validation_endpoint="https://x",
+            instruction_md="md",
+            auth_scheme=scheme,
+        )
+        assert a.auth_scheme == scheme

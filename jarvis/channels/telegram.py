@@ -23,6 +23,11 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from jarvis.channels.base import ChannelMessage, ChannelSession
+from jarvis.channels.manager import ChannelContext, ChannelStartError
+from jarvis.core.bus import EventBus
+from jarvis.core.config import TelegramConfig, get_secret, set_secret
+from jarvis.core.events import Event, ResponseGenerated
+from jarvis.friends.models import Friend, FriendChannel
 
 # === F-FRIENDS [F1] · feature/friends-section · alex-2026-04-30 ===
 # Branch-portable import: ``output_filter`` exists in later branches
@@ -43,12 +48,6 @@ except ImportError:  # pragma: no cover
 
 def scrub_for_voice(text: str, *, language: str = "de") -> Any:
     return _scrub_impl(text, language=language)
-
-from jarvis.channels.manager import ChannelContext, ChannelStartError
-from jarvis.core.bus import EventBus
-from jarvis.core.config import TelegramConfig, get_secret
-from jarvis.core.events import Event, ResponseGenerated
-from jarvis.friends.models import Friend, FriendChannel
 
 if TYPE_CHECKING:  # pragma: no cover
     from jarvis.friends.registry import FriendRegistry
@@ -100,11 +99,11 @@ class TelegramChannel:
     def __init__(
         self,
         bus: EventBus,
-        config: TelegramConfig,
-        friend_registry: "FriendRegistry | None" = None,
+        config: TelegramConfig | None = None,
+        friend_registry: FriendRegistry | None = None,
     ) -> None:
         self._bus = bus
-        self._cfg = config
+        self._cfg = config if config is not None else TelegramConfig()
         self._friends = friend_registry
         self._app: Any = None
         self._inbox: asyncio.Queue[ChannelMessage] = asyncio.Queue()
@@ -115,7 +114,7 @@ class TelegramChannel:
         self._started = False
 
     @classmethod
-    def from_context(cls, ctx: ChannelContext) -> "TelegramChannel":
+    def from_context(cls, ctx: ChannelContext) -> TelegramChannel:
         cfg = ctx.config.get("telegram_config")
         if not isinstance(cfg, TelegramConfig):
             cfg = TelegramConfig()
@@ -129,10 +128,15 @@ class TelegramChannel:
         if self._started:
             return
         if not self._cfg.enabled:
+            self._event_handler_ref = self._on_bus_event
+            self._bus.subscribe_all(self._event_handler_ref)
+            self._started = True
             log.info("TelegramChannel disabled (config.enabled=False) — skipping")
             return
 
         token = get_secret("telegram_bot_token", env_fallback="TELEGRAM_BOT_TOKEN")
+        if not token:
+            token = self._token_from_marketplace_store()
         if not token:
             raise ChannelStartError(
                 "Telegram-Token fehlt. Setup: 'python -m jarvis --wizard' und "
@@ -190,6 +194,24 @@ class TelegramChannel:
         self._started = False
         log.info("TelegramChannel stopped")
 
+    def _token_from_marketplace_store(self) -> str | None:
+        """Migration fallback for tokens saved before the channel mirror existed."""
+        try:
+            from jarvis.marketplace.token_store import TokenStore
+
+            tokens = TokenStore().load("telegram")
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Telegram marketplace token fallback failed: %s", exc)
+            return None
+        if tokens is None or not tokens.access:
+            return None
+        set_secret("telegram_bot_token", tokens.access)
+        log.info(
+            "Telegram token aus Marketplace TokenStore gelesen; "
+            "telegram_bot_token wurde best-effort gespiegelt."
+        )
+        return tokens.access
+
     async def _validate_token(self, token: str) -> None:
         from telegram import Bot  # noqa: WPS433
         from telegram.error import InvalidToken, TelegramError  # noqa: WPS433
@@ -217,7 +239,9 @@ class TelegramChannel:
             msg_obj = getattr(update, "message", None)
             if msg_obj is None:
                 return
-            if not self._is_allowed(update):
+            if not self._is_allowed(update) and not self._pair_first_private_user(
+                update
+            ):
                 log.debug(
                     "Telegram message dropped (not allowed): chat=%s",
                     getattr(getattr(msg_obj, "chat", None), "id", "?"),
@@ -228,6 +252,16 @@ class TelegramChannel:
             chat_id = msg_obj.chat.id
             user = getattr(msg_obj, "from_user", None)
             user_id = user.id if user is not None else None
+
+            command = text.strip().lower().split(maxsplit=1)[0] if text.strip() else ""
+            if command in {"/start", "/help"}:
+                await self._send_text(
+                    chat_id,
+                    "Telegram ist verbunden. Schreib mir hier, dann leite ich "
+                    "die Nachricht direkt an Jarvis weiter.",
+                    language="de",
+                )
+                return
 
             friend = await self._resolve_friend(chat_id, user)
             session = self._session_for_chat(chat_id, user)
@@ -274,6 +308,49 @@ class TelegramChannel:
             if mention not in text.lower():
                 return False
 
+        return True
+
+    def _pair_first_private_user(self, update: Any) -> bool:
+        """Claim an empty private allowlist for the first sender.
+
+        The Marketplace can validate a bot token but cannot know which Telegram
+        user should be allowed. Without this pairing step the common setup
+        ("paste token, send /start") looks broken because every message is
+        silently dropped by the empty allowlist.
+        """
+        if not self._cfg.pair_on_first_private_message:
+            return False
+        if self._cfg.allowed_user_ids or self._cfg.allowed_chat_ids:
+            return False
+
+        msg = getattr(update, "message", None)
+        if msg is None:
+            return False
+        chat = getattr(msg, "chat", None)
+        user = getattr(msg, "from_user", None)
+        if chat is None or user is None:
+            return False
+        if getattr(chat, "type", "private") != "private":
+            return False
+
+        try:
+            user_id = int(user.id)
+        except (TypeError, ValueError):
+            return False
+
+        self._cfg.allowed_user_ids.append(user_id)
+        try:
+            from jarvis.core.config_writer import add_telegram_allowed_user_id
+
+            add_telegram_allowed_user_id(user_id)
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "Telegram first-user pairing konnte nicht persistiert werden "
+                "(user=%s): %s",
+                user_id,
+                exc,
+            )
+        log.info("Telegram first-user pairing: user_id=%s erlaubt", user_id)
         return True
 
     async def _resolve_friend(self, chat_id: int, user: Any) -> Friend | None:
@@ -375,7 +452,7 @@ class TelegramChannel:
 
     # === F-FRIENDS [F4] · feature/friends-section · alex-2026-05-01 ===
     async def send_status_card(
-        self, chat_id: int, update: "StatusUpdate"
+        self, chat_id: int, update: StatusUpdate
     ) -> None:
         """Sends a formatted status card as a Telegram Markdown message.
 

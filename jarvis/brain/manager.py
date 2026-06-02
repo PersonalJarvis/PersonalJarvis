@@ -62,6 +62,7 @@ from .local_action_gate import (
     LocalActionMode,
     _looks_like_desktop_control,
     match_local_action,
+    requires_external_integration,
 )
 from .local_action_gate import _normalize as _gate_normalize
 from .mission_command_gate import match_mission_command
@@ -515,6 +516,58 @@ def normalize_reply_language(value: object) -> str:
     return code if code in _REPLY_LANGS else "auto"
 
 
+# Spoken fallback when the ENTIRE provider chain fails (no key, depleted
+# credits, all rate-limited). The detailed provider/billing diagnostic
+# (``_format_provider_chain_error``) is developer-facing and must NEVER reach
+# the voice path — a butler does not read "Account-Problem bei grok …
+# console.x.ai/team/billing" aloud (live complaint 2026-06-01). Instead we
+# speak a short, provider-agnostic apology in the user's SELECTED reply
+# language (de/en/es; "auto" → German, the default locale). Three variants
+# per language so repeated failures in one session don't sound robotic
+# (mirrors the ACK-variant approach). The full diagnostic stays in the logs.
+_PROVIDER_DOWN_PHRASES: dict[str, tuple[str, ...]] = {
+    "de": (
+        "Entschuldige, ich komme gerade nicht an mein Sprachmodell. Einen Moment, bitte.",
+        (
+            "Tut mir leid, mein Sprachmodell ist im Moment nicht erreichbar. "
+            "Ich versuche es gleich erneut."
+        ),
+        (
+            "Ich kann gerade nicht antworten — die Verbindung zu meinem Modell hakt. "
+            "Gib mir kurz Zeit."
+        ),
+    ),
+    "en": (
+        "Sorry, I can't reach my language model right now. One moment, please.",
+        "I'm afraid my language model is unavailable at the moment. I'll try again shortly.",
+        "I can't answer just now — my connection to the model is failing. Give me a second.",
+    ),
+    "es": (
+        "Lo siento, ahora mismo no puedo acceder a mi modelo de lenguaje. Un momento, por favor.",
+        (
+            "Me temo que mi modelo de lenguaje no está disponible en este momento. "
+            "Lo intentaré de nuevo enseguida."
+        ),
+        "No puedo responder ahora mismo: la conexión con mi modelo está fallando. Dame un segundo.",
+    ),
+}
+
+
+def _provider_down_phrase(lang: str, idx: int) -> str:
+    """Localized, provider-agnostic apology for a total brain-chain failure.
+
+    ``lang`` is a reply-language code (de/en/es); anything else — notably
+    "auto" — falls back to German (the default locale). ``idx`` rotates
+    deterministically through the three variants so repeated failures in one
+    session don't repeat the identical sentence. Voice-safe by construction:
+    no provider names, no URLs, no jargon (anti-AP-11 / ADR-0010).
+    """
+    variants = _PROVIDER_DOWN_PHRASES.get(
+        (lang or "").strip().lower(), _PROVIDER_DOWN_PHRASES["de"]
+    )
+    return variants[idx % len(variants)]
+
+
 class BrainManager:
     """Top-level orchestrator with intent router and smart fallback."""
 
@@ -536,6 +589,7 @@ class BrainManager:
         cost_meter: "CostMeterLike | None" = None,  # noqa: UP037
         awareness_manager: "AwarenessManager | None" = None,  # noqa: UP037
         wiki_injector: "WikiContextInjector | None" = None,  # noqa: UP037
+        contacts: Any = None,
     ) -> None:
         self._config = config
         self._bus = bus
@@ -555,6 +609,11 @@ class BrainManager:
         self._user_profile = user_profile
         self._soul = soul
         self._people = people
+        # Chunk B (contacts): optional ContactStore (Contract 1, owned by Chunk
+        # A). When set, _build_system_prompt() appends its compact name-index
+        # (names + relationship only; details on demand via contact-lookup).
+        # None until Chunk A is merged — the block is simply omitted (graceful).
+        self._contacts = contacts
         # Phase A1: optional AwarenessManager. When set, _build_system_prompt()
         # injects a compact live snapshot (window/idle) as a fallback in case
         # the LLM does NOT call the awareness-snapshot tool. Plan §5 "Files to Modify".
@@ -580,6 +639,10 @@ class BrainManager:
         # of returning silently to LISTENING. A legitimate empty turn
         # (suppress_response fire-and-forget) leaves this False.
         self._last_turn_all_failed: bool = False
+        # Rotation cursor for the localized "brain unreachable" spoken fallback
+        # (_provider_down_phrase). Advances once per total-failure turn so the
+        # phrase varies instead of repeating verbatim.
+        self._provider_down_idx: int = 0
 
         self._registry = BrainProviderRegistry()
         self._active_name: str = config.brain.primary
@@ -662,6 +725,7 @@ class BrainManager:
         soul: Soul | None = None,
         people: PersonStore | None = None,
         awareness_manager: "AwarenessManager | None" = None,  # noqa: UP037
+        contacts: Any = None,
     ) -> BrainManager:
         """Builds a BrainManager from the tier-specific config.
 
@@ -769,6 +833,7 @@ class BrainManager:
             soul=soul,
             people=people,
             awareness_manager=awareness_manager,
+            contacts=contacts,
         )
         manager._configured_fallbacks = configured_fallbacks
 
@@ -885,11 +950,19 @@ class BrainManager:
         ``spawn_worker``. ``None`` (default) = full tool visibility.
         """
         tools = tools_override if tools_override is not None else self._tools
+        system_prompt = self._build_system_prompt()
+        # Per-plugin usage guidance for whichever plugins are active this turn
+        # (the "MCP + thin skill" reliability layer). Appended last so it sits
+        # closest to the turn; only present when a plugin tool is in scope.
+        cards = self._plugin_usage_cards_block(tools)
+        if cards:
+            system_prompt = f"{system_prompt}\n\n{cards}"
         return BrainDispatcher(
             brain,
             tools=tools,
             executor=self._tool_executor,
-            system_prompt=self._build_system_prompt(),
+            system_prompt=system_prompt,
+            max_tokens=self._config.brain.max_tokens,
         )
 
     @property
@@ -910,6 +983,18 @@ class BrainManager:
                 f"unknown reply language {lang!r} (allowed: {sorted(_REPLY_LANGS)})"
             )
         self._reply_language = code
+
+    def _next_provider_down_phrase(self) -> str:
+        """Localized 'I can't reach my model' apology + advance the rotation.
+
+        Spoken when the whole provider chain fails. Provider-agnostic and
+        voice-safe (no names/URLs) — the actionable diagnostic is logged, never
+        spoken (live complaint 2026-06-01: the grok/Anthropic billing message
+        was read aloud while Gemini was the active provider).
+        """
+        phrase = _provider_down_phrase(self._reply_language, self._provider_down_idx)
+        self._provider_down_idx += 1
+        return phrase
 
     def _reply_language_directive(self) -> str:
         """The reply-language instruction appended last to the system prompt.
@@ -1000,11 +1085,44 @@ class BrainManager:
                 "Rueckfrage). Keine sensiblen Kategorien (Politik/Religion/Gesundheit)."
             )
 
+        # Chunk B (contacts): e-mail-by-name rule. No new e-mail tool exists —
+        # the path is contact-lookup (resolve name -> e-mail) THEN gmail (send).
+        # Only emitted when BOTH tools are wired (never instruct a tool that is
+        # not present — the hard "do not invent tools" rule). The literal
+        # "contact-lookup first" phrase is the directive's unambiguous marker.
+        # ``getattr`` guard: some tests build the manager via __new__ (bypassing
+        # __init__) and set only the attrs the prompt needs — tolerate a missing
+        # _tools the same way the rest of this builder tolerates missing state.
+        _tools_now = getattr(self, "_tools", None) or {}
+        if "contact-lookup" in _tools_now and "gmail" in _tools_now:
+            parts.append(
+                "KONTAKTE: Wenn der User eine Person beim Namen nennt, um ihr eine "
+                "E-Mail oder Nachricht zu schicken ('schreib eine Mail an Christoph'), "
+                "rufe `contact-lookup` first, um den Namen zur gespeicherten E-Mail "
+                "aufzuloesen, und sende dann mit `gmail`. Erfinde nie eine Adresse — "
+                "wenn contact-lookup nichts findet, sag das."
+            )
+
         if self._people is not None:
             try:
                 people_block = self._people.render_for_prompt()
                 if people_block:
                     parts.append(people_block)
+            except Exception:  # noqa: BLE001
+                pass
+
+        # Chunk B (contacts): compact name-index of the user-curated contact
+        # book (names + relationship only; e-mails/phones/address fetched on
+        # demand via contact-lookup). None until Chunk A merges, "" when the
+        # book is empty — either way no block is injected. Defensive try/except
+        # so a store error never crashes the system-prompt build (AP-9-adjacent);
+        # ``getattr`` guard tolerates __init__-bypassing tests (see _tools above).
+        _contacts = getattr(self, "_contacts", None)
+        if _contacts is not None:
+            try:
+                contacts_block = _contacts.render_for_prompt(max_chars=800)
+                if contacts_block:
+                    parts.append(contacts_block)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -1141,6 +1259,54 @@ class BrainManager:
         """True when the cache-optimized prompt layout (Wave 2) is enabled."""
         perf = getattr(self._config, "performance", None)
         return bool(getattr(perf, "cache_optimized_prompt", False))
+
+    def _is_pointer_intent(self, user_text: str) -> bool:
+        """True when this is a deictic AI-Pointer turn ("worauf zeige ich?").
+
+        Cheap regex gate, honoured only when ``[pointer].enabled``. Drives the
+        per-turn grounding (scope images to the cursor crop, drop the full-screen
+        screenshot tool) so the brain answers from the cursor, not a screen guess.
+        """
+        cfg = getattr(self._config, "pointer", None)
+        if not bool(getattr(cfg, "enabled", True)):
+            return False
+        try:
+            from jarvis.pointer.intent import is_pointing_intent  # noqa: PLC0415
+
+            return is_pointing_intent(user_text)
+        except Exception:  # noqa: BLE001 — gate must never block a turn
+            return False
+
+    def _start_pointer_task(self, user_text: str, is_smalltalk_turn: bool):
+        """Launch the deictic AI-Pointer resolution as a background task (AP-9).
+
+        Returns an ``asyncio.Task`` resolving to ``(prompt_block, crop_image)``, or
+        ``None`` when the feature is disabled or the turn is smalltalk. The task
+        does the regex deictic gate itself, so a non-pointing utterance completes
+        instantly with ``("", None)`` and a headless host fast-skips before any
+        worker-thread dispatch. Started before the vision-image await so it runs
+        concurrently rather than serially on the hot path. See
+        docs/plans/ai-pointer/DESIGN.md.
+        """
+        try:
+            import asyncio  # noqa: PLC0415
+
+            from jarvis.pointer.turn import resolve_turn_pointer
+
+            cfg = getattr(self._config, "pointer", None)
+            if not bool(getattr(cfg, "enabled", True)) or is_smalltalk_turn:
+                return None
+            return asyncio.create_task(
+                resolve_turn_pointer(
+                    user_text,
+                    enabled=True,
+                    timeout_s=float(getattr(cfg, "timeout_s", 0.12)),
+                    crop_radius=int(getattr(cfg, "crop_radius", 64)),
+                )
+            )
+        except Exception:  # noqa: BLE001 — never crash a turn on pointer setup
+            log.debug("AI Pointer task launch skipped", exc_info=True)
+            return None
 
     def _build_turn_context(self) -> str:
         """Per-turn dynamic context for the user message (cache-optimized mode).
@@ -1411,6 +1577,16 @@ class BrainManager:
             # refusal (live bug 2026-05-25: "oeffne WhatsApp und schreib").
             if _looks_like_desktop_control(_gate_normalize(t)):
                 return None
+            # 2026-06-01: the sub-agent is the universal capability for generic
+            # work (analyse/build/fix/code/research/git). Only a SPECIFIC
+            # external integration the worker cannot satisfy (mail/calendar/
+            # Spotify/social/delivery) is genuinely "unsupported". Everything
+            # else falls through to the force-spawn path so a sub-agent task is
+            # delegated natively instead of refused with "kann ich noch nicht"
+            # (live forensic 2026-06-01: a sub-agent task was refused, then only
+            # spawned once the user said "Subagent" explicitly).
+            if not requires_external_integration(t):
+                return None
             if reg.has_action_intent(t) and reg.resolve_intent(t) is None:
                 # Detect user language from text heuristic (simple: if latin
                 # chars + german umlaut present → DE, else EN).
@@ -1466,6 +1642,96 @@ class BrainManager:
             n: t for n, t in self._tools.items()
             if n in self._SMALLTALK_SAFE_TOOLS
         }
+
+    def _apply_plugin_relevance(
+        self, user_text: str, tools: dict[str, "Tool"]
+    ) -> dict[str, "Tool"]:
+        """Drop plugin tools (namespaced ``<id>/<tool>``) irrelevant to this turn.
+
+        Keyword-only, no LLM / no IO (AP-9). Native (non-namespaced) tools are
+        untouched. Defensive: any failure returns the unfiltered dict so a gate
+        bug can never blind the brain on the voice path.
+        """
+        try:
+            from jarvis.marketplace.plugin_relevance import filter_plugin_tools
+
+            kept = filter_plugin_tools(user_text, list(tools.values()))
+            kept_names = {t.name for t in kept}
+            return {name: t for name, t in tools.items() if t.name in kept_names}
+        except Exception:  # noqa: BLE001
+            log.debug("plugin relevance gate failed; using full tool set", exc_info=True)
+            return tools
+
+    def _plugin_usage_cards_block(self, tools: dict[str, "Tool"]) -> str:
+        """Markdown block of usage cards for the plugins active in this turn.
+
+        Only the plugins whose tools are in ``tools`` (already relevance-gated)
+        contribute, so the prompt stays small. Returns ``""`` when no plugin
+        tools are active. Defensive: never raises on the prompt-build path.
+        """
+        try:
+            from jarvis.marketplace.usage_cards.loader import load_usage_card
+
+            plugin_ids: list[str] = []
+            for name in tools:
+                pid, sep, _ = name.partition("/")
+                if sep and pid not in plugin_ids:
+                    plugin_ids.append(pid)
+            blocks: list[str] = []
+            for pid in plugin_ids:
+                card = load_usage_card(pid)
+                if card and card.body:
+                    blocks.append(f"### Plugin: {pid}\n{card.body}")
+            if not blocks:
+                return ""
+            return "## Connected plugins — how to use them\n\n" + "\n\n".join(blocks)
+        except Exception:  # noqa: BLE001
+            log.debug("plugin usage-card block failed; omitting", exc_info=True)
+            return ""
+
+    async def _run_navigation_fast_path(
+        self,
+        user_text: str,
+        *,
+        trace_id: UUID | None = None,
+    ) -> str | None:
+        """Move the desktop UI to a section on a clear navigation command.
+
+        Navigation is a deterministic "dumb" action (AD-OE3): a spoken/typed
+        "zeig die Socials" / "open settings" switches the active sidebar section
+        WITHOUT the LLM, and crucially before the capability gate — which would
+        otherwise refuse it ('social' is an external-integration marker) — and
+        before force-spawn. Executes the ``navigate`` tool (which publishes
+        ``NavigateSidebar`` for the frontend) and returns a short spoken
+        confirmation. Returns ``None`` when the utterance is not a navigation
+        request, so the normal path runs. Pure regex match, no LLM (AP-11).
+        """
+        from jarvis.brain.navigation_intent import match_navigation_intent
+
+        section = match_navigation_intent(user_text)
+        if section is None:
+            return None
+        tool = self._tools.get("navigate")
+        if tool is None or self._tool_executor is None:
+            return None
+        tid = trace_id or uuid4()
+        try:
+            await self._tool_executor.execute(
+                tool,
+                {"section": section},
+                user_utterance=user_text,
+                trace_id=tid,
+            )
+        except Exception:  # noqa: BLE001 — navigation must never crash the turn
+            log.warning(
+                "navigation fast-path failed for section %r", section, exc_info=True
+            )
+            return None
+        label = section.replace("-", " ").title()
+        is_de = bool(re.search(r"[äöüÄÖÜß]", user_text)) or bool(
+            re.search(r"\b(zeig\w*|öffne|oeffne|geh\w*|wechs\w*|spring\w*)\b", user_text, re.I)
+        )
+        return f"Öffne {label}." if is_de else f"Opening {label}."
 
     def _should_force_spawn(self, user_text: str) -> bool:
         """Deterministic spawn guard for action requests.
@@ -1537,6 +1803,31 @@ class BrainManager:
         verb_re, marker_re, smalltalk_re = self._get_routing_patterns()
         if _is_instructional_question(t):
             return False
+        # AI Pointer: a deictic "what is this?" is a Q&A about the element under
+        # the cursor — answered inline from the pushed pointer context, NEVER a
+        # heavy-worker spawn. Guard here so a pointing verb like "zeige" cannot
+        # fall through to the permissive verb heuristic or generic-subagent
+        # detection. See docs/plans/ai-pointer/DESIGN.md.
+        try:
+            from jarvis.pointer.intent import is_pointing_intent  # noqa: PLC0415
+
+            if is_pointing_intent(t):
+                return False
+        except Exception:  # noqa: BLE001 — pointer gate must never block routing
+            pass
+        # UI navigation ("zeig die Socials", "open settings") is a deterministic
+        # dumb action handled by the navigation fast-path in generate() — never a
+        # heavy worker spawn. Guard here too so a navigation verb cannot fall
+        # through to the generic-subagent heuristic. See ADR-0011 "Navigate tool".
+        try:
+            from jarvis.brain.navigation_intent import (  # noqa: PLC0415
+                match_navigation_intent,
+            )
+
+            if match_navigation_intent(t) is not None:
+                return False
+        except Exception:  # noqa: BLE001 — nav gate must never block routing
+            pass
         if smalltalk_re.search(t):
             return False
         if "dispatch_to_harness" in self._tools and _looks_like_pc_control(t):
@@ -1551,12 +1842,45 @@ class BrainManager:
         # `brain.routing.force_spawn_mode = "permissive"`.
         mode = (self._config.brain.routing.force_spawn_mode or "strict").lower()
         if mode == "strict":
-            return bool(self._get_force_spawn_pattern().search(t))
+            if self._get_force_spawn_pattern().search(t):
+                return True
+            # 2026-06-01: the sub-agent is the universal capability for generic
+            # work. The capability gate no longer refuses such tasks, so spawn
+            # them natively here — the user must NOT have to say "Subagent". A
+            # request the registry recognises as an action that no capability
+            # resolves AND that needs no SPECIFIC external integration
+            # (mail/calendar/Spotify/social/delivery) is generic sub-agent work.
+            # Live forensic 2026-06-01: a sub-agent task was refused, then only
+            # spawned once the user said "Subagent" explicitly.
+            return self._is_generic_subagent_work(t)
         if verb_re.search(t):
             return True
         if marker_re.search(t):
             return True
         return False
+
+    def _is_generic_subagent_work(self, t: str) -> bool:
+        """True iff the utterance is generic, sub-agent-fulfillable work.
+
+        Mirrors the capability gate's class exactly — an action the registry
+        recognises that no capability resolves — but FLIPS the verdict from
+        "refuse" to "spawn". A specific external integration the worker cannot
+        satisfy (mail/calendar/Spotify/social/delivery) is excluded so it keeps
+        the honest refusal. Defensive: an unavailable/empty registry returns
+        False so the explicit-trigger path stays the sole strict-mode spawn
+        signal (mirrors the empty-registry guard in _check_unsupported_intent).
+        """
+        if requires_external_integration(t):
+            return False
+        try:
+            from jarvis.core.capabilities import get_registry  # type: ignore[import]
+
+            reg = get_registry()
+            if not getattr(reg, "all", lambda: ())():
+                return False
+            return bool(reg.has_action_intent(t) and reg.resolve_intent(t) is None)
+        except Exception:  # noqa: BLE001 — registry error must not block spawn decision
+            return False
 
     async def _run_local_action_fast_path(
         self,
@@ -1686,6 +2010,7 @@ class BrainManager:
         user_text: str,
         response_text: str,
         use_history: bool,
+        trace_id: UUID | None = None,
     ) -> None:
         """Apply the normal response side effects for non-provider paths too."""
         if use_history:
@@ -1695,6 +2020,7 @@ class BrainManager:
                 self._history = self._history[-40:]
 
         await self._bus.publish(ResponseGenerated(
+            trace_id=trace_id or uuid4(),
             text=response_text,
             language="de" if _looks_german(response_text) else "en",
         ))
@@ -2039,6 +2365,7 @@ class BrainManager:
         use_history: bool = True,
         trace_id: UUID | None = None,
         text_consumer: "Callable[[str], None] | None" = None,
+        on_progress: Callable[[], None] | None = None,
     ) -> str:
         # 1. Intercept meta-commands (cancel, switch, depth override).
         # User request 2026-04-25: no standardised confirmation phrases
@@ -2050,6 +2377,7 @@ class BrainManager:
         # failure-diagnostic returns below flip it True; the meta-command
         # early-returns ("") that follow correctly leave it False.
         self._last_turn_all_failed = False
+        turn_trace_id = trace_id or uuid4()
 
         if self._detect_cancel_intent(user_text):
             self._cancel_all_background_tasks()
@@ -2087,30 +2415,24 @@ class BrainManager:
                 and self._openclaw_status_fn is not None
             ):
                 response = await self._openclaw_status_fn(oc_match.mission_id)
-                if use_history:
-                    self._history.append(
-                        BrainMessage(role="user", content=user_text)
-                    )
-                    self._history.append(
-                        BrainMessage(role="assistant", content=response)
-                    )
-                    if len(self._history) > 40:
-                        self._history = self._history[-40:]
+                await self._record_response_side_effects(
+                    user_text=user_text,
+                    response_text=response,
+                    use_history=use_history,
+                    trace_id=turn_trace_id,
+                )
                 return response
             if (
                 oc_match.intent == "cancel"
                 and self._openclaw_cancel_fn is not None
             ):
                 response = await self._openclaw_cancel_fn(oc_match.mission_id)
-                if use_history:
-                    self._history.append(
-                        BrainMessage(role="user", content=user_text)
-                    )
-                    self._history.append(
-                        BrainMessage(role="assistant", content=response)
-                    )
-                    if len(self._history) > 40:
-                        self._history = self._history[-40:]
+                await self._record_response_side_effects(
+                    user_text=user_text,
+                    response_text=response,
+                    use_history=use_history,
+                    trace_id=turn_trace_id,
+                )
                 return response
             # Pattern matched, but no handler registered — fall through to
             # the normal path. Logging aids debugging ("why does the status
@@ -2122,15 +2444,33 @@ class BrainManager:
             )
 
         local_action = await self._run_local_action_fast_path(
-            user_text, trace_id=trace_id,
+            user_text, trace_id=turn_trace_id,
         )
         if local_action is not None:
             await self._record_response_side_effects(
                 user_text=user_text,
                 response_text=local_action,
                 use_history=use_history,
+                trace_id=turn_trace_id,
             )
             return local_action
+
+        # Navigation fast-path: a clear "go to section X" command moves the UI
+        # deterministically (a dumb action, AD-OE3). Placed BEFORE the capability
+        # gate — which would refuse "zeig die Socials" because 'social' is an
+        # external-integration marker — and before force-spawn. Pure regex, no
+        # LLM (AP-11). See ADR-0011 amendment "Navigate tool".
+        nav_reply = await self._run_navigation_fast_path(
+            user_text, trace_id=turn_trace_id,
+        )
+        if nav_reply is not None:
+            await self._record_response_side_effects(
+                user_text=user_text,
+                response_text=nav_reply,
+                use_history=use_history,
+                trace_id=turn_trace_id,
+            )
+            return nav_reply
 
         # Agent-C (capability-coupling): pre-generation capability gate.
         # If the utterance looks like an action request but no registered
@@ -2143,6 +2483,7 @@ class BrainManager:
                 user_text=user_text,
                 response_text=unsupported,
                 use_history=use_history,
+                trace_id=turn_trace_id,
             )
             return unsupported
 
@@ -2151,23 +2492,23 @@ class BrainManager:
         # inputs (see docs/persona-research.md section 2 — 60% empty smalltalk
         # outputs from the reflexive LLM spawn path).
         forced_spawn = await self._force_spawn_worker(
-            user_text, trace_id=trace_id,
+            user_text, trace_id=turn_trace_id,
         )
         if forced_spawn is not None:
             # Bug fix 2026-04-30: history update also in the force-spawn path.
             # Previously returned directly → main Jarvis had no memory on the
             # NEXT turn that this question was ever asked.
-            # Symptom: user asks a follow-up, main Jarvis "forgets everything".
-            if use_history:
-                self._history.append(BrainMessage(role="user", content=user_text))
-                self._history.append(BrainMessage(role="assistant", content=forced_spawn))
-                if len(self._history) > 40:
-                    self._history = self._history[-40:]
+            await self._record_response_side_effects(
+                user_text=user_text,
+                response_text=forced_spawn,
+                use_history=use_history,
+                trace_id=turn_trace_id,
+            )
             return forced_spawn
 
         # Phase 5 / ADR-0006: pre-call budget gate. Block rather than request
         # when cooldown is active or the task/daily budget is exhausted.
-        trace_uuid = trace_id or uuid4()
+        trace_uuid = turn_trace_id
         if self._cost_meter is not None:
             if self._cost_meter.is_in_cooldown():
                 return ("Cost-Cooldown aktiv — Tagesbudget erschoepft. "
@@ -2204,20 +2545,33 @@ class BrainManager:
             # (b) all filtered out by _dead_providers (no key set).
             # In production (b) is the common case — provide an actionable message.
             self._last_turn_all_failed = True
+            # Keep the actionable provider/key diagnostic in the LOG (UI/console
+            # surface it), but SPEAK only a localized, provider-agnostic apology
+            # — never read setup hints or provider names aloud (AP-11/ADR-0010).
             if self._dead_providers:
-                return _format_provider_chain_error([
-                    (p, "", "missing_key", "kein API-Key in dieser Session")
-                    for p in self._dead_providers
-                ])
-            return ("Keine Brain-Provider verfuegbar. "
-                    "Sidebar -> API-Keys oeffnen und mindestens einen Key "
-                    "(z.B. GEMINI_API_KEY) setzen.")
+                log.warning(
+                    "Provider chain empty (all dead/keyless) — spoken fallback. "
+                    "Diagnostic: %s",
+                    _format_provider_chain_error([
+                        (p, "", "missing_key", "kein API-Key in dieser Session")
+                        for p in self._dead_providers
+                    ]),
+                )
+            else:
+                log.warning("No brain providers available — spoken fallback used.")
+            return self._next_provider_down_phrase()
 
         history = self._history if use_history else []
         last_exc: Exception | None = None
         response_text = ""
         used_provider: str | None = None
         used_model: str | None = None
+        # AI Pointer (deictic push): launch the cursor-element resolution BEFORE
+        # the vision-image await so it overlaps with it instead of running serially
+        # after (AP-9: keep the deictic turn off the serial hot path). The task does
+        # the regex gate itself, so non-deictic turns complete instantly with
+        # ("", None) and fast-skip on a headless host. Awaited just below.
+        pointer_task = self._start_pointer_task(user_text, is_smalltalk_turn)
         images: tuple[ImageBlock, ...] = await self._collect_vision_images(
             trace_id=trace_uuid,
             user_text=user_text,
@@ -2261,6 +2615,42 @@ class BrainManager:
         # mode. Reused for every provider in the fallback chain below.
         turn_context = self._build_turn_context()
 
+        # AI Pointer (deictic push): collect the result of the resolution started
+        # above. When the utterance points at the mouse cursor ("was ist das da?")
+        # the resolved element rides on this turn's context + a tight crop is
+        # attached only when the element is unlabeled. Unrelated turns ("how's the
+        # weather?") yield ("", None). See docs/plans/ai-pointer/DESIGN.md.
+        pointer_block = ""
+        pointer_image: ImageBlock | None = None
+        if pointer_task is not None:
+            try:
+                pointer_block, pointer_image = await pointer_task
+            except Exception:  # noqa: BLE001 — never crash a turn on pointer context
+                log.debug("AI Pointer per-turn injection skipped", exc_info=True)
+                pointer_block, pointer_image = "", None
+
+        # AI Pointer grounding (2026-06-02): a deictic pointer turn ("worauf zeige
+        # ich?") must be scoped to the CURSOR region so the brain answers from the
+        # cursor element/crop — it must NOT guess the pointing target from the
+        # full-screen permanent-vision image (the live "described something
+        # completely elsewhere" bug). On such a turn we (1) replace the full-screen
+        # image with the tight cursor crop (or none, for a labelled element),
+        # (2) drop the full-screen screenshot + inspect-pointer tools (below), and
+        # (3) inject a "do not guess" instruction when resolution failed.
+        pointing_turn = (not is_smalltalk_turn) and self._is_pointer_intent(user_text)
+        if pointing_turn:
+            images = (pointer_image,) if pointer_image is not None else ()
+            if not pointer_block:
+                pointer_block = (
+                    "[AI Pointer] The user asked what they are pointing at, but the "
+                    "element under the cursor could not be read right now. Tell them "
+                    "you cannot tell what is under the cursor at the moment — do NOT "
+                    "guess from the rest of the screen."
+                )
+            turn_context = (
+                f"{turn_context}\n\n{pointer_block}" if turn_context else pointer_block
+            )
+
         for idx, (prov_name, model) in enumerate(chain):
             # Skip providers already marked dead in THIS turn.
             # Example: gemini-fast fails with missing_key → gemini-deep would
@@ -2303,12 +2693,28 @@ class BrainManager:
                 provider_errors.append((prov_name, model, kind, msg[:200]))
                 continue
 
-            disp = self._build_dispatcher(
-                brain,
-                tools_override=(
-                    self._smalltalk_tool_override() if is_smalltalk_turn else None
-                ),
+            _turn_tools = (
+                self._smalltalk_tool_override() if is_smalltalk_turn
+                # Non-smalltalk turn: pass the full set minus plugin tools
+                # that are irrelevant to this utterance (progressive
+                # disclosure — keeps the surface small once 3+ plugins are
+                # connected). None would mean "use self._tools verbatim".
+                else self._apply_plugin_relevance(user_text, self._tools)
             )
+            # AI Pointer: on a deictic pointer turn the cursor crop is already the
+            # only attached image, so drop the redundant ``inspect-pointer`` PULL
+            # tool (calling it produced an empty spoken answer — observed live).
+            # The full-screen ``screenshot`` tool is deliberately KEPT: removing it
+            # made the router refuse "Was siehst du hier?" with "I lack a tool"
+            # (the capability gate maps "see" to a vision tool). With the tool
+            # present there is no refusal, and the injected crop + prompt steer the
+            # brain to answer from the crop, not the whole screen. See
+            # docs/plans/ai-pointer/DESIGN.md.
+            if pointing_turn and isinstance(_turn_tools, dict):
+                _turn_tools = {
+                    k: v for k, v in _turn_tools.items() if k != "inspect-pointer"
+                }
+            disp = self._build_dispatcher(brain, tools_override=_turn_tools)
             try:
                 # CostMeter: start per-trace tracking (idempotent if already started).
                 if self._cost_meter is not None:
@@ -2320,6 +2726,7 @@ class BrainManager:
                     trace_id=trace_id,
                     intent_level=decision.level,
                     text_consumer=text_consumer,
+                    on_progress=on_progress,
                     turn_context=turn_context,
                 )
                 # Post-call cost hook: aggregated usage → meter.
@@ -2462,7 +2869,14 @@ class BrainManager:
             self._last_turn_all_failed = True
             log.error("Alle %d Provider-Versuche fehlgeschlagen. Letzter Fehler: %s",
                      len(chain), last_exc)
-            return _format_provider_chain_error(provider_errors)
+            # Developer diagnostic → LOG only. The voice path gets a localized,
+            # provider-agnostic apology (live complaint 2026-06-01: the grok/
+            # Anthropic billing diagnostic was spoken while Gemini was active).
+            log.warning(
+                "Spoken fallback used instead of chain diagnostic: %s",
+                _format_provider_chain_error(provider_errors),
+            )
+            return self._next_provider_down_phrase()
 
         # Robustness net (2026-05-24): a provider (notably Gemini) sometimes
         # emits a spawn_worker tool_use block as TEXT instead of executing
@@ -2486,6 +2900,7 @@ class BrainManager:
                 self._history = self._history[-40:]
 
         await self._bus.publish(ResponseGenerated(
+            trace_id=trace_uuid,
             text=response_text,
             language="de" if _looks_german(response_text) else "en",
         ))
@@ -2612,12 +3027,19 @@ class BrainManager:
         *,
         use_history: bool = True,
         trace_id: UUID | None = None,
+        on_progress: Callable[[], None] | None = None,
     ) -> AsyncIterator[str]:
         """Latency sprint 1: streaming variant of ``generate``.
 
         Yields each brain text chunk in real time. Tool-use loops run as
         usual; pre-tool-use text is also streamed (the persona prompt forbids
         fillers, so this is uncritical).
+
+        ``on_progress`` (stall-timeout signal): forwarded to the tool-use loop,
+        which pings it at every model-round + tool boundary. The speech pipeline
+        passes its ``_mark_brain_progress`` here so its *no-progress* deadline
+        resets while a vision/tool turn is genuinely working but streaming no
+        text (live bug 2026-06-01). ``None`` (default) is a no-op.
 
         Consumed via an ``asyncio.Queue`` between the producer task
         (``generate``) and the caller (``async for``). If the caller cancels
@@ -2649,6 +3071,7 @@ class BrainManager:
                     use_history=use_history,
                     trace_id=trace_id,
                     text_consumer=_consumer,
+                    on_progress=on_progress,
                 )
             finally:
                 # Sentinel signals "brain is done (or crashed)".

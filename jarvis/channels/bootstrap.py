@@ -19,7 +19,7 @@ from pathlib import Path
 
 from jarvis.channels.manager import ChannelContext, ChannelManager
 from jarvis.core.bus import EventBus
-from jarvis.core.config import TelegramConfig
+from jarvis.core.config import DiscordConfig, TelegramConfig
 from jarvis.friends.registry import FriendRegistry
 
 log = logging.getLogger(__name__)
@@ -29,6 +29,7 @@ async def bootstrap_channels(
     *,
     bus: EventBus,
     telegram_config: TelegramConfig | None = None,
+    discord_config: DiscordConfig | None = None,
     friends_db_path: str | Path = "data/friends.db",
     auto_start: bool = True,
 ) -> tuple[ChannelManager, FriendRegistry]:
@@ -37,10 +38,11 @@ async def bootstrap_channels(
     await registry.open()
 
     cfg = telegram_config if telegram_config is not None else TelegramConfig()
+    dc_cfg = discord_config if discord_config is not None else DiscordConfig()
     context = ChannelContext(
         bus=bus,
         friend_registry=registry,
-        config={"telegram_config": cfg},
+        config={"telegram_config": cfg, "discord_config": dc_cfg},
     )
     manager = ChannelManager(context)
 

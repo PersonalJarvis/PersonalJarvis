@@ -1,8 +1,8 @@
-# Functional CI matrix (Wave 0, sub-task 0.3 — AD-4, discharges PC-1).
+# Functional CI matrix (Wave 0, sub-task 0.3 - AD-4, discharges PC-1).
 #
 # Before this file the repo had NO functional CI: .github/workflows/ held only
 # supply-chain workflows, none ran pytest/ruff/mypy. This is the cross-platform
-# migration's load-bearing safety net — it is the only place the Windows-only
+# migration's load-bearing safety net - it is the only place the Windows-only
 # maintainer sees a red check when macOS/Linux code breaks.
 #
 # Gating policy (deliberate, see docs/plans/cross-platform-mac-linux/WELLE-0):
@@ -12,7 +12,7 @@
 #     unrelated to this migration. Clean them in a separate effort, then flip
 #     continue-on-error off.
 #   * import-cleanliness gate    -> BLOCKING. Proves `import jarvis` is clean on
-#     Linux/macOS (no module-scope pywin32/winreg/global_hotkeys) — the €5-VPS
+#     Linux/macOS (no module-scope pywin32/winreg/global_hotkeys) - the €5-VPS
 #     contract. A regression here breaks Mac/Linux outright.
 #   * min-passed floor           -> BLOCKING. Catches a mass-skip / broken-
 #     collection regression that would otherwise sail through as green.
@@ -58,7 +58,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install base + dev (NO platform extras — proves the VPS/base install)
+      - name: Install base + dev (NO platform extras - proves the VPS/base install)
         shell: bash
         run: |
           python -m pip install --upgrade pip
@@ -106,3 +106,31 @@ jobs:
       - name: Minimum-passed floor (BLOCKING, Linux leg is authoritative)
         if: matrix.os == 'ubuntu-latest'
         run: python scripts/ci/assert_min_passed.py report.xml
+
+  # Output Language Policy enforcement (CLAUDE.md, HIGHEST PRIORITY): block any
+  # NEWLY ADDED German text from reaching GitHub. Diff-based, so the in-flight
+  # DE->EN translation backlog (pre-existing German) does NOT turn this red - only
+  # German added by a push/PR does. Own job (runs once, not across the OS matrix);
+  # stdlib + git only, so no pip install. BLOCKING.
+  language-policy:
+    name: language-policy (no new German)
+    # PR-only: a push to main rewrites SHAs (rebase merge), which widens the
+    # diff base and would re-flag pre-existing German. The protection belongs
+    # on PRs, before the change reaches main.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout (full history - diff needs the merge base)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.11"
+
+      - name: No-new-German gate (BLOCKING)
+        run: python scripts/ci/check_no_new_german.py

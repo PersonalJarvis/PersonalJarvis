@@ -166,6 +166,178 @@
         "url": "https://mcp.linear.app/mcp",
         "auth_header_template": "Authorization: Bearer ${plugin_linear_access_token}"
       }
+    },
+    {
+      "id": "stripe",
+      "display_name": "Stripe",
+      "description": "Payments, customers, invoices and balance — read-first",
+      "category": "Developer",
+      "logo_slug": "stripe",
+      "logo_color": "F4F4F5",
+      "featured": false,
+      "auth": {
+        "mode": "pat_paste",
+        "token_creation_url": "https://dashboard.stripe.com/apikeys",
+        "token_prefix": "",
+        "validation_endpoint": "https://api.stripe.com/v1/balance",
+        "instruction_md": "1. Open https://dashboard.stripe.com/apikeys and click 'Create restricted key'.\n2. Name it 'Personal Jarvis'. Set the resources Jarvis should read to 'Read' — at minimum 'Balance: Read', plus e.g. Customers, Products, Invoices, Subscriptions.\n3. Create the key and copy the value starting with 'rk_live_' (or 'rk_test_').\n4. Paste it below. A full secret key 'sk_' also works but grants full access — a restricted read key is safer."
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.stripe.com",
+        "auth_header_template": "Authorization: Bearer ${plugin_stripe_access_token}"
+      },
+      "post_install_hint_md": "Restricted key (rk_), validated against GET /v1/balance, sent as a Bearer token to Stripe's hosted MCP server — the documented path for non-OAuth clients (bypasses the OAuth client-allowlist; no Node needed). Read-only is controlled by the key's scope."
+    },
+    {
+      "id": "cloudflare",
+      "display_name": "Cloudflare",
+      "description": "Workers, observability logs, analytics and Radar insights",
+      "category": "Developer",
+      "logo_slug": "cloudflare",
+      "logo_color": "F4F4F5",
+      "featured": false,
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "discovery_url": "https://observability.mcp.cloudflare.com/.well-known/oauth-protected-resource",
+        "mcp_url": "https://observability.mcp.cloudflare.com/mcp",
+        "refresh_supported": true,
+        "capabilities": [
+          "https://bindings.mcp.cloudflare.com/mcp",
+          "https://radar.mcp.cloudflare.com/mcp",
+          "https://graphql.mcp.cloudflare.com/mcp"
+        ]
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://observability.mcp.cloudflare.com/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_cloudflare_access_token}"
+      },
+      "post_install_hint_md": "Defaults to the read-only observability/analytics server. Pick read scopes on Cloudflare's consent screen."
+    },
+    {
+      "id": "discord",
+      "display_name": "Discord",
+      "description": "Read and send messages in your servers (bot)",
+      "category": "Communication",
+      "logo_slug": "discord",
+      "logo_color": "F4F4F5",
+      "featured": false,
+      "auth": {
+        "mode": "pat_paste",
+        "auth_scheme": "bot",
+        "token_creation_url": "https://discord.com/developers/applications",
+        "token_prefix": "",
+        "validation_endpoint": "https://discord.com/api/v10/users/@me",
+        "instruction_md": "1. Open https://discord.com/developers/applications and click 'New Application'.\n2. Go to the 'Bot' page, click 'Reset Token', and copy it (shown once).\n3. Under 'Privileged Gateway Intents', enable 'Message Content Intent' so the bot can read message text.\n4. Invite the bot to your server: OAuth2 -> URL Generator -> scope 'bot' + the permissions you want (View Channels, Read Message History, Send Messages), open the link, pick your server, Authorize.\n5. Paste the bot token below."
+      },
+      "mcp_server": {
+        "transport": "stdio",
+        "install": ["npx", "-y", "mcp-discord", "--config", "$plugin_discord_access_token"],
+        "env_template": {"DISCORD_TOKEN": "$plugin_discord_access_token"}
+      },
+      "post_install_hint_md": "The bot only sees servers it has been invited to. This MCP server (community: barryyip0625/mcp-discord) needs Node/npx on the host."
+    },
+    {
+      "id": "telegram",
+      "display_name": "Telegram",
+      "description": "Chat with Jarvis from Telegram (your bot)",
+      "category": "Communication",
+      "logo_slug": "telegram",
+      "logo_color": "F4F4F5",
+      "featured": false,
+      "auth": {
+        "mode": "pat_paste",
+        "auth_scheme": "telegram_path",
+        "token_creation_url": "https://t.me/BotFather",
+        "token_prefix": "",
+        "validation_endpoint": "https://api.telegram.org/bot{token}/getMe",
+        "instruction_md": "1. Open @BotFather in Telegram (https://t.me/BotFather).\n2. Send /newbot, pick a name and a username ending in 'bot'.\n3. Copy the token BotFather gives you (looks like 123456789:AAH...).\n4. Paste it below, then send /start to your new bot so it can reach you."
+      },
+      "post_install_hint_md": "This enables the Telegram channel — message your bot to talk to Jarvis. Outbound replies pass through the voice scrubber and your allowlist."
+    },
+    {
+      "id": "asana",
+      "display_name": "Asana",
+      "description": "Tasks, projects and workspaces",
+      "category": "Productivity",
+      "logo_slug": "asana",
+      "logo_color": "F4F4F5",
+      "featured": false,
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://app.asana.com/-/oauth_authorize",
+        "token_url": "https://app.asana.com/-/oauth_token",
+        "revocation_url": "https://app.asana.com/-/oauth_revoke",
+        "client_id": "REPLACE_WITH_JARVIS_ASANA_CLIENT_ID",
+        "callback_port": 3119,
+        "scopes": ["default"],
+        "refresh_supported": true,
+        "resource": "https://mcp.asana.com/v2"
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.asana.com/v2/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_asana_access_token}"
+      },
+      "post_install_hint_md": "Setup: register an OAuth app at https://app.asana.com/0/my-apps, add redirect URI http://127.0.0.1:3119/oauth/callback, and put its Client ID into data/plugin_catalog.json. If Asana rejects the 127.0.0.1 redirect, switch this plugin to pat_paste (token at app.asana.com/0/my-apps, validate https://app.asana.com/api/1.0/users/me)."
+    },
+    {
+      "id": "google_drive",
+      "display_name": "Google Drive",
+      "description": "Files Jarvis creates or you share with it (drive.file)",
+      "category": "Productivity",
+      "logo_slug": "googledrive",
+      "logo_color": "F4F4F5",
+      "featured": false,
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "revocation_url": "https://oauth2.googleapis.com/revoke",
+        "client_id": "REPLACE_WITH_JARVIS_GOOGLE_CLIENT_ID",
+        "callback_port": 3120,
+        "callback_path": "",
+        "scopes": ["https://www.googleapis.com/auth/drive.file"],
+        "scope_separator": "space",
+        "user_scopes_only": false,
+        "refresh_supported": true,
+        "offline_access": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://drivemcp.googleapis.com/mcp/v1",
+        "auth_header_template": "Authorization: Bearer ${plugin_google_drive_access_token}"
+      },
+      "post_install_hint_md": "Setup: see docs/marketplace/google-oauth-setup.md. Uses the non-sensitive drive.file scope (no Google verification, stays connected permanently). The Drive MCP server is Google's official endpoint (Developer Preview)."
+    },
+    {
+      "id": "gmail",
+      "display_name": "Gmail",
+      "description": "Read and send mail from your inbox",
+      "category": "Communication",
+      "logo_slug": "gmail",
+      "logo_color": "F4F4F5",
+      "featured": false,
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "revocation_url": "https://oauth2.googleapis.com/revoke",
+        "client_id": "REPLACE_WITH_JARVIS_GOOGLE_CLIENT_ID",
+        "callback_port": 3121,
+        "callback_path": "",
+        "scopes": [
+          "https://www.googleapis.com/auth/gmail.readonly",
+          "https://www.googleapis.com/auth/gmail.send"
+        ],
+        "scope_separator": "space",
+        "user_scopes_only": false,
+        "refresh_supported": true,
+        "offline_access": true
+      },
+      "native_tool": "gmail",
+      "post_install_hint_md": "Setup: see docs/marketplace/google-oauth-setup.md (shares the Google client with Drive). In Google 'Testing' status the connection expires every 7 days; publish the app + complete Google's restricted-scope verification to make it permanent."
     }
   ]
 }

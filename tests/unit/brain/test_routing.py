@@ -212,6 +212,30 @@ async def test_smalltalk_dispatches_zero_spawn_calls(utterance: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# AI Pointer: a deictic "what is this?" is a Q&A, never a heavy-worker spawn —
+# even in permissive mode where the verb "zeige" would otherwise match.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "was ist das da?",
+        "was ist das hier?",
+        "worauf zeige ich gerade?",
+        "wo ich hinzeige, was ist das?",
+    ],
+)
+def test_pointing_intent_never_force_spawns(utterance: str) -> None:
+    """A deictic pointer question must answer inline, never trigger a spawn —
+    even in permissive mode (where 'zeige' is an action verb)."""
+    manager, _executor = _manager_with_spawn(force_spawn_mode="permissive")
+    assert manager._should_force_spawn(utterance) is False, (
+        f"pointing question {utterance!r} wrongly force-spawned a worker"
+    )
+
+
+# ---------------------------------------------------------------------------
 # 5 Spawn-Inputs — muessen genau 1 Spawn-Call mit Utterance verbatim ausloesen.
 # ---------------------------------------------------------------------------
 
@@ -367,6 +391,45 @@ def test_computer_use_in_router_tools() -> None:
     assert "computer-use" in ROUTER_TOOLS
 
 
+def test_navigate_in_router_tools() -> None:
+    """``navigate`` must live in ROUTER_TOOLS (2026-06-02).
+
+    The router can move the desktop UI to a sidebar section (e.g. "zeig die
+    Socials", "open settings") only when this entry-point name is in the
+    frozenset — the loader filters entry-points against ROUTER_TOOLS. It is a
+    pure UI action (risk ``safe``) that publishes ``NavigateSidebar``; a direct
+    safe-gated action, never a spawn, so it never enters a worker tool-set
+    (AP-5/AP-14). See ADR-0011 amendment "Navigate tool".
+    """
+    from jarvis.brain.factory import ROUTER_TOOLS
+
+    assert "navigate" in ROUTER_TOOLS
+
+
+def test_plugin_tools_in_router_set():
+    from jarvis.brain.factory import ROUTER_TOOLS
+    assert "plugin-tools" in ROUTER_TOOLS
+
+
+def test_plugin_tools_is_router_only_not_a_spawn():
+    """plugin-tools is a direct safe-gated loader; it must never become a
+    spawn-style tool in a worker set (AP-5/AP-14, D9 recursion guard)."""
+    import jarvis.brain.factory as factory_mod
+    from jarvis.brain.factory import ROUTER_TOOLS
+
+    assert "plugin-tools" in ROUTER_TOOLS
+    # Welle 4 deleted the Sub-Jarvis tier; no worker tool-set may resurrect.
+    assert not hasattr(factory_mod, "SUB_TOOLS")
+
+
+def test_router_prompt_mentions_plugin_inline_reads():
+    from jarvis.brain.router import SYSTEM_PROMPT
+
+    low = SYSTEM_PROMPT.lower()
+    assert "plugin" in low
+    assert "spawn_worker" in low or "spawn-worker" in low
+
+
 def test_factory_wires_computer_use_tool_into_router_set() -> None:
     """End-to-end wiring: entry-point + ROUTER_TOOLS + factory branch connect.
 
@@ -389,6 +452,70 @@ def test_factory_wires_computer_use_tool_into_router_set() -> None:
 
     assert "computer_use" in tools
     assert tools["computer_use"].name == "computer_use"
+
+
+def test_inspect_pointer_in_router_tools() -> None:
+    """``inspect-pointer`` (AI Pointer pull path) must live in ROUTER_TOOLS."""
+    from jarvis.brain.factory import ROUTER_TOOLS
+
+    assert "inspect-pointer" in ROUTER_TOOLS
+
+
+def test_factory_wires_inspect_pointer_into_router_set() -> None:
+    """End-to-end wiring: entry-point + ROUTER_TOOLS + default construction.
+
+    A missing entry-point or a stray construction branch would silently drop the
+    AI-Pointer tool from the router schema.
+    """
+    from jarvis.brain.factory import _load_tools_for_tier
+
+    tools = _load_tools_for_tier(
+        "router",
+        bus=EventBus(),
+        executor=None,
+        harness_manager=None,
+        user_profile=None,
+        people=None,
+        config=JarvisConfig(),
+    )
+
+    assert "inspect-pointer" in tools
+    assert tools["inspect-pointer"].name == "inspect-pointer"
+    assert tools["inspect-pointer"].risk_tier == "safe"
+
+
+def test_factory_wires_navigate_into_router_set() -> None:
+    """End-to-end wiring for the navigate tool: entry-point + ROUTER_TOOLS +
+    bus construction. A missing entry-point or construction branch would
+    silently drop UI navigation from the router schema."""
+    from jarvis.brain.factory import _load_tools_for_tier
+
+    tools = _load_tools_for_tier(
+        "router",
+        bus=EventBus(),
+        executor=None,
+        harness_manager=None,
+        user_profile=None,
+        people=None,
+        config=JarvisConfig(),
+    )
+
+    assert "navigate" in tools
+    assert tools["navigate"].name == "navigate"
+    assert tools["navigate"].risk_tier == "safe"
+
+
+def test_inspect_pointer_is_not_a_spawn_in_local_action_set() -> None:
+    """The AI-Pointer tool is a router-tier read, never in the worker fast-path."""
+    from jarvis.brain.factory import _load_local_action_tools
+
+    local_tools = _load_local_action_tools(
+        bus=EventBus(),
+        harness_manager=None,
+        config=JarvisConfig(),
+    )
+    assert "inspect-pointer" not in local_tools
+    assert "inspect_pointer" not in local_tools
 
 
 def test_computer_use_tool_is_not_a_spawn_in_local_action_set() -> None:
@@ -680,6 +807,14 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             "dispatch-to-harness",
             # Phase 8.4 (Quality-Gate, Recursion-geschuetzt analog spawn-worker)
             "dispatch-with-review",
+            # AI Pointer (pull path): resolve the element under the mouse cursor
+            # via the OS accessibility tree. Read-only safe-tier, direct action,
+            # never a spawn (AP-5/AP-14). See docs/plans/ai-pointer/DESIGN.md.
+            "inspect-pointer",
+            # UI navigation (2026-06-02): switch the active sidebar section by
+            # voice/chat. Pure UI action (risk safe), publishes NavigateSidebar,
+            # never a spawn (AP-5/AP-14). See ADR-0011 amendment "Navigate tool".
+            "navigate",
             "awareness-snapshot",
             # Awareness Phase A3 (BM25 search over recent episode log).
             "awareness-recall",
@@ -697,6 +832,15 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # spawn, so it never enters a worker tool-set (AP-5/AP-14). See
             # ADR-0011 amendment "CLI-Integration".
             "cli-tools",
+            # Marketplace plugins as live brain tools (2026-06-01): virtual
+            # loader that expands to one MCPToolAdapter per connected plugin
+            # tool. Direct safe/risk-gated action, never a spawn — must not
+            # enter any worker tool-set (AP-5/AP-14).
+            "plugin-tools",
+            # Gmail Marketplace plugin (2026-06-01): native REST tool backed by
+            # the marketplace OAuth token. Gmail has no MCP server block, so it
+            # must be router-visible directly.
+            "gmail",
             # Computer-Use (Wave 1, 2026-05-29): first-class tool to drive the
             # live desktop. Router-tier only — a direct safe-gated action (the
             # loop gates each action via ToolExecutor, ADR-0008), never a spawn,
@@ -723,6 +867,16 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # chars of a stored key, never the full value. monitor-tier, narrow
             # safe exception to AP-2. See ADR-0011 amendment "App-Control Tools".
             "reveal-key-preview",
+            # Chunk B jarvis-contacts (2026-06-02): the three contact-action
+            # tools. contact-lookup (safe, read) resolves a name -> e-mail/
+            # phone/address; contact-upsert (monitor, deterministic write) saves
+            # a contact by voice; call-contact (ask, echo-confirm) places a real
+            # outbound call via the telephony engine. All direct safe/monitor/
+            # ask-gated actions, never spawns (AP-5/AP-14). See ADR-0011
+            # amendment "Contacts Tools".
+            "contact-lookup",
+            "contact-upsert",
+            "call-contact",
         }
     )
     assert ROUTER_TOOLS == expected, (
@@ -749,6 +903,37 @@ def test_update_profile_in_router_tools() -> None:
     from jarvis.brain.factory import ROUTER_TOOLS
 
     assert "update-profile" in ROUTER_TOOLS
+
+
+def test_gmail_marketplace_tool_in_router_tools() -> None:
+    """Connected Gmail must become a callable brain tool.
+
+    Gmail is not MCP-backed; it uses the in-repo REST tool and reads the
+    marketplace OAuth token at execution time. If this entry is missing, the
+    active voice brain drops the tool while the Plugins UI shows Gmail
+    connected.
+    """
+    from jarvis.brain.factory import ROUTER_TOOLS
+
+    assert "gmail" in ROUTER_TOOLS
+
+
+def test_factory_wires_gmail_tool_into_router_set() -> None:
+    """End-to-end wiring: entry-point + ROUTER_TOOLS expose ``gmail``."""
+    from jarvis.brain.factory import _load_tools_for_tier
+
+    tools = _load_tools_for_tier(
+        "router",
+        bus=EventBus(),
+        executor=None,
+        harness_manager=None,
+        user_profile=None,
+        people=None,
+        config=JarvisConfig(),
+    )
+
+    assert "gmail" in tools
+    assert tools["gmail"].name == "gmail"
 
 
 def test_factory_wires_update_profile_tool_into_router_set() -> None:
@@ -1102,6 +1287,172 @@ def test_check_unsupported_intent_returns_none_when_registry_empty() -> None:
             sys.modules.pop("jarvis.core.capabilities", None)
 
 
+# ---------------------------------------------------------------------------
+# 2026-06-01: Sub-agent as the UNIVERSAL CAPABILITY for generic work.
+#
+# A work request with an action verb but no registered MCP capability and no
+# SPECIFIC external integration (email/calendar/spotify/...) is sub-agent-worthy
+# and must spawn NATIVELY — even in strict mode, WITHOUT the user saying
+# "Subagent"/"spawn" — instead of being refused with "Das kann ich noch nicht".
+# Only specific external integrations stay refused: a generic claude-cli worker
+# cannot send an email or play Spotify, but it CAN analyse/build/fix/code and
+# drive git/gh. Live forensic 2026-06-01 (voice turn 21:45:24): a sub-agent task
+# was refused, then only spawned once the user said "Subagent" explicitly.
+# ---------------------------------------------------------------------------
+
+
+def _strict_manager_with_mock_registry(
+    *, has_action: bool = True, resolves: bool = False, populated: bool = True
+):
+    """A strict-mode manager with a mocked capability registry in sys.modules.
+
+    The mock returns a constant ``has_action_intent`` / ``resolve_intent`` so the
+    SPAWN-vs-REFUSE decision is driven purely by the real external-integration
+    detector running on the actual utterance text.
+    """
+    import sys
+    import types
+
+    mock_reg = types.SimpleNamespace(
+        all=lambda: ((object(),) if populated else ()),
+        has_action_intent=lambda _t: has_action,
+        resolve_intent=lambda _t: (object() if resolves else None),
+        render_for_prompt=lambda lang="de": "",
+    )
+    mock_module = types.ModuleType("jarvis.core.capabilities")
+    mock_module.get_registry = lambda: mock_reg  # type: ignore[attr-defined]
+    sys.modules["jarvis.core.capabilities"] = mock_module
+    manager, _executor = _manager_with_spawn(force_spawn_mode="strict")
+    return manager
+
+
+def test_generic_work_spawns_natively_in_strict_mode() -> None:
+    """A generic work task (build/analyse/fix) with no capability and no
+    external integration must spawn a sub-agent natively in STRICT mode —
+    without the user uttering an explicit 'Subagent'/'spawn' trigger."""
+    original = __import__("sys").modules.get("jarvis.core.capabilities")
+    try:
+        manager = _strict_manager_with_mock_registry()
+        for utterance in (
+            "baue mir ein Python-Skript das die Java-Support Logs analysiert",
+            "fix den Bug in der Authentifizierung",
+            "implementier eine Funktion die CSV nach JSON konvertiert",
+        ):
+            assert manager._should_force_spawn(utterance), (
+                f"generic work {utterance!r} must spawn natively in strict mode"
+            )
+    finally:
+        if original is not None:
+            __import__("sys").modules["jarvis.core.capabilities"] = original
+        else:
+            __import__("sys").modules.pop("jarvis.core.capabilities", None)
+
+
+def test_generic_work_not_refused_as_unsupported() -> None:
+    """The same generic work task must NOT be refused with 'kann ich noch
+    nicht' — the sub-agent is its universal capability."""
+    original = __import__("sys").modules.get("jarvis.core.capabilities")
+    try:
+        manager = _strict_manager_with_mock_registry()
+        result = manager._check_unsupported_intent(
+            "baue mir ein Python-Skript das die Logs analysiert"
+        )
+        assert result is None, (
+            "generic work must not be refused as unsupported — route to sub-agent"
+        )
+    finally:
+        if original is not None:
+            __import__("sys").modules["jarvis.core.capabilities"] = original
+        else:
+            __import__("sys").modules.pop("jarvis.core.capabilities", None)
+
+
+def test_external_integration_without_capability_stays_unsupported() -> None:
+    """A SPECIFIC external integration (email/calendar/spotify) with no
+    registered capability must STILL be refused and must NOT spawn — a generic
+    worker cannot fulfil it. Preserves the anti-hallucination contract."""
+    original = __import__("sys").modules.get("jarvis.core.capabilities")
+    try:
+        manager = _strict_manager_with_mock_registry()
+        for utterance in (
+            "schick eine Email an Sam",
+            "trag einen Termin in meinen Kalender ein",
+            "spiel Musik auf Spotify",
+        ):
+            assert manager._check_unsupported_intent(utterance) is not None, (
+                f"external integration {utterance!r} must stay unsupported"
+            )
+            assert not manager._should_force_spawn(utterance), (
+                f"external integration {utterance!r} must not spawn a worker"
+            )
+    finally:
+        if original is not None:
+            __import__("sys").modules["jarvis.core.capabilities"] = original
+        else:
+            __import__("sys").modules.pop("jarvis.core.capabilities", None)
+
+
+def test_coding_task_mentioning_integration_is_not_refused() -> None:
+    """A coding task that merely MENTIONS an integration name as a topic /
+    data-type (email validator, calendar parser, Spotify-like player) is generic
+    sub-agent work — NOT a real dispatch. It must spawn, never be refused. The
+    integration name alone is not enough; a real dispatch verb must be present
+    (code-review MAJOR, 2026-06-01)."""
+    original = __import__("sys").modules.get("jarvis.core.capabilities")
+    try:
+        manager = _strict_manager_with_mock_registry()
+        for utterance in (
+            "implementier eine Funktion die Email-Adressen validiert",
+            "baue einen Parser fuer Kalender-Dateien im ICS-Format",
+            "schreib Code der Spotify-Playlists aus einer JSON-Datei liest",
+        ):
+            assert manager._check_unsupported_intent(utterance) is None, (
+                f"coding task {utterance!r} must not be refused (mentions an "
+                "integration name only as data, not a dispatch target)"
+            )
+            assert manager._should_force_spawn(utterance), (
+                f"coding task {utterance!r} must spawn a sub-agent"
+            )
+    finally:
+        if original is not None:
+            __import__("sys").modules["jarvis.core.capabilities"] = original
+        else:
+            __import__("sys").modules.pop("jarvis.core.capabilities", None)
+
+
+def test_is_generic_subagent_work_false_on_empty_registry() -> None:
+    """An empty/unseeded registry must NOT let _is_generic_subagent_work spawn —
+    otherwise a boot before seed_registry() would spawn-storm (mirrors the
+    _check_unsupported_intent empty-registry guard)."""
+    original = __import__("sys").modules.get("jarvis.core.capabilities")
+    try:
+        manager = _strict_manager_with_mock_registry(populated=False)
+        assert not manager._is_generic_subagent_work("baue mir ein Skript"), (
+            "empty registry must not spawn — explicit trigger is the sole signal"
+        )
+    finally:
+        if original is not None:
+            __import__("sys").modules["jarvis.core.capabilities"] = original
+        else:
+            __import__("sys").modules.pop("jarvis.core.capabilities", None)
+
+
+def test_github_work_is_not_treated_as_external_integration() -> None:
+    """git/GitHub work is sub-agent-fulfillable (the worker has git + gh), so a
+    'commit and push' / 'open a PR' task must spawn, never be refused."""
+    original = __import__("sys").modules.get("jarvis.core.capabilities")
+    try:
+        manager = _strict_manager_with_mock_registry()
+        utterance = "committe die Aenderungen und mach einen GitHub Pull Request"
+        assert manager._check_unsupported_intent(utterance) is None
+        assert manager._should_force_spawn(utterance)
+    finally:
+        if original is not None:
+            __import__("sys").modules["jarvis.core.capabilities"] = original
+        else:
+            __import__("sys").modules.pop("jarvis.core.capabilities", None)
+
+
 class _FakeProfileForPrompt:
     """Minimal UserProfile stand-in: only render_for_prompt is exercised."""
 
@@ -1203,3 +1554,181 @@ def test_ack_brain_persona_en_forbids_action_promise_phrases(
     assert forbidden_phrase in PERSONA_PROMPT_EN, (
         f"PERSONA_PROMPT_EN must list forbidden action-promise phrase: {forbidden_phrase!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Chunk B (jarvis-contacts) — contact tool registration + routing discipline.
+#
+# Three new router-tier tools: contact-lookup (safe), contact-upsert (monitor),
+# call-contact (ask). All append-only on the shared seams (ROUTER_TOOLS,
+# pyproject entry-points, this test, ADR-0011). The PFLICHT routing tests prove
+# the BUG-class `project_bug_subagent_not_natively_recognized` does NOT bite:
+# "schreib eine Mail an Christoph" and "ruf Christoph an" must stay router-tier
+# (no false refuse, no contextless worker spawn).
+# ---------------------------------------------------------------------------
+
+
+def test_contact_tools_in_router_tools() -> None:
+    """The three contact tools must live in ROUTER_TOOLS — the loader filters
+    entry-points against this frozenset, so a missing entry silently drops the
+    tool from the router schema."""
+    from jarvis.brain.factory import ROUTER_TOOLS
+
+    assert "contact-lookup" in ROUTER_TOOLS
+    assert "contact-upsert" in ROUTER_TOOLS
+    assert "call-contact" in ROUTER_TOOLS
+
+
+def test_contact_tools_not_in_local_action_set() -> None:
+    """Contact tools are router-tier reads/writes/actions, never in the
+    deterministic local-action worker fast-path (D9 recursion guard,
+    AP-5/AP-14)."""
+    from jarvis.brain.factory import _load_local_action_tools
+
+    local_tools = _load_local_action_tools(
+        bus=EventBus(),
+        harness_manager=None,
+        config=JarvisConfig(),
+    )
+    for name in ("contact-lookup", "contact-upsert", "call-contact"):
+        assert name not in local_tools
+
+
+def test_factory_wires_contact_tools_into_router_set() -> None:
+    """End-to-end wiring: entry-point + ROUTER_TOOLS + factory construction
+    branch connect, with the contracted risk tiers. A missing entry-point
+    registration (pip install -e .) or construction branch would silently drop
+    the tool from the router schema."""
+    from jarvis.brain.factory import _load_tools_for_tier
+
+    tools = _load_tools_for_tier(
+        "router",
+        bus=EventBus(),
+        executor=None,
+        harness_manager=None,
+        user_profile=None,
+        people=None,
+        config=JarvisConfig(),
+    )
+
+    assert tools["contact-lookup"].name == "contact-lookup"
+    assert tools["contact-lookup"].risk_tier == "safe"
+    assert tools["contact-upsert"].name == "contact-upsert"
+    assert tools["contact-upsert"].risk_tier == "monitor"
+    assert tools["call-contact"].name == "call-contact"
+    assert tools["call-contact"].risk_tier == "ask"
+
+
+def test_capability_seed_registers_contact_capabilities() -> None:
+    """The contact tools must be registered as capabilities so the gate routes
+    a named-person action to them instead of refusing/spawning. resolve_intent
+    must map a call/mail/save-by-name utterance to the contact surface."""
+    from jarvis.core.capabilities import get_registry
+    from jarvis.core.capabilities_seed import seed_registry
+
+    reg = get_registry()
+    seed_registry(reg)
+
+    call_cap = reg.resolve_intent("ruf Christoph an")
+    assert call_cap is not None and call_cap.id == "tool.call-contact"
+
+    save_cap = reg.resolve_intent("merk dir Christophs Nummer ist 0151 12345678")
+    assert save_cap is not None and save_cap.id == "tool.contact-upsert"
+
+
+def test_contact_capabilities_do_not_resolve_external_hard_negatives() -> None:
+    """Adding contact capabilities must NOT make the canonical hard-negatives
+    resolve — they must stay UNSUPPORTED (resolve_intent None) so the
+    anti-hallucination contract (test_capability_coupling_e2e) is preserved."""
+    from jarvis.core.capabilities import get_registry
+    from jarvis.core.capabilities_seed import seed_registry
+
+    reg = get_registry()
+    seed_registry(reg)
+    for utterance in (
+        "Schick eine Email an sam@gmx.de mit dem Betreff Hallo",
+        "Trag einen Termin morgen 10 Uhr ein",
+        "Sende eine WhatsApp an Mama",
+        "Bestelle eine Pizza",
+        "Poste auf X dass ich heute frei habe",
+    ):
+        assert reg.resolve_intent(utterance) is None, (
+            f"contact capabilities must not resolve hard-negative {utterance!r}"
+        )
+
+
+# --- PFLICHT-Tests: mail-by-name + call-by-name stay router-tier ------------
+#
+# Built against the REAL seeded CapabilityRegistry (the conftest snapshot/
+# restores it). The gate (`_check_unsupported_intent`) must NOT refuse and the
+# force-spawn heuristic (`_should_force_spawn`) must NOT spawn — the router
+# brain then reaches contact-lookup + gmail / call-contact natively.
+
+
+def _strict_manager_with_seeded_registry() -> BrainManager:
+    """A strict-mode manager (production default) over the REAL seeded
+    registry — exactly the production gate path for these utterances."""
+    from jarvis.core.capabilities import get_registry
+    from jarvis.core.capabilities_seed import seed_registry
+
+    seed_registry(get_registry())
+    manager, _executor = _manager_with_spawn(force_spawn_mode="strict")
+    return manager
+
+
+def test_mail_by_name_stays_router_tier() -> None:
+    """'schreib eine Mail an Christoph' must NOT be refused and must NOT spawn a
+    contextless worker — it stays router-tier so the brain calls contact-lookup
+    then gmail. BUG-class project_bug_subagent_not_natively_recognized."""
+    manager = _strict_manager_with_seeded_registry()
+    utterance = "schreib eine Mail an Christoph"
+    assert manager._check_unsupported_intent(utterance) is None, (
+        "mail-by-name must not be refused as unsupported"
+    )
+    assert manager._should_force_spawn(utterance) is False, (
+        "mail-by-name must not force-spawn a contextless worker"
+    )
+
+
+def test_call_by_name_stays_router_tier() -> None:
+    """'ruf Christoph an' must NOT be refused and must NOT spawn — it stays
+    router-tier so the brain calls call-contact. Without the call-contact
+    capability this utterance force-spawns a generic worker (the live bug)."""
+    manager = _strict_manager_with_seeded_registry()
+    utterance = "ruf Christoph an"
+    assert manager._check_unsupported_intent(utterance) is None, (
+        "call-by-name must not be refused as unsupported"
+    )
+    assert manager._should_force_spawn(utterance) is False, (
+        "call-by-name must not force-spawn a contextless worker"
+    )
+
+
+def test_voice_save_contact_stays_router_tier() -> None:
+    """'merk dir, Christophs Nummer ist …' must stay router-tier so the brain
+    calls contact-upsert — never refused, never spawned."""
+    manager = _strict_manager_with_seeded_registry()
+    utterance = "merk dir, Christophs Nummer ist 0151 12345678"
+    assert manager._check_unsupported_intent(utterance) is None
+    assert manager._should_force_spawn(utterance) is False
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "ruf Christoph an",
+        "ruf Laura an",
+        "call Christoph",
+    ],
+)
+def test_call_by_name_resolves_to_call_contact_capability(utterance: str) -> None:
+    """The call-by-name surface resolves to the call-contact capability (not a
+    generic worker), which is exactly what flips _is_generic_subagent_work from
+    spawn to no-spawn."""
+    from jarvis.core.capabilities import get_registry
+    from jarvis.core.capabilities_seed import seed_registry
+
+    reg = get_registry()
+    seed_registry(reg)
+    cap = reg.resolve_intent(utterance)
+    assert cap is not None and cap.id == "tool.call-contact"

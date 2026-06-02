@@ -107,7 +107,7 @@ class TestPersonSlug:
         assert person_slug("Weißbier") == "weissbier"
 
     def test_case_insensitive_result(self) -> None:
-        assert person_slug("RUBEN") == "alex"
+        assert person_slug("ALEX") == "alex"
         assert person_slug("alex") == "alex"
 
 

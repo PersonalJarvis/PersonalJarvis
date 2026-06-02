@@ -33,17 +33,26 @@ def build_connect_stream_twiml(
     secret: str,
     call_sid: str = "",
     language_code: str = "de-DE",
+    direction: str = "",
+    opening: str = "",
 ) -> str:
     """Return TwiML opening a bidirectional Media Stream to ``wss_url``.
 
     Custom parameters (secret, call_sid, language) ride along in the ``start``
     event's ``customParameters`` so the WS handler can authenticate and
     configure the call without a separate lookup.
+
+    For an *outbound* call (Chunk C) two extra parameters ride along:
+    ``direction="outbound"`` and ``opening`` (the line Jarvis speaks first). Both
+    default to empty and are filtered out below, so the inbound TwiML is
+    byte-identical to before — outbound is purely additive.
     """
     parameters = {
         "secret": secret,
         "call_sid": call_sid,
         "language": language_code,
+        "direction": direction,
+        "opening": opening,
     }
     try:
         from twilio.twiml.voice_response import (  # type: ignore[import-untyped]

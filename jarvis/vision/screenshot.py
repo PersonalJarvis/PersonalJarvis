@@ -47,7 +47,6 @@ _DEFAULT_BLOB_DIR = Path("data") / "flight_recorder" / "blobs"
 
 from jarvis.core.win32_dpi import ensure_dpi_awareness as _ensure_dpi_awareness  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # ScreenshotSource
 # ---------------------------------------------------------------------------
@@ -151,6 +150,78 @@ def select_capture_monitor(
         return primary
 
 
+# ---------------------------------------------------------------------------
+# Region-of-interest crop around a screen point (AI Pointer step 4).
+#
+# A tight crop centered on the cursor — the scoped fallback the AI Pointer uses
+# when the accessibility element under the cursor carries no label (a raster
+# graphic). It is never a full-screen dump; the radius bounds the token cost.
+# ---------------------------------------------------------------------------
+
+def region_bbox_around(
+    x: int,
+    y: int,
+    radius: int,
+    *,
+    virtual_bounds: tuple[int, int, int, int] | None = None,
+) -> dict[str, int]:
+    """An mss-style bbox dict centered on ``(x, y)`` with side ``2 * radius``.
+
+    ``(x, y)`` and the returned coords are physical-pixel virtual-desktop
+    coordinates (negative on a secondary monitor left of the primary). When
+    ``virtual_bounds = (left, top, width, height)`` is given the crop is clamped
+    so it never extends past the desktop.
+    """
+    r = max(1, int(radius))
+    side = r * 2
+    left = int(x) - r
+    top = int(y) - r
+    width = side
+    height = side
+    if virtual_bounds is not None:
+        vl, vt, vw, vh = (int(v) for v in virtual_bounds)
+        left = max(vl, min(left, vl + vw - 1))
+        top = max(vt, min(top, vt + vh - 1))
+        width = max(1, min(width, vl + vw - left))
+        height = max(1, min(height, vt + vh - top))
+    return {"left": left, "top": top, "width": width, "height": height}
+
+
+def _mss_grab(bbox: dict[str, int]) -> tuple[tuple[int, int], bytes]:
+    """Default grabber: capture an arbitrary screen rectangle via mss."""
+    import mss  # type: ignore[import-not-found]  # noqa: PLC0415
+
+    with mss.mss() as sct:
+        raw = sct.grab(bbox)
+    return (tuple(raw.size), raw.rgb)
+
+
+def capture_region(
+    bbox: dict[str, int],
+    *,
+    image_format: Literal["jpeg", "png"] = "jpeg",
+    jpeg_quality: int = 85,
+    grab=None,
+) -> bytes:
+    """Capture the screen rectangle ``bbox`` and return encoded image bytes.
+
+    ``grab`` is injectable for tests: a callable ``(bbox) -> ((w, h), rgb_bytes)``.
+    Defaults to :func:`_mss_grab`. JPEG by default (token-cheap; the model bills
+    by pixel area, not bytes).
+    """
+    from PIL import Image  # noqa: PLC0415
+
+    grabber = grab or _mss_grab
+    size, rgb = grabber(bbox)
+    img = Image.frombytes("RGB", size, rgb)
+    buf = io.BytesIO()
+    if image_format == "jpeg":
+        img.save(buf, format="JPEG", quality=jpeg_quality, optimize=False)
+    else:
+        img.save(buf, format="PNG", optimize=False, compress_level=1)
+    return buf.getvalue()
+
+
 class ScreenshotSource:
     """Nimmt Screenshots vom richtigen Monitor via mss auf.
 
@@ -189,6 +260,11 @@ class ScreenshotSource:
         self._jpeg_quality = jpeg_quality
         self._monitor_strategy: MonitorStrategy = monitor_strategy
         self._closed = False
+        # State-change flag for BitBlt / GDI transient errors (BUG-BitBlt):
+        # True while the last grab failed; cleared on the next successful grab.
+        # Used to emit exactly ONE warning log per error episode instead of
+        # spamming the log every refresh cycle.
+        self._bitblt_error_active: bool = False
 
     @property
     def mime_type(self) -> str:
@@ -205,12 +281,18 @@ class ScreenshotSource:
         *,
         cancel_token: CancelToken | None = None,
         window_title_filter: str | None = None,  # noqa: ARG002 — fuer Protocol-Signatur
-    ) -> Observation:
+    ) -> Observation | None:
         """Nimmt einen Primary-Monitor-Screenshot auf.
 
         `window_title_filter` wird hier ignoriert — ein reiner Screenshot
         kann nicht pro-Fenster gefiltert werden. Der Parameter bleibt aber
         in der Signatur wegen dem Protocol.
+
+        Returns None when the GDI/BitBlt grab fails transiently (display
+        asleep, locked workstation, resolution change). The caller (engine /
+        context_provider) must treat None as "skip this frame and reuse the
+        last good observation". This avoids spamming the log and keeps the
+        refresh loop alive during monitor power-save / lock-screen events.
         """
         if self._closed:
             raise RuntimeError("ScreenshotSource ist geschlossen")
@@ -219,6 +301,12 @@ class ScreenshotSource:
 
         # Screenshot synchron — Thread-Pool wegen blockierender GDI-Calls.
         image_bytes = await asyncio.to_thread(self._capture_image)
+
+        # _capture_image returns None on a transient BitBlt / GDI error.
+        # Propagate None upward so the engine/context_provider can skip the
+        # frame gracefully without a traceback.
+        if image_bytes is None:
+            return None
 
         if cancel_token is not None and cancel_token.is_cancelled():
             raise RuntimeError(f"cancelled: {cancel_token.reason}")
@@ -258,13 +346,19 @@ class ScreenshotSource:
 
     # ---- Internals ---------------------------------------------------------
 
-    def _capture_image(self) -> bytes:
+    def _capture_image(self) -> bytes | None:
         """Blocking: nimmt Primary-Monitor auf und gibt Bild-Bytes zurueck.
 
         Format ist `self._image_format` — JPEG q85 default (8x kleiner als PNG
         bei identischen Token-Kosten, da Claude/GPT/Gemini in Pixel-Area
         rechnen, nicht in Bytes). PNG nur fuer Tests/Screenshots wo Pixel-
         perfekte Reproduktion gebraucht wird.
+
+        Returns None on transient GDI/BitBlt failure (display asleep, workstation
+        locked, resolution change, disconnected monitor). The caller must treat
+        None as "skip this frame" — the loop keeps running and recovers on the
+        next successful grab.  Only one WARNING is logged per error episode
+        (state-change logging: silent while the error persists, INFO on recovery).
         """
         # Late-Import, damit das Modul auch ohne mss importierbar bleibt
         # (Contract-Tests laufen so, selbst wenn die Dep fehlt).
@@ -279,9 +373,45 @@ class ScreenshotSource:
         except ImportError as exc:
             raise RuntimeError("pillow ist nicht installiert") from exc
 
-        with mss.mss() as sct:
-            target = self._select_capture_monitor(sct.monitors)
-            raw = sct.grab(target)
+        # Lazy import of the exception class — same pattern as the mss import
+        # above; keeps this module importable without mss installed.
+        try:
+            from mss.exception import ScreenShotError  # noqa: PLC0415
+        except ImportError:
+            # mss not installed — ImportError already raised above, unreachable.
+            ScreenShotError = Exception  # type: ignore[assignment,misc]
+
+        monitor_id: str = "unknown"
+        try:
+            with mss.mss() as sct:
+                target = self._select_capture_monitor(sct.monitors)
+                # Keep a human-readable monitor identity for the warning message.
+                monitor_id = (
+                    f"left={target.get('left', '?')},top={target.get('top', '?')},"
+                    f"{target.get('width', '?')}x{target.get('height', '?')}"
+                )
+                raw = sct.grab(target)
+
+        except ScreenShotError as exc:
+            # Transient Windows GDI failure (BitBlt, display asleep, locked screen,
+            # resolution change).  Log ONCE when the error state begins; stay silent
+            # on subsequent failures in the same uninterrupted error run.
+            if not self._bitblt_error_active:
+                self._bitblt_error_active = True
+                logger.warning(
+                    "ScreenshotSource: BitBlt failed for monitor [%s] — "
+                    "skipping frame (will retry; logged once per error episode): %s",
+                    monitor_id,
+                    exc,
+                )
+            return None
+
+        # --- Successful grab: clear the error-state flag and log recovery. ---
+        if self._bitblt_error_active:
+            self._bitblt_error_active = False
+            logger.info(
+                "ScreenshotSource: BitBlt recovered for monitor [%s].", monitor_id
+            )
 
         img = Image.frombytes("RGB", raw.size, raw.rgb)
         buf = io.BytesIO()

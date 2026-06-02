@@ -243,12 +243,16 @@ class ToolUseLoop:
         *,
         system_prompt: str | None = None,
         budget: IterationBudget | None = None,
+        max_tokens: int = 8192,
     ) -> None:
         self._brain = brain
         self._tools = tools
         self._executor = executor
         self._system_prompt = system_prompt
         self._budget = budget or IterationBudget()
+        # Per-response output ceiling forwarded onto every BrainRequest this
+        # loop issues. Safety ceiling, not a target (see BrainConfig.max_tokens).
+        self._max_tokens = max_tokens
 
     def _tool_schemas(self) -> list[dict[str, Any]]:
         """Schemas in Anthropic-compatible format (providers normalise)."""
@@ -270,6 +274,7 @@ class ToolUseLoop:
         intent_level: str | None = None,
         text_consumer: Callable[[str], None] | None = None,
         ack_emitter: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
+        on_progress: Callable[[], None] | None = None,
     ) -> StreamingAggregate:
         """Executes the complete loop and returns the final aggregate.
 
@@ -282,6 +287,16 @@ class ToolUseLoop:
         the loop behaves identically to the previous implementation.
         Pre-tool-use texts are also delivered; the persona prompt prohibits
         filler openers anyway, so this is non-critical.
+
+        ``on_progress`` (stall-timeout signal, live bug 2026-06-01): called
+        synchronously at every "the brain is actively working" boundary — once
+        per completed model round and once per executed tool. A vision/tool turn
+        streams little or no text, so the speech pipeline cannot tell "still
+        working" from "stalled" by watching text chunks alone; these pings let
+        its *no-progress* deadline reset across the long silent gaps (model
+        thinking + tool execution) instead of guillotining a working turn at a
+        hard wall-clock cap. ``None`` (default) is a no-op. Callback exceptions
+        are swallowed so a buggy consumer can never break tool execution.
 
         ``ack_emitter`` (perceived-latency pattern): if provided, awaited
         exactly once on the first iteration that has tool calls scheduled,
@@ -298,11 +313,21 @@ class ToolUseLoop:
         final_agg = StreamingAggregate()
         ack_attempted = False
 
+        def _progress() -> None:
+            # Stall-timeout heartbeat (see ``on_progress`` in the docstring).
+            # Swallow everything: a progress consumer must never break the loop.
+            if on_progress is not None:
+                try:
+                    on_progress()
+                except Exception:  # noqa: BLE001
+                    log.debug("on_progress callback raised (ignored)", exc_info=True)
+
         while True:
             req = BrainRequest(
                 messages=tuple(current_messages),
                 tools=tuple(tools_payload),
                 system=self._system_prompt,
+                max_tokens=self._max_tokens,
                 stream=True,
             )
             stream = self._brain.complete(req)
@@ -310,6 +335,10 @@ class ToolUseLoop:
                 agg = await aggregate_with_consumer(stream, text_consumer)
             else:
                 agg = await aggregate(stream)
+            # A model round finished — the brain is alive and working. Reset the
+            # pipeline's no-progress deadline before the (possibly long) tool
+            # execution + next round so a slow-but-working turn is not cut off.
+            _progress()
 
             # Accumulate final text
             if agg.text:
@@ -554,6 +583,10 @@ class ToolUseLoop:
                     tool_call_id=call_id,
                     name=tool_name,
                 ))
+                # A tool just finished — another active-work boundary. Reset the
+                # no-progress deadline so a slow tool (a vision capture, an MCP
+                # round-trip) does not count as a stall.
+                _progress()
 
                 # Wave 2 (vision-on-demand): if the tool returned image
                 # artifact(s), feed them back as a user-role message so a

@@ -143,3 +143,14 @@ def test_factory_loopback_respects_fixed_port() -> None:
     srv = make_callback_server("st", timeout_seconds=10, fixed_port=3118)
     assert isinstance(srv, OAuthCallbackServer)
     assert srv._port == 3118  # noqa: SLF001
+
+
+def test_loopback_empty_callback_path_omits_path_from_redirect_uri() -> None:
+    srv = OAuthCallbackServer(expected_state="st", callback_path="", port=3120)
+    assert srv.redirect_uri == "http://127.0.0.1:3120"
+
+
+def test_loopback_empty_callback_path_registers_root_route() -> None:
+    srv = OAuthCallbackServer(expected_state="st", callback_path="", port=3120)
+    app = srv._build_app()  # noqa: SLF001
+    assert any(getattr(route, "path", None) == "/" for route in app.routes)

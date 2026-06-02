@@ -102,7 +102,10 @@ async def test_skips_token_without_refresh() -> None:
 
 
 @pytest.mark.asyncio
-async def test_revoked_refresh_drops_entry() -> None:
+async def test_revoked_refresh_marks_needs_reauth_and_keeps_token() -> None:
+    # A revoked refresh must NOT delete the entry — the plugin has to stay
+    # visible with a "Reconnect" prompt. The only user-visible delete path is
+    # an explicit DELETE. (This replaces the old drop-on-revoke behaviour.)
     store = _store()
     store.save("hubspot", _tokens(60))
     handler = _FakeHandler("hubspot", raise_exc=RuntimeError("revoked"))
@@ -110,7 +113,23 @@ async def test_revoked_refresh_drops_entry() -> None:
     outcomes = await refresh_due_tokens(["hubspot"], store, lambda pid: handler)
 
     assert outcomes == {"hubspot": REVOKED}
-    assert store.load("hubspot") is None
+    kept = store.load("hubspot")
+    assert kept is not None, "revoked token must NOT be deleted"
+    assert kept.needs_reauth is True
+
+
+@pytest.mark.asyncio
+async def test_successful_refresh_clears_stale_needs_reauth() -> None:
+    store = _store()
+    store.save("notion", Tokens(access="a0", refresh="r0", needs_reauth=True,
+                                expires_at=datetime.now(UTC) + timedelta(seconds=60)))
+    handler = _FakeHandler("notion", new_tokens=Tokens(access="a1", refresh="r1"))
+
+    outcomes = await refresh_due_tokens(["notion"], store, lambda pid: handler)
+
+    assert outcomes == {"notion": REFRESHED}
+    healed = store.load("notion")
+    assert healed.access == "a1" and healed.needs_reauth is False
 
 
 @pytest.mark.asyncio

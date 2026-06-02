@@ -248,3 +248,107 @@ def test_voice_webhook_skips_signature_with_test_flag(app, secret_store):
         r = client.post("/api/telephony/voice", data={"CallSid": "CA1"})
     assert r.status_code == 200
     assert "<Connect>" in r.text
+
+
+# ---------------------------------------------------------------------------
+# Chunk C — outbound calling (POST /outbound + the /voice outbound branch)
+# ---------------------------------------------------------------------------
+
+
+def test_outbound_route_places_call(app, secret_store, fake_cfg, monkeypatch):
+    captured: dict = {}
+
+    def fake_place_call(**kwargs):
+        captured.update(kwargs)
+        return "CA_OUT_42"
+
+    monkeypatch.setattr("jarvis.telephony.outbound.place_call", fake_place_call)
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/telephony/outbound",
+            json={"to": "+4915112345678", "opening": "Hallo Christoph."},
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["call_sid"] == "CA_OUT_42"
+    # The route resolved config + secret and dialed a raw number.
+    assert captured["to"] == "+4915112345678"
+    assert captured["opening"] == "Hallo Christoph."
+    assert captured["from_number"] == "+49301234567"
+    assert captured["public_base_url"] == "https://jarvis.example.com"
+    assert captured["account_sid"] == "AC0123456789abcdef0123456789abcdef"
+    assert captured["auth_token"] == "supersecrettoken"
+
+
+def test_outbound_route_rejects_non_e164(app, secret_store):
+    with TestClient(app) as client:
+        r = client.post("/api/telephony/outbound", json={"to": "0151 123"})
+    assert r.status_code == 422
+    assert "E.164" in r.json()["error"]
+
+
+def test_outbound_route_409_when_disabled(app, secret_store, fake_cfg):
+    fake_cfg.integrations.twilio.enabled = False
+    with TestClient(app) as client:
+        r = client.post("/api/telephony/outbound", json={"to": "+4915112345678"})
+    assert r.status_code == 409
+    assert "error" in r.json()
+
+
+def test_outbound_route_409_when_no_token(app, monkeypatch):
+    monkeypatch.setattr(routes, "get_secret", lambda *a, **k: None)
+    with TestClient(app) as client:
+        r = client.post("/api/telephony/outbound", json={"to": "+4915112345678"})
+    assert r.status_code == 409
+
+
+def test_outbound_route_graceful_when_twilio_missing(app, secret_store, monkeypatch):
+    monkeypatch.setattr(routes, "is_available", lambda: False)
+    with TestClient(app) as client:
+        r = client.post("/api/telephony/outbound", json={"to": "+4915112345678"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert "twilio" in body["error"].lower()
+
+
+def test_outbound_route_surfaces_provision_error(app, secret_store, monkeypatch):
+    from jarvis.telephony.provisioning import TelephonyProvisionError
+
+    def boom(**kwargs):
+        raise TelephonyProvisionError("Number purchase failed: nope")
+
+    monkeypatch.setattr("jarvis.telephony.outbound.place_call", boom)
+    with TestClient(app) as client:
+        r = client.post("/api/telephony/outbound", json={"to": "+4915112345678", "opening": "Hi"})
+    assert r.status_code == 409
+    assert r.json()["ok"] is False
+    assert "nope" in r.json()["error"]
+
+
+def test_voice_webhook_outbound_branch_returns_opening(app, secret_store, fake_cfg):
+    from twilio.request_validator import RequestValidator
+
+    query = "opening=Servus"
+    url = f"https://jarvis.example.com/api/telephony/voice?{query}"
+    params = {
+        "CallSid": "CAOUT9",
+        "From": "+49301234567",
+        "To": "+4915112345678",
+        "Direction": "outbound-api",
+    }
+    sig = RequestValidator(secret_store["twilio_auth_token"]).compute_signature(url, params)
+    with TestClient(app) as client:
+        r = client.post(
+            f"/api/telephony/voice?{query}",
+            data=params,
+            headers={"X-Twilio-Signature": sig},
+        )
+    assert r.status_code == 200
+    assert "<Connect>" in r.text
+    assert 'name="direction" value="outbound"' in r.text
+    assert "Servus" in r.text
+    assert "wss://jarvis.example.com/api/telephony/media" in r.text
+    # A per-call secret was minted and registered for the outbound call too.
+    assert app.state.telephony_manager.peek_pending("CAOUT9") is not None

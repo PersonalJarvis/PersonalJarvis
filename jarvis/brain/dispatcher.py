@@ -35,6 +35,7 @@ class BrainDispatcher:
         system_prompt: str | None = None,
         max_turns: int = 15,
         max_tokens_total: int = 50_000,
+        max_tokens: int = 8192,
     ) -> None:
         self._brain = brain
         self._tools = tools or {}
@@ -42,6 +43,11 @@ class BrainDispatcher:
         self._system_prompt = system_prompt
         self._max_turns = max_turns
         self._max_tokens_total = max_tokens_total
+        # Per-response output ceiling (BrainConfig.max_tokens). Distinct from
+        # ``max_tokens_total`` — that is the loop-wide budget across all
+        # tool-use turns; this is the cap on a single provider response so a
+        # long reply is never read aloud truncated mid-sentence.
+        self._max_tokens = max_tokens
 
     @property
     def brain(self) -> Brain:
@@ -56,6 +62,7 @@ class BrainDispatcher:
             system_prompt=self._system_prompt,
             max_turns=self._max_turns,
             max_tokens_total=self._max_tokens_total,
+            max_tokens=self._max_tokens,
         )
 
     def set_tools(self, tools: dict[str, Tool]) -> None:
@@ -74,6 +81,7 @@ class BrainDispatcher:
         intent_level: str | None = None,
         text_consumer: Callable[[str], None] | None = None,
         ack_emitter: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
+        on_progress: Callable[[], None] | None = None,
         turn_context: str = "",
     ) -> StreamingAggregate:
         """Execute a complete turn (including the tool-use loop if tools are configured).
@@ -115,6 +123,7 @@ class BrainDispatcher:
                     max_turns=self._max_turns,
                     max_tokens_total=self._max_tokens_total,
                 ),
+                max_tokens=self._max_tokens,
             )
             return await loop.run(
                 messages,
@@ -123,12 +132,14 @@ class BrainDispatcher:
                 intent_level=intent_level,
                 text_consumer=text_consumer,
                 ack_emitter=ack_emitter,
+                on_progress=on_progress,
             )
 
         # Simple mode: no tool use, streaming only
         req = BrainRequest(
             messages=tuple(messages),
             system=self._system_prompt,
+            max_tokens=self._max_tokens,
             stream=True,
         )
         if text_consumer is not None:
@@ -150,6 +161,7 @@ class BrainDispatcher:
         req = BrainRequest(
             messages=tuple(messages),
             system=self._system_prompt,
+            max_tokens=self._max_tokens,
             stream=True,
         )
         async for chunk in tee_text(self._brain.complete(req)):

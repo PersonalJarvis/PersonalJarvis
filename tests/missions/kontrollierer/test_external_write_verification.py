@@ -2,7 +2,7 @@
 
 Root cause of mission_019e7abd (2026-05-30, live voice failure): the worker
 wrote the requested HTML file to an absolute path OUTSIDE its git worktree
-(`C:\\Users\\Administrator\\Desktop\\M\\hello.html`, exactly as the task
+(`<USER_HOME>\\Desktop\\M\\hello.html`, exactly as the task
 demanded). `_capture_diff` is worktree-scoped, so the captured diff was empty;
 the Critic's GROUND-TRUTH-RULE then deterministically failed the mission 3×
 with `critic_loop_exhausted` even though the file existed and was correct.

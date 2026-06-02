@@ -169,18 +169,39 @@ def set_assistant_name(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _patch_table(path, "persona", "name", name)
 
 
-def set_ptt_hotkey(hotkey: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
-    """Persist the push-to-talk hotkey to ``[trigger] hotkey`` in jarvis.toml.
+# Voice-keybind action vocabulary. Shared with the keybinds API
+# (jarvis/ui/web/settings_routes.py) and the TS type KeybindAction in the
+# frontend (jarvis/ui/web/frontend/src/hooks/useHotkey.ts). Keep the three in
+# sync. The mapped value is BOTH the jarvis.toml key under [trigger] AND the
+# TriggerConfig field name (they are intentionally identical).
+KEYBIND_ACTIONS = ("call", "hangup", "ptt")
+KEYBIND_TOML_KEY = {
+    "call": "hotkey_call",
+    "hangup": "hotkey_hangup",
+    "ptt": "hotkey",
+}
 
-    Toml-only by design: ``trigger.hotkey`` is NOT tracked in
-    ``config-soll.json`` (only ``trigger.single_turn_mode`` is), so the
-    drift-guard never reverts it — a plain atomic write suffices and the
-    3-layer rule (which exists only to stop the guard from rolling a UI switch
-    back, BUG-010) does not apply. Takes effect on the next SpeechPipeline
-    bootstrap (a Jarvis restart): the hotkey bindings are armed once at pipeline
-    start via ``TriggerConfig.resolve_hotkeys``.
+
+def set_keybind(action: str, hotkey: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist a voice keybind (call / hangup / ptt) to ``[trigger]`` in jarvis.toml.
+
+    Toml-only by design (same rationale as the other [trigger] writers — these
+    keys are NOT tracked in config-soll.json, so the drift-guard never reverts
+    them; a plain atomic write suffices and the BUG-010 3-layer rule does not
+    apply). Takes effect on the next SpeechPipeline bootstrap (a Jarvis restart):
+    bindings are armed once at pipeline start via ``TriggerConfig.resolve_hotkeys``
+    plus the ``hotkey_hangup`` read at the call sites.
     """
-    _patch_table(path, "trigger", "hotkey", hotkey)
+    try:
+        key = KEYBIND_TOML_KEY[action]
+    except KeyError:
+        raise ValueError(f"unknown keybind action: {action!r}") from None
+    _patch_table(path, "trigger", key, hotkey)
+
+
+def set_ptt_hotkey(hotkey: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Backward-compatible alias for ``set_keybind("ptt", ...)``."""
+    set_keybind("ptt", hotkey, path=path)
 
 
 def set_reply_language(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -248,6 +269,151 @@ def set_autostart(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     next boot by ``reconcile_autostart``).
     """
     _patch_table(path, "autostart", "enabled", bool(enabled))
+
+
+def set_overlay_style(style: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist the on-screen overlay style to ``[ui] orb_style`` in jarvis.toml.
+
+    ``style`` is one of ``"whisper_bar"`` / ``"mascot"`` / ``"none"``. TOML-only
+    by design: ``ui.orb_style`` is NOT tracked in ``config-soll.json``, so the
+    drift-guard never reverts it (same rationale as :func:`set_autostart`). The
+    Settings route applies the change live; this persists the boot default.
+    """
+    _patch_table(path, "ui", "orb_style", style)
+
+
+def set_bar_persistent(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[ui] bar_persistent`` (the 'show bar at all times' toggle).
+
+    TOML-only (not drift-guarded); the Taskbar route applies it live.
+    """
+    _patch_table(path, "ui", "bar_persistent", bool(enabled))
+
+
+def set_mute_music(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[ducking] enabled`` (the 'mute music while dictating' toggle).
+
+    TOML-only (not drift-guarded); the Taskbar route applies it live.
+    """
+    _patch_table(path, "ducking", "enabled", bool(enabled))
+
+
+def set_telegram_enabled(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist the Telegram channel toggle to ``[integrations.telegram] enabled``.
+
+    Written when the user connects/disconnects Telegram in the Plugin
+    Marketplace: the bot token itself lives in the Credential Manager
+    (``telegram_bot_token``); this flag tells the channel bootstrap to start it.
+
+    ``[integrations.telegram]`` is a NESTED table, so ``_patch_table`` (single
+    level) does not fit — we walk/create the two levels here. Toml-only by
+    design: ``integrations.telegram.enabled`` is not tracked in
+    ``config-soll.json``, so the drift-guard never reverts it.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"Config file missing: {path}")
+
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+        integrations = doc.get("integrations")
+        if integrations is None:
+            integrations = tomlkit.table()
+            doc["integrations"] = integrations
+        telegram = integrations.get("telegram")
+        if telegram is None:
+            telegram = tomlkit.table()
+            integrations["telegram"] = telegram
+        telegram["enabled"] = bool(enabled)
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
+
+
+def add_telegram_allowed_user_id(
+    user_id: int, *, path: Path = DEFAULT_CONFIG_FILE
+) -> None:
+    """Persist a Telegram user id under ``[integrations.telegram]``.
+
+    Used by first-private-message pairing. The token remains a secret; the
+    numeric Telegram user id is not secret and belongs in the operational config
+    so the channel keeps working after restart. Idempotent and comment-preserving
+    like :func:`set_telegram_enabled`.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"Config file missing: {path}")
+
+    uid = int(user_id)
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+        integrations = doc.get("integrations")
+        if integrations is None:
+            integrations = tomlkit.table()
+            doc["integrations"] = integrations
+        telegram = integrations.get("telegram")
+        if telegram is None:
+            telegram = tomlkit.table()
+            integrations["telegram"] = telegram
+
+        current = telegram.get("allowed_user_ids")
+        values = [int(v) for v in current] if current is not None else []
+        if uid not in values:
+            values.append(uid)
+            telegram["allowed_user_ids"] = values
+
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
+
+
+def add_discord_allowed_user_id(
+    user_id: int, *, path: Path = DEFAULT_CONFIG_FILE
+) -> None:
+    """Persist a Discord user id under ``[integrations.discord]``.
+
+    Used by first-direct-message pairing. The token remains a secret; the
+    numeric Discord user id is not secret and belongs in the operational config
+    so the channel keeps working after restart. Idempotent and comment-preserving
+    like :func:`add_telegram_allowed_user_id`.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"Config file missing: {path}")
+
+    uid = int(user_id)
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+        integrations = doc.get("integrations")
+        if integrations is None:
+            integrations = tomlkit.table()
+            doc["integrations"] = integrations
+        discord = integrations.get("discord")
+        if discord is None:
+            discord = tomlkit.table()
+            integrations["discord"] = discord
+
+        current = discord.get("allowed_user_ids")
+        values = [int(v) for v in current] if current is not None else []
+        if uid not in values:
+            values.append(uid)
+            discord["allowed_user_ids"] = values
+
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
 
 
 def set_brain_provider_defaults(

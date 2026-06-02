@@ -1,81 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
 /**
- * Current push-to-talk hotkey config from GET /api/settings/ptt-hotkey.
- * Mirrors the backend response in jarvis/ui/web/settings_routes.py.
- */
-export interface HotkeyConfig {
-  hotkey: string;
-  push_to_talk: boolean;
-  default: string;
-  suggestions: string[];
-}
-
-/** Result of a successful PUT /api/settings/ptt-hotkey. */
-export interface HotkeySaveResult {
-  ok: boolean;
-  hotkey: string;
-  persisted: boolean;
-  restart_required: boolean;
-}
-
-/**
- * Loads /api/settings/ptt-hotkey and exposes saveHotkey() that PUTs a new
- * combo and returns the result. Mirrors useWakeWord's fetch/error/loading
- * shape. A failed save (e.g. an unsafe combo rejected by the backend
- * validator) throws with the backend's reason so the UI can surface it. After
- * a successful save it dispatches 'jarvis:ptt-hotkey-changed'.
- */
-export function useHotkey() {
-  const [config, setConfig] = useState<HotkeyConfig | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const refetch = useCallback(async () => {
-    setError(null);
-    try {
-      const res = await fetch("/api/settings/ptt-hotkey");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data: HotkeyConfig = await res.json();
-      setConfig(data);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void refetch();
-    const onChanged = () => void refetch();
-    window.addEventListener("jarvis:ptt-hotkey-changed", onChanged);
-    return () => {
-      window.removeEventListener("jarvis:ptt-hotkey-changed", onChanged);
-    };
-  }, [refetch]);
-
-  const saveHotkey = useCallback(
-    async (hotkey: string): Promise<HotkeySaveResult> => {
-      const res = await fetch("/api/settings/ptt-hotkey", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hotkey, persist: true }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(body.detail ?? `HTTP ${res.status}`);
-      }
-      const result = body as HotkeySaveResult;
-      window.dispatchEvent(new CustomEvent("jarvis:ptt-hotkey-changed"));
-      return result;
-    },
-    [],
-  );
-
-  return { config, loading, error, refetch, saveHotkey };
-}
-
-/**
  * Convert a browser KeyboardEvent into the jarvis hotkey-combo string
  * (e.g. "ctrl+right_alt+j"). Modifiers come from event.code so left/right
  * Alt is distinguished; the main key is the first non-modifier code.
@@ -134,4 +59,79 @@ export function eventToCombo(e: {
   else return null; // unsupported key (arrows, punctuation, etc.)
 
   return [...mods, key].join("+");
+}
+
+export type KeybindAction = "call" | "hangup" | "ptt";
+
+/** Response of GET /api/settings/keybinds. */
+export interface KeybindsConfig {
+  keybinds: Record<KeybindAction, string>;
+  defaults: Record<KeybindAction, string>;
+  push_to_talk: boolean;
+  suggestions: string[];
+  restart_required: boolean;
+}
+
+/** Result of a successful PUT /api/settings/keybinds. */
+export interface KeybindSaveResult {
+  ok: boolean;
+  action: KeybindAction;
+  hotkey: string;
+  persisted: boolean;
+  restart_required: boolean;
+}
+
+/**
+ * Loads /api/settings/keybinds and exposes saveKeybind(action, combo). Mirrors
+ * useHotkey's fetch/error/loading shape but covers all three voice keybinds
+ * (Call / Hangup / Talk-PTT). A rejected save (unsafe combo or a collision with
+ * another action) throws with the backend's reason. After a successful save it
+ * dispatches 'jarvis:keybinds-changed'.
+ */
+export function useKeybinds() {
+  const [config, setConfig] = useState<KeybindsConfig | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const refetch = useCallback(async () => {
+    setError(null);
+    try {
+      const res = await fetch("/api/settings/keybinds");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data: KeybindsConfig = await res.json();
+      setConfig(data);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refetch();
+    const onChanged = () => void refetch();
+    window.addEventListener("jarvis:keybinds-changed", onChanged);
+    return () => {
+      window.removeEventListener("jarvis:keybinds-changed", onChanged);
+    };
+  }, [refetch]);
+
+  const saveKeybind = useCallback(
+    async (action: KeybindAction, hotkey: string): Promise<KeybindSaveResult> => {
+      const res = await fetch("/api/settings/keybinds", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, hotkey, persist: true }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.detail ?? `HTTP ${res.status}`);
+      }
+      window.dispatchEvent(new CustomEvent("jarvis:keybinds-changed"));
+      return body as KeybindSaveResult;
+    },
+    [],
+  );
+
+  return { config, loading, error, refetch, saveKeybind };
 }

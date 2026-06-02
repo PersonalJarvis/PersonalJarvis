@@ -21,7 +21,88 @@
     "settings": "Einstellungen",
     "telephony": "Telefonie",
     "debug": "Debug",
-    "outputs": "Outputs"
+    "outputs": "Outputs",
+    "socials": "Socials",
+    "taskbar": "Taskbar",
+    "contacts": "Kontakte"
+  },
+  "taskbar_view": {
+    "subtitle": "Bildschirm-Overlay-Aussehen und Diktier-Verhalten.",
+    "appearance_title": "Darstellung",
+    "behavior_title": "Verhalten",
+    "restart_required": "Gespeichert — Jarvis neu starten zum Übernehmen.",
+    "restart_now": "Jetzt neu starten",
+    "restarting": "Jarvis startet neu…",
+    "bar_persistent": {
+      "title": "Bar immer anzeigen",
+      "description": "Die Bar bleibt auch im Leerlauf sichtbar. Aus: kein Standby — sie erscheint nur, wenn du \"Hey Jarvis\" sagst.",
+      "saved": "Bar-Sichtbarkeit aktualisiert."
+    },
+    "mute_music": {
+      "title": "Musik beim Diktieren stummschalten",
+      "description": "Andere Apps (Spotify, Browser …) werden stumm, während du mit Jarvis sprichst, und danach wiederhergestellt. Jarvis' eigene Stimme wird nie gemutet.",
+      "enabled_toast": "Musik wird stumm, während du mit Jarvis sprichst.",
+      "disabled_toast": "Musik-Stummschaltung deaktiviert."
+    }
+  },
+  "socials": {
+    "subtitle": "Links zu unserer Community und unseren Profilen.",
+    "add": "Link hinzufügen",
+    "empty": "Noch keine Social-Links — füge den ersten hinzu.",
+    "edit": "Bearbeiten",
+    "delete": "Löschen",
+    "open": "Öffnen",
+    "dialogAddTitle": "Social-Link hinzufügen",
+    "dialogEditTitle": "Link bearbeiten",
+    "platform": "Plattform",
+    "label": "Bezeichnung",
+    "url": "URL",
+    "save": "Speichern",
+    "cancel": "Abbrechen",
+    "hidden": "Ausgeblendet",
+    "visible": "Sichtbar",
+    "links": "Links",
+    "back": "Zurück"
+  },
+  "contacts": {
+    "subtitle": "Dein persönliches Adressbuch — Namen, Kontaktdaten und eine kurze Notiz pro Person.",
+    "add": "Kontakt hinzufügen",
+    "empty": "Noch keine Kontakte — füge deinen ersten hinzu.",
+    "noMatches": "Keine Kontakte passen zur Suche.",
+    "search": "Kontakte durchsuchen…",
+    "selectHint": "Wähle einen Kontakt, um Details zu sehen.",
+    "edit": "Bearbeiten",
+    "delete": "Löschen",
+    "deleteTitle": "Kontakt löschen",
+    "deleteConfirm": "Löschen",
+    "cancel": "Abbrechen",
+    "save": "Speichern",
+    "name": "Name",
+    "nameRequired": "Ein Name ist erforderlich.",
+    "aliases": "Aliase",
+    "relationship": "Beziehung",
+    "emails": "E-Mails",
+    "phones": "Telefonnummern",
+    "addEmail": "E-Mail hinzufügen",
+    "addPhone": "Telefonnummer hinzufügen",
+    "address": "Adresse",
+    "street": "Straße",
+    "postalCode": "Postleitzahl",
+    "city": "Stadt",
+    "country": "Land",
+    "readme": "README",
+    "readmePlaceholder": "Eine kurze Notiz zu dieser Person…",
+    "words": "Wörter",
+    "dialogAddTitle": "Kontakt hinzufügen",
+    "dialogEditTitle": "Kontakt bearbeiten",
+    "rel": {
+      "family": "Familie",
+      "friend": "Freund",
+      "colleague": "Kollege",
+      "partner": "Partner",
+      "acquaintance": "Bekannte/r",
+      "other": "Andere"
+    }
   },
   "voice_state": {
     "idle": "Bereit",
@@ -65,7 +146,8 @@
     "select_or_new": "Wähle links eine Unterhaltung oder starte eine neue.",
     "group_today": "Heute",
     "group_yesterday": "Gestern",
-    "group_earlier": "Früher"
+    "group_earlier": "Früher",
+    "resize_hint": "Zum Verändern ziehen · Doppelklick zum Zurücksetzen"
   },
   "subagents_view": {
     "title": "Sub-Agents",
@@ -477,6 +559,19 @@
       "disabled_toast": "Autostart deaktiviert.",
       "unsupported": "Autostart ist auf diesem Host nicht verfügbar (z. B. ein Headless-Server ohne Desktop-Sitzung)."
     },
+    "overlay_style": {
+      "title": "Anzeige-Stil",
+      "description": "Wähle, wie Jarvis bei Sprachaktivität auf dem Bildschirm erscheint. Die Bar ist der schlanke Standard; das Maskottchen ist der klassische Orb; oder ganz ausblenden.",
+      "label": "Stil",
+      "save": "Speichern",
+      "saved": "Anzeige-Stil gewechselt.",
+      "restart_required": "Gespeichert — Jarvis neu starten zum Übernehmen.",
+      "options": {
+        "whisper_bar": "Bar (Standard)",
+        "mascot": "Maskottchen-Orb",
+        "none": "Keins (ausgeblendet)"
+      }
+    },
     "assistant_name": {
       "title": "Name des Assistenten",
       "description": "Wie der Assistent sich in Antworten selbst nennt. Leer lassen, um dem Wake-Wort zu folgen.",
@@ -495,6 +590,19 @@
       "suggestions_label": "Vorschläge",
       "save": "Hotkey speichern",
       "saved": "Hotkey gespeichert",
+      "restart_required": "Neustart nötig, damit es wirkt."
+    },
+    "keybinds": {
+      "title": "Sprach-Tastenkürzel",
+      "description": "Lege die Tasten für Anruf, Auflegen und Sprechen (Push-to-Talk) fest. Klick auf Aufnehmen und drücke deine Kombination, oder setze auf Standard zurück. Änderungen greifen nach einem Neustart.",
+      "call_label": "Anruf (annehmen / Sprechen starten)",
+      "hangup_label": "Auflegen",
+      "talk_label": "Sprechen / Push-to-Talk",
+      "record": "Aufnehmen",
+      "recording": "Drücke jetzt deine Tasten… (Esc zum Abbrechen)",
+      "save": "Speichern",
+      "saved": "Tastenkürzel gespeichert",
+      "reset": "Auf Standard zurücksetzen",
       "restart_required": "Neustart nötig, damit es wirkt."
     },
     "codex_title": "OpenAI Codex CLI",

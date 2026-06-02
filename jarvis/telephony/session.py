@@ -109,6 +109,8 @@ class TelephonyCallSession:
         to_number: str = "",
         language_code: str = "de-DE",
         greeting: str = "",
+        direction: str = "inbound",
+        opening: str = "",
         max_call_seconds: int = 600,
         bus: Any = None,
         config: Any = None,
@@ -123,6 +125,11 @@ class TelephonyCallSession:
         self.to_number = to_number
         self.language_code = language_code or "de-DE"
         self.greeting = greeting
+        # Chunk C: an outbound call ("outbound") speaks ``opening`` first instead
+        # of the inbound greeting. Anything other than "outbound" is inbound and
+        # behaves exactly as before.
+        self.direction = direction or "inbound"
+        self.opening = opening
         self.max_call_seconds = max_call_seconds
         self._bus = bus
         self._config = config
@@ -302,9 +309,7 @@ class TelephonyCallSession:
         try:
             verdict = classify_completeness(text, lang=self._lang_short())
         except Exception:  # noqa: BLE001 — fail-open
-            log.warning(
-                "telephony[%s] completeness classifier raised; failing open", self.call_sid
-            )
+            log.warning("telephony[%s] completeness classifier raised; failing open", self.call_sid)
             return text
 
         label = verdict.label
@@ -462,6 +467,29 @@ class TelephonyCallSession:
         """Speak the configured (or default) greeting at call start."""
         text = self.greeting.strip() or self._default_greeting()
         return await self._speak(scrub_for_voice(text, language=self._lang_short()).cleaned)
+
+    async def speak_opening(self) -> int:
+        """Speak the outbound ``opening`` line (Chunk C) at call start.
+
+        Mirrors :meth:`speak_greeting` (scrub -> TTS -> paced mu-law frames) but
+        speaks the caller-supplied opening. Falls back to the greeting when no
+        opening was provided so an outbound call is never silent (AD-OE6).
+        """
+        text = self.opening.strip()
+        if not text:
+            return await self.speak_greeting()
+        return await self._speak(scrub_for_voice(text, language=self._lang_short()).cleaned)
+
+    async def speak_intro(self) -> int:
+        """Speak the right call-opening line for this call's direction.
+
+        Outbound (``direction == "outbound"``) speaks the ``opening``; everything
+        else is inbound and speaks the greeting — byte-for-byte the previous
+        behaviour, so the inbound path is unchanged.
+        """
+        if self.direction == "outbound":
+            return await self.speak_opening()
+        return await self.speak_greeting()
 
     # -- barge-in ----------------------------------------------------------
 

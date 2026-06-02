@@ -15,8 +15,10 @@ Pitfalls handled:
 - Loopback port allocated ONCE upfront — the registration_endpoint sees
   the exact port that the callback server is bound to (avoids the
   port-mismatch trap from openclaw/openclaw#52961).
-- DCR is fresh per flow (never persist client_id) — sidesteps the
-  "stale client_id rejected after server-side rotation" class of bugs.
+- DCR registers a fresh client per CONNECT flow, but the issued client_id is
+  persisted with the tokens and reused on REFRESH — a refresh_token is bound to
+  its issuing client (OAuth 2.0 §6), so refreshing under a re-registered client
+  fails with invalid_grant.
 - State validated against CSRF on callback; mismatch raises.
 - Refresh has per-plugin asyncio.Lock to avoid the 1-2s race window where
   Notion/Supabase issue two valid refresh tokens during rotation.
@@ -27,7 +29,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -77,6 +79,40 @@ class _PendingFlow:
     redirect_uri: str
     token_endpoint: str
     client_id: str
+    resource: str | None = None
+
+
+def _well_known_candidates(issuer: str) -> list[str]:
+    """Auth-server metadata URLs for an issuer, most-correct first.
+
+    RFC 8414 §3 inserts ``/.well-known/oauth-authorization-server`` BETWEEN the
+    host and the issuer's path component. So an issuer WITH a path (Stripe's
+    ``https://access.stripe.com/mcp``, Asana's ``mcp.asana.com/v2``) resolves to
+    ``https://access.stripe.com/.well-known/oauth-authorization-server/mcp`` —
+    NOT ``.../mcp/.well-known/...`` (which 404s and broke Stripe connect).
+    Path-less issuers (Notion, Linear) are identical either way. We also try the
+    OIDC variant and the legacy append form as fallbacks for servers that only
+    serve there.
+    """
+    parts = urlsplit(issuer.rstrip("/"))
+    path = parts.path  # "/mcp" or ""
+    out: list[str] = []
+
+    def _add(url: str) -> None:
+        if url not in out:
+            out.append(url)
+
+    # 1. RFC 8414 — well-known inserted between host and the issuer path.
+    _add(urlunsplit(
+        (parts.scheme, parts.netloc, "/.well-known/oauth-authorization-server" + path, "", "")
+    ))
+    # 2. OpenID-Connect discovery insert variant.
+    _add(urlunsplit(
+        (parts.scheme, parts.netloc, "/.well-known/openid-configuration" + path, "", "")
+    ))
+    # 3. Legacy append form (some non-compliant servers serve only here).
+    _add(issuer.rstrip("/") + "/.well-known/oauth-authorization-server")
+    return out
 
 
 class HostedMcpDcrHandler:
@@ -96,7 +132,13 @@ class HostedMcpDcrHandler:
 
     async def _discover(self, client: httpx.AsyncClient) -> dict[str, str]:
         """Returns the auth-server metadata dict. Fields used downstream:
-        authorization_endpoint, token_endpoint, registration_endpoint."""
+        authorization_endpoint, token_endpoint, registration_endpoint.
+
+        Side effect: stashes ``self._discovered_resource`` (the protected-resource
+        canonical URI, RFC 9728) so ``start()``/``_exchange`` can send the RFC 8707
+        ``resource`` parameter — Stripe's MCP authorize silently drops you on the
+        dashboard (no consent) when it is missing."""
+        self._discovered_resource: str | None = None
         # Step 1: protected-resource → tells us which auth server to ask.
         try:
             r = await client.get(self._config.discovery_url)
@@ -125,15 +167,29 @@ class HostedMcpDcrHandler:
             raise RuntimeError(
                 f"protected-resource has no authorization_servers: {pr_meta}"
             )
+        # RFC 9728 resource indicator — passed as the RFC 8707 `resource` param.
+        self._discovered_resource = pr_meta.get("resource") or None
 
-        # Step 2: hit auth-server's well-known.
-        as_url = auth_servers[0].rstrip("/") + "/.well-known/oauth-authorization-server"
-        r2 = await client.get(as_url)
-        r2.raise_for_status()
-        meta = r2.json()
-        if "authorization_endpoint" not in meta or "token_endpoint" not in meta:
-            raise RuntimeError(f"auth-server metadata incomplete: keys={list(meta)}")
-        return meta
+        # Step 2: fetch the auth-server metadata. RFC 8414 puts the well-known
+        # path BETWEEN host and the issuer's path, so an issuer with a path
+        # (Stripe's .../mcp, Asana's .../v2) is NOT at issuer + "/.well-known/...".
+        # Try the candidates in order until one returns usable metadata.
+        last_status: int | None = None
+        for as_url in _well_known_candidates(auth_servers[0]):
+            r2 = await client.get(as_url)
+            if r2.status_code == 200:
+                try:
+                    cand = r2.json()
+                except ValueError:
+                    last_status = r2.status_code
+                    continue
+                if "authorization_endpoint" in cand and "token_endpoint" in cand:
+                    return cand
+            last_status = r2.status_code
+        raise RuntimeError(
+            f"auth-server metadata discovery failed for {auth_servers[0]!r} "
+            f"(last HTTP {last_status})"
+        )
 
     # ------------------------------------------------------------------
     # DCR — RFC 7591
@@ -176,9 +232,13 @@ class HostedMcpDcrHandler:
         # Hosted callback (public route) when configured for a headless VPS,
         # else the loopback server (desktop). DCR registers whatever
         # redirect_uri this yields, so both modes work transparently.
+        # 15-min window: a real user logging into the provider can need to do a
+        # CAPTCHA + 2FA + account selection + consent — 5 min was too tight and
+        # the loopback callback server died before they finished (the redirect
+        # then hit a dead port and never came back).
         callback_server = make_callback_server(
             random_state(),
-            timeout_seconds=300,
+            timeout_seconds=900,
         )
         await callback_server.start()
         redirect_uri = callback_server.redirect_uri
@@ -212,6 +272,12 @@ class HostedMcpDcrHandler:
         }
         if scopes:
             params["scope"] = scopes
+        resource = getattr(self, "_discovered_resource", None)
+        if resource:
+            # RFC 8707 resource indicator — MANDATORY for MCP auth servers.
+            # Without it Stripe's authorize skips consent and bounces the user
+            # to their dashboard instead of redirecting back to the loopback.
+            params["resource"] = resource
         params["prompt"] = "consent"  # always show consent on first connect
         authorize_url = (
             meta["authorization_endpoint"] + "?" + urlencode(params, doseq=True)
@@ -226,6 +292,7 @@ class HostedMcpDcrHandler:
             redirect_uri=redirect_uri,
             token_endpoint=meta["token_endpoint"],
             client_id=client_id,
+            resource=resource,
         )
 
         return AuthSession(
@@ -234,7 +301,7 @@ class HostedMcpDcrHandler:
             kind="browser_redirect",
             open_url=authorize_url,
             expires_at_ms=int(
-                (datetime.now(UTC) + timedelta(minutes=5)).timestamp() * 1000
+                (datetime.now(UTC) + timedelta(minutes=15)).timestamp() * 1000
             ),
         )
 
@@ -277,6 +344,8 @@ class HostedMcpDcrHandler:
             "redirect_uri": pending.redirect_uri,
             "code_verifier": pending.code_verifier,
         }
+        if pending.resource:
+            body["resource"] = pending.resource
         timeout = httpx.Timeout(pending.config.timeout_seconds)
         async with httpx.AsyncClient(timeout=timeout) as client:
             r = await client.post(
@@ -306,6 +375,15 @@ class HostedMcpDcrHandler:
         token_type = payload.get("token_type")
         if token_type:
             extra["token_type"] = token_type
+        # Persist the client this grant was issued to + the token endpoint.
+        # A refresh_token is bound to its issuing client_id (OAuth 2.0 §6), so
+        # the refresh path MUST present the SAME client_id — re-registering a
+        # fresh DCR client here would get rejected with invalid_grant and the
+        # scheduler would delete the (still-valid) token. See refresh().
+        extra["client_id"] = pending.client_id
+        extra["token_endpoint"] = pending.token_endpoint
+        if pending.resource:
+            extra["resource"] = pending.resource
         return Tokens(
             access=access,
             refresh=refresh,
@@ -316,34 +394,41 @@ class HostedMcpDcrHandler:
     async def refresh(self, current: Tokens) -> Tokens:
         if not current.refresh:
             raise RuntimeError("no refresh token stored")
-        # We need the auth server's token_endpoint and a valid client_id.
-        # Re-discovery is the simplest path for now (DCR is fresh per flow,
-        # so the old client_id may already be revoked — instead of
-        # caching, re-register).
+        # A refresh_token is bound to the client_id that obtained it (OAuth 2.0
+        # §6). We persisted that client_id (+ token endpoint) at connect time —
+        # reuse it verbatim. Re-registering a fresh DCR client here was the old
+        # bug: the auth server rejects the mismatched client with invalid_grant,
+        # the scheduler reads that as "revoked", and the keyring entry is deleted
+        # — which is why browser-OAuth plugins (Linear, Notion) silently
+        # disconnected after a restart while static PAT plugins survived.
+        client_id = current.extra.get("client_id")
+        token_endpoint = current.extra.get("token_endpoint")
+        if not client_id:
+            # Token minted before client_id was persisted (pre-fix connect).
+            # We can't refresh it without the original client, but we must NOT
+            # signal "revoked" — that would make the scheduler delete a token
+            # that may still be valid. Fail soft so the entry is kept; the user
+            # reconnects once and the new token carries its client_id forever.
+            raise RuntimeError(
+                "refresh: no stored client_id — reconnect required to heal "
+                "this connection"
+            )
         timeout = httpx.Timeout(self._config.timeout_seconds)
         async with httpx.AsyncClient(timeout=timeout) as client:
-            meta = await self._discover(client)
-            # We don't need DCR for refresh — public clients refresh with
-            # `client_id` only. But some servers require the same client_id
-            # that was used for auth. Pragmatic: re-register here too.
-            registration_endpoint = (
-                meta.get("registration_endpoint")
-                or self._config.fallback_registration_endpoint
-            )
-            if not registration_endpoint:
-                raise RuntimeError("refresh: no registration_endpoint")
-            # Refresh doesn't need a redirect_uri but DCR does. Use a
-            # placeholder; the registered client is throwaway.
-            client_id = await self._register(
-                client, registration_endpoint, "http://127.0.0.1/refresh"
-            )
+            if not token_endpoint:
+                # Legacy token without a stored endpoint — rediscover it.
+                meta = await self._discover(client)
+                token_endpoint = meta["token_endpoint"]
+            refresh_body = {
+                "grant_type": "refresh_token",
+                "refresh_token": current.refresh,
+                "client_id": client_id,
+            }
+            if current.extra.get("resource"):
+                refresh_body["resource"] = current.extra["resource"]
             r = await client.post(
-                meta["token_endpoint"],
-                data={
-                    "grant_type": "refresh_token",
-                    "refresh_token": current.refresh,
-                    "client_id": client_id,
-                },
+                token_endpoint,
+                data=refresh_body,
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
         if r.status_code == 400 and "invalid_grant" in r.text:

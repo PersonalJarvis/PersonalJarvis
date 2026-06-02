@@ -46,7 +46,7 @@ def test_factory_returns_null_when_no_elevation_capability(monkeypatch):
     fake_caps = Capabilities(
         platform="linux", has_hotkey=False, has_ax_tree=False,
         has_overlay=False, has_pty=False, has_elevation=False,
-        display_present=False, is_wayland=False, ax_permission_granted=None,
+        display_present=False, is_wayland=False, ax_permission_granted=None, has_cursor=False,
     )
     monkeypatch.setattr(elevator_mod, "detect_capabilities", lambda: fake_caps)
     assert isinstance(make_elevator(), NullElevator)
@@ -58,7 +58,7 @@ def test_factory_selects_polkit_when_pkexec_present(monkeypatch):
     caps = Capabilities(
         platform="linux", has_hotkey=False, has_ax_tree=False,
         has_overlay=False, has_pty=False, has_elevation=True,
-        display_present=False, is_wayland=False, ax_permission_granted=None,
+        display_present=False, is_wayland=False, ax_permission_granted=None, has_cursor=False,
     )
     monkeypatch.setattr(elevator_mod, "detect_capabilities", lambda: caps)
     monkeypatch.setattr(elevator_mod, "detect_platform", lambda: "linux")
@@ -75,7 +75,7 @@ def test_factory_falls_back_to_sudo_when_no_pkexec(monkeypatch):
     caps = Capabilities(
         platform="linux", has_hotkey=False, has_ax_tree=False,
         has_overlay=False, has_pty=False, has_elevation=True,
-        display_present=False, is_wayland=False, ax_permission_granted=None,
+        display_present=False, is_wayland=False, ax_permission_granted=None, has_cursor=False,
     )
     monkeypatch.setattr(elevator_mod, "detect_capabilities", lambda: caps)
     monkeypatch.setattr(elevator_mod, "detect_platform", lambda: "linux")
@@ -92,7 +92,7 @@ def test_factory_returns_null_on_linux_with_neither(monkeypatch):
     caps = Capabilities(
         platform="linux", has_hotkey=False, has_ax_tree=False,
         has_overlay=False, has_pty=False, has_elevation=True,
-        display_present=False, is_wayland=False, ax_permission_granted=None,
+        display_present=False, is_wayland=False, ax_permission_granted=None, has_cursor=False,
     )
     monkeypatch.setattr(elevator_mod, "detect_capabilities", lambda: caps)
     monkeypatch.setattr(elevator_mod, "detect_platform", lambda: "linux")
@@ -106,7 +106,7 @@ def test_factory_selects_macauth_on_darwin(monkeypatch):
     caps = Capabilities(
         platform="darwin", has_hotkey=False, has_ax_tree=False,
         has_overlay=False, has_pty=False, has_elevation=True,
-        display_present=True, is_wayland=False, ax_permission_granted=None,
+        display_present=True, is_wayland=False, ax_permission_granted=None, has_cursor=False,
     )
     monkeypatch.setattr(elevator_mod, "detect_capabilities", lambda: caps)
     monkeypatch.setattr(elevator_mod, "detect_platform", lambda: "darwin")

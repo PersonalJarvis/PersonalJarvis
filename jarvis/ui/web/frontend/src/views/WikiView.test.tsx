@@ -102,7 +102,7 @@ const POPULATED_TREE: WikiTreeResponse = {
   stats: { total_pages: 3, total_links: 8, last_curator_run: "2026-05-13T13:59:00" },
 };
 
-const HARALD_PAGE: WikiPageResponse = {
+const SAM_PAGE: WikiPageResponse = {
   ok: true,
   slug: "sam",
   kind: "entity",
@@ -121,7 +121,7 @@ const HARALD_PAGE: WikiPageResponse = {
   stats: { words: 17, bytes: 289, mtime: 1 },
 };
 
-const HARALD_BACKLINKS: WikiBacklinksResponse = {
+const SAM_BACKLINKS: WikiBacklinksResponse = {
   ok: true,
   slug: "sam",
   backlinks: [
@@ -156,8 +156,8 @@ describe("WikiView — populated tree", () => {
   beforeEach(() => {
     installFetchMock({
       "/api/wiki/tree": () => POPULATED_TREE,
-      "/api/wiki/page/": () => HARALD_PAGE,
-      "/api/wiki/backlinks/": () => HARALD_BACKLINKS,
+      "/api/wiki/page/": () => SAM_PAGE,
+      "/api/wiki/backlinks/": () => SAM_BACKLINKS,
     });
   });
 
@@ -216,7 +216,7 @@ describe("PageRenderer — wikilink behaviour", () => {
   it("clicking a wikilink fires onWikilinkClick with the target slug", async () => {
     installFetchMock({
       "/api/wiki/tree": () => POPULATED_TREE,
-      "/api/wiki/page/sam": () => HARALD_PAGE,
+      "/api/wiki/page/sam": () => SAM_PAGE,
     });
     const onClick = vi.fn();
     renderWithClient(
@@ -237,7 +237,7 @@ describe("PageRenderer — wikilink behaviour", () => {
 
   it("renders a broken wikilink with the `.broken` class when the slug is unknown", async () => {
     const brokenPage: WikiPageResponse = {
-      ...HARALD_PAGE,
+      ...SAM_PAGE,
       body_md: "Refers to [[nonexistent-slug]] which doesn't exist.\n",
       wikilinks: ["nonexistent-slug"],
     };

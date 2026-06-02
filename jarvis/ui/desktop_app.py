@@ -505,7 +505,12 @@ class DesktopApp:
         scripted Standard-Phrasen. User-Wunsch: kein "dummer Jarvis" ohne LLM.
         """
         from jarvis.brain.factory import build_default_brain
-        from jarvis.core.events import ErrorOccurred, MessageSent
+        from jarvis.core.events import (
+            ErrorOccurred,
+            MessageSent,
+            ResponseGenerated,
+            ShowWindowRequested,
+        )
         from jarvis.mcp import state as mcp_state
         from jarvis.mcp.registry import MCPRegistry
         from jarvis.state.chat_store import ChatStore, default_chats_db_path
@@ -749,6 +754,14 @@ class DesktopApp:
                             role="assistant",
                             text=reply_text,
                         )
+                        await server.bus.publish(
+                            ResponseGenerated(
+                                trace_id=evt.trace_id,
+                                text=reply_text,
+                                language="de",
+                                source_layer="brain.chat_direct",
+                            )
+                        )
                         await supervisor.set_state("IDLE")
                         logger.info(
                             "Skill direkt-getriggert (chat): '{}' -> '{}'",
@@ -763,6 +776,7 @@ class DesktopApp:
             if brain is None:
                 # Build-Fehler-Pfad: Systemfehler statt Jarvis-Antwort.
                 detail = brain_build_error or "BrainManager nicht initialisiert"
+                message = f"Brain nicht verfuegbar: {detail}"
                 await server.bus.publish(
                     ErrorOccurred(
                         layer="brain",
@@ -772,18 +786,31 @@ class DesktopApp:
                         source_layer="brain",
                     )
                 )
+                await server.bus.publish(
+                    ResponseGenerated(
+                        trace_id=evt.trace_id,
+                        text=message,
+                        language="de",
+                        source_layer="brain",
+                    )
+                )
                 await chat_store.add_message(
                     thread_id=thread_id,
                     role="system",
-                    text=f"Brain nicht verfuegbar: {detail}",
+                    text=message,
                 )
                 return
 
             try:
                 await supervisor.set_state("THINKING")
-                reply = await brain(evt.text)
+                generate = getattr(brain, "generate", None)
+                if callable(generate):
+                    reply = await generate(evt.text, trace_id=evt.trace_id)
+                else:
+                    reply = await brain(evt.text)
             except Exception as exc:  # noqa: BLE001
                 detail = f"{type(exc).__name__}: {exc}"
+                message = f"Brain-Fehler: {detail}"
                 logger.opt(exception=exc).warning("BrainManager call failed")
                 await server.bus.publish(
                     ErrorOccurred(
@@ -794,10 +821,18 @@ class DesktopApp:
                         source_layer="brain",
                     )
                 )
+                await server.bus.publish(
+                    ResponseGenerated(
+                        trace_id=evt.trace_id,
+                        text=message,
+                        language="de",
+                        source_layer="brain",
+                    )
+                )
                 await chat_store.add_message(
                     thread_id=thread_id,
                     role="system",
-                    text=f"Brain-Fehler: {detail}",
+                    text=message,
                 )
                 await supervisor.set_state("IDLE")
                 return
@@ -813,6 +848,10 @@ class DesktopApp:
                 await supervisor.set_state("IDLE")
 
         server.bus.subscribe(MessageSent, _on_user_message)
+        # Overlay right-click (bar OR mascot) → raise the main desktop window.
+        # OrbBusBridge publishes ShowWindowRequested from the Tk thread; the
+        # handler runs on the asyncio loop and pywebview.show() is thread-safe.
+        server.bus.subscribe(ShowWindowRequested, self._on_show_window_requested)
         self._install_focus_route(server)
 
         # Workflow-System (Phase 6) — Store + Runner + Scheduler. Eigene
@@ -1102,6 +1141,215 @@ class DesktopApp:
             logger.opt(exception=exc).warning("Virtual mouse overlay not startable")
             self._virtual_cursor = None
 
+    def _build_overlay_surface(self, style: str):
+        """Construct (and start) the overlay surface for a display style.
+
+        Returns a ``NullOverlay`` for ``"none"`` (no Tk window, no-op surface),
+        a started ``WhisperBarOverlay`` for ``"whisper_bar"``, or a started
+        mascot ``OrbOverlay`` for anything else. Shared by boot wiring and the
+        live ``swap_overlay`` path so the two never drift.
+        """
+        if style == "none":
+            from jarvis.ui.whisperbar import NullOverlay
+
+            return NullOverlay()
+        if style == "whisper_bar":
+            from jarvis.ui.whisperbar import WhisperBarOverlay
+
+            surface = WhisperBarOverlay(
+                persistent=self.cfg.ui.bar_persistent,
+                accent=self.cfg.ui.bar_accent,
+            )
+        else:  # "mascot" (and any legacy style value)
+            from ui.orb.overlay import OrbOverlay
+
+            surface = OrbOverlay(
+                sticky=False,
+                mic_reactive=False,
+                style=style,
+                mascot_path=self.cfg.ui.orb_mascot_path or None,
+            )
+        surface.start_in_thread()
+        return surface
+
+    def set_bar_persistent(self, enabled: bool) -> dict[str, object]:
+        """Live-toggle 'show bar at all times' (bar_persistent) without a restart.
+
+        Flips the bar's ``_persistent`` flag + the bridge's ``_hide_on_idle``,
+        then shows the idle pill (enabled) or hides it when currently idle
+        (disabled). Only flag flips — no new Tk root — so it is safe + immediate.
+        """
+        from loguru import logger
+
+        enabled = bool(enabled)
+        try:
+            self.cfg.ui.bar_persistent = enabled
+        except Exception:  # noqa: BLE001
+            pass
+        bar = getattr(self, "_orb", None)
+        bridge = getattr(self, "_bridge", None)
+        if bar is None or bridge is None:
+            return {"ok": True, "applied_live": False}
+        try:
+            if hasattr(bar, "_persistent"):
+                bar._persistent = enabled
+            bridge._hide_on_idle = not enabled
+            mode = getattr(bar, "_mode", "idle")
+            if enabled:
+                bar.show("idle")
+            elif mode == "idle":
+                bar.hide()
+            logger.info("bar_persistent set live to {}.", enabled)
+            return {"ok": True, "applied_live": True}
+        except Exception as exc:  # noqa: BLE001
+            logger.opt(exception=exc).warning("set_bar_persistent failed")
+            return {"ok": True, "applied_live": False}
+
+    def swap_overlay(self, style: str) -> dict[str, object]:
+        """Apply an overlay style change at runtime *as far as is Tk-safe*.
+
+        Hard constraint: this NEVER creates a new ``tk.Tk()`` root at runtime.
+        Tkinter cannot create per-style Tk roots on short-lived threads and tear
+        them down: when a destroyed root's Python wrapper is later garbage-
+        collected on a different thread, Tcl aborts the WHOLE PROCESS with
+        ``Tcl_AsyncDelete: async handler deleted by the wrong thread`` (proven
+        live — ``screenshots/live_swap_three_cycles.py``, BUG-031). The "park +
+        join + rebuild" approach looked safe in a 2-root throwaway test only
+        because that test called ``os._exit()`` before GC ran. So the only live
+        transitions we allow are the ones that touch no new root:
+
+        - ``"none"``           → hide the current surface (NullOverlay no-op).
+        - an already-built style (cached, e.g. the boot surface re-selected)
+                               → show it again (same root, never destroyed).
+
+        Any transition that would need a brand-new real surface (e.g. boot was
+        the mascot and the user picks the bar for the first time) returns
+        ``applied_live=False``; the choice is persisted and the route reports
+        ``restart_required``. The frontend turns that into a one-click
+        self-restart so the user never has to close + reopen by hand. Guarded.
+        """
+        from loguru import logger
+
+        style = (style or "whisper_bar").strip()
+        if style not in ("whisper_bar", "mascot", "none"):
+            return {"ok": False, "applied_live": False, "style": style}
+        bridge = getattr(self, "_bridge", None)
+        if bridge is None:
+            # No live bridge (headless / overlay unavailable) — persisted only.
+            return {"ok": True, "applied_live": False, "style": style}
+        try:
+            cache = getattr(self, "_surfaces", None)
+            if cache is None:
+                cache = self._surfaces = {}
+            old = getattr(self, "_orb", None)
+
+            if style == "none":
+                new = cache.get("none")
+                if new is None:
+                    from jarvis.ui.whisperbar import NullOverlay  # no Tk root
+
+                    new = NullOverlay()
+                    cache["none"] = new
+            else:
+                new = cache.get(style)
+                if new is None:
+                    # A new tk.Tk() root at runtime would cross-thread-abort the
+                    # process (Tcl_AsyncDelete, BUG-031). Persist only; the route
+                    # surfaces restart_required (frontend = one-click restart).
+                    logger.info(
+                        "Overlay style '{}' needs a restart (no live Tk root yet).",
+                        style,
+                    )
+                    return {"ok": True, "applied_live": False, "style": style}
+
+            bridge.set_surface(new)
+            self._orb = new
+            if old is not None and old is not new:
+                try:
+                    old.hide()
+                except Exception:  # noqa: BLE001
+                    logger.debug("old overlay hide failed", exc_info=True)
+            try:
+                if style == "whisper_bar" and self.cfg.ui.bar_persistent:
+                    new.show("idle")
+            except Exception:  # noqa: BLE001
+                logger.debug("post-swap show failed", exc_info=True)
+            try:
+                self.cfg.ui.orb_style = style  # best-effort in-memory
+            except Exception:  # noqa: BLE001
+                logger.debug("in-memory orb_style update skipped", exc_info=True)
+            logger.info("Overlay swapped live to style={}.", style)
+            return {"ok": True, "applied_live": True, "style": style}
+        except Exception as exc:  # noqa: BLE001
+            logger.opt(exception=exc).warning(
+                "overlay live-swap failed (persisted; applies on restart)"
+            )
+            return {"ok": True, "applied_live": False, "style": style}
+
+    def request_restart(self) -> bool:
+        """Cleanly self-restart the app to deliver a pending overlay change.
+
+        An overlay style that needs a brand-new Tk root (e.g. bar → mascot)
+        cannot be applied live (BUG-031 — ``Tcl_AsyncDelete`` cross-thread
+        abort). Instead of asking the user to close + reopen by hand, this
+        spawns a detached relauncher (``jarvis.ui.relauncher``) that waits for
+        THIS process to exit — releasing the single-instance mutex — and then
+        starts a fresh launcher, and triggers a clean quit 0.8 s later (the same
+        path as the tray "Quit": ``_user_requested_quit`` + ``window.destroy``).
+        The short delay lets the HTTP 200 flush to the frontend first.
+
+        Returns ``True`` if a restart was scheduled, ``False`` on a headless host
+        (no window to restart). Fully guarded — a spawn failure leaves the app
+        running rather than half-quitting.
+        """
+        import subprocess
+
+        from loguru import logger
+
+        from jarvis.ui.relauncher import detached_creationflags
+
+        window = getattr(self, "_window", None)
+        if window is None:
+            return False
+        try:
+            import jarvis as _jarvis
+
+            repo_root = str(Path(_jarvis.__file__).resolve().parent.parent)
+            kwargs: dict[str, Any] = {"cwd": repo_root, "close_fds": True}
+            if sys.platform == "win32":
+                kwargs["creationflags"] = detached_creationflags()
+            else:
+                kwargs["start_new_session"] = True
+            subprocess.Popen(  # noqa: S603 — fixed argv, no shell, own interpreter
+                [
+                    sys.executable,
+                    "-m",
+                    "jarvis.ui.relauncher",
+                    str(os.getpid()),
+                    repo_root,
+                ],
+                **kwargs,
+            )
+        except Exception as exc:  # noqa: BLE001 — never half-quit on a spawn error
+            logger.opt(exception=exc).warning(
+                "relauncher spawn failed — staying up (no self-restart)"
+            )
+            return False
+
+        def _quit_soon() -> None:
+            time.sleep(0.8)  # let the HTTP 200 reach the frontend first
+            self._user_requested_quit = True
+            try:
+                window.destroy()
+            except Exception:  # noqa: BLE001
+                logger.debug("restart window.destroy failed", exc_info=True)
+
+        threading.Thread(
+            target=_quit_soon, name="jarvis-restart-quit", daemon=True
+        ).start()
+        logger.info("Self-restart scheduled (relauncher spawned; quitting in 0.8 s).")
+        return True
+
     def _start_speech_and_orb(
         self,
         loop: asyncio.AbstractEventLoop,
@@ -1128,32 +1376,68 @@ class DesktopApp:
             logger.info("Voice-Stack per JARVIS_VOICE=0 deaktiviert.")
             return
 
-        # Orb-Overlay in eigenem Tk-Daemon-Thread — Bus-Bridge reagiert auf
-        # SystemStateChanged und zeigt/versteckt das Orb.
+        # On-screen overlay in its own Tk daemon thread — the bus bridge reacts
+        # to SystemStateChanged and drives whichever surface is selected.
+        # Style is chosen by [ui].orb_style: "whisper_bar" (slim default),
+        # "mascot" (ghost orb), or "none". Both real surfaces share OrbBusBridge.
         try:
-            from ui.orb.bus_bridge import OrbBusBridge
-            from ui.orb.overlay import OrbOverlay
-
-            orb_style = self.cfg.ui.orb_style or "mascot"
-            orb_mascot_path = self.cfg.ui.orb_mascot_path or None
-            orb = OrbOverlay(
-                sticky=False,
-                mic_reactive=False,
-                style=orb_style,
-                mascot_path=orb_mascot_path,
-            )
-            orb.start_in_thread()
-            OrbBusBridge(bus=bus, orb=orb).attach()
-            self._orb = orb
             from loguru import logger
-            logger.info(
-                "Orb-Style aktiv: {} (config={}, ENV JARVIS_ORB_STYLE={!r})",
-                orb._style, orb_style, os.environ.get("JARVIS_ORB_STYLE", ""),
-            )
+
+            from jarvis.platform.probes import has_overlay
+
+            orb_style = self.cfg.ui.orb_style or "whisper_bar"
+            overlay_ok = has_overlay()
+
+            if not overlay_ok:
+                # Headless / no display: no surface, no bridge. A later settings
+                # swap persists the choice and applies on the next GUI boot.
+                self._orb = None
+                self._bridge = None
+                self._surfaces = {}
+                logger.info(
+                    "On-screen overlay unavailable (has_overlay=False, style={}).",
+                    orb_style,
+                )
+            else:
+                from ui.orb.bus_bridge import OrbBusBridge
+
+                # NullOverlay for "none" still gets a bridge, so a live switch to
+                # bar/mascot works without a restart.
+                surface = self._build_overlay_surface(orb_style)
+                hide_on_idle = (
+                    (not self.cfg.ui.bar_persistent)
+                    if orb_style == "whisper_bar"
+                    else True
+                )
+                bridge = OrbBusBridge(bus=bus, orb=surface, hide_on_idle=hide_on_idle)
+                bridge.attach()
+                self._orb = surface
+                self._bridge = bridge
+                # Cache the boot surface so a later swap back to it reuses the
+                # same Tk root instead of building a second one.
+                self._surfaces = {orb_style: surface}
+                logger.info(
+                    "On-screen overlay active: style={} (persistent={}, accent={}).",
+                    orb_style, self.cfg.ui.bar_persistent, self.cfg.ui.bar_accent,
+                )
         except Exception as exc:  # noqa: BLE001
             from loguru import logger
-            logger.opt(exception=exc).warning("Orb-Overlay nicht startbar")
+            logger.opt(exception=exc).warning("On-screen overlay failed to start")
             self._orb = None
+            self._bridge = None
+
+        # Audio ducking — "Mute music while dictating" (Taskbar section). Its own
+        # try so an overlay failure above does not skip it (and vice versa). The
+        # controller no-ops when disabled / on a host without pycaw.
+        try:
+            from jarvis.audio.ducking import make_audio_duck_controller
+
+            self._ducker = make_audio_duck_controller(bus=bus, cfg=self.cfg)
+            self._ducker.attach()
+        except Exception as exc:  # noqa: BLE001
+            from loguru import logger
+            logger.opt(exception=exc).warning("Audio ducking not started")
+            self._ducker = None
 
         # Skills-Brain-Integration: Phase Skills-1 — SkillContext aufsetzen
         # bevor die Pipeline startet. Pipeline holt sich den Context lazy via
@@ -1307,7 +1591,7 @@ class DesktopApp:
             pipeline = SpeechPipeline(
                 call_hotkeys=_call_hk,
                 ptt_hotkeys=_ptt_hk,
-                hangup_hotkeys=("f1+f2",),
+                hangup_hotkeys=(self.cfg.trigger.hotkey_hangup,),
                 wake_keywords=("hey_jarvis",),
                 # BUG-009 episode 5 (2026-05-24): the 0.06 over-correction from
                 # episode 4 made OWW fire on the entire ambient band (idle
@@ -1686,6 +1970,17 @@ class DesktopApp:
             target=_bridge_loop, name="jarvis-tray-bridge", daemon=True
         ).start()
 
+    async def _on_show_window_requested(self, _event: object) -> None:
+        """Bus subscriber for ``ShowWindowRequested`` (overlay right-click).
+
+        Coroutine because ``EventBus._safe_dispatch`` does ``await handler(event)``
+        — a plain ``def`` would still run but trip ``await None`` → a swallowed
+        TypeError on every click. Raises the main desktop window;
+        ``_safe_window_show`` is null-safe, so on a headless / VPS runtime (no
+        window) this is a no-op.
+        """
+        self._safe_window_show()
+
     def _safe_window_show(self) -> None:
         if self._window is None:
             return
@@ -1738,7 +2033,22 @@ class DesktopApp:
         # oben rechts verschwindet bevor der Prozess terminiert.
         if self._orb is not None:
             try:
-                self._orb.hide()
+                # Prefer stop() when the surface has it (whisper bar:
+                # unsubscribes its level_tap sink + destroys the window). The
+                # mascot orb has no stop() → fall back to hide().
+                stop = getattr(self._orb, "stop", None)
+                if callable(stop):
+                    stop()
+                else:
+                    self._orb.hide()
+            except Exception:  # noqa: BLE001
+                pass
+
+        # Restore other apps' audio (in case a session was muting music at quit).
+        ducker = getattr(self, "_ducker", None)
+        if ducker is not None:
+            try:
+                ducker.restore_sync()
             except Exception:  # noqa: BLE001
                 pass
 

@@ -7,9 +7,11 @@ Was wird verifiziert:
 1. Clean start ohne pre-existing Missions liefert recovery=[].
 2. Happy-Path PENDING -> RUNNING -> CRITIQUING -> APPROVED emittiert 4 Events.
 3. seq ist monoton 1..N, lueckenlos.
-4. Crash-Simulation (manager.stop() ohne Endzustand) + Restart fuehrt zur
-   Recovery: stale Mission wird FAILED, MissionStateChanged + MissionFailed
-   landen auf dem neuen Bus.
+4. Crash-Simulation (manager.stop() ohne Endzustand) + Restart ist
+   ACTIVITY-AWARE (fix 9f5e043b): a mission whose last event is recent is
+   presumed owned by a live orchestrator and is SKIPPED (not swept), while a
+   genuinely stale orphan (no activity past the window) is swept to FAILED with
+   MissionStateChanged + MissionFailed on the new bus.
 5. Terminale Missions (APPROVED) werden NICHT recovered.
 6. events_since(0) liefert lueckenlos alle persistierten Events.
 """
@@ -26,8 +28,12 @@ if sys.stdout.encoding != "utf-8":
 # Repo-Root in sys.path damit `from jarvis.missions...` funktioniert
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from jarvis.missions.events import EventEnvelope  # noqa: E402
+from jarvis.missions.events import EventEnvelope, now_ms  # noqa: E402
 from jarvis.missions.manager import MissionManager  # noqa: E402
+from jarvis.missions.recovery import (  # noqa: E402
+    RECOVERY_STALE_AFTER_MS,
+    startup_recover,
+)
 from jarvis.missions.state_machine import MissionState  # noqa: E402
 
 OK = "[OK]"
@@ -80,7 +86,9 @@ async def smoke() -> int:
         else:
             print(f"{OK} event-types konsistent")
 
-        # --- Section 2: crash-simulation + recovery ---
+        # --- Section 2: crash-simulation + ACTIVITY-AWARE recovery ---
+        # (fix 9f5e043b: a fresh crashed mission is presumed owned by a live
+        # orchestrator and must NOT be swept; only a genuinely stale orphan is.)
 
         mid2 = await m1.dispatch(prompt="will-crash")
         await m1.transition_state(mid2, MissionState.RUNNING, reason="worker-spawn")
@@ -94,20 +102,49 @@ async def smoke() -> int:
             bus_received.append(e)
 
         m2.bus.subscribe_all(collect)
-        recovered2 = await m2.start()
 
-        if mid2 not in recovered2:
-            failures.append(f"recovery enthaelt {mid2!r} nicht: {recovered2}")
-        else:
-            print(f"{OK} recovery markiert stale RUNNING")
-
-        view2 = await m2.mission(mid2)
-        if view2 is None or view2.state != MissionState.FAILED:
+        # 2a: default 30-min guard — mid2's last event is FRESH, so the live-work
+        # guard must protect it (no sweep, state stays RUNNING). This is the very
+        # behaviour that fixed the crash_recovery false-negative.
+        recovered_fresh = await m2.start()
+        if mid2 in recovered_fresh:
             failures.append(
-                f"mid2 state {view2.state if view2 else None} != FAILED"
+                f"FRESH crashed mission faelschlich gesweept: {recovered_fresh}"
             )
         else:
-            print(f"{OK} mid2 ist FAILED nach recovery")
+            print(f"{OK} activity-guard: frische crashed mission NICHT gesweept")
+
+        view_fresh = await m2.mission(mid2)
+        if view_fresh is None or view_fresh.state != MissionState.RUNNING:
+            failures.append(
+                f"geschuetzte mission state "
+                f"{view_fresh.state if view_fresh else None} != RUNNING"
+            )
+        else:
+            print(f"{OK} geschuetzte mission bleibt RUNNING")
+
+        # 2b: a GENUINELY stale orphan (its last event is older than the window)
+        # IS a real crash and gets swept to FAILED. We model "past the window" by
+        # asking the recovery to evaluate at a point > RECOVERY_STALE_AFTER_MS in
+        # the future — exactly how test_recovery_staleness.py proves the sweep.
+        future_now = now_ms() + RECOVERY_STALE_AFTER_MS + 60_000
+        recovered_stale = await startup_recover(m2.store, now=future_now)
+
+        if mid2 not in recovered_stale:
+            failures.append(
+                f"stale orphan NICHT gesweept: {recovered_stale}"
+            )
+        else:
+            print(f"{OK} stale orphan -> recovered")
+
+        view_stale = await m2.mission(mid2)
+        if view_stale is None or view_stale.state != MissionState.FAILED:
+            failures.append(
+                f"stale orphan state "
+                f"{view_stale.state if view_stale else None} != FAILED"
+            )
+        else:
+            print(f"{OK} stale orphan ist FAILED nach recovery")
 
         recovery_types = [e.payload.event_type for e in bus_received]
         if (
@@ -120,10 +157,10 @@ async def smoke() -> int:
         else:
             print(f"{OK} recovery emits MissionFailed + MissionStateChanged auf bus")
 
-        # mid1 ist APPROVED — darf NICHT recovered werden
-        if mid1 in recovered2:
+        # mid1 ist APPROVED — darf in KEINEM der beiden Sweeps recovered werden
+        if mid1 in recovered_fresh or mid1 in recovered_stale:
             failures.append(
-                f"recovered enthaelt faelschlich mid1 (APPROVED): {recovered2}"
+                "recovered enthaelt faelschlich mid1 (APPROVED)"
             )
         else:
             print(f"{OK} terminal missions nicht recovered")
@@ -131,9 +168,9 @@ async def smoke() -> int:
         # --- Section 3: events_since(0) lueckenlos ---
 
         all_events = await m2.store.events_since(0)
-        # mid1: 4 (dispatch + 3 state-changes)
-        # mid2: 2 (dispatch + 1 state-change) + 2 recovery (state-change + failed)
-        # = 8 total
+        # mid1: 4 (dispatch + 3 state-changes), terminal -> never swept.
+        # mid2: 2 (dispatch + 1 state-change) + 2 stale-recovery (state-change +
+        #       failed). The fresh-guard pass in 2a emits nothing. = 8 total.
         if len(all_events) != 8:
             failures.append(f"events_since(0) liefert {len(all_events)}, erwartet 8")
         else:

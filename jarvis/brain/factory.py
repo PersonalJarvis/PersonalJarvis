@@ -46,6 +46,17 @@ ROUTER_TOOLS = frozenset({
     # Phase 8.4 (Plan §6.4) — Hauptjarvis calls the quality-gate pipeline
     # explicitly. NEVER downstream in a recursive spawn (D9 recursion guard).
     "dispatch-with-review",
+    # AI Pointer (pull path): resolve the on-screen element under the mouse
+    # cursor via the OS accessibility tree. Read-only, safe-tier; the brain
+    # calls it on deictic questions ("what is this?"). A direct safe-gated read,
+    # never a spawn — never in a worker set (AP-5/AP-14). See
+    # docs/plans/ai-pointer/DESIGN.md.
+    "inspect-pointer",
+    # UI navigation (2026-06-02): switch the active sidebar section by voice/chat
+    # ("zeig die Socials", "open settings"). Publishes NavigateSidebar; the
+    # frontend listener moves the UI. Pure UI action, risk safe, NO spawn —
+    # never in a worker set (AP-5/AP-14). See ADR-0011 amendment "Navigate tool".
+    "navigate",
     # Phase A1: synchronous state read on the AwarenessManager (Plan §5).
     # NO brain call, NO IO — property read only.
     "awareness-snapshot",
@@ -85,6 +96,15 @@ ROUTER_TOOLS = frozenset({
     # not enter any worker tool-set (AP-5/AP-14). See ADR-0011 amendment
     # "CLI-Integration" + docs/superpowers/specs/2026-05-24-cli-integration-design.md.
     "cli-tools",
+    # Marketplace plugins as live brain tools (2026-06-01). Virtual loader,
+    # mirror of cli-tools: expands to one MCPToolAdapter per connected plugin
+    # tool. Direct safe/risk-gated action, NEVER a spawn — must not enter any
+    # worker tool-set (AP-5/AP-14). See docs/.../2026-06-01-live-plugin-tools.md.
+    "plugin-tools",
+    # Gmail Marketplace plugin: native REST tool backed by the marketplace
+    # OAuth token. Gmail has no MCP server block, so it must be router-visible
+    # directly; otherwise connected Gmail is not callable by voice/chat.
+    "gmail",
     # Computer-Use (Wave 1, 2026-05-29): first-class, clearly-described tool to
     # drive the user's LIVE desktop (open apps, click, type, scroll, operate
     # any GUI). The router previously had no honest desktop path — spawn-worker
@@ -122,6 +142,19 @@ ROUTER_TOOLS = frozenset({
     # (logged, no confirmation nag). Read-only, returns only 6 chars — a narrow,
     # safe exception to AP-2; the full-key refusal is a router-prompt rule.
     "reveal-key-preview",
+    # Chunk B jarvis-contacts (2026-06-02): three contact-action tools that let
+    # the brain act on a person by name. contact-lookup (safe, read-only)
+    # resolves a name/alias -> e-mail/phone/address; contact-upsert (monitor,
+    # deterministic write) saves a contact by voice ("merk dir Christophs
+    # Nummer …"); call-contact (ask, echo-confirm before dialing a real person)
+    # places a real outbound call via the telephony engine. All three are
+    # direct safe/monitor/ask-gated actions, NEVER a spawn — so they never enter
+    # a worker tool-set (AP-5/AP-14). The contact tools degrade gracefully when
+    # Chunk A's ContactStore / Chunk C's telephony engine is absent (cloud-first
+    # no-op). See ADR-0011 amendment "Contacts Tools".
+    "contact-lookup",
+    "contact-upsert",
+    "call-contact",
 })
 
 # Phase 7.3 — self-mod tools are registered directly in the router loader in
@@ -146,6 +179,7 @@ def _load_tools_for_tier(
     mission_manager: Any = None,
     awareness_manager: Any = None,
     recall_store: Any = None,
+    contacts: Any = None,
 ) -> dict[str, Any]:
     """Load all tools for the given tier and instantiate them.
 
@@ -217,6 +251,11 @@ def _load_tools_for_tier(
                 inst = cls()
             elif ep.name == "start-preview-server":
                 inst = cls(bus=bus)
+            elif ep.name == "navigate":
+                # UI navigation: publishes NavigateSidebar on the shared bus,
+                # which the WS forwarder streams to the frontend (event_name
+                # "NavigateSidebar") to switch the active section.
+                inst = cls(bus=bus)
             elif ep.name == "whoami":
                 inst = cls(profile=user_profile, people=people)
             elif ep.name == "awareness-snapshot":
@@ -252,8 +291,8 @@ def _load_tools_for_tier(
                 # constructed by ``bootstrap_wiki_integration`` after the brain
                 # is built, so the tool must defer the lookup to execute time.
                 # Mirrors the spawn-worker lazy-resolver pattern.
-                from jarvis.plugins.tool.wiki_ingest import WikiIngestTool
                 from jarvis.memory.wiki.integration import get_running_curator
+                from jarvis.plugins.tool.wiki_ingest import WikiIngestTool
 
                 inst = WikiIngestTool(curator_resolver=get_running_curator)
             elif ep.name == "update-profile":
@@ -266,6 +305,18 @@ def _load_tools_for_tier(
                 # the tool surface stays stable across sessions (mirrors
                 # awareness-recall / wiki-ingest).
                 inst = cls(profile_resolver=lambda: user_profile, bus=bus)
+            elif ep.name in ("contact-lookup", "contact-upsert", "call-contact"):
+                # Chunk B (jarvis-contacts): all three consume Contract 1
+                # (ContactStore) via a lazy resolver. The store is built once in
+                # _phase2_full_brain and passed in via `contacts`; it is None
+                # until Chunk A merges (or if the store fails to build) — the
+                # tools then return a clean "contacts unavailable" error rather
+                # than disappearing from the schema mid-session (stable tool
+                # surface, mirrors awareness-recall / wiki-ingest). call-contact
+                # additionally lazy-loads Contract 2 (place_call) + the telephony
+                # config at execute time, degrading to a clear English no-op when
+                # the [telephony] extra / Chunk C is absent.
+                inst = cls(store_resolver=lambda: contacts)
             else:
                 inst = cls()
 
@@ -331,6 +382,29 @@ def _load_local_action_tools(
         # hidden-window state.
         "respawn_mascot": RespawnMascotTool(),
     }
+
+
+def _build_contact_store() -> Any:
+    """Build the ContactStore (Contract 1, owned by Chunk A) or return None.
+
+    Chunk B is the integrator: it codes against the frozen Contract-1 interface
+    and degrades gracefully when Chunk A is not merged. Mirrors the
+    WikiContextInjector import guard in ``_phase2_full_brain``: an ``ImportError``
+    (module not merged) or any constructor mismatch yields ``None``, so the
+    contact tools return a clean "contacts unavailable" error and the
+    ``## Contacts`` name-index block is simply omitted from the system prompt —
+    never a boot crash (cloud-first €5-VPS doctrine).
+    """
+    try:
+        from jarvis.contacts.store import ContactStore  # type: ignore[import]
+    except Exception as exc:  # noqa: BLE001 — Chunk A not merged yet is expected
+        log.debug("ContactStore unavailable (Chunk A not merged?): %s", exc)
+        return None
+    try:
+        return ContactStore()
+    except Exception as exc:  # noqa: BLE001 — constructor mismatch must not crash boot
+        log.warning("ContactStore could not be built: %s", exc)
+        return None
 
 
 def _resolve_mission_manager() -> Any:
@@ -439,8 +513,6 @@ def _phase2_full_brain(
 
     tier="router": RouterBrain system prompt + ROUTER_TOOLS + Haiku.
     """
-    from importlib.metadata import entry_points
-
     from jarvis.brain.manager import BrainManager
     from jarvis.core import config as cfg
     from jarvis.core.bus import EventBus
@@ -624,6 +696,11 @@ def _phase2_full_brain(
     # BrainManager knows this and returns a setup message instead of silently crashing.
     mission_manager_ref: Any = _resolve_mission_manager()
 
+    # Chunk B (jarvis-contacts): build the ContactStore once and share the SAME
+    # instance with the contact tools (via the loader) and the BrainManager (for
+    # the name-index render). None until Chunk A is merged — graceful no-op.
+    contact_store: Any = _build_contact_store()
+
     tools = _load_tools_for_tier(
         tier,
         bus=bus,
@@ -635,6 +712,7 @@ def _phase2_full_brain(
         mission_manager=mission_manager_ref,
         awareness_manager=awareness_manager,
         recall_store=recall,
+        contacts=contact_store,
     )
     local_action_tools = _load_local_action_tools(
         bus=bus,
@@ -672,6 +750,7 @@ def _phase2_full_brain(
         soul=soul,
         people=people,
         awareness_manager=awareness_manager,
+        contacts=contact_store,
     )
 
     # Live-reload marker: refresh_tools() uses these attributes to reconstruct
@@ -982,7 +1061,7 @@ def _legacy_full_brain(bus: Any | None = None) -> Any:
 
     tools: dict[str, Any] = {}
     active_tools = {"open-app", "type-text", "run-shell", "search-web", "remember",
-                    "dispatch-to-harness", "whoami", "cli-tools"}
+                    "dispatch-to-harness", "whoami", "cli-tools", "gmail"}
     from jarvis.harness.manager import HarnessManager
     harness_manager = HarnessManager(bus=bus)
 

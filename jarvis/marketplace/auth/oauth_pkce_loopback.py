@@ -1,9 +1,8 @@
-"""PkceLoopbackHandler — covers Slack.
+"""PkceLoopbackHandler — covers Slack and Google-style loopback OAuth.
 
-OAuth 2.1 + PKCE (RFC 7636) with a pre-registered public client_id
-shipped in the binary. No client_secret, no DCR. The redirect_uri is
-fixed at app-registration time (Slack: `http://localhost:3118/oauth/callback`),
-so we open the loopback callback server on that exact port.
+OAuth 2.1 + PKCE (RFC 7636) with a pre-registered client_id. Some providers
+use a public client with no secret; Google's desktop-client JSON still carries
+a client_secret and its token endpoint may require it.
 
 The pattern works for any service that:
   - lets the developer mark an OAuth app as "PKCE-enabled / public client"
@@ -19,6 +18,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 from urllib.parse import urlencode
 
 import httpx
@@ -47,12 +47,21 @@ class PkceLoopbackConfig:
     client_id: str
     callback_port: int
     scopes: list[str]
+    client_secret: str | None = None
+    scope_separator: Literal["comma", "space"] = "comma"
     # Slack: scope is split into `scope=` (bot) and `user_scope=` (user).
     # PKCE-enabled Slack apps must use `user_scope=` — no bot tokens. So
     # the scope_param_name lets us swap between the two.
     scope_param_name: str = "scope"
     callback_path: str = "/oauth/callback"
     timeout_seconds: int = 10
+    # OAuth `resource` indicator (RFC 8707) — Asana's V2 MCP server requires
+    # `resource=https://mcp.asana.com/v2` on authorize + token requests. Inert
+    # when unset.
+    resource: str | None = None
+    # Google desktop/loopback clients only return a refresh token when the
+    # authorize request carries `access_type=offline` + `prompt=consent`.
+    offline_access: bool = False
 
 
 @dataclass
@@ -93,16 +102,9 @@ class PkceLoopbackHandler:
         verifier, challenge = pkce_pair()
         sid = session_id()
 
-        params = {
-            "response_type": "code",
-            "client_id": self._config.client_id,
-            "redirect_uri": redirect_uri,
-            "state": state,
-            "code_challenge": challenge,
-            "code_challenge_method": "S256",
-        }
-        if self._config.scopes:
-            params[self._config.scope_param_name] = ",".join(self._config.scopes)
+        params = self._authorize_params(
+            redirect_uri=redirect_uri, state=state, challenge=challenge
+        )
         url = self._config.authorization_url + "?" + urlencode(params, doseq=True)
 
         self._pending[sid] = _PendingPkceFlow(
@@ -120,6 +122,30 @@ class PkceLoopbackHandler:
                 (datetime.now(UTC) + timedelta(minutes=5)).timestamp() * 1000
             ),
         )
+
+    def _authorize_params(
+        self, *, redirect_uri: str, state: str, challenge: str
+    ) -> dict[str, str]:
+        """Build the authorize query params. Extracted so the optional
+        `resource` / `offline_access` extensions are unit-testable without
+        binding a socket."""
+        params = {
+            "response_type": "code",
+            "client_id": self._config.client_id,
+            "redirect_uri": redirect_uri,
+            "state": state,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+        }
+        if self._config.scopes:
+            separator = " " if self._config.scope_separator == "space" else ","
+            params[self._config.scope_param_name] = separator.join(self._config.scopes)
+        if self._config.resource:
+            params["resource"] = self._config.resource
+        if self._config.offline_access:
+            params["access_type"] = "offline"
+            params["prompt"] = "consent"
+        return params
 
     async def await_completion(self, session: AuthSession) -> FlowResult:
         pending = self._pending.get(session.flow_id)
@@ -154,6 +180,10 @@ class PkceLoopbackHandler:
             "grant_type": "authorization_code",
             "redirect_uri": pending.redirect_uri,
         }
+        if pending.config.client_secret:
+            body["client_secret"] = pending.config.client_secret
+        if pending.config.resource:
+            body["resource"] = pending.config.resource
         timeout = httpx.Timeout(pending.config.timeout_seconds)
         async with httpx.AsyncClient(timeout=timeout) as client:
             r = await client.post(
@@ -211,15 +241,20 @@ class PkceLoopbackHandler:
     async def refresh(self, current: Tokens) -> Tokens:
         if not current.refresh:
             raise RuntimeError("no refresh token stored")
+        refresh_body = {
+            "grant_type": "refresh_token",
+            "refresh_token": current.refresh,
+            "client_id": self._config.client_id,
+        }
+        if self._config.client_secret:
+            refresh_body["client_secret"] = self._config.client_secret
+        if self._config.resource:
+            refresh_body["resource"] = self._config.resource
         timeout = httpx.Timeout(self._config.timeout_seconds)
         async with httpx.AsyncClient(timeout=timeout) as client:
             r = await client.post(
                 self._config.token_url,
-                data={
-                    "grant_type": "refresh_token",
-                    "refresh_token": current.refresh,
-                    "client_id": self._config.client_id,
-                },
+                data=refresh_body,
                 headers={
                     "Accept": "application/json",
                     "Content-Type": "application/x-www-form-urlencoded",

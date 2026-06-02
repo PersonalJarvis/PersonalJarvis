@@ -187,6 +187,11 @@ async def smoke() -> int:
         critic = FakeCriticRunner(_revise_verdict(), _approve_verdict())
         worker = FakeWorker()
         budget = BudgetTracker(per_mission_usd=10.0, daily_usd=100.0)
+        # Production records cost via the event bus, not a direct .record() call
+        # (the orchestrator deliberately does NOT call _budget.record() — see
+        # orchestrator._run_iterations + init.py:256). Bind here so the
+        # WorkerDraftReady cost_usd is accumulated, mirroring bootstrap_missions.
+        budget.bind_to_event_bus(mgr.bus)
 
         kontrollierer = Kontrollierer(
             manager=mgr,
@@ -228,8 +233,10 @@ async def smoke() -> int:
         else:
             print(f"{OK} worker spawned exactly 2 times")
 
-        # Check 4: Reflections.md hat 1 Eintrag (von iter 0 revise)
-        mission_dir = tmp_path / "missions" / f"mission_{mid[:8]}"
+        # Check 4: Reflections.md hat 1 Eintrag (von iter 0 revise).
+        # mission_dir uses mission_id[:13] (BUG-LIVE-10 bumped the prefix from 8
+        # to 13 chars — see orchestrator._run_mission + outputs_routes.py).
+        mission_dir = tmp_path / "missions" / f"mission_{mid[:13]}"
         refl = ReflectionMemory(mission_dir)
         last = refl.last_n(5)
         if len(last) != 1:

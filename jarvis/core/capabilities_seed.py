@@ -350,6 +350,69 @@ _SEED_CAPABILITIES: list[Capability] = [
         risk_tier="ask",
         requires_evidence=True,
     ),
+    # ------------------------------------------------------------------ #
+    # CHUNK B — jarvis-contacts (3)
+    # ------------------------------------------------------------------ #
+    # These exist so the capability gate routes a named-person action to the
+    # contact surface instead of refusing it ("Das kann ich noch nicht") or
+    # spawning a contextless worker. CRITICAL constraint (test_capability_
+    # coupling_e2e hard-negatives): NONE of these verbs may appear in the
+    # canonical dispatch hard-negatives ("schick Email", "trag Termin ein",
+    # "sende WhatsApp", "bestelle Pizza", "poste auf X") — so the contact verbs
+    # deliberately EXCLUDE the dispatch verbs schick/sende/trag/bestelle/poste.
+    # call-contact is the SOLE owner of the call verbs (ruf/anruf/call/
+    # telefonier) so "ruf Christoph an" resolves there unambiguously, which is
+    # exactly what flips _is_generic_subagent_work from spawn to no-spawn
+    # (BUG-class project_bug_subagent_not_natively_recognized).
+    Capability(
+        id="tool.contact-lookup",
+        source="router_tool",
+        verbs=(
+            "schreib", "schreibe", "mail", "maile",
+            "such", "suche", "find", "finde", "zeig", "zeige",
+            "nenn", "nenne", "kontaktier", "kontaktiere", "wer", "lookup",
+        ),
+        objects=(
+            "kontakt", "kontakte", "contact", "contacts", "person", "leute",
+            "mail", "email", "e-mail", "nummer", "number", "telefonnummer",
+            "telefon", "phone", "adresse", "address",
+        ),
+        description="Resolve a saved contact by name/alias to their e-mail, phone and address (read-only).",
+        risk_tier="safe",
+        requires_evidence=False,
+    ),
+    Capability(
+        id="tool.contact-upsert",
+        source="router_tool",
+        verbs=(
+            "merk", "merke", "speicher", "speichere", "save", "store",
+            "update", "aktualisier", "aktualisiere", "notier", "notiere",
+            "schreib",
+        ),
+        objects=(
+            "kontakt", "kontakte", "contact", "person", "nummer", "number",
+            "telefonnummer", "telefon", "adresse", "address",
+            "mail", "email", "e-mail",
+        ),
+        description="Create or update a saved contact (name, phone, e-mail, address, note).",
+        risk_tier="monitor",
+        requires_evidence=True,
+    ),
+    Capability(
+        id="tool.call-contact",
+        source="router_tool",
+        verbs=(
+            "ruf", "rufe", "ruft", "anruf", "anrufe", "anrufen",
+            "call", "telefonier", "telefoniere", "dial",
+        ),
+        objects=(
+            "kontakt", "kontakte", "contact", "person", "anruf", "telefon",
+            "phone", "nummer", "number",
+        ),
+        description="Place a real outbound phone call to a saved contact.",
+        risk_tier="ask",
+        requires_evidence=True,
+    ),
 ]
 
 

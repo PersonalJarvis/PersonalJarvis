@@ -75,3 +75,27 @@ def test_extra_mcp_json_servers_are_merged() -> None:
 def test_no_connections_returns_only_extras() -> None:
     servers = assemble_claude_mcp_servers(load_catalog(), _store())
     assert servers == {}
+
+
+def _seed_catalog():
+    """The tracked package seed (carries the new coming-soon plugins even
+    before the data/ override is synced)."""
+    from jarvis.marketplace import catalog_data
+    from jarvis.marketplace.catalog_data import clear_cache, load_catalog
+
+    clear_cache()
+    cat = load_catalog(catalog_data._PACKAGE_SEED_PATH)
+    clear_cache()
+    return cat
+
+
+def test_connected_stripe_becomes_http_mcp_with_bearer() -> None:
+    servers = assemble_claude_mcp_servers(_seed_catalog(), _store(stripe="sk_live_abc"))
+    assert servers["stripe"]["type"] == "http"
+    assert servers["stripe"]["url"] == "https://mcp.stripe.com"
+    assert servers["stripe"]["headers"] == {"Authorization": "Bearer sk_live_abc"}
+
+
+def test_unconnected_cloudflare_is_absent() -> None:
+    servers = assemble_claude_mcp_servers(_seed_catalog(), _store())
+    assert "cloudflare" not in servers

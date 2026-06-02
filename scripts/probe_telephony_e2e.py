@@ -108,6 +108,63 @@ async def _run_fake() -> int:
     return 0 if ok else 1
 
 
+async def _run_outbound_fake() -> int:
+    """Outbound path (Chunk C): Jarvis speaks the opening FIRST, then converses.
+
+    Proves the contact-agnostic engine end-to-end against the same session loop:
+    a session created with ``direction="outbound"`` + an ``opening`` speaks that
+    opening before any caller audio arrives (N>0 outbound frames), then a normal
+    caller turn still works.
+    """
+    from tests.fakes.fake_telephony_stack import FakeBrain, FakeSTT, FakeTTS
+
+    sink = _Collector()
+    opening = "Guten Tag, hier ist Jarvis. Ich rufe im Auftrag von Alex an."
+    reply = "Alles klar, ich richte es aus. Vielen Dank!"
+    session = TelephonyCallSession(
+        call_sid="PROBE-OUT",
+        stream_sid="MZOUT",
+        send=sink.send,
+        stt=FakeSTT(["Ja, gerne. Worum geht es?"]),
+        brain=FakeBrain(reply),
+        tts=FakeTTS(ms_per_char=2),
+        language_code="de-DE",
+        direction="outbound",
+        opening=opening,
+    )
+    session._endpointer.silence_ms = 100
+    session._endpointer.min_speech_ms = 60
+
+    # 1) The opening is the FIRST thing spoken — before any inbound media.
+    opening_frames = await session.speak_intro()
+    spoke_opening_first = (
+        opening_frames > 0 and bool(session._tts.calls) and "Guten Tag" in session._tts.calls[0][0]
+    )
+
+    # 2) The conversation then continues exactly like the inbound loop.
+    for _ in range(2):
+        await session.handle_media(_ulaw_b64(0))
+    for _ in range(8):
+        await session.handle_media(_ulaw_b64(15000))
+    for _ in range(12):
+        await session.handle_media(_ulaw_b64(0))
+    for _ in range(200):
+        await asyncio.sleep(0.01)
+        if session.turns >= 1:
+            break
+
+    print("=== Telephony E2E probe (outbound, fakes) ===")
+    print(f"Opening    : {opening}")
+    print(f"Opening spoken first : {spoke_opening_first} ({opening_frames} frames)")
+    print(f"Reply      : {reply}")
+    print(f"Turns      : {session.turns}")
+    print(f"Outbound mu-law media frames : {sink.media}")
+    print(f"Marks      : {sink.marks}  Clears: {sink.clears}")
+    ok = spoke_opening_first and session.turns >= 1 and sink.media > opening_frames
+    print("RESULT     :", "OK" if ok else "FAILED")
+    return 0 if ok else 1
+
+
 async def _run_real(wav_path: str) -> int:
     import wave
 
@@ -153,7 +210,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--real", action="store_true", help="Use the configured real stack")
     parser.add_argument("--wav", default="", help="16 kHz mono WAV for --real STT input")
+    parser.add_argument(
+        "--outbound",
+        action="store_true",
+        help="Drive the outbound path (Chunk C): opening spoken first, then converse",
+    )
     args = parser.parse_args()
+    if args.outbound:
+        return asyncio.run(_run_outbound_fake())
     if args.real:
         if not args.wav:
             print("--real requires --wav <16kHz mono wav>", file=sys.stderr)

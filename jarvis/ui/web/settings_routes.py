@@ -324,6 +324,107 @@ async def put_ptt_hotkey(body: PttHotkeyBody, request: Request) -> dict[str, obj
 
 
 # ---------------------------------------------------------------------------
+# Voice keybinds (editable): Call / Hangup / Talk-PTT. GET all three + defaults;
+# PUT one action at a time. Persisted to jarvis.toml [trigger]; applies on the
+# next voice bootstrap (a Jarvis restart) — bindings are armed once at pipeline
+# start. The legacy /ptt-hotkey route above stays for backward compatibility.
+# ---------------------------------------------------------------------------
+
+
+def _keybind_values(trig: object) -> dict[str, str]:
+    """Current combo per action, falling back to TriggerConfig defaults."""
+    from jarvis.core.config import TriggerConfig
+    from jarvis.core.config_writer import KEYBIND_TOML_KEY
+
+    d = TriggerConfig()
+    out: dict[str, str] = {}
+    for action, field in KEYBIND_TOML_KEY.items():
+        default = getattr(d, field)
+        out[action] = str(getattr(trig, field, default)) if trig is not None else default
+    return out
+
+
+class KeybindBody(BaseModel):
+    action: str = Field(..., description="call | hangup | ptt")
+    hotkey: str = Field(..., min_length=1, max_length=64)
+    persist: bool = Field(default=True, description="Persist to jarvis.toml")
+
+
+@router.get("/keybinds")
+async def get_keybinds(request: Request) -> dict[str, object]:
+    from jarvis.core.config import TriggerConfig
+
+    cfg = _config(request)
+    trig = getattr(cfg, "trigger", None) if cfg is not None else None
+    d = TriggerConfig()
+    return {
+        "keybinds": _keybind_values(trig),
+        "defaults": {"call": d.hotkey_call, "hangup": d.hotkey_hangup, "ptt": d.hotkey},
+        "push_to_talk": bool(getattr(trig, "push_to_talk", True)) if trig else True,
+        "suggestions": list(_HOTKEY_SUGGESTIONS),
+        "restart_required": True,
+    }
+
+
+@router.put("/keybinds")
+async def put_keybind(body: KeybindBody, request: Request) -> dict[str, object]:
+    from jarvis.core.config_writer import KEYBIND_ACTIONS, KEYBIND_TOML_KEY
+    from jarvis.trigger.hotkey import validate_hotkey
+
+    action = body.action.strip().lower()
+    if action not in KEYBIND_ACTIONS:
+        raise HTTPException(status_code=400, detail=f"unknown action: {action}")
+    hotkey = body.hotkey.strip().lower()
+
+    # The backend is the authority — a browser key-capture cannot be trusted to
+    # filter OS-critical / unusable combos (AltGr detection is unreliable there).
+    ok, reason = validate_hotkey(hotkey)
+    if not ok:
+        raise HTTPException(status_code=400, detail=reason)
+
+    cfg = _config(request)
+    trig = getattr(cfg, "trigger", None) if cfg is not None else None
+
+    # Collision check: one chord can't both answer and hang up.
+    for other_action, other_combo in _keybind_values(trig).items():
+        if other_action != action and other_combo.strip().lower() == hotkey:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"'{hotkey}' is already bound to '{other_action}' — "
+                    "pick a different combo."
+                ),
+            )
+
+    field = KEYBIND_TOML_KEY[action]
+    if trig is not None:
+        try:
+            setattr(trig, field, hotkey)
+        except Exception as exc:  # noqa: BLE001 — frozen model is not an error
+            log.debug("in-memory trigger.%s update skipped: %s", field, exc)
+
+    persisted = False
+    if body.persist:
+        try:
+            from jarvis.core import config_writer
+
+            config_writer.set_keybind(action, hotkey)
+            persisted = True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("keybind persist failed: %s", exc)
+
+    return {
+        "ok": True,
+        "action": action,
+        "hotkey": hotkey,
+        "persisted": persisted,
+        # Bindings are armed once at SpeechPipeline construction, so a keybind
+        # change needs a voice restart to take effect.
+        "restart_required": True,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Assistant name (persona identity). GET current (explicit + resolved); PUT to
 # change. Persisted to jarvis.toml [persona].name; applies on the next
 # BrainManager build (a Jarvis restart). Empty = derive from the wake phrase.
@@ -492,3 +593,191 @@ async def put_autostart(body: AutostartBody, request: Request) -> dict[str, obje
         "detail": status.detail,
         "restart_required": False,
     }
+
+
+_OVERLAY_STYLES = ("whisper_bar", "mascot", "none")
+
+
+class OverlayStyleBody(BaseModel):
+    style: str = Field(..., min_length=1)
+    persist: bool = Field(default=True, description="Persist as boot default in jarvis.toml")
+
+
+@router.get("/overlay-style")
+async def get_overlay_style(request: Request) -> dict[str, object]:
+    """Current on-screen overlay style + the selectable options."""
+    cfg = _config(request)
+    ui = getattr(cfg, "ui", None)
+    current = getattr(ui, "orb_style", None) or "whisper_bar"
+    return {"style": current, "options": list(_OVERLAY_STYLES)}
+
+
+@router.put("/overlay-style")
+async def put_overlay_style(body: OverlayStyleBody, request: Request) -> dict[str, object]:
+    """Switch the on-screen overlay (whisper_bar / mascot / none).
+
+    Persists [ui].orb_style and live-swaps the running surface via the
+    DesktopApp (app.state.desktop_app.swap_overlay). When no live app is
+    reachable (headless), the choice is persisted and applies on restart.
+    """
+    style = body.style.strip()
+    if style not in _OVERLAY_STYLES:
+        raise HTTPException(status_code=400, detail=f"Unknown overlay style '{style}'")
+
+    # Best-effort in-memory cfg update so a later read agrees pre-restart.
+    cfg = _config(request)
+    ui = getattr(cfg, "ui", None)
+    if ui is not None:
+        try:
+            ui.orb_style = style  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 — frozen model is not an error
+            log.debug("in-memory orb_style update skipped: %s", exc)
+
+    persisted = False
+    if body.persist:
+        try:
+            from jarvis.core import config_writer
+
+            config_writer.set_overlay_style(style)
+            persisted = True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("overlay-style persist failed (live apply still attempted): %s", exc)
+
+    applied_live = False
+    detail = ""
+    desktop = getattr(request.app.state, "desktop_app", None)
+    swap = getattr(desktop, "swap_overlay", None)
+    if callable(swap):
+        try:
+            # swap_overlay touches Tk (spawns a daemon thread) — keep it off the loop.
+            result = await asyncio.to_thread(swap, style)
+            applied_live = bool(result.get("applied_live")) if isinstance(result, dict) else bool(result)
+        except Exception as exc:  # noqa: BLE001 — never fail the toggle on an apply hiccup
+            log.warning("overlay-style live-apply failed (persisted; applies on restart): %s", exc)
+            detail = str(exc)
+
+    return {
+        "ok": True,
+        "style": style,
+        "persisted": persisted,
+        "applied_live": applied_live,
+        "restart_required": not applied_live,
+        "detail": detail,
+    }
+
+
+@router.post("/restart-app")
+async def restart_app(request: Request) -> dict[str, object]:
+    """Cleanly self-restart the desktop app.
+
+    Delivers a pending overlay-style change (bar <-> mascot) that cannot be
+    applied live (BUG-031) without the user closing + reopening by hand. The
+    DesktopApp spawns a detached relauncher and quits ~0.8 s later, so this
+    request returns 200 first. Returns 503 on a headless host (no window).
+    """
+    desktop = getattr(request.app.state, "desktop_app", None)
+    fn = getattr(desktop, "request_restart", None)
+    if not callable(fn):
+        raise HTTPException(
+            status_code=503, detail="self-restart unavailable on this host"
+        )
+    scheduled = await asyncio.to_thread(fn)
+    if not scheduled:
+        raise HTTPException(
+            status_code=503, detail="no desktop window to restart"
+        )
+    return {"ok": True, "restarting": True}
+
+
+# ---------------------------------------------------------------------------
+# Taskbar section toggles: "Show bar at all times" (bar_persistent, live) and
+# "Mute music while dictating" (ducking.enabled, live). Both persist to
+# jarvis.toml and live-apply via app.state.desktop_app.
+# ---------------------------------------------------------------------------
+
+
+class BoolToggleBody(BaseModel):
+    enabled: bool = Field(...)
+
+
+@router.get("/bar-persistent")
+async def get_bar_persistent(request: Request) -> dict[str, object]:
+    cfg = _config(request)
+    ui = getattr(cfg, "ui", None)
+    return {"enabled": bool(getattr(ui, "bar_persistent", True))}
+
+
+@router.put("/bar-persistent")
+async def put_bar_persistent(body: BoolToggleBody, request: Request) -> dict[str, object]:
+    enabled = bool(body.enabled)
+    cfg = _config(request)
+    ui = getattr(cfg, "ui", None)
+    if ui is not None:
+        try:
+            ui.bar_persistent = enabled  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001
+            log.debug("in-memory bar_persistent update skipped: %s", exc)
+    persisted = False
+    try:
+        from jarvis.core import config_writer
+
+        config_writer.set_bar_persistent(enabled)
+        persisted = True
+    except Exception as exc:  # noqa: BLE001
+        log.warning("bar_persistent persist failed (live apply still attempted): %s", exc)
+    applied_live = False
+    desktop = getattr(request.app.state, "desktop_app", None)
+    fn = getattr(desktop, "set_bar_persistent", None)
+    if callable(fn):
+        try:
+            res = await asyncio.to_thread(fn, enabled)
+            applied_live = (
+                bool(res.get("applied_live")) if isinstance(res, dict) else bool(res)
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("bar_persistent live-apply failed: %s", exc)
+    return {
+        "ok": True,
+        "enabled": enabled,
+        "persisted": persisted,
+        "applied_live": applied_live,
+        "restart_required": not applied_live,
+    }
+
+
+@router.get("/mute-music")
+async def get_mute_music(request: Request) -> dict[str, object]:
+    cfg = _config(request)
+    duck = getattr(cfg, "ducking", None)
+    return {"enabled": bool(getattr(duck, "enabled", False))}
+
+
+@router.put("/mute-music")
+async def put_mute_music(body: BoolToggleBody, request: Request) -> dict[str, object]:
+    enabled = bool(body.enabled)
+    cfg = _config(request)
+    duck = getattr(cfg, "ducking", None)
+    if duck is not None:
+        try:
+            duck.enabled = enabled  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001
+            log.debug("in-memory ducking.enabled update skipped: %s", exc)
+    persisted = False
+    try:
+        from jarvis.core import config_writer
+
+        config_writer.set_mute_music(enabled)
+        persisted = True
+    except Exception as exc:  # noqa: BLE001
+        log.warning("mute_music persist failed (live apply still attempted): %s", exc)
+    applied_live = False
+    desktop = getattr(request.app.state, "desktop_app", None)
+    ducker = getattr(desktop, "_ducker", None)
+    setter = getattr(ducker, "set_enabled", None)
+    if callable(setter):
+        try:
+            await setter(enabled)
+            applied_live = True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("mute_music live-apply failed: %s", exc)
+    return {"ok": True, "enabled": enabled, "persisted": persisted, "applied_live": applied_live}

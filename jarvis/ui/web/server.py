@@ -90,6 +90,7 @@ class WebServer:
         # docs_index_db_path(). Watcher startet in ``start()``.
         self._doc_registry: Any | None = None
         self._cli_registry: Any | None = None
+        self._plugin_registry: Any | None = None
         # Board-Stack wird in _setup_board() befuellt (im _build_app-Pfad).
         self._board_aggregator: Any | None = None
         self._board_aggregator_task: asyncio.Task[None] | None = None
@@ -110,6 +111,7 @@ class WebServer:
         self._wiki_integration_handle: Any | None = None
         # Phase B3 wiki live-reload watchdog handle — shutdown() called in stop().
         self._wiki_watcher: Any | None = None
+        self._channel_chat_bridge: Any | None = None
         # Pre-Thinking-Ack (Flash-Brain) bridge: translate AnnouncementRequested
         # events with kind="preamble" into MessageSent(role="preamble") so the
         # chat view in the desktop UI can render them as muted pre-ack bubbles.
@@ -188,6 +190,9 @@ class WebServer:
         # State-Objekt, das die REST-Routes und der Brain-Launcher teilen.
         self._setup_cli_registry(app)
 
+        # Plugin-Tool-Registry — wired marketplace plugins as live brain tools.
+        self._setup_plugin_registry(app)
+
         # Sub-Agent-Registry (Dashboard-Feature) — abonniert sofort den Bus.
         try:
             from jarvis.agents import SubAgentRegistry
@@ -209,6 +214,7 @@ class WebServer:
         )
         from .chats_routes import router as chats_router
         from .cli_routes import router as cli_router
+        from .contacts_routes import router as contacts_router
         from .docs_routes import router as docs_router
         from .federation_proxy_routes import router as federation_proxy_router
         from .friends_routes import router as friends_router
@@ -232,6 +238,7 @@ class WebServer:
         from .settings_routes import router as settings_router
         from .setup_routes import router as setup_router
         from .skills_routes import router as skills_router
+        from .socials_routes import router as socials_router
         from .sub_agents_routes import router as sub_agents_router
         from .tasks_routes import router as tasks_router
         from .telephony_routes import router as telephony_router
@@ -260,6 +267,7 @@ class WebServer:
         app.include_router(marketplace_router)
         app.state.friend_registry = None
         app.state.channel_manager = None
+        app.state.channel_chat_bridge = None
         # Twilio telephony voice agent (webhook + media WS + REST status/config).
         # Degrades gracefully when the `twilio` extra is not installed (AD-T8).
         app.include_router(telephony_router)
@@ -268,6 +276,10 @@ class WebServer:
         app.state.telephony_manager = TelephonyManager()
         app.include_router(sub_agents_router)
         app.include_router(outputs_router)
+        # Socials section — project social-media links (pure file store, no Brain dep).
+        app.include_router(socials_router)
+        # Contacts section — user-curated address book (pure file store, no Brain dep).
+        app.include_router(contacts_router)
         app.include_router(workflows_router)
         if conductor_router is not None:
             app.include_router(conductor_router)
@@ -515,6 +527,30 @@ class WebServer:
                 "CliToolRegistry-Setup fehlgeschlagen — CLIs-View bleibt leer"
             )
             app.state.cli_registry = None
+
+    def _setup_plugin_registry(self, app: FastAPI) -> None:
+        """Construct the PluginToolRegistry (non-blocking) and publish it.
+
+        Mirror of _setup_cli_registry: the bootstrap (which opens an MCPClient
+        per connected plugin) is scheduled as a background task in start(). The
+        shared handle lets the plugin-tools loader + the marketplace routes see
+        the SAME instance on the SAME bus.
+        """
+        try:
+            from jarvis.marketplace.plugin_registry import PluginToolRegistry
+            from jarvis.marketplace.plugin_shared import set_active_plugin_registry
+
+            registry = PluginToolRegistry(bus=self.bus)
+            self._plugin_registry = registry
+            app.state.plugin_registry = registry
+            set_active_plugin_registry(registry)
+            logger.info("PluginToolRegistry erstellt (bootstrap pending)")
+        except Exception as exc:  # noqa: BLE001
+            logger.opt(exception=exc).warning(
+                "PluginToolRegistry-Setup fehlgeschlagen — Plugins bleiben worker-only"
+            )
+            app.state.plugin_registry = None
+            self._plugin_registry = None
 
     # ------------------------------------------------------------------
     # REST
@@ -1383,6 +1419,19 @@ class WebServer:
                     )
             asyncio.create_task(_bootstrap_clis(), name="cli-registry-bootstrap")
 
+        # Plugin-Registry asynchron bootstrappen — oeffnet pro verbundenem
+        # Plugin einen In-Process-MCPClient und bridged dessen Tools in den
+        # Live-Brain (BrainToolsChanged re-expandiert). Mirror der CLI-Registry.
+        if self._plugin_registry is not None:
+            async def _bootstrap_plugins() -> None:
+                try:
+                    await self._plugin_registry.bootstrap()
+                except Exception as exc:  # noqa: BLE001
+                    logger.opt(exception=exc).warning(
+                        "PluginToolRegistry-Bootstrap fehlgeschlagen — Plugins worker-only"
+                    )
+            asyncio.create_task(_bootstrap_plugins(), name="plugin-registry-bootstrap")
+
         # Board-Aggregator als Endlos-Task. run_forever() macht erst einen
         # on-startup-Run und schlaeft dann 6 h (Plan §5-A Decision #2).
         if self._board_aggregator is not None:
@@ -1793,6 +1842,7 @@ class WebServer:
         blockiert die anderen Channels nicht.
         """
         from jarvis.channels.bootstrap import bootstrap_channels
+        from jarvis.channels.chat_bridge import ChannelChatBridge
 
         # data_dir existiert moeglicherweise nicht auf jedem Branch unter
         # cfg.memory; Fallback auf ./data damit der Code branch-portabel ist.
@@ -1806,20 +1856,27 @@ class WebServer:
         data_dir.mkdir(parents=True, exist_ok=True)
         friends_db = data_dir / "friends.db"
 
-        # TelegramConfig aus integrations.telegram (Branch-portable mit getattr)
+        # Telegram/Discord configs aus integrations.* (Branch-portable mit getattr)
         tg_cfg = None
+        dc_cfg = None
         integrations = getattr(self.cfg, "integrations", None)
         if integrations is not None:
             tg_cfg = getattr(integrations, "telegram", None)
+            dc_cfg = getattr(integrations, "discord", None)
 
         manager, registry = await bootstrap_channels(
             bus=self.bus,
             telegram_config=tg_cfg,
+            discord_config=dc_cfg,
             friends_db_path=friends_db,
             auto_start=True,
         )
         self.app.state.friend_registry = registry
         self.app.state.channel_manager = manager
+        bridge = ChannelChatBridge(bus=self.bus, manager=manager)
+        bridge.start()
+        self._channel_chat_bridge = bridge
+        self.app.state.channel_chat_bridge = bridge
 
         if "telegram" in manager.started():
             logger.info("Friends-Stack live: Telegram-Channel aktiv")
@@ -1857,6 +1914,23 @@ class WebServer:
             set_active_registry(None)
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).debug("CLI-Shared-Registry Cleanup fehlgeschlagen: {}", exc)
+
+        # Symmetric teardown for the plugin registry: unset the module singleton
+        # AND stop the registry so each connected plugin's MCPClient (with its
+        # AsyncExitStack / subprocess) is closed cleanly. Without this, an
+        # in-process restart (--no-lock parallel dev, test teardown) would leave
+        # a stale shared handle and leaked MCP sessions.
+        if self._plugin_registry is not None:
+            try:
+                from jarvis.marketplace.plugin_shared import set_active_plugin_registry
+                set_active_plugin_registry(None)
+                await self._plugin_registry.stop()
+            except Exception as exc:  # noqa: BLE001
+                logger.opt(exception=exc).debug(
+                    "PluginToolRegistry-Cleanup fehlgeschlagen: {}", exc
+                )
+            self._plugin_registry = None
+            self.app.state.plugin_registry = None
 
         # Board-Aggregator-Task geordnet beenden, bevor uvicorn faellt. Der
         # run_forever()-Loop faengt CancelledError selbst und propagiert es.
@@ -2000,6 +2074,16 @@ class WebServer:
 
         channel_manager = getattr(self.app.state, "channel_manager", None)
         friend_registry = getattr(self.app.state, "friend_registry", None)
+        channel_bridge = getattr(self, "_channel_chat_bridge", None)
+        if channel_bridge is not None:
+            try:
+                await channel_bridge.stop()
+            except Exception as exc:  # noqa: BLE001
+                logger.opt(exception=exc).warning(
+                    "ChannelChatBridge-Shutdown fehlgeschlagen"
+                )
+            self._channel_chat_bridge = None
+            self.app.state.channel_chat_bridge = None
         if channel_manager is not None or friend_registry is not None:
             try:
                 from jarvis.channels.bootstrap import shutdown_channels

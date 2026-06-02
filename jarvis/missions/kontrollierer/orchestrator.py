@@ -57,6 +57,7 @@ from ..isolation.worktree import WorktreeManager
 from ..worker_runtime.workspace import materialize_worker_contract
 from ..manager import MissionManager
 from ..stream_evidence import (
+    extract_verified_commands,
     extract_write_targets,
     readonly_answer,
     summarize_answers,
@@ -235,6 +236,44 @@ def _format_external_write_block(path: Path, raw_bytes: bytes) -> str:
         else "\n".join("+" + ln for ln in truncated.splitlines())
     )
     return header + f"--- /dev/null\n+++ b/{p}\n" + note + body + "\n"
+
+
+# Cap on the command output embedded per verified command — enough for a
+# push/PR confirmation line, small enough not to blow the Critic prompt.
+_COMMAND_EVIDENCE_MAX_CHARS: Final[int] = 1200
+
+
+def _format_command_evidence_block(commands: list[tuple[str, str]]) -> str:
+    """Render verified mutating git/GitHub commands as a Critic diff block.
+
+    Like :func:`_format_external_write_block`, the block is deliberately NOT a
+    ``diff --git`` hunk (so the artifact archive's new-file regex ignores it)
+    yet IS meaningful to :func:`_real_diff_is_empty` (it does not start with
+    ``# untracked-not-in-diff:``). Each command's real subprocess output is
+    ``+``-prefixed so any embedded ``diff --git`` text in the output cannot be
+    mis-parsed as a diff control line.
+    """
+    header = (
+        "diff --command-evidence b/<git-github-operations>\n"
+        "# verified-command-execution\n"
+        "# ground-truth: the following state-changing git/GitHub commands ran "
+        "with a NON-ERRORED result this iteration. The output below was written "
+        "by the real subprocess (git/gh), NOT asserted by the worker — treat it "
+        "as on-execution-verified evidence. A 'commit and push' / 'open a PR' "
+        "task legitimately leaves an empty worktree diff; this block IS the "
+        "deliverable, so do not veto under the empty-diff rule.\n"
+    )
+    lines: list[str] = []
+    for command, output in commands:
+        lines.append(f"$ {command}")
+        excerpt = (output or "").strip()
+        if len(excerpt) > _COMMAND_EVIDENCE_MAX_CHARS:
+            excerpt = excerpt[: _COMMAND_EVIDENCE_MAX_CHARS - 1].rstrip() + "…"
+        if excerpt:
+            lines.extend("+" + ln for ln in excerpt.splitlines())
+        else:
+            lines.append("+ (command succeeded; no output captured)")
+    return header + "\n".join(lines) + "\n"
 
 
 def _strip_managed_persona_hunks(diff_text: str) -> str:
@@ -784,6 +823,15 @@ class Kontrollierer:
             diff_text = self._augment_diff_with_external_writes(
                 diff_text, log_text, worktree
             )
+            # Side-effecting git/GitHub work (commit, push, open a PR) leaves no
+            # worktree diff — the change is a commit or a remote ref update done
+            # via the shell. Credit those verified, non-errored commands so a
+            # "commit and push" / "open PRs" task is reviewed on its real
+            # subprocess output instead of failing 3× on a blind empty diff
+            # (the dominant Git/GitHub critic_loop_exhausted false-negative).
+            diff_text = self._augment_diff_with_command_evidence(
+                diff_text, log_text
+            )
             # Record this iteration's diff verbatim. Later iterations may
             # overwrite the worktree with a no-op Edit (live repro
             # mission_019e3288: iter0=1237B real diff, iter1+iter2=0B), so
@@ -825,25 +873,55 @@ class Kontrollierer:
                     step.task_id, iteration, kill_reason,
                     spawn_result.worker_error,
                 )
-                # A worker timeout is transient (Claude Max OAuth contention:
-                # claude produced zero output and was killed by the worker's
+                # A timeout-killed worker that STILL left real files on disk
+                # (non-empty diff after the external-write augmentation above)
+                # is GRADED by the critic, not discarded. Live false-negative
+                # E1: a long Git/build task ("open PRs", "commit and push")
+                # completes its writes, then the worker's 630s wall-clock cap
+                # fires on the trailing network/IO and the process is killed.
+                # The old loop returned TaskOutcome.ERROR → task_error and threw
+                # the real on-disk work away. The diff is the ground truth; the
+                # critic is the judge — fall through to the draft + critic call
+                # below so the user keeps work that actually happened. An empty
+                # diff means nothing was produced (a genuine zero-output hang,
+                # e.g. Claude Max OAuth contention), so keep the transient-retry
+                # / hard-fail behaviour for that case.
+                if is_timeout and not _real_diff_is_empty(diff_text):
+                    logger.warning(
+                        "Task %s iter %d: worker hit the wall-clock cap but "
+                        "left a non-empty diff (%d bytes) — grading the partial "
+                        "work with the critic instead of failing as task_error",
+                        step.task_id, iteration, len(diff_text),
+                    )
+                    # Deliberately fall through (no continue / no return): the
+                    # WorkerDraftReady publish + critic call below grade the
+                    # partial deliverable. We intentionally do NOT emit
+                    # WorkerKilled here: the worker's output is being judged, not
+                    # discarded — emitting a kill event would contradict a
+                    # subsequent MissionApproved. If the critic instead rejects
+                    # the partial work, the honest failure cause is the critic
+                    # verdict (critic_loop_exhausted / rejected), not "timeout";
+                    # the timeout itself is recorded in the logger.error above.
+                # A worker timeout with no output is transient (Claude Max OAuth
+                # contention: claude produced zero output and was killed by the
                 # first-output gate). Retry on a fresh spawn instead of failing
                 # the whole mission — the heavy-phase semaphore (_mission_sem,
                 # default 1) serialises the retry so it no longer competes with
                 # the spawn that just timed out. Budget/auth errors stay fatal.
-                if is_timeout and iteration < MAX_CRITIC_LOOPS - 1:
+                elif is_timeout and iteration < MAX_CRITIC_LOOPS - 1:
                     logger.warning(
                         "Task %s iter %d: worker timed out with no output — "
                         "retrying on a fresh spawn",
                         step.task_id, iteration,
                     )
                     continue
-                await self._publish_worker_killed(
-                    mission_id=mission_id,
-                    worker_id=spawn_result.worker_id,
-                    reason=kill_reason,
-                )
-                return TaskOutcome.ERROR
+                else:
+                    await self._publish_worker_killed(
+                        mission_id=mission_id,
+                        worker_id=spawn_result.worker_id,
+                        reason=kill_reason,
+                    )
+                    return TaskOutcome.ERROR
 
             # WorkerDraftReady event — BudgetTracker.bind_to_event_bus
             # auto-records cost_usd via the bus subscription (init.py:119).
@@ -1419,6 +1497,45 @@ class Kontrollierer:
         if diff_text and diff_text.strip():
             return diff_text.rstrip("\n") + "\n" + trailer
         return trailer
+
+    def _augment_diff_with_command_evidence(
+        self, diff_text: str, stream_text: str
+    ) -> str:
+        """Append verified mutating git/GitHub commands to the captured diff.
+
+        ``_capture_diff`` is worktree-scoped and a "commit and push" / "open a
+        PR" task produces NO worktree file change — the work is a commit or a
+        remote ref update, executed via the shell. The Critic's GROUND-TRUTH-RULE
+        then fails the empty diff 3× → ``critic_loop_exhausted`` even though the
+        push/PR succeeded (the dominant Git/GitHub false-negative bucket). This
+        helper restores ground truth: for every recognised state-changing
+        git/``gh`` command the worker ran with a real, NON-ERRORED result
+        (parsed from the stream by :func:`extract_verified_commands`), it appends
+        a ``diff --command-evidence`` block carrying the command + its real
+        subprocess output.
+
+        Anti-hallucination is preserved: read-only commands never match, and a
+        command with no correlated/errored result is never credited — so a bare
+        "I pushed it" claim still falls through to the empty-diff veto. The
+        Critic remains the final judge of whether the command satisfied the goal.
+
+        Best-effort: never raises.
+        """
+        try:
+            commands = extract_verified_commands(stream_text)
+        except Exception as exc:  # noqa: BLE001 — evidence parse must not crash the loop
+            logger.warning("command-evidence parse failed: %s", exc)
+            return diff_text
+        if not commands:
+            return diff_text
+        block = _format_command_evidence_block(list(commands))
+        logger.info(
+            "command-evidence: credited %d verified git/GitHub command(s): %s",
+            len(commands), [c[0][:60] for c in commands],
+        )
+        if diff_text and diff_text.strip():
+            return diff_text.rstrip("\n") + "\n" + block
+        return block
 
     def _archive_task_artifacts(
         self,

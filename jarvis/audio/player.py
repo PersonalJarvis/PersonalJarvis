@@ -16,6 +16,7 @@ from typing import Any
 import numpy as np
 import sounddevice as sd
 
+from jarvis.audio import level_tap
 from jarvis.core.events import AudioOutFirst
 from jarvis.core.protocols import AudioChunk
 
@@ -594,6 +595,17 @@ class AudioPlayer:
                 await asyncio.to_thread(
                     self._write_samples, stm, arr, pending_rate, dev_rate
                 )
+                # Out-of-band TTS output amplitude for the whisper-bar speaking
+                # equalizer. Deliberately NOT the EventBus (~8 Hz would spam the
+                # flight-recorder wildcard subscriber); zero-cost when no sink is
+                # registered (mascot/none style → has_subscribers() is False).
+                if level_tap.has_subscribers() and arr.size:
+                    rms = float(
+                        np.sqrt(np.mean(np.square(arr.astype(np.float32) * (1.0 / 32768.0))))
+                    )
+                    # feed() normalizes (adaptive gain) so Jarvis's voice drives
+                    # the bars to full range — raw RMS (~0.1) barely moved them.
+                    level_tap.feed(rms)
                 # First audible sample reached PortAudio — tell the bus so the
                 # mascot mouth + SPEAKING bubble sync to actual audio start
                 # instead of the speculative SPEAKING state-transition.

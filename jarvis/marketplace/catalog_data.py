@@ -21,7 +21,7 @@ _PACKAGE_SEED_PATH = Path(__file__).parent / "seed_catalog.json"
 
 
 def _read(path: Path) -> PluginCatalog:
-    with path.open(encoding="utf-8") as f:
+    with path.open(encoding="utf-8-sig") as f:
         raw = json.load(f)
     return PluginCatalog.model_validate(raw)
 

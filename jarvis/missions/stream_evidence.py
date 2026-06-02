@@ -11,6 +11,7 @@ unparseable is skipped, so a half-flushed stream never raises.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 
 
@@ -215,6 +216,119 @@ def extract_write_targets(stream_text: str) -> tuple[str, ...]:
     return tuple(p for p in order if not errored_by_path[p])
 
 
+# Shell-execution tool names across the worker backends (claude-direct `Bash`,
+# OpenClaw / codex / generic variants). Matched case-sensitively against
+# `tool_use.name`.
+_SHELL_TOOL_NAMES: frozenset[str] = frozenset({
+    "Bash", "shell", "run_command", "exec", "execute", "run_shell_command",
+})
+
+# Keys under `tool_use.input` that carry the shell command string.
+_COMMAND_INPUT_KEYS: tuple[str, ...] = ("command", "cmd", "script", "shell")
+
+# State-CHANGING git / GitHub-CLI operations. A successful one of these is a
+# real deliverable for a "commit and push" / "open a PR" task that leaves NO
+# worktree diff — the work happens via the shell, not a file write. Read-only
+# ops (status, log, diff, fetch) are deliberately excluded: they are not a
+# deliverable and must not satisfy an empty-diff veto.
+# The git arm allows global options BEFORE the mutating subcommand so common
+# real-world forms still match: ``git -C <dir> push`` (worker running from a
+# different cwd — very common), ``git --no-pager commit``, ``git -c k=v push``.
+# Each option is either a value-bearing global (``-C <path>``, ``--git-dir=…``)
+# or a plain flag (``-q`` / ``--force``). The subcommand must be the first
+# NON-option word, so ``git log --grep=push`` does NOT match (``log`` is not a
+# mutating subcommand and the ``push`` inside the flag value is never in
+# subcommand position).
+_MUTATING_CMD_RE = re.compile(
+    r"\bgit\b(?:\s+(?:-[cC]\s+\S+|--(?:git-dir|work-tree|namespace)(?:=|\s+)\S+"
+    r"|--?\S+))*\s+(?:push|commit|merge|tag|cherry-pick|revert|am)\b"
+    r"|\bgh\s+(?:pr|issue|release|repo|gist)\s+"
+    r"(?:create|merge|close|edit|comment|review|delete|reopen)\b",
+    re.IGNORECASE,
+)
+
+
+def extract_verified_commands(
+    stream_text: str, *, max_result_chars: int = 400
+) -> tuple[tuple[str, str], ...]:
+    """State-changing git/GitHub shell commands the worker ran successfully.
+
+    Returns ``(command, result_excerpt)`` tuples for every shell ``tool_use``
+    whose command matches a recognised mutating git/``gh`` operation (push,
+    commit, merge, ``gh pr create``, …) AND whose correlated ``tool_result`` is
+    present and did NOT error.
+
+    Why this is ground truth, not hearsay: the ``tool_result`` is the REAL
+    subprocess output — the line ``main -> main`` was written by the actual
+    ``git`` process, not asserted by the LLM. A "commit and push" / "open a PR"
+    task legitimately produces an EMPTY worktree diff (the change is a commit or
+    a remote ref update, not a working-tree file), so the empty-diff
+    GROUND-TRUTH-RULE would fail it 3× → ``critic_loop_exhausted``. Crediting a
+    verified mutating command closes that false-negative.
+
+    Anti-hearsay discipline (mirrors :func:`extract_write_targets`): a command
+    is credited only when its result frame is observed AND successful. A
+    ``tool_use`` with no ``id`` (cannot be correlated) or whose result never
+    arrived (truncated stream) is NOT credited. Read-only commands (``git
+    status``, ``git log``) never match the mutating pattern, so they cannot
+    satisfy an empty diff. The Critic still grades the command + its output as
+    the final judge — this only lets it SEE the evidence instead of vetoing
+    blind.
+    """
+    pending: dict[str, str] = {}          # tool_use_id -> command string
+    credited: list[tuple[str, str]] = []
+    seen_commands: set[str] = set()
+
+    for raw in stream_text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(obj, dict):
+            continue
+        otype = obj.get("type")
+
+        if otype == "assistant":
+            for blk in (obj.get("message", {}) or {}).get("content", []) or []:
+                if not isinstance(blk, dict) or blk.get("type") != "tool_use":
+                    continue
+                if str(blk.get("name", "")).strip() not in _SHELL_TOOL_NAMES:
+                    continue
+                tool_input = blk.get("input") or {}
+                if not isinstance(tool_input, dict):
+                    continue
+                command = next(
+                    (str(tool_input[k]).strip() for k in _COMMAND_INPUT_KEYS
+                     if isinstance(tool_input.get(k), str) and tool_input[k].strip()),
+                    "",
+                )
+                tid = str(blk.get("id", "")).strip()
+                # An id is required to correlate the result; a mutating command
+                # with no confirmable result is not credited (anti-hearsay).
+                if command and tid and _MUTATING_CMD_RE.search(command):
+                    pending[tid] = command
+        elif otype == "user":
+            for blk in (obj.get("message", {}) or {}).get("content", []) or []:
+                if not isinstance(blk, dict) or blk.get("type") != "tool_result":
+                    continue
+                tid = str(blk.get("tool_use_id", "")).strip()
+                command = pending.pop(tid, None)
+                if command is None or _result_is_error(blk):
+                    continue
+                if command in seen_commands:
+                    continue
+                seen_commands.add(command)
+                result_excerpt = _result_text(blk.get("content", "")).strip()
+                credited.append((command, result_excerpt[:max_result_chars]))
+
+    # Commands left in `pending` had no matching result (truncated stream) —
+    # intentionally NOT credited.
+    return tuple(credited)
+
+
 def _has_inworktree_hunk(diff_text: str) -> bool:
     """True if the diff carries a real in-worktree change (a ``diff --git`` hunk).
 
@@ -265,6 +379,7 @@ def summarize_answers(answers: list[str], *, cap: int = 600) -> str:
 __all__ = [
     "StreamEvidence",
     "extract_stream_evidence",
+    "extract_verified_commands",
     "extract_write_targets",
     "readonly_answer",
     "summarize_answers",

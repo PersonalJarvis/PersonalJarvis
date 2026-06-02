@@ -9,11 +9,144 @@ from __future__ import annotations
 
 import json
 
-from jarvis.missions.stream_evidence import extract_stream_evidence
+from jarvis.missions.stream_evidence import (
+    extract_stream_evidence,
+    extract_verified_commands,
+)
 
 
 def _stream(lines: list[dict]) -> str:
     return "\n".join(json.dumps(line) for line in lines)
+
+
+# ---------------------------------------------------------------------------
+# extract_verified_commands — Git/GitHub side-effects that leave no worktree
+# diff (commit/push/PR). The tool_result is the REAL subprocess output (the
+# git/gh process wrote it), so a non-errored result is ground truth, not a log
+# claim. This closes the "commit and push" / "open PRs" critic_loop_exhausted
+# false-negative without weakening the anti-hallucination guard.
+# ---------------------------------------------------------------------------
+
+
+def test_credits_successful_git_push() -> None:
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "Bash",
+             "input": {"command": "git push origin main"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1",
+             "content": "To github.com:me/repo.git\n   abc..def  main -> main"}]}},
+    ])
+    cmds = extract_verified_commands(stream)
+    assert len(cmds) == 1
+    assert "git push" in cmds[0][0]
+    assert "main -> main" in cmds[0][1]
+
+
+def test_credits_gh_pr_create() -> None:
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "p1", "name": "Bash",
+             "input": {"command": "gh pr create --title 'Add X' --body '...'"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "p1",
+             "content": "https://github.com/me/repo/pull/42"}]}},
+    ])
+    cmds = extract_verified_commands(stream)
+    assert len(cmds) == 1
+    assert "gh pr create" in cmds[0][0]
+    assert "pull/42" in cmds[0][1]
+
+
+def test_errored_command_not_credited() -> None:
+    """A failed command (is_error result) is NOT credited — anti-hearsay."""
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "Bash",
+             "input": {"command": "git push origin main"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1", "is_error": True,
+             "content": "error: failed to push some refs"}]}},
+    ])
+    assert extract_verified_commands(stream) == ()
+
+
+def test_read_only_command_not_credited() -> None:
+    """A read-only command (git status) is not a deliverable — not credited."""
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "Bash",
+             "input": {"command": "git status"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "clean"}]}},
+    ])
+    assert extract_verified_commands(stream) == ()
+
+
+def test_unmatched_command_result_not_credited() -> None:
+    """A command whose result never arrived (truncated stream) is NOT credited."""
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "Bash",
+             "input": {"command": "gh pr create --title x"}}]}},
+    ])
+    assert extract_verified_commands(stream) == ()
+
+
+def test_credits_git_dash_C_push() -> None:
+    """`git -C <dir> push` — a worker operating from a different cwd uses this
+    constantly. The global `-C <path>` flag before the subcommand must not
+    defeat crediting (code-review MAJOR-3)."""
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "Bash",
+             "input": {"command": "git -C /home/me/repo push origin main"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1",
+             "content": "   abc..def  main -> main"}]}},
+    ])
+    assert len(extract_verified_commands(stream)) == 1
+
+
+def test_credits_git_long_flag_before_subcommand() -> None:
+    """`git --no-pager commit` — a long global flag before the subcommand."""
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "Bash",
+             "input": {"command": "git --no-pager commit -m 'msg'"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1",
+             "content": "[main 1a2b3c4] msg\n 1 file changed"}]}},
+    ])
+    assert len(extract_verified_commands(stream)) == 1
+
+
+def test_git_log_grep_push_not_a_false_positive() -> None:
+    """`git log --grep=push` is read-only — the word 'push' inside a flag value
+    must NOT be credited as a mutating command."""
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "Bash",
+             "input": {"command": "git log --grep=push --oneline"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "abc commit"}]}},
+    ])
+    assert extract_verified_commands(stream) == ()
+
+
+def test_chained_command_with_commit_and_push_is_credited() -> None:
+    """A real-world chained command (add && commit && push) is credited once."""
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "c1", "name": "Bash",
+             "input": {"command": "cd repo && git add -A && git commit -m 'x' && git push"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "c1",
+             "content": "[main 1a2b3c4] x\n 1 file changed\n   ab..cd  main -> main"}]}},
+    ])
+    cmds = extract_verified_commands(stream)
+    assert len(cmds) == 1
+    assert "git commit" in cmds[0][0] or "git push" in cmds[0][0]
 
 
 def test_extracts_tool_calls_and_final_answer() -> None:

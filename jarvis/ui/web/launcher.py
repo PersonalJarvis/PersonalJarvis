@@ -79,6 +79,92 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def _acquire_primary_lock_for_headless(
+    *, lock_path=None, meta_path=None
+):
+    """Claim primary-instance status for a headless run and set the env flag.
+
+    Decides ``JARVIS_PRIMARY_INSTANCE`` the SAME way the desktop path does:
+    whoever holds the single-instance lock is primary and may run the mission
+    ``crash_recovery`` sweep. Returns the held lock (release at shutdown) or
+    ``None`` when another instance already holds it.
+
+    Why this exists (the 94-occurrence ``crash_recovery`` false-negative,
+    live forensic 2026-05-31, missions 019e6fea / 019e7095): headless NEVER
+    set ``JARVIS_PRIMARY_INSTANCE``, so ``server.py:_init_mission_stack``
+    defaulted it to ``"1"`` (primary) and a parallel headless boot ran
+    ``startup_recover`` against the shared ``missions.db`` — sweeping the
+    DESKTOP instance's actively-running missions to ``FAILED('crash_recovery')``.
+
+    A headless run that is the SOLE instance (the €5-VPS case) holds the lock
+    and stays primary, so genuine orphans are still recovered. A secondary
+    headless run (desktop app or another run already holds the lock) marks
+    itself NON-primary and must not sweep — but it still boots, because
+    headless is explicitly meant to coexist with a primary (tests, parallel
+    dev, smoke probes). Unlike the desktop path it therefore never exits on
+    a lock conflict.
+
+    ``lock_path`` / ``meta_path`` are test overrides forwarded to
+    ``acquire_single_instance_lock``; production uses the defaults.
+    """
+    lock = None
+    try:
+        from jarvis.ui.desktop_app import (
+            SingleInstanceError,
+            acquire_single_instance_lock,
+        )
+
+        try:
+            lock = acquire_single_instance_lock(
+                lock_path=lock_path, meta_path=meta_path
+            )
+        except SingleInstanceError:
+            lock = None
+    except Exception as exc:  # noqa: BLE001 — lock infra must never block boot
+        # Cloud-first guard: if desktop_app cannot be imported (a future GUI
+        # top-level import, a trimmed VPS install), do NOT silently fall to
+        # non-primary — that would disable crash_recovery on the SOLE €5-VPS
+        # instance. Fall back to a direct FileLock on the same path so a lone
+        # headless instance still claims primary. ``filelock`` is a base dep.
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "headless lock via desktop_app failed (%s) — trying a direct "
+            "FileLock fallback so a sole VPS instance still stays primary", exc,
+        )
+        lock = _direct_filelock_fallback(lock_path)
+
+    os.environ["JARVIS_PRIMARY_INSTANCE"] = "1" if lock is not None else "0"
+    return lock
+
+
+def _direct_filelock_fallback(lock_path=None):
+    """Acquire the single-instance lock without importing ``desktop_app``.
+
+    Last-resort path for ``_acquire_primary_lock_for_headless`` so a sole VPS
+    instance stays primary even if ``desktop_app`` is unimportable. Uses the
+    same on-disk lock path (``DATA_DIR / "jarvis.lock"``) so it still coordinates
+    with a desktop instance. No PID-sidecar / stale-detection here — that lives
+    in ``acquire_single_instance_lock``; this is only reached when that import
+    failed. Returns the held lock or ``None`` (already held / unavailable).
+    """
+    try:
+        from filelock import FileLock, Timeout
+
+        from jarvis.core.config import DATA_DIR
+
+        lp = lock_path or (DATA_DIR / "jarvis.lock")
+        lp.parent.mkdir(parents=True, exist_ok=True)
+        fl = FileLock(str(lp))
+        try:
+            fl.acquire(timeout=0.0)
+            return fl
+        except Timeout:
+            return None
+    except Exception:  # noqa: BLE001 — never block boot on the fallback either
+        return None
+
+
 async def _run_headless(cfg) -> int:
     """Nur FastAPI-Backend starten, bis SIGINT.
 
@@ -86,8 +172,13 @@ async def _run_headless(cfg) -> int:
     damit Chat-Messages auch im Headless-Mode End-to-End antworten. Ohne den
     Hook kämen User-Messages am Server an, aber kein Assistant-Reply.
     """
+    # Decide primary-instance status BEFORE the WebServer boots its mission
+    # stack: only the lock holder may run the crash_recovery sweep. A secondary
+    # headless run marks itself non-primary here so it cannot poison the
+    # primary's live missions (the 94-occurrence false-negative).
+    _headless_lock = _acquire_primary_lock_for_headless()
     from jarvis.brain.factory import build_default_brain
-    from jarvis.core.events import ErrorOccurred, MessageSent
+    from jarvis.core.events import ErrorOccurred, MessageSent, ResponseGenerated
     from jarvis.state.chat_store import ChatStore, default_chats_db_path
     from jarvis.state.supervisor import Supervisor
     from jarvis.ui.web.server import WebServer
@@ -124,6 +215,7 @@ async def _run_headless(cfg) -> int:
         thread_id = evt.thread_id or "default"
         if brain is None:
             detail = brain_build_error or "BrainManager nicht initialisiert"
+            message = f"Brain nicht verfuegbar: {detail}"
             await server.bus.publish(
                 ErrorOccurred(
                     layer="brain",
@@ -133,20 +225,41 @@ async def _run_headless(cfg) -> int:
                     source_layer="brain",
                 )
             )
+            await server.bus.publish(
+                ResponseGenerated(
+                    trace_id=evt.trace_id,
+                    text=message,
+                    language="de",
+                    source_layer="brain",
+                )
+            )
             await chat_store.add_message(
                 thread_id=thread_id,
                 role="system",
-                text=f"Brain nicht verfuegbar: {detail}",
+                text=message,
             )
             return
         try:
-            reply = await brain(evt.text)
+            generate = getattr(brain, "generate", None)
+            if callable(generate):
+                reply = await generate(evt.text, trace_id=evt.trace_id)
+            else:
+                reply = await brain(evt.text)
         except Exception as exc:  # noqa: BLE001
             detail = f"{type(exc).__name__}: {exc}"
+            message = f"Brain-Fehler: {detail}"
+            await server.bus.publish(
+                ResponseGenerated(
+                    trace_id=evt.trace_id,
+                    text=message,
+                    language="de",
+                    source_layer="brain",
+                )
+            )
             await chat_store.add_message(
                 thread_id=thread_id,
                 role="system",
-                text=f"Brain-Fehler: {detail}",
+                text=message,
             )
             return
         if reply:
@@ -255,6 +368,20 @@ async def _run_headless(cfg) -> int:
     finally:
         await stop_overlay()  # Phase 9.8: Overlay sauber beenden BEVOR server.stop
         await server.stop()
+        # Release the single-instance lock on the normal (run-then-SIGINT) path.
+        # A crash during the setup phase ABOVE (e.g. server.start raising) skips
+        # this and leaks the lock until the next boot, where the PID-sidecar
+        # stale-detection in acquire_single_instance_lock reclaims it — so the
+        # leak is self-healing, not permanent.
+        if _headless_lock is not None:
+            try:
+                _headless_lock.release()
+            except Exception as exc:  # noqa: BLE001 — best-effort release on shutdown
+                import logging as _logging
+
+                _logging.getLogger(__name__).debug(
+                    "headless lock release failed on shutdown: %s", exc
+                )
 
     return 0
 

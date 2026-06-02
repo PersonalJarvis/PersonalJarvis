@@ -104,6 +104,23 @@ def has_hotkey() -> bool:
     return _has_module("pynput") and not is_wayland()
 
 
+def has_cursor() -> bool:
+    """Can the global mouse-cursor position be read on this OS (AI Pointer)?
+
+    Windows reads it via stdlib ``ctypes`` (always available). macOS/Linux-X11
+    read it via ``pynput``; Wayland forbids global cursor queries, and a headless
+    host has no display — both degrade to the null cursor backend.
+    """
+    plat = detect_platform()
+    if plat == "win32":
+        return True
+    if not display_present():
+        return False
+    if plat == "linux" and is_wayland():
+        return False
+    return _has_module("pynput")
+
+
 def has_overlay() -> bool:
     """Can a transparent floating overlay (orb) be drawn (AD-11)?"""
     return display_present() and _has_module("tkinter")
@@ -127,6 +144,7 @@ __all__ = [
     "ax_permission_granted",
     "has_ax_tree",
     "has_hotkey",
+    "has_cursor",
     "has_overlay",
     "has_elevation",
 ]

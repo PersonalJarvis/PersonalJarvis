@@ -55,6 +55,7 @@ def patch_platform(monkeypatch):
             display_present=True,
             is_wayland=not has_hotkey,
             ax_permission_granted=None,
+            has_cursor=False,
         )
         monkeypatch.setattr(caps_mod, "detect_capabilities", lambda: fake_caps)
 

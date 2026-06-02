@@ -1275,6 +1275,10 @@ class OrbOverlay:
         # stays decoupled from the bus — OrbBusBridge injects a
         # callable that publishes ``VoiceMuteToggleRequested``.
         self._mute_toggle_callback: Callable[[], None] | None = None
+        # Right-click on the orb raises the main desktop window. OrbBusBridge
+        # injects a callable that publishes ``ShowWindowRequested``; the orb
+        # itself stays bus-agnostic (same contract as the mute toggle).
+        self._on_show_window: Callable[[], None] | None = None
         # Counter + Tk timer-id for the two-double-click gesture. The
         # earlier single-double-click implementation muted Jarvis as soon
         # as the user clicked twice on the popup logo, which fired
@@ -1434,17 +1438,20 @@ class OrbOverlay:
         #   <B1-Motion> → drag-update (only fires while LMB held)
         #   <ButtonRelease-1> → drag-finish (or no-op if it was a click)
         #   <Double-Button-1> → mute toggle (fires after Button-1+Release)
-        #   <Button-3>       → right-click popup (Reset Position, Mute)
+        #   <Button-3>       → raise the main desktop window (spec 2026-06-02)
+        #   <Button-2>       → reset position (moved off the old right-click menu)
         # User spec 2026-05-17: double-click on the orb mutes Jarvis.
-        # The old "double-click = reset position" gesture moved into
-        # the right-click menu so the two cannot collide. Drag-start
-        # does not commit any geometry change until the threshold is
-        # crossed, so a fast double-click stays harmless.
+        # Spec 2026-06-02: right-click now opens the Jarvis window (same as the
+        # whisper-bar). "Reset position" moved from the old right-click menu to
+        # middle-click; mute stays on the double-double-click gesture. Drag-start
+        # does not commit any geometry change until the threshold is crossed, so
+        # a fast double-click stays harmless.
         self._canvas.bind("<ButtonPress-1>", self._on_drag_press)
         self._canvas.bind("<B1-Motion>", self._on_drag_motion)
         self._canvas.bind("<ButtonRelease-1>", self._on_drag_release)
         self._canvas.bind("<Double-Button-1>", self._on_mute_double_click)
-        self._canvas.bind("<Button-3>", self._on_context_menu)
+        self._canvas.bind("<Button-3>", self._on_right_click)
+        self._canvas.bind("<Button-2>", self._on_reset_double_click)
 
         self._comment_bubble = OrbCommentBubble(
             parent=self._root,
@@ -1646,6 +1653,33 @@ class OrbOverlay:
         """
         self._mute_toggle_callback = callback
 
+    def set_on_show_window(self, callback: Callable[[], None] | None) -> None:
+        """Inject the right-click → raise-main-window action.
+
+        Fired on a right-click of the orb. Same bus-agnostic contract as
+        ``set_on_mute_toggle``: OrbBusBridge passes a callable that publishes
+        ``ShowWindowRequested``. Pass ``None`` to detach.
+        """
+        self._on_show_window = callback
+
+    def _on_right_click(self, _event: tk.Event | None = None) -> None:
+        """Right-click → raise the main desktop window via the injected
+        callback. Replaces the old Reset/Mute context menu (spec 2026-06-02):
+        "Reset position" now lives on middle-click, mute stays on the
+        double-double-click gesture. No callback wired → safe no-op."""
+        callback = self._on_show_window
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception as exc:  # noqa: BLE001
+            # The Tk thread must not crash on a downstream bus hiccup.
+            import logging
+
+            logging.getLogger("jarvis.orb").warning(
+                "orb show-window callback raised: %r", exc
+            )
+
     def _on_mute_double_click(self, _event: tk.Event) -> None:
         """First half of the mute gesture: increment a counter and arm a
         reset timer. Mute toggles only after a *second* ``<Double-Button-1>``
@@ -1728,45 +1762,15 @@ class OrbOverlay:
             # gesture is supposed to silence Jarvis, not blow up the orb.
             print(f"[orb] mute toggle callback raised: {exc!r}")
 
-    def _on_context_menu(self, event: tk.Event) -> None:
-        """Right-click popup menu — currently exposes "Reset position"
-        plus a placeholder mute entry. The menu is created fresh on each
-        right-click; Tk widgets are cheap and recreating side-steps any
-        stale geometry on monitor changes.
-        """
-        if self._root is None:
-            return
-        try:
-            menu = tk.Menu(self._root, tearoff=0)
-            menu.add_command(
-                label="Reset position",
-                command=lambda: self._on_reset_double_click(event),
-            )
-            menu.add_separator()
-            menu.add_command(
-                label="Mute / Unmute Jarvis",
-                command=self._fire_mute_toggle,
-            )
-            try:
-                menu.tk_popup(event.x_root, event.y_root)
-            finally:
-                # tk_popup leaves a grab — must release or further input
-                # is swallowed. ``grab_release`` on a freshly torn-down
-                # menu raises TclError which we squash.
-                try:
-                    menu.grab_release()
-                except tk.TclError:
-                    pass
-        except tk.TclError as exc:
-            print(f"[orb] context menu failed: {exc}")
-
-    def _on_reset_double_click(self, _event: tk.Event) -> None:
+    def _on_reset_double_click(self, _event: tk.Event | None = None) -> None:
         """Reset the orb to its default anchor position.
 
-        Historically bound to ``<Double-Button-1>``; that gesture moved
-        to mute on 2026-05-17. The method is still reachable via the
-        right-click context menu and is kept callable from tests by
-        the same name so the existing reset-coverage stays valid.
+        Historically bound to ``<Double-Button-1>`` (moved to mute on
+        2026-05-17) and then reachable via the right-click menu. Spec
+        2026-06-02 binds it to middle-click (``<Button-2>``) since right-click
+        now raises the main window. Still reachable via the voice
+        ``OrbResetRequested`` path and kept callable by the same name so the
+        existing reset-coverage stays valid.
         """
         if self._root is None:
             return
@@ -1935,6 +1939,38 @@ class OrbOverlay:
                 self._root.withdraw()
             except tk.TclError:
                 pass
+
+    def stop(self) -> None:
+        """Tear the mascot overlay down at runtime (live display-style swap).
+
+        Additive — not on the normal voice path. Clears ``_running`` so the
+        after-loops (``_schedule_frame`` / ``_schedule_ui_queue`` /
+        ``_schedule_position_recheck``) all stop rescheduling on their next
+        tick (each guards on ``self._running`` first), then hides the comment
+        bubble and destroys the root on the Tk thread. Fully guarded so a
+        teardown hiccup never propagates.
+        """
+        self._running = False
+        root = self._root
+        if root is None:
+            return
+
+        def _teardown() -> None:
+            try:
+                bubble = self._comment_bubble
+                if bubble is not None and hasattr(bubble, "hide"):
+                    bubble.hide()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                root.destroy()
+            except Exception:  # noqa: BLE001
+                pass
+
+        try:
+            root.after(0, _teardown)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _cancel_pending_hide(self) -> None:
         if self._pending_hide_after_id is not None and self._root is not None:

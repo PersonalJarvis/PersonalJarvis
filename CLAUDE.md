@@ -14,6 +14,8 @@ This rule overrides historical "Sprache: Deutsch" sections in this file and any 
 
 **What stays German:** the user-facing chat reply written by the assistant in conversation (per global `~/.claude/CLAUDE.md`), TTS output (bilingual DE+EN auto-detect at runtime), and already-committed German content (do not retro-translate unless asked).
 
+**Enforced in CI (not just documented):** the `language-policy` job in `.github/workflows/ci.yml` blocks any *newly added* German line from merging to `main` (diff-based, so the in-flight DE→EN backlog stays green). It is a required status check. Intentionally-German exceptions: an inline `i18n-allow` marker on the line, or a glob in `scripts/ci/german-allowlist.txt`. See `docs/superpowers/specs/2026-05-30-ci-language-policy-gate-design.md`.
+
 ---
 
 ## Cloud-First Philosophy (BINDING — overrides historical "Windows 11" framing)

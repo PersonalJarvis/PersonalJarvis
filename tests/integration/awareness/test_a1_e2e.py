@@ -6,7 +6,7 @@ Cleanup + 2s-Shutdown-Budget.
 
 Wird NICHT von der Standard-Test-Suite eingesammelt wenn auf non-Windows
 laeuft — pytestmark skipt das ganze Modul. Im Worktree-Pfad
-``C:\\Users\\Administrator\\Desktop\\jarvis-a0`` (Win32) laufen die Tests
+``<USER_HOME>\\Desktop\\jarvis-a0`` (Win32) laufen die Tests
 real; in Linux-CI: skipped.
 """
 from __future__ import annotations

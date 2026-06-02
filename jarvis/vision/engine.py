@@ -85,7 +85,7 @@ class VisionEngine:
         mode: ObserveMode = "auto",
         cancel_token: CancelToken | None = None,
         window_title_filter: str | None = None,
-    ) -> Observation:
+    ) -> Observation | None:
         """Einzelner Observation-Snapshot.
 
         `mode='auto'` entscheidet heuristisch: wenn der aktuelle
@@ -94,6 +94,11 @@ class VisionEngine:
 
         CancelToken wird an die Sub-Sources weitergereicht. Jeder
         Sub-Operation-Start prueft zusaetzlich selbst.
+
+        Returns None when the screenshot source signals a transient BitBlt /
+        GDI failure (ScreenshotSource.observe() returned None). The caller
+        (VisionContextProvider._refresh_loop) must treat None as "skip this
+        frame" — no cache update, no event emission.
         """
         if cancel_token is not None and cancel_token.is_cancelled():
             raise RuntimeError(f"cancelled: {cancel_token.reason}")
@@ -105,6 +110,11 @@ class VisionEngine:
             cancel_token=cancel_token,
             window_title_filter=window_title_filter,
         )
+
+        # Transient BitBlt skip: propagate None to the caller without touching
+        # the cache or emitting an event.
+        if obs is None:
+            return None
 
         # Cache-Check ueber Hash. Wenn wir die exakt gleiche Observation
         # schon hatten, recyclen wir.
@@ -182,8 +192,9 @@ class VisionEngine:
         *,
         cancel_token: CancelToken | None,
         window_title_filter: str | None,
-    ) -> Observation:
+    ) -> Observation | None:
         if mode == "screenshot":
+            # Returns None on transient BitBlt failure — propagate to observe().
             return await self._screenshot_source.observe(
                 cancel_token=cancel_token,
                 window_title_filter=window_title_filter,
@@ -204,12 +215,20 @@ class VisionEngine:
         *,
         cancel_token: CancelToken | None,
         window_title_filter: str | None,
-    ) -> Observation:
-        """Beides aufnehmen und mergen."""
+    ) -> Observation | None:
+        """Beides aufnehmen und mergen.
+
+        Returns None when the screenshot source signals a transient BitBlt
+        failure — the composite result is unusable without a screenshot.
+        """
         shot = await self._screenshot_source.observe(
             cancel_token=cancel_token,
             window_title_filter=window_title_filter,
         )
+        # Transient BitBlt skip in composite mode — skip the whole frame.
+        if shot is None:
+            return None
+
         if cancel_token is not None and cancel_token.is_cancelled():
             raise RuntimeError(f"cancelled: {cancel_token.reason}")
         tree = await self._uia_source.observe(

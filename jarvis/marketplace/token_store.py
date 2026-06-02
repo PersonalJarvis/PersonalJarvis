@@ -26,6 +26,10 @@ class Tokens:
     refresh: str | None = None
     expires_at: datetime | None = None
     extra: dict[str, str] = field(default_factory=dict)
+    # Set when the refresh scheduler hit an unrecoverable refresh (revoked /
+    # un-healable). The entry is KEPT (never deleted) so the plugin stays
+    # visible with a "Reconnect" affordance instead of silently disappearing.
+    needs_reauth: bool = False
 
     def is_near_expiry(self, threshold_seconds: int = 600) -> bool:
         if self.expires_at is None:
@@ -38,6 +42,7 @@ class Tokens:
             "refresh": self.refresh,
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
             "extra": dict(self.extra),
+            "needs_reauth": self.needs_reauth,
         }
         return json.dumps(payload, separators=(",", ":"))
 
@@ -55,6 +60,7 @@ class Tokens:
             refresh=data.get("refresh"),
             expires_at=expires_at,
             extra=dict(data.get("extra") or {}),
+            needs_reauth=bool(data.get("needs_reauth", False)),
         )
 
 

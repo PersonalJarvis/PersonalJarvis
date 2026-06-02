@@ -17,6 +17,7 @@ it that the app starts at boot.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 from collections.abc import Callable
 from contextlib import suppress
@@ -74,9 +75,13 @@ async def refresh_due_tokens(
             new_tokens = await handler.refresh(tokens)
         except RuntimeError as exc:
             if "revoked" in str(exc):
-                store.delete(pid)
+                # Do NOT delete — keep the entry and flag it so the UI shows a
+                # "Reconnect" prompt. A connected plugin must never silently
+                # disappear; the only user-visible delete path is an explicit
+                # DELETE. (Previously this called store.delete(pid).)
+                store.save(pid, dataclasses.replace(tokens, needs_reauth=True))
                 outcomes[pid] = REVOKED
-                log.info("plugin %s refresh token revoked — dropped", pid)
+                log.info("plugin %s refresh revoked — marked needs_reauth", pid)
             else:
                 outcomes[pid] = FAILED
                 log.warning("plugin %s refresh failed: %s", pid, exc)
@@ -86,7 +91,8 @@ async def refresh_due_tokens(
             log.warning("plugin %s refresh errored: %s", pid, exc)
             continue
 
-        store.save(pid, new_tokens)
+        # A healthy refresh clears any stale needs_reauth flag.
+        store.save(pid, dataclasses.replace(new_tokens, needs_reauth=False))
         outcomes[pid] = REFRESHED
     return outcomes
 

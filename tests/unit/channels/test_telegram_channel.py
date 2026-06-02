@@ -189,11 +189,55 @@ def test_is_allowed_anonymous_message_dropped() -> None:
 
 @pytest.mark.asyncio
 async def test_on_msg_drops_when_not_allowed() -> None:
-    cfg = TelegramConfig(enabled=True, allowed_user_ids=[])
+    cfg = TelegramConfig(
+        enabled=True,
+        allowed_user_ids=[],
+        pair_on_first_private_message=False,
+    )
     ch = _make_channel(cfg)
     upd = _make_update(user_id=999)
     await ch._on_telegram_msg(upd, _ctx=None)  # noqa: SLF001
     assert ch._inbox.qsize() == 0  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_on_msg_pairs_first_private_user_and_inserts_inbox(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paired: list[int] = []
+    monkeypatch.setattr(
+        "jarvis.core.config_writer.add_telegram_allowed_user_id",
+        lambda user_id: paired.append(user_id),
+    )
+    cfg = TelegramConfig(enabled=True, allowed_user_ids=[])
+    ch = _make_channel(cfg)
+    upd = _make_update(user_id=999, chat_id=999, text="Hallo Jarvis")
+
+    await ch._on_telegram_msg(upd, _ctx=None)  # noqa: SLF001
+
+    assert paired == [999]
+    assert ch._cfg.allowed_user_ids == [999]  # noqa: SLF001
+    msg = await ch._inbox.get()  # noqa: SLF001
+    assert msg.content == "Hallo Jarvis"
+    assert msg.metadata["telegram_chat_id"] == 999
+
+
+@pytest.mark.asyncio
+async def test_start_command_replies_without_entering_inbox(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "jarvis.core.config_writer.add_telegram_allowed_user_id",
+        lambda user_id: None,
+    )
+    cfg = TelegramConfig(enabled=True, allowed_user_ids=[])
+    ch = _make_channel(cfg)
+    upd = _make_update(user_id=999, chat_id=999, text="/start")
+
+    await ch._on_telegram_msg(upd, _ctx=None)  # noqa: SLF001
+
+    assert ch._inbox.qsize() == 0  # noqa: SLF001
+    ch._app.bot.send_message.assert_awaited_once()  # noqa: SLF001
 
 
 @pytest.mark.asyncio
@@ -360,12 +404,16 @@ def test_from_context_picks_up_telegram_config() -> None:
 
 
 @pytest.mark.asyncio
-async def test_start_skips_when_disabled() -> None:
+async def test_start_disabled_attaches_noop_bus_observer() -> None:
     cfg = TelegramConfig(enabled=False)
     bus = EventBus()
     ch = TelegramChannel(bus=bus, config=cfg)
     await ch.start()
-    assert ch._started is False  # noqa: SLF001
+    assert ch._started is True  # noqa: SLF001
+    assert len(bus._wildcard_subscribers) == 1  # noqa: SLF001
+    assert ch._app is None  # noqa: SLF001
+    await ch.stop()
+    assert len(bus._wildcard_subscribers) == 0  # noqa: SLF001
 
 
 @pytest.mark.asyncio
