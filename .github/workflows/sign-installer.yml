@@ -96,7 +96,7 @@ jobs:
 
       - name: Set up Python 3.11
         # pin: actions/setup-python@v5.3.0 — pinned by commit SHA.
-        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.11"
 
