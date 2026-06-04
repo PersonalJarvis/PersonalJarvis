@@ -1,0 +1,5 @@
+#!/bin/bash
+# AppImage entrypoint — launch the bundled PyInstaller onedir executable.
+HERE="$(dirname "$(readlink -f "${0}")")"
+export PATH="${HERE}/usr/bin:${PATH}"
+exec "${HERE}/usr/bin/Jarvis" "$@"

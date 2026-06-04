@@ -1,0 +1,33 @@
+// REST-Aufrufe zu /api/sessions. Alle relativ — der Vite-Dev-Proxy bzw.
+// das pywebview-Fenster routen automatisch zur FastAPI auf 127.0.0.1:47821.
+
+import type { SessionDetail, SessionListItem } from "./types";
+
+export async function fetchSessions(limit = 100): Promise<SessionListItem[]> {
+  const res = await fetch(`/api/sessions?limit=${limit}`);
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} — sessions list`);
+  }
+  return (await res.json()) as SessionListItem[];
+}
+
+export async function fetchSessionDetail(id: string): Promise<SessionDetail> {
+  const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} — session detail`);
+  }
+  return (await res.json()) as SessionDetail;
+}
+
+export async function fetchSessionExport(
+  id: string,
+  format: "markdown" | "plain" | "json" = "markdown",
+): Promise<string> {
+  const res = await fetch(
+    `/api/sessions/${encodeURIComponent(id)}/export?format=${format}`,
+  );
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} — session export`);
+  }
+  return await res.text();
+}

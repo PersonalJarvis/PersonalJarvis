@@ -1,0 +1,573 @@
+"""REST-route tests for the Outputs view (`/api/outputs`).
+
+Focus: H1 bug — `_mission_status_lookup` previously used the names of
+``tasks/<task_id>/`` subdirectories as the ``WHERE id LIKE 'prefix%'``
+input. Those names are ``Step.task_id`` UUIDs (a fresh UUIDv7 minted per
+step by the Kontrollierer), not the ``mission_id`` the
+Mission-Manager persists in ``missions.id``. The lookup therefore never
+matched and every ``mission_<short>/`` directory rendered as
+``status="unknown"`` in the UI.
+
+The fix derives the mission-id prefix from the dir-name itself
+(``mission_<mission_id[:13]>``). These tests cover both regression
+guards: that ``mission_<short>`` dirs resolve to the right status from
+the DB, and that worktree slug-style dirs stay un-enriched (their
+embedded random ``hex[:8]`` is decoupled from any mission UUID by
+design).
+"""
+from __future__ import annotations
+
+import time
+from collections.abc import AsyncIterator
+from pathlib import Path
+
+import aiosqlite
+import pytest
+import pytest_asyncio
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from jarvis.ui.web.outputs_routes import (
+    _is_deliverable_relpath,
+    _mission_id_prefix_for_dir,
+    _parse_slug,
+)
+from jarvis.ui.web.outputs_routes import (
+    router as outputs_router,
+)
+
+# --- Stubs -------------------------------------------------------------------
+
+
+class _StubStore:
+    """Mimics ``MissionEventStore`` enough for ``_mission_status_lookup``.
+
+    The route only touches ``mgr.store.conn.execute(...)`` so we only need
+    a connection with a missions table populated to fake-DB shape.
+    """
+
+    def __init__(self, conn: aiosqlite.Connection) -> None:
+        self.conn = conn
+
+
+class _StubManager:
+    def __init__(self, store: _StubStore) -> None:
+        self.store = store
+
+
+@pytest_asyncio.fixture
+async def db_conn() -> AsyncIterator[aiosqlite.Connection]:
+    conn = await aiosqlite.connect(":memory:", isolation_level=None)
+    await conn.execute(
+        "CREATE TABLE missions ("
+        "id TEXT PRIMARY KEY, prompt TEXT NOT NULL, state TEXT NOT NULL, "
+        "language TEXT NOT NULL DEFAULT 'de', created_ms INTEGER NOT NULL, "
+        "updated_ms INTEGER NOT NULL, iteration INTEGER NOT NULL DEFAULT 0, "
+        "cost_usd REAL NOT NULL DEFAULT 0.0)"
+    )
+    try:
+        yield conn
+    finally:
+        await conn.close()
+
+
+@pytest.fixture
+def app(tmp_path: Path, db_conn: aiosqlite.Connection) -> FastAPI:
+    app = FastAPI()
+    app.include_router(outputs_router)
+    app.state.outputs_root = tmp_path
+    app.state.mission_manager = _StubManager(_StubStore(db_conn))
+    return app
+
+
+# --- Helpers -----------------------------------------------------------------
+
+
+def _make_mission_dir(root: Path, mission_id: str) -> Path:
+    """Create a ``mission_<mission_id[:13]>`` dir as the Kontrollierer does."""
+    d = root / f"mission_{mission_id[:13]}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _make_worktree_dir(
+    root: Path, utterance: str = "test-task", short: str | None = None
+) -> Path:
+    """Create a worktree slug-style dir as ``WorktreeManager.create`` does."""
+    short = short or "deadbeef"
+    ts = time.strftime("%Y%m%dT%H%M%S")
+    d = root / f"{ts}__{utterance}__{short}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _seed(path: Path, content: str = "x") -> Path:
+    """Write ``content`` to ``path``, creating parent dirs (``mkdir -p``).
+
+    ``Path.write_text`` does NOT create missing parents — it raises
+    ``FileNotFoundError``. The artifact-filter tests lay down deeply nested
+    mission scaffolding (``tasks/<id>/artifacts/files/...``, ``claude_config/
+    projects/...``), so they all go through this helper.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+async def _insert_mission(
+    conn: aiosqlite.Connection,
+    *,
+    mission_id: str,
+    state: str,
+    prompt: str = "test prompt",
+    created_ms: int | None = None,
+    updated_ms: int | None = None,
+) -> None:
+    created_ms = created_ms or int(time.time() * 1000) - 5000
+    updated_ms = updated_ms or int(time.time() * 1000)
+    await conn.execute(
+        "INSERT INTO missions (id, prompt, state, created_ms, updated_ms) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (mission_id, prompt, state, created_ms, updated_ms),
+    )
+
+
+# --- _parse_slug + _mission_id_prefix_for_dir unit tests ---------------------
+
+
+def test_parse_slug_mission_dir() -> None:
+    parsed = _parse_slug("mission_019e3600-a84e")
+    assert parsed["short"] == "019e3600-a84e"
+    assert parsed["utterance"] is None
+    assert parsed["started_at"] is None
+
+
+def test_parse_slug_worktree_dir() -> None:
+    parsed = _parse_slug("20260518T120000__refactor-router__deadbeef")
+    assert parsed["short"] == "deadbeef"
+    assert parsed["utterance"] == "Refactor router"
+    assert parsed["started_at"] is not None
+
+
+def test_parse_slug_unknown_returns_nones() -> None:
+    parsed = _parse_slug("random-dir-name")
+    assert parsed == {"started_at": None, "utterance": None, "short": None}
+
+
+def test_mission_id_prefix_for_persistent_dir() -> None:
+    """The mission_<short> dir-name yields its short as the LIKE-prefix."""
+    assert (
+        _mission_id_prefix_for_dir("mission_019e3600-a84e") == "019e3600-a84e"
+    )
+
+
+def test_mission_id_prefix_for_worktree_dir_is_none() -> None:
+    """Worktree slug dirs embed a random hex[:8] — no mission-id mapping."""
+    assert (
+        _mission_id_prefix_for_dir(
+            "20260518T120000__refactor-router__deadbeef"
+        )
+        is None
+    )
+
+
+def test_mission_id_prefix_for_random_dir_is_none() -> None:
+    assert _mission_id_prefix_for_dir("unrelated-folder") is None
+
+
+def test_mission_id_prefix_rejects_too_short_prefix() -> None:
+    """Six char floor matches the SQL LIKE guard in _mission_status_lookup."""
+    assert _mission_id_prefix_for_dir("mission_abcde") is None  # 5 chars
+    assert _mission_id_prefix_for_dir("mission_abcdef") == "abcdef"  # 6 OK
+
+
+# --- /api/outputs route tests ------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_outputs_empty_root(app: FastAPI) -> None:
+    with TestClient(app) as client:
+        r = client.get("/api/outputs")
+    assert r.status_code == 200
+    assert r.json() == {"sessions": []}
+
+
+@pytest.mark.asyncio
+async def test_list_outputs_mission_dir_resolves_status_from_db(
+    app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
+) -> None:
+    """H1 regression: mission_<short>/ dirs must NOT render as unknown."""
+    mission_id = "019e3600-a84e-7000-8000-000000000001"
+    _make_mission_dir(tmp_path, mission_id)
+    await _insert_mission(db_conn, mission_id=mission_id, state="APPROVED")
+
+    with TestClient(app) as client:
+        r = client.get("/api/outputs")
+
+    assert r.status_code == 200
+    sessions = r.json()["sessions"]
+    assert len(sessions) == 1
+    sess = sessions[0]
+    assert sess["slug"] == f"mission_{mission_id[:13]}"
+    assert sess["status"] == "success", (
+        f"H1 regression: mission_<short>/ dir should resolve to its DB "
+        f"row (APPROVED→success), got status={sess['status']!r}"
+    )
+    assert sess["utterance"] == "test prompt"
+
+
+@pytest.mark.asyncio
+async def test_list_outputs_mission_dir_running_state(
+    app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
+) -> None:
+    mission_id = "019e3600-b000-7000-8000-000000000002"
+    _make_mission_dir(tmp_path, mission_id)
+    await _insert_mission(db_conn, mission_id=mission_id, state="RUNNING")
+
+    with TestClient(app) as client:
+        r = client.get("/api/outputs")
+    sessions = r.json()["sessions"]
+    assert sessions[0]["status"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_list_outputs_mission_dir_failed_state(
+    app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
+) -> None:
+    mission_id = "019e3600-c000-7000-8000-000000000003"
+    _make_mission_dir(tmp_path, mission_id)
+    await _insert_mission(db_conn, mission_id=mission_id, state="FAILED")
+
+    with TestClient(app) as client:
+        r = client.get("/api/outputs")
+    sessions = r.json()["sessions"]
+    assert sessions[0]["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_list_outputs_mission_dir_no_db_row_falls_back_to_unknown(
+    app: FastAPI, tmp_path: Path
+) -> None:
+    """When the dir exists but no DB row matches the prefix, status is unknown."""
+    mission_id = "019e9999-d000-7000-8000-000000000004"
+    _make_mission_dir(tmp_path, mission_id)
+
+    with TestClient(app) as client:
+        r = client.get("/api/outputs")
+    sessions = r.json()["sessions"]
+    assert len(sessions) == 1
+    assert sessions[0]["status"] == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_list_outputs_hides_worktree_slug_dirs(
+    app: FastAPI, tmp_path: Path
+) -> None:
+    """Worktree slug dirs (``<ts>__<utterance>__<short>``) are temporary scaffolding
+    created and torn down by ``WorktreeManager``. They have no mission-id mapping
+    so their status would always render as ``unknown`` — together with the
+    canonical ``mission_<short>`` dir for the same task this produced TWO cards
+    per single mission (live regression 2026-05-26: user perceived "two
+    sub-agents for one task"). The Outputs list now hides them so each mission
+    is represented by exactly one card. Power users can still address the
+    worktree dir directly via ``/api/outputs/{slug}/artifacts``.
+    """
+    _make_worktree_dir(tmp_path, utterance="test-fix", short="cafebabe")
+
+    with TestClient(app) as client:
+        r = client.get("/api/outputs")
+    sessions = r.json()["sessions"]
+    assert sessions == [], (
+        f"worktree slug dir must not appear in the Outputs list, got {sessions!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_outputs_worktree_dir_random_short_does_not_collide(
+    app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
+) -> None:
+    """Worktree short must not accidentally LIKE-match a real mission_id.
+
+    Regression guard: if we ever revert to "use the dir's parsed short as
+    a LIKE-prefix", a worktree dir whose random hex[:8] happens to be a
+    UUID prefix could resolve to the wrong mission. After the 2026-05-26
+    dedup change worktree-only dirs are hidden from the list — but the
+    regression guard is preserved: even if a worktree slug's random short
+    collides with a real mission's prefix, the worktree must NOT inherit
+    that mission's row. Concretely the list stays empty (the worktree dir
+    is hidden) instead of falsely-resolved.
+    """
+    mission_id = "deadbeef-0000-7000-8000-000000000005"
+    _make_worktree_dir(tmp_path, short="deadbeef")
+    await _insert_mission(db_conn, mission_id=mission_id, state="APPROVED")
+
+    with TestClient(app) as client:
+        r = client.get("/api/outputs")
+    sessions = r.json()["sessions"]
+    assert sessions == [], (
+        "worktree slug must remain hidden even when its random short collides "
+        f"with a real mission_id prefix, got {sessions!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_outputs_multiple_mission_dirs(
+    app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
+) -> None:
+    """Each mission_<short>/ dir resolves independently to its own DB row."""
+    mid_a = "019e3600-aaaa-7000-8000-000000000010"
+    mid_b = "019e3600-bbbb-7000-8000-000000000011"
+    _make_mission_dir(tmp_path, mid_a)
+    _make_mission_dir(tmp_path, mid_b)
+    await _insert_mission(
+        db_conn, mission_id=mid_a, state="APPROVED", prompt="task A"
+    )
+    await _insert_mission(
+        db_conn, mission_id=mid_b, state="FAILED", prompt="task B"
+    )
+
+    with TestClient(app) as client:
+        r = client.get("/api/outputs")
+    sessions = {s["slug"]: s for s in r.json()["sessions"]}
+    assert sessions[f"mission_{mid_a[:13]}"]["status"] == "success"
+    assert sessions[f"mission_{mid_a[:13]}"]["utterance"] == "task A"
+    assert sessions[f"mission_{mid_b[:13]}"]["status"] == "error"
+    assert sessions[f"mission_{mid_b[:13]}"]["utterance"] == "task B"
+
+
+@pytest.mark.asyncio
+async def test_list_outputs_mission_dir_ignores_task_subdir_names(
+    app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
+) -> None:
+    """H1 root cause: the lookup must NOT use tasks/<task_id>/ subdirs.
+
+    Pre-fix, the route walked ``mission_<short>/tasks/<task_id>/`` and
+    used the task_id (a FRESH UUIDv7, disjoint from mission_id) as the
+    DB-prefix. If the fix regressed, this test would either render the
+    status as unknown (good — no false match) OR render the status of a
+    *different* mission whose UUID happens to share the task_id prefix.
+    By inserting a row whose ``id`` matches the task_id prefix but NOT
+    the mission-dir prefix, we prove the lookup uses the dir-name only.
+    """
+    mission_id = "019e3600-d000-7000-8000-000000000020"
+    mission_dir = _make_mission_dir(tmp_path, mission_id)
+    # Mimic the Kontrollierer task tree: ``tasks/<task_id[:13]>/``. The
+    # task_id is intentionally a completely different UUID prefix.
+    task_id_prefix = "feedface-cafe"
+    (mission_dir / "tasks" / task_id_prefix).mkdir(parents=True)
+    # Insert a row keyed off the *task_id* prefix to bait the old lookup.
+    bait_full_id = f"{task_id_prefix}-7000-8000-000000000099"
+    await _insert_mission(
+        db_conn,
+        mission_id=bait_full_id,
+        state="FAILED",
+        prompt="WRONG ROW — should not appear",
+    )
+    # And the correct mission row.
+    await _insert_mission(
+        db_conn, mission_id=mission_id, state="APPROVED", prompt="correct row"
+    )
+
+    with TestClient(app) as client:
+        r = client.get("/api/outputs")
+    sessions = r.json()["sessions"]
+    assert len(sessions) == 1
+    sess = sessions[0]
+    assert sess["status"] == "success", (
+        "H1 regression: lookup picked up the task_id-prefixed row "
+        "(state=FAILED) instead of the mission-dir's own mission_id row"
+    )
+    assert sess["utterance"] == "correct row"
+
+
+@pytest.mark.asyncio
+async def test_list_outputs_without_mission_manager_stays_functional(
+    tmp_path: Path,
+) -> None:
+    """When Phase-6 is not booted (no mission_manager), the view still works."""
+    app = FastAPI()
+    app.include_router(outputs_router)
+    app.state.outputs_root = tmp_path
+    # NB: no mission_manager set
+    _make_mission_dir(tmp_path, "019e3600-aaaa-7000-8000-000000000030")
+
+    with TestClient(app) as client:
+        r = client.get("/api/outputs")
+    assert r.status_code == 200
+    sessions = r.json()["sessions"]
+    assert len(sessions) == 1
+    assert sessions[0]["status"] == "unknown"
+
+
+# --- Plan endpoint stub (UI-MED: Plan-UI-Stub) -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_output_plan_returns_empty_stub(
+    app: FastAPI, tmp_path: Path
+) -> None:
+    """The Plan tab is intentionally a placeholder (Welle-4 not plumbed).
+
+    Confirmed as out-of-scope per the B1 brief: returns ``{plan: null,
+    steps: []}`` rather than 404. The UI renders "Single-Shot-Run — kein
+    strukturierter Plan" for this shape.
+    """
+    _make_mission_dir(tmp_path, "019e3600-eeee-7000-8000-000000000040")
+    with TestClient(app) as client:
+        r = client.get(
+            "/api/outputs/mission_019e3600-eeee/plan"
+        )
+    assert r.status_code == 200
+    assert r.json() == {"plan": None, "steps": []}
+
+
+@pytest.mark.asyncio
+async def test_get_output_plan_404_for_unknown_slug(app: FastAPI) -> None:
+    with TestClient(app) as client:
+        r = client.get("/api/outputs/nonexistent-slug/plan")
+    assert r.status_code == 404
+
+
+# --- /artifacts deliverable-only filter (live report 2026-05-30) -------------
+# A trivial "make an HTML file" mission rendered 10+ ``claude_config/*`` rows
+# (sessions, policy-limits, settings, projects/*.jsonl, .claude.json, backups)
+# plus the forensic ``diff.patch`` in the Outputs "Results" list — burying the
+# one file the user actually wanted (HelloBot.html). The list endpoint now
+# surfaces ONLY genuine deliverables under ``tasks/<id>/artifacts/files/`` —
+# the exact subtree ``deliver_to_user_folder`` mirrors to the user's Downloads.
+
+
+def test_is_deliverable_relpath() -> None:
+    """The allowlist predicate: only ``tasks/<id>/artifacts/files/<rel>`` wins."""
+    assert _is_deliverable_relpath(
+        ("tasks", "019e0000", "artifacts", "files", "out.html")
+    )
+    assert _is_deliverable_relpath(
+        ("tasks", "019e0000", "artifacts", "files", "sub", "deep.css")
+    )
+    # Forensic + scaffolding paths are all rejected.
+    assert not _is_deliverable_relpath(
+        ("tasks", "019e0000", "artifacts", "diff.patch")
+    )
+    assert not _is_deliverable_relpath(("claude_config", "settings.json"))
+    assert not _is_deliverable_relpath(
+        ("claude_config", "sessions", "45552.json")
+    )
+    assert not _is_deliverable_relpath((".codex", "auth.json"))
+    assert not _is_deliverable_relpath(("openclaw_state", "openclaw.json"))
+    assert not _is_deliverable_relpath(("reflections.md",))
+    assert not _is_deliverable_relpath(("tasks", "019e0000", "logs", "x.jsonl"))
+
+
+@pytest.mark.asyncio
+async def test_list_artifacts_lists_only_deliverables(
+    app: FastAPI, tmp_path: Path
+) -> None:
+    """Only genuine deliverables are listed; the forensic ``diff.patch`` one
+    level up in ``artifacts/`` is excluded (contract change 2026-05-30)."""
+    d = _make_mission_dir(tmp_path, "019e3288abcd")
+    _seed(d / "tasks" / "019e0000" / "artifacts" / "files" / "out.txt", "hello")
+    _seed(d / "tasks" / "019e0000" / "artifacts" / "diff.patch", "diff --git")
+    with TestClient(app) as client:
+        r = client.get(f"/api/outputs/{d.name}/artifacts")
+    assert r.status_code == 200
+    paths = {f["path"] for f in r.json()["files"]}
+    assert "tasks/019e0000/artifacts/files/out.txt" in paths
+    assert "tasks/019e0000/artifacts/diff.patch" not in paths
+
+
+@pytest.mark.asyncio
+async def test_list_artifacts_skips_claude_config_scaffolding(
+    app: FastAPI, tmp_path: Path
+) -> None:
+    """The isolated ``CLAUDE_CONFIG_DIR`` (``run_dir/claude_config/``) seeded by
+    ``build_worker_env`` must never leak into the Outputs view."""
+    d = _make_mission_dir(tmp_path, "019e3288abcd")
+    cfg = d / "claude_config"
+    _seed(cfg / "sessions" / "45552.json", "{}")
+    _seed(cfg / "projects" / "x" / "a.jsonl", "{}\n")
+    _seed(cfg / "backups" / ".claude.json.backup.123", "{}")
+    _seed(cfg / "settings.json", "{}")
+    _seed(cfg / "policy-limits.json", "{}")
+    _seed(cfg / ".claude.json", "{}")
+    _seed(cfg / ".last-cleanup", "x")
+    _seed(
+        d / "tasks" / "019e0000" / "artifacts" / "files" / "HelloBot.html",
+        "<html></html>",
+    )
+    with TestClient(app) as client:
+        r = client.get(f"/api/outputs/{d.name}/artifacts")
+    assert r.status_code == 200
+    paths = {f["path"] for f in r.json()["files"]}
+    assert paths == {"tasks/019e0000/artifacts/files/HelloBot.html"}, (
+        "only the genuine deliverable may show; all claude_config rows must be "
+        f"filtered. Got: {sorted(paths)}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_artifacts_skips_codex_and_forensics(
+    app: FastAPI, tmp_path: Path
+) -> None:
+    """``.codex/`` (CODEX_HOME), worker ``logs/`` and ``reflections.md`` are
+    internal scaffolding — only the deliverable survives the listing filter."""
+    d = _make_mission_dir(tmp_path, "019e3288abcd")
+    _seed(d / ".codex" / "cache" / "auth.json", "{}")
+    _seed(d / "tasks" / "019e0000" / "logs" / "stream.jsonl", "{}\n")
+    _seed(d / "reflections.md", "notes")
+    _seed(
+        d / "tasks" / "019e0000" / "artifacts" / "files" / "site.html",
+        "<html></html>",
+    )
+    with TestClient(app) as client:
+        r = client.get(f"/api/outputs/{d.name}/artifacts")
+    assert r.status_code == 200
+    paths = {f["path"] for f in r.json()["files"]}
+    assert paths == {"tasks/019e0000/artifacts/files/site.html"}, sorted(paths)
+
+
+@pytest.mark.asyncio
+async def test_list_artifacts_lists_nested_deliverables(
+    app: FastAPI, tmp_path: Path
+) -> None:
+    """Deliverables in nested sub-dirs under ``artifacts/files/`` are kept."""
+    d = _make_mission_dir(tmp_path, "019e3288abcd")
+    _seed(
+        d / "tasks" / "019e0000" / "artifacts" / "files" / "assets" / "logo.svg",
+        "<svg/>",
+    )
+    with TestClient(app) as client:
+        r = client.get(f"/api/outputs/{d.name}/artifacts")
+    assert r.status_code == 200
+    paths = {f["path"] for f in r.json()["files"]}
+    assert "tasks/019e0000/artifacts/files/assets/logo.svg" in paths
+
+
+@pytest.mark.asyncio
+async def test_raw_serves_deliverable(app: FastAPI, tmp_path: Path) -> None:
+    """The raw-file endpoint returns the contents of a genuine deliverable."""
+    d = _make_mission_dir(tmp_path, "019e3288abcd")
+    _seed(
+        d / "tasks" / "019e0000" / "artifacts" / "files" / "out.txt", "payload"
+    )
+    with TestClient(app) as client:
+        r = client.get(
+            f"/api/outputs/{d.name}/files/"
+            "tasks/019e0000/artifacts/files/out.txt/raw"
+        )
+    assert r.status_code == 200
+    assert r.json()["text"] == "payload"
+
+
+@pytest.mark.asyncio
+async def test_raw_404s_for_scaffolding(app: FastAPI, tmp_path: Path) -> None:
+    """Defense-in-depth: a direct raw-fetch of an internal claude_config file
+    must 404 even though the file exists on disk — the same allowlist guards
+    the raw endpoint, so scaffolding can be neither listed nor fetched."""
+    d = _make_mission_dir(tmp_path, "019e3288abcd")
+    _seed(d / "claude_config" / ".claude.json", '{"secret":"x"}')
+    with TestClient(app) as client:
+        r = client.get(
+            f"/api/outputs/{d.name}/files/claude_config/.claude.json/raw"
+        )
+    assert r.status_code == 404

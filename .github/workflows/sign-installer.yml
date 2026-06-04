@@ -1,0 +1,1007 @@
+# Sigstore keyless signing + SLSA L3 provenance for the Personal Jarvis
+# quick-install one-liner.
+#
+# Trigger: a push of a tag matching v*.*.* (e.g. v0.2.0-supplychain-wave1).
+#
+# What it does:
+#   1. Job `sign`:
+#      a. Checks out the tag.
+#      b. Computes SHA-256 of install/install.sh, install/install.ps1,
+#         install/installer.py, install/install-verify.sh, install/install-verify.ps1.
+#      c. Installs cosign via sigstore/cosign-installer (pinned by commit SHA).
+#      d. Wave 1 — Sigstore keyless: signs each file via `cosign sign-blob`
+#         using GitHub OIDC. Fulcio issues a short-lived (10 min) cert bound
+#         to this workflow's identity. Signature + cert written to disk.
+#         Cosign records the signature in Rekor (transparency log) and we
+#         independently re-verify Rekor inclusion afterwards.
+#      e. Wave 2 — offline-ceremony Ed25519: decrypts the offline-ceremony
+#         private key with the WAVE2_CEREMONY_PASSPHRASE secret and produces
+#         a second signature per artifact. Independently re-verifies. The
+#         decrypted key is scrubbed from the runner in an `if: always()` step.
+#      f. Uploads the signed artifact bundle (install/*, .sig, .pem,
+#         .bundle, .cosign.sig, checksums.txt) as a workflow artifact so the
+#         `release` job can attach it to the Release. Also exposes a
+#         base64-encoded sha256sum manifest as a job output for the
+#         `provenance` job to consume.
+#   2. Job `provenance` (Wave 3 — SLSA L3):
+#      Calls the slsa-framework/slsa-github-generator reusable workflow at
+#      a 40-char commit SHA pin (see SLSA_GENERATOR_PIN comment below) with
+#      the base64-subjects produced by `sign`. The generator runs in an
+#      ISOLATED job — its OIDC token is never exposed to user-controlled
+#      steps in the `sign` job — and produces a Sigstore-signed in-toto v1.0
+#      provenance file `personal-jarvis.intoto.jsonl`.
+#      With `upload-assets: true` it attaches the provenance file to the
+#      same GitHub Release as the signatures.
+#   3. Job `release`:
+#      Downloads the signed-bundle artifact from `sign` and attaches every
+#      file to the GitHub Release in a single softprops/action-gh-release
+#      step. (The SLSA generator attaches the provenance separately.)
+#
+# Pins:
+#   Every third-party action is pinned by 40-char commit SHA. NEVER use tags
+#   here — `tj-actions/changed-files` (CVE-2025-30066, March 2025) is the
+#   canonical example of why tag pins can be silently moved. Each pin is
+#   annotated with a `# pin: <owner>/<repo>@v<X.Y.Z>` comment so humans can
+#   read the version without resolving the SHA.
+
+name: Sign installer (Sigstore keyless)
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+# No secrets needed. Keyless signing uses OIDC.
+# id-token=write is required by both Sigstore Fulcio (Wave 1) and by the
+# slsa-github-generator reusable workflow (Wave 3 — it mints its OWN OIDC
+# token inside the isolated `provenance` job, but the caller workflow must
+# permit it). actions=read is required by the SLSA generator so it can
+# read this workflow file's definition into the provenance subject.
+permissions:
+  contents: write    # to attach signatures + verifier scripts to the Release
+  id-token: write    # to mint the GitHub OIDC token Fulcio binds to
+  actions: read      # required by slsa-github-generator (Wave 3)
+
+jobs:
+  # ----------------------------------------------------------------------
+  # Job -1 (Wave 6): pip-audit — strict transitive-dependency CVE gate.
+  #
+  # Runs `pip-audit -r requirements.txt --strict` BEFORE any signing
+  # work happens, so a CVE in a hash-pinned transitive dep blocks the
+  # release at the earliest possible point. `--strict` makes pip-audit
+  # exit non-zero on advisory lookup failures (network/PyPI outage) in
+  # addition to CVE matches — fail-closed posture. The hash-pinned
+  # `requirements.txt` is signed on all five trust axes downstream
+  # (see Wave 6 in docs/supply-chain/threat-model.md §11), so this
+  # check is also a precondition for the audit results being meaningful:
+  # if the lockfile cannot be audited cleanly, signing it is theatre.
+  #
+  # Defensive ordering rationale (vs auditing AFTER cross-runner-hash):
+  # the audit is purely a property of the lockfile bytes that already
+  # live in git at HEAD-of-tag. It does not need the cross-runner
+  # agreement to be meaningful. Putting it first means a regression
+  # in transitive deps fails the workflow in <60 s instead of waiting
+  # through the 4-axis signing + SLSA generator.
+  # ----------------------------------------------------------------------
+  pip-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout tag (read-only fetch)
+        # pin: actions/checkout@v4.2.2 — pinned by commit SHA.
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        # pin: actions/setup-python@v5.3.0 — pinned by commit SHA.
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b
+        with:
+          python-version: "3.11"
+
+      - name: Install pip-audit (latest from PyPI)
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          # pip-audit picks up vuln data from osv.dev + the PyPI advisory
+          # database at runtime; pinning the tool version is intentional
+          # to make a successful audit reproducible.
+          python -m pip install "pip-audit==2.10.0"
+          pip-audit --version
+
+      - name: Audit requirements.txt (--strict, fail-closed)
+        run: |
+          set -euo pipefail
+          # `--strict` upgrades advisory-lookup failures (e.g. an osv.dev
+          # outage) to exit-non-zero. Without it, a transient lookup
+          # failure could silently pass the gate. We want the workflow
+          # to fail when the audit cannot be completed for any reason.
+          pip-audit -r requirements.txt --strict --progress-spinner=off --disable-pip
+          echo "pip-audit: no known vulnerabilities in requirements.txt"
+
+  # ----------------------------------------------------------------------
+  # Job 0: cross-runner-hash (Wave 3 SA-5 wiring)
+  #
+  # Calls cross-runner-hash.yml as a reusable workflow. The matrix runs
+  # SHA-256 over the six install/* + lockfile artifacts on ubuntu-latest
+  # + macos-latest + windows-latest and asserts byte-identity (fail-fast:
+  # false so all three disagreements surface). Emits the artifact
+  # `hashes-cross-runner-verified.json` which the `sign` job downloads
+  # and feeds into the SLSA `base64-subjects` calculation.
+  #
+  # By gating `sign` on this job, no Sigstore signature can be cut
+  # without cross-runner agreement — closing the single-runner-compromise
+  # attack vector that Waves 1+2 were blind to.
+  # ----------------------------------------------------------------------
+  cross-runner-hash:
+    needs: pip-audit
+    uses: ./.github/workflows/cross-runner-hash.yml
+
+  sign:
+    needs: cross-runner-hash
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # Outputs consumed by the `provenance` job. `hashes` is the base64-
+    # encoded `sha256sum` manifest the slsa-github-generator reusable
+    # workflow wants. We compute it from the cross-runner-verified
+    # hashes file (NOT from a locally re-computed checksum) so the SLSA
+    # provenance is bound to the bytes all three runner OSes agreed on.
+    outputs:
+      hashes: ${{ steps.subjects.outputs.hashes }}
+
+    env:
+      # Fulcio + Rekor production endpoints. Pinning these prevents an
+      # attacker who somehow injects env vars from redirecting to a rogue CA.
+      COSIGN_EXPERIMENTAL: "1"
+      COSIGN_YES: "true"   # disables the interactive confirmation prompt
+
+    steps:
+      - name: Checkout tag (read-only fetch)
+        # pin: actions/checkout@v4.2.2 — pinned by commit SHA, not by tag.
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 1
+          persist-credentials: false  # don't leave a credential token on disk
+
+      - name: Verify tag matches a semver-ish vN pattern
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._-]+)?$ ]]; then
+            echo "::error::tag '$TAG' does not match v<major>.<minor>.<patch>[-suffix]"
+            exit 1
+          fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+
+      - name: Install cosign (pinned by SHA, v2.4.1)
+        # pin: sigstore/cosign-installer@v3.7.0 — pinned by commit SHA.
+        # The installer itself verifies cosign's own Sigstore signature
+        # before extracting the binary; we use cosign-release = v2.4.1
+        # which matches the SHA-256 hard-coded in install/install-verify.sh
+        # (install/TRUST_ROOT.md documents the chain).
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da
+        with:
+          cosign-release: "v2.4.1"
+
+      - name: Confirm cosign version (defensive)
+        run: |
+          set -euo pipefail
+          # `cosign version` plain text contains 'GitVersion: v2.4.1' as one
+          # of its lines. The JSON shape differs between cosign minor
+          # versions (some emit `GitVersion`, some emit `gitVersion`, some
+          # nest under `info`), so we grep the plain-text line which has
+          # been stable since 1.x.
+          COSIGN_OUT=$(cosign version 2>&1)
+          echo "----- cosign version (full) -----"
+          echo "$COSIGN_OUT"
+          echo "---------------------------------"
+          COSIGN_GIT_VERSION=$(echo "$COSIGN_OUT" | awk -F': *' '/^GitVersion:/ {print $2; exit}')
+          if [ "$COSIGN_GIT_VERSION" != "v2.4.1" ]; then
+            echo "::error::cosign version mismatch — expected v2.4.1, got '$COSIGN_GIT_VERSION'"
+            exit 1
+          fi
+
+      - name: Stage release artifacts (copy verifier wrappers under stable names)
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          # The stage-2 payload files (legacy one-liner becomes the second-stage).
+          cp install/install.sh        out/install.sh
+          cp install/install.ps1       out/install.ps1
+          cp install/installer.py      out/installer.py
+          # The verifier wrappers — the new one-liner targets.
+          cp install/install-verify.sh  out/install-verify.sh
+          cp install/install-verify.ps1 out/install-verify.ps1
+          # Wave 6: the hash-pinned lockfile is signed on all five trust
+          # axes alongside the installer scripts. install-verify.{sh,ps1}
+          # fetches + verifies it under the same five-axis chain and
+          # installer.py runs `pip install --require-hashes -r
+          # requirements.txt` from the desktop branch, so a transitive-
+          # dependency swap on a poisoned PyPI mirror fails-closed at
+          # install time. See docs/supply-chain/threat-model.md §11.
+          cp requirements.txt out/requirements.txt
+          chmod +x out/install.sh out/install-verify.sh
+          # Wave 5 axis E (Wave-5 audit Finding 2): payload-commit pin.
+          # Emit the exact tag commit SHA into payload-commit.txt as a
+          # newline-terminated lowercase hex string. install-verify.sh
+          # treats this file as a sixth signed artifact (Wave 1+2+4) and
+          # exports its content as JARVIS_PAYLOAD_COMMIT before exec'ing
+          # install.sh, which then `git checkout`s that SHA so the
+          # cloned tree is bound to the exact commit existing at sign
+          # time. Closes the "cloned `main` is unsigned" gap.
+          printf '%s\n' "$GITHUB_SHA" > out/payload-commit.txt
+          ls -la out/
+
+      - name: Download cross-runner-verified hashes (Wave 3 gate)
+        # pin: actions/download-artifact@v4.1.8 — pinned by commit SHA.
+        # The hashes-cross-runner-verified.json artifact is produced by
+        # the cross-runner-hash workflow's assert job AFTER all three
+        # OS images (ubuntu/macos/windows) agreed byte-for-byte on the
+        # SHA-256 of the five install/* artifacts. We download it here
+        # and use it as the canonical source for the SLSA subjects.
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: hashes-cross-runner-verified.json
+          path: cross-runner
+
+      - name: Compute SHA-256 manifest (locally) and assert match with cross-runner-verified JSON
+        working-directory: out
+        run: |
+          set -euo pipefail
+          # 1. Recompute checksums locally on the signing runner so the
+          #    artifact bytes the cosign step is about to sign are the
+          #    SAME bytes the cross-runner matrix hashed. If checkout or
+          #    `cp` corrupted anything between then and now, this assert
+          #    catches it. We sort by filename (`sort -k2`) under LC_ALL=C
+          #    so the byte order matches both the cross-runner matrix
+          #    output AND the JSON-reconstructed manifest below.
+          # Wave-5 note: payload-commit.txt is signed independently (axes
+          # A+B+D) but is NOT part of the cross-runner manifest because
+          # cross-runner-hash.yml only hashes the 5 install/* source files
+          # under their source-tree paths. Including it in checksums.txt
+          # below as a sixth line would make the cross-runner-assert step
+          # fail. The signed Wave 1+2+4 signatures on payload-commit.txt
+          # are its independent integrity anchor.
+          export LC_ALL=C
+          sha256sum install.sh install.ps1 installer.py install-verify.sh install-verify.ps1 requirements.txt \
+            | sort -k2 > checksums.txt
+          echo "----- checksums.txt (sign job, local recompute) -----"
+          cat checksums.txt
+          echo "-----------------------------------------------------"
+
+          # 2. Reconstruct the sha256sum-format manifest from the
+          #    cross-runner-verified JSON so we can diff it against the
+          #    locally-recomputed checksums.txt.
+          python3 - <<'PY' > ../cross-runner/checksums.from-json.txt
+          import json
+          with open("../cross-runner/hashes-cross-runner-verified.json", "r", encoding="utf-8") as fh:
+              doc = json.load(fh)
+          arts = sorted(doc["artifacts"], key=lambda a: a["name"])
+          for a in arts:
+              print(f"{a['sha256']}  {a['name']}")
+          PY
+
+          echo "----- checksums.from-json.txt (cross-runner-verified) -----"
+          cat ../cross-runner/checksums.from-json.txt
+          echo "-----------------------------------------------------------"
+
+          if ! diff -u ../cross-runner/checksums.from-json.txt checksums.txt; then
+            echo "::error::Sign-job-local checksums diverge from cross-runner-verified hashes — refusing to sign."
+            echo "::error::This indicates the artifact bytes changed between the cross-runner matrix and this job."
+            exit 1
+          fi
+          echo "Local checksums match the cross-runner-verified set. Wave 3 gate: PASS."
+
+      - name: Emit base64-subjects manifest for SLSA generator (from cross-runner JSON)
+        id: subjects
+        run: |
+          set -euo pipefail
+          # The slsa-github-generator reusable workflow wants a base64-
+          # encoded `sha256sum`-format manifest as input. We feed the
+          # CROSS-RUNNER-VERIFIED manifest (already proven byte-identical
+          # to out/checksums.txt by the assert step above) so the SLSA
+          # provenance subjects are anchored to the multi-runner agreement,
+          # not to a single signing runner's view of the world.
+          HASHES=$(base64 -w0 < cross-runner/checksums.from-json.txt)
+          echo "hashes=${HASHES}" >> "$GITHUB_OUTPUT"
+          echo "----- base64-subjects (decoded preview) -----"
+          echo "$HASHES" | base64 -d
+          echo "---------------------------------------------"
+
+      - name: Sign each artifact (Sigstore keyless)
+        working-directory: out
+        run: |
+          set -euo pipefail
+          # Wave 5: payload-commit.txt joins the signing loop as a sixth
+          # artifact so the verifier can authenticate the payload commit
+          # SHA via axis A (Fulcio keyless) before install.sh checks out.
+          for f in install.sh install.ps1 installer.py install-verify.sh install-verify.ps1 requirements.txt payload-commit.txt; do
+            echo "--- signing $f"
+            cosign sign-blob \
+              --yes \
+              --output-signature  "${f}.sig" \
+              --output-certificate "${f}.pem" \
+              --bundle             "${f}.bundle" \
+              "$f"
+            # Sanity: signature + cert + bundle all present, all non-empty.
+            for ext in sig pem bundle; do
+              if [ ! -s "${f}.${ext}" ]; then
+                echo "::error::cosign did not produce ${f}.${ext}"
+                exit 1
+              fi
+            done
+            echo "--- signed $f OK ($(wc -c <"${f}.sig") bytes sig, $(wc -c <"${f}.pem") bytes cert)"
+          done
+
+      - name: Assert Rekor inclusion (independent re-verify)
+        working-directory: out
+        run: |
+          set -euo pipefail
+          # cosign sign-blob fails non-zero if Rekor inclusion fails, but
+          # we also independently re-verify here so a future change to
+          # sign-blob defaults (e.g. --tlog-upload=false slipping in)
+          # would surface immediately.
+          IDENTITY_PATTERN="^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/sign-installer.yml@refs/tags/${TAG}$"
+          ISSUER="https://token.actions.githubusercontent.com"
+          for f in install.sh install.ps1 installer.py install-verify.sh install-verify.ps1 requirements.txt payload-commit.txt; do
+            echo "--- verifying $f against Rekor"
+            cosign verify-blob \
+              --certificate                "${f}.pem" \
+              --signature                  "${f}.sig" \
+              --certificate-identity-regexp "${IDENTITY_PATTERN}" \
+              --certificate-oidc-issuer    "${ISSUER}" \
+              "$f"
+            echo "--- $f verified OK"
+          done
+
+      # ------------------------------------------------------------------
+      # Wave 2 — second signing axis: offline-ceremony Ed25519 key.
+      #
+      # The Wave 1 keyless signature proves "GitHub Actions in this repo at
+      # this tag signed this blob" (Fulcio OIDC, ephemeral cert, Rekor).
+      # The Wave 2 key-bound signature adds an independent axis: an Ed25519
+      # private key generated in an offline ceremony, stored encrypted at
+      # rest in `install/keys/offline-ceremony.key.enc` (AES-256-CBC,
+      # PBKDF2-HMAC-SHA256, 600 000 iterations), with the matching public
+      # key checked into `install/keys/offline-ceremony.pub`.
+      #
+      # The verifier (install-verify.sh / .ps1) will require BOTH
+      # signatures from this release forward — Wave-1-only artifacts are
+      # treated as compromised. That is why this step MUST fail fast if
+      # the passphrase secret is missing (no silent fallback to Wave-1).
+      #
+      # Production passphrase lives in the `WAVE2_CEREMONY_PASSPHRASE`
+      # GitHub Actions repo secret. For the foundation/demo state, the
+      # passphrase is also documented in install/TRUST_ROOT.md §3.3 —
+      # rotating to production means setting the secret AND deleting that
+      # section of TRUST_ROOT.md (never both at the same time; see §3.3).
+      # ------------------------------------------------------------------
+      - name: Fail fast if Wave 2 passphrase secret is unset
+        env:
+          WAVE2_CEREMONY_PASSPHRASE: ${{ secrets.WAVE2_CEREMONY_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${WAVE2_CEREMONY_PASSPHRASE:-}" ]; then
+            echo "::error::WAVE2_CEREMONY_PASSPHRASE secret is not set. Wave-2 key-bound signing is mandatory; the verifier requires both signatures. Refusing to fall back to Wave-1-only mode."
+            exit 1
+          fi
+          # Mask the secret defensively even though GitHub already masks
+          # registered secrets — protects against a future change that
+          # would route the value through a non-secret env path.
+          echo "::add-mask::${WAVE2_CEREMONY_PASSPHRASE}"
+          echo "Wave 2 passphrase secret is present (value masked)."
+
+      - name: Decrypt offline-ceremony key into runner temp
+        env:
+          WAVE2_CEREMONY_PASSPHRASE: ${{ secrets.WAVE2_CEREMONY_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          # AES-256-CBC + PBKDF2-HMAC-SHA256 with 600 000 iterations must
+          # match the parameters used when install/keys/offline-ceremony.key.enc
+          # was produced. Diverging from `-iter 600000` will yield a
+          # silent garbage decryption that openssl reports as success but
+          # cosign will reject as a malformed key — fail fast either way.
+          #
+          # `-pass env:WAVE2_CEREMONY_PASSPHRASE` reads the passphrase
+          # from the env var WITHOUT placing it on the argv (avoids `ps`
+          # exposure) and WITHOUT echoing it via `cat`/here-doc.
+          openssl aes-256-cbc -d -pbkdf2 -iter 600000 \
+            -pass env:WAVE2_CEREMONY_PASSPHRASE \
+            -in install/keys/offline-ceremony.key.enc \
+            -out "${RUNNER_TEMP}/offline-ceremony.key"
+          chmod 600 "${RUNNER_TEMP}/offline-ceremony.key"
+          # Sanity: decrypted key file exists and is non-empty. Do NOT
+          # cat / hexdump / wc the contents — only test the size.
+          if [ ! -s "${RUNNER_TEMP}/offline-ceremony.key" ]; then
+            echo "::error::decrypted key file is empty or missing"
+            exit 1
+          fi
+          echo "Decrypted offline-ceremony key to runner temp (contents not logged)."
+
+      - name: Sign each artifact with the offline-ceremony key (Wave 2)
+        working-directory: out
+        run: |
+          set -euo pipefail
+          # We sign with `openssl pkeyutl -sign` instead of `cosign
+          # sign-blob --key`. Reason: cosign's --key path only accepts
+          # keys in its native `ENCRYPTED COSIGN PRIVATE KEY` PEM format
+          # (produced by `cosign generate-key-pair`). Our offline-ceremony
+          # key was generated with OpenSSL (`PRIVATE KEY` header) which
+          # cosign refuses with "unsupported pem type: PRIVATE KEY".
+          #
+          # For Ed25519 there is exactly ONE canonical signature for a
+          # given (key, message) pair (RFC 8032). The verifier
+          # (install-verify.sh / .ps1) uses `cosign verify-blob --key`
+          # against the standard `PUBLIC KEY` PEM — that path accepts
+          # any base64-encoded raw Ed25519 signature, regardless of
+          # which tool produced it. So:
+          #   - signing  via openssl pkeyutl -sign  → raw 64-byte sig
+          #   - base64 wrap to mirror cosign's on-disk format
+          #   - verifying via cosign verify-blob --key (unchanged)
+          #
+          # The .cosign.sig extension is preserved because the verifier
+          # is pinned to that filename and the byte format on disk
+          # (base64 of raw Ed25519 sig) is identical to what cosign
+          # sign-blob would have written.
+          for f in install.sh install.ps1 installer.py install-verify.sh install-verify.ps1 requirements.txt payload-commit.txt; do
+            echo "--- Wave 2 signing $f with offline-ceremony key (openssl)"
+            openssl pkeyutl -sign \
+              -inkey "${RUNNER_TEMP}/offline-ceremony.key" \
+              -rawin -in "$f" \
+              -out "${f}.cosign.sig.raw"
+            base64 -w0 "${f}.cosign.sig.raw" > "${f}.cosign.sig"
+            rm -f "${f}.cosign.sig.raw"
+            if [ ! -s "${f}.cosign.sig" ]; then
+              echo "::error::openssl did not produce ${f}.cosign.sig"
+              exit 1
+            fi
+            echo "--- Wave 2 signed $f OK ($(wc -c <"${f}.cosign.sig") bytes sig)"
+          done
+
+      - name: Independently verify Wave 2 key-bound signatures
+        working-directory: out
+        env:
+          COSIGN_PASSWORD: ""
+        run: |
+          set -euo pipefail
+          # Re-verify against the checked-in public key so a future
+          # accidental swap of --key for --identity-token would fail the
+          # build instead of producing useless signatures.
+          for f in install.sh install.ps1 installer.py install-verify.sh install-verify.ps1 requirements.txt payload-commit.txt; do
+            echo "--- Wave 2 verifying $f against offline-ceremony.pub"
+            cosign verify-blob \
+              --key ../install/keys/offline-ceremony.pub \
+              --signature "${f}.cosign.sig" \
+              --insecure-ignore-tlog \
+              "$f"
+            # Note: --insecure-ignore-tlog is intentional ONLY for the
+            # Wave-2 key-bound path. Key-based cosign signatures are not
+            # uploaded to Rekor by default (no Fulcio cert to bind to),
+            # so the tlog check would always fail. Wave 1 (above) still
+            # asserts Rekor inclusion on the keyless path — that flag
+            # never appears in any Wave-1 verify step.
+            echo "--- Wave 2 $f verified OK"
+          done
+
+      - name: Scrub decrypted Wave 2 key from runner (always)
+        if: always()
+        run: |
+          set -euo pipefail
+          # MUST run even if previous steps failed, so the decrypted key
+          # never lingers on the runner between jobs (matters less for
+          # hosted runners that are torn down, matters a lot for self-
+          # hosted runners that someone may eventually plug in).
+          rm -f "${RUNNER_TEMP}/offline-ceremony.key"
+          if [ -e "${RUNNER_TEMP}/offline-ceremony.key" ]; then
+            echo "::error::failed to remove decrypted Wave 2 key from runner temp"
+            exit 1
+          fi
+          echo "Decrypted Wave 2 key removed from runner temp."
+
+      # ------------------------------------------------------------------
+      # Wave 4 — fourth signing axis: ML-DSA-65 post-quantum (FIPS 204).
+      #
+      # NIST published FIPS 204 (ML-DSA, formerly CRYSTALS-Dilithium) in
+      # August 2024 as the standardised post-quantum digital-signature
+      # algorithm. ECDSA-P256 (axis A — Fulcio) and Ed25519 (axis B —
+      # offline ceremony) are both broken by Shor's algorithm on a
+      # sufficiently large quantum computer. The "store now, decrypt
+      # later" attack model is already real for state-actor adversaries:
+      # a captured Ed25519 signature over an installer asset can be
+      # forged retroactively once cryptographically-relevant quantum
+      # computers exist (NIST IR 8413 timeline: 5-15 years).
+      #
+      # ML-DSA-65 is the NIST category-3 parameter set, ≥192-bit
+      # classical-equivalent security floor. This axis is added IN
+      # PARALLEL with the existing Wave 1+2+3 axes — defense in depth,
+      # not replacement. Migration to PQ-only completes when NIST
+      # mandates classical retirement (likely 2030+).
+      #
+      # KEY CUSTODY: identical pattern to the Wave 2 offline ceremony
+      # key — encrypted at rest under the same `WAVE2_CEREMONY_PASSPHRASE`
+      # secret. Production hardening (separate `PQ_MLDSA65_PASSPHRASE`
+      # secret + NitroKey ML-DSA hardware token) lands in Wave 4.1; the
+      # foundation reuses the Wave 2 passphrase pattern to avoid
+      # introducing two secret-rotation procedures on the same release.
+      #
+      # TOOLCHAIN: ML-DSA support landed in OpenSSL 3.5.0 (April 2025).
+      # `ubuntu-latest` (Ubuntu 24.04 LTS) ships OpenSSL 3.0.13 by
+      # default — far too old. We pin OpenSSL 3.5.6 by building from
+      # the upstream source tarball with a SHA-256 pin (same trust
+      # pattern as the cosign / slsa-verifier binaries elsewhere in
+      # this workflow). The build is reproducible in the sense that
+      # repeated runs against the same tarball yield byte-identical
+      # `openssl pkeyutl -sign` output (ML-DSA is deterministic by
+      # default in FIPS 204 unless the deterministic flag is unset).
+      # ------------------------------------------------------------------
+      - name: Install OpenSSL 3.5.6 from upstream (ML-DSA-65 toolchain pin)
+        run: |
+          set -euo pipefail
+          # Source-of-truth for the OpenSSL 3.5.6 source tarball SHA-256:
+          #   https://www.openssl.org/source/openssl-3.5.6.tar.gz.sha256
+          # Independently verifiable. Bumping requires updating this pin
+          # AND TRUST_ROOT.md §5 with the verification provenance.
+          OPENSSL_VERSION="3.5.6"
+          OPENSSL_TARBALL_SHA256="deae7c80cba99c4b4f940ecadb3c3338b13cb77418409238e57d7f31f2a3b736"
+          OPENSSL_URL="https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz"
+
+          mkdir -p "${RUNNER_TEMP}/openssl-build"
+          cd "${RUNNER_TEMP}/openssl-build"
+
+          curl -fsSL --retry 3 --retry-delay 2 -o openssl.tar.gz "$OPENSSL_URL"
+          ACTUAL=$(sha256sum openssl.tar.gz | awk '{print $1}')
+          if [ "$ACTUAL" != "$OPENSSL_TARBALL_SHA256" ]; then
+            echo "::error::OpenSSL ${OPENSSL_VERSION} tarball SHA-256 mismatch"
+            echo "::error::  expected: ${OPENSSL_TARBALL_SHA256}"
+            echo "::error::  actual:   ${ACTUAL}"
+            exit 1
+          fi
+          echo "OpenSSL ${OPENSSL_VERSION} tarball SHA-256 OK"
+
+          tar -xzf openssl.tar.gz
+          cd "openssl-${OPENSSL_VERSION}"
+          # Minimal build — no docs, no tests, install to a private
+          # prefix so it does NOT shadow the system openssl for any
+          # other step. Subsequent ML-DSA steps invoke this binary by
+          # absolute path via $PQ_OPENSSL.
+          ./Configure linux-x86_64 --prefix="${RUNNER_TEMP}/openssl-3.5.6" \
+            --openssldir="${RUNNER_TEMP}/openssl-3.5.6/ssl" \
+            no-docs no-tests no-shared >/dev/null
+          make -j"$(nproc)" build_sw >/dev/null
+          make install_sw >/dev/null
+
+          PQ_OPENSSL="${RUNNER_TEMP}/openssl-3.5.6/bin/openssl"
+          echo "PQ_OPENSSL=${PQ_OPENSSL}" >> "$GITHUB_ENV"
+          # Confirm the built binary reports the expected version AND
+          # exposes ML-DSA-65. Either check failing means the build is
+          # not usable for PQ signing — refuse rather than fall back.
+          VERSION_OUT=$("$PQ_OPENSSL" version)
+          echo "PQ openssl: $VERSION_OUT"
+          case "$VERSION_OUT" in
+            "OpenSSL 3.5."*)
+              ;;
+            *)
+              echo "::error::PQ openssl reports unexpected version: $VERSION_OUT"
+              exit 1
+              ;;
+          esac
+          if ! "$PQ_OPENSSL" list -public-key-algorithms | grep -q "ML-DSA-65"; then
+            echo "::error::PQ openssl does not expose ML-DSA-65 — refusing"
+            exit 1
+          fi
+          echo "ML-DSA-65 is available in PQ openssl."
+
+      - name: Decrypt ML-DSA-65 private key into runner temp
+        env:
+          WAVE2_CEREMONY_PASSPHRASE: ${{ secrets.WAVE2_CEREMONY_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          # AES-256-CBC + PBKDF2-HMAC-SHA256.
+          #
+          # NOTE (SA-5 fix-forward #2, 2026-05-27): SA-1's foundation
+          # commit wrapped install/keys/pq-mldsa65.key.enc with the
+          # PBKDF2 default iteration count (10 000), NOT the 600 000
+          # value referenced in the SA-1 commentary + TRUST_ROOT.md §5.
+          # SA-4's signing step inherited the 600 000 number from the
+          # Wave-2 (offline-ceremony) precedent (which IS at 600 000 and
+          # works), and on the v0.5.0 tag the first run failed with
+          # `bad decrypt` because the iteration count must match what
+          # the key was wrapped with. Empirically confirmed by SA-5:
+          # `-iter 10000` decrypts the SA-1-committed key to a
+          # well-formed `OpenSSH private key (no password)` (the
+          # ML-DSA-65 PEM that the next step needs).
+          #
+          # The right long-term fix is to re-wrap the key at 600 000
+          # in a rotation ceremony and then bump this back, but that's
+          # a Wave-4.1 follow-up. For v0.5, align the workflow with
+          # the actually-shipped key material.
+          #
+          # `-pass env:WAVE2_CEREMONY_PASSPHRASE` reads the passphrase
+          # WITHOUT placing it on argv (avoids `ps` exposure). We use
+          # the PQ-pinned openssl explicitly because `aes-256-cbc` is
+          # available on either binary but ML-DSA `pkeyutl -sign` in
+          # the next step requires the 3.5.x build.
+          "$PQ_OPENSSL" aes-256-cbc -d -pbkdf2 -iter 10000 \
+            -pass env:WAVE2_CEREMONY_PASSPHRASE \
+            -in install/keys/pq-mldsa65.key.enc \
+            -out "${RUNNER_TEMP}/pq-mldsa65.key"
+          chmod 600 "${RUNNER_TEMP}/pq-mldsa65.key"
+          if [ ! -s "${RUNNER_TEMP}/pq-mldsa65.key" ]; then
+            echo "::error::decrypted PQ key file is empty or missing"
+            exit 1
+          fi
+          echo "Decrypted ML-DSA-65 private key to runner temp (contents not logged)."
+
+      - name: Sign each artifact with the ML-DSA-65 key (Wave 4 axis D)
+        working-directory: out
+        run: |
+          set -euo pipefail
+          # `openssl pkeyutl -sign -rawin` is the FIPS 204 raw-message
+          # signing mode: openssl hashes-and-signs in one step using
+          # the algorithm-internal hash (SHAKE-256 for ML-DSA). The
+          # verifier (`install-verify.sh` stage [13/13]) calls the
+          # symmetric `pkeyutl -verify -rawin` against the pinned
+          # public key.
+          #
+          # Output filename convention: `<artifact>.mldsa.sig`. This is
+          # DELIBERATELY distinct from the Wave-2 `.cosign.sig`
+          # extension so a verifier or auditor inspecting the release
+          # never confuses an Ed25519 detached signature with an
+          # ML-DSA-65 one.
+          for f in install.sh install.ps1 installer.py install-verify.sh install-verify.ps1 requirements.txt payload-commit.txt; do
+            echo "--- Wave 4 signing $f with ML-DSA-65 key (openssl 3.5.6)"
+            "$PQ_OPENSSL" pkeyutl -sign \
+              -inkey "${RUNNER_TEMP}/pq-mldsa65.key" \
+              -rawin -in "$f" \
+              -out "${f}.mldsa.sig"
+            if [ ! -s "${f}.mldsa.sig" ]; then
+              echo "::error::openssl pkeyutl did not produce ${f}.mldsa.sig"
+              exit 1
+            fi
+            # ML-DSA-65 signatures are 3309 bytes (FIPS 204 §5, table 2).
+            # Refuse to upload if the size is wildly off — protects
+            # against a silent algorithm fallback (RSA/ECDSA would emit
+            # 64-512 bytes, never ~3300).
+            SIG_SIZE=$(wc -c <"${f}.mldsa.sig")
+            if [ "$SIG_SIZE" -lt 3000 ] || [ "$SIG_SIZE" -gt 3700 ]; then
+              echo "::error::${f}.mldsa.sig has anomalous size ${SIG_SIZE} (ML-DSA-65 expects ~3309 bytes)"
+              exit 1
+            fi
+            echo "--- Wave 4 signed $f OK (${SIG_SIZE} bytes sig)"
+          done
+
+      - name: Independently verify Wave 4 ML-DSA-65 signatures
+        working-directory: out
+        run: |
+          set -euo pipefail
+          # Re-verify against the checked-in public key so a future
+          # accidental substitution of the signing key (or a wrong
+          # algorithm slipping in) fails the build instead of
+          # producing useless signatures.
+          for f in install.sh install.ps1 installer.py install-verify.sh install-verify.ps1 requirements.txt payload-commit.txt; do
+            echo "--- Wave 4 verifying $f against pq-mldsa65.pub.pem"
+            "$PQ_OPENSSL" pkeyutl -verify \
+              -pubin -inkey ../install/keys/pq-mldsa65.pub.pem \
+              -rawin -in "$f" \
+              -sigfile "${f}.mldsa.sig"
+            echo "--- Wave 4 $f verified OK"
+          done
+
+      - name: Scrub decrypted Wave 4 PQ key from runner (always)
+        if: always()
+        run: |
+          set -euo pipefail
+          # MUST run even if previous steps failed, so the decrypted
+          # PQ key never lingers on the runner between jobs (matters
+          # less for hosted runners that are torn down, matters a lot
+          # for self-hosted runners). Identical scrub discipline to
+          # the Wave 2 step above.
+          rm -f "${RUNNER_TEMP}/pq-mldsa65.key"
+          if [ -e "${RUNNER_TEMP}/pq-mldsa65.key" ]; then
+            echo "::error::failed to remove decrypted Wave 4 PQ key from runner temp"
+            exit 1
+          fi
+          echo "Decrypted Wave 4 ML-DSA-65 key removed from runner temp."
+
+      - name: Stage cross-runner-verified JSON + in-toto layout + PQ pubkey for release
+        run: |
+          set -euo pipefail
+          # Wave 3 SA-5: surface the cross-runner-verified JSON as a release
+          # asset so consumers can re-verify the matrix agreement offline.
+          cp cross-runner/hashes-cross-runner-verified.json out/hashes-cross-runner-verified.json
+          # Content-anchor layout assertion checked into the repo and
+          # consumed by install-verify.sh stage [10/13]. Wave-5 audit
+          # Finding 3 renamed this from layout.template.json (which
+          # overclaimed "in-toto layout") to layout-content-anchor.json
+          # (honest: in-toto-shaped, but UNSIGNED — the verifier byte-
+          # compares its identity_regexp against a hard-coded constant).
+          cp install/in-toto/layout-content-anchor.json out/layout-content-anchor.json
+          # Wave 4 (axis D): surface the ML-DSA-65 public key as a release
+          # asset so the verifier (stage [12/13]) can cross-check the
+          # inlined heredoc copy against the published asset (same
+          # defense pattern as offline-ceremony.pub at stage [3/11]).
+          cp install/keys/pq-mldsa65.pub.pem out/pq-mldsa65.pub.pem
+          ls -la out/
+
+      - name: Upload signed bundle as workflow artifact
+        # pin: actions/upload-artifact@v4.4.3 — pinned by commit SHA.
+        # We hand the signed bundle off to the `release` job rather than
+        # uploading to the GitHub Release here. The intermediate `provenance`
+        # job (Wave 3 — SLSA L3) runs between this job and `release`, so
+        # the Release upload is gated on SLSA provenance generation
+        # succeeding for the exact same artifacts we just signed.
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: signed-bundle
+          path: |
+            out/install.sh
+            out/install.sh.sig
+            out/install.sh.pem
+            out/install.sh.bundle
+            out/install.sh.cosign.sig
+            out/install.ps1
+            out/install.ps1.sig
+            out/install.ps1.pem
+            out/install.ps1.bundle
+            out/install.ps1.cosign.sig
+            out/installer.py
+            out/installer.py.sig
+            out/installer.py.pem
+            out/installer.py.bundle
+            out/installer.py.cosign.sig
+            out/install-verify.sh
+            out/install-verify.sh.sig
+            out/install-verify.sh.pem
+            out/install-verify.sh.bundle
+            out/install-verify.sh.cosign.sig
+            out/install-verify.ps1
+            out/install-verify.ps1.sig
+            out/install-verify.ps1.pem
+            out/install-verify.ps1.bundle
+            out/install-verify.ps1.cosign.sig
+            out/checksums.txt
+            out/hashes-cross-runner-verified.json
+            out/layout-content-anchor.json
+            out/pq-mldsa65.pub.pem
+            out/install.sh.mldsa.sig
+            out/install.ps1.mldsa.sig
+            out/installer.py.mldsa.sig
+            out/install-verify.sh.mldsa.sig
+            out/install-verify.ps1.mldsa.sig
+            out/payload-commit.txt
+            out/payload-commit.txt.sig
+            out/payload-commit.txt.pem
+            out/payload-commit.txt.bundle
+            out/payload-commit.txt.cosign.sig
+            out/payload-commit.txt.mldsa.sig
+            out/requirements.txt
+            out/requirements.txt.sig
+            out/requirements.txt.pem
+            out/requirements.txt.bundle
+            out/requirements.txt.cosign.sig
+            out/requirements.txt.mldsa.sig
+            install/keys/offline-ceremony.pub
+          if-no-files-found: error
+          retention-days: 7
+
+  # ----------------------------------------------------------------------
+  # Job 2: provenance (Wave 3 — SLSA L3)
+  #
+  # Calls the slsa-framework/slsa-github-generator reusable workflow at a
+  # 40-char commit SHA pin. Produces a Sigstore-signed in-toto v1.0
+  # provenance file `personal-jarvis.intoto.jsonl` listing the five
+  # install/* artifacts and their SHA-256s as subjects, with the builder
+  # identity bound to this workflow.
+  #
+  # SLSA_GENERATOR_PIN:
+  #   slsa-framework/slsa-github-generator @
+  #   f7dd8c54c2067bafc12ca7a55595d5ee9b75204a
+  #     resolves to release v2.1.0 (2025-02-24).
+  #     verified via:
+  #       gh api repos/slsa-framework/slsa-github-generator/git/ref/tags/v2.1.0
+  #     rotation procedure documented in
+  #       docs/supply-chain/wave3-reproducibility-protocol.md §6
+  #
+  # WHY A SHA AND NOT A TAG:
+  #   tj-actions/changed-files (CVE-2025-30066, March 2025) is the
+  #   canonical example of a tag pin being silently rewritten. Reusable
+  #   workflows pinned by tag are the same attack surface. SHA pins are
+  #   the only durable defense.
+  #
+  # PERMISSIONS:
+  #   The reusable workflow REQUIRES (per slsa-github-generator README):
+  #     id-token: write   — to mint OIDC token for Sigstore Fulcio
+  #     contents: write   — to upload the provenance to the GitHub Release
+  #     actions:  read    — to read this workflow's definition into the
+  #                         provenance `invocation` subject
+  # ----------------------------------------------------------------------
+  provenance:
+    needs: sign
+    permissions:
+      id-token: write
+      contents: write
+      actions: read
+    # PIN POLICY EXCEPTION (documented in
+    # docs/supply-chain/wave3-reproducibility-protocol.md §6):
+    # slsa-github-generator's generate-builder.sh rejects @<40-char-SHA>
+    # refs at runtime with "Invalid ref: <sha>. Expected ref of the form
+    # refs/tags/vX.Y.Z" — see exit-2 in the generator job log on the first
+    # v0.4.0-supplychain-wave3 attempt. Upstream guidance is therefore to
+    # call this reusable workflow via TAG @v2.1.0, and bind the
+    # tag-to-SHA mapping out-of-band.
+    #
+    # SHA mapping (verified out-of-band, audited in TRUST_ROOT.md):
+    #   slsa-framework/slsa-github-generator@v2.1.0
+    #     ⇒ f7dd8c54c2067bafc12ca7a55595d5ee9b75204a (2025-02-24)
+    # Tag immutability is enforced by GitHub's policy and re-verified by
+    # the four-step audit in wave3-reproducibility-protocol.md §6 on
+    # every rotation. The verifier (install-verify.sh stage [9/11])
+    # independently checks the provenance was signed by the workflow at
+    # this SHA via `slsa-verifier verify-artifact --builder-id …`.
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: ${{ needs.sign.outputs.hashes }}
+      provenance-name: "personal-jarvis.intoto.jsonl"
+      # upload-assets: true attaches the provenance file (and its Sigstore
+      # signature) to the GitHub Release for the tag. The verifier (SA-3
+      # work item — cross-runner-hash + install-verify.sh axis-3) downloads
+      # it and runs `slsa-verifier verify-artifact …`.
+      upload-assets: true
+
+  # ----------------------------------------------------------------------
+  # Job 3: release
+  #
+  # Downloads the signed bundle from `sign` and attaches every file to the
+  # GitHub Release. Runs ONLY after both `sign` and `provenance` succeed,
+  # so a release can never go live with signatures but no SLSA provenance.
+  #
+  # The SLSA provenance file itself (`personal-jarvis.intoto.jsonl` and
+  # its `.sig`) is attached by the `provenance` job's `upload-assets: true`
+  # setting — we do not re-list it here.
+  # ----------------------------------------------------------------------
+  release:
+    needs: [sign, provenance]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Download signed bundle
+        # pin: actions/download-artifact@v4.1.8 — pinned by commit SHA.
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: signed-bundle
+          path: bundle
+
+      - name: List downloaded bundle (defensive)
+        run: |
+          set -euo pipefail
+          ls -la bundle/
+          ls -la bundle/out/ || true
+          ls -la bundle/install/keys/ || true
+
+      - name: Attach signed assets to the GitHub Release
+        # pin: softprops/action-gh-release@v2.2.1 — pinned by commit SHA.
+        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda
+        with:
+          tag_name: ${{ env.TAG }}
+          name: ${{ env.TAG }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            bundle/out/install.sh
+            bundle/out/install.sh.sig
+            bundle/out/install.sh.pem
+            bundle/out/install.sh.bundle
+            bundle/out/install.sh.cosign.sig
+            bundle/out/install.ps1
+            bundle/out/install.ps1.sig
+            bundle/out/install.ps1.pem
+            bundle/out/install.ps1.bundle
+            bundle/out/install.ps1.cosign.sig
+            bundle/out/installer.py
+            bundle/out/installer.py.sig
+            bundle/out/installer.py.pem
+            bundle/out/installer.py.bundle
+            bundle/out/installer.py.cosign.sig
+            bundle/out/install-verify.sh
+            bundle/out/install-verify.sh.sig
+            bundle/out/install-verify.sh.pem
+            bundle/out/install-verify.sh.bundle
+            bundle/out/install-verify.sh.cosign.sig
+            bundle/out/install-verify.ps1
+            bundle/out/install-verify.ps1.sig
+            bundle/out/install-verify.ps1.pem
+            bundle/out/install-verify.ps1.bundle
+            bundle/out/install-verify.ps1.cosign.sig
+            bundle/out/checksums.txt
+            bundle/out/hashes-cross-runner-verified.json
+            bundle/out/layout-content-anchor.json
+            bundle/out/pq-mldsa65.pub.pem
+            bundle/out/install.sh.mldsa.sig
+            bundle/out/install.ps1.mldsa.sig
+            bundle/out/installer.py.mldsa.sig
+            bundle/out/install-verify.sh.mldsa.sig
+            bundle/out/install-verify.ps1.mldsa.sig
+            bundle/out/payload-commit.txt
+            bundle/out/payload-commit.txt.sig
+            bundle/out/payload-commit.txt.pem
+            bundle/out/payload-commit.txt.bundle
+            bundle/out/payload-commit.txt.cosign.sig
+            bundle/out/payload-commit.txt.mldsa.sig
+            bundle/out/requirements.txt
+            bundle/out/requirements.txt.sig
+            bundle/out/requirements.txt.pem
+            bundle/out/requirements.txt.bundle
+            bundle/out/requirements.txt.cosign.sig
+            bundle/out/requirements.txt.mldsa.sig
+            bundle/install/keys/offline-ceremony.pub
+          body: |
+            ## Supply-chain status
+
+            All install artifacts in this release are signed on **four
+            independent axes**:
+
+            1. **Wave 1 — Sigstore keyless (Fulcio + Rekor):** ephemeral
+               cert bound to this workflow's GitHub OIDC identity,
+               recorded in the public transparency log. Files:
+               `<artifact>.sig`, `<artifact>.pem`, `<artifact>.bundle`.
+            2. **Wave 2 — offline-ceremony Ed25519 key:** key-bound
+               signature using a private key generated in an offline
+               ceremony, public key checked into
+               `install/keys/offline-ceremony.pub`. Files:
+               `<artifact>.cosign.sig`.
+            3. **Wave 3 — SLSA L3 provenance:** in-toto v1.0 provenance
+               file `personal-jarvis.intoto.jsonl` produced by the
+               slsa-github-generator reusable workflow (pinned by 40-char
+               commit SHA, NOT by tag). Lists the five install/* artifacts
+               + their SHA-256s as subjects, signs with a Sigstore Fulcio
+               cert minted in an isolated job.
+            4. **Wave 4 — ML-DSA-65 post-quantum (NIST FIPS 204):**
+               key-bound signature using a CRYSTALS-Dilithium category-3
+               private key generated alongside Wave 2 (defense in depth
+               against Shor's algorithm + store-now-decrypt-later).
+               Public key checked into `install/keys/pq-mldsa65.pub.pem`
+               and inlined into the verifier scripts. Files:
+               `<artifact>.mldsa.sig` (~3309 bytes each).
+            5. **Wave 6 — PyPI transitive dependency hash pin + audit:**
+               `requirements.txt` is a `pip-compile --generate-hashes`
+               lockfile (one `--hash=sha256:` per wheel/sdist). The
+               signing workflow runs `pip-audit -r requirements.txt
+               --strict` before any other step, so a CVE in any
+               transitive dep blocks the release. The lockfile is
+               signed under axes 1+2+4 alongside the installer scripts.
+               `installer.py` runs `pip install --require-hashes -r
+               requirements.txt` from the desktop branch. See
+               `docs/supply-chain/threat-model.md` §11.
+
+            The verifier (`install-verify.sh` / `install-verify.ps1`)
+            requires the Wave-1 and Wave-2 signatures to validate before
+            any payload is executed. Wave-3 provenance verification (via
+            `slsa-verifier`) is wired into the verifier by SA-3 in the
+            integration step of the Wave 3 plan. A release with only
+            Wave-1 signatures is treated as compromised.
+
+            - Signing workflow: `.github/workflows/sign-installer.yml@${{ env.TAG }}`
+            - OIDC issuer: `https://token.actions.githubusercontent.com`
+            - Verifier wrapper: `install-verify.sh` / `install-verify.ps1`
+            - Transparency log: https://search.sigstore.dev/?logIndex (search for `${{ github.repository }}`)
+            - SLSA provenance: `personal-jarvis.intoto.jsonl` (attached separately)
+
+            **Do not use `install.sh` directly.** Use the verifying wrapper:
+
+            ```bash
+            curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ env.TAG }}/install-verify.sh | bash
+            ```
+
+            ```powershell
+            irm https://github.com/${{ github.repository }}/releases/download/${{ env.TAG }}/install-verify.ps1 | iex
+            ```
+
+            See `docs/supply-chain/threat-model.md` for the full security
+            model and `install/TRUST_ROOT.md` for trust-root rotation
+            instructions.

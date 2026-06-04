@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jarvis STT Fehlerbild</title>
+  <style>
+    :root {
+      --bg: #0b0d10;
+      --panel: #151922;
+      --panel-2: #10141b;
+      --text: #f4f7fb;
+      --muted: #94a3b8;
+      --line: #2a3445;
+      --red: #ff4d5f;
+      --yellow: #ffe600;
+      --cyan: #15d5ff;
+      --green: #35d07f;
+      --orange: #ff9f2e;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 18% 10%, rgba(21, 213, 255, 0.08), transparent 28%),
+        radial-gradient(circle at 90% 82%, rgba(255, 77, 95, 0.09), transparent 26%),
+        var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", system-ui, sans-serif;
+    }
+
+    main {
+      width: min(1180px, calc(100vw - 40px));
+      margin: 0 auto;
+      padding: 34px 0 40px;
+    }
+
+    header {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 22px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(28px, 4vw, 54px);
+      line-height: 0.98;
+      letter-spacing: 0;
+    }
+
+    .tag {
+      border: 1px solid var(--red);
+      color: var(--red);
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-weight: 800;
+      white-space: nowrap;
+      box-shadow: 0 0 20px rgba(255, 77, 95, 0.16);
+    }
+
+    .subtitle {
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 17px;
+      max-width: 760px;
+    }
+
+    .stage {
+      display: grid;
+      grid-template-columns: 1.15fr 0.75fr;
+      gap: 18px;
+    }
+
+    .card {
+      background: linear-gradient(180deg, var(--panel), var(--panel-2));
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 18px 45px rgba(0, 0, 0, 0.28);
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(120px, 1fr));
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .step {
+      position: relative;
+      min-height: 170px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 15px;
+      background: rgba(255, 255, 255, 0.025);
+      overflow: hidden;
+    }
+
+    .step::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -15px;
+      width: 18px;
+      height: 2px;
+      background: var(--line);
+      transform: translateY(-50%);
+    }
+
+    .step:last-child::after { display: none; }
+
+    .number {
+      display: inline-grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: #263044;
+      color: var(--cyan);
+      font-weight: 900;
+      margin-bottom: 12px;
+    }
+
+    .step h2 {
+      margin: 0 0 9px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .step p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .bad {
+      border-color: rgba(255, 77, 95, 0.72);
+      box-shadow: inset 0 0 0 1px rgba(255, 77, 95, 0.14);
+    }
+
+    .bad .number { background: rgba(255, 77, 95, 0.16); color: var(--red); }
+
+    .code {
+      margin-top: 18px;
+      border: 1px solid rgba(255, 77, 95, 0.5);
+      border-radius: 8px;
+      background: #090b0f;
+      overflow: hidden;
+    }
+
+    .code .bar {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 9px 12px;
+      border-bottom: 1px solid rgba(255, 77, 95, 0.35);
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    pre {
+      margin: 0;
+      padding: 15px;
+      white-space: pre-wrap;
+      color: #dbeafe;
+      font: 14px/1.5 Consolas, "Cascadia Mono", monospace;
+    }
+
+    .miss { color: var(--red); font-weight: 900; }
+    .hit { color: var(--green); font-weight: 900; }
+
+    .orb-zone {
+      min-height: 100%;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 16px;
+    }
+
+    .bubble {
+      position: relative;
+      min-height: 122px;
+      border: 2px solid var(--yellow);
+      border-radius: 8px;
+      padding: 14px 16px;
+      color: var(--yellow);
+      font-weight: 900;
+      line-height: 1.35;
+      box-shadow: 0 0 22px rgba(255, 230, 0, 0.16);
+    }
+
+    .bubble::after {
+      content: "";
+      position: absolute;
+      right: 28px;
+      bottom: -14px;
+      width: 24px;
+      height: 24px;
+      background: var(--panel-2);
+      border-right: 2px solid var(--yellow);
+      border-bottom: 2px solid var(--yellow);
+      transform: rotate(45deg);
+    }
+
+    .ghost {
+      display: block;
+      color: var(--red);
+      margin-top: 8px;
+      text-decoration: line-through;
+      text-decoration-thickness: 3px;
+    }
+
+    .jarvis {
+      justify-self: end;
+      width: 112px;
+      aspect-ratio: 1;
+      border: 3px solid var(--yellow);
+      border-radius: 34px 34px 18px 18px;
+      position: relative;
+      background: #0d1117;
+      box-shadow: 0 0 30px rgba(255, 230, 0, 0.22);
+    }
+
+    .jarvis::before,
+    .jarvis::after {
+      content: "";
+      position: absolute;
+      top: 39px;
+      width: 15px;
+      height: 22px;
+      border-radius: 50%;
+      background: var(--yellow);
+      box-shadow: 0 0 10px var(--yellow);
+    }
+
+    .jarvis::before { left: 26px; }
+    .jarvis::after { right: 26px; }
+
+    .mouth {
+      position: absolute;
+      left: 50%;
+      top: 68px;
+      width: 16px;
+      height: 18px;
+      border: 3px solid var(--yellow);
+      border-radius: 50%;
+      transform: translateX(-50%);
+    }
+
+    .fix {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 12px;
+      align-items: center;
+      border: 1px solid rgba(53, 208, 127, 0.45);
+      border-radius: 8px;
+      padding: 14px;
+      background: rgba(53, 208, 127, 0.06);
+    }
+
+    .fix-box {
+      min-height: 72px;
+      border-radius: 7px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 12px;
+      color: var(--muted);
+    }
+
+    .fix-box strong {
+      display: block;
+      color: var(--text);
+      margin-bottom: 5px;
+    }
+
+    .arrow {
+      color: var(--green);
+      font-size: 34px;
+      font-weight: 900;
+    }
+
+    .caption {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    @media (max-width: 880px) {
+      header, .stage, .flow, .fix { grid-template-columns: 1fr; display: grid; }
+      header { align-items: start; }
+      .step::after { display: none; }
+      .arrow { transform: rotate(90deg); justify-self: center; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>ZDF-Text in der Listening-Bubble</h1>
+        <p class="subtitle">Der Fehler war kein UI-Text. Es war ein STT-Partial, das wie echte Sprache aussah und deshalb live in die Sprechblase ging.</p>
+      </div>
+      <div class="tag">Root Cause</div>
+    </header>
+
+    <section class="stage">
+      <div class="card">
+        <div class="flow">
+          <article class="step">
+            <span class="number">1</span>
+            <h2>Leiser Audio-Tail</h2>
+            <p>Nach dem Sprechen bleibt ein kurzer, leerer oder verrauschter Rest im Probe-Fenster.</p>
+          </article>
+          <article class="step">
+            <span class="number">2</span>
+            <h2>Whisper halluziniert</h2>
+            <p>STT macht daraus einen bekannten Untertitel-Text, obwohl du ihn nicht gesagt hast.</p>
+          </article>
+          <article class="step bad">
+            <span class="number">3</span>
+            <h2>Filter-Luecke</h2>
+            <p>Die Regex kannte <strong>Untertitel im Auftrag</strong>, aber nicht <strong>Untertitelung des ZDF</strong>.</p>
+          </article>
+          <article class="step bad">
+            <span class="number">4</span>
+            <h2>Bubble zeigt es</h2>
+            <p>Das Partial wurde als <strong>TranscriptionUpdate</strong> published und die Orb-UI hat es live angezeigt.</p>
+          </article>
+        </div>
+
+        <div class="code">
+          <div class="bar">
+            <span>Vorher: Filter traf nicht</span>
+            <span>pipeline.py</span>
+          </div>
+          <pre>Input vom STT:
+<span class="miss">"Untertitelung des ZDF, 2020"</span>
+
+Alte Regex:
+"untertitel (von|der|im auftrag)"  -> kein Treffer
+
+Folge:
+tail_is_empty = false
+publish TranscriptionUpdate(is_final=false)
+Orb-Bubble zeigt den falschen Text.</pre>
+        </div>
+
+        <div class="fix">
+          <div class="fix-box">
+            <strong>Jetzt</strong>
+            <span class="hit">untertitelung des zdf</span> wird als STT-Halluzination erkannt.
+          </div>
+          <div class="arrow">→</div>
+          <div class="fix-box">
+            <strong>Resultat</strong>
+            Kein Partial-Publish, kein finales Bubble-Leak, zurueck in Listening.
+          </div>
+        </div>
+      </div>
+
+      <aside class="card orb-zone">
+        <p class="caption">So sah der sichtbare Fehler aus: Die Bubble hat nicht gelogen, sie hat nur ungefiltert angezeigt, was Whisper falsch erzeugt hat.</p>
+        <div class="bubble">
+          Im Anhang habe ich den Tablet.
+          <span class="ghost">Untertitelung des ZDF, 2020</span>
+        </div>
+        <div class="jarvis" aria-label="Jarvis Orb">
+          <div class="mouth"></div>
+        </div>
+      </aside>
+    </section>
+  </main>
+</body>
+</html>

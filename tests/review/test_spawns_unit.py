@@ -1,0 +1,350 @@
+"""Unit-Tests fuer WorkerSpawner / ReviewerSpawner mit gemocktem
+HarnessManager (Phase 8.3).
+
+Plan-Referenz: §6.3 Akzeptanzkriterien — CLI-Argumente, Prompt-Inhalt,
+RunDirectory-Layout, Verdict-Parse + Schema-Reject.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+from collections.abc import AsyncIterator
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from jarvis.core.protocols import HarnessResult, HarnessTask
+from jarvis.core.review.errors import (
+    ReviewerUnavailable,
+    VerdictParseError,
+    WorkerSpawnError,
+)
+from jarvis.core.review.io import RunDirectory
+from jarvis.core.review.spawns import (
+    DEFAULT_REVIEWER_BUDGET_USD,
+    DEFAULT_REVIEWER_TOOLS,
+    DEFAULT_WORKER_BUDGET_USD,
+    DEFAULT_WORKER_TOOLS,
+    ReviewerSpawner,
+    WorkerSpawner,
+    _extract_verdict_json,
+)
+from jarvis.core.review.state import RunState
+from jarvis.core.review.verdict import ReviewStatus
+
+# ----------------------------------------------------------------------
+# Fake HarnessManager
+# ----------------------------------------------------------------------
+
+
+class FakeHarnessManager:
+    """Drop-in-Ersatz für HarnessManager — kein Subprocess, gibt scripted Result.
+
+    Pro Aufruf wird eine vorbereitete `script`-Sequenz konsumiert; dadurch
+    kann ein Test mehrere aufeinanderfolgende dispatch()-Aufrufe (Worker
+    + Reviewer) mit unterschiedlichen Outputs scriptien.
+    """
+
+    def __init__(self, scripts: list[dict[str, Any]] | None = None) -> None:
+        # script: {"stdout": "...", "stderr": "...", "exit_code": 0, "duration_ms": 42}
+        self._scripts: list[dict[str, Any]] = list(scripts or [])
+        self.calls: list[tuple[str, HarnessTask]] = []
+
+    def dispatch(
+        self, name: str, task: HarnessTask
+    ) -> AsyncIterator[HarnessResult]:
+        self.calls.append((name, task))
+        script = self._scripts.pop(0) if self._scripts else {
+            "stdout": "",
+            "stderr": "",
+            "exit_code": 0,
+            "duration_ms": 1,
+        }
+        return self._gen(script)
+
+    @staticmethod
+    async def _gen(script: dict[str, Any]) -> AsyncIterator[HarnessResult]:
+        if script.get("stdout"):
+            yield HarnessResult(stdout=script["stdout"])
+        if script.get("stderr"):
+            yield HarnessResult(stderr=script["stderr"])
+        yield HarnessResult(
+            exit_code=script.get("exit_code", 0),
+            duration_ms=script.get("duration_ms", 1),
+            is_final=True,
+        )
+
+
+def _make_state(*, run_id: str = "run-1", task: str = "do something useful") -> RunState:
+    return RunState(run_id=run_id, task=task, rubric_id="default")
+
+
+def _valid_verdict_dict(*, status: str = "pass") -> dict:
+    return {
+        "status": status,
+        "summary": "all good",
+        "issues": [],
+        "rubric_results": [],
+        "score": 0.95,
+    }
+
+
+# ======================================================================
+# WorkerSpawner
+# ======================================================================
+
+
+def test_worker_spawner_calls_openclaw_harness(tmp_path: Path) -> None:
+    fake = FakeHarnessManager([
+        {"stdout": "wrote artifact.\n", "exit_code": 0, "duration_ms": 100}
+    ])
+    spawner = WorkerSpawner(harness_manager=fake, runs_root=tmp_path / "runs")
+    state = _make_state()
+
+    result = asyncio.run(spawner.spawn(state, iteration=1))
+
+    assert len(fake.calls) == 1
+    name, task = fake.calls[0]
+    assert name == "openclaw"
+    assert isinstance(task, HarnessTask)
+    assert "Original task" in task.prompt
+    assert state.task in task.prompt
+    # Worker-Prompt enthält Pfad-Hinweis (AD-9)
+    assert "iter-1" in task.prompt and "worker.out" in task.prompt
+
+    assert isinstance(result, str) and result.strip()
+
+
+def test_worker_spawner_writes_iter_n_worker_out(tmp_path: Path) -> None:
+    """Wenn der Worker selbst nicht schreibt, persistiert der Spawner stdout."""
+    fake = FakeHarnessManager([
+        {"stdout": "summary line\n", "exit_code": 0}
+    ])
+    runs_root = tmp_path / "runs"
+    spawner = WorkerSpawner(harness_manager=fake, runs_root=runs_root)
+    state = _make_state(run_id="abc")
+
+    asyncio.run(spawner.spawn(state, iteration=1))
+
+    out_path = runs_root / "abc" / "iter-1" / "worker.out"
+    assert out_path.exists()
+    assert out_path.read_text(encoding="utf-8").strip() == "summary line"
+
+
+def test_worker_spawner_keeps_self_written_artifact(tmp_path: Path) -> None:
+    """Wenn der Worker SELBST in worker.out schreibt, persistiert Spawner
+    NICHT den stdout drüber.
+    """
+    runs_root = tmp_path / "runs"
+    state = _make_state(run_id="abc")
+
+    # Pre-create worker.out (simuliert Worker-Tool-Use)
+    pre_dir = RunDirectory(runs_root, "abc").ensure()
+    pre_dir.write_worker_output(1, "self-written artifact body")
+
+    fake = FakeHarnessManager([
+        {"stdout": "summary only\n", "exit_code": 0}
+    ])
+    spawner = WorkerSpawner(harness_manager=fake, runs_root=runs_root)
+
+    result = asyncio.run(spawner.spawn(state, iteration=1))
+    assert result == "self-written artifact body"
+
+
+def test_worker_spawner_raises_on_nonzero_exit(tmp_path: Path) -> None:
+    fake = FakeHarnessManager([
+        {"stdout": "", "stderr": "boom", "exit_code": 1}
+    ])
+    spawner = WorkerSpawner(harness_manager=fake, runs_root=tmp_path / "runs")
+
+    with pytest.raises(WorkerSpawnError) as exc:
+        asyncio.run(spawner.spawn(_make_state(), iteration=1))
+    assert "exit_code=1" in str(exc.value)
+
+
+def test_worker_spawner_includes_feedback_block_on_iter2(tmp_path: Path) -> None:
+    """Iter-2-Spawn muss den Feedback-Block aus Iter-1 enthalten."""
+    from jarvis.core.review.verdict import ReviewIssue, ReviewVerdict
+    fake = FakeHarnessManager([
+        {"stdout": "summary\n", "exit_code": 0}
+    ])
+    spawner = WorkerSpawner(harness_manager=fake, runs_root=tmp_path / "runs")
+    state = _make_state()
+    state.record_iteration(
+        iteration=1,
+        worker_output="initial output",
+        verdict=ReviewVerdict(
+            status=ReviewStatus.NEEDS_REVISION,
+            summary="needs work",
+            issues=[
+                ReviewIssue(
+                    severity="warning",
+                    description="docstring missing on add()",
+                    location="src/calc.py:5",
+                    fix_hint="add a one-line docstring",
+                )
+            ],
+            score=0.5,
+        ),
+    )
+
+    asyncio.run(spawner.spawn(state, iteration=2))
+
+    _, task = fake.calls[-1]
+    assert "Reviewer feedback from iteration 1" in task.prompt
+    assert "docstring missing on add()" in task.prompt
+    assert "src/calc.py:5" in task.prompt
+    assert "add a one-line docstring" in task.prompt
+
+
+# ======================================================================
+# ReviewerSpawner
+# ======================================================================
+
+
+def test_reviewer_spawner_passes_schema_and_low_effort(tmp_path: Path) -> None:
+    fake = FakeHarnessManager([
+        {"stdout": json.dumps(_valid_verdict_dict()), "exit_code": 0}
+    ])
+    runs_root = tmp_path / "runs"
+    # worker.out muss für den Reviewer-Prompt-Pfad existieren — wird vom
+    # WorkerSpawner geschrieben; in unit-tests mocken wir das.
+    RunDirectory(runs_root, "abc").ensure().write_worker_output(1, "x")
+
+    spawner = ReviewerSpawner(harness_manager=fake, runs_root=runs_root)
+    state = _make_state(run_id="abc")
+
+    asyncio.run(spawner.spawn(state, "ignored", iteration=1))
+
+    name, task = fake.calls[0]
+    assert name == "openclaw"
+    assert task.timeout_s == 120
+    assert "verdict_schema.json" in task.prompt
+
+
+def test_reviewer_spawner_returns_parsed_verdict(tmp_path: Path) -> None:
+    fake = FakeHarnessManager([
+        {"stdout": json.dumps(_valid_verdict_dict(status="pass")), "exit_code": 0}
+    ])
+    runs_root = tmp_path / "runs"
+    RunDirectory(runs_root, "abc").ensure().write_worker_output(1, "x")
+    spawner = ReviewerSpawner(harness_manager=fake, runs_root=runs_root)
+
+    verdict = asyncio.run(spawner.spawn(_make_state(run_id="abc"), "ignored", 1))
+    assert verdict.status is ReviewStatus.PASS
+    assert verdict.score == 0.95
+
+
+def test_reviewer_spawner_writes_iter_n_verdict_json(tmp_path: Path) -> None:
+    payload = _valid_verdict_dict(status="needs_revision")
+    payload["score"] = 0.6
+    fake = FakeHarnessManager([
+        {"stdout": json.dumps(payload), "exit_code": 0}
+    ])
+    runs_root = tmp_path / "runs"
+    RunDirectory(runs_root, "abc").ensure().write_worker_output(1, "x")
+    spawner = ReviewerSpawner(harness_manager=fake, runs_root=runs_root)
+
+    asyncio.run(spawner.spawn(_make_state(run_id="abc"), "ignored", 1))
+
+    verdict_path = runs_root / "abc" / "iter-1" / "verdict.json"
+    assert verdict_path.exists()
+    on_disk = json.loads(verdict_path.read_text(encoding="utf-8"))
+    assert on_disk["status"] == "needs_revision"
+    assert on_disk["score"] == 0.6
+
+
+def test_reviewer_spawner_raises_unavailable_on_nonzero_exit(
+    tmp_path: Path,
+) -> None:
+    fake = FakeHarnessManager([
+        {"stdout": "", "stderr": "auth failed", "exit_code": 1}
+    ])
+    runs_root = tmp_path / "runs"
+    RunDirectory(runs_root, "abc").ensure().write_worker_output(1, "x")
+    spawner = ReviewerSpawner(harness_manager=fake, runs_root=runs_root)
+
+    with pytest.raises(ReviewerUnavailable):
+        asyncio.run(spawner.spawn(_make_state(run_id="abc"), "ignored", 1))
+
+
+def test_reviewer_spawner_raises_parse_error_on_invalid_json(
+    tmp_path: Path,
+) -> None:
+    fake = FakeHarnessManager([
+        {"stdout": "this is not JSON at all", "exit_code": 0}
+    ])
+    runs_root = tmp_path / "runs"
+    RunDirectory(runs_root, "abc").ensure().write_worker_output(1, "x")
+    spawner = ReviewerSpawner(harness_manager=fake, runs_root=runs_root)
+
+    with pytest.raises(VerdictParseError):
+        asyncio.run(spawner.spawn(_make_state(run_id="abc"), "ignored", 1))
+
+
+def test_reviewer_spawner_raises_parse_error_on_schema_violation(
+    tmp_path: Path,
+) -> None:
+    """JSON valide, aber score=2.0 verletzt das Schema."""
+    bad = {
+        "status": "pass",
+        "summary": "ok",
+        "issues": [],
+        "rubric_results": [],
+        "score": 2.0,
+    }
+    fake = FakeHarnessManager([
+        {"stdout": json.dumps(bad), "exit_code": 0}
+    ])
+    runs_root = tmp_path / "runs"
+    RunDirectory(runs_root, "abc").ensure().write_worker_output(1, "x")
+    spawner = ReviewerSpawner(harness_manager=fake, runs_root=runs_root)
+
+    with pytest.raises(VerdictParseError):
+        asyncio.run(spawner.spawn(_make_state(run_id="abc"), "ignored", 1))
+
+
+def test_reviewer_spawner_handles_prose_prefix(tmp_path: Path) -> None:
+    """Reviewer ignoriert Prosa vor dem JSON (robustness gegen --output-format-Drift)."""
+    payload = _valid_verdict_dict()
+    fake = FakeHarnessManager([
+        {"stdout": "Here is my verdict:\n" + json.dumps(payload), "exit_code": 0}
+    ])
+    runs_root = tmp_path / "runs"
+    RunDirectory(runs_root, "abc").ensure().write_worker_output(1, "x")
+    spawner = ReviewerSpawner(harness_manager=fake, runs_root=runs_root)
+
+    verdict = asyncio.run(spawner.spawn(_make_state(run_id="abc"), "ignored", 1))
+    assert verdict.status is ReviewStatus.PASS
+
+
+# ======================================================================
+# _extract_verdict_json
+# ======================================================================
+
+
+def test_extract_clean_object() -> None:
+    assert _extract_verdict_json('{"a": 1}') == {"a": 1}
+
+
+def test_extract_with_prose_prefix() -> None:
+    assert _extract_verdict_json('Here you go:\n{"a": 1}') == {"a": 1}
+
+
+def test_extract_with_prose_suffix() -> None:
+    assert _extract_verdict_json('{"a": 1}\nThanks.') == {"a": 1}
+
+
+def test_extract_empty_returns_none() -> None:
+    assert _extract_verdict_json("") is None
+    assert _extract_verdict_json("   \n\t  ") is None
+
+
+def test_extract_non_json_returns_none() -> None:
+    assert _extract_verdict_json("nothing structured here") is None
+
+
+def test_extract_array_at_top_returns_none() -> None:
+    """Top-level ist ein Array, kein Object — Reviewer-Verdict muss Object sein."""
+    assert _extract_verdict_json("[1, 2, 3]") is None

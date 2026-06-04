@@ -1,0 +1,38 @@
+# Lokales Compose-File fuer das Board-Backend.
+#
+# Start:
+#   cp .env.example .env       # ADMIN_TOKEN setzen!
+#   docker compose up -d --build
+#   curl http://localhost:8765/healthz
+#
+# Multi-Arch-Build (amd64 + arm64):
+#   docker buildx build --platform linux/amd64,linux/arm64 \
+#       -t jarvis-board-backend:0.1.0 . --push
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: jarvis-board-backend:0.1.0
+    container_name: jarvis-board-backend
+    restart: unless-stopped
+    environment:
+      JARVIS_BOARD_ADMIN_TOKEN: ${JARVIS_BOARD_ADMIN_TOKEN:?ADMIN_TOKEN ist nicht gesetzt — siehe .env.example}
+      JARVIS_BOARD_DB_PATH: /data/board.db
+      JARVIS_BOARD_REGISTER_RATE_LIMIT_PER_MINUTE: ${JARVIS_BOARD_RATE_LIMIT:-10}
+      JARVIS_BOARD_REPLAY_WINDOW_SECONDS: ${JARVIS_BOARD_REPLAY_WINDOW:-300}
+    ports:
+      - "${JARVIS_BOARD_HOST_PORT:-8765}:8765"
+    volumes:
+      - db_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8765/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  db_data:
+    driver: local

@@ -1,0 +1,23 @@
+{
+ "signatures": [
+  {
+   "keyid": "offline_ceremony",
+   "sig": "093328ab91d0a2c345301faa2d473ef1ff75e3e0a259210c96f1e5a35008370462754423dfeac3b7b644bd653295f3b72e4129ab5e087fd82a05c33278a8ad0d"
+  }
+ ],
+ "signed": {
+  "_type": "snapshot",
+  "expires": "2026-06-02T21:15:21Z",
+  "meta": {
+   "targets.json": {
+    "hashes": {
+     "sha256": "e5d7b6dca82558aa319cc6a41b904bc83de5c03bf8856d86705a68b52bdf3d23"
+    },
+    "length": 1629,
+    "version": 1
+   }
+  },
+  "spec_version": "1.0.31",
+  "version": 1
+ }
+}

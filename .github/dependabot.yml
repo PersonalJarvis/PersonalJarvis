@@ -1,0 +1,62 @@
+# Dependabot configuration for PersonalJarvis/PersonalJarvis.
+#
+# Wave-5 audit Finding 4 (repo hygiene): the main repo had no dependabot
+# configuration, so vulnerable transitive deps in pip and unmaintained
+# GitHub Actions could land silently. This file enables weekly updates
+# for both ecosystems with PRs grouped per ecosystem to keep noise down.
+#
+# All Dependabot PRs land as PRs (never auto-merge) — the supply-chain
+# pinning discipline (40-char SHA pins for actions, SHA-256 pins for
+# downloaded binaries) requires a human to validate the new SHA + hash
+# before merging. See install/TRUST_ROOT.md §6+§7 for the bumping
+# procedure.
+
+version: 2
+updates:
+  # GitHub Actions — the supply-chain critical path. Every action in
+  # .github/workflows/*.yml is pinned by 40-char commit SHA (per the
+  # AP from CVE-2025-30066). Dependabot will propose SHA bumps weekly;
+  # review the diff carefully before merging (read TRUST_ROOT.md §7).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: "Europe/Berlin"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+      - supply-chain
+    commit-message:
+      prefix: deps
+      include: scope
+
+  # Python (pip) — the runtime dependency surface for installer.py and
+  # the rest of the project. Dependabot updates pyproject.toml +
+  # requirements.txt entries on a weekly cadence. The pip ecosystem
+  # uses semantic-version constraints (not SHA pins), so review the
+  # CHANGELOG of each bumped dep before merging.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: "Europe/Berlin"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - python
+    commit-message:
+      prefix: deps
+      include: scope
+    # Group all pip patch-level updates into one PR per week so the
+    # signal-to-noise ratio of the review queue stays high. Major and
+    # minor bumps still arrive as individual PRs because they often
+    # carry behavior changes worth reviewing one at a time.
+    groups:
+      pip-patch-updates:
+        update-types:
+          - patch

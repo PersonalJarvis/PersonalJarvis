@@ -1,0 +1,126 @@
+/*
+ * Minimal (local) — small dark theme variant tailored for this vault.
+ * Loaded by Obsidian when appearance.json has cssTheme: "Minimal".
+ *
+ * Adjusts the most visible surfaces: backgrounds, headings,
+ * wiki-link accent, and graph-view node colours. The vault still
+ * works without this file (Obsidian falls back to its built-in
+ * dark theme), so removing or replacing it is safe.
+ */
+
+:root {
+  --accent-h: 215;
+  --accent-s: 70%;
+  --accent-l: 65%;
+}
+
+.theme-dark {
+  --background-primary: #14171c;
+  --background-primary-alt: #181c22;
+  --background-secondary: #1d2027;
+  --background-secondary-alt: #22262d;
+  --background-modifier-border: #2a2f37;
+  --background-modifier-form-field: #1a1e25;
+  --text-normal: #d8dde6;
+  --text-muted: #98a0ad;
+  --text-faint: #6a7280;
+  --text-accent: hsl(var(--accent-h), var(--accent-s), var(--accent-l));
+  --text-accent-hover: hsl(var(--accent-h), var(--accent-s), 75%);
+  --interactive-accent: hsl(var(--accent-h), var(--accent-s), var(--accent-l));
+  --interactive-accent-hover: hsl(var(--accent-h), var(--accent-s), 72%);
+}
+
+.theme-dark .workspace-leaf-content {
+  background: var(--background-primary);
+}
+
+.theme-dark .markdown-reading-view,
+.theme-dark .markdown-source-view {
+  font-size: var(--font-text-size, 16px);
+  line-height: 1.65;
+}
+
+.theme-dark .markdown-preview-view h1,
+.theme-dark .cm-header-1 {
+  color: var(--text-normal);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding-bottom: 0.3em;
+}
+
+.theme-dark .markdown-preview-view h2,
+.theme-dark .cm-header-2 {
+  color: var(--text-accent-hover);
+  font-weight: 600;
+  margin-top: 1.8em;
+}
+
+.theme-dark .internal-link {
+  color: var(--text-accent);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--text-accent);
+}
+
+.theme-dark .internal-link:hover {
+  color: var(--text-accent-hover);
+  border-bottom-style: solid;
+}
+
+.theme-dark .is-unresolved.internal-link {
+  color: #c06070;
+  border-bottom-color: #c06070;
+}
+
+.theme-dark .nav-folder-title,
+.theme-dark .nav-file-title {
+  border-radius: 4px;
+  padding: 3px 6px;
+}
+
+.theme-dark .nav-folder-title.is-active,
+.theme-dark .nav-file-title.is-active {
+  background-color: var(--background-secondary-alt);
+  color: var(--text-accent-hover);
+}
+
+.theme-dark .graph-view.color-fill {
+  color: hsl(var(--accent-h), 50%, 60%);
+}
+
+.theme-dark .graph-view.color-line {
+  color: hsla(var(--accent-h), 40%, 55%, 0.4);
+}
+
+.theme-dark .graph-view.color-text {
+  color: var(--text-normal);
+}
+
+.theme-dark .graph-view.color-fill-highlight {
+  color: hsl(var(--accent-h), var(--accent-s), 75%);
+}
+
+.theme-dark .view-header {
+  background: var(--background-secondary);
+}
+
+.theme-dark blockquote {
+  border-left: 3px solid var(--interactive-accent);
+  background: var(--background-secondary);
+  border-radius: 0 4px 4px 0;
+  padding: 0.6em 1em;
+}
+
+.theme-dark code,
+.theme-dark .markdown-rendered code {
+  background: var(--background-secondary-alt);
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+  font-size: 0.92em;
+}
+
+.theme-dark .HyperMD-codeblock,
+.theme-dark pre {
+  background: var(--background-secondary);
+  border-radius: 6px;
+}
