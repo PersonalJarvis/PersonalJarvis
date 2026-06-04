@@ -1,0 +1,821 @@
+{
+  "nav": {
+    "chats": "Chats",
+    "agents": "Agents",
+    "skills": "Skills",
+    "plugins": "Plugins",
+    "docs": "Docs",
+    "mcps": "MCPs",
+    "tasks": "Tasks",
+    "review": "Review",
+    "sessions": "Transcription",
+    "terminal": "Terminal",
+    "clis": "CLIs",
+    "cli_test_hub": "CLI Test Hub",
+    "board": "Board",
+    "languages": "Languages",
+    "profile": "Profile",
+    "memory": "Notes",
+    "wiki": "Wiki",
+    "apikeys": "API Keys",
+    "settings": "Settings",
+    "telephony": "Telephony",
+    "debug": "Debug",
+    "outputs": "Outputs",
+    "socials": "Socials",
+    "taskbar": "Taskbar",
+    "contacts": "Contacts"
+  },
+  "taskbar_view": {
+    "subtitle": "On-screen overlay appearance and dictation behaviour.",
+    "appearance_title": "Appearance",
+    "behavior_title": "Behavior",
+    "restart_required": "Saved — restart Jarvis to apply.",
+    "restart_now": "Restart now",
+    "restarting": "Restarting Jarvis…",
+    "bar_persistent": {
+      "title": "Show bar at all times",
+      "description": "Keep the bar on screen even when idle. Off: no standby — it only appears when you say \"Hey Jarvis\".",
+      "saved": "Bar visibility updated."
+    },
+    "mute_music": {
+      "title": "Mute music while dictating",
+      "description": "Mute other apps (Spotify, browser…) while you talk to Jarvis, then restore them after. Jarvis's own voice is never muted.",
+      "enabled_toast": "Music will mute while you talk to Jarvis.",
+      "disabled_toast": "Music mute disabled."
+    }
+  },
+  "socials": {
+    "subtitle": "Links to our community and profiles.",
+    "add": "Add link",
+    "empty": "No social links yet — add your first one.",
+    "edit": "Edit",
+    "delete": "Delete",
+    "open": "Open",
+    "dialogAddTitle": "Add social link",
+    "dialogEditTitle": "Edit link",
+    "platform": "Platform",
+    "label": "Label",
+    "url": "URL",
+    "save": "Save",
+    "cancel": "Cancel",
+    "hidden": "Hidden",
+    "visible": "Visible",
+    "links": "Links",
+    "back": "Back"
+  },
+  "contacts": {
+    "subtitle": "Your personal address book — names, contact details, and a short note per person.",
+    "add": "Add contact",
+    "empty": "No contacts yet — add your first one.",
+    "noMatches": "No contacts match your search.",
+    "search": "Search contacts…",
+    "selectHint": "Select a contact to see details.",
+    "edit": "Edit",
+    "delete": "Delete",
+    "deleteTitle": "Delete contact",
+    "deleteConfirm": "Delete",
+    "cancel": "Cancel",
+    "save": "Save",
+    "name": "Name",
+    "nameRequired": "A name is required.",
+    "aliases": "Aliases",
+    "relationship": "Relationship",
+    "emails": "Emails",
+    "phones": "Phones",
+    "addEmail": "Add email",
+    "addPhone": "Add phone",
+    "address": "Address",
+    "street": "Street",
+    "postalCode": "Postal code",
+    "city": "City",
+    "country": "Country",
+    "readme": "README",
+    "readmePlaceholder": "A short note about this person…",
+    "words": "words",
+    "dialogAddTitle": "Add contact",
+    "dialogEditTitle": "Edit contact",
+    "rel": {
+      "family": "Family",
+      "friend": "Friend",
+      "colleague": "Colleague",
+      "partner": "Partner",
+      "acquaintance": "Acquaintance",
+      "other": "Other"
+    }
+  },
+  "voice_state": {
+    "idle": "Ready",
+    "listening": "Listening",
+    "thinking": "Thinking",
+    "speaking": "Speaking",
+    "error": "Error",
+    "offline": "Offline"
+  },
+  "sidebar": {
+    "wake_hint": "Say \"Hey Jarvis\"…",
+    "brain_label": "Brain",
+    "brain_tooltip": "Switch brain provider"
+  },
+  "chats_view": {
+    "title": "Chat",
+    "subtitle": "Talk to Jarvis or type — both go through the same event bus.",
+    "thinking_aria": "Jarvis is thinking",
+    "thinking_label": "thinking…",
+    "empty_title": "Ready for commands",
+    "empty_subtitle": "Say \"Hey Jarvis\" or type your message below. Jarvis dispatches sub-agents, calls tools, and gives you a voice back.",
+    "examples": {
+      "0": "Hey Jarvis, show the agents",
+      "1": "Switch brain to Gemini",
+      "2": "Work in folder C:\\Projects\\Foo"
+    },
+    "input_placeholder": "Message Jarvis… (Enter to send)",
+    "dictation_start": "Dictate",
+    "dictation_stop": "Stop dictation",
+    "dictation_listening": "Listening… speak now",
+    "history": "History",
+    "new_chat": "New chat",
+    "speak": "Speak in this conversation",
+    "speak_short": "Speak",
+    "empty_history": "No conversations yet",
+    "delete": "Delete",
+    "voice_badge": "Voice",
+    "text_badge": "Text",
+    "speak_started": "Listening — continue this conversation by voice.",
+    "speak_unavailable": "Voice isn't available in this mode.",
+    "select_or_new": "Pick a conversation on the left, or start a new one.",
+    "group_today": "Today",
+    "group_yesterday": "Yesterday",
+    "group_earlier": "Earlier",
+    "resize_hint": "Drag to resize · double-click to reset"
+  },
+  "subagents_view": {
+    "title": "Sub-Agents",
+    "stat_active": "active",
+    "stat_total": "total",
+    "clear": "Clear",
+    "clear_tooltip": "Clear board",
+    "board_title": "Departure Board",
+    "active_label": "Active",
+    "standby_label": "Standby",
+    "col_agent": "Agent",
+    "col_target": "Goal",
+    "col_status": "Status",
+    "col_cost": "Cost",
+    "agents_traveling": "Agent(s) traveling",
+    "last_departure": "last departure",
+    "last_departure_ago": "last departure {0} ago",
+    "status": {
+      "running": "running",
+      "completed": "arrived",
+      "failed": "failed"
+    }
+  },
+  "tasks_view": {
+    "title": "Tasks",
+    "subtitle": "Persistent task queue — reminders, harness dispatches, tool calls.",
+    "filter_all": "All",
+    "filter_active": "Active",
+    "filter_done": "Done",
+    "filter_problems": "Problems",
+    "entries": "entries",
+    "loading": "Loading tasks…",
+    "load_error": "Could not load tasks",
+    "empty_text": "No tasks yet.",
+    "empty_hint": "Currently tasks can only be created via REST API — POST /api/tasks with a TaskSpec (trigger + action). Voice commands like \"remind me in 2 hours\" and an inline form will follow.",
+    "expand": "Expand",
+    "collapse": "Collapse",
+    "state": {
+      "pending": "waiting",
+      "scheduled": "scheduled",
+      "running": "running",
+      "completed": "done",
+      "failed": "failed",
+      "cancelled": "cancelled",
+      "interrupted": "interrupted"
+    },
+    "trigger_label": {
+      "after_delay": "Delay",
+      "at_time": "At time",
+      "on_event": "Event"
+    },
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "attempts": "attempts",
+    "last_error": "Last error",
+    "due_at": "Due",
+    "started_at": "Started",
+    "finished_at": "Finished",
+    "no_steps": "No steps yet."
+  },
+  "skills_view": {
+    "title": "Skills",
+    "subtitle": "Built-in and user skills with voice and event triggers.",
+    "search_placeholder": "Search skills…",
+    "create": "Create skill",
+    "no_results": "No skills found.",
+    "draft_badge": "Draft",
+    "active_badge": "Active",
+    "disabled_badge": "Disabled",
+    "validated_badge": "Validated",
+    "trigger_voice": "Voice",
+    "trigger_event": "Event",
+    "trigger_cron": "Cron"
+  },
+  "review_view": {
+    "title": "Review",
+    "subtitle": "Curator pending reviews — accept or reject memory candidates.",
+    "empty_title": "Nothing to review",
+    "empty_subtitle": "When the curator extracts new memory candidates, they appear here.",
+    "accept": "Accept",
+    "reject": "Reject",
+    "confidence": "Confidence",
+    "field": "Field",
+    "value": "Value",
+    "reason": "Reason"
+  },
+  "sessions_view": {
+    "title": "Transcription",
+    "subtitle": "Recent voice sessions, turn by turn.",
+    "empty_title": "No sessions yet",
+    "empty_subtitle": "After a voice conversation with Jarvis, the transcripts appear here.",
+    "load_more": "Load more",
+    "user": "You",
+    "assistant": "Jarvis",
+    "hangup": "Hung up",
+    "duration": "Duration"
+  },
+  "terminal_view": {
+    "title": "Terminal",
+    "subtitle": "Persistent shell session — stays alive while you switch sections.",
+    "start": "Start",
+    "restart": "Restart",
+    "stop": "Stop",
+    "select_shell_hint": "Select a shell and press Start.",
+    "start_shell": "Start shell",
+    "status_idle": "Ready · {0} · click Start to spawn the shell",
+    "status_starting": "Spawning {0} …",
+    "status_running": "{0} active · audit log via bus (TerminalCommandExecuted)",
+    "status_closed": "{0} ended (exit {1}) · click Restart"
+  },
+  "docs_view": {
+    "title": "Docs",
+    "subtitle": "Project documentation, architecture decisions, and bug log.",
+    "search_placeholder": "Search docs…",
+    "no_results": "No documents found."
+  },
+  "mcps_view": {
+    "title": "MCPs",
+    "subtitle": "Model Context Protocol servers — external tools Jarvis can call.",
+    "empty": "No MCP servers configured.",
+    "connected": "Connected",
+    "disconnected": "Disconnected",
+    "edit_tooltip": "Edit mcp.json",
+    "reload_tooltip": "Reload",
+    "intro": "Jarvis manages MCP servers automatically. Activate one with the switch — the connection is checked first. For manual edits open mcp.json.",
+    "empty_title": "No MCPs yet",
+    "empty_description": "MCP servers are configured exclusively via mcp.json (Claude Desktop format). Edit it directly, or import the full Claude Desktop config.",
+    "empty_tip": "Tip: Tell Jarvis later \"install MCP X\" — it will add it to mcp.json itself.",
+    "open_config": "Open mcp.json",
+    "import_claude": "Import Claude Desktop config",
+    "importing": "Importing…",
+    "import_failed": "Import failed",
+    "saved_servers": "Saved · {0} server(s)",
+    "copy_path": "Copy path",
+    "path_copied": "Path copied",
+    "copy_failed": "Copy failed",
+    "config_format_hint": "Claude Desktop format. Per server: command, args, optional env and enabled. Env values with $-prefix are resolved from the Credential Manager (e.g. \"$GMAIL_TOKEN\").",
+    "save": "Save",
+    "saving": "Saving…",
+    "cancel": "Cancel",
+    "credentials_incomplete": "Credentials incomplete",
+    "status": {
+      "checking": "checking…",
+      "connected": "connected",
+      "disconnected": "disconnected",
+      "error": "error"
+    }
+  },
+  "board_view": {
+    "title": "Board",
+    "subtitle": "Your mastery dashboard. Local, no cloud, no streak pressure.",
+    "refresh": "Refresh",
+    "refresh_tooltip": "Trigger aggregator manually",
+    "loading": "Loading board stats…",
+    "load_error": "Could not load stats",
+    "stats": {
+      "tasks_completed": "Tasks completed (total)",
+      "tasks_completed_sub": "in {0} active days",
+      "tools_in_window": "Tools in the last {0} days",
+      "tools_in_window_sub": "Distinct, aggregated per day",
+      "voice_first_try": "Voice First-Try Rate",
+      "voice_first_try_sub": "Base: {0} commands",
+      "voice_no_data": "No voice data yet",
+      "hours_saved": "Sub-Jarvis hours saved",
+      "hours_saved_sub": "Summed across all runs",
+      "conversation_hours": "Conversation hours with Jarvis",
+      "conversation_hours_sub": "{0} h in the last {1} days"
+    },
+    "activity_title": "Activity",
+    "activity_description": "Last 365 days. Voice, chat, tools, tasks and app starts. Each cell = one day.",
+    "ai_profile_title": "AI Profile",
+    "ai_profile_description": "What Jarvis has learned about you. Updated evolutionarily on Sundays.",
+    "ai_profile_regenerate": "Regenerate now",
+    "ai_profile_regenerate_tooltip": "Regenerate bio now",
+    "ai_profile_loading": "Loading bio…",
+    "ai_profile_collecting": "Collecting observations…",
+    "ai_profile_first_bio_hint": "First short bio appears after the first active day, deeper observations on Sundays.",
+    "ai_profile_today": "generated today",
+    "ai_profile_one_day_ago": "1 day ago",
+    "ai_profile_days_ago": "{0} days ago",
+    "feedback_correct": "Correct",
+    "feedback_incorrect": "Incorrect",
+    "feedback_harder": "Harder",
+    "feedback_noted": "Noted. Will affect the next bio.",
+    "regenerate_failed": "Regeneration failed",
+    "personal_records_title": "Personal Records",
+    "personal_records_description": "Personal bests for daily activity.",
+    "tools_chart_title": "Tools — last 90 days",
+    "tools_chart_description": "Most-used tools with success rate.",
+    "tools_chart_empty": "No tool usage in this window",
+    "tools_chart_days_used_one": "{0} day",
+    "tools_chart_days_used": "{0} days",
+    "tools_chart_used_label": "used",
+    "achievements_title": "Achievements",
+    "backend_section_title": "Backend Connection",
+    "backend_disconnect_tooltip": "Disable federation (local-only mode)",
+    "backend_disconnect": "Disconnect",
+    "backend_status_loading": "Status…",
+    "backend_local_only": "Federation is disabled (local-only mode). Enable in jarvis.toml: [board.federation] enabled = true.",
+    "backend_url_label": "Backend URL",
+    "backend_url_unset": "(not configured)",
+    "backend_url_hint": "Configurable via jarvis.toml [board.federation] backend_url.",
+    "backend_pubkey_label": "My pubkey",
+    "backend_pubkey_copy_tooltip": "Copy pubkey to clipboard",
+    "backend_pubkey_copied": "copied",
+    "no_records_yet": "No records yet — they appear automatically once data exists.",
+    "no_tools_used": "No tools used yet.",
+    "records": {
+      "most_tasks_in_a_day": {
+        "title": "Best output day",
+        "unit": "Tasks"
+      },
+      "most_unique_tools_in_a_day": {
+        "title": "Widest toolbox",
+        "unit": "Tools"
+      },
+      "most_voice_commands_in_a_day": {
+        "title": "Most active voice day",
+        "unit": "Commands"
+      },
+      "most_hours_saved_in_a_day": {
+        "title": "Biggest time-saver day",
+        "unit": "Hours"
+      },
+      "most_active_events_in_a_day": {
+        "title": "Most active Jarvis day",
+        "unit": "Activities"
+      },
+      "most_conversation_hours_in_a_day": {
+        "title": "Longest conversation day",
+        "unit": "Hours"
+      }
+    }
+  },
+  "profile_view": {
+    "title": "Profile",
+    "subtitle": "Your USER.md, people you know, and pending memory reviews.",
+    "people": "People",
+    "reviews_count": "pending reviews",
+    "no_people": "No people yet.",
+    "person_singular": "Person",
+    "person_plural": "People",
+    "review_singular": "Review",
+    "review_plural": "Reviews",
+    "review_open": "open",
+    "no_name_yet": "Jarvis doesn't know your name yet. Tell him \"My name is …\".",
+    "reload_tooltip": "Reload",
+    "fact_accepted": "{0} fact(s) merged",
+    "accepted": "Accepted",
+    "accept_tooltip": "Apply",
+    "reject_tooltip": "Discard",
+    "close_tooltip": "Close",
+    "profile_not_ready": "Profile system not ready.",
+    "reviews_disabled_title": "Review queue inactive",
+    "reviews_disabled_body": "This session's fact curator writes straight to the wiki vault and doesn't use a review queue. Candidates show up here once a provider with the classic memory integration is running.",
+    "hero_eyebrow": "Knowledge profile",
+    "hero_classification": "Knowledge base",
+    "hero_maintained_by": "Maintained by Jarvis",
+    "hero_name_placeholder": "Who are you?",
+    "hero_tagline": "What Jarvis has learned about you — from your conversations.",
+    "hero_completeness": "Profile mapped",
+    "field_unknown": "not known yet",
+    "facts_ratio": "{0}/{1} facts",
+    "no_user_hint": "Jarvis doesn't know your name yet. Just tell him what to call you — the curator picks up the rest from your conversations over time.",
+    "section_knowledge": "Knowledge matrix",
+    "section_people": "People around you",
+    "section_reviews": "Review queue",
+    "section_source": "USER.md — live source",
+    "people_empty_title": "No people known yet",
+    "people_empty_body": "When you tell Jarvis about family, friends or colleagues, the curator automatically creates a file under data/workspace/people/.",
+    "person_detail_hint": "Pick a person on the left to see details.",
+    "person_relationship": "Relationship",
+    "person_aliases": "Aliases",
+    "person_no_aliases": "none",
+    "person_file_hint": "Observations and full notes live in people/{0}.md.",
+    "reviews_empty_title": "Nothing to review",
+    "reviews_empty_body": "Every extracted fact was high-confidence and applied directly. When the curator is unsure, candidates land here.",
+    "review_value": "Value",
+    "review_reason": "Reason",
+    "review_subject_user": "You",
+    "raw_loading": "Loading USER.md…",
+    "raw_empty": "(File empty — the curator hasn't written anything yet)",
+    "raw_edit": "Edit",
+    "raw_save": "Save",
+    "raw_saving": "Saving…",
+    "raw_cancel": "Cancel",
+    "raw_saved": "USER.md saved",
+    "raw_editing_hint": "Editing the source file directly. The YAML frontmatter between the --- drives the clusters above.",
+    "raw_frontmatter_warning": "Saved — but the YAML frontmatter couldn't be parsed. The clusters stay empty until you fix it.",
+    "just_updated": "just updated",
+    "avatar_alt": "Profile picture",
+    "avatar_upload": "Upload photo",
+    "avatar_change": "Change photo",
+    "avatar_remove": "Remove photo",
+    "avatar_uploading": "Uploading…",
+    "avatar_uploaded": "Profile picture updated",
+    "avatar_removed": "Profile picture removed",
+    "avatar_hint": "Click the frame to upload a picture of yourself.",
+    "clusters": {
+      "identity": {
+        "label": "Identity",
+        "description": "Name, languages, devices, basics."
+      },
+      "communication": {
+        "label": "Communication",
+        "description": "How Jarvis talks to you: directness, humor, formality."
+      },
+      "work_style": {
+        "label": "Work Style",
+        "description": "Focus mode, planning horizon, tools."
+      },
+      "values": {
+        "label": "Values",
+        "description": "Top values, pet peeves, motivations."
+      },
+      "relationship": {
+        "label": "Relationship",
+        "description": "How Jarvis gives feedback, how the dynamic runs."
+      }
+    },
+    "fields": {
+      "name": "Name",
+      "preferred_address": "Address form",
+      "pronouns": "Pronouns",
+      "primary_language": "Primary language",
+      "languages": "Languages",
+      "timezone": "Timezone",
+      "devices": "Devices",
+      "directness": "Directness (1–5)",
+      "formality": "Formality (1–5)",
+      "verbosity": "Verbosity",
+      "humor_types": "Humor styles",
+      "emoji_ok": "Emojis OK?",
+      "focus_mode": "Focus mode",
+      "planning_horizon": "Planning horizon",
+      "top_values": "Top values",
+      "pet_peeves": "Pet peeves",
+      "motivations": "Motivations",
+      "feedback_pref": "Feedback style"
+    }
+  },
+  "apikeys_view": {
+    "title": "API Keys & Providers",
+    "subtitle": "Keys live in Windows Credential Manager. Codex uses the official ChatGPT/Codex login.",
+    "save": "Save",
+    "saved": "Saved",
+    "missing": "Missing",
+    "configured": "Configured",
+    "loading_providers": "Loading providers…",
+    "load_error": "Could not load provider list",
+    "retry": "retry",
+    "tier_brain": "Brain Provider",
+    "tier_tts": "Voice Output (TTS)",
+    "tier_stt": "Voice Input (STT)",
+    "tier_subagent": "Subagent (heavy tasks)",
+    "active_tooltip": "Already active",
+    "click_to_activate": "Click to activate this provider",
+    "needs_codex": "First connect Codex or save API key, then activate",
+    "needs_key": "First save API key, then activate",
+    "security_notice": "Keys are stored via keyring in the Windows Credential Manager. Jarvis reads them at runtime via get_secret() — they never end up in jarvis.toml. OpenAI Codex uses only the official Codex CLI for ChatGPT login; Jarvis never asks for ChatGPT credentials."
+  },
+  "settings_view": {
+    "title": "Settings",
+    "subtitle": "Wake-word, hotkeys, safety policies, autostart.",
+    "save": "Save changes",
+    "saving": "Saving…",
+    "reset": "Reset to defaults",
+    "rows": {
+      "wake_word_title": "Wake Word",
+      "wake_word_description": "Activation word for voice mode.",
+      "ptt_title": "Push-to-Talk Hotkey",
+      "ptt_description": "Hold to talk, release to send. Works without the wake word.",
+      "privacy_title": "Privacy Mode",
+      "privacy_description": "Hybrid: STT local (Whisper), TTS/Brain cloud.",
+      "privacy_value": "Hybrid",
+      "scope_title": "Project Scope",
+      "scope_description": "\"Jarvis, work in folder X\" pins context until released.",
+      "scope_value": "Global (no pin)",
+      "autostart_title": "Auto-start with Windows",
+      "autostart_description": "Jarvis starts in tray after login.",
+      "toasts_title": "Autopilot Toasts",
+      "toasts_description": "Show \"Jarvis opened X\" notification when voice controls the UI."
+    },
+    "wake_word": {
+      "title": "Wake Word",
+      "description": "Activation phrase for voice mode. Pick a quick phrase or type your own.",
+      "phrase_label": "Wake phrase",
+      "phrase_placeholder": "e.g. Hey Jarvis",
+      "instant_phrases_label": "Quick picks",
+      "engine_label": "Detection engine",
+      "sensitivity_label": "Sensitivity",
+      "custom_model_path_label": "Custom ONNX model path",
+      "save": "Save wake word",
+      "saved": "Wake word saved",
+      "restart_required": "Restart required to take effect.",
+      "degraded_warning": "The chosen phrase isn't supported by the selected engine — it will fall back to a different engine.",
+      "needs_whisper_hint": "An arbitrary phrase needs the local-Whisper extra. Without it the engine will degrade to a built-in quick phrase.",
+      "engine_options": {
+        "auto": "Auto (recommended)",
+        "openwakeword": "openWakeWord (built-in phrases)",
+        "stt_match": "STT match (any phrase, needs local Whisper)",
+        "custom_onnx": "Custom ONNX model"
+      }
+    },
+    "autostart": {
+      "title": "Start at login",
+      "description": "Launch Jarvis automatically when you log in, so \"Hey Jarvis\" works right after a reboot. Turn it off here any time.",
+      "enabled_toast": "Autostart enabled — Jarvis will launch at login.",
+      "disabled_toast": "Autostart disabled.",
+      "unsupported": "Autostart is not available on this host (e.g. a headless server with no desktop session)."
+    },
+    "overlay_style": {
+      "title": "Display style",
+      "description": "Choose how Jarvis appears on screen during voice activity. The bar is the slim default; the mascot is the classic orb; or hide it entirely.",
+      "label": "Style",
+      "save": "Save",
+      "saved": "Display style switched.",
+      "restart_required": "Saved — restart Jarvis to apply.",
+      "options": {
+        "whisper_bar": "Bar (default)",
+        "mascot": "Mascot orb",
+        "none": "None (hidden)"
+      }
+    },
+    "assistant_name": {
+      "title": "Assistant Name",
+      "description": "How the assistant refers to itself in replies. Leave empty to follow the wake word.",
+      "label": "Name",
+      "current": "The assistant calls itself “{0}”.",
+      "auto_hint": "Empty — follows the wake word (currently “{0}”).",
+      "save": "Save name",
+      "saved": "Name saved",
+      "restart_required": "Restart required to take effect."
+    },
+    "hotkey": {
+      "title": "Push-to-Talk Hotkey",
+      "description": "Click Record and press your key combination — hold it to talk, release to send. Or pick a safe suggestion below.",
+      "record": "Record",
+      "recording": "Press your keys now… (Esc to cancel)",
+      "suggestions_label": "Suggestions",
+      "save": "Save hotkey",
+      "saved": "Hotkey saved",
+      "restart_required": "Restart required to take effect."
+    },
+    "keybinds": {
+      "title": "Voice Keybinds",
+      "description": "Set the keys for Call, Hangup and Talk (push-to-talk). Click Record and press your combination, or reset to default. Changes apply after a restart.",
+      "call_label": "Call (answer / start talking)",
+      "hangup_label": "Hangup",
+      "talk_label": "Talk / Push-to-talk",
+      "record": "Record",
+      "recording": "Press your keys now… (Esc to cancel)",
+      "save": "Save",
+      "saved": "Keybind saved",
+      "reset": "Reset to default",
+      "restart_required": "Restart required to take effect."
+    },
+    "codex_title": "OpenAI Codex CLI",
+    "codex_description": "Manual path for Windows PATH issues. Empty uses 'codex' from PATH.",
+    "safety_title": "Safety Whitelist",
+    "safety_description": "Patterns executed without confirmation, even at risk-tier 'ask'. Avoids confirmation fatigue."
+  },
+  "telephony_view": {
+    "title": "Telephony",
+    "subtitle": "Call Jarvis on a real phone number. Same STT, Brain, and Charon voice as \"Hey Jarvis\".",
+    "load_error": "Could not load telephony status",
+    "not_configured_hint": "Set your Twilio Account SID, Auth Token, and phone number below to finish setup, then run \"Test connection\".",
+    "unavailable_title": "Telephony extra not installed",
+    "unavailable_body": "The optional Twilio integration is not available in this install. Add the telephony extras group, then restart Jarvis.",
+    "status": {
+      "title": "Status",
+      "twilio": "Twilio",
+      "reachable": "Reachable",
+      "unreachable": "Not reachable",
+      "not_configured": "Not configured yet",
+      "enabled": "Enabled",
+      "account_sid": "Account SID",
+      "phone_number": "Phone number",
+      "public_url": "Public base URL",
+      "webhook_url": "Voice webhook",
+      "voice": "TTS voice",
+      "active_calls": "Active calls",
+      "max_seconds": "Max call length",
+      "not_set": "not set",
+      "badge_setup": "Setup needed",
+      "badge_live": "Live",
+      "badge_error": "Error"
+    },
+    "creds": {
+      "title": "Credentials & config",
+      "enable": "Enabled",
+      "account_sid": "Account SID",
+      "auth_token": "Auth Token",
+      "auth_token_set": "Stored — leave blank to keep",
+      "auth_token_placeholder": "Paste Twilio Auth Token",
+      "phone_number": "Phone number (E.164)",
+      "public_url": "Public base URL",
+      "language": "Language code",
+      "greeting": "Greeting (optional)",
+      "greeting_placeholder": "Leave empty for the Jarvis butler default",
+      "test_connection": "Test connection",
+      "self_test": "Self-test voice",
+      "saved": "Telephony settings saved",
+      "test_ok": "Twilio reachable",
+      "test_failed": "Twilio not reachable",
+      "test_reachable": "Twilio account is reachable.",
+      "selftest_ok": "Voice chain works",
+      "selftest_failed": "Self-test failed",
+      "transcript": "Transcript",
+      "response": "Jarvis response",
+      "audio_bytes": "Audio bytes"
+    },
+    "scripts": {
+      "title": "Setup scripts",
+      "subtitle": "Run these to expose Jarvis publicly and provision the Twilio number. Copy a command with the button.",
+      "empty": "No setup scripts reported by the backend yet."
+    },
+    "calls": {
+      "title": "Recent calls",
+      "empty": "No calls yet. Once someone dials your number, the turns appear here.",
+      "from": "From",
+      "to": "To",
+      "started": "Started",
+      "duration": "Duration",
+      "turns": "Turns",
+      "status": "Status"
+    },
+    "call_status": {
+      "ringing": "Ringing",
+      "in_progress": "In progress",
+      "completed": "Completed",
+      "failed": "Failed",
+      "no_audio": "No audio"
+    }
+  },
+  "debug_view": {
+    "title": "Debug",
+    "subtitle": "Live event stream from the orchestrator."
+  },
+  "previews_view": {
+    "title": "Previews",
+    "subtitle": "Live preview servers Jarvis spawned for you.",
+    "empty": "No active previews."
+  },
+  "outputs_view": {
+    "title": "Outputs",
+    "subtitle": "Files Jarvis or sub-agents wrote for you.",
+    "empty": "No outputs yet.",
+    "open": "Open",
+    "delete": "Delete"
+  },
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "loading": "Loading…",
+    "saved": "Saved",
+    "delete": "Delete",
+    "edit": "Edit",
+    "close": "Close",
+    "back": "Back",
+    "retry": "Retry",
+    "yes": "Yes",
+    "no": "No",
+    "error_generic": "Something went wrong.",
+    "save_failed": "Save failed",
+    "delete_failed": "Delete failed",
+    "search": "Search…",
+    "open_in_explorer": "Open in Explorer",
+    "open_in_editor": "Open Markdown file in OS default editor",
+    "running": "running",
+    "saving": "Saving…"
+  },
+  "docs": {
+    "search_placeholder": "Filter title/tag…",
+    "fulltext_search": "Full-text search (Ctrl+K)",
+    "search_modal_title": "Search docs",
+    "search_modal_placeholder": "Search docs…",
+    "search_hint": "Type a term to search…",
+    "search_loading": "Searching…",
+    "no_results": "No results for \"{0}\"",
+    "for_fulltext": "for full-text search.",
+    "could_not_load": "Could not load doc.",
+    "recent": "Recent"
+  },
+  "sessions": {
+    "select_one": "Select a session on the left.",
+    "no_turns": "This session has no turns — probably only a wake-word.",
+    "running": "running"
+  },
+  "provider_switcher": {
+    "loading_hint": "Provider list is loading — if it stays empty, check the backend."
+  },
+  "cli_connect": {
+    "is_connected": "{0} is connected",
+    "login_aborted": "{0}: login check failed after 5 min. Restart manually if needed."
+  },
+  "mascot": {
+    "brain_switched": "switched to {0}. ok!"
+  },
+  "board": {
+    "heatmap_tooltip": "{0} - {1} activities, {2} tasks, {3} h conversation"
+  },
+  "story_composer": {
+    "close": "close"
+  },
+  "reactions": {
+    "others_reacted": "Others reacted"
+  },
+  "add_friend": {
+    "display_name": "Display name"
+  },
+  "apikeys_codex": {
+    "login_started": "codex login started in terminal",
+    "disconnected": "Codex disconnected",
+    "status_loading": "Loading Codex status",
+    "needs_codex_full": "{0}: first connect Codex or save API key, then activate.",
+    "needs_key_full": "{0}: first save API key, then activate."
+  },
+  "mcps_toast": {
+    "connected": "{0} connected"
+  },
+  "profile_toast": {
+    "fact_applied": "{0} fact(s) applied"
+  },
+  "skills_toast": {
+    "error": "Error",
+    "back_to_list": "Back to list",
+    "stale_refreshing": " (stale, refreshing)"
+  },
+  "terminal_xterm": {
+    "session_ended": "\r\n\u001b[33m[Session ended — exit {0}]\u001b[0m\r\n",
+    "install_no_binary": "{0}: install completed (exit 0) but binary not found. PATH may not be refreshed.",
+    "install_failed": "{0}: install failed (exit {1}). Try a different method."
+  },
+  "languages_view": {
+    "title": "Languages",
+    "subtitle": "Choose the UI language and the language Jarvis replies in.",
+    "ui_section": "Interface Language",
+    "ui_hint": "Affects every label, button and message in the app.",
+    "reply_section": "Reply Language",
+    "reply_hint": "Which language Jarvis speaks when answering you. Proper names, code identifiers and technical terms stay in their original form.",
+    "options": {
+      "auto": {
+        "label": "Automatic",
+        "description": "Match whichever language you use."
+      },
+      "en": {
+        "label": "English",
+        "description": "Use English for every label and button."
+      },
+      "de": {
+        "label": "Deutsch (German)",
+        "description": "Use German for every label and button."
+      },
+      "es": {
+        "label": "Español (Spanish)",
+        "description": "Use Spanish for every label and button."
+      }
+    },
+    "reply_options": {
+      "auto": "Jarvis mirrors whichever language you speak or type.",
+      "en": "Jarvis answers in English.",
+      "de": "Jarvis antwortet auf Deutsch.",
+      "es": "Jarvis responde en español."
+    },
+    "recognition_title": "Voice recognition: automatic.",
+    "recognition_text": "Whisper detects whichever language you speak — no manual switch needed.",
+    "override_title": "Per-Session Override",
+    "override_text": "Say \"Jarvis, reply in German\" or \"Por favor en español\" — Jarvis switches for the current session without changing this setting."
+  }
+}

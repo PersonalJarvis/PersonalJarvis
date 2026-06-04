@@ -1,0 +1,361 @@
+# Cross-runner SHA-256 agreement check — Wave 3 SA-3.
+#
+# STATUS: ACTIVE. Renamed from .yml.tmpl by SA-W3-3.
+#
+# Why this exists:
+#   The whole supply-chain stack from Waves 1+2 trusts WHATEVER bytes
+#   the build environment produces. If one GitHub Actions runner is
+#   compromised (CVE-2025-30066-style), it can ship malicious bytes
+#   while still emitting a legitimate cosign signature, because the
+#   Fulcio OIDC binding is on the runner's identity, not on the
+#   source-commit-to-output-bytes relationship.
+#
+#   Wave 3 closes that gap by requiring three INDEPENDENT runner OS
+#   images (`ubuntu-latest`, `macos-latest`, `windows-latest`) to
+#   agree, byte-for-byte, on the SHA-256 of each of the five install/*
+#   artifacts. An attacker who controls ONE runner cannot produce a
+#   matching set across all three.
+#
+# Why all three OSes and not just two:
+#   Two-of-two is a weaker bar — an attacker who compromises the
+#   upstream `ubuntu-latest` image (e.g. via a malicious package
+#   landing in `microsoft/runner-images`) gets BOTH ubuntu runs.
+#   Three INDEPENDENT vendors (Ubuntu/Linux, Apple/macOS,
+#   Microsoft/Windows-Server) make a coordinated cross-vendor compromise
+#   significantly harder. The cost of adding the Windows job is a few
+#   workflow-minutes per tag push; the integrity gain is one full
+#   independence-axis.
+#
+# Why NO line-ending normalization in the hash step:
+#   The point of this check is that no runner can normalize away a
+#   byte-level disagreement. We pin all five artifacts to LF via
+#   .gitattributes (`text eol=lf`) so Windows runners don't introduce
+#   CRLF on checkout. If a future PR removes the .gitattributes
+#   pinning, this workflow MUST fail — that is correct behavior, not
+#   a false alarm.
+#
+# Downstream consumer:
+#   `sign-installer.yml` calls this workflow via `workflow_call` and
+#   downloads the `hashes-cross-runner-verified.json` artifact. That
+#   JSON is the canonical set of pre-signature SHA-256s and feeds
+#   directly into SLSA provenance subjects (SA-2).
+
+name: Cross-runner hash agreement (Wave 3)
+
+on:
+  # Wave 3 SA-5 integration: tag-push trigger removed so this workflow
+  # runs ONLY via workflow_call from sign-installer.yml. That guarantees
+  # the `hashes-cross-runner-verified.json` artifact lives in the same
+  # workflow run as the sign job that needs to consume it, and avoids
+  # a duplicate matrix run on every tag push.
+  #
+  # Manual dispatch is preserved for diagnostic runs (e.g. checking
+  # cross-runner agreement on a feature branch before tagging).
+  workflow_dispatch: {}
+  # Reusable from `sign-installer.yml` so the signing job hard-depends
+  # on cross-runner agreement before any cosign call is made.
+  workflow_call: {}
+
+permissions:
+  contents: read
+
+jobs:
+  # --------------------------------------------------------------------
+  # Job 1: hash — runs on every OS in the matrix.
+  #
+  # Each runner:
+  #   1. Checks out the tagged commit.
+  #   2. Records the runner image SHA (for forensic traceability).
+  #   3. Computes SHA-256 of the five install/* artifacts.
+  #   4. Normalizes the output (lowercase hex, no whitespace
+  #      variation) and sorts by filename so the agreement check is
+  #      a literal string comparison.
+  #   5. Uploads the hashes file as a workflow artifact.
+  # --------------------------------------------------------------------
+  hash:
+    strategy:
+      fail-fast: false   # we want to see ALL disagreements, not just the first
+      matrix:
+        # Three INDEPENDENT vendors. Do NOT collapse to two.
+        # Order is alphabetical so the assert job's matrix-output
+        # iteration is deterministic.
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout tag (read-only)
+        # actions/checkout v4.2.2 — pinned by 40-char commit SHA.
+        # Tag-pinning would re-introduce the CVE-2025-30066 vector.
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Record runner image info (forensic trace)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== runner image trace ==="
+          echo "matrix.os:    ${{ matrix.os }}"
+          echo "ImageOS:      ${ImageOS:-(unset)}"
+          echo "ImageVersion: ${ImageVersion:-(unset)}"
+          echo "Runner name:  ${RUNNER_NAME:-(unset)}"
+          echo "Runner OS:    ${RUNNER_OS:-(unset)}"
+          echo "Runner arch:  ${RUNNER_ARCH:-(unset)}"
+          echo "==========================="
+
+      # Wave 6: the lockfile `requirements.txt` lives at repo root, NOT
+      # under `install/`. Stage it into the install/ working dir so the
+      # hash step sees it under the same filename on every runner — the
+      # resulting `hashes.txt` line is `<sha>  requirements.txt`, which
+      # the SLSA-subjects + verifier expect by basename only.
+      - name: Stage requirements.txt next to install/* for hashing
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp requirements.txt install/requirements.txt
+          ls -la install/requirements.txt
+
+      - name: Stage requirements.txt next to install/* for hashing (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Copy-Item requirements.txt install/requirements.txt
+          Get-Item install/requirements.txt | Format-List
+
+      - name: Compute SHA-256 (POSIX runners, sha256sum)
+        if: runner.os != 'Windows'
+        shell: bash
+        working-directory: install
+        run: |
+          set -euo pipefail
+          # sha256sum is GNU coreutils on Linux; on macOS the
+          # /usr/bin/shasum -a 256 alias produces identical output
+          # for the same byte stream (the algorithm is RFC 6234).
+          # Force the LANG/LC_ALL so any filename collation is
+          # deterministic regardless of runner locale defaults.
+          export LANG=C LC_ALL=C
+          if command -v sha256sum >/dev/null 2>&1; then
+            HASHER="sha256sum"
+          else
+            # macOS path — `shasum -a 256` mimics sha256sum's output
+            # format exactly: lowercase hex, two spaces, filename.
+            HASHER="shasum -a 256"
+          fi
+          # Sort by the FILENAME column (field 2 onward, since the
+          # sha256sum output is "<64-hex>  <filename>" with two spaces).
+          # `sort -k2` keys on the second whitespace-delimited field —
+          # whitespace runs are treated as single delimiters by default,
+          # so the leading "  " between hash and name does not produce
+          # a phantom empty field. This matches the PowerShell branch's
+          # `$files | Sort-Object` behavior exactly (sort by filename,
+          # case-sensitive, byte-wise under LC_ALL=C).
+          $HASHER \
+            install.sh \
+            install.ps1 \
+            installer.py \
+            install-verify.sh \
+            install-verify.ps1 \
+            requirements.txt \
+            | sort -k2 \
+            > "${RUNNER_TEMP}/hashes.txt"
+          echo "----- ${{ matrix.os }} hashes -----"
+          cat "${RUNNER_TEMP}/hashes.txt"
+          echo "-----------------------------------"
+
+      - name: Compute SHA-256 (Windows runner, Get-FileHash)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: install
+        run: |
+          $ErrorActionPreference = "Stop"
+          $files = @(
+            "install.sh",
+            "install.ps1",
+            "installer.py",
+            "install-verify.sh",
+            "install-verify.ps1",
+            "requirements.txt"
+          )
+          # Produce the same `<lowercase-sha256>  <filename>` format
+          # that sha256sum emits, so the agreement check is a pure
+          # string compare. Sort by filename ORDINAL (byte-wise) so
+          # the result matches `sort -k2` under LC_ALL=C on the POSIX
+          # runners — PowerShell's default culture-aware Sort-Object
+          # would treat hyphens as ignorable in some locales and place
+          # `install-verify.ps1` differently than POSIX `sort` does.
+          # Use [Array]::Sort with [StringComparer]::Ordinal so we are
+          # comparing raw UTF-16 code units exactly the way `sort` under
+          # LC_ALL=C compares bytes — same primary-key order on all 3.
+          $sortedFiles = [string[]]$files
+          [Array]::Sort($sortedFiles, [System.StringComparer]::Ordinal)
+          $lines = foreach ($f in $sortedFiles) {
+            $h = (Get-FileHash -Algorithm SHA256 -Path $f).Hash.ToLower()
+            "$h  $f"
+          }
+          $manifest = $lines -join "`n"
+          # Add trailing LF so the file shape matches sha256sum's.
+          $manifest = $manifest + "`n"
+          # Write LF line-endings (Set-Content default on Win is CRLF).
+          [System.IO.File]::WriteAllText(
+            "$env:RUNNER_TEMP\hashes.txt",
+            $manifest,
+            (New-Object System.Text.UTF8Encoding $false)
+          )
+          Write-Host "----- ${{ matrix.os }} hashes -----"
+          Get-Content "$env:RUNNER_TEMP\hashes.txt"
+          Write-Host "-----------------------------------"
+
+      - name: Upload per-runner hashes artifact
+        # actions/upload-artifact v4.4.3 — pinned by 40-char SHA.
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: hashes-${{ matrix.os }}.txt
+          path: ${{ runner.temp }}/hashes.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  # --------------------------------------------------------------------
+  # Job 2: assert — gates the rest of the release pipeline.
+  #
+  # Downloads all three hash files and asserts byte-identity. Failure
+  # mode is intentionally verbose: print every hashes file, print a
+  # unified diff between the disagreeing pair, fail the workflow.
+  # No `continue-on-error` escape hatch — see
+  # wave3-reproducibility-protocol.md section 3.
+  #
+  # Emits `hashes-cross-runner-verified.json` for downstream
+  # consumption (SLSA provenance subjects, SA-2).
+  # --------------------------------------------------------------------
+  assert:
+    needs: hash
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download all per-runner hashes
+        # actions/download-artifact v4.1.8 — pinned by 40-char SHA.
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          path: hashes
+
+      - name: Assert byte-identity across the three runner OSes
+        shell: bash
+        run: |
+          set -euo pipefail
+          # actions/download-artifact@v4 creates a directory per
+          # artifact name; the file inside keeps the upload's `path`
+          # basename. Both segments must match.
+          UBUNTU="hashes/hashes-ubuntu-latest.txt/hashes.txt"
+          MACOS="hashes/hashes-macos-latest.txt/hashes.txt"
+          WIN="hashes/hashes-windows-latest.txt/hashes.txt"
+
+          for f in "$UBUNTU" "$MACOS" "$WIN"; do
+            if [ ! -s "$f" ]; then
+              echo "::error::hashes file missing or empty: $f"
+              exit 1
+            fi
+          done
+
+          echo "=== ubuntu-latest hashes ==="
+          cat "$UBUNTU"
+          echo "=== macos-latest hashes ==="
+          cat "$MACOS"
+          echo "=== windows-latest hashes ==="
+          cat "$WIN"
+          echo "============================"
+
+          # Diff every pair so the failure annotation shows the
+          # disagreement directly. We compare all three pairs even
+          # if the first pair fails, because an attacker who only
+          # controls ONE runner produces a 2-vs-1 disagreement;
+          # showing all three pairs makes the rogue runner obvious.
+          FAIL=0
+          if ! diff -u "$UBUNTU" "$MACOS"; then
+            echo "::error::ubuntu-latest != macos-latest"
+            FAIL=1
+          fi
+          if ! diff -u "$UBUNTU" "$WIN"; then
+            echo "::error::ubuntu-latest != windows-latest"
+            FAIL=1
+          fi
+          if ! diff -u "$MACOS" "$WIN"; then
+            echo "::error::macos-latest != windows-latest"
+            FAIL=1
+          fi
+
+          if [ "$FAIL" -ne 0 ]; then
+            echo "::error::cross-runner hash agreement FAILED — refusing to proceed to signing."
+            echo "See docs/supply-chain/wave3-reproducibility-protocol.md section 3 for the non-papering-over policy."
+            exit 1
+          fi
+
+          echo "Cross-runner agreement: PASS. All three OS images produced identical SHA-256 for the five install/* artifacts."
+
+      - name: Emit verified-hashes JSON for SLSA provenance (SA-2)
+        shell: bash
+        run: |
+          set -euo pipefail
+          UBUNTU="hashes/hashes-ubuntu-latest.txt/hashes.txt"
+
+          # Once the assert above passes, any of the three hashes files
+          # IS the canonical set. Promote ubuntu's copy to a deterministic
+          # JSON shape so the SLSA-provenance job can consume it as
+          # `subject[]` entries.
+          #
+          # Output schema (stable contract with SA-2):
+          #   {
+          #     "schema_version": "1",
+          #     "tag": "<git-tag-or-ref>",
+          #     "commit": "<40-char-sha>",
+          #     "verified_by": ["ubuntu-latest", "macos-latest", "windows-latest"],
+          #     "artifacts": [
+          #       { "name": "<filename>", "sha256": "<lowercase-hex>" },
+          #       ...
+          #     ]
+          #   }
+          python3 - "$UBUNTU" > hashes-cross-runner-verified.json <<'PY'
+          import json
+          import os
+          import sys
+
+          src = sys.argv[1]
+          artifacts = []
+          with open(src, "r", encoding="utf-8") as fh:
+              for line in fh:
+                  line = line.rstrip("\n")
+                  if not line:
+                      continue
+                  # sha256sum format: "<64-hex>  <filename>"
+                  sha, _, name = line.partition("  ")
+                  if len(sha) != 64 or not name:
+                      raise SystemExit(f"malformed hashes line: {line!r}")
+                  artifacts.append({"name": name, "sha256": sha.lower()})
+
+          out = {
+              "schema_version": "1",
+              "tag": os.environ.get("GITHUB_REF_NAME", ""),
+              "commit": os.environ.get("GITHUB_SHA", ""),
+              "verified_by": ["ubuntu-latest", "macos-latest", "windows-latest"],
+              "artifacts": artifacts,
+          }
+          print(json.dumps(out, indent=2, sort_keys=True))
+          PY
+
+          echo "----- hashes-cross-runner-verified.json -----"
+          cat hashes-cross-runner-verified.json
+          echo "---------------------------------------------"
+
+      - name: Upload verified-hashes JSON
+        # actions/upload-artifact v4.4.3 — pinned by 40-char SHA.
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: hashes-cross-runner-verified.json
+          path: hashes-cross-runner-verified.json
+          if-no-files-found: error
+          retention-days: 30

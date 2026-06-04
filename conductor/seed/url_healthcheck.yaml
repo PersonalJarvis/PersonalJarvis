@@ -1,0 +1,18 @@
+# Demo-Job 1 — HTTP-Healthcheck alle 5 Minuten.
+# Dieses YAML ist exakt das Pydantic-Job-Modell.
+id: 7b4d7e01-5c11-4c57-9c1d-10cc00000001
+name: GitHub-API Zen
+description: >
+  Pingt github.com/zen alle 5 Minuten und checkt 2xx. Minimaler
+  Live-Demo-Job; zeigt wie HTTP-Monitoring aussieht.
+enabled: true
+tags: [demo, monitor, http]
+spec:
+  type: http
+  method: GET
+  url: https://api.github.com/zen
+  expect_status: 2xx
+  timeout_s: 10.0
+schedule:
+  type: interval
+  seconds: 300

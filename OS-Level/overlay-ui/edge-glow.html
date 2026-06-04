@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src qrc:; worker-src blob:;" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Edge Glow</title>
+    <!--
+      qwebchannel.js wird von Qt aus dem qrc-Resource-Path bereitgestellt,
+      sobald die Page in QWebEngineView geladen ist. bridge.ts laedt es
+      lazy via JS — so muss Vite das URL nicht analysieren.
+    -->
+  </head>
+  <body>
+    <!-- Edge-Glow Container — main.ts buildLayers() haengt 5 Layer-Divs
+         hier rein. CSS in edge-glow.css macht den Rest. -->
+    <div class="edge-glow" role="presentation"></div>
+
+    <!-- Diagnose-Marker. Per Default via CSS display:none; sichtbar mit
+         ?debug=1 in der URL. Plan §7 + Phase-9.4-Vorgabe. -->
+    <div id="state-display" role="presentation">
+      <span class="state">init</span>
+    </div>
+
+    <script type="module" src="./src/edge-glow/main.ts"></script>
+  </body>
+</html>

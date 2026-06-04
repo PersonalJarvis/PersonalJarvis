@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Personal Jarvis — Bug Audit 2026-05-16</title>
+<style>
+  /* ---------- Reset + base ---------- */
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: #0e0d0c;
+    background-image:
+      radial-gradient(1100px 700px at 12% -10%, rgba(231, 196, 110, 0.05), transparent 60%),
+      radial-gradient(900px 600px at 95% 110%, rgba(108, 162, 200, 0.04), transparent 65%);
+    background-attachment: fixed;
+    color: #d7d4cf;
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto,
+                 "Helvetica Neue", Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+    letter-spacing: 0.005em;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    min-height: 100vh;
+  }
+  ::selection { background: rgba(231, 196, 110, 0.35); color: #fff; }
+
+  a { color: #e7c46e; text-decoration: none; border-bottom: 1px dotted rgba(231, 196, 110, 0.4); }
+  a:hover { color: #f3d68a; border-bottom-color: rgba(231, 196, 110, 0.85); }
+  code, .mono {
+    font-family: "JetBrains Mono", "Cascadia Code", "Fira Code", Consolas,
+                 "Liberation Mono", Menlo, monospace;
+    font-feature-settings: "calt" 1, "ss01" 1;
+  }
+
+  /* ---------- Layout ---------- */
+  .shell {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 64px 36px 96px;
+  }
+
+  /* ---------- Hero ---------- */
+  .hero {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 3fr);
+    gap: 48px;
+    align-items: end;
+    padding-bottom: 32px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .hero .eyebrow {
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(231, 196, 110, 0.85);
+    margin: 0 0 16px;
+  }
+  .hero h1 {
+    font-size: clamp(36px, 5.5vw, 64px);
+    font-weight: 600;
+    line-height: 0.98;
+    margin: 0 0 16px;
+    letter-spacing: -0.025em;
+    color: #f3efe6;
+  }
+  .hero h1 .accent { color: #e7c46e; font-style: italic; font-weight: 500; }
+  .hero p.lede {
+    font-size: 18px;
+    color: rgba(215, 212, 207, 0.78);
+    max-width: 56ch;
+    margin: 0;
+  }
+  .hero .meta {
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 12px;
+    color: rgba(215, 212, 207, 0.55);
+    line-height: 1.85;
+  }
+  .hero .meta .kv { display: grid; grid-template-columns: 90px 1fr; gap: 12px; }
+  .hero .meta .kv span:first-child { color: rgba(231, 196, 110, 0.6); }
+
+  /* ---------- Stats strip ---------- */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    margin: 48px 0 56px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .stat {
+    background: #131210;
+    padding: 28px 24px;
+    position: relative;
+  }
+  .stat .num {
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 44px;
+    font-weight: 500;
+    line-height: 1;
+    color: #f3efe6;
+    margin-bottom: 6px;
+    letter-spacing: -0.02em;
+  }
+  .stat .label {
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(215, 212, 207, 0.55);
+  }
+  .stat.blocker .num { color: #ff7a6c; }
+  .stat.major .num   { color: #e7c46e; }
+  .stat.minor .num   { color: rgba(215, 212, 207, 0.75); }
+  .stat.total .num   { color: #f3efe6; }
+
+  /* ---------- Section header ---------- */
+  .section-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 24px;
+    margin: 64px 0 28px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .section-head h2 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    color: #f3efe6;
+  }
+  .section-head .marker {
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 11px;
+    color: rgba(231, 196, 110, 0.65);
+    letter-spacing: 0.1em;
+  }
+
+  /* ---------- Filter bar ---------- */
+  .filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0 0 28px;
+  }
+  .chip {
+    appearance: none;
+    background: transparent;
+    color: rgba(215, 212, 207, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 7px 14px;
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.18s ease;
+  }
+  .chip:hover { color: #f3efe6; border-color: rgba(255, 255, 255, 0.2); }
+  .chip.active {
+    background: rgba(231, 196, 110, 0.12);
+    color: #e7c46e;
+    border-color: rgba(231, 196, 110, 0.55);
+  }
+  .chip .count {
+    margin-left: 6px;
+    color: rgba(215, 212, 207, 0.45);
+    font-weight: 400;
+  }
+  .chip.active .count { color: rgba(231, 196, 110, 0.75); }
+
+  /* ---------- Bug card ---------- */
+  .grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+
+  .bug {
+    position: relative;
+    background: #131210;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    padding: 22px 26px 22px 30px;
+    transition: border-color 0.2s ease;
+  }
+  .bug::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: rgba(215, 212, 207, 0.2);
+  }
+  .bug[data-sev="BLOCKER"]::before { background: #ff7a6c; }
+  .bug[data-sev="CRITICAL"]::before { background: #ff5a47; box-shadow: 0 0 24px rgba(255, 90, 71, 0.35); }
+  .bug[data-sev="MAJOR"]::before   { background: #e7c46e; }
+  .bug[data-sev="MINOR"]::before   { background: rgba(108, 162, 200, 0.7); }
+  .bug:hover { border-color: rgba(255, 255, 255, 0.12); }
+
+  .bug-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+  .bug-id {
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 12px;
+    font-weight: 500;
+    color: #e7c46e;
+    letter-spacing: 0.04em;
+  }
+  .bug-title {
+    font-size: 15.5px;
+    color: #f3efe6;
+    font-weight: 500;
+    line-height: 1.35;
+    flex: 1;
+    min-width: 240px;
+  }
+  .bug-sev {
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border: 1px solid currentColor;
+  }
+  .bug[data-sev="BLOCKER"] .bug-sev { color: #ff7a6c; }
+  .bug[data-sev="CRITICAL"] .bug-sev { color: #ff5a47; }
+  .bug[data-sev="MAJOR"]   .bug-sev { color: #e7c46e; }
+  .bug[data-sev="MINOR"]   .bug-sev { color: rgba(108, 162, 200, 0.85); }
+
+  .bug-loc {
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 12px;
+    color: rgba(215, 212, 207, 0.6);
+    margin-bottom: 12px;
+    word-break: break-all;
+  }
+  .bug-loc::before {
+    content: "→ ";
+    color: rgba(231, 196, 110, 0.4);
+  }
+  .bug-body {
+    font-size: 14px;
+    color: rgba(215, 212, 207, 0.85);
+    line-height: 1.65;
+  }
+  .bug-body strong {
+    color: #f3efe6;
+    font-weight: 500;
+  }
+  .bug-body .recap {
+    margin-top: 12px;
+    padding: 12px 14px;
+    background: rgba(231, 196, 110, 0.04);
+    border-left: 2px solid rgba(231, 196, 110, 0.4);
+    font-size: 13px;
+    color: rgba(215, 212, 207, 0.7);
+    font-style: italic;
+  }
+  .bug-body .recap::before {
+    content: "Plain language — ";
+    font-style: normal;
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(231, 196, 110, 0.7);
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  /* ---------- Sector overview table ---------- */
+  .sector-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+  }
+  .sector-table th, .sector-table td {
+    text-align: left;
+    padding: 12px 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  }
+  .sector-table th {
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-weight: 500;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(215, 212, 207, 0.5);
+    padding-top: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  }
+  .sector-table td.num-cell {
+    font-family: "JetBrains Mono", Consolas, monospace;
+    text-align: right;
+    color: rgba(215, 212, 207, 0.75);
+  }
+  .sector-table .sev-blocker { color: #ff7a6c; }
+  .sector-table .sev-major   { color: #e7c46e; }
+  .sector-table .sev-minor   { color: rgba(108, 162, 200, 0.85); }
+  .sector-table .sector-name {
+    color: #f3efe6;
+    font-weight: 500;
+  }
+  .sector-table .sector-prefix {
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 11px;
+    color: rgba(231, 196, 110, 0.7);
+    margin-left: 10px;
+  }
+  .sector-table tr:hover td { background: rgba(255, 255, 255, 0.02); }
+
+  /* ---------- Wave-1 panel ---------- */
+  .wave1 {
+    background: linear-gradient(180deg, rgba(110, 180, 130, 0.06), rgba(110, 180, 130, 0.02));
+    border: 1px solid rgba(110, 180, 130, 0.25);
+    padding: 28px 32px;
+    margin: 56px 0 0;
+  }
+  .wave1 h3 {
+    margin: 0 0 6px;
+    color: #94d3a6;
+    font-size: 18px;
+    font-weight: 500;
+    letter-spacing: -0.005em;
+  }
+  .wave1 .sub {
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 11px;
+    color: rgba(148, 211, 166, 0.55);
+    letter-spacing: 0.1em;
+    margin-bottom: 18px;
+  }
+  .wave1 ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+  }
+  .wave1 li {
+    font-size: 13px;
+    color: rgba(215, 212, 207, 0.82);
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 12px;
+    align-items: baseline;
+  }
+  .wave1 li .id {
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 11px;
+    color: rgba(148, 211, 166, 0.85);
+    white-space: nowrap;
+  }
+
+  /* ---------- Patterns panel ---------- */
+  .patterns {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .pattern {
+    background: #131210;
+    padding: 24px 24px 28px;
+  }
+  .pattern .num {
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    color: rgba(231, 196, 110, 0.65);
+    margin-bottom: 10px;
+  }
+  .pattern h4 {
+    margin: 0 0 8px;
+    font-size: 15.5px;
+    color: #f3efe6;
+    font-weight: 500;
+    line-height: 1.3;
+  }
+  .pattern p {
+    margin: 0;
+    font-size: 13.5px;
+    color: rgba(215, 212, 207, 0.72);
+    line-height: 1.6;
+  }
+
+  /* ---------- Roadmap ---------- */
+  .roadmap {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+  }
+  .wave {
+    background: #131210;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    padding: 22px 22px 24px;
+    position: relative;
+  }
+  .wave-num {
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 12px;
+    color: rgba(231, 196, 110, 0.75);
+    letter-spacing: 0.14em;
+    margin-bottom: 4px;
+  }
+  .wave h4 {
+    margin: 0 0 8px;
+    font-size: 14.5px;
+    font-weight: 500;
+    color: #f3efe6;
+  }
+  .wave p {
+    margin: 0;
+    font-size: 12.5px;
+    color: rgba(215, 212, 207, 0.65);
+    line-height: 1.55;
+  }
+  .wave.done {
+    border-color: rgba(148, 211, 166, 0.35);
+  }
+  .wave.done .wave-num { color: rgba(148, 211, 166, 0.9); }
+  .wave.done::after {
+    content: "✓ shipped";
+    position: absolute;
+    top: 18px;
+    right: 18px;
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 10px;
+    color: rgba(148, 211, 166, 0.85);
+    letter-spacing: 0.1em;
+  }
+
+  /* ---------- Footer ---------- */
+  footer {
+    margin-top: 80px;
+    padding-top: 28px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 11px;
+    color: rgba(215, 212, 207, 0.4);
+    letter-spacing: 0.05em;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  /* ---------- Responsive ---------- */
+  @media (max-width: 760px) {
+    .shell { padding: 40px 22px 64px; }
+    .hero { grid-template-columns: 1fr; gap: 28px; }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .bug { padding: 20px 22px 20px 26px; }
+    .wave1 ul { grid-template-columns: 1fr; }
+  }
+
+  /* ---------- Filter mechanics ---------- */
+  .grid[data-filter="ALL"] .bug { display: block; }
+  .grid[data-filter="BLOCKER"] .bug:not([data-sev="BLOCKER"]):not([data-sev="CRITICAL"]) { display: none; }
+  .grid[data-filter="MAJOR"]   .bug:not([data-sev="MAJOR"]) { display: none; }
+  .grid[data-filter="MINOR"]   .bug:not([data-sev="MINOR"]) { display: none; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- ===================== Hero ===================== -->
+  <header class="hero">
+    <div>
+      <p class="eyebrow">15-Agent deep audit · Personal Jarvis</p>
+      <h1>One hundred thirty-five bugs,<br><span class="accent">localized & ordered for repair.</span></h1>
+      <p class="lede">A single-pass parallel audit across thirteen sectors of the codebase. Every finding carries a <code>file:line</code> anchor, a severity, and a fix direction — read top-to-bottom, repair bottom-up.</p>
+    </div>
+    <div class="meta">
+      <div class="kv"><span>Date</span><span>2026-05-16</span></div>
+      <div class="kv"><span>Branch</span><span>impl/b6-external-sources</span></div>
+      <div class="kv"><span>Commit</span><span>81930934</span></div>
+      <div class="kv"><span>Agents</span><span>13 of 15 returned</span></div>
+      <div class="kv"><span>Model</span><span>Opus 4.7 · max thinking</span></div>
+    </div>
+  </header>
+
+  <!-- ===================== Stats strip ===================== -->
+  <section class="stats" aria-label="Severity totals">
+    <div class="stat blocker"><div class="num">20</div><div class="label">Blocker · critical</div></div>
+    <div class="stat major"><div class="num">89</div><div class="label">Major</div></div>
+    <div class="stat minor"><div class="num">90</div><div class="label">Minor</div></div>
+    <div class="stat total"><div class="num">135</div><div class="label">Total findings</div></div>
+  </section>
+
+  <!-- ===================== Top-15 Blockers ===================== -->
+  <div class="section-head">
+    <h2>Top-15 blockers — user-visible or budget-burning</h2>
+    <span class="marker">§ blockers</span>
+  </div>
+
+  <div class="filter-bar" role="toolbar" aria-label="Severity filter">
+    <button class="chip active" data-filter="ALL">All <span class="count">15</span></button>
+    <button class="chip" data-filter="BLOCKER">Blocker · Critical <span class="count">15</span></button>
+  </div>
+
+  <div class="grid" data-filter="ALL" id="blockers">
+
+    <article class="bug" data-sev="CRITICAL">
+      <div class="bug-head"><span class="bug-id">BUG-B-1</span><span class="bug-title">Force-spawn heuristic disabled for Grok — every action verb misroutes</span><span class="bug-sev">CRITICAL</span></div>
+      <div class="bug-loc">jarvis/brain/manager.py:966-971 · _should_force_openclaw</div>
+      <div class="bug-body">
+        <strong>Symptom.</strong> When <code>brain.primary</code> is <code>grok</code>, <code>openai</code>, <code>openrouter</code>, or any non-Anthropic / non-Gemini provider, the deterministic spawn heuristic returns <code>False</code> unconditionally. Every utterance with an action verb (<code>schreib</code>, <code>baue</code>, <code>öffne</code>) bypasses the OpenClaw spawn path and falls through to LLM tool-choice — exactly the silent failure surface the heuristic was designed to prevent.<br><br>
+        <strong>Root cause.</strong> A guard <code>if primary not in ("claude-api", "gemini"): return False</code> was added as a Gemini-403 workaround but never widened. The user's <em>actual</em> primary today is <code>grok</code> (per <code>MEMORY.md</code> BUG-017), so the guard kills the heuristic for the most common provider.<br><br>
+        <strong>Fix direction.</strong> Gate on whether the configured OpenClaw worker is viable, not on a hardcoded provider whitelist. Allow any provider in <code>_SECRET_KEY_TO_BRAIN</code> whose worker class is callable.
+        <div class="recap">If you say "build me a Python script" today, Jarvis is supposed to hand the job to its delegation worker. Instead it tries to answer with the chat model alone — because a half-finished safety check refuses to forward jobs for the provider you are actually using.</div>
+      </div>
+    </article>
+
+    <article class="bug" data-sev="CRITICAL">
+      <div class="bug-head"><span class="bug-id">BUG-Z-1</span><span class="bug-title">Whitelist matcher bypassable via LLM-controlled argument-key ordering</span><span class="bug-sev">CRITICAL</span></div>
+      <div class="bug-loc">jarvis/safety/risk_tier.py:48-61 · _serialize_args</div>
+      <div class="bug-body">
+        <strong>Symptom.</strong> The whitelist match string is <code>f"{tool.name} {value1} {value2} …"</code> — keys dropped, values joined in dict insertion order. A tool call like <code>run-shell(prefix="ls", command="rm -rf /")</code> serializes to <code>"run-shell ls rm -rf /"</code>, matches <code>"run-shell ls *"</code> → tier downgraded to <code>safe</code> with <code>approved_by="whitelist"</code> → executes without confirmation and skips plausibility.<br><br>
+        <strong>Root cause.</strong> Two-fold: keys are stripped from the matcher, and ordering follows attacker-controllable dict insertion. The whitelist also unconditionally downgrades to <code>safe</code> regardless of the tool's declared tier.<br><br>
+        <strong>Fix direction.</strong> Match against canonical-form <code>f"{tool.name} {k1}={v1} {k2}={v2}"</code> with sorted keys, or pin the match to a "primary" argument per tool (e.g. <code>args["command"]</code> for shell).
+        <div class="recap">The list of "you may run these without asking" patterns can be tricked. A model can hide a dangerous command behind a harmless-looking prefix and it slips past every safety prompt as if you had personally approved it.</div>
+      </div>
+    </article>
+
+    <article class="bug" data-sev="BLOCKER">
+      <div class="bug-head"><span class="bug-id">BUG-S-2</span><span class="bug-title">Voice death when <code>_fanout</code> task dies — heartbeat reports it, nothing acts</span><span class="bug-sev">BLOCKER</span></div>
+      <div class="bug-loc">jarvis/speech/pipeline.py:1437-1448, 1517-1519 · _run_parallel_wake</div>
+      <div class="bug-body">
+        <strong>Symptom.</strong> "Hey Jarvis" silently stops working after some uptime. The 10-second heartbeat correctly logs <code>fanout=DEAD oww=alive whisper=alive</code> — but <code>asyncio.wait(detector_tasks)</code> deliberately excludes the fanout task, both detector queues stop receiving chunks, and the function never returns. Same silent-failure class as BUG-014 / BUG-016.<br><br>
+        <strong>Root cause.</strong> No try/except around <code>mic.stream()</code> iteration in <code>_fanout</code>, and the surrounding wait set does not include the fanout task. Heartbeat detects but cannot self-heal.<br><br>
+        <strong>Fix direction.</strong> Include <code>fanout_task</code> in the <code>asyncio.wait</code> set, or have the heartbeat task call <code>fanout_task.cancel()</code> and raise from <code>_run_parallel_wake</code> when it sees <code>fanout_alive=False</code>.
+        <div class="recap">The wake-word listener can quietly die mid-session. The logs see it die. No part of the code does anything about it. The user just notices Jarvis stops reacting.</div>
+      </div>
+    </article>
+
+    <article class="bug" data-sev="BLOCKER">
+      <div class="bug-head"><span class="bug-id">BUG-P-10</span><span class="bug-title">Gemini context-cache TTL-expiry wedge — root-cause comment exists, fix never coded</span><span class="bug-sev">BLOCKER</span></div>
+      <div class="bug-loc">jarvis/plugins/brain/gemini.py:292-384</div>
+      <div class="bug-body">
+        <strong>Symptom.</strong> One hour after Jarvis boot, the first voice turn hangs for forty seconds and ends with no audible reply. The Gemini server-side cache TTL expired; the client still sends the dead cache name; Gemini returns 403 <code>CachedContent not found</code>; BrainManager logs the provider as failed without invalidating <code>self._cached_content_name</code>; the next turn re-uses the dead name and re-fails.<br><br>
+        <strong>Root cause.</strong> An in-file ninety-line comment block from 2026-05-11 documents the exact failure and prescribes the retry pattern — <code>try / except PermissionDenied with "CachedContent not found" / set self._cached_content_name = None / re-add system_instruction + tools / single retry</code>. The fix was never implemented.<br><br>
+        <strong>Fix direction.</strong> Implement the in-file recipe. Keep recovery local to the Gemini provider; do not leak Gemini-specific semantics into BrainManager.
+        <div class="recap">Once Jarvis has been on for an hour, the link to Gemini goes bad and stays bad until restart. The fix is already written down — in the source code as a comment — but nobody applied it.</div>
+      </div>
+    </article>
+
+    <article class="bug" data-sev="BLOCKER">
+      <div class="bug-head"><span class="bug-id">BUG-X-2</span><span class="bug-title">Cancelled missions keep spawning workers and burning budget</span><span class="bug-sev">BLOCKER</span></div>
+      <div class="bug-loc">jarvis/missions/kontrollierer/orchestrator.py:251-465, 859-875</div>
+      <div class="bug-body">
+        <strong>Symptom.</strong> A <code>POST /api/missions/{id}/cancel</code> transitions the mission header to <code>CANCELLED</code> but the iteration loop has no <code>state == CANCELLED</code> early-exit. <code>_safe_transition</code> swallows <code>IllegalStateTransition</code> at debug level. The worker is spawned, the critic runs, <code>budget.assert_under_limit</code> still increments. There is no <code>CancelToken</code> threaded into iterations.<br><br>
+        <strong>Root cause.</strong> Cancel is a header mutation only; no propagation into the running iteration body.<br><br>
+        <strong>Fix direction.</strong> Add a <code>self._cancel_event</code> per mission; check it at the top of each iteration and before each <code>_spawn_worker_collect</code>. Wire <code>POST /cancel</code> to <code>set()</code> it.
+        <div class="recap">Pressing "cancel" on a running task is cosmetic. The dashboard says it's cancelled, but the model in the background keeps running and keeps costing money until it finishes on its own.</div>
+      </div>
+    </article>
+
+    <article class="bug" data-sev="BLOCKER">
+      <div class="bug-head"><span class="bug-id">BUG-W-2</span><span class="bug-title">SessionRollupWorker never auto-fires — ADR-0014 "loud regression" silently broken</span><span class="bug-sev">BLOCKER</span></div>
+      <div class="bug-loc">jarvis/memory/wiki/session_rollup.py:329-348</div>
+      <div class="bug-body">
+        <strong>Symptom.</strong> <code>IdleDetector</code> emits <code>IdleEntered</code> exactly once at the active→idle transition with <code>idle_since_ns ≈ now − 5min</code>. The worker compares <code>(now − idle_since_ns) ≥ 120min</code> — always false. The 120-minute auto-rollup never triggers; the <code>session_rollups_succeeded</code> / <code>_failed</code> counters stay at zero forever; the long-term memory tier silently does not exist.<br><br>
+        <strong>Root cause.</strong> <code>IdleEntered</code> fires once at the boundary, not repeatedly during idle. Threshold semantics assume re-fire that never comes.<br><br>
+        <strong>Fix direction.</strong> Either subscribe to a periodic "still-idle" tick, or compute the deadline as "fire-time + 120min" on the boundary event and arm a single asyncio timer.
+        <div class="recap">The system was supposed to summarize a session into long-term memory after two hours of quiet. The trigger that should fire that summary never does — so nothing ever lands in long-term memory. The user has been running without that tier the entire time.</div>
+      </div>
+    </article>
+
+    <article class="bug" data-sev="BLOCKER">
+      <div class="bug-head"><span class="bug-id">BUG-A-1</span><span class="bug-title"><code>AudioPlayer.stop()</code> is a no-op — barge-in completely broken</span><span class="bug-sev">BLOCKER</span></div>
+      <div class="bug-loc">jarvis/audio/player.py:491-493</div>
+      <div class="bug-body">
+        <strong>Symptom.</strong> Every barge-in / interrupt / announcement-priority path calls <code>self._player.stop()</code> expecting playback to abort. The implementation is <code>sd.stop()</code>, which by PortAudio contract only stops <code>sd.play</code>/<code>sd.rec</code>/<code>sd.playrec</code> — never persistent <code>sd.OutputStream</code>s, which is what the player uses. Jarvis keeps talking over the user; the code thinks it stopped.<br><br>
+        <strong>Root cause.</strong> The stream is a closure-local in <code>play_chunks</code> and unreachable from <code>stop()</code>. The wrong API was wired.<br><br>
+        <strong>Fix direction.</strong> Track the active stream as an instance attribute; on stop call <code>stream.abort()</code> (<code>Pa_AbortStream</code>, discards buffered samples).
+        <div class="recap">When the user starts speaking during a Jarvis answer, Jarvis is supposed to stop. It doesn't. The "stop button" inside the code is wired to a switch that doesn't apply to how Jarvis actually plays audio.</div>
+      </div>
+    </article>
+
+    <article class="bug" data-sev="BLOCKER">
+      <div class="bug-head"><span class="bug-id">BUG-Y-1</span><span class="bug-title">Phase-7 self-mod surface — built but never wired</span><span class="bug-sev">BLOCKER</span></div>
+      <div class="bug-loc">jarvis/ui/web/server.py · jarvis/ui/web/self_mod_routes.py:39 · frontend/src/views/SelfModView.tsx</div>
+      <div class="bug-body">
+        <strong>Symptom.</strong> A REST router is defined under <code>/api/self-mod</code> and a React <code>SelfModView</code> ships in the frontend tree — but <code>server.py</code> never calls <code>include_router</code>, <code>app.state.self_mod_writer</code>/<code>_audit</code> are never assigned, and no layout/nav imports <code>SelfModView</code>. The entire Phase-7 audit / restore / mutable-listing surface returns 404.<br><br>
+        <strong>Fix direction.</strong> Wire the router in <code>server.py</code>, populate <code>app.state</code> with the self-mod stack at bootstrap, register the view in the sidebar.
+        <div class="recap">A whole feature for safely editing Jarvis's settings by voice exists in the codebase. Tests pass. The UI is drawn. None of it is connected — clicking the relevant menu items does nothing because the menu item itself was never added.</div>
+      </div>
+    </article>
+
+    <article class="bug" data-sev="CRITICAL">
+      <div class="bug-head"><span class="bug-id">BUG-K-2</span><span class="bug-title">Voice / chat skill-direct-trigger path bypasses all risk-tier enforcement</span><span class="bug-sev">CRITICAL</span></div>
+      <div class="bug-loc">jarvis/speech/pipeline.py:910-918 · jarvis/ui/desktop_app.py:672-680, 1091-1095 · jarvis/skills/runner.py:177-193</div>
+      <div class="bug-body">
+        <strong>Symptom.</strong> The direct-trigger code path calls <code>SkillRunner.run()</code> directly, not through <code>RunSkillTool.execute</code>. <code>SkillRunner._check_risk</code> returns <code>(True, "no-enforcer")</code> when its <code>safety_enforcer</code> is <code>None</code> — and at the only construction site, no enforcer is injected. A SKILL with <code>risk_policy.default_tier: block</code> still runs when triggered by voice.<br><br>
+        <strong>Fix direction.</strong> Inject the same <code>RiskTierEvaluator</code> that <code>RunSkillTool</code> uses into <code>SkillRunner</code> at construction. Make <code>safety_enforcer=None</code> raise rather than silently allow.
+        <div class="recap">A voice-triggered skill labelled "dangerous, never run without asking" runs anyway, with no prompt. The safety check is wired to a missing component and quietly returns "go ahead".</div>
+      </div>
+    </article>
+
+    <article class="bug" data-sev="CRITICAL">
+      <div class="bug-head"><span class="bug-id">BUG-K-10</span><span class="bug-title">D9 recursion protection bypassed — <code>run-skill</code> can fork-bomb itself</span><span class="bug-sev">CRITICAL</span></div>
+      <div class="bug-loc">jarvis/ui/desktop_app.py:1078-1093 · jarvis/plugins/tool/run_skill.py:23-28</div>
+      <div class="bug-body">
+        <strong>Symptom.</strong> The <code>RunSkillTool</code> docstring promises <em>"D9 Recursion-Protection: SkillRunner is constructed without a tool_registry reference everywhere"</em>. Production code does the opposite — discovers every no-arg-constructible <code>jarvis.tool</code> entry-point and stuffs all into <code>skill_tool_registry</code>, including <code>RunSkillTool</code> itself. A SKILL body containing <code>TOOL: run-skill {"skill_name": "self"}</code> resolves and re-enters; no recursion-depth guard exists.<br><br>
+        <strong>Fix direction.</strong> Explicitly remove <code>run-skill</code> from the <code>skill_tool_registry</code> dict at build time. Add a <code>_depth</code> counter to <code>SkillRunner</code> and refuse to nest deeper than two.
+        <div class="recap">A skill can call itself in a loop with no limit. If anyone authors that — by accident or on purpose — the process crashes from stack overflow. The protection note in the source code claims this can't happen, but the code doesn't actually enforce it.</div>
+      </div>
+    </article>
+
+    <article class="bug" data-sev="BLOCKER">
+      <div class="bug-head"><span class="bug-id">BUG-D-1</span><span class="bug-title">Google STT plugin parked in <code>.audit-tmp/</code> — invisible to entry-point discovery</span><span class="bug-sev">BLOCKER</span></div>
+      <div class="bug-loc">.audit-tmp/google_stt.py · pyproject.toml:110-117</div>
+      <div class="bug-body">
+        <strong>Symptom.</strong> Memory note <code>project_google_stt_plugin.md</code> claims "verdrahtet 2026-05-15, 14 Unit-Tests grün". Reality: the file lives outside the package tree, is not in <code>tool.setuptools.packages.find</code>, and has no <code>[project.entry-points."jarvis.stt"]</code> row. <code>entry_points(group='jarvis.stt')</code> cannot find it; setting <code>[stt].provider = "google-stt"</code> raises at the factory.<br><br>
+        <strong>Fix direction.</strong> Move the file under <code>jarvis/plugins/stt/google_stt.py</code>, register the entry-point in <code>pyproject.toml</code>, re-run <code>pip install -e . --no-deps</code>.
+        <div class="recap">A cloud-speech plugin is fully written and tested in a staging folder. The build system is not told it exists, so selecting it in the settings just fails. The notes file says it's "in production"; the project tree disagrees.</div>
+      </div>
+    </article>
+
+    <article class="bug" data-sev="BLOCKER">
+      <div class="bug-head"><span class="bug-id">BUG-D-10</span><span class="bug-title">STT factory references six Pydantic <code>STTConfig.google_*</code> fields that don't exist</span><span class="bug-sev">BLOCKER</span></div>
+      <div class="bug-loc">.audit-tmp/stt_factory.py:74-86 · jarvis/core/config.py:90-95</div>
+      <div class="bug-body">
+        <strong>Symptom.</strong> Setting <code>[stt].provider = "google-stt"</code> and reaching the factory raises <code>AttributeError: 'STTConfig' object has no attribute 'google_credentials_path'</code>. <code>STTConfig</code> has no <code>model_config = ConfigDict(extra="allow")</code>, so even loading the TOML with the new keys fails Pydantic validation upstream.<br><br>
+        <strong>Fix direction.</strong> Add the six <code>google_*</code> fields to <code>STTConfig</code> with sensible defaults (empty strings or fallback values), then re-validate the factory.
+        <div class="recap">The bridge between the Google plugin and Jarvis's settings model is broken. The settings model has no slots for the new options, so even before we get to the missing plugin file, the configuration itself rejects the new lines.</div>
+      </div>
+    </article>
+
+    <article class="bug" data-sev="BLOCKER">
+      <div class="bug-head"><span class="bug-id">BUG-Y-2</span><span class="bug-title">Drift-Guard auto-reverts every self-mod mutation within 5 minutes</span><span class="bug-sev">BLOCKER</span></div>
+      <div class="bug-loc">scripts/drift-guard-daemon.ps1 · scripts/config-soll.json</div>
+      <div class="bug-body">
+        <strong>Symptom.</strong> A successful voice-mutation writes <code>tts.provider</code>, audits OK, says "set" — then within 300 s the drift-guard daemon overwrites <code>jarvis.toml</code> from <code>config-soll.json</code>. Six of the eight ALLOWED self-mod paths (<code>tts.provider</code>, <code>tts.voice_*</code>, <code>brain.primary</code>, <code>stt.provider</code>) are in the daemon's enforcement set. EK-1 ("voice changes TTS provider, persists, reloads") is unachievable in production.<br><br>
+        <strong>Fix direction.</strong> Teach the drift-guard to update <code>config-soll.json</code> after acknowledged self-mod writes (single source of truth), or pause it during self-mod windows.
+        <div class="recap">If you tell Jarvis by voice to change a setting, it changes — and then a background watchdog notices the change and undoes it, because it thinks the new value is a mistake. Both systems are doing their job; nobody told them about each other.</div>
+      </div>
+    </article>
+
+    <article class="bug" data-sev="BLOCKER">
+      <div class="bug-head"><span class="bug-id">BUG-X-3</span><span class="bug-title">Job-Object assign race — worker grandchildren escape kill-on-close</span><span class="bug-sev">BLOCKER</span></div>
+      <div class="bug-loc">jarvis/missions/workers/subjarvis_worker.py:529-542 · gemini_worker.py:314-327 · jarvis/missions/isolation/job_object.py:118-136</div>
+      <div class="bug-body">
+        <strong>Symptom.</strong> The pattern <code>create_subprocess_exec → set last_pid → job.assign(pid)</code> leaves a window between process creation and Job Object assignment where the worker can already fork. Job Object membership is inherited at creation time, not retroactive — grandchildren escape. ADR-0009 §5 zombie-risk invariant violated.<br><br>
+        <strong>Fix direction.</strong> Start the subprocess <code>CREATE_SUSPENDED</code>, assign to the Job, then <code>ResumeThread</code>. Standard Windows pattern.
+        <div class="recap">When a heavy worker is killed, only the main process actually dies. Any helper processes the worker started keep running. After enough failures, the machine has a colony of orphans the orchestrator can no longer reach.</div>
+      </div>
+    </article>
+
+    <article class="bug" data-sev="BLOCKER">
+      <div class="bug-head"><span class="bug-id">BUG-X-7</span><span class="bug-title">Mission announcer poisons its own cache — silent mute per mission</span><span class="bug-sev">BLOCKER</span></div>
+      <div class="bug-loc">jarvis/missions/voice/announcer.py:194-217 · listener.py:157-185</div>
+      <div class="bug-body">
+        <strong>Symptom.</strong> When a non-<code>MissionDispatched</code> event arrives at the announcer before the dispatch row is persisted, <code>_resolve_voice_meta</code> caches <code>(False, default_lang)</code> for that <code>mission_id</code> permanently. The mission is silent for the rest of the process lifetime even though it succeeds. BUG-016 recurrence pattern, sibling component.<br><br>
+        <strong>Fix direction.</strong> Copy the listener's <code>"do not cache when unresolved"</code> branch into the announcer (don't insert the negative result).
+        <div class="recap">A mission can fully succeed in the background, but Jarvis never says anything about it. The announcer decided the mission doesn't exist before the database had time to confirm it does, and then refuses to ever check again.</div>
+      </div>
+    </article>
+
+  </div>
+
+  <!-- ===================== Wave-1 panel ===================== -->
+  <section class="wave1">
+    <h3>Wave-1 — shipped 2026-05-16</h3>
+    <p class="sub">9 quick wins · 128/128 unit tests green · drift-parity 5/5 · pushed</p>
+    <ul>
+      <li><span class="id">BUG-S-16</span><span>Watchdog passed no <code>config=</code> to SpeechPipeline → streaming-TTS silently off. Fixed.</span></li>
+      <li><span class="id">BUG-P-3</span><span>Wake-threshold drift at two remaining sites (0.15 → 0.10). Aligned.</span></li>
+      <li><span class="id">BUG-M-2</span><span><code>KNOWN_HANGUP_REASONS</code> duplicate replaced with single-source import.</span></li>
+      <li><span class="id">BUG-A-5</span><span>Output blocklist is now case-insensitive (capture-side parity).</span></li>
+      <li><span class="id">BUG-S-3</span><span><code>_session_end_reason</code> reset between sessions — drift vector closed.</span></li>
+      <li><span class="id">BUG-S-8</span><span>Unreachable filter-block removed from <code>_handle_utterance</code>.</span></li>
+      <li><span class="id">BUG-S-9</span><span>Orphan <code>whisper_wake.py</code> deleted (0 importers verified).</span></li>
+      <li><span class="id">BUG-P-22</span><span><code>supported_keywords</code> mirrored onto the instance in <code>__init__</code>.</span></li>
+      <li><span class="id">BUG-A-8</span><span>Permanently red <code>test_auto_headset_prefers_wasapi_*</code> renamed + assertion corrected.</span></li>
+    </ul>
+  </section>
+
+  <!-- ===================== Sector overview ===================== -->
+  <div class="section-head">
+    <h2>Sector totals — full inventory</h2>
+    <span class="marker">§ overview</span>
+  </div>
+
+  <table class="sector-table" aria-label="Sector totals">
+    <thead>
+      <tr>
+        <th>Sector</th>
+        <th class="num-cell">Blocker</th>
+        <th class="num-cell">Major</th>
+        <th class="num-cell">Minor</th>
+        <th class="num-cell">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td class="sector-name">Speech pipeline<span class="sector-prefix">S</span></td><td class="num-cell sev-blocker">1</td><td class="num-cell sev-major">4</td><td class="num-cell sev-minor">11</td><td class="num-cell">16</td></tr>
+      <tr><td class="sector-name">Brain manager + routing<span class="sector-prefix">B</span></td><td class="num-cell sev-blocker">1</td><td class="num-cell sev-major">10</td><td class="num-cell sev-minor">8</td><td class="num-cell">19</td></tr>
+      <tr><td class="sector-name">Plugin providers<span class="sector-prefix">P</span></td><td class="num-cell sev-blocker">2</td><td class="num-cell sev-major">8</td><td class="num-cell sev-minor">10</td><td class="num-cell">20</td></tr>
+      <tr><td class="sector-name">Memory + Awareness<span class="sector-prefix">M</span></td><td class="num-cell sev-blocker">0</td><td class="num-cell sev-major">5</td><td class="num-cell sev-minor">8</td><td class="num-cell">13</td></tr>
+      <tr><td class="sector-name">Skills system<span class="sector-prefix">K</span></td><td class="num-cell sev-blocker">3</td><td class="num-cell sev-major">3</td><td class="num-cell sev-minor">6</td><td class="num-cell">12</td></tr>
+      <tr><td class="sector-name">Phase-6 missions<span class="sector-prefix">X</span></td><td class="num-cell sev-blocker">3</td><td class="num-cell sev-major">6</td><td class="num-cell sev-minor">4</td><td class="num-cell">13</td></tr>
+      <tr><td class="sector-name">Phase-7 self-mod<span class="sector-prefix">Y</span></td><td class="num-cell sev-blocker">2</td><td class="num-cell sev-major">6</td><td class="num-cell sev-minor">4</td><td class="num-cell">12</td></tr>
+      <tr><td class="sector-name">Vision + computer-use<span class="sector-prefix">V</span></td><td class="num-cell sev-blocker">0</td><td class="num-cell sev-major">7</td><td class="num-cell sev-minor">5</td><td class="num-cell">12</td></tr>
+      <tr><td class="sector-name">Safety + control plane<span class="sector-prefix">Z</span></td><td class="num-cell sev-blocker">1</td><td class="num-cell sev-major">8</td><td class="num-cell sev-minor">5</td><td class="num-cell">14</td></tr>
+      <tr><td class="sector-name">Config + drift-guard<span class="sector-prefix">C</span></td><td class="num-cell sev-blocker">2</td><td class="num-cell sev-major">7</td><td class="num-cell sev-minor">3</td><td class="num-cell">12</td></tr>
+      <tr><td class="sector-name">Knowledge wiki<span class="sector-prefix">W</span></td><td class="num-cell sev-blocker">1</td><td class="num-cell sev-major">7</td><td class="num-cell sev-minor">10</td><td class="num-cell">18</td></tr>
+      <tr><td class="sector-name">Audio I/O<span class="sector-prefix">A</span></td><td class="num-cell sev-blocker">1</td><td class="num-cell sev-major">4</td><td class="num-cell sev-minor">3</td><td class="num-cell">8</td></tr>
+      <tr><td class="sector-name">Modified files + <code>.audit-tmp/</code><span class="sector-prefix">D</span></td><td class="num-cell sev-blocker">3</td><td class="num-cell sev-major">14</td><td class="num-cell sev-minor">13</td><td class="num-cell">30</td></tr>
+      <tr style="opacity: 0.5;"><td class="sector-name">Desktop UI<span class="sector-prefix">U</span></td><td class="num-cell" colspan="4" style="text-align: left; padding-left: 14px; font-style: italic; color: rgba(215,212,207,0.45);">rate-limited — re-run pending</td></tr>
+      <tr style="opacity: 0.5;"><td class="sector-name">Tests + drift-prevention<span class="sector-prefix">T</span></td><td class="num-cell" colspan="4" style="text-align: left; padding-left: 14px; font-style: italic; color: rgba(215,212,207,0.45);">rate-limited — re-run pending</td></tr>
+    </tbody>
+  </table>
+
+  <!-- ===================== Cross-cutting patterns ===================== -->
+  <div class="section-head">
+    <h2>Cross-cutting patterns</h2>
+    <span class="marker">§ themes</span>
+  </div>
+
+  <div class="patterns">
+    <article class="pattern">
+      <div class="num">PATTERN 01</div>
+      <h4>Silent-fallback anti-pattern</h4>
+      <p><code>except Exception: pass</code> followed by "pipeline keeps running in an inconsistent state". Ancestor of BUG-002 / 003 / 007 / 010 / 014. The audit found at least eight fresh occurrences across Brain, TTS, Safety, Config, and Audio.</p>
+    </article>
+    <article class="pattern">
+      <div class="num">PATTERN 02</div>
+      <h4>Multi-layer drift</h4>
+      <p>The five-layer parity test works for <code>HANGUP_REASONS</code> but the same discipline is absent for <code>VoiceTier</code>, mission statuses, skill lifecycle states, and the <code>phase6.*</code> Pydantic gap. Anti-drift scaffolding is local, not project-wide.</p>
+    </article>
+    <article class="pattern">
+      <div class="num">PATTERN 03</div>
+      <h4>70%-built / 5%-wired</h4>
+      <p>Phase-7 self-mod, Google STT, the skill system, and the wiki external-sources package all share the shape: code exists, tests exist, docs exist, nothing is reachable from production entry-points. The cost of a partial commit is invisible until production reads the dead reference.</p>
+    </article>
+    <article class="pattern">
+      <div class="num">PATTERN 04</div>
+      <h4>Trust by naming</h4>
+      <p>fnmatch substring matchers in safety, wake-priority, and device-blocklist all fail on unanchored or case-mismatched inputs. Each is individually recoverable; the class deserves a shared regex-anchor helper rather than per-call defensive code.</p>
+    </article>
+  </div>
+
+  <!-- ===================== Wave roadmap ===================== -->
+  <div class="section-head">
+    <h2>Remediation roadmap</h2>
+    <span class="marker">§ next waves</span>
+  </div>
+
+  <div class="roadmap">
+    <article class="wave done">
+      <div class="wave-num">WAVE 1</div>
+      <h4>Quick wins</h4>
+      <p>9 single-line fixes, no architectural change. 128 tests green. Branch pushed.</p>
+    </article>
+    <article class="wave">
+      <div class="wave-num">WAVE 2</div>
+      <h4>Architectural blockers</h4>
+      <p>BUG-B-1, BUG-A-1, BUG-Z-1, BUG-W-2, BUG-S-2, BUG-X-2, BUG-P-10, BUG-M-1 — each one a dedicated session with regression coverage.</p>
+    </article>
+    <article class="wave">
+      <div class="wave-num">WAVE 3</div>
+      <h4>Wiring + STT migration</h4>
+      <p>BUG-Y-1, BUG-Y-2, BUG-D-1, BUG-D-10, BUG-D-11 — close the 70-percent-built surfaces and reconcile drift-guard with self-mod writes.</p>
+    </article>
+    <article class="wave">
+      <div class="wave-num">WAVE 4</div>
+      <h4>Drift-prevention extensions</h4>
+      <p>Apply the five-layer pattern to <code>VoiceTier</code>, mission statuses, skill lifecycles. Empty the entry-point graveyard (~11 dead plugin rows).</p>
+    </article>
+    <article class="wave">
+      <div class="wave-num">WAVE 5</div>
+      <h4>Missing audits</h4>
+      <p>Re-run rate-limited agents 14 (Desktop UI / FastAPI + React + pywebview) and 15 (Tests + drift-prevention).</p>
+    </article>
+  </div>
+
+  <!-- ===================== Footer ===================== -->
+  <footer>
+    <span>Personal Jarvis · Bug audit 2026-05-16 · Opus 4.7</span>
+    <span>Source of truth: <a href="BUGS-AUDIT-2026-05-16.md">docs/BUGS-AUDIT-2026-05-16.md</a></span>
+  </footer>
+
+</div>
+
+<script>
+  // Severity filter — toggle data-filter on the grid container so CSS
+  // does the per-card show/hide. Cheaper than mutating display on each card.
+  document.querySelectorAll('.chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      const grid = document.getElementById('blockers');
+      if (!grid) return;
+      const filter = chip.getAttribute('data-filter');
+      grid.setAttribute('data-filter', filter);
+      document.querySelectorAll('.chip').forEach((c) => c.classList.remove('active'));
+      chip.classList.add('active');
+    });
+  });
+</script>
+</body>
+</html>
