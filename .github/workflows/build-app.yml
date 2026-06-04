@@ -69,7 +69,7 @@ jobs:
           sudo apt-get clean || true
           df -h /
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
