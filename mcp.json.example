@@ -1,0 +1,15 @@
+{
+  "_comment": "Per-user MCP server config. Copy this file to mcp.json and add your servers under 'mcpServers'. mcp.json is gitignored (it is personal). To use the example below, move an entry from '_example_mcpServers' into 'mcpServers'.",
+  "mcpServers": {},
+  "_example_mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/dir"]
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "set-in-your-environment-not-here" }
+    }
+  }
+}

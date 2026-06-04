@@ -1,0 +1,32 @@
+# Path allowlist for the CI "no new German" gate (scripts/ci/check_no_new_german.py).
+#
+# Files matching these fnmatch globs are EXEMPT from the German-text check. "*"
+# matches across "/" (fnmatch semantics), so "dir/*" covers a whole subtree.
+# Keep this list tight: it is the documented set of places German is allowed.
+# One pattern per line; "#" starts a comment; blank lines ignored.
+
+# --- Deliberately German persona / soul prompts (load-bearing, not translated) ---
+jarvis/brain/JARVIS_PERSONA.md
+jarvis/brain/ack_brain/persona_prompt.py
+jarvis/brain/persona_loader.py
+jarvis/memory/soul.py
+jarvis/speech/persona.py
+
+# --- The translation tooling itself (necessarily contains German word lists) ---
+scripts/bulk_translate*.py
+scripts/find_german_strings.py
+scripts/rewrite_locales.py
+scripts/ci/_german_detect.py
+scripts/ci/check_no_new_german.py
+
+# --- The gate's own tests (German fixture strings are required to test it) ---
+tests/unit/ci/test_check_no_new_german.py
+
+# --- i18n / locale source files (German IS the point here) ---
+*/i18n/*
+*/locales/*
+*.de.json
+*.de.ts
+
+# --- Historical session logs (internal memory, not an outward-facing artifact) ---
+wiki/obsidian-vault/*

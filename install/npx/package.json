@@ -1,0 +1,28 @@
+{
+  "name": "personal-jarvis",
+  "version": "0.1.0",
+  "description": "One-command installer for Personal Jarvis — the open-source voice-driven AI orchestrator (Windows / macOS / Linux).",
+  "bin": {
+    "personal-jarvis": "bin.js"
+  },
+  "files": [
+    "bin.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "personal-jarvis",
+    "voice",
+    "assistant",
+    "orchestrator",
+    "installer"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/personal-jarvis/PersonalJarvis.git"
+  },
+  "homepage": "https://github.com/personal-jarvis/PersonalJarvis#readme"
+}

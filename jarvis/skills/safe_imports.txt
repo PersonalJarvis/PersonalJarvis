@@ -1,0 +1,47 @@
+# Allowlist erlaubter Python-Imports in Sub-Jarvis-authored Skills
+# (Plan-§7.5 Sicherheits-Lint vor Promote, ergänzt durch Phase-7.5-Implementation).
+#
+# Skills sind Markdown mit YAML-Frontmatter — Python-Code-Blöcke darin
+# werden nicht direkt ausgeführt; sie können aber via `scripts/`-Resources
+# importiert werden. Dieser Lint scannt jeden Python-Block per AST und
+# verbietet alles, was außerhalb dieser Liste liegt.
+#
+# Format: ein Modulname pro Zeile, # für Kommentare. Submodule werden
+# automatisch erlaubt (z.B. `pathlib.Path` → `pathlib` in der Liste).
+
+# Stdlib — datenverarbeitend, ohne IO-Risiko
+json
+re
+time
+datetime
+math
+random
+collections
+itertools
+functools
+typing
+dataclasses
+enum
+pathlib
+io
+csv
+hashlib
+base64
+uuid
+urllib.parse
+http.client
+
+# Logging
+logging
+warnings
+
+# Async (für Skills mit Background-Tasks)
+asyncio
+
+# Jarvis-Eigene APIs (Skills dürfen die nutzen)
+jarvis.core.protocols
+jarvis.core.config
+jarvis.skills.schema
+
+# Pydantic für Schema-Validation in Skills
+pydantic

@@ -1,0 +1,368 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "personal-jarvis"
+version = "0.1.1"
+description = "Voice-gesteuerter Meta-Orchestrator für Windows 11"
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Personal Jarvis Maintainers" }]
+
+dependencies = [
+    "anthropic>=0.96",
+    "openai>=1.30",  # 1.30+ ist Mindestversion fuer stream_options (Juni 2024)
+    "google-genai>=1.0",
+    "pydantic>=2.9,<3.0",
+    "pydantic-settings>=2.6",
+    "pyyaml>=6.0",
+    "structlog>=24.4",
+    "loguru>=0.7",
+    "keyring>=25.5",
+    "sounddevice>=0.5",
+    "numpy>=1.26,<2.2",
+    "scipy>=1.14",
+    "silero-vad>=5.1",
+    "webrtcvad-wheels>=2.0",
+    "pvporcupine>=3.0",
+    "openwakeword>=0.6",
+    # Local STT removed 2026-05-18 — Groq Whisper API is the new default.
+    "google-cloud-texttospeech>=2.21",
+    "elevenlabs>=1.5",
+    "chromadb>=0.5",
+    "sentence-transformers>=3.3",
+    # Desktop-only packages (global-hotkeys, pywinauto, pywin32, pystray,
+    # pywebview, pywinpty, win10toast-click) moved to the [desktop] extras
+    # group per the cloud-first doctrine (CLAUDE.md). The base install must
+    # boot on a headless Linux VPS without them.
+    "pyautogui>=0.9.54",
+    "mss>=10.0",
+    "psutil>=6.1",
+    "pillow>=11.0",
+    "opentelemetry-api>=1.28",
+    "opentelemetry-sdk>=1.28",
+    "prometheus-client>=0.21",
+    "httpx>=0.27",
+    "aiofiles>=24.1",
+    "aiolimiter>=1.1",
+    "tenacity>=9.0",
+    "mcp>=1.0",
+    "rich>=13.9",
+    # Desktop-App (Phase 1a) — cross-platform pieces stay in base.
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "websockets>=13",
+    "filelock>=3.16",
+    "packaging>=24.0",
+    # Skill-System + MCP (Phase 1c)
+    "python-frontmatter>=1.1",
+    "jinja2>=3.1",
+    "croniter>=6.0",
+    "gitpython>=3.1",
+    "watchdog>=5.0",
+    # Atomare TOML-Edits aus der Desktop-App (Phase 1b: Provider-Persistenz)
+    "tomlkit>=0.12",
+    # === F-FRIENDS [F0+F1] · feature/friends-section · alex-2026-04-30 ===
+    # Phase F0 — async SQLite fuer FriendRegistry (vorher transitive via chromadb).
+    "aiosqlite>=0.21",
+    # Phase F1 — Telegram-Channel-Bot via long-polling (ChannelAdapter).
+    "python-telegram-bot>=22,<23",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "pyinstaller>=6.11",
+]
+# Twilio telephony voice agent (call Jarvis on a phone number). Optional extra
+# per the cloud-first doctrine: the base install must boot without it, and the
+# telephony routes degrade gracefully when it is absent (AD-T8). `audioop` is
+# stdlib on Python <=3.12 and removed on 3.13+, so the backport is pulled in
+# only on 3.13+ for the mu-law transcode path.
+telephony = [
+    # Stream/Connect TwiML, RequestValidator and the REST client used here are
+    # stable since 8.x; verified green against the installed 8.11.0.
+    "twilio>=8.0",
+    "audioop-lts; python_version>='3.13'",
+]
+# Chat-channel bot libraries. Cloud-first doctrine (CLAUDE.md, RULE #1): the
+# base install must boot on a headless Linux VPS without these, so discord.py is
+# an OPTIONAL extra. `jarvis.channels.discord` lazy-imports it and degrades to a
+# clear English ChannelStartError when absent. (python-telegram-bot is a
+# grandfathered base dependency above; new channel libs go here instead.)
+# Discord runs fine headless on a VPS, so this is intentionally NOT in [desktop].
+channels = [
+    "discord.py>=2,<3",
+]
+# Desktop / tray / overlay extras. Cloud-first doctrine (CLAUDE.md): the base
+# install must boot on a headless Linux VPS without these. Windows-only
+# packages carry an explicit ``sys_platform`` marker so a ``pip install
+# .[desktop]`` on Linux quietly skips them (pystray + pywebview still
+# install, since they ship Linux wheels and benefit Linux desktop users).
+desktop = [
+    "global-hotkeys>=0.1.7; sys_platform == 'win32'",
+    "pywinauto>=0.6.9; sys_platform == 'win32'",
+    "pywin32>=308; sys_platform == 'win32'",
+    "pywinpty>=2.0; sys_platform == 'win32'",
+    # win10toast-click depends on pywin32; only one release on PyPI (0.1.2),
+    # so the version floor is relaxed from the original >=0.1.3 pin which
+    # no PyPI version satisfies.
+    "win10toast-click>=0.1.2; sys_platform == 'win32'",
+    # Per-app audio ducking ("Mute music while dictating", Taskbar section):
+    # Windows Core Audio session control. comtypes is pycaw's COM backend.
+    "pycaw>=20240210; sys_platform == 'win32'",
+    "comtypes>=1.2; sys_platform == 'win32'",
+    "pystray>=0.19",
+    "pywebview>=5.3",
+    # Cross-platform ports (Wave 1, AD-14): pynput = global hotkey on macOS/Linux
+    # (all-platform). ptyprocess = Unix pseudo-terminal for the built-in terminal
+    # (POSIX only — Windows keeps pywinpty above). pyobjc-* lives in the separate
+    # [desktop-macos] extra (Wave 2); pyatspi is distro-packaged, never a pip dep.
+    "pynput>=1.7",
+    "ptyprocess>=0.7; sys_platform != 'win32'",
+]
+# macOS accessibility / overlay extras (Wave 2, AD-14). pyobjc frameworks back
+# the macOS AX-tree UI-element-click source (Wave 2.1) and are macOS-only, so
+# every entry carries a ``sys_platform == 'darwin'`` marker — a
+# ``pip install .[desktop-macos]`` on Windows/Linux quietly skips them, and the
+# base install never pulls them in. Linux's AT-SPI uses distro-packaged pyatspi
+# (``apt install python3-pyatspi gir1.2-atspi-2.0``), surfaced via the
+# ``capabilities.has_ax_tree`` runtime probe — it is NEVER a pip dependency.
+desktop-macos = [
+    "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'",
+    "pyobjc-framework-ApplicationServices>=10; sys_platform == 'darwin'",
+    "pyobjc-framework-Accessibility>=10; sys_platform == 'darwin'",
+]
+# Local (offline) speech models: GPU/CPU faster-whisper STT. silero-vad and
+# openwakeword are already base dependencies (they ship small models and back
+# the always-on wake word + VAD), so the only heavy addition here is
+# faster-whisper + its ctranslate2 backend (~1.5 GB of model weights are
+# downloaded lazily on first use, NOT bundled). Installing this extra lets the
+# full desktop app transcribe entirely on-device instead of calling the Groq
+# Whisper cloud API. Referenced by ``install/installer.py --with-voice-local``.
+voice-local = [
+    "faster-whisper>=1.0",
+]
+# One-shot "install everything" group — the standard for the full cross-platform
+# desktop app (the downloadable product). A single ``pip install -e .[full]``
+# pulls the desktop GUI stack, local voice models, telephony and chat channels.
+# Self-referential extras (PEP 621) resolve recursively; platform markers inside
+# [desktop]/[desktop-macos] keep each OS to its own native packages, so [full]
+# is safe to install unchanged on Linux, macOS and Windows.
+full = [
+    "personal-jarvis[desktop,desktop-macos,voice-local,telephony,channels]",
+]
+
+[project.scripts]
+jarvis = "jarvis.__main__:main"
+# Phase 8.5 — Review-Pipeline-Run-GC (Plan §6.5).
+jarvis-review-gc = "jarvis.cli.review_gc:main"
+# Phase 8.6 — Review-Pipeline-Eval-Harness (Plan §6.6).
+jarvis-review-eval = "jarvis.cli.review_eval:main"
+
+# Plugin-Entry-Points — alle Slots sind schon jetzt deklariert.
+# Neue Plugins werden ohne Core-Änderung discovered.
+
+[project.entry-points."jarvis.wakeword"]
+openwakeword = "jarvis.plugins.wake.openwakeword_provider:OpenWakeWordProvider"
+
+[project.entry-points."jarvis.stt"]
+groq-api = "jarvis.plugins.stt.groq_api:GroqWhisperAPI"
+# Local (offline) faster-whisper STT. Weights (~1.5 GB) auto-download on first
+# use; ships in the [voice-local] extra. Selected via [stt].provider / fallback.
+faster-whisper = "jarvis.plugins.stt.fwhisper:FasterWhisperProvider"
+
+[project.entry-points."jarvis.tts"]
+elevenlabs = "jarvis.plugins.tts.elevenlabs_tts:ElevenLabsTTS"
+gemini-flash-tts = "jarvis.plugins.tts.gemini_flash_tts:GeminiFlashTTS"
+grok-voice = "jarvis.plugins.tts.grok_voice_tts:GrokVoiceTTS"
+# Phase L.4 — Streaming-TTS mit niedriger TTFB.
+cartesia = "jarvis.plugins.tts.cartesia_tts:CartesiaTTS"
+
+[project.entry-points."jarvis.brain"]
+claude-api = "jarvis.plugins.brain.claude_api:ClaudeAPIBrain"
+openrouter = "jarvis.plugins.brain.openrouter:OpenRouterBrain"
+openai = "jarvis.plugins.brain.openai:OpenAIBrain"
+gemini = "jarvis.plugins.brain.gemini:GeminiBrain"
+grok = "jarvis.plugins.brain.grok:GrokBrain"
+# Ollama-Provider 2026-04-21 entfernt — User-Entscheidung (reine API-Provider-Chain).
+
+[project.entry-points."jarvis.harness"]
+open-interpreter = "jarvis.plugins.harness.open_interpreter:OpenInterpreterHarness"
+mcp-remote = "jarvis.plugins.harness.mcp_remote:MCPRemoteHarness"
+python-script = "jarvis.plugins.harness.python_script:PythonScriptHarness"
+# Phase 5 — in-process screenshot/click/keyboard computer-use loop (ADR-0008).
+screenshot = "jarvis.plugins.harness.computer_use:ComputerUseHarness"
+
+[project.entry-points."jarvis.channel"]
+# Transport-Adapter zwischen UI-Layer und Orchestrator (Plan §17.3).
+# Web-Channel ist der erste; Telegram/WhatsApp folgen in Phase 8+.
+web = "jarvis.channels.web:WebChannel"
+# === F-FRIENDS [F1] · feature/friends-section · alex-2026-04-30 ===
+# Phase F1 — bidirektionaler Telegram-Bot-Channel (long-polling).
+# Token via Credential Manager (Key "telegram_bot_token" / ENV TELEGRAM_BOT_TOKEN).
+telegram = "jarvis.channels.telegram:TelegramChannel"
+# Bidirectional Discord bot channel (gateway). Mirrors Telegram: a DM/guild
+# message is bridged into the normal Jarvis chat path. discord.py lives in the
+# optional [channels] extra; token via Credential Manager (key "discord_bot_token"
+# / ENV DISCORD_BOT_TOKEN). Enable [Message Content Intent] in the bot settings.
+discord = "jarvis.channels.discord:DiscordChannel"
+
+[project.entry-points."jarvis.tool"]
+open-app = "jarvis.plugins.tool.open_app:OpenAppTool"
+type-text = "jarvis.plugins.tool.type_text:TypeTextTool"
+hotkey = "jarvis.plugins.tool.hotkey:HotkeyTool"
+click = "jarvis.plugins.tool.click:ClickTool"
+run-shell = "jarvis.plugins.tool.run_shell:RunShellTool"
+search-web = "jarvis.plugins.tool.search_web:SearchWebTool"
+# Gmail (marketplace plugin, 2026-06-01) — read + send mail via the Gmail REST
+# API using the marketplace-stored OAuth token. Router-tier (persona-mandate
+# set), risk_tier "ask": send is consequential. A direct safe/ask-gated action,
+# never a spawn (AP-5/AP-14). See docs/superpowers/specs/2026-06-01-marketplace-coming-soon-plugins-design.md.
+gmail = "jarvis.plugins.tool.gmail_rest:GmailRestTool"
+screen-snapshot = "jarvis.plugins.tool.screen_snapshot:ScreenSnapshotTool"
+move-mouse = "jarvis.plugins.tool.move_mouse:MoveMouseTool"
+switch-window = "jarvis.plugins.tool.switch_window:SwitchWindowTool"
+read-visible-ui-state = "jarvis.plugins.tool.read_visible_ui_state:ReadVisibleUIStateTool"
+wait-for-ui-state = "jarvis.plugins.tool.wait_for_ui_state:WaitForUIStateTool"
+# Multi-step computer-use primitives (Set-of-Marks ReAct loop).
+click-element = "jarvis.plugins.tool.click_element:ClickElementTool"
+scroll = "jarvis.plugins.tool.scroll:ScrollTool"
+wait-for-element = "jarvis.plugins.tool.wait_for_element:WaitForElementTool"
+remember = "jarvis.plugins.tool.remember:RememberTool"
+dispatch-to-harness = "jarvis.plugins.tool.dispatch_to_harness:DispatchToHarnessTool"
+# Computer-Use (Wave 1, 2026-05-29) — first-class router tool to drive the live
+# desktop via the in-process computer-use harness. Router-tier only (in
+# ROUTER_TOOLS); a direct safe-gated action, never a spawn (AP-5/AP-14).
+computer-use = "jarvis.plugins.tool.computer_use_tool:ComputerUseTool"
+whoami = "jarvis.plugins.tool.whoami:WhoAmITool"
+# Phase 5 — privilegierte Ops via Named-Pipe-IPC an den UAC-Helper (ADR-0001).
+dispatch-to-admin = "jarvis.plugins.tool.dispatch_to_admin:DispatchToAdminTool"
+# Phase 5.5 — Tiered Routing (Router-Brain -> heavy worker + parallele Harnesses).
+# spawn-worker dispatches a Mission-Manager-backed direct Opus worker
+# (ClaudeDirectWorker). Legacy names: spawn-sub-jarvis -> spawn-openclaw -> spawn-worker.
+multi-spawn = "jarvis.plugins.tool.multi_spawn:MultiSpawnTool"
+spawn-worker = "jarvis.plugins.tool.spawn_worker:SpawnWorkerTool"
+# Phase 8.4 — Quality-Gate-Pipeline-Trigger (siehe Plan §6.4, §AD-6).
+dispatch-with-review = "jarvis.plugins.tool.dispatch_with_review:DispatchWithReviewTool"
+# CLI-Integration — Virtual-Loader: expandiert zu N CliTool-Instanzen beim
+# Discovery (eins pro verbundener CLI: cli_gcloud, cli_gh, cli_supabase, ...).
+# Router-tier only (in ROUTER_TOOLS); the loader resolves the shared,
+# bus-connected CliToolRegistry so the brain and the safety layer see the
+# same connected CLIs. See ADR-0011 amendment "CLI-Integration".
+cli-tools = "jarvis.clis.loader:CliToolLoader"
+plugin-tools = "jarvis.marketplace.plugin_loader:PluginToolLoader"
+# NOTE (2026-05-24): the former ``spawn-cli-worker`` entry point was REMOVED.
+# It pointed at jarvis.plugins.tool.spawn_cli_worker:SpawnCliWorkerTool, a file
+# that never existed (dead entry point). Single-step CLI work is now served
+# directly by the connected ``cli_<name>`` tools (the ``cli-tools`` loader);
+# heavy multi-step CLI work is already covered by ``spawn_openclaw`` (the
+# mission worker has shell + CLI access). A dedicated spawn-cli-worker would be
+# redundant surface and a new D9 recursion vector to police, so it was dropped
+# rather than re-implemented.
+# Self-Verification-Tools (Phase 5.5)
+verify-via-curl = "jarvis.plugins.tool.verify_via_curl:VerifyViaCurlTool"
+verify-localhost = "jarvis.plugins.tool.verify_localhost:VerifyLocalhostTool"
+start-preview-server = "jarvis.plugins.tool.start_preview_server:StartPreviewServerTool"
+# AI Pointer — resolve the element under the mouse cursor via the OS
+# accessibility tree (router-tier, read-only). Pull path for deictic questions.
+inspect-pointer = "jarvis.plugins.tool.inspect_pointer:InspectPointerTool"
+# UI navigation (2026-06-02) — switch the active sidebar section by voice/chat
+# ("zeig die Socials", "open settings"). Router-tier, risk safe (pure UI move).
+# Publishes NavigateSidebar; the frontend switches the section. Never a spawn
+# (AP-5/AP-14). See ADR-0011 amendment "Navigate tool".
+navigate = "jarvis.plugins.tool.navigate:NavigateTool"
+# Phase A1 — Awareness-Layer L1 (synchroner State-Read fuer Router).
+awareness-snapshot = "jarvis.plugins.tool.awareness_snapshot:AwarenessSnapshotTool"
+# Phase A3 — Awareness-Layer L3 (BM25 search across recent episodes).
+awareness-recall = "jarvis.plugins.tool.awareness_recall:AwarenessRecallTool"
+# Skills-Brain-Integration — Brain-callable executor for installed user skills.
+run-skill = "jarvis.plugins.tool.run_skill:RunSkillTool"
+# Phase B5 — long-term wiki recall (router-tier, read-only).
+wiki-recall = "jarvis.plugins.tool.wiki_recall:WikiRecallTool"
+# Phase B5 follow-up — full-page reader (router-tier, read-only).
+wiki-page-read = "jarvis.plugins.tool.wiki_page_read:WikiPageReadTool"
+# Phase B5 follow-up — deterministic ingest tool (router-tier, write).
+wiki-ingest = "jarvis.plugins.tool.wiki_ingest:WikiIngestTool"
+# Profile-write (2026-05-30) — deterministic writer for the structured USER.md
+# clusters (the Knowledge matrix + per-turn system-prompt source). Router-tier,
+# write, monitor. Closes the gap left by the soft-disabled legacy Curator.
+update-profile = "jarvis.plugins.tool.profile_update:UpdateProfileTool"
+# Phase 7.5 — skill authoring (router-tier, ask). Spawns the
+# SkillAuthoringRunner over OpenClaw. Implementation lives at
+# jarvis/brain/tools/skill_authoring.py since 2026-05-12; registration
+# was missing until the 2026-05-17 audit (CLAUDE.md flagged it as
+# "not yet registered in pyproject.toml" — this is that line landing).
+spawn-skill-author = "jarvis.brain.tools.skill_authoring:SpawnSkillAuthorTool"
+# App-Control (2026-05-31) — gives the brain a complete overview of the Desktop
+# App and lets it change settings/providers/MCP by voice/chat. Router-tier;
+# direct safe/ask-gated actions, never a spawn (AP-5/AP-14). describe is read-only
+# safe; switch-provider + manage-mcp-server are ask (echo-confirm). Raw secret
+# values are never accepted (AP-2). See ADR-0011 amendment "App-Control Tools" +
+# docs/superpowers/specs/2026-05-31-app-control-tools-design.md.
+describe-app-settings = "jarvis.plugins.tool.describe_app_settings:DescribeAppSettingsTool"
+switch-provider = "jarvis.plugins.tool.switch_provider:SwitchProviderTool"
+manage-mcp-server = "jarvis.plugins.tool.manage_mcp_server:ManageMcpServerTool"
+# Masked key preview (2026-05-31, user mandate) — speaks first 3 + last 3 chars of
+# a stored API key ("AIz...xQ2"), never the full value. monitor-tier (logged, no
+# nag). Narrow, safe exception to AP-2; the full-key refusal lives in router.py.
+reveal-key-preview = "jarvis.plugins.tool.reveal_key_preview:RevealKeyPreviewTool"
+# Chunk B jarvis-contacts (2026-06-02) — three contact-action router tools.
+# contact-lookup (safe, read) resolves a name/alias to e-mail/phone/address;
+# contact-upsert (monitor, deterministic write) saves a contact by voice;
+# call-contact (ask, echo-confirm) places a real outbound call via the telephony
+# engine. Direct safe/monitor/ask-gated actions, never a spawn (AP-5/AP-14); they
+# degrade to a clean no-op when Chunk A's ContactStore / Chunk C's telephony
+# engine is absent. See ADR-0011 amendment "Contacts Tools".
+contact-lookup = "jarvis.plugins.tool.contact_lookup:ContactLookupTool"
+contact-upsert = "jarvis.plugins.tool.contact_upsert:ContactUpsertTool"
+call-contact = "jarvis.plugins.tool.call_contact:CallContactTool"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["jarvis*"]
+
+[tool.setuptools.package-data]
+jarvis = [
+    "ui/web/dist/**/*",
+    "ui/web/dist/*",
+    "assets/**/*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "S", "A"]
+ignore = ["S101", "S603", "S607"]
+
+[tool.ruff.lint.per-file-ignores]
+# Verdichter-System-Prompt enthaelt bewusst lange Few-Shot-Beispiele
+# (Tournament 2026-04-26 Pick) — String-Content, NICHT umformatierbar.
+"jarvis/awareness/prompts.py" = ["E501"]
+# Telephony tests parse our OWN generated TwiML (trusted input, not untrusted
+# network data) and use the literal word "secret" / fake fixture tokens that
+# bandit flags as hardcoded passwords. Both are false positives in a test
+# context; the production modules stay under the strict ruleset.
+"tests/unit/telephony/*.py" = ["S105", "S106", "S314"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "phase5: Phase-5-Integration-Tests (isoliert fahrbar via `pytest -m phase5`).",
+    "skip_ci: Tests die echtes Desktop/Admin/Live-Klicken brauchen — nicht in CI.",
+    "e2e: Phase-7-End-to-End-Tests (Plan-§7.6, manuell via `pytest -m e2e`).",
+    "voice_latency: Phase-L Voice-Latency-Tests (Plan §6.1; manuell via `pytest -m voice_latency`).",
+    "eval: Phase-8.6 Eval-Harness — Golden-Query-Suite (manuell via `pytest -m eval`).",
+    "slow: Lang laufende Tests (Eval, E2E) — vom Standard-Run via `pytest -m 'not slow'` ausgeschlossen.",
+    "integration: Integration tests that spawn real subprocesses or hit live external services (e.g. Codex CLI ChatGPT OAuth). Self-skip when prerequisites are missing; run explicitly via `pytest -m integration`.",
+]

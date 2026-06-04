@@ -1,0 +1,15 @@
+# Demo-Job 3 — Shell-Command, manueller Trigger.
+# Zeigt wie man einen OS-nativen Befehl als Conductor-Job rahmt.
+id: 7b4d7e01-5c11-4c57-9c1d-10cc00000003
+name: Data-Dir Listing
+description: >
+  Listet das Jarvis-Data-Verzeichnis auf. Demo-Shell-Job, manuell
+  triggerbar. Kein destruktives Kommando — wir loeschen nichts.
+enabled: true
+tags: [demo, shell]
+spec:
+  type: shell
+  command: cmd /c dir /b data
+  timeout_s: 10.0
+schedule:
+  type: manual
