@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["status", "summary", "issues", "rubric_results", "score"],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["pass", "needs_revision", "fail"]
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 200
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "description"],
+        "additionalProperties": false,
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "warning", "suggestion"]
+          },
+          "location": {"type": ["string", "null"]},
+          "description": {"type": "string"},
+          "fix_hint": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "rubric_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "passed"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string"},
+          "passed": {"type": "boolean"},
+          "note": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "score": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    }
+  }
+}

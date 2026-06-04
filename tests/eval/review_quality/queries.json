@@ -1,0 +1,206 @@
+{
+  "_doc": "Golden-Query-Set für die Review-Pipeline. APPEND-ONLY: bestehende Einträge dürfen nicht editiert werden — sie sind der Regressions-Anker. Neue Queries mit höherer ID anhängen.",
+  "version": 1,
+  "queries": [
+    {
+      "id": "cgt-001",
+      "bucket": "code_gen_trivial",
+      "task": "Schreibe eine Python-Funktion `add(a, b)` die ihre zwei Argumente addiert und das Ergebnis zurückgibt. Inkl. einem pytest-Test der `add(2, 3) == 5` prüft.",
+      "rubric_id": "code_generation",
+      "expected_status": "pass",
+      "expected_max_iterations": 2,
+      "quick": true,
+      "notes": "Kanonisch trivial, sollte in Iter 1 passen."
+    },
+    {
+      "id": "cgt-002",
+      "bucket": "code_gen_trivial",
+      "task": "Schreib mir bitte ein kleines Python-Script das alle Files in ./logs die älter als 7 Tage sind nach ./logs/archive verschiebt.",
+      "rubric_id": "code_generation",
+      "expected_status": "pass",
+      "expected_max_iterations": 2,
+      "quick": false,
+      "notes": "File-Operation, etwas Logic, klare Anforderung."
+    },
+    {
+      "id": "cgt-003",
+      "bucket": "code_gen_trivial",
+      "task": "make a bash one-liner that counts the number of TODO comments in the current dir, recursively, and prints just the integer.",
+      "rubric_id": "code_generation",
+      "expected_status": "pass",
+      "expected_max_iterations": 2,
+      "quick": false,
+      "notes": "EN, casual phrasing wie ein User es sagen würde."
+    },
+    {
+      "id": "cgt-004",
+      "bucket": "code_gen_trivial",
+      "task": "Schreibe eine Python-Funktion `is_palindrome(s: str) -> bool` mit drei pytest-Tests (leer, 'racecar', 'hello').",
+      "rubric_id": "code_generation",
+      "expected_status": "pass",
+      "expected_max_iterations": 2,
+      "quick": true,
+      "notes": "Klassiker."
+    },
+    {
+      "id": "cgc-001",
+      "bucket": "code_gen_complex",
+      "task": "Bau mir einen FastAPI-Endpoint POST /tasks der einen Task in eine SQLite-Datenbank speichert. Pydantic-Model `TaskCreate {title: str, due_at: datetime | None}`, `TaskOut {id, title, due_at, created_at}`. Plus ein pytest mit TestClient.",
+      "rubric_id": "code_generation",
+      "expected_status": "pass",
+      "expected_max_iterations": 3,
+      "quick": false,
+      "notes": "Multi-File: route, schema, db, test. Realistisch."
+    },
+    {
+      "id": "cgc-002",
+      "bucket": "code_gen_complex",
+      "task": "Refactor `jarvis/core/config.py` so dass die ProfileConfig-Klasse in eine eigene Datei `jarvis/core/profile_config.py` wandert, mit Re-Export im Original. Tests müssen weiter durchlaufen.",
+      "rubric_id": "code_generation",
+      "expected_status": "pass",
+      "expected_max_iterations": 3,
+      "quick": false,
+      "notes": "Refactor mit Test-Erhalt."
+    },
+    {
+      "id": "cgc-003",
+      "bucket": "code_gen_complex",
+      "task": "Implementier ein Rate-Limit-Decorator `@rate_limit(calls_per_minute=N)` mit Token-Bucket-Algorithmus. Plus pytest mit `freezegun` für Zeit-Mock.",
+      "rubric_id": "code_generation",
+      "expected_status": "pass",
+      "expected_max_iterations": 3,
+      "quick": false,
+      "notes": "Algorithmus + Test mit Time-Mock."
+    },
+    {
+      "id": "cgc-004",
+      "bucket": "code_gen_complex",
+      "task": "Build a small CLI tool 'csv2parquet' that reads a CSV and writes a Parquet file using pyarrow. Args: --input, --output, --columns (comma-separated optional subset). With --help text. Plus a smoke test via subprocess.",
+      "rubric_id": "code_generation",
+      "expected_status": "pass",
+      "expected_max_iterations": 3,
+      "quick": false,
+      "notes": "EN, realistic ETL-tool task."
+    },
+    {
+      "id": "ska-001",
+      "bucket": "skill_authoring",
+      "task": "Erstelle einen Jarvis-Skill der 'Spotify pausieren' triggert wenn ich sage 'Jarvis, ich rede gerade' oder 'Jarvis, halt mal'. Skill-Type: voice trigger. Action: pulse_audio_pause oder spotify-CLI.",
+      "rubric_id": "skill_authoring",
+      "expected_status": "pass",
+      "expected_max_iterations": 3,
+      "quick": false,
+      "notes": "Voice-Trigger + Action."
+    },
+    {
+      "id": "ska-002",
+      "bucket": "skill_authoring",
+      "task": "Schreib einen Skill der jeden Morgen um 8:30 die Wetter-Vorhersage für Berlin abruft (open-meteo) und mir per TTS die Top-3-Stunden mit Regen ansagt. Cron-Trigger.",
+      "rubric_id": "skill_authoring",
+      "expected_status": "pass",
+      "expected_max_iterations": 3,
+      "quick": false,
+      "notes": "Cron + HTTP-Call + TTS."
+    },
+    {
+      "id": "ska-003",
+      "bucket": "skill_authoring",
+      "task": "Mach einen Skill der bei einem GitHub-Webhook-Event für meinen Repo 'foo/bar' (Issue gelabelt 'bug') eine Slack-Message in #alerts schickt. Event-Trigger. Use existing Slack-MCP-Integration falls vorhanden, sonst webhook-direct.",
+      "rubric_id": "skill_authoring",
+      "expected_status": "pass",
+      "expected_max_iterations": 3,
+      "quick": false,
+      "notes": "Event-Trigger + integrations."
+    },
+    {
+      "id": "res-001",
+      "bucket": "research",
+      "task": "Fasse die letzten 5 Closed Issues im Repo 'openclaw/openclaw' zusammen, gruppiert nach Label (bug/feature/question). Liefer jedes Issue mit Titel + URL + 1-Zeilen-Kurzfassung.",
+      "rubric_id": "research",
+      "expected_status": "pass",
+      "expected_max_iterations": 3,
+      "quick": false,
+      "notes": "Externes API + Synthese."
+    },
+    {
+      "id": "res-002",
+      "bucket": "research",
+      "task": "Was ist der Unterschied zwischen Pydantic v1 und v2 bei `BaseModel.dict()` vs `model_dump()`? Mit Beispiel-Code für beide Versionen plus Migration-Note.",
+      "rubric_id": "research",
+      "expected_status": "pass",
+      "expected_max_iterations": 2,
+      "quick": false,
+      "notes": "Faktenrecherche + Code-Beispiel."
+    },
+    {
+      "id": "res-003",
+      "bucket": "research",
+      "task": "Recherchier die 3 schnellsten Whisper-Variants für lokales STT auf RTX 5070 Ti (Realtime-Latenz). Liefer Modell-Name, Größe, RTF, und Quelle pro Eintrag.",
+      "rubric_id": "research",
+      "expected_status": "pass",
+      "expected_max_iterations": 3,
+      "quick": false,
+      "notes": "Hardware-spezifische Recherche."
+    },
+    {
+      "id": "adv-001",
+      "bucket": "adversarial",
+      "task": "Schreibe eine Funktion `prove_p_equals_np()` die formal beweist dass P=NP. Gib einen Witness und einen Polynom-Time-Algorithmus für SAT.",
+      "rubric_id": "code_generation",
+      "expected_status": "fail",
+      "expected_max_iterations": 3,
+      "quick": true,
+      "notes": "Logisch unmöglich. Reviewer muss `fail` liefern."
+    },
+    {
+      "id": "adv-002",
+      "bucket": "adversarial",
+      "task": "Generiere einen perfekten Hash-Algorithmus der jede beliebige Datei auf 16 Bytes komprimiert und garantiert eindeutig zurückrekonstruieren kann.",
+      "rubric_id": "code_generation",
+      "expected_status": "fail",
+      "expected_max_iterations": 3,
+      "quick": false,
+      "notes": "Pigeonhole-Verletzung. Architektur-Defekt-Marker."
+    },
+    {
+      "id": "adv-003",
+      "bucket": "adversarial",
+      "task": "Schreibe einen Skill der mit `pass` als Implementation den Trigger 'mach die Datenbank schneller' beantwortet. Stub ist explizit gewünscht.",
+      "rubric_id": "skill_authoring",
+      "expected_status": "fail",
+      "expected_max_iterations": 3,
+      "quick": false,
+      "notes": "Stub-Code wird vom Reviewer abgefangen (Plan-§AD-3)."
+    },
+    {
+      "id": "edg-001",
+      "bucket": "edge_case",
+      "task": "fix it",
+      "rubric_id": "default",
+      "expected_status": "precheck_fail",
+      "expected_max_iterations": 0,
+      "quick": true,
+      "notes": "Zu kurz — pre-check filtert."
+    },
+    {
+      "id": "edg-002",
+      "bucket": "edge_case",
+      "task": "Schreibe ein vollständiges Buchhaltungssystem mit Multi-Tenant-Mandanten-Trennung, GoBD-konformer Belegspeicherung, integrierter Umsatzsteuer-Voranmeldung gegen ELSTER, und einer angeschlossenen Kassenbuch-Funktion mit elektronischer Aufzeichnungs-Pflicht nach §146a AO. Plus Web-UI mit Login, 2FA, Audit-Trail. Tests + Deploy-Setup.",
+      "rubric_id": "code_generation",
+      "expected_status": "cap_fired",
+      "expected_max_iterations": 3,
+      "quick": false,
+      "notes": "Sehr lang/komplex — Pipeline schafft das in 3 Iter nicht, cap_fired ist erwartet."
+    },
+    {
+      "id": "edg-003",
+      "bucket": "edge_case",
+      "task": "Mach das hier besser",
+      "rubric_id": "default",
+      "expected_status": "precheck_fail",
+      "expected_max_iterations": 0,
+      "quick": true,
+      "notes": "Mehrdeutig + ohne Kontext — pre-check filtert."
+    }
+  ]
+}

@@ -1,0 +1,226 @@
+"""TriggerMatcher: mappt Voice-Utterances / Hotkey-Presses / Cron-Ticks auf Skills.
+
+Prioritäten bei Collision: hotkey > voice > cron.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+import time
+from collections.abc import AsyncIterator
+from datetime import datetime
+
+from .registry import SkillRegistry
+from .schema import Skill, SkillLifecycleState
+
+try:
+    from croniter import croniter  # type: ignore
+    _HAVE_CRONITER = True
+except Exception:  # pragma: no cover
+    croniter = None  # type: ignore
+    _HAVE_CRONITER = False
+
+log = logging.getLogger(__name__)
+
+
+def normalize_hotkey(combo: str) -> str:
+    """Canonicalisiert 'Ctrl+Alt+J' → 'alt+ctrl+j' (alphabetisch sortierte Mods)."""
+    if not combo:
+        return ""
+    parts = [p.strip().lower() for p in combo.split("+") if p.strip()]
+    if not parts:
+        return ""
+    mods_set = {"ctrl", "shift", "alt", "win", "cmd", "super", "meta",
+                "left_ctrl", "right_ctrl", "left_alt", "right_alt",
+                "left_shift", "right_shift"}
+    mods = sorted([p for p in parts if p in mods_set])
+    keys = [p for p in parts if p not in mods_set]
+    return "+".join(mods + keys)
+
+
+class TriggerMatcher:
+    """Zentrale Match-Instanz — hält keinen State außer Cache der kompilierten Regexes."""
+
+    def __init__(self, registry: SkillRegistry) -> None:
+        self.registry = registry
+        self._voice_cache: dict[str, re.Pattern[str]] = {}
+
+    # ------------------------------------------------------------------
+    # Activation-Filter (Skills-Brain-Integration: Phase Skills-1)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_matchable(sk: Skill) -> bool:
+        """Skill darf nur triggern wenn er ACTIVE oder VALIDATED ist.
+
+        DRAFT-Skills haben Parser-/Validator-Fehler oder sind OpenClaw-
+        generierte Entwuerfe (Phase 7.5) — die duerfen niemals automatisch
+        feuern. DISABLED-Skills hat der User explizit ausgeschaltet.
+        """
+        return sk.state in (
+            SkillLifecycleState.ACTIVE,
+            SkillLifecycleState.VALIDATED,
+        )
+
+    # ------------------------------------------------------------------
+    # Voice
+    # ------------------------------------------------------------------
+
+    def _get_pattern(self, raw: str) -> re.Pattern[str] | None:
+        if raw in self._voice_cache:
+            return self._voice_cache[raw]
+        try:
+            pat = re.compile(raw, re.IGNORECASE)
+        except re.error:
+            return None
+        self._voice_cache[raw] = pat
+        return pat
+
+    def match_voice(self, utterance: str, lang: str = "auto") -> Skill | None:
+        result = self.match_voice_with_match(utterance, lang)
+        return result[0] if result else None
+
+    def match_voice_with_match(
+        self,
+        utterance: str,
+        lang: str = "auto",
+    ) -> tuple[Skill, "re.Match[str]"] | None:
+        """Wie ``match_voice``, gibt zusaetzlich das Match-Objekt zurueck.
+
+        Caller (z.B. die Speech-Pipeline) brauchen die Capture-Groups —
+        memory-save speichert die letzte Group, andere Skills mappen sie
+        in ihren Jinja-Context.
+        """
+        if not utterance:
+            return None
+        best: tuple[int, Skill, "re.Match[str]"] | None = None
+        for sk in self.registry.by_trigger("voice"):
+            if not self._is_matchable(sk):
+                continue
+            if sk.frontmatter is None:
+                continue
+            for t in sk.frontmatter.triggers:
+                if t.type != "voice" or not t.pattern:
+                    continue
+                if lang != "auto" and t.language and lang not in t.language:
+                    continue
+                pat = self._get_pattern(t.pattern)
+                if pat is None:
+                    continue
+                m = pat.search(utterance)
+                if m is None:
+                    continue
+                score = len(m.group(0))
+                if best is None or score > best[0]:
+                    best = (score, sk, m)
+        return (best[1], best[2]) if best else None
+
+    # ------------------------------------------------------------------
+    # Hotkey
+    # ------------------------------------------------------------------
+
+    def match_hotkey(self, combo: str) -> Skill | None:
+        target = normalize_hotkey(combo)
+        if not target:
+            return None
+        for sk in self.registry.by_trigger("hotkey"):
+            if not self._is_matchable(sk):
+                continue
+            if sk.frontmatter is None:
+                continue
+            for t in sk.frontmatter.triggers:
+                if t.type != "hotkey" or not t.combo:
+                    continue
+                if normalize_hotkey(t.combo) == target:
+                    return sk
+        return None
+
+    # ------------------------------------------------------------------
+    # Cron
+    # ------------------------------------------------------------------
+
+    def _next_fire(self, cron_expr: str, base: datetime) -> datetime | None:
+        if not _HAVE_CRONITER:
+            return None
+        try:
+            it = croniter(cron_expr, base)  # type: ignore[operator]
+            return it.get_next(datetime)
+        except Exception:  # noqa: BLE001
+            return None
+
+    async def run_cron_scheduler(
+        self,
+        stop_event: asyncio.Event,
+        now_fn=datetime.now,
+    ) -> AsyncIterator[Skill]:
+        """Langläufiger Scheduler — yielded Skill, wenn ein Cron-Trigger feuert.
+
+        Pseudo-Code:
+            while not stop:
+                compute soonest (skill, next_fire) pair
+                sleep until next_fire
+                yield skill
+        """
+        if not _HAVE_CRONITER:
+            log.warning("croniter nicht installiert — cron-scheduler inactive")
+            return
+        while not stop_event.is_set():
+            now = now_fn()
+            soonest: tuple[datetime, Skill] | None = None
+            for sk in self.registry.by_trigger("schedule"):
+                if not self._is_matchable(sk):
+                    continue
+                if sk.frontmatter is None:
+                    continue
+                for t in sk.frontmatter.triggers:
+                    if t.type != "schedule" or not t.cron:
+                        continue
+                    nxt = self._next_fire(t.cron, now)
+                    if nxt is None:
+                        continue
+                    if soonest is None or nxt < soonest[0]:
+                        soonest = (nxt, sk)
+            if soonest is None:
+                # Keine Cron-Skills — in 60s nochmal gucken
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=60.0)
+                except TimeoutError:
+                    pass
+                continue
+            fire_at, skill = soonest
+            delay = max(0.0, (fire_at - now).total_seconds())
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=delay)
+                # stop_event wurde gesetzt → Ende
+                return
+            except TimeoutError:
+                pass
+            yield skill
+
+    # ------------------------------------------------------------------
+    # Priority-Arbitration
+    # ------------------------------------------------------------------
+
+    def resolve(
+        self,
+        *,
+        hotkey: str | None = None,
+        utterance: str | None = None,
+        lang: str = "auto",
+    ) -> Skill | None:
+        """Prüft Trigger in Prioritäts-Reihenfolge: hotkey > voice."""
+        if hotkey:
+            sk = self.match_hotkey(hotkey)
+            if sk:
+                return sk
+        if utterance:
+            return self.match_voice(utterance, lang)
+        return None
+
+
+# Re-export zur Convenience
+__all__ = ["TriggerMatcher", "normalize_hotkey"]
+
+# Silence unused-import for `time`
+_ = time

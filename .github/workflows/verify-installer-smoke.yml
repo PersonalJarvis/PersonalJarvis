@@ -1,0 +1,135 @@
+# Continuous proof that the verifying installer wrapper still works end-to-end
+# against the latest signed release.
+#
+# Triggers:
+#   - Every push to main
+#   - Every PR targeting main that changes install/, .github/workflows/, or this file
+#   - Manual dispatch (so we can verify a specific tag)
+#
+# Behaviour:
+#   1. Run on a fresh ubuntu-latest container.
+#   2. Resolve the latest release tag (or use the manually-provided one).
+#   3. Skip gracefully if no signed release exists yet (first-time setup).
+#   4. Otherwise run install-verify.sh against it in --dry-run --no-wizard --no-launch mode.
+#      The fact that this completes proves the entire signing → publishing →
+#      verifying chain is wired correctly.
+
+name: Smoke-test verifying installer
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'install/install-verify.sh'
+      - 'install/install-verify.ps1'
+      - 'install/TRUST_ROOT.md'
+      - 'install/install.sh'
+      - 'install/install.ps1'
+      - 'install/installer.py'
+      - '.github/workflows/sign-installer.yml'
+      - '.github/workflows/verify-installer-smoke.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'install/install-verify.sh'
+      - 'install/install-verify.ps1'
+      - 'install/TRUST_ROOT.md'
+      - 'install/install.sh'
+      - 'install/install.ps1'
+      - 'install/installer.py'
+      - '.github/workflows/sign-installer.yml'
+      - '.github/workflows/verify-installer-smoke.yml'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to verify against (default: latest)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout (just for install-verify.sh reference)
+        # actions/checkout v4.2.2 — pinned by commit SHA.
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Resolve target tag
+        id: tag
+        run: |
+          set -euo pipefail
+          INPUT_TAG="${{ github.event.inputs.tag }}"
+          if [ -n "$INPUT_TAG" ]; then
+              echo "tag=$INPUT_TAG" >> "$GITHUB_OUTPUT"
+              echo "Using manually-provided tag: $INPUT_TAG"
+              exit 0
+          fi
+          # Resolve the latest published release. The /latest API
+          # returns 404 if there are no releases yet — we treat that
+          # as a "skip" condition, not a failure.
+          HTTP=$(curl -s -o /tmp/resp.json -w "%{http_code}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/latest")
+          if [ "$HTTP" = "404" ]; then
+              echo "tag=" >> "$GITHUB_OUTPUT"
+              echo "No releases yet — smoke will skip gracefully."
+              exit 0
+          fi
+          if [ "$HTTP" != "200" ]; then
+              echo "::error::unexpected HTTP $HTTP from GitHub API"
+              cat /tmp/resp.json
+              exit 1
+          fi
+          TAG=$(python3 -c "import json; print(json.load(open('/tmp/resp.json'))['tag_name'])")
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Latest release tag: $TAG"
+
+      - name: Skip when no signed release exists
+        if: steps.tag.outputs.tag == ''
+        run: |
+          echo "::notice::No signed release exists yet; smoke test is a no-op."
+          echo "This is expected on the bootstrapping commit that adds the signing workflow."
+          echo "Once the first v*.*.* tag is pushed and signed, this smoke will run for real."
+
+      - name: Confirm signed assets exist on the release
+        if: steps.tag.outputs.tag != ''
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.tag.outputs.tag }}"
+          REL_BASE="https://github.com/${{ github.repository }}/releases/download/${TAG}"
+          for f in install-verify.sh install.sh install.sh.sig install.sh.pem install.sh.bundle; do
+              if ! curl -fsSL -I -o /dev/null "${REL_BASE}/${f}"; then
+                  echo "::error::missing asset on release $TAG: ${f}"
+                  echo "Did the sign-installer.yml workflow run to completion?"
+                  exit 1
+              fi
+          done
+          echo "All signed assets present on release $TAG."
+
+      - name: Run install-verify.sh end-to-end (dry-run, no-wizard, no-launch)
+        if: steps.tag.outputs.tag != ''
+        env:
+          JARVIS_INSTALL_TAG: ${{ steps.tag.outputs.tag }}
+          JARVIS_INSTALL_DIR: /tmp/jarvis-smoke-install
+        run: |
+          set -euo pipefail
+          REL_BASE="https://github.com/${{ github.repository }}/releases/download/${JARVIS_INSTALL_TAG}"
+          # Download the released install-verify.sh (NOT the in-repo copy)
+          # — this is the actual wire-format the user runs.
+          curl -fsSL "${REL_BASE}/install-verify.sh" -o /tmp/install-verify.sh
+          chmod +x /tmp/install-verify.sh
+          echo "----- install-verify.sh first 20 lines -----"
+          head -20 /tmp/install-verify.sh
+          echo "--------------------------------------------"
+          # The verifier honours JARVIS_INSTALL_TAG (set above) so we exercise
+          # the exact release we resolved.
+          bash /tmp/install-verify.sh --dry-run --no-wizard --no-launch

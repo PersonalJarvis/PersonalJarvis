@@ -1,0 +1,136 @@
+# Functional CI matrix (Wave 0, sub-task 0.3 - AD-4, discharges PC-1).
+#
+# Before this file the repo had NO functional CI: .github/workflows/ held only
+# supply-chain workflows, none ran pytest/ruff/mypy. This is the cross-platform
+# migration's load-bearing safety net - it is the only place the Windows-only
+# maintainer sees a red check when macOS/Linux code breaks.
+#
+# Gating policy (deliberate, see docs/plans/cross-platform-mac-linux/WELLE-0):
+#   * ruff / ruff format / mypy  -> REPORT-ONLY (continue-on-error). The repo
+#     carries a large pre-existing lint/type backlog (636 ruff findings at
+#     Wave 0); making them blocking would be red-from-day-one for reasons
+#     unrelated to this migration. Clean them in a separate effort, then flip
+#     continue-on-error off.
+#   * import-cleanliness gate    -> BLOCKING. Proves `import jarvis` is clean on
+#     Linux/macOS (no module-scope pywin32/winreg/global_hotkeys) - the €5-VPS
+#     contract. A regression here breaks Mac/Linux outright.
+#   * min-passed floor           -> BLOCKING. Catches a mass-skip / broken-
+#     collection regression that would otherwise sail through as green.
+#   * pytest failures            -> reported (the floor script warns; pass
+#     --strict once the suite is fully green to make them blocking).
+#
+# Action SHAs are pinned to 40-char commits already vetted elsewhere in this
+# repo's workflows (CVE-2025-30066 hardening).
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "wip/cross-platform-cloud-first-20260529"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false # we want to see ALL three OS legs, not just the first red one
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.11"
+
+      - name: Install base + dev (NO platform extras - proves the VPS/base install)
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: ruff lint (report-only)
+        continue-on-error: true
+        run: python -m ruff check jarvis/
+
+      - name: ruff format check (report-only)
+        continue-on-error: true
+        run: python -m ruff format --check jarvis/
+
+      - name: mypy (report-only)
+        continue-on-error: true
+        run: python -m mypy jarvis/
+
+      - name: Import-cleanliness gate (BLOCKING — runs on the bare .[dev] install)
+        run: python scripts/ci/check_import_clean.py
+
+      # The import gate above PROVES the €5-VPS base install imports clean (no
+      # Windows APIs, no system libs). Only AFTER that proof do we install the
+      # system libraries + test-only packages the *test suite* needs to RUN — these
+      # are NOT part of the base-install contract. libportaudio2 backs sounddevice
+      # (a base dep that lazy-imports PortAudio); hypothesis + twilio are imported
+      # by some test modules that lack an importorskip guard (pre-existing).
+      - name: System + test-only deps (to run the suite, not part of the base proof)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update
+            sudo apt-get install -y libportaudio2
+          fi
+          python -m pip install hypothesis
+          python -m pip install -e ".[telephony]"
+
+      - name: pytest (JUnit XML)
+        shell: bash
+        run: |
+          python -m pytest tests/ -q -p no:cacheprovider \
+            -m "not skip_ci and not slow and not openclaw_live and not voice_latency and not eval" \
+            --continue-on-collection-errors \
+            --junitxml=report.xml || echo "pytest exited non-zero (pre-existing failures/collection-errors are reported by the floor gate)"
+
+      - name: Minimum-passed floor (BLOCKING, Linux leg is authoritative)
+        if: matrix.os == 'ubuntu-latest'
+        run: python scripts/ci/assert_min_passed.py report.xml
+
+  # Output Language Policy enforcement (CLAUDE.md, HIGHEST PRIORITY): block any
+  # NEWLY ADDED German text from reaching GitHub. Diff-based, so the in-flight
+  # DE->EN translation backlog (pre-existing German) does NOT turn this red - only
+  # German added by a push/PR does. Own job (runs once, not across the OS matrix);
+  # stdlib + git only, so no pip install. BLOCKING.
+  language-policy:
+    name: language-policy (no new German)
+    # PR-only: a push to main rewrites SHAs (rebase merge), which widens the
+    # diff base and would re-flag pre-existing German. The protection belongs
+    # on PRs, before the change reaches main.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout (full history - diff needs the merge base)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.11"
+
+      - name: No-new-German gate (BLOCKING)
+        run: python scripts/ci/check_no_new_german.py

@@ -1,0 +1,26 @@
+﻿# Demo-Job 2 — LLM-Agent schreibt jeden Werktag 9:00 eine Standup-Notiz.
+# Default-Provider: gemini mit gemini-3.1-pro (Frontier). Voraussetzung:
+# GEMINI_API_KEY gesetzt (Key von https://aistudio.google.com/apikey).
+id: 7b4d7e01-5c11-4c57-9c1d-10cc00000002
+name: Daily Standup
+description: >
+  Werktags 9:00 — Gemini 3.1 Pro generiert eine kurze Standup-Notiz.
+  Standard-Provider ist gemini via Google AI Studio API-Key.
+enabled: true
+tags: [demo, agent, gemini]
+spec:
+  type: agent
+  provider: gemini
+  model: gemini-3.1-pro
+  system_prompt: >
+    Du bist ein knapper, praegnanter Work-Coach. Keine Einleitung,
+    kein Small-Talk — nur die Notiz selbst.
+  user_prompt: >
+    Schreibe eine 3-Punkte-Standup-Notiz fuer heute. Jeder Punkt
+    maximal ein Satz, auf Deutsch. Thema: Fokus-Arbeit an einem
+    Software-Projekt.
+  max_output_tokens: 400
+  temperature: 0.7
+schedule:
+  type: cron
+  expression: 0 9 * * 1-5

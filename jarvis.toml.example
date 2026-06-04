@@ -1,0 +1,147 @@
+# ============================================================
+#  Personal Jarvis — configuration TEMPLATE
+# ------------------------------------------------------------
+#  This file is OPTIONAL. Jarvis boots with no jarvis.toml at all
+#  (every value below has a built-in default in jarvis/core/config.py).
+#  Copy this to `jarvis.toml` only if you want to override defaults:
+#      cp jarvis.toml.example jarvis.toml
+#
+#  SECRETS DO NOT GO HERE. API keys live in your OS credential manager
+#  (run `python -m jarvis --wizard`) or in `.env` (see .env.example).
+#  Never commit a real jarvis.toml — it is gitignored.
+#
+#  Overrides cascade: jarvis.toml  →  ENV (JARVIS__SECTION__KEY=...)
+#  Any section you delete falls back to the code defaults.
+#  This template ships cloud-first defaults (no GPU, no local model,
+#  no microphone required) so it runs on a 1 vCPU / 1 GB VPS.
+# ============================================================
+
+[profile]
+name = "default"
+language = "auto"            # "de" | "en" | "auto" (bilingual auto-detect)
+
+[persona]
+# The assistant's name. Empty -> derived from the wake-word phrase below.
+name = "Jarvis"
+
+# ── Voice trigger (optional; irrelevant on a headless/browser-only host) ──
+[trigger]
+wake_word_enabled = true     # always-on "Hey Jarvis" listener (needs a mic)
+hotkey = "ctrl+right_alt+j"  # push-to-talk; safe combo on all OSes
+single_turn_mode = false     # false = conversation stays open until "hang up"/idle
+
+[trigger.wake_word]
+phrase = "Hey Jarvis"        # any phrase; "Hey Jarvis"/"Alexa"/"Hey Mycroft" use the offline CPU model
+engine = "auto"              # auto | openwakeword | stt_match | custom_onnx
+sensitivity = 0.5
+
+# ── Speech-to-Text ──
+[stt]
+provider = "groq-api"        # groq-api (cloud) | faster-whisper (local, offline)
+# Fallback kicks in only when the primary STT errors. The only non-cloud option
+# is faster-whisper; its ~1.5 GB model downloads once on first fallback use
+# (never on the happy path), so it does not block normal startup.
+fallback = "faster-whisper"  # local offline safety net (downloads once on first use)
+device = "cpu"               # cpu | cuda — keep "cpu" unless you have a local GPU
+language = "auto"            # "de" | "en" | "auto"
+bias_prompt = ""             # optional comma-separated vocab to stabilize proper nouns
+
+# ── Text-to-Speech ──
+# Cloud default = Gemini Flash TTS (reuses your GEMINI_API_KEY). Alternatives:
+#   provider = "cartesia"    (Sonic 3.5, 42 languages — needs CARTESIA_API_KEY + [tts.cartesia] voice ids)
+#   provider = "grok-voice"  (reuses GROK_API_KEY)
+#   provider = "elevenlabs"  (needs ELEVENLABS_API_KEY)
+[tts]
+provider = "gemini-flash-tts"
+fallback = "grok-voice"
+model = "gemini-3.1-flash-tts-preview"
+voice_de = "Charon"
+voice_en = "Charon"
+language_code = "auto"
+streaming = true
+# Vertex AI routing avoids the AI-Studio preview RPD cap. Off by default;
+# set JARVIS__TTS__VERTEX_PROJECT (env) + the SA path to enable.
+use_vertex = false
+vertex_project = ""
+service_account_path = "~/.config/jarvis/vertex-sa.json"
+
+# ── Brain (multi-provider; never hardcode a single vendor) ──
+# Cloud-reachable default = Gemini (needs only GEMINI_API_KEY). Switch the
+# whole stack by changing these four to "claude-api" | "openai" | "grok" |
+# "openrouter" and supplying that provider's key.
+[brain]
+primary = "gemini"
+fallback = "gemini"
+deep_brain = "gemini"
+routing_provider = "gemini"
+routing_model = "gemini-3.5-flash"
+
+[brain.providers.gemini]
+model = "gemini-3.5-flash"          # fast router/voice tier
+deep_model = "gemini-3.1-pro-preview"  # heavy worker/critic tier
+
+[brain.providers.claude-api]
+auth_mode = "api_key"               # uses ANTHROPIC_API_KEY
+model = "claude-haiku-4-5-20251001"
+deep_model = "claude-opus-4-8"
+
+[brain.providers.openai]
+model = "gpt-5.5"
+deep_model = "gpt-5.5-pro"
+
+[brain.providers.grok]
+model = "grok-4.3"
+deep_model = "grok-4.3"
+
+[brain.providers.openrouter]
+model = "anthropic/claude-opus-4.8"
+base_url = "https://openrouter.ai/api/v1"
+
+# ── Safety: anti-confirmation-fatigue whitelist + hard blacklist ──
+[safety]
+default_tier = "safe"
+always_confirm_tiers = ["ask"]
+always_block_tiers = ["block"]
+
+[safety.whitelist]
+# fnmatch patterns against "<tool_name> <args>"; a match downgrades to "safe".
+commands = [
+    "open_app *", "type_text *", "run_shell *", "search_web *", "remember *",
+    "dispatch_to_harness *", "screenshot *",
+    "git status", "git log *", "git diff *",
+]
+
+[safety.blacklist]
+commands = ["format *", "rm -rf /", "del /f /s /q C:\\", "shutdown /p", "reg delete HKLM\\*"]
+
+# ── Audio I/O ──
+[audio]
+input_device = "auto"        # "auto" | shortest-unique device-name token (e.g. "PRO X")
+output_device = "auto"
+echo_cancellation = true
+sample_rate = 16000          # mandatory 16 kHz (AP-L-16)
+
+# ── UI / tray ──
+[ui]
+tray_enabled = true
+admin_api_port = 47821
+startup_chime = true
+
+# ── Memory ──
+[memory]
+recall_store = "sqlite"
+archival_store = "chroma"
+data_dir = "./data"          # per-user runtime data (gitignored)
+
+# ── Knowledge wiki (Obsidian vault) — self-creates an empty vault on first run ──
+[wiki_integration]
+enabled = true
+vault_root = "wiki/obsidian-vault"
+
+# ── Login autostart — OFF by default; enable per machine ──
+[autostart]
+enabled = false
+
+# Phase-5/6 features (vision, computer_use, admin, missions, board, telephony)
+# default to enabled = false in code. Enable them individually once configured;
+# see jarvis/core/config.py for every available section and its defaults.

@@ -1,0 +1,159 @@
+"""REST-API fuer die Task-Queue (Phase 5 Capability 4).
+
+Endpoints:
+- ``POST   /api/tasks``              → TaskSpec anlegen + schedulen.
+- ``GET    /api/tasks``              → Task-Liste, optional ``?state=...``.
+- ``GET    /api/tasks/{id}``         → Full-Task mit Steps-Timeline.
+- ``POST   /api/tasks/{id}/cancel``  → Soft-Cancel (aus Heap entfernen).
+- ``DELETE /api/tasks/{id}``         → Harter Delete (nur Terminal-States).
+
+Der Router erwartet einen ``TaskStore`` + ``TaskScheduler`` auf
+``app.state.task_store`` bzw. ``app.state.task_scheduler`` — die werden
+vom DesktopApp beim Startup gesetzt. Wenn nichts gesetzt ist, antworten
+die Endpoints mit ``503`` (Service Unavailable).
+"""
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Request
+
+from jarvis.tasks.schema import TaskSpec
+
+router = APIRouter(prefix="/api/tasks", tags=["tasks"])
+
+
+def _require_store(request: Request) -> Any:
+    store = getattr(request.app.state, "task_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="TaskStore nicht verfuegbar")
+    return store
+
+
+def _optional_scheduler(request: Request) -> Any | None:
+    return getattr(request.app.state, "task_scheduler", None)
+
+
+def _row_to_summary(row: dict[str, Any]) -> dict[str, Any]:
+    """Wandelt einen DB-Row in ein UI-Summary-Dict. Nur flache Keys, keine Steps."""
+    return {
+        "id": row["id"],
+        "title": row.get("title") or "",
+        "state": row["state"],
+        "trigger_type": row["trigger_type"],
+        "due_at_ns": row.get("due_at_ns"),
+        "created_at_ns": row.get("created_at_ns"),
+        "started_at_ns": row.get("started_at_ns"),
+        "finished_at_ns": row.get("finished_at_ns"),
+        "attempts": row.get("attempts", 0),
+        "last_error": row.get("last_error"),
+    }
+
+
+# ----------------------------------------------------------------------
+# Routes
+# ----------------------------------------------------------------------
+
+@router.post("", status_code=201)
+async def create_task(spec: TaskSpec, request: Request) -> dict[str, Any]:
+    """Legt einen Task an. Wenn ein ``TaskScheduler`` verfuegbar ist, laeuft
+    der komplette ``schedule()``-Pfad (inkl. Heap-Push + Wakeup); sonst
+    reiner Store-Insert.
+    """
+    store = _require_store(request)
+    scheduler = _optional_scheduler(request)
+    if scheduler is not None:
+        task_id = await scheduler.schedule(spec)
+    else:
+        task_id = await store.insert(spec)
+    return {"id": task_id}
+
+
+@router.get("")
+async def list_tasks(
+    request: Request,
+    state: str | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Liste aller Tasks, optional nach State gefiltert."""
+    store = _require_store(request)
+    filter_val: str | list[str] | None
+    if state is None or state == "":
+        filter_val = None
+    elif "," in state:
+        filter_val = [s.strip() for s in state.split(",") if s.strip()]
+    else:
+        filter_val = state
+    rows = await store.list(state_filter=filter_val, limit=limit)
+    return {
+        "tasks": [_row_to_summary(r) for r in rows],
+        "total": len(rows),
+    }
+
+
+@router.get("/{task_id}")
+async def get_task(task_id: str, request: Request) -> dict[str, Any]:
+    """Full-Task inkl. Steps-Timeline."""
+    store = _require_store(request)
+    task = await store.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task nicht gefunden")
+
+    # spec_json → dict fuer UI-Convenience
+    spec_obj = None
+    spec_raw = task.get("spec_json")
+    if spec_raw:
+        try:
+            spec_obj = json.loads(spec_raw)
+        except json.JSONDecodeError:
+            spec_obj = None
+
+    task_out = _row_to_summary(task)
+    task_out["spec"] = spec_obj
+    task_out["steps"] = task.get("steps", [])
+    return task_out
+
+
+@router.post("/{task_id}/cancel")
+async def cancel_task(task_id: str, request: Request) -> dict[str, Any]:
+    """Soft-Cancel: entfernt den Task aus dem Heap/Event-Index und setzt
+    State auf ``cancelled``. Bricht **nicht** harte CU-Loops ab — dafuer
+    gibt es den globalen Kill-Switch.
+    """
+    store = _require_store(request)
+    scheduler = _optional_scheduler(request)
+    # 404 fuer Unbekannte
+    task = await store.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task nicht gefunden")
+    if task["state"] in ("completed", "failed", "cancelled", "interrupted"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Task ist bereits final (state={task['state']})",
+        )
+
+    if scheduler is not None:
+        ok = await scheduler.cancel_task(task_id, reason="web_ui_cancel")
+    else:
+        await store.update_state(task_id, "cancelled", error="web_ui_cancel")
+        await store.append_step(task_id, "log",
+                                {"event": "cancelled", "reason": "web_ui_cancel"})
+        ok = True
+    return {"ok": bool(ok), "id": task_id, "state": "cancelled"}
+
+
+@router.delete("/{task_id}")
+async def delete_task(task_id: str, request: Request) -> dict[str, Any]:
+    """Harter Delete — nur erlaubt wenn der Task in einem Terminal-State ist."""
+    store = _require_store(request)
+    task = await store.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task nicht gefunden")
+    if task["state"] not in ("completed", "failed", "cancelled", "interrupted"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Task noch aktiv (state={task['state']}) — erst cancellen",
+        )
+    deleted = await store.delete(task_id)
+    return {"ok": deleted, "id": task_id}
