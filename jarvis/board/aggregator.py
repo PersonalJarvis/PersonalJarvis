@@ -152,7 +152,17 @@ class BoardAggregator:
     def db(self) -> sqlite3.Connection:
         """An open connection. Lazy, idempotent."""
         if self._db is None:
-            self._db = sqlite3.connect(self._db_path, isolation_level=None)
+            # check_same_thread=False: run() is dispatched via asyncio.to_thread
+            # (server.run_forever loop + the manual /board refresh route), which
+            # uses the default ThreadPoolExecutor — successive runs can land on
+            # different worker threads. The single cached connection is only ever
+            # used serially (one to_thread awaited at a time, each run() wrapped
+            # in its own transaction), so cross-thread reuse is safe here and
+            # avoids the "SQLite objects created in a thread can only be used in
+            # that same thread" ProgrammingError that aborted the aggregation.
+            self._db = sqlite3.connect(
+                self._db_path, isolation_level=None, check_same_thread=False
+            )
             self._db.row_factory = sqlite3.Row
             schema = SCHEMA_FILE.read_text(encoding="utf-8")
             self._db.executescript(schema)
