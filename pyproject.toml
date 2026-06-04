@@ -79,6 +79,7 @@ dev = [
     "ruff>=0.7",
     "mypy>=1.13",
     "pyinstaller>=6.11",
+    "hypothesis>=6",
 ]
 # Twilio telephony voice agent (call Jarvis on a phone number). Optional extra
 # per the cloud-first doctrine: the base install must boot without it, and the
