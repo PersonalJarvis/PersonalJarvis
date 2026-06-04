@@ -1,6 +1,6 @@
 class PersonalJarvisInstaller < Formula
   desc "Supply-chain hardened installer for Personal Jarvis (cosign + offline Ed25519 + SLSA L3 + in-toto)"
-  homepage "https://github.com/personal-jarvis/personal-jarvis"
+  homepage "https://github.com/personal-jarvis/PersonalJarvis"
   license "MIT"
 
   # PINNED to the v0.5.1-supplychain-wave5-audit-fixes release.
@@ -20,13 +20,13 @@ class PersonalJarvisInstaller < Formula
   #
   # SHA-256 SOURCE OF TRUTH: read it from the published checksums.txt
   # AFTER the v0.5.1 release pipeline completes:
-  #   curl -fsSL https://github.com/personal-jarvis/personal-jarvis/releases/download/v0.5.1-supplychain-wave5-audit-fixes/checksums.txt \
+  #   curl -fsSL https://github.com/personal-jarvis/PersonalJarvis/releases/download/v0.5.1-supplychain-wave5-audit-fixes/checksums.txt \
   #     | awk '/install-verify\.sh$/ {print $1}'
   # That value MUST be pasted into `sha256` below before the tap is
   # committed to homebrew-jarvis. Until the release pipeline produces
   # checksums.txt the sha256 below is a placeholder zero-string and the
   # tap will refuse to install (Homebrew rejects all-zero sha256).
-  url "https://github.com/personal-jarvis/personal-jarvis/releases/download/v0.5.1-supplychain-wave5-audit-fixes/install-verify.sh"
+  url "https://github.com/personal-jarvis/PersonalJarvis/releases/download/v0.5.1-supplychain-wave5-audit-fixes/install-verify.sh"
   version "0.5.1-supplychain-wave5-audit-fixes"
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
 
@@ -52,6 +52,6 @@ class PersonalJarvisInstaller < Formula
     contents = File.read(installer)
     assert_match "Personal Jarvis", contents
     assert_match "supply-chain", contents
-    assert_match "EXPECTED_REPO=\"personal-jarvis/personal-jarvis\"", contents
+    assert_match "EXPECTED_REPO=\"personal-jarvis/PersonalJarvis\"", contents
   end
 end

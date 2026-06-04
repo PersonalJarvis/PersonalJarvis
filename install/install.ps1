@@ -1,7 +1,7 @@
 # Personal Jarvis — Windows quick-install bootstrap (Stage 1)
 #
 # Usage (from PowerShell):
-#   irm https://raw.githubusercontent.com/personal-jarvis/personal-jarvis/main/install/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/personal-jarvis/PersonalJarvis/main/install/install.ps1 | iex
 #
 # This bootstrap is intentionally small. It:
 #   1. Verifies Python 3.11+ is available.
@@ -31,7 +31,7 @@ $banner = @'
 Write-Host $banner -ForegroundColor Cyan
 
 # ----------------------------------------------------------------- config
-$RepoUrl    = if ($env:JARVIS_INSTALL_REPO) { $env:JARVIS_INSTALL_REPO } else { 'https://github.com/personal-jarvis/personal-jarvis.git' }
+$RepoUrl    = if ($env:JARVIS_INSTALL_REPO) { $env:JARVIS_INSTALL_REPO } else { 'https://github.com/personal-jarvis/PersonalJarvis.git' }
 $Branch     = if ($env:JARVIS_INSTALL_REF)  { $env:JARVIS_INSTALL_REF }  else { 'main' }
 $InstallDir = if ($env:JARVIS_INSTALL_DIR)  { $env:JARVIS_INSTALL_DIR }  else { Join-Path $env:USERPROFILE '.personal-jarvis' }
 

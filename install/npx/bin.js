@@ -19,7 +19,7 @@
 const { spawnSync } = require("node:child_process");
 const os = require("node:os");
 
-const REPO = process.env.JARVIS_INSTALL_REPO || "personal-jarvis/personal-jarvis";
+const REPO = process.env.JARVIS_INSTALL_REPO || "personal-jarvis/PersonalJarvis";
 const REF = process.env.JARVIS_INSTALL_REF || "main";
 const BASE = `https://raw.githubusercontent.com/${REPO}/${REF}/install`;
 const PS_URL = `${BASE}/install.ps1`;

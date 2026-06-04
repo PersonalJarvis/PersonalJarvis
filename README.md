@@ -145,12 +145,12 @@ on a real macOS box and a real Linux desktop to convert each row to a dated
 
 ```powershell
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/personal-jarvis/personal-jarvis/main/install/install.ps1 | iex
+irm https://raw.githubusercontent.com/personal-jarvis/PersonalJarvis/main/install/install.ps1 | iex
 ```
 
 ```bash
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/personal-jarvis/personal-jarvis/main/install/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/personal-jarvis/PersonalJarvis/main/install/install.sh | bash
 ```
 
 The installer clones into `~/.personal-jarvis`, builds a Python venv, installs deps (incl. the companion packages), **builds the React desktop UI** (`npm`), runs the 7-step wizard (API keys → mic → hotkey → mascot → profile), and launches the Desktop App. Re-running the same one-liner detects the existing checkout and updates instead of re-cloning. Optional flags: `--no-launch`, `--no-wizard`, `--headless` (VPS mode, no GUI deps), `--with-voice-local` (pulls faster-whisper + Silero + openWakeWord, ~1.5 GB). See [`install/README.md`](install/README.md) for the full surface.
@@ -162,7 +162,7 @@ The installer clones into `~/.personal-jarvis`, builds a Python venv, installs d
 **Manual install (advanced):**
 
 ```bash
-git clone https://github.com/personal-jarvis/personal-jarvis ~/.personal-jarvis
+git clone https://github.com/personal-jarvis/PersonalJarvis ~/.personal-jarvis
 cd ~/.personal-jarvis
 python -m venv .venv
 source .venv/bin/activate                    # Windows: .\.venv\Scripts\Activate.ps1
@@ -709,7 +709,7 @@ Neither blocks anything — but a fresh chat parroting CLAUDE.md verbatim will b
 
 **Copyright.** © 2026 Personal Jarvis Maintainers. All contributors retain copyright on their respective contributions; opening a pull request against this repository is taken as agreement that the contribution is licensed under the MIT License above.
 
-**Canonical source.** This repository — **[`github.com/personal-jarvis/personal-jarvis`](https://github.com/personal-jarvis/personal-jarvis)** — is the authoritative upstream of Personal Jarvis. Forks, mirrors, vendored copies, and derivative works are welcome under MIT, but the **original authors are the Personal Jarvis Maintainers**, not whoever is hosting the copy you happened to find. If you encounter Personal Jarvis code outside this URL, you can verify provenance by comparing the git history against the canonical repository.
+**Canonical source.** This repository — **[`github.com/personal-jarvis/PersonalJarvis`](https://github.com/personal-jarvis/PersonalJarvis)** — is the authoritative upstream of Personal Jarvis. Forks, mirrors, vendored copies, and derivative works are welcome under MIT, but the **original authors are the Personal Jarvis Maintainers**, not whoever is hosting the copy you happened to find. If you encounter Personal Jarvis code outside this URL, you can verify provenance by comparing the git history against the canonical repository.
 
 **Attribution & provenance (mandatory).** Section 2 of the MIT License is **not decorative** — it requires that *"the above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software."* In plain English: anyone who uses substantial portions of this code in their own project, fork, distribution, product, or training corpus **must retain the `Copyright (c) 2026 Personal Jarvis Maintainers` line and the full MIT permission text in a place where downstream users can find them** (typical conventions: a `LICENSE` / `LICENSES/` / `NOTICE` / `THIRD_PARTY_NOTICES` file at the root of the derivative work, or an "Open Source Licenses" screen reachable from a product's UI). Stripping the notice and republishing the code is **not** a licensing question — it is **copyright infringement**, actionable under copyright law in the 179 Berne-Convention signatory states. We additionally request — though we cannot legally compel beyond MIT — that derivative works include a visible link back to the canonical repository above so users can find the upstream project.
 
