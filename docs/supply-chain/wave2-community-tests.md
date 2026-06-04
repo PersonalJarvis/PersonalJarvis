@@ -8,7 +8,7 @@ real numbers, including failures, rather than hand-wave compliance.
 
 **Run date:** 2026-05-27
 **Tag exercised:** `v0.3.0-supplychain-wave2`
-**Repo:** `github.com/personal-jarvis/personal-jarvis`
+**Repo:** `github.com/personal-jarvis/PersonalJarvis`
 **Operator:** SA-5 integrator, Wave 2 integration
 
 ---
@@ -32,7 +32,7 @@ docker run --rm ubuntu:24.04 bash -c '
 set -e
 apt-get update -qq && apt-get install -y -qq git curl python3 python3-pip python3-venv ca-certificates >/dev/null
 TAG=v0.3.0-supplychain-wave2
-REL=https://github.com/personal-jarvis/personal-jarvis/releases/download/$TAG
+REL=https://github.com/personal-jarvis/PersonalJarvis/releases/download/$TAG
 mkdir /tmp/c && cd /tmp/c
 python3 -m venv venv && . venv/bin/activate
 pip install --quiet sigstore
@@ -40,7 +40,7 @@ curl -fsSLo install.sh        "$REL/install.sh"
 curl -fsSLo install.sh.bundle "$REL/install.sh.bundle"
 sigstore verify identity \
   --bundle install.sh.bundle \
-  --cert-identity "https://github.com/personal-jarvis/personal-jarvis/.github/workflows/sign-installer.yml@refs/tags/v0.3.0-supplychain-wave2" \
+  --cert-identity "https://github.com/personal-jarvis/PersonalJarvis/.github/workflows/sign-installer.yml@refs/tags/v0.3.0-supplychain-wave2" \
   --cert-oidc-issuer https://token.actions.githubusercontent.com \
   install.sh
 '
@@ -105,7 +105,7 @@ python3 -m venv /tmp/v && . /tmp/v/bin/activate
 pip install --quiet "tuf>=5,<6"
 mkdir /tmp/tuf-repo /tmp/tuf-local && cd /tmp/tuf-repo
 for f in 1.root.json 1.snapshot.json 1.targets.json 1.timestamp.json; do
-  curl -fsSLo "$f" "https://raw.githubusercontent.com/personal-jarvis/personal-jarvis/main/install/tuf/$f"
+  curl -fsSLo "$f" "https://raw.githubusercontent.com/personal-jarvis/PersonalJarvis/main/install/tuf/$f"
 done
 cp 1.root.json root.json
 ( cd /tmp/tuf-repo && python3 -m http.server 8765 >/tmp/tuf-server.log 2>&1 ) &
@@ -185,7 +185,7 @@ SAST, vulnerabilities, …) on a 0–10 scale and aggregates them.
 docker run --rm \
   -e GITHUB_AUTH_TOKEN=$(gh auth token) \
   gcr.io/openssf/scorecard:stable \
-  --repo=github.com/personal-jarvis/personal-jarvis
+  --repo=github.com/personal-jarvis/PersonalJarvis
 ```
 
 ### Result — **3.0 / 10 aggregate** (real number; do not hide)

@@ -95,7 +95,7 @@ actually best, not just easiest.
 
 **Auditor's prescribed fix:**
 
-- `gh api -X PATCH /repos/personal-jarvis/personal-jarvis -F
+- `gh api -X PATCH /repos/personal-jarvis/PersonalJarvis -F
   security_and_analysis.secret_scanning.status=enabled -F
   security_and_analysis.secret_scanning_push_protection.status=enabled`
   — enable secret scanning + push protection.
@@ -105,7 +105,7 @@ actually best, not just easiest.
   (sign-installer.yml + cross-runner-hash.yml +
   verify-installer-smoke.yml), require signed commits, disallow
   force-push, require linear history. Use `gh api -X PUT
-  /repos/personal-jarvis/personal-jarvis/branches/main/protection -f
+  /repos/personal-jarvis/PersonalJarvis/branches/main/protection -f
   required_status_checks.strict=true -f
   required_status_checks.contexts[]=...` etc. If any field fails
   because of plan restrictions, document the failure honestly and skip
@@ -125,7 +125,7 @@ actually best, not just easiest.
   new tag-binding stage with the documented error message.
 - A new red-team scenario R-Wave5-A: tamper with `payload-commit.txt`
   post-release; `install.sh` must refuse to install.
-- `gh repo view personal-jarvis/personal-jarvis --json
+- `gh repo view personal-jarvis/PersonalJarvis --json
   securityAndAnalysis` shows `secret_scanning.status=enabled`.
-- `gh api /repos/personal-jarvis/personal-jarvis/branches/main/protection`
+- `gh api /repos/personal-jarvis/PersonalJarvis/branches/main/protection`
   returns a populated object.

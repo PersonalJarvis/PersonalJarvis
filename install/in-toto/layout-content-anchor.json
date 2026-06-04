@@ -1,7 +1,7 @@
 {
   "_type": "content-anchor",
   "expires": "2027-05-27T00:00:00Z",
-  "readme": "Content-anchored layout assertion for personal-jarvis/personal-jarvis. WAVE-5 HONESTY NOTE (audit Finding 3): this file is NOT a signed in-toto layout as the in-toto v1.0.0 spec defines it — it has no `signatures` field and was never signed by an in-toto-keygen-produced functionary key. It is an UNSIGNED CONTENT-ANCHOR document. Authenticity comes from the verifier (install-verify.sh / install-verify.ps1, both signed Wave 1+2+4) byte-comparing this file's `identity_regexp` against a hard-coded constant (EXPECTED_INTOTO_IDENTITY_REGEXP) baked into the signed verifier source. Any tamper with this file is caught because the constant inside the verifier does not match. This is defensible defense-in-depth, not spec-compliant in-toto. Layout-shape data is preserved (`_type` changed from `layout` to `content-anchor` to make the divergence machine-readable) so a future migration to real in-toto (with in-toto-keygen-produced layout signatures verified by the offline-ceremony key) is incremental. Re-issue this document if the functionary regexp ever changes (verifier and document must be updated together). Spec-version reference: this document mirrors the SHAPE of in-toto v1.0.0 (June 2023) but does not satisfy its signature requirements.",
+  "readme": "Content-anchored layout assertion for personal-jarvis/PersonalJarvis. WAVE-5 HONESTY NOTE (audit Finding 3): this file is NOT a signed in-toto layout as the in-toto v1.0.0 spec defines it — it has no `signatures` field and was never signed by an in-toto-keygen-produced functionary key. It is an UNSIGNED CONTENT-ANCHOR document. Authenticity comes from the verifier (install-verify.sh / install-verify.ps1, both signed Wave 1+2+4) byte-comparing this file's `identity_regexp` against a hard-coded constant (EXPECTED_INTOTO_IDENTITY_REGEXP) baked into the signed verifier source. Any tamper with this file is caught because the constant inside the verifier does not match. This is defensible defense-in-depth, not spec-compliant in-toto. Layout-shape data is preserved (`_type` changed from `layout` to `content-anchor` to make the divergence machine-readable) so a future migration to real in-toto (with in-toto-keygen-produced layout signatures verified by the offline-ceremony key) is incremental. Re-issue this document if the functionary regexp ever changes (verifier and document must be updated together). Spec-version reference: this document mirrors the SHAPE of in-toto v1.0.0 (June 2023) but does not satisfy its signature requirements.",
   "keys": {
     "github-actions-sign-installer-yml-tag-push": {
       "keyid": "github-actions-sign-installer-yml-tag-push",
@@ -10,8 +10,8 @@
       "scheme": "ecdsa-sha2-nistp256",
       "keyval": {
         "issuer": "https://token.actions.githubusercontent.com",
-        "identity": "https://github.com/personal-jarvis/personal-jarvis/.github/workflows/sign-installer.yml@refs/tags/v*",
-        "identity_regexp": "^https://github\\.com/personal-jarvis/personal-jarvis/\\.github/workflows/sign-installer\\.yml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+(-[A-Za-z0-9._-]+)?$",
+        "identity": "https://github.com/personal-jarvis/PersonalJarvis/.github/workflows/sign-installer.yml@refs/tags/v*",
+        "identity_regexp": "^https://github\\.com/personal-jarvis/PersonalJarvis/\\.github/workflows/sign-installer\\.yml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+(-[A-Za-z0-9._-]+)?$",
         "fulcio_url": "https://fulcio.sigstore.dev",
         "rekor_url": "https://rekor.sigstore.dev"
       }

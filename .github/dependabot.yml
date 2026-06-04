@@ -1,4 +1,4 @@
-# Dependabot configuration for personal-jarvis/personal-jarvis.
+# Dependabot configuration for personal-jarvis/PersonalJarvis.
 #
 # Wave-5 audit Finding 4 (repo hygiene): the main repo had no dependabot
 # configuration, so vulnerable transitive deps in pip and unmaintained

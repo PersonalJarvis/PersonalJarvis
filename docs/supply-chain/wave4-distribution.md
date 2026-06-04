@@ -11,7 +11,7 @@
 Wave 1 (cosign keyless), Wave 2 (offline Ed25519), and Wave 3 (SLSA L3 + in-toto) hardened **what** the installer signs and **how** signatures are verified. But all three waves still depend on the user running:
 
 ```bash
-curl -fsSL https://github.com/personal-jarvis/personal-jarvis/releases/download/<TAG>/install-verify.sh | bash
+curl -fsSL https://github.com/personal-jarvis/PersonalJarvis/releases/download/<TAG>/install-verify.sh | bash
 ```
 
 or the equivalent `irm | iex` on Windows. That bootstrap line trusts:
@@ -41,10 +41,10 @@ The two channels root the trust in **different ecosystems** — Homebrew's tap-s
 
 ```bash
 # macOS / Linux
-curl -fsSL https://github.com/personal-jarvis/personal-jarvis/releases/download/<TAG>/install-verify.sh | bash
+curl -fsSL https://github.com/personal-jarvis/PersonalJarvis/releases/download/<TAG>/install-verify.sh | bash
 
 # Windows
-irm https://github.com/personal-jarvis/personal-jarvis/releases/download/<TAG>/install-verify.ps1 | iex
+irm https://github.com/personal-jarvis/PersonalJarvis/releases/download/<TAG>/install-verify.ps1 | iex
 ```
 
 These remain supported. The 12-stage verifier (Wave 1+2+3) still runs. They are now the **fallback path** for users on platforms without Homebrew or Scoop.
@@ -97,7 +97,7 @@ Scenarios S-1..S-3 are the Wave 1-3 axes; Wave 4 leaves them as-is (the 12-stage
 **Wave 4 PQ scaffolding (SA-1 work):**
 
 - `install/keys/pq-mldsa65.pub.pem` — ML-DSA-65 public key, plain.
-- `install/keys/pq-mldsa65.key.enc` — ML-DSA-65 private key, AES-256-CBC encrypted with PBKDF2-derived key from the Wave-2 passphrase pattern (`env++ci2NDWCOLeLfgTTZRks`). Encryption round-trip verified at generation time.
+- `install/keys/pq-mldsa65.key.enc` — ML-DSA-65 private key, AES-256-CBC encrypted with PBKDF2-derived key from the Wave-2 passphrase pattern. **Not tracked in the public release** — only the `.pub.pem` half is committed; the encrypted private blob is held off-repo and the demo passphrase has been rotated out.
 - Tooling: OpenSSL 3.5.6 (ML-DSA support added in OpenSSL 3.5.0 via the OQS provider integration).
 
 **What this Wave does NOT do:**
@@ -117,7 +117,7 @@ Scenarios S-1..S-3 are the Wave 1-3 axes; Wave 4 leaves them as-is (the 12-stage
 **PQ key storage strategy:**
 
 - Public key: committed plain in `install/keys/pq-mldsa65.pub.pem` and **inlined into the verifier scripts** (same pattern as the Wave-2 offline key — defends against asset-store-only substitution).
-- Private key: encrypted at rest in `install/keys/pq-mldsa65.key.enc`. The passphrase is **never committed**; it lives in GitHub Actions secrets (`PQ_MLDSA65_PASSPHRASE`) and in the maintainer's password manager. The Wave-2 passphrase pattern (`env++ci2NDWCOLeLfgTTZRks`) is reused at SA-1 only for *encrypt-at-rest of the test material*; production rotation happens before the v0.5.0-wave4 cut.
+- Private key: encrypted at rest in `install/keys/pq-mldsa65.key.enc`. The passphrase is **never committed**; it lives in GitHub Actions secrets (`PQ_MLDSA65_PASSPHRASE`) and in the maintainer's password manager. The Wave-2 passphrase pattern (`<DEMO-PASSPHRASE-ROTATED-OUT>`) is reused at SA-1 only for *encrypt-at-rest of the test material*; production rotation happens before the v0.5.0-wave4 cut.
 - Fingerprint: see `install/keys/pq-mldsa65.pub.pem` (SHA-256 of DER-encoded SubjectPublicKeyInfo). Will be pinned in `TRUST_ROOT.md §5` (Wave 4.1).
 
 ---

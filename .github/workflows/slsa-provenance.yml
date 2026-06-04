@@ -171,7 +171,7 @@ jobs:
 # 3. SA-3 modifies install-verify.sh to add the axis-3 check:
 #       slsa-verifier verify-artifact \
 #         --provenance-path personal-jarvis.intoto.jsonl \
-#         --source-uri github.com/personal-jarvis/personal-jarvis \
+#         --source-uri github.com/personal-jarvis/PersonalJarvis \
 #         --source-tag "$TAG" \
 #         install.sh install.ps1 installer.py install-verify.sh install-verify.ps1
 #    The slsa-verifier binary download must itself be SHA-pinned in

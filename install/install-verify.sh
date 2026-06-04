@@ -2,7 +2,7 @@
 # Personal Jarvis — verifying one-liner (Wave 3 supply-chain).
 #
 # The user runs:
-#   curl -fsSL https://github.com/personal-jarvis/personal-jarvis/releases/download/<TAG>/install-verify.sh | bash
+#   curl -fsSL https://github.com/personal-jarvis/PersonalJarvis/releases/download/<TAG>/install-verify.sh | bash
 #
 # Wave 3 demands 3-of-3 independent trust axes — all must validate or the
 # verifier refuses to hand off to install.sh:
@@ -67,7 +67,7 @@ set -euo pipefail
 
 # Owning repo (for the OIDC identity regex). Users running a fork must
 # rebuild the verifier with their fork's slug.
-readonly EXPECTED_REPO="personal-jarvis/personal-jarvis"
+readonly EXPECTED_REPO="personal-jarvis/PersonalJarvis"
 
 # Path of the signing workflow inside the source repo. Pinned so an
 # attacker who adds a *different* workflow that signs with the same OIDC
@@ -236,7 +236,7 @@ readonly EXPECTED_SLSA_SOURCE_URI="github.com/${EXPECTED_REPO}"
 # into this signed verifier. We byte-compare the layout's regexp against
 # this constant on every release; drift means either the layout was
 # modified or the pin is stale; both are fail-closed.
-readonly EXPECTED_INTOTO_IDENTITY_REGEXP='^https://github\.com/personal-jarvis/personal-jarvis/\.github/workflows/sign-installer\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._-]+)?$'
+readonly EXPECTED_INTOTO_IDENTITY_REGEXP='^https://github\.com/personal-jarvis/PersonalJarvis/\.github/workflows/sign-installer\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._-]+)?$'
 
 # Filename of the SLSA L3 provenance attestation emitted by the workflow.
 # Decoupled from the artifact name so the verifier survives a workflow

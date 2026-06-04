@@ -32,7 +32,7 @@ the bytes of `install.sh` while leaving the released `.sig` / `.pem` /
    are attached to the GitHub Release.
 2. Attacker prepares a tampered copy with a single trailing comment:
    ```
-   curl -fsSL https://github.com/personal-jarvis/personal-jarvis/releases/download/v0.2.0-supplychain-wave1/install.sh > /tmp/install-tampered.sh
+   curl -fsSL https://github.com/personal-jarvis/PersonalJarvis/releases/download/v0.2.0-supplychain-wave1/install.sh > /tmp/install-tampered.sh
    echo "# attacker payload" >> /tmp/install-tampered.sh
    sha256sum /tmp/install-tampered.sh   # different from the signed hash
    ```
@@ -53,7 +53,7 @@ emulate this inside the staging directory the verifier creates:
 docker run --rm -v "$PWD:/work" ubuntu:24.04 bash -c '
   apt-get update -qq && apt-get install -y -qq curl ca-certificates python3 >/dev/null
   TAG=v0.2.0-supplychain-wave1
-  REL=https://github.com/personal-jarvis/personal-jarvis/releases/download/$TAG
+  REL=https://github.com/personal-jarvis/PersonalJarvis/releases/download/$TAG
 
   # 1. Download the verifier from the real release.
   curl -fsSL "$REL/install-verify.sh" -o /tmp/install-verify.sh
@@ -83,7 +83,7 @@ docker run --rm -v "$PWD:/work" ubuntu:24.04 bash -c '
     --certificate /tmp/install.sh.pem \
     --signature   /tmp/install.sh.sig \
     --bundle      /tmp/install.sh.bundle \
-    --certificate-identity-regexp "^https://github.com/personal-jarvis/personal-jarvis/.github/workflows/sign-installer.yml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+(-[A-Za-z0-9._-]+)?$" \
+    --certificate-identity-regexp "^https://github.com/personal-jarvis/PersonalJarvis/.github/workflows/sign-installer.yml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+(-[A-Za-z0-9._-]+)?$" \
     --certificate-oidc-issuer     "https://token.actions.githubusercontent.com" \
     /tmp/install.sh    # ← the TAMPERED file
 '
@@ -144,7 +144,7 @@ Same image, same network, the **non-tampered** path:
 ```
 $ docker run --rm ubuntu:24.04 bash -c "apt-get update -qq && \
     apt-get install -y -qq git curl ca-certificates python3 >/dev/null 2>&1 && \
-    curl -fsSL https://github.com/personal-jarvis/personal-jarvis/releases/download/v0.2.0-supplychain-wave1/install-verify.sh | \
+    curl -fsSL https://github.com/personal-jarvis/PersonalJarvis/releases/download/v0.2.0-supplychain-wave1/install-verify.sh | \
     bash -s -- --dry-run --no-wizard --no-launch"
 
   Verifying installer (Sigstore keyless, Wave 1)
@@ -164,7 +164,7 @@ $ docker run --rm ubuntu:24.04 bash -c "apt-get update -qq && \
 
 [4/6] Verifying signature against this repo's GitHub Actions OIDC identity...
 Verified OK
-      signature OK (identity=personal-jarvis/personal-jarvis / .github/workflows/sign-installer.yml,
+      signature OK (identity=personal-jarvis/PersonalJarvis / .github/workflows/sign-installer.yml,
                     issuer=https://token.actions.githubusercontent.com)
 
 [5/6] Checking Rekor inclusion proof freshness (≤ 86400s)...
@@ -210,7 +210,7 @@ curl -fsSL https://github.com/sigstore/cosign/releases/download/v2.4.1/cosign-li
 /tmp/cosign verify-blob \
   --certificate /tmp/wrong.pem \
   --signature   /tmp/wrong.sig \
-  --certificate-identity-regexp "^https://github.com/personal-jarvis/personal-jarvis/.github/workflows/sign-installer.yml@refs/tags/v.*$" \
+  --certificate-identity-regexp "^https://github.com/personal-jarvis/PersonalJarvis/.github/workflows/sign-installer.yml@refs/tags/v.*$" \
   --certificate-oidc-issuer     "https://token.actions.githubusercontent.com" \
   /tmp/install.sh
 ```
@@ -220,7 +220,7 @@ curl -fsSL https://github.com/sigstore/cosign/releases/download/v2.4.1/cosign-li
 `cosign verify-blob` rejects because (a) the signature does not match
 the payload bytes and (b) the cert's identity SAN is
 `https://github.com/sigstore/cosign/...`, which does not match the
-`personal-jarvis/personal-jarvis` regex.
+`personal-jarvis/PersonalJarvis` regex.
 
 ### Result
 
@@ -258,7 +258,7 @@ TAG=v0.2.0-supplychain-wave1
 docker run --rm ubuntu:24.04 bash -c "
   set -e
   apt-get update -qq && apt-get install -y -qq curl ca-certificates python3 >/dev/null 2>&1
-  REL=https://github.com/personal-jarvis/personal-jarvis/releases/download/$TAG
+  REL=https://github.com/personal-jarvis/PersonalJarvis/releases/download/$TAG
   curl -fsSL \$REL/install.sh -o /tmp/install.sh
   curl -fsSL \$REL/install.sh.sig -o /tmp/install.sh.sig
   curl -fsSL \$REL/install.sh.pem -o /tmp/install.sh.pem
@@ -272,7 +272,7 @@ docker run --rm ubuntu:24.04 bash -c "
     --certificate /tmp/install.sh.pem \\
     --signature /tmp/install.sh.sig \\
     --bundle /tmp/install.sh.bundle \\
-    --certificate-identity-regexp '^https://github.com/personal-jarvis/personal-jarvis/.github/workflows/sign-installer.yml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+(-[A-Za-z0-9._-]+)?\$' \\
+    --certificate-identity-regexp '^https://github.com/personal-jarvis/PersonalJarvis/.github/workflows/sign-installer.yml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+(-[A-Za-z0-9._-]+)?\$' \\
     --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \\
     /tmp/install.sh
 
@@ -283,7 +283,7 @@ docker run --rm ubuntu:24.04 bash -c "
     --certificate /tmp/install.sh.pem \\
     --signature /tmp/install.sh.sig \\
     --bundle /tmp/install.sh.bundle \\
-    --certificate-identity-regexp '^https://github.com/personal-jarvis/personal-jarvis/.github/workflows/sign-installer.yml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+(-[A-Za-z0-9._-]+)?\$' \\
+    --certificate-identity-regexp '^https://github.com/personal-jarvis/PersonalJarvis/.github/workflows/sign-installer.yml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+(-[A-Za-z0-9._-]+)?\$' \\
     --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \\
     /tmp/install.sh || echo '↑ cosign rejected the tampered file (FAIL-CLOSED, as designed)'
 "
@@ -323,7 +323,7 @@ docker run --rm ubuntu:24.04 bash -c "
 set -e
 apt-get update -qq && apt-get install -y -qq curl ca-certificates openssl python3 >/dev/null 2>&1
 TAG=v0.3.0-supplychain-wave2
-REL=https://github.com/personal-jarvis/personal-jarvis/releases/download/\$TAG
+REL=https://github.com/personal-jarvis/PersonalJarvis/releases/download/\$TAG
 cd /tmp && mkdir mirror && cd mirror
 # Note: install.sh.cosign.sig is NOT downloaded (the attacker drop)
 for f in install.sh install.sh.sig install.sh.pem install.sh.bundle offline-ceremony.pub install-verify.sh; do
@@ -344,7 +344,7 @@ echo R_WAVE2_A_EXIT=\$?
 curl: (37) Couldn't open file /tmp/mirror/install.sh.cosign.sig
   failed to fetch file:///tmp/mirror/install.sh.cosign.sig
   is the tag 'v0.3.0-supplychain-wave2' actually a Wave-2 signed release? See:
-    https://github.com/personal-jarvis/personal-jarvis/releases/tag/v0.3.0-supplychain-wave2
+    https://github.com/personal-jarvis/PersonalJarvis/releases/tag/v0.3.0-supplychain-wave2
 R_WAVE2_A_EXIT=1
 ```
 
@@ -389,7 +389,7 @@ docker run --rm ubuntu:24.04 bash -c "
 set -e
 apt-get update -qq && apt-get install -y -qq curl ca-certificates openssl python3 >/dev/null 2>&1
 TAG=v0.3.0-supplychain-wave2
-REL=https://github.com/personal-jarvis/personal-jarvis/releases/download/\$TAG
+REL=https://github.com/personal-jarvis/PersonalJarvis/releases/download/\$TAG
 cd /tmp && mkdir mirror && cd mirror
 for f in install.sh install.sh.sig install.sh.pem install.sh.bundle install.sh.cosign.sig offline-ceremony.pub install-verify.sh; do
   curl -fsSLo \"\$f\" \"\$REL/\$f\"
@@ -420,7 +420,7 @@ Sample attacker fingerprint generated on 2026-05-27 run:
 
 [4/8] Verifying Fulcio keyless signature (axis A — GitHub Actions OIDC)...
 Verified OK
-      axis A OK (identity=personal-jarvis/personal-jarvis / .github/workflows/sign-installer.yml, issuer=https://token.actions.githubusercontent.com)
+      axis A OK (identity=personal-jarvis/PersonalJarvis / .github/workflows/sign-installer.yml, issuer=https://token.actions.githubusercontent.com)
 
 [5/8] Verifying offline-ceremony signature (axis B — Ed25519, air-gapped)...
 WARNING: Skipping tlog verification is an insecure practice that lacks of transparency and auditability verification for the blob.
@@ -461,7 +461,7 @@ key (Wave 2).
 
 Verifier stage [9/11] downloads the provenance and runs
 `slsa-verifier verify-artifact --provenance-path ... --source-uri
-github.com/personal-jarvis/personal-jarvis --source-tag $TAG`.
+github.com/personal-jarvis/PersonalJarvis --source-tag $TAG`.
 
 Three attacker scenarios were exercised against the live
 `v0.4.0-supplychain-wave3` release on 2026-05-27. All three reject
@@ -586,7 +586,7 @@ Command:
     docker run --rm -e JARVIS_INSTALL_TAG=v0.4.0-supplychain-wave3 \
       ubuntu:24.04 bash -c 'apt-get update -qq && \
       apt-get install -y -qq git curl ca-certificates openssl jq build-essential python3 >/dev/null && \
-      curl -fsSL https://github.com/personal-jarvis/personal-jarvis/releases/download/v0.5.0-supplychain-wave4/install-verify.sh | \
+      curl -fsSL https://github.com/personal-jarvis/PersonalJarvis/releases/download/v0.5.0-supplychain-wave4/install-verify.sh | \
       bash -s -- --dry-run --no-wizard --no-launch'
 
 **Result:** stages [0/13]..[11/13] PASS (classical axes A+B+C still

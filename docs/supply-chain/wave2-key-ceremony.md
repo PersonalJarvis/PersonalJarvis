@@ -20,7 +20,7 @@ GitHub Actions OIDC. The verifier accepts a signature iff a cosign
 
 - OIDC issuer = `https://token.actions.githubusercontent.com`
 - Certificate identity regex pinned to
-  `^https://github\.com/personal-jarvis/personal-jarvis/\.github/workflows/sign-installer\.yml@refs/tags/v[0-9].*$`
+  `^https://github\.com/personal-jarvis/PersonalJarvis/\.github/workflows/sign-installer\.yml@refs/tags/v[0-9].*$`
 
 That is **one trust axis**: an attacker who controls the GitHub repo (or
 the maintainer's account) can run the signing workflow and produce a
@@ -68,7 +68,7 @@ branch `feat/wave2-foundation`.
 ```bash
 openssl rand -base64 18 > /tmp/wave2_passphrase.txt
 cat /tmp/wave2_passphrase.txt
-# → env++ci2NDWCOLeLfgTTZRks   (24 base64 characters)
+# → <DEMO-PASSPHRASE-ROTATED-OUT>   (24 base64 characters)
 ```
 
 The passphrase is 18 bytes of CSPRNG output encoded as 24 base64
@@ -237,10 +237,10 @@ Ideally:
 
 ```bash
 gh secret set WAVE2_CEREMONY_PASSPHRASE \
-    --repo personal-jarvis/personal-jarvis \
+    --repo personal-jarvis/PersonalJarvis \
     --body "<new passphrase from openssl rand -base64 18>"
 # Verify:
-gh secret list --repo personal-jarvis/personal-jarvis
+gh secret list --repo personal-jarvis/PersonalJarvis
 # WAVE2_CEREMONY_PASSPHRASE  Updated 2026-MM-DD HH:MM:SS
 ```
 
@@ -344,7 +344,7 @@ FULCIO_INTERMEDIATE_V1_PEM = (
 )
 OFFLINE_PUB_HEX = "c90e099a2b2ef76fdff763acf034662306f037fae33ae2ec45361368798d9cdd"
 FULCIO_IDENTITY_REGEX = (
-    r"^https://github\.com/personal-jarvis/personal-jarvis/"
+    r"^https://github\.com/personal-jarvis/PersonalJarvis/"
     r"\.github/workflows/sign-installer\.yml@refs/tags/v[0-9].*$"
 )
 
@@ -425,11 +425,18 @@ This document, the keypair, and the TUF root together satisfy these
 checks (all run inside this branch's HEAD before commit — the next
 sub-agent should re-run them as sanity checks):
 
+> **Public-release honesty note.** The checks below describe the original
+> demo branch. In the public release the encrypted private blob
+> (`offline-ceremony.key.enc`) is **not tracked** and the demo passphrase has
+> been **rotated out** (see `install/TRUST_ROOT.md §3.3`). Steps that assert
+> the `.enc` or the literal passphrase are committed therefore no longer apply
+> — only the `.pub` key and the TUF root are tracked.
+
 ```bash
 # 1. Public key committed as a blob
 git ls-tree HEAD install/keys/offline-ceremony.pub
 
-# 2. Encrypted private key committed as a blob
+# 2. Encrypted private key committed as a blob (demo branch only — NOT in the public release)
 git ls-tree HEAD install/keys/offline-ceremony.key.enc
 
 # 3. TUF root committed as a blob
@@ -438,7 +445,7 @@ git ls-tree HEAD install/tuf/1.root.json
 # 4. Decryption round-trip works (proves passphrase + encryption)
 openssl aes-256-cbc -d -pbkdf2 -iter 600000 \
     -in install/keys/offline-ceremony.key.enc \
-    -pass "pass:env++ci2NDWCOLeLfgTTZRks" \
+    -pass "pass:<DEMO-PASSPHRASE-ROTATED-OUT>" \
     -out /tmp/wave2_decrypted.key
 openssl pkey -in /tmp/wave2_decrypted.key -noout && echo PASS
 rm -f /tmp/wave2_decrypted.key   # scrub immediately
@@ -447,7 +454,7 @@ rm -f /tmp/wave2_decrypted.key   # scrub immediately
 python -c "from tuf.api.metadata import Metadata; m = Metadata.from_file('install/tuf/1.root.json'); assert m.signed.roles['root'].threshold == 2; print('PASS')"
 
 # 6. Passphrase committed in TRUST_ROOT.md §3.3 (literal disclosure)
-grep -F 'WAVE2_CEREMONY_PASSPHRASE=env++ci2NDWCOLeLfgTTZRks' install/TRUST_ROOT.md
+grep -F 'WAVE2_CEREMONY_PASSPHRASE=<DEMO-PASSPHRASE-ROTATED-OUT>' install/TRUST_ROOT.md
 ```
 
 If any of the six commands fails, this branch is not Wave-2-foundation-
