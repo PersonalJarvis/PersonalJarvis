@@ -175,3 +175,65 @@ def test_project_icon_path_backward_compat():
     p = project_icon_path()
     assert isinstance(p, Path)
     assert p.name == "jarvis.ico"
+
+
+# ---------------------------------------------------------------------------
+# set_window_appusermodel_icon — IPropertyStore path
+# ---------------------------------------------------------------------------
+
+
+def test_set_window_appusermodel_icon_noop_on_linux(monkeypatch, tmp_path):
+    """IPropertyStore helper is a no-op on non-Windows."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    from jarvis.ui import icon_utils
+    import importlib
+    importlib.reload(icon_utils)
+
+    ico = tmp_path / "fake.ico"
+    ico.write_bytes(b"")
+    assert icon_utils.set_window_appusermodel_icon(12345, "Test.App", ico) is False
+
+
+def test_set_window_appusermodel_icon_missing_file_returns_false():
+    """Returns False when .ico does not exist (no propsys call is made)."""
+    if sys.platform != "win32":
+        return
+    from jarvis.ui.icon_utils import set_window_appusermodel_icon
+
+    assert set_window_appusermodel_icon(0, "Test.App", Path("no_such.ico")) is False
+
+
+def test_set_window_appusermodel_icon_zero_hwnd_returns_false():
+    """Returns False for hwnd=0 without touching propsys."""
+    if sys.platform != "win32":
+        return
+    from jarvis.ui.icon_utils import set_window_appusermodel_icon, project_icon_path
+
+    assert set_window_appusermodel_icon(0, "Test.App", project_icon_path()) is False
+
+
+def test_set_window_appusermodel_icon_live_hwnd():
+    """Calls SHGetPropertyStoreForWindow on a real HWND and verifies S_OK path.
+
+    Uses GetForegroundWindow as a conveniently available visible top-level HWND.
+    We verify the function returns True (all four HRESULTs S_OK).  The actual
+    taskbar rendering cannot be asserted in an automated test.
+    """
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    hwnd = ctypes.windll.user32.GetForegroundWindow()
+    if not hwnd:
+        return  # no foreground window in this environment
+
+    from jarvis.ui.icon_utils import (
+        set_window_appusermodel_icon,
+        project_icon_path,
+        APP_USER_MODEL_ID,
+    )
+
+    result = set_window_appusermodel_icon(hwnd, APP_USER_MODEL_ID, project_icon_path())
+    assert result is True, (
+        "IPropertyStore SetValue+Commit should succeed on a real visible HWND"
+    )
