@@ -114,6 +114,225 @@ def project_icon_path_for_platform() -> Path:
 # ---------------------------------------------------------------------------
 
 
+def set_window_appusermodel_icon(
+    hwnd: int,
+    app_id: str,
+    ico_path: Path,
+    *,
+    relaunch_command: str | None = None,
+    relaunch_display_name: str = "Personal Jarvis",
+) -> bool:
+    """Set per-window AppUserModel properties via IPropertyStore.
+
+    WHY this is required:
+    When a process calls SetCurrentProcessExplicitAppUserModelID the taskbar
+    groups its windows under that AUMID.  For a scripting-host process
+    (pythonw.exe) the taskbar derives the AUMID-group button icon from the
+    *process executable* (pythonw.exe -> Python snake) — NOT from WM_SETICON
+    on the hosted window.  The only documented Win32 mechanism to override the
+    button icon for a specific HWND inside such a group is to set the per-window
+    IPropertyStore property PKEY_AppUserModel_RelaunchIconResource via
+    SHGetPropertyStoreForWindow.  WM_SETICON alone, SetClassLongPtrW alone, or
+    any combination thereof cannot fix this: they update the titlebar and the
+    Alt-Tab thumbnail but the taskbar button continues to render the process
+    executable icon.
+
+    Properties written:
+      PKEY_AppUserModel_ID                   (pid 5)  — ties the window to our AUMID
+      PKEY_AppUserModel_RelaunchIconResource (pid 3)  — icon for the taskbar button
+      PKEY_AppUserModel_RelaunchCommand      (pid 2)  — "relaunch" command (optional)
+      PKEY_AppUserModel_RelaunchDisplayNameResource (pid 4) — display name
+
+    All properties use fmtid {9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3}.
+
+    Args:
+        hwnd: The top-level window handle (must be the taskbar-representative
+              window; for pywebview this is the WS_EX_APPWINDOW BrowserForm).
+        app_id: AUMID string, e.g. ``"PersonalJarvis.PersonalJarvis"``.
+        ico_path: Absolute path to the .ico file.
+        relaunch_command: Optional relaunch command string shown in taskbar
+            jump-list / pin dialog.  Defaults to the current sys.executable
+            invocation when None.
+        relaunch_display_name: Human-readable app name in the taskbar group.
+
+    Returns:
+        True when all SetValue + Commit calls returned S_OK.
+    """
+    if sys.platform != "win32":
+        return False
+    if not hwnd:
+        return False
+    if not ico_path.is_file():
+        logger.debug(
+            "set_window_appusermodel_icon: .ico nicht gefunden: {}", ico_path
+        )
+        return False
+
+    try:
+        import ctypes  # noqa: PLC0415
+        import ctypes.wintypes as wt  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("ctypes nicht verfuegbar: {}", exc)
+        return False
+
+    # ------------------------------------------------------------------ COM structures
+
+    class GUID(ctypes.Structure):
+        _fields_ = [
+            ("Data1", ctypes.c_ulong),
+            ("Data2", ctypes.c_ushort),
+            ("Data3", ctypes.c_ushort),
+            ("Data4", ctypes.c_ubyte * 8),
+        ]
+
+    def _guid(d1: int, d2: int, d3: int, d4: list[int]) -> GUID:
+        g = GUID()
+        g.Data1 = d1
+        g.Data2 = d2
+        g.Data3 = d3
+        for i, b in enumerate(d4):
+            g.Data4[i] = b
+        return g
+
+    class PROPERTYKEY(ctypes.Structure):
+        _fields_ = [("fmtid", GUID), ("pid", ctypes.c_ulong)]
+
+    def _pkey(d1: int, d2: int, d3: int, d4: list[int], pid: int) -> PROPERTYKEY:
+        pk = PROPERTYKEY()
+        pk.fmtid = _guid(d1, d2, d3, d4)
+        pk.pid = pid
+        return pk
+
+    # All AppUserModel keys share this fmtid
+    _D4 = [0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3]
+    _PKEY_ID    = _pkey(0x9F4C2855, 0x9F79, 0x4B39, _D4, 5)
+    _PKEY_ICON  = _pkey(0x9F4C2855, 0x9F79, 0x4B39, _D4, 3)
+    _PKEY_CMD   = _pkey(0x9F4C2855, 0x9F79, 0x4B39, _D4, 2)
+    _PKEY_DNAME = _pkey(0x9F4C2855, 0x9F79, 0x4B39, _D4, 4)
+
+    # PROPVARIANT: 16 bytes on 64-bit (vt + 3 reserved WORDs + 8-byte data union)
+    class PROPVARIANT(ctypes.Structure):
+        _fields_ = [
+            ("vt",         ctypes.c_ushort),
+            ("wReserved1", ctypes.c_ushort),
+            ("wReserved2", ctypes.c_ushort),
+            ("wReserved3", ctypes.c_ushort),
+            ("data",       ctypes.c_ulonglong),
+        ]
+
+    VT_LPWSTR = 31  # VARIANT type for LPWSTR
+
+    # IID_IPropertyStore {886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99}
+    _IID_IPS = _guid(
+        0x886D8EEB, 0x8CF2, 0x4446,
+        [0x8D, 0x02, 0xCD, 0xBA, 0x1D, 0xBD, 0xCF, 0x99],
+    )
+
+    # vtable function types for IPropertyStore
+    # COM vtable order: QI(0) AddRef(1) Release(2) GetCount(3) GetAt(4)
+    #                   GetValue(5) SetValue(6) Commit(7)
+    _P = ctypes.c_void_p
+    _HRESULT = ctypes.HRESULT
+    _FN_RELEASE  = ctypes.WINFUNCTYPE(ctypes.c_ulong, _P)
+    _FN_SETVALUE = ctypes.WINFUNCTYPE(
+        _HRESULT, _P,
+        ctypes.POINTER(PROPERTYKEY),
+        ctypes.POINTER(PROPVARIANT),
+    )
+    _FN_COMMIT = ctypes.WINFUNCTYPE(_HRESULT, _P)
+
+    # ------------------------------------------------------------------ get store
+
+    propsys = ctypes.windll.propsys
+    propsys.SHGetPropertyStoreForWindow.restype = ctypes.HRESULT
+
+    store = ctypes.c_void_p()
+    hr = propsys.SHGetPropertyStoreForWindow(
+        hwnd, ctypes.byref(_IID_IPS), ctypes.byref(store)
+    )
+    if hr != 0 or not store.value:
+        logger.debug(
+            "SHGetPropertyStoreForWindow fehlgeschlagen: hr=0x{:08X}", hr & 0xFFFFFFFF
+        )
+        return False
+
+    # ------------------------------------------------------------------ vtable helpers
+
+    vtbl_base = ctypes.cast(store, ctypes.POINTER(ctypes.c_void_p))[0]
+
+    def _vtfn(idx: int, ftype: type) -> object:
+        fn_ptr = ctypes.cast(vtbl_base, ctypes.POINTER(ctypes.c_void_p))[idx]
+        return ftype(fn_ptr)
+
+    set_value = _vtfn(6, _FN_SETVALUE)
+    commit    = _vtfn(7, _FN_COMMIT)
+    release   = _vtfn(2, _FN_RELEASE)
+
+    # ------------------------------------------------------------------ set properties
+
+    # String buffers must outlive all SetValue calls — collect them here.
+    _string_bufs: list[ctypes.Array] = []
+
+    def _pv_str(s: str) -> PROPVARIANT:
+        pv = PROPVARIANT()
+        pv.vt = VT_LPWSTR
+        buf = ctypes.create_unicode_buffer(s)
+        _string_bufs.append(buf)
+        pv.data = ctypes.cast(buf, ctypes.c_void_p).value
+        return pv
+
+    all_ok = True
+    failed_keys: list[str] = []
+
+    # PKEY_AppUserModel_ID
+    hr = set_value(store, ctypes.byref(_PKEY_ID), ctypes.byref(_pv_str(app_id)))
+    if hr != 0:
+        failed_keys.append(f"ID hr=0x{hr & 0xFFFFFFFF:08X}")
+        all_ok = False
+
+    # PKEY_AppUserModel_RelaunchIconResource — "<abs_path>,0"
+    icon_resource = f"{ico_path},0"
+    hr = set_value(store, ctypes.byref(_PKEY_ICON), ctypes.byref(_pv_str(icon_resource)))
+    if hr != 0:
+        failed_keys.append(f"Icon hr=0x{hr & 0xFFFFFFFF:08X}")
+        all_ok = False
+
+    # PKEY_AppUserModel_RelaunchDisplayNameResource
+    hr = set_value(store, ctypes.byref(_PKEY_DNAME), ctypes.byref(_pv_str(relaunch_display_name)))
+    if hr != 0:
+        failed_keys.append(f"DisplayName hr=0x{hr & 0xFFFFFFFF:08X}")
+        # Non-fatal — icon is what matters for the taskbar button
+
+    # PKEY_AppUserModel_RelaunchCommand (optional — improves pin-to-taskbar UX)
+    if relaunch_command:
+        hr = set_value(store, ctypes.byref(_PKEY_CMD), ctypes.byref(_pv_str(relaunch_command)))
+        if hr != 0:
+            failed_keys.append(f"Cmd hr=0x{hr & 0xFFFFFFFF:08X}")
+            # Non-fatal
+
+    # ------------------------------------------------------------------ commit
+
+    hr = commit(store)
+    release(store)
+
+    if hr != 0:
+        logger.debug(
+            "IPropertyStore.Commit fehlgeschlagen: hr=0x{:08X}", hr & 0xFFFFFFFF
+        )
+        return False
+
+    if failed_keys:
+        logger.debug(
+            "IPropertyStore: einige SetValue-Aufrufe fehlgeschlagen: {}", failed_keys
+        )
+
+    logger.debug(
+        "IPropertyStore gesetzt (AUMID={} Icon={}): hwnd=0x{:X}",
+        app_id, icon_resource, hwnd,
+    )
+    return all_ok
+
+
 def _apply_icon_to_hwnd(hwnd: int, ico_path: Path) -> bool:
     """Set window + class icon on a known HWND.
 
@@ -179,7 +398,18 @@ def _apply_icon_to_hwnd(hwnd: int, ico_path: Path) -> bool:
     # DWM-Trick: zwingt den Compositor dazu, das HICON-Cache des Fensters
     # neu einzulesen ohne auf den naechsten Maximize/Restore zu warten.
     user32.PostMessageW(hwnd, _WM_DWMCOMPOSITIONCHANGED, 1, 0)
-    logger.debug("Icon gesetzt (window+class+DWM-nudge): hwnd=0x{:X} path={}", hwnd, path_str)
+
+    # IPropertyStore: PKEY_AppUserModel_RelaunchIconResource — das ist die
+    # einzig dokumentierte Methode, den Taskbar-Button-Icon fuer ein
+    # pythonw.exe-gehostetes Fenster zu setzen.  WM_SETICON allein reicht nicht:
+    # Windows zieht das Icon des AUMID-Groups vom Process-Executable (pythonw →
+    # Python-Logo) und ignoriert WM_SETICON fuer den Taskbar-Button.
+    set_window_appusermodel_icon(hwnd, APP_USER_MODEL_ID, ico_path)
+
+    logger.debug(
+        "Icon gesetzt (WM_SETICON+Class+IPropertyStore): hwnd=0x{:X} path={}",
+        hwnd, path_str,
+    )
     return True
 
 
