@@ -31,7 +31,10 @@ dependencies = [
     # Local STT removed 2026-05-18 — Groq Whisper API is the new default.
     "google-cloud-texttospeech>=2.21",
     "elevenlabs>=1.5",
-    "chromadb>=0.5",
+    # chromadb removed 2026-06-04: it was never imported (FriendRegistry moved
+    # to aiosqlite in Phase F0) and pinned at 1.5.9, the version with the
+    # unpatched pre-auth code-injection advisory GHSA-f4j7-r4q5-qw2c (no fixed
+    # release exists). Embeddings use sentence-transformers directly.
     "sentence-transformers>=3.3",
     # Desktop-only packages (global-hotkeys, pywinauto, pywin32, pystray,
     # pywebview, pywinpty, win10toast-click) moved to the [desktop] extras
@@ -45,6 +48,10 @@ dependencies = [
     "opentelemetry-sdk>=1.28",
     "prometheus-client>=0.21",
     "httpx>=0.27",
+    # aiohttp is pulled transitively (discord.py, twilio, kubernetes). Pin a
+    # security floor: <3.14.0 carries the deserialization advisory
+    # GHSA-jg22-mg44-37j8 (2026-06-04).
+    "aiohttp>=3.14.0",
     "aiofiles>=24.1",
     "aiolimiter>=1.1",
     "tenacity>=9.0",
