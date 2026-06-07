@@ -153,6 +153,15 @@ class CapabilityRegistry:
         with self._lock:
             self._caps[cap.id] = cap
 
+    def deregister(self, cap_id: str) -> None:
+        """Remove a capability by id. Unknown id is a silent no-op.
+
+        Needed for plugin-disconnect: a paired plugin capability must be
+        withdrawn when the user disconnects the plugin, so resolve_intent
+        stops resolving (and the honest refusal / force-spawn returns)."""
+        with self._lock:
+            self._caps.pop(cap_id, None)
+
     # ------------------------------------------------------------------
     # Query
     # ------------------------------------------------------------------
@@ -198,7 +207,20 @@ class CapabilityRegistry:
                 re.search(r"\b" + re.escape(_normalize(o)) + r"\b", normalised)
                 for o in cap.objects
             )
+            # Plugin/paired-skill capabilities are DOMAIN-SPECIFIC: they must
+            # match a domain object (noun), not just a generic dispatch verb.
+            # Without this, gmail's generic "sende"/"schick" would hijack a
+            # different domain's request ("Sende eine WhatsApp"). Seed
+            # tool/harness/local caps keep their verb-only match (unchanged).
+            if cap.source == "skill" and not obj_hit:
+                continue
             score = 2 if obj_hit else 1
+            # A domain-specific paired-skill match (verb + its own domain noun)
+            # is the most specific signal -- it beats a generic seed cap that
+            # merely shares the verb/object on a tie (e.g. "check mein Postfach"
+            # must reach gmail, not dispatch-with-review).
+            if cap.source == "skill" and obj_hit:
+                score = 3
             if score > best_score:
                 best = cap
                 best_score = score

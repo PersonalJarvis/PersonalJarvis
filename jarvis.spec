@@ -13,7 +13,6 @@
 
 # ruff: noqa
 
-import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import (
@@ -25,33 +24,6 @@ from PyInstaller.utils.hooks import (
 
 PROJECT_ROOT = Path(SPECPATH).resolve()  # noqa: F821  (SPECPATH is PyInstaller-injected)
 FRONTEND_DIST = PROJECT_ROOT / "jarvis" / "ui" / "web" / "dist"
-
-# Cross-platform build (CLOUD.md Rule #1): the same spec produces a native
-# bundle on Windows (onedir + .ico), macOS (.app via BUNDLE + .icns), and Linux
-# (onedir + .png, wrapped into an AppImage by packaging/linux/). The OS is
-# selected at build time from ``sys.platform``; the per-OS installer recipes
-# live under ``packaging/`` and the build matrix in
-# ``.github/workflows/build-app.yml``.
-IS_WIN = sys.platform.startswith("win")
-IS_MAC = sys.platform == "darwin"
-IS_LINUX = sys.platform.startswith("linux")
-
-# Icon per platform, resolved from the shared path contract under
-# assets/icons/. All three faces of the ghost-mascot icon now ship in the repo:
-#   - jarvis.ico  (Windows, multi-resolution 16/24/32/48/64/128/256)
-#   - jarvis.icns (macOS, full retina ladder ic07..ic14 / 16..1024)
-#   - jarvis.png  (Linux, 256x256 RGBA)
-# Each is generated from the canonical mascot art (assets/icons/jarvis-gigi-256.png).
-# Missing is still tolerated (PyInstaller simply omits the icon then) so a partial
-# checkout can still build.
-_ICON_DIR = PROJECT_ROOT / "assets" / "icons"
-if IS_WIN:
-    _icon_path = _ICON_DIR / "jarvis.ico"
-elif IS_MAC:
-    _icon_path = _ICON_DIR / "jarvis.icns"
-else:
-    _icon_path = _ICON_DIR / "jarvis.png"
-ICON = str(_icon_path) if _icon_path.exists() else None
 
 
 # --- Data-Files -------------------------------------------------------------
@@ -67,14 +39,8 @@ if FRONTEND_DIST.exists():
             rel = entry.relative_to(FRONTEND_DIST).parent
             datas.append((str(entry), str(Path("jarvis/ui/web/dist") / rel)))
 
-# jarvis.toml default config so load_config() finds a default in the bundle.
-# A fresh checkout (e.g. a CI runner) has only jarvis.toml.example — the real
-# jarvis.toml is gitignored / wizard-generated — so fall back to the example and
-# never hard-fail the build when neither file is present.
-for _cfg in (PROJECT_ROOT / "jarvis.toml", PROJECT_ROOT / "jarvis.toml.example"):
-    if _cfg.exists():
-        datas.append((str(_cfg), "."))
-        break
+# jarvis.toml + profiles/ damit load_config() einen Default findet
+datas.append((str(PROJECT_ROOT / "jarvis.toml"), "."))
 
 # Assets (Icons, Chimes) wenn vorhanden
 assets_dir = PROJECT_ROOT / "assets"
@@ -107,26 +73,6 @@ hiddenimports: list[str] = []
 hiddenimports += collect_submodules("jarvis.plugins")
 hiddenimports += collect_submodules("jarvis.channels")
 
-# Companion packages the main app imports at boot (board_backend, overlay,
-# skillbook). They live in their own top-level packages, so PyInstaller needs
-# them named explicitly to bundle them into the frozen app. Tolerate absence
-# so a partial dev checkout can still build the base bundle.
-for pkg in ("board_backend", "overlay", "skillbook"):
-    try:
-        hiddenimports += collect_submodules(pkg)
-    except Exception:
-        pass
-
-# The Orb overlay is a full-app feature backed by PySide6. We do NOT
-# ``collect_submodules("PySide6")`` — PySide6 has hundreds of submodules and
-# collecting them all makes the Windows analysis balloon (it effectively hangs
-# the build). PyInstaller ships its own PySide6 hooks that bundle only what is
-# actually imported, so a plain top-level hidden-import is enough; the overlay
-# subprocess degrades gracefully if Qt is unavailable in the frozen app.
-for _qt in ("PySide6", "PySide6.QtCore", "PySide6.QtGui", "PySide6.QtWidgets"):
-    if _qt not in hiddenimports:
-        hiddenimports.append(_qt)
-
 # Uvicorn/websockets/http-tools — uvicorn[standard] bringt versionsspezifische
 # Backends die via importlib geladen werden.
 for pkg in (
@@ -158,13 +104,12 @@ for pkg in ("faster_whisper", "ctranslate2"):
 
 # --- Excludes (Bundle-Size-Sparen) ------------------------------------------
 
-# NOTE: PySide6 is intentionally NOT excluded — the Orb overlay is a default
-# full-app feature now. The other GUI toolkits stay excluded to save size.
 excludes = [
     "tkinter",
     "PyQt5",
     "PyQt6",
     "PySide2",
+    "PySide6",
     "matplotlib",
     "IPython",
     "jupyter",
@@ -213,7 +158,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=ICON,             # per-OS icon (jarvis.ico / jarvis.icns / .png) or None
+    icon=str(PROJECT_ROOT / "assets" / "icons" / "jarvis.ico"),  # Gigi-Maskottchen (Schwarz/Gelb)
     uac_admin=False,       # asInvoker — kein UAC-Prompt
 )
 
@@ -227,24 +172,3 @@ coll = COLLECT(
     upx_exclude=[],
     name="Jarvis",
 )
-
-# macOS: wrap the onedir COLLECT into a proper .app bundle. The .dmg is built
-# from this by packaging/macos in the CI build step. The Info.plist declares the
-# microphone usage string macOS requires before the app may access the mic.
-if IS_MAC:
-    app = BUNDLE(
-        coll,
-        name="Jarvis.app",
-        icon=ICON,
-        bundle_identifier="ai.PersonalJarvis.app",
-        info_plist={
-            "CFBundleName": "Jarvis",
-            "CFBundleDisplayName": "Personal Jarvis",
-            "CFBundleShortVersionString": "0.1.0",
-            "CFBundleVersion": "0.1.0",
-            "NSMicrophoneUsageDescription":
-                "Personal Jarvis uses the microphone for voice input.",
-            "NSHighResolutionCapable": True,
-            "LSMinimumSystemVersion": "11.0",
-        },
-    )

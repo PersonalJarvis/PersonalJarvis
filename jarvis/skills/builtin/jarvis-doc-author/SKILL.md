@@ -1,4 +1,4 @@
-﻿---
+---
 schema_version: "1"
 name: jarvis-doc-author
 version: "1.0.0"

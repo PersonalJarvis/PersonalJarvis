@@ -29,9 +29,9 @@ from fastapi.testclient import TestClient
 DISCORD_URL = "https://discord.gg/UPu6pFWrJ"
 REPO_URL = "https://github.com/PersonalJarvis/PersonalJarvis"
 PROFILE_URL = "https://github.com/PersonalJarvis"
-X_URL = "https://x.com/yourhandle"
+X_URL = "https://x.com/Alex_Herz"
 JARVIS_X_URL = "https://x.com/PersonalJarvis"
-INSTAGRAM_URL = "https://www.instagram.com/PersonalJarvis/"
+INSTAGRAM_URL = "https://www.instagram.com/personaljarvis/"
 
 
 @pytest.fixture(autouse=True)
@@ -78,7 +78,7 @@ def test_get_seeds_on_first_run(client: TestClient) -> None:
     # X now has two links → it renders as a group (like GitHub).
     x_labels = [e["label"] for e in entries if e["platform"] == "x"]
     assert len(x_labels) == 2
-    assert "Your Profile" in x_labels
+    assert "Alex Herz" in x_labels
     assert "Personal Jarvis" in x_labels
     # Every entry carries the stable wire shape.
     for e in entries:

@@ -776,6 +776,111 @@ async def test_empty_diff_without_tool_evidence_keeps_generic_summary(
     assert approved[0].summary_de == "Mission abgeschlossen."  # type: ignore[attr-defined]
 
 
+# ---------------------------------------------------------------------------
+# Task 2.2 — mission-level wall-clock deadline (2026-06-07)
+# ---------------------------------------------------------------------------
+
+
+class _HangingWorker:
+    """Worker stub that never yields a terminal event — simulates a runaway
+    subprocess that blocks indefinitely. Used to verify the mission-level
+    wall-clock deadline cuts the execution.
+    """
+
+    cli = "claude"
+    last_pid: int = 99999
+
+    async def spawn(
+        self,
+        prompt: str,
+        *,
+        worktree: Path,
+        env: dict[str, str],
+        job: Any,
+        worker_id: str,
+        log_dir: Path,
+        **kwargs: Any,
+    ) -> AsyncIterator[Any]:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        # Hang for 100 seconds — the deadline (0.3s in the test) must cut this.
+        await asyncio.sleep(100)
+        # This yield is unreachable under the deadline; it is here only so the
+        # type checker is satisfied that the function is an async generator.
+        yield _FakeWorkerEvent()  # pragma: no cover
+
+
+@pytest.mark.asyncio
+async def test_mission_deadline_fails_as_timed_out(
+    manager: MissionManager, tmp_path: Path
+) -> None:
+    """Task 2.2: a mission that exceeds the wall-clock deadline is failed
+    honestly as attempts_timed_out rather than the generic task_error.
+
+    Uses a 0.3s deadline and a worker that sleeps 100s — the deadline must
+    fire well before the sleep completes.
+    """
+    import time
+
+    critic = FakeCriticRunner(_make_approve_verdict())
+    hanging_worker = _HangingWorker()
+
+    k = _make_kontrollierer(
+        manager=manager,
+        tmp_path=tmp_path,
+        critic=critic,
+        worker_factory_fn=lambda step: hanging_worker,
+    )
+    # Inject the tiny deadline directly onto the Kontrollierer instance so we
+    # do not need to thread it through _make_kontrollierer's kwargs.
+    k._mission_deadline_s = 0.3
+
+    mid = await manager.dispatch(prompt="build something that hangs")
+
+    t0 = time.monotonic()
+    end_state = await k.run_mission(mid)
+    elapsed = time.monotonic() - t0
+
+    # The deadline must have fired (not the 100s hang).
+    assert elapsed < 10.0, f"deadline did not fire; elapsed={elapsed:.1f}s"
+
+    # State must be FAILED.
+    assert end_state == MissionState.FAILED
+
+    # The MissionFailed event must carry reason="attempts_timed_out".
+    events = await manager.store.events_for_mission(mid)
+    failed_payloads = [
+        e.payload for e in events if e.payload.event_type == "MissionFailed"
+    ]
+    assert len(failed_payloads) == 1, (
+        f"expected exactly one MissionFailed event, got {len(failed_payloads)}"
+    )
+    assert failed_payloads[0].reason == "attempts_timed_out", (  # type: ignore[attr-defined]
+        f"expected reason='attempts_timed_out', got {failed_payloads[0].reason!r}"  # type: ignore[attr-defined]
+    )
+
+
+@pytest.mark.asyncio
+async def test_fast_mission_not_affected_by_deadline(
+    manager: MissionManager, tmp_path: Path
+) -> None:
+    """Task 2.2: the deadline wrap must not disturb a mission that completes
+    normally well within the deadline. A large deadline (default 2400s) and a
+    fast FakeWorker must still yield MissionState.APPROVED.
+    """
+    critic = FakeCriticRunner(_make_approve_verdict())
+    k = _make_kontrollierer(manager=manager, tmp_path=tmp_path, critic=critic)
+    # Leave _mission_deadline_s at the default (2400s) — no injection needed.
+
+    mid = await manager.dispatch(prompt="build palindrome function fast")
+    end_state = await k.run_mission(mid)
+
+    assert end_state == MissionState.APPROVED
+
+    events = await manager.store.events_for_mission(mid)
+    approved = [e.payload for e in events if e.payload.event_type == "MissionApproved"]
+    assert len(approved) == 1, "expected one MissionApproved event on the happy path"
+
+
 # --- 2026-05-28 sub-agent mass-failure resilience (OAuth-contention) ---
 
 
@@ -879,6 +984,18 @@ async def test_worker_timeout_every_iteration_fails_with_timeout_reason(
     killed = [e.payload for e in events if e.payload.event_type == "WorkerKilled"]
     assert killed
     assert killed[-1].reason == "timeout"  # type: ignore[attr-defined]
+    # The MISSION-level failure reason must be honest about the timeout too —
+    # NOT the generic 'task_error' (the "worker aborted" voice phrase) that a
+    # real worker crash produces. Live deep-dive 2026-06-07 (mission 019ea1da):
+    # a Computer-Use mission whose final iteration hit the 630s wall-clock cap
+    # was mislabeled task_error, so the user heard a worker-abort phrase for a
+    # mission they never consciously spawned. A worker that ran out of time on
+    # every attempt is a timeout; the voice layer must say so.
+    failed = [e.payload for e in events if e.payload.event_type == "MissionFailed"]
+    assert len(failed) == 1
+    assert failed[0].reason == "attempts_timed_out", (  # type: ignore[attr-defined]
+        f"expected attempts_timed_out, got {failed[0].reason!r}"  # type: ignore[attr-defined]
+    )
 
 
 @pytest.mark.asyncio
@@ -1037,6 +1154,50 @@ async def test_git_push_evidence_reaches_critic_as_nonempty_diff(
 
 
 @pytest.mark.asyncio
+async def test_empty_task_outcomes_is_not_approved(
+    manager: MissionManager, tmp_path: Path
+) -> None:
+    """MAJOR-1 guard: when task_outcomes is empty after the TaskGroup exits,
+    the guard must fail the mission with reason='task_error' instead of letting
+    all(...) over an empty list return vacuously True and silently APPROVE.
+
+    MissionPlan enforces min_length=1 on steps, so we bypass Pydantic validation
+    via model_construct to inject a genuine zero-step plan — the exact degenerate
+    input the guard is designed to catch.
+    """
+    # Bypass MissionPlan's min_length=1 validator to produce a zero-step plan.
+    zero_step_plan = MissionPlan.model_construct(
+        steps=[],
+        n_workers=1,
+        expected_output="nothing — degenerate zero-step plan",
+    )
+
+    k = _make_kontrollierer(
+        manager=manager,
+        tmp_path=tmp_path,
+        critic=FakeCriticRunner(),  # never called — plan has no steps
+        decomposer_plan=zero_step_plan,
+    )
+
+    mid = await manager.dispatch(prompt="degenerate zero-step plan")
+    end_state = await k.run_mission(mid)
+
+    # Must be FAILED, not APPROVED (the vacuous-truth false-APPROVE bug).
+    assert end_state == MissionState.FAILED
+
+    events = await manager.store.events_for_mission(mid)
+    failed_payloads = [
+        e.payload for e in events if e.payload.event_type == "MissionFailed"
+    ]
+    assert len(failed_payloads) == 1, (
+        f"expected exactly one MissionFailed event, got {len(failed_payloads)}"
+    )
+    assert failed_payloads[0].reason == "task_error", (  # type: ignore[attr-defined]
+        f"expected reason='task_error', got {failed_payloads[0].reason!r}"  # type: ignore[attr-defined]
+    )
+
+
+@pytest.mark.asyncio
 async def test_default_max_concurrent_missions_is_one(
     manager: MissionManager, tmp_path: Path
 ) -> None:
@@ -1046,3 +1207,74 @@ async def test_default_max_concurrent_missions_is_one(
     k = _make_kontrollierer(manager=manager, tmp_path=tmp_path, critic=critic)
     # Semaphore initial value == configured concurrency cap.
     assert k._mission_sem._value == 1  # noqa: SLF001 — asserting the default
+
+
+# ---------------------------------------------------------------------------
+# Task 3.1 — desktop-launch evidence channel
+# ---------------------------------------------------------------------------
+
+
+class _DesktopLaunchWorker:
+    """Worker stub for an "open Explorer" task: empty worktree diff (the
+    deliverable is a running process) but a real, non-errored 'start
+    explorer.exe' Bash tool_use in the stream — mirrors _GitPushWorker for the
+    desktop-launch false-negative shape."""
+
+    cli = "claude"
+
+    def __init__(self) -> None:
+        self.last_pid = 777
+        self.spawn_calls: list[dict[str, Any]] = []
+
+    async def spawn(self, prompt, *, worktree, env, job, worker_id, log_dir, **kw):  # type: ignore[no-untyped-def]
+        import json as _json
+
+        self.spawn_calls.append(dict(kw))
+        log_dir.mkdir(parents=True, exist_ok=True)
+        lines = [
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": "de1", "name": "Bash",
+                 "input": {"command": "start explorer.exe"}}]}},
+            # Silent detached spawn — empty stdout is success, not failure.
+            {"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "de1",
+                 "content": ""}]}},
+            {"type": "result", "subtype": "success", "result": "Opened Explorer."},
+        ]
+        (log_dir / "stream.jsonl").write_text(
+            "\n".join(_json.dumps(line) for line in lines), encoding="utf-8"
+        )
+        yield _FakeWorkerEvent()
+
+
+@pytest.mark.asyncio
+async def test_desktop_launch_evidence_reaches_critic_as_nonempty_diff(
+    manager: MissionManager, tmp_path: Path
+) -> None:
+    """An 'open Explorer' task leaves an empty worktree diff but a verified
+    desktop-launch tool call. The critic must SEE a non-empty diff carrying
+    the desktop-action evidence (so its empty-diff GROUND-TRUTH veto no longer
+    fires) and the mission can succeed instead of failing critic_loop_exhausted.
+    Mirrors test_git_push_evidence_reaches_critic_as_nonempty_diff for the
+    desktop-launch shape (Task 3.1)."""
+    from jarvis.missions.kontrollierer.orchestrator import _real_diff_is_empty
+
+    worker = _DesktopLaunchWorker()
+    critic = FakeCriticRunner(_make_approve_verdict())
+    k = _make_kontrollierer(
+        manager=manager, tmp_path=tmp_path, critic=critic,
+        worker_factory_fn=lambda step: worker,
+    )
+    mid = await manager.dispatch(prompt="open Windows Explorer")
+    end = await k.run_mission(mid)
+
+    assert end == MissionState.APPROVED
+    # The critic was called with a diff that carries the desktop-launch evidence.
+    assert len(critic.calls) == 1
+    reviewed_diff = critic.calls[0]["worker_diff"]
+    assert "verified-desktop-launch" in reviewed_diff
+    assert "start explorer.exe" in reviewed_diff
+    # The sentinel string for a silent detached spawn must be present.
+    assert "(command succeeded; no output captured)" in reviewed_diff
+    # And that augmented diff is NOT considered empty (no blind veto).
+    assert not _real_diff_is_empty(reviewed_diff)

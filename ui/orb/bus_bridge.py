@@ -499,12 +499,15 @@ class OrbBusBridge:
         elif state == "SPEAKING":
             # TTS-Synthese laeuft hier oft noch — der State wechselt zu
             # SPEAKING bevor das erste Audio-Sample wirklich aus dem
-            # Lautsprecher kommt (Vorlauf 0.5–2 s). Der Mund wird DESHALB
-            # nicht hier getriggert, sondern erst beim AudioOutFirst-Event
-            # (siehe _on_audio_out_first). Die Bubble zeigt jetzt Jarvis'
-            # Antworttext — dieselbe Quelle wie die Sidebar-Assistant-Zeile.
-            self._orb.show(mode="speak")
-            self._orb.play_animation("nod")
+            # Lautsprecher kommt (Vorlauf 0.5–2 s). Diese stille Vorlaufzeit
+            # ist aus Nutzersicht weiterhin "Verarbeiten", also bleibt das
+            # Overlay auf der THINKING-Welle und wechselt erst auf die
+            # SPEAKING-Bars, wenn wirklich Ton da ist — getrieben vom
+            # AudioOutFirst-Event (siehe _on_audio_out_first). Der Mund + das
+            # "nod" haengen aus demselben Grund am AudioOutFirst-Event. Die
+            # Bubble zeigt jetzt schon Jarvis' Antworttext — dieselbe Quelle
+            # wie die Sidebar-Assistant-Zeile.
+            self._orb.show(mode="think")
             self._refresh_voice_bubble()
             self._cancel_idle_scheduler()
         elif state in ("IDLE", "ERROR", "PAUSED"):
@@ -627,15 +630,22 @@ class OrbBusBridge:
             log.debug("OrbBridge listening transcript bubble suppressed: %s", exc)
 
     async def _on_audio_out_first(self, _event: AudioOutFirst) -> None:
-        """First TTS audio sample reached the speaker — start the talking-mouth
-        animation. Synced to the actual audible start instead of the
-        speculative SPEAKING state-transition that fires before TTS synthesis
-        even completes. The transcript bubble stays as-is (shown on the
-        SPEAKING transition); no personality quip is popped over it.
+        """First TTS audio sample reached the speaker — NOW switch the overlay
+        to the speaking equalizer (bars) and start the talking-mouth + nod.
+
+        Synced to the actual audible start instead of the speculative SPEAKING
+        state-transition that fires 0.5–2 s earlier, before TTS synthesis even
+        produces sound. Until this event the overlay stays on the THINKING wave
+        (set on the SPEAKING transition), so the silent synthesis lead-in reads
+        as "still processing" rather than as speaking. The transcript bubble is
+        left as-is (already showing Jarvis's reply); no personality quip is
+        popped over it.
         """
         if self._last_state != "SPEAKING":
             return
-        log.info("OrbBridge._on_audio_out_first → mouth animation")
+        log.info("OrbBridge._on_audio_out_first → speaking overlay + mouth")
+        self._orb.show(mode="speak")
+        self._orb.play_animation("nod")
         start_mouth = getattr(self._orb, "start_mouth_animation", None)
         if callable(start_mouth):
             try:

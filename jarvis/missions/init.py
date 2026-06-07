@@ -44,6 +44,7 @@ from .manager import MissionManager
 from .voice.announcer import MissionAnnouncer
 from .voice.listener import MissionVoiceListener
 from .voice.readback import MissionReadback
+from .worker_runtime.provider_map import CODEX_SUBAGENT_SLUGS
 from .workers.claude_direct_worker import ClaudeDirectWorker
 from .workers.codex_direct_worker import CodexDirectWorker
 from .workers.gemini_worker import GeminiWorker
@@ -149,7 +150,7 @@ def _select_subagent_worker_kind(
         return "claude_direct"
     if sub_jarvis_provider == "openclaw-claude":
         return "subjarvis"
-    if sub_jarvis_provider in ("chatgpt", "openai-codex"):
+    if sub_jarvis_provider in CODEX_SUBAGENT_SLUGS:
         return "codex_direct"
     if sub_jarvis_provider:
         return "subjarvis"
@@ -196,12 +197,15 @@ async def bootstrap_missions(
     # as ``_resolve_mission_manager`` in jarvis/brain/factory.py); currently
     # unused by the bootstrap but kept on the signature for callers.
     brain_manager_resolver: Callable[[], Any | None] | None = None,
-    # Fix #2 (2026-05-29): recovery-sweep ownership. Only the PRIMARY
-    # (single-instance-lock-holding) process may run startup_recover — a
-    # secondary/dev (--no-lock) instance's sweep would mark the primary's
-    # in-flight missions as crash_recovery and kill live work. The caller
-    # (server._init_mission_stack) passes False for non-primary instances.
-    recover_missions: bool = True,
+    # Recovery is OPT-IN and fail-closed: only the proven primary process
+    # (the launcher that holds the single-instance lock) passes True.
+    # Any side-process — smoke scripts, eval harnesses, --no-lock parallel
+    # sessions, or any caller that forgets to set the flag — defaults to
+    # False and will NOT sweep live missions to crash_recovery.
+    # The launcher sets os.environ["JARVIS_PRIMARY_INSTANCE"] = "1" exactly
+    # when it holds the lock, and server.py reads that to decide whether to
+    # pass recover_missions=True here.
+    recover_missions: bool = False,
 ) -> dict[str, Any]:
     """Boot the entire Phase-6 subsystem.
 
@@ -340,9 +344,18 @@ async def bootstrap_missions(
             anthropic_key = get_secret(
                 "anthropic_api_key", env_fallback="ANTHROPIC_API_KEY"
             )
-            openai_key = get_secret(
-                "openai_api_key", env_fallback="OPENAI_API_KEY"
-            )
+            # Codex-as-subagent API-key path: prefer the dedicated Codex key slot
+            # so OPENAI_API_KEY carries it (the OAuth path strips the key anyway —
+            # see CodexDirectWorker._build_codex_env). Other subagents use the
+            # general OpenAI key unchanged.
+            if sub_jarvis_provider in CODEX_SUBAGENT_SLUGS:
+                openai_key = get_secret(
+                    "codex_openai_api_key", env_fallback="OPENAI_API_KEY"
+                ) or get_secret("openai_api_key", env_fallback="OPENAI_API_KEY")
+            else:
+                openai_key = get_secret(
+                    "openai_api_key", env_fallback="OPENAI_API_KEY"
+                )
             gemini_key = get_secret(
                 "gemini_api_key", env_fallback="GEMINI_API_KEY"
             ) or get_secret(

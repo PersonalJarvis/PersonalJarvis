@@ -10,12 +10,21 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections.abc import Callable
 
 from jarvis.audio.mic_level import LevelNormalizer
 
 _log = logging.getLogger("jarvis.audio.level_tap")
 _lock = threading.Lock()
+
+# monotonic() timestamp until which TTS audio is known to be on the output
+# device. The player only feeds a level at buffer-write time (a brief instant),
+# then stream.write() BLOCKS for the whole multi-second playback with no further
+# level. So the level alone can't tell the UI "Jarvis is speaking right now".
+# note_playing() records the playback END so the whisper bar can show the
+# speaking equalizer for the ENTIRE sentence, not just the write instant.
+_audible_until = 0.0
 _subscribers: list[Callable[[float], None]] = []
 
 # Adaptive normalizer for the TTS output: raw speech RMS is only ~0.05-0.15, so
@@ -66,8 +75,35 @@ def feed(rms: float) -> None:
     publish(_norm.push(float(rms)))
 
 
+def note_playing(duration_s: float) -> None:
+    """Record that ``duration_s`` of TTS audio is about to play on the device.
+
+    Called by the player right before each blocking ``stream.write`` so the UI
+    knows audio is audible for the whole block, not just the write instant. Uses
+    ``max`` so overlapping/back-to-back blocks extend the window monotonically.
+    """
+    global _audible_until
+    if duration_s <= 0.0:
+        return
+    _audible_until = max(_audible_until, time.monotonic() + duration_s)
+
+
+def playback_active() -> bool:
+    """True while TTS audio is known to be playing on the output device."""
+    return time.monotonic() < _audible_until
+
+
+def reset_playing() -> None:
+    """Clear the playback window (barge-in / stop): audio was aborted, so the
+    UI must not keep showing the speaking equalizer for the cancelled tail."""
+    global _audible_until
+    _audible_until = 0.0
+
+
 def reset() -> None:
     """Test helper: drop all subscribers and reset the normalizer."""
+    global _audible_until
     with _lock:
         _subscribers.clear()
     _norm.reset()
+    _audible_until = 0.0

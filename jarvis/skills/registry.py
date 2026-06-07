@@ -10,6 +10,8 @@ import asyncio
 import logging
 import threading
 import time
+from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -73,10 +75,15 @@ class SkillRegistry:
         root: Path,
         bus: Any | None = None,
         debounce_ms: int = 500,
+        state_prefs_loader: Callable[[], dict[str, str]] | None = None,
     ) -> None:
         self.root = Path(root)
         self.bus = bus
         self._debounce_ms = debounce_ms
+        # Optional injection: returns ``{skill_name: "active" | "disabled"}`` —
+        # the user's persisted on/off choice, re-applied on every (re)load so a
+        # toggle survives restarts. ``None`` → legacy behaviour (no overrides).
+        self._state_prefs_loader = state_prefs_loader
         self._skills: dict[str, Skill] = {}
         self._async_lock = asyncio.Lock()
         self._thread_lock = threading.Lock()
@@ -249,9 +256,40 @@ class SkillRegistry:
     # Reload
     # ------------------------------------------------------------------
 
+    def _apply_state_overrides(self, skills: list[Skill]) -> list[Skill]:
+        """Overlay the user's persisted on/off choice onto freshly parsed skills.
+
+        AP-15 invariant: a ``DRAFT`` skill is NEVER forced on — only the
+        safety-linted ``promote()`` path may activate a draft. A missing override
+        leaves the parsed state untouched (a new skill stays VALIDATED = "on").
+        """
+        if self._state_prefs_loader is None:
+            return skills
+        try:
+            overrides = self._state_prefs_loader()
+        except Exception as exc:  # noqa: BLE001 — a broken prefs file must not kill reload
+            log.warning("skill state-prefs loader failed: %s", exc)
+            return skills
+        if not overrides:
+            return skills
+
+        out: list[Skill] = []
+        for s in skills:
+            ov = overrides.get(s.name)
+            if ov is None or s.state == SkillLifecycleState.DRAFT:
+                out.append(s)
+                continue
+            if ov == "disabled":
+                out.append(replace(s, state=SkillLifecycleState.DISABLED))
+            elif ov == "active":
+                out.append(replace(s, state=SkillLifecycleState.ACTIVE))
+            else:
+                out.append(s)
+        return out
+
     def reload_sync(self) -> None:
         """Synchroner Reload — für Bootstrap + Tests."""
-        skills = discover_skills(self.root)
+        skills = self._apply_state_overrides(discover_skills(self.root))
         with self._thread_lock:
             self._skills = {s.name: s for s in skills}
         self._emit_reloaded()
@@ -262,6 +300,7 @@ class SkillRegistry:
             skills = await asyncio.get_event_loop().run_in_executor(
                 None, discover_skills, self.root
             )
+            skills = self._apply_state_overrides(skills)
             with self._thread_lock:
                 self._skills = {s.name: s for s in skills}
         self._emit_reloaded()

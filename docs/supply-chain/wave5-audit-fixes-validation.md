@@ -22,12 +22,12 @@ run after the signing pipeline completes.
 
 | # | Gate (audit text) | Status | Evidence |
 |---|---|---|---|
-| G1 | `install-verify.sh --dry-run` against `v0.5.1` succeeds. | **POST-MERGE** | After the v0.5.1 release pipeline completes: `JARVIS_INSTALL_TAG=v0.5.1-supplychain-wave5-audit-fixes bash <(curl -fsSL https://github.com/PersonalJarvis/PersonalJarvis/releases/download/v0.5.1-supplychain-wave5-audit-fixes/install-verify.sh) --dry-run`. Expected: stages [0/13]..[13/13] pass + axis-E payload-commit stage prints `axis E OK (payload commit pinned to <SHA>)`. |
+| G1 | `install-verify.sh --dry-run` against `v0.5.1` succeeds. | **POST-MERGE** | After the v0.5.1 release pipeline completes: `JARVIS_INSTALL_TAG=v0.5.1-supplychain-wave5-audit-fixes bash <(curl -fsSL https://github.com/personal-jarvis/personal-jarvis/releases/download/v0.5.1-supplychain-wave5-audit-fixes/install-verify.sh) --dry-run`. Expected: stages [0/13]..[13/13] pass + axis-E payload-commit stage prints `axis E OK (payload commit pinned to <SHA>)`. |
 | G2 | `install-verify.sh --dry-run` against `v0.5.0` succeeds when `$TAG=v0.5.0` (backward-compat). | **POST-MERGE** | After the v0.5.1 release pipeline completes, run the v0.5.1 verifier against the v0.5.0 release with `JARVIS_INSTALL_TAG=v0.5.0-supplychain-wave4 JARVIS_INSTALL_ALLOW_NO_PAYLOAD_PIN=1 bash <(curl ...) --dry-run`. Expected: axes A+B+C+D validate; axis E SKIPS loudly with the override message ("axis E SKIPPED via JARVIS_INSTALL_ALLOW_NO_PAYLOAD_PIN=1"); install-verify.sh hands off to install.sh, which falls through the `JARVIS_PAYLOAD_COMMIT` check (env unset) and clones HEAD-of-main like the legacy flow. |
 | G3 | `install-verify.sh --dry-run` with mismatched tag (e.g. fetch v0.5.0 assets but tell verifier `$TAG=v0.4.0`) — must FAIL-CLOSED at the new tag-binding stage with the documented error message. | **PRE-MERGE PROVABLE** via the in-source code review + the post-merge red-team scenario R-Wave5-A below. The bash code change is at `install/install-verify.sh` immediately after the SAN regex assertion: `SAN_TAG="${CERT_SAN##*@refs/tags/}"`, then `if [ "$SAN_TAG" != "$TAG" ]; then err ... exit 1`. Expected error text: `axis A: SAN tag <X> does not match requested tag <Y> — refusing (possible downgrade replay)`. |
 | G4 | New red-team scenario R-Wave5-A: tamper with `payload-commit.txt` post-release; `install.sh` must refuse to install. | **POST-MERGE** | See §3 below. Tamper-then-verify procedure: `(1) curl ... | base64 -d` the asset, `(2) flip a byte`, `(3) re-run install-verify.sh`. Expected: stage axis-E fails at the `cosign verify-blob` call on `payload-commit.txt`. |
-| G5 | `gh repo view PersonalJarvis/PersonalJarvis --json securityAndAnalysis` shows `secret_scanning.status=enabled`. | **POST-MERGE** | `gh api -X PATCH /repos/PersonalJarvis/PersonalJarvis -F security_and_analysis.secret_scanning.status=enabled -F security_and_analysis.secret_scanning_push_protection.status=enabled` then `gh repo view PersonalJarvis/PersonalJarvis --json securityAndAnalysis`. |
-| G6 | `gh api /repos/PersonalJarvis/PersonalJarvis/branches/main/protection` returns a populated object. | **POST-MERGE** | `gh api -X PUT /repos/PersonalJarvis/PersonalJarvis/branches/main/protection -F required_status_checks.strict=true -F 'required_status_checks.contexts[]=sign / sign' -F 'required_status_checks.contexts[]=cross-runner-hash / assert' -F 'required_status_checks.contexts[]=smoke / smoke' -F enforce_admins=true -F required_pull_request_reviews.required_approving_review_count=1 -F required_signatures=true -F allow_force_pushes=false -F required_linear_history=true -F restrictions=`. Any field that fails because of GitHub plan restrictions (e.g. `required_signatures` needs Pro+ on personal accounts) is documented as a known limitation in this table, not silently skipped. |
+| G5 | `gh repo view personal-jarvis/personal-jarvis --json securityAndAnalysis` shows `secret_scanning.status=enabled`. | **POST-MERGE** | `gh api -X PATCH /repos/personal-jarvis/personal-jarvis -F security_and_analysis.secret_scanning.status=enabled -F security_and_analysis.secret_scanning_push_protection.status=enabled` then `gh repo view personal-jarvis/personal-jarvis --json securityAndAnalysis`. |
+| G6 | `gh api /repos/personal-jarvis/personal-jarvis/branches/main/protection` returns a populated object. | **POST-MERGE** | `gh api -X PUT /repos/personal-jarvis/personal-jarvis/branches/main/protection -F required_status_checks.strict=true -F 'required_status_checks.contexts[]=sign / sign' -F 'required_status_checks.contexts[]=cross-runner-hash / assert' -F 'required_status_checks.contexts[]=smoke / smoke' -F enforce_admins=true -F required_pull_request_reviews.required_approving_review_count=1 -F required_signatures=true -F allow_force_pushes=false -F required_linear_history=true -F restrictions=`. Any field that fails because of GitHub plan restrictions (e.g. `required_signatures` needs Pro+ on personal accounts) is documented as a known limitation in this table, not silently skipped. |
 
 ---
 
@@ -157,12 +157,12 @@ admin rights.
 
 ```bash
 # Enable secret scanning + push protection (Gate G5)
-gh api -X PATCH /repos/PersonalJarvis/PersonalJarvis \
+gh api -X PATCH /repos/personal-jarvis/personal-jarvis \
   -F security_and_analysis.secret_scanning.status=enabled \
   -F security_and_analysis.secret_scanning_push_protection.status=enabled
 
 # Branch protection on main (Gate G6)
-gh api -X PUT /repos/PersonalJarvis/PersonalJarvis/branches/main/protection \
+gh api -X PUT /repos/personal-jarvis/personal-jarvis/branches/main/protection \
   -F required_status_checks.strict=true \
   -F 'required_status_checks.contexts[]=sign / sign' \
   -F 'required_status_checks.contexts[]=cross-runner-hash / assert' \
@@ -204,7 +204,7 @@ get install.sh to clone the attacker's commit.
 ```bash
 mkdir -p /tmp/r-wave5-a && cd /tmp/r-wave5-a
 TAG=v0.5.1-supplychain-wave5-audit-fixes
-REL="https://github.com/PersonalJarvis/PersonalJarvis/releases/download/$TAG"
+REL="https://github.com/personal-jarvis/personal-jarvis/releases/download/$TAG"
 curl -fsSL "$REL/install-verify.sh" -o install-verify.sh
 chmod +x install-verify.sh
 
@@ -243,7 +243,7 @@ asked for a different tag.
 # Pretend we found an old, valid v0.5.0 install-verify.sh trio
 # (the audit's exact scenario).
 curl -fsSL -o install-verify.sh \
-  https://github.com/PersonalJarvis/PersonalJarvis/releases/download/v0.5.0-supplychain-wave4/install-verify.sh
+  https://github.com/personal-jarvis/personal-jarvis/releases/download/v0.5.0-supplychain-wave4/install-verify.sh
 chmod +x install-verify.sh
 
 # But the operator THINKS they're installing v0.4.0 — i.e. an
@@ -298,7 +298,7 @@ must not proceed).
 
 Tag `v0.5.1-supplychain-wave5-audit-fixes` was cut at squash-merge
 SHA `fe58438ca0436362178f48efdf2ff07960ee0085`. Sign-installer
-workflow run [`26509243915`](https://github.com/PersonalJarvis/PersonalJarvis/actions/runs/26509243915)
+workflow run [`26509243915`](https://github.com/personal-jarvis/personal-jarvis/actions/runs/26509243915)
 succeeded on first attempt (zero fix-forwards). Release ships 42
 assets (Wave-4 baseline 36 + 6 new `payload-commit.txt*` + the
 renamed `layout-content-anchor.json`). Both red-team scenarios were
@@ -314,7 +314,7 @@ container; the happy-path smoke was executed in the same harness.
       offline-ceremony pubkey fingerprint OK (40cdb1b9e255e797909fba4fb5983450ccf7fa26ec17c80f473fe360da5549ee)
 
 [4/13] Verifying Fulcio keyless signature (axis A — GitHub Actions OIDC)...
-      axis A OK (identity=PersonalJarvis/PersonalJarvis / .github/workflows/sign-installer.yml, issuer=https://token.actions.githubusercontent.com)
+      axis A OK (identity=personal-jarvis/personal-jarvis / .github/workflows/sign-installer.yml, issuer=https://token.actions.githubusercontent.com)
 
 [5/13] Verifying offline-ceremony signature (axis B — Ed25519, air-gapped)...
       axis B OK (Ed25519, key fingerprint=40cdb1b9e255e797909fba4fb5983450ccf7fa26ec17c80f473fe360da5549ee)
@@ -324,7 +324,7 @@ container; the happy-path smoke was executed in the same harness.
 
 [7/13] Cross-checking identity assertions on both axes...
   axis A: SAN tag v0.4.0-supplychain-wave3 does not match requested tag v0.5.1-supplychain-wave5-audit-fixes — refusing (possible downgrade replay).
-    SAN:           https://github.com/PersonalJarvis/PersonalJarvis/.github/workflows/sign-installer.yml@refs/tags/v0.4.0-supplychain-wave3
+    SAN:           https://github.com/personal-jarvis/personal-jarvis/.github/workflows/sign-installer.yml@refs/tags/v0.4.0-supplychain-wave3
     SAN tag:       v0.4.0-supplychain-wave3
     requested tag: v0.5.1-supplychain-wave5-audit-fixes
   this defends against an attacker serving valid-signed bytes from a
@@ -399,8 +399,8 @@ the handoff, not a verifier failure.
 
 | Channel | Repo | Commit | Tag |
 |---|---|---|---|
-| Homebrew tap | [`PersonalJarvis/homebrew-jarvis`](https://github.com/PersonalJarvis/homebrew-jarvis) | `b0d90f8` | `v0.3.0` |
-| Scoop bucket | [`PersonalJarvis/scoop-jarvis`](https://github.com/PersonalJarvis/scoop-jarvis) | `61a7ea8` | `v0.3.0` |
+| Homebrew tap | [`personal-jarvis/homebrew-jarvis`](https://github.com/personal-jarvis/homebrew-jarvis) | `b0d90f8` | `v0.3.0` |
+| Scoop bucket | [`personal-jarvis/scoop-jarvis`](https://github.com/personal-jarvis/scoop-jarvis) | `61a7ea8` | `v0.3.0` |
 
 Both manifests pin `install-verify.{sh,ps1}` SHA-256 values taken
 verbatim from the v0.5.1 release's `checksums.txt`.

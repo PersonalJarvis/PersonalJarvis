@@ -3,17 +3,14 @@ import {
   Settings,
   Mic,
   Keyboard,
-  Shield,
-  Folder,
   Power,
-  Terminal,
   Bot,
 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
-import { BackendConnectionSection } from "@/components/board/BackendConnectionSection";
-import { setCodexBinaryPath, useProviders } from "@/hooks/useProviders";
+import { OverlayTaskbarGroup } from "@/views/settings/OverlayTaskbarGroup";
+import { LanguagesGroup } from "@/views/settings/LanguagesGroup";
 import { useWakeWord, type WakeWordSaveResult } from "@/hooks/useWakeWord";
 import {
   useKeybinds,
@@ -38,42 +35,8 @@ interface SettingRow {
 
 export function SettingsView() {
   const t = useT();
-  const { providers, refetch } = useProviders();
-  const codex = providers.find((p) => p.id === "codex");
-  const [codexPath, setCodexPath] = useState("");
-  const [savingCodexPath, setSavingCodexPath] = useState(false);
-  const pushToast = useEventStore((s) => s.pushToast);
-
-  useEffect(() => {
-    setCodexPath(codex?.codex_status?.binaryPath ?? "");
-  }, [codex?.codex_status?.binaryPath]);
-
-  async function saveCodexPath() {
-    setSavingCodexPath(true);
-    try {
-      await setCodexBinaryPath(codexPath.trim());
-      pushToast("success", "Codex-Pfad gespeichert");
-      refetch();
-    } catch (e) {
-      pushToast("error", (e as Error).message);
-    } finally {
-      setSavingCodexPath(false);
-    }
-  }
 
   const rows: SettingRow[] = [
-    {
-      icon: Shield,
-      title: t("settings_view.rows.privacy_title"),
-      description: t("settings_view.rows.privacy_description"),
-      value: t("settings_view.rows.privacy_value"),
-    },
-    {
-      icon: Folder,
-      title: t("settings_view.rows.scope_title"),
-      description: t("settings_view.rows.scope_description"),
-      value: t("settings_view.rows.scope_value"),
-    },
     {
       icon: Settings,
       title: t("settings_view.rows.toasts_title"),
@@ -90,6 +53,7 @@ export function SettingsView() {
         subtitle={t("settings_view.subtitle")}
       />
       <div className="flex-1 overflow-y-auto scrollbar-jarvis p-6">
+        <LanguagesGroup />
         <AssistantNamePanel />
         <AutostartPanel />
         <WakeWordPanel />
@@ -101,51 +65,7 @@ export function SettingsView() {
           ))}
         </ul>
 
-        <div className="mt-8">
-          <BackendConnectionSection />
-        </div>
-
-        <div className="mt-6 rounded-lg border border-border bg-card/60 p-4">
-          <div className="flex items-start gap-3">
-            <Terminal className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-            <div className="min-w-0 flex-1">
-              <h4 className="font-display text-sm font-semibold">{t("settings_view.codex_title")}</h4>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {t("settings_view.codex_description")}
-              </p>
-              <div className="mt-3 flex gap-2">
-                <input
-                  value={codexPath}
-                  onChange={(e) => setCodexPath(e.target.value)}
-                  placeholder="C:\\Users\\...\\codex.cmd"
-                  className="min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-2 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-primary"
-                />
-                <Button size="sm" onClick={saveCodexPath} disabled={savingCodexPath}>
-                  {savingCodexPath ? t("settings_view.saving") : t("settings_view.save")}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-6 rounded-lg border border-border bg-card/60 p-4">
-          <h4 className="font-display text-sm font-semibold">{t("settings_view.safety_title")}</h4>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {t("settings_view.safety_description")}
-          </p>
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            {["browser-use *", "pytest *", "git status", "ls *", "pip list"].map(
-              (pattern) => (
-                <code
-                  key={pattern}
-                  className="rounded border border-border bg-background px-2 py-1 text-xs font-mono"
-                >
-                  {pattern}
-                </code>
-              ),
-            )}
-          </div>
-        </div>
+        <OverlayTaskbarGroup />
       </div>
     </div>
   );

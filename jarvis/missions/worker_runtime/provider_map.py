@@ -37,7 +37,20 @@ __all__ = [
     "env_vars_for",
     "validate_configured_providers",
     "canonical_subagent_provider",
+    "CODEX_SUBAGENT_SLUGS",
+    "CODEX_SUBAGENT_CANONICAL",
 ]
+
+
+# Subagent slugs that route to the DIRECT Codex CLI worker (CodexDirectWorker),
+# NOT through MAPPINGS — Codex has no OpenClaw provider slug. SINGLE SOURCE OF
+# TRUTH shared by /api/subagent/switch (provider_routes), the brain-tool path
+# (app_control._switch_subagent), the worker selector
+# (init._select_subagent_worker_kind) and the worker-env builder, so the
+# acceptance set can never drift across sites (BUG-008 class). The canonical
+# persisted value is "openai-codex"; "chatgpt" is an accepted alias.
+CODEX_SUBAGENT_SLUGS: Final[frozenset[str]] = frozenset({"openai-codex", "chatgpt"})
+CODEX_SUBAGENT_CANONICAL: Final[str] = "openai-codex"
 
 
 @dataclass(frozen=True, slots=True)

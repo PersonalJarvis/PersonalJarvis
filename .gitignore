@@ -109,13 +109,11 @@ Desktop.ini
 *.swp
 
 # Runtime-Artefakte (Claude Code + Playwright-MCP)
-# Dev-internal Claude Code config, agents, commands, and skills — plus the
-# engineering docs (CLAUDE.md, AGENTS.md) — are excluded from the public
-# release. They stay on disk for local development; public contributors get
-# CONTRIBUTING.md instead.
-.claude/
-/CLAUDE.md
-/AGENTS.md
+.claude/*
+# Subagents, Slash-Commands und Skills sind Team-Knowledge und werden versioniert
+!.claude/agents/
+!.claude/commands/
+!.claude/skills/
 .playwright-mcp/
 
 # TypeScript incremental build cache (regenerated on every `tsc --build`)

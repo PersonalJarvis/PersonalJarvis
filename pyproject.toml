@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-jarvis"
-version = "0.0.0"
+version = "0.1.0"
 description = "Voice-gesteuerter Meta-Orchestrator für Windows 11"
 requires-python = ">=3.11"
 readme = "README.md"
@@ -31,10 +31,7 @@ dependencies = [
     # Local STT removed 2026-05-18 — Groq Whisper API is the new default.
     "google-cloud-texttospeech>=2.21",
     "elevenlabs>=1.5",
-    # chromadb removed 2026-06-04: it was never imported (FriendRegistry moved
-    # to aiosqlite in Phase F0) and pinned at 1.5.9, the version with the
-    # unpatched pre-auth code-injection advisory GHSA-f4j7-r4q5-qw2c (no fixed
-    # release exists). Embeddings use sentence-transformers directly.
+    "chromadb>=0.5",
     "sentence-transformers>=3.3",
     # Desktop-only packages (global-hotkeys, pywinauto, pywin32, pystray,
     # pywebview, pywinpty, win10toast-click) moved to the [desktop] extras
@@ -48,10 +45,6 @@ dependencies = [
     "opentelemetry-sdk>=1.28",
     "prometheus-client>=0.21",
     "httpx>=0.27",
-    # aiohttp is pulled transitively (discord.py, twilio, kubernetes). Pin a
-    # security floor: <3.14.0 carries the deserialization advisory
-    # GHSA-jg22-mg44-37j8 (2026-06-04).
-    "aiohttp>=3.14.0",
     "aiofiles>=24.1",
     "aiolimiter>=1.1",
     "tenacity>=9.0",
@@ -86,7 +79,6 @@ dev = [
     "ruff>=0.7",
     "mypy>=1.13",
     "pyinstaller>=6.11",
-    "hypothesis>=6",
 ]
 # Twilio telephony voice agent (call Jarvis on a phone number). Optional extra
 # per the cloud-first doctrine: the base install must boot without it, and the
@@ -147,28 +139,10 @@ desktop-macos = [
     "pyobjc-framework-ApplicationServices>=10; sys_platform == 'darwin'",
     "pyobjc-framework-Accessibility>=10; sys_platform == 'darwin'",
 ]
-# Local (offline) speech models: GPU/CPU faster-whisper STT. silero-vad and
-# openwakeword are already base dependencies (they ship small models and back
-# the always-on wake word + VAD), so the only heavy addition here is
-# faster-whisper + its ctranslate2 backend (~1.5 GB of model weights are
-# downloaded lazily on first use, NOT bundled). Installing this extra lets the
-# full desktop app transcribe entirely on-device instead of calling the Groq
-# Whisper cloud API. Referenced by ``install/installer.py --with-voice-local``.
-voice-local = [
-    "faster-whisper>=1.0",
-]
-# One-shot "install everything" group — the standard for the full cross-platform
-# desktop app (the downloadable product). A single ``pip install -e .[full]``
-# pulls the desktop GUI stack, local voice models, telephony and chat channels.
-# Self-referential extras (PEP 621) resolve recursively; platform markers inside
-# [desktop]/[desktop-macos] keep each OS to its own native packages, so [full]
-# is safe to install unchanged on Linux, macOS and Windows.
-full = [
-    "personal-jarvis[desktop,desktop-macos,voice-local,telephony,channels]",
-]
 
 [project.scripts]
 jarvis = "jarvis.__main__:main"
+jarvis-ask = "jarvis.clis.jarvis_ask:main"
 # Phase 8.5 — Review-Pipeline-Run-GC (Plan §6.5).
 jarvis-review-gc = "jarvis.cli.review_gc:main"
 # Phase 8.6 — Review-Pipeline-Eval-Harness (Plan §6.6).
@@ -178,20 +152,33 @@ jarvis-review-eval = "jarvis.cli.review_eval:main"
 # Neue Plugins werden ohne Core-Änderung discovered.
 
 [project.entry-points."jarvis.wakeword"]
+porcupine = "jarvis.plugins.wake.porcupine:PorcupineProvider"
 openwakeword = "jarvis.plugins.wake.openwakeword_provider:OpenWakeWordProvider"
 
+[project.entry-points."jarvis.turn"]
+# Phase L.2 — End-of-Turn Detection. Default: flux_integrated (siehe AD-L-4).
+flux-integrated = "jarvis.plugins.turn.flux_integrated:FluxIntegratedNoOp"
+smart-turn-v3 = "jarvis.plugins.turn.smart_turn_v3:SmartTurnV3Detector"
+silero-only = "jarvis.plugins.turn.silero_only:SileroOnlyDetector"
+
 [project.entry-points."jarvis.stt"]
+openai-api = "jarvis.plugins.stt.openai_api:OpenAIWhisperAPI"
 groq-api = "jarvis.plugins.stt.groq_api:GroqWhisperAPI"
-# Local (offline) faster-whisper STT. Weights (~1.5 GB) auto-download on first
-# use; ships in the [voice-local] extra. Selected via [stt].provider / fallback.
-faster-whisper = "jarvis.plugins.stt.fwhisper:FasterWhisperProvider"
+deepgram = "jarvis.plugins.stt.deepgram:DeepgramSTT"
+# Phase L.3 — Streaming-STT mit integriertem EOT (Variante A) bzw. Plan-B Nova-3.
+deepgram-flux = "jarvis.plugins.stt.deepgram_flux:DeepgramFluxSTT"
+deepgram-nova3 = "jarvis.plugins.stt.deepgram_nova3:DeepgramNova3STT"
 
 [project.entry-points."jarvis.tts"]
 elevenlabs = "jarvis.plugins.tts.elevenlabs_tts:ElevenLabsTTS"
 gemini-flash-tts = "jarvis.plugins.tts.gemini_flash_tts:GeminiFlashTTS"
+google-neural2 = "jarvis.plugins.tts.google_neural2:GoogleNeural2TTS"
+openai-tts = "jarvis.plugins.tts.openai_tts:OpenAITTS"
+piper-local = "jarvis.plugins.tts.piper_local:PiperLocalTTS"
 grok-voice = "jarvis.plugins.tts.grok_voice_tts:GrokVoiceTTS"
 # Phase L.4 — Streaming-TTS mit niedriger TTFB.
 cartesia = "jarvis.plugins.tts.cartesia_tts:CartesiaTTS"
+elevenlabs-flash = "jarvis.plugins.tts.elevenlabs_flash:ElevenLabsFlashTTS"
 
 [project.entry-points."jarvis.brain"]
 claude-api = "jarvis.plugins.brain.claude_api:ClaudeAPIBrain"
@@ -199,6 +186,7 @@ openrouter = "jarvis.plugins.brain.openrouter:OpenRouterBrain"
 openai = "jarvis.plugins.brain.openai:OpenAIBrain"
 gemini = "jarvis.plugins.brain.gemini:GeminiBrain"
 grok = "jarvis.plugins.brain.grok:GrokBrain"
+codex = "jarvis.plugins.brain.codex:CodexBrain"
 # Ollama-Provider 2026-04-21 entfernt — User-Entscheidung (reine API-Provider-Chain).
 
 [project.entry-points."jarvis.harness"]
@@ -234,6 +222,12 @@ search-web = "jarvis.plugins.tool.search_web:SearchWebTool"
 # set), risk_tier "ask": send is consequential. A direct safe/ask-gated action,
 # never a spawn (AP-5/AP-14). See docs/superpowers/specs/2026-06-01-marketplace-coming-soon-plugins-design.md.
 gmail = "jarvis.plugins.tool.gmail_rest:GmailRestTool"
+# Vercel (marketplace plugin, 2026-06-07) — read projects/deployments via the
+# Vercel REST API using the marketplace-stored PAT. Native tool because Vercel's
+# catalog entry used the never-implemented rest_wrapper transport (zero tools);
+# router-tier, risk_tier "monitor" (read-only). A direct gated action, never a
+# spawn (AP-5/AP-14). See docs/superpowers/plans/2026-06-07-plugin-skill-pairing-reachability.md.
+vercel = "jarvis.plugins.tool.vercel_rest:VercelRestTool"
 screen-snapshot = "jarvis.plugins.tool.screen_snapshot:ScreenSnapshotTool"
 move-mouse = "jarvis.plugins.tool.move_mouse:MoveMouseTool"
 switch-window = "jarvis.plugins.tool.switch_window:SwitchWindowTool"

@@ -20,18 +20,12 @@ vs the identical request through ``openclaw agent``:
 
 This worker spawns ``claude`` directly with the right argv and the prompt
 on stdin, preserving the WorkerProtocol contract so the Kontrollierer
-sees the same ClaudeSystemInit / ClaudeResult events.
-
-Since the OpenClaw-subprocess SubJarvisWorker was removed in Welle 4,
-``ClaudeDirectWorker`` is the **universal** heavy worker:
-``jarvis.missions.init`` routes every provider (grok / gemini / openrouter /
-unset) to it. It therefore ALWAYS drives the ``claude`` CLI via Claude Max
-OAuth regardless of ``brain.primary``, and never bails on a non-claude
-provider. The ``--model`` it passes is resolved by ``_resolve_claude_model``:
-the configured ``[brain.sub_jarvis]`` model when that provider is
-``claude-api``, else the per-step claude alias the Decomposer emits
-("sonnet"/"opus"/"haiku"), else ``_DEFAULT_CLAUDE_MODEL``. A foreign-provider
-model id (e.g. "grok-4.3") is never passed to ``claude --model``.
+sees the same ClaudeSystemInit / ClaudeResult events as it does for the
+OpenClaw-backed SubJarvisWorker. The provider chain is read from
+``[brain.sub_jarvis]`` for parity with SubJarvisWorker — we only act
+when the resolved primary provider is ``claude-api``; other providers
+fall through to SubJarvisWorker via ``worker_factory`` routing in
+``jarvis.missions.init``.
 
 Spawn discipline mirrors GeminiWorker / SubJarvisWorker:
 
@@ -71,41 +65,6 @@ from .stream_consumer import (
 from .provider_chain import _resolve_provider_chain
 
 logger = logging.getLogger(__name__)
-
-
-# The model handed to ``claude --model`` when no claude-specific model can be
-# resolved. ClaudeDirectWorker is the *universal* heavy worker since the
-# OpenClaw-subprocess SubJarvisWorker was removed in Welle 4 (jarvis.missions.init
-# routes grok / gemini / openrouter / unset providers here too). A non-claude
-# provider model id (e.g. "grok-4.3") must NEVER reach ``claude --model``, so we
-# fall back to this safe claude alias instead of erroring the mission out.
-_DEFAULT_CLAUDE_MODEL: str = "sonnet"
-# Model ids the ``claude`` CLI accepts: the short aliases the Phase-6 Decomposer
-# emits plus any explicit ``claude-*`` id. Anything else is a foreign-provider
-# model and is ignored in favour of _DEFAULT_CLAUDE_MODEL.
-_CLAUDE_MODEL_ALIASES: frozenset[str] = frozenset({"sonnet", "opus", "haiku"})
-
-
-def _resolve_claude_model(primary: Any, step_model: str) -> str:
-    """Pick a CLAUDE-valid ``--model`` value for the universal direct worker.
-
-    Priority:
-        1. The configured ``[brain.sub_jarvis]`` model when its provider is
-           ``claude-api`` (the explicit Claude-Max-OAuth heavy-worker setup).
-        2. The per-step model the Decomposer emits when it is a claude alias /
-           ``claude-*`` id ("sonnet"/"opus"/"haiku" by default).
-        3. ``_DEFAULT_CLAUDE_MODEL`` — the safe fallback so a non-claude
-           ``[brain.sub_jarvis].provider`` (or no config at all) still runs the
-           worker on the claude CLI instead of failing the mission.
-    """
-    if primary is not None and getattr(primary, "provider", None) == "claude-api":
-        model = getattr(primary, "model", None)
-        if model:
-            return model
-    candidate = (step_model or "").strip()
-    if candidate.lower() in _CLAUDE_MODEL_ALIASES or candidate.lower().startswith("claude"):
-        return candidate
-    return _DEFAULT_CLAUDE_MODEL
 
 
 _DEFAULT_TIMEOUT_S: float = 600.0
@@ -256,17 +215,30 @@ class ClaudeDirectWorker:
         stdout_log = log_dir / "stream.jsonl"
         stderr_log = log_dir / "stderr.log"
 
-        # 1. Resolve the CLAUDE-valid model. ClaudeDirectWorker is the universal
-        # heavy worker (the OpenClaw-subprocess SubJarvisWorker was removed in
-        # Welle 4 — jarvis.missions.init routes grok/gemini/openrouter/unset here
-        # too). It ALWAYS drives the `claude` CLI via Claude Max OAuth regardless
-        # of `brain.primary`, so we never bail on a non-claude provider; we just
-        # pick a claude model (configured claude-api model > per-step claude
-        # alias > _DEFAULT_CLAUDE_MODEL). A foreign provider model like "grok-4.3"
-        # must never reach `claude --model`.
+        # 1. Resolve provider chain — only "claude-api" is in our scope.
         chain = _resolve_provider_chain()
         primary = chain[0] if chain else None
-        claude_model = _resolve_claude_model(primary, model)
+        if primary is None or primary.provider != "claude-api":
+            session_id = resume_session_id or str(uuid.uuid4())
+            yield ClaudeSystemInit(
+                session_id=session_id,
+                model="claude-cli/unresolved",
+                tools=[],
+                cwd=str(worktree),
+            )
+            yield ClaudeResult(
+                subtype="error_during_execution",
+                is_error=True,
+                cost_usd=None,
+                num_turns=None,
+                session_id=session_id,
+                duration_ms=0,
+                result=(
+                    f"ClaudeDirectWorker: primary provider is "
+                    f"{primary.provider if primary else 'None'}, expected claude-api"
+                ),
+            )
+            return
 
         session_id = resume_session_id or str(uuid.uuid4())
         self.last_session_id = session_id
@@ -280,7 +252,7 @@ class ClaudeDirectWorker:
             "--verbose",  # required by --print + stream-json
             "--permission-mode", permission_mode,
             "--add-dir", str(worktree),
-            "--model", claude_model,
+            "--model", primary.model,
         ]
         if allowed_tools:
             cmd.extend(["--allowedTools", allowed_tools])
@@ -292,14 +264,14 @@ class ClaudeDirectWorker:
 
         yield ClaudeSystemInit(
             session_id=session_id,
-            model=f"claude-cli/{claude_model}",
+            model=f"claude-cli/{primary.model}",
             tools=[],
             cwd=str(worktree),
         )
 
         logger.info(
             "ClaudeDirectWorker[%s] spawn: cwd=%s model=%s",
-            worker_id, worktree, claude_model,
+            worker_id, worktree, primary.model,
         )
 
         # 3. Spawn the subprocess with the prompt on stdin.
@@ -514,5 +486,4 @@ __all__ = [
     "ClaudeDirectWorker",
     "_resolve_claude_argv_prefix",
     "_resolve_claude_binary",
-    "_resolve_claude_model",
 ]

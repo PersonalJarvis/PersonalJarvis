@@ -18,6 +18,14 @@ CREATE TABLE IF NOT EXISTS daily_stats (
     hours_saved_estimate  REAL    NOT NULL DEFAULT 0.0,
     active_events_count   INTEGER NOT NULL DEFAULT 0,
     conversation_seconds_estimate REAL NOT NULL DEFAULT 0.0,
+    -- Dictation-style word counts, derived from sessions.db voice_turns.
+    -- Raw text is counted at aggregation time and never stored.
+    user_words_count      INTEGER NOT NULL DEFAULT 0,   -- words the user spoke/typed
+    jarvis_words_count    INTEGER NOT NULL DEFAULT 0,   -- words Jarvis spoke back
+    session_count         INTEGER NOT NULL DEFAULT 0,   -- voice sessions started this day
+    -- Usage-by-category: JSON object {category_key: invocation_count}, derived
+    -- from per-turn tool calls via jarvis.board.categories.categorize_tool.
+    category_counts       TEXT    NOT NULL DEFAULT '{}',
     created_at            TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 

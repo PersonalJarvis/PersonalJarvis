@@ -265,6 +265,79 @@ async def test_crash_recovery_is_not_announced(store_and_bus) -> None:
 
 
 @pytest.mark.asyncio
+async def test_failed_attempts_timed_out_speaks_honest_timeout(store_and_bus) -> None:
+    """Live deep-dive 2026-06-07 (mission 019ea1da): a Computer-Use mission whose
+    final iteration hit the 630s wall-clock cap was failed as ``task_error``, so
+    the announcer spoke the generic "mission failed / worker aborted" phrase for
+    what was really a timeout. The honest reason ``attempts_timed_out`` must
+    produce a timeout phrase, never the alarming worker-abort wording."""
+    store, bus = store_and_bus
+    speech_bus = EventBus()
+    captured = _collect_announcements(speech_bus)
+
+    announcer = MissionAnnouncer(bus=bus, store=store, speech_bus=speech_bus)
+    await announcer.start()
+
+    mid = await _seed_voice_mission(store)
+    await store.append_and_publish(
+        EventEnvelope(
+            mission_id=mid,
+            source_actor="kontrollierer",
+            ts_ms=now_ms(),
+            payload=MissionFailed(
+                reason="attempts_timed_out",
+                last_state="CRITIQUING",
+                partial_artifacts=[],
+            ),
+        )
+    )
+
+    assert len(captured) == 1
+    assert captured[0].priority == "normal"
+    assert "Zeitlimit" in captured[0].text, (
+        f"expected an honest timeout phrase, got {captured[0].text!r}"
+    )
+    assert "abgebrochen" not in captured[0].text.lower(), (
+        f"a timeout must NOT be announced as a worker abort: {captured[0].text!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_interrupted_is_not_announced(store_and_bus) -> None:
+    """'interrupted' is startup-sweep housekeeping — the same suppression rule
+    that applies to 'crash_recovery' must also apply here. A mission swept as
+    'interrupted' was dispatched in a prior session; the announcer must stay
+    silent (no AnnouncementRequested on the speech bus) so the user is not
+    woken up by a boot-time event."""
+    store, bus = store_and_bus
+    speech_bus = EventBus()
+    captured = _collect_announcements(speech_bus)
+
+    announcer = MissionAnnouncer(bus=bus, store=store, speech_bus=speech_bus)
+    await announcer.start()
+
+    mid = await _seed_voice_mission(store)
+    await store.append_and_publish(
+        EventEnvelope(
+            mission_id=mid,
+            source_actor="system",
+            ts_ms=now_ms(),
+            payload=MissionFailed(
+                reason="interrupted",
+                error_class="OrchestratorInterrupt",
+                last_state="RUNNING",
+                partial_artifacts=[],
+            ),
+        )
+    )
+
+    assert captured == [], (
+        "interrupted (swept-on-boot) must not be spoken — it is boot "
+        "housekeeping, not a live failure"
+    )
+
+
+@pytest.mark.asyncio
 async def test_cancelled_emits_announcement(store_and_bus) -> None:
     store, bus = store_and_bus
     speech_bus = EventBus()

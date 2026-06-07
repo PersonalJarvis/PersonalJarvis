@@ -110,6 +110,8 @@ async def startup_recover(
     now_ts = now if now is not None else now_fn()
     stale = await store.list_non_terminal_missions()
     recovered_ids: list[str] = []
+    crash_ids: list[str] = []
+    interrupted_ids: list[str] = []
     reconciled_ids: list[str] = []
     skipped_active: list[str] = []
 
@@ -135,18 +137,31 @@ async def startup_recover(
             reconciled_ids.append(mission_id)
             continue
 
-        # 2. Active-guard: recent activity → a live instance owns this mission.
-        #    No events at all means the crash hit the dispatch window (header
-        #    upserted, MissionDispatched never written): there is no activity to
-        #    protect, so fall through to the sweep (do NOT treat eventless as
-        #    active — that would leave it stuck non-terminal forever).
-        if events:
-            last_ts = events[-1].ts_ms
-            if stale_after_ms > 0 and (now_ts - last_ts) < stale_after_ms:
-                skipped_active.append(mission_id)
-                continue
+        # 2. Active-guard: recent activity (last event OR a live heartbeat) →
+        #    a live instance owns this mission. The heartbeat catches a worker
+        #    that is busy but silent for >stale_after_ms between stream events
+        #    (Opus / long tool calls / Computer-Use) — without it, a restart
+        #    would sweep a mission another instance is actively running.
+        #
+        #    No events AND no heartbeat means the crash hit the dispatch window
+        #    (header upserted, MissionDispatched never written): there is no
+        #    activity to protect, so fall through to the sweep (do NOT treat
+        #    eventless + heartbeat-zero as active — that would leave it stuck
+        #    non-terminal forever).
+        last_event_ts = events[-1].ts_ms if events else 0
+        heartbeat_ts = await store.get_heartbeat(mission_id)
+        freshness = max(last_event_ts, heartbeat_ts)
+        if stale_after_ms > 0 and freshness > 0 and (now_ts - freshness) < stale_after_ms:
+            skipped_active.append(mission_id)
+            continue
 
-        # 3. Genuinely orphaned → sweep to FAILED('crash_recovery').
+        # 3. Genuinely orphaned → sweep to FAILED.
+        #    Distinguish "had delivered work" (interrupted delivery) from a bare
+        #    empty crash so the Outputs view can surface preserved artifacts.
+        delivered = _delivered_artifacts(events)
+        sweep_reason = "interrupted" if delivered else "crash_recovery"
+        error_class = "MissionInterrupted" if delivered else "OrchestratorCrash"
+
         state_env = EventEnvelope(
             mission_id=mission_id,
             source_actor="system",
@@ -154,7 +169,7 @@ async def startup_recover(
             payload=MissionStateChanged(
                 from_state=last_state,
                 to_state=MissionState.FAILED.value,
-                reason="crash_recovery",
+                reason=sweep_reason,
             ),
         )
         await store.append_and_publish(state_env)
@@ -164,10 +179,10 @@ async def startup_recover(
             source_actor="system",
             ts_ms=now_ts,
             payload=MissionFailed(
-                reason="crash_recovery",
-                error_class="OrchestratorCrash",
+                reason=sweep_reason,
+                error_class=error_class,
                 last_state=last_state,
-                partial_artifacts=[],
+                partial_artifacts=delivered,
             ),
         )
         await store.append_and_publish(fail_env)
@@ -179,13 +194,24 @@ async def startup_recover(
             language="de",
             ts_ms=now_ts,
         )
+        if delivered:
+            interrupted_ids.append(mission_id)
+        else:
+            crash_ids.append(mission_id)
         recovered_ids.append(mission_id)
 
-    if recovered_ids:
+    if crash_ids:
         log.warning(
             "Mission recovery: marked %d mission(s) FAILED('crash_recovery'): %s",
-            len(recovered_ids),
-            recovered_ids,
+            len(crash_ids),
+            crash_ids,
+        )
+    if interrupted_ids:
+        log.warning(
+            "Mission recovery: marked %d mission(s) FAILED('interrupted') "
+            "[partial work preserved]: %s",
+            len(interrupted_ids),
+            interrupted_ids,
         )
     if reconciled_ids:
         log.info(
@@ -196,8 +222,8 @@ async def startup_recover(
         )
     if skipped_active:
         log.info(
-            "Mission recovery: skipped %d mission(s) as active (last event "
-            "< %d ms ago — presumed owned by a live instance): %s",
+            "Mission recovery: skipped %d mission(s) as active (last event or "
+            "heartbeat < %d ms ago — presumed owned by a live instance): %s",
             len(skipped_active),
             stale_after_ms,
             skipped_active,
@@ -218,3 +244,33 @@ def _last_terminal_state(events: list[EventEnvelope]) -> str | None:
         if state is not None:
             result = state
     return result
+
+
+def _delivered_artifacts(events: list[EventEnvelope]) -> list[str]:
+    """artifact_uri(s) from WorkerDraftReady events that carried real work, or [].
+
+    Non-empty result => the mission produced real work before going stale: the
+    orphan was a DELIVERY interruption, not an empty crash. WorkerDraftReady
+    schema (events.py:66): worker_id, artifact_uri, diff, tokens_used, cost_usd,
+    session_id. "Real work" = a draft whose artifact_uri OR diff is non-empty.
+    Per-worker sentinel + dedup so a multi-step mission with several diff-only
+    workers does not emit duplicate entries.
+    """
+    seen: set[str] = set()
+    artifacts: list[str] = []
+    for env in events:
+        p = env.payload
+        if p.event_type != "WorkerDraftReady":
+            continue
+        uri = (getattr(p, "artifact_uri", "") or "").strip()
+        diff = (getattr(p, "diff", "") or "").strip()
+        entry: str | None = None
+        if uri:
+            entry = uri
+        elif diff:
+            worker_id = getattr(p, "worker_id", "") or env.mission_id
+            entry = f"draft:{worker_id}"
+        if entry and entry not in seen:
+            seen.add(entry)
+            artifacts.append(entry)
+    return artifacts

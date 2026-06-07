@@ -27,8 +27,6 @@ from __future__ import annotations
 from collections import deque
 from typing import TYPE_CHECKING, Final, Literal
 
-from jarvis.speech.persona import PhrasePicker  # reuse anti-repeat
-
 if TYPE_CHECKING:
     from jarvis.missions.critic.runner import CapabilityHonestyCheck
 
@@ -179,9 +177,11 @@ FAILURE_REASON_PHRASES: Final[dict[Lang, dict[str, str]]] = {
         "critic_loop_exhausted": "Drei Versuche haben nicht gereicht.",
         "critic_rejected": "Die Prüfung war nicht zufrieden.",
         "task_error": "Der Worker ist abgebrochen.",
+        "attempts_timed_out": "Das Zeitlimit wurde überschritten.",  # i18n-allow (DE TTS phrase)
         "budget_exceeded": "Das Kostenlimit ist erreicht.",
         "decompose_failed": "Die Aufgabe konnte ich nicht zerlegen.",
         "crash_recovery": "Eine alte Mission wurde aufgeräumt.",
+        "interrupted": "Eine laufende Mission wurde unterbrochen.",  # i18n-allow (DE TTS phrase)
         "empty_diff": "Es wurden keine Dateien geschrieben.",
         "critic_unavailable": "Der Prüfer ist abgestürzt, die Arbeit liegt im Worktree.",
         "worktree_setup_failed": "Ich konnte keinen Arbeitsbereich anlegen.",
@@ -190,9 +190,11 @@ FAILURE_REASON_PHRASES: Final[dict[Lang, dict[str, str]]] = {
         "critic_loop_exhausted": "Three attempts were not enough.",
         "critic_rejected": "The review wasn't satisfied.",
         "task_error": "The worker aborted.",
+        "attempts_timed_out": "The time limit was reached.",
         "budget_exceeded": "The cost limit was reached.",
         "decompose_failed": "I could not break the task down.",
         "crash_recovery": "An old mission was cleaned up.",
+        "interrupted": "A running mission was interrupted; the partial results are available.",
         "empty_diff": "No files were written.",
         "critic_unavailable": (
             "The reviewer crashed; the work is preserved in the worktree."
@@ -257,7 +259,7 @@ class MissionReadback:
         *,
         summary: str = "",
         language: Lang = "de",
-        honesty_check: "CapabilityHonestyCheck | None" = None,
+        honesty_check: CapabilityHonestyCheck | None = None,
     ) -> str:
         """Render a success readback for an approved mission.
 
@@ -291,11 +293,15 @@ class MissionReadback:
 
     def render_failed(self, *, reason: str = "", language: Lang = "de") -> str:
         short_reason = (reason or "").split(":", 1)[0].strip()
-        # crash_recovery is a swept previous mission, not a task failure —
-        # speak the dedicated non-alarming template instead of framing it as
-        # "gescheitert. Grund: crash_recovery" (2026-05-27 finding #7).
+        # crash_recovery and interrupted are swept/interrupted previous-session
+        # missions, not live task failures — speak a dedicated non-alarming phrase
+        # instead of framing them as "gescheitert. Grund: <reason>"
+        # (2026-05-27 finding #7; interrupted added 2026-06-07 for commit 13b86605).
         if short_reason == "crash_recovery":
             return self.render_crash_recovery(language=language)
+        if short_reason == "interrupted":
+            phrase = FAILURE_REASON_PHRASES.get(language, {}).get("interrupted", "")
+            return _truncate(phrase) if phrase else self.render_crash_recovery(language=language)
         template = self._pick("failed", language)
         if not template:
             return ""

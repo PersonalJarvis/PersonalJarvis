@@ -38,11 +38,13 @@ from jarvis.audio.vad import VAD_FRAME_SAMPLES, SileroEndpointer
 from jarvis.audio.vad_reasons import FORCED_CUT_REASONS
 from jarvis.brain.output_filter import scrub_for_voice
 from jarvis.core.events import (
+    ActionPlanned,
     AnnouncementRequested,
     AudioOutFirst,
     BrainTTFT,
     DictationTranscript,
     ListeningStarted,
+    ObservationCaptured,
     OpenClawAnnouncement,
     OpenClawBackgroundCompleted,
     TranscriptFinal,
@@ -786,6 +788,14 @@ class SpeechPipeline:
         )
         self._brain_stall_poll_s = max(0.05, float(brain_stall_poll_s))
         self._brain_last_progress = time.monotonic()
+        # Monotonic stamp of the last *long-running desktop tool* heartbeat
+        # (computer_use loop step → ObservationCaptured/ActionPlanned on the bus
+        # → _on_agent_progress). While these keep arriving the absolute ceiling
+        # is suspended in _run_brain_with_stall_guard, so a legitimately long
+        # multi-step desktop automation is never guillotined mid-work (live bug
+        # 2026-06-07: a 10-step OBS automation was cut off at 30 s). 0.0 = never
+        # seen, so the ceiling applies normally to ordinary chat/vision turns.
+        self._long_tool_last_activity: float = 0.0
         # True once the streaming turn has handed a real sentence to TTS. Read
         # by the stall-fallback guard so a canned timeout phrase is never
         # stacked on top of an answer the user is already hearing (live bug
@@ -971,6 +981,16 @@ class SpeechPipeline:
             # Wave 0 (omni-latency): perceived time-to-first-audio (ack OR
             # brain, whichever speaks first) feeds the per-turn latency tracker.
             self._bus.subscribe(AudioOutFirst, self._on_audio_out_first)
+            # Computer-use liveness: a desktop-automation loop (computer_use)
+            # runs as ONE opaque tool call that streams NO text, so the brain
+            # stall guard cannot tell "stepping through a 20-action plan" from
+            # "provider wedged" by watching text chunks. The loop DOES emit one
+            # ObservationCaptured (observe) + ActionPlanned (act) per step on
+            # the bus; treat each as brain progress so a working desktop task is
+            # never cut off mid-work (live bug 2026-06-07: OBS automation killed
+            # at 30 s). See _on_agent_progress + _run_brain_with_stall_guard.
+            self._bus.subscribe(ObservationCaptured, self._on_agent_progress)
+            self._bus.subscribe(ActionPlanned, self._on_agent_progress)
 
         # Skills-Brain-Integration: Direct-Trigger + Cron. Ohne gesetzten
         # SkillContext bleiben beide Pfade no-op.
@@ -2137,35 +2157,13 @@ class SpeechPipeline:
         # whole process and the wake chime / TTS evaporate (BUG-014 class,
         # 2026-05-25). Runs first so the mic + speaker resolve correctly.
         await self._stabilize_audio_devices()
-        # Load the models OFF the event loop. ``_ensure_model`` is synchronous
-        # and, on a cold first boot, downloads the faster-whisper weights
-        # (~1.4 GB) — running it directly here froze the asyncio loop, so the
-        # FastAPI server stopped answering and the desktop window showed a black
-        # screen until the download finished. ``asyncio.to_thread`` keeps the
-        # server responsive: the window renders immediately while the models
-        # download/load in the background.
-        # Model loads can hit the network on a cold first boot (faster-whisper
-        # ~1.4 GB, openWakeWord weights). A download failure here must NOT kill
-        # the whole speech-pipeline task — degrade the affected capability and
-        # keep the rest of the session alive (text path + TTS still work).
+        # Lightweight path has no local Whisper to pre-load.
         if self._stt is not None:
-            try:
-                await asyncio.to_thread(self._stt._ensure_model)
-            except Exception as exc:  # noqa: BLE001
-                log.error(
-                    "STT model load/download failed — speech-to-text disabled "
-                    "this session: %s", exc, exc_info=True,
-                )
-        await asyncio.to_thread(self._vad._ensure_model)
+            self._stt._ensure_model()
+        self._vad._ensure_model()
         if self._openwakeword_enabled:
-            try:
-                await self._wake.start()
-            except Exception as exc:  # noqa: BLE001
-                log.error(
-                    "Wake-word model start/download failed — wake detection "
-                    "disabled this session: %s", exc, exc_info=True,
-                )
-        await asyncio.to_thread(self._tts._ensure_client)
+            await self._wake.start()
+        self._tts._ensure_client()
         # ACK pre-rendern — bei leerer Phrase skippen (User-Wunsch: keine
         # gesprochene Wake-Reaktion, nur der Chime). Gemini-TTS mit "" wuerde
         # sowieso einen API-Fehler werfen.
@@ -2634,6 +2632,15 @@ class SpeechPipeline:
                                     "🚫 WAKE verworfen — kein 'Hey'-Prefix im "
                                     "Transkript der letzten ~3 s"
                                 )
+                                # Clear the detector's debounce cooldown: this
+                                # candidate was a false positive, so a genuine
+                                # "Hey Jarvis" spoken right after must NOT be
+                                # swallowed for the full cooldown window.
+                                note_rejected = getattr(
+                                    self._wake, "note_rejected_candidate", None
+                                )
+                                if callable(note_rejected):
+                                    note_rejected()
                                 break
                         log.info("🎙 WAKE bestätigt über %s", result)
                         if self._state == PipelineState.IDLE:
@@ -4530,6 +4537,24 @@ class SpeechPipeline:
         """
         self._brain_last_progress = time.monotonic()
 
+    async def _on_agent_progress(
+        self, event: ObservationCaptured | ActionPlanned
+    ) -> None:
+        """Bus handler: a computer_use loop step happened (it captured a
+        screenshot or executed a desktop action). The desktop loop runs as one
+        opaque, text-silent tool call, so without this heartbeat the brain
+        stall guard would (and did, live 2026-06-07) mistake a working 30 s+
+        automation for a wedged provider and speak "Das hat zu lange gedauert".
+
+        Marks brain progress (resets the no-progress stall window) AND records
+        long-tool activity (suspends the absolute ceiling while the loop keeps
+        stepping — see _run_brain_with_stall_guard). Must be ``async``: the bus
+        silently drops a sync handler (live lesson 2026-06-02). The ``event`` is
+        only a liveness signal, so its payload is intentionally unused.
+        """
+        self._mark_brain_progress()
+        self._long_tool_last_activity = time.monotonic()
+
     def _should_speak_stall_fallback(self) -> bool:
         """Whether a stalled streaming turn should speak the canned timeout phrase.
 
@@ -4574,6 +4599,11 @@ class SpeechPipeline:
         stall_s = getattr(self, "_brain_timeout_s", 30.0)
         ceiling_s = getattr(self, "_brain_hard_timeout_s", 90.0)
         self._mark_brain_progress()
+        # Each turn starts with the ceiling fully armed: only a computer_use
+        # step THIS turn (ObservationCaptured/ActionPlanned → _on_agent_progress)
+        # may suspend it — never a stale heartbeat bled over from a previous
+        # desktop turn that finished moments ago.
+        self._long_tool_last_activity = 0.0
         start = time.monotonic()
         task: asyncio.Task[tuple[str, bool]] = asyncio.ensure_future(coro)
         try:
@@ -4583,7 +4613,19 @@ class SpeechPipeline:
                     return task.result()
                 now = time.monotonic()
                 stalled = (now - self._brain_last_progress) >= stall_s
-                ceiling_hit = (now - start) >= ceiling_s
+                # A computer_use loop runs as one opaque tool call that can
+                # legitimately need minutes (open app → search → click → verify,
+                # one screenshot round-trip per step). It reports each step via
+                # ObservationCaptured/ActionPlanned (→ _on_agent_progress), so
+                # while those heartbeats keep arriving the absolute ceiling is
+                # suspended — a long desktop task is "as long as it needs", not
+                # guillotined at 90 s (live bug 2026-06-07). The no-progress
+                # stall above is the real liveness guard: once the loop wedges
+                # and heartbeats stop for `stall_s`, BOTH re-engage and abort.
+                long_tool_active = (
+                    now - getattr(self, "_long_tool_last_activity", 0.0)
+                ) < stall_s
+                ceiling_hit = (not long_tool_active) and (now - start) >= ceiling_s
                 if stalled or ceiling_hit:
                     raise TimeoutError
         finally:

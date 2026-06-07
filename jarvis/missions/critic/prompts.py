@@ -142,6 +142,15 @@ believed the log and approved with confidence=0.9):
   as missing evidence. (Dominant Git/GitHub false-negative:
   "commit and push" / "open PRs" missions failed 3× with critic_loop_exhausted
   because the work left no file diff.)
+- EXCEPTION — verified desktop launch (open app / start process): a
+  `diff --desktop-action-evidence` block (marked `# verified-desktop-launch`) is
+  ALSO ground truth and is NOT an empty diff. An "open Explorer" / "launch
+  Chrome" / "start the calculator" task leaves NO worktree file change — the
+  deliverable is a running process. The `+` lines under the block are the REAL
+  output of a non-errored Bash/shell launch command (or the literal
+  "(command succeeded; no output captured)" for a silent detached spawn). Judge
+  whether the launched command satisfies the user's goal. A diff containing at
+  least one such block is NOT empty — do NOT veto it under the empty-diff rule.
 - A log entry like `toolSummary: write tool was called` is NOT evidence
   that any file was actually created — it is the worker's self-report.
   Evidence strings that only cite `log_line:N` without a corresponding

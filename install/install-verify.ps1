@@ -1,7 +1,7 @@
 # Personal Jarvis — verifying one-liner for Windows (Wave 3 supply-chain).
 #
 # Usage:
-#   irm https://github.com/PersonalJarvis/PersonalJarvis/releases/download/<TAG>/install-verify.ps1 | iex
+#   irm https://github.com/personal-jarvis/personal-jarvis/releases/download/<TAG>/install-verify.ps1 | iex
 #
 # Wave 3 demands 3-of-3 independent trust axes — all must validate or the
 # verifier refuses to hand off to install.ps1:
@@ -50,7 +50,7 @@ $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 # ------------------------------------------------------------------- pins
-$EXPECTED_REPO            = 'PersonalJarvis/PersonalJarvis'
+$EXPECTED_REPO            = 'personal-jarvis/personal-jarvis'
 $EXPECTED_WORKFLOW_PATH   = '.github/workflows/sign-installer.yml'
 $EXPECTED_OIDC_ISSUER     = 'https://token.actions.githubusercontent.com'
 $COSIGN_VERSION           = 'v2.4.1'
@@ -159,7 +159,7 @@ $EXPECTED_SLSA_SOURCE_URI = "github.com/$EXPECTED_REPO"
 # The constant below is the actual source of truth, baked into this signed
 # verifier. Drift means either the layout was modified or the pin is stale -
 # both are fail-closed.
-$EXPECTED_INTOTO_IDENTITY_REGEXP = '^https://github\.com/PersonalJarvis/PersonalJarvis/\.github/workflows/sign-installer\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._-]+)?$'
+$EXPECTED_INTOTO_IDENTITY_REGEXP = '^https://github\.com/personal-jarvis/personal-jarvis/\.github/workflows/sign-installer\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._-]+)?$'
 
 # Filename of the SLSA L3 provenance attestation. The release uploads
 # this file under exactly this name; SA-2 owns the workflow contract.
@@ -200,11 +200,11 @@ function Get-PubkeyFingerprint([string]$PemText) {
 
 $banner = @'
 
- ____                                 _     _                  _
-|  _ \ ___ _ __ ___  ___  _ __   __ _| |   | | __ _ _ ____   _(_)___
-| |_) / _ \ '__/ __|/ _ \| '_ \ / _` | |_  | |/ _` | '__\ \ / / / __|
-|  __/  __/ |  \__ \ (_) | | | | (_| | | |_| | (_| | |   \ V /| \__ \
-|_|   \___|_|  |___/\___/|_| |_|\__,_|_|\___/ \__,_|_|    \_/ |_|___/
+ ____                                  _   _                  _
+|  _ \ ___ _ __ ___  ___  _ __   __ _ | | | | __ _ _ ____   _(_)___
+| |_) / _ \ '__/ __|/ _ \| '_ \ / _` || |_| |/ _` | '__\ \ / / / __|
+|  __/  __/ |  \__ \ (_) | | | | (_| ||  _  | (_| | |   \ V /| \__ \
+|_|   \___|_|  |___/\___/|_| |_|\__,_||_| |_|\__,_|_|    \_/ |_|___/
 
   Verifying installer (Sigstore + offline ceremony + SLSA L3, Wave 3)
 '@

@@ -48,7 +48,6 @@ from ..events import (
     MissionTimedOut,
 )
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -176,17 +175,20 @@ class MissionAnnouncer:
             # knows what to do next.
             reason = (getattr(payload, "reason", "") or "").strip()
             short_reason = reason.split(":", 1)[0].strip()
-            # crash_recovery is boot-time housekeeping, NOT a live failure: on
-            # every startup `startup_recover` sweeps every still-in-flight
-            # mission to FAILED('crash_recovery'). Those missions were
-            # dispatched by voice in a PRIOR session, so the is_voice gate
-            # (keyed on the ORIGINAL MissionDispatched.source_actor) lets them
-            # through — and the announcer would barge in with "Die Mission ist
-            # fehlgeschlagen." at interrupt priority. That is exactly the
-            # user's "random Mission fehlgeschlagen, although I never started
-            # one" complaint (deep-dive 2026-05-29). Suppress it: return empty
-            # text so _dispatch skips publishing an AnnouncementRequested.
-            if short_reason == "crash_recovery":
+            # crash_recovery and interrupted are boot-time housekeeping, NOT
+            # live failures: on every startup `startup_recover` sweeps
+            # still-in-flight missions to FAILED('crash_recovery') or
+            # FAILED('interrupted'). Those missions were dispatched by voice in
+            # a PRIOR session, so the is_voice gate (keyed on the ORIGINAL
+            # MissionDispatched.source_actor) lets them through — and the
+            # announcer would barge in with "Die Mission ist fehlgeschlagen."
+            # at interrupt priority. That is exactly the user's "random Mission
+            # fehlgeschlagen, although I never started one" complaint (deep-dive
+            # 2026-05-29). Suppress both: return empty text so _dispatch skips
+            # publishing an AnnouncementRequested. (interrupted added 2026-06-07
+            # for commit 13b86605 which emits 'interrupted' instead of
+            # 'crash_recovery' for stale missions with partial work.)
+            if short_reason in ("crash_recovery", "interrupted"):
                 return ("", "normal")
             # Reason -> phrase map shared with MissionReadback.render_failed via
             # FAILURE_REASON_PHRASES (single source) so the announcer and the

@@ -104,3 +104,24 @@ def test_body_hash_stable(skill_dir: Path):
     a = parse_skill(skill_dir / "good" / "SKILL.md")
     b = parse_skill(skill_dir / "good" / "SKILL.md")
     assert a.body_hash == b.body_hash
+
+
+def test_parse_skill_with_utf8_bom(tmp_path: Path):
+    """A UTF-8 BOM before the frontmatter must not break parsing.
+
+    Regression: a builtin (jarvis-doc-author/SKILL.md) shipped with a BOM,
+    which made the loader miss the ``---`` delimiter and drop the skill to
+    DRAFT with a 'name required' error (loaded under the fallback name
+    'SKILL'). Reading with ``utf-8-sig`` strips the BOM transparently.
+    """
+    d = tmp_path / "bom_skill"
+    d.mkdir()
+    # utf-8-sig prepends the BOM bytes (ef bb bf) before the content.
+    (d / "SKILL.md").write_text(VALID_SKILL_MD, encoding="utf-8-sig")
+
+    sk = parse_skill(d / "SKILL.md")
+
+    assert sk.error is None
+    assert sk.frontmatter is not None
+    assert sk.frontmatter.name == "test_skill"
+    assert sk.state == SkillLifecycleState.VALIDATED

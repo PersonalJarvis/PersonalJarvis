@@ -58,6 +58,7 @@ from ..worker_runtime.workspace import materialize_worker_contract
 from ..manager import MissionManager
 from ..stream_evidence import (
     extract_verified_commands,
+    extract_verified_desktop_actions,
     extract_write_targets,
     readonly_answer,
     summarize_answers,
@@ -81,6 +82,19 @@ logger = logging.getLogger(__name__)
 
 MAX_WORKERS_PER_MISSION: Final[int] = 5
 """ADR-0009 + jarvis.toml [phase6.orchestrator]: max_workers_per_mission."""
+
+_HEARTBEAT_INTERVAL_S: float = 20.0
+"""How often (seconds) the orchestrator writes a liveness heartbeat to the
+mission header while a worker is draining. Recovery uses
+max(last_event_ts, last_heartbeat_ms) as freshness so a busy-but-silent
+worker (Opus, long tool calls, Computer-Use) is never swept as orphaned."""
+
+# Mission-level wall-clock safety net. Bounds TOTAL execution time across all
+# critic iterations + the critic subprocess + decomposition — the per-iteration
+# 630s worker cap does not. Deliberately GENEROUS (worst legitimate mission seen
+# ~18 min): this catches a genuine runaway/hang, never slow-but-working code.
+# Measured AFTER the concurrency semaphore is acquired (queue wait is excluded).
+_MISSION_DEADLINE_S: float = 2400.0  # 40 minutes
 
 
 # BUG-LIVE-05 (Recon-Agent 2, 2026-05-16): when persona files (AGENTS.md
@@ -276,6 +290,40 @@ def _format_command_evidence_block(commands: list[tuple[str, str]]) -> str:
     return header + "\n".join(lines) + "\n"
 
 
+def _format_desktop_action_evidence_block(actions: list[tuple[str, str]]) -> str:
+    """Render verified desktop-launch commands as a Critic diff block.
+
+    Like :func:`_format_command_evidence_block`, the block is deliberately NOT
+    a ``diff --git`` hunk (so the artifact archive's new-file regex ignores it)
+    yet IS meaningful to :func:`_real_diff_is_empty`. Each command's real
+    subprocess output (or the sentinel string for a silent detached spawn) is
+    ``+``-prefixed so any embedded ``diff --git`` text cannot be mis-parsed.
+    """
+    header = (
+        "diff --desktop-action-evidence b/<desktop-launch-operations>\n"
+        "# verified-desktop-launch\n"
+        "# ground-truth: the following desktop/process-launch commands ran "
+        "with a NON-ERRORED result this iteration. A task like 'open Explorer' "
+        "/ 'launch Chrome' / 'start the calculator' leaves NO worktree file "
+        "change — the deliverable is a running process, not a file. The output "
+        "below was captured from a real, non-errored Bash/shell tool_use; "
+        "'(command succeeded; no output captured)' means the spawn was silent "
+        "(detached process) — treat that as a successful launch, not as missing "
+        "evidence. Do NOT veto this diff under the empty-diff rule.\n"
+    )
+    lines: list[str] = []
+    for command, output in actions:
+        lines.append(f"$ {command}")
+        excerpt = (output or "").strip()
+        if len(excerpt) > _COMMAND_EVIDENCE_MAX_CHARS:
+            excerpt = excerpt[: _COMMAND_EVIDENCE_MAX_CHARS - 1].rstrip() + "…"
+        if excerpt:
+            lines.extend("+" + ln for ln in excerpt.splitlines())
+        else:
+            lines.append("+ (command succeeded; no output captured)")
+    return header + "\n".join(lines) + "\n"
+
+
 def _strip_managed_persona_hunks(diff_text: str) -> str:
     """Return ``diff_text`` with managed worker-contract hunks removed.
 
@@ -439,6 +487,17 @@ class TaskOutcome:
     # `worktree_setup_failed` ("Konnte keinen Arbeitsbereich anlegen.") so the
     # user hears an actionable cause instead of "Der Worker ist abgebrochen."
     SETUP_FAILED = "setup_failed"
+    # Live deep-dive 2026-06-07 (mission 019ea1da): a Computer-Use mission whose
+    # final iteration hit the 630s wall-clock cap returned the generic ERROR,
+    # which aggregated to `task_error` -- i.e. the "worker aborted" voice phrase.
+    # The user heard a worker-abort phrase for what was really a TIMEOUT, on a
+    # mission they never consciously spawned. This distinct outcome lets the
+    # failure-reason mapper surface `attempts_timed_out` (the "time limit
+    # exceeded" phrase) so a run that ran out of time is honestly labelled a
+    # timeout, not an abort. A non-timeout worker error (auth/billing/crash)
+    # stays the generic ERROR -> task_error. (Voice strings live in
+    # readback.FAILURE_REASON_PHRASES; see the deep-dive README.)
+    TIMED_OUT = "timed_out"
 
 
 class Kontrollierer:
@@ -476,6 +535,11 @@ class Kontrollierer:
         # a personal assistant, correctness is not). Override per deployment via
         # [phase6.orchestrator].max_concurrent_missions.
         max_concurrent_missions: int = 1,
+        # Mission-level wall-clock deadline (Task 2.2). Measured AFTER the
+        # concurrency semaphore is acquired so queued missions are not
+        # penalised for waiting. Deliberately GENEROUS — the worst legitimate
+        # mission observed was ~18 min. Injected by tests via a tiny value.
+        mission_deadline_s: float = _MISSION_DEADLINE_S,
         # Phase-5 safety hooks (all optional — None = no-op):
         safety_enabled: bool = True,
         extra_blocked_globs: tuple[str, ...] = (),
@@ -492,6 +556,7 @@ class Kontrollierer:
         self._max_workers = max(1, min(max_workers, MAX_WORKERS_PER_MISSION))
         # Global cap on concurrent heavy (claude worker+critic) mission phases.
         self._mission_sem = asyncio.Semaphore(max(1, max_concurrent_missions))
+        self._mission_deadline_s = mission_deadline_s
         self._state_locks: dict[str, asyncio.Lock] = {}
         self._safety_enabled = safety_enabled
         self._extra_blocked_globs = tuple(extra_blocked_globs)
@@ -579,11 +644,37 @@ class Kontrollierer:
         # Claude Max OAuth and crash the critics (critic_unavailable). The
         # within-mission `sem` above still bounds per-step parallelism.
         async with self._mission_sem:
-            async with asyncio.TaskGroup() as tg:
-                for step in plan.steps:
-                    tg.create_task(_run(step), name=f"task-{step.task_id[:13]}")
+            try:
+                async with asyncio.timeout(self._mission_deadline_s):
+                    async with asyncio.TaskGroup() as tg:
+                        for step in plan.steps:
+                            tg.create_task(_run(step), name=f"task-{step.task_id[:13]}")
+            except TimeoutError:
+                # The mission ran past its wall-clock deadline. TaskGroup
+                # cancellation has already propagated to the worker(s) — their
+                # Job Objects close on context exit and kill the subprocesses.
+                # Fail HONESTLY as a timeout (not the generic "worker aborted").
+                logger.warning(
+                    "run_mission: mission %s exceeded the %.0fs wall-clock "
+                    "deadline — failing as attempts_timed_out",
+                    mission_id, self._mission_deadline_s,
+                )
+                partial = self._collect_partial_artifacts(mission_id, plan)
+                await self._fail_mission(
+                    mission_id, "attempts_timed_out", partial_artifacts=partial
+                )
+                return MissionState.FAILED
 
         # Aggregate
+        # A plan that produced no task outcomes at all must never be approved
+        # (all(...) over an empty list is vacuously True). Treat zero work as a
+        # task error, not a silent success.
+        if not task_outcomes:
+            logger.warning(
+                "run_mission: %s produced no task outcomes — failing", mission_id
+            )
+            await self._fail_mission(mission_id, "task_error")
+            return MissionState.FAILED
         if all(o == TaskOutcome.APPROVED for o in task_outcomes):
             await self._approve_mission(mission_id, plan)
             return MissionState.APPROVED
@@ -620,6 +711,21 @@ class Kontrollierer:
             # actionable cause instead of the generic "worker aborted" (#8).
             await self._fail_mission(
                 mission_id, "worktree_setup_failed", partial_artifacts=partial
+            )
+        elif TaskOutcome.TIMED_OUT in task_outcomes:
+            # Final-attempt wall-clock timeout — honest "timeout" reason instead
+            # of the generic "worker aborted" (deep-dive 2026-06-07,
+            # mission 019ea1da). The WorkerKilled event already carries
+            # reason="timeout"; surface the same truth at the mission level so
+            # the voice layer never speaks the "worker aborted" phrase for a run
+            # that simply ran out of time.
+            # Ranked BELOW BUDGET/CRITIC_UNAVAILABLE/REJECTED/EXHAUSTED on
+            # purpose: in a multi-step mission, a reviewer-failed or budget-
+            # capped step is a more specific, more actionable diagnosis than a
+            # wall-clock cap on a different step. TIMED_OUT only wins over the
+            # generic task_error fallback.
+            await self._fail_mission(
+                mission_id, "attempts_timed_out", partial_artifacts=partial
             )
         else:
             await self._fail_mission(
@@ -832,6 +938,15 @@ class Kontrollierer:
             diff_text = self._augment_diff_with_command_evidence(
                 diff_text, log_text
             )
+            # Desktop/process-launch work (open Explorer, launch Chrome, etc.)
+            # also produces NO worktree diff — the deliverable is a running
+            # process. Credit verified launch commands so a diff-less
+            # "open Explorer" / "start Calculator" task can be approved instead
+            # of failing 3× with critic_loop_exhausted. Mirrors the git/gh
+            # command-evidence path above.
+            diff_text = self._augment_diff_with_desktop_action_evidence(
+                diff_text, log_text
+            )
             # Record this iteration's diff verbatim. Later iterations may
             # overwrite the worktree with a no-op Edit (live repro
             # mission_019e3288: iter0=1237B real diff, iter1+iter2=0B), so
@@ -921,6 +1036,15 @@ class Kontrollierer:
                         worker_id=spawn_result.worker_id,
                         reason=kill_reason,
                     )
+                    # A worker that ran out of time (wall-clock cap) on its
+                    # final attempt is a TIMEOUT, not a crash. Surface the
+                    # honest `attempts_timed_out` reason (deep-dive 2026-06-07,
+                    # mission 019ea1da) so the voice layer speaks the "time limit
+                    # exceeded" phrase instead of the alarming "worker aborted"
+                    # phrase that a real crash produces. Any other worker error
+                    # (auth/billing/non-timeout crash) stays ERROR.
+                    if is_timeout:
+                        return TaskOutcome.TIMED_OUT
                     return TaskOutcome.ERROR
 
             # WorkerDraftReady event — BudgetTracker.bind_to_event_bus
@@ -1155,74 +1279,99 @@ class Kontrollierer:
         worker_error: str | None = None
 
         async with job:
-            kwargs: dict[str, Any] = {
-                "model": step.model,
-                "allowed_tools": step.allowed_tools,
-            }
-            if resume_session_id:
-                kwargs["resume_session_id"] = resume_session_id
+            hb_stop = asyncio.Event()
 
-            async for ev in worker.spawn(
-                worker_prompt,
-                worktree=worktree,
-                env=self._env_builder(mission_dir),
-                job=job,
-                worker_id=worker_id,
-                log_dir=log_dir,
-                **kwargs,
-            ):
-                # Publish WorkerSpawned on the first event
-                if not spawned_emitted:
-                    pid = getattr(worker, "last_pid", 0) or 0
-                    sid = getattr(ev, "session_id", None) or session_id
-                    await self._publish_worker_spawned(
-                        mission_id=mission_id,
-                        worker_id=worker_id,
-                        pid=int(pid) if pid else 0,
-                        cli=worker.cli,
-                        model=step.model,
-                        worktree=str(worktree),
-                        session_id=sid,
-                        step=step,
+            async def _heartbeat() -> None:
+                """Write a liveness heartbeat every _HEARTBEAT_INTERVAL_S seconds.
+
+                Runs concurrently with the worker drain. Any exception is
+                swallowed so a transient DB hiccup never kills the worker path.
+                """
+                while not hb_stop.is_set():
+                    try:
+                        await self._manager.store.touch_heartbeat(mission_id, now_ms())
+                    except Exception as hb_exc:  # noqa: BLE001 - heartbeat must never kill the worker
+                        logger.debug("Heartbeat write failed (non-fatal): %s", hb_exc)
+                    try:
+                        await asyncio.wait_for(
+                            hb_stop.wait(), timeout=_HEARTBEAT_INTERVAL_S
+                        )
+                    except TimeoutError:
+                        pass
+
+            hb_task = asyncio.create_task(_heartbeat())
+            try:
+                kwargs: dict[str, Any] = {
+                    "model": step.model,
+                    "allowed_tools": step.allowed_tools,
+                }
+                if resume_session_id:
+                    kwargs["resume_session_id"] = resume_session_id
+
+                async for ev in worker.spawn(
+                    worker_prompt,
+                    worktree=worktree,
+                    env=self._env_builder(mission_dir),
+                    job=job,
+                    worker_id=worker_id,
+                    log_dir=log_dir,
+                    **kwargs,
+                ):
+                    # Publish WorkerSpawned on the first event
+                    if not spawned_emitted:
+                        pid = getattr(worker, "last_pid", 0) or 0
+                        sid = getattr(ev, "session_id", None) or session_id
+                        await self._publish_worker_spawned(
+                            mission_id=mission_id,
+                            worker_id=worker_id,
+                            pid=int(pid) if pid else 0,
+                            cli=worker.cli,
+                            model=step.model,
+                            worktree=str(worktree),
+                            session_id=sid,
+                            step=step,
+                        )
+                        spawned_emitted = True
+
+                    # Capture session ID from the init event
+                    ev_session_id = getattr(ev, "session_id", None)
+                    if ev_session_id and not session_id:
+                        session_id = ev_session_id
+
+                    # Cost+Tokens aus result-Event aggregieren.
+                    ev_cost = getattr(ev, "cost_usd", None)
+                    if ev_cost is not None:
+                        cost = float(ev_cost)
+                    # Claude stream-json result events carry num_turns (not the
+                    # older total_tokens used by some Codex flows). Read whichever
+                    # is present so the field doesn't silently stay at 0 and
+                    # mislead the budget tracker / Sub-Agents UI.
+                    ev_tokens = (
+                        getattr(ev, "tokens_used", None)
+                        or getattr(ev, "total_tokens", None)
+                        or getattr(ev, "num_turns", None)
                     )
-                    spawned_emitted = True
-
-                # Capture session ID from the init event
-                ev_session_id = getattr(ev, "session_id", None)
-                if ev_session_id and not session_id:
-                    session_id = ev_session_id
-
-                # Cost+Tokens aus result-Event aggregieren.
-                ev_cost = getattr(ev, "cost_usd", None)
-                if ev_cost is not None:
-                    cost = float(ev_cost)
-                # Claude stream-json result events carry num_turns (not the
-                # older total_tokens used by some Codex flows). Read whichever
-                # is present so the field doesn't silently stay at 0 and
-                # mislead the budget tracker / Sub-Agents UI.
-                ev_tokens = (
-                    getattr(ev, "tokens_used", None)
-                    or getattr(ev, "total_tokens", None)
-                    or getattr(ev, "num_turns", None)
-                )
-                if ev_tokens is not None:
-                    tokens = int(ev_tokens)
-                # Fail-fast signal: claude emits a terminal result with
-                # is_error=True for billing errors ("Credit balance is too
-                # low"), authentication failures ("Not logged in"), and
-                # error_max_turns. Without this hook the loop above keeps
-                # retrying for MAX_CRITIC_LOOPS (3) iterations, each one
-                # roundtripping the Critic and burning credits + minutes,
-                # before failing with the misleading reason
-                # "critic_loop_exhausted". Capture the real cause once so
-                # the caller can short-circuit.
-                if getattr(ev, "is_error", False):
-                    upstream = (
-                        getattr(ev, "result", None)
-                        or getattr(ev, "subtype", None)
-                        or "worker reported is_error=True"
-                    )
-                    worker_error = str(upstream)[:300]
+                    if ev_tokens is not None:
+                        tokens = int(ev_tokens)
+                    # Fail-fast signal: claude emits a terminal result with
+                    # is_error=True for billing errors ("Credit balance is too
+                    # low"), authentication failures ("Not logged in"), and
+                    # error_max_turns. Without this hook the loop above keeps
+                    # retrying for MAX_CRITIC_LOOPS (3) iterations, each one
+                    # roundtripping the Critic and burning credits + minutes,
+                    # before failing with the misleading reason
+                    # "critic_loop_exhausted". Capture the real cause once so
+                    # the caller can short-circuit.
+                    if getattr(ev, "is_error", False):
+                        upstream = (
+                            getattr(ev, "result", None)
+                            or getattr(ev, "subtype", None)
+                            or "worker reported is_error=True"
+                        )
+                        worker_error = str(upstream)[:300]
+            finally:
+                hb_stop.set()
+                await hb_task
 
         return Kontrollierer._SpawnResult(
             worker_id=worker_id,
@@ -1532,6 +1681,47 @@ class Kontrollierer:
         logger.info(
             "command-evidence: credited %d verified git/GitHub command(s): %s",
             len(commands), [c[0][:60] for c in commands],
+        )
+        if diff_text and diff_text.strip():
+            return diff_text.rstrip("\n") + "\n" + block
+        return block
+
+    def _augment_diff_with_desktop_action_evidence(
+        self, diff_text: str, stream_text: str
+    ) -> str:
+        """Append verified desktop/process-launch commands to the captured diff.
+
+        ``_capture_diff`` is worktree-scoped and a desktop-launch task
+        ("open Explorer", "launch Chrome", "start the calculator") produces NO
+        worktree file change — the deliverable is a running process. The
+        Critic's GROUND-TRUTH-RULE then fails the empty diff 3×
+        → ``critic_loop_exhausted`` even though the launch succeeded (a
+        false-negative for app-open missions). This helper mirrors
+        :meth:`_augment_diff_with_command_evidence` for the desktop-launch
+        case: for every recognised launch command the worker ran with a real,
+        NON-ERRORED result (parsed by :func:`extract_verified_desktop_actions`),
+        it appends a ``diff --desktop-action-evidence`` block carrying the
+        command + its real subprocess output (or the silent-spawn sentinel).
+
+        Anti-hallucination is preserved: read-only commands never match, and a
+        command with no correlated/errored result is never credited — so a bare
+        "I opened Explorer" claim still falls through to the empty-diff veto.
+        The Critic remains the final judge of whether the launch satisfied the
+        goal.
+
+        Best-effort: never raises.
+        """
+        try:
+            actions = extract_verified_desktop_actions(stream_text)
+        except Exception as exc:  # noqa: BLE001 — evidence parse must not crash the loop
+            logger.warning("desktop-action-evidence parse failed: %s", exc)
+            return diff_text
+        if not actions:
+            return diff_text
+        block = _format_desktop_action_evidence_block(list(actions))
+        logger.info(
+            "desktop-action-evidence: credited %d verified launch command(s): %s",
+            len(actions), [a[0][:60] for a in actions],
         )
         if diff_text and diff_text.strip():
             return diff_text.rstrip("\n") + "\n" + block

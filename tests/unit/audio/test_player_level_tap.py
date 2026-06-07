@@ -20,6 +20,14 @@ class _DummyLock:
         return False
 
 
+class _FakeStream:
+    """Stand-in for sd.OutputStream: write() accepts the samples and reports no
+    underflow, so the REAL _write_samples runs and feeds the per-sub-block RMS."""
+
+    def write(self, _arr):
+        return False
+
+
 def _make_player():
     from jarvis.audio import player as P
 
@@ -30,8 +38,10 @@ def _make_player():
     pl._active_device_rate = None
     pl._log_device_once = lambda: None
     pl._get_play_lock = lambda: _DummyLock()
-    pl._open_output_stream = lambda rate: (object(), rate)
-    pl._write_samples = lambda *a, **k: None
+    pl._open_output_stream = lambda rate: (_FakeStream(), rate)
+    # _write_samples is NOT stubbed: it runs for real (numpy + the fake
+    # stream.write) and feeds the per-sub-block RMS to level_tap, which is the
+    # behaviour under test.
     return pl
 
 

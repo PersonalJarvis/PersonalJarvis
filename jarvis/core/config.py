@@ -57,6 +57,11 @@ KEYRING_SERVICE = "personal-jarvis"
 PROVIDER_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
     "claude-api": (("anthropic_api_key", "ANTHROPIC_API_KEY"),),
     "openai": (("openai_api_key", "OPENAI_API_KEY"),),
+    # Codex-as-brain uses its own key slot, falling back to the general OpenAI key.
+    "codex": (
+        ("codex_openai_api_key", "OPENAI_API_KEY"),
+        ("openai_api_key", "OPENAI_API_KEY"),
+    ),
     "openrouter": (("openrouter_api_key", "OPENROUTER_API_KEY"),),
     "gemini": (
         ("gemini_api_key", "GEMINI_API_KEY"),
@@ -855,12 +860,11 @@ class DuckingConfig(BaseModel):
 class AutostartConfig(BaseModel):
     """Cross-platform login autostart (the 7th cross-platform port).
 
-    ``enabled`` defaults to True (full-desktop-app standard): an installed app
-    should still be there after a reboot, like any normal desktop program. The
-    first boot after install registers the entry via ``reconcile_autostart``; the
-    Settings toggle, or an explicit ``[autostart] enabled = false`` in jarvis.toml,
-    is the off-switch. On a headless host (no display) the autostart manager is a
-    graceful no-op anyway, so defaulting True is safe there.
+    ``enabled`` defaults to False (cloud-first / least-surprise): a fresh install
+    must not register login autostart without the user opting in — via the setup
+    wizard, the Settings toggle, or an explicit ``[autostart] enabled = true`` in
+    jarvis.toml. On a headless host (no display) the autostart manager is a
+    graceful no-op anyway.
 
     ``extra="allow"`` so a future ``[autostart.*]`` sub-key — or a self-mod /
     drift-guard write of an as-yet-unknown field — never trips pre-validate
@@ -868,11 +872,7 @@ class AutostartConfig(BaseModel):
     """
 
     model_config = ConfigDict(extra="allow")
-    # Default True (full-desktop-app standard, 2026-06-02 re-scope): an installed
-    # app should still be there after a reboot, like any normal desktop program.
-    # The first boot registers it via reconcile_autostart; the Settings toggle (or
-    # [autostart] enabled = false) turns it off. Headless host = graceful no-op.
-    enabled: bool = True
+    enabled: bool = False
     # Windows shortcut WindowStyle hint (7 = minimized/tray-friendly); other OSes
     # ignore it.
     start_minimized: bool = True
@@ -1449,6 +1449,17 @@ class PointerConfig(BaseModel):
     crop_radius: int = 110
 
 
+class CodexConfig(BaseModel):
+    """``[codex]`` — OpenAI Codex CLI integration.
+
+    ``binary_path`` overrides the on-PATH ``codex`` resolution (Windows installs
+    sometimes expose only ``codex.cmd`` in a non-PATH location). Empty = use the
+    standard PATH lookup. Read by :class:`jarvis.codex_auth.CodexAuthService` and
+    the provider routes; written via ``config_writer.set_codex_binary_path``.
+    """
+    binary_path: str = ""
+
+
 class JarvisConfig(BaseModel):
     """Root config model."""
     profile: ProfileConfig = Field(default_factory=ProfileConfig)
@@ -1515,6 +1526,8 @@ class JarvisConfig(BaseModel):
     # AI Pointer — deictic-gated "what is under the mouse cursor" context.
     # Spec: docs/plans/ai-pointer/DESIGN.md
     pointer: PointerConfig = Field(default_factory=PointerConfig)
+    # [codex] — OpenAI Codex CLI integration (binary path override).
+    codex: CodexConfig = Field(default_factory=CodexConfig)
 
 
 # ----------------------------------------------------------------------

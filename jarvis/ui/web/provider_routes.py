@@ -24,6 +24,10 @@ from pydantic import BaseModel, Field
 from jarvis.codex_auth import CodexAuthService
 from jarvis.core import config as cfg_mod
 from jarvis.core.events import SecretConfigured
+from jarvis.missions.worker_runtime.provider_map import (
+    CODEX_SUBAGENT_CANONICAL as _CODEX_SUBAGENT_CANONICAL,
+    CODEX_SUBAGENT_SLUGS as _CODEX_SUBAGENT_SLUGS,
+)
 from jarvis.setup.wizard import SECRETS as WIZARD_SECRETS
 
 from .provider_spec import PROVIDERS, ProviderSpec, get_spec
@@ -40,6 +44,10 @@ ALLOWED_SECRET_KEYS: frozenset[str] = frozenset(s.key for s in WIZARD_SECRETS)
 # Lokale Provider, die im Privacy-Mode erlaubt bleiben.
 # Ollama wurde 2026-04-21 entfernt — nur STT (faster-whisper) ist aktuell lokal.
 LOCAL_PROVIDERS: frozenset[str] = frozenset({"faster-whisper"})
+
+# Codex subagent slugs (_CODEX_SUBAGENT_SLUGS / _CODEX_SUBAGENT_CANONICAL) are
+# imported from jarvis.missions.worker_runtime.provider_map — the single source
+# of truth shared with app_control + the worker selector (BUG-008 anti-drift).
 
 # The provider catalog stays here; the credential-presence heuristic + secret-slot
 # alias map live in jarvis.brain.app_control (single source of truth). They are
@@ -195,6 +203,27 @@ def _codex_binary_path(request: Request | None = None) -> str | None:
     return getattr(getattr(cfg, "codex", None), "binary_path", "") or None
 
 
+def _apply_sub_jarvis_in_memory(request: Request, provider: str) -> None:
+    """Best-effort in-memory update of ``cfg.brain.sub_jarvis.provider``.
+
+    So the next ``/openclaw/status`` reflects the choice immediately (the worker
+    itself only re-reads at restart). Frozen / detached cfg is not an error.
+    """
+    cfg = _resolve_cfg(request)
+    if cfg is None or getattr(cfg, "brain", None) is None:
+        return
+    sub = getattr(cfg.brain, "sub_jarvis", None)
+    try:
+        if sub is None:
+            from jarvis.core.config import BrainTierConfig
+
+            cfg.brain.sub_jarvis = BrainTierConfig(provider=provider)
+        else:
+            sub.provider = provider
+    except Exception as exc:  # noqa: BLE001 — frozen models / detached cfg are not errors
+        log.debug("In-memory sub_jarvis.provider update skipped: %s", exc)
+
+
 async def _emit(request: Request, event: Any) -> None:
     bus = getattr(request.app.state, "bus", None) or _bus_from_brain(request)
     if bus is None:
@@ -344,7 +373,7 @@ async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             available = list(brain.available_providers())
         except Exception:  # noqa: BLE001
             available = []
-    if available and body.provider not in available and body.provider != "codex":
+    if available and body.provider not in available:
         raise HTTPException(
             status_code=404,
             detail=f"Provider '{body.provider}' ist nicht im Plugin-Registry verfügbar",
@@ -357,7 +386,23 @@ async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     # Reihenfolge: 404 (Provider unbekannt/nicht im Registry) kommt VOR
     # 409 (Provider bekannt, aber Credentials fehlen) — Identifiability vor
     # Konfiguration.
-    if not _is_credential_present(spec, _codex_binary_path(request) if spec.id == "codex" else None):
+    #
+    # Codex-as-BRAIN is special: a chat-completions brain needs an OpenAI API
+    # key. The ChatGPT subscription (OAuth) cannot back a chat endpoint — it
+    # only powers the Codex *subagent*. So we require the key explicitly here,
+    # rather than the shared key-OR-OAuth presence check, to avoid a switch that
+    # "succeeds" on OAuth and then fails on the first turn.
+    if spec.id == "codex":
+        if not cfg_mod.get_provider_secret("codex"):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Codex as a brain provider needs an OpenAI API key "
+                    "(codex_openai_api_key). The ChatGPT subscription only powers "
+                    "the Codex subagent — save an API key to use Codex as a brain."
+                ),
+            )
+    elif not _is_credential_present(spec):
         raise HTTPException(
             status_code=409,
             detail=(
@@ -602,6 +647,46 @@ async def subagent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     # Normalize (lower/strip + ``openclaw-claude`` -> ``claude-api``) so the
     # accepted set matches what the UI cards display.
     provider = canonical_subagent_provider(body.provider) or ""
+
+    # Codex is a DIRECT worker (CodexDirectWorker) with no OpenClaw slug — it is
+    # not in JARVIS_TO_OPENCLAW. Handle it explicitly: it can be backed by the
+    # ChatGPT subscription (OAuth, ``codex login``) OR an OpenAI API key.
+    if provider in _CODEX_SUBAGENT_SLUGS:
+        codex_connected = CodexAuthService(_codex_binary_path(request)).status().connected
+        has_key = bool(
+            cfg_mod.get_secret("codex_openai_api_key")
+            or cfg_mod.get_provider_secret("codex")
+        )
+        if not (codex_connected or has_key):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Codex is not connected — run 'codex login' (ChatGPT) or save "
+                    "an OpenAI API key first, then activate."
+                ),
+            )
+        persisted = False
+        if body.persist:
+            try:
+                from jarvis.core.config_writer import set_sub_jarvis_provider
+
+                set_sub_jarvis_provider(_CODEX_SUBAGENT_CANONICAL)
+                persisted = True
+            except FileNotFoundError as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(
+                    status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                ) from exc
+        _apply_sub_jarvis_in_memory(request, _CODEX_SUBAGENT_CANONICAL)
+        await _emit(request, SecretConfigured(key="brain.sub_jarvis.provider", action="set"))
+        return {
+            "ok": True,
+            "active": _CODEX_SUBAGENT_CANONICAL,
+            "persisted": persisted,
+            "restart_required": True,
+        }
+
     if provider not in JARVIS_TO_OPENCLAW:
         known = ", ".join(sorted(JARVIS_TO_OPENCLAW))
         raise HTTPException(
@@ -641,18 +726,7 @@ async def subagent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
 
     # Best-effort in-memory update so the next /openclaw/status reflects the
     # choice immediately (the worker itself only re-reads on restart).
-    cfg = _resolve_cfg(request)
-    if cfg is not None and getattr(cfg, "brain", None) is not None:
-        sub = getattr(cfg.brain, "sub_jarvis", None)
-        try:
-            if sub is None:
-                from jarvis.core.config import BrainTierConfig
-
-                cfg.brain.sub_jarvis = BrainTierConfig(provider=provider)
-            else:
-                sub.provider = provider
-        except Exception as exc:  # noqa: BLE001 — frozen models / detached cfg are not errors
-            log.debug("In-memory sub_jarvis.provider update skipped: %s", exc)
+    _apply_sub_jarvis_in_memory(request, provider)
 
     await _emit(request, SecretConfigured(key="brain.sub_jarvis.provider", action="set"))
 

@@ -10,7 +10,7 @@ gaps.
 **Run date:** 2026-05-27
 **Tag exercised:** `v0.4.0-supplychain-wave3`
 **Commit:** `73bb7b50fb56ec5354fdb48a53cccb5a9018791e`
-**Repo:** `github.com/PersonalJarvis/PersonalJarvis`
+**Repo:** `github.com/personal-jarvis/personal-jarvis`
 **Operator:** SA-5 integrator, Wave 3 integration
 
 ---
@@ -35,7 +35,7 @@ docker run --rm ubuntu:24.04 bash -c '
        -o /usr/local/bin/slsa-verifier
   chmod +x /usr/local/bin/slsa-verifier
   TAG=v0.4.0-supplychain-wave3
-  REL=https://github.com/PersonalJarvis/PersonalJarvis/releases/download/$TAG
+  REL=https://github.com/personal-jarvis/personal-jarvis/releases/download/$TAG
   mkdir /tmp/v && cd /tmp/v
   for a in install.sh install.ps1 installer.py install-verify.sh install-verify.ps1 \
            personal-jarvis.intoto.jsonl ; do
@@ -43,7 +43,7 @@ docker run --rm ubuntu:24.04 bash -c '
   done
   slsa-verifier verify-artifact \
     --provenance-path ./personal-jarvis.intoto.jsonl \
-    --source-uri github.com/PersonalJarvis/PersonalJarvis \
+    --source-uri github.com/personal-jarvis/personal-jarvis \
     --source-tag v0.4.0-supplychain-wave3 \
     install.sh install.ps1 installer.py install-verify.sh install-verify.ps1
 '
@@ -134,7 +134,7 @@ provenance. Wave 2 had signatures only; Wave 3 adds provenance.
 
 ```bash
 docker run --rm -e GITHUB_AUTH_TOKEN="$GITHUB_TOKEN" gcr.io/openssf/scorecard:stable \
-  --repo=github.com/PersonalJarvis/PersonalJarvis \
+  --repo=github.com/personal-jarvis/personal-jarvis \
   --checks=Signed-Releases \
   --show-details
 ```
@@ -150,17 +150,17 @@ Aggregate score: 8.0 / 10
 |        |                 | artifacts.                     |
 | ...
 Info: signed release artifact: install-verify.ps1.cosign.sig:
-   https://github.com/PersonalJarvis/PersonalJarvis/releases/tag/v0.4.0-supplychain-wave3
+   https://github.com/personal-jarvis/personal-jarvis/releases/tag/v0.4.0-supplychain-wave3
 Info: signed release artifact: install-verify.ps1.cosign.sig:
-   https://github.com/PersonalJarvis/PersonalJarvis/releases/tag/v0.3.0-supplychain-wave2
+   https://github.com/personal-jarvis/personal-jarvis/releases/tag/v0.3.0-supplychain-wave2
 Info: signed release artifact: install-verify.ps1.sig:
-   https://github.com/PersonalJarvis/PersonalJarvis/releases/tag/v0.2.0-supplychain-wave1
+   https://github.com/personal-jarvis/personal-jarvis/releases/tag/v0.2.0-supplychain-wave1
 Info: provenance for release artifact: personal-jarvis.intoto.jsonl:
-   https://github.com/PersonalJarvis/PersonalJarvis/releases/tag/v0.4.0-supplychain-wave3
+   https://github.com/personal-jarvis/personal-jarvis/releases/tag/v0.4.0-supplychain-wave3
 Warn: release artifact v0.3.0-supplychain-wave2 does not have provenance:
-   https://api.github.com/repos/PersonalJarvis/PersonalJarvis/releases/329969659
+   https://api.github.com/repos/personal-jarvis/personal-jarvis/releases/329969659
 Warn: release artifact v0.2.0-supplychain-wave1 does not have provenance:
-   https://api.github.com/repos/PersonalJarvis/PersonalJarvis/releases/329675930
+   https://api.github.com/repos/personal-jarvis/personal-jarvis/releases/329675930
 ```
 
 ### Interpretation
@@ -200,7 +200,7 @@ hands off to install.sh if all 3 axes pass.
 docker run --rm ubuntu:24.04 bash -c '
   apt-get update -qq && apt-get install -y -qq \
     git curl ca-certificates openssl jq python3 >/dev/null
-  curl -fsSL https://github.com/PersonalJarvis/PersonalJarvis/releases/download/v0.4.0-supplychain-wave3/install-verify.sh \
+  curl -fsSL https://github.com/personal-jarvis/personal-jarvis/releases/download/v0.4.0-supplychain-wave3/install-verify.sh \
     -o /tmp/iv.sh
   bash /tmp/iv.sh --dry-run --no-wizard --no-launch
 '
@@ -220,7 +220,7 @@ docker run --rm ubuntu:24.04 bash -c '
       offline-ceremony pubkey fingerprint OK (40cdb1b9e255e797909fba4fb5983450ccf7fa26ec17c80f473fe360da5549ee)
 [4/11] Verifying Fulcio keyless signature (axis A - GitHub Actions OIDC)...
 Verified OK
-      axis A OK (identity=PersonalJarvis/PersonalJarvis / .github/workflows/sign-installer.yml, issuer=https://token.actions.githubusercontent.com)
+      axis A OK (identity=personal-jarvis/personal-jarvis / .github/workflows/sign-installer.yml, issuer=https://token.actions.githubusercontent.com)
 [5/11] Verifying offline-ceremony signature (axis B - Ed25519, air-gapped)...
 Verified OK
       axis B OK (Ed25519, key fingerprint=40cdb1b9e255e797909fba4fb5983450ccf7fa26ec17c80f473fe360da5549ee)
@@ -236,10 +236,10 @@ Verified OK
 Verified build using builder "https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@refs/tags/v2.1.0" at commit 73bb7b50fb56ec5354fdb48a53cccb5a9018791e
 Verifying artifact /tmp/jarvis-install-verify.U5WMKt71/install.sh: PASSED
 PASSED: SLSA verification passed
-      axis C OK (SLSA L3: source=github.com/PersonalJarvis/PersonalJarvis, tag=v0.4.0-supplychain-wave3)
+      axis C OK (SLSA L3: source=github.com/personal-jarvis/personal-jarvis, tag=v0.4.0-supplychain-wave3)
 [10/11] Verifying in-toto layout functionary pin (axis C - supply-chain layout match)...
       axis C OK (in-toto layout: OK keyid=github-actions-sign-installer-yml-tag-push)
-      identity_regexp pin: ^https://github\.com/PersonalJarvis/PersonalJarvis/\.github/workflows/sign-installer\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._-]+)?$
+      identity_regexp pin: ^https://github\.com/personal-jarvis/personal-jarvis/\.github/workflows/sign-installer\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._-]+)?$
 [11/11] All checks passed (3-of-3 axes). Handing off to install.sh...
 ```
 
