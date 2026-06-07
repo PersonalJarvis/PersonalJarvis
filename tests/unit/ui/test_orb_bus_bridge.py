@@ -112,9 +112,46 @@ async def test_orb_is_shown_again_for_speaking_after_external_hide() -> None:
     await bridge._on_state(  # noqa: SLF001
         SystemStateChanged(new_state="SPEAKING", previous="THINKING")
     )
+    # The overlay only switches to the speaking equalizer once audio is audible.
+    await bridge._on_audio_out_first(AudioOutFirst())  # noqa: SLF001
 
     assert ("show", "speak") in orb.calls
     assert ("set_mode", "speak") not in orb.calls
+
+
+async def test_speaking_keeps_thinking_wave_until_audio_is_audible() -> None:
+    """The silent TTS-synthesis lead-in must read as thinking, not speaking.
+
+    The supervisor flips to SPEAKING 0.5–2 s BEFORE the first audio sample
+    leaves the speaker (TTS is still synthesizing). During that silence the
+    overlay must keep the THINKING wave and only switch to the speaking
+    equalizer bars once ``AudioOutFirst`` proves audio is actually audible.
+    """
+    orb = _FakeOrb()
+    bridge = OrbBusBridge(bus=_FakeBus(), orb=orb, idle_animations_enabled=False)  # type: ignore[arg-type]
+
+    await bridge._on_state(  # noqa: SLF001
+        SystemStateChanged(new_state="LISTENING", previous="IDLE")
+    )
+    await bridge._on_state(  # noqa: SLF001
+        SystemStateChanged(new_state="THINKING", previous="LISTENING")
+    )
+    orb.calls.clear()
+
+    # SPEAKING fires while TTS is still synthesizing → silence. The overlay
+    # must NOT flip to the speaking bars or the talking 'nod' yet.
+    await bridge._on_state(  # noqa: SLF001
+        SystemStateChanged(new_state="SPEAKING", previous="THINKING")
+    )
+    assert ("show", "think") in orb.calls
+    assert ("show", "speak") not in orb.calls
+    assert ("play_animation", "nod") not in orb.calls
+    orb.calls.clear()
+
+    # First audible sample reached the speaker → NOW show the speaking bars.
+    await bridge._on_audio_out_first(AudioOutFirst())  # noqa: SLF001
+    assert ("show", "speak") in orb.calls
+    assert ("play_animation", "nod") in orb.calls
 
 
 async def test_orb_stays_visible_while_call_waits_for_next_turn() -> None:

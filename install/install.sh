@@ -2,7 +2,7 @@
 # Personal Jarvis — macOS / Linux quick-install bootstrap (Stage 1)
 #
 # Usage (from any POSIX shell):
-#   curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/personal-jarvis/personal-jarvis/main/install/install.sh | bash
 #
 # This bootstrap is intentionally small. It:
 #   1. Verifies Python 3.11+ is available.
@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-REPO_URL="${JARVIS_INSTALL_REPO:-https://github.com/PersonalJarvis/PersonalJarvis.git}"
+REPO_URL="${JARVIS_INSTALL_REPO:-https://github.com/personal-jarvis/personal-jarvis.git}"
 BRANCH="${JARVIS_INSTALL_REF:-main}"
 INSTALL_DIR="${JARVIS_INSTALL_DIR:-$HOME/.personal-jarvis}"
 
@@ -31,11 +31,11 @@ fi
 
 cat <<EOF
 
-${CYAN} ____                                 _     _                  _
-|  _ \\ ___ _ __ ___  ___  _ __   __ _| |   | | __ _ _ ____   _(_)___
-| |_) / _ \\ '__/ __|/ _ \\| '_ \\ / _\` | |_  | |/ _\` | '__\\ \\ / / / __|
-|  __/  __/ |  \\__ \\ (_) | | | | (_| | | |_| | (_| | |   \\ V /| \\__ \\
-|_|   \\___|_|  |___/\\___/|_| |_|\\__,_|_|\\___/ \\__,_|_|    \\_/ |_|___/${RESET}
+${CYAN} ____                                  _   _                  _
+|  _ \\ ___ _ __ ___  ___  _ __   __ _ | | | | __ _ _ ____   _(_)___
+| |_) / _ \\ '__/ __|/ _ \\| '_ \\ / _\` || |_| |/ _\` | '__\\ \\ / / / __|
+|  __/  __/ |  \\__ \\ (_) | | | | (_| ||  _  | (_| | |   \\ V /| \\__ \\
+|_|   \\___|_|  |___/\\___/|_| |_|\\__,_||_| |_|\\__,_|_|    \\_/ |_|___/${RESET}
 
   ${BOLD}Quick install (macOS / Linux)${RESET}
 

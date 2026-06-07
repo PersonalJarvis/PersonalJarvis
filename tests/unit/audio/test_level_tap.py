@@ -52,3 +52,27 @@ def test_feed_normalizes_raw_rms_to_a_reactive_level():
     assert loud > quiet
     assert loud > 0.3  # reaches a clearly visible level, not stuck near zero
     level_tap.reset()
+
+
+def test_note_playing_marks_audio_active_for_its_duration():
+    # The player only feeds a level at buffer-write time, then blocks for the
+    # whole multi-second playback. note_playing() records the playback window so
+    # the UI can show the speaking equalizer for the ENTIRE block, not just the
+    # write instant.
+    level_tap.reset()
+    assert level_tap.playback_active() is False
+    level_tap.note_playing(10.0)  # 10 s of audio about to play
+    assert level_tap.playback_active() is True
+    level_tap.reset()
+    assert level_tap.playback_active() is False
+
+
+def test_note_playing_ignores_nonpositive_and_resets_on_bargein():
+    level_tap.reset()
+    level_tap.note_playing(0.0)  # nothing to play → no window
+    assert level_tap.playback_active() is False
+    level_tap.note_playing(10.0)
+    assert level_tap.playback_active() is True
+    level_tap.reset_playing()  # barge-in discards the tail
+    assert level_tap.playback_active() is False
+    level_tap.reset()

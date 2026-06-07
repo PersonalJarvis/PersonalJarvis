@@ -72,35 +72,6 @@ _HOSTAPI_PREFERENCE = {
 _FORBIDDEN_OUTPUT_HOSTAPIS = frozenset({"Windows WDM-KS"})
 
 
-class _OutputUnavailable(Exception):
-    """Raised internally when the machine has no usable audio OUTPUT device.
-
-    Distinct from a transient PortAudio rate failure: it signals a permanent
-    "no driver installed" / "no default output" condition (a laptop/VM without
-    an audio endpoint). The play_* entry points swallow it so TTS degrades to a
-    silent no-op with a single WARNING instead of a per-utterance ERROR
-    traceback storm (2026-06-04: PaErrorCode -9999 'There is no driver
-    installed on your system' [MME error 6] logged on every voice turn).
-    """
-
-
-def _is_no_output_device_error(exc: BaseException) -> bool:
-    """True when a PortAudio error means 'no usable output device exists'.
-
-    Matches the -9999 host-error family that PortAudio raises when the resolved
-    device (or the MME system default) has no backing driver. Deliberately does
-    NOT match -9997 (invalid sample rate) — that one is recoverable by trying
-    another rate and is handled by the rate cascade in _open_output_stream.
-    """
-    text = str(exc).lower()
-    return (
-        "-9999" in text
-        or "no driver installed" in text
-        or "no default output" in text
-        or "invalid device" in text
-    )
-
-
 def _apply_edge_fades(pcm: bytes, sample_rate: int, fade_ms: int = 5) -> bytes:
     """Apply a linear fade-in + fade-out (each ``fade_ms``) to int16 mono PCM.
 
@@ -185,14 +156,7 @@ def _resolve_output_device(device: int | str | None) -> int | str | None:
     """
     if device is None or isinstance(device, int):
         return device
-    norm = device.strip().lower() if isinstance(device, str) else ""
-    # "auto" / "" → OS default output (the speaker/headphones the user selected
-    # in Windows). A literal "auto" used to reach sounddevice as a device NAME →
-    # "No output device matching 'auto'" → TTS playback failed and Jarvis stayed
-    # silent. "auto-headset" keeps the smart headset / WDM-KS-avoiding picker.
-    if norm in ("auto", ""):
-        return None
-    if norm != "auto-headset":
+    if not isinstance(device, str) or device != "auto-headset":
         return device
 
     try:
@@ -332,13 +296,6 @@ class AudioPlayer:
         # makes the lookup miss for the new device and walk the cascade
         # fresh.
         self._device_rate_cache: dict[tuple[Any, int], int] = {}
-        # Session-level latch: set once the machine proves to have no usable
-        # audio OUTPUT device (PaErrorCode -9999 'no driver installed' on a
-        # laptop/VM without an endpoint). Once latched, play_pcm/play_chunks
-        # are silent no-ops so a headless / driverless box doesn't emit a
-        # full ERROR traceback on every utterance. invalidate_device_cache()
-        # clears it so a re-probe (e.g. headset hot-plug) can recover.
-        self._output_unavailable = False
 
     def _get_play_lock(self) -> asyncio.Lock:
         if self._play_lock is None:
@@ -363,9 +320,6 @@ class AudioPlayer:
             self._active_source_rate = None
             self._active_device_rate = None
         self._device_rate_cache.clear()
-        # A hot-plug / device-reset may have ADDED the audio endpoint that was
-        # missing — clear the no-output latch so the next play re-probes.
-        self._output_unavailable = False
 
     def set_device(self, device: int | str | None) -> None:
         """Re-resolve the output device and drop any cached state tied to
@@ -420,16 +374,11 @@ class AudioPlayer:
         stream produces no clicks. For streaming TTS playback see
         ``play_chunks``, which keeps a persistent stream open.
         """
-        if getattr(self, "_output_unavailable", False):
-            return  # no audio endpoint on this machine — silent no-op
         self._log_device_once()
         rate = sample_rate or self._sample_rate
         pcm = _apply_edge_fades(pcm, rate)
         async with self._get_play_lock():
-            try:
-                await asyncio.to_thread(self._play_blob, pcm, rate)
-            except _OutputUnavailable:
-                return  # latched + logged once in _open_output_stream
+            await asyncio.to_thread(self._play_blob, pcm, rate)
 
     def _play_blob(self, pcm: bytes, source_rate: int) -> None:
         """Sync: open stream, write blob, close stream."""
@@ -511,16 +460,6 @@ class AudioPlayer:
                 return stream, target_rate
             except sd.PortAudioError as exc:
                 last_exc = exc
-                if _is_no_output_device_error(exc):
-                    # Permanent 'no usable output device' — latch + warn ONCE,
-                    # then raise the typed sentinel the play_* paths swallow so
-                    # we don't spam an ERROR traceback per utterance.
-                    log.warning(
-                        "Audio output unavailable (%s) — TTS playback disabled "
-                        "until an output device appears.", exc,
-                    )
-                    self._output_unavailable = True
-                    raise _OutputUnavailable() from exc
                 if "-9997" not in str(exc) and "Invalid sample rate" not in str(exc):
                     raise
                 log.warning(
@@ -574,13 +513,26 @@ class AudioPlayer:
         # (the buffer is at most ~120 ms of stereo float32).
         if not arr_f.flags["C_CONTIGUOUS"]:
             arr_f = np.ascontiguousarray(arr_f)
-        underflowed = stream.write(arr_f)
-        if underflowed:
-            log.warning(
-                "PortAudio underflow during write (frames=%d, source=%dHz, "
-                "device=%dHz) — buffer drained mid-stream, audible click/crackle",
-                arr_f.shape[0], source_rate, device_rate,
-            )
+        # Write in ~60 ms sub-blocks, feeding the LIVE output RMS per block, so
+        # the whisper-bar equalizer reacts to Jarvis's voice exactly like it
+        # reacts to your mic — moving with the actual loudness instead of one
+        # coarse level per sentence that left the bars frozen and blocky. It is
+        # the SAME continuous PortAudio stream (no clicks), and the blocking
+        # write still provides back-pressure. ~60 ms blocks are large enough to
+        # never starve the buffer.
+        feed_level = level_tap.has_subscribers()
+        block = max(1, int(device_rate * 0.06))
+        for start in range(0, arr_f.shape[0], block):
+            chunk = arr_f[start:start + block]
+            underflowed = stream.write(chunk)
+            if underflowed:
+                log.warning(
+                    "PortAudio underflow during write (frames=%d, source=%dHz, "
+                    "device=%dHz) — buffer drained mid-stream, audible click/crackle",
+                    chunk.shape[0], source_rate, device_rate,
+                )
+            if feed_level and chunk.size:
+                level_tap.feed(float(np.sqrt(np.mean(np.square(chunk)))))
 
     def _close_output_stream(self, stream: sd.OutputStream) -> None:
         """Flush and stop: ``stream.stop()`` blocks until the buffer is empty."""
@@ -616,8 +568,6 @@ class AudioPlayer:
         No edge fades on chunks: the stream stays open and chunks are
         appended seamlessly → no discontinuity, no clicks.
         """
-        if getattr(self, "_output_unavailable", False):
-            return  # no audio endpoint on this machine — silent no-op
         self._log_device_once()
         async with self._get_play_lock():
             def _ensure_stream(needed_rate: int) -> tuple[sd.OutputStream, int]:
@@ -655,20 +605,21 @@ class AudioPlayer:
                 pending.clear()
                 stm, dev_rate = await asyncio.to_thread(_ensure_stream, pending_rate)
                 arr = np.frombuffer(pcm, dtype=np.int16)
+                # Tell the UI how long this block will be audible BEFORE the
+                # blocking write below. _write_samples blocks for the whole
+                # playback with no further level, so the level tap alone makes
+                # the whisper bar fall back to its "thinking" wave mid-sentence.
+                # note_playing marks the playback window so the bar shows the
+                # speaking equalizer for the entire block (mono samples / rate).
+                if arr.size:
+                    level_tap.note_playing(arr.size / pending_rate)
+                # The live TTS output amplitude is now fed PER ~60 ms sub-block
+                # from inside _write_samples (so the whisper-bar equalizer moves
+                # with Jarvis's voice across the whole sentence, not one coarse
+                # level per flush). Nothing to feed here.
                 await asyncio.to_thread(
                     self._write_samples, stm, arr, pending_rate, dev_rate
                 )
-                # Out-of-band TTS output amplitude for the whisper-bar speaking
-                # equalizer. Deliberately NOT the EventBus (~8 Hz would spam the
-                # flight-recorder wildcard subscriber); zero-cost when no sink is
-                # registered (mascot/none style → has_subscribers() is False).
-                if level_tap.has_subscribers() and arr.size:
-                    rms = float(
-                        np.sqrt(np.mean(np.square(arr.astype(np.float32) * (1.0 / 32768.0))))
-                    )
-                    # feed() normalizes (adaptive gain) so Jarvis's voice drives
-                    # the bars to full range — raw RMS (~0.1) barely moved them.
-                    level_tap.feed(rms)
                 # First audible sample reached PortAudio — tell the bus so the
                 # mascot mouth + SPEAKING bubble sync to actual audio start
                 # instead of the speculative SPEAKING state-transition.
@@ -684,22 +635,15 @@ class AudioPlayer:
             # NOTE: no finally-close — the stream stays open across play_chunks
             # calls and is only torn down by stop() (barge-in) or by the next
             # _ensure_stream call that observes a sample-rate mismatch.
-            try:
-                async for chunk in chunks:
-                    if not chunk.pcm:
-                        continue
-                    if pending_rate is not None and chunk.sample_rate != pending_rate:
-                        await _flush_pending(final=True)
-                    pending_rate = chunk.sample_rate
-                    pending.extend(chunk.pcm)
-                    await _flush_pending()
-                await _flush_pending(final=True)
-            except _OutputUnavailable:
-                # No audio endpoint — latched + logged once. Drain the rest of
-                # the chunk iterator so the upstream TTS producer isn't left
-                # blocked on an unconsumed async generator, then no-op.
-                async for _ in chunks:
-                    pass
+            async for chunk in chunks:
+                if not chunk.pcm:
+                    continue
+                if pending_rate is not None and chunk.sample_rate != pending_rate:
+                    await _flush_pending(final=True)
+                pending_rate = chunk.sample_rate
+                pending.extend(chunk.pcm)
+                await _flush_pending()
+            await _flush_pending(final=True)
 
     def stop(self) -> None:
         """Abort ongoing playback (e.g. for barge-in).
@@ -711,6 +655,9 @@ class AudioPlayer:
         ``stream.stop()`` which waits for the drain — for barge-in we want
         the fast discard).
         """
+        # Barge-in discards the buffered tail, so the UI must stop showing the
+        # speaking equalizer for audio that will never play.
+        level_tap.reset_playing()
         stream = self._active_stream
         self._active_stream = None
         self._active_source_rate = None

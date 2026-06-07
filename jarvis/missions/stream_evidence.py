@@ -329,6 +329,120 @@ def extract_verified_commands(
     return tuple(credited)
 
 
+# Desktop/process-LAUNCH commands that produce NO file diff: the deliverable is
+# a running process, not a file change. Cross-platform (Win/mac/Linux). Mirrors
+# the git/gh command-evidence path so a diff-less "open Explorer / launch Chrome"
+# mission can be credited as real work instead of vetoed as an empty diff.
+_DESKTOP_ACTION_CMD_RE = re.compile(
+    # Windows: start explorer.exe / start "" chrome / start calc
+    # Tightened: exclude flag-style runs (/B, /WAIT → (?!/|-)) and common
+    # CLI/dev tools (git, python, npm, etc.) that workers run async via
+    # `start <tool>` — those are CLI runs, not GUI launches, and must not
+    # satisfy the deterministic empty-diff veto for non-launch tasks.
+    r"\bstart\s+(?!/|-)(?!git\b|python\b|py\b|pip\b|npm\b|npx\b|node\b|cargo\b"
+    r"|go\b|dotnet\b|mvn\b|gradle\b|ruby\b|java\b|deno\b|bun\b"
+    r"|pwsh\b|powershell\b|cmd\b|bash\b|sh\b)\S"
+    r"|\bexplorer(?:\.exe)?\b"             # bare explorer.exe
+    r"|\bStart-Process\b"                  # PowerShell Start-Process
+    r"|\bcmd\b.*/[cC]\s+start\b"          # cmd /c start ...
+    r"|\bxdg-open\b"                       # Linux
+    r"|\bgio\s+open\b"                     # Linux (modern)
+    r"|\bopen\s+-[aAbnegtWR]"             # macOS: open -a AppName
+    , re.IGNORECASE,
+)
+
+
+def extract_verified_desktop_actions(
+    stream_text: str, *, max_result_chars: int = 400
+) -> tuple[tuple[str, str], ...]:
+    """Desktop-launch shell commands the worker ran successfully.
+
+    Returns ``(command, result_excerpt)`` tuples for every shell ``tool_use``
+    whose command matches a recognised desktop/process-launch operation (Windows
+    ``start``, PowerShell ``Start-Process``, Linux ``xdg-open``/``gio open``,
+    macOS ``open -a``) AND whose correlated ``tool_result`` is present and did
+    NOT error.
+
+    Why this is ground truth, not hearsay: the ``tool_result`` is the REAL
+    subprocess output from the shell. An "open Explorer" / "launch Chrome" /
+    "start the calculator" task legitimately produces an EMPTY worktree diff
+    (the deliverable is a running process, not a file change), so the
+    empty-diff GROUND-TRUTH-RULE would fail it 3× → ``critic_loop_exhausted``.
+    Crediting a verified desktop-launch command closes that false-negative.
+
+    Silent launch handling: a successful ``start explorer.exe`` typically has
+    EMPTY stdout because the process is detached. When the non-errored result
+    excerpt is empty, we substitute the literal
+    ``"(command succeeded; no output captured)"`` — a silent detached spawn IS
+    success, not missing evidence.
+
+    Anti-hearsay discipline (mirrors :func:`extract_verified_commands`): a
+    command is credited only when its result frame is observed AND successful.
+    A ``tool_use`` with no ``id`` (cannot be correlated) or whose result never
+    arrived (truncated stream) is NOT credited. Read-only commands (``ls``,
+    ``cat``) never match the launch pattern, so they cannot satisfy an empty
+    diff. The Critic still grades the command + its output as the final judge —
+    this only lets it SEE the evidence instead of vetoing blind.
+    """
+    pending: dict[str, str] = {}          # tool_use_id -> command string
+    credited: list[tuple[str, str]] = []
+    seen_commands: set[str] = set()
+
+    for raw in stream_text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(obj, dict):
+            continue
+        otype = obj.get("type")
+
+        if otype == "assistant":
+            for blk in (obj.get("message", {}) or {}).get("content", []) or []:
+                if not isinstance(blk, dict) or blk.get("type") != "tool_use":
+                    continue
+                if str(blk.get("name", "")).strip() not in _SHELL_TOOL_NAMES:
+                    continue
+                tool_input = blk.get("input") or {}
+                if not isinstance(tool_input, dict):
+                    continue
+                command = next(
+                    (str(tool_input[k]).strip() for k in _COMMAND_INPUT_KEYS
+                     if isinstance(tool_input.get(k), str) and tool_input[k].strip()),
+                    "",
+                )
+                tid = str(blk.get("id", "")).strip()
+                # An id is required to correlate the result; a launch command
+                # with no confirmable result is not credited (anti-hearsay).
+                if command and tid and _DESKTOP_ACTION_CMD_RE.search(command):
+                    pending[tid] = command
+        elif otype == "user":
+            for blk in (obj.get("message", {}) or {}).get("content", []) or []:
+                if not isinstance(blk, dict) or blk.get("type") != "tool_result":
+                    continue
+                tid = str(blk.get("tool_use_id", "")).strip()
+                command = pending.pop(tid, None)
+                if command is None or _result_is_error(blk):
+                    continue
+                if command in seen_commands:
+                    continue
+                seen_commands.add(command)
+                result_excerpt = _result_text(blk.get("content", "")).strip()
+                # A silent detached spawn produces no stdout — substitute a
+                # clear sentinel rather than leaving an empty evidence string
+                # that the Critic might misread as "no output = not run".
+                if not result_excerpt:
+                    result_excerpt = "(command succeeded; no output captured)"
+                credited.append((command, result_excerpt[:max_result_chars]))
+
+    # Commands left in `pending` had no matching result (truncated stream) —
+    # intentionally NOT credited.
+    return tuple(credited)
+
+
 def _has_inworktree_hunk(diff_text: str) -> bool:
     """True if the diff carries a real in-worktree change (a ``diff --git`` hunk).
 
@@ -380,6 +494,7 @@ __all__ = [
     "StreamEvidence",
     "extract_stream_evidence",
     "extract_verified_commands",
+    "extract_verified_desktop_actions",
     "extract_write_targets",
     "readonly_answer",
     "summarize_answers",

@@ -38,6 +38,17 @@ triggers:
 body
 """
 
+VOICE_ANCHORED = """---
+schema_version: "1"
+name: voice_anchored
+triggers:
+  - type: voice
+    pattern: "^(guten morgen|starte (die )?morgenroutine)$"
+    language: ["de"]
+---
+body
+"""
+
 HOTKEY_SKILL = """---
 schema_version: "1"
 name: hotkey_skill
@@ -182,3 +193,70 @@ def test_by_trigger_separation(registry: SkillRegistry):
     assert {s.name for s in voice} == {"voice_de", "voice_en"}
     assert {s.name for s in hotkey} == {"hotkey_skill"}
     assert {s.name for s in schedule} == {"cron_skill"}
+
+
+# ----------------------------------------------------------------------
+# Politeness-tolerant matching for ^...$-anchored patterns (Step 2).
+#
+# Real builtin skills (morning-routine, deep-work-mode) anchor their
+# voice patterns with ^...$, which forces an exact whole-utterance match.
+# A natural command like "Jarvis, bitte starte die Morgenroutine" must
+# still fire — leading/trailing address + politeness fillers are stripped
+# before the anchored pattern is re-tried. A *casual* mention buried in a
+# narrative sentence must NOT fire (no false positives).
+# ----------------------------------------------------------------------
+
+
+@pytest.fixture
+def anchored_registry(tmp_path: Path) -> SkillRegistry:
+    _write_skill(tmp_path, "voice_anchored", VOICE_ANCHORED)
+    reg = SkillRegistry(tmp_path)
+    reg.reload_sync()
+    return reg
+
+
+def test_anchored_still_matches_exact(anchored_registry: SkillRegistry):
+    """Backwards-compat: the bare exact phrase keeps matching."""
+    m = TriggerMatcher(anchored_registry)
+    assert m.match_voice("guten morgen", lang="de") is not None
+
+
+def test_anchored_matches_with_polite_prefix(anchored_registry: SkillRegistry):
+    """Address + politeness before the command is tolerated."""
+    m = TriggerMatcher(anchored_registry)
+    sk = m.match_voice("Jarvis, bitte starte die morgenroutine", lang="de")
+    assert sk is not None
+    assert sk.name == "voice_anchored"
+
+
+def test_anchored_matches_with_polite_suffix(anchored_registry: SkillRegistry):
+    """Politeness fillers after the command are tolerated."""
+    m = TriggerMatcher(anchored_registry)
+    sk = m.match_voice("starte die morgenroutine bitte jetzt", lang="de")
+    assert sk is not None
+    assert sk.name == "voice_anchored"
+
+
+def test_anchored_matches_with_prefix_and_suffix(anchored_registry: SkillRegistry):
+    m = TriggerMatcher(anchored_registry)
+    sk = m.match_voice("hey jarvis guten morgen bitte", lang="de")
+    assert sk is not None
+
+
+def test_anchored_punctuation_tolerated(anchored_registry: SkillRegistry):
+    """Trailing punctuation alone must not block an otherwise exact match."""
+    m = TriggerMatcher(anchored_registry)
+    assert m.match_voice("guten morgen!", lang="de") is not None
+
+
+def test_anchored_no_false_positive_on_casual_mention(
+    anchored_registry: SkillRegistry,
+):
+    """A casual mention buried in narrative speech must NOT fire the skill."""
+    m = TriggerMatcher(anchored_registry)
+    assert m.match_voice("ich wollte dir nur guten morgen sagen", lang="de") is None
+
+
+def test_anchored_no_false_positive_on_unrelated(anchored_registry: SkillRegistry):
+    m = TriggerMatcher(anchored_registry)
+    assert m.match_voice("erzähl mir was über den morgen", lang="de") is None

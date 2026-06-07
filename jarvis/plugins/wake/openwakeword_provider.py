@@ -27,6 +27,13 @@ log = logging.getLogger("jarvis.wake")
 OWW_SAMPLE_RATE = 16_000
 OWW_FRAME_SAMPLES = 1280  # openWakeWord erwartet genau diese Frame-Länge
 
+# After the pipeline's STT prefix-verifier REJECTS a candidate, the detector
+# stays deaf only this long (not the full cooldown). Short enough that a real
+# "Hey Jarvis" spoken right after a false trigger gets through, long enough that
+# continuous jarvis-like background audio cannot spin a reject->retrigger
+# busy-loop of STT calls. See ``note_rejected_candidate``.
+_REJECT_REFRACTORY_S = 0.8
+
 # Production wake threshold for this project's quiet-mic hardware, wired by
 # jarvis/ui/desktop_app.py. Empirically derived from the 2026-05-24 idle-
 # telemetry log (data/jarvis_desktop.log): ambient speech and bare "Hallo"
@@ -156,6 +163,29 @@ class OpenWakeWordProvider:
         self._model = None
         self._residual = np.empty(0, dtype=np.int16)
 
+    def _cooldown_ok(self, now_ns: int) -> bool:
+        """True if the debounce window since the last yielded trigger elapsed.
+
+        The cooldown debounces ONE spoken wake word into a single trigger; it
+        is NOT meant to deafen the detector after a candidate the pipeline
+        later rejects (see ``note_rejected_candidate``).
+        """
+        return now_ns - self._last_trigger_ns >= self._cooldown_s * 1e9
+
+    def note_rejected_candidate(self, now_ns: int | None = None) -> None:
+        """The pipeline's STT prefix-verifier rejected the last yielded
+        candidate as a false positive (bare "Jarvis", background speech).
+
+        Shorten the debounce so a genuine "Hey Jarvis" spoken ~1 s later still
+        triggers (instead of being swallowed for the full ``cooldown_s``), while
+        leaving a SHORT refractory (``_REJECT_REFRACTORY_S``) so continuous
+        jarvis-like background audio cannot spin a reject->retrigger busy-loop of
+        STT verification calls. ``now_ns`` is injectable for deterministic tests.
+        """
+        now = time.time_ns() if now_ns is None else now_ns
+        held = max(0.0, self._cooldown_s - _REJECT_REFRACTORY_S)
+        self._last_trigger_ns = now - int(held * 1e9)
+
     async def detect(
         self, chunks: AsyncIterator[AudioChunk]
     ) -> AsyncIterator[str]:
@@ -192,7 +222,7 @@ class OpenWakeWordProvider:
                     if score < self._threshold:
                         continue
                     now_ns = time.time_ns()
-                    if now_ns - self._last_trigger_ns < self._cooldown_s * 1e9:
+                    if not self._cooldown_ok(now_ns):
                         continue
                     self._last_trigger_ns = now_ns
                     yield self._canonical_keyword(keyword)

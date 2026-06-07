@@ -185,6 +185,58 @@ export function useReloadSkills() {
   });
 }
 
+async function deleteSkill(
+  name: string,
+): Promise<{ ok: boolean; removed: boolean }> {
+  const res = await fetch(`/api/skills/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+async function reorderSkills(
+  order: string[],
+): Promise<{ ok: boolean; order: string[] }> {
+  const res = await fetch("/api/skills/order", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ order }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export function useDeleteSkill() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: deleteSkill,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["skills"] });
+    },
+  });
+}
+
+/**
+ * Persist the user's custom skill order (list view only). The order is applied
+ * server-side, so it survives a restart and follows the user across devices.
+ */
+export function useReorderSkills() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: reorderSkills,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["skills"] });
+    },
+  });
+}
+
 // ----------------------------------------------------------------------
 // Skill-Creation (User-authored, ueber Desktop-App)
 // ----------------------------------------------------------------------

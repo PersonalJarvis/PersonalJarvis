@@ -66,6 +66,38 @@ def _resolve_codex_binary() -> str | None:
     return None
 
 
+def _codex_oauth_available() -> bool:
+    """True when the user's global ``~/.codex`` carries a ChatGPT (OAuth) login.
+
+    Read from the GLOBAL codex home (not the per-mission ``CODEX_HOME``), since
+    subscription tokens live in the user's profile. Best-effort: a missing codex
+    CLI or any read error degrades to False -> API-key mode keeps OPENAI_API_KEY.
+    """
+    try:
+        from jarvis.codex_auth import CodexAuthService
+
+        status = CodexAuthService().status()
+        return bool(status.connected and status.mode == "chatgpt")
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _build_codex_env(env: dict[str, str], *, oauth_available: bool) -> dict[str, str]:
+    """Env for ``codex exec``, honoring both auth models.
+
+    Always drops ``CODEX_HOME``: build_worker_env points it at a per-mission dir
+    so parallel workers don't share state, but the global OAuth tokens live in
+    the user's ``~/.codex``; a per-mission home makes codex error "Error finding
+    codex home". ``OPENAI_API_KEY`` is dropped ONLY when OAuth is available, so
+    the free subscription wins; an API-key-only setup keeps the key and runs
+    codex in API mode. Returns a new dict — the input is not mutated.
+    """
+    drop = {"CODEX_HOME"}
+    if oauth_available:
+        drop.add("OPENAI_API_KEY")
+    return {k: v for k, v in env.items() if k not in drop}
+
+
 # Anthropic-flavoured model aliases the MissionDecomposer emits as a
 # legacy default (`kontrollierer/decomposer.py:57` -> `model: str = "sonnet"`).
 # Codex with a ChatGPT account rejects these with HTTP 400 -- "The
@@ -203,22 +235,11 @@ class CodexDirectWorker:
             extra_args=extra_args,
         )
 
-        # CRITICAL: strip OPENAI_API_KEY so codex falls back to OAuth.
-        # The user explicitly chose ChatGPT-subscription auth; an
-        # accidentally-set API key would steer codex onto the paid
-        # Platform API instead.
-        #
-        # Also strip CODEX_HOME: build_worker_env sets it to a per-mission
-        # path so two parallel codex workers do not share state, but
-        # OAuth bearer + refresh tokens live in the user's *global*
-        # ~/.codex/auth.json. Pointing CODEX_HOME at an empty per-mission
-        # dir makes codex error with "Error finding codex home" and exit
-        # immediately. Per the ChatGPT-subscription auth path we want
-        # codex to use the default ~/.codex, so just drop the override.
-        env_for_codex = {
-            k: v for k, v in env.items()
-            if k not in ("OPENAI_API_KEY", "CODEX_HOME")
-        }
+        # Honor both auth models (see _build_codex_env). CODEX_HOME is always
+        # dropped (per-mission dir breaks the global OAuth home). OPENAI_API_KEY
+        # is dropped only when a ChatGPT (OAuth) login exists, so the free
+        # subscription wins; an API-key-only setup keeps the key (API mode).
+        env_for_codex = _build_codex_env(env, oauth_available=_codex_oauth_available())
 
         yield ClaudeSystemInit(
             session_id=session_id,

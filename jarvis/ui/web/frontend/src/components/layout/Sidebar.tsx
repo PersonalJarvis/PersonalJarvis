@@ -1,15 +1,11 @@
 import {
   MessageSquare,
   Users,
-  Puzzle,
-  Blocks,
+  Boxes,
   BookOpen,
-  Plug,
-  Globe,
   KeyRound,
   Settings,
   Activity,
-  TerminalSquare,
   UserCircle2,
   ListTodo,
   FolderOpen,
@@ -17,11 +13,8 @@ import {
   Sparkles,
   Mic,
   Phone,
-  ShieldCheck,
   Terminal,
-  Wand2,
   Share2,
-  PanelBottom,
   Contact,
   type LucideIcon,
   ChevronRight,
@@ -36,33 +29,48 @@ interface NavItem {
   id: SectionId;
   labelKey: string;
   icon: LucideIcon;
+  // When set, the row is highlighted while the active section is any of these
+  // ids — used by the merged section entries ("Skills & Tools" fronting
+  // skills/plugins/mcps, "CLIs" fronting clis/cli-test-hub); the active id
+  // doubles as the tab state.
+  matchIds?: SectionId[];
 }
 
 const NAV_ITEMS: NavItem[] = [
   { id: "chats", labelKey: "nav.chats", icon: MessageSquare },
   { id: "agents", labelKey: "nav.agents", icon: Users },
-  { id: "skills", labelKey: "nav.skills", icon: Puzzle },
-  { id: "plugins", labelKey: "nav.plugins", icon: Blocks },
+  // Skills & Tools — Skills + Plugins + MCPs behind one tab switch. The id
+  // "skills" is the default landing (Skills tab); matchIds keeps the row
+  // highlighted for any of the fronted sections.
+  {
+    id: "skills",
+    labelKey: "nav.extensions",
+    icon: Boxes,
+    matchIds: ["skills", "plugins", "mcps"],
+  },
   { id: "docs", labelKey: "nav.docs", icon: BookOpen },
-  { id: "mcps", labelKey: "nav.mcps", icon: Plug },
   { id: "tasks", labelKey: "nav.tasks", icon: ListTodo },
-  { id: "review", labelKey: "nav.review", icon: ShieldCheck },
   { id: "sessions", labelKey: "nav.sessions", icon: Mic },
-  { id: "terminal", labelKey: "nav.terminal", icon: TerminalSquare },
-  { id: "clis", labelKey: "nav.clis", icon: Terminal },
-  { id: "cli-test-hub", labelKey: "nav.cli_test_hub", icon: Wand2 },
+  // CLIs — the CLIs list + the CLI Test Hub behind one tab switch (CLIs first).
+  { id: "clis", labelKey: "nav.clis_hub", icon: Terminal, matchIds: ["clis", "cli-test-hub"] },
   { id: "board", labelKey: "nav.board", icon: Sparkles },
-  { id: "languages", labelKey: "nav.languages", icon: Globe },
   { id: "profile", labelKey: "nav.profile", icon: UserCircle2 },
   { id: "contacts", labelKey: "nav.contacts", icon: Contact },
   { id: "memory", labelKey: "nav.wiki", icon: Notebook },
   { id: "apikeys", labelKey: "nav.apikeys", icon: KeyRound },
   { id: "telephony", labelKey: "nav.telephony", icon: Phone },
-  { id: "settings", labelKey: "nav.settings", icon: Settings },
+  // Settings also fronts the former "Taskbar" and "Languages" sections (overlay
+  // + dictation controls live in OverlayTaskbarGroup, language selectors in
+  // LanguagesGroup now). matchIds keeps this row highlighted when a "geh zur
+  // Taskleiste" or "zeig die Sprachen" voice command lands on those ids.
+  {
+    id: "settings",
+    labelKey: "nav.settings",
+    icon: Settings,
+    matchIds: ["settings", "taskbar", "languages"],
+  },
   { id: "debug", labelKey: "nav.debug", icon: Activity },
   { id: "outputs", labelKey: "nav.outputs", icon: FolderOpen },
-  // Taskbar — the on-screen overlay appearance + dictation behaviour.
-  { id: "taskbar", labelKey: "nav.taskbar", icon: PanelBottom },
   // Socials — pinned at the very bottom: the project's social-media links.
   { id: "socials", labelKey: "nav.socials", icon: Share2 },
 ];
@@ -139,7 +147,7 @@ export function Sidebar() {
               key={item.id}
               item={item}
               label={t(item.labelKey)}
-              active={item.id === active}
+              active={item.matchIds ? item.matchIds.includes(active) : item.id === active}
               badge={item.id === "agents" ? agentsCount : undefined}
               onClick={() => setActive(item.id)}
             />

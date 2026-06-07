@@ -7,12 +7,12 @@ never read these files; they just paste the URL into their shell.
 
 ```powershell
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.ps1 | iex
+irm https://raw.githubusercontent.com/personal-jarvis/personal-jarvis/main/install/install.ps1 | iex
 ```
 
 ```bash
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/personal-jarvis/personal-jarvis/main/install/install.sh | bash
 ```
 
 > The one-liner only works once the repo is public. While the repo is
@@ -58,7 +58,7 @@ shell and PowerShell version. The safest pattern for ad-hoc testing is to
 clone manually and call `installer.py` directly:
 
 ```bash
-git clone https://github.com/PersonalJarvis/PersonalJarvis ~/.personal-jarvis
+git clone https://github.com/personal-jarvis/personal-jarvis ~/.personal-jarvis
 cd ~/.personal-jarvis && python -m venv .venv
 . .venv/bin/activate           # Windows: .\.venv\Scripts\Activate.ps1
 pip install rich packaging
@@ -98,7 +98,7 @@ Before that flip:
 2. Strip Maintainer-only paths: `data/_final_verdict_runtime/`, `data/workspace/`, `data/sessions.db` removed from history (consider `git filter-repo`).
 3. Confirm `.env` is in `.gitignore` and never committed.
 4. Smoke-test the one-liner on a clean VM (Win11 fresh box, Ubuntu 22.04 server, macOS).
-5. Flip visibility: `gh repo edit PersonalJarvis/PersonalJarvis --visibility public --accept-visibility-change-consequences`.
+5. Flip visibility: `gh repo edit personal-jarvis/personal-jarvis --visibility public --accept-visibility-change-consequences`.
 
 ## Future work (not in this PR)
 

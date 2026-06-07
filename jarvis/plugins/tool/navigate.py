@@ -111,6 +111,14 @@ _ALIASES: dict[str, str] = {
     "kontakte": "contacts",
     "address book": "contacts",
     "adressbuch": "contacts",
+    # "Extensions" is the merged sidebar entry fronting skills + plugins + clis
+    # + mcps. The bare name lands on the Skills tab; "tools" lands on the Tools
+    # tab (which defaults to Plugins). The underlying section ids are unchanged.
+    "extensions": "skills",
+    "erweiterungen": "skills",
+    "erweiterung": "skills",
+    "tools": "plugins",
+    "werkzeuge": "plugins",
 }
 
 

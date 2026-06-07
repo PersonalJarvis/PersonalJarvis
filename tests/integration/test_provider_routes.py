@@ -314,6 +314,36 @@ def test_brain_switch_503_when_brain_missing(web_server: WebServer, secret_store
         assert resp.status_code == 503
 
 
+def test_brain_switch_codex_requires_api_key(
+    server_with_brain: WebServer, secret_store: _InMemorySecretStore
+) -> None:
+    """Codex as a BRAIN needs an OpenAI API key.
+
+    The ChatGPT subscription (OAuth) only powers the Codex *subagent*; a
+    chat-completions brain cannot use it. Without a key -> 409, no switch.
+    """
+    fake: _FakeBrainManager = server_with_brain.app.state.brain
+    with TestClient(server_with_brain.app) as client:
+        resp = client.post("/api/brain/switch", json={"provider": "codex"})
+        assert resp.status_code == 409
+    assert fake.calls == []
+
+
+def test_brain_switch_codex_with_api_key(
+    server_with_brain: WebServer, secret_store: _InMemorySecretStore
+) -> None:
+    """With the Codex key saved, codex activates as a first-class brain."""
+    secret_store.set("codex_openai_api_key", "sk-codex-123")
+    fake: _FakeBrainManager = server_with_brain.app.state.brain
+    with TestClient(server_with_brain.app) as client:
+        resp = client.post(
+            "/api/brain/switch", json={"provider": "codex", "persist": False}
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["active"] == "codex"
+    assert fake.calls == [("codex", False)]
+
+
 # ----------------------------------------------------------------------
 # /api/tts/switch
 # ----------------------------------------------------------------------

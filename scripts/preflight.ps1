@@ -225,6 +225,37 @@ if ($siteExit -ne 0 -or [string]::IsNullOrWhiteSpace($siteOut)) {
 }
 
 # ---------------------------------------------------------------------------
+# Check 5: Privacy pre-push hook wiring.
+#
+# The versioned privacy gate lives in .githooks/pre-push but only runs if
+# core.hooksPath points at it. A fresh clone does NOT inherit local config,
+# so wire it here (self-healing, like the editable-install repin in Check 2).
+# Without this, `git push` would silently skip the secret / PII / identity gate.
+# ---------------------------------------------------------------------------
+Push-Location $WorktreeRoot
+try {
+    $hookFile = Join-Path $WorktreeRoot ".githooks/pre-push"
+    if (-not (Test-Path -LiteralPath $hookFile)) {
+        Write-Check "GREEN" "No .githooks/pre-push in this worktree -- nothing to wire"
+    } else {
+        $current = (git config --local --get core.hooksPath 2>$null)
+        $current = (($current -join "") -as [string]).Trim()
+        if ($current -eq ".githooks") {
+            Write-Check "GREEN" "Privacy pre-push hook wired (core.hooksPath=.githooks)"
+        } else {
+            git config --local core.hooksPath .githooks 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Check "GREEN" "Wired privacy pre-push hook (core.hooksPath=.githooks)"
+            } else {
+                Write-Check "RED" "Could not set core.hooksPath=.githooks (push privacy gate inactive)"
+            }
+        }
+    }
+} finally {
+    Pop-Location
+}
+
+# ---------------------------------------------------------------------------
 # Best-effort housekeeping: prune stale agent/* branches left behind by
 # `git worktree remove` (which does not delete the branch). H7 from the
 # 2026-05-17 audit. Failures here are warnings only -- the preflight's

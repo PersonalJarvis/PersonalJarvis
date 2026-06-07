@@ -141,7 +141,7 @@ async def test_recovery_marks_running_as_failed(tmp_missions_db: Path) -> None:
     # window (which protects missions a live instance is still running) is
     # covered by tests/missions/test_recovery_staleness.py.
     m2 = MissionManager(tmp_missions_db)
-    recovered = await m2.start(stale_after_ms=0)
+    recovered = await m2.start(recover=True, stale_after_ms=0)
     try:
         assert mid in recovered
         view = await m2.mission(mid)
@@ -169,7 +169,7 @@ async def test_recovery_emits_two_events_per_mission(tmp_missions_db: Path) -> N
         received.append(e)
 
     m2.bus.subscribe_all(collect)
-    await m2.start(stale_after_ms=0)  # orphaned-crash model: sweep immediately
+    await m2.start(recover=True, stale_after_ms=0)  # primary restart: sweep immediately
     try:
         # Recovery hat 2 weitere Events emittiert (StateChange + Failed)
         # Aber: collect war erst NACH start() registriert — deshalb pruefen wir die DB
@@ -213,7 +213,7 @@ async def test_recovery_publishes_to_bus(tmp_missions_db: Path) -> None:
 
     bus.subscribe_all(collect)
     m2 = MissionManager(tmp_missions_db, bus=bus)
-    await m2.start(stale_after_ms=0)  # orphaned-crash model: sweep immediately
+    await m2.start(recover=True, stale_after_ms=0)  # primary restart: sweep immediately
     try:
         # Beim start wurden 2 Recovery-Events publiziert
         types = [e.payload.event_type for e in received]
@@ -250,7 +250,7 @@ async def test_recovery_handles_multiple_stale_missions(tmp_missions_db: Path) -
     await m1.stop()
 
     m2 = MissionManager(tmp_missions_db)
-    recovered = await m2.start(stale_after_ms=0)  # orphaned-crash model
+    recovered = await m2.start(recover=True, stale_after_ms=0)  # primary restart
     try:
         assert sorted(recovered) == sorted(mids)
         for mid in mids:
@@ -301,7 +301,7 @@ async def test_recovery_preserves_pending_mission_as_failed(
     await m1.stop()
 
     m2 = MissionManager(tmp_missions_db)
-    recovered = await m2.start(stale_after_ms=0)  # orphaned-crash model
+    recovered = await m2.start(recover=True, stale_after_ms=0)  # primary restart
     try:
         assert mid in recovered
         view = await m2.mission(mid)

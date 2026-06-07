@@ -1,0 +1,93 @@
+#!/bin/sh
+# pre-push: versioned local mirror of the privacy + language CI gates.
+#
+# Layer 1 of a 3-layer privacy defence. It runs two checks per push:
+#
+#   1. PRIVACY gate (FAIL-CLOSED on positive findings) — scripts/ci/privacy_pre_push.py
+#        (A) blocks any direct push to the PUBLIC repo (PersonalJarvis/PersonalJarvis);
+#        (B) blocks a commit carrying a private maintainer email (author/committer);
+#        (C) blocks a real secret / forbidden secret file in the pushed files.
+#      The gate itself fails OPEN only when it genuinely cannot run (no python,
+#      scanner import fails, diff range unknown) — layer-3 CI is the backstop.
+#
+#   2. LANGUAGE gate (FAIL-OPEN) — scripts/ci/check_no_new_german.py
+#        aborts only on a CONFIRMED newly-added German hit (Output Language Policy).
+#
+# This hook is VERSIONED in .githooks/; the orchestrator wires it via
+# `git config core.hooksPath .githooks` (this hook never sets that itself).
+#
+# Bypass once:  git push --no-verify
+#
+# git passes the remote name as $1 and the remote URL as $2; the pushed refs
+# arrive on stdin, one line per ref:
+#   <local_ref> <local_sha> <remote_ref> <remote_sha>
+
+remote_name="$1"
+remote_url="$2"
+
+# Prefer the known-good interpreter (a bare 'python' may be a deps-less venv on
+# this machine); fall back to whatever 'python' resolves to. Both gates are
+# stdlib + git only, so any Python 3.x works. No Python at all -> fail OPEN.
+PY="/c/Program Files/Python311/python.exe"
+[ -x "$PY" ] || PY="$(command -v python 2>/dev/null)"
+[ -n "$PY" ] || exit 0
+
+# Read all pushed refs from stdin FIRST (into a temp file), so each gate's own
+# subprocess can never consume the hook's stdin pipe and corrupt the loop.
+refs_file="$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/prepush_refs.$$")"
+cat > "$refs_file"
+
+status=0
+privacy_hit=0
+language_hit=0
+
+# --- 1) PRIVACY gate (FAIL-CLOSED) --------------------------------------------
+# Feed the buffered refs to the privacy gate on stdin; it reads remote name/url
+# from argv. A non-zero exit means a CONFIRMED privacy block.
+privacy_gate="scripts/ci/privacy_pre_push.py"
+if [ -f "$privacy_gate" ]; then
+    "$PY" "$privacy_gate" "$remote_name" "$remote_url" < "$refs_file"
+    if [ "$?" -ne 0 ]; then
+        status=1
+        privacy_hit=1
+    fi
+fi
+
+# --- 2) LANGUAGE gate (FAIL-OPEN) ---------------------------------------------
+# rc == 1 means confirmed newly-added German; any other rc is fail-open.
+language_gate="scripts/ci/check_no_new_german.py"
+if [ -f "$language_gate" ]; then
+    while read -r local_ref local_sha remote_ref remote_sha; do
+        # Skip branch deletions (local_sha all zeros).
+        case "$local_sha" in *[!0]*) : ;; *) continue ;; esac
+
+        # Diff base = what the remote already has; new branch -> main.
+        case "$remote_sha" in
+            *[!0]*) base="$remote_sha" ;;
+            *)      base="origin/main" ;;
+        esac
+
+        # </dev/null keeps the gate from touching the hook's stdin; rc captured.
+        "$PY" "$language_gate" "$base" </dev/null
+        rc=$?
+        if [ "$rc" -eq 1 ]; then
+            status=1
+            language_hit=1
+        fi
+    done < "$refs_file"
+fi
+
+rm -f "$refs_file"
+
+if [ "$status" -ne 0 ]; then
+    echo ""
+    if [ "$privacy_hit" -ne 0 ]; then
+        echo "pre-push BLOCKED: PRIVACY gate (public target / private email / secret)."
+        echo "  See the findings above. Public releases go via the ship-public-release skill."
+    fi
+    if [ "$language_hit" -ne 0 ]; then
+        echo "pre-push BLOCKED: LANGUAGE gate (newly added German text)."
+    fi
+    echo "Bypass once with:  git push --no-verify   (layer-3 CI is the backstop)."
+fi
+exit "$status"

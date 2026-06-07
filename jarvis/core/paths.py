@@ -70,6 +70,15 @@ def docs_index_db_path() -> Path:
     return user_data_dir() / "data" / "docs_index.sqlite"
 
 
+def skill_prefs_path() -> Path:
+    """JSON sidecar storing per-skill on/off overrides and the custom list order.
+
+    Kept OUTSIDE ``user_skills_dir()`` (which the registry watcher observes for
+    ``*.md`` changes) so a preference write never triggers a skill hot-reload.
+    """
+    return user_data_dir() / "data" / "skill_prefs.json"
+
+
 def repo_root() -> Path:
     """Path to the repository root (local Personal Jarvis working tree).
 
@@ -169,6 +178,7 @@ __all__ = [
     "cli_usage_db_path",
     "cli_custom_catalog_path",
     "skill_link_health_db_path",
+    "skill_prefs_path",
     "docs_index_db_path",
     "repo_root",
     "default_doc_roots",

@@ -31,15 +31,3 @@ docs/supply-chain/*.md       text eol=lf
 install/in-toto/*.json       text eol=lf
 install/keys/*.pub           text eol=lf
 install/tuf/*.json           text eol=lf
-
-# Cross-platform app build (Phase C). Shell scripts, the AppImage AppRun, the
-# .desktop entry and the Inno Setup script MUST stay LF: a CRLF shebang
-# (`#!/usr/bin/env bash\r`) is a "bad interpreter" error on macOS/Linux and
-# would break the build-app.yml runners immediately. build.bat stays CRLF.
-build.sh                     text eol=lf
-build.bat                    text eol=crlf
-packaging/**/*.sh            text eol=lf
-packaging/linux/AppRun       text eol=lf
-packaging/linux/*.desktop    text eol=lf
-packaging/windows/*.iss      text eol=lf
-install/npx/bin.js           text eol=lf

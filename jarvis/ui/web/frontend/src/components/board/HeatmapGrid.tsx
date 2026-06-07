@@ -49,6 +49,8 @@ export function HeatmapGrid({ cells, weeks = 53, showLegend = true }: HeatmapGri
         tasks_failed: 0,
         activity_events: 0,
         conversation_hours: 0,
+        user_words: 0,
+        jarvis_words: 0,
       };
     }
 

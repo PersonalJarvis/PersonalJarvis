@@ -143,18 +143,7 @@ def _resolve_input_device(device: int | str | None) -> int | str | None:
         else:
             _log.info("Mic-Resolve: System-Default-Input (device=None).")
         return device
-    norm = device.strip().lower() if isinstance(device, str) else ""
-    # "auto" / "" → trust the OS default input device — i.e. the mic the user
-    # actually selected in Windows (e.g. their AirPods). Returning None makes
-    # sounddevice use that default and adapt when they switch mics. This fixes
-    # two bugs: (1) a literal "auto" reaching sounddevice raised "No input device
-    # matching 'auto'" and killed the pipeline; (2) the name-priority picker
-    # below chose the built-in array (silence) while the real mic was a headset.
-    # "auto-headset" keeps the smart, loopback-avoiding headset picker.
-    if norm in ("auto", ""):
-        _log.info("Mic-Resolve 'auto': System-Default-Input (device=None).")
-        return None
-    if norm != "auto-headset":
+    if not isinstance(device, str) or device != "auto-headset":
         _log.info("Mic-Resolve: benanntes Device '{}'.", device)
         return device
 

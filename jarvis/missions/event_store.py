@@ -78,6 +78,11 @@ class MissionEventStore:
                 "ALTER TABLE missions ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0.0"
             )
             log.info("MissionEventStore: migration applied — added 'cost_usd'")
+        if "last_heartbeat_ms" not in existing_cols:
+            await self.conn.execute(
+                "ALTER TABLE missions ADD COLUMN last_heartbeat_ms INTEGER NOT NULL DEFAULT 0"
+            )
+            log.info("MissionEventStore: migration applied — added 'last_heartbeat_ms'")
 
     async def close(self) -> None:
         if self._conn is not None:
@@ -300,6 +305,28 @@ class MissionEventStore:
         row = await cur.fetchone()
         await cur.close()
         return str(row[0]) if row is not None else None
+
+    async def touch_heartbeat(self, mission_id: str, ts_ms: int) -> None:
+        """Bump a mission's liveness heartbeat (header-only, NO event).
+
+        A live orchestrator calls this periodically while a worker is draining
+        so startup recovery can distinguish a busy-but-silent worker from a
+        genuinely orphaned mission. Deliberately not an event: it must not bloat
+        the event log or wake the flight-recorder wildcard subscriber.
+        """
+        await self.conn.execute(
+            "UPDATE missions SET last_heartbeat_ms = ? WHERE id = ?",
+            (ts_ms, mission_id),
+        )
+
+    async def get_heartbeat(self, mission_id: str) -> int:
+        """Last heartbeat ms for a mission, or 0 if none/unknown."""
+        cur = await self.conn.execute(
+            "SELECT last_heartbeat_ms FROM missions WHERE id = ?", (mission_id,)
+        )
+        row = await cur.fetchone()
+        await cur.close()
+        return int(row[0]) if row is not None and row[0] is not None else 0
 
     async def wal_checkpoint(self) -> None:
         """Manual WAL checkpoint (TRUNCATE mode)."""

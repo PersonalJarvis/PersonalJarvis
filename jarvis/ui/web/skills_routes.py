@@ -101,6 +101,23 @@ def _skill_to_detail(s: Skill) -> dict[str, Any]:
     return out
 
 
+def _sort_by_order(skills: list[Skill], order: list[str]) -> list[Skill]:
+    """Apply the user's custom list order.
+
+    Skills named in ``order`` come first, in that order; any skill not in the
+    order (e.g. freshly created) is appended after them, sorted by name. Names in
+    ``order`` that no longer resolve to a skill are simply ignored.
+    """
+    index = {name: i for i, name in enumerate(order)}
+    ordered = sorted(
+        (s for s in skills if s.name in index), key=lambda s: index[s.name]
+    )
+    rest = sorted(
+        (s for s in skills if s.name not in index), key=lambda s: s.name.lower()
+    )
+    return ordered + rest
+
+
 def _resolve_resource_path(skill: Skill, kind: str, filename: str) -> Path:
     """Loest einen Resource-Pfad und stellt sicher, dass er nicht aus dem
     Skill-Root ausbricht (Path-Traversal-Schutz).
@@ -220,6 +237,16 @@ class SkillImportBody(BaseModel):
     input: str = Field(min_length=5, max_length=4000)
 
 
+class SkillOrderBody(BaseModel):
+    """Body fuer ``PUT /api/skills/order`` — die User-definierte Listen-Reihenfolge.
+
+    ``order`` ist eine Liste von Skill-Namen in Anzeige-Reihenfolge. Sie betrifft
+    NUR die Listen-Ansicht — Auslösung + Brain-Einblendung ignorieren die
+    Reihenfolge.
+    """
+    order: list[str] = Field(default_factory=list)
+
+
 class SkillQueryBody(BaseModel):
     """Body fuer ``POST /api/skills/query`` — lokale Skill-Suche mit BM25 + LLM."""
     q: str = Field(default="", max_length=500)
@@ -237,8 +264,10 @@ class SkillQueryBody(BaseModel):
 
 @router.get("")
 async def list_skills(request: Request) -> dict[str, Any]:
+    from jarvis.skills import prefs
+
     reg = _require_registry(request)
-    skills: list[Skill] = reg.list()
+    skills: list[Skill] = _sort_by_order(reg.list(), prefs.load_order())
     return {
         "skills": [_skill_to_summary(s) for s in skills],
         "total": len(skills),
@@ -483,6 +512,18 @@ async def import_skill(body: SkillImportBody, request: Request) -> dict[str, Any
     return _skill_to_detail(installed)
 
 
+# NB: registered BEFORE ``/{name}`` so a ``PUT /order`` is not captured by the
+# ``PUT /{name}`` path-param route (which would treat "order" as a skill name).
+@router.put("/order")
+async def reorder_skills(body: SkillOrderBody, request: Request) -> dict[str, Any]:
+    """Persist the user's custom skill order (list view only)."""
+    from jarvis.skills import prefs
+
+    _require_registry(request)  # 503 if the registry is absent, for consistency
+    prefs.set_order(body.order)
+    return {"ok": True, "order": prefs.load_order()}
+
+
 @router.get("/{name}")
 async def get_skill(name: str, request: Request) -> dict[str, Any]:
     reg = _require_registry(request)
@@ -491,6 +532,54 @@ async def get_skill(name: str, request: Request) -> dict[str, Any]:
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Skill '{name}' nicht gefunden")
     return _skill_to_detail(skill)
+
+
+@router.delete("/{name}")
+async def delete_skill(name: str, request: Request) -> dict[str, Any]:
+    """Loescht einen User-Skill (Ordner) und raeumt seine Prefs auf.
+
+    Builtins werden abgelehnt (409) — sie wuerden beim naechsten Start ohnehin
+    neu kopiert. Sicherheit: geloescht wird nur INNERHALB des Registry-Roots
+    (kein Path-Escape).
+    """
+    import shutil
+
+    from jarvis.skills import prefs
+
+    reg = _require_registry(request)
+    try:
+        skill = reg.get(name)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Skill '{name}' nicht gefunden")
+
+    if _is_builtin(name):
+        raise HTTPException(
+            status_code=409,
+            detail="Builtin-Skill kann nicht geloescht werden (wird beim Start neu kopiert).",
+        )
+
+    root = reg.root.resolve()
+    target = skill.root.resolve()
+    if target == root:
+        raise HTTPException(status_code=400, detail="Ungueltiges Loeschziel.")
+    try:
+        target.relative_to(root)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Skill liegt ausserhalb des User-Skill-Ordners — Loeschen verweigert.",
+        )
+
+    try:
+        shutil.rmtree(target)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Konnte Skill nicht loeschen: {exc}"
+        ) from exc
+
+    reg._skills.pop(name, None)  # type: ignore[attr-defined]
+    prefs.remove_skill(name)
+    return {"ok": True, "removed": True, "name": name}
 
 
 @router.put("/{name}")
@@ -651,6 +740,12 @@ def _flip_state(
 
     updated = replace(skill, state=new_state)
     reg._skills[name] = updated  # type: ignore[attr-defined]
+
+    # Persist the choice to the sidecar so it survives a reload/restart — the
+    # in-memory flip above is wiped by every hot-reload (that was the old bug).
+    from jarvis.skills import prefs
+
+    prefs.set_state(name, new_state == SkillLifecycleState.ACTIVE)
     return _skill_to_summary(updated)
 
 

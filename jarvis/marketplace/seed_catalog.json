@@ -45,12 +45,7 @@
         "validation_endpoint": "https://api.vercel.com/v2/user",
         "instruction_md": "1. Click 'Create Token'\n2. Name: 'Personal Jarvis'\n3. Choose 'Full Account' or a specific team\n4. Copy the token (shown once)\n5. Paste below"
       },
-      "mcp_server": {
-        "transport": "rest_wrapper",
-        "rest_base_url": "https://api.vercel.com",
-        "auth_header_template": "Authorization: Bearer ${plugin_vercel_access_token}",
-        "tool_set": "vercel_rest_minimal"
-      },
+      "native_tool": "vercel",
       "future_v2_note": "Apply for mcp.vercel.com client-allowlist; switch mode to hosted_mcp_allowlist when approved."
     },
     {

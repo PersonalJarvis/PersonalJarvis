@@ -105,6 +105,10 @@ ROUTER_TOOLS = frozenset({
     # OAuth token. Gmail has no MCP server block, so it must be router-visible
     # directly; otherwise connected Gmail is not callable by voice/chat.
     "gmail",
+    # Vercel Marketplace plugin (2026-06-07): native REST tool, same rationale
+    # as gmail — Vercel's catalog rest_wrapper transport produced zero MCP tools,
+    # so it must be router-visible directly. Read-only; never a spawn (AP-5/AP-14).
+    "vercel",
     # Computer-Use (Wave 1, 2026-05-29): first-class, clearly-described tool to
     # drive the user's LIVE desktop (open apps, click, type, scroll, operate
     # any GUI). The router previously had no honest desktop path — spawn-worker
@@ -1061,7 +1065,7 @@ def _legacy_full_brain(bus: Any | None = None) -> Any:
 
     tools: dict[str, Any] = {}
     active_tools = {"open-app", "type-text", "run-shell", "search-web", "remember",
-                    "dispatch-to-harness", "whoami", "cli-tools", "gmail"}
+                    "dispatch-to-harness", "whoami", "cli-tools", "gmail", "vercel"}
     from jarvis.harness.manager import HarnessManager
     harness_manager = HarnessManager(bus=bus)
 
@@ -1197,6 +1201,21 @@ def build_default_brain(
         seed_registry(get_registry())
     except Exception as exc:  # noqa: BLE001 — a seed hiccup must not kill the brain build
         log.warning("CapabilityRegistry seed failed: %s", exc)
+
+    # Plugin<->Skill pairing (2026-06-07): after the static seed, register a
+    # capability for every live paired skill so connected plugins resolve.
+    # Placed after seed_registry so an explicit paired cap overrides the weak
+    # MCP auto-cap for the same domain. Defensive: a missing skill context must
+    # not block boot (cloud-first graceful degradation).
+    try:
+        from jarvis.skills.plugin_coupling import register_paired_capabilities
+        from jarvis.skills.skill_context import try_get_skill_context
+
+        _ctx = try_get_skill_context()
+        if _ctx is not None:
+            register_paired_capabilities(get_registry(), _ctx.registry.list())
+    except Exception as exc:  # noqa: BLE001
+        log.debug("paired-capability seed skipped: %s", exc)
 
     mode = (os.environ.get("JARVIS_BRAIN") or "").strip().lower()
 

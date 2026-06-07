@@ -381,3 +381,179 @@ def test_readonly_answer_returns_answer_for_external_only_diff() -> None:
         readonly_answer(external_diff, stream)
         == "Created hello.html at C:/Users/x/M/hello.html."
     )
+
+
+# ---------------------------------------------------------------------------
+# extract_verified_desktop_actions — desktop-launch commands that produce NO
+# file diff: the deliverable is a running process, not a file change.
+# Mirrors the git/gh command-evidence path so a diff-less "open Explorer /
+# launch Chrome" mission can be credited as real work instead of being vetoed
+# as an empty diff. Anti-hearsay discipline: SAME rules as
+# extract_verified_commands (id required; non-errored result required).
+# ---------------------------------------------------------------------------
+from jarvis.missions.stream_evidence import extract_verified_desktop_actions  # noqa: E402
+
+
+def test_extract_verified_desktop_actions_credits_silent_launch() -> None:
+    """Windows 'start explorer.exe' with an empty (but non-errored) result is
+    credited — a silent detached spawn produces no stdout, and that is SUCCESS,
+    not missing evidence."""
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "d1", "name": "Bash",
+             "input": {"command": "start explorer.exe"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "d1",
+             "content": ""}]}},
+    ])
+    actions = extract_verified_desktop_actions(stream)
+    assert len(actions) == 1
+    assert "start explorer.exe" in actions[0][0]
+    # Silent detached spawn: empty stdout → substitute sentinel text.
+    assert actions[0][1] == "(command succeeded; no output captured)"
+
+
+def test_extract_verified_desktop_actions_skips_errored() -> None:
+    """A launch command whose tool_result is errored is NOT credited — the
+    process did not start (or the shell reported failure)."""
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "d2", "name": "Bash",
+             "input": {"command": "start explorer.exe"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "d2", "is_error": True,
+             "content": "The system cannot find the file specified."}]}},
+    ])
+    assert extract_verified_desktop_actions(stream) == ()
+
+
+def test_extract_verified_desktop_actions_ignores_readonly() -> None:
+    """Read-only commands (ls, cat) do NOT match the desktop-launch regex and
+    must never be credited (false-positive guard)."""
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "r1", "name": "Bash",
+             "input": {"command": "ls -la"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "r1",
+             "content": "total 0"}]}},
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "r2", "name": "Bash",
+             "input": {"command": "cat foo.txt"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "r2",
+             "content": "hello"}]}},
+    ])
+    assert extract_verified_desktop_actions(stream) == ()
+
+
+def test_extract_verified_desktop_actions_linux_xdg_open() -> None:
+    """Linux: 'xdg-open foo.pdf' is a desktop-launch command and is credited."""
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "x1", "name": "Bash",
+             "input": {"command": "xdg-open /home/user/document.pdf"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "x1",
+             "content": ""}]}},
+    ])
+    actions = extract_verified_desktop_actions(stream)
+    assert len(actions) == 1
+    assert "xdg-open" in actions[0][0]
+    assert actions[0][1] == "(command succeeded; no output captured)"
+
+
+def test_extract_verified_desktop_actions_macos_open() -> None:
+    """macOS: 'open -a Safari' is a desktop-launch command and is credited."""
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "m1", "name": "Bash",
+             "input": {"command": "open -a Safari https://example.com"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "m1",
+             "content": ""}]}},
+    ])
+    actions = extract_verified_desktop_actions(stream)
+    assert len(actions) == 1
+    assert "open -a" in actions[0][0]
+    assert actions[0][1] == "(command succeeded; no output captured)"
+
+
+def test_extract_verified_desktop_actions_skips_uncorrelated() -> None:
+    """A tool_use with no id cannot be correlated to a result and must NOT be
+    credited — anti-hearsay gate mirrors extract_verified_commands."""
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            # No "id" field — cannot correlate to a result.
+            {"type": "tool_use", "name": "Bash",
+             "input": {"command": "start explorer.exe"}}]}},
+    ])
+    assert extract_verified_desktop_actions(stream) == ()
+
+
+def test_extract_verified_desktop_actions_skips_unmatched_result() -> None:
+    """A tool_use whose result never arrived (truncated stream) is NOT credited."""
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t99", "name": "Bash",
+             "input": {"command": "start explorer.exe"}}]}},
+        # no tool_result for t99
+    ])
+    assert extract_verified_desktop_actions(stream) == ()
+
+
+# ---------------------------------------------------------------------------
+# MAJOR-2 — tightened `start` arm: CLI runs must NOT be credited as desktop
+# launches, but real GUI/app launches must still be credited.
+# ---------------------------------------------------------------------------
+
+
+def _desktop_stream(command: str) -> str:
+    """Build a minimal successful shell tool_use stream for `command`."""
+    return _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "s1", "name": "Bash",
+             "input": {"command": command}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "s1", "content": ""}]}},
+    ])
+
+
+def test_start_explorer_still_credited_after_tightening() -> None:
+    """Real GUI launch: 'start explorer.exe' must still be credited."""
+    assert len(extract_verified_desktop_actions(_desktop_stream("start explorer.exe"))) == 1
+
+
+def test_start_chrome_still_credited_after_tightening() -> None:
+    """Real GUI launch: 'start chrome' must still be credited."""
+    assert len(extract_verified_desktop_actions(_desktop_stream("start chrome"))) == 1
+
+
+def test_start_calc_still_credited_after_tightening() -> None:
+    """Real GUI launch: 'start calc' must still be credited."""
+    assert len(extract_verified_desktop_actions(_desktop_stream("start calc"))) == 1
+
+
+def test_start_quoted_title_chrome_still_credited() -> None:
+    """Real GUI launch: 'start \"\" chrome' (quoted-title form) must still be credited."""
+    assert len(extract_verified_desktop_actions(_desktop_stream('start "" chrome'))) == 1
+
+
+def test_start_git_push_not_credited() -> None:
+    """MAJOR-2: 'start git push' is a CLI run, NOT a desktop launch — must not be credited."""
+    assert extract_verified_desktop_actions(_desktop_stream("start git push")) == ()
+
+
+def test_start_python_build_not_credited() -> None:
+    """MAJOR-2: 'start python build.py' is a CLI run, NOT a desktop launch — must not be credited."""
+    assert extract_verified_desktop_actions(_desktop_stream("start python build.py")) == ()
+
+
+def test_start_slash_B_not_credited() -> None:
+    """MAJOR-2: 'start /B git status' uses a Windows flag — NOT a named-app GUI launch."""
+    assert extract_verified_desktop_actions(_desktop_stream("start /B git status")) == ()
+
+
+def test_start_npm_run_build_not_credited() -> None:
+    """MAJOR-2: 'start npm run build' is a CLI tool run — must not be credited as a launch."""
+    assert extract_verified_desktop_actions(_desktop_stream("start npm run build")) == ()

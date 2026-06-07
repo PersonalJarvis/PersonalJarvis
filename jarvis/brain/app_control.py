@@ -505,6 +505,8 @@ async def _switch_subagent(
 ) -> dict[str, Any]:
     try:
         from jarvis.missions.worker_runtime.provider_map import (
+            CODEX_SUBAGENT_CANONICAL,
+            CODEX_SUBAGENT_SLUGS,
             JARVIS_TO_OPENCLAW,
             canonical_subagent_provider,
         )
@@ -516,6 +518,48 @@ async def _switch_subagent(
         }
 
     canon = canonical_subagent_provider(provider) or ""
+
+    # Codex is a DIRECT worker (no OpenClaw slug) — accept it explicitly, mirroring
+    # the REST ``/api/subagent/switch`` path so the two switch sites never drift.
+    # Backed by the ChatGPT subscription (OAuth) OR an OpenAI API key.
+    if canon in CODEX_SUBAGENT_SLUGS:
+        try:
+            from jarvis.codex_auth import CodexAuthService
+
+            codex_connected = CodexAuthService().status().connected
+        except Exception:  # noqa: BLE001 — codex CLI absent is just "not connected"
+            codex_connected = False
+        has_key = bool(
+            cfg_mod.get_secret("codex_openai_api_key")
+            or cfg_mod.get_provider_secret("codex")
+        )
+        if not (codex_connected or has_key):
+            return {
+                "ok": False,
+                "error_kind": "missing_credential",
+                "error": (
+                    "Codex is not connected — run 'codex login' or save an OpenAI "
+                    "API key first, then switch the subagent."
+                ),
+            }
+        persisted = (
+            _persist(
+                lambda: _import_writer().set_sub_jarvis_provider(CODEX_SUBAGENT_CANONICAL)
+            )
+            if persist
+            else False
+        )
+        _set_in_memory(cfg, ["brain", "sub_jarvis", "provider"], CODEX_SUBAGENT_CANONICAL)
+        return {
+            "ok": True,
+            "tier": "subagent",
+            "old_provider": old,
+            "new_provider": CODEX_SUBAGENT_CANONICAL,
+            "persisted": persisted,
+            "applied_live": False,
+            "requires_restart": True,
+        }
+
     if canon not in JARVIS_TO_OPENCLAW:
         known = ", ".join(sorted(JARVIS_TO_OPENCLAW))
         return {
