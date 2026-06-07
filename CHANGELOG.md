@@ -7,6 +7,13 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
+## [0.1.1] — 2026-06-07
+
+### Fixed
+- **Plugin skills now load on a real boot.** The 12 paired plugin skills were missing from `BUILTIN_SKILL_NAMES`, so first-run bootstrap never copied them into the user skills dir and the paired capabilities never registered — the plugin-reachability feature was inert outside tests. A real boot now logs "registered 12 paired capabilities".
+
+---
+
 ## [0.1.0] — 2026-06-07
 
 ### Added
