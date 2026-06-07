@@ -66,7 +66,7 @@ class MissionManager:
     async def start(
         self,
         *,
-        recover: bool = True,
+        recover: bool = False,
         stale_after_ms: int = RECOVERY_STALE_AFTER_MS,
     ) -> list[str]:
         """Open store, optionally run crash-recovery.
@@ -74,15 +74,22 @@ class MissionManager:
         Returns the list of recovered mission_ids ([] when ``recover`` is
         False or nothing was orphaned).
 
-        ``recover=False`` is the coarse guard for SECONDARY instances (e.g. a
-        ``--no-lock`` parallel-dev launch). It is a best-effort optimization —
-        the real protection lives in :func:`startup_recover`, which is
+        Recovery is **opt-in / fail-closed**: ``recover`` defaults to ``False``
+        so that any process that opens the DB without proving it is the primary
+        instance does NOT sweep live missions to ``crash_recovery``.  Only the
+        launcher, after confirming it holds the single-instance lock, passes
+        ``recover=True`` (via ``bootstrap_missions(recover_missions=True)``).
+
+        ``recover=True`` engages :func:`startup_recover`, which is
         activity-aware: a mission with recent activity is presumed owned by a
         live orchestrator and is skipped, and a mission with a terminal event is
-        reconciled rather than failed. That makes the sweep safe even when an
-        instance that *should* have been secondary runs it anyway (the headless
-        launch path never set JARVIS_PRIMARY_INSTANCE — live incident 2026-05-31,
-        missions 019e7095 / 019e6fea).
+        reconciled rather than failed.  That layered defence applies on top of
+        the primary-gate, not instead of it.
+
+        Historical context: the old default ``recover=True`` caused the
+        94-occurrence crash_recovery false-negative (live forensic 2026-05-31,
+        missions 019e7095 / 019e6fea) because headless instances never set
+        ``JARVIS_PRIMARY_INSTANCE`` and the server defaulted to primary.
 
         ``stale_after_ms`` is forwarded to :func:`startup_recover` (default
         :data:`RECOVERY_STALE_AFTER_MS`).

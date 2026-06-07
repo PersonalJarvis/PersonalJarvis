@@ -1,11 +1,11 @@
-# Threat Model — `PersonalJarvis/PersonalJarvis` Quick-Install One-Liner
+# Threat Model — `personal-jarvis/personal-jarvis` Quick-Install One-Liner
 
 > Status: **Wave 1 of 4** (Sigstore keyless + Rekor freshness + pinned cosign +
 > pinned action SHAs). Waves 2-4 are scoped at the bottom of this document but
 > intentionally **not** delivered yet — promising more than is shipped is itself
 > a supply-chain anti-pattern.
 >
-> Last reviewed: 2026-05-26 against the `PersonalJarvis/PersonalJarvis` repo
+> Last reviewed: 2026-05-26 against the `personal-jarvis/personal-jarvis` repo
 > at `main` HEAD `e7cdefeca7e44ddf18ebd17a1e646d4471cf7a1e` (Wave 1 baseline).
 
 ---
@@ -15,7 +15,7 @@
 The artifact under threat is the **one-liner installation flow**:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/personal-jarvis/personal-jarvis/main/install/install.sh | bash
 ```
 
 and its PowerShell sibling. This document enumerates every trust root a fresh
@@ -80,7 +80,7 @@ Each scenario follows: **pre-condition → action → blast radius → pre-Wave-
 - **Residual gap.** **Single-maintainer signing remains a single point of failure.** Wave 2: threshold signing (2-of-N maintainer keys, with one offline witness key held off-network). Wave 3: rebuilder farm + reproducible builds so an external party can independently verify that the signed bytes match the source commit. This is exactly what Debian's reproducible-builds project, GUAC, and in-toto are designed for.
 
 ### Scenario D — Dependency confusion against `personal-jarvis` itself (T8)
-- **Pre-condition.** `install/installer.py` runs `pip install -e ".[desktop]"` against PyPI with no index pinning. If the project's own distribution name on PyPI is left unclaimed, an attacker could register it (the GitHub repo is `PersonalJarvis/PersonalJarvis`). The legitimate package is currently installed from the local clone — so PyPI's package would only matter for someone running `pip install personal-jarvis` manually, but **`pip install -e .` resolves transitive dependencies from PyPI** and any of those slots being claimed is a vector. **Pre-publication prerequisite:** defensively claim the project's PyPI distribution name before the repository is made public (tracked in the release checklist), so the namespace cannot be squatted.
+- **Pre-condition.** `install/installer.py` runs `pip install -e ".[desktop]"` against PyPI with no index pinning. An attacker registers `personal-jarvis` on PyPI (the GitHub repo is `personal-jarvis/personal-jarvis` — the *PyPI* slot is currently unclaimed, an active dependency-confusion vector). The legitimate package is currently installed from the local clone — so PyPI's package would only matter for someone running `pip install personal-jarvis` manually, but **`pip install -e .` resolves transitive dependencies from PyPI** and any of those slots being claimed is a vector.
 - **Action.** A typosquatted `personnal-jarvis` package or a confusion-attack against a not-pinned dep (e.g. an internal package name leaking into pyproject.toml) ships malware on first `pip install`.
 - **Blast radius.** Full Python interpreter access, persistent via `pyproject.toml` entry-points.
 - **Pre-Wave-1 mitigation.** None.
@@ -247,7 +247,7 @@ treated as code, not as marketing.
 
 Wave 1's verifier accepts a signature iff `cosign verify-blob` succeeds
 against a single OIDC identity (the `sign-installer.yml` workflow on
-`PersonalJarvis/PersonalJarvis`). That is **one trust axis.** If an
+`personal-jarvis/personal-jarvis`). That is **one trust axis.** If an
 attacker compromises the maintainer's GitHub account, or pushes a
 poisoned `sign-installer.yml` that survives review, or successfully runs
 a `tj-actions/changed-files`-class Action-pinning attack on this repo,
@@ -588,9 +588,9 @@ Wave 4 closes two gaps that Waves 1-3 structurally cannot:
    Polyfill-style domain-substitution attack), the **verifier itself** can
    be substituted before any signature is checked, and the entire Wave 1-3
    stack is bypassed. Wave 4 distributes the verifier through Homebrew
-   (`brew tap PersonalJarvis/jarvis && brew install
+   (`brew tap personal-jarvis/jarvis && brew install
    personal-jarvis-installer`) and Scoop (`scoop bucket add jarvis
-   https://github.com/PersonalJarvis/scoop-jarvis && scoop install
+   https://github.com/personal-jarvis/scoop-jarvis && scoop install
    personal-jarvis-installer`). Each package manager has its own signing
    chain rooted in a trust ecosystem **independent of GitHub's TLS**:
    Homebrew's tap-signing infra (macOS/Linux), Scoop's pinned-hash manifest
@@ -648,9 +648,9 @@ A fifth scenario the post-quantum work explicitly addresses:
 **Wave 4 foundation status (SA-1 deliverables, committed in
 `feat/wave4-foundation`):**
 
-- `PersonalJarvis/homebrew-jarvis` org repo created (empty, ready for
+- `personal-jarvis/homebrew-jarvis` org repo created (empty, ready for
   SA-W4-5 to push the Formula).
-- `PersonalJarvis/scoop-jarvis` org repo created (empty, ready for
+- `personal-jarvis/scoop-jarvis` org repo created (empty, ready for
   SA-W4-5 to push the manifest).
 - `homebrew-tap/Formula/personal-jarvis-installer.rb` — Ruby Formula
   pinned at v0.4.0-supplychain-wave3 release asset

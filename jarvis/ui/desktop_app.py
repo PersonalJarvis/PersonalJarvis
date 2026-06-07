@@ -1306,7 +1306,10 @@ class DesktopApp:
 
         from loguru import logger
 
-        from jarvis.ui.relauncher import detached_creationflags
+        from jarvis.ui.relauncher import (
+            detached_creationflags,
+            run_restart_quit_sequence,
+        )
 
         window = getattr(self, "_window", None)
         if window is None:
@@ -1336,18 +1339,27 @@ class DesktopApp:
             )
             return False
 
-        def _quit_soon() -> None:
-            time.sleep(0.8)  # let the HTTP 200 reach the frontend first
+        def _mark_quit() -> None:
             self._user_requested_quit = True
-            try:
-                window.destroy()
-            except Exception:  # noqa: BLE001
-                logger.debug("restart window.destroy failed", exc_info=True)
+
+        def _quit_soon() -> None:
+            # Clean quit, but HARD-EXIT if shutdown stalls — guarantees the
+            # single-instance mutex + port free up so the relauncher's fresh
+            # instance can claim them (without it, a lingering windowless
+            # process holds the lock and the new instance bounces off it →
+            # "shuts down but never comes back").
+            run_restart_quit_sequence(
+                set_quit=_mark_quit,
+                destroy_window=window.destroy,
+            )
 
         threading.Thread(
             target=_quit_soon, name="jarvis-restart-quit", daemon=True
         ).start()
-        logger.info("Self-restart scheduled (relauncher spawned; quitting in 0.8 s).")
+        logger.info(
+            "Self-restart scheduled (relauncher spawned; quitting in ~0.8 s, "
+            "hard-exit fallback at ~10 s)."
+        )
         return True
 
     def _start_speech_and_orb(
@@ -1461,7 +1473,13 @@ class DesktopApp:
             if server is not None and getattr(server, "app", None) is not None:
                 skill_registry = getattr(server.app.state, "skill_registry", None)
             if skill_registry is None:
-                skill_registry = SkillRegistry(root=skills_root, bus=bus)
+                from jarvis.skills.prefs import load_state_overrides
+
+                skill_registry = SkillRegistry(
+                    root=skills_root,
+                    bus=bus,
+                    state_prefs_loader=load_state_overrides,
+                )
                 skill_registry.reload_sync()
 
             # Mini-Tool-Registry fuer den SkillRunner — laedt alle
@@ -1783,33 +1801,23 @@ class DesktopApp:
             # oder /api/ui/bootstrap holen als Fallback.
             pass
 
-        # Zweite Absicherung: Icon per WM_SETICON + Taskbar-Refresh setzen,
-        # nachdem das Fenster vollstaendig geladen ist (shown-Event).
-        # Das native pywebview-icon=-Argument (webview.start) ist der primaere
-        # Fix; dieser Aufruf stellt sicher, dass der Taskbar-Button auch dann
-        # aktualisiert wird, wenn WebView2 das Icon nach dem Page-Load
-        # zuruecksetzt (kann bei einigen WebView2-Versionen vorkommen).
         try:
-            from jarvis.ui.icon_utils import (  # noqa: PLC0415
+            from jarvis.ui.icon_utils import (
                 project_icon_path,
-                set_window_icon_for_current_process,
+                set_window_icon_by_title,
             )
 
-            set_window_icon_for_current_process(project_icon_path())
+            set_window_icon_by_title(WINDOW_TITLE, project_icon_path())
         except Exception:  # noqa: BLE001
             pass
 
     # ---- Backend-Ready-Check ----------------------------------------------
 
-    def _wait_for_backend(self, timeout_s: float = 180.0) -> bool:
+    def _wait_for_backend(self, timeout_s: float = 45.0) -> bool:
         """Pollt ``/api/health`` bis 200 kommt oder Timeout abgelaufen ist.
 
-        180s Default — auf einem kalten Erststart laden die Registries
-        (Skills/Docs/CLI/Plugins/Board) plus chromadb/sentence-transformers
-        Embeddings und optional Whisper/VAD-Modelle synchron, was auf einer
-        Low-Spec-Maschine (1-2 vCPU, kein GPU) deutlich über 45s dauern kann.
-        Großzügig gewählt, weil ein zu knappes Limit das Fenster gar nicht
-        erst erscheinen lässt; ein bereits gebooteter Server antwortet sofort.
+        45s Default — Whisper/VAD-Modelle werden bei erster Initialisierung
+        geladen und blockieren den Event-Loop synchron für bis zu ~20s.
         """
         import httpx
 
@@ -1833,17 +1841,6 @@ class DesktopApp:
         """Blockt bis der User das Fenster schliesst. Rueckgabe = Exit-Code."""
         import webview  # type: ignore[import-not-found]
 
-        # Windows: one stable AppUserModelID (shared with icon_utils) so the
-        # taskbar groups the app as Personal Jarvis, not under a generic Python
-        # entry. Must run before the first window is created. Never blocks boot.
-        if sys.platform == "win32":
-            try:
-                from jarvis.ui.icon_utils import ensure_windows_app_identity
-
-                ensure_windows_app_identity()
-            except Exception:  # noqa: BLE001 — cosmetic only, never block boot
-                pass
-
         self._backend_thread = threading.Thread(
             target=self._run_backend,
             name="jarvis-backend",
@@ -1852,7 +1849,7 @@ class DesktopApp:
         self._backend_thread.start()
 
         if not self._wait_for_backend():
-            sys.stderr.write("Backend startete nicht in 180s — Abbruch.\n")
+            sys.stderr.write("Backend startete nicht in 45s — Abbruch.\n")
             return self.shutdown() or 2
 
         self._window = webview.create_window(
@@ -1885,33 +1882,17 @@ class DesktopApp:
         # er beim Hauptprogramm-Exit nicht am Leben bleibt.
         self._start_tray_and_bridge()
 
-        # Icon-Setter-Thread: setzt WM_SETICON + Class-Icon + Taskbar-Refresh
-        # parallel zu webview.start als Absicherung fuer den Fall, dass das
-        # native pywebview-Icon-Handling das Taskbar-Icon nicht aktualisiert.
-        # Primaerer Fix ist das ``icon=``-Argument an webview.start (s.u.) —
-        # dieser Thread ist nur die zweite Verteidigungslinie.
+        # Taskbar-Icon-Setter als parallelen Polling-Thread starten. Pywebview
+        # ruft ``func`` (``_inject_token``) erst nach dem ``shown``-Event auf —
+        # zu dem Zeitpunkt hat Windows den Taskbar-Eintrag schon mit dem
+        # pythonw.exe-Default-Icon gerendert und cached die Zuordnung. Wir
+        # pollen FindWindowW alle 50 ms ab und setzen WM_SETICON, sobald das
+        # HWND existiert. Das ist der frueheste Zeitpunkt, an dem die Taskbar
+        # das Jarvis-Icon mitbekommt.
         self._start_icon_setter_thread()
 
         gui = "edgechromium" if sys.platform == "win32" else None
         debug = os.environ.get("JARVIS_WEBVIEW_DEBUG") == "1"
-
-        # PRIMAERER FIX: icon= an webview.start uebergeben.
-        # winforms.py BrowserForm.__init__ setzt self.Icon = Icon(path) SYNCHRON
-        # bevor Form.Show() aufgerufen wird — das ist der frueheste und
-        # zuverlaessigste Zeitpunkt.  Ohne dieses Argument erbt das Fenster das
-        # Process-Icon (pythonw.exe → Python-Logo) und die Taskbar cached es
-        # sofort beim ersten ShowWindow-Aufruf.
-        # Auf macOS setzt cocoa.py setApplicationIconImage_ aus demselben _state.
-        # Auf Linux/GTK setzt gtk.py gtk.Window.set_icon_from_file.
-        _icon_arg: str | None = None
-        try:
-            from jarvis.ui.icon_utils import project_icon_path_for_platform  # noqa: PLC0415
-
-            _icon_candidate = project_icon_path_for_platform()
-            if _icon_candidate.is_file():
-                _icon_arg = str(_icon_candidate)
-        except Exception:  # noqa: BLE001
-            pass
 
         # webview.start blockt im Main-Thread. func/args wird nach dem ersten
         # Load aufgerufen (pywebview-intern), sodass evaluate_js auf einen
@@ -1921,35 +1902,25 @@ class DesktopApp:
             args=(self._window,),
             gui=gui,
             debug=debug,
-            icon=_icon_arg,
         )
         return self.shutdown()
 
     def _start_icon_setter_thread(self) -> None:
-        """Backup-Polling-Thread: setzt Icon per WM_SETICON sobald HWND existiert.
+        """Polling-Thread: setzt Taskbar-/Titlebar-Icon sobald HWND existiert.
 
-        Primaerer Fix ist ``icon=`` an ``webview.start()`` — das setzt das Icon
-        in BrowserForm.__init__ synchron vor Form.Show().  Dieser Thread ist die
-        zweite Verteidigungslinie fuer den Fall, dass WebView2 das Fenster-Icon
-        nach dem Page-Load ueberschreibt oder der pywebview-icon=-Pfad in einer
-        zukunftigen Version entfernt wird.
-
-        Verbesserte Filterung gegenueber der alten Implementierung:
-        - Filtert WS_EX_TOOLWINDOW heraus (Tray-Helper-Fenster)
-        - Prueft GA_ROOTOWNER == hwnd selbst (kein Child-Fenster)
-        - Akzeptiert auch noch-nicht-sichtbare Fenster mit Titel (frueherer
-          Zeitpunkt als IsWindowVisible == True)
-        - Ruft force_taskbar_icon_refresh nach dem Setzen auf
-
-        Daemon-Thread, laeuft max. 20 s nach Start.  No-op auf Nicht-Windows.
+        Hintergrund: pywebview's ``func``-Callback feuert erst nach dem
+        ``shown``-Event. Bis dahin ist die Taskbar-Zuordnung schon mit dem
+        Default-Process-Icon (Python-Logo) initialisiert. Wir pollen
+        ``FindWindowW`` parallel zu ``webview.start`` (das im Main-Thread
+        blockt) und rufen ``set_window_icon_by_title`` so frueh wie moeglich.
+        Daemon-Thread, max. 5 s, dann gibt der Thread auf.
         """
         if sys.platform != "win32":
             return
 
-        from jarvis.ui.icon_utils import (  # noqa: PLC0415
-            force_taskbar_icon_refresh,
+        from jarvis.ui.icon_utils import (
             project_icon_path,
-            set_window_icon_for_current_process,
+            set_window_icon_by_title,
         )
 
         ico = project_icon_path()
@@ -1957,35 +1928,18 @@ class DesktopApp:
             return
 
         def _poll() -> None:
-            from loguru import logger  # noqa: PLC0415
+            from loguru import logger
 
-            # Kurze Startverzoegerung: webview.start muss den WinForms-
-            # Application-Loop initialisiert haben, bevor EnumWindows irgendetwas
-            # findet.  50 ms reichen auf jeder modernen Hardware.
-            time.sleep(0.05)
-
-            deadline = time.monotonic() + 20.0
-            first_set = False
-            set_count = 0
+            deadline = time.monotonic() + 5.0
             while time.monotonic() < deadline:
-                if set_window_icon_for_current_process(ico):
-                    set_count += 1
-                    if not first_set:
-                        logger.info(
-                            "Taskbar-Icon gesetzt (WM_SETICON + Taskbar-Refresh, prozess-basiert)."
-                        )
-                        first_set = True
-                    # Nach dem ersten erfolgreichen Set: seltener wiederholen
-                    # (nur noetig falls WebView2 das Icon zuruecksetzt)
-                    time.sleep(2.0)
-                else:
-                    time.sleep(0.1)
-            if not first_set:
-                logger.warning(
-                    "Taskbar-Icon-Setter Timeout — kein passendes Top-Level-Fenster gefunden."
-                )
-            else:
-                logger.debug("Taskbar-Icon-Setter abgeschlossen ({} Setz-Ops).", set_count)
+                if set_window_icon_by_title(WINDOW_TITLE, ico, quiet=True):
+                    logger.debug("Taskbar-Icon fruehzeitig gesetzt.")
+                    return
+                time.sleep(0.05)
+            logger.warning(
+                "Taskbar-Icon-Setter Timeout — Fenster '{}' nicht gefunden.",
+                WINDOW_TITLE,
+            )
 
         threading.Thread(
             target=_poll, name="jarvis-icon-setter", daemon=True

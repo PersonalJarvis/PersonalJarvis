@@ -262,3 +262,23 @@ async def test_successful_append_delivers_to_subscribers(open_store) -> None:
     assert len(received) == 1
     assert received[0].seq == 1
     assert received[0].payload.prompt == "delivered"  # type: ignore[union-attr]
+
+
+# --- Liveness heartbeat ---
+
+
+async def test_touch_and_get_heartbeat_roundtrip(open_store) -> None:
+    """touch_heartbeat writes a timestamp that get_heartbeat reads back exactly;
+    get_heartbeat on an unknown mission_id returns 0."""
+    store, _bus = open_store
+    mid = uuid7_str()
+    # Must upsert the mission header first so the UPDATE hits a row.
+    await store.upsert_mission(
+        mission_id=mid, prompt="hb-test", state="RUNNING", language="en", ts_ms=now_ms()
+    )
+
+    await store.touch_heartbeat(mid, 12345)
+    assert await store.get_heartbeat(mid) == 12345
+
+    # Unknown mission_id must return 0 (no row to read).
+    assert await store.get_heartbeat("no-such-mission") == 0

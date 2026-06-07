@@ -2,16 +2,16 @@
   "nav": {
     "chats": "Chats",
     "agents": "Agents",
+    "extensions": "Skills, Plugins & MCPs",
     "skills": "Skills",
     "plugins": "Plugins",
     "docs": "Docs",
     "mcps": "MCPs",
     "tasks": "Aufgaben",
-    "review": "Review",
     "sessions": "Transkription",
-    "terminal": "Terminal",
     "clis": "CLIs",
     "cli_test_hub": "CLI Test Hub",
+    "clis_hub": "CLIs & CLI Test Hub",
     "board": "Board",
     "languages": "Sprachen",
     "profile": "Profil",
@@ -25,6 +25,10 @@
     "socials": "Socials",
     "taskbar": "Taskbar",
     "contacts": "Kontakte"
+  },
+  "extensions": {
+    "tab_skills": "Skills",
+    "tab_tools": "Tools"
   },
   "taskbar_view": {
     "subtitle": "Bildschirm-Overlay-Aussehen und Diktier-Verhalten.",
@@ -220,19 +224,17 @@
     "validated_badge": "Validiert",
     "trigger_voice": "Voice",
     "trigger_event": "Event",
-    "trigger_cron": "Cron"
-  },
-  "review_view": {
-    "title": "Review",
-    "subtitle": "Curator-Reviews — Memory-Kandidaten akzeptieren oder ablehnen.",
-    "empty_title": "Nichts zu reviewen",
-    "empty_subtitle": "Wenn der Curator neue Memory-Kandidaten extrahiert, erscheinen sie hier.",
-    "accept": "Akzeptieren",
-    "reject": "Ablehnen",
-    "confidence": "Konfidenz",
-    "field": "Feld",
-    "value": "Wert",
-    "reason": "Grund"
+    "trigger_cron": "Cron",
+    "on": "An",
+    "off": "Aus",
+    "error": "Fehler",
+    "delete": "Löschen",
+    "delete_title": "Skill löschen?",
+    "delete_body": "Dieser Skill wird dauerhaft entfernt:",
+    "delete_cancel": "Abbrechen",
+    "delete_confirm": "Löschen",
+    "builtin_protected": "Builtin-Skill — kann nicht gelöscht werden",
+    "drag_hint": "Zum Umsortieren ziehen"
   },
   "sessions_view": {
     "title": "Transkription",
@@ -244,19 +246,6 @@
     "assistant": "Jarvis",
     "hangup": "Aufgelegt",
     "duration": "Dauer"
-  },
-  "terminal_view": {
-    "title": "Terminal",
-    "subtitle": "Persistente Shell-Session — bleibt aktiv beim Sektion-Wechsel.",
-    "start": "Start",
-    "restart": "Neu starten",
-    "stop": "Stop",
-    "select_shell_hint": "Wähle eine Shell und drücke Start.",
-    "start_shell": "Shell starten",
-    "status_idle": "Bereit · {0} · Klick auf Start, um die Shell zu spawnen",
-    "status_starting": "Spawne {0} …",
-    "status_running": "{0} aktiv · Audit-Log via Bus (TerminalCommandExecuted)",
-    "status_closed": "{0} beendet (exit {1}) · Klick auf Neu starten"
   },
   "docs_view": {
     "title": "Docs",
@@ -298,11 +287,52 @@
   },
   "board_view": {
     "title": "Board",
-    "subtitle": "Dein Mastery-Dashboard. Lokal, ohne Cloud, ohne Streak-Druck.",
+    "subtitle": "Alles, was du und Jarvis zusammen gemacht habt — komplett lokal.",
     "refresh": "Aktualisieren",
     "refresh_tooltip": "Aggregator manuell triggern",
     "loading": "Lade Board-Stats…",
     "load_error": "Konnte Stats nicht laden",
+    "hero": {
+      "you_spoke": "Du gesagt",
+      "you_spoke_sub": "Wörter an Jarvis gesprochen",
+      "jarvis_spoke": "Jarvis gesagt",
+      "jarvis_spoke_sub": "Wörter zurück gesprochen",
+      "streak": "Tage-Serie",
+      "streak_sub": "{0} aktive Tage insgesamt",
+      "streak_sub_one": "{0} aktiver Tag insgesamt",
+      "talk_time": "Gesprächszeit",
+      "talk_time_sub": "über {0} Gespräche",
+      "talk_time_sub_one": "über {0} Gespräch"
+    },
+    "activity_subtitle": "Wie viele Wörter du und Jarvis pro Tag ausgetauscht habt.",
+    "activity_heatmap_hint": "Jedes Kästchen ist ein Tag — je heller, desto aktiver.",
+    "chart_title": "Wörter über Zeit",
+    "chart_empty": "Noch nicht genug Daten für ein Diagramm.",
+    "longest_streak": "Längste Serie · {0} Tage",
+    "longest_streak_one": "Längste Serie · {0} Tag",
+    "activity_streak_badge": "{0}-Tage-Serie",
+    "activity_streak_badge_one": "{0}-Tage-Serie",
+    "categories_title": "Wofür du Jarvis nutzt",
+    "categories_subtitle": "Jedes Tool, das Jarvis für dich ausgeführt hat, nach Zweck gruppiert.",
+    "categories_empty": "Noch keine Tool-Nutzung — füllt sich, während Jarvis arbeitet.",
+    "category": {
+      "agents": "Agenten",
+      "browser": "Browser",
+      "mail": "E-Mail",
+      "community": "Community",
+      "knowledge": "Wissen",
+      "system": "System"
+    },
+    "micro": {
+      "avg_words": "{0} Wörter / Gespräch",
+      "ratio": "Jarvis sagt {0}× deine Wörter",
+      "active_days": "{0} aktive Tage",
+      "active_days_one": "{0} aktiver Tag",
+      "active_since": "Aktiv seit {0}"
+    },
+    "heatmap_tooltip": "{0} · {1} Aktivitäten · {2} h Gespräch",
+    "heatmap_less": "Weniger",
+    "heatmap_more": "Mehr",
     "stats": {
       "tasks_completed": "Tasks abgeschlossen (gesamt)",
       "tasks_completed_sub": "in {0} aktiven Tagen",
@@ -512,6 +542,8 @@
   "settings_view": {
     "title": "Einstellungen",
     "subtitle": "Wake-Word, Hotkeys, Safety-Policies, Autostart.",
+    "overlay_taskbar_group_title": "Leiste & Overlay",
+    "languages_group_title": "Sprachen",
     "save": "Speichern",
     "saving": "Speichere…",
     "reset": "Auf Defaults zurücksetzen",

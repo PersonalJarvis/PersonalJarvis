@@ -97,6 +97,24 @@ class SkillFrontmatter(BaseModel):
     # tragen explizit `state: draft`, vom `draft_writer` erzwungen (Plan-§AD-8).
     # Default `None` → Loader interpretiert als "validated/active" (Legacy).
     state: SkillLifecycleState | None = None
+    # Plugin<->Skill pairing (2026-06-07). When set, this skill is the canonical
+    # source for a marketplace plugin's intent vocabulary; the deterministic
+    # generator in jarvis/skills/plugin_coupling.py (created in a follow-up task)
+    # turns intent_verbs + intent_objects into a CapabilityRegistry entry so the
+    # connected plugin is reachable (resolve_intent != None silences the
+    # UNSUPPORTED refusal AND the force-spawn gate). plugin_id=None marks a
+    # standalone "skill without plugin" that still carries an intent capability.
+    # HARD CONSTRAINT (Task 5.5 corrected): a paired-skill cap only matches when
+    # BOTH a verb AND a domain object hit (resolve_intent in capabilities.py), so
+    # the hard-negative guard lives in the VERB list: intent_verbs MUST EXCLUDE
+    # coding verbs (implement/build/write/refactor/debug) so a coding task that
+    # merely names the domain ("implement an Email-Validation") never gets a verb
+    # hit. intent_objects SHOULD include the real domain nouns a user says,
+    # INCLUDING "mail"/"email" (needed so "send an Email" matches) plus a UNIQUE
+    # keyword (e.g. "gmail") so the cap never steals another domain's request.
+    plugin_id: str | None = None
+    intent_verbs: list[str] = Field(default_factory=list)
+    intent_objects: list[str] = Field(default_factory=list)
 
     @field_validator("name")
     @classmethod

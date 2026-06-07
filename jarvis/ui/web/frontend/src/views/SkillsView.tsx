@@ -1,4 +1,5 @@
-import { useMemo, useState, useEffect, useCallback } from "react";
+import { useMemo, useState, useEffect, useCallback, useRef } from "react";
+import { Reorder, useDragControls } from "framer-motion";
 import {
   Puzzle,
   RefreshCw,
@@ -8,8 +9,6 @@ import {
   Keyboard,
   Clock,
   Save,
-  PowerOff,
-  Power,
   FolderOpen,
   ChevronRight,
   ChevronDown,
@@ -27,6 +26,8 @@ import {
   Home,
   BookOpen,
   Github,
+  Trash2,
+  GripVertical,
 } from "lucide-react";
 import { SkillFinderDialog } from "@/views/SkillFinderDialog";
 import { SkillCreateDialog } from "@/views/SkillCreateDialog";
@@ -34,6 +35,7 @@ import { ViewHeader } from "@/views/ChatsView";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import {
@@ -45,6 +47,8 @@ import {
   useSkillResource,
   useLocalSkillSearch,
   useSkillLinkHealth,
+  useDeleteSkill,
+  useReorderSkills,
   RESOURCE_KINDS,
   RESOURCE_LABELS,
   type SkillSummary,
@@ -79,6 +83,15 @@ const TRIGGER_ICON: Record<SkillTrigger["type"], typeof Mic> = {
   schedule: Clock,
 };
 
+/**
+ * A skill is "on" (it triggers + is offered to the brain) when it is ACTIVE or
+ * VALIDATED — the trigger-matcher and the AVAILABLE SKILLS prompt treat both the
+ * same. Only DISABLED is "off"; DRAFT is broken and cannot be switched on.
+ */
+function isSkillOn(state: SkillState): boolean {
+  return state === "active" || state === "validated";
+}
+
 // In-memory Admin-Pass — haelt den Pass fuer die Session, damit der User ihn
 // nicht bei jedem Edit neu eingibt. Absichtlich kein localStorage: wer die
 // App schliesst, gibt den Pass beim naechsten Start neu ein.
@@ -88,19 +101,50 @@ export function SkillsView() {
   const t = useT();
   const { data, isLoading, error, refetch, isRefetching } = useSkillsList();
   const reload = useReloadSkills();
+  const setEnabled = useSetSkillEnabled();
+  const reorder = useReorderSkills();
+  const del = useDeleteSkill();
   const [selected, setSelected] = useState<string | null>(null);
   const [finderOpen, setFinderOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<SkillSummary | null>(null);
 
   const [queryInput, setQueryInput] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [ownerFilter, setOwnerFilter] = useState<"all" | "user" | "builtin">("all");
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
 
+  // Local, drag-reorderable copy of the server list. The server already returns
+  // skills in the user's saved order; we mirror it so a drag updates instantly
+  // and the persisted order (PUT /order) confirms it on drop.
+  const [items, setItems] = useState<SkillSummary[]>([]);
+  useEffect(() => {
+    if (data?.skills) setItems(data.skills);
+  }, [data]);
+
+  const itemsRef = useRef<SkillSummary[]>([]);
+  itemsRef.current = items;
+  const persistOrder = useCallback(() => {
+    reorder.mutate(itemsRef.current.map((s) => s.name));
+  }, [reorder]);
+
+  const onToggle = useCallback(
+    (name: string, on: boolean) => {
+      // Optimistic flip so the switch responds instantly; the refetch confirms.
+      setItems((prev) =>
+        prev.map((it) =>
+          it.name === name ? { ...it, state: on ? "active" : "disabled" } : it,
+        ),
+      );
+      setEnabled.mutate({ name, enabled: on });
+    },
+    [setEnabled],
+  );
+
   // Debounce: 250ms nach letztem Tastendruck
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedQuery(queryInput.trim()), 250);
-    return () => clearTimeout(t);
+    const tmr = setTimeout(() => setDebouncedQuery(queryInput.trim()), 250);
+    return () => clearTimeout(tmr);
   }, [queryInput]);
 
   const searchActive =
@@ -120,8 +164,6 @@ export function SkillsView() {
   );
 
   const search = useLocalSkillSearch(searchFilters, searchActive);
-
-  const grouped = useMemo(() => groupByCategory(data?.skills ?? []), [data]);
 
   const categoryOptions = useMemo(() => {
     const seen = new Set<string>();
@@ -197,6 +239,25 @@ export function SkillsView() {
         onCreated={(name) => setSelected(name)}
       />
 
+      {confirmDelete && (
+        <DeleteConfirmDialog
+          skill={confirmDelete}
+          pending={del.isPending}
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() =>
+            del.mutate(confirmDelete.name, {
+              onSuccess: () => {
+                if (selected === confirmDelete.name) setSelected(null);
+                setItems((prev) =>
+                  prev.filter((s) => s.name !== confirmDelete.name),
+                );
+                setConfirmDelete(null);
+              },
+            })
+          }
+        />
+      )}
+
       <div className="flex min-h-0 flex-1">
         {/* Linke Spalte: Liste */}
         <div className="flex w-[340px] flex-col border-r border-border">
@@ -208,7 +269,7 @@ export function SkillsView() {
                 type="text"
                 value={queryInput}
                 onChange={(e) => setQueryInput(e.target.value)}
-                placeholder="Skills durchsuchen…"
+                placeholder={t("skills_view.search_placeholder")}
                 className="w-full rounded-md border border-border bg-background py-1.5 pl-7 pr-7 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
               />
               {queryInput && (
@@ -275,7 +336,7 @@ export function SkillsView() {
             )}
           </div>
           <ScrollArea className="flex-1">
-            <div className="space-y-6 p-4">
+            <div className="space-y-3 p-4">
               {isLoading && (
                 <div className="text-sm text-muted-foreground">Lade Skills…</div>
               )}
@@ -294,24 +355,26 @@ export function SkillsView() {
                 />
               ) : (
                 <>
-                  {!isLoading && !error && grouped.length === 0 && <EmptyList />}
-                  {grouped.map(([category, skills]) => (
-                    <section key={category}>
-                      <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                        {category}
-                      </h3>
-                      <ul className="space-y-1.5">
-                        {skills.map((s) => (
-                          <SkillRow
-                            key={s.name}
-                            skill={s}
-                            selected={selected === s.name}
-                            onClick={() => setSelected(s.name)}
-                          />
-                        ))}
-                      </ul>
-                    </section>
-                  ))}
+                  {!isLoading && !error && items.length === 0 && <EmptyList />}
+                  <Reorder.Group
+                    axis="y"
+                    values={items}
+                    onReorder={setItems}
+                    as="ul"
+                    className="space-y-1.5"
+                  >
+                    {items.map((s) => (
+                      <SkillRowDraggable
+                        key={s.name}
+                        skill={s}
+                        selected={selected === s.name}
+                        onSelect={() => setSelected(s.name)}
+                        onToggle={(on) => onToggle(s.name, on)}
+                        onDelete={() => setConfirmDelete(s)}
+                        onDragEnd={persistOrder}
+                      />
+                    ))}
+                  </Reorder.Group>
                 </>
               )}
             </div>
@@ -334,76 +397,180 @@ export function SkillsView() {
 }
 
 // ----------------------------------------------------------------------
-// Linke Spalte — List Row
+// Linke Spalte — Draggable List Row (On/Off switch + delete)
 // ----------------------------------------------------------------------
 
-function SkillRow({
+function SkillRowDraggable({
   skill,
   selected,
-  onClick,
+  onSelect,
+  onToggle,
+  onDelete,
+  onDragEnd,
 }: {
   skill: SkillSummary;
   selected: boolean;
-  onClick: () => void;
+  onSelect: () => void;
+  onToggle: (on: boolean) => void;
+  onDelete: () => void;
+  onDragEnd: () => void;
 }) {
+  const t = useT();
+  const controls = useDragControls();
+  const isDraft = skill.state === "draft";
+  const on = isSkillOn(skill.state);
+
   return (
-    <li>
-      <button
-        type="button"
-        onClick={onClick}
+    <Reorder.Item
+      value={skill}
+      dragListener={false}
+      dragControls={controls}
+      onDragEnd={onDragEnd}
+      as="li"
+    >
+      <div
         className={cn(
-          "w-full rounded-md border p-2.5 text-left transition-colors",
+          "flex items-start gap-1.5 rounded-md border p-2.5 transition-colors",
           selected
             ? "border-primary/60 bg-primary/5"
             : "border-border hover:bg-muted/40",
         )}
       >
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <span className="truncate text-sm font-medium">{skill.name}</span>
-              {skill.is_builtin && (
-                <Lock
-                  className="h-3 w-3 flex-shrink-0 text-muted-foreground"
-                  aria-label="Builtin"
-                />
-              )}
-              {skill.state === "draft" && (
-                <AlertTriangle
-                  className="h-3.5 w-3.5 flex-shrink-0 text-destructive"
-                  aria-label="Fehler"
-                />
-              )}
-            </div>
-            {skill.description && (
-              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                {skill.description}
-              </p>
+        {/* Drag handle — only this starts a reorder (dragListener is off). */}
+        <button
+          type="button"
+          onPointerDown={(e) => controls.start(e)}
+          className="mt-0.5 cursor-grab touch-none text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing"
+          title={t("skills_view.drag_hint")}
+          aria-label={t("skills_view.drag_hint")}
+        >
+          <GripVertical className="h-3.5 w-3.5" />
+        </button>
+
+        {/* Select area */}
+        <button
+          type="button"
+          onClick={onSelect}
+          className="min-w-0 flex-1 text-left"
+        >
+          <div className="flex items-center gap-1.5">
+            <span className="truncate text-sm font-medium">{skill.name}</span>
+            {skill.is_builtin && (
+              <Lock
+                className="h-3 w-3 flex-shrink-0 text-muted-foreground"
+                aria-label="Builtin"
+              />
             )}
-            <div className="mt-2 flex items-center gap-1.5">
-              {skill.triggers.map((t, i) => {
-                const Icon = TRIGGER_ICON[t.type];
-                return (
-                  <Icon
-                    key={i}
-                    className="h-3 w-3 text-muted-foreground"
-                    aria-label={t.type}
-                  />
-                );
-              })}
-              {skill.triggers.length === 0 && (
-                <span className="text-[10px] text-muted-foreground">
-                  kein auto-trigger
-                </span>
-              )}
-            </div>
           </div>
-          <Badge variant={STATE_VARIANT[skill.state]} className="flex-shrink-0">
-            {STATE_LABEL[skill.state]}
-          </Badge>
+          {skill.description && (
+            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+              {skill.description}
+            </p>
+          )}
+          <div className="mt-2 flex items-center gap-1.5">
+            {skill.triggers.map((tr, i) => {
+              const Icon = TRIGGER_ICON[tr.type];
+              return (
+                <Icon
+                  key={i}
+                  className="h-3 w-3 text-muted-foreground"
+                  aria-label={tr.type}
+                />
+              );
+            })}
+            {skill.triggers.length === 0 && (
+              <span className="text-[10px] text-muted-foreground">
+                kein auto-trigger
+              </span>
+            )}
+          </div>
+        </button>
+
+        {/* Right rail: On/Off switch (or error lock) + delete */}
+        <div className="flex flex-shrink-0 items-center gap-1.5">
+          {isDraft ? (
+            <span
+              className="flex items-center gap-1 text-[10px] font-medium text-destructive"
+              title={skill.error ?? undefined}
+            >
+              <AlertTriangle className="h-3.5 w-3.5" />
+              {t("skills_view.error")}
+            </span>
+          ) : (
+            <Switch
+              checked={on}
+              onCheckedChange={onToggle}
+              aria-label={`${skill.name}: ${on ? t("skills_view.on") : t("skills_view.off")}`}
+            />
+          )}
+          {skill.is_builtin ? (
+            <Lock
+              className="h-3.5 w-3.5 text-muted-foreground/40"
+              aria-label={t("skills_view.builtin_protected")}
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={onDelete}
+              aria-label={t("skills_view.delete")}
+              title={t("skills_view.delete")}
+              className="rounded p-1 text-muted-foreground/60 hover:bg-destructive/10 hover:text-destructive"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
-      </button>
-    </li>
+      </div>
+    </Reorder.Item>
+  );
+}
+
+// ----------------------------------------------------------------------
+// Delete confirmation dialog
+// ----------------------------------------------------------------------
+
+function DeleteConfirmDialog({
+  skill,
+  pending,
+  onCancel,
+  onConfirm,
+}: {
+  skill: SkillSummary;
+  pending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const t = useT();
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      role="dialog"
+      aria-label={t("skills_view.delete_title")}
+    >
+      <div className="w-[400px] rounded-lg border border-border bg-card p-6 shadow-xl">
+        <h3 className="flex items-center gap-2 text-base font-semibold">
+          <Trash2 className="h-4 w-4 text-destructive" />
+          {t("skills_view.delete_title")}
+        </h3>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {t("skills_view.delete_body")}
+        </p>
+        <p className="mt-1 font-mono text-sm font-medium">{skill.name}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button size="sm" variant="ghost" onClick={onCancel} disabled={pending}>
+            {t("skills_view.delete_cancel")}
+          </Button>
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={onConfirm}
+            disabled={pending}
+          >
+            {t("skills_view.delete_confirm")}
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -426,6 +593,7 @@ function SkillDetailPanel({ name }: { name: string }) {
   }, [data]);
   const linkHealth = useSkillLinkHealth(name, hasLinks);
 
+  const t = useT();
   const [draft, setDraft] = useState<string>("");
   const [dirty, setDirty] = useState(false);
   const [showAdminDialog, setShowAdminDialog] = useState(false);
@@ -498,8 +666,8 @@ function SkillDetailPanel({ name }: { name: string }) {
     );
   }
 
-  const isActive = data.state === "active";
   const isDraft = data.state === "draft";
+  const on = isSkillOn(data.state);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -522,30 +690,25 @@ function SkillDetailPanel({ name }: { name: string }) {
               v{data.version} · {data.category} · {data.path}
             </p>
           </div>
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={isDraft || setEnabled.isPending}
-              onClick={() =>
-                setEnabled.mutate(
-                  { name: data.name, enabled: !isActive },
-                  { onSuccess: () => refetch() },
-                )
-              }
-            >
-              {isActive ? (
-                <>
-                  <PowerOff className="mr-1.5 h-3.5 w-3.5" />
-                  Deaktivieren
-                </>
-              ) : (
-                <>
-                  <Power className="mr-1.5 h-3.5 w-3.5" />
-                  Aktivieren
-                </>
-              )}
-            </Button>
+          <div className="flex items-center gap-3">
+            {!isDraft && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  {on ? t("skills_view.on") : t("skills_view.off")}
+                </span>
+                <Switch
+                  checked={on}
+                  disabled={setEnabled.isPending}
+                  onCheckedChange={(next) =>
+                    setEnabled.mutate(
+                      { name: data.name, enabled: next },
+                      { onSuccess: () => refetch() },
+                    )
+                  }
+                  aria-label={`${data.name}: ${on ? t("skills_view.on") : t("skills_view.off")}`}
+                />
+              </div>
+            )}
             <Button
               size="sm"
               onClick={handleSaveClick}
@@ -705,21 +868,6 @@ function AdminPassDialog({
 // ----------------------------------------------------------------------
 // Helpers
 // ----------------------------------------------------------------------
-
-function groupByCategory(
-  skills: SkillSummary[],
-): [string, SkillSummary[]][] {
-  const groups = new Map<string, SkillSummary[]>();
-  for (const s of skills) {
-    const key = s.category || "general";
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(s);
-  }
-  for (const list of groups.values()) {
-    list.sort((a, b) => a.name.localeCompare(b.name));
-  }
-  return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b));
-}
 
 /**
  * Baut die SKILL.md-Textrepraesentation aus Frontmatter + Body. Die PUT-Route

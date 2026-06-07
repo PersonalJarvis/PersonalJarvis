@@ -96,6 +96,88 @@ def test_render_failed_maps_worktree_setup_failed() -> None:
     assert "Arbeitsbereich" in out, f"expected actionable cause, got {out!r}"
 
 
+def test_render_failed_maps_attempts_timed_out_to_honest_timeout_phrase() -> None:
+    """Live deep-dive 2026-06-07 (mission 019ea1da): a Computer-Use mission
+    whose final iteration hit the 630s wall-clock cap was failed with the
+    generic ``task_error`` reason, so the user heard a "worker aborted" phrase
+    for a timeout. A worker that ran out of time on every attempt must speak an
+    HONEST timeout phrase — never the alarming worker-abort wording that a real
+    worker crash produces."""
+    rb = MissionReadback()
+    out = rb.render_failed(reason="attempts_timed_out", language="de")
+    assert "attempts_timed_out" not in out, f"raw reason leaked: {out!r}"
+    assert "Zeitlimit" in out, f"expected an honest timeout phrase, got {out!r}"
+    assert "abgebrochen" not in out.lower(), (
+        f"a timeout must NOT be framed as a worker abort: {out!r}"
+    )
+
+
+def test_render_failed_maps_attempts_timed_out_en() -> None:
+    rb = MissionReadback()
+    out = rb.render_failed(reason="attempts_timed_out", language="en")
+    assert "attempts_timed_out" not in out
+    assert "time limit" in out.lower(), f"expected an honest timeout phrase, got {out!r}"
+    assert "aborted" not in out.lower()
+
+
+# --- interrupted recovery reason (2026-06-07, commit 13b86605) ---
+# startup_recover now emits MissionFailed(reason="interrupted") for stale
+# missions that produced real partial work. The voice layer must render a
+# friendly, non-alarming phrase — not a KeyError and not "Grund: interrupted".
+# It must also be suppressed at announce time (same as crash_recovery) so the
+# user is not woken up by a boot-time housekeeping event.
+
+
+def test_render_failed_interrupted_renders_non_empty_de() -> None:
+    """'interrupted' must map to a non-empty DE phrase — no KeyError, no raw
+    snake_case token spoken."""
+    rb = MissionReadback()
+    out = rb.render_failed(reason="interrupted", language="de")
+    assert "interrupted" not in out, f"raw reason leaked: {out!r}"
+    assert out.strip(), "interrupted must produce a non-empty phrase in DE"
+
+
+def test_render_failed_interrupted_renders_non_empty_en() -> None:
+    """'interrupted' must map to a non-empty EN phrase — no raw snake_case
+    framing like 'Reason: interrupted' or 'The task failed. interrupted'."""
+    rb = MissionReadback()
+    out = rb.render_failed(reason="interrupted", language="en")
+    # The phrase may contain the English word "interrupted" (it's in the human
+    # text), but must NOT be the raw "Reason: interrupted" / task-failed frame.
+    assert "Reason: interrupted" not in out, f"raw reason leaked (EN): {out!r}"
+    assert "task failed" not in out.lower(), f"failure frame must not appear (EN): {out!r}"
+    assert out.strip(), "interrupted must produce a non-empty phrase in EN"
+
+
+def test_render_failed_interrupted_uses_non_alarming_template() -> None:
+    """'interrupted' is a swept mission with partial results — it must NOT be
+    framed as a catastrophic failure (no 'gescheitert'/'not geklappt' wording
+    that implies everything went wrong)."""
+    rb = MissionReadback()
+    out = rb.render_failed(reason="interrupted", language="de")
+    assert "gescheitert" not in out.lower(), (
+        f"interrupted must not be framed as a failure: {out!r}"
+    )
+
+
+def test_failure_reason_phrases_de_en_parity() -> None:
+    """BUG-008 discipline: every key in FAILURE_REASON_PHRASES['de'] must
+    also exist in ['en'] and vice-versa. A symmetric add-or-remove in one
+    lang only cannot silently survive this gate."""
+    from jarvis.missions.voice.readback import FAILURE_REASON_PHRASES
+
+    de_keys = set(FAILURE_REASON_PHRASES["de"])
+    en_keys = set(FAILURE_REASON_PHRASES["en"])
+    assert de_keys == en_keys, (
+        f"FAILURE_REASON_PHRASES parity broken — "
+        f"only-DE: {de_keys - en_keys}, only-EN: {en_keys - de_keys}"
+    )
+    # Pin 'interrupted' explicitly so a future symmetric removal from BOTH
+    # langs cannot silently regress the 2026-06-07 fix.
+    assert "interrupted" in de_keys, "'interrupted' missing from DE map"
+    assert "interrupted" in en_keys, "'interrupted' missing from EN map"
+
+
 def test_failure_reason_phrases_shared_with_announcer() -> None:
     """Drift guard (BUG-008 five-layer pattern): the announcer must use the
     SAME reason->phrase map as the readback, so the listener and announcer
@@ -107,6 +189,11 @@ def test_failure_reason_phrases_shared_with_announcer() -> None:
         FAILURE_REASON_PHRASES["de"]["critic_unavailable"]
         == "Der Prüfer ist abgestürzt, die Arbeit liegt im Worktree."
     )
+    # Pin the timeout key so a symmetric removal from BOTH de+en (which the
+    # set-equality check below would NOT catch) can never silently regress the
+    # 2026-06-07 fix back to a raw snake_case token on the voice path.
+    assert "attempts_timed_out" in FAILURE_REASON_PHRASES["de"]
+    assert "attempts_timed_out" in FAILURE_REASON_PHRASES["en"]
     assert set(FAILURE_REASON_PHRASES["de"]) == set(FAILURE_REASON_PHRASES["en"])
 
 

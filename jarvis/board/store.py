@@ -13,6 +13,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from jarvis.board.aggregator import _ensure_daily_stats_columns
+from jarvis.board.categories import BOARD_CATEGORY_KEYS
+
 
 class BoardStore:
     """Synchronous read interface for the board DB."""
@@ -70,6 +73,9 @@ class BoardStore:
                     COALESCE(SUM(active_events_count), 0)  AS activity_events,
                     COALESCE(SUM(conversation_seconds_estimate), 0)
                                                              AS conversation_seconds,
+                    COALESCE(SUM(user_words_count), 0)     AS user_words,
+                    COALESCE(SUM(jarvis_words_count), 0)   AS jarvis_words,
+                    COALESCE(SUM(session_count), 0)        AS session_count,
                     COALESCE(SUM(CASE WHEN active_events_count > 0 THEN 1 ELSE 0 END), 0)
                                                              AS active_days,
                     MIN(date)                              AS first_day
@@ -87,6 +93,9 @@ class BoardStore:
                     COALESCE(SUM(active_events_count), 0)  AS activity_events,
                     COALESCE(SUM(conversation_seconds_estimate), 0)
                                                              AS conversation_seconds,
+                    COALESCE(SUM(user_words_count), 0)     AS user_words,
+                    COALESCE(SUM(jarvis_words_count), 0)   AS jarvis_words,
+                    COALESCE(SUM(session_count), 0)        AS session_count,
                     AVG(voice_first_try_rate)              AS avg_first_try
                 FROM daily_stats
                 WHERE date >= ?
@@ -108,6 +117,7 @@ class BoardStore:
                     continue
 
             streak_days = _calc_streak(conn)
+            longest_streak = _calc_longest_streak(conn)
 
             return {
                 "window_days": window_days,
@@ -120,6 +130,9 @@ class BoardStore:
                     "conversation_hours": (
                         float(totals["conversation_seconds"]) / 3600.0
                     ),
+                    "user_words":      int(totals["user_words"]),
+                    "jarvis_words":    int(totals["jarvis_words"]),
+                    "session_count":   int(totals["session_count"]),
                     "active_days":     int(totals["active_days"]),
                     "first_day":       totals["first_day"],
                 },
@@ -132,6 +145,9 @@ class BoardStore:
                     "conversation_hours": (
                         float(window["conversation_seconds"]) / 3600.0
                     ),
+                    "user_words":      int(window["user_words"]),
+                    "jarvis_words":    int(window["jarvis_words"]),
+                    "session_count":   int(window["session_count"]),
                     "voice_first_try_rate": (
                         float(window["avg_first_try"])
                         if window["avg_first_try"] is not None else None
@@ -139,6 +155,7 @@ class BoardStore:
                     "unique_tools": len(tools_recent),
                 },
                 "streak_days": streak_days,
+                "longest_streak": longest_streak,
             }
         finally:
             conn.close()
@@ -157,7 +174,7 @@ class BoardStore:
             start = end - timedelta(days=days - 1)
             rows = conn.execute(
                 "SELECT date, tasks_completed, tasks_failed, active_events_count, "
-                "conversation_seconds_estimate "
+                "conversation_seconds_estimate, user_words_count, jarvis_words_count "
                 "FROM daily_stats WHERE date >= ? ORDER BY date",
                 (start.isoformat(),),
             ).fetchall()
@@ -167,6 +184,8 @@ class BoardStore:
                     int(row["tasks_failed"]),
                     int(row["active_events_count"]),
                     float(row["conversation_seconds_estimate"]) / 3600.0,
+                    int(row["user_words_count"]),
+                    int(row["jarvis_words_count"]),
                 )
                 for row in rows
             }
@@ -174,9 +193,10 @@ class BoardStore:
             cursor = start
             while cursor <= end:
                 iso = cursor.isoformat()
-                completed, failed, activity_events, conversation_hours = index.get(
+                (completed, failed, activity_events, conversation_hours,
+                 user_words, jarvis_words) = index.get(
                     iso,
-                    (0, 0, 0, 0.0),
+                    (0, 0, 0, 0.0, 0, 0),
                 )
                 cells.append({
                     "date": iso,
@@ -184,6 +204,8 @@ class BoardStore:
                     "tasks_failed": failed,
                     "activity_events": activity_events,
                     "conversation_hours": conversation_hours,
+                    "user_words": user_words,
+                    "jarvis_words": jarvis_words,
                 })
                 cursor += timedelta(days=1)
             return {
@@ -223,6 +245,52 @@ class BoardStore:
                 "window_days": window_days,
                 "total_unique": len(histogram),
                 "histogram": histogram,
+            }
+        finally:
+            conn.close()
+
+    def categories(self, *, window_days: int | None = None) -> dict[str, Any]:
+        """Usage broken down by the six task categories.
+
+        Answers "what did you use Jarvis for". Sums the per-day
+        ``category_counts`` JSON across history (or the last ``window_days``).
+        All six keys are always returned in their canonical order, including
+        zero-count categories, so the UI can render a stable, honest bar list.
+        """
+        conn = self._connect()
+        try:
+            conn.row_factory = sqlite3.Row
+            if window_days is None:
+                rows = conn.execute(
+                    "SELECT category_counts FROM daily_stats"
+                ).fetchall()
+            else:
+                cutoff = (_today() - timedelta(days=window_days)).isoformat()
+                rows = conn.execute(
+                    "SELECT category_counts FROM daily_stats WHERE date >= ?",
+                    (cutoff,),
+                ).fetchall()
+
+            totals: dict[str, int] = dict.fromkeys(BOARD_CATEGORY_KEYS, 0)
+            for row in rows:
+                try:
+                    counts = json.loads(row["category_counts"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if not isinstance(counts, dict):
+                    continue
+                for key, value in counts.items():
+                    if key in totals and isinstance(value, (int, float)):
+                        totals[key] += int(value)
+
+            categories = [
+                {"category": key, "count": totals[key]}
+                for key in BOARD_CATEGORY_KEYS
+            ]
+            return {
+                "window_days": window_days,
+                "total": sum(totals.values()),
+                "categories": categories,
             }
         finally:
             conn.close()
@@ -307,18 +375,37 @@ def _calc_streak(conn: sqlite3.Connection) -> int:
     return streak
 
 
+def _calc_longest_streak(conn: sqlite3.Connection) -> int:
+    """Longest run of consecutive days with ``active_events_count > 0``.
+
+    Unlike ``_calc_streak`` (which counts back from today and resets on a skip),
+    this scans the whole history for the best run ever — Wispr's "longest
+    streak" indicator. Pure read, no UI nag.
+    """
+    rows = conn.execute(
+        "SELECT date FROM daily_stats WHERE active_events_count > 0 ORDER BY date"
+    ).fetchall()
+    longest = 0
+    run = 0
+    prev: _date | None = None
+    for row in rows:
+        try:
+            current = datetime.fromisoformat(row["date"]).date()
+        except (ValueError, TypeError):
+            continue
+        if prev is not None and (current - prev).days == 1:
+            run += 1
+        else:
+            run = 1
+        longest = max(longest, run)
+        prev = current
+    return longest
+
+
 def _ensure_schema(conn: sqlite3.Connection) -> None:
-    columns = {
-        row["name"]
-        for row in conn.execute("PRAGMA table_info(daily_stats)").fetchall()
-    }
-    if "active_events_count" not in columns:
-        conn.execute(
-            "ALTER TABLE daily_stats ADD COLUMN "
-            "active_events_count INTEGER NOT NULL DEFAULT 0"
-        )
-    if "conversation_seconds_estimate" not in columns:
-        conn.execute(
-            "ALTER TABLE daily_stats ADD COLUMN "
-            "conversation_seconds_estimate REAL NOT NULL DEFAULT 0.0"
-        )
+    """Bring an existing board DB up to the current ``daily_stats`` shape.
+
+    Delegates to the single migration list in ``aggregator`` so the reader and
+    writer never drift apart.
+    """
+    _ensure_daily_stats_columns(conn)

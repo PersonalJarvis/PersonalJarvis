@@ -42,6 +42,17 @@ TASKBAR_GAP_PX = 8
 # out). Lower = more see-through. Tune this one number for the glass look.
 BAR_ALPHA = 0.6
 
+# Sound-driven look. The bar shows the speaking equalizer (bars) ONLY while real
+# audio is present — mic input while you speak, or TTS output while Jarvis speaks
+# — and the thinking wave during silence (brain thinking AND the silent
+# TTS-synthesis lead-in). This tracks actual sound instead of the supervisor
+# state, which is unreliable here (continue-listening flips SPEAKING→LISTENING
+# mid-playback). AUDIBLE_LEVEL is the normalized 0..1 level above which a
+# set_level() counts as "sound now"; AUDIBLE_HOLD_S keeps the bars up across the
+# short word/sentence gaps so they don't flap back to the wave on every pause.
+AUDIBLE_LEVEL = 0.06
+AUDIBLE_HOLD_S = 0.5
+
 
 def _primary_work_area() -> tuple[int, int, int, int] | None:
     """Primary-monitor work area (left, top, right, bottom) EXCLUDING the
@@ -78,6 +89,10 @@ class WhisperBarOverlay:
         self._opacity = max(0.2, min(1.0, float(opacity)))  # clamp to sane range
         self._mode = "idle"
         self._ext_level = 0.0
+        # perf_counter() of the last set_level() that carried real sound
+        # (>= AUDIBLE_LEVEL). Drives the wave↔bars choice in _schedule_frame.
+        # 0.0 = "long ago" → starts on the wave, not the bars.
+        self._last_audible_t = 0.0
         self._root: Any = None
         self._canvas: Any = None
         self._renderer: renderer.WhisperBarRenderer | None = None
@@ -123,7 +138,14 @@ class WhisperBarOverlay:
 
     def set_level(self, level: float) -> None:
         # Direct atomic write (no enqueue) — matches OrbOverlay.set_level.
-        self._ext_level = 0.0 if level < 0.0 else 1.0 if level > 1.0 else float(level)
+        lv = 0.0 if level < 0.0 else 1.0 if level > 1.0 else float(level)
+        self._ext_level = lv
+        # Remember WHEN real sound last arrived (mic or TTS, both feed here via
+        # their level taps). _schedule_frame uses this to show bars while sound
+        # is present and the wave during silence. Atomic float write, like
+        # _ext_level — safe from the audio/VAD threads with no lock.
+        if lv >= AUDIBLE_LEVEL:
+            self._last_audible_t = time.perf_counter()
 
     # The bar has no text bubble and no mouth — these stay no-ops so the
     # bridge's duck-typed calls remain safe.
@@ -316,8 +338,28 @@ class WhisperBarOverlay:
             return
         from PIL import ImageTk
 
-        t = time.perf_counter() - self._t0
-        img = self._renderer.render(t, self._mode, self._ext_level, hovered=self._hovered)
+        now = time.perf_counter()
+        t = now - self._t0
+        # Sound-driven look: bars while audio is present (mic OR TTS), wave while
+        # silent. The coarse self._mode only decides active-vs-idle; the actual
+        # wave↔bars choice comes from how recently real sound arrived. This makes
+        # the silent TTS-synthesis lead-in render as the thinking wave and real
+        # speech (in or out) render as the equalizer — independent of the
+        # supervisor state's continue-listening flips.
+        from jarvis.audio import level_tap
+
+        playing = level_tap.playback_active()
+        effective_mode = renderer.visual_mode(
+            self._mode,
+            now - self._last_audible_t,
+            hold_s=AUDIBLE_HOLD_S,
+            playback_active=playing,
+        )
+        # The level is fed live per ~60 ms TTS sub-block (player._write_samples),
+        # so the equalizer reacts to Jarvis's actual loudness — thin and lively,
+        # exactly like it reacts to your mic. No synthetic floor (that made the
+        # bars look uniformly blocky).
+        img = self._renderer.render(t, effective_mode, self._ext_level, hovered=self._hovered)
         # PhotoImage must be retained on self, else Tk GCs it before drawing.
         self._photo = ImageTk.PhotoImage(img)
         if self._image_id is None:

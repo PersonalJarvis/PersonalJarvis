@@ -25,6 +25,34 @@ from jarvis.mcp.adapter import MCPToolAdapter
 log = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Module-level capability lifecycle helpers (called from connect/disconnect)
+# ---------------------------------------------------------------------------
+
+
+def _register_plugin_capability(cap_registry, plugin_id, skills) -> None:
+    """Register the paired-skill capability for a freshly connected plugin.
+
+    Finds the skill whose frontmatter plugin_id matches and registers its
+    capability so resolve_intent reaches the connected plugin's tools."""
+    from jarvis.skills.plugin_coupling import capability_from_skill
+
+    for sk in skills:
+        fm = getattr(sk, "frontmatter", None)
+        if fm is not None and getattr(fm, "plugin_id", None) == plugin_id:
+            cap = capability_from_skill(sk)
+            if cap is not None:
+                cap_registry.register(cap)
+            return
+
+
+def _deregister_plugin_capability(cap_registry, plugin_id) -> None:
+    """Withdraw the paired capability when a plugin disconnects."""
+    from jarvis.skills.plugin_coupling import PAIRED_CAP_PREFIX
+
+    cap_registry.deregister(f"{PAIRED_CAP_PREFIX}{plugin_id}")
+
+
 class PluginToolRegistry:
     def __init__(
         self,
@@ -127,6 +155,17 @@ class PluginToolRegistry:
         for tool_def in tool_defs:
             adapter = MCPToolAdapter(client, tool_def, risk_tier=self._risk_tier)
             self._tools[adapter.name] = adapter
+        try:
+            from jarvis.core.capabilities import get_registry as _get_cap_registry
+            from jarvis.skills.skill_context import try_get_skill_context
+
+            _ctx = try_get_skill_context()
+            if _ctx is not None:
+                _register_plugin_capability(
+                    _get_cap_registry(), plugin.id, _ctx.registry.list()
+                )
+        except Exception as exc:  # noqa: BLE001 — capability is best-effort
+            log.debug("paired cap register failed for %s: %s", plugin.id, exc)
 
     async def _disconnect_plugin(self, plugin_id: str) -> None:
         for name in [n for n in self._tools if n.startswith(f"{plugin_id}/")]:
@@ -137,6 +176,12 @@ class PluginToolRegistry:
                 await client.stop()
             except Exception as exc:  # noqa: BLE001
                 log.debug("plugin-registry: %s stop failed: %s", plugin_id, exc)
+        try:
+            from jarvis.core.capabilities import get_registry as _get_cap_registry
+
+            _deregister_plugin_capability(_get_cap_registry(), plugin_id)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("paired cap deregister failed for %s: %s", plugin_id, exc)
 
     async def _publish_brain_tools_changed(self, plugin_id: str, connected: bool) -> None:
         if self._bus is None:

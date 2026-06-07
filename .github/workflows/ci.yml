@@ -134,3 +134,32 @@ jobs:
 
       - name: No-new-German gate (BLOCKING)
         run: python scripts/ci/check_no_new_german.py
+
+  # Privacy gate (Wave 2, layer 3): the non-bypassable backstop for the local
+  # pre-push hook (.githooks/pre-push), which `--no-verify` can skip. Re-runs the
+  # SAME secret / forbidden-file detection over the PR diff (reusing
+  # scripts/ci/privacy_pre_push.py) and, when PRIVACY_PRIVATE_EMAILS is set as a
+  # repo variable, the private-email identity check. Does NOT scan the real
+  # name/PII (that is the ship skill's job to the public repo, and would
+  # false-positive here). stdlib + git only, so no pip install. BLOCKING, PR-only.
+  privacy-gate:
+    name: privacy-gate (no secrets / no private identity)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout (full history - diff needs the PR base)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.11"
+
+      - name: Privacy gate (BLOCKING - secrets + forbidden files + identity)
+        env:
+          PRIVACY_PRIVATE_EMAILS: ${{ vars.PRIVACY_PRIVATE_EMAILS }}
+        run: python scripts/ci/privacy_scan_ci.py --base "${{ github.event.pull_request.base.sha }}"

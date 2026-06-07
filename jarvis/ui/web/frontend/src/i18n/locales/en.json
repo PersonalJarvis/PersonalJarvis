@@ -2,16 +2,16 @@
   "nav": {
     "chats": "Chats",
     "agents": "Agents",
+    "extensions": "Skills, Plugins & MCPs",
     "skills": "Skills",
     "plugins": "Plugins",
     "docs": "Docs",
     "mcps": "MCPs",
     "tasks": "Tasks",
-    "review": "Review",
     "sessions": "Transcription",
-    "terminal": "Terminal",
     "clis": "CLIs",
     "cli_test_hub": "CLI Test Hub",
+    "clis_hub": "CLIs & CLI Test Hub",
     "board": "Board",
     "languages": "Languages",
     "profile": "Profile",
@@ -25,6 +25,10 @@
     "socials": "Socials",
     "taskbar": "Taskbar",
     "contacts": "Contacts"
+  },
+  "extensions": {
+    "tab_skills": "Skills",
+    "tab_tools": "Tools"
   },
   "taskbar_view": {
     "subtitle": "On-screen overlay appearance and dictation behaviour.",
@@ -220,19 +224,17 @@
     "validated_badge": "Validated",
     "trigger_voice": "Voice",
     "trigger_event": "Event",
-    "trigger_cron": "Cron"
-  },
-  "review_view": {
-    "title": "Review",
-    "subtitle": "Curator pending reviews — accept or reject memory candidates.",
-    "empty_title": "Nothing to review",
-    "empty_subtitle": "When the curator extracts new memory candidates, they appear here.",
-    "accept": "Accept",
-    "reject": "Reject",
-    "confidence": "Confidence",
-    "field": "Field",
-    "value": "Value",
-    "reason": "Reason"
+    "trigger_cron": "Cron",
+    "on": "On",
+    "off": "Off",
+    "error": "Error",
+    "delete": "Delete",
+    "delete_title": "Delete skill?",
+    "delete_body": "This skill will be permanently removed:",
+    "delete_cancel": "Cancel",
+    "delete_confirm": "Delete",
+    "builtin_protected": "Built-in skill — can't be deleted",
+    "drag_hint": "Drag to reorder"
   },
   "sessions_view": {
     "title": "Transcription",
@@ -244,19 +246,6 @@
     "assistant": "Jarvis",
     "hangup": "Hung up",
     "duration": "Duration"
-  },
-  "terminal_view": {
-    "title": "Terminal",
-    "subtitle": "Persistent shell session — stays alive while you switch sections.",
-    "start": "Start",
-    "restart": "Restart",
-    "stop": "Stop",
-    "select_shell_hint": "Select a shell and press Start.",
-    "start_shell": "Start shell",
-    "status_idle": "Ready · {0} · click Start to spawn the shell",
-    "status_starting": "Spawning {0} …",
-    "status_running": "{0} active · audit log via bus (TerminalCommandExecuted)",
-    "status_closed": "{0} ended (exit {1}) · click Restart"
   },
   "docs_view": {
     "title": "Docs",
@@ -298,11 +287,52 @@
   },
   "board_view": {
     "title": "Board",
-    "subtitle": "Your mastery dashboard. Local, no cloud, no streak pressure.",
+    "subtitle": "Everything you and Jarvis have done together — fully local.",
     "refresh": "Refresh",
     "refresh_tooltip": "Trigger aggregator manually",
     "loading": "Loading board stats…",
     "load_error": "Could not load stats",
+    "hero": {
+      "you_spoke": "You said",
+      "you_spoke_sub": "words spoken to Jarvis",
+      "jarvis_spoke": "Jarvis said",
+      "jarvis_spoke_sub": "words spoken back to you",
+      "streak": "Day streak",
+      "streak_sub": "{0} active days in total",
+      "streak_sub_one": "{0} active day in total",
+      "talk_time": "Talk time",
+      "talk_time_sub": "across {0} conversations",
+      "talk_time_sub_one": "across {0} conversation"
+    },
+    "activity_subtitle": "How many words you and Jarvis exchanged each day.",
+    "activity_heatmap_hint": "Each square is a day — the brighter, the busier.",
+    "chart_title": "Words over time",
+    "chart_empty": "Not enough data yet to chart.",
+    "longest_streak": "Longest streak · {0} days",
+    "longest_streak_one": "Longest streak · {0} day",
+    "activity_streak_badge": "{0}-day streak",
+    "activity_streak_badge_one": "{0}-day streak",
+    "categories_title": "What you use Jarvis for",
+    "categories_subtitle": "Every tool Jarvis ran for you, grouped by purpose.",
+    "categories_empty": "No tool usage yet — it fills in as Jarvis works.",
+    "category": {
+      "agents": "Agents",
+      "browser": "Browser",
+      "mail": "Mail",
+      "community": "Community",
+      "knowledge": "Knowledge",
+      "system": "System"
+    },
+    "micro": {
+      "avg_words": "{0} words / conversation",
+      "ratio": "Jarvis says {0}× your words",
+      "active_days": "{0} active days",
+      "active_days_one": "{0} active day",
+      "active_since": "Active since {0}"
+    },
+    "heatmap_tooltip": "{0} · {1} activities · {2} h talking",
+    "heatmap_less": "Less",
+    "heatmap_more": "More",
     "stats": {
       "tasks_completed": "Tasks completed (total)",
       "tasks_completed_sub": "in {0} active days",
@@ -512,6 +542,8 @@
   "settings_view": {
     "title": "Settings",
     "subtitle": "Wake-word, hotkeys, safety policies, autostart.",
+    "overlay_taskbar_group_title": "Bar & Overlay",
+    "languages_group_title": "Languages",
     "save": "Save changes",
     "saving": "Saving…",
     "reset": "Reset to defaults",

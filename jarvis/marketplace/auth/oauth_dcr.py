@@ -64,7 +64,7 @@ class DcrConfig:
     fallback_token_endpoint: str | None = None
     fallback_registration_endpoint: str | None = None
     client_name: str = "Personal Jarvis"
-    client_uri: str = "https://github.com/PersonalJarvis/jarvis"
+    client_uri: str = "https://github.com/PersonalJarvis/PersonalJarvis"
     timeout_seconds: int = 10
 
 

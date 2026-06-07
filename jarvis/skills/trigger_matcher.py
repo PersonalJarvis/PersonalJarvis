@@ -39,6 +39,55 @@ def normalize_hotkey(combo: str) -> str:
     return "+".join(mods + keys)
 
 
+# Politeness / address fillers peeled off the head and tail of an utterance
+# before an ``^...$``-anchored voice pattern is re-tried (Step 2: tolerant
+# matching). DELIBERATELY CONSERVATIVE — only address tokens, courtesy words
+# and imperative command glue. Narrative words ("ich", "nur", "wollte",
+# "sagen", ...) are intentionally absent: that asymmetry keeps a casual
+# mention ("ich wollte nur guten morgen sagen") from firing the skill while a
+# real command ("Jarvis, bitte starte die Morgenroutine") still does, because
+# only the *edges* are stripped and the surviving core must satisfy the
+# anchored pattern on its own.
+_FILLER_WORDS: frozenset[str] = frozenset({
+    # address / wake
+    "jarvis", "hey", "ok", "okay", "hallo", "hello", "yo", "computer",
+    # courtesy
+    "bitte", "please", "danke", "thanks", "mal", "doch", "kurz",
+    # imperative command glue (NOT narrative verbs)
+    "mach", "machst", "kannst", "könntest", "koenntest", "würdest",
+    "wuerdest", "kann", "du", "mir", "uns", "lass", "lasst",
+    "let", "lets", "us", "can", "could", "would", "you",
+    # temporal courtesy
+    "jetzt", "now", "gleich", "schnell", "für", "fuer", "for", "me", "mich",
+})
+
+# Penalty applied to a filler-stripped match so a direct (unstripped) hit on
+# any skill always wins over a tolerant fallback hit on another.
+_FILLER_MATCH_PENALTY = 100_000
+
+_PUNCT_RE = re.compile(r"[^\w\s]", re.UNICODE)
+
+
+def _strip_fillers(utterance: str) -> str:
+    """Return ``utterance`` with leading/trailing politeness fillers removed.
+
+    Punctuation is flattened to spaces first; then filler tokens are peeled
+    off the head and the tail. The middle is never touched — so the surviving
+    core must still satisfy the anchored pattern by itself, which is exactly
+    the "phrase must carry the sentence" contract.
+    """
+    cleaned = _PUNCT_RE.sub(" ", utterance)
+    tokens = cleaned.split()
+    if not tokens:
+        return ""
+    start, end = 0, len(tokens)
+    while start < end and tokens[start].lower() in _FILLER_WORDS:
+        start += 1
+    while end > start and tokens[end - 1].lower() in _FILLER_WORDS:
+        end -= 1
+    return " ".join(tokens[start:end])
+
+
 class TriggerMatcher:
     """Zentrale Match-Instanz — hält keinen State außer Cache der kompilierten Regexes."""
 
@@ -94,6 +143,12 @@ class TriggerMatcher:
         """
         if not utterance:
             return None
+        # Step 2: politeness-tolerant fallback for ``^...$``-anchored patterns.
+        # The raw utterance is tried first (preserves all existing behaviour,
+        # incl. un-anchored "contains" patterns); only on a miss do we retry
+        # against the filler-stripped core. A stripped hit carries a score
+        # penalty so a direct hit on any skill always outranks it.
+        stripped = _strip_fillers(utterance)
         best: tuple[int, Skill, "re.Match[str]"] | None = None
         for sk in self.registry.by_trigger("voice"):
             if not self._is_matchable(sk):
@@ -108,10 +163,14 @@ class TriggerMatcher:
                 pat = self._get_pattern(t.pattern)
                 if pat is None:
                     continue
+                penalty = 0
                 m = pat.search(utterance)
+                if m is None and stripped and stripped != utterance:
+                    m = pat.search(stripped)
+                    penalty = _FILLER_MATCH_PENALTY
                 if m is None:
                     continue
-                score = len(m.group(0))
+                score = len(m.group(0)) - penalty
                 if best is None or score > best[0]:
                     best = (score, sk, m)
         return (best[1], best[2]) if best else None

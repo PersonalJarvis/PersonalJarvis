@@ -75,11 +75,11 @@ def _seed_entries() -> list[dict[str, Any]]:
         ("github", "GitHub (Repo)", "https://github.com/PersonalJarvis/PersonalJarvis"),
         ("github", "GitHub (Profile)", "https://github.com/PersonalJarvis"),
         # X: two links → X renders as a group with its own detail page, like
-        # GitHub. The first is a placeholder for the user's own X profile (edit
-        # it in the UI); the second is the official "Personal Jarvis" account.
-        ("x", "Your Profile", "https://x.com/yourhandle"),
+        # GitHub. "Alex Herz" is the personal profile; "Personal Jarvis" is the
+        # official project X account.
+        ("x", "Alex Herz", "https://x.com/Alex_Herz"),
         ("x", "Personal Jarvis", "https://x.com/PersonalJarvis"),
-        ("instagram", "Instagram", "https://www.instagram.com/PersonalJarvis/"),
+        ("instagram", "Instagram", "https://www.instagram.com/personaljarvis/"),
     ]
     return [
         {

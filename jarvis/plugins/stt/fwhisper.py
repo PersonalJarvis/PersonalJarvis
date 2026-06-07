@@ -48,39 +48,13 @@ class FasterWhisperProvider:
         self._model: Any = None  # lazy
 
     def _ensure_model(self) -> None:
-        if self._model is not None:
-            return
-        from faster_whisper import WhisperModel
-
-        device = self._device
-        compute_type = self._compute_type
-        # ``int8_float16`` is a CUDA-only compute type. On a CPU-only machine
-        # (no NVIDIA GPU — the common case) WhisperModel raises
-        # "target device or backend do not support efficient int8_float16",
-        # which killed the whole speech pipeline → the stt_match wake word
-        # ("Hey Jarvis") and dictation silently stopped working. Coerce to a
-        # CPU-supported type up front, then fall back defensively.
-        if device != "cuda" and "float16" in compute_type:
-            compute_type = "int8"
-        try:
+        if self._model is None:
+            from faster_whisper import WhisperModel
             self._model = WhisperModel(
-                self._model_name, device=device, compute_type=compute_type
+                self._model_name,
+                device=self._device,
+                compute_type=self._compute_type,
             )
-            self._device, self._compute_type = device, compute_type
-        except (ValueError, RuntimeError):
-            # Last-resort CPU fallbacks so local Whisper never hard-fails boot.
-            for fallback in ("int8", "float32"):
-                if fallback == compute_type:
-                    continue
-                try:
-                    self._model = WhisperModel(
-                        self._model_name, device="cpu", compute_type=fallback
-                    )
-                    self._device, self._compute_type = "cpu", fallback
-                    return
-                except (ValueError, RuntimeError):
-                    continue
-            raise
 
     async def transcribe(self, audio: AsyncIterator[AudioChunk]) -> Transcript:
         """Sammelt alle Chunks, transkribiert am Stück.

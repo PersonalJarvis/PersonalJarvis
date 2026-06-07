@@ -87,6 +87,74 @@ async def test_stall_guard_enforces_the_absolute_ceiling() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stall_guard_does_not_cut_off_active_computer_use() -> None:
+    """THE FIX (2026-06-07): a ``computer_use`` loop runs as ONE opaque tool
+    call inside the brain turn and legitimately exceeds BOTH the no-progress
+    stall window AND the absolute ceiling (a 10-step OBS automation took 30 s+
+    live). It reports progress only via ObservationCaptured/ActionPlanned bus
+    events, NOT text chunks. While those events keep arriving, the ceiling is
+    suspended so the desktop task runs to completion instead of being
+    guillotined mid-work and spoken 'Das hat zu lange gedauert'."""
+    # ceiling 0.4 s is SHORTER than the 1.0 s turn — the old absolute-ceiling
+    # code raised TimeoutError here even though the loop kept stepping.
+    p = _make_pipeline(stall=0.3, ceiling=0.4, poll=0.05)
+    p._long_tool_last_activity = 0.0
+
+    async def computer_use_working() -> tuple[str, bool]:
+        # A CU step event arrives every 0.1 s (live: every ~2-3 s, far inside
+        # the 30 s window). Each marks brain progress AND long-tool activity,
+        # exactly as the _on_agent_progress bus handler does.
+        for _ in range(10):
+            await asyncio.sleep(0.1)
+            p._mark_brain_progress()
+            p._long_tool_last_activity = time.monotonic()
+        return ("OBS Studio ist offen.", False)
+
+    result = await p._run_brain_with_stall_guard(computer_use_working())
+
+    assert result == ("OBS Studio ist offen.", False)
+
+
+@pytest.mark.asyncio
+async def test_stall_guard_still_aborts_a_wedged_computer_use() -> None:
+    """Boundary: suspending the ceiling for an ACTIVE desktop loop must not
+    also disable the no-progress liveness guard. A computer_use loop that
+    genuinely wedges (a COM hang — events STOP arriving) must still abort after
+    the stall window, so the voice session can never freeze."""
+    p = _make_pipeline(stall=0.3, ceiling=10.0, poll=0.05)
+    p._long_tool_last_activity = 0.0
+
+    async def computer_use_wedges() -> tuple[str, bool]:
+        for _ in range(3):  # a few healthy steps...
+            await asyncio.sleep(0.1)
+            p._mark_brain_progress()
+            p._long_tool_last_activity = time.monotonic()
+        await asyncio.sleep(10.0)  # ...then wedged: no more progress events
+        return ("unreachable", False)
+
+    with pytest.raises(TimeoutError):
+        await p._run_brain_with_stall_guard(computer_use_wedges())
+
+
+@pytest.mark.asyncio
+async def test_agent_progress_handler_resets_both_deadlines() -> None:
+    """The computer_use/vision bus-event handler resets the no-progress
+    deadline (``_brain_last_progress``) AND records long-tool activity
+    (``_long_tool_last_activity``), so a stepping desktop loop holds off BOTH
+    the stall and the ceiling. Bus handlers must be ``async`` (a sync handler
+    is silently dropped by the bus, live lesson 2026-06-02)."""
+    p = SpeechPipeline.__new__(SpeechPipeline)
+    p._brain_last_progress = 0.0
+    p._long_tool_last_activity = 0.0
+
+    before = time.monotonic()
+    await p._on_agent_progress(object())
+
+    assert p._brain_last_progress >= before
+    assert p._long_tool_last_activity >= before
+
+
+@pytest.mark.asyncio
 async def test_stall_guard_propagates_a_brain_error() -> None:
     """A brain coroutine that raises surfaces its exception unchanged — the
     caller's ``except Exception`` branch must keep handling provider failures."""

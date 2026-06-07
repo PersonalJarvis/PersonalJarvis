@@ -34,13 +34,16 @@ import contextlib
 import json
 import logging
 import sqlite3
+import threading
 import time
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from jarvis.board.categories import categorize_tool
 
 log = logging.getLogger(__name__)
 
@@ -94,6 +97,10 @@ class DailyStats:
     hours_saved_estimate: float = 0.0
     active_events_count: int = 0
     conversation_seconds_estimate: float = 0.0
+    user_words_count: int = 0
+    jarvis_words_count: int = 0
+    session_count: int = 0
+    category_counts: dict[str, int] = field(default_factory=dict)
 
     @property
     def unique_tools_count(self) -> int:
@@ -136,13 +143,25 @@ class BoardAggregator:
         self,
         jsonl_dir: Path,
         db_path: Path | None = None,
+        sessions_db_path: Path | None = None,
     ) -> None:
         self._jsonl_dir = Path(jsonl_dir)
         self._db_path = Path(db_path) if db_path is not None else (
             self._jsonl_dir.parent / "board" / "personal.db"
         )
+        # Durable conversation store (voice_turns + voice_sessions). This is
+        # the rich source the board actually has data in — the flight-recorder
+        # JSONL is empty on most installs. ``None`` disables the source.
+        self._sessions_db_path = (
+            Path(sessions_db_path) if sessions_db_path is not None else None
+        )
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._db: sqlite3.Connection | None = None
+        # Serialises every aggregation run. The connection is shared across
+        # thread-pool threads (freshen-on-read + the 6 h loop + manual refresh),
+        # so runs must never overlap — hence ``check_same_thread=False`` on the
+        # connection paired with this lock.
+        self._run_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Public
@@ -152,14 +171,6 @@ class BoardAggregator:
     def db(self) -> sqlite3.Connection:
         """An open connection. Lazy, idempotent."""
         if self._db is None:
-            # check_same_thread=False: run() is dispatched via asyncio.to_thread
-            # (server.run_forever loop + the manual /board refresh route), which
-            # uses the default ThreadPoolExecutor — successive runs can land on
-            # different worker threads. The single cached connection is only ever
-            # used serially (one to_thread awaited at a time, each run() wrapped
-            # in its own transaction), so cross-thread reuse is safe here and
-            # avoids the "SQLite objects created in a thread can only be used in
-            # that same thread" ProgrammingError that aborted the aggregation.
             self._db = sqlite3.connect(
                 self._db_path, isolation_level=None, check_same_thread=False
             )
@@ -176,20 +187,60 @@ class BoardAggregator:
             self._db = None
 
     def run(self) -> None:
-        """One complete aggregation run. Synchronous, idempotent.
+        """One complete aggregation run. Synchronous, idempotent, serialised.
 
         Error handling: all expected I/O errors are logged, not raised. The
         caller (``run_forever``) would otherwise kill the background task and
         subsequently block voice-loop telemetry — this is explicitly excluded
         in the Plan §5-A done criteria.
         """
+        with self._run_lock:
+            self._run_body()
+
+    def run_if_stale(self, ttl_s: float) -> bool:
+        """Re-aggregate only if the last run is older than ``ttl_s`` seconds.
+
+        This is the "live indicators" path: the board read endpoints call it on
+        every poll so newly spoken words show up within a poll cycle, while the
+        TTL gate plus a non-blocking lock keep concurrent polls from triggering
+        a thundering herd of re-aggregations. Returns ``True`` if it ran.
+        """
+        if not self._run_lock.acquire(blocking=False):
+            return False  # another run in progress — its result is fresh enough
+        try:
+            last = self._get_last_run_ns()
+            if last is not None and (time.time_ns() - last) < int(ttl_s * 1e9):
+                return False
+            self._run_body()
+            return True
+        finally:
+            self._run_lock.release()
+
+    def _run_body(self) -> None:
+        """The actual aggregation. Callers must hold ``self._run_lock``."""
         try:
             daily = self._aggregate_events()
+            self._aggregate_sessions(daily)
             self._upsert_daily_stats(daily.values())
             self._refresh_personal_records()
             self._set_meta("last_run_ns", str(time.time_ns()))
         except Exception:  # noqa: BLE001
             log.exception("BoardAggregator.run() abgebrochen — DB bleibt unveraendert")
+
+    def _get_last_run_ns(self) -> int | None:
+        """Timestamp of the last successful run, or ``None`` if never run."""
+        try:
+            row = self.db.execute(
+                "SELECT value FROM aggregator_meta WHERE key = 'last_run_ns'"
+            ).fetchone()
+        except sqlite3.Error:
+            return None
+        if row is None:
+            return None
+        try:
+            return int(row["value"])
+        except (ValueError, TypeError):
+            return None
 
     async def run_forever(self, *, interval_s: float = 6 * 3600) -> None:
         """Infinite loop for the FastAPI lifecycle.
@@ -362,6 +413,71 @@ class BoardAggregator:
         return daily
 
     # ------------------------------------------------------------------
+    # Durable conversation store (sessions.db)
+    # ------------------------------------------------------------------
+
+    def _aggregate_sessions(self, daily: dict[str, DailyStats]) -> None:
+        """Fold word counts, usage categories, session count and conversation
+        time from ``sessions.db`` into the per-day stats.
+
+        This is the source that actually has data — voice_turns holds the user
+        and Jarvis text plus per-turn tool calls. Only counts are derived; the
+        raw text never leaves this method. A missing or unreadable database is
+        a silent no-op, consistent with the rest of the aggregator.
+        """
+        path = self._sessions_db_path
+        if path is None or not Path(path).exists():
+            return
+        try:
+            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+        except sqlite3.Error:
+            log.warning("BoardAggregator: sessions.db nicht lesbar (%s)", path)
+            return
+        try:
+            for row in conn.execute(
+                "SELECT started_ms, user_text, jarvis_text, tool_calls_json "
+                "FROM voice_turns"
+            ):
+                ms = row["started_ms"]
+                if not ms:
+                    continue
+                date = _iso_date_from_ms(int(ms))
+                stats = daily.setdefault(date, DailyStats(date=date))
+                user_words = _count_words(row["user_text"])
+                jarvis_words = _count_words(row["jarvis_text"])
+                stats.user_words_count += user_words
+                stats.jarvis_words_count += jarvis_words
+                if user_words or jarvis_words:
+                    # Heatmap/streak should light up on real conversation days;
+                    # voice_commands_count is left to the flight-recorder source
+                    # so the voice_first_try_rate semantics stay intact.
+                    stats.active_events_count += 1
+                for tool in _parse_tool_calls(row["tool_calls_json"]):
+                    cat = categorize_tool(tool)
+                    stats.category_counts[cat] = stats.category_counts.get(cat, 0) + 1
+
+            for row in conn.execute(
+                "SELECT started_ms, ended_ms FROM voice_sessions"
+            ):
+                ms = row["started_ms"]
+                if not ms:
+                    continue
+                date = _iso_date_from_ms(int(ms))
+                stats = daily.setdefault(date, DailyStats(date=date))
+                stats.session_count += 1
+                ended = row["ended_ms"]
+                if ended and int(ended) > int(ms):
+                    stats.conversation_seconds_estimate += (
+                        int(ended) - int(ms)
+                    ) / 1000.0
+        except sqlite3.Error:
+            log.exception("BoardAggregator: Fehler beim Lesen von sessions.db")
+        finally:
+            with contextlib.suppress(sqlite3.Error):
+                conn.close()
+
+    # ------------------------------------------------------------------
     # Upsert
     # ------------------------------------------------------------------
 
@@ -376,8 +492,10 @@ class BoardAggregator:
                         date, tasks_completed, tasks_failed, tools_used,
                         unique_tools_count, voice_commands_count,
                         voice_first_try_rate, hours_saved_estimate,
-                        active_events_count, conversation_seconds_estimate
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        active_events_count, conversation_seconds_estimate,
+                        user_words_count, jarvis_words_count, session_count,
+                        category_counts
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(date) DO UPDATE SET
                         tasks_completed      = excluded.tasks_completed,
                         tasks_failed         = excluded.tasks_failed,
@@ -387,7 +505,11 @@ class BoardAggregator:
                         voice_first_try_rate = excluded.voice_first_try_rate,
                         hours_saved_estimate = excluded.hours_saved_estimate,
                         active_events_count  = excluded.active_events_count,
-                        conversation_seconds_estimate = excluded.conversation_seconds_estimate
+                        conversation_seconds_estimate = excluded.conversation_seconds_estimate,
+                        user_words_count     = excluded.user_words_count,
+                        jarvis_words_count   = excluded.jarvis_words_count,
+                        session_count        = excluded.session_count,
+                        category_counts      = excluded.category_counts
                     """,
                     (
                         stats.date,
@@ -400,6 +522,10 @@ class BoardAggregator:
                         stats.hours_saved_estimate,
                         stats.active_events_count,
                         stats.conversation_seconds_estimate,
+                        stats.user_words_count,
+                        stats.jarvis_words_count,
+                        stats.session_count,
+                        json.dumps(stats.category_counts),
                     ),
                 )
 
@@ -530,20 +656,7 @@ class BoardAggregator:
             )
 
     def _ensure_schema(self, conn: sqlite3.Connection) -> None:
-        columns = {
-            row["name"]
-            for row in conn.execute("PRAGMA table_info(daily_stats)").fetchall()
-        }
-        if "active_events_count" not in columns:
-            conn.execute(
-                "ALTER TABLE daily_stats ADD COLUMN "
-                "active_events_count INTEGER NOT NULL DEFAULT 0"
-            )
-        if "conversation_seconds_estimate" not in columns:
-            conn.execute(
-                "ALTER TABLE daily_stats ADD COLUMN "
-                "conversation_seconds_estimate REAL NOT NULL DEFAULT 0.0"
-            )
+        _ensure_daily_stats_columns(conn)
 
 
 def _iso_date_from_ns(ts_ns: int) -> str:
@@ -552,7 +665,7 @@ def _iso_date_from_ns(ts_ns: int) -> str:
     Local time is the meaningful granularity for a personal dashboard — a
     commit at 00:30 belongs to the user's "today", not "yesterday in UTC".
     """
-    dt = datetime.fromtimestamp(ts_ns / 1e9, tz=timezone.utc).astimezone()
+    dt = datetime.fromtimestamp(ts_ns / 1e9, tz=UTC).astimezone()
     return dt.strftime("%Y-%m-%d")
 
 
@@ -562,3 +675,64 @@ def _is_active_event(event: str, payload: dict[str, Any]) -> bool:
     if event == "ActionExecuted":
         return bool(payload.get("success"))
     return True
+
+
+def _iso_date_from_ms(ts_ms: int) -> str:
+    """ISO date (local timezone) from a millisecond epoch timestamp."""
+    dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=UTC).astimezone()
+    return dt.strftime("%Y-%m-%d")
+
+
+def _count_words(text: str | None) -> int:
+    """Whitespace word count. ``None``/empty -> 0. Never stores the text."""
+    if not text:
+        return 0
+    return len(text.split())
+
+
+def _parse_tool_calls(raw: str | None) -> list[str]:
+    """Extract tool names from a ``tool_calls_json`` cell.
+
+    The column is a JSON array of either plain tool-name strings
+    (``["spawn_openclaw"]``) or objects carrying a ``name`` key. Both shapes
+    are tolerated; anything unparseable yields an empty list.
+    """
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    names: list[str] = []
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, str):
+                names.append(item)
+            elif isinstance(item, dict):
+                name = item.get("name") or item.get("tool") or item.get("tool_name")
+                if isinstance(name, str):
+                    names.append(name)
+    return names
+
+
+# Migration columns added after the original Phase-A schema. Kept in one place
+# so the aggregator (writer) and the BoardStore (reader) stay in lock-step —
+# both call this on every connection open.
+_DAILY_STATS_MIGRATIONS: tuple[tuple[str, str], ...] = (
+    ("active_events_count", "INTEGER NOT NULL DEFAULT 0"),
+    ("conversation_seconds_estimate", "REAL NOT NULL DEFAULT 0.0"),
+    ("user_words_count", "INTEGER NOT NULL DEFAULT 0"),
+    ("jarvis_words_count", "INTEGER NOT NULL DEFAULT 0"),
+    ("session_count", "INTEGER NOT NULL DEFAULT 0"),
+    ("category_counts", "TEXT NOT NULL DEFAULT '{}'"),
+)
+
+
+def _ensure_daily_stats_columns(conn: sqlite3.Connection) -> None:
+    """Idempotently add any missing ``daily_stats`` columns (no Alembic)."""
+    existing = {
+        row[1] for row in conn.execute("PRAGMA table_info(daily_stats)").fetchall()
+    }
+    for name, decl in _DAILY_STATS_MIGRATIONS:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE daily_stats ADD COLUMN {name} {decl}")

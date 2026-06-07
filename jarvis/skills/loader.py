@@ -100,7 +100,12 @@ def parse_skill(path: Path) -> Skill:
     resources = _scan_resources(path.parent)
 
     try:
-        raw = path.read_text(encoding="utf-8")
+        # utf-8-sig transparently strips a leading BOM (ef bb bf) if present
+        # and reads plain UTF-8 otherwise. Without this a BOM would shift the
+        # leading ``---`` so neither python-frontmatter nor the manual splitter
+        # recognise the frontmatter, dropping the skill to DRAFT with a
+        # 'name required' error (seen on jarvis-doc-author/SKILL.md).
+        raw = path.read_text(encoding="utf-8-sig")
     except OSError as exc:
         return Skill(
             path=path,

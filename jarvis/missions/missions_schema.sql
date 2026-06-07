@@ -13,7 +13,14 @@ CREATE TABLE IF NOT EXISTS missions (
     -- Bestehende DBs werden via _apply_migrations() in event_store.py upgegradet
     -- (SQLite hat kein ADD COLUMN IF NOT EXISTS).
     iteration       INTEGER NOT NULL DEFAULT 0,
-    cost_usd        REAL NOT NULL DEFAULT 0.0
+    cost_usd        REAL NOT NULL DEFAULT 0.0,
+    -- Liveness heartbeat: written by the live orchestrator every ~20 s while a
+    -- worker drains. Recovery uses max(last_event_ts, last_heartbeat_ms) as the
+    -- freshness timestamp so a busy-but-silent worker (Opus, long tool calls,
+    -- Computer-Use) is never swept as orphaned. Not an event: must not bloat
+    -- the event log or wake the flight-recorder wildcard subscriber.
+    -- Existing DBs are upgraded via _apply_migrations() in event_store.py.
+    last_heartbeat_ms INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_missions_state ON missions(state);

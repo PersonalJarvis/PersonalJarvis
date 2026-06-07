@@ -33,6 +33,18 @@ describe("locale completeness (raw-key bug guard)", () => {
   }
 });
 
+describe("settings_view languages group (folded-in section)", () => {
+  for (const [name, loc] of Object.entries(LOCALES)) {
+    it(`${name}: has a languages group title for the Settings panel`, () => {
+      const sv = (loc as any).settings_view;
+      expect(
+        sv.languages_group_title,
+        `${name}.settings_view.languages_group_title`,
+      ).toBeTruthy();
+    });
+  }
+});
+
 describe("reply language wiring", () => {
   beforeEach(() => {
     localStorage.clear();

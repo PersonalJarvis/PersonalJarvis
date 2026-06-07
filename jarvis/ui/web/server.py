@@ -216,6 +216,7 @@ class WebServer:
         from .cli_routes import router as cli_router
         from .contacts_routes import router as contacts_router
         from .docs_routes import router as docs_router
+        from .federation_proxy_routes import router as federation_proxy_router
         from .friends_routes import router as friends_router
         from .marketplace_routes import router as marketplace_router
         from .mcp_routes import router as mcp_router
@@ -253,16 +254,6 @@ class WebServer:
         except ImportError as exc:
             logger.warning("Conductor-Modul nicht verfuegbar: {} — Conductor-View bleibt leer", exc)
             conductor_router = None
-        # federation_proxy_routes imports the `board_backend` companion package
-        # at module top. board_backend has its own pyproject and is installed by
-        # install/installer.py, NOT by `pip install -e .[full]`. Import defensively
-        # so a checkout/install without the companion still boots the server
-        # (the Board-Federation proxy simply stays unmounted).
-        try:
-            from .federation_proxy_routes import router as federation_proxy_router
-        except ImportError as exc:
-            logger.warning("board_backend nicht verfuegbar: {} — Federation-Proxy bleibt aus", exc)
-            federation_proxy_router = None
         app.include_router(mcp_router)
         app.include_router(tools_router)
         app.include_router(provider_router)
@@ -295,8 +286,7 @@ class WebServer:
         app.include_router(preview_router)
         app.include_router(board_router)
         app.include_router(board_meta_router)
-        if federation_proxy_router is not None:
-            app.include_router(federation_proxy_router)
+        app.include_router(federation_proxy_router)
         # Phase 8.5 — Review-Pipeline read-only UI (Plan §6.5).
         app.include_router(review_router)
         # Voice-Session-Transkriptions-View (Sidebar -> "Transkription").
@@ -378,7 +368,17 @@ class WebServer:
             jsonl_dir = user_logs_dir()
             jsonl_dir.mkdir(parents=True, exist_ok=True)
 
-            aggregator = BoardAggregator(jsonl_dir=jsonl_dir, db_path=db_path)
+            # The board's rich source is the durable voice-session store
+            # (sessions.db), not the flight-recorder JSONL (which is empty on
+            # most installs). Matches the [sessions] default db path used by
+            # bootstrap_sessions (cwd-relative ``data/sessions.db``).
+            sessions_db_path = Path("data/sessions.db")
+
+            aggregator = BoardAggregator(
+                jsonl_dir=jsonl_dir,
+                db_path=db_path,
+                sessions_db_path=sessions_db_path,
+            )
             store = BoardStore(db_path=db_path)
             evaluator = AchievementEvaluator(db_path=db_path, bus=self.bus)
             bio_store = BioStore(db_path=db_path)
@@ -459,10 +459,15 @@ class WebServer:
         """
         try:
             from jarvis.skills.bootstrap import ensure_user_skills_dir
+            from jarvis.skills.prefs import load_state_overrides
             from jarvis.skills.registry import SkillRegistry
 
             skills_root = ensure_user_skills_dir()
-            registry = SkillRegistry(root=skills_root, bus=self.bus)
+            registry = SkillRegistry(
+                root=skills_root,
+                bus=self.bus,
+                state_prefs_loader=load_state_overrides,
+            )
             registry.reload_sync()
             self._skill_registry = registry
             app.state.skill_registry = registry
@@ -749,6 +754,36 @@ class WebServer:
                         "is_active_brain": mapping.jarvis == primary,
                     }
                 )
+
+            # Codex is a DIRECT worker (CodexDirectWorker) with no OpenClaw slug,
+            # so it is not in MAPPINGS. Surface it as an explicit selectable
+            # subagent row. Backed by the ChatGPT subscription (OAuth) OR an
+            # OpenAI API key — "key_set" is true when either is present.
+            try:
+                from jarvis.codex_auth import CodexAuthService
+
+                codex_bin = (
+                    getattr(getattr(cfg, "codex", None), "binary_path", "") or None
+                )
+                codex_connected = CodexAuthService(codex_bin).status().connected
+            except Exception:  # noqa: BLE001
+                codex_connected = False
+            try:
+                codex_key = bool(
+                    get_secret("codex_openai_api_key", env_fallback="OPENAI_API_KEY")
+                )
+            except Exception:  # noqa: BLE001
+                codex_key = False
+            mapping_rows.append(
+                {
+                    "jarvis": "openai-codex",
+                    "openclaw": "codex-cli (direct)",
+                    "env_var": "ChatGPT-OAuth",
+                    "env_fallback": "OPENAI_API_KEY",
+                    "key_set": codex_connected or codex_key,
+                    "is_active_brain": primary == "openai-codex",
+                }
+            )
 
             return {
                 "configured": oc_cfg is not None,
@@ -1557,12 +1592,16 @@ class WebServer:
         repo_root = WEB_DIR.parent.parent.parent
         isolation_root = repo_root.parent / "sub-agents-outputs"
 
-        # Fix #2 (2026-05-29): only the PRIMARY (single-instance-lock holder)
-        # runs the crash_recovery sweep. The launcher sets
-        # JARVIS_PRIMARY_INSTANCE=0 for --no-lock parallel-dev instances so
-        # their boot does NOT mark the primary's in-flight missions as
-        # crash_recovery. Env unset → treat as primary (recover).
-        _is_primary = os.environ.get("JARVIS_PRIMARY_INSTANCE", "1") != "0"
+        # Fail-closed primary-instance gate: POSITIVE proof is required.
+        # Only the launcher process, after confirming it holds the
+        # single-instance lock, sets JARVIS_PRIMARY_INSTANCE="1".
+        # Any other caller — smoke scripts, eval harnesses, --no-lock parallel
+        # sessions, or anything that simply does not set the variable — gets
+        # _is_primary=False and will NOT run the crash_recovery sweep.
+        # This prevents side-processes from sweeping the desktop app's live
+        # missions to FAILED('crash_recovery') (the 98-of-286 false-failure
+        # bucket, forensic 2026-05-31, missions 019e7095 / 019e6fea).
+        _is_primary = os.environ.get("JARVIS_PRIMARY_INSTANCE") == "1"
         result = await bootstrap_missions(
             db_path=db_path,
             isolation_root=isolation_root,

@@ -173,3 +173,125 @@ def test_subagent_switch_updates_status_endpoint(monkeypatch: pytest.MonkeyPatch
     active = {r["jarvis"]: r["is_active_brain"] for r in data["mapping"]}
     assert active["grok"] is True
     assert active["claude-api"] is False
+
+
+# --- Codex as a subagent (direct worker, not an OpenClaw MAPPINGS row) -----
+
+
+class _FakeCodex:
+    def __init__(self, *_a, **_k) -> None:  # noqa: ANN002, ANN003
+        pass
+
+    connected_value = True
+
+    def status(self):  # noqa: ANN201
+        from jarvis.codex_auth import CodexAuthStatus
+
+        return CodexAuthStatus(
+            installed=True, connected=type(self).connected_value, mode="chatgpt"
+        )
+
+
+def _patch_codex(monkeypatch: pytest.MonkeyPatch, *, connected: bool) -> None:
+    """Stub CodexAuthService in both the route + the status endpoint paths."""
+    _FakeCodex.connected_value = connected
+    monkeypatch.setattr("jarvis.ui.web.provider_routes.CodexAuthService", _FakeCodex)
+    monkeypatch.setattr("jarvis.codex_auth.CodexAuthService", _FakeCodex)
+
+
+def test_openclaw_status_includes_codex_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Codex is selectable as a subagent even though it has no OpenClaw slug."""
+    _patch_codex(monkeypatch, connected=False)
+    cfg = load_config()
+    data = _status(cfg)
+    slugs = {r["jarvis"] for r in data["mapping"]}
+    assert "openai-codex" in slugs
+
+
+def test_codex_subagent_active_when_selected(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_codex(monkeypatch, connected=True)
+    cfg = load_config()
+    cfg.brain.primary = "gemini"
+    cfg.brain.sub_jarvis = BrainTierConfig(provider="openai-codex", model="")
+    data = _status(cfg)
+    active = {r["jarvis"]: r["is_active_brain"] for r in data["mapping"]}
+    assert active["openai-codex"] is True
+    assert active["gemini"] is False
+
+
+def test_subagent_switch_accepts_codex_oauth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ChatGPT-subscription (OAuth) connected, no API key -> codex selectable."""
+    import jarvis.core.config as cfg_mod
+    import jarvis.core.config_writer as config_writer
+
+    monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _p: None)
+    monkeypatch.setattr(cfg_mod, "get_secret", lambda *_a, **_k: None)
+    _patch_codex(monkeypatch, connected=True)
+    calls: list[str] = []
+    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: calls.append(n))
+
+    cfg = load_config()
+    resp = _client(cfg).post(
+        "/api/subagent/switch", json={"provider": "openai-codex", "persist": True}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["active"] == "openai-codex"
+    assert calls == ["openai-codex"]
+
+
+def test_subagent_switch_codex_api_key_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No OAuth, but a saved Codex API key is enough to select the subagent."""
+    import jarvis.core.config as cfg_mod
+    import jarvis.core.config_writer as config_writer
+
+    monkeypatch.setattr(
+        cfg_mod, "get_secret",
+        lambda key, *a, **k: "sk-codex" if key == "codex_openai_api_key" else None,
+    )
+    monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _p: None)
+    _patch_codex(monkeypatch, connected=False)
+    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: None)
+
+    cfg = load_config()
+    resp = _client(cfg).post(
+        "/api/subagent/switch", json={"provider": "openai-codex", "persist": True}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["active"] == "openai-codex"
+
+
+def test_subagent_switch_chatgpt_alias_normalizes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The 'chatgpt' alias resolves to the canonical 'openai-codex' slug."""
+    import jarvis.core.config as cfg_mod
+    import jarvis.core.config_writer as config_writer
+
+    monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _p: None)
+    monkeypatch.setattr(cfg_mod, "get_secret", lambda *_a, **_k: None)
+    _patch_codex(monkeypatch, connected=True)
+    calls: list[str] = []
+    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: calls.append(n))
+
+    cfg = load_config()
+    resp = _client(cfg).post("/api/subagent/switch", json={"provider": "chatgpt"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["active"] == "openai-codex"
+    assert calls == ["openai-codex"]
+
+
+def test_subagent_switch_409_codex_when_not_connected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Neither OAuth nor API key -> 409, nothing persisted."""
+    import jarvis.core.config as cfg_mod
+    import jarvis.core.config_writer as config_writer
+
+    monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _p: None)
+    monkeypatch.setattr(cfg_mod, "get_secret", lambda *_a, **_k: None)
+    _patch_codex(monkeypatch, connected=False)
+    persisted: list[str] = []
+    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: persisted.append(n))
+
+    cfg = load_config()
+    resp = _client(cfg).post("/api/subagent/switch", json={"provider": "openai-codex"})
+    assert resp.status_code == 409
+    assert persisted == []

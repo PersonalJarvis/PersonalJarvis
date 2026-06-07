@@ -37,11 +37,8 @@ sensitivity = 0.5
 
 # ── Speech-to-Text ──
 [stt]
-provider = "groq-api"        # groq-api (cloud) | faster-whisper (local, offline)
-# Fallback kicks in only when the primary STT errors. The only non-cloud option
-# is faster-whisper; its ~1.5 GB model downloads once on first fallback use
-# (never on the happy path), so it does not block normal startup.
-fallback = "faster-whisper"  # local offline safety net (downloads once on first use)
+provider = "groq-api"        # groq-api | openai-api | deepgram-flux | deepgram-nova3 | faster-whisper
+fallback = "faster-whisper"  # offline fallback (needs the [desktop] local-whisper extra)
 device = "cpu"               # cpu | cuda — keep "cpu" unless you have a local GPU
 language = "auto"            # "de" | "en" | "auto"
 bias_prompt = ""             # optional comma-separated vocab to stabilize proper nouns

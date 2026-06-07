@@ -2,16 +2,16 @@
   "nav": {
     "chats": "Chats",
     "agents": "Agentes",
+    "extensions": "Skills, Plugins & MCPs",
     "skills": "Habilidades",
     "plugins": "Plugins",
     "docs": "Documentos",
     "mcps": "MCPs",
     "tasks": "Tareas",
-    "review": "Revisión",
     "sessions": "Transcripción",
-    "terminal": "Terminal",
     "clis": "CLIs",
     "cli_test_hub": "CLI Test Hub",
+    "clis_hub": "CLIs & CLI Test Hub",
     "board": "Tablero",
     "languages": "Idiomas",
     "profile": "Perfil",
@@ -25,6 +25,10 @@
     "socials": "Redes",
     "taskbar": "Barra",
     "contacts": "Contactos"
+  },
+  "extensions": {
+    "tab_skills": "Habilidades",
+    "tab_tools": "Herramientas"
   },
   "taskbar_view": {
     "subtitle": "Apariencia del overlay en pantalla y comportamiento al dictar.",
@@ -220,19 +224,17 @@
     "validated_badge": "Validada",
     "trigger_voice": "Voz",
     "trigger_event": "Evento",
-    "trigger_cron": "Cron"
-  },
-  "review_view": {
-    "title": "Revisión",
-    "subtitle": "Revisiones pendientes del Curator — acepta o rechaza candidatos de memoria.",
-    "empty_title": "Nada que revisar",
-    "empty_subtitle": "Cuando el curator extraiga nuevos candidatos de memoria aparecerán aquí.",
-    "accept": "Aceptar",
-    "reject": "Rechazar",
-    "confidence": "Confianza",
-    "field": "Campo",
-    "value": "Valor",
-    "reason": "Razón"
+    "trigger_cron": "Cron",
+    "on": "Activada",
+    "off": "Desactivada",
+    "error": "Error",
+    "delete": "Eliminar",
+    "delete_title": "¿Eliminar habilidad?",
+    "delete_body": "Esta habilidad se eliminará permanentemente:",
+    "delete_cancel": "Cancelar",
+    "delete_confirm": "Eliminar",
+    "builtin_protected": "Habilidad incorporada — no se puede eliminar",
+    "drag_hint": "Arrastra para reordenar"
   },
   "sessions_view": {
     "title": "Transcripción",
@@ -244,19 +246,6 @@
     "assistant": "Jarvis",
     "hangup": "Colgado",
     "duration": "Duración"
-  },
-  "terminal_view": {
-    "title": "Terminal",
-    "subtitle": "Sesión de shell persistente — sigue activa al cambiar de sección.",
-    "start": "Iniciar",
-    "restart": "Reiniciar",
-    "stop": "Detener",
-    "select_shell_hint": "Selecciona un shell y pulsa Iniciar.",
-    "start_shell": "Iniciar shell",
-    "status_idle": "Listo · {0} · pulsa Iniciar para lanzar el shell",
-    "status_starting": "Lanzando {0} …",
-    "status_running": "{0} activo · registro de auditoría vía bus (TerminalCommandExecuted)",
-    "status_closed": "{0} terminado (exit {1}) · pulsa Reiniciar"
   },
   "docs_view": {
     "title": "Documentos",
@@ -298,11 +287,52 @@
   },
   "board_view": {
     "title": "Tablero",
-    "subtitle": "Tu panel de maestría. Local, sin nube, sin presión de rachas.",
+    "subtitle": "Todo lo que tú y Jarvis habéis hecho juntos — totalmente local.",
     "refresh": "Actualizar",
     "refresh_tooltip": "Disparar agregador manualmente",
     "loading": "Cargando estadísticas…",
     "load_error": "No se pudieron cargar las estadísticas",
+    "hero": {
+      "you_spoke": "Tú dijiste",
+      "you_spoke_sub": "palabras dichas a Jarvis",
+      "jarvis_spoke": "Jarvis dijo",
+      "jarvis_spoke_sub": "palabras dichas de vuelta",
+      "streak": "Racha de días",
+      "streak_sub": "{0} días activos en total",
+      "streak_sub_one": "{0} día activo en total",
+      "talk_time": "Tiempo de conversación",
+      "talk_time_sub": "en {0} conversaciones",
+      "talk_time_sub_one": "en {0} conversación"
+    },
+    "activity_subtitle": "Cuántas palabras intercambiasteis tú y Jarvis cada día.",
+    "activity_heatmap_hint": "Cada cuadro es un día — cuanto más brillante, más actividad.",
+    "chart_title": "Palabras a lo largo del tiempo",
+    "chart_empty": "Aún no hay datos suficientes para el gráfico.",
+    "longest_streak": "Racha más larga · {0} días",
+    "longest_streak_one": "Racha más larga · {0} día",
+    "activity_streak_badge": "racha de {0} días",
+    "activity_streak_badge_one": "racha de {0} día",
+    "categories_title": "Para qué usas Jarvis",
+    "categories_subtitle": "Cada herramienta que Jarvis ejecutó para ti, agrupada por propósito.",
+    "categories_empty": "Aún no hay uso de herramientas — se llena mientras Jarvis trabaja.",
+    "category": {
+      "agents": "Agentes",
+      "browser": "Navegador",
+      "mail": "Correo",
+      "community": "Comunidad",
+      "knowledge": "Conocimiento",
+      "system": "Sistema"
+    },
+    "micro": {
+      "avg_words": "{0} palabras / conversación",
+      "ratio": "Jarvis dice {0}× tus palabras",
+      "active_days": "{0} días activos",
+      "active_days_one": "{0} día activo",
+      "active_since": "Activo desde {0}"
+    },
+    "heatmap_tooltip": "{0} · {1} actividades · {2} h hablando",
+    "heatmap_less": "Menos",
+    "heatmap_more": "Más",
     "stats": {
       "tasks_completed": "Tareas completadas (total)",
       "tasks_completed_sub": "en {0} días activos",
@@ -512,6 +542,8 @@
   "settings_view": {
     "title": "Ajustes",
     "subtitle": "Palabra de activación, atajos, políticas de seguridad, inicio automático.",
+    "overlay_taskbar_group_title": "Barra y superposición",
+    "languages_group_title": "Idiomas",
     "save": "Guardar",
     "saving": "Guardando…",
     "reset": "Restablecer valores predeterminados",

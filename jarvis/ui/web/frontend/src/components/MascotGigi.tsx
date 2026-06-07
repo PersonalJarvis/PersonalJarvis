@@ -290,7 +290,6 @@ const SECTION_COMMENTS: Partial<Record<SectionId, string[]>> = {
   agents: ["die Agents sind meine Kollegen.", "wer ist dein Liebling?"],
   skills: ["Skills sind mein Lieblings-Feature.", "was sollen wir lernen?"],
   mcps: ["mehr MCPs = mehr Power.", "was sollen wir dazuholen?"],
-  terminal: ["mutig, das Terminal.", "viel Spaß in der Shell."],
   languages: ["ich spreche DE und EN.", "Sprachwechsel? Einfach sagen."],
   apikeys: ["pass auf die Keys auf.", "nicht in Git committen!"],
   settings: ["was stört dich?", "tweaken wir was?"],

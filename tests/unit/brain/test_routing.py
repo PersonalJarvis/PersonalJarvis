@@ -212,6 +212,76 @@ async def test_smalltalk_dispatches_zero_spawn_calls(utterance: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Greeting-prefixed command bug (live forensic 2026-06-07,
+# data/jarvis_desktop.log 18:19:07): the user said "Hallo, öffne ihn für mich".
+# The smalltalk allowlist substring-matched the leading "Hallo", so the whole
+# turn was classified as smalltalk. That hid the action/dispatch tools from the
+# LLM, which then hit the anti-silence fallback and spoke
+# "Das kann ich gerade nicht ausführen — mir fehlt dafür das passende Werkzeug."
+# A greeting/politeness prefix must NOT turn a real command into smalltalk.
+# ---------------------------------------------------------------------------
+
+GREETING_PREFIXED_COMMANDS = [
+    "Hallo, öffne ihn für mich",
+    "Hallo, öffne ihn für mich.",
+    "Hey Jarvis, baue eine Landingpage",
+    "Hi, lies die Datei jarvis.toml",
+    "Moin, mach einen Screenshot",
+    "Danke, öffne mir Chrome",
+    "Okay, zeig mir die Logs",
+]
+
+
+@pytest.mark.parametrize("utterance", GREETING_PREFIXED_COMMANDS)
+def test_greeting_prefixed_command_is_not_smalltalk(utterance: str) -> None:
+    """A greeting/politeness prefix in front of a real action command must NOT
+    classify the turn as smalltalk — otherwise the action tools are hidden and
+    the brain speaks the 'Das kann ich gerade nicht ausführen' refusal."""
+    manager, _executor = _manager_with_spawn()
+    assert manager._is_smalltalk(utterance) is False, (
+        f"greeting-prefixed command {utterance!r} wrongly classified as smalltalk"
+    )
+
+
+PURE_SMALLTALK_INCL_GREETING = [
+    "Hallo",
+    "Hallo, wie geht's?",
+    "Hey, was machst du?",
+    "Moin, wie geht es dir?",
+    "Danke",
+    "Guten Morgen",
+    "Hallo, was ist die Hauptstadt von Frankreich?",
+]
+
+
+@pytest.mark.parametrize("utterance", PURE_SMALLTALK_INCL_GREETING)
+def test_pure_smalltalk_still_smalltalk(utterance: str) -> None:
+    """Pure smalltalk — including a greeting followed by more smalltalk — must
+    STILL be classified as smalltalk so the anti-fake-spawn guard is intact."""
+    manager, _executor = _manager_with_spawn()
+    assert manager._is_smalltalk(utterance) is True, (
+        f"pure smalltalk {utterance!r} wrongly classified as a command"
+    )
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Hallo, öffne mir Chrome",
+        "Hey Jarvis, baue eine Landingpage",
+        "Moin, lies die Datei jarvis.toml",
+    ],
+)
+def test_greeting_prefixed_command_force_spawns_permissive(utterance: str) -> None:
+    """In permissive mode a greeting-prefixed action verb must reach the
+    force-spawn heuristic instead of being silenced as smalltalk."""
+    manager, _executor = _manager_with_spawn(force_spawn_mode="permissive")
+    assert manager._should_force_spawn(utterance) is True, (
+        f"greeting-prefixed command {utterance!r} did not force-spawn"
+    )
+
+
+# ---------------------------------------------------------------------------
 # AI Pointer: a deictic "what is this?" is a Q&A, never a heavy-worker spawn —
 # even in permissive mode where the verb "zeige" would otherwise match.
 # ---------------------------------------------------------------------------
@@ -389,6 +459,17 @@ def test_computer_use_in_router_tools() -> None:
     from jarvis.brain.factory import ROUTER_TOOLS
 
     assert "computer-use" in ROUTER_TOOLS
+
+
+def test_gmail_and_vercel_native_tools_in_router_tools() -> None:
+    """The two REST-backed marketplace plugins (gmail, vercel) must be
+    router-visible directly — neither has a usable MCP server, so without this
+    a connected Gmail/Vercel is not callable by voice/chat (the original bug
+    this whole pairing effort fixed). Read-only/ask-gated, never a spawn."""
+    from jarvis.brain.factory import ROUTER_TOOLS
+
+    assert "gmail" in ROUTER_TOOLS
+    assert "vercel" in ROUTER_TOOLS
 
 
 def test_navigate_in_router_tools() -> None:
@@ -841,6 +922,10 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # the marketplace OAuth token. Gmail has no MCP server block, so it
             # must be router-visible directly.
             "gmail",
+            # Vercel Marketplace plugin (2026-06-07): native REST tool, same
+            # rationale as gmail — its rest_wrapper transport produced zero MCP
+            # tools, so it must be router-visible directly. Read-only.
+            "vercel",
             # Computer-Use (Wave 1, 2026-05-29): first-class tool to drive the
             # live desktop. Router-tier only — a direct safe-gated action (the
             # loop gates each action via ToolExecutor, ADR-0008), never a spawn,

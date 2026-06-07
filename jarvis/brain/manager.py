@@ -346,6 +346,24 @@ def _build_smalltalk_pattern(allowlist: list[str]) -> re.Pattern[str]:
     return re.compile(r"(?:^|\b)(?:" + "|".join(parts) + r")(?:\b|$)", re.IGNORECASE)
 
 
+# Leading greeting / wake-word / politeness run, stripped before the smalltalk
+# re-check in ``BrainManager._is_smalltalk``. Anchored at ^, repeats so several
+# leading tokens collapse ("Hey Jarvis, hallo, öffne ..."), and swallows the
+# trailing separators (comma / period / …). Longer tokens ("hey jarvis") precede
+# their prefix ("hey") so the longest run is consumed. Live bug 2026-06-07
+# (data/jarvis_desktop.log 18:19:07): "Hallo, öffne ihn für mich" was silenced
+# as smalltalk because the allowlist substring-matched the leading "Hallo".
+_GREETING_PREFIX_RE = re.compile(
+    r"^(?:\s*(?:"
+    r"hey\s+jarvis|hi\s+jarvis|hallo\s+jarvis|ok(?:ay)?\s+jarvis|jarvis|"
+    r"guten\s+morgen|guten\s+abend|guten\s+tag|good\s+morning|good\s+evening|"
+    r"hey|hi|hallo|hello|moin|servus|"
+    r"ok|okay|bitte|danke|thanks|thank\s+you"
+    r")\b[\s,.!?:;-]*)+",
+    re.IGNORECASE,
+)
+
+
 def _looks_like_pc_control(user_text: str) -> bool:
     """Detects local screen/PC control requests intended for the computer-use harness."""
     return bool(_PC_CONTROL_RE.search(user_text or ""))
@@ -1156,6 +1174,29 @@ class BrainManager:
             except Exception:  # noqa: BLE001
                 pass
 
+        # Skills-Brain-Integration (Track B): surface the installed, active
+        # user skills so the router-tier brain can actually choose ``run_skill``
+        # for them. Without this block the ``run-skill`` tool is registered but
+        # the brain never learns which skills exist, so it is never selected.
+        # Static content (changes only on install/promote), so unlike the
+        # per-turn awareness snapshot above it stays in the cached system
+        # prefix — mirrors the capability block below. Defensive try/except:
+        # a renderer fault must never crash the system-prompt build. The lazy
+        # import is intentional so a monkeypatched renderer resolves correctly.
+        try:
+            from jarvis.skills.prompt_injection import (
+                render_available_skills_section,
+            )
+            from jarvis.skills.skill_context import try_get_skill_context
+
+            _skill_ctx = try_get_skill_context()
+            if _skill_ctx is not None:
+                _skills_section = render_available_skills_section(_skill_ctx.registry)
+                if _skills_section:
+                    parts.append(_skills_section)
+        except Exception:  # noqa: BLE001
+            pass
+
         if self._system_prompt_extra:
             parts.append(self._system_prompt_extra)
 
@@ -1616,12 +1657,43 @@ class BrainManager:
 
         Used in ``generate()`` to hide tools on clear smalltalk turns — the
         tool-use loop receives ``tools={}``, so the LLM can no longer spawn.
+
+        Greeting-prefix guard (live bug 2026-06-07, data/jarvis_desktop.log
+        18:19:07): the user said "Hallo, öffne ihn für mich". The allowlist
+        substring-matched the leading "Hallo", the turn was treated as
+        smalltalk, the action tools were hidden, and the brain spoke the
+        anti-silence refusal "Das kann ich gerade nicht ausführen — mir fehlt
+        dafür das passende Werkzeug." A greeting/politeness prefix in front of a
+        REAL command is NOT smalltalk: strip the leading greeting run and, if
+        what remains is itself a non-smalltalk action request, classify the turn
+        as a command (return False) so the tools stay visible and force-spawn
+        can fire. Standalone smalltalk ("Hallo", "Hallo, wie geht's?") and
+        greeting-less chit-chat ("was machst du") are unaffected.
         """
         t = (user_text or "").strip()
         if not t:
             return False
         _, _, smalltalk_re = self._get_routing_patterns()
-        return bool(smalltalk_re.search(t))
+        if not smalltalk_re.search(t):
+            return False
+        stripped = _GREETING_PREFIX_RE.sub("", t).strip()
+        if (
+            stripped                                # something survives the greeting
+            and stripped != t                       # a greeting prefix was removed
+            and not smalltalk_re.search(stripped)   # the remainder isn't smalltalk too
+            and self._remainder_has_action(stripped)  # the remainder is a real command
+        ):
+            return False
+        return True
+
+    def _remainder_has_action(self, text: str) -> bool:
+        """True when *text* (a greeting-stripped remainder) is a real action
+        command — an action verb, an external-system marker, or a desktop-control
+        phrase. Pure regex, no LLM / no registry IO (AP-9/AP-11)."""
+        verb_re, marker_re, _ = self._get_routing_patterns()
+        if verb_re.search(text) or marker_re.search(text):
+            return True
+        return _looks_like_desktop_control(_gate_normalize(text))
 
     # Read-only tools that stay visible even on a smalltalk turn. The toolless
     # smalltalk path (2026-05-01) exists to stop the LLM hallucinating a
@@ -1800,7 +1872,7 @@ class BrainManager:
             primary = ""
         if primary not in ("claude-api", "gemini"):
             return False
-        verb_re, marker_re, smalltalk_re = self._get_routing_patterns()
+        verb_re, marker_re, _smalltalk_re = self._get_routing_patterns()
         if _is_instructional_question(t):
             return False
         # AI Pointer: a deictic "what is this?" is a Q&A about the element under
@@ -1828,7 +1900,10 @@ class BrainManager:
                 return False
         except Exception:  # noqa: BLE001 — nav gate must never block routing
             pass
-        if smalltalk_re.search(t):
+        # Greeting-aware smalltalk check (live bug 2026-06-07): a greeting prefix
+        # ("Hallo, öffne ...") must NOT block the spawn of the real command that
+        # follows it. _is_smalltalk strips the greeting and re-evaluates.
+        if self._is_smalltalk(t):
             return False
         if "dispatch_to_harness" in self._tools and _looks_like_pc_control(t):
             return False

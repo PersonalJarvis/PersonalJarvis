@@ -11,6 +11,9 @@ export interface SummaryTotals {
   hours_saved: number;
   activity_events: number;
   conversation_hours: number;
+  user_words: number;
+  jarvis_words: number;
+  session_count: number;
   active_days: number;
   first_day: string | null;
 }
@@ -22,6 +25,9 @@ export interface SummaryWindow {
   hours_saved: number;
   activity_events: number;
   conversation_hours: number;
+  user_words: number;
+  jarvis_words: number;
+  session_count: number;
   voice_first_try_rate: number | null;
   unique_tools: number;
 }
@@ -31,6 +37,7 @@ export interface BoardSummary {
   totals: SummaryTotals;
   window: SummaryWindow;
   streak_days: number;
+  longest_streak: number;
 }
 
 export interface HeatmapCell {
@@ -39,6 +46,8 @@ export interface HeatmapCell {
   tasks_failed: number;
   activity_events: number;
   conversation_hours: number;
+  user_words: number;
+  jarvis_words: number;
 }
 
 export interface BoardHeatmap {
@@ -46,6 +55,17 @@ export interface BoardHeatmap {
   end: string;
   days: number;
   cells: HeatmapCell[];
+}
+
+export interface CategoryEntry {
+  category: string;
+  count: number;
+}
+
+export interface BoardCategories {
+  window_days: number | null;
+  total: number;
+  categories: CategoryEntry[];
 }
 
 export interface ToolHistogramEntry {
@@ -100,6 +120,12 @@ async function fetchRecords(): Promise<BoardRecords> {
   return res.json();
 }
 
+async function fetchCategories(): Promise<BoardCategories> {
+  const res = await fetch("/api/board/personal/categories");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
 async function triggerRefresh(): Promise<{ ok: boolean; triggered: boolean }> {
   const res = await fetch("/api/board/personal/refresh", { method: "POST" });
   if (!res.ok) {
@@ -122,8 +148,10 @@ export function useBoardSummary() {
   return useQuery({
     queryKey: ["board", "summary"],
     queryFn: fetchSummary,
-    refetchInterval: 30_000,
-    staleTime: 15_000,
+    // Live indicators: poll fast so spoken words climb visibly. The backend
+    // re-aggregates on read (TTL-gated), so each poll reflects sessions.db.
+    refetchInterval: 8_000,
+    staleTime: 4_000,
   });
 }
 
@@ -131,9 +159,9 @@ export function useBoardHeatmap(days = 365) {
   return useQuery({
     queryKey: ["board", "heatmap", days],
     queryFn: () => fetchHeatmap(days),
-    // Heatmap aendert sich selten → weniger aggressive Refresh-Frequenz.
-    refetchInterval: 5 * 60_000,
-    staleTime: 60_000,
+    // Drives the words-over-time chart + calendar — keep it reasonably live.
+    refetchInterval: 20_000,
+    staleTime: 8_000,
   });
 }
 
@@ -152,6 +180,15 @@ export function useBoardRecords() {
     queryFn: fetchRecords,
     refetchInterval: 2 * 60_000,
     staleTime: 60_000,
+  });
+}
+
+export function useBoardCategories() {
+  return useQuery({
+    queryKey: ["board", "categories"],
+    queryFn: fetchCategories,
+    refetchInterval: 12_000,
+    staleTime: 6_000,
   });
 }
 

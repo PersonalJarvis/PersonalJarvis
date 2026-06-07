@@ -4,15 +4,14 @@
 
 **Personal Jarvis** is a voice-driven **Supervisor-Agent meta-orchestrator** — not a classical voice assistant. The core pattern is a fast **Router-Brain** that dispatches work to interchangeable harnesses (OpenClaw subprocess, Codex CLI, Open Interpreter, MCP servers, raw computer-use loops). The voice layer is just the I/O surface; the soul is the dispatcher discipline that keeps the Router-Brain lean and delegates heavy reasoning to specialized subagents under critic-loop + worktree-isolation guard rails. The project is **provider-agnostic by mandate** — the user has no Anthropic API account (Claude Max OAuth is used only inside workers) — and **self-modifying** via an atomic config-writer with a 10-step validate-backup-tempfile-replace-rollback-audit pipeline.
 
-> ### The product — Read This Before The Install Section
-> **Personal Jarvis is a full, downloadable desktop app — one product, three native faces (Linux, macOS, Windows).** You install it like any normal app, the installer pulls *every* feature in one step (`pip install -e .[full]` or the native per-OS installer), you enter your own API keys on first run, and you talk to it. The standard install includes the desktop GUI, local voice models (downloaded on first use), telephony, and chat channels. A machine with no GPU still runs — every provider class (Brain / STT / TTS / Vision / Wake) keeps a cloud-API fallback, so local models are an installed-by-default *upgrade*, not a hard requirement. A **headless / server** deployment (browser UI over WebSocket, or a Telegram/Discord/SMS/webhook channel) is fully supported as the secondary mode. **Binding doctrine: [`CLOUD.md`](CLOUD.md) + [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md)**. On conflict between this README and the doctrine, the doctrine wins.
+> ### Cloud-First — Read This Before The Install Section
+> **Target runtime is any €5 / month VPS or low-spec laptop** with a modern browser. **The maintainer's RTX 5070 Ti / Windows 11 Pro workstation is not a requirement** — it represents fewer than 0.1 % of the install base this project is being designed for. All Brain / STT / TTS / Vision / Wake providers default to cloud APIs; no GPU, no local models, no Windows APIs, no microphone are required in the base install. Windows-desktop features (tray app, Orb overlay, global hotkey wake, local Whisper, Silero-VAD-in-process, Computer-Use harness, PowerShell drift-guard daemon) are **opt-in `[desktop]` extras**, not requirements. **Binding doctrine: [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md)**. On conflict between this README and `PHILOSOPHY.md`, the doctrine wins.
 
-- **Runtime:** Linux / macOS / Windows with Python 3.11+. The full desktop app is the default; a headless browser/channel deployment is the supported alternative.
-- **Bring your own keys:** the first-run wizard collects your own cloud API keys and stores them in the OS credential manager (Windows Credential Manager / macOS Keychain / Secret Service). Keys are never committed or bundled.
-- **Cross-platform parity (Rule #1):** a feature that works on only one OS is *incomplete*. OS-specific packages are selected by platform markers so the same install command resolves the correct native wheels per OS.
-- **Maintainer's reference machine** (developed on, but **not required**): RTX 5070 Ti, 32 GB RAM, CUDA 12.8, Windows 11 Pro — the full app must run natively on a plain Linux/macOS/Windows machine too.
+- **Base runtime:** Linux / macOS / Windows with Python 3.11+ and a network connection. Headless VPS + browser UI is a first-class deployment target.
+- **Maintainer's reference machine** (the project is developed on, but **does not require**, this hardware): RTX 5070 Ti, 32 GB RAM, CUDA 12.8, Windows 11 Pro — unlocks the optional `[desktop]` extras.
+- **Repo root** (maintainer's workstation; not relevant to consumers): `<USER_HOME>\Desktop\Personal Jarvis`
 - **Binding plan:** `~/.claude/plans/also-er-muss-auch-lexical-pond.md` (plan wins on plan-vs-code conflict).
-- **Binding doctrine:** [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md) (wins over the binding plan when the two disagree on hardware/OS assumptions).
+- **Binding doctrine:** [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md) (cloud-first; wins over the binding plan when the two disagree on hardware assumptions).
 
 ---
 
@@ -145,37 +144,31 @@ on a real macOS box and a real Linux desktop to convert each row to a dated
 
 ```powershell
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.ps1 | iex
+irm https://raw.githubusercontent.com/personal-jarvis/personal-jarvis/main/install/install.ps1 | iex
 ```
 
 ```bash
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/personal-jarvis/personal-jarvis/main/install/install.sh | bash
 ```
 
-The installer clones into `~/.personal-jarvis`, builds a Python venv, installs deps (incl. the companion packages), **builds the React desktop UI** (`npm`), runs the 7-step wizard (API keys → mic → hotkey → mascot → profile), and launches the Desktop App. Re-running the same one-liner detects the existing checkout and updates instead of re-cloning. Optional flags: `--no-launch`, `--no-wizard`, `--headless` (VPS mode, no GUI deps), `--with-voice-local` (pulls faster-whisper + Silero + openWakeWord, ~1.5 GB). See [`install/README.md`](install/README.md) for the full surface.
+The installer clones into `~/.personal-jarvis`, builds a Python venv, installs deps, runs the 7-step wizard (API keys → mic → hotkey → mascot → profile), and launches the Desktop App. Re-running the same one-liner detects the existing checkout and updates instead of re-cloning. Optional flags: `--no-launch`, `--no-wizard`, `--headless` (VPS mode, no GUI deps), `--with-voice-local` (pulls faster-whisper + Silero + openWakeWord, ~1.5 GB). See [`install/README.md`](install/README.md) for the full surface.
 
-> **Prerequisites:** Python 3.11+, git, and — for the desktop GUI — **Node.js + npm** (the installer builds the React bundle from source; without Node the backend still runs but the window shows a loading placeholder).
->
-> **Status:** the anonymous one-liner works only while the GitHub repo is **public** — it fetches `install.ps1` / `install.sh` from `raw.githubusercontent.com`, which returns `404` for a private repo. Spec: [`docs/superpowers/specs/2026-05-26-quick-install-one-liner-design.md`](docs/superpowers/specs/2026-05-26-quick-install-one-liner-design.md).
+> **Status:** live since 2026-05-26 — both URLs above respond `HTTP 200` for anonymous users worldwide (verified). Spec: [`docs/superpowers/specs/2026-05-26-quick-install-one-liner-design.md`](docs/superpowers/specs/2026-05-26-quick-install-one-liner-design.md).
 
-**Manual install (advanced):**
+**Manual install (advanced / always works):**
 
 ```bash
-git clone https://github.com/PersonalJarvis/PersonalJarvis ~/.personal-jarvis
+git clone https://github.com/personal-jarvis/personal-jarvis ~/.personal-jarvis
 cd ~/.personal-jarvis
 python -m venv .venv
-source .venv/bin/activate                    # Windows: .\.venv\Scripts\Activate.ps1
-pip install -e . --no-deps                   # activate entry_points (BUG-006/014 recovery)
-pip install -e ".[full]"                      # full app deps (cross-platform; picks per-OS wheels)
-pip install -e ./board-backend ./OS-Level ./skillbook   # companion packages (imported at boot)
-( cd jarvis/ui/web/frontend && npm ci && npm run build ) # build the desktop UI (needs Node.js)
-pip install -e ".[dev]"                       # optional: pytest, ruff, mypy, pyinstaller
+source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1
+pip install -e . --no-deps          # activates entry_points (BUG-006/014 recovery)
+pip install -r requirements.txt     # full runtime deps
+pip install -e ".[dev]"             # optional: pytest, ruff, mypy, pyinstaller
 
-python -m jarvis --wizard                     # 7-step Setup-Wizard
+python -m jarvis --wizard           # 7-step Setup-Wizard
 ```
-
-> The companion packages (`board-backend`, `OS-Level` → `overlay`, `skillbook`) are **not** pulled by `pip install -e .[full]` — they each carry their own `pyproject.toml` and must be installed separately (the one-liner installer does this for you). `requirements.txt` is a Linux-only hash-pinned lockfile for the supply-chain-hardened install, **not** the cross-platform dependency source — use `.[full]` above on Windows/macOS.
 
 Wizard (`jarvis/setup/wizard.py`) is idempotent: hardware analysis → API keys (written to Windows Credential Manager) → mic check → hotkey → external CLI deps (auto-installs `claude` CLI via npm; `node`/`npm` manual) → mascot install → profile.
 
@@ -184,6 +177,7 @@ Wizard (`jarvis/setup/wizard.py`) is idempotent: hardware analysis → API keys 
 | Script | Purpose |
 |---|---|
 | `jarvis` | Tray app or first-run wizard |
+| `jarvis-ask` | One-shot prompt CLI |
 | `jarvis-review-gc` | Phase 8.5 review-pipeline GC |
 | `jarvis-review-eval` | Phase 8.6 eval harness (`--quick`/`--real`/`--bucket`) |
 
@@ -564,9 +558,9 @@ Line length 100. Target `py311`. One per-file `E501` exception (`jarvis/awarenes
 - **Grok = fallback** (xAI — primary TTS voice "leo" + Brain fallback). API key reused for both.
 - **Claude-API** plugin exists but **user has NO Anthropic API account** (AP-6). Workers use Claude Sonnet via Claude Max OAuth through the `claude-cli` backend (`@anthropic-ai/claude-code`), auto-installed by wizard via npm.
 - **OpenRouter** universal gateway, **OpenAI** GPT, **Codex** API-key mode.
-- **GitHub Claude Bot:** an optional CI workflow (`.github/workflows/claude.yml`) with a **public-repo safety gate** baked in — it only runs when `repository.private == true`, so it never executes on the public repository.
+- **GitHub Claude Bot:** deployed on 29 private repos via `.github/workflows/claude.yml`. **Public-repo safety gate** baked in (workflow only runs if `repository.private == true`). OAuth tokens auto-synced from `.credentials.json` every 3h.
 
-**STT** (6 plugins): `faster-whisper` (local, GPU), `openai-api`, `groq-api`, `deepgram`, `deepgram-flux` (Phase L.3 streaming), `deepgram-nova3`. **Google Cloud STT** wired 2026-05-15 — `chirp_2` @ `europe-west4`, ~680ms warm latency. The service-account key path is configurable and read from your own credentials store.
+**STT** (6 plugins): `faster-whisper` (local, GPU), `openai-api`, `groq-api`, `deepgram`, `deepgram-flux` (Phase L.3 streaming), `deepgram-nova3`. **Google Cloud STT** wired 2026-05-15 — `chirp_2` @ `europe-west4`, ~680ms warm latency. SA-key under `~/.config/jarvis/`.
 
 **TTS** (8 plugins): `elevenlabs`, `elevenlabs-flash`, `gemini-flash-tts`, `google-neural2`, `openai-tts`, `piper-local`, `grok-voice` (default; 5 voices, `leo`=Jarvis-Butler), `cartesia-sonic3`.
 

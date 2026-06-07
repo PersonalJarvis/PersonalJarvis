@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -46,6 +45,27 @@ def _require_aggregator(request: Request) -> BoardAggregator:
     if agg is None:
         raise HTTPException(status_code=503, detail="BoardAggregator nicht verfuegbar")
     return agg
+
+
+# Freshness window for the live-indicator endpoints. A poll re-aggregates from
+# sessions.db at most once per this interval, so newly spoken words appear
+# within a poll cycle instead of staying frozen until the 6 h batch tick.
+_FRESHEN_TTL_S = 6.0
+
+
+async def _freshen(request: Request, ttl_s: float = _FRESHEN_TTL_S) -> None:
+    """Re-aggregate before a read if the cached stats are older than ``ttl_s``.
+
+    Never raises — a failed freshen just serves the previous (slightly older)
+    numbers rather than 500-ing the dashboard.
+    """
+    agg = getattr(request.app.state, "board_aggregator", None)
+    if agg is None:
+        return
+    try:
+        await asyncio.to_thread(agg.run_if_stale, ttl_s)
+    except Exception:  # noqa: BLE001
+        log.debug("Board freshen-on-read fehlgeschlagen — serviere Cache", exc_info=True)
 
 
 def _require_evaluator(request: Request) -> AchievementEvaluator:
@@ -80,6 +100,9 @@ class SummaryTotals(BaseModel):
     hours_saved: float
     activity_events: int
     conversation_hours: float
+    user_words: int = 0
+    jarvis_words: int = 0
+    session_count: int = 0
     active_days: int
     first_day: str | None
 
@@ -91,6 +114,9 @@ class SummaryWindow(BaseModel):
     hours_saved: float
     activity_events: int
     conversation_hours: float
+    user_words: int = 0
+    jarvis_words: int = 0
+    session_count: int = 0
     voice_first_try_rate: float | None
     unique_tools: int
 
@@ -100,6 +126,7 @@ class SummaryResponse(BaseModel):
     totals: SummaryTotals
     window: SummaryWindow
     streak_days: int
+    longest_streak: int = 0
 
 
 class HeatmapCell(BaseModel):
@@ -108,6 +135,8 @@ class HeatmapCell(BaseModel):
     tasks_failed: int
     activity_events: int
     conversation_hours: float
+    user_words: int = 0
+    jarvis_words: int = 0
 
 
 class HeatmapResponse(BaseModel):
@@ -115,6 +144,17 @@ class HeatmapResponse(BaseModel):
     end: str
     days: int
     cells: list[HeatmapCell]
+
+
+class CategoryEntry(BaseModel):
+    category: str
+    count: int
+
+
+class CategoriesResponse(BaseModel):
+    window_days: int | None
+    total: int
+    categories: list[CategoryEntry]
 
 
 class ToolHistogramEntry(BaseModel):
@@ -154,6 +194,7 @@ async def personal_summary(
     window_days: int = Query(30, ge=1, le=365),
 ) -> SummaryResponse:
     store = _require_store(request)
+    await _freshen(request)
     data = await asyncio.to_thread(store.summary, window_days=window_days)
     return SummaryResponse.model_validate(data)
 
@@ -164,6 +205,7 @@ async def personal_heatmap(
     days: int = Query(365, ge=7, le=730),
 ) -> HeatmapResponse:
     store = _require_store(request)
+    await _freshen(request)
     data = await asyncio.to_thread(store.heatmap, days=days)
     return HeatmapResponse.model_validate(data)
 
@@ -176,6 +218,20 @@ async def personal_tools(
     store = _require_store(request)
     data = await asyncio.to_thread(store.tools, window_days=window_days)
     return ToolsResponse.model_validate(data)
+
+
+@router.get("/categories", response_model=CategoriesResponse)
+async def personal_categories(
+    request: Request,
+    window_days: int | None = Query(None, ge=1, le=365),
+) -> CategoriesResponse:
+    """Usage broken down by the six task categories ("what did you use Jarvis
+    for"). ``window_days`` omitted = all history.
+    """
+    store = _require_store(request)
+    await _freshen(request)
+    data = await asyncio.to_thread(store.categories, window_days=window_days)
+    return CategoriesResponse.model_validate(data)
 
 
 @router.get("/records", response_model=RecordsResponse)

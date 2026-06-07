@@ -63,13 +63,7 @@ class _ProvidersBundle(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     gemini: GeminiAckProviderConfig = Field(
-        # 2026-06-04: "gemini-3.1-flash" returned 404 NOT_FOUND from the
-        # generateContent v1beta API on every install (the id does not exist —
-        # only "-preview"/"-lite"/"3.5" flash variants do; see manager.py note
-        # "gemini-3-flash is only available as -preview"). Aligned with the
-        # working router default ("gemini-3.5-flash", jarvis.toml routing_model)
-        # so the ack tier resolves to a valid model when brain.primary=gemini.
-        default_factory=lambda: GeminiAckProviderConfig(model="gemini-3.5-flash")
+        default_factory=lambda: GeminiAckProviderConfig(model="gemini-3.1-flash")
     )
     grok: GrokAckProviderConfig = Field(
         # 2026-05-13: "grok-4-flash" returned 400 "Model not found" from

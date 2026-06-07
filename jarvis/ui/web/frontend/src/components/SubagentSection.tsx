@@ -56,6 +56,9 @@ const PROVIDER_LABELS: Record<string, string> = {
   openai: "OpenAI",
   openrouter: "OpenRouter",
   grok: "xAI Grok",
+  // Codex is a direct worker (ChatGPT subscription / OpenAI key), not an
+  // OpenClaw-routed provider — surfaced as its own selectable subagent row.
+  "openai-codex": "OpenAI Codex",
 };
 
 export function SubagentSection() {

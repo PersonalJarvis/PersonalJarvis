@@ -95,16 +95,88 @@ def wait_for_pid_exit(
     return not _alive(pid)
 
 
+def run_restart_quit_sequence(
+    *,
+    set_quit,
+    destroy_window,
+    pre_delay: float = 0.8,
+    hard_exit_after: float = 10.0,
+    _sleep=time.sleep,
+    _exit=os._exit,
+) -> None:
+    """Quit the DYING app for a restart, hard-exiting if shutdown stalls.
+
+    Runs in a daemon thread of the app being replaced. It (1) waits a beat so
+    the HTTP 200 reaches the frontend, (2) marks the quit + destroys the window
+    (the normal clean-shutdown path), then (3) **force-exits the process** if it
+    is still alive after ``hard_exit_after`` seconds.
+
+    The hard exit is the load-bearing part: the relauncher's fresh instance can
+    only claim the single-instance mutex + TCP port once THIS process is gone.
+    A stalled shutdown — or a cross-thread ``window.destroy`` that fails to
+    unblock the GUI loop (the BUG-031 hazard) — would otherwise leave a
+    windowless process holding the lock, and the new instance would bounce off
+    it: the "shuts down but never comes back" bug. If the normal shutdown
+    finishes first, the main thread exits the process and this daemon thread
+    dies before reaching ``_exit`` — so the force-exit only fires when it must.
+    """
+    _sleep(pre_delay)
+    try:
+        set_quit()
+    except Exception:  # noqa: BLE001 — never block the quit on a callback error
+        pass
+    try:
+        destroy_window()
+    except Exception:  # noqa: BLE001 — destroy may already be impossible; force-exit anyway
+        pass
+    _sleep(hard_exit_after)
+    _exit(0)
+
+
+def _new_instance_settled(
+    pid,
+    *,
+    _alive=pid_alive,
+    _sleep=time.sleep,
+    checks: int = 5,
+    interval: float = 1.0,
+) -> bool:
+    """True if a freshly spawned launcher is still alive after a short grace.
+
+    A secondary that bounces off the single-instance lock prints "already
+    running", focuses the existing window, and exits within ~1 s; a real primary
+    keeps running. So "still alive after a few seconds" is a good proxy for "the
+    new instance actually came up". An unverifiable pid (missing/invalid) is
+    treated as success to avoid spinning needlessly.
+    """
+    if not isinstance(pid, int) or pid <= 0:
+        return True
+    for _ in range(checks):
+        _sleep(interval)
+        if not _alive(pid):
+            return False
+    return True
+
+
 def main(
     argv: list[str] | None = None,
     *,
     _wait=wait_for_pid_exit,
     _spawn=subprocess.Popen,
     _sleep=time.sleep,
+    _alive=pid_alive,
+    _settled=_new_instance_settled,
+    attempts: int = 3,
 ) -> int:
-    """Wait for the old app to exit, then start a fresh launcher.
+    """Wait for the old app to exit, then start a fresh launcher — verified.
 
-    Returns ``2`` on bad argv, ``0`` once the new launcher has been spawned.
+    The single-instance lock frees only once the old process is gone, so we
+    wait for that first. After spawning the new launcher we verify it actually
+    stayed up (it would otherwise have bounced off a still-held lock) and retry
+    a couple of times if not.
+
+    Returns ``2`` on bad argv, ``0`` once a new instance is confirmed up, ``1``
+    if every spawn attempt failed to bring one up.
     """
     argv = list(sys.argv[1:] if argv is None else argv)
     if len(argv) < 2:
@@ -115,18 +187,25 @@ def main(
         return 2
     cwd = argv[1]
 
-    _wait(pid, timeout=45.0)
-    # Extra grace so the kernel finishes releasing the mutex + the TCP port
-    # before the new launcher tries to claim them.
-    _sleep(1.0)
-
     kwargs: dict[str, object] = {"cwd": cwd, "close_fds": True}
     if sys.platform == "win32":
         kwargs["creationflags"] = detached_creationflags()
     else:
         kwargs["start_new_session"] = True
-    _spawn(build_launch_command(sys.executable), **kwargs)
-    return 0
+
+    for attempt in range(attempts):
+        # Never launch into a still-held lock: the old process must be gone.
+        if _alive(pid):
+            _wait(pid, timeout=45.0 if attempt == 0 else 15.0)
+        # Extra grace so the kernel finishes releasing the mutex + the TCP port
+        # before the new launcher tries to claim them.
+        _sleep(1.0)
+
+        proc = _spawn(build_launch_command(sys.executable), **kwargs)
+        new_pid = getattr(proc, "pid", None)
+        if _settled(new_pid, _alive=_alive, _sleep=_sleep):
+            return 0
+    return 1
 
 
 if __name__ == "__main__":  # pragma: no cover
