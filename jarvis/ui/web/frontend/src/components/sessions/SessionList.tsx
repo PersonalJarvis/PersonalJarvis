@@ -38,8 +38,7 @@ export function SessionList({ sessions, selectedId, onSelect, loading }: Props) 
         <MicOff className="h-8 w-8 opacity-40" />
         <div className="font-medium">Noch keine Voice-Sessions</div>
         <div className="text-xs">
-          Sage <span className="font-mono">"Hey Jarvis"</span> — beim Auflegen
-          erscheint die Session hier.
+          Sage dein Wake-Word — beim Auflegen erscheint die Session hier.
         </div>
       </div>
     );
