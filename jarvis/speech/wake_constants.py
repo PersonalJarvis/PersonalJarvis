@@ -51,20 +51,24 @@ WAKE_PREFIXES: frozenset[str] = frozenset(
     {"hey", "hi", "ok", "okay", "hello", "hallo", "yo", "hej"}
 )
 
-# Normalised core phrase -> openWakeWord pretrained model name. The installed
-# ``openwakeword`` package ships these on disk (resources/models/), so they are
-# offline + CPU-only. ``timer``/``weather`` are NOT wake names and excluded.
+# Normalised core phrase -> openWakeWord pretrained model name. We enumerate
+# only our own brand ("jarvis") and the bundled open-source default
+# ("rhasspy"); ANY other phrase is resolved dynamically against whatever
+# pretrained models the installed ``openwakeword`` package actually exposes
+# (see ``match_known_oww_model``), so the shipped product does not bake a list
+# of third-party wake-word brands into its source.
 KNOWN_OWW_MODELS: dict[str, str] = {
     "jarvis": "hey_jarvis",
-    "alexa": "alexa",
-    "mycroft": "hey_mycroft",
     "rhasspy": "hey_rhasspy",
 }
 
+# openWakeWord also ships non-wake models we must never route a phrase to.
+_NON_WAKE_OWW_MODELS: frozenset[str] = frozenset({"timer", "weather"})
+
 # Quick-pick phrases the Settings UI could offer as one-click suggestions.
 # Currently empty: the shipped product does not pre-advertise any specific wake
-# name. Users type a phrase of their choice; "Hey Jarvis", "Alexa",
-# "Hey Mycroft", and "Hey Rhasspy" all work when typed (offline CPU models).
+# name. Users type a phrase of their choice; the bundled offline model is
+# "Hey Rhasspy", and any phrase with a matching pretrained model works offline.
 INSTANT_WAKE_PHRASES: tuple[str, ...] = ()
 
 _NORMALISE_RE = re.compile(r"[^0-9a-zäöüß]+")
@@ -94,9 +98,27 @@ def phrase_core(phrase: str) -> list[str]:
 
 
 def match_known_oww_model(phrase: str) -> str | None:
-    """Map a phrase onto a pretrained openWakeWord model name, or ``None``."""
+    """Map a phrase onto a pretrained openWakeWord model name, or ``None``.
+
+    Checks our own enumerated names first ("jarvis"/"rhasspy"), then probes the
+    installed openWakeWord package at runtime for a matching pretrained model —
+    so a user who types any word that happens to ship a model still gets it,
+    without the source enumerating third-party wake-word trademarks. Non-wake
+    models (timer/weather) are never routed to.
+    """
     core = phrase_core(phrase)
-    return KNOWN_OWW_MODELS.get(" ".join(core)) if core else None
+    if not core:
+        return None
+    key = " ".join(core)
+    if key in KNOWN_OWW_MODELS:
+        return KNOWN_OWW_MODELS[key]
+    slug = key.replace(" ", "_")
+    if slug in _NON_WAKE_OWW_MODELS:
+        return None
+    for candidate in (slug, f"hey_{slug}"):
+        if resolve_oww_model_path(candidate) is not None:
+            return candidate
+    return None
 
 
 # ---------------------------------------------------------------------------
