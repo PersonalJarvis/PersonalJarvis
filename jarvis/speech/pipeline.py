@@ -5184,7 +5184,7 @@ async def _main() -> None:
     print("=" * 64)
     print("  Personal Jarvis — Speech-Pipeline")
     print("=" * 64)
-    print("  ANRUFEN :  sag 'Hey Jarvis' / 'Jarvis'  |  Ctrl+RightAlt+J  |  F3+F4")
+    print("  ANRUFEN :  sag dein Wake-Word           |  Ctrl+RightAlt+J  |  F3+F4")
     print("  AUFLEGEN:  sag 'auflegen'               |  F1+F2")
     print("  BEENDEN :  Ctrl+C im Terminal")
     print()
