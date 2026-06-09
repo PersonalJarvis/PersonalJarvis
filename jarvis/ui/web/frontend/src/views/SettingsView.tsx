@@ -318,7 +318,7 @@ function AssistantNamePanel() {
     }
   }
 
-  const resolved = config?.resolved ?? "Jarvis";
+  const resolved = config?.resolved ?? "Assistant";
   const dirty = !!config && name.trim() !== config.name;
 
   return (

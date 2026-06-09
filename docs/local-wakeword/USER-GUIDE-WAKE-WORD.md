@@ -1,7 +1,8 @@
 # How to Change Your Wake Word
 
-This guide explains how to choose the spoken phrase that wakes Jarvis (the
-default is **"Hey Jarvis"**). For the engineering rationale behind the three
+This guide explains how to choose the spoken phrase that wakes your assistant
+(there is no preset — you choose your own; the bundled offline fallback is
+**"Hey Rhasspy"**). For the engineering rationale behind the three
 detection paths, see [`CUSTOM-WAKE-WORD-DESIGN.md`](CUSTOM-WAKE-WORD-DESIGN.md).
 
 ---
