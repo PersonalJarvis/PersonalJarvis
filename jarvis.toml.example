@@ -32,9 +32,9 @@ hotkey = "ctrl+right_alt+j"  # push-to-talk; safe combo on all OSes
 single_turn_mode = false     # false = conversation stays open until "hang up"/idle
 
 [trigger.wake_word]
-# Type any phrase. Offline CPU models: "Hey Rhasspy", "Hey Jarvis", "Alexa",
-# "Hey Mycroft". Any other phrase needs the [desktop] local-Whisper extra or a
-# custom .onnx model. Leave blank to use the bundled "Hey Rhasspy" fallback.
+# Type any phrase you like. The bundled offline model is "Hey Rhasspy"; any
+# other phrase needs the [desktop] local-Whisper extra or a custom .onnx model.
+# Leave blank to use the bundled "Hey Rhasspy" fallback.
 phrase = ""
 engine = "auto"              # auto | openwakeword | stt_match | custom_onnx
 sensitivity = 0.5
