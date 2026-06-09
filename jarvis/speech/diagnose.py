@@ -90,7 +90,7 @@ def step_devices() -> None:
 async def step_mic_level(duration_s: float = 10.0) -> float:
     """Misst Live-Mic-Pegel — User sollte laut sprechen, Max-dBFS wird gemerkt."""
     _print_header(2, f"Mic-Pegel-Test ({int(duration_s)} Sekunden — SPRICH JETZT!)")
-    print("Sag 'Hey Jarvis, eins zwei drei' oder sing ein bisschen.")
+    print("Sprich laut — zähl bis zehn oder sing ein bisschen.")
     print("Max-Pegel sollte im Bereich -20 bis -5 dBFS liegen.")
     print()
     max_dbfs = -120.0
@@ -124,7 +124,7 @@ async def step_mic_level(duration_s: float = 10.0) -> float:
 
 async def step_wake_live(duration_s: float = 20.0) -> None:
     _print_header(3, f"Wake-Word Live-Score ({int(duration_s)} Sekunden)")
-    print("Sag MEHRMALS: 'Hey Jarvis' — versuche verschiedene Aussprachen.")
+    print("Sag MEHRMALS dein Wake-Word — versuche verschiedene Aussprachen.")
     print("Zeigt den höchsten Wake-Score pro Sekunde live.")
     print()
     from jarvis.plugins.wake.openwakeword_provider import (
@@ -175,7 +175,7 @@ async def step_wake_live(duration_s: float = 20.0) -> None:
     print()
     print(f"→ Global-Max-Score: {max_score_global:.3f}")
     if max_score_global < 0.15:
-        print("  ⚠ openWakeWord erkennt dein 'Hey Jarvis' nicht zuverlässig.")
+        print("  ⚠ openWakeWord erkennt dein Wake-Word nicht zuverlässig.")
         print("    → Whisper-Wake-Fallback übernimmt in der vollen Pipeline.")
     else:
         print("  ✓ openWakeWord würde triggern bei Threshold 0.15.")
