@@ -116,6 +116,38 @@ def _cli_installed(spec: ProviderSpec) -> bool | None:
     return None
 
 
+def _has_openai_brain_credential() -> bool:
+    """True iff an OpenAI API key usable by the Codex *brain* is configured.
+
+    Mirrors ``CodexBrain._ensure_client``: the dedicated codex slot, the general
+    OpenAI provider key, or the ``OPENAI_API_KEY`` env fallback. The ChatGPT
+    OAuth login is intentionally NOT counted — it powers the codex *subagent*
+    (the CLI), not a chat-completions brain. Used to gate Codex-as-brain
+    activation so the switch never "succeeds" on OAuth and then fails on the
+    first turn.
+    """
+    return bool(
+        cfg_mod.get_secret("codex_openai_api_key")
+        or cfg_mod.get_secret("openai_api_key", "OPENAI_API_KEY")
+    )
+
+
+def _codex_brain_usable() -> bool:
+    """True iff Codex can serve as a brain: an OpenAI API key (the fast chat-API
+    path) OR a ChatGPT login (the slow ``codex exec`` CLI path).
+
+    The CLI path is genuinely slow (~15-20 s per turn) and burns subscription
+    tokens, but it IS a working brain (CodexBrain drives ``codex exec`` over the
+    OAuth token). So the brain toggle unlocks on OAuth too, not only on a key.
+    """
+    if _has_openai_brain_credential():
+        return True
+    try:
+        return bool(CodexAuthService(_codex_binary_path()).status().connected)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _spec_to_payload(
     spec: ProviderSpec,
     *,
@@ -155,6 +187,10 @@ def _spec_to_payload(
     }
     if codex_status is not None:
         payload["codex_status"] = codex_status
+        # Codex IS a selectable brain. It works with an OpenAI API key (fast)
+        # OR the ChatGPT login (slow codex-exec CLI path). The UI gates the brain
+        # "activate" radio on this — unlocked for either credential.
+        payload["codex_brain_ready"] = _codex_brain_usable()
     return payload
 
 
@@ -389,17 +425,17 @@ async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     #
     # Codex-as-BRAIN is special: a chat-completions brain needs an OpenAI API
     # key. The ChatGPT subscription (OAuth) cannot back a chat endpoint — it
-    # only powers the Codex *subagent*. So we require the key explicitly here,
-    # rather than the shared key-OR-OAuth presence check, to avoid a switch that
-    # "succeeds" on OAuth and then fails on the first turn.
+    # only powers the Codex *subagent*. Accept ANY OpenAI key CodexBrain can use
+    # (codex_openai_api_key / openai_api_key / OPENAI_API_KEY), not just the
+    # dedicated codex slot — so activation matches what the brain actually reads,
+    # and never "succeeds" on OAuth alone and then fails on the first turn.
     if spec.id == "codex":
-        if not cfg_mod.get_provider_secret("codex"):
+        if not _codex_brain_usable():
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "Codex as a brain provider needs an OpenAI API key "
-                    "(codex_openai_api_key). The ChatGPT subscription only powers "
-                    "the Codex subagent — save an API key to use Codex as a brain."
+                    "Codex can't be a brain yet — add an OpenAI API key (fast) or "
+                    "run 'codex login' (ChatGPT subscription, slower CLI path)."
                 ),
             )
     elif not _is_credential_present(spec):

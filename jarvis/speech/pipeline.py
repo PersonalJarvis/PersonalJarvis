@@ -150,6 +150,19 @@ _BRAIN_TIMEOUT_PHRASE: dict[str, str] = {
     "en": "That took too long just now, Alex. Could you say it again?",
 }
 
+# AD-OE6 zero-silent-drop fallback for an ABANDONED incomplete utterance. When
+# the user trails off on a dangling fragment ("…erinnere mich daran, dass" +
+# silence) and never continues, the ContinuationBuffer would hold it silently
+# forever (its timeout is lazy — it only drops on the *next* utterance). Instead
+# of leaving the user in silence ("Jarvis hört für immer zu", 2026-06-08) we ask
+# a short clarifying question. Fires only AFTER the grace window expires with no
+# continuation, so a real thinking-pause-then-continue is never interrupted.
+# Short, bilingual, TTS-clean (``_speak`` does not scrub).
+_CLARIFY_QUESTION_PHRASE: dict[str, str] = {
+    "de": "Wie meinst du das genau?",
+    "en": "What do you mean exactly?",
+}
+
 # Transient STT failures worth a retry: cloud rate-limit (429) and transient
 # gateway/server errors (5xx). Anything else (401 bad key, 400 bad audio) is a
 # hard error and must NOT be retried — retrying only hammers the provider.
@@ -168,10 +181,39 @@ _STT_RETRY_CAP_S: float = 2.0
 # bound, ``_speak`` never returns, which wedges ``_handle_utterance`` ->
 # ``_active_session`` so the ``_state_loop`` finally that resets
 # ``self._state`` to IDLE never runs and the wake loop stops re-arming
-# ("Hey Jarvis" goes permanently deaf until restart). The ceiling is generous:
-# a normal spoken turn finishes well below it; it only fires on a genuine
-# stall. AD-OE6 — recover, never silently hang.
-_TTS_PLAYBACK_CEILING_S: float = 120.0
+# ("Hey Jarvis" goes permanently deaf until restart). AD-OE6 — recover, never
+# silently hang.
+#
+# 2026-06-08 (Wave-1 latency fix): the old ceiling was 120 s — the live root
+# cause of the 60-156 s voice-hangs on "open app" turns (a wedged output device
+# left ``stream.write`` blocked and this ceiling was the ONLY escape).
+#
+# 2026-06-08 (watchdog redesign): the ceiling now bounds ONLY the no-first-frame
+# window — a TTS provider that never yields any audio. It no longer caps total
+# playback, so a legitimately long spoken answer is never truncated mid-speech;
+# an ACTIVE playback is governed solely by the mid-playback no-progress stall
+# below. This pairs with ``AudioPlayer.play_chunks`` resetting ``last_write_ns``
+# per playback, so the watchdog's "no first frame yet" (<=0) guard works on
+# EVERY turn — not just the first — instead of reading a stale cross-turn
+# timestamp and falsely aborting a fresh, still-synthesizing answer.
+_TTS_PLAYBACK_CEILING_S: float = 20.0
+# Mid-playback no-audio-frame gap that means the output device is wedged (a
+# healthy ~60 ms sub-block write returns far inside this). Trips the watchdog →
+# ``player.abort_active()`` → turn unwinds → session re-arms.
+_TTS_PLAYBACK_STALL_S: float = 5.0
+
+
+def _playback_progress_stalled(last_write_ns: int, stall_s: float) -> bool:
+    """True when audio frames stopped reaching PortAudio for ``stall_s``.
+
+    ``last_write_ns == 0`` (no frame produced yet) is deliberately NOT a stall:
+    the first-token / producer window is owned by the brain stall guard, so a
+    slow first token must not be misread here as a device wedge. Only a
+    *mid-playback* gap trips this. Cross-platform — pure monotonic-clock math.
+    """
+    if last_write_ns <= 0:
+        return False
+    return (time.monotonic_ns() - last_write_ns) >= int(stall_s * 1e9)
 
 
 def _stt_error_status(exc: BaseException) -> int | None:
@@ -554,7 +596,7 @@ class SpeechPipeline:
         tts: GeminiFlashTTS | None = None,
         wake: OpenWakeWordProvider | None = None,
         brain_callback: BrainCallback | None = None,
-        vad_silence_ms: int = 1200,   # User-Feedback 2026-04-22 (2): 350ms schnitt bei Denkpausen ab. 1200ms erlaubt Atempausen. Kurze Commands wie 'auflegen' bleiben schnell, weil HANGUP_RE vor dem Brain-Call greift.
+        vad_silence_ms: int = 1500,   # User-Feedback 2026-04-22 (2): 350ms schnitt bei Denkpausen ab. 2026-06-08: 1200→1500ms ("1,5-Sekunden-Pause-Regel") — gibt mehr Luft für Denkpausen und reduziert das Zerstückeln langer Anweisungen in Fragmente. Kurze Commands wie 'auflegen' bleiben schnell, weil HANGUP_RE vor dem Brain-Call greift.
         stt_final_timeout_s: float = 8.0,
         # No-PROGRESS (stall) window for a streaming brain turn — NOT a total
         # wall-clock cap. The deadline resets every time the turn makes progress
@@ -723,7 +765,7 @@ class SpeechPipeline:
         # Human label for the wake-listener log line so debugging reflects the
         # actually-configured phrase ("Computer") instead of a hardcoded
         # "Hey Jarvis" when a custom wake word is in use.
-        self._wake_phrase_label = getattr(wake_plan, "phrase", None) or "Hey Jarvis"
+        self._wake_phrase_label = getattr(wake_plan, "phrase", None) or "the wake word"
         # Live-apply signal: set_wake_plan() flips this so a running
         # _run_parallel_wake aborts early and _wake_loop re-arms with the new
         # detector/model/matcher — the wake word changes WITHOUT an app restart.
@@ -805,6 +847,11 @@ class SpeechPipeline:
         # Guards against a stalled output device / TTS stream wedging _speak —
         # which would freeze the voice session and stop the wake loop re-arming.
         self._speak_playback_ceiling_s = _TTS_PLAYBACK_CEILING_S
+        # Mid-playback device-wedge detector (Wave-1 latency fix). Polls the
+        # player's write-progress and aborts a stalled device in ~5 s instead of
+        # waiting out the ceiling — the core fix for the 60-156 s "open app"
+        # voice-hangs.
+        self._speak_playback_stall_s = _TTS_PLAYBACK_STALL_S
         self._pending_context_flush_s = max(0.5, float(pending_context_flush_s))
         self._pending_flush_task: asyncio.Task[None] | None = None
         self._vad = SileroEndpointer(
@@ -1007,6 +1054,10 @@ class SpeechPipeline:
         # cut at the comma and the continuation triggered a SEPARATE
         # spawn_worker — producing multiple sub-agent missions for one task.
         self._continuation_buffer: ContinuationBuffer = ContinuationBuffer()
+        # Active timeout the ContinuationBuffer lacks: when a held incomplete
+        # fragment is never continued, this fires a clarifying question instead
+        # of leaving the user in silence (AD-OE6; "hört für immer zu" fix).
+        self._clarify_timer_task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------------
     # Live-Provider-Switch (Voice ohne Pipeline-Restart)
@@ -1057,7 +1108,7 @@ class SpeechPipeline:
         prev = getattr(self._wake_plan, "oww_keyword", None)
         self._wake_plan = plan
         self._wake_matcher = getattr(plan, "matcher", None)
-        self._wake_phrase_label = getattr(plan, "phrase", None) or "Hey Jarvis"
+        self._wake_phrase_label = getattr(plan, "phrase", None) or "the wake word"
         engine = getattr(plan, "engine", "openwakeword")
 
         # Build a local Whisper engine on demand for the stt_match path. The
@@ -2402,8 +2453,10 @@ class SpeechPipeline:
         except Exception:  # noqa: BLE001 — hangup must never crash
             log.debug("CU cancel-on-hangup failed (non-fatal)", exc_info=True)
         # Discard any pending continuation fragment so it can't leak into the
-        # next voice session (the user has explicitly ended this one).
+        # next voice session (the user has explicitly ended this one), and
+        # cancel its clarifying-question timer so no question fires after hangup.
         try:
+            self._cancel_clarify_question()
             self._continuation_buffer.discard()
         except Exception:  # noqa: BLE001 — hangup must never crash
             log.debug("ContinuationBuffer.discard() failed (non-fatal)", exc_info=True)
@@ -2454,7 +2507,7 @@ class SpeechPipeline:
             try:
                 log.info(
                     "🎧 Wake-Listener aktiv — sag '%s' …",
-                    getattr(self, "_wake_phrase_label", "Hey Jarvis"),
+                    getattr(self, "_wake_phrase_label", "the wake word"),
                 )
                 await self._run_parallel_wake()
             except Exception as exc:  # noqa: BLE001
@@ -2724,6 +2777,15 @@ class SpeechPipeline:
                 # stale flag can never reroute a later wake-word session into
                 # the raw-recording path.
                 self._ptt_mode = False
+                # Tear down any pending incomplete-utterance hold so a clarify
+                # question can never fire into a dead session (e.g. the turn
+                # ended via idle-timeout, not the hangup handler) and a held
+                # fragment can never leak into the next session.
+                try:
+                    self._cancel_clarify_question()
+                    self._continuation_buffer.discard()
+                except Exception:  # noqa: BLE001 — teardown must never crash
+                    log.debug("Clarify/continuation teardown failed", exc_info=True)
                 await self._publish_event(
                     VoiceSessionEnded(
                         source_layer="speech.pipeline",
@@ -3440,13 +3502,26 @@ class SpeechPipeline:
         # the continuation triggered a SEPARATE spawn_worker). Fail-open:
         # on any classifier exception we dispatch the utterance as-is so the
         # user is never silently swallowed (AD-OE6).
+        #
+        # A fresh utterance arrived → cancel any pending clarifying-question
+        # timer from a previous incomplete fragment: the user kept the floor, so
+        # the question must not fire on top of them.
+        self._cancel_clarify_question()
         try:
             coalesced = self._continuation_buffer.process(text, language=lang)
         except Exception:  # noqa: BLE001 — fail-open by contract
             log.warning("Continuation-Buffer raised; failing open", exc_info=True)
             coalesced = text
         if coalesced is None:
-            await self._set_turn_state(TurnTakingState.LISTENING)
+            # Incomplete fragment held by the ContinuationBuffer (which has no
+            # active timeout of its own). Arm the clarifying-question timer so a
+            # user who trails off is never left in silence — after the grace
+            # window Jarvis asks "Wie meinst du das genau?" instead of waiting
+            # forever ("hört für immer zu" fix 2026-06-08; AD-OE6). A
+            # continuation cancels it at the top of the next turn. Surface
+            # WAITING_FOR_COMPLETION so the UI hints "…waiting for the rest".
+            self._arm_clarify_question(lang)
+            await self._set_turn_state(TurnTakingState.WAITING_FOR_COMPLETION)
             return True
         if coalesced != text:
             log.info(
@@ -3593,12 +3668,12 @@ class SpeechPipeline:
                 return True
             log.info("🤖 Jarvis [%s] (streamed): %s", lang, response)
             if not response.strip():
-                # AD-OE6 zero-silent-drop: a *total* provider-chain failure
-                # must be spoken, not swallowed (BUG-020 4th recurrence). A
-                # legitimate empty (suppress_response fire-and-forget spawn)
-                # stays silent — its feedback arrives over the bus.
-                if self._brain_turn_failed():
-                    await self._speak_brain_unavailable(lang)
+                # AD-OE6 zero-silent-drop. A *total* provider-chain failure is
+                # spoken; a fire-and-forget spawn stays silent (bus reports);
+                # ANY other empty turn (function_call/CU without speech, empty
+                # content) gets a spoken clarifying question instead of muting —
+                # the dominant "Jarvis antwortet nie" cause (logs 2026-06-08).
+                await self._handle_silent_brain_turn(lang, text)
                 await self._set_turn_state(TurnTakingState.LISTENING)
                 return True
             normalized = response.strip().rstrip("!.").strip().lower()
@@ -3643,11 +3718,10 @@ class SpeechPipeline:
             await self._set_turn_state(TurnTakingState.LISTENING)
             return True
         if not response.strip():
-            # Kein Response → weiter zuhoeren. AD-OE6: a total provider-chain
-            # failure must be spoken; a legitimate suppress_response empty
-            # (fire-and-forget spawn) stays silent.
-            if self._brain_turn_failed():
-                await self._speak_brain_unavailable(lang)
+            # AD-OE6 zero-silent-drop (non-streaming path). Total failure →
+            # spoken; fire-and-forget spawn → silent (bus reports); any other
+            # empty turn → spoken clarifying question instead of muting.
+            await self._handle_silent_brain_turn(lang, text)
             await self._set_turn_state(TurnTakingState.LISTENING)
             return True
 
@@ -3893,6 +3967,78 @@ class SpeechPipeline:
             fragment[:80],
         )
         # No TTS, no state ping-pong, no interruption.
+
+    # --- Clarifying-question timer (Zwischenfrage; AD-OE6 for the hold) ----- #
+
+    def _arm_clarify_question(self, lang: str) -> None:
+        """Arm the clarifying-question timer for a buffered incomplete fragment.
+
+        The ``ContinuationBuffer`` holds an open-ended fragment with NO active
+        timeout (it only drops the stale buffer lazily on the next
+        ``process()`` call), so a user who trails off and never continues is
+        otherwise left in silence forever — the "Jarvis hört für immer zu"
+        report (2026-06-08). On fire, ``_clarify_question_fire`` speaks a short
+        clarifying question instead of discarding silently (AD-OE6
+        zero-silent-drop; supersedes the 2026-05-26 silent-discard mandate).
+        Cancelled the moment the next utterance arrives, so a thinking-pause-
+        then-continue is never interrupted. Gated by
+        ``[voice].clarify_incomplete_enabled`` (set false → old silent
+        behaviour).
+        """
+        self._cancel_clarify_question()
+        cfg = getattr(self._config, "voice", None)
+        if cfg is not None and not getattr(cfg, "clarify_incomplete_enabled", True):
+            return  # feature off — preserve the legacy silent-hold behaviour
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        wait_ms = int(getattr(cfg, "clarify_after_ms", 2500)) if cfg else 2500
+        delay_s = max(0.05, wait_ms / 1000.0)
+        self._clarify_timer_task = loop.create_task(
+            self._clarify_question_fire(delay_s, lang),
+            name="clarify-question",
+        )
+
+    def _cancel_clarify_question(self) -> None:
+        task = getattr(self, "_clarify_timer_task", None)
+        if task is not None and not task.done():
+            task.cancel()
+        self._clarify_timer_task = None
+
+    async def _clarify_question_fire(self, delay_s: float, lang: str) -> None:
+        """Per-gap timer: the user trailed off on an incomplete fragment and did
+        not continue within the grace window. Ask a short clarifying question
+        instead of dropping into silence (AD-OE6). Failures are swallowed — a
+        fallback must never crash the turn.
+        """
+        try:
+            await asyncio.sleep(delay_s)
+        except asyncio.CancelledError:
+            return
+        self._clarify_timer_task = None
+        buf = getattr(self, "_continuation_buffer", None)
+        if buf is None or not buf.has_pending():
+            # Continuation already arrived / buffer drained — nothing to ask.
+            return
+        # Clear the stale fragment so it cannot pollute the next turn, THEN ask.
+        buf.discard()
+        picker_lang = "de" if lang.startswith("de") else "en"
+        phrase = _CLARIFY_QUESTION_PHRASE[picker_lang]
+        log.info("⏳→❓ Incomplete trailed off (%.1fs) — asking clarifying question.", delay_s)
+        try:
+            await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
+            await self._speak(phrase, language=picker_lang)
+        except Exception as exc:  # noqa: BLE001 — fallback must never crash the turn
+            log.warning("Clarify-question speak failed: %s", exc)
+        finally:
+            # Always hand the floor back, even if the speak above raised — a
+            # stuck JARVIS_SPEAKING would leave the orb "speaking" while the user
+            # talks (the _state_loop finally only corrects this at session end).
+            try:
+                await self._set_turn_state(TurnTakingState.LISTENING)
+            except Exception:  # noqa: BLE001
+                log.debug("Clarify-question state reset failed", exc_info=True)
 
     async def _complete_or_buffer_context_legacy_orphan(
         self, text: str, lang: str = "de"
@@ -4412,23 +4558,17 @@ class SpeechPipeline:
             hangup_event.wait(), name="hangup-during-tts"
         )
 
-        # Hard ceiling: a stalled output device (blocking ``stream.write``) or a
-        # stalled producer can wedge playback forever. Bound the wait so the
-        # turn always unwinds and the voice session can never freeze with
-        # ``self._state`` stuck at ACTIVE (the wake loop only re-arms in IDLE).
-        ceiling = getattr(self, "_speak_playback_ceiling_s", _TTS_PLAYBACK_CEILING_S)
+        # A stalled output device (blocking ``stream.write``) or a stalled
+        # producer can wedge playback. The watchdog aborts a wedged device in
+        # ~5 s (vs the old 120 s ceiling) so the turn always unwinds and the
+        # voice session can never freeze with ``self._state`` stuck at ACTIVE
+        # (the wake loop only re-arms in IDLE).
         try:
-            done, _pending = await asyncio.wait(
-                {play_task, barge_task, hangup_task},
-                timeout=ceiling,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
+            done = await self._await_playback(play_task, {barge_task, hangup_task})
             if not done:
-                log.warning(
-                    "Streaming-TTS playback exceeded %.0fs ceiling — aborting "
-                    "(stalled audio device or producer).", ceiling,
-                )
-                self._player.stop()
+                # Watchdog already aborted the wedged device + logged the reason;
+                # fall through so the turn unwinds and the session re-arms.
+                pass
             elif hangup_task in done and not hangup_task.cancelled():
                 log.info("📵 Hangup während TTS — Turn abbrechen")
                 barged = True
@@ -4489,6 +4629,59 @@ class SpeechPipeline:
         return bool(
             getattr(getattr(self, "_brain", None), "_last_turn_all_failed", False)
         )
+
+    def _brain_turn_suppressed(self) -> bool:
+        """True when the just-finished brain turn was a fire-and-forget
+        ``suppress_response`` spawn (background ``spawn_worker`` mission).
+
+        Reads ``BrainManager._last_turn_suppressed`` (set for exactly one turn).
+        Such a turn produces empty text ON PURPOSE — its feedback arrives over
+        the bus — so the pipeline must stay silent for it and must NOT speak a
+        clarifying question. Degrades to ``False`` for echo/mock brains.
+        """
+        return bool(
+            getattr(getattr(self, "_brain", None), "_last_turn_suppressed", False)
+        )
+
+    async def _handle_silent_brain_turn(self, lang: str, text: str = "") -> None:
+        """AD-OE6 zero-silent-drop for a brain turn that produced no speech.
+
+        Decides what (if anything) to say when the streamed/!generated response
+        is empty, so the user is never dropped into silence after talking — the
+        dominant live "Jarvis antwortet nie" cause (logs 2026-06-08), where a
+        conversational turn made the router brain emit a ``function_call`` /
+        Computer-Use action (or empty content) and the turn ended mute (the TTS
+        playback watchdog then mis-read the absent frames as a device wedge).
+
+        Branches, in priority order:
+        * **Total provider-chain failure** → speak the dedicated "brain
+          unreachable" message (unchanged behaviour).
+        * **Fire-and-forget spawn** (``suppress_response``) → stay silent; the
+          mission reports back over the bus.
+        * **Anything else empty** (function_call without speech, empty content)
+          → speak a short clarifying question. This both engages the user
+          (their explicit "Zwischenfragen" wish) AND emits TTS frames, which
+          un-sticks the playback watchdog's stale ``last_write_ns`` cascade.
+          Gated by ``[voice].clarify_incomplete_enabled`` (off → old silence).
+        """
+        if self._brain_turn_failed():
+            await self._speak_brain_unavailable(lang)
+            return
+        if self._brain_turn_suppressed():
+            return  # legit background spawn — its feedback arrives over the bus
+        if text and is_cancel(text):
+            return  # user explicitly aborted ("vergiss das") — stay quiet
+        cfg = getattr(self._config, "voice", None)
+        if cfg is not None and not getattr(cfg, "clarify_incomplete_enabled", True):
+            return  # feature off → preserve the legacy silent behaviour
+        picker_lang = "de" if lang.startswith("de") else "en"
+        phrase = _CLARIFY_QUESTION_PHRASE[picker_lang]
+        log.info("🤷 Brain produced no speech (not a spawn) — clarifying question (AD-OE6).")
+        try:
+            await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
+            await self._speak(phrase, language=picker_lang)
+        except Exception as exc:  # noqa: BLE001 — fallback must never crash the turn
+            log.warning("Silent-brain-turn clarify speak failed: %s", exc)
 
     async def _speak_brain_unavailable(self, lang: str) -> None:
         """Zero-silent-drop (AD-OE6): say out loud that the whole brain
@@ -4704,6 +4897,76 @@ class SpeechPipeline:
             log.debug("Task-Ack Cache-Miss fuer (%s, %s)", picker_lang, phrase)
         return pcm
 
+    def _abort_playback_device(self) -> None:
+        """Unblock + tear down the live output stream after a playback stall."""
+        player = getattr(self, "_player", None)
+        if player is None:
+            return
+        if hasattr(player, "abort_active"):
+            player.abort_active()
+        else:  # older player without the Wave-1 hook
+            player.stop()
+
+    async def _await_playback(
+        self,
+        play_task: asyncio.Task[Any],
+        extra_tasks: set[asyncio.Task[Any]],
+    ) -> set[asyncio.Task[Any]]:
+        """Wait for a TTS playback task, aborting a wedged device fast.
+
+        The dominant 60-156 s voice-hang root cause was a wedged output device:
+        PortAudio's blocking ``stream.write`` got stuck in its ``to_thread``
+        worker (which Python cannot cancel), so ``play_task`` never completed and
+        the only escape was a 120 s ceiling. This poll loop watches the player's
+        write-progress (``last_write_ns``): a mid-playback gap of
+        ``_speak_playback_stall_s`` means the device is wedged → we call
+        ``player.abort_active()`` (Pa_AbortStream) to unblock the write so the
+        turn unwinds in ~5 s and the session re-arms. A ``_speak_playback_
+        ceiling_s`` absolute backstop covers anything the progress signal misses.
+
+        Returns the set of completed tasks, or an EMPTY set when it aborted on a
+        stall/ceiling (the device has already been torn down + the event logged).
+        Cross-platform: pure asyncio + PortAudio abort.
+        """
+        ceiling = getattr(self, "_speak_playback_ceiling_s", _TTS_PLAYBACK_CEILING_S)
+        stall_s = getattr(self, "_speak_playback_stall_s", _TTS_PLAYBACK_STALL_S)
+        watch = {play_task, *extra_tasks}
+        start = time.monotonic()
+        while True:
+            done, _pending = await asyncio.wait(
+                watch, timeout=0.25, return_when=asyncio.FIRST_COMPLETED
+            )
+            if done:
+                return done
+            player = getattr(self, "_player", None)
+            last_write = getattr(player, "last_write_ns", 0) if player is not None else 0
+            if last_write <= 0:
+                # No first frame yet: the synthesize / first-frame window. A slow
+                # TTS provider must NOT be misread as a device wedge — that false
+                # abort (on every turn whose brain/synthesize took > stall_s) was
+                # the "Jarvis listens forever / answer never heard" root cause.
+                # Only a generous no-first-frame backstop applies here; it covers
+                # a provider that never yields any audio at all.
+                if (time.monotonic() - start) >= ceiling:
+                    log.warning(
+                        "TTS produced no audio within %.0fs — aborting "
+                        "(no first frame).", ceiling,
+                    )
+                    self._abort_playback_device()
+                    return set()
+                continue
+            # Playback has started: only a genuine MID-playback gap (frames were
+            # flowing, then froze) is a device wedge. An actively-progressing long
+            # answer keeps last_write fresh and is never aborted — the old flat
+            # total-time ceiling used to truncate any spoken turn over ~20 s.
+            if _playback_progress_stalled(last_write, stall_s):
+                log.warning(
+                    "TTS playback stalled — no audio frames for %.1fs — aborting "
+                    "device + unwinding turn (device-wedge recovery).", stall_s,
+                )
+                self._abort_playback_device()
+                return set()
+
     async def _speak(self, text: str, language: str | None = None) -> bool:
         """Sprich Text aus — mit Barge-in-Monitor.
 
@@ -4741,7 +5004,7 @@ class SpeechPipeline:
         # abort _speak at once. Without watching the event here, a stalled
         # output device — or a hangup fired during a fallback phrase
         # (_speak_brain_unavailable / _speak_brain_timeout) — keeps ``play_task``
-        # pending until the (120 s) ceiling, so ``_speak`` never returns and the
+        # pending until the no-first-frame ceiling, so ``_speak`` never returns and the
         # voice session wedges in JARVIS_SPEAKING (same root cause as
         # _brain_streaming; live bug 2026-06-01). Treat it like a barge-in.
         # getattr-fallback: test fixtures build the pipeline via ``__new__``
@@ -4752,23 +5015,16 @@ class SpeechPipeline:
             hangup_event.wait(), name="hangup-during-speak"
         )
         barged = False
-        # Hard ceiling: a stalled output device (blocking ``stream.write``) or a
-        # stalled TTS stream can wedge ``play_chunks`` forever. Bound it so
-        # ``_speak`` always returns and the voice session can never freeze with
-        # ``self._state`` stuck at ACTIVE (the wake loop only re-arms in IDLE).
-        ceiling = getattr(self, "_speak_playback_ceiling_s", _TTS_PLAYBACK_CEILING_S)
+        # A stalled output device (blocking ``stream.write``) or a stalled TTS
+        # stream can wedge ``play_chunks``. The watchdog aborts a wedged device
+        # in ~5 s (vs the old 120 s ceiling) so ``_speak`` always returns and the
+        # voice session can never freeze with ``self._state`` stuck at ACTIVE
+        # (the wake loop only re-arms in IDLE).
         try:
-            done, _pending = await asyncio.wait(
-                {play_task, barge_task, hangup_task},
-                timeout=ceiling,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
+            done = await self._await_playback(play_task, {barge_task, hangup_task})
             if not done:
-                log.warning(
-                    "TTS playback exceeded %.0fs ceiling — aborting (stalled "
-                    "audio device or TTS stream).", ceiling,
-                )
-                self._player.stop()
+                # Watchdog already aborted the wedged device + logged the reason.
+                pass
             elif hangup_task in done and not hangup_task.cancelled():
                 log.info("📵 Hangup während TTS — Turn abbrechen")
                 self._player.stop()
@@ -4786,22 +5042,14 @@ class SpeechPipeline:
                     and not play_task.done()
                 ):
                     # Barge monitor returned without barging (mic ended/error)
-                    # but playback is still running — wait it out, still bounded,
-                    # but still abortable by a hangup (reuse the pending waiter).
-                    tail_done, _tail = await asyncio.wait(
-                        {play_task, hangup_task},
-                        timeout=ceiling,
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
+                    # but playback is still running — wait it out under the same
+                    # device-wedge watchdog, still abortable by a hangup.
+                    tail_done = await self._await_playback(play_task, {hangup_task})
                     if play_task not in tail_done:
                         if hangup_task in tail_done:
                             log.info("📵 Hangup während TTS — Turn abbrechen")
                             barged = True
-                        else:
-                            log.warning(
-                                "TTS playback did not finish within %.0fs ceiling "
-                                "— aborting.", ceiling,
-                            )
+                        # else: watchdog already aborted the wedged device + logged.
                         self._player.stop()
         except Exception as exc:  # noqa: BLE001
             log.exception("Playback-Fehler: %s", exc)

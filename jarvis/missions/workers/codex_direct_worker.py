@@ -173,6 +173,61 @@ def _build_codex_direct_cmd(
     return cmd
 
 
+# Markers in a codex ``turn.failed`` / ``error`` event that mean the ChatGPT
+# OAuth session is dead and cannot be refreshed — the user must re-run
+# ``codex login``. ``codex status`` still reports connected=True (it only checks
+# token PRESENCE, not validity), so the mission would otherwise fail opaquely.
+# When we see these we fall back to the Claude Max worker so the mission still
+# completes (the 2026-06-08 "all sub-missions fail on codex" incident).
+_CODEX_AUTH_EXPIRED_MARKERS: tuple[str, ...] = (
+    "log in again",
+    "login again",
+    "refresh token",
+    "not logged in",
+    "please login",
+    "please log in",
+    "unauthorized",
+    "401",
+    "authentication failed",
+    "auth error",
+    "token expired",
+    "expired token",
+)
+
+
+def _coerce_codex_error_text(obj: dict[str, Any]) -> str:
+    """Extract a plain string from a codex ``error`` / ``turn.failed`` event.
+
+    Codex sometimes nests the message as a dict, e.g.
+    ``{"type": "error", "message": {"message": "Failed to refresh token. ...
+    Please log in again."}}``. Feeding that dict straight into
+    ``ClaudeResult(result=...)`` (a ``str`` field) raised a Pydantic
+    ``ValidationError`` and CRASHED the worker mid-spawn → opaque ``task_error``
+    (forensic 2026-06-08, mission 019ea8db). Always return a plain string so the
+    real cause (expired ChatGPT login) survives instead of a crash.
+    """
+    for key in ("message", "error"):
+        val = obj.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+        if isinstance(val, dict):
+            for inner in ("message", "error", "text", "detail"):
+                iv = val.get(inner)
+                if isinstance(iv, str) and iv.strip():
+                    return iv.strip()
+            try:
+                return json.dumps(val, ensure_ascii=False)
+            except (TypeError, ValueError):
+                return str(val)
+    return str(obj.get("type") or "codex error")
+
+
+def _codex_error_is_auth_expired(text: str) -> bool:
+    """True when a codex error string signals a dead/unrefreshable ChatGPT login."""
+    low = (text or "").lower()
+    return any(marker in low for marker in _CODEX_AUTH_EXPIRED_MARKERS)
+
+
 class CodexDirectWorker:
     """Heavy worker that calls ``codex exec`` directly via ChatGPT-OAuth.
 
@@ -414,11 +469,49 @@ class CodexDirectWorker:
                 continue
             if t in ("turn.failed", "error"):
                 terminal_kind = "error"
-                terminal_message = obj.get("message") or obj.get("error") or t
+                terminal_message = _coerce_codex_error_text(obj)
                 continue
 
         wall_ms = int((time.perf_counter() - t0) * 1000)
         exit_code = proc.returncode if proc.returncode is not None else -1
+
+        # Codex ChatGPT login dead → fall back to the Claude Max worker so the
+        # mission COMPLETES instead of failing (2026-06-08 "all sub-missions fail
+        # on codex" incident — expired token, `codex status` still lied
+        # connected=True). Guarded to codex having done NO real work (no tool use
+        # / file change) so delivered work is never discarded. We intentionally
+        # do NOT yield the codex error event: _spawn_worker_collect only sets
+        # worker_error on an is_error event, so skipping it lets the claude result
+        # drive the outcome; the git diff is captured from the worktree after.
+        if (
+            terminal_kind == "error"
+            and not any_tool_use
+            and _codex_error_is_auth_expired(terminal_message or "")
+        ):
+            logger.warning(
+                "CodexDirectWorker[%s]: codex ChatGPT login expired (%r) — "
+                "falling back to the Claude Max OAuth worker so the mission "
+                "completes. Run `codex login` to use codex again.",
+                worker_id, (terminal_message or "")[:160],
+            )
+            from .claude_direct_worker import ClaudeDirectWorker
+
+            async for ev in ClaudeDirectWorker().spawn(
+                prompt,
+                worktree=worktree,
+                env=env,
+                job=job,
+                worker_id=worker_id,
+                log_dir=log_dir,
+                model="",  # let ClaudeDirectWorker resolve a valid claude model
+                allowed_tools=allowed_tools,
+                permission_mode="bypassPermissions",
+                max_turns=max_turns,
+                timeout_s=timeout_s,
+                mission_id=mission_id,
+            ):
+                yield ev
+            return
 
         final = ClaudeResult(
             subtype="success" if terminal_kind == "success" and exit_code == 0
@@ -428,7 +521,7 @@ class CodexDirectWorker:
             num_turns=None,
             session_id=session_id,
             duration_ms=wall_ms,
-            result=(
+            result=str(
                 terminal_message
                 or ("\n".join(text_acc) if text_acc else "")
                 or f"codex exited with code {exit_code}"

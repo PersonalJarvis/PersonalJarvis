@@ -14,7 +14,10 @@ docs/local-wakeword/CUSTOM-WAKE-WORD-DESIGN.md). Two public pieces:
     Turns the user's ``[trigger.wake_word]`` config into a concrete engine
     choice, honouring the cloud-first doctrine: a phrase with no pretrained
     model needs local Whisper, and on a box without it we degrade gracefully to
-    "Hey Jarvis" with a clear English message — never a silent dead listener.
+    the bundled "Hey Rhasspy" model with a clear English message — never a
+    silent dead listener. Users who type "Hey Jarvis" still get the hey_jarvis
+    offline model (it is in ``KNOWN_OWW_MODELS``); "Hey Rhasspy" is just the
+    neutral out-of-box shipped fallback.
 """
 from __future__ import annotations
 
@@ -150,7 +153,7 @@ class WakeWordPlan:
 
     Note: in the graceful-degrade case (an arbitrary phrase on a box without
     local Whisper) ``phrase`` keeps the user's *requested* word (e.g. "Computer")
-    while ``engine``/``oww_keyword``/``matcher`` are all "Hey Jarvis" and
+    while ``engine``/``oww_keyword``/``matcher`` are all "Hey Rhasspy" and
     ``degraded`` is True — so ``phrase != oww_keyword`` is a valid, intentional
     state. ``phrase`` is what to show the user; ``oww_keyword`` is what fires.
     """
@@ -184,7 +187,7 @@ def resolve_wake_plan(cfg: Any, *, local_whisper_available: bool) -> WakeWordPla
     ``cfg`` is duck-typed: any object exposing ``phrase``, ``engine``,
     ``custom_model_path``, ``sensitivity``, ``fuzzy_match_ratio``.
     """
-    phrase = str(_read(cfg, "phrase", DEFAULT_WAKE_PHRASE)).strip() or DEFAULT_WAKE_PHRASE
+    phrase = str(_read(cfg, "phrase", DEFAULT_WAKE_PHRASE)).strip()
     engine_pref = str(_read(cfg, "engine", "auto")).strip().lower()
     if engine_pref not in WAKE_ENGINES:
         log.warning("Unknown wake engine %r — coercing to 'auto'.", engine_pref)
@@ -262,22 +265,29 @@ def resolve_wake_plan(cfg: Any, *, local_whisper_available: bool) -> WakeWordPla
             verify_prefix=matcher.is_jarvis_default,
         )
 
-    # 4. Graceful degrade — fall back to bundled "Hey Jarvis", explain why.
-    jarvis_path = resolve_oww_model_path("hey_jarvis")
+    # 4. Graceful degrade — fall back to the bundled hey_rhasspy model (neutral
+    # offline fallback that ships without any product-name association). The
+    # hey_rhasspy model is its own discriminator, so the German-pinned STT prefix
+    # verifier must NOT run (verify_prefix=False): applying it would reject valid
+    # hits because the STT transcribes the rhasspy sound differently from "Jarvis".
+    rhasspy_path = resolve_oww_model_path("hey_rhasspy")
+    _phrase_label = phrase or "Hey Rhasspy"
     return WakeWordPlan(
         phrase=phrase,
         engine="openwakeword",
-        oww_model_path=jarvis_path,
-        oww_keyword="hey_jarvis",
+        oww_model_path=rhasspy_path,
+        oww_keyword="hey_rhasspy",
         threshold=threshold,
-        matcher=compile_wake_matcher(DEFAULT_WAKE_PHRASE),
+        matcher=compile_wake_matcher("Hey Rhasspy"),
         needs_local_whisper=False,
         degraded=True,
         message=(
-            f"Wake word '{phrase}' needs the local-Whisper extra ([desktop]) or a "
-            "custom ONNX model; falling back to 'Hey Jarvis'."
+            f"Wake phrase '{_phrase_label}' needs the local-Whisper extra ([desktop])"
+            " or a custom ONNX model; falling back to the bundled 'Hey Rhasspy'"
+            " offline model. Install [desktop] or supply a custom .onnx to use a"
+            " different phrase."
         ),
-        verify_prefix=True,  # we fell back to hey_jarvis, which needs the gate
+        verify_prefix=False,  # rhasspy model IS the discriminator; no prefix gate
     )
 
 

@@ -61,6 +61,7 @@ from .intent_router import RoutingDecision, classify
 from .local_action_gate import (
     LocalActionMode,
     _looks_like_desktop_control,
+    is_open_app_intent,
     match_local_action,
     requires_external_integration,
 )
@@ -79,6 +80,12 @@ if TYPE_CHECKING:
     from jarvis.control.cost import CostMeter as CostMeterLike
 
 log = logging.getLogger(__name__)
+
+#: Hard bound on the per-turn vision capture (Wave-3 latency fix). ``vision.
+#: current()`` can stall (mss BitBlt hang, paused-state miss, slow disk); without
+#: a cap it blocks the whole brain turn on the hot path. On timeout the turn
+#: proceeds text-only.
+_VISION_COLLECT_TIMEOUT_S: float = 2.5
 
 
 def _estimate_usd_from_usage(
@@ -657,6 +664,16 @@ class BrainManager:
         # of returning silently to LISTENING. A legitimate empty turn
         # (suppress_response fire-and-forget) leaves this False.
         self._last_turn_all_failed: bool = False
+        # AD-OE6 companion signal. True for exactly one turn when the winning
+        # provider finished with ``suppress_response`` (a fire-and-forget
+        # ``spawn_worker`` background mission that reports back over the bus).
+        # The voice pipeline reads this to tell a LEGIT silent turn (spawn —
+        # stay silent) from a turn that produced no speech for any other reason
+        # (function_call/CU without speech, empty content). The latter must NOT
+        # drop the user into silence — it gets a spoken clarifying question
+        # (live "Jarvis antwortet nie" cause 2026-06-08: conversational turns
+        # returned a function_call and the turn ended mute).
+        self._last_turn_suppressed: bool = False
         # Rotation cursor for the localized "brain unreachable" spoken fallback
         # (_provider_down_phrase). Advances once per total-failure turn so the
         # phrase varies instead of repeating verbatim.
@@ -1854,23 +1871,16 @@ class BrainManager:
         # intentional command.
         if len(lowered) < 6:
             return False
-        # BUG-017 cascade (2026-05-13): the force-spawn path delegates to
-        # GeminiWorker which shells out to `gemini -p ... --model
-        # gemini-3.1-pro-preview`. Google AI Studio currently returns
-        # 403 PERMISSION_DENIED for this Workspace account, so every
-        # spawned worker hangs / fails after a long retry. Skip the
-        # force-spawn entirely when brain.primary points at a provider
-        # whose worker is not viable (grok / openai / openrouter /
-        # ollama). The Router-Brain then handles the request inline
-        # via the normal tool-use loop, which actually answers instead
-        # of fire-and-forgetting into a broken worker. Re-enable by
-        # setting brain.primary back to "claude-api" or "gemini" once
-        # the account is unblocked.
-        try:
-            primary = (self._config.brain.primary or "").strip().lower()
-        except Exception:  # noqa: BLE001
-            primary = ""
-        if primary not in ("claude-api", "gemini"):
+        # Force-spawn viability follows the WORKER, not the talker. The heavy
+        # worker is selected from [brain.sub_jarvis].provider and runs regardless
+        # of which provider talks to the user (jarvis/missions/init.py
+        # _select_subagent_worker_kind). The original BUG-017 (2026-05-13) guard
+        # gated on brain.primary, which silenced EVERY action request the moment
+        # the user switched the talker to grok / openai / codex / openrouter —
+        # re-introducing the "Das kann ich nicht ausführen" refusal through the
+        # LLM fallback path (live bug class, forensic 2026-06-07). See
+        # _heavy_worker_provider_viable.
+        if not self._heavy_worker_provider_viable():
             return False
         verb_re, marker_re, _smalltalk_re = self._get_routing_patterns()
         if _is_instructional_question(t):
@@ -1904,6 +1914,14 @@ class BrainManager:
         # ("Hallo, öffne ...") must NOT block the spawn of the real command that
         # follows it. _is_smalltalk strips the greeting and re-evaluates.
         if self._is_smalltalk(t):
+            return False
+        # Opening / launching an app is ALWAYS a computer-use task — a sub-agent
+        # worker runs in an isolated git worktree and has no desktop. The
+        # deterministic match_local_action path routes these to computer-use
+        # first; this guard is defense-in-depth so a conjugated open verb
+        # ("öffnest") can never fall through to a force-spawn (live bug
+        # 2026-06-08: "Ich möchte, dass du mir Hermes Agent öffnest, also …").
+        if is_open_app_intent(t):
             return False
         if "dispatch_to_harness" in self._tools and _looks_like_pc_control(t):
             return False
@@ -1956,6 +1974,36 @@ class BrainManager:
             return bool(reg.has_action_intent(t) and reg.resolve_intent(t) is None)
         except Exception:  # noqa: BLE001 — registry error must not block spawn decision
             return False
+
+    def _heavy_worker_provider_viable(self) -> bool:
+        """True when a heavy-worker backend can run a force-spawn, decoupled from
+        the talker provider (``brain.primary``).
+
+        The worker is ``[brain.sub_jarvis].provider`` (jarvis/missions/init.py
+        ``_select_subagent_worker_kind``) and is chosen independently of which
+        provider talks to the user. A configured worker provider always maps to a
+        real worker (claude-api -> ClaudeDirectWorker, codex -> CodexDirectWorker,
+        else the OpenClaw/default path), so it is viable for ANY talker — this is
+        what lets the user switch ``brain.primary`` to grok / openai / codex
+        without silencing every action request (AP-6: never couple routing to a
+        hardcoded talker provider).
+
+        Only the LEGACY no-worker-configured path keeps the conservative
+        ``brain.primary in {claude-api, gemini}`` check, because there the mission
+        factory may fall back to the Gemini API worker, which 403s on an account
+        without Gemini access (the original BUG-017, 2026-05-13)."""
+        try:
+            sub = getattr(self._config.brain, "sub_jarvis", None)
+            worker_provider = (getattr(sub, "provider", "") or "").strip().lower()
+        except Exception:  # noqa: BLE001 — config hiccup must not block dispatch
+            return True
+        if worker_provider:
+            return True
+        try:
+            primary = (self._config.brain.primary or "").strip().lower()
+        except Exception:  # noqa: BLE001
+            primary = ""
+        return primary in ("claude-api", "gemini")
 
     async def _run_local_action_fast_path(
         self,
@@ -2032,52 +2080,120 @@ class BrainManager:
                     return "Task-Budget fuer diese Konversation ueberschritten."
                 if self._cost_meter.over_daily_budget():
                     return "Tagesbudget ueberschritten."
-            # AD-OE1: speak an immediate, concrete acknowledgement BEFORE the
-            # (multi-second) computer-use loop runs, so the user is never left
-            # wondering whether anything is happening. The pipeline suppresses
-            # empty/generic ACKs, so phrase it with the task verb.
-            try:
-                await self._bus.publish(AnnouncementRequested(
-                    text="Mach ich — ich erledige das jetzt direkt am Bildschirm.",
-                    priority="normal",
-                    language="de",
-                    kind="preamble",
-                ))
-            except Exception:  # noqa: BLE001 — an ACK hiccup must not block the action
-                log.debug("computer-use preamble announce failed", exc_info=True)
-            # Harness identity comes from the gate; fall back to the
-            # canonical in-process computer-use harness name. This routes
-            # straight to ``ComputerUseHarness`` (see jarvis/plugins/harness/
-            # computer_use.py) — never to a claude-cli worker spawn.
+            # Wave-4 latency fix: Computer-Use is OFFLOADED off the voice turn.
+            # Previously the harness was awaited inline for up to ~31 s, so a
+            # "do it on screen" command froze the spoken turn the whole time.
+            # Now we launch the harness as a BACKGROUND task and return an
+            # immediate ACK (AD-OE1); its outcome — success, failure, or timeout
+            # — is spoken at the next turn boundary via an
+            # AnnouncementRequested(kind="completion") readback (AD-OE5/OE6, zero
+            # silent drops). Harness identity comes from the gate; fall back to
+            # the canonical in-process harness name (routes to ComputerUseHarness,
+            # never a claude-cli worker spawn).
+            #
+            # Note: the result readback rides the announcement bus, which the
+            # voice pipeline speaks. A text-chat-initiated Computer-Use command
+            # therefore still executes and is ACK'd, but its result lands as a
+            # voice announcement rather than in the chat transcript — an
+            # acceptable trade for never freezing the spoken turn.
             harness_name = plan.harness or "computer-use"
-            try:
-                result = await asyncio.wait_for(
-                    self._tool_executor.execute(
-                        tool,
-                        {
-                            "harness": harness_name,
-                            "prompt": plan.prompt or user_text,
-                            "timeout_s": timeout_s,
-                        },
-                        user_utterance=user_text,
-                        trace_id=tid,
-                    ),
-                    timeout=timeout_s + 1.0,
-                )
-            except asyncio.TimeoutError:
-                await self._bus.publish(ActionExecuted(
+            bg_tasks = getattr(self, "_cu_background_tasks", None)
+            if bg_tasks is None:
+                bg_tasks = set()
+                self._cu_background_tasks = bg_tasks
+            task = asyncio.create_task(
+                self._run_computer_use_background(
+                    tool=tool,
+                    harness_name=harness_name,
+                    prompt=plan.prompt or user_text,
+                    timeout_s=timeout_s,
+                    user_text=user_text,
                     trace_id=tid,
+                ),
+                name="computer-use-background",
+            )
+            # Keep a strong reference so the task is not garbage-collected
+            # mid-flight, and drop it on completion.
+            bg_tasks.add(task)
+            task.add_done_callback(bg_tasks.discard)
+            return (
+                "Mach ich — ich erledige das direkt am Bildschirm und sage "
+                "Bescheid, sobald es fertig ist."
+            )
+
+        return None
+
+    async def _run_computer_use_background(
+        self,
+        *,
+        tool: Any,
+        harness_name: str,
+        prompt: str,
+        timeout_s: float,
+        user_text: str,
+        trace_id: UUID,
+    ) -> None:
+        """Run the Computer-Use harness off the voice turn and speak the result.
+
+        Launched fire-and-forget by ``_run_local_action_fast_path`` so the spoken
+        turn ACKs immediately (AD-OE1) instead of blocking up to ~31 s on the
+        harness. The outcome — success, failure, or timeout — is ALWAYS surfaced
+        as an ``AnnouncementRequested(kind="completion")`` readback
+        (AD-OE5/OE6: zero silent drops). Never raises — a background-task crash
+        must not leak into the event loop.
+        """
+        text: str
+        try:
+            result = await asyncio.wait_for(
+                self._tool_executor.execute(
+                    tool,
+                    {
+                        "harness": harness_name,
+                        "prompt": prompt,
+                        "timeout_s": timeout_s,
+                    },
+                    user_utterance=user_text,
+                    trace_id=trace_id,
+                ),
+                timeout=timeout_s + 1.0,
+            )
+            if result.success:
+                text = str(result.output or "").strip() or "Erledigt."
+            else:
+                err = getattr(result, "error", None)
+                text = (
+                    f"Das am Bildschirm hat nicht geklappt: {err}"
+                    if err else "Das am Bildschirm hat nicht geklappt."
+                )
+        except TimeoutError:
+            text = (
+                f"Das am Bildschirm hat zu lange gedauert "
+                f"(ueber {timeout_s:.0f} Sekunden) und wurde abgebrochen."
+            )
+            try:
+                await self._bus.publish(ActionExecuted(
+                    trace_id=trace_id,
                     tool_name="dispatch_to_harness",
                     success=False,
                     duration_ms=int((timeout_s + 1.0) * 1000),
                     error=f"timeout after {timeout_s:.3g}s",
                 ))
-                return f"{harness_name} timeout after {timeout_s:.3g}s"
-            if not result.success:
-                return result.error or "Computer-Use-Harness fehlgeschlagen."
-            return str(result.output or "")
-
-        return None
+            except Exception:  # noqa: BLE001
+                log.debug("CU-background ActionExecuted publish failed", exc_info=True)
+        except Exception as exc:  # noqa: BLE001 — a background crash must not leak
+            log.error("Computer-Use background task failed: %r", exc, exc_info=True)
+            text = "Beim Erledigen am Bildschirm ist leider etwas schiefgegangen."
+        # AD-OE6 zero silent drops: ALWAYS speak the outcome at the next turn
+        # boundary (announcement -> scrub_for_voice -> TTS).
+        try:
+            await self._bus.publish(AnnouncementRequested(
+                text=text,
+                priority="normal",
+                language="de",
+                kind="completion",
+            ))
+        except Exception:  # noqa: BLE001
+            log.debug("CU-background completion announce failed", exc_info=True)
 
     async def _record_response_side_effects(
         self,
@@ -2452,6 +2568,7 @@ class BrainManager:
         # failure-diagnostic returns below flip it True; the meta-command
         # early-returns ("") that follow correctly leave it False.
         self._last_turn_all_failed = False
+        self._last_turn_suppressed = False
         turn_trace_id = trace_id or uuid4()
 
         if self._detect_cancel_intent(user_text):
@@ -2851,6 +2968,12 @@ class BrainManager:
                     continue
 
                 response_text = agg.text
+                # Record whether THIS (winning) turn was a fire-and-forget
+                # ``suppress_response`` spawn, so the voice pipeline can stay
+                # silent for it but speak a clarifying question for a different
+                # empty turn (function_call/CU without speech). See
+                # ``SpeechPipeline._handle_silent_brain_turn``.
+                self._last_turn_suppressed = suppressed
                 used_provider, used_model = prov_name, model
 
                 # Bug C Fix (2026-04-29) — BrainTurnStarted/Completed publishen
@@ -3040,7 +3163,9 @@ class BrainManager:
         try:
             from jarvis.brain.router import _read_observation_image_b64
 
-            obs = await vision.current()
+            obs = await asyncio.wait_for(
+                vision.current(), timeout=_VISION_COLLECT_TIMEOUT_S
+            )
             hash_prefix = (obs.screenshot_hash or "")[:16]
             log.info(
                 "Vision-Inject Observation: screenshot_path=%s "
@@ -3082,6 +3207,14 @@ class BrainManager:
                     source_hash=obs.screenshot_hash,
                 ),
             )
+        except TimeoutError:
+            log.warning(
+                "Vision-Inject skipped: capture exceeded %.1fs — proceeding "
+                "text-only (no hot-path hang). brain_provider=%s",
+                _VISION_COLLECT_TIMEOUT_S,
+                self._active_name,
+            )
+            return ()
         except Exception as exc:  # noqa: BLE001
             log.error(
                 "Vision-Inject fehlgeschlagen: path=BrainManager "
@@ -3416,6 +3549,31 @@ class BrainManager:
             self.reactivate_provider(provider)
 
         target_bus.subscribe(SecretConfigured, _on_secret_configured)
+
+        from jarvis.core.events import ConfigReloaded
+
+        async def _on_config_reloaded(ev: ConfigReloaded) -> None:
+            # Hot-reload the reply-language pin so a Self-Mod / Control-API write
+            # to ``brain.reply_language`` (SAFE, needs_restart=False) takes effect
+            # on the NEXT turn without an app restart. The event carries only the
+            # changed keys, so re-read the persisted value from disk. Never let a
+            # bad value (ValueError) escape — that would kill the bus (AP-18).
+            if "brain.reply_language" not in ev.changed_keys:
+                return
+            try:
+                import asyncio as _asyncio
+
+                from jarvis.core.config import load_config
+
+                # Off the event loop — load_config() is a blocking disk read and
+                # this subscriber fires on every SAFE-tier config write.
+                cfg = await _asyncio.to_thread(load_config)
+                raw = getattr(cfg.brain, "reply_language", "auto")
+                self.set_reply_language(normalize_reply_language(raw))
+            except Exception:  # noqa: BLE001 — survive without a live switch
+                log.warning("reply-language hot-reload failed", exc_info=True)
+
+        target_bus.subscribe(ConfigReloaded, _on_config_reloaded)
 
     # ------------------------------------------------------------------
     # Back-compat aliases (for existing tests)

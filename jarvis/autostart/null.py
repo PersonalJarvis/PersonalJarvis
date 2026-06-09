@@ -33,11 +33,13 @@ class NullAutostart:
     def status(self, spec: LaunchSpec) -> AutostartStatus:  # noqa: ARG002 — interface
         return self._status()
 
-    def install(self, spec: LaunchSpec) -> AutostartStatus:  # noqa: ARG002 — interface
+    def install(  # noqa: ARG002 — interface
+        self, spec: LaunchSpec, *, interactive: bool = False
+    ) -> AutostartStatus:
         log.debug("NullAutostart.install no-op (%s)", self._reason)
         return self._status()
 
-    def uninstall(self) -> AutostartStatus:
+    def uninstall(self, *, interactive: bool = False) -> AutostartStatus:  # noqa: ARG002
         log.debug("NullAutostart.uninstall no-op (%s)", self._reason)
         return self._status()
 

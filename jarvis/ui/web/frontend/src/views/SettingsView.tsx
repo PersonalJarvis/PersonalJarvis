@@ -3,7 +3,6 @@ import {
   Settings,
   Mic,
   Keyboard,
-  Power,
   Bot,
 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
@@ -11,16 +10,18 @@ import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { OverlayTaskbarGroup } from "@/views/settings/OverlayTaskbarGroup";
 import { LanguagesGroup } from "@/views/settings/LanguagesGroup";
+import { AppSettingsGroup } from "@/views/settings/AppSettingsGroup";
+import { JarvisApiGroup } from "@/views/settings/JarvisApiGroup";
 import { useWakeWord, type WakeWordSaveResult } from "@/hooks/useWakeWord";
 import {
   useKeybinds,
-  eventToCombo,
+  chordToCombo,
+  codeToKeyToken,
   type KeybindAction,
   type KeybindsConfig,
   type KeybindSaveResult,
 } from "@/hooks/useHotkey";
 import { useAssistantName } from "@/hooks/useAssistantName";
-import { useAutostart } from "@/hooks/useAutostart";
 import { WAKE_ENGINES, WAKE_ENGINE_I18N_KEY } from "@/constants/wakeEngines";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
@@ -54,8 +55,9 @@ export function SettingsView() {
       />
       <div className="flex-1 overflow-y-auto scrollbar-jarvis p-6">
         <LanguagesGroup />
+        <AppSettingsGroup />
+        <JarvisApiGroup />
         <AssistantNamePanel />
-        <AutostartPanel />
         <WakeWordPanel />
         <KeybindsPanel />
 
@@ -89,11 +91,13 @@ function SettingRow({ row }: { row: SettingRow }) {
 }
 
 /**
- * Editable wake-word panel: phrase input + quick-pick chips, engine select,
- * sensitivity slider, optional custom-model path, and a Save button that
- * surfaces the backend's resolved engine, message, and a restart hint. A
- * degraded result is shown as a warning; an arbitrary phrase without the
- * local-Whisper extra gets an inline degrade hint.
+ * Editable wake-word panel: free-text phrase input, engine select, sensitivity
+ * slider, optional custom-model path, and a Save button that surfaces the
+ * backend's resolved engine, message, and a restart hint. A degraded result is
+ * shown as a warning; a phrase without local-Whisper gets an inline hint.
+ *
+ * No quick-pick chips: the user must type their own phrase. The onboarding gate
+ * (WakeWordOnboardingGate) handles the mandatory first-run flow.
  */
 function WakeWordPanel() {
   const t = useT();
@@ -116,16 +120,11 @@ function WakeWordPanel() {
     setCustomModelPath(config.custom_model_path ?? "");
   }, [config]);
 
-  const instantPhrases = config?.instant_phrases ?? [];
   const localWhisperAvailable = config?.local_whisper_available ?? true;
 
   const trimmedPhrase = phrase.trim();
-  const isInstantPhrase = instantPhrases.some(
-    (p) => p.toLowerCase() === trimmedPhrase.toLowerCase(),
-  );
-  // Arbitrary phrase + no local-Whisper extra → the engine will degrade.
-  const showNeedsWhisperHint =
-    !localWhisperAvailable && trimmedPhrase.length > 0 && !isInstantPhrase;
+  // No local-Whisper extra + any non-empty phrase → the engine will degrade.
+  const showNeedsWhisperHint = !localWhisperAvailable && trimmedPhrase.length > 0;
 
   async function onSave() {
     if (!trimmedPhrase) return;
@@ -169,7 +168,7 @@ function WakeWordPanel() {
             <p className="mt-3 text-xs text-destructive">{error}</p>
           )}
 
-          {/* Phrase input */}
+          {/* Phrase input — free text, no quick-picks */}
           <label className="mt-4 block text-xs font-medium text-muted-foreground">
             {t("settings_view.wake_word.phrase_label")}
           </label>
@@ -181,31 +180,6 @@ function WakeWordPanel() {
             disabled={loading}
             className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
           />
-
-          {/* Quick-pick chips for instant phrases */}
-          {instantPhrases.length > 0 && (
-            <div className="mt-3">
-              <span className="text-xs text-muted-foreground">
-                {t("settings_view.wake_word.instant_phrases_label")}
-              </span>
-              <div className="mt-1.5 flex flex-wrap gap-1.5">
-                {instantPhrases.map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => setPhrase(p)}
-                    className={`rounded border px-2 py-1 text-xs transition-colors ${
-                      trimmedPhrase.toLowerCase() === p.toLowerCase()
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-border bg-background text-muted-foreground hover:border-primary/60 hover:text-foreground"
-                    }`}
-                  >
-                    {p}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
 
           {/* Engine select */}
           <label className="mt-4 block text-xs font-medium text-muted-foreground">
@@ -304,77 +278,6 @@ function WakeWordPanel() {
                 </p>
               )}
             </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/**
- * Login-autostart toggle. Flipping it installs/removes the OS autostart entry
- * live (Windows .lnk / macOS LaunchAgent / Linux XDG .desktop) and persists
- * [autostart].enabled. On a headless host the switch is disabled with an honest
- * caption — the toggle cannot create a login entry where there is no GUI seat.
- */
-function AutostartPanel() {
-  const t = useT();
-  const { config, loading, error, setEnabled } = useAutostart();
-  const pushToast = useEventStore((s) => s.pushToast);
-  const [saving, setSaving] = useState(false);
-
-  const supported = config?.supported ?? true;
-  const enabled = config?.enabled ?? false;
-
-  async function onToggle(next: boolean) {
-    setSaving(true);
-    try {
-      const res = await setEnabled(next);
-      if (next && res.supported && res.applied_live) {
-        pushToast("success", t("settings_view.autostart.enabled_toast"));
-      } else if (next && !res.supported) {
-        pushToast("warning", res.detail || t("settings_view.autostart.unsupported"));
-      } else if (!next) {
-        pushToast("success", t("settings_view.autostart.disabled_toast"));
-      }
-    } catch (e) {
-      pushToast("error", (e as Error).message);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="mb-2 rounded-lg border border-border bg-card/60 p-4">
-      <div className="flex items-start gap-3">
-        <Power className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-4">
-            <h4 className="font-display text-sm font-semibold">
-              {t("settings_view.autostart.title")}
-            </h4>
-            <Switch
-              checked={enabled}
-              disabled={loading || saving || !supported}
-              onCheckedChange={onToggle}
-            />
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {t("settings_view.autostart.description")}
-          </p>
-
-          {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
-
-          {!supported && !loading && (
-            <p className="mt-3 text-xs text-amber-500">
-              {config?.detail || t("settings_view.autostart.unsupported")}
-            </p>
-          )}
-
-          {supported && config?.entry_path && (
-            <p className="mt-2 break-all font-mono text-[11px] text-muted-foreground">
-              {config.entry_path}
-            </p>
           )}
         </div>
       </div>
@@ -567,21 +470,59 @@ function KeybindRow({
     if (config) setCombo(config.keybinds[action]);
   }, [config, action]);
 
-  function onCaptureKeyDown(e: React.KeyboardEvent) {
+  // While capturing, listen on `window` (capture phase) instead of on a single
+  // button. Two reasons:
+  //   1. Focus: clicking the "Record" button puts focus on THAT button, so a
+  //      key listener living only on the display field never fired — the combo
+  //      was silently dropped. A window listener catches the chord no matter
+  //      which control has focus.
+  //   2. Chord: a held set accumulates every non-modifier key, so two ordinary
+  //      keys pressed together (F7+F8, I+Y) — which the global-hotkeys backend
+  //      registers natively (the Call default is f3+f4) — are captured instead
+  //      of aborting on the first key.
+  // preventDefault on both edges also stops the keystrokes from leaking into
+  // the rest of the app while recording (the "everything lags" symptom).
+  useEffect(() => {
     if (!capturing) return;
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.key === "Escape") {
-      setCapturing(false);
-      return;
+    const held = new Set<string>();
+    let pending: string | null = null;
+
+    function onKeyDown(e: KeyboardEvent) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") {
+        setCapturing(false);
+        return;
+      }
+      const tok = codeToKeyToken(e.code);
+      if (tok) held.add(tok);
+      const next = chordToCombo(e, held);
+      if (next) {
+        pending = next;
+        setCombo(next); // live preview as the chord grows
+        setSaved(false);
+      }
     }
-    const next = eventToCombo(e);
-    if (next) {
-      setCombo(next);
-      setCapturing(false);
-      setSaved(false);
+
+    function onKeyUp(e: KeyboardEvent) {
+      e.preventDefault();
+      e.stopPropagation();
+      // Commit on the first release once a real key has landed: `pending` holds
+      // the fullest chord seen, so releasing F7 before F8 still saves "f7+f8".
+      if (pending) {
+        setCombo(pending);
+        setSaved(false);
+        setCapturing(false);
+      }
     }
-  }
+
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+    };
+  }, [capturing]);
 
   async function onSaveClick() {
     const trimmed = combo.trim().toLowerCase();
@@ -625,9 +566,7 @@ function KeybindRow({
       <div className="mt-2 flex items-center gap-2">
         <button
           type="button"
-          onClick={() => setCapturing(true)}
-          onKeyDown={onCaptureKeyDown}
-          onBlur={() => setCapturing(false)}
+          onClick={() => setCapturing((c) => !c)}
           disabled={loading}
           className={`flex-1 rounded-md border px-3 py-2 text-left font-mono text-sm transition-colors focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 ${
             capturing
@@ -644,10 +583,12 @@ function KeybindRow({
         <Button
           size="sm"
           variant="outline"
-          onClick={() => setCapturing(true)}
+          onClick={() => setCapturing((c) => !c)}
           disabled={loading}
         >
-          {t("settings_view.keybinds.record")}
+          {capturing
+            ? t("settings_view.keybinds.stop")
+            : t("settings_view.keybinds.record")}
         </Button>
         <Button size="sm" onClick={onSaveClick} disabled={saving || loading || !dirty}>
           {saving ? t("settings_view.saving") : t("settings_view.keybinds.save")}

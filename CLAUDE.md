@@ -340,18 +340,20 @@ pytest tests/integration/test_openclaw_lazy_bootstrap.py
 | AP-16 | Add `[phase6.*]`/`[memory.wiki.*]` keys without `ConfigDict(extra="allow")` | Pre-validate rejects → boot fails after self-mod |
 | AP-17 | Run Jarvis as a Windows Service | SYSTEM has no mic/headset access |
 | AP-18 | Propagate a subscriber exception from `EventBus._safe_dispatch` | One handler kills the pipeline |
+| AP-19 | Reuse a process-global progress counter in a stall/heartbeat watchdog without resetting it per unit of work | BUG-032: watchdog measures the idle gap *between* turns → spuriously aborts a fresh TTS answer before its first frame ("Jarvis listens forever") |
 
 ---
 
 ## Recurring bug classes (must internalize)
 
-Detail in [`docs/BUGS.md`](docs/BUGS.md). Five classes recur — recognize the signal, apply the defense:
+Detail in [`docs/BUGS.md`](docs/BUGS.md). Six classes recur — recognize the signal, apply the defense:
 
 1. **Four-layer restore trap** (BUG-006 → -014 → -015): worktree + frontend build + RAM + **editable-install pin to a deleted clone**. Signal: fix "works in tests" but Jarvis behavior unchanged after restart. Defense: `pwsh scripts/preflight.ps1` + `python -c "import jarvis; print(jarvis.__file__)"`.
 2. **Multi-layer enum drift** (BUG-008, 4 episodes): empty UI list while DB has rows, HTTP 500, `literal_error` in Pydantic. Defense: `docs/anti-drift-three-layer.md` pattern + parity test.
 3. **Config drift** (BUG-010 triple-defense): parallel sessions rewriting `jarvis.toml`, silently rolling back provider switches. Defense: `scripts/drift-guard-daemon.ps1` (5-min cron) + ENV overrides + read-only TOML + BOM-safe writer (`UTF8Encoding($false)`).
 4. **Subprocess console flicker** (BUG-012): missing `NO_WINDOW_CREATIONFLAGS` on `pythonw.exe`. Defense: every new subprocess call imports from `jarvis.core.process_utils`.
 5. **Audio host-API blocking-write trap** (BUG-014): WDM-KS picked by auto-resolver, PortAudio blocking API crashes. Defense: `_FORBIDDEN_OUTPUT_HOSTAPIS` filter; shortest-unique-token device matching.
+6. **Watchdog stale cross-unit counter** (BUG-032): a stall/heartbeat watchdog reads a process-global progress counter (`last_write_ns`) that is never reset per unit, so it measures idle time *between* units and fires spuriously — e.g. the TTS playback watchdog aborted a fresh answer before its first frame ("Jarvis listens forever / never speaks") whenever the brain thought longer than the 5 s stall window. Signal: a "wedge" abort whose timestamps are impossible (fires earlier than the threshold; the resource responds *after* the abort). Defense: reset the counter at unit start (before any lock wait); re-arm the "not started yet" guard per unit, not at construction; guards in `tests/unit/audio/test_player_stall_recovery.py` + `tests/unit/speech/test_speak_playback_timeout.py`.
 
 ---
 

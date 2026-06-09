@@ -7,7 +7,7 @@ from typing import Any
 from jarvis.core import config as cfg
 from jarvis.core.protocols import BrainDelta, BrainRequest
 
-from ._openai_base import stream_complete
+from ._openai_base import CLIENT_TIMEOUT, stream_complete
 
 DEFAULT_MODEL = "grok-4.3"
 BASE_URL = "https://api.x.ai/v1"
@@ -36,7 +36,9 @@ class GrokBrain:
                     "(grok_api_key / xai_api_key / GROK_API_KEY / XAI_API_KEY)."
                 )
             from openai import AsyncOpenAI
-            self._client = AsyncOpenAI(api_key=api_key, base_url=BASE_URL)
+            self._client = AsyncOpenAI(
+                api_key=api_key, base_url=BASE_URL, timeout=CLIENT_TIMEOUT
+            )
         return self._client
 
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:

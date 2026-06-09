@@ -102,7 +102,9 @@ class LinuxAutostart:
             ),
         )
 
-    def install(self, spec: LaunchSpec) -> AutostartStatus:
+    def install(  # noqa: ARG002 — per-user XDG .desktop never needs elevation
+        self, spec: LaunchSpec, *, interactive: bool = False
+    ) -> AutostartStatus:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         # Atomic-ish: write tempfile then replace, so a crash never leaves a
         # half-written .desktop the DE would choke on.
@@ -112,7 +114,7 @@ class LinuxAutostart:
         log.info("Linux autostart entry written: %s", self._path)
         return self.status(spec)
 
-    def uninstall(self) -> AutostartStatus:
+    def uninstall(self, *, interactive: bool = False) -> AutostartStatus:  # noqa: ARG002
         if self._path.exists():
             try:
                 self._path.unlink()

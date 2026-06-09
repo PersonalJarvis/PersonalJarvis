@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -296,6 +297,20 @@ class AudioPlayer:
         # makes the lookup miss for the new device and walk the cascade
         # fresh.
         self._device_rate_cache: dict[tuple[Any, int], int] = {}
+        # Playback-progress telemetry for the pipeline stall watchdog (Wave-1
+        # latency fix). ``last_write_ns`` is bumped after every successful
+        # ``stream.write`` sub-block; the watchdog reads it to tell a healthy
+        # back-pressure wait apart from a wedged device. See ``abort_active``.
+        self._init_progress()
+
+    def _init_progress(self) -> None:
+        """(Re)set playback-progress counters.
+
+        Separate from ``__init__`` so ``__new__``-built instances (test
+        fixtures, hot-reload) can arm the counters without the full ctor.
+        """
+        self.frames_written: int = 0
+        self.last_write_ns: int = 0
 
     def _get_play_lock(self) -> asyncio.Lock:
         if self._play_lock is None:
@@ -525,6 +540,14 @@ class AudioPlayer:
         for start in range(0, arr_f.shape[0], block):
             chunk = arr_f[start:start + block]
             underflowed = stream.write(chunk)
+            # Playback progress for the pipeline stall watchdog: a healthy
+            # ~60 ms sub-block returns well inside the watchdog's stall window;
+            # only a wedged device leaves ``last_write_ns`` frozen. ``getattr``
+            # defaults keep this resilient for ``__new__``-built instances (test
+            # fixtures / hot-reload) that skipped ``_init_progress`` — progress
+            # telemetry must never be the thing that crashes playback.
+            self.frames_written = getattr(self, "frames_written", 0) + int(chunk.shape[0])
+            self.last_write_ns = time.monotonic_ns()
             if underflowed:
                 log.warning(
                     "PortAudio underflow during write (frames=%d, source=%dHz, "
@@ -569,6 +592,22 @@ class AudioPlayer:
         appended seamlessly → no discontinuity, no clicks.
         """
         self._log_device_once()
+        # Reset the playback-progress watchdog signal at the START of every
+        # playback — BEFORE awaiting the play lock, so the invariant
+        # "last_write_ns == 0 until this playback's first frame" holds from the
+        # task's very first event-loop tick, not just from lock acquisition.
+        # ``last_write_ns`` is otherwise only zeroed once in ``_init_progress``
+        # and then carries the PREVIOUS turn's timestamp across turns. The
+        # pipeline stall watchdog reads it, so after a >stall-window thinking gap
+        # it saw a stale-but-non-zero value and aborted the fresh, still-
+        # synthesizing answer before its first frame (a false "device-wedge") —
+        # the "Jarvis listens forever / never speaks" root cause. Resetting here
+        # restores the watchdog's <=0 "no first frame yet" guard for every turn,
+        # not just the first, and closes the lock-wait window (a lock held by a
+        # non-writing op such as a slow stream-open must not leave a stale value
+        # visible to the watchdog).
+        self.last_write_ns = 0
+        self.frames_written = 0
         async with self._get_play_lock():
             def _ensure_stream(needed_rate: int) -> tuple[sd.OutputStream, int]:
                 # Reuse the persistent OutputStream across sentence-by-sentence
@@ -644,6 +683,32 @@ class AudioPlayer:
                 pending.extend(chunk.pcm)
                 await _flush_pending()
             await _flush_pending(final=True)
+
+    def abort_active(self) -> None:
+        """Force-abort the live OutputStream to unblock a wedged ``stream.write``.
+
+        PortAudio's blocking write runs in a worker thread that Python cannot
+        cancel; ``Pa_AbortStream`` (``stream.abort()``) is the only way to make
+        the blocked write return so the ``asyncio.to_thread`` unwinds. Called by
+        the pipeline playback watchdog on a device stall (no audio frames for
+        the stall window) so the voice turn unwinds and the session re-arms,
+        instead of hanging until the 120 s ceiling. Idempotent; cross-platform
+        (PortAudio abort behaves identically on Windows/macOS/Linux).
+        """
+        level_tap.reset_playing()
+        stream = self._active_stream
+        self._active_stream = None
+        self._active_source_rate = None
+        self._active_device_rate = None
+        if stream is not None:
+            try:
+                stream.abort()
+            except Exception as exc:  # noqa: BLE001
+                log.debug("abort_active: stream.abort() failed: %s", exc)
+            try:
+                stream.close()
+            except Exception:  # noqa: BLE001, S110
+                pass
 
     def stop(self) -> None:
         """Abort ongoing playback (e.g. for barge-in).

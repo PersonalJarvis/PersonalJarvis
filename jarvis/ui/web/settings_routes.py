@@ -99,6 +99,82 @@ async def put_reply_language(body: ReplyLanguageBody, request: Request) -> dict[
     return {"ok": True, "language": lang, "persisted": persisted}
 
 
+# ----------------------------------------------------------------------
+# Interface (display) language — what the user SEES (every label/button).
+# Distinct from the reply language. The frontend used to keep this only in
+# localStorage; giving it a backend home lets a voice command / the Control API
+# change it and the open UI switch live (a UiLanguageChanged event is forwarded
+# over /ws). Key-free same-origin route, like reply-language.
+# ----------------------------------------------------------------------
+
+_UI_LANGUAGES: tuple[str, ...] = ("en", "de", "es")
+
+
+class UiLanguageBody(BaseModel):
+    language: str = Field(..., min_length=1)
+    persist: bool = Field(default=True, description="Persist as boot default in jarvis.toml")
+
+
+def _current_ui_language(request: Request) -> str:
+    # Read fresh from disk so a value just written by voice/the Control API is
+    # reflected; fall back to the boot config, then the "en" default.
+    try:
+        from jarvis.core.config import load_config
+
+        return str(getattr(load_config().ui, "language", "en"))
+    except Exception as exc:  # noqa: BLE001 — never 500 a settings read
+        log.debug("ui-language fresh read failed, using boot config: %s", exc)
+    cfg = getattr(request.app.state, "config", None)
+    return str(getattr(getattr(cfg, "ui", None), "language", "en"))
+
+
+@router.get("/ui-language")
+async def get_ui_language(request: Request) -> dict[str, object]:
+    return {"language": _current_ui_language(request), "options": list(_UI_LANGUAGES)}
+
+
+@router.put("/ui-language")
+async def put_ui_language(body: UiLanguageBody, request: Request) -> dict[str, object]:
+    lang = (body.language or "").strip().lower()
+    if lang not in _UI_LANGUAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown UI language {body.language!r} (allowed: {list(_UI_LANGUAGES)})",
+        )
+
+    persisted = False
+    if body.persist:
+        try:
+            from jarvis.core import config_writer
+            from jarvis.core.config import resolve_config_path
+
+            # Honour JARVIS_CONFIG (cloud-first) so the write lands in the same
+            # file load_config reads — no desktop/VPS split-brain.
+            config_writer.set_ui_language(lang, path=resolve_config_path())
+            persisted = True
+        except Exception as exc:  # noqa: BLE001 — persist is best-effort
+            log.warning("ui-language persist failed: %s", exc)
+
+    cfg = getattr(request.app.state, "config", None)
+    if cfg is not None and getattr(cfg, "ui", None) is not None:
+        try:
+            cfg.ui.language = lang  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 — frozen model is not an error
+            log.debug("in-memory cfg.ui.language update skipped: %s", exc)
+
+    # Broadcast so EVERY open frontend (and other clients) switch live.
+    bus = getattr(request.app.state, "bus", None)
+    if bus is not None:
+        try:
+            from jarvis.core.events import UiLanguageChanged
+
+            await bus.publish(UiLanguageChanged(language=lang))
+        except Exception as exc:  # noqa: BLE001 — a bus hiccup must not fail the write
+            log.warning("UiLanguageChanged publish failed: %s", exc)
+
+    return {"ok": True, "language": lang, "persisted": persisted}
+
+
 # ---------------------------------------------------------------------------
 # Wake word (custom-wake-word feature). GET current + options; PUT to switch.
 # Persisted to jarvis.toml [trigger.wake_word]; applies on the next voice
@@ -521,12 +597,24 @@ def _autostart_components(request: Request):
 
 
 def _autostart_payload(enabled, caps, spec, status) -> dict[str, object]:
+    # Which OS mechanism is currently active — lets the Windows UI offer the
+    # "enable instant start" upgrade when only the throttled .lnk fallback is in
+    # place (scheduled-task registration needs a one-time UAC prompt).
+    mechanism = "none"
+    if status.installed:
+        if str(status.entry_path or "").startswith("Task Scheduler"):
+            mechanism = "scheduled_task"
+        elif caps.platform == "win32":
+            mechanism = "shortcut"
+        else:
+            mechanism = "native"
     return {
         "enabled": enabled,
         "supported": status.supported,
         "installed": status.installed,
         "matches_spec": status.matches_spec,
         "platform": caps.platform,
+        "mechanism": mechanism,
         "resolved_command": spec.command_line(),
         "entry_path": status.entry_path,
         "detail": status.detail,
@@ -571,9 +659,11 @@ async def put_autostart(body: AutostartBody, request: Request) -> dict[str, obje
     applied_live = False
     try:
         if enabled:
-            status = await asyncio.to_thread(manager.install, spec)
+            # User-initiated → interactive: Windows may show a one-time UAC prompt
+            # to register the instant-start logon task (declined → .lnk fallback).
+            status = await asyncio.to_thread(manager.install, spec, interactive=True)
         else:
-            status = await asyncio.to_thread(manager.uninstall)
+            status = await asyncio.to_thread(manager.uninstall, interactive=True)
         applied_live = status.supported
     except Exception as exc:  # noqa: BLE001 — never fail the toggle on an apply hiccup
         log.warning("autostart live-apply failed (persisted; applies on restart): %s", exc)

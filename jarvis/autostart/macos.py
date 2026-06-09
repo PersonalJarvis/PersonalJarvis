@@ -95,7 +95,9 @@ class MacOSAutostart:
             ),
         )
 
-    def install(self, spec: LaunchSpec) -> AutostartStatus:
+    def install(  # noqa: ARG002 — per-user LaunchAgent never needs elevation
+        self, spec: LaunchSpec, *, interactive: bool = False
+    ) -> AutostartStatus:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         plist = {
             "Label": _LABEL,
@@ -114,7 +116,7 @@ class MacOSAutostart:
         _launchctl("load", "-w", str(self._path))
         return self.status(spec)
 
-    def uninstall(self) -> AutostartStatus:
+    def uninstall(self, *, interactive: bool = False) -> AutostartStatus:  # noqa: ARG002
         _launchctl("unload", "-w", str(self._path))
         if self._path.exists():
             try:

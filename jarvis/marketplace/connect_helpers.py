@@ -18,6 +18,57 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+# Catalog client_id values that are unfilled placeholders, not real OAuth
+# clients. The public catalog can't ship the maintainer's Google client, so
+# gmail/google_drive carry a REPLACE_WITH_... marker until the operator supplies
+# a real client via the `google_oauth_client_id` secret. Sending a placeholder
+# to a token endpoint yields `invalid_client: "The OAuth client was not found."`.
+_PLACEHOLDER_MARKERS: tuple[str, ...] = (
+    "replace_with",
+    "your_client_id",
+    "your-client-id",
+    "<",
+    "changeme",
+    "todo",
+)
+
+# Plugins that share one Google OAuth client (per the catalog gmail hint:
+# "shares the Google client with Drive"). Their real client is resolved from the
+# shared `google_oauth_client_id` / `google_oauth_client_secret` secrets.
+_GOOGLE_FAMILY: frozenset[str] = frozenset({"gmail", "google_drive", "google_calendar"})
+
+
+def is_placeholder_client_id(value: str | None) -> bool:
+    """True when an OAuth client_id is empty or an unfilled catalog placeholder."""
+    if value is None:
+        return True
+    v = value.strip()
+    if not v:
+        return True
+    low = v.lower()
+    return any(marker in low for marker in _PLACEHOLDER_MARKERS)
+
+
+def resolve_pkce_client(
+    plugin_id: str, catalog_client_id: str, catalog_client_secret: str | None
+) -> tuple[str, str | None]:
+    """Resolve the effective (client_id, client_secret) for a PKCE plugin.
+
+    Precedence: a secret override wins over the catalog value, so the operator
+    can supply a real Google OAuth client without editing the tracked catalog
+    (which gets re-synced from the seed). For the Google family the shared
+    `google_oauth_client_id` / `google_oauth_client_secret` secrets are used;
+    other PKCE plugins (e.g. Slack) keep their real catalog client untouched.
+    """
+    if plugin_id not in _GOOGLE_FAMILY:
+        return catalog_client_id, catalog_client_secret
+    from jarvis.core.config import get_secret
+
+    cid = get_secret("google_oauth_client_id", "GOOGLE_OAUTH_CLIENT_ID")
+    csec = get_secret("google_oauth_client_secret", "GOOGLE_OAUTH_CLIENT_SECRET")
+    return (cid or catalog_client_id, csec or catalog_client_secret)
+
+
 def build_handler_from_catalog(plugin_id: str) -> AuthHandler | None:
     """Return the AuthHandler for a catalog plugin, or ``None`` if the plugin
     is unknown or uses a non-refreshable auth mode (e.g. ``pat_paste``)."""
@@ -56,13 +107,16 @@ def build_handler_from_catalog(plugin_id: str) -> AuthHandler | None:
             )
         )
     if isinstance(auth, OAuthPkceLoopbackAuth):
+        client_id, client_secret = resolve_pkce_client(
+            plugin_id, auth.client_id, auth.client_secret
+        )
         return PkceLoopbackHandler(
             PkceLoopbackConfig(
                 plugin_id=plugin_id,
                 authorization_url=auth.authorization_url,
                 token_url=auth.token_url,
-                client_id=auth.client_id,
-                client_secret=auth.client_secret,
+                client_id=client_id,
+                client_secret=client_secret,
                 callback_port=auth.callback_port or 0,
                 scopes=list(auth.scopes),
                 scope_separator=auth.scope_separator,

@@ -137,6 +137,18 @@ class SecretConfigured(Event):
     action: str = "set"  # "set" | "delete"
 
 
+@dataclass(frozen=True, slots=True)
+class UiLanguageChanged(Event):
+    """Fired when the interface (display) language changes.
+
+    The frontend listens for this over ``/ws`` (wildcard-forwarded) and switches
+    its i18n language live — every label/button/message — without a page reload.
+    Emitted by the settings endpoint and (indirectly, via ``ConfigReloaded``) by
+    a voice command / the Control API. Distinct from the reply language.
+    """
+    language: str = ""  # "en" | "de" | "es"
+
+
 # ----------------------------------------------------------------------
 # Action-Lifecycle
 # ----------------------------------------------------------------------

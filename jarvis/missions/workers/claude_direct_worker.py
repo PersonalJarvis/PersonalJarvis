@@ -90,6 +90,48 @@ _FIRST_READ_BYTES: int = 65536
 # was found lingering across 6 mission log dirs).
 _MCP_CONFIG_FILENAME: str = ".jarvis-mcp.json"
 
+# The claude-cli ``--model`` used when ClaudeDirectWorker runs as the universal
+# heavy-worker fallback for a non-claude sub_jarvis provider (see spawn()). A
+# real claude model — NEVER a foreign slug like ``grok-4.3``, which the claude
+# CLI rejects. Overridden by ``[brain.providers.claude-api].deep_model`` when
+# the config is readable.
+_DEFAULT_CLAUDE_MODEL: str = "claude-opus-4-8"
+
+
+def _resolve_claude_model(primary: Any) -> str:
+    """Resolve the claude-cli ``--model`` this worker actually runs.
+
+    * If the resolved chain primary IS ``claude-api`` with a model, honour it
+      verbatim (unchanged behaviour for a claude-api sub_jarvis config).
+    * Otherwise — the universal-fallback case where ``_worker_factory`` routed a
+      ``grok`` / ``gemini`` / ``openai`` / ``openrouter`` / unset provider here
+      because none of them has a direct worker anymore — resolve the
+      ``[brain.providers.claude-api].deep_model`` from config, falling back to a
+      sane Opus default. We must NEVER pass the foreign chain model (e.g.
+      ``grok-4.3``) to ``claude --model``: that is the 2026-06-08 instant-fail
+      bug (``primary provider is grok, expected claude-api``).
+    """
+    provider = getattr(primary, "provider", None)
+    model = getattr(primary, "model", None)
+    if provider == "claude-api" and model:
+        return str(model)
+    # Config read is best-effort — a missing/unreadable config falls through to
+    # the sane Opus default below rather than crashing the worker spawn.
+    with suppress(Exception):
+        from jarvis.core.config import load_config
+
+        cfg = load_config()
+        providers = getattr(cfg.brain, "providers", {}) or {}
+        pcfg = providers.get("claude-api")
+        if pcfg is not None:
+            resolved = (
+                getattr(pcfg, "deep_model", None)
+                or getattr(pcfg, "model", None)
+            )
+            if resolved:
+                return str(resolved)
+    return _DEFAULT_CLAUDE_MODEL
+
 
 def _resolve_claude_binary() -> str | None:
     """Returns the absolute path to the ``claude`` CLI shim.
@@ -215,30 +257,36 @@ class ClaudeDirectWorker:
         stdout_log = log_dir / "stream.jsonl"
         stderr_log = log_dir / "stderr.log"
 
-        # 1. Resolve provider chain — only "claude-api" is in our scope.
+        # 1. Resolve which claude model this worker runs.
+        #
+        # Post-Welle-4, ClaudeDirectWorker is the UNIVERSAL heavy-worker
+        # fallback: the OpenClaw-backed SubJarvisWorker was removed (it caused
+        # the ~92% nested-claude hang), so jarvis.missions.init._worker_factory
+        # routes EVERY [brain.sub_jarvis].provider that is not
+        # openai-codex/chatgpt (grok, gemini, openai, openrouter,
+        # openclaw-claude, AND the unset default — whose chain resolver falls
+        # back to the ("grok", "grok-4.3") stub) to THIS worker, which always
+        # executes on the Claude Max OAuth claude-cli backend.
+        #
+        # The old "refuse unless the resolved provider is claude-api" guard
+        # assumed a SubJarvisWorker fall-through that NO LONGER EXISTS — so it
+        # turned every non-claude sub_jarvis setting into an INSTANT mission
+        # failure (forensic 2026-06-08: missions 019ea82e* / 019ea830* died in
+        # ~3 s with "primary provider is grok, expected claude-api"). We now
+        # always run on Claude and only LOG when the configured provider
+        # differs, so the fallback is legible, never a silent swap
+        # (anti-silent-fallback mandate).
         chain = _resolve_provider_chain()
         primary = chain[0] if chain else None
-        if primary is None or primary.provider != "claude-api":
-            session_id = resume_session_id or str(uuid.uuid4())
-            yield ClaudeSystemInit(
-                session_id=session_id,
-                model="claude-cli/unresolved",
-                tools=[],
-                cwd=str(worktree),
+        claude_model = _resolve_claude_model(primary)
+        if primary is not None and primary.provider != "claude-api":
+            logger.warning(
+                "ClaudeDirectWorker[%s]: configured sub_jarvis provider is %r, "
+                "which has no direct worker (OpenClaw path removed in Welle 4) — "
+                "running heavy work on the Claude Max OAuth backend (model=%s) "
+                "instead of failing the mission.",
+                worker_id, primary.provider, claude_model,
             )
-            yield ClaudeResult(
-                subtype="error_during_execution",
-                is_error=True,
-                cost_usd=None,
-                num_turns=None,
-                session_id=session_id,
-                duration_ms=0,
-                result=(
-                    f"ClaudeDirectWorker: primary provider is "
-                    f"{primary.provider if primary else 'None'}, expected claude-api"
-                ),
-            )
-            return
 
         session_id = resume_session_id or str(uuid.uuid4())
         self.last_session_id = session_id
@@ -252,7 +300,7 @@ class ClaudeDirectWorker:
             "--verbose",  # required by --print + stream-json
             "--permission-mode", permission_mode,
             "--add-dir", str(worktree),
-            "--model", primary.model,
+            "--model", claude_model,
         ]
         if allowed_tools:
             cmd.extend(["--allowedTools", allowed_tools])
@@ -264,14 +312,14 @@ class ClaudeDirectWorker:
 
         yield ClaudeSystemInit(
             session_id=session_id,
-            model=f"claude-cli/{primary.model}",
+            model=f"claude-cli/{claude_model}",
             tools=[],
             cwd=str(worktree),
         )
 
         logger.info(
             "ClaudeDirectWorker[%s] spawn: cwd=%s model=%s",
-            worker_id, worktree, primary.model,
+            worker_id, worktree, claude_model,
         )
 
         # 3. Spawn the subprocess with the prompt on stdin.

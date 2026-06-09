@@ -136,8 +136,20 @@ function ProviderCard({
   const [activating, setActivating] = useState(false);
   const pushToast = useEventStore((s) => s.pushToast);
 
+  // Codex IS a selectable brain like every other provider, but a chat brain
+  // needs an OpenAI API key — the ChatGPT login cannot back one (it powers the
+  // Codex *worker*). `codex_brain_ready` reflects whether any OpenAI key is
+  // configured; the radio is gated on it so activation never silently fails.
+  const isCodex = descriptor.auth_mode === "codex";
+
   async function activate(assumeConfigured = false) {
     if (descriptor.active) return;
+    if (isCodex && !descriptor.codex_brain_ready) {
+      // The card is "connected" via OAuth, but a chat brain needs an OpenAI key.
+      // Guide honestly instead of switching and failing on the first turn.
+      pushToast("warning", t("apikeys_codex.brain_needs_openai_key"));
+      return;
+    }
     if (!assumeConfigured && !descriptor.configured) {
       pushToast(
         "warning",
@@ -183,6 +195,8 @@ function ProviderCard({
   // hat zusaetzlich ein eigenes stopPropagation aus historischen Gruenden
   // (Doppelschutz).
   function handleCardActivate(e: React.MouseEvent<HTMLDivElement>) {
+    // Codex is connection-only — a card click must never trigger a brain switch.
+    if (isCodex) return;
     const target = e.target as HTMLElement | null;
     if (
       target &&
@@ -246,11 +260,22 @@ function ProviderCard({
         </div>
 
         <ActiveControl
-          descriptor={descriptor}
+          descriptor={
+            isCodex
+              ? { ...descriptor, configured: Boolean(descriptor.codex_brain_ready) }
+              : descriptor
+          }
           activating={activating}
           onActivate={activate}
+          disabled={isCodex && !descriptor.codex_brain_ready}
         />
       </div>
+
+      {isCodex && !descriptor.codex_brain_ready && (
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          {t("apikeys_codex.brain_needs_openai_key")}
+        </p>
+      )}
 
       <AuthWidget
         descriptor={descriptor}
@@ -276,16 +301,26 @@ function ActiveControl({
   descriptor,
   activating,
   onActivate,
+  disabled = false,
 }: {
   descriptor: ProviderDescriptor;
   activating: boolean;
   onActivate: () => void;
+  /**
+   * Truly disable the radio (no click, no toast). Used for Codex when it cannot
+   * be a brain yet (no OpenAI key) — a click there would be a dead end, so we
+   * disable instead of firing a warning toast. Other providers stay clickable
+   * (warn-on-click) because their key field is right on the card.
+   */
+  disabled?: boolean;
 }) {
   const labelTitle = descriptor.active
     ? "Dieser Provider ist aktiv"
-    : descriptor.configured
-      ? "Diesen Provider aktivieren"
-      : "Erst API-Key setzen";
+    : disabled
+      ? "Erst einen OpenAI-API-Key setzen"
+      : descriptor.configured
+        ? "Diesen Provider aktivieren"
+        : "Erst API-Key setzen";
 
   return (
     <label
@@ -297,7 +332,8 @@ function ActiveControl({
         e.stopPropagation();
       }}
       className={cn(
-        "inline-flex shrink-0 cursor-pointer select-none items-center gap-1.5 text-xs",
+        "inline-flex shrink-0 select-none items-center gap-1.5 text-xs",
+        disabled ? "cursor-not-allowed" : "cursor-pointer",
         descriptor.active
           ? "font-medium text-primary"
           : descriptor.configured
@@ -311,7 +347,7 @@ function ActiveControl({
         name={`active-${descriptor.tier}`}
         checked={descriptor.active}
         onChange={() => onActivate()}
-        disabled={activating}
+        disabled={activating || disabled}
         className="accent-primary"
       />
       {activating ? "Aktiviere…" : "Als aktiv"}
@@ -337,13 +373,7 @@ function AuthWidget({
   }
 
   if (descriptor.auth_mode === "codex") {
-    return (
-      <CodexAuthWidget
-        descriptor={descriptor}
-        onChanged={onChanged}
-        onSavedActivate={onSavedActivate}
-      />
-    );
+    return <CodexAuthWidget descriptor={descriptor} onChanged={onChanged} />;
   }
 
   // api_key
@@ -366,11 +396,9 @@ function AuthWidget({
 function CodexAuthWidget({
   descriptor,
   onChanged,
-  onSavedActivate,
 }: {
   descriptor: ProviderDescriptor;
   onChanged: () => void;
-  onSavedActivate?: () => void;
 }) {
   const t = useT();
   const [pending, setPending] = useState<"login" | "logout" | "copy" | null>(null);
@@ -395,7 +423,13 @@ function CodexAuthWidget({
     try {
       await startCodexLogin();
       pushToast("info", t("apikeys_codex.login_started"));
-      window.setTimeout(onChanged, 1200);
+      // `codex login` opens the browser OAuth flow; it only completes once the
+      // user clicks through (seconds later). Poll a few times so the card flips
+      // to the compact "connected" state on its own once auth.json appears —
+      // no manual refresh needed.
+      [1500, 4000, 8000, 15000, 25000].forEach((ms) =>
+        window.setTimeout(onChanged, ms),
+      );
     } catch (e) {
       pushToast("error", (e as Error).message);
     } finally {
@@ -416,6 +450,42 @@ function CodexAuthWidget({
     }
   }
 
+  // Connected: collapse to a small "logged in" badge instead of the full card.
+  // No connect button (no second invitation), no API-key field (the key lives on
+  // the separate "OpenAI" provider). Activation as the worker happens in the
+  // Subagent list below.
+  if (status?.connected) {
+    return (
+      <div className="space-y-3">
+        <div
+          data-testid="codex-connected"
+          className="flex flex-wrap items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/[0.06] px-3 py-2 text-xs"
+        >
+          <Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+          <span className="min-w-0 break-words text-foreground">
+            {status.message ?? "Connected via ChatGPT."}
+          </span>
+          {status.version && (
+            <code className="rounded bg-muted px-1.5 py-0.5 font-mono">{status.version}</code>
+          )}
+          {status.mode === "chatgpt" && <span className="chip-yellow">CHATGPT-LOGIN</span>}
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={handleLogout}
+            disabled={pending !== null}
+            className="ml-auto"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            Trennen
+          </Button>
+        </div>
+        <CodexBrainKeyField descriptor={descriptor} onChanged={onChanged} />
+      </div>
+    );
+  }
+
+  // Not connected: status + (install hint) + the single "connect" action.
   return (
     <div className="space-y-3">
       <div className="rounded-md border border-border bg-background/40 p-3 text-xs text-muted-foreground">
@@ -424,14 +494,7 @@ function CodexAuthWidget({
           {status?.version && (
             <code className="rounded bg-muted px-1.5 py-0.5 font-mono">{status.version}</code>
           )}
-          {status?.mode === "chatgpt" && <span className="chip-yellow">CHATGPT-LOGIN</span>}
-          {status?.mode === "api_key" && <span className="chip-yellow">API-KEY</span>}
         </div>
-        {status?.mode === "unknown" && (
-          <p className="mt-2">
-            Status unbekannt, bitte Codex oeffnen oder Login ausfuehren.
-          </p>
-        )}
       </div>
 
       {!status?.installed && (
@@ -457,30 +520,46 @@ function CodexAuthWidget({
             Codex installieren
           </a>
         </Button>
-        {status?.connected && (
-          <Button size="sm" variant="ghost" onClick={handleLogout} disabled={pending !== null}>
-            <LogOut className="h-3.5 w-3.5" />
-            Trennen
-          </Button>
-        )}
       </div>
 
-      <div className="space-y-2">
-        <p className="text-[11px] text-muted-foreground">
-          API-Key-Modus: Nutzung wird ueber OpenAI Platform/API-Billing abgerechnet.
-          Dieser Key ist getrennt vom normalen OpenAI Provider.
-        </p>
-        {descriptor.secret_keys.map((k) => (
-          <ApiKeyForm
-            key={k}
-            secretKey={k}
-            dashboardUrl={descriptor.dashboard_url}
-            configured={Boolean(descriptor.secrets_set[k])}
-            onChanged={onChanged}
-            onSavedActivate={onSavedActivate}
-          />
-        ))}
-      </div>
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        {t("apikeys_codex.runs_as_subagent_hint")}
+      </p>
+
+      <CodexBrainKeyField descriptor={descriptor} onChanged={onChanged} />
+    </div>
+  );
+}
+
+/**
+ * Optional OpenAI API-key field on the Codex card — the ONLY way to use Codex as
+ * a brain (a chat brain can't run on the ChatGPT login, which powers the worker).
+ * Saving a key flips `codex_brain_ready` true on the next refetch, which unlocks
+ * the brain "activate" radio above. Kept compact + clearly scoped so it doesn't
+ * read as "the connection" (that is the ChatGPT login above).
+ */
+function CodexBrainKeyField({
+  descriptor,
+  onChanged,
+}: {
+  descriptor: ProviderDescriptor;
+  onChanged: () => void;
+}) {
+  const t = useT();
+  return (
+    <div
+      data-testid="codex-brain-key"
+      className="space-y-1.5 rounded-md border border-border/60 bg-background/30 p-3"
+    >
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        {t("apikeys_codex.brain_key_hint")}
+      </p>
+      <ApiKeyForm
+        secretKey="codex_openai_api_key"
+        dashboardUrl={descriptor.dashboard_url}
+        configured={Boolean(descriptor.secrets_set["codex_openai_api_key"])}
+        onChanged={onChanged}
+      />
     </div>
   );
 }

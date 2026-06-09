@@ -32,8 +32,9 @@ def test_wake_engines_are_the_four_canonical_engines() -> None:
     assert wc.WAKE_ENGINES == ("auto", "openwakeword", "stt_match", "custom_onnx")
 
 
-def test_default_wake_phrase_is_hey_jarvis() -> None:
-    assert wc.DEFAULT_WAKE_PHRASE.lower() == "hey jarvis"
+def test_default_wake_phrase_is_empty() -> None:
+    # Shipped default is now blank (neutral); "Hey Jarvis" is still typeable.
+    assert wc.DEFAULT_WAKE_PHRASE == ""
 
 
 # --------------------------------------------------------------------------
@@ -163,6 +164,19 @@ def _cfg(**kw: object) -> SimpleNamespace:
     return SimpleNamespace(**base)
 
 
+def _cfg_blank(**kw: object) -> SimpleNamespace:
+    """Config with empty phrase — the new shipped default pre-onboarding state."""
+    base = dict(
+        phrase="",
+        engine="auto",
+        custom_model_path="",
+        sensitivity=0.5,
+        fuzzy_match_ratio=0.8,
+    )
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
 def test_default_phrase_resolves_to_bundled_hey_jarvis_oww() -> None:
     plan = resolve_wake_plan(_cfg(), local_whisper_available=False)
     assert plan.engine == "openwakeword"
@@ -199,11 +213,13 @@ def test_arbitrary_phrase_with_local_whisper_resolves_to_stt_match() -> None:
     assert plan.matcher.search("hey computer") is not None
 
 
-def test_arbitrary_phrase_without_local_whisper_degrades_to_jarvis() -> None:
+def test_arbitrary_phrase_without_local_whisper_degrades_to_rhasspy() -> None:
+    # Path D now falls back to the bundled hey_rhasspy model (neutral default).
     plan = resolve_wake_plan(_cfg(phrase="Computer"), local_whisper_available=False)
     assert plan.engine == "openwakeword"
-    assert plan.oww_keyword == "hey_jarvis"
+    assert plan.oww_keyword == "hey_rhasspy"
     assert plan.degraded is True
+    assert plan.verify_prefix is False   # rhasspy model IS the discriminator
     assert "computer" in plan.message.lower()
     # The degraded message must point the user at the real options.
     assert "whisper" in plan.message.lower() or "onnx" in plan.message.lower()
@@ -236,7 +252,36 @@ def test_custom_onnx_missing_file_degrades_to_stt_match_when_whisper_present(
     assert plan.degraded is True
 
 
-def test_blank_phrase_falls_back_to_default() -> None:
+def test_blank_phrase_degrades_to_rhasspy() -> None:
+    # Blank phrase (shipped default / pre-onboarding) now degrades to hey_rhasspy.
     plan = resolve_wake_plan(_cfg(phrase="  "), local_whisper_available=False)
-    assert plan.oww_keyword == "hey_jarvis"
+    assert plan.oww_keyword == "hey_rhasspy"
     assert plan.engine == "openwakeword"
+    assert plan.degraded is True
+    assert plan.verify_prefix is False
+
+
+def test_blank_phrase_without_whisper_degrades_to_rhasspy() -> None:
+    plan = resolve_wake_plan(_cfg_blank(), local_whisper_available=False)
+    assert plan.oww_keyword == "hey_rhasspy"
+    assert plan.degraded is True
+    assert plan.verify_prefix is False
+
+
+def test_jarvis_stays_typeable_resolves_to_hey_jarvis_model() -> None:
+    # A user who explicitly types "Hey Jarvis" must still get the hey_jarvis
+    # OWW model (verify_prefix=True, not degraded).
+    plan = resolve_wake_plan(_cfg(phrase="Hey Jarvis"), local_whisper_available=False)
+    assert plan.engine == "openwakeword"
+    assert plan.oww_keyword == "hey_jarvis"
+    assert plan.degraded is False
+    assert plan.verify_prefix is True
+
+
+def test_just_jarvis_stays_typeable_resolves_to_hey_jarvis_model() -> None:
+    # Bare "Jarvis" (no "Hey" prefix) also maps to the hey_jarvis model.
+    plan = resolve_wake_plan(_cfg(phrase="Jarvis"), local_whisper_available=False)
+    assert plan.engine == "openwakeword"
+    assert plan.oww_keyword == "hey_jarvis"
+    assert plan.degraded is False
+    assert plan.verify_prefix is True

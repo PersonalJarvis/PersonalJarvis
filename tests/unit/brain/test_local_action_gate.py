@@ -8,8 +8,105 @@ from jarvis.brain.local_action_gate import (
     LocalToolCall,
     _CapabilityRegistryLike,
     _unsupported_response,
+    is_open_app_intent,
     match_local_action,
 )
+
+
+# ---------------------------------------------------------------------------
+# Open-app intent (live bug 2026-06-08, data/jarvis_desktop.log 17:37): the
+# conversational "Ich möchte, dass du mir Hermes Agent öffnest, also …"
+# force-spawned a heavy sub-agent worker instead of routing to computer-use.
+# Opening an app is ALWAYS a computer-use task — a sandboxed worker has no
+# desktop. Recognition must be conjugation- and phrasing-robust.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Ich möchte, dass du mir Hermes Agent öffnest, also",
+        "öffne für mich Hermes Agent",
+        "Hey Jarvis, öffne mir den Steam Client",
+        "mach mir mal Spotify auf",
+        "kannst du mir Discord aufmachen",
+        "starte mir bitte den Taschenrechner",
+        "öffnest du mir kurz Notion",
+    ],
+)
+def test_is_open_app_intent_true(utterance: str) -> None:
+    """Any conjugation/phrasing of an open/launch request is an open-app intent."""
+    assert is_open_app_intent(utterance) is True, (
+        f"open-app request {utterance!r} not recognised as open-app intent"
+    )
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "wie öffne ich Chrome?",
+        "Bau eine Landingpage",
+        "öffne einen PR im jarvis-repo",
+        "lies die Datei jarvis.toml",
+        "implementier eine Email-Validierung",
+        "wie spät ist es",
+        "analysiere gründlich die Logs",
+    ],
+)
+def test_is_open_app_intent_false(utterance: str) -> None:
+    """Instructional questions, external-system work and heavy build/code/file
+    tasks are NOT open-app intents (a worker, not computer-use, owns them)."""
+    assert is_open_app_intent(utterance) is False, (
+        f"{utterance!r} wrongly classified as an open-app intent"
+    )
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Ich möchte, dass du mir Hermes Agent öffnest, also",
+        "öffne für mich Hermes Agent",
+        "kannst du mir Discord aufmachen",
+    ],
+)
+def test_open_app_intent_non_alias_falls_through_to_brain(utterance: str) -> None:
+    """A non-alias open command is NOT handled deterministically: it must fall
+    through (``None``) so the brain's proven ``computer-use`` tool path handles
+    it. Live 2026-06-08: the deterministic ``dispatch_to_harness(screenshot)``
+    path stalled (no [cu] steps, 120s TTS-ceiling abort), so open-app intents are
+    kept off it — the force-spawn guard (test_open_app_intent_does_not_force_spawn)
+    still keeps them off the sub-agent path."""
+    plan = match_local_action(utterance, _registry=None)
+    assert plan is None, (
+        f"{utterance!r} produced plan {plan!r}; expected None (fall through to "
+        f"the brain's computer-use tool)"
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "app"),
+    [
+        # er-prefixed verb ("eröffne/eröffnet") + trailing politeness ("für mich")
+        ("Eröffnet den Explorer für mich", "explorer"),
+        ("Eröffne Chrome für mich", "chrome"),
+        # trailing politeness after the app name (the leading-filler strip alone
+        # left "explorer für mich" unresolved → fell to the computer-use loop)
+        ("Öffne den Explorer für mich", "explorer"),
+        ("Starte Notepad für mich bitte", "notepad"),
+    ],
+)
+def test_natural_open_phrasings_take_clean_direct_path(text: str, app: str) -> None:
+    """Natural open phrasings (er-prefixed verb, trailing politeness) must take
+    the clean instant DIRECT open path for a known app — NOT the computer-use
+    vision loop. Live 2026-06-08: "Eröffnet den Explorer für mich" fell to the
+    vision loop, which wandered (clicked the taskbar, re-opened) and produced a
+    confusing end-of-task readback."""
+    plan = match_local_action(text, _registry=None)
+    assert plan is not None, f"{text!r} produced no plan (fell through to brain)"
+    assert plan.mode is LocalActionMode.DIRECT, (
+        f"{text!r} produced {plan.mode}, expected DIRECT"
+    )
+    assert plan.tool_calls[0].args == {"app_name": app}
 
 
 # ---------------------------------------------------------------------------

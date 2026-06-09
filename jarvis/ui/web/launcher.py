@@ -342,11 +342,22 @@ async def _run_headless(cfg) -> int:
         )
         _refresh_scheduler.start()
         server.app.state.refresh_scheduler = _refresh_scheduler
+        import logging as _logging
+
+        _logging.getLogger(__name__).info(
+            "marketplace refresh scheduler started (%d connected plugins) — "
+            "tokens kept warm so connections stay alive",
+            len(connected_plugin_ids(_token_store)),
+        )
     except Exception:
         import logging as _logging
 
-        _logging.getLogger(__name__).debug(
-            "marketplace refresh scheduler not started", exc_info=True
+        # A failed scheduler = tokens silently expire = the exact failure mode we
+        # are fixing. Surface it at WARNING, never swallow it at DEBUG.
+        _logging.getLogger(__name__).warning(
+            "marketplace refresh scheduler NOT started — connected plugins may "
+            "expire; check the error",
+            exc_info=True,
         )
 
     stop_event = asyncio.Event()
@@ -449,6 +460,25 @@ def main(argv: list[str] | None = None) -> int:
         cfg = cfg.model_copy(
             update={"ui": cfg.ui.model_copy(update={"admin_api_port": args.port})}
         )
+
+    # Per-user Jarvis Control API key — generate-once BEFORE the app serves so
+    # it exists by the time a local agent (Codex CLI / Claude Code) hits
+    # /api/control/*. Idempotent; never blocks boot. The clear value is only
+    # ever revealed via the loopback Settings panel / the key file — we log the
+    # masked form here so the key never lands in a logfile.
+    try:
+        from jarvis.core import control_key
+
+        _ck = control_key.ensure_control_key()
+        import logging as _logging
+
+        _logging.getLogger(__name__).info(
+            "Jarvis Control API key ready (%s)", control_key.mask_control_key(_ck)
+        )
+    except Exception as exc:  # noqa: BLE001 — never block boot on key bootstrap
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning("Control API key bootstrap skipped: %s", exc)
 
     # Self-healing login autostart (the 7th cross-platform port). Runs once at
     # boot, off the voice critical path: if [autostart].enabled is True and the

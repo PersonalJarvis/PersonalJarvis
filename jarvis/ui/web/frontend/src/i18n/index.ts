@@ -28,7 +28,12 @@ export type UiLanguage = "en" | "de" | "es";
 export type ReplyLanguage = "auto" | "en" | "de" | "es";
 
 const REPLY_LANGUAGE_ENDPOINT = "/api/settings/reply-language";
+const UI_LANGUAGE_ENDPOINT = "/api/settings/ui-language";
 const REPLY_VALUES: readonly ReplyLanguage[] = ["auto", "en", "de", "es"];
+
+function isUiLanguage(v: unknown): v is UiLanguage {
+  return v === "en" || v === "de" || v === "es";
+}
 
 function isReplyLanguage(v: unknown): v is ReplyLanguage {
   return typeof v === "string" && (REPLY_VALUES as readonly string[]).includes(v);
@@ -101,23 +106,65 @@ export async function hydrateReplyLanguage(): Promise<void> {
   }
 }
 
+/**
+ * Push the interface (display) language to the backend. The UI language is now
+ * backend-backed (not just localStorage) so a voice command / the Control API
+ * can change it and every open client switches live. Fire-and-forget.
+ */
+function pushUi(lang: UiLanguage): void {
+  try {
+    void fetch(UI_LANGUAGE_ENDPOINT, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ language: lang }),
+    }).catch(() => {
+      /* offline / headless — localStorage re-syncs on next mount */
+    });
+  } catch {
+    /* fetch unavailable (SSR / tests without stub) */
+  }
+}
+
+/**
+ * Pull the persisted interface language from the backend and reflect it (so a
+ * voice/Control-API change made while the app was closed, or on another client,
+ * shows up). Called on mount and when a ConfigReloaded for ui.language arrives.
+ */
+export async function hydrateUiLanguage(): Promise<void> {
+  try {
+    const res = await fetch(UI_LANGUAGE_ENDPOINT);
+    if (!res.ok) return;
+    const body = (await res.json()) as { language?: unknown };
+    if (isUiLanguage(body.language)) {
+      useI18nStore.getState().setUi(body.language, { push: false });
+    }
+  } catch {
+    /* keep the local value */
+  }
+}
+
 interface I18nState {
   ui: UiLanguage;
   reply: ReplyLanguage;
-  setUi: (lang: UiLanguage) => void;
+  setUi: (lang: UiLanguage, opts?: { push?: boolean }) => void;
   setReply: (lang: ReplyLanguage, opts?: { push?: boolean }) => void;
 }
 
 export const useI18nStore = create<I18nState>((set) => ({
   ui: readUi(),
   reply: readReply(),
-  setUi: (lang) => {
+  setUi: (lang, opts) => {
     try {
       localStorage.setItem(UI_KEY, lang);
     } catch {
       /* ignore */
     }
     set({ ui: lang });
+    // Default: propagate to the backend (the new source of truth). The WS
+    // handler and hydrate pass push:false to avoid a GET/PUT echo loop.
+    if (opts?.push !== false) {
+      pushUi(lang);
+    }
   },
   setReply: (lang, opts) => {
     try {
