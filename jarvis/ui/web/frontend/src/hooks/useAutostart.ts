@@ -11,6 +11,10 @@ export interface AutostartConfig {
   installed: boolean;
   matches_spec: boolean;
   platform: string;
+  /** Active OS mechanism: "scheduled_task" | "shortcut" | "native" | "none".
+   * On Windows, "shortcut" means the throttled .lnk fallback is in place and the
+   * UI can offer the one-time "enable instant start" upgrade to a scheduled task. */
+  mechanism: string;
   resolved_command: string;
   entry_path: string | null;
   detail: string;

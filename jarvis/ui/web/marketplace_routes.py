@@ -283,13 +283,21 @@ async def connect_start(
             )
         )
     elif isinstance(spec.auth, OAuthPkceLoopbackAuth):
+        # Resolve the effective client from secrets so a reconnect uses the
+        # operator's real Google client, not the catalog placeholder (the same
+        # resolution the refresh scheduler uses — connect/refresh stay in sync).
+        from jarvis.marketplace.connect_helpers import resolve_pkce_client
+
+        _pkce_client_id, _pkce_client_secret = resolve_pkce_client(
+            plugin_id, spec.auth.client_id, spec.auth.client_secret
+        )
         handler = PkceLoopbackHandler(
             PkceLoopbackConfig(
                 plugin_id=plugin_id,
                 authorization_url=spec.auth.authorization_url,
                 token_url=spec.auth.token_url,
-                client_id=spec.auth.client_id,
-                client_secret=spec.auth.client_secret,
+                client_id=_pkce_client_id,
+                client_secret=_pkce_client_secret,
                 callback_port=spec.auth.callback_port or 0,
                 scopes=list(spec.auth.scopes),
                 scope_separator=spec.auth.scope_separator,

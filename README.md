@@ -46,10 +46,10 @@ Apple Silicon (arm64) recommended. Intel Macs run, but get no Neural-Engine bene
 | Use case | Minimum that runs well | Comfortable / recommended |
 |---|---|---|
 | **Cloud voice on a laptop** (Profile B) | MacBook Air **M1 / M2, 8 GB** | MacBook Air **M3 / M4, 16 GB** |
-| **Always-on Jarvis host, 24/7** (Profile B/C) | Mac mini **M4, 16 GB** (≈ $599–799) | Mac mini **M4, 24–32 GB** |
+| **Always-on assistant host, 24/7** (Profile B/C) | Mac mini **M4, 16 GB** (≈ $599–799) | Mac mini **M4, 24–32 GB** |
 | **Local Whisper + Vision** (Profile C) | M-series, **16 GB** unified (covers `whisper-medium`) | M-series, **32 GB** (covers `large-v3` + Vision) |
 
-The **Mac mini M4 (16 GB unified, ≈ $799)** is the sweet spot for a dedicated household Jarvis: silent, ~7 W idle, and unified memory means CPU-side Whisper runs fine without a discrete GPU. On macOS, pywebview uses the native WKWebView, so the UI is *lighter* than the Chromium/WebView2 figures measured above.
+The **Mac mini M4 (16 GB unified, ≈ $799)** is the sweet spot for a dedicated always-on assistant: silent, ~7 W idle, and unified memory means CPU-side Whisper runs fine without a discrete GPU. On macOS, pywebview uses the native WKWebView, so the UI is *lighter* than the Chromium/WebView2 figures measured above.
 
 ### Recommendation — self-built (Linux / Windows)
 
@@ -100,7 +100,7 @@ Run [`scripts/crossplatform/signoff_probe.py`](scripts/crossplatform/signoff_pro
 on a real macOS box and a real Linux desktop to convert each row to a dated
 `live-verified` verdict.
 
-**One-line buying advice.** *Just want to try it?* Any laptop you already own (8 GB+) or a €4 Hetzner CX22. *Want a dedicated always-on Jarvis?* Mac mini M4 (16 GB). *Want everything local, no cloud STT?* 16–32 GB plus an NVIDIA RTX 3060 / 4060 (or better), or an Apple Silicon Mac with 16–32 GB.
+**One-line buying advice.** *Just want to try it?* Any laptop you already own (8 GB+) or a €4 Hetzner CX22. *Want a dedicated always-on assistant?* Mac mini M4 (16 GB). *Want everything local, no cloud STT?* 16–32 GB plus an NVIDIA RTX 3060 / 4060 (or better), or an Apple Silicon Mac with 16–32 GB.
 
 ---
 

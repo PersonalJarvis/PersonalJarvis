@@ -27,11 +27,37 @@ registering, you paste the resulting **Client ID** into your local
 6. **Credentials → Create credentials → OAuth client ID** → Application type
    **Desktop app** → Create. Copy the **Client ID**
    (looks like `1234567890-abc….apps.googleusercontent.com`).
-   The Desktop client's "secret" is not actually secret (PKCE protects the flow);
-   Jarvis uses PKCE and does not need it.
-7. In `data/plugin_catalog.json`, replace **both** occurrences of
-   `REPLACE_WITH_JARVIS_GOOGLE_CLIENT_ID` (the `gmail` and `google_drive`
-   entries) with your Client ID. Restart Jarvis.
+   The Desktop client's "secret" is usually not needed (PKCE protects the flow),
+   but if Google rejects the token exchange/refresh with `invalid_client` you can
+   also supply it (see below) — it is optional.
+7. Give the Client ID to Jarvis. **Preferred: store it as a secret** so it
+   survives a catalog re-sync (a plain edit of `data/plugin_catalog.json` is
+   overwritten the next time the seed catalog is synced — this is how a working
+   client can silently get reset back to the placeholder):
+
+   ```bash
+   # env var (simplest; works headless / VPS)
+   set GOOGLE_OAUTH_CLIENT_ID=1234567890-abc….apps.googleusercontent.com
+   # optional, only if Google demands it:
+   set GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-…
+   ```
+
+   Or store it permanently in the credential manager (service
+   `personal-jarvis`), keys `google_oauth_client_id` /
+   `google_oauth_client_secret`. One client covers **both** Gmail and Drive.
+   Then restart Jarvis and **reconnect Gmail** in the Plugins view.
+
+   (Editing `data/plugin_catalog.json` directly still works as a fallback, but
+   the secret takes precedence and is the durable option.)
+
+### What happens when the connection dies
+
+Jarvis now self-heals: when a Gmail call hits an expired token it refreshes once
+and retries automatically. If the refresh can't succeed (revoked token, or the
+client_id is still the placeholder), Jarvis flags the connection for re-auth — the
+Plugins view shows **Reconnect** and the voice/chat reply says the Gmail
+authorization expired and needs reconnecting, instead of a cryptic "expired" or
+"timeout". Set a real `google_oauth_client_id` first (above), then reconnect.
 
 ### Keeping Gmail connected (the 7-day rule)
 
@@ -76,7 +102,17 @@ default `bearer` scheme) and point `mcp_server` at a community Asana stdio MCP
 
 ## Applying Client IDs
 
-`data/plugin_catalog.json` is your local, gitignored runtime override. After any
-edit there, restart Jarvis so the catalog reloads. The tracked
+Two ways, in precedence order:
+
+1. **Secret (recommended, durable).** Google: `google_oauth_client_id`
+   (+ optional `google_oauth_client_secret`). These override the catalog at
+   connect-time *and* refresh-time and survive a catalog re-sync. Set them as env
+   vars or in the credential manager (service `personal-jarvis`).
+2. **`data/plugin_catalog.json` (fallback).** Your local, gitignored runtime
+   override; edit the `gmail`/`google_drive`/`asana` entries and restart. Note
+   this file is re-synced from the seed, so a real Client ID written here can be
+   reset back to the placeholder — prefer the secret for Google.
+
+After any change, restart Jarvis and reconnect the plugin. The tracked
 `jarvis/marketplace/seed_catalog.json` keeps the placeholders (never commit your
 real Client IDs).

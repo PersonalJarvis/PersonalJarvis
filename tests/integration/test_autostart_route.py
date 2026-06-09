@@ -55,12 +55,12 @@ class _FakeManager:
     def status(self, spec):  # noqa: ARG002
         return self._st()
 
-    def install(self, spec):  # noqa: ARG002
+    def install(self, spec, *, interactive: bool = False):  # noqa: ARG002
         self.calls.append("install")
         self._installed = self._supported
         return self._st()
 
-    def uninstall(self):
+    def uninstall(self, *, interactive: bool = False):  # noqa: ARG002
         self.calls.append("uninstall")
         self._installed = False
         return self._st()

@@ -48,6 +48,21 @@ PROFILES_DIR = PROJECT_ROOT / "profiles"
 DATA_DIR = PROJECT_ROOT / "data"
 ASSETS_DIR = PROJECT_ROOT / "assets"
 
+
+def resolve_config_path() -> Path:
+    """Return the active ``jarvis.toml`` path, honouring ``JARVIS_CONFIG``.
+
+    Cloud-first: a headless ``python:3.11-slim`` container (or any VPS where
+    ``PROJECT_ROOT`` is read-only / does not exist) sets ``JARVIS_CONFIG`` to a
+    writable path. A blank / whitespace value is ignored so an empty export does
+    not shadow the bundled default. Both the reader (``load_config``) and the
+    Control-API write path (``AtomicConfigWriter``) resolve through here.
+    """
+    override = os.environ.get("JARVIS_CONFIG")
+    if override and override.strip():
+        return Path(override.strip())
+    return DEFAULT_CONFIG_FILE
+
 KEYRING_SERVICE = "personal-jarvis"
 
 # Provider-secrets are intentionally kept out of TOML. Keep the accepted
@@ -446,8 +461,16 @@ class RouterVisionConfig(BaseModel):
     Wave-1 B4 — additive to `[brain.router]` / `[brain.router.policy]`.
     Controls the continuous screenshot feed that the router receives as context.
     All fields have defaults: existing configs without this section load cleanly.
+
+    2026-06-08 (Wave-2 latency fix): ``enabled`` defaults to ``False``. The
+    permanent per-turn screenshot injection roughly doubled think-time
+    (tokens_in 25k -> 50-143k) on EVERY turn and is meaningless on a headless
+    VPS (cloud-first). Computer-Use keeps its own on-demand screen capture — the
+    two are decoupled in ``jarvis.brain.factory`` so this default does NOT
+    disable "klick auf X". Turn it on only on a desktop where you want Jarvis to
+    spontaneously see the screen on ordinary turns.
     """
-    enabled: bool = True
+    enabled: bool = False
     refresh_interval_s: float = 2.0
     max_staleness_s: float = 2.0
     capture_mode: str = "screenshot"      # "screenshot" | "composite"
@@ -819,6 +842,12 @@ class UIConfig(BaseModel):
     tray_enabled: bool = True
     admin_api_port: int = 47821
     startup_chime: bool = True
+    # Interface (display) language of the whole app — every label, button and
+    # message. The backend home for what used to be a frontend-only localStorage
+    # value, so a voice command or the Control API can change it and the open UI
+    # switches live (a ConfigReloaded / UiLanguageChanged event reaches the
+    # frontend over /ws). Distinct from brain.reply_language (what Jarvis SPEAKS).
+    language: Literal["en", "de", "es"] = "en"
     # Dev mode: the frontend is not mounted from frontend/dist/ but loaded from
     # a running Vite dev server (HMR). Activated via ENV JARVIS_DEV=1 or CLI
     # --dev; the fields here simply hold the parameters.
@@ -860,11 +889,13 @@ class DuckingConfig(BaseModel):
 class AutostartConfig(BaseModel):
     """Cross-platform login autostart (the 7th cross-platform port).
 
-    ``enabled`` defaults to False (cloud-first / least-surprise): a fresh install
-    must not register login autostart without the user opting in — via the setup
-    wizard, the Settings toggle, or an explicit ``[autostart] enabled = true`` in
-    jarvis.toml. On a headless host (no display) the autostart manager is a
-    graceful no-op anyway.
+    ``enabled`` defaults to True (approved design spec §5 — "default ON, user
+    mandate"). On the first boot after this feature ships, the self-healing
+    reconcile finds no entry and installs it, so Jarvis launches at login and
+    "Hey Jarvis" works right after a reboot. The Settings toggle is the intended
+    off-switch. On a headless host (no display) the autostart manager is a
+    graceful no-op, so default-on stays safe for the cloud-first / VPS base
+    install — nothing is registered where there is no GUI login session.
 
     ``extra="allow"`` so a future ``[autostart.*]`` sub-key — or a self-mod /
     drift-guard write of an as-yet-unknown field — never trips pre-validate
@@ -872,10 +903,13 @@ class AutostartConfig(BaseModel):
     """
 
     model_config = ConfigDict(extra="allow")
-    enabled: bool = False
-    # Windows shortcut WindowStyle hint (7 = minimized/tray-friendly); other OSes
-    # ignore it.
-    start_minimized: bool = True
+    enabled: bool = True
+    # Window-visibility hint for the autostart launch. Default False = open the
+    # desktop window visibly at login, so the user sees Jarvis came up (user
+    # choice 2026-06-09). On Windows it maps to the fallback shortcut's WindowStyle
+    # (7 = minimized/tray, 1 = normal); the logon scheduled task launches visibly
+    # regardless. macOS/Linux ignore it.
+    start_minimized: bool = False
 
 
 class TelemetryConfig(BaseModel):
@@ -1359,6 +1393,22 @@ class VoiceConfig(BaseModel):
     # Maximum number of continuations to chain before a forced flush. Bounds
     # the wait to a finite duration even for indefinite trailing fragments.
     completion_max_chain: int = 3
+    # When the user trails off on an incomplete/dangling fragment and never
+    # continues, ask a short clarifying question ("Zwischenfrage") instead of
+    # leaving them in silence. User-mandated 2026-06-08 ("Jarvis hört für immer
+    # zu") — supersedes the 2026-05-26 silent-discard policy. Restores AD-OE6
+    # (zero silent drops) for the incomplete-utterance hold: after a pause the
+    # user always gets either an answer or a question, never silence. The
+    # patience window is preserved (see ``clarify_after_ms``), so a genuine
+    # thinking-pause-then-continue is never interrupted. Set false to restore
+    # the old silent-discard behaviour.
+    clarify_incomplete_enabled: bool = True
+    # Grace window after an incomplete fragment is buffered before the
+    # clarifying question fires. Long enough not to cut off a thinking pause
+    # (the VAD already waited ``vad_silence_ms`` of silence before yielding the
+    # fragment), short enough that the user is never left hanging. A continuation
+    # arriving within this window cancels the question and joins the turn.
+    clarify_after_ms: int = 2500
 
 
 class CompletenessConfig(BaseModel):
@@ -1661,7 +1711,7 @@ def _coerce_env_value(v: str) -> Any:
 
 
 def load_config(
-    config_file: Path = DEFAULT_CONFIG_FILE,
+    config_file: Path | None = None,
     profile: str | None = None,
 ) -> JarvisConfig:
     """Load config from TOML + optional YAML profile + env overrides.
@@ -1670,7 +1720,13 @@ def load_config(
       1. jarvis.toml (defaults)
       2. profiles/<active>.yaml
       3. Environment variables (JARVIS__*)
+
+    ``config_file=None`` resolves through :func:`resolve_config_path` so the
+    ``JARVIS_CONFIG`` override is honoured (cloud-first). An explicit path still
+    wins for callers that target a specific file.
     """
+    if config_file is None:
+        config_file = resolve_config_path()
     if not config_file.exists():
         # No config file → pure defaults (useful for tests)
         data: dict[str, Any] = {}

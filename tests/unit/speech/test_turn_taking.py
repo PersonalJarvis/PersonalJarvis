@@ -445,15 +445,22 @@ class _FailedBrain:
     """Stand-in for BrainManager after a total provider-chain failure."""
 
     _last_turn_all_failed = True
+    _last_turn_suppressed = False
 
     async def __call__(self, _text: str) -> str:  # pragma: no cover - unused here
         return ""
 
 
 class _SuppressBrain:
-    """Stand-in for BrainManager after a legitimate suppress_response turn."""
+    """Stand-in for BrainManager after a legitimate suppress_response turn.
+
+    A fire-and-forget ``spawn_worker`` sets ``_last_turn_suppressed`` so the
+    pipeline knows the empty text is intentional (bus reports back) and stays
+    silent — instead of speaking a clarifying question on top of it.
+    """
 
     _last_turn_all_failed = False
+    _last_turn_suppressed = True
 
     async def __call__(self, _text: str) -> str:  # pragma: no cover - unused here
         return ""
@@ -464,6 +471,7 @@ def _make_streaming_pipeline(
     *,
     stream_chunks: list[str],
     all_failed: bool,
+    suppressed: bool = False,
 ) -> SpeechPipeline:
     """Like ``_make_pipeline`` but with the streaming-TTS path enabled.
 
@@ -512,6 +520,7 @@ def _make_streaming_pipeline(
 
     class _StreamBrain:
         _last_turn_all_failed = all_failed
+        _last_turn_suppressed = suppressed
 
         async def generate_stream(self, _text: str):
             for chunk in stream_chunks:
@@ -573,12 +582,35 @@ async def test_streaming_suppressed_empty_stays_silent() -> None:
         FakeSTT(text="Wie spaet ist es"),
         stream_chunks=[],
         all_failed=False,
+        suppressed=True,  # fire-and-forget spawn → silence is correct
     )
 
     keep_session = await pipe._handle_utterance(b"\x01\x00" * 1024)
 
     assert keep_session is True
     assert pipe._spoken == []
+
+
+@pytest.mark.asyncio
+async def test_streaming_empty_non_suppressed_speaks_clarifying_question() -> None:
+    # The dominant live "Jarvis antwortet nie" case (logs 2026-06-08): a
+    # conversational turn made the router brain emit a function_call / empty
+    # content — NOT a spawn, NOT a total failure — and the turn ended mute.
+    # The pipeline must now speak a short clarifying question instead of
+    # dropping the user into silence (AD-OE6).
+    pipe = _make_streaming_pipeline(
+        FakeSTT(text="Das sind fuer mich die naechsten Plaene"),
+        stream_chunks=[],
+        all_failed=False,
+        suppressed=False,
+    )
+
+    keep_session = await pipe._handle_utterance(b"\x01\x00" * 1024)
+
+    assert keep_session is True
+    assert pipe._spoken, "conversational empty turn stayed silent (the bug)"
+    assert pipe._spoken[0][0].strip().endswith("?")
+    assert pipe._turn_state == TurnTakingState.LISTENING
 
 
 # ---------------------------------------------------------------------------

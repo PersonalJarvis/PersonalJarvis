@@ -30,7 +30,8 @@ class LaunchSpec:
     program: str               # absolute interpreter path (pythonw.exe / python3)
     args: tuple[str, ...]       # ("-m", "jarvis.ui.web.launcher")
     working_dir: str            # PROJECT_ROOT
-    minimized: bool = True      # Windows WindowStyle hint; other OSes ignore it
+    minimized: bool = False     # fallback-shortcut WindowStyle hint (False = open
+    #                             the window visibly); other OSes ignore it
 
     def command_line(self) -> str:
         """Human-readable command for the Settings UI / diagnostics."""
@@ -73,12 +74,23 @@ class AutostartManager(Protocol):
         """Report the current entry state vs. the desired ``spec``."""
         ...
 
-    def install(self, spec: LaunchSpec) -> AutostartStatus:
-        """Create/refresh the autostart entry so it matches ``spec``."""
+    def install(self, spec: LaunchSpec, *, interactive: bool = False) -> AutostartStatus:
+        """Create/refresh the autostart entry so it matches ``spec``.
+
+        ``interactive`` marks a user-initiated call (Settings toggle / wizard)
+        where a one-time permission prompt is acceptable — Windows uses it to
+        register a logon scheduled task via a single UAC prompt; the silent boot
+        reconcile passes ``interactive=False`` and never prompts. macOS/Linux
+        ignore it (their per-user autostart never needs elevation).
+        """
         ...
 
-    def uninstall(self) -> AutostartStatus:
-        """Remove the autostart entry (and legacy entries, where applicable)."""
+    def uninstall(self, *, interactive: bool = False) -> AutostartStatus:
+        """Remove the autostart entry (and legacy entries, where applicable).
+
+        ``interactive`` (see :meth:`install`) lets Windows remove the scheduled
+        task via a one-time UAC prompt; macOS/Linux ignore it.
+        """
         ...
 
 

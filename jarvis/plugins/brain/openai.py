@@ -7,7 +7,7 @@ from typing import Any
 from jarvis.core import config as cfg
 from jarvis.core.protocols import BrainDelta, BrainRequest
 
-from ._openai_base import stream_complete
+from ._openai_base import CLIENT_TIMEOUT, stream_complete
 
 DEFAULT_MODEL = "gpt-5.5"
 
@@ -28,7 +28,7 @@ class OpenAIBrain:
             if not api_key:
                 raise RuntimeError("Kein OpenAI-API-Key gefunden (openai_api_key / OPENAI_API_KEY).")
             from openai import AsyncOpenAI
-            self._client = AsyncOpenAI(api_key=api_key)
+            self._client = AsyncOpenAI(api_key=api_key, timeout=CLIENT_TIMEOUT)
         return self._client
 
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:

@@ -143,6 +143,130 @@ async def test_transient_refresh_failure_keeps_entry() -> None:
     assert outcomes == {"gmail": FAILED}
     # Transient failure must NOT delete the token — only `revoked` does.
     assert store.load("gmail") is not None
+    # ...and a transient (server-side) error must NOT falsely flag reauth.
+    assert store.load("gmail").needs_reauth is False
+
+
+@pytest.mark.asyncio
+async def test_google_invalid_client_marks_needs_reauth() -> None:
+    # Google reports OAuth errors via HTTP status + JSON body (not Slack's
+    # `ok:false` shape), so the PkceLoopbackHandler raises
+    # RuntimeError("refresh HTTP 401: {...invalid_client...}"). The scheduler
+    # must classify this as an un-healable auth failure and flag needs_reauth —
+    # otherwise the token rots forever as a "transient" FAILED (the live
+    # 2026-06-07 Gmail bug: token expired 6 days, needs_reauth stayed False).
+    store = _store()
+    store.save("gmail", _tokens(60))
+    handler = _FakeHandler(
+        "gmail",
+        raise_exc=RuntimeError(
+            'refresh HTTP 401: {"error": "invalid_client", '
+            '"error_description": "The OAuth client was not found."}'
+        ),
+    )
+
+    outcomes = await refresh_due_tokens(["gmail"], store, lambda pid: handler)
+
+    assert outcomes == {"gmail": REVOKED}
+    kept = store.load("gmail")
+    assert kept is not None, "must not delete — UI needs a Reconnect affordance"
+    assert kept.needs_reauth is True
+
+
+@pytest.mark.asyncio
+async def test_google_invalid_grant_marks_needs_reauth() -> None:
+    # Google returns invalid_grant as HTTP 400 + JSON body when the refresh
+    # token is revoked/expired (e.g. the 7-day Testing-mode window). Must also
+    # flag needs_reauth, not FAILED.
+    store = _store()
+    store.save("gmail", _tokens(60))
+    handler = _FakeHandler(
+        "gmail",
+        raise_exc=RuntimeError('refresh HTTP 400: {"error": "invalid_grant"}'),
+    )
+
+    outcomes = await refresh_due_tokens(["gmail"], store, lambda pid: handler)
+
+    assert outcomes == {"gmail": REVOKED}
+    assert store.load("gmail").needs_reauth is True
+
+
+@pytest.mark.asyncio
+async def test_legacy_no_client_id_marks_needs_reauth() -> None:
+    # A DCR token minted before client_id was persisted cannot be refreshed; the
+    # handler fails soft with "reconnect required". The scheduler must flag
+    # needs_reauth (not silent FAILED) so the UI offers Reconnect (live
+    # 2026-06-08 audit: linear sat EXPIRED -151h with needs_reauth=False).
+    store = _store()
+    store.save("linear", _tokens(60))
+    handler = _FakeHandler(
+        "linear",
+        raise_exc=RuntimeError(
+            "refresh: no stored client_id — reconnect required to heal this connection"
+        ),
+    )
+
+    outcomes = await refresh_due_tokens(["linear"], store, lambda pid: handler)
+
+    assert outcomes == {"linear": REVOKED}
+    assert store.load("linear").needs_reauth is True
+
+
+@pytest.mark.asyncio
+async def test_keep_alive_refreshes_no_expiry_token() -> None:
+    # A token with a refresh token but no recorded expiry is never "near expiry",
+    # so the default path skips it forever — its refresh token can then rot from
+    # provider-side inactivity. keep_alive refreshes it proactively to keep the
+    # connection alive forever (the core "log in once, stay forever" guarantee).
+    store = _store()
+    store.save("slack", Tokens(access="a0", refresh="r0", expires_at=None))
+    handler = _FakeHandler("slack", new_tokens=Tokens(access="a1", refresh="r1"))
+
+    outcomes = await refresh_due_tokens(
+        ["slack"], store, lambda pid: handler, keep_alive_seconds=3600
+    )
+
+    assert outcomes == {"slack": REFRESHED}
+    assert handler.calls == 1
+    healed = store.load("slack")
+    assert healed.access == "a1"
+    assert "last_refreshed" in healed.extra  # stamped so the next cycle can skip
+
+
+@pytest.mark.asyncio
+async def test_keep_alive_skips_recently_refreshed() -> None:
+    store = _store()
+    store.save(
+        "notion",
+        Tokens(
+            access="a0",
+            refresh="r0",
+            expires_at=datetime.now(UTC) + timedelta(hours=10),
+            extra={"last_refreshed": datetime.now(UTC).isoformat()},
+        ),
+    )
+    handler = _FakeHandler("notion", new_tokens=Tokens(access="nope"))
+
+    outcomes = await refresh_due_tokens(
+        ["notion"], store, lambda pid: handler, keep_alive_seconds=3600
+    )
+
+    assert outcomes == {"notion": SKIPPED}
+    assert handler.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_keep_alive_disabled_by_default_keeps_skip() -> None:
+    # Backwards-compat: without keep_alive_seconds a not-near-expiry token is
+    # still SKIPPED (the existing refresh_due_tokens contract is unchanged).
+    store = _store()
+    store.save("linear", Tokens(access="a0", refresh="r0", expires_at=None))
+    handler = _FakeHandler("linear", new_tokens=Tokens(access="x"))
+
+    outcomes = await refresh_due_tokens(["linear"], store, lambda pid: handler)
+
+    assert outcomes == {"linear": SKIPPED}
+    assert handler.calls == 0
 
 
 @pytest.mark.asyncio
@@ -157,3 +281,21 @@ async def test_scheduler_run_once_delegates() -> None:
     )
     outcomes = await sched.run_once()
     assert outcomes == {"notion": REFRESHED}
+
+
+@pytest.mark.asyncio
+async def test_scheduler_keep_alive_refreshes_long_lived_token() -> None:
+    # The scheduler must apply keep-alive so a long-lived / no-expiry token still
+    # gets its refresh token exercised — the durable "stay connected forever" path.
+    store = _store()
+    store.save("slack", Tokens(access="a0", refresh="r0", expires_at=None))
+    handler = _FakeHandler("slack", new_tokens=Tokens(access="a1", refresh="r1"))
+    sched = RefreshScheduler(
+        plugin_ids_fn=lambda: ["slack"],
+        store=store,
+        build_handler=lambda pid: handler,
+        keep_alive_seconds=3600,
+    )
+    outcomes = await sched.run_once()
+    assert outcomes == {"slack": REFRESHED}
+    assert store.load("slack").access == "a1"

@@ -32,12 +32,18 @@ _PROVIDER_ALIASES = (
     "gpt",
 )
 
-# Strict: "wechsel auf X", "switch to X", "wechsle zu X", "nutze X"
-# Word boundaries around the provider name; no substring trap. The German
-# imperative paradigm "wechsel / wechsle / wechseln" requires two variants:
-# "wechsel" (w-e-c-h-s-e-l) and "wechsle" (w-e-c-h-s-l-e).
+# Strict: "wechsel auf X", "switch to X", "wechsle zu X", "nutze X" — plus the
+# natural-phrasing filler "[den/the/deinen] [brain ]provider/anbieter/modell"
+# between the verb and the target (added 2026-06-08). Without that filler,
+# "switch the brain provider to gemini" / "wechsel den Brain-Provider auf X"
+# fell through to the router LLM, which (told it had "no authority" to switch)
+# refused with "keine Berechtigung". A still-strict gate: it ends in a known
+# provider alias with a word boundary, so harmless sentences never match.
+# The German imperative paradigm needs two stems: "wechsel" and "wechsle".
 _PROVIDER_PATTERN = re.compile(
     r"\b(?:wechsel[n]?|wechsle|switch(?:\s+to)?|benutze?|nutze|use|nimm)"
+    r"(?:\s+(?:den|die|das|der|the|deinen|deine|dein|meinen|meine|mein|my))?"
+    r"(?:\s+(?:brain[-\s]*provider|provider|anbieter|sprach[-\s]*modell|modell|model))?"
     r"(?:\s+(?:auf|zu|to))?\s+"
     r"(?P<provider>" + "|".join(re.escape(p) for p in _PROVIDER_ALIASES) + r")\b",
     re.IGNORECASE,

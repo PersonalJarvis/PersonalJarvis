@@ -34,7 +34,7 @@ type ExportFormat = "markdown" | "plain" | "json";
 
 const FORMAT_LABEL: Record<ExportFormat, string> = {
   markdown: "Markdown",
-  plain: "Plain-Text",
+  plain: "Text",
   json: "JSON",
 };
 
@@ -166,16 +166,16 @@ export function SessionDetail({ detail, loading, error }: Props) {
             </div>
             <ExportRow
               icon={<FileText className="h-3.5 w-3.5" />}
-              label="Markdown"
-              onCopy={() => copyAs("markdown")}
-              onDownload={() => downloadAsFormat("markdown")}
+              label="Text"
+              onCopy={() => copyAs("plain")}
+              onDownload={() => downloadAsFormat("plain")}
               variant="primary"
             />
             <ExportRow
               icon={<FileCode2 className="h-3.5 w-3.5" />}
-              label="Plain-Text"
-              onCopy={() => copyAs("plain")}
-              onDownload={() => downloadAsFormat("plain")}
+              label="Markdown"
+              onCopy={() => copyAs("markdown")}
+              onDownload={() => downloadAsFormat("markdown")}
               variant="outline"
             />
             <ExportRow

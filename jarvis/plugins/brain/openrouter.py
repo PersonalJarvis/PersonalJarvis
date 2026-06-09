@@ -11,7 +11,7 @@ from typing import Any
 from jarvis.core import config as cfg
 from jarvis.core.protocols import BrainDelta, BrainRequest
 
-from ._openai_base import stream_complete
+from ._openai_base import CLIENT_TIMEOUT, stream_complete
 
 DEFAULT_MODEL = "anthropic/claude-opus-4.8"
 BASE_URL = "https://openrouter.ai/api/v1"
@@ -36,6 +36,7 @@ class OpenRouterBrain:
             self._client = AsyncOpenAI(
                 api_key=api_key,
                 base_url=BASE_URL,
+                timeout=CLIENT_TIMEOUT,
                 default_headers={
                     "HTTP-Referer": "https://github.com/PersonalJarvis",
                     "X-Title": "Personal Jarvis",

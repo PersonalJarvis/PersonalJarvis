@@ -98,6 +98,15 @@ def test_set_reply_language_preserves_existing_brain_keys(sample_toml: Path) -> 
     assert 'deep_brain = "claude-api"' in text
 
 
+def test_set_ui_language_writes_ui_key(sample_toml: Path) -> None:
+    # The interface (display) language — backend home for the formerly
+    # frontend-only localStorage setting, so voice/API can change it.
+    config_writer.set_ui_language("de", path=sample_toml)
+    text = sample_toml.read_text(encoding="utf-8")
+    assert "[ui]" in text
+    assert 'language = "de"' in text
+
+
 def test_atomic_write_does_not_leave_tmp(sample_toml: Path) -> None:
     config_writer.set_brain_primary("openai", path=sample_toml)
     leftovers = list(sample_toml.parent.glob("*.tmp"))

@@ -84,12 +84,39 @@ def test_voice_patterns_compile(name: str) -> None:
 
 
 def test_expected_builtin_count() -> None:
-    """Sanity: wir erwarten die vier mitgelieferten Skills (Phase 1c + Skill-Creator)."""
-    assert len(BUILTIN_SKILL_NAMES) == 4
-    assert "morning-routine" in BUILTIN_SKILL_NAMES
-    assert "deep-work-mode" in BUILTIN_SKILL_NAMES
-    assert "memory-save" in BUILTIN_SKILL_NAMES
-    assert "skill-creator" in BUILTIN_SKILL_NAMES
+    """The base skills (Phase 1c + skill-creator + control-api) plus the paired
+    plugin skills. Computed from the components so adding a plugin does not rot
+    this guard; only a missing base skill or a duplicate trips it."""
+    from jarvis.skills.builtin import _PLUGIN_PAIRED_SKILLS
+
+    base = {
+        "morning-routine",
+        "deep-work-mode",
+        "memory-save",
+        "skill-creator",
+        "control-api",
+    }
+    assert base.issubset(set(BUILTIN_SKILL_NAMES)), (
+        f"missing base skill(s): {base - set(BUILTIN_SKILL_NAMES)}"
+    )
+    assert len(BUILTIN_SKILL_NAMES) == len(base) + len(_PLUGIN_PAIRED_SKILLS)
+    assert len(set(BUILTIN_SKILL_NAMES)) == len(BUILTIN_SKILL_NAMES), "duplicate skill name"
+
+
+def test_control_api_specifics() -> None:
+    """The shipped Control-API skill is documentation for coding agents.
+
+    AP-15: VALIDATED (not DRAFT — would never load; not ACTIVE — would bypass
+    review). category=meta so it carries NO voice triggers: a trigger matching
+    "switch language" would make the router pick run_skill (a markdown body that
+    cannot call HTTP) instead of the set_config_value tool on the voice path.
+    """
+    skill = parse_skill(builtin_skill_path("control-api"))
+    fm = skill.frontmatter
+    assert fm is not None
+    assert skill.state == SkillLifecycleState.VALIDATED
+    assert fm.category == "meta"
+    assert fm.triggers == []
 
 
 def test_morning_routine_specifics() -> None:

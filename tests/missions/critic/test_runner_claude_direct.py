@@ -158,6 +158,65 @@ async def test_claude_direct_path_approves_when_resolver_picks_claude_api(
     assert not (tmp_path / "openclaw.json").exists()
 
 
+@pytest.mark.parametrize("provider,foreign_model", [
+    ("grok", "grok-4.3"),
+    ("gemini", "gemini-3.1-pro-preview"),
+    ("openrouter", "anthropic/claude-sonnet"),
+])
+@pytest.mark.asyncio
+async def test_non_claude_provider_critic_uses_claude_model_not_foreign(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    provider: str, foreign_model: str,
+) -> None:
+    """Regression (2026-06-08): with a non-claude [brain.sub_jarvis].provider the
+    critic correctly falls back to the direct claude critic — but it MUST pass a
+    claude model to ``claude --model``, never the foreign provider model
+    (e.g. ``grok-4.3``), which the claude CLI rejects with returncode=1. That
+    failed the critic twice -> ``critic_unavailable`` and the whole mission
+    FAILED even though the worker had delivered real work (the sibling of the
+    ClaudeDirectWorker provider-refusal bug, same root cause in the critic path).
+    """
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        "jarvis.missions.critic.runner._resolve_critic_provider_model",
+        lambda: (provider, foreign_model),
+    )
+    monkeypatch.setattr(
+        "jarvis.missions.workers.claude_direct_worker."
+        "_resolve_claude_argv_prefix",
+        lambda: ["claude"],
+    )
+
+    async def fake(*args: Any, **kwargs: Any) -> _FakeProc:
+        captured["argv"] = list(args)
+        return _FakeProc(
+            _valid_verdict_json("approve").encode("utf-8"), returncode=0,
+        )
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake)
+
+    verdict = await CriticRunner().run(
+        mission_prompt="Build X",
+        worker_diff="diff",
+        worker_log="log",
+        prior_reflections="",
+        iteration=0,
+        worktree=tmp_path,
+        env={},
+    )
+
+    assert verdict.verdict == "approve"
+    argv = captured["argv"]
+    # The critic must fall back to the direct claude critic, not OpenClaw.
+    assert argv[0] == "claude", argv
+    # The foreign provider model must NEVER reach `claude --model`.
+    assert foreign_model not in argv, f"foreign model leaked into claude argv: {argv}"
+    model_arg = argv[argv.index("--model") + 1]
+    assert model_arg.startswith("claude") or model_arg in {"sonnet", "opus", "haiku"}, (
+        f"--model must be a claude critic model, got {model_arg!r}"
+    )
+
+
 @pytest.mark.asyncio
 async def test_claude_direct_pipes_prompt_through_stdin(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,

@@ -1,18 +1,14 @@
 """Resolve the assistant's own name (how it refers to itself).
 
-The assistant was historically hardcoded as "Jarvis" across the system prompt,
-the ack-brain persona, and the router. This makes the name configurable so a
-user who renames their wake word to "Micron" gets an assistant that calls
-itself Micron — no second field to fill in.
-
 Resolution order (first non-empty wins):
   1. ``[persona].name`` — an explicit override, for when the spoken identity
      should differ from the wake word (wake "Hey Computer", identity "Friday").
   2. The wake phrase with its prefix stripped — "Hey Jarvis" -> "Jarvis",
      "Micron" -> "Micron", "Hey Athena" -> "Athena".
-  3. ``"Jarvis"`` — the historical default, also the safety fallback when the
-     config is missing or malformed (defensive getattr throughout: the brain
-     init path must never crash on a name lookup).
+  3. ``DEFAULT_ASSISTANT_NAME`` — the neutral shipped fallback when no wake
+     phrase and no persona name is set (pre-onboarding state). A user who types
+     "Hey Jarvis" gets "Jarvis" via path 2; this constant is not "Jarvis" so
+     the product does not silently impose a name.
 
 Capitalisation: the derived name is title-cased token-by-token so a lowercase
 wake phrase ("micron") still yields a proper name ("Micron").
@@ -21,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
-DEFAULT_ASSISTANT_NAME = "Jarvis"
+DEFAULT_ASSISTANT_NAME = "Assistant"
 
 
 def resolve_assistant_name(config: Any) -> str:

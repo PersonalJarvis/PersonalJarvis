@@ -17,6 +17,13 @@ export interface ProviderDescriptor {
   configured: boolean;
   active: boolean;
   cli_installed: boolean | null;
+  /**
+   * Codex only: whether an OpenAI API key usable by the Codex *brain* is
+   * configured (codex_openai_api_key / openai_api_key / OPENAI_API_KEY). The
+   * ChatGPT login alone cannot back a chat brain, so the brain "activate" radio
+   * is gated on this rather than on the OAuth connection.
+   */
+  codex_brain_ready?: boolean;
   codex_status?: CodexStatus;
 }
 

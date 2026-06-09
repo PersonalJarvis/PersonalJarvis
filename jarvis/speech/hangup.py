@@ -53,6 +53,14 @@ _HANGUP_PATTERNS: Final[tuple[str, ...]] = (
     r"\baufgelegt\b",
     r"\bdrauf\s*leg\w*\b",
     r"\bableg\w*\b",
+    # Whisper mis-transcribes the one-word command "auflegen" as "auffliegen"
+    # (homophone with an inserted "i") or "aufflegen" (doubled "f") on a
+    # low-confidence utterance (live 2026-06-09: confidence 0.68 / 0.57). Both
+    # slipped past the patterns above ("auffliegen" has no "leg"; "aufflegen"
+    # has "auffl", not "aufl"), so the hang-up never fired and the user had to
+    # repeat the command three times. These two cover that mis-hearing family.
+    r"\bauff?lieg\w*\b",
+    r"\bauffleg\w*\b",
     # German — other explicit closings
     r"\btschüss\b",
     r"\btschuess\b",

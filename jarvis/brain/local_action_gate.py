@@ -65,7 +65,13 @@ class _CapabilityRegistryLike(Protocol):
 
 
 _DIRECT_PATTERNS = (
-    re.compile(r"^(?:hey\s+)?(?:jarvis[,\s]+)?oeffne\s+(?P<app>.+?)\s*[?.!]*$", re.I),
+    # ``(?:er)?oeffne(?:t|st|n)?`` covers öffne / öffnet / öffnest / öffnen and the
+    # er-prefixed eröffne / eröffnet / … so "Eröffnet den Explorer" also takes the
+    # clean DIRECT launch instead of the computer-use vision loop (live 2026-06-08).
+    re.compile(
+        r"^(?:hey\s+)?(?:jarvis[,\s]+)?(?:er)?oeffne(?:t|st|n)?\s+(?P<app>.+?)\s*[?.!]*$",
+        re.I,
+    ),
     re.compile(r"^(?:hey\s+)?(?:jarvis[,\s]+)?starte\s+(?P<app>.+?)\s*[?.!]*$", re.I),
     re.compile(
         r"^(?:hey\s+)?(?:jarvis[,\s]+)?mach\s+(?P<app>.+?)\s+(?:auf|auch)\s*[?.!]*$",
@@ -121,6 +127,59 @@ def _looks_like_desktop_control(text: str) -> bool:
     path and "schreib mir ein Gedicht" stays a normal brain answer.
     """
     return bool(_COMPOUND_OPEN_CONTROL_RE.match(text) or _GUI_VERB_RE.search(text))
+
+
+# Open / launch verbs in ANY conjugation. Inputs are pre-normalised
+# (``_normalize``: lowercased + umlauts transliterated, so "öffnest" -> "oeffnest"),
+# so ``oeffn\w*`` catches öffne/öffnest/öffnet/öffnen alike. ``start\w*`` catches
+# starte/startest/start; "mach … auf" is the separable verb handled separately.
+_OPEN_VERB_RE = re.compile(
+    r"\b(?:oeffn\w*|aufmach\w*|aufzumach\w*|start\w*|open\w*|launch\w*)\b",
+    re.IGNORECASE,
+)
+# Separable verb "mach … auf" (particle trails the object): "mach mir Spotify auf".
+_MACH_AUF_RE = re.compile(r"\bmach(?:e|st|t)?\b[\w\s]*\bauf\b", re.IGNORECASE)
+# Signals that the request is NOT a plain desktop app-open but heavy worker /
+# external-system work, which a sandboxed worker (not computer-use) owns.
+_NOT_OPEN_APP_RE = re.compile(
+    r"\b(?:"
+    r"pr|prs|pull\s*request|repo|repository|github|gitlab|issue|issues|branch|"
+    r"baue?|baust|baut|implementier\w*|entwickel\w*|refactor\w*|debugg?\w*|"
+    r"analysier\w*|analyz\w*|untersuch\w*|programmier\w*|deploy\w*|"
+    r"datei|dateien|file|files|funktion\w*|skript|script|landingpage"
+    r")\b",
+    re.IGNORECASE,
+)
+# Instructional questions ("wie oeffne ich X?") must never launch anything.
+_OPEN_INSTRUCTIONAL_RE = re.compile(
+    r"^\s*(?:wie|how|was|what|warum|why|wieso|weshalb)\b", re.IGNORECASE
+)
+
+
+def is_open_app_intent(text: str) -> bool:
+    """True for a request to OPEN / LAUNCH an application or window on the
+    desktop — in any conjugation or phrasing — that a sandboxed sub-agent worker
+    could never fulfil (a worker runs in an isolated git worktree and has no
+    desktop). Such requests belong to the computer-use harness, NEVER to a
+    force-spawned worker.
+
+    Live bug 2026-06-08 (data/jarvis_desktop.log 17:37): "Ich möchte, dass du mir
+    Hermes Agent öffnest, also …" force-spawned a worker because the capability
+    registry resolves verbs strictly (``\\boeffne\\b``, base form only) while the
+    action detector matches conjugations (``\\boeffne\\w*\\b``) — so "öffnest"
+    counted as an action no capability resolves, i.e. generic sub-agent work.
+
+    Excludes instructional questions ("wie oeffne ich X"), external-system work
+    (PR / repo / GitHub), and heavy build / code / file work that genuinely needs
+    a worker. Pure regex, no LLM / no IO (AP-9 / AP-11)."""
+    t = _normalize(text)
+    if not t:
+        return False
+    if _OPEN_INSTRUCTIONAL_RE.search(t):
+        return False
+    if _NOT_OPEN_APP_RE.search(t):
+        return False
+    return bool(_OPEN_VERB_RE.search(t) or _MACH_AUF_RE.search(t))
 
 _APP_ALIASES = {
     "chrome": "chrome",
@@ -439,6 +498,14 @@ def match_local_action(
     if direct is not None:
         return direct
 
+    # NOTE: a non-alias open command ("…dass du mir Hermes Agent öffnest") is
+    # deliberately NOT routed here to the deterministic dispatch_to_harness
+    # (screenshot) computer-use path — live 2026-06-08 that path stalled (no [cu]
+    # steps, 120s TTS-ceiling abort). Open-app intents fall through to the brain's
+    # proven `computer-use` tool instead; the force-spawn guard in
+    # BrainManager._should_force_spawn (is_open_app_intent) keeps them off the
+    # sub-agent path. See is_open_app_intent.
+
     if _matches_visual_target(normalized):
         return LocalActionPlan(
             mode=LocalActionMode.COMPUTER_USE,
@@ -500,6 +567,12 @@ def _canonical_app(raw: str) -> str | None:
     # "editor", "fuer mich chrome" -> "chrome". Keep at least one token.
     while len(tokens) > 1 and tokens[0] in _APP_FILLER_WORDS:
         tokens.pop(0)
+    # Drop trailing politeness/articles too: "explorer fuer mich" -> "explorer",
+    # "notepad fuer mich bitte" -> "notepad". Without this the trailing "fuer
+    # mich" left a known app unresolved and the command fell to the computer-use
+    # vision loop instead of the clean DIRECT launch (live 2026-06-08).
+    while len(tokens) > 1 and tokens[-1] in _APP_FILLER_WORDS:
+        tokens.pop()
     cleaned = " ".join(tokens)
     direct = _APP_ALIASES.get(cleaned)
     if direct is not None:

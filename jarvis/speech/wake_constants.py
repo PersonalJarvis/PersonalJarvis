@@ -14,7 +14,10 @@ Why this module exists:
   re-export ONE definition instead of duplicating the literal (BUG-008 drift).
 - ``KNOWN_OWW_MODELS`` maps a normalised phrase onto an openWakeWord pretrained
   model name, and ``resolve_oww_model_path`` finds that model's ONNX on disk
-  (bundled in-repo for hey_jarvis, otherwise from the installed package).
+  (bundled in-repo for hey_rhasspy/hey_jarvis, otherwise from the installed package).
+  The shipped out-of-box bundled fallback is ``hey_rhasspy`` (neutral, CPU-only
+  offline model). ``hey_jarvis`` is kept so a user who types "Jarvis" still gets
+  the offline model — just not as a silent default.
 """
 from __future__ import annotations
 
@@ -31,7 +34,7 @@ from pathlib import Path
 #: ``custom_onnx`` — a user-supplied/trained .onnx model (CPU, any phrase).
 WAKE_ENGINES: tuple[str, ...] = ("auto", "openwakeword", "stt_match", "custom_onnx")
 
-DEFAULT_WAKE_PHRASE = "Hey Jarvis"
+DEFAULT_WAKE_PHRASE = ""  # empty = neutral pre-onboarding default; user must opt in
 
 # Strict legacy wake pattern (was rolling_whisper_wake.DEFAULT_PATTERN). Matches
 # "hey/hi/hallo" + a jarv-family stem; a bare "Jarvis" or a Whisper
@@ -58,15 +61,11 @@ KNOWN_OWW_MODELS: dict[str, str] = {
     "rhasspy": "hey_rhasspy",
 }
 
-# Human-friendly spoken phrases for the instant (CPU-only, offline, no-download)
-# pretrained models — what the Settings UI offers as one-click wake words. Any
-# other phrase the user types goes down the local-Whisper stt_match path.
-INSTANT_WAKE_PHRASES: tuple[str, ...] = (
-    "Hey Jarvis",
-    "Alexa",
-    "Hey Mycroft",
-    "Hey Rhasspy",
-)
+# Quick-pick phrases the Settings UI could offer as one-click suggestions.
+# Currently empty: the shipped product does not pre-advertise any specific wake
+# name. Users type a phrase of their choice; "Hey Jarvis", "Alexa",
+# "Hey Mycroft", and "Hey Rhasspy" all work when typed (offline CPU models).
+INSTANT_WAKE_PHRASES: tuple[str, ...] = ()
 
 _NORMALISE_RE = re.compile(r"[^0-9a-zäöüß]+")
 

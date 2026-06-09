@@ -7,24 +7,37 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
-## [0.1.1] — 2026-06-07
+## [v0.2.0] — 2026-06-09
 
-### Fixed
-- **Plugin skills now load on a real boot.** The 12 paired plugin skills were missing from `BUILTIN_SKILL_NAMES`, so first-run bootstrap never copied them into the user skills dir and the paired capabilities never registered — the plugin-reachability feature was inert outside tests. A real boot now logs "registered 12 paired capabilities".
-
----
-
-## [0.1.0] — 2026-06-07
+A broad feature + reliability release: a local self-configuration API, a
+shareable Board stats card, login autostart, Codex as a brain provider, and a
+batch of voice/mission reliability fixes.
 
 ### Added
-- **Plugin↔Skill pairing — connected plugins are now reachable by voice and chat.** Each marketplace plugin (Gmail, GitHub, Stripe, Notion, Slack, Linear, Discord, Asana, Supabase, Cloudflare, Google Drive, Vercel) ships a paired skill whose intent vocabulary becomes a router capability, so a request like "show my Stripe payments" reaches the plugin instead of being refused.
-- Native **Vercel** tool (list projects and deployments) — Vercel had no usable MCP transport, so it is wired as a REST tool like Gmail.
-- Anti-drift CI gate: every catalog plugin must ship a paired skill (Telegram stays exempt as an inbound channel adapter, not an actionable tool).
-- Mission-reliability improvements and desktop-UI refinements accumulated since the previous snapshot.
 
-### Changed
-- `resolve_intent` precision: a paired-skill capability only matches when the user names a domain object, so a plugin never hijacks another domain's request; the coding-task guard lives in the verb list.
-- Paired capabilities register when the skill context is set, so they take effect on a real boot (not only in isolated tests).
+- **Jarvis Control API** — a local authenticated HTTP API (`/api/control/*`) for
+  self-configuration: a per-user `jctl_` key (keyring → 0600 file → env,
+  headless-friendly), fail-closed bind, and a hot-reloadable `brain.reply_language`.
+  Files: `jarvis/ui/web/control_routes.py`, `control_auth.py`,
+  `jarvis/core/control_key.py`, the `control-api` builtin skill, and a
+  `JarvisApiGroup` settings panel.
+- **Board "Share Stats" card** — a shareable 1080² PNG (Copy / Save / Share-on-X)
+  with the Jarvis mark: `ShareCard.tsx`, `ShareDialog.tsx`, `useShareHandle.ts`,
+  `lib/shareImage.ts`.
+- **App Settings → Launch app at login** — cross-platform autostart via
+  `AppSettingsGroup.tsx`.
+- **Codex as a selectable brain provider** (parity with Gemini, gated on an
+  OpenAI key) and as a subagent backend.
+- **Plugin–skill pairing** so connected plugins become voice-reachable.
+
+### Changed / Fixed
+
+- Voice playback watchdog now measures per-turn progress instead of cross-turn
+  idle, fixing a spurious "Jarvis listens forever" abort (BUG-032 / AP-19).
+- Voice-latency fixes around the audio-device TTS wedge.
+- Mission-reliability wave 1: recovery preserves delivered work instead of
+  mislabeling timeouts as task errors.
+- "Languages" folded into Settings as the first settings group.
 
 ---
 

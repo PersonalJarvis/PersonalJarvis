@@ -45,6 +45,10 @@ BUILTIN_SKILL_NAMES: tuple[str, ...] = (
     "deep-work-mode",
     "memory-save",
     "skill-creator",
+    # control-api (2026-06-08): documentation skill that teaches a local coding
+    # agent (Codex CLI, Claude Code) how to drive the Jarvis Control API to
+    # change settings/providers/language. category=meta, no voice triggers.
+    "control-api",
 ) + _PLUGIN_PAIRED_SKILLS
 
 

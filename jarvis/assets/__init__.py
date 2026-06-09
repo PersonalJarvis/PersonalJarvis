@@ -1,9 +1,10 @@
 """Bundled binary assets shipped with the Jarvis package.
 
 Currently:
-- ``wakeword/``: ONNX models for openWakeWord (hey_jarvis_v0.1, melspectrogram,
-  embedding). Loaded via :func:`bundled_wakeword_models` from the openWakeWord
-  provider so first-boot stays offline.
+- ``wakeword/``: ONNX models for openWakeWord (hey_rhasspy_v0.1 bundled as the
+  neutral shipped default, hey_jarvis_v0.1 kept for users who type "Jarvis",
+  melspectrogram, embedding). Loaded via :func:`bundled_wakeword_models` from
+  the openWakeWord provider so first-boot stays offline.
 
 Future bundles (e.g. local VAD profiles, packaged voice clips) live under this
 package.
@@ -14,7 +15,7 @@ from pathlib import Path
 
 _WAKEWORD_DIR = Path(__file__).resolve().parent / "wakeword"
 _WAKEWORD_FILES = {
-    "wakeword": "hey_jarvis_v0.1.onnx",
+    "wakeword": "hey_rhasspy_v0.1.onnx",
     "melspec": "melspectrogram.onnx",
     "embedding": "embedding_model.onnx",
 }
@@ -28,8 +29,8 @@ def bundled_wakeword_models() -> dict[str, Path] | None:
     caller (``openwakeword_provider``) then falls back to openWakeWord's
     built-in keyword names + auto-download.
 
-    Keys: ``wakeword`` (the hey_jarvis_v0.1 detector), ``melspec``
-    (preprocessing), ``embedding`` (shared backbone).
+    Keys: ``wakeword`` (the hey_rhasspy_v0.1 detector — neutral shipped default),
+    ``melspec`` (preprocessing), ``embedding`` (shared backbone).
     """
     if not _WAKEWORD_DIR.is_dir():
         return None

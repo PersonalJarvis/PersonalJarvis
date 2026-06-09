@@ -189,11 +189,13 @@ class TestSchemaCompliance:
 
 
 class TestListMutableSettings:
-    def test_returns_nine_entries(self, tools: dict[str, Any]) -> None:
-        # Allowlist: 8 base settings + voice-tunable computer_use.step_budget.
+    def test_returns_thirteen_entries(self, tools: dict[str, Any]) -> None:
+        # 9 historical settings + the language keys (brain.reply_language,
+        # stt.language, tts.language_code) + ui.language (interface language)
+        # added for the Jarvis Control API.
         result = _exec(tools["list_mutable_settings"], {})
         assert result.success is True
-        assert len(result.output) == 9
+        assert len(result.output) == 13
         for entry in result.output:
             assert {"path", "current_value", "description", "risk_tier", "needs_restart"} == set(
                 entry.keys()
@@ -202,6 +204,8 @@ class TestListMutableSettings:
         # step_budget (the field the loop reads), not the legacy max_steps no-op.
         paths = {entry["path"] for entry in result.output}
         assert "computer_use.step_budget" in paths
+        # The canonical reply-language path must be discoverable by agents.
+        assert "brain.reply_language" in paths
 
     def test_current_values_match_fixture(self, tools: dict[str, Any]) -> None:
         result = _exec(tools["list_mutable_settings"], {})
@@ -599,6 +603,42 @@ class TestFactory:
         # Smoke: list_mutable_settings funktioniert
         result = _exec(tools["list_mutable_settings"], {})
         assert result.success is True
+
+    def test_factory_forwards_bus_for_hot_reload(
+        self, tmp_path: Path, fixture_path: Path
+    ) -> None:
+        """The voice path (factory.py) passes the EventBus via writer_kwargs so a
+        SAFE-tier write dispatches ConfigReloaded -> the BrainManager language
+        hot-reload. Without the bus, a voice "switch to English" only takes
+        effect after a restart (the exact "self-mod doesn't work" symptom)."""
+        from jarvis.core.events import ConfigReloaded
+        from jarvis.core.self_mod import MutationRequest
+
+        captured: list[Any] = []
+
+        class _Bus:
+            async def publish(self, ev: Any) -> None:
+                captured.append(ev)
+
+        bus = _Bus()
+        tools = build_self_mod_tools(
+            config_path=fixture_path,
+            writer_kwargs={
+                "bus": bus,
+                "backup_dir": tmp_path / "backups",
+                "audit": SelfModAudit(path=tmp_path / "audit.log"),
+                "config_loader": _isolated_loader,
+            },
+        )
+        # The bus reached the writer the tools share.
+        writer = tools["get_config_value"]._writer
+        assert writer._bus is bus
+        # A SAFE write dispatches ConfigReloaded (sync call -> deterministic).
+        writer.mutate(MutationRequest(path="tts.speed", new_value=1.3))
+        assert any(
+            isinstance(e, ConfigReloaded) and "tts.speed" in e.changed_keys
+            for e in captured
+        )
 
 
 # ----------------------------------------------------------------------

@@ -10,6 +10,7 @@ vi.mock("@/i18n", () => ({
   setUiLanguage: vi.fn(),
   setReplyLanguage: vi.fn(),
   hydrateReplyLanguage: vi.fn(),
+  hydrateUiLanguage: vi.fn(),
 }));
 
 import { LanguagesGroup } from "@/views/settings/LanguagesGroup";

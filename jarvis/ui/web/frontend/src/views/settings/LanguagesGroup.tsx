@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Check, Mic2 } from "lucide-react";
+import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   useT,
@@ -8,6 +8,7 @@ import {
   setUiLanguage,
   setReplyLanguage,
   hydrateReplyLanguage,
+  hydrateUiLanguage,
   type UiLanguage,
   type ReplyLanguage,
 } from "@/i18n";
@@ -17,20 +18,21 @@ const REPLY_OPTIONS: ReplyLanguage[] = ["auto", "en", "de", "es"];
 
 /**
  * "Languages" group inside the Settings view — the interface-language and
- * reply-language selectors, plus the voice-recognition note and the per-session
- * override note. Moved here from the former standalone Languages section; the
- * controls, i18n hooks, and i18n keys (``languages_view.*``) are unchanged. The
- * page-level ViewHeader is dropped because this group sits under the Settings
- * header, as the first panel of the view.
+ * reply-language selectors. Moved here from the former standalone Languages
+ * section; the controls, i18n hooks, and i18n keys (``languages_view.*``) are
+ * unchanged. The page-level ViewHeader is dropped because this group sits under
+ * the Settings header, as the first panel of the view.
  */
 export function LanguagesGroup() {
   const t = useT();
   const ui = useUiLanguage();
   const reply = useReplyLanguage();
 
-  // Reflect the backend's persisted reply language on open (survives restart).
+  // Reflect the backend's persisted languages on open (both are backend-backed
+  // now, so a voice/Control-API change is shown and the choice survives restart).
   useEffect(() => {
     void hydrateReplyLanguage();
+    void hydrateUiLanguage();
   }, []);
 
   return (
@@ -68,23 +70,6 @@ export function LanguagesGroup() {
           />
         ))}
       </Section>
-
-      <div className="flex items-start gap-3 rounded-lg border border-border bg-card/40 p-4 text-xs text-muted-foreground">
-        <Mic2 className="mt-0.5 h-4 w-4 shrink-0 text-primary/70" />
-        <div>
-          <strong className="text-foreground">
-            {t("languages_view.recognition_title")}
-          </strong>
-          <div className="mt-0.5">{t("languages_view.recognition_text")}</div>
-        </div>
-      </div>
-
-      <div className="rounded-lg border border-border bg-card/60 p-4 text-xs text-muted-foreground">
-        <strong className="text-foreground">
-          {t("languages_view.override_title")}:
-        </strong>{" "}
-        {t("languages_view.override_text")}
-      </div>
     </div>
   );
 }

@@ -215,6 +215,7 @@ class WebServer:
         from .chats_routes import router as chats_router
         from .cli_routes import router as cli_router
         from .contacts_routes import router as contacts_router
+        from .control_routes import router as control_router
         from .docs_routes import router as docs_router
         from .federation_proxy_routes import router as federation_proxy_router
         from .friends_routes import router as friends_router
@@ -257,6 +258,7 @@ class WebServer:
         app.include_router(mcp_router)
         app.include_router(tools_router)
         app.include_router(provider_router)
+        app.include_router(control_router)
         app.include_router(profile_router)
         app.include_router(settings_router)
         app.include_router(tasks_router)
@@ -1345,6 +1347,13 @@ class WebServer:
         port: int | None = None,
     ) -> None:
         import uvicorn
+
+        # Cloud-first fail-closed: never expose a non-loopback bind without a
+        # Control API key — the key, not the bind address, is the boundary.
+        from jarvis.core import control_key as _control_key
+        from jarvis.ui.web.control_auth import assert_bind_safe
+
+        assert_bind_safe(host, _control_key.get_control_key())
 
         resolved_port = port if port is not None else self.cfg.ui.admin_api_port
         config = uvicorn.Config(

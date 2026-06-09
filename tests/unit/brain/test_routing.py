@@ -16,6 +16,7 @@ Nach dem Fix sollen alle 10 Cases gruen sein.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -267,7 +268,10 @@ def test_pure_smalltalk_still_smalltalk(utterance: str) -> None:
 @pytest.mark.parametrize(
     "utterance",
     [
-        "Hallo, öffne mir Chrome",
+        # NOTE: not an "open app" command — those route to computer-use, never a
+        # force-spawn (see test_open_app_intent_does_not_force_spawn_*). These
+        # are genuine heavy-worker commands that must survive the greeting prefix.
+        "Hallo, schreib mir einen Bericht über die Logs",
         "Hey Jarvis, baue eine Landingpage",
         "Moin, lies die Datei jarvis.toml",
     ],
@@ -390,13 +394,12 @@ def _live_manager_with_toml() -> tuple[BrainManager, _RecordingExecutor]:
     repo_root = Path(__file__).resolve().parents[3]
     cfg_path = repo_root / "jarvis.toml"
     cfg = load_config(cfg_path)
-    # BUG-017 (2026-05-13): live jarvis.toml has brain.primary="grok" as
-    # the user's account-level workaround. The force-spawn guard in
-    # BrainManager._should_force_spawn now declines to spawn when
-    # primary is not a worker-viable provider (claude-api / gemini)
-    # because GeminiWorker would hang on the 403. This routing test
-    # only exercises the regex pattern path; pin primary to "gemini"
-    # so the cascade-guard does not pre-empt the actual matcher.
+    # Pin a worker-viable provider so the force-spawn viability guard
+    # (_heavy_worker_provider_viable) never pre-empts the regex matcher this test
+    # exercises. Since 2026-06-07 that guard follows the WORKER
+    # ([brain.sub_jarvis].provider), not brain.primary — the live jarvis.toml
+    # configures a claude-api worker, so this pin is belt-and-suspenders for runs
+    # against a toml without a [brain.sub_jarvis] block.
     cfg.brain.primary = "gemini"
 
     executor = _RecordingExecutor()
@@ -431,6 +434,125 @@ def test_live_toml_force_spawn_for_subagent_phrases(utterance: str) -> None:
         f"Live-TOML-Heuristik triggert NICHT auf {utterance!r}. "
         f"jarvis.toml [brain.routing] hat Drift gegenueber Code-Defaults."
     )
+
+
+# ---------------------------------------------------------------------------
+# Provider-coupling time bomb (manager.py BUG-017 workaround 2026-05-13): the
+# force-spawn guard returned False whenever brain.primary was not in
+# {claude-api, gemini}. But the heavy worker is selected from
+# [brain.sub_jarvis].provider and runs INDEPENDENTLY of brain.primary
+# (jarvis/missions/init.py::_select_subagent_worker_kind). Coupling force-spawn
+# to the TALKER provider silenced every action request the moment the user
+# switched brain.primary to grok / openai / codex — re-introducing the
+# "Das kann ich nicht ausführen" refusal via the LLM fallback path.
+# ---------------------------------------------------------------------------
+
+
+def _manager_with_worker_provider(
+    *,
+    brain_primary: str,
+    worker_provider: str | None,
+    force_spawn_mode: str = "permissive",
+) -> tuple[BrainManager, _RecordingExecutor]:
+    """Manager with the talker (brain.primary) and the heavy-worker
+    ([brain.sub_jarvis].provider) providers set independently."""
+    from jarvis.core.config import BrainTierConfig
+
+    executor = _RecordingExecutor()
+    config = JarvisConfig()
+    config.brain.primary = brain_primary
+    config.brain.routing.force_spawn_mode = force_spawn_mode
+    config.brain.sub_jarvis = (
+        BrainTierConfig(provider=worker_provider)
+        if worker_provider is not None
+        else None
+    )
+    manager = BrainManager(
+        config=config,
+        bus=EventBus(),
+        tools={"spawn_worker": _FakeTool()},
+        tool_executor=executor,  # type: ignore[arg-type]
+    )
+    return manager, executor
+
+
+@pytest.mark.parametrize(
+    "brain_primary", ["grok", "openai", "openai-codex", "openrouter", "ollama"]
+)
+def test_force_spawn_follows_worker_provider_not_talker(brain_primary: str) -> None:
+    """With a configured claude-api worker, switching the talker to
+    grok/openai/codex must NOT block force-spawn — viability follows the WORKER,
+    not the talker."""
+    manager, _executor = _manager_with_worker_provider(
+        brain_primary=brain_primary, worker_provider="claude-api",
+    )
+    assert manager._should_force_spawn("Bau eine Landingpage") is True, (
+        f"talker={brain_primary!r} wrongly blocked force-spawn despite a viable "
+        f"claude-api worker"
+    )
+
+
+def test_force_spawn_codex_worker_with_codex_talker() -> None:
+    """A Codex talker + Codex worker must still force-spawn (the user's
+    Codex-as-brain switch must not disable delegation)."""
+    manager, _executor = _manager_with_worker_provider(
+        brain_primary="openai-codex", worker_provider="openai-codex",
+    )
+    assert manager._should_force_spawn("Bau eine Landingpage") is True
+
+
+@pytest.mark.parametrize("brain_primary", ["grok", "openai", "ollama"])
+def test_force_spawn_blocked_when_no_worker_and_nonviable_talker(
+    brain_primary: str,
+) -> None:
+    """Regression guard for the legacy no-worker-configured path: with NO
+    [brain.sub_jarvis].provider set, the factory may fall back to the Gemini API
+    worker, so the conservative talker check still blocks a non-viable talker."""
+    manager, _executor = _manager_with_worker_provider(
+        brain_primary=brain_primary, worker_provider=None,
+    )
+    assert manager._should_force_spawn("Bau eine Landingpage") is False
+
+
+# ---------------------------------------------------------------------------
+# Open-app intent must route to computer-use, NEVER a sub-agent force-spawn
+# (live bug 2026-06-08, data/jarvis_desktop.log 17:37): the conversational
+# "Ich möchte, dass du mir Hamis Agent öffnest, also …" force-spawned a worker
+# because the registry's resolve_intent matches verbs strictly (\boeffne\b — only
+# the base form) while has_action_intent matches conjugations (\boeffne\w*\b),
+# so "öffnest" registered as "action with no capability" -> generic sub-agent
+# work. A worker runs in an isolated git worktree and has no desktop, so opening
+# an app is ALWAYS computer-use.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Ich möchte, dass du mir Hermes Agent öffnest, also",
+        "öffne für mich Hermes Agent",
+        "kannst du mir den Steam Client aufmachen",
+    ],
+)
+def test_open_app_intent_does_not_force_spawn_with_seeded_registry(
+    utterance: str,
+) -> None:
+    """Defense-in-depth: even with a seeded registry (where a conjugated open
+    verb resolves no capability), an open-app command must NOT force-spawn."""
+    from jarvis.core.capabilities import get_registry
+    from jarvis.core.capabilities_seed import seed_registry
+
+    reg = get_registry()
+    snapshot = dict(reg._caps)  # noqa: SLF001 — test fixture state restore
+    seed_registry(reg)
+    try:
+        manager, _executor = _manager_with_spawn()  # strict mode (production)
+        assert manager._should_force_spawn(utterance) is False, (
+            f"open-app command {utterance!r} wrongly force-spawned a worker"
+        )
+    finally:
+        reg._caps.clear()  # noqa: SLF001
+        reg._caps.update(snapshot)  # noqa: SLF001
 
 
 def test_cli_tools_in_router_tools() -> None:
@@ -759,12 +881,23 @@ async def test_local_fast_path_publishes_response_generated() -> None:
 
 @pytest.mark.asyncio
 async def test_local_visual_click_fast_path_dispatches_computer_use() -> None:
-    """Visual target commands go straight to the computer-use harness."""
+    """Visual target commands offload to the computer-use harness (Wave-4).
+
+    The spoken turn ACKs immediately instead of blocking up to ~31 s on the
+    harness; the harness runs as a background task whose result is announced
+    later. So ``generate`` returns the ACK, and the dispatch is observable only
+    after the background task has run.
+    """
     manager, executor = _manager_with_local_actions()
 
     result = await manager.generate("Klick auf den Senden Button")
 
-    assert result == "ok"
+    # Immediate ACK (not the inline harness result "ok").
+    assert "Bildschirm" in result
+    assert result != "ok"
+
+    # The harness dispatch happens in the background — await it, then assert.
+    await asyncio.gather(*getattr(manager, "_cu_background_tasks", set()))
     assert len(executor.calls) == 1
     tool, args, user_utterance = executor.calls[0]
     assert tool.name == "dispatch_to_harness"

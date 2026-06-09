@@ -225,7 +225,9 @@ def _enable_autostart_via_port() -> None:
     except Exception as exc:  # noqa: BLE001 — persistence best-effort
         print(f"[warn] could not persist [autostart].enabled: {exc}")
 
-    status = make_autostart_manager(detect_capabilities()).install(resolve_launch_spec(None))
+    status = make_autostart_manager(detect_capabilities()).install(
+        resolve_launch_spec(None), interactive=True
+    )
     if status.installed:
         print(f"\n[ok] Autostart enabled at login: {status.entry_path}")
     else:
@@ -241,7 +243,7 @@ def _disable_autostart_via_port() -> None:
         config_writer.set_autostart(False)
     except Exception as exc:  # noqa: BLE001 — persistence best-effort
         print(f"[warn] could not persist [autostart].enabled: {exc}")
-    make_autostart_manager(detect_capabilities()).uninstall()
+    make_autostart_manager(detect_capabilities()).uninstall(interactive=True)
 
 
 def uninstall() -> None:
