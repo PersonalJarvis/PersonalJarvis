@@ -58,6 +58,28 @@ def test_hangup_re_matches_explicit_commands(phrase: str) -> None:
 @pytest.mark.parametrize(
     "phrase",
     [
+        # Live 2026-06-09: Whisper transcribed the closing command "auflegen"
+        # as "Auffliegen" (confidence 0.68) and "Aufflegen" (0.57). Neither
+        # matched HANGUP_RE — "auffliegen" carries no "leg" substring and
+        # "aufflegen" has a doubled "f" the "aufleg" patterns reject — so both
+        # fell through to the brain (which then hallucinated) and the user had
+        # to repeat "auflegen" three times before the session ended.
+        "auffliegen",
+        "Auffliegen",
+        "auffliegt",
+        "aufliegen",
+        "aufflegen",
+        "Aufflegen",
+        "aufflegt",
+    ],
+)
+def test_hangup_re_matches_auflegen_mishearings(phrase: str) -> None:
+    assert HANGUP_RE.search(phrase) is not None
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
         # Ambiguous-polite phrases are delegated to the brain (stay-on bias),
         # so the INSTANT regex must NOT fire on them.
         "vielen dank",

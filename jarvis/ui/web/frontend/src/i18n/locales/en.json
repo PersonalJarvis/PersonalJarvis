@@ -1,4 +1,11 @@
 {
+  "topbar": {
+    "restart": "Restart",
+    "restart_confirm": "Confirm restart?",
+    "restart_hint": "Restart Jarvis",
+    "restarting": "Restarting Jarvis…",
+    "restart_failed": "Restart failed"
+  },
   "nav": {
     "chats": "Chats",
     "agents": "Agents",
@@ -39,13 +46,13 @@
     "restarting": "Restarting Jarvis…",
     "bar_persistent": {
       "title": "Show bar at all times",
-      "description": "Keep the bar on screen even when idle. Off: no standby — it only appears when you say \"Hey Jarvis\".",
+      "description": "Keep the bar on screen even when idle. Off: no standby — it only appears when you say your wake word.",
       "saved": "Bar visibility updated."
     },
     "mute_music": {
       "title": "Mute music while dictating",
-      "description": "Mute other apps (Spotify, browser…) while you talk to Jarvis, then restore them after. Jarvis's own voice is never muted.",
-      "enabled_toast": "Music will mute while you talk to Jarvis.",
+      "description": "Mute other apps (Spotify, browser…) while you talk to your assistant, then restore them after. The assistant's own voice is never muted.",
+      "enabled_toast": "Music will mute while you talk to your assistant.",
       "disabled_toast": "Music mute disabled."
     }
   },
@@ -117,23 +124,23 @@
     "offline": "Offline"
   },
   "sidebar": {
-    "wake_hint": "Say \"Hey Jarvis\"…",
+    "wake_hint": "Say your wake word…",
     "brain_label": "Brain",
     "brain_tooltip": "Switch brain provider"
   },
   "chats_view": {
     "title": "Chat",
-    "subtitle": "Talk to Jarvis or type — both go through the same event bus.",
-    "thinking_aria": "Jarvis is thinking",
+    "subtitle": "Talk to your assistant or type — both go through the same event bus.",
+    "thinking_aria": "Your assistant is thinking",
     "thinking_label": "thinking…",
     "empty_title": "Ready for commands",
-    "empty_subtitle": "Say \"Hey Jarvis\" or type your message below. Jarvis dispatches sub-agents, calls tools, and gives you a voice back.",
+    "empty_subtitle": "Say your wake word or type your message below. Your assistant dispatches sub-agents, calls tools, and gives you a voice back.",
     "examples": {
-      "0": "Hey Jarvis, show the agents",
+      "0": "Show the agents",
       "1": "Switch brain to Gemini",
       "2": "Work in folder C:\\Projects\\Foo"
     },
-    "input_placeholder": "Message Jarvis… (Enter to send)",
+    "input_placeholder": "Message your assistant… (Enter to send)",
     "dictation_start": "Dictate",
     "dictation_stop": "Stop dictation",
     "dictation_listening": "Listening… speak now",
@@ -240,10 +247,10 @@
     "title": "Transcription",
     "subtitle": "Recent voice sessions, turn by turn.",
     "empty_title": "No sessions yet",
-    "empty_subtitle": "After a voice conversation with Jarvis, the transcripts appear here.",
+    "empty_subtitle": "After a voice conversation with your assistant, the transcripts appear here.",
     "load_more": "Load more",
     "user": "You",
-    "assistant": "Jarvis",
+    "assistant": "Assistant",
     "hangup": "Hung up",
     "duration": "Duration"
   },
@@ -292,6 +299,32 @@
     "refresh_tooltip": "Trigger aggregator manually",
     "loading": "Loading board stats…",
     "load_error": "Could not load stats",
+    "share": {
+      "button": "Share",
+      "button_tooltip": "Share your stats",
+      "title": "Share your stats",
+      "subtitle": "A snapshot of your Jarvis activity.",
+      "handle_label": "Your X handle (optional)",
+      "handle_placeholder": "yourhandle",
+      "copy_image": "Copy Image",
+      "save_png": "Save as PNG",
+      "share_on_x": "Share on X",
+      "status_generating": "Generating image…",
+      "status_copied": "Image copied — paste it (Ctrl/Cmd+V) into your post.",
+      "status_saved": "Saved jarvis-stats.png.",
+      "status_copy_unsupported": "Copy isn't supported here — saved the PNG instead.",
+      "status_composer": "Image copied — paste it into the X composer.",
+      "status_error": "Couldn't generate the image. Try again.",
+      "status_shared": "Shared.",
+      "status_blocked": "Couldn't open X — the image is on your clipboard, open x.com and paste it.",
+      "card": {
+        "brand": "PERSONAL JARVIS",
+        "hero_label": "Words spoken",
+        "jarvis_suffix": "spoken by Jarvis",
+        "talk_line": "{0} h talked · {1} chats",
+        "streak": "{0}-day best streak"
+      }
+    },
     "hero": {
       "you_spoke": "You said",
       "you_spoke_sub": "words spoken to Jarvis",
@@ -544,6 +577,20 @@
     "subtitle": "Wake-word, hotkeys, safety policies, autostart.",
     "overlay_taskbar_group_title": "Bar & Overlay",
     "languages_group_title": "Languages",
+    "app_settings_group_title": "App settings",
+    "jarvis_api": {
+      "title": "Jarvis API",
+      "key_label": "API key",
+      "description": "Local agents (Codex, Claude Code) use this key to drive Jarvis through the Control API — change settings, switch providers or language — instead of clicking the UI.",
+      "show": "Show",
+      "hide": "Hide",
+      "copy_button": "Copy",
+      "copied_toast": "API key copied to clipboard.",
+      "copy_failed_toast": "Could not copy the API key.",
+      "regenerate_button": "Regenerate key",
+      "regenerated_toast": "A new API key was generated. Update any agent that used the old one.",
+      "usage_hint": "Send it as an Authorization: Bearer header to your local Jarvis (/api/control). GET /api/control/allowlist lists everything you can change."
+    },
     "save": "Save changes",
     "saving": "Saving…",
     "reset": "Reset to defaults",
@@ -556,19 +603,18 @@
       "privacy_description": "Hybrid: STT local (Whisper), TTS/Brain cloud.",
       "privacy_value": "Hybrid",
       "scope_title": "Project Scope",
-      "scope_description": "\"Jarvis, work in folder X\" pins context until released.",
+      "scope_description": "\"Work in folder X\" pins context until released.",
       "scope_value": "Global (no pin)",
       "autostart_title": "Auto-start with Windows",
-      "autostart_description": "Jarvis starts in tray after login.",
+      "autostart_description": "The assistant starts in tray after login.",
       "toasts_title": "Autopilot Toasts",
       "toasts_description": "Show \"Jarvis opened X\" notification when voice controls the UI."
     },
     "wake_word": {
       "title": "Wake Word",
-      "description": "Activation phrase for voice mode. Pick a quick phrase or type your own.",
+      "description": "Activation phrase for voice mode. Type your own.",
       "phrase_label": "Wake phrase",
-      "phrase_placeholder": "e.g. Hey Jarvis",
-      "instant_phrases_label": "Quick picks",
+      "phrase_placeholder": "e.g. Jonas",
       "engine_label": "Detection engine",
       "sensitivity_label": "Sensitivity",
       "custom_model_path_label": "Custom ONNX model path",
@@ -584,12 +630,28 @@
         "custom_onnx": "Custom ONNX model"
       }
     },
+    "onboarding": {
+      "wake_word": {
+        "title": "Set your wake word",
+        "body": "Choose a word or short phrase Jarvis will listen for. You can type anything — for example your name.",
+        "input_label": "Wake phrase",
+        "placeholder": "e.g. Jonas",
+        "cta": "Get started",
+        "saving": "Saving…",
+        "degraded_note": "This phrase isn't supported by the current engine — it will use a fallback. You can still continue."
+      }
+    },
     "autostart": {
-      "title": "Start at login",
-      "description": "Launch Jarvis automatically when you log in, so \"Hey Jarvis\" works right after a reboot. Turn it off here any time.",
+      "title": "Launch app at login",
+      "description": "Launch the assistant automatically when you log in, so your wake word works right after a reboot. Turn it off here any time.",
       "enabled_toast": "Autostart enabled — Jarvis will launch at login.",
       "disabled_toast": "Autostart disabled.",
-      "unsupported": "Autostart is not available on this host (e.g. a headless server with no desktop session)."
+      "unsupported": "Autostart is not available on this host (e.g. a headless server with no desktop session).",
+      "enable_instant_start": "Enable instant start",
+      "instant_start_hint": "On Windows, instant start uses a scheduled task and asks for permission once. Without it, Windows may delay startup by several minutes on machines with many startup programs.",
+      "instant_start_active": "Instant start is active — Jarvis launches within seconds of login.",
+      "instant_start_enabled_toast": "Instant start enabled — Jarvis will launch right after login.",
+      "instant_start_declined_toast": "Permission was declined — Jarvis still starts via the shortcut (may be delayed)."
     },
     "overlay_style": {
       "title": "Display style",
@@ -631,7 +693,8 @@
       "hangup_label": "Hangup",
       "talk_label": "Talk / Push-to-talk",
       "record": "Record",
-      "recording": "Press your keys now… (Esc to cancel)",
+      "stop": "Stop",
+      "recording": "Press your keys now — hold several at once for a combo (Esc to cancel)",
       "save": "Save",
       "saved": "Keybind saved",
       "reset": "Reset to default",
@@ -644,7 +707,7 @@
   },
   "telephony_view": {
     "title": "Telephony",
-    "subtitle": "Call Jarvis on a real phone number. Same STT, Brain, and Charon voice as \"Hey Jarvis\".",
+    "subtitle": "Call your assistant on a real phone number. Same STT, Brain, and Charon voice as the local wake-word path.",
     "load_error": "Could not load telephony status",
     "not_configured_hint": "Set your Twilio Account SID, Auth Token, and phone number below to finish setup, then run \"Test connection\".",
     "unavailable_title": "Telephony extra not installed",
@@ -796,7 +859,10 @@
     "disconnected": "Codex disconnected",
     "status_loading": "Loading Codex status",
     "needs_codex_full": "{0}: first connect Codex or save API key, then activate.",
-    "needs_key_full": "{0}: first save API key, then activate."
+    "needs_key_full": "{0}: first save API key, then activate.",
+    "runs_as_subagent_hint": "Codex works as a subagent (background worker) on your ChatGPT login. After connecting, activate it in the Subagent list below. A thinking brain needs the separate OpenAI API-key provider.",
+    "brain_needs_openai_key": "Codex as a brain needs an OpenAI API key — the ChatGPT login only powers the Codex worker. Add an OpenAI key (e.g. on the OpenAI provider), then select Codex here.",
+    "brain_key_hint": "To use Codex as a brain too, add an OpenAI API key (paid, separate from your ChatGPT login — which only powers the worker). Saving it unlocks the brain toggle above."
   },
   "mcps_toast": {
     "connected": "{0} connected"
@@ -844,10 +910,6 @@
       "en": "Jarvis answers in English.",
       "de": "Jarvis antwortet auf Deutsch.",
       "es": "Jarvis responde en español."
-    },
-    "recognition_title": "Voice recognition: automatic.",
-    "recognition_text": "Whisper detects whichever language you speak — no manual switch needed.",
-    "override_title": "Per-Session Override",
-    "override_text": "Say \"Jarvis, reply in German\" or \"Por favor en español\" — Jarvis switches for the current session without changing this setting."
+    }
   }
 }

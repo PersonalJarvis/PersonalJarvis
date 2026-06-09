@@ -101,6 +101,78 @@ def test_urls_and_paths_pass_through_to_startfile(target: str) -> None:
     assert resolve_app_launch_target(target) == LaunchTarget("startfile", target)
 
 
+def _seed_start_menu(monkeypatch: pytest.MonkeyPatch, tmp_path, *shortcut_relpaths: str):
+    """Point the Start Menu roots at a temp tree and drop the given .lnk files.
+
+    Forces the Windows branch and makes both App Paths and PATH miss, so the
+    resolver MUST fall through to the Start Menu lookup under test. Returns the
+    per-user 'Programs' root the shortcuts were created under.
+    """
+    monkeypatch.setattr(app_resolver, "detect_platform", lambda: "win32")
+    monkeypatch.setattr(app_resolver, "_resolve_via_app_paths", lambda exe: None)
+    monkeypatch.setattr(app_resolver.shutil, "which", lambda name: None)
+    appdata = tmp_path / "appdata"
+    programdata = tmp_path / "programdata"
+    programs = appdata / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+    programs.mkdir(parents=True)
+    (programdata / "Microsoft" / "Windows" / "Start Menu" / "Programs").mkdir(parents=True)
+    monkeypatch.setenv("APPDATA", str(appdata))
+    monkeypatch.setenv("ProgramData", str(programdata))
+    for rel in shortcut_relpaths:
+        lnk = programs / rel
+        lnk.parent.mkdir(parents=True, exist_ok=True)
+        lnk.write_text("")  # contents irrelevant — the resolver matches by name
+    return programs
+
+
+def test_start_menu_shortcut_resolves_when_not_in_app_paths_or_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    """Discord-class apps register ONLY a Start Menu .lnk (per-user Squirrel
+    installs are absent from App Paths AND PATH). Live 2026-06-09:
+    open_app('discord') failed with 'Anwendung discord nicht gefunden', which
+    forced the computer-use loop into unreliable taskbar pixel-clicking (it
+    clicked Spotify, Discord's neighbour). The resolver must find the shortcut.
+    """
+    programs = _seed_start_menu(monkeypatch, tmp_path, r"Discord Inc/Discord.lnk")
+    expected = str(programs / "Discord Inc" / "Discord.lnk")
+    assert resolve_app_launch_target("discord") == LaunchTarget("startfile", expected)
+
+
+def test_start_menu_lookup_requires_exact_stem_match(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    """An exact basename match only — 'chrome' must NOT grab 'Chrome Remote
+    Desktop.lnk', and a prefix like 'disc' must NOT grab 'Discord.lnk'. A loose
+    match would launch the wrong app; unresolved names stay last-resort startfile.
+    """
+    _seed_start_menu(
+        monkeypatch, tmp_path,
+        r"Discord Inc/Discord.lnk",
+        r"Chrome Apps/Chrome Remote Desktop.lnk",
+    )
+    assert resolve_app_launch_target("chrome") == LaunchTarget("startfile", "chrome")
+    assert resolve_app_launch_target("disc") == LaunchTarget("startfile", "disc")
+
+
+@pytest.mark.asyncio
+async def test_open_app_launches_discord_via_start_menu_shortcut(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    """End-to-end regression for the live failure: open_app('discord') now
+    resolves the Start Menu shortcut and launches it via os.startfile instead
+    of returning 'nicht gefunden'."""
+    programs = _seed_start_menu(monkeypatch, tmp_path, r"Discord Inc/Discord.lnk")
+    expected = str(programs / "Discord Inc" / "Discord.lnk")
+    started: list[str] = []
+    monkeypatch.setattr(os, "startfile", lambda target: started.append(target), raising=False)
+
+    result = await OpenAppTool().execute({"app_name": "discord"}, _ctx())
+
+    assert result.success is True
+    assert started == [expected]
+
+
 @pytest.mark.asyncio
 async def test_open_app_uses_resolved_startfile_target_before_launch(
     monkeypatch: pytest.MonkeyPatch,

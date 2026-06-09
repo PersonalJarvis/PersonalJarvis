@@ -8,8 +8,9 @@ Plan-Akzeptanzkriterien §7.1:
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
+import jarvis.core.config as cfg_module
 from jarvis.core.self_mod import (
     FORBIDDEN_PATTERNS,
     AllowlistViolationError,
@@ -19,8 +20,11 @@ from jarvis.core.self_mod import (
 )
 
 # Plan-§7.1 table + voice-tunable computer_use.step_budget (the field the
-# screenshot loop actually reads; the legacy max_steps field was a no-op).
-# 9 paths in the current allowlist.
+# screenshot loop actually reads; the legacy max_steps field was a no-op) +
+# the language keys added 2026-06-08 for the Jarvis Control API. The canonical
+# reply-language path is ``brain.reply_language`` (SAFE); ``profile.language``
+# is kept (legacy, no runtime effect) so old configs/flows keep validating.
+# 12 paths in the current allowlist.
 EXPECTED_PATHS = {
     "tts.provider",
     "tts.voice_de",
@@ -28,15 +32,21 @@ EXPECTED_PATHS = {
     "tts.speed",
     "stt.provider",
     "brain.primary",
+    "brain.reply_language",
+    "stt.language",
+    "tts.language_code",
     "ui.theme",
+    "ui.language",
     "profile.language",
     "computer_use.step_budget",
 }
 
-SAFE_TIER_PATHS = {"tts.speed", "ui.theme"}
+SAFE_TIER_PATHS = {"tts.speed", "ui.theme", "brain.reply_language", "ui.language"}
 RESTART_REQUIRED_PATHS = {
     "stt.provider",
     "brain.primary",
+    "stt.language",
+    "tts.language_code",
 }
 
 
@@ -44,9 +54,10 @@ RESTART_REQUIRED_PATHS = {
 
 
 class TestListAll:
-    def test_returns_nine_specs(self) -> None:
-        # Wave-3 T2 added the 9th spec (``computer_use.engine``).
-        assert len(SelfModRegistry.list_all()) == 9
+    def test_returns_thirteen_specs(self) -> None:
+        # 9 historical paths + brain.reply_language/stt.language/tts.language_code
+        # + ui.language (interface language, live-synced to the frontend).
+        assert len(SelfModRegistry.list_all()) == 13
 
     def test_returns_expected_paths(self) -> None:
         paths = {spec.path for spec in SelfModRegistry.list_all()}
@@ -89,6 +100,9 @@ class TestIsMutable:
             # Plan-§AP-9 erweitert auf weitere geschützte Sektionen
             "mcp_server.transport",
             "mcp_server.auth_token_env",
+            # Risk-tier whitelist/blacklist — added 2026-06-08 for the Control API
+            "safety.whitelist",
+            "safety.blacklist.commands",
             "harness.default_timeout_s",
             # Suffix-Patterns für Secrets
             "anthropic_api_key",
@@ -268,8 +282,64 @@ class TestNoConfigFileIO:
         assert not (tmp_path / "jarvis.toml").exists()
 
         # Alle drei Public-API-Aufrufe müssen funktionieren.
-        assert len(SelfModRegistry.list_all()) == 9
+        assert len(SelfModRegistry.list_all()) == 13
         assert SelfModRegistry.is_mutable("tts.provider") is True
         assert SelfModRegistry.is_mutable("security.admin_password_hash") is False
         spec = SelfModRegistry.get_spec("brain.primary")
         assert spec is not None and spec.field_name == "primary"
+
+
+# --- Allowlist <-> Pydantic field parity (anti-drift guard) ---
+
+
+class TestAllowlistFieldParity:
+    """Every allowlist entry must point at a real Pydantic field.
+
+    Self-mod resolves ``pydantic_model_name`` via ``getattr(jarvis.core.config,
+    name)`` and writes ``field_name``. A typo in either (e.g. ``reply_lang``
+    instead of ``reply_language``) makes pre-validate fail at runtime for a
+    write the user explicitly asked for. This guard catches the drift at test
+    time across ALL specs, not just the new language keys.
+    """
+
+    @pytest.mark.parametrize("spec", SelfModRegistry.list_all(), ids=lambda s: s.path)
+    def test_model_and_field_exist(self, spec: MutableSpec) -> None:
+        model = getattr(cfg_module, spec.pydantic_model_name, None)
+        assert model is not None, (
+            f"{spec.path}: pydantic_model_name '{spec.pydantic_model_name}' "
+            "does not exist in jarvis.core.config"
+        )
+        assert isinstance(model, type) and issubclass(model, BaseModel), (
+            f"{spec.path}: '{spec.pydantic_model_name}' is not a Pydantic model"
+        )
+        # A declared field is the strict case. A model with extra="allow"
+        # legitimately stores undeclared keys (e.g. ui.theme on UIConfig), so
+        # the write still survives pre-validate. Only an undeclared field on an
+        # extra="forbid" model would break a mutation the user asked for — that
+        # is the drift this guard must catch.
+        declared = spec.field_name in model.model_fields
+        allows_extra = model.model_config.get("extra") == "allow"
+        assert declared or allows_extra, (
+            f"{spec.path}: field '{spec.field_name}' is not declared on "
+            f"{spec.pydantic_model_name} and the model forbids extras "
+            "(allowlist <-> config drift; pre-validate would reject this write)"
+        )
+
+
+# --- Language keys (Jarvis Control API, 2026-06-08) ---
+
+
+class TestLanguageKeys:
+    def test_reply_language_is_canonical_safe_no_restart(self) -> None:
+        """The headline ``brain.reply_language`` auto-applies (SAFE) and is
+        hot-reloaded (no restart) — that is what makes "switch to English" work
+        end-to-end via set_config_value."""
+        spec = SelfModRegistry.require_spec("brain.reply_language")
+        assert spec.pydantic_model_name == "BrainConfig"
+        assert spec.field_name == "reply_language"
+        assert spec.risk_tier == "safe"
+        assert spec.needs_restart is False
+
+    def test_stt_and_tts_language_are_mutable(self) -> None:
+        assert SelfModRegistry.is_mutable("stt.language") is True
+        assert SelfModRegistry.is_mutable("tts.language_code") is True

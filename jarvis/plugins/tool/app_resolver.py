@@ -128,6 +128,53 @@ def _resolve_via_app_paths(exe_name: str) -> str | None:
     return None
 
 
+def _start_menu_roots() -> list[str]:
+    """Return the existing Start Menu ``Programs`` roots (per-user + machine-wide).
+
+    These trees hold the ``.lnk`` shortcuts Windows installers create and that
+    the Start Menu / search box use to launch apps by friendly name. Many apps
+    register ONLY a Start Menu shortcut — per-user Squirrel/Electron installs
+    (Discord, Slack) land in ``%LOCALAPPDATA%`` and appear in neither App Paths
+    nor ``PATH``. Returns only roots that exist on disk; empty on a non-Windows
+    runtime or when the env vars are unset.
+    """
+    roots: list[str] = []
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        roots.append(os.path.join(appdata, "Microsoft", "Windows", "Start Menu", "Programs"))
+    programdata = os.environ.get("ProgramData")
+    if programdata:
+        roots.append(os.path.join(programdata, "Microsoft", "Windows", "Start Menu", "Programs"))
+    return [r for r in roots if os.path.isdir(r)]
+
+
+def _resolve_via_start_menu(candidates: set[str], roots: list[str] | None = None) -> str | None:
+    """Return the absolute path of a Start Menu ``.lnk`` whose file stem matches
+    one of ``candidates`` (case-insensitive, EXACT stem), else ``None``.
+
+    Walks the per-user and machine-wide ``Programs`` trees. Exact-stem matching
+    keeps it deterministic and avoids launching the wrong app: ``chrome`` must
+    not match ``Chrome Remote Desktop.lnk`` (Chrome resolves earlier via App
+    Paths anyway), and a prefix like ``disc`` must not match ``Discord.lnk``.
+    The resolved shortcut is launched via ``os.startfile`` by the caller, which
+    follows the ``.lnk`` to its real target. Never raises.
+    """
+    wanted = {c.strip().lower() for c in candidates if c and c.strip()}
+    if not wanted:
+        return None
+    if roots is None:
+        roots = _start_menu_roots()
+    for root in roots:
+        try:
+            for dirpath, _dirnames, filenames in os.walk(root):
+                for fn in filenames:
+                    if fn.lower().endswith(".lnk") and fn[:-4].strip().lower() in wanted:
+                        return os.path.join(dirpath, fn)
+        except OSError:
+            continue
+    return None
+
+
 def resolve_app_launch_target(app_name: str) -> LaunchTarget:
     """Resolve a voice alias / app name to a concrete, launchable target.
 
@@ -181,6 +228,18 @@ def _resolve_windows(
         full_path = shutil.which(canonical) or shutil.which(normalized)
     if full_path:
         return LaunchTarget("executable", full_path)
+
+    # Start Menu shortcut fallback (live 2026-06-09). Apps like Discord/Slack
+    # install a per-user Squirrel build registered ONLY as a Start Menu .lnk —
+    # absent from both App Paths and PATH. Without this step the resolver fell
+    # through to os.startfile("discord"), which raises FileNotFoundError
+    # ("Anwendung 'discord' nicht gefunden"), and the computer-use loop was then
+    # forced into unreliable taskbar pixel-clicking (it hit Spotify, the icon
+    # next to Discord). Match the friendly name AND the canonical alias to a
+    # shortcut and hand the launcher that .lnk (os.startfile follows it).
+    lnk = _resolve_via_start_menu({normalized_without_exe, canonical})
+    if lnk:
+        return LaunchTarget("startfile", lnk)
 
     # Last resort: hand the raw name to the shell. The plausibility gate in
     # open_app has already vetted that this is a whitelisted/known name, so this

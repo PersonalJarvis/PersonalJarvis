@@ -914,7 +914,7 @@ class CriticRunner:
             effective_critic_model = _normalize_model_for_codex(
                 primary_model or model
             )
-            return await self._invoke_via_codex_direct(
+            codex_verdict = await self._invoke_via_codex_direct(
                 prompt=prompt_for_subprocess,
                 worktree=worktree,
                 env=env,
@@ -922,17 +922,54 @@ class CriticRunner:
                 iteration=iteration,
                 adversarial_reframe=adversarial_reframe,
             )
+            if codex_verdict is not None:
+                return codex_verdict
+            # Codex critic produced no schema-valid verdict — commonly a dead
+            # ChatGPT OAuth token ("Please log in again"). Fall back to the
+            # claude critic so a dead codex login does not fail a mission with
+            # `critic_unavailable` even though the worker delivered real work
+            # (2026-06-08 incident, mission 019ea8a5: claude worker, 7.8 KB diff,
+            # codex critic → critic_unavailable). Run `codex login` to use the
+            # codex critic again.
+            logger.warning(
+                "CriticRunner: codex critic produced no verdict — falling back "
+                "to the claude critic (model=%r). Run `codex login` to restore "
+                "the codex critic.",
+                model,
+            )
+            return await self._invoke_via_claude_direct(
+                prompt=prompt_for_subprocess,
+                worktree=worktree,
+                env=env,
+                model=model,
+                iteration=iteration,
+                adversarial_reframe=adversarial_reframe,
+            )
 
         # Any other provider (grok / gemini / openrouter / unset) falls back to
-        # the direct Opus critic. The OpenClaw subprocess critic path was
+        # the direct claude critic. The OpenClaw subprocess critic path was
         # removed alongside the OpenClaw worker — it shared the ~92% nested-
         # claude hang failure mode (see docs/BUGS.md). The direct claude CLI
         # path is the proven critic surface.
+        #
+        # Use the claude critic model from `choose_critic_model` (`model`) here —
+        # NOT `primary_model`. In this branch `primary_model` is the foreign
+        # provider's model (e.g. "grok-4.3" / "gemini-3.1-pro-preview"), which
+        # `claude --model` rejects with returncode=1. That failed the critic
+        # twice -> `critic_unavailable` and the whole mission FAILED even though
+        # the worker delivered real work (sibling of the ClaudeDirectWorker
+        # provider-refusal bug; forensic 2026-06-08 verify run, grok sub-agent).
+        if primary_provider:
+            logger.info(
+                "CriticRunner: sub_jarvis provider %r has no direct critic — "
+                "grading on the claude critic model %r (Claude Max OAuth).",
+                primary_provider, model,
+            )
         return await self._invoke_via_claude_direct(
             prompt=prompt_for_subprocess,
             worktree=worktree,
             env=env,
-            model=primary_model or model,
+            model=model,
             iteration=iteration,
             adversarial_reframe=adversarial_reframe,
         )

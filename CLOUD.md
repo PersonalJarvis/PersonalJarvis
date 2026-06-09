@@ -6,6 +6,23 @@
 
 ---
 
+## Canonical repositories (READ THIS BEFORE ANY PUSH — added 2026-06-07)
+
+This project lives in **two private GitHub repos under the `PersonalJarvis` org**. The org owner was renamed from `personal-jarvis` to `PersonalJarvis` on 2026-06-07, so **both repos now start with `PersonalJarvis/`** — tell them apart by the **second path segment (case-sensitive)**:
+
+| Remote | URL | What it is | Who writes to it |
+|---|---|---|---|
+| **`origin`** | `github.com/PersonalJarvis/personal-jarvis` — lower-case repo name (the old `personal-jarvis/personal-jarvis` 301-redirects here) | **THE working repo.** All day-to-day development, commits, branches, and `main` live here. | Every dev session — this is where `git push origin` goes. |
+| `public` | `github.com/PersonalJarvis/PersonalJarvis` — PascalCase repo name | The **depersonalized public distribution repo** (still private until the public launch, ~end of June). A clean, secrets-/PII-scrubbed snapshot of the working tree. | **Only** the `ship-public-release` skill. |
+
+**Binding rule for every agent (human or cloud-code):**
+
+1. **Normal work pushes to `origin` = `PersonalJarvis/personal-jarvis`.** Before any push, run `git remote -v` and confirm the target is `origin`. The lower-case `…/personal-jarvis` is correct; the PascalCase `…/PersonalJarvis` is NOT a normal push target.
+2. **`PersonalJarvis/PersonalJarvis` (the `public` remote) is written EXCLUSIVELY by the `ship-public-release` skill** — never by a manual `git push`, never with raw working state, never with secrets/PII. Pushing day-to-day work there is a defect.
+3. **Do NOT rename the local pip package name or the keyring service `personal-jarvis`** — those identifiers are independent of the GitHub org rename and changing them breaks credential lookup.
+
+---
+
 ## Rule #1 — Everything we build must run on Linux, macOS, AND Windows. (NON-NEGOTIABLE)
 
 **Every feature, module, dependency, default, and PR must work end-to-end on all three desktop platforms — Linux, macOS, and Windows — plus a headless Linux server.**

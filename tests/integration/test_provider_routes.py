@@ -283,6 +283,77 @@ def test_brain_switch_rejects_provider_without_key(
     assert fake.calls == []
 
 
+def test_brain_switch_codex_accepts_any_openai_key(
+    server_with_brain: WebServer, secret_store: _InMemorySecretStore
+) -> None:
+    """Codex-as-brain activates with ANY OpenAI key CodexBrain can use.
+
+    Here only the general ``openai_api_key`` is set (not the dedicated codex
+    slot). CodexBrain falls back to it, so the switch must succeed — matching
+    what the brain actually reads. The ChatGPT OAuth login alone is NOT enough
+    for a chat brain (covered by the next test).
+    """
+    secret_store.set("openai_api_key", "sk-openai-test-123")
+    fake: _FakeBrainManager = server_with_brain.app.state.brain
+    with TestClient(server_with_brain.app) as client:
+        resp = client.post("/api/brain/switch", json={"provider": "codex", "persist": True})
+        assert resp.status_code == 200
+        assert resp.json()["active"] == "codex"
+    assert fake.calls == [("codex", True)]
+
+
+def _patch_codex_status(monkeypatch: pytest.MonkeyPatch, *, connected: bool) -> None:
+    """Pin provider_routes.CodexAuthService to a connected/disconnected stub so
+    the codex-brain tests don't depend on the dev machine's real `codex login`."""
+
+    class _Fake:
+        def __init__(self, binary_path: str | None = None) -> None:
+            self.binary_path = binary_path
+
+        def status(self):
+            from jarvis.codex_auth import CodexAuthStatus
+
+            return CodexAuthStatus(
+                installed=True,
+                connected=connected,
+                mode="chatgpt" if connected else "unknown",
+            )
+
+    monkeypatch.setattr("jarvis.ui.web.provider_routes.CodexAuthService", _Fake)
+
+
+def test_brain_switch_codex_accepts_chatgpt_login(
+    server_with_brain: WebServer,
+    secret_store: _InMemorySecretStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No OpenAI key, but a ChatGPT login -> 200: CodexBrain drives the slow
+    ``codex exec`` CLI path over the OAuth token, so the toggle is usable."""
+    _patch_codex_status(monkeypatch, connected=True)
+    fake: _FakeBrainManager = server_with_brain.app.state.brain
+    with TestClient(server_with_brain.app) as client:
+        resp = client.post("/api/brain/switch", json={"provider": "codex", "persist": True})
+        assert resp.status_code == 200
+        assert resp.json()["active"] == "codex"
+    assert fake.calls == [("codex", True)]
+
+
+def test_brain_switch_codex_rejected_without_any_auth(
+    server_with_brain: WebServer,
+    secret_store: _InMemorySecretStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No OpenAI key AND no ChatGPT login -> 409: nothing can back the brain."""
+    _patch_codex_status(monkeypatch, connected=False)
+    fake: _FakeBrainManager = server_with_brain.app.state.brain
+    with TestClient(server_with_brain.app) as client:
+        resp = client.post("/api/brain/switch", json={"provider": "codex"})
+        assert resp.status_code == 409
+        assert "Codex can't be a brain yet" in resp.json()["detail"]
+    # No silent switch — the manager must not have been called.
+    assert fake.calls == []
+
+
 def test_brain_switch_unknown_provider_returns_404(server_with_brain: WebServer, secret_store: _InMemorySecretStore) -> None:
     with TestClient(server_with_brain.app) as client:
         resp = client.post("/api/brain/switch", json={"provider": "nonexistent-provider"})

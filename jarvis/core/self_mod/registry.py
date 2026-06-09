@@ -20,6 +20,7 @@ from .schema import MutableSpec
 # read and write attempts.
 FORBIDDEN_PATTERNS: tuple[str, ...] = (
     "security.*",
+    "safety.*",  # risk-tier whitelist/blacklist — never readable/writable via self-mod or the Control API
     "mcp_server.*",
     "harness.*",
     "*_api_key",
@@ -81,7 +82,7 @@ class SelfModRegistry:
             field_name="primary",
             risk_tier="ask",
             needs_restart=True,
-            description="Primärer Brain-Provider (Brain-Manager-Reinit)",
+            description="Primary brain provider (requires a BrainManager re-init).",
         ),
         MutableSpec(
             path="ui.theme",
@@ -91,13 +92,75 @@ class SelfModRegistry:
             needs_restart=False,
             description="UI-Theme (trivial, Bypass-Whitelist)",
         ),
+        # Interface (display) language — every label/button/message in the app.
+        # SAFE: trivially reversible. needs_restart=False: the frontend switches
+        # live when the write fires ConfigReloaded over /ws (no restart). This is
+        # the VISIBLE language the user sees; brain.reply_language is what Jarvis
+        # SPEAKS. "switch the language" should usually target this one.
+        MutableSpec(
+            path="ui.language",
+            pydantic_model_name="UIConfig",
+            field_name="language",
+            risk_tier="safe",
+            needs_restart=False,
+            description=(
+                "Interface / display language of the whole app (en/de/es) — what "
+                "the user SEES. Applies live, no restart."
+            ),
+        ),
         MutableSpec(
             path="profile.language",
             pydantic_model_name="ProfileConfig",
             field_name="language",
             risk_tier="ask",
             needs_restart=False,
-            description="Profil-Sprache (wirkt sofort in nächster Antwort)",
+            description="Profile language (legacy; canonical is brain.reply_language).",
+        ),
+        # Canonical reply-language pin (Jarvis Control API, 2026-06-08). This is
+        # the ONLY setting that changes spoken/chat output language —
+        # BrainManager._reply_language_directive reads brain.reply_language, NOT
+        # profile.language (which is a legacy no-op kept for old configs). SAFE:
+        # trivially reversible, the user explicitly wants an instant switch, so
+        # it auto-applies through the writer with no confirmation round-trip. A
+        # ConfigReloaded subscriber calls BrainManager.set_reply_language so the
+        # NEXT turn is in the new language without a restart.
+        MutableSpec(
+            path="brain.reply_language",
+            pydantic_model_name="BrainConfig",
+            field_name="reply_language",
+            risk_tier="safe",
+            needs_restart=False,
+            description=(
+                "Reply language for spoken/chat output (auto/de/en/es). "
+                "Canonical language setting; applies to the next turn (no "
+                "restart). Voice: \"switch your language to English\"."
+            ),
+        ),
+        # STT input-locale hint. Read at STT init, so a change needs a restart.
+        MutableSpec(
+            path="stt.language",
+            pydantic_model_name="STTConfig",
+            field_name="language",
+            risk_tier="ask",
+            needs_restart=True,
+            description=(
+                "Speech-to-text input locale hint (auto/de/en/...). Read at STT "
+                "init — needs restart to take effect."
+            ),
+        ),
+        # TTS output locale. Read at TTS init; most cloud voices also auto-detect
+        # the language from the reply text, so this mainly pins fixed-locale
+        # engines. Needs restart to re-init the synthesizer.
+        MutableSpec(
+            path="tts.language_code",
+            pydantic_model_name="TTSConfig",
+            field_name="language_code",
+            risk_tier="ask",
+            needs_restart=True,
+            description=(
+                "Text-to-speech output locale (de-DE/en-US/...). Read at TTS "
+                "init — needs restart to take effect."
+            ),
         ),
         # Voice-tunable computer-use step budget. Points at ``step_budget`` —
         # the field the screenshot loop actually reads (via

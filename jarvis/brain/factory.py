@@ -171,6 +171,27 @@ SELF_MOD_TOOL_NAMES_ROUTER = frozenset({
 })
 
 
+def _per_turn_vision_active(vision_cfg: Any) -> bool:
+    """True when ``[brain.router.vision]`` requests the per-turn screenshot feed.
+
+    This is the always-on latency tax (a screenshot injected into EVERY router
+    turn). Off by default since the Wave-2 latency fix.
+    """
+    return vision_cfg is not None and bool(getattr(vision_cfg, "enabled", False))
+
+
+def _needs_vision_engine(*, per_turn_vision: bool, cu_enabled: bool) -> bool:
+    """True when a ``VisionEngine`` must be built.
+
+    The engine is shared by two consumers: (a) the per-turn screenshot injector
+    (``_vision_provider``) and (b) Computer-Use's on-demand capture. Build it
+    whenever EITHER needs it — so turning the per-turn feed OFF for speed does
+    NOT also disable Computer-Use ("klick auf X"). Decouples the two, which were
+    previously gated on the single ``[brain.router.vision].enabled`` flag.
+    """
+    return per_turn_vision or cu_enabled
+
+
 def _load_tools_for_tier(
     tier: str,
     *,
@@ -344,7 +365,12 @@ def _load_tools_for_tier(
         try:
             from jarvis.brain.tools import build_self_mod_tools
 
-            self_mod_tools = build_self_mod_tools()
+            # Pass the EventBus so the writer dispatches ConfigReloaded on a
+            # SAFE-tier write (e.g. voice "switch to English"): the BrainManager
+            # hot-reload subscriber then applies it to the NEXT turn with no
+            # restart. Without the bus the change lands on disk but stays dormant
+            # until restart — the exact symptom self-mod "doesn't work".
+            self_mod_tools = build_self_mod_tools(writer_kwargs={"bus": bus})
             for name, inst in self_mod_tools.items():
                 tools[name] = inst
         except Exception as exc:  # noqa: BLE001 — defensive, kein Tool-Block fail-stops das Brain
@@ -778,38 +804,56 @@ def _phase2_full_brain(
     except Exception as exc:  # noqa: BLE001
         log.warning("attach_to_bus fehlgeschlagen: %s", exc)
 
-    # Permanent-Vision (Wave-2 B6): instantiate VisionContextProvider when
-    # enabled in [brain.router.vision].
+    cu_cfg = getattr(config, "computer_use", None)
+    cu_enabled = bool(cu_cfg and cu_cfg.enabled)
+
+    # Vision wiring (Wave-2 latency fix — decoupled). The single ``VisionEngine``
+    # feeds TWO independent consumers:
+    #   (a) the per-turn screenshot injector ``_vision_provider`` — the always-on
+    #       token tax, gated on ``[brain.router.vision].enabled`` (OFF by default);
+    #   (b) Computer-Use's on-demand capture (``vision_engine_for_cu``), needed
+    #       whenever ``[computer_use].enabled`` so "klick auf X" works.
+    # Build the engine when EITHER consumer needs it, but attach the continuously
+    # refreshing ``_vision_provider`` ONLY for (a). Previously both were gated on
+    # the single vision flag, so disabling the per-turn feed also killed
+    # Computer-Use (factory:924 "Vision-Engine fehlt"). They are now independent.
     manager._vision_provider = None
     vision_engine_for_cu: Any | None = None
     if tier == "router":
         router_tier = getattr(config.brain, "router", None)
         vision_cfg = getattr(router_tier, "vision", None) if router_tier is not None else None
-        if vision_cfg is not None and getattr(vision_cfg, "enabled", False):
+        per_turn_vision = _per_turn_vision_active(vision_cfg)
+        if _needs_vision_engine(per_turn_vision=per_turn_vision, cu_enabled=cu_enabled):
             try:
-                from jarvis.vision.context_provider import VisionContextProvider
                 from jarvis.vision.engine import VisionEngine
 
                 engine = VisionEngine(bus=bus)
                 vision_engine_for_cu = engine
-                manager._vision_provider = VisionContextProvider(
-                    engine,
-                    bus=bus,
-                    refresh_interval_s=vision_cfg.refresh_interval_s,
-                    max_staleness_s=vision_cfg.max_staleness_s,
-                    capture_mode=vision_cfg.capture_mode,
-                )
-                log.info(
-                    "VisionContextProvider instantiiert (interval=%ss, mode=%s)",
-                    vision_cfg.refresh_interval_s,
-                    vision_cfg.capture_mode,
-                )
-            except Exception as exc:  # noqa: BLE001
-                log.warning("VisionContextProvider konnte nicht gebaut werden: %s", exc)
-                manager._vision_provider = None
+                if per_turn_vision:
+                    from jarvis.vision.context_provider import VisionContextProvider
 
-    cu_cfg = getattr(config, "computer_use", None)
-    cu_enabled = bool(cu_cfg and cu_cfg.enabled)
+                    manager._vision_provider = VisionContextProvider(
+                        engine,
+                        bus=bus,
+                        refresh_interval_s=vision_cfg.refresh_interval_s,
+                        max_staleness_s=vision_cfg.max_staleness_s,
+                        capture_mode=vision_cfg.capture_mode,
+                    )
+                    log.info(
+                        "VisionContextProvider instantiiert (interval=%ss, mode=%s)",
+                        vision_cfg.refresh_interval_s,
+                        vision_cfg.capture_mode,
+                    )
+                else:
+                    log.info(
+                        "Per-turn vision injection OFF — VisionEngine kept for "
+                        "Computer-Use on-demand capture only (max-speed mode)."
+                    )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Vision-Engine/Provider konnte nicht gebaut werden: %s", exc)
+                manager._vision_provider = None
+                vision_engine_for_cu = None
+
     # Computer-Use runs the in-process screenshot/click/keyboard loop
     # (jarvis/harness/screenshot_only_loop.py) via the ComputerUseContext
     # wired below. Requires the router tier + a vision engine.

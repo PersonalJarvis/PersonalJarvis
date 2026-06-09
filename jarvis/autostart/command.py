@@ -71,13 +71,14 @@ def resolve_launch_spec(cfg: object | None = None) -> LaunchSpec:
     """Build the :class:`LaunchSpec` for the *current* install.
 
     ``cfg`` is optional; only ``cfg.autostart.start_minimized`` is read (default
-    True). Everything else is derived from the running interpreter + package so
-    the entry always targets the clone that is actually running.
+    False = open the window visibly at login). Everything else is derived from the
+    running interpreter + package so the entry always targets the clone that is
+    actually running.
     """
-    minimized = True
+    minimized = False
     autostart = getattr(cfg, "autostart", None) if cfg is not None else None
     if autostart is not None:
-        minimized = bool(getattr(autostart, "start_minimized", True))
+        minimized = bool(getattr(autostart, "start_minimized", False))
 
     if sys.platform == "win32":
         program = _detect_pythonw()

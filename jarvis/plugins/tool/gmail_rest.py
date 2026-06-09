@@ -12,12 +12,24 @@ because sending mail is consequential (echo-confirm before send).
 from __future__ import annotations
 
 import base64
-from collections.abc import Callable
+import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
 
+log = logging.getLogger(__name__)
+
 _GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
+
+# User-facing error strings (English per CLAUDE.md; the brain rephrases to the
+# user's language). Kept distinct so the brain can tell "never connected" from
+# "was connected, token died — reconnect".
+_NOT_CONNECTED = "Gmail is not connected — connect it in the Plugins view."
+_NEEDS_RECONNECT = (
+    "Gmail authorization expired and could not be renewed — "
+    "please reconnect Gmail in the Plugins view."
+)
 
 
 def _default_token_provider() -> str | None:
@@ -25,6 +37,39 @@ def _default_token_provider() -> str | None:
 
     tokens = TokenStore().load("gmail")
     return tokens.access if tokens is not None else None
+
+
+async def _default_refresher() -> bool:
+    """Refresh the stored Gmail token in place. Returns True on success.
+
+    On an un-healable failure (revoked / invalid_client / placeholder client)
+    it flags ``needs_reauth`` on the stored token so the Plugins view stops
+    showing a green "connected" that lies and offers a Reconnect instead.
+    Best-effort: any error returns False, never raises into the tool."""
+    import contextlib
+    import dataclasses
+
+    from jarvis.marketplace.connect_helpers import build_handler_from_catalog
+    from jarvis.marketplace.token_store import TokenStore
+
+    store = TokenStore()
+    tokens = store.load("gmail")
+    if tokens is None or not tokens.refresh:
+        return False
+    handler = build_handler_from_catalog("gmail")
+    if handler is None:
+        return False
+    try:
+        new = await handler.refresh(tokens)
+    except Exception as exc:  # noqa: BLE001 — classify, never propagate
+        # A 401 followed by a failed refresh means the connection is dead;
+        # surface a Reconnect affordance instead of silently staying "green".
+        with contextlib.suppress(Exception):
+            store.save("gmail", dataclasses.replace(tokens, needs_reauth=True))
+        log.info("gmail token refresh failed, flagged needs_reauth: %s", exc)
+        return False
+    store.save("gmail", dataclasses.replace(new, needs_reauth=False))
+    return True
 
 
 class GmailRestTool:
@@ -59,9 +104,11 @@ class GmailRestTool:
         self,
         access_token_provider: Callable[[], str | None] | None = None,
         transport: Any | None = None,
+        token_refresher: Callable[[], Awaitable[bool]] | None = None,
     ) -> None:
         self._token_provider = access_token_provider or _default_token_provider
         self._transport = transport
+        self._refresher = token_refresher or _default_refresher
 
     # -- internal helpers ---------------------------------------------------
 
@@ -70,6 +117,37 @@ class GmailRestTool:
         if not token:
             return None
         return {"Authorization": f"Bearer {token}", "User-Agent": "Personal-Jarvis/1.0"}
+
+    async def _with_auth_retry(
+        self, do_call: Callable[[dict[str, str]], Awaitable[Any]]
+    ) -> Any:
+        """Run an authenticated Gmail call; on a 401 refresh once and retry.
+
+        Centralises the self-heal so every action (list/get/send) recovers from
+        an expired access token instead of returning a hard auth error. Returns
+        the call's JSON on success, or a ``{"error": ...}`` dict the caller maps
+        to a ToolResult."""
+        import httpx
+
+        headers = self._bearer()
+        if headers is None:
+            return {"error": _NOT_CONNECTED}
+        try:
+            return await do_call(headers)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 401:
+                raise
+        # 401 — token likely expired. Try exactly one refresh + retry.
+        try:
+            refreshed = bool(await self._refresher())
+        except Exception:  # noqa: BLE001 — refresher must never crash the tool
+            refreshed = False
+        if not refreshed:
+            return {"error": _NEEDS_RECONNECT}
+        headers = self._bearer()
+        if headers is None:
+            return {"error": _NEEDS_RECONNECT}
+        return await do_call(headers)
 
     async def _get(self, path: str, params: dict[str, Any], headers: dict[str, str]):
         import httpx
@@ -90,26 +168,25 @@ class GmailRestTool:
     # -- public actions (also directly unit-testable) -----------------------
 
     async def list_messages(self, *, query: str = "", max_results: int = 10) -> dict[str, Any]:
-        headers = self._bearer()
-        if headers is None:
-            return {"error": "Gmail is not connected — connect it in the Plugins view."}
-        return await self._get(
-            "/messages", {"q": query, "maxResults": max_results}, headers
+        return await self._with_auth_retry(
+            lambda headers: self._get(
+                "/messages", {"q": query, "maxResults": max_results}, headers
+            )
         )
 
     async def get_message(self, *, message_id: str) -> dict[str, Any]:
-        headers = self._bearer()
-        if headers is None:
-            return {"error": "Gmail is not connected — connect it in the Plugins view."}
-        return await self._get(f"/messages/{message_id}", {"format": "full"}, headers)
+        return await self._with_auth_retry(
+            lambda headers: self._get(
+                f"/messages/{message_id}", {"format": "full"}, headers
+            )
+        )
 
     async def send_message(self, *, to: str, subject: str = "", body: str = "") -> dict[str, Any]:
-        headers = self._bearer()
-        if headers is None:
-            return {"error": "Gmail is not connected — connect it in the Plugins view."}
         mime = f"To: {to}\r\nSubject: {subject}\r\n\r\n{body}"
         raw = base64.urlsafe_b64encode(mime.encode("utf-8")).decode("ascii")
-        return await self._post("/messages/send", {"raw": raw}, headers)
+        return await self._with_auth_retry(
+            lambda headers: self._post("/messages/send", {"raw": raw}, headers)
+        )
 
     # -- Tool protocol ------------------------------------------------------
 

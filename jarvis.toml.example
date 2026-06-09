@@ -21,17 +21,21 @@ name = "default"
 language = "auto"            # "de" | "en" | "auto" (bilingual auto-detect)
 
 [persona]
-# The assistant's name. Empty -> derived from the wake-word phrase below.
-name = "Jarvis"
+# The assistant's name. Empty -> derived from the wake-word phrase below
+# (e.g. "Hey Jarvis" -> "Jarvis"). Leave blank to keep the default.
+name = ""
 
 # ── Voice trigger (optional; irrelevant on a headless/browser-only host) ──
 [trigger]
-wake_word_enabled = true     # always-on "Hey Jarvis" listener (needs a mic)
+wake_word_enabled = true     # always-on wake listener (needs a mic)
 hotkey = "ctrl+right_alt+j"  # push-to-talk; safe combo on all OSes
 single_turn_mode = false     # false = conversation stays open until "hang up"/idle
 
 [trigger.wake_word]
-phrase = "Hey Jarvis"        # any phrase; "Hey Jarvis"/"Alexa"/"Hey Mycroft" use the offline CPU model
+# Type any phrase. Offline CPU models: "Hey Rhasspy", "Hey Jarvis", "Alexa",
+# "Hey Mycroft". Any other phrase needs the [desktop] local-Whisper extra or a
+# custom .onnx model. Leave blank to use the bundled "Hey Rhasspy" fallback.
+phrase = ""
 engine = "auto"              # auto | openwakeword | stt_match | custom_onnx
 sensitivity = 0.5
 
@@ -135,9 +139,12 @@ data_dir = "./data"          # per-user runtime data (gitignored)
 enabled = true
 vault_root = "wiki/obsidian-vault"
 
-# ── Login autostart — OFF by default; enable per machine ──
+# ── Login autostart — ON by default; toggle in Settings ──
+# Launches the full desktop app (voice + Orb) at login so the wake listener
+# starts right after a reboot. On a headless host (no display) this is a
+# graceful no-op. Set to false to opt out, or use the "App settings" toggle.
 [autostart]
-enabled = false
+enabled = true
 
 # Phase-5/6 features (vision, computer_use, admin, missions, board, telephony)
 # default to enabled = false in code. Enable them individually once configured;

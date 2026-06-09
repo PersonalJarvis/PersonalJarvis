@@ -105,6 +105,27 @@ export function downloadAs(
 }
 
 /**
+ * Triggert einen Datei-Download aus einem Blob (binaer-sicher — anders als
+ * ``downloadAs``, das einen String nimmt). Gleiches Hidden-Anchor-Muster;
+ * genutzt fuer den PNG-Export der Share-Karte.
+ */
+export function downloadBlob(filename: string, blob: Blob): void {
+  const url = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.style.position = "fixed";
+    a.style.left = "-9999px";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+}
+
+/**
  * Erzeugt einen filesystem-tauglichen Filename fuer eine Voice-Session.
  *
  * Pattern: ``voice-session-YYYY-MM-DD_HH-mm-{slug}.{ext}``

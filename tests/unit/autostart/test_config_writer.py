@@ -9,12 +9,13 @@ from jarvis.core import config_writer
 from jarvis.core.config import AutostartConfig, JarvisConfig
 
 
-def test_default_enabled_is_false() -> None:
-    # Cloud-first / least-surprise default: a fresh install must not register
-    # login autostart until the user opts in (wizard, Settings toggle, or an
-    # explicit [autostart] enabled = true in jarvis.toml).
-    assert AutostartConfig().enabled is False
-    assert JarvisConfig().autostart.enabled is False
+def test_default_enabled_is_true() -> None:
+    # Approved design spec §5 ("default ON, user mandate"): on first boot the
+    # self-healing reconcile installs the entry so Jarvis launches at login.
+    # The Settings toggle is the off-switch; a headless host is a graceful
+    # no-op regardless (supported=False), so default-on stays cloud-safe.
+    assert AutostartConfig().enabled is True
+    assert JarvisConfig().autostart.enabled is True
 
 
 def test_set_autostart_writes_bool(tmp_path: Path) -> None:

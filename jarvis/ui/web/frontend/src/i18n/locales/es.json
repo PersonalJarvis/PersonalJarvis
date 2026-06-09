@@ -1,4 +1,11 @@
 {
+  "topbar": {
+    "restart": "Reiniciar",
+    "restart_confirm": "¿Confirmar reinicio?",
+    "restart_hint": "Reiniciar Jarvis",
+    "restarting": "Reiniciando Jarvis…",
+    "restart_failed": "Error al reiniciar"
+  },
   "nav": {
     "chats": "Chats",
     "agents": "Agentes",
@@ -39,13 +46,13 @@
     "restarting": "Reiniciando Jarvis…",
     "bar_persistent": {
       "title": "Mostrar la barra siempre",
-      "description": "Mantén la barra en pantalla incluso inactiva. Desactivado: sin standby — solo aparece cuando dices \"Hey Jarvis\".",
+      "description": "Mantén la barra en pantalla incluso inactiva. Desactivado: sin standby — solo aparece cuando dices tu palabra de activación.",
       "saved": "Visibilidad de la barra actualizada."
     },
     "mute_music": {
       "title": "Silenciar música al dictar",
-      "description": "Silencia otras apps (Spotify, navegador…) mientras hablas con Jarvis y las restaura después. La voz de Jarvis nunca se silencia.",
-      "enabled_toast": "La música se silenciará mientras hablas con Jarvis.",
+      "description": "Silencia otras apps (Spotify, navegador…) mientras hablas con tu asistente y las restaura después. La voz del asistente nunca se silencia.",
+      "enabled_toast": "La música se silenciará mientras hablas con tu asistente.",
       "disabled_toast": "Silenciado de música desactivado."
     }
   },
@@ -117,23 +124,23 @@
     "offline": "Sin conexión"
   },
   "sidebar": {
-    "wake_hint": "Di \"Hey Jarvis\"…",
+    "wake_hint": "Di tu palabra de activación…",
     "brain_label": "Cerebro",
     "brain_tooltip": "Cambiar proveedor de IA"
   },
   "chats_view": {
     "title": "Chat",
-    "subtitle": "Habla con Jarvis o escribe — ambos pasan por el mismo bus de eventos.",
-    "thinking_aria": "Jarvis está pensando",
+    "subtitle": "Habla con tu asistente o escribe — ambos pasan por el mismo bus de eventos.",
+    "thinking_aria": "Tu asistente está pensando",
     "thinking_label": "pensando…",
     "empty_title": "Listo para órdenes",
-    "empty_subtitle": "Di \"Hey Jarvis\" o escribe tu mensaje abajo. Jarvis dirige sub-agentes, llama a herramientas y te devuelve voz.",
+    "empty_subtitle": "Di tu palabra de activación o escribe tu mensaje abajo. Tu asistente dirige sub-agentes, llama a herramientas y te devuelve voz.",
     "examples": {
-      "0": "Hey Jarvis, muestra los agentes",
+      "0": "Muestra los agentes",
       "1": "Cambia el cerebro a Gemini",
       "2": "Trabaja en la carpeta C:\\Proyectos\\Foo"
     },
-    "input_placeholder": "Mensaje a Jarvis… (Enter para enviar)",
+    "input_placeholder": "Mensaje a tu asistente… (Enter para enviar)",
     "dictation_start": "Dictar",
     "dictation_stop": "Detener dictado",
     "dictation_listening": "Escuchando… habla ahora",
@@ -240,10 +247,10 @@
     "title": "Transcripción",
     "subtitle": "Sesiones de voz recientes, turno por turno.",
     "empty_title": "Sin sesiones",
-    "empty_subtitle": "Tras una conversación con Jarvis las transcripciones aparecen aquí.",
+    "empty_subtitle": "Tras una conversación con tu asistente las transcripciones aparecen aquí.",
     "load_more": "Cargar más",
     "user": "Tú",
-    "assistant": "Jarvis",
+    "assistant": "Asistente",
     "hangup": "Colgado",
     "duration": "Duración"
   },
@@ -292,6 +299,32 @@
     "refresh_tooltip": "Disparar agregador manualmente",
     "loading": "Cargando estadísticas…",
     "load_error": "No se pudieron cargar las estadísticas",
+    "share": {
+      "button": "Compartir",
+      "button_tooltip": "Comparte tus estadísticas",
+      "title": "Comparte tus estadísticas",
+      "subtitle": "Una instantánea de tu actividad con Jarvis.",
+      "handle_label": "Tu usuario de X (opcional)",
+      "handle_placeholder": "tuusuario",
+      "copy_image": "Copiar imagen",
+      "save_png": "Guardar como PNG",
+      "share_on_x": "Compartir en X",
+      "status_generating": "Generando imagen…",
+      "status_copied": "Imagen copiada — pégala (Ctrl/Cmd+V) en tu publicación.",
+      "status_saved": "jarvis-stats.png guardado.",
+      "status_copy_unsupported": "Copiar no es compatible aquí — se guardó el PNG.",
+      "status_composer": "Imagen copiada — pégala en el editor de X.",
+      "status_error": "No se pudo generar la imagen. Inténtalo de nuevo.",
+      "status_shared": "Compartido.",
+      "status_blocked": "No se pudo abrir X — la imagen está en tu portapapeles, abre x.com y pégala.",
+      "card": {
+        "brand": "PERSONAL JARVIS",
+        "hero_label": "Palabras dichas",
+        "jarvis_suffix": "dichas por Jarvis",
+        "talk_line": "{0} h hablando · {1} chats",
+        "streak": "Mejor racha · {0} días"
+      }
+    },
     "hero": {
       "you_spoke": "Tú dijiste",
       "you_spoke_sub": "palabras dichas a Jarvis",
@@ -544,6 +577,20 @@
     "subtitle": "Palabra de activación, atajos, políticas de seguridad, inicio automático.",
     "overlay_taskbar_group_title": "Barra y superposición",
     "languages_group_title": "Idiomas",
+    "app_settings_group_title": "Ajustes de la app",
+    "jarvis_api": {
+      "title": "Jarvis API",
+      "key_label": "Clave de API",
+      "description": "Los agentes locales (Codex, Claude Code) usan esta clave para controlar Jarvis a través de la Control API — cambiar ajustes, proveedores o idioma — en lugar de hacer clic en la interfaz.",
+      "show": "Mostrar",
+      "hide": "Ocultar",
+      "copy_button": "Copiar",
+      "copied_toast": "Clave de API copiada al portapapeles.",
+      "copy_failed_toast": "No se pudo copiar la clave de API.",
+      "regenerate_button": "Regenerar clave",
+      "regenerated_toast": "Se generó una nueva clave de API. Actualiza cualquier agente que usara la anterior.",
+      "usage_hint": "Envíala como cabecera Authorization: Bearer a tu Jarvis local (/api/control). GET /api/control/allowlist lista todo lo que puedes cambiar."
+    },
     "save": "Guardar",
     "saving": "Guardando…",
     "reset": "Restablecer valores predeterminados",
@@ -556,19 +603,18 @@
       "privacy_description": "Híbrido: STT local (Whisper), TTS/IA en la nube.",
       "privacy_value": "Híbrido",
       "scope_title": "Alcance del Proyecto",
-      "scope_description": "\"Jarvis, trabaja en la carpeta X\" fija el contexto hasta liberarlo.",
+      "scope_description": "\"Trabaja en la carpeta X\" fija el contexto hasta liberarlo.",
       "scope_value": "Global (sin fijar)",
       "autostart_title": "Inicio automático con Windows",
-      "autostart_description": "Jarvis se inicia en la bandeja tras iniciar sesión.",
+      "autostart_description": "El asistente se inicia en la bandeja tras iniciar sesión.",
       "toasts_title": "Notificaciones del piloto automático",
       "toasts_description": "Muestra \"Jarvis abrió X\" cuando la voz controla la UI."
     },
     "wake_word": {
       "title": "Palabra de activación",
-      "description": "Frase de activación para el modo de voz. Elige una frase rápida o escribe la tuya.",
+      "description": "Frase de activación para el modo de voz. Escribe la tuya.",
       "phrase_label": "Frase de activación",
-      "phrase_placeholder": "p. ej. Hey Jarvis",
-      "instant_phrases_label": "Selección rápida",
+      "phrase_placeholder": "p. ej. Jonas",
       "engine_label": "Motor de detección",
       "sensitivity_label": "Sensibilidad",
       "custom_model_path_label": "Ruta del modelo ONNX personalizado",
@@ -584,12 +630,28 @@
         "custom_onnx": "Modelo ONNX personalizado"
       }
     },
+    "onboarding": {
+      "wake_word": {
+        "title": "Establece tu palabra de activación",
+        "body": "Elige una palabra o frase corta que Jarvis escuchará. Puedes escribir lo que quieras — por ejemplo, tu nombre.",
+        "input_label": "Frase de activación",
+        "placeholder": "p. ej. Jonas",
+        "cta": "Empezar",
+        "saving": "Guardando…",
+        "degraded_note": "Esta frase no es compatible con el motor actual — usará un motor de reserva. Puedes continuar igualmente."
+      }
+    },
     "autostart": {
-      "title": "Iniciar al iniciar sesión",
-      "description": "Inicia Jarvis automáticamente al iniciar sesión, para que \"Hey Jarvis\" funcione justo después de reiniciar. Puedes desactivarlo aquí cuando quieras.",
+      "title": "Iniciar la app al iniciar sesión",
+      "description": "Inicia el asistente automáticamente al iniciar sesión, para que tu palabra de activación funcione justo después de reiniciar. Puedes desactivarlo aquí cuando quieras.",
       "enabled_toast": "Inicio automático activado: Jarvis se iniciará al iniciar sesión.",
       "disabled_toast": "Inicio automático desactivado.",
-      "unsupported": "El inicio automático no está disponible en este host (p. ej. un servidor sin escritorio)."
+      "unsupported": "El inicio automático no está disponible en este host (p. ej. un servidor sin escritorio).",
+      "enable_instant_start": "Activar inicio instantáneo",
+      "instant_start_hint": "En Windows, el inicio instantáneo usa una tarea programada y pide permiso una vez. Sin ella, Windows puede retrasar el arranque varios minutos en equipos con muchos programas de inicio.",
+      "instant_start_active": "El inicio instantáneo está activo: Jarvis se inicia pocos segundos después de iniciar sesión.",
+      "instant_start_enabled_toast": "Inicio instantáneo activado: Jarvis se iniciará justo después de iniciar sesión.",
+      "instant_start_declined_toast": "Se denegó el permiso: Jarvis sigue iniciándose mediante el acceso directo (puede retrasarse)."
     },
     "overlay_style": {
       "title": "Estilo de visualización",
@@ -631,7 +693,8 @@
       "hangup_label": "Colgar",
       "talk_label": "Hablar / Pulsar para hablar",
       "record": "Grabar",
-      "recording": "Presiona tus teclas ahora… (Esc para cancelar)",
+      "stop": "Detener",
+      "recording": "Presiona tus teclas ahora — mantén varias a la vez para una combinación (Esc para cancelar)",
       "save": "Guardar",
       "saved": "Atajo guardado",
       "reset": "Restablecer predeterminado",
@@ -644,7 +707,7 @@
   },
   "telephony_view": {
     "title": "Telefonía",
-    "subtitle": "Llama a Jarvis a un número de teléfono real. Mismo STT, Brain y voz Charon que \"Hey Jarvis\".",
+    "subtitle": "Llama a tu asistente a un número de teléfono real. Mismo STT, Brain y voz Charon que la ruta local de palabra de activación.",
     "load_error": "No se pudo cargar el estado de telefonía",
     "not_configured_hint": "Introduce tu Account SID de Twilio, el Auth Token y el número de teléfono abajo para terminar la configuración, luego ejecuta \"Probar conexión\".",
     "unavailable_title": "Extra de telefonía no instalado",
@@ -796,7 +859,10 @@
     "disconnected": "Codex desconectado",
     "status_loading": "Cargando estado de Codex",
     "needs_codex_full": "{0}: primero conecta Codex o guarda la clave API, luego activa.",
-    "needs_key_full": "{0}: primero guarda la clave API, luego activa."
+    "needs_key_full": "{0}: primero guarda la clave API, luego activa.",
+    "runs_as_subagent_hint": "Con tu inicio de sesión de ChatGPT, Codex funciona como subagente (trabajador en segundo plano). Tras conectar, actívalo en la lista de subagentes de abajo. Un cerebro pensante necesita el proveedor de clave API de OpenAI por separado.",
+    "brain_needs_openai_key": "Codex como cerebro necesita una clave API de OpenAI — el inicio de sesión de ChatGPT solo impulsa el trabajador de Codex. Añade una clave de OpenAI (p. ej. en el proveedor OpenAI) y luego selecciona Codex aquí.",
+    "brain_key_hint": "Para usar Codex también como cerebro, añade una clave API de OpenAI (de pago, independiente de tu inicio de sesión de ChatGPT — que solo impulsa el trabajador). Al guardarla se desbloquea el interruptor de arriba."
   },
   "mcps_toast": {
     "connected": "{0} conectado"
@@ -844,10 +910,6 @@
       "en": "Jarvis responde en inglés.",
       "de": "Jarvis responde en alemán.",
       "es": "Jarvis responde en español."
-    },
-    "recognition_title": "Reconocimiento de voz: automático.",
-    "recognition_text": "Whisper detecta automáticamente el idioma en el que hablas — no hace falta un interruptor manual.",
-    "override_title": "Anulación por Sesión",
-    "override_text": "Di \"Jarvis, responde en inglés\" o \"Bitte auf Deutsch\" — Jarvis cambia para la sesión actual sin modificar este ajuste."
+    }
   }
 }

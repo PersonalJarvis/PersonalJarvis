@@ -576,14 +576,16 @@ def _apply_autostart_choice(enabled: bool) -> None:
 
         manager = make_autostart_manager(detect_capabilities())
         if not enabled:
-            manager.uninstall()
+            manager.uninstall(interactive=True)
             _println(
                 "→ Autostart disabled. Start Jarvis any time via run.bat or "
                 "`python -m jarvis.ui.web.launcher`."
             )
             return
 
-        status = manager.install(resolve_launch_spec(None))
+        # interactive=True: on Windows this registers the instant-start logon task
+        # via a one-time permission prompt (declined → startup-shortcut fallback).
+        status = manager.install(resolve_launch_spec(None), interactive=True)
         if status.supported and status.installed:
             _println(f"→ Autostart enabled: {status.entry_path}")
         elif not status.supported:

@@ -45,7 +45,11 @@ from tomlkit import TOMLDocument
 from tomlkit.items import AbstractTable
 
 from jarvis.core.bus import EventBus
-from jarvis.core.config import DEFAULT_CONFIG_FILE, JarvisConfig, load_config
+from jarvis.core.config import (
+    JarvisConfig,
+    load_config,
+    resolve_config_path,
+)
 from jarvis.core.events import ConfigReloaded
 
 from .audit import SelfModAudit
@@ -93,7 +97,7 @@ class AtomicConfigWriter:
         config_loader: Callable[[Path], JarvisConfig] | None = None,
     ) -> None:
         self._config_path: Path = (
-            Path(config_path) if config_path is not None else DEFAULT_CONFIG_FILE
+            Path(config_path) if config_path is not None else resolve_config_path()
         )
         self._backup_dir: Path = (
             Path(backup_dir)

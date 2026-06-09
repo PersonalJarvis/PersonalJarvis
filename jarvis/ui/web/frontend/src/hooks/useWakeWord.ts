@@ -45,6 +45,14 @@ export interface WakeWordSaveResult {
 }
 
 /**
+ * Returns true when the wake-word config is fully set up (phrase is non-empty).
+ * Used by WakeWordOnboardingGate to decide whether to show the blocking overlay.
+ */
+export function isConfigured(config: WakeWordConfig | null): boolean {
+  return !!config && config.phrase.trim().length > 0;
+}
+
+/**
  * Loads /api/settings/wake-word and exposes a saveWakeWord() that PUTs the new
  * config and returns the resolved result. Mirrors the fetch/error/loading shape
  * of useProviders. After a successful save it dispatches the window event

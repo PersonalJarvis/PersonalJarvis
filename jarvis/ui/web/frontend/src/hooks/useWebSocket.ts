@@ -9,6 +9,7 @@ import {
 } from "@/store/events";
 import { useSubAgentStore, SUB_AGENT_EVENT_NAMES } from "@/store/subAgents";
 import { WSEventEnvelope, WSWelcome } from "@/schema/ws";
+import { useI18nStore, hydrateUiLanguage, hydrateReplyLanguage } from "@/i18n";
 
 let singleton: WSClient | null = null;
 
@@ -164,6 +165,26 @@ export function useWebSocket(): void {
         if (env.event_name === "SecretConfigured") {
           // Trigger nur — die ApiKeysView refresht ihre Provider-Liste selbst.
           window.dispatchEvent(new CustomEvent("jarvis:secret-configured", { detail: env.payload }));
+        }
+
+        // Live interface-language switch (voice / Control API / another client):
+        // the whole app re-renders in the new language with no reload. push:false
+        // so receiving the broadcast does not echo a PUT back.
+        if (env.event_name === "UiLanguageChanged") {
+          const p = env.payload as { language?: string };
+          if (p.language === "en" || p.language === "de" || p.language === "es") {
+            useI18nStore.getState().setUi(p.language, { push: false });
+          }
+        }
+
+        // A voice command / the Control API writes config via the atomic writer,
+        // which fires ConfigReloaded (not UiLanguageChanged). Re-hydrate the
+        // affected language setting so the UI reflects it live.
+        if (env.event_name === "ConfigReloaded") {
+          const p = env.payload as { changed_keys?: unknown };
+          const keys = Array.isArray(p.changed_keys) ? (p.changed_keys as string[]) : [];
+          if (keys.includes("ui.language")) void hydrateUiLanguage();
+          if (keys.includes("brain.reply_language")) void hydrateReplyLanguage();
         }
 
         if (env.event_name === "ToastNotification") {

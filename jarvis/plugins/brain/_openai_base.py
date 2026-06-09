@@ -13,9 +13,19 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
+import httpx
+
 from jarvis.core.protocols import BrainDelta, BrainMessage, BrainRequest
 
 log = logging.getLogger(__name__)
+
+#: Shared HTTP timeout for every openai-SDK-based brain (openai / grok /
+#: openrouter). The SDK default read timeout is 600 s — a hung backup provider
+#: on the fallback chain could otherwise hold the brain coroutine far longer
+#: than the voice path tolerates. Read is capped to 30 s (well under the brain
+#: stall guard) while connect stays at 5 s so a dead endpoint fast-fails and the
+#: chain moves on (Wave-3 latency fix).
+CLIENT_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=30.0, pool=30.0)
 
 
 def _stream_options_supported() -> bool:

@@ -9,6 +9,7 @@
 jarvis/brain/JARVIS_PERSONA.md
 jarvis/brain/ack_brain/persona_prompt.py
 jarvis/brain/persona_loader.py
+jarvis/brain/router.py
 jarvis/memory/soul.py
 jarvis/speech/persona.py
 
@@ -30,6 +31,13 @@ tests/unit/ci/test_check_no_new_german.py
 
 # --- Historical session logs (internal memory, not an outward-facing artifact) ---
 wiki/obsidian-vault/*
+
+# --- Voice-session transcript renderer: emits LOCALIZED session content
+#     ("Du:" / "Jarvis:" speaker labels, German header) that a user copies in
+#     their own conversation language — runtime output, not product UI. Its test
+#     necessarily quotes German voice utterances + umlauts to prove the render. ---
+jarvis/sessions/formatter.py
+tests/unit/sessions/test_formatter.py
 
 # --- Forensic voice-bug deep-dive: an internal diagnosis doc that necessarily
 #     quotes the German voice phrases, log lines and user utterance it analyses ---

@@ -1,0 +1,166 @@
+"""Tests for the voice-session transcript renderers.
+
+Focus: the ``plain`` renderer is the *clean* conversation transcript a
+human copies to share — pure dialogue, no emojis, no Markdown markers and
+none of the per-turn telemetry (tier/provider/tokens/cost/latency). Those
+guards exist because the old plain output leaked ``[USER]``/``[BRAIN]``
+developer tags and the markdown output leaks emojis — both read as
+"AI-slop" when pasted into a chat or note.
+"""
+from __future__ import annotations
+
+from jarvis.sessions.formatter import (
+    format_session_markdown,
+    format_session_plain,
+)
+from jarvis.sessions.models import VoiceSessionRow, VoiceTurnRow
+
+# Emojis the markdown renderer uses as visual anchors — none may leak into
+# the clean ``plain`` transcript.
+_EMOJI_ANCHORS = ["\U0001f3a4", "\U0001f9e0", "\U0001f50a", "⏱", "\U0001f527"]
+
+
+def _session(**over: object) -> VoiceSessionRow:
+    base: dict[str, object] = dict(
+        id="sess-1",
+        started_ms=1_717_780_000_000,
+        ended_ms=1_717_780_102_000,  # +102s -> "1 min 42 s"
+        hangup_reason="voice_pattern",
+        turn_count=2,
+        total_cost_usd=0.1984,
+        total_tokens_in=98_487,
+        total_tokens_out=118,
+        providers_used=["gemini"],
+        language="de",
+        wake_keyword="hey_jarvis",
+    )
+    base.update(over)
+    return VoiceSessionRow(**base)  # type: ignore[arg-type]
+
+
+def _turn(idx: int, user: str, jarvis: str, **over: object) -> VoiceTurnRow:
+    base: dict[str, object] = dict(
+        id=f"turn-{idx}",
+        session_id="sess-1",
+        idx=idx,
+        started_ms=1_717_780_000_000 + idx * 1000,
+        user_text=user,
+        jarvis_text=jarvis,
+        tier="deep",
+        provider="gemini",
+        model="gemini-3.1-pro-preview",
+        tokens_in=98_487,
+        tokens_out=118,
+        cost_usd=0.1984,
+        latency_total_ms=89_760,
+        think_ms=72_800,
+        speak_ms=13_660,
+        tool_calls=["gmail-search"],
+    )
+    base.update(over)
+    return VoiceTurnRow(**base)  # type: ignore[arg-type]
+
+
+def _example_turns() -> list[VoiceTurnRow]:
+    return [
+        _turn(
+            0,
+            "Kannst du für mich bitte einmal meine Gmails durchsuchen?",
+            "Einen Augenblick. Die Gmail-Suche wurde leider wegen eines "
+            "Timeouts abgelehnt. Soll ich es noch einmal versuchen?",
+        ),
+        _turn(1, "auflegen", ""),
+    ]
+
+
+# --- The clean ``plain`` transcript ----------------------------------------
+
+
+def test_plain_has_no_emoji_anchors() -> None:
+    out = format_session_plain(_session(), _example_turns())
+    for emoji in _EMOJI_ANCHORS:
+        assert emoji not in out, f"emoji {emoji!r} leaked into clean transcript"
+
+
+def test_plain_has_no_markdown_markers() -> None:
+    out = format_session_plain(_session(), _example_turns())
+    assert "# " not in out  # no headings
+    assert "**" not in out  # no bold
+    assert "> " not in out  # no blockquotes
+    assert "`" not in out  # no inline code
+
+
+def test_plain_has_no_developer_tags() -> None:
+    out = format_session_plain(_session(), _example_turns())
+    for tag in ("[USER]", "[JARVIS]", "[BRAIN]", "[TOOLS]"):
+        assert tag not in out
+
+
+def test_plain_has_no_telemetry() -> None:
+    out = format_session_plain(_session(), _example_turns())
+    # No tokens / cost / provider / tier / latency clutter, and none of the
+    # raw numbers behind them.
+    for needle in (
+        "tokens",
+        "token=",
+        "tier",
+        "provider",
+        "model=",
+        "$",
+        "tok",
+        "98487",
+        "gemini",
+        "0.1984",
+        "latency",
+        "ms",
+    ):
+        assert needle not in out, f"telemetry token {needle!r} leaked"
+
+
+def test_plain_uses_speaker_labels() -> None:
+    out = format_session_plain(_session(), _example_turns())
+    assert "Du: Kannst du für mich bitte einmal meine Gmails durchsuchen?" in out
+    assert "Jarvis: Einen Augenblick." in out
+
+
+def test_plain_header_is_a_single_slim_line() -> None:
+    out = format_session_plain(_session(), _example_turns())
+    first = out.splitlines()[0]
+    assert first.startswith("Voice-Session")
+    assert "1 min 42 s" in first  # duration
+    assert "." in first  # a date is present (dd.mm.yyyy)
+
+
+def test_plain_preserves_umlauts() -> None:
+    turns = [_turn(0, "Mach eine Übung für Köln, groß und süß", "Natürlich.")]
+    out = format_session_plain(_session(), turns)
+    assert "Übung für Köln, groß und süß" in out
+    assert "Natürlich." in out
+    # ASCII-mangling must NOT happen.
+    assert "Uebung" not in out and "gross" not in out
+
+
+def test_plain_turn_without_reply_renders_cleanly() -> None:
+    out = format_session_plain(_session(), _example_turns())
+    assert "Du: auflegen" in out
+    # The reply-less turn must not emit a dangling empty "Jarvis:" line.
+    assert "Jarvis: \n" not in out
+    assert not out.rstrip().endswith("Jarvis:")
+
+
+def test_plain_empty_session_is_graceful() -> None:
+    out = format_session_plain(_session(turn_count=0), [])
+    assert out.strip()  # non-empty
+    for emoji in _EMOJI_ANCHORS:
+        assert emoji not in out
+
+
+# --- Markdown renderer stays the rich (emoji) variant ----------------------
+
+
+def test_markdown_renderer_unchanged_still_has_emojis() -> None:
+    out = format_session_markdown(_session(), _example_turns())
+    # Guard: the rich markdown export keeps its visual anchors; only the
+    # clean ``plain`` path was supposed to change.
+    assert "\U0001f3a4" in out  # 🎤
+    assert "## Turn 1" in out

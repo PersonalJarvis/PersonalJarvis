@@ -36,10 +36,10 @@ def _client(
 
 def test_get_returns_current_and_options() -> None:
     body = _client().get("/api/settings/wake-word").json()
-    assert body["phrase"] == "Hey Jarvis"
+    assert body["phrase"] == ""
     assert body["engine"] == "auto"
     assert "auto" in body["engines"] and "stt_match" in body["engines"]
-    assert "Hey Jarvis" in body["instant_phrases"]
+    assert "Hey Jarvis" not in body["instant_phrases"]  # instant quick-picks are empty
     assert isinstance(body["local_whisper_available"], bool)
 
 

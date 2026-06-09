@@ -140,14 +140,21 @@ def test_write_samples_logs_warning_on_underflow(monkeypatch, caplog) -> None:
     with caplog.at_level(logging.WARNING, logger="jarvis.audio.player"):
         player._write_samples(stream, arr, source_rate=24000, device_rate=24000)
 
-    assert len(stream.write_calls) == 1, "stream.write must be called exactly once"
+    # Audio is written in ~60 ms sub-blocks (so the whisper-bar equalizer can
+    # follow Jarvis's voice), so 2400 frames @ 24 kHz become 1440 + 960 = two
+    # writes; each underflowing sub-block logs a warning. The behaviour under
+    # test is "an underflow is never silently discarded", not the block count.
+    assert len(stream.write_calls) >= 1, "stream.write must be called at least once"
+    assert sum(s[0] for s in stream.write_calls) == 2400, (
+        f"all 2400 frames must be written across the sub-blocks, got {stream.write_calls}"
+    )
     underflow_logs = [r for r in caplog.records if "underflow" in r.getMessage().lower()]
-    assert len(underflow_logs) == 1, (
-        f"expected exactly 1 underflow warning, got {len(underflow_logs)}: "
-        f"{[r.getMessage() for r in caplog.records]}"
+    assert len(underflow_logs) == len(stream.write_calls), (
+        f"every underflowing sub-block must warn, got {len(underflow_logs)} warnings "
+        f"for {len(stream.write_calls)} writes: {[r.getMessage() for r in caplog.records]}"
     )
     msg = underflow_logs[0].getMessage()
-    assert "frames=2400" in msg, f"warning should include frame count, got: {msg}"
+    assert "frames=" in msg, f"warning should include frame count, got: {msg}"
     assert "source=24000Hz" in msg, f"warning should include source rate, got: {msg}"
     assert "device=24000Hz" in msg, f"warning should include device rate, got: {msg}"
 

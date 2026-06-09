@@ -53,7 +53,7 @@
     "deep_model": "claude-opus-4-8"
   },
   "brain.sub_jarvis": {
-    "provider": "claude-api",
+    "provider": "openai-codex",
     "model": "",
     "fallback_provider": "gemini",
     "fallback_model": "gemini-3.1-pro-preview",

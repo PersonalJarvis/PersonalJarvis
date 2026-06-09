@@ -1,6 +1,8 @@
-import { Flame, Loader2, RefreshCw, Sparkles } from "lucide-react";
+import { useState } from "react";
+import { Flame, Loader2, RefreshCw, Share2, Sparkles } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { BoardCard } from "@/components/board/BoardCard";
+import { ShareDialog } from "@/components/board/ShareDialog";
 import { CategoryUsage } from "@/components/board/CategoryUsage";
 import { ActivityHeatmap, HeatmapScale } from "@/components/board/ActivityHeatmap";
 import {
@@ -23,6 +25,7 @@ export function BoardView() {
   const heatmap = useBoardHeatmap(365);
   const categories = useBoardCategories();
   const refresh = useBoardRefresh();
+  const [shareOpen, setShareOpen] = useState(false);
 
   const s = summary.data;
   const userWords = s?.totals.user_words ?? 0;
@@ -73,20 +76,37 @@ export function BoardView() {
         title={t("board_view.title")}
         subtitle={t("board_view.subtitle")}
         right={
-          <button
-            type="button"
-            onClick={() => refresh.mutate()}
-            disabled={refresh.isPending}
-            className={cn(
-              "inline-flex items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-1.5 text-xs font-medium transition-colors",
-              "hover:border-primary/40 hover:bg-primary/[0.06]",
-              refresh.isPending && "opacity-60",
-            )}
-            title={t("board_view.refresh_tooltip")}
-          >
-            <RefreshCw className={cn("h-3.5 w-3.5", refresh.isPending && "animate-spin")} />
-            {t("board_view.refresh")}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShareOpen(true)}
+              disabled={loading || !s}
+              className={cn(
+                "inline-flex items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-1.5 text-xs font-medium transition-colors",
+                "hover:border-primary/40 hover:bg-primary/[0.06]",
+                (loading || !s) && "opacity-50",
+              )}
+              title={t("board_view.share.button_tooltip")}
+              data-testid="board-share-button"
+            >
+              <Share2 className="h-3.5 w-3.5" />
+              {t("board_view.share.button")}
+            </button>
+            <button
+              type="button"
+              onClick={() => refresh.mutate()}
+              disabled={refresh.isPending}
+              className={cn(
+                "inline-flex items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-1.5 text-xs font-medium transition-colors",
+                "hover:border-primary/40 hover:bg-primary/[0.06]",
+                refresh.isPending && "opacity-60",
+              )}
+              title={t("board_view.refresh_tooltip")}
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", refresh.isPending && "animate-spin")} />
+              {t("board_view.refresh")}
+            </button>
+          </div>
         }
       />
 
@@ -215,6 +235,20 @@ export function BoardView() {
           </BoardCard>
         </div>
       </div>
+
+      {s && (
+        <ShareDialog
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+          stats={{
+            userWords,
+            jarvisWords,
+            conversationHours: convHours,
+            sessionCount: sessions,
+            longestStreak: longest,
+          }}
+        />
+      )}
     </div>
   );
 }
