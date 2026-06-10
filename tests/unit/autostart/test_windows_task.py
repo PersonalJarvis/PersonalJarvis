@@ -224,6 +224,21 @@ def test_install_noninteractive_writes_shortcut_without_prompting() -> None:
     assert "write_shortcut" in calls
 
 
+def test_install_noninteractive_keeps_fallback_when_task_is_stale() -> None:
+    # Boot reconcile finds a task pointing at an old install (path drift, BUG-006
+    # class). It must NOT elevate (no UAC at boot) — it ensures the shortcut
+    # fallback so autostart still works until the user re-enables instant start.
+    stale = _TaskInfo(
+        execute=r"C:\Old\pythonw.exe",
+        arguments="-m jarvis.ui.web.launcher",
+        working_dir=r"C:\Old",
+    )
+    mgr, calls = _mk(task_info=stale)
+    mgr.install(_SPEC, interactive=False)
+    assert "elevate_register" not in calls
+    assert "write_shortcut" in calls
+
+
 def test_install_noninteractive_is_noop_when_task_already_matches() -> None:
     # Common boot: the task is already there and correct → do nothing at all.
     mgr, calls = _mk(task_info=_MATCHING_INFO)

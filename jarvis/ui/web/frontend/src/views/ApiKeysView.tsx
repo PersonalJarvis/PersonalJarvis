@@ -1,8 +1,10 @@
 ﻿import { useState } from "react";
-import { Brain, Check, Copy, KeyRound, LogIn, LogOut, Mic, Shield, Terminal, Volume2, Loader2, AlertCircle } from "lucide-react";
+import { Brain, Check, Copy, KeyRound, LogIn, LogOut, Mic, Phone, Shield, Terminal, Volume2, Loader2, AlertCircle } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { SubagentSection } from "@/components/SubagentSection";
+import { TelephonyPanel } from "@/views/TelephonyView";
+import { WikiProviderCard } from "@/views/settings/WikiProviderCard";
 import { Button } from "@/components/ui/button";
 import {
   codexLogout,
@@ -70,10 +72,38 @@ export function ApiKeysView() {
             {/* Subagent (OpenClaw) — own data source (/api/openclaw/status),
                 rendered as a sibling tier so it shares the card system. */}
             <SubagentSection />
+            {/* Telephony — the former standalone "Telephony" screen, folded in
+                here as another tier section (own data source /api/telephony/*).
+                Same header style as the tiers above; always expanded. */}
+            <TelephonySection />
+            {/* Wiki — dedicated long-term-memory curator provider/model. Own
+                data source (/api/settings/wiki-provider); a thin sibling tier. */}
+            <WikiProviderCard />
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Telephony tier section. Visually a sibling of the brain/tts/stt/subagent
+ * tiers: the same uppercase tier header (Phone icon + label) above the embedded
+ * `TelephonyPanel`, which carries the status / credentials / calls cards in the
+ * shared `card-outline` style. The heavier setup scripts + guide moved to the
+ * dedicated TelephonySetupView (reached via the panel's "Setup script" button)
+ * to keep this section compact. Its own data source (`/api/telephony/*`) is
+ * owned by the panel, so this stays a thin wrapper.
+ */
+function TelephonySection() {
+  const t = useT();
+  return (
+    <section>
+      <h3 className="mb-3 inline-flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+        <Phone className="h-3.5 w-3.5" /> {t("apikeys_view.tier_telephony")}
+      </h3>
+      <TelephonyPanel />
+    </section>
   );
 }
 
@@ -270,12 +300,6 @@ function ProviderCard({
           disabled={isCodex && !descriptor.codex_brain_ready}
         />
       </div>
-
-      {isCodex && !descriptor.codex_brain_ready && (
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
-          {t("apikeys_codex.brain_needs_openai_key")}
-        </p>
-      )}
 
       <AuthWidget
         descriptor={descriptor}
@@ -480,7 +504,6 @@ function CodexAuthWidget({
             Trennen
           </Button>
         </div>
-        <CodexBrainKeyField descriptor={descriptor} onChanged={onChanged} />
       </div>
     );
   }
@@ -522,44 +545,6 @@ function CodexAuthWidget({
         </Button>
       </div>
 
-      <p className="text-[11px] leading-relaxed text-muted-foreground">
-        {t("apikeys_codex.runs_as_subagent_hint")}
-      </p>
-
-      <CodexBrainKeyField descriptor={descriptor} onChanged={onChanged} />
-    </div>
-  );
-}
-
-/**
- * Optional OpenAI API-key field on the Codex card — the ONLY way to use Codex as
- * a brain (a chat brain can't run on the ChatGPT login, which powers the worker).
- * Saving a key flips `codex_brain_ready` true on the next refetch, which unlocks
- * the brain "activate" radio above. Kept compact + clearly scoped so it doesn't
- * read as "the connection" (that is the ChatGPT login above).
- */
-function CodexBrainKeyField({
-  descriptor,
-  onChanged,
-}: {
-  descriptor: ProviderDescriptor;
-  onChanged: () => void;
-}) {
-  const t = useT();
-  return (
-    <div
-      data-testid="codex-brain-key"
-      className="space-y-1.5 rounded-md border border-border/60 bg-background/30 p-3"
-    >
-      <p className="text-[11px] leading-relaxed text-muted-foreground">
-        {t("apikeys_codex.brain_key_hint")}
-      </p>
-      <ApiKeyForm
-        secretKey="codex_openai_api_key"
-        dashboardUrl={descriptor.dashboard_url}
-        configured={Boolean(descriptor.secrets_set["codex_openai_api_key"])}
-        onChanged={onChanged}
-      />
     </div>
   );
 }

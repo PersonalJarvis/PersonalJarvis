@@ -16,6 +16,7 @@ fall back to the Claude Max OAuth worker so the mission still COMPLETES.
 """
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,17 @@ from jarvis.missions.workers.codex_direct_worker import (
     _coerce_codex_error_text,
 )
 from jarvis.missions.workers.provider_chain import _FallbackStep
+
+
+@pytest.fixture(autouse=True)
+def _reset_codex_auth_marker():
+    """The codex needs_reauth flag is a process global — reset it around every
+    test so the auth-expiry test doesn't pollute the rest of the suite."""
+    from jarvis.codex_auth_state import clear_codex_needs_reauth
+
+    clear_codex_needs_reauth()
+    yield
+    clear_codex_needs_reauth()
 
 
 # --- pure-unit: the crash-proofing helpers --------------------------------
@@ -54,6 +66,21 @@ def test_codex_error_is_auth_expired() -> None:
     assert _codex_error_is_auth_expired("401 Unauthorized")
     assert not _codex_error_is_auth_expired("Compilation failed: missing semicolon")
     assert not _codex_error_is_auth_expired("")
+
+
+def test_codex_error_is_usage_limited() -> None:
+    from jarvis.missions.workers.codex_direct_worker import _codex_error_is_usage_limited
+
+    # The exact 2026-06-09 message (re-authed codex hit its ChatGPT cap).
+    assert _codex_error_is_usage_limited(
+        "You've hit your usage limit. Upgrade to Pro … purchase more credits or "
+        "try again at 7:40 PM."
+    )
+    assert _codex_error_is_usage_limited("429 Too Many Requests")
+    assert _codex_error_is_usage_limited("rate limit exceeded")
+    # A dead login is NOT a usage cap (different fallback semantics).
+    assert not _codex_error_is_usage_limited("Please log in again.")
+    assert not _codex_error_is_usage_limited("Compilation failed")
 
 
 # --- integration: spawn() does not crash + falls back ---------------------
@@ -187,3 +214,76 @@ async def test_codex_auth_expired_falls_back_to_claude(
     # The fallback must actually have spawned the claude worker.
     assert calls["n"] == 2, "expected a second (claude) spawn after codex auth-fail"
     assert calls["claude_argv"] and calls["claude_argv"][0] == "claude"
+
+
+@pytest.mark.asyncio
+async def test_codex_hardcap_timeout_preserves_work_and_flags_timed_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Live bug (mission 019eacb8): codex wrote a real deliverable then ran past
+    its wall-clock cap. The worker must (1) set the structured `timed_out` flag,
+    (2) keep "timeout" in the result, and (3) PRESERVE the partial stdout so the
+    file_change tool_use survives parsing — instead of `stdout_bytes=b""` which
+    discarded the 17 KB HTML and produced an opaque task_error."""
+    ndjson = (
+        b'{"type":"thread.started","thread_id":"t1"}\n'
+        b'{"type":"item.completed","item":{"type":"file_change",'
+        b'"changes":[{"path":"aktuelle-emails.html"}]}}\n'
+        b'{"type":"item.completed","item":{"type":"agent_message",'
+        b'"text":"Created the HTML."}}\n'
+    )
+
+    class _TimeoutProc:
+        """Streams a first chunk (work done) then hangs on communicate()."""
+
+        def __init__(self) -> None:
+            self.pid = 7
+            self.returncode = -9
+            self.stdin = _FakeStream()
+            self.stdout = _FakeStream(data=ndjson)
+            self.stderr = _FakeStream()
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            raise asyncio.TimeoutError  # simulate the hard-cap timeout
+
+        async def wait(self) -> int:
+            return -9
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+    async def _fake_exec(*_a: Any, **_k: Any) -> _TimeoutProc:
+        return _TimeoutProc()
+
+    monkeypatch.setattr(cdw.asyncio, "create_subprocess_exec", _fake_exec)
+
+    worker = CodexDirectWorker()
+    events: list[Any] = []
+    async for ev in worker.spawn(
+        "do the task",
+        worktree=tmp_path,
+        env={},
+        job=_Job(),
+        worker_id="t",
+        log_dir=tmp_path / "logs",
+        timeout_s=5.0,
+        first_output_timeout_s=5.0,
+    ):
+        events.append(ev)
+
+    final = events[-1]
+    # 1. structured timeout flag (the orchestrator keys off THIS, not the string)
+    assert getattr(final, "timed_out", False) is True
+    assert final.is_error is True
+    # 2. "timeout" still in the result (belt-and-suspenders)
+    assert "timeout" in (final.result or "").lower()
+    # 3. the file_change tool_use survived → work NOT discarded
+    tool_use_seen = any(
+        getattr(ev, "type", None) == "assistant"
+        and any(
+            isinstance(b, dict) and b.get("type") == "tool_use"
+            for b in (getattr(ev, "message", {}) or {}).get("content", [])
+        )
+        for ev in events
+    )
+    assert tool_use_seen, "file_change tool_use must survive the timeout (work preserved)"

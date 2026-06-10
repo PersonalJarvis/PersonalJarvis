@@ -1,8 +1,9 @@
-"""Unit-Tests fuer den Pipeline-Pre-Brain-Hook (Skills-Brain-Integration: Phase Skills-1).
+"""Unit tests for the pipeline pre-brain hook (instruction-skill model).
 
-Testet ``SpeechPipeline._try_skill_direct_trigger`` — die zentrale Methode
-die zwischen STT-Hallucination-Guard und Brain-Call sitzt und bei einem
-Voice-Pattern-Match den Skill direkt ausfuehrt (Brain-Bypass).
+``SpeechPipeline._try_skill_direct_trigger`` no longer macro-runs a matched
+skill and reads raw Markdown aloud (AD-S4, 2026-06-09 rebuild). On a voice
+trigger match it notes the skill on the brain (``note_skill_trigger``) and
+returns ``False`` so the normal brain turn carries the skill instructions.
 """
 from __future__ import annotations
 
@@ -21,7 +22,7 @@ from jarvis.speech.pipeline import SpeechPipeline
 
 
 class FakeTTS:
-    """Minimaler TTS-Fake — nur damit Pipeline-Init nicht crasht."""
+    """Minimal TTS fake — keeps pipeline init from crashing."""
 
     name = "fake-tts"
     supports_streaming = False
@@ -31,9 +32,24 @@ class FakeTTS:
 
     async def synthesize(  # type: ignore[no-untyped-def]
         self, text: str, language_code=None
-    ) -> AsyncIterator[bytes]:  # pragma: no cover — wird im Test nicht aufgerufen
+    ) -> AsyncIterator[bytes]:  # pragma: no cover — not called in these tests
         if False:
             yield b""
+
+
+class FakeBrain:
+    """Callable brain stub recording note_skill_trigger handoffs."""
+
+    def __init__(self) -> None:
+        self.noted: list[tuple[str, str, str]] = []
+
+    async def __call__(self, text: str) -> str:  # pragma: no cover
+        return "ok"
+
+    def note_skill_trigger(
+        self, skill_name: str, *, content: str = "", source: str = "trigger"
+    ) -> None:
+        self.noted.append((skill_name, content, source))
 
 
 def _write_skill(root: Path, name: str, body: str) -> None:
@@ -45,27 +61,40 @@ def _write_skill(root: Path, name: str, body: str) -> None:
 VOICE_SKILL_DE = """---
 schema_version: "1"
 name: voice_test_skill
-description: Test-Skill fuer Pipeline-Hook
+description: Test skill for the pipeline hook.
 triggers:
   - type: voice
     pattern: "^starte das experiment$"
     language: ["de"]
 ---
-Experiment gestartet.
+Experiment instructions.
+"""
+
+CONTENT_SKILL_DE = """---
+schema_version: "1"
+name: note_skill
+description: Captures trailing content.
+triggers:
+  - type: voice
+    pattern: "^notiere (.+)$"
+    language: ["de"]
+---
+Note: {{ content }}
 """
 
 
 @pytest.fixture
 def skills_root(tmp_path: Path) -> Path:
     _write_skill(tmp_path, "voice_test_skill", VOICE_SKILL_DE)
+    _write_skill(tmp_path, "note_skill", CONTENT_SKILL_DE)
     return tmp_path
 
 
 @pytest.fixture
 def skill_ctx_with_bus(skills_root: Path):
-    """Setzt einen echten SkillContext mit Registry + Runner und liefert den Bus.
+    """Real SkillContext with registry + runner; yields the bus.
 
-    Cleanup nach jedem Test garantiert: kein State-Leak zwischen Tests.
+    Cleanup after every test — no state leak between tests.
     """
     bus = EventBus()
     registry = SkillRegistry(skills_root, bus=bus)
@@ -77,31 +106,27 @@ def skill_ctx_with_bus(skills_root: Path):
 
 
 @pytest.fixture
-def pipeline_with_mocks(skill_ctx_with_bus: EventBus):
-    """Pipeline mit gemockten _speak/_transition fuer Test-Schnelligkeit (kein Audio-I/O)."""
+def pipeline_with_brain(skill_ctx_with_bus: EventBus):
     bus = skill_ctx_with_bus
-    pipeline = SpeechPipeline(tts=FakeTTS(), bus=bus, enable_whisper_wake=False)
+    brain = FakeBrain()
+    pipeline = SpeechPipeline(
+        tts=FakeTTS(), bus=bus, brain_callback=brain, enable_whisper_wake=False
+    )
 
     speak_calls: list[tuple[str, str | None]] = []
-    transition_calls: list[str] = []
 
     async def fake_speak(text: str, language: str | None = None) -> bool:
         speak_calls.append((text, language))
         return False
 
-    async def fake_transition(state: str) -> None:
-        transition_calls.append(state)
-
     pipeline._speak = fake_speak  # type: ignore[method-assign]
-    pipeline._transition = fake_transition  # type: ignore[method-assign]
-
-    return pipeline, speak_calls, transition_calls, bus
+    return pipeline, brain, speak_calls, bus
 
 
 @pytest.mark.asyncio
-async def test_skill_direct_trigger_matches(pipeline_with_mocks) -> None:
-    """Voice-Pattern-Match → Skill laeuft, Speak gerufen, SkillDirectTriggered emittet."""
-    pipeline, speak_calls, transition_calls, bus = pipeline_with_mocks
+async def test_trigger_match_notes_brain_and_returns_false(pipeline_with_brain) -> None:
+    """Voice match → brain noted, NO macro run, NO direct TTS, brain path continues."""
+    pipeline, brain, speak_calls, bus = pipeline_with_brain
 
     received: list[SkillDirectTriggered] = []
 
@@ -112,36 +137,38 @@ async def test_skill_direct_trigger_matches(pipeline_with_mocks) -> None:
 
     handled = await pipeline._try_skill_direct_trigger("starte das experiment", lang="de")
 
-    assert handled is True
-    assert len(speak_calls) == 1
-    assert "Experiment gestartet" in speak_calls[0][0]
-    assert speak_calls[0][1] == "de"
-    # State-Transitions: THINKING (vor Run) → SPEAKING (Output) → LISTENING (Ende)
-    assert transition_calls == ["THINKING", "SPEAKING", "LISTENING"]
+    assert handled is False  # brain path continues — it carries the skill
+    assert brain.noted == [("voice_test_skill", "", "trigger")]
+    assert speak_calls == []  # no raw-Markdown read-aloud anymore
 
-    # Bus-Event Flush — publish ist async, der Subscribe-Handler ist es auch.
     await asyncio.sleep(0.01)
     assert len(received) == 1
     assert received[0].skill_name == "voice_test_skill"
     assert received[0].trigger_type == "voice_direct"
-    assert received[0].source_layer == "speech.pipeline"
 
 
 @pytest.mark.asyncio
-async def test_skill_direct_trigger_no_match(pipeline_with_mocks) -> None:
-    """Kein Pattern-Match → returns False, kein Skill-Run, kein Speak/Transition."""
-    pipeline, speak_calls, transition_calls, _bus = pipeline_with_mocks
+async def test_trigger_match_captures_content(pipeline_with_brain) -> None:
+    pipeline, brain, _speak_calls, _bus = pipeline_with_brain
+
+    await pipeline._try_skill_direct_trigger("notiere milch kaufen", lang="de")
+
+    assert brain.noted == [("note_skill", "milch kaufen", "trigger")]
+
+
+@pytest.mark.asyncio
+async def test_no_match_returns_false_without_noting(pipeline_with_brain) -> None:
+    pipeline, brain, speak_calls, _bus = pipeline_with_brain
 
     handled = await pipeline._try_skill_direct_trigger("komplett anderes zeug", lang="de")
 
     assert handled is False
+    assert brain.noted == []
     assert speak_calls == []
-    assert transition_calls == []
 
 
 @pytest.mark.asyncio
-async def test_skill_direct_trigger_no_context() -> None:
-    """Kein SkillContext gesetzt → returns False sauber, kein Crash."""
+async def test_no_context_returns_false() -> None:
     set_skill_context(None)
     pipeline = SpeechPipeline(tts=FakeTTS(), bus=None, enable_whisper_wake=False)
 
@@ -151,17 +178,13 @@ async def test_skill_direct_trigger_no_context() -> None:
 
 
 @pytest.mark.asyncio
-async def test_trigger_matcher_cached_after_first_match(pipeline_with_mocks) -> None:
-    """TriggerMatcher wird beim ersten Match instanziiert und gecached.
-
-    Pattern-Cache lebt so fuer die Pipeline-Lebenszeit — verhindert wiederholte
-    Regex-Compilation auf jedem Voice-Turn.
-    """
-    pipeline, _, _, _ = pipeline_with_mocks
+async def test_trigger_matcher_cached_after_first_match(pipeline_with_brain) -> None:
+    """TriggerMatcher is instantiated on first use and cached afterwards."""
+    pipeline, _brain, _speak, _bus = pipeline_with_brain
 
     assert pipeline._trigger_matcher is None
     await pipeline._try_skill_direct_trigger("starte das experiment", lang="de")
     assert pipeline._trigger_matcher is not None
     cached = pipeline._trigger_matcher
     await pipeline._try_skill_direct_trigger("starte das experiment", lang="de")
-    assert pipeline._trigger_matcher is cached  # gleicher Cache, nicht neu erstellt
+    assert pipeline._trigger_matcher is cached

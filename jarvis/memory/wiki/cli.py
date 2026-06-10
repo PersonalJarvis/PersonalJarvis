@@ -40,7 +40,10 @@ if hasattr(sys.stderr, "reconfigure"):
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_VAULT = REPO_ROOT / "data" / "workspace"
+# Runtime default vault — mirrors WikiIntegrationConfig.vault_root
+# ("wiki/obsidian-vault"). The legacy "data/workspace" tree is the
+# soft-disabled B4 Curator snapshot and is NOT the search vault.
+DEFAULT_VAULT = REPO_ROOT / "wiki" / "obsidian-vault"
 DEFAULT_BACKUP_DIR = REPO_ROOT / "data" / "backups"
 DEFAULT_DB = REPO_ROOT / "data" / "jarvis.db"
 
@@ -122,6 +125,41 @@ def _run_reindex(vault_root: Path, db_path: Path) -> int:
 
     conn.close()
     print(f"Indexed {count} page(s) from {vault_root}  →  {db_path}")
+    return 0
+
+
+def _run_cleanup(vault_root: Path, *, apply: bool) -> int:
+    """Body of the ``cleanup`` subcommand — one-time Wave-1 vault hygiene.
+
+    Dry-run by default; pass ``--apply`` to actually back up and mutate.
+    Returns 0 on success, 1 on a missing vault.
+    """
+    from .cleanup import clean_vault
+
+    if not vault_root.is_dir():
+        print(f"ERROR: vault not found: {vault_root}", file=sys.stderr)
+        return 1
+
+    report = clean_vault(vault_root, apply=apply)
+    mode = "APPLIED" if report.applied else "DRY-RUN (pass --apply to write)"
+    print(f"WIKI CLEANUP  {mode}  vault: {vault_root}")
+    if report.backup_path:
+        print(f"        backup:            {report.backup_path}")
+    print(f"        leak pages:        {len(report.removed_leak)}")
+    for p in report.removed_leak:
+        print(f"          - {p.relative_to(vault_root)}")
+    print(f"        duplicate copies:  {len(report.removed_duplicates)}")
+    for p in report.removed_duplicates:
+        print(f"          - {p.relative_to(vault_root)}")
+    print(f"        truncated pages:   {len(report.removed_truncated)}")
+    for p in report.removed_truncated:
+        print(f"          - {p.relative_to(vault_root)}")
+    print(f"        relinked survivors:{len(report.relinked)}  "
+          f"(dangling links stripped: {report.dangling_stripped})")
+    for p in report.relinked:
+        print(f"          ~ {p.relative_to(vault_root)}")
+    if report.total_changes == 0:
+        print("        (nothing to clean — vault is already tidy)")
     return 0
 
 
@@ -249,6 +287,28 @@ def main(argv: list[str] | None = None) -> int:
         help="Enable DEBUG-level logging.",
     )
 
+    p_cleanup = subparsers.add_parser(
+        "cleanup",
+        help="One-time Wave-1 vault hygiene: remove leak/duplicate/truncated "
+             "session pages and strip dangling app wikilinks.",
+    )
+    p_cleanup.add_argument(
+        "--vault",
+        type=Path,
+        default=DEFAULT_VAULT,
+        help=f"Vault root (default: {DEFAULT_VAULT}).",
+    )
+    p_cleanup.add_argument(
+        "--apply",
+        action="store_true",
+        help="Actually back up and mutate. Omit for a dry-run report.",
+    )
+    p_cleanup.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable DEBUG-level logging.",
+    )
+
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -258,6 +318,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "reindex":
         return _run_reindex(args.vault.resolve(), args.db.resolve())
+
+    if args.command == "cleanup":
+        return _run_cleanup(args.vault.resolve(), apply=bool(args.apply))
 
     if args.command == "ingest":
         return asyncio.run(

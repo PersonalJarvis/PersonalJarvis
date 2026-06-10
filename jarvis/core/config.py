@@ -567,7 +567,9 @@ class WikiCuratorConfig(BaseModel):
     provider: str = ""                  # "" = fall back to brain.primary
     model: str = ""                     # "" = provider default model
     max_input_tokens: int = 8000
-    max_output_tokens: int = 2000
+    # Headroom for a complete proposal; the streaming truncation guard
+    # rejects any residual length-capped generation.
+    max_output_tokens: int = 4000
     timeout_s: float = 90.0
 
 
@@ -613,9 +615,18 @@ class SessionRollupConfig(BaseModel):
     session_idle_threshold_minutes: int = 120
     min_episodes_for_rollup: int = 2
     max_active_sessions: int = 5
-    max_output_tokens: int = 600
+    # A 400-word digest paragraph needs ~700 tokens of headroom; the
+    # streaming truncation guard rejects anything still length-capped.
+    max_output_tokens: int = 1200
     timeout_s: float = 30.0
     user_entity_slug: str = "alex"
+    # D2 (2026-06): the awareness-episode -> durable session-page feed is
+    # retired. The worker still READS awareness episodes and still produces
+    # the rollup paragraph (live awareness is unaffected), but the durable
+    # wiki *page write* is gated off by default. Conversation (VoiceFactBridge)
+    # is the sole wiki feed now. Flip to True only to re-enable the legacy
+    # window-focus session pages.
+    wiki_write_enabled: bool = False
 
 
 class SchedulerConfig(BaseModel):
@@ -675,13 +686,31 @@ class VoiceBridgeConfig(BaseModel):
     rate_limit_seconds: int = 60
 
 
+class ExtractorConfig(BaseModel):
+    """Settings for the Stage-1 ``ConversationFactExtractor`` (Wave 2).
+
+    ``[memory.wiki.extractor]``. The extractor's provider/model are NOT
+    configured here — both curator stages resolve through the single
+    ``[memory.wiki.curator]`` provider/model pair (the Wiki settings card
+    drives them together). This section only holds the extraction gates.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = True
+    # Turns shorter than this never reach the LLM (smalltalk floor).
+    min_user_chars: int = 12
+    max_output_tokens: int = 800
+    timeout_s: float = 30.0
+
+
 class WikiMemoryConfig(BaseModel):
-    """Root of the ``[memory.wiki]`` block (Phase B1+B7+B8).
+    """Root of the ``[memory.wiki]`` block (Phase B1+B7+B8 + Wave 2).
 
     Holds the Curator LLM section (B1), the session-rollup section (B7),
-    and the voice-bridge section (B8 aggressive ingest). Defaults are
-    chosen so a config without the section loads cleanly as
-    ``WikiMemoryConfig()``.
+    the voice-bridge section (B8 aggressive ingest), and the Stage-1
+    extractor section (Wave 2). Defaults are chosen so a config without
+    the section loads cleanly as ``WikiMemoryConfig()``.
     """
 
     model_config = ConfigDict(extra="allow")
@@ -689,6 +718,7 @@ class WikiMemoryConfig(BaseModel):
     curator: WikiCuratorConfig = Field(default_factory=WikiCuratorConfig)
     session_rollup: SessionRollupConfig = Field(default_factory=SessionRollupConfig)
     voice_bridge: VoiceBridgeConfig = Field(default_factory=VoiceBridgeConfig)
+    extractor: ExtractorConfig = Field(default_factory=ExtractorConfig)
 
 
 class LegacyCuratorConfig(BaseModel):
@@ -1393,16 +1423,24 @@ class VoiceConfig(BaseModel):
     # Maximum number of continuations to chain before a forced flush. Bounds
     # the wait to a finite duration even for indefinite trailing fragments.
     completion_max_chain: int = 3
-    # When the user trails off on an incomplete/dangling fragment and never
-    # continues, ask a short clarifying question ("Zwischenfrage") instead of
-    # leaving them in silence. User-mandated 2026-06-08 ("Jarvis hört für immer
-    # zu") — supersedes the 2026-05-26 silent-discard policy. Restores AD-OE6
-    # (zero silent drops) for the incomplete-utterance hold: after a pause the
-    # user always gets either an answer or a question, never silence. The
-    # patience window is preserved (see ``clarify_after_ms``), so a genuine
-    # thinking-pause-then-continue is never interrupted. Set false to restore
-    # the old silent-discard behaviour.
-    clarify_incomplete_enabled: bool = True
+    # When the user trails off on an incomplete/dangling fragment, OR the brain
+    # returns an empty turn (Gemini function_call without narration / a slow CLI
+    # brain timing out on the voice path), Jarvis can speak a short clarifying
+    # question ("Wie meinst du das genau?") instead of staying silent.
+    #
+    # DEFAULT OFF since 2026-06-09 (maintainer mandate, REVERSES the 2026-06-08
+    # opt-in): in practice the question fired on every empty brain turn —
+    # interrogating the user about perfectly clear commands ("kannst du mein
+    # Spotify öffnen?" → "Wie meinst du das genau?") and so blaming the user for
+    # a brain-side glitch. The original "Jarvis hört für immer zu" report it was
+    # built for had its real root cause (the playback-watchdog stale counter,
+    # BUG-032) fixed separately, so the question lost its only justification and
+    # was left as pure annoyance. With this off, an empty turn stays silent and
+    # a normal turn answers normally — the genuinely useful AD-OE6 acks
+    # (brain-unavailable message, "Erledigt." after a wordless desktop action,
+    # silent fire-and-forget spawn) are independent of this flag and unaffected.
+    # Set true to opt back into the clarifying-question behaviour.
+    clarify_incomplete_enabled: bool = False
     # Grace window after an incomplete fragment is buffered before the
     # clarifying question fires. Long enough not to cut off a thinking pause
     # (the VAD already waited ``vad_silence_ms`` of silence before yielding the

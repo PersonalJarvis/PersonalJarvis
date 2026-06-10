@@ -64,6 +64,18 @@ export function useWebSocket(): void {
           payload: env.payload,
         });
 
+        // Live reasoning trace: while the text chat is waiting on a reply,
+        // turn-progress events (tools, computer-use, worker dispatch, ...)
+        // become visible thinking steps. Gated on chatThinking inside the
+        // store, so this is a cheap no-op for every other event.
+        useEventStore
+          .getState()
+          .ingestThinkingEvent(
+            env.event_name,
+            env.payload,
+            Math.floor(env.timestamp_ns / 1_000_000),
+          );
+
         // Sub-Agent-Dashboard: Live-Tree aus den Phase-5.5-Events bauen.
         if (SUB_AGENT_EVENT_NAMES.has(env.event_name)) {
           useSubAgentStore
@@ -108,7 +120,12 @@ export function useWebSocket(): void {
             // The "preamble" role is the Flash-Brain pre-ack; it does NOT end
             // the thinking state because the assistant's main reply is still
             // pending. Only "assistant" / "system" clear the indicator.
-            if (p.role === "assistant" || p.role === "system") {
+            if (p.role === "assistant") {
+              // Snapshot the live reasoning trace onto this reply so the
+              // "Thought for Xs" disclosure can replay it. Also clears the flag.
+              useEventStore.getState().finishThinking(msg.id);
+              console.log("[ChatThinking] reply → false");
+            } else if (p.role === "system") {
               setChatThinking(false);
               console.log("[ChatThinking] reply → false");
             }

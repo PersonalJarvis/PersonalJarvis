@@ -901,7 +901,9 @@ class CriticRunner:
         # non-interactively, the prompt enforces strict JSON output, the
         # critic spawns read-only because no file should change during
         # review.
-        if primary_provider in ("chatgpt", "openai-codex"):
+        from jarvis.codex_auth_state import codex_needs_reauth
+
+        if primary_provider in ("chatgpt", "openai-codex") and not codex_needs_reauth():
             # NB: `model` here is the Anthropic-shaped slug from
             # `choose_critic_model` (e.g. "claude-sonnet-4-6"); codex
             # would reject it as "unknown model". `_normalize_model_for_codex`

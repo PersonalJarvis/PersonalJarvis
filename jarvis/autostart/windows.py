@@ -231,15 +231,21 @@ def _run_powershell_elevated(script: str) -> bool:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(script)
+        # Escape any single-quote in the temp path (e.g. a login like O'Brien →
+        # C:\Users\O'Brien\...\Temp) before baking it into the single-quoted PS arg.
+        safe_path = path.replace("'", "''")
         launcher = (
             "$ErrorActionPreference = 'Stop'\n"
             "try {\n"
             "  $p = Start-Process -FilePath powershell -ArgumentList "
             "@('-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden',"
-            f"'-File','{path}') -Verb RunAs -Wait -PassThru\n"
+            f"'-File','{safe_path}') -Verb RunAs -Wait -PassThru\n"
             "  exit $p.ExitCode\n"
             "} catch { exit 1 }\n"
         )
+        # No check=True (unlike _run_powershell): a declined UAC prompt makes the
+        # outer launcher exit non-zero, which we translate to a clean `False`
+        # (→ .lnk fallback), never an exception.
         result = subprocess.run(
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", launcher],
             capture_output=True,
@@ -247,6 +253,8 @@ def _run_powershell_elevated(script: str) -> bool:
             timeout=180,
             creationflags=NO_WINDOW_CREATIONFLAGS,
         )
+        # INFO so a declined prompt (non-zero) vs success (0) is diagnosable in the log.
+        log.info("autostart task registration: powershell returncode=%d", result.returncode)
         return result.returncode == 0
     except Exception as exc:  # noqa: BLE001 — declined UAC / launch failure → fallback
         log.warning("Elevated autostart task registration failed: %s", exc)
@@ -353,6 +361,16 @@ class WindowsAutostart:
                 return self.status(spec)
             log.info(
                 "Autostart task not granted (UAC declined) — using startup shortcut fallback."
+            )
+        elif info is not None:
+            # Non-interactive boot reconcile found a *stale* task (path drift — the
+            # BUG-006 restore-trap class). We cannot unregister + re-register it
+            # without elevation here, so surface it loudly: the user must re-enable
+            # instant start in Settings (one UAC prompt) to refresh it. The .lnk
+            # fallback below keeps autostart working (delayed) meanwhile.
+            log.warning(
+                "Autostart scheduled task is stale (points at a different install); "
+                "re-enable instant start in Settings to refresh it. Using shortcut fallback."
             )
 
         # Boot reconcile, or declined UAC: ensure the no-elevation fallback. Never

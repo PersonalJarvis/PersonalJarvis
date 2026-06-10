@@ -115,6 +115,13 @@ class SkillFrontmatter(BaseModel):
     plugin_id: str | None = None
     intent_verbs: list[str] = Field(default_factory=list)
     intent_objects: list[str] = Field(default_factory=list)
+    # Instruction-skill model (2026-06-09 rebuild, AD-S5/S7): optional trigger
+    # guidance appended to the description in the AVAILABLE SKILLS listing
+    # (Anthropic Agent Skills convention), and the execution mode split —
+    # inline skills are followed by the brain in the current turn, mission
+    # skills are dispatched as background worker briefs.
+    when_to_use: str | None = None
+    execution: Literal["inline", "mission"] = "inline"
 
     @field_validator("name")
     @classmethod
@@ -268,6 +275,20 @@ class SkillLinkCheckCompleted(Event):
 # ----------------------------------------------------------------------
 # Activation-Events (Skills-Brain-Integration, Phase Skills-1)
 # ----------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class SkillInvoked(Event):
+    """A skill's instructions were loaded for execution (instruction-skill model).
+
+    Emitted on every invocation path — model-decided (``run-skill`` tool),
+    direct trigger (voice/chat), hotkey, or cron. This is the single
+    observability signal that answers "did a skill actually fire?"
+    (2026-06-09 rebuild, AD-S6). ``source`` is one of:
+    ``model | trigger | hotkey | cron | chat``.
+    """
+    skill_name: str = ""
+    source: str = ""
 
 
 @dataclass(frozen=True, slots=True)

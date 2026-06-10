@@ -7,6 +7,7 @@ into the canonical ``telegram_bot_token`` secret and flip
 both. This reuses the channel's allowlist + voice-scrub conventions instead of
 duplicating the token into a separate Node MCP server.
 """
+
 from __future__ import annotations
 
 import logging
@@ -24,10 +25,33 @@ def _set_telegram_enabled(on: bool) -> None:
     set_telegram_enabled(on)
 
 
-def on_telegram_connected(token: str) -> None:
-    """Store the bot token + enable the channel. Raises on a secret-store error."""
+def _add_telegram_allowed_user_id(user_id: int) -> None:
+    from jarvis.core.config_writer import add_telegram_allowed_user_id
+
+    add_telegram_allowed_user_id(user_id)
+
+
+def _set_telegram_pairing(on: bool) -> None:
+    from jarvis.core.config_writer import set_telegram_pairing
+
+    set_telegram_pairing(on)
+
+
+def on_telegram_connected(token: str, allowed_user_id: int | None = None) -> None:
+    """Store the bot token + enable the channel. Raises on a secret-store error.
+
+    When ``allowed_user_id`` is given, lock the bot to that owner: append the id
+    to the allowlist and turn trust-on-first-private-message off so nobody else
+    can claim it.
+    """
     if not set_secret(_SECRET_KEY, token):
         raise RuntimeError("could not store telegram_bot_token in the credential store")
+    # Owner-lock BEFORE enabling: the three writes are separate atomic TOML
+    # writes, so enabling last guarantees a crash mid-sequence never leaves the
+    # channel enabled with an open (pair-on-first-message) allowlist.
+    if allowed_user_id is not None:
+        _add_telegram_allowed_user_id(int(allowed_user_id))
+        _set_telegram_pairing(False)
     _set_telegram_enabled(True)
     log.info("telegram connected via marketplace — channel enabled")
 

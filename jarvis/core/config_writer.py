@@ -345,9 +345,7 @@ def set_telegram_enabled(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> 
         _atomic_write(path, out)
 
 
-def add_telegram_allowed_user_id(
-    user_id: int, *, path: Path = DEFAULT_CONFIG_FILE
-) -> None:
+def add_telegram_allowed_user_id(user_id: int, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist a Telegram user id under ``[integrations.telegram]``.
 
     Used by first-private-message pairing. The token remains a secret; the
@@ -386,9 +384,7 @@ def add_telegram_allowed_user_id(
         _atomic_write(path, out)
 
 
-def add_discord_allowed_user_id(
-    user_id: int, *, path: Path = DEFAULT_CONFIG_FILE
-) -> None:
+def add_discord_allowed_user_id(user_id: int, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist a Discord user id under ``[integrations.discord]``.
 
     Used by first-direct-message pairing. The token remains a secret; the
@@ -425,6 +421,70 @@ def add_discord_allowed_user_id(
         if had_bom:
             out = _BOM + out
         _atomic_write(path, out)
+
+
+def _set_integration_value(
+    platform: str, key: str, value: object, *, path: Path = DEFAULT_CONFIG_FILE
+) -> None:
+    """Set ``[integrations.<platform>] <key> = value`` in jarvis.toml.
+
+    Walks/creates the two-level nested table (``_patch_table`` only handles a
+    single level). Comment- and BOM-preserving, lock-guarded, atomic — same
+    contract as :func:`set_telegram_enabled`. Toml-only by design: these
+    operational integration flags are not tracked in ``config-soll.json``, so
+    the drift-guard never reverts them.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"Config file missing: {path}")
+
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+        integrations = doc.get("integrations")
+        if integrations is None:
+            integrations = tomlkit.table()
+            doc["integrations"] = integrations
+        table = integrations.get(platform)
+        if table is None:
+            table = tomlkit.table()
+            integrations[platform] = table
+        table[key] = value
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
+
+
+def set_discord_enabled(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist the Discord channel toggle to ``[integrations.discord] enabled``.
+
+    Mirror of :func:`set_telegram_enabled`: written when the user
+    connects/disconnects Discord in the Plugin Marketplace. The bot token lives
+    in the Credential Manager (``discord_bot_token``); this flag tells the
+    channel bootstrap whether to start the bot.
+    """
+    _set_integration_value("discord", "enabled", bool(enabled), path=path)
+
+
+def set_telegram_pairing(on: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Toggle ``[integrations.telegram] pair_on_first_private_message``.
+
+    Turned off when the owner connects with an explicit user id, so the bot
+    never claims the allowlist for whoever messages first (owner-lock contract).
+    """
+    _set_integration_value("telegram", "pair_on_first_private_message", bool(on), path=path)
+
+
+def set_discord_pairing(on: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Toggle ``[integrations.discord] pair_on_first_dm``.
+
+    Turned off when the owner connects with an explicit user id, so the bot
+    never claims the allowlist for whoever DMs first (owner-lock contract).
+    """
+    _set_integration_value("discord", "pair_on_first_dm", bool(on), path=path)
 
 
 def set_brain_provider_defaults(
@@ -938,7 +998,8 @@ def _sync_sub_jarvis_provider_drift_soll(name: str) -> None:
     except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
         log.warning(
             "Could not sync %s to the User environment: %s",
-            _SUB_JARVIS_PROVIDER_ENV, exc,
+            _SUB_JARVIS_PROVIDER_ENV,
+            exc,
         )
 
 
@@ -1106,9 +1167,7 @@ def _set_user_env_var_winreg(name: str, value: str) -> None:
     """
     import winreg  # local import: Windows-only module
 
-    with winreg.OpenKey(
-        winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_SET_VALUE
-    ) as key:
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_SET_VALUE) as key:
         winreg.SetValueEx(key, name, 0, winreg.REG_SZ, value)
 
     # Best-effort: tell already-running shells/processes the env block changed.
@@ -1129,3 +1188,60 @@ def _set_user_env_var_winreg(name: str, value: str) -> None:
         )
     except Exception as exc:  # noqa: BLE001 — broadcast is a nicety, not required
         log.debug("WM_SETTINGCHANGE broadcast failed (non-fatal): %s", exc)
+
+
+def set_wiki_curator_provider(
+    name: str,
+    *,
+    model: str = "",
+    path: Path = DEFAULT_CONFIG_FILE,
+) -> None:
+    """Persist the Wiki-curator model picker in ``[memory.wiki.curator]``.
+
+    Writes ``provider`` and ``model`` together. Empty strings are persisted
+    verbatim — they are the documented fallback sentinels resolved at runtime
+    by ``jarvis.memory.wiki.curator_llm._resolve_provider_and_model``
+    (``provider=""`` -> ``brain.primary``; ``model=""`` -> the provider's
+    cheap/fast router model). Takes effect as a boot default on the next
+    ``load_config``; the live switch happens in the settings route by resetting
+    the running ``WikiCuratorLLM``'s cached brain.
+    """
+    _patch_wiki_curator_toml(path, {"provider": name, "model": model})
+
+
+def _patch_wiki_curator_toml(path: Path, values: dict[str, object]) -> None:
+    """Set keys under the nested ``[memory.wiki.curator]`` table.
+
+    Walks ``memory`` -> ``wiki`` -> ``curator`` (creating any missing level),
+    sets each key in ``values``, and preserves comments, sibling keys, and the
+    optional BOM (same contract as :func:`_patch_sub_jarvis_provider_toml`).
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"Config file missing: {path}")
+
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+
+        memory = doc.get("memory")
+        if memory is None:
+            memory = tomlkit.table()
+            doc["memory"] = memory
+        wiki = memory.get("wiki")
+        if wiki is None:
+            wiki = tomlkit.table()
+            memory["wiki"] = wiki
+        curator = wiki.get("curator")
+        if curator is None:
+            curator = tomlkit.table()
+            wiki["curator"] = curator
+        for key, value in values.items():
+            curator[key] = value
+
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)

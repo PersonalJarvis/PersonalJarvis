@@ -6,11 +6,20 @@ existing bidirectional channel boots. Disconnecting reverses both.
 """
 # ruff: noqa: S106
 
+import types
+
 import pytest
 
 from jarvis.marketplace import telegram_connect as tc
 from jarvis.marketplace.catalog import PatPasteAuth, PluginSpec
 from jarvis.ui.web import marketplace_routes as mr
+
+
+def _fake_request():
+    # Channel routes now take the FastAPI Request to reach app.state for the
+    # live reload. A state without channel_manager makes apply_channel_live a
+    # safe no-op (returns False), which is all these enable-hook tests need.
+    return types.SimpleNamespace(app=types.SimpleNamespace(state=None))
 
 
 def test_enable_writes_secret_and_flips_flag(monkeypatch):
@@ -24,6 +33,21 @@ def test_enable_writes_secret_and_flips_flag(monkeypatch):
     tc.on_telegram_connected("123:ABC")
     assert calls["secret"] == ("telegram_bot_token", "123:ABC")
     assert calls["enabled"] is True
+
+
+def test_enable_with_user_id_locks_owner(monkeypatch):
+    calls = {}
+    monkeypatch.setattr(tc, "set_secret", lambda k, v: True)
+    monkeypatch.setattr(tc, "_set_telegram_enabled", lambda on: None)
+    monkeypatch.setattr(
+        tc, "_add_telegram_allowed_user_id", lambda uid: calls.__setitem__("uid", uid)
+    )
+    monkeypatch.setattr(
+        tc, "_set_telegram_pairing", lambda on: calls.__setitem__("pairing", on)
+    )
+    tc.on_telegram_connected("123:ABC", 7777)
+    assert calls["uid"] == 7777
+    assert calls["pairing"] is False
 
 
 def test_enable_raises_when_secret_store_fails(monkeypatch):
@@ -73,9 +97,13 @@ async def test_connect_pat_telegram_fires_the_enable_hook(monkeypatch):
 
     monkeypatch.setattr(mr, "_validate_token", _ok)
     monkeypatch.setattr(mr, "TokenStore", lambda: type("S", (), {"save": lambda *_: None})())
-    monkeypatch.setattr(mr, "on_telegram_connected", lambda tok: fired.__setitem__("tok", tok))
+    monkeypatch.setattr(
+        mr, "on_telegram_connected", lambda tok, uid=None: fired.__setitem__("tok", tok)
+    )
 
-    out = await mr.connect_pat("telegram", mr.PatConnectBody(token="123:ABC"))
+    out = await mr.connect_pat(
+        "telegram", mr.PatConnectBody(token="123:ABC"), _fake_request()
+    )
     assert out["status"] == "connected"
     assert fired["tok"] == "123:ABC"
 
@@ -114,13 +142,15 @@ async def test_connect_pat_telegram_fails_when_channel_enable_fails(monkeypatch)
     monkeypatch.setattr(mr, "_validate_token", _ok)
     monkeypatch.setattr(mr, "TokenStore", lambda: store)
 
-    def _boom(_token):
+    def _boom(_token, _uid=None):
         raise RuntimeError("keyring down")
 
     monkeypatch.setattr(mr, "on_telegram_connected", _boom)
 
     with pytest.raises(mr.HTTPException) as exc:
-        await mr.connect_pat("telegram", mr.PatConnectBody(token="123:ABC"))
+        await mr.connect_pat(
+            "telegram", mr.PatConnectBody(token="123:ABC"), _fake_request()
+        )
 
     assert exc.value.status_code == 500
     assert store.deleted is True

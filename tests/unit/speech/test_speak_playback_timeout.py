@@ -204,6 +204,70 @@ class WedgeAfterFirstFramePlayer:
 
 
 @pytest.mark.asyncio
+async def test_no_first_frame_ceiling_deferred_while_desktop_tool_steps() -> None:
+    """An actively-stepping computer_use turn must not be beheaded pre-first-frame.
+
+    Live bug 2026-06-09 (data/jarvis_desktop.log 19:46, "öffne CapCut"): the
+    router brain ran an inline ``computer_use`` loop. The loop was working on
+    step 4 (heartbeats flowing via ObservationCaptured/ActionPlanned →
+    ``_on_agent_progress``) when the no-first-frame ceiling fired at 20 s,
+    aborted the device, unwound the streaming turn, and the answer came back
+    EMPTY — silence (or, earlier, the canned clarify phrase) instead of a real
+    result. The brain stall guard already suspends its ceiling on these
+    heartbeats; ``_await_playback`` must honour the same liveness signal.
+    """
+    bus = EventBus()
+    pipeline = SpeechPipeline(tts=FakeTTS(), bus=bus, enable_whisper_wake=False)
+    player = HangingPlayer()  # never writes a frame — CU is still working
+    pipeline._player = player  # type: ignore[assignment]
+    pipeline._speak_playback_ceiling_s = 0.2  # type: ignore[attr-defined]
+
+    play_task = asyncio.create_task(player.play_chunks(_empty_chunks()))
+
+    async def _cu_steps_then_finish() -> None:
+        # ~0.6 s of desktop-tool heartbeats — three times the ceiling.
+        for _ in range(12):
+            pipeline._long_tool_last_activity = time.monotonic()
+            await asyncio.sleep(0.05)
+        player._release.set()  # CU done → playback completes normally
+
+    heartbeat_task = asyncio.create_task(_cu_steps_then_finish())
+    try:
+        done = await asyncio.wait_for(
+            pipeline._await_playback(play_task, set()), timeout=5.0
+        )
+    finally:
+        heartbeat_task.cancel()
+
+    assert done == {play_task}, "working desktop turn must not be aborted"
+    assert player.stop_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_no_first_frame_ceiling_ignores_pre_await_heartbeat() -> None:
+    """A heartbeat from BEFORE this playback await began must NOT defer the
+    ceiling — per-unit re-arm, the BUG-032 stale-counter lesson. A desktop turn
+    that finished moments ago must not grant a later, genuinely-dead playback a
+    free pass past the no-first-frame backstop.
+    """
+    bus = EventBus()
+    pipeline = SpeechPipeline(tts=FakeTTS(), bus=bus, enable_whisper_wake=False)
+    player = HangingPlayer()
+    pipeline._player = player  # type: ignore[assignment]
+    pipeline._speak_playback_ceiling_s = 0.2  # type: ignore[attr-defined]
+    # Stale: stamped before _await_playback starts its window.
+    pipeline._long_tool_last_activity = time.monotonic()
+
+    play_task = asyncio.create_task(player.play_chunks(_empty_chunks()))
+    done = await asyncio.wait_for(
+        pipeline._await_playback(play_task, set()), timeout=5.0
+    )
+
+    assert done == set(), "stale heartbeat must not defer the abort"
+    assert player.stop_calls >= 1
+
+
+@pytest.mark.asyncio
 async def test_await_playback_still_aborts_genuine_midplayback_wedge() -> None:
     """A real mid-playback device wedge (frames then freeze) must still abort."""
     bus = EventBus()

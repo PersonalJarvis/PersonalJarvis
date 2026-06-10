@@ -138,6 +138,87 @@ def test_delete_builtin_is_refused(skills_root: Path) -> None:
 
 
 # ----------------------------------------------------------------------
+# bulk delete
+# ----------------------------------------------------------------------
+
+
+def test_bulk_delete_removes_multiple_user_skills(skills_root: Path) -> None:
+    for n in ("alpha", "beta", "gamma"):
+        _make_skill(skills_root, n)
+    client, _reg = _client(skills_root)
+
+    res = client.post("/api/skills/bulk-delete", json={"names": ["alpha", "gamma"]})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert sorted(body["deleted"]) == ["alpha", "gamma"]
+    assert body["failed"] == []
+    assert not (skills_root / "alpha").exists()
+    assert not (skills_root / "gamma").exists()
+    assert (skills_root / "beta").exists()
+
+    names = [s["name"] for s in client.get("/api/skills").json()["skills"]]
+    assert names == ["beta"]
+
+
+def test_bulk_delete_refuses_builtins_but_deletes_the_rest(skills_root: Path) -> None:
+    from jarvis.skills.builtin import BUILTIN_SKILL_NAMES
+
+    builtin_name = sorted(BUILTIN_SKILL_NAMES)[0]
+    _make_skill(skills_root, builtin_name)
+    _make_skill(skills_root, "alpha")
+    client, _reg = _client(skills_root)
+
+    res = client.post(
+        "/api/skills/bulk-delete", json={"names": [builtin_name, "alpha"]}
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["deleted"] == ["alpha"]
+    assert [f["name"] for f in body["failed"]] == [builtin_name]
+    # The protected built-in is untouched; the user skill is gone.
+    assert (skills_root / builtin_name).exists()
+    assert not (skills_root / "alpha").exists()
+
+
+def test_bulk_delete_reports_missing_skill(skills_root: Path) -> None:
+    _make_skill(skills_root, "alpha")
+    client, _reg = _client(skills_root)
+
+    res = client.post("/api/skills/bulk-delete", json={"names": ["alpha", "ghost"]})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["deleted"] == ["alpha"]
+    assert [f["name"] for f in body["failed"]] == ["ghost"]
+
+
+def test_bulk_delete_dedupes_repeated_names(skills_root: Path) -> None:
+    _make_skill(skills_root, "alpha")
+    client, _reg = _client(skills_root)
+
+    res = client.post(
+        "/api/skills/bulk-delete", json={"names": ["alpha", "alpha"]}
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    # A doubled name is deleted once, not reported as a failure on the second pass.
+    assert body["deleted"] == ["alpha"]
+    assert body["failed"] == []
+
+
+def test_bulk_delete_prunes_prefs(skills_root: Path) -> None:
+    _make_skill(skills_root, "alpha")
+    _make_skill(skills_root, "beta")
+    client, _reg = _client(skills_root)
+
+    client.post("/api/skills/alpha/disable")
+    client.post("/api/skills/bulk-delete", json={"names": ["alpha", "beta"]})
+
+    overrides = prefs.load_state_overrides()
+    assert "alpha" not in overrides
+    assert "beta" not in overrides
+
+
+# ----------------------------------------------------------------------
 # reorder
 # ----------------------------------------------------------------------
 

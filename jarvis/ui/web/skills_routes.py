@@ -247,6 +247,16 @@ class SkillOrderBody(BaseModel):
     order: list[str] = Field(default_factory=list)
 
 
+class SkillBulkDeleteBody(BaseModel):
+    """Body for ``POST /api/skills/bulk-delete`` — delete several user skills.
+
+    ``names`` is the list of skill names the user selected. Each is deleted
+    independently; the response reports which ones went through and which were
+    refused (built-ins, unknown names, IO errors).
+    """
+    names: list[str] = Field(default_factory=list)
+
+
 class SkillQueryBody(BaseModel):
     """Body fuer ``POST /api/skills/query`` — lokale Skill-Suche mit BM25 + LLM."""
     q: str = Field(default="", max_length=500)
@@ -534,51 +544,92 @@ async def get_skill(name: str, request: Request) -> dict[str, Any]:
     return _skill_to_detail(skill)
 
 
-@router.delete("/{name}")
-async def delete_skill(name: str, request: Request) -> dict[str, Any]:
-    """Loescht einen User-Skill (Ordner) und raeumt seine Prefs auf.
+def _delete_user_skill(reg: Any, name: str) -> None:
+    """Delete one user skill folder and prune its prefs.
 
-    Builtins werden abgelehnt (409) — sie wuerden beim naechsten Start ohnehin
-    neu kopiert. Sicherheit: geloescht wird nur INNERHALB des Registry-Roots
-    (kein Path-Escape).
+    Raises ``HTTPException`` on every refusal (unknown name → 404, built-in →
+    409, path escape / invalid target → 400, IO error → 500) so the single-skill
+    ``DELETE`` route and the bulk endpoint share the exact same safety checks.
+    Built-ins are refused because they would be re-copied on the next start.
+    Only a directory strictly INSIDE the registry root is ever removed.
     """
     import shutil
 
     from jarvis.skills import prefs
 
-    reg = _require_registry(request)
     try:
         skill = reg.get(name)
     except KeyError:
-        raise HTTPException(status_code=404, detail=f"Skill '{name}' nicht gefunden")
+        raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
 
     if _is_builtin(name):
         raise HTTPException(
             status_code=409,
-            detail="Builtin-Skill kann nicht geloescht werden (wird beim Start neu kopiert).",
+            detail="Built-in skill can't be deleted (it is re-copied on next start).",
         )
 
     root = reg.root.resolve()
     target = skill.root.resolve()
     if target == root:
-        raise HTTPException(status_code=400, detail="Ungueltiges Loeschziel.")
+        raise HTTPException(status_code=400, detail="Invalid delete target.")
     try:
         target.relative_to(root)
     except ValueError:
         raise HTTPException(
             status_code=400,
-            detail="Skill liegt ausserhalb des User-Skill-Ordners — Loeschen verweigert.",
+            detail="Skill lives outside the user skill folder — delete refused.",
         )
 
     try:
         shutil.rmtree(target)
     except OSError as exc:
         raise HTTPException(
-            status_code=500, detail=f"Konnte Skill nicht loeschen: {exc}"
+            status_code=500, detail=f"Could not delete skill: {exc}"
         ) from exc
 
     reg._skills.pop(name, None)  # type: ignore[attr-defined]
     prefs.remove_skill(name)
+
+
+# NB: registered BEFORE ``/{name}`` so a ``POST /bulk-delete`` is never captured
+# by a path-param route that would treat "bulk-delete" as a skill name.
+@router.post("/bulk-delete")
+async def bulk_delete_skills(
+    body: SkillBulkDeleteBody, request: Request
+) -> dict[str, Any]:
+    """Delete several user skills in one batch.
+
+    Each name is deleted independently: built-ins, unknown names, and IO errors
+    are recorded in ``failed`` while every deletable skill still goes through, so
+    one bad entry never blocks the rest of the selection. Repeated names are
+    de-duped so a doubled selection is not reported as a phantom failure.
+    """
+    reg = _require_registry(request)
+    deleted: list[str] = []
+    failed: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for name in body.names:
+        if name in seen:
+            continue
+        seen.add(name)
+        try:
+            _delete_user_skill(reg, name)
+        except HTTPException as exc:
+            failed.append({"name": name, "detail": str(exc.detail)})
+        else:
+            deleted.append(name)
+    return {"deleted": deleted, "failed": failed}
+
+
+@router.delete("/{name}")
+async def delete_skill(name: str, request: Request) -> dict[str, Any]:
+    """Delete a user skill (folder) and prune its prefs.
+
+    Built-ins are refused (409) — they would be re-copied on the next start.
+    Safety lives in ``_delete_user_skill`` (path-escape guard + built-in guard).
+    """
+    reg = _require_registry(request)
+    _delete_user_skill(reg, name)
     return {"ok": True, "removed": True, "name": name}
 
 

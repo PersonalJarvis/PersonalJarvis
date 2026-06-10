@@ -206,6 +206,55 @@ def test_global_backend_register_failure_degrades(fake_gh):
     assert fake_gh.start_calls == 0
 
 
+def test_global_backend_one_bad_combo_does_not_disable_others(fake_gh):
+    """A single unregisterable combo must NOT take the other hotkeys down.
+
+    The old code registered all bindings in one ``register_hotkeys(all)`` call,
+    so one unknown key name raised and EVERY hotkey (incl. F1+F2) died. Now each
+    binding is armed individually: the bad one is skipped, the rest stay live.
+    """
+    from jarvis.trigger.backends.global_hotkeys import GlobalHotkeysBackend
+
+    fired: list[str] = []
+    # "numpad_x" stands in for any combo the library cannot register.
+    fake_gh.register_error_combos = {"numpad_x"}
+    backend = GlobalHotkeysBackend()
+    backend.register(
+        [
+            ["f1 + f2", None, lambda: fired.append("hangup")],
+            ["numpad_x", None, lambda: fired.append("bad")],
+            ["f3 + f4", None, lambda: fired.append("call")],
+        ]
+    )
+    # The two good combos registered; the bad one was skipped — not a degrade.
+    assert backend._gh is not None
+    assert "f1+f2" in fake_gh.registered
+    assert "f3+f4" in fake_gh.registered
+    assert "numpad_x" not in fake_gh.registered
+    # Teardown must only try to remove the combos that actually registered.
+    assert backend._combo_strings == ["f1 + f2", "f3 + f4"]
+
+    backend.start()
+    fake_gh.fire("f1 + f2")
+    fake_gh.fire("f3 + f4")
+    assert fired == ["hangup", "call"]  # both good hotkeys still fire
+    backend.stop()
+
+
+def test_global_backend_all_combos_bad_degrades(fake_gh):
+    """If NOT ONE combo registers, degrade so the checker never starts empty."""
+    import jarvis.trigger.backends.global_hotkeys as ghb
+    from jarvis.trigger.backends.global_hotkeys import GlobalHotkeysBackend
+
+    fake_gh.register_error_combos = {"numpad_x"}
+    backend = GlobalHotkeysBackend()
+    backend.register([["numpad_x", None, lambda: None]])
+    assert backend._gh is None  # degraded — nothing registered
+    backend.start()  # no-op
+    assert ghb._CHECKER_REFCOUNT == 0
+    assert fake_gh.start_calls == 0
+
+
 def test_global_backend_missing_package_degrades():
     """No global_hotkeys package → register degrades to a no-op, no raise."""
     from jarvis.trigger.backends.global_hotkeys import GlobalHotkeysBackend

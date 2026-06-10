@@ -79,6 +79,70 @@ async def test_bridge_publishes_channel_text_as_user_message() -> None:
     assert seen[0].source_layer == "channel.telegram"
 
 
+class _SwapManager:
+    def __init__(self, channel: _QueueChannel) -> None:
+        self._channel = channel
+
+    def started(self) -> list[str]:
+        return ["telegram"]
+
+    def get(self, name: str) -> _QueueChannel:
+        assert name == "telegram"
+        return self._channel
+
+    def set_channel(self, channel: _QueueChannel) -> None:
+        self._channel = channel
+
+
+@pytest.mark.asyncio
+async def test_refresh_rebinds_consumer_to_new_instance() -> None:
+    bus = EventBus()
+    old = _QueueChannel()
+    mgr = _SwapManager(old)
+    bridge = ChannelChatBridge(bus=bus, manager=mgr)  # type: ignore[arg-type]
+    seen: list[MessageSent] = []
+    ready = asyncio.Event()
+
+    async def _capture(event: MessageSent) -> None:
+        seen.append(event)
+        ready.set()
+
+    bus.subscribe(MessageSent, _capture)
+    bridge.start()
+
+    # Live reload swapped the channel instance — rebind the consumer.
+    new = _QueueChannel()
+    mgr.set_channel(new)
+    await bridge.refresh("telegram")
+
+    # A message on the OLD (now-detached) instance must NOT be consumed.
+    await old.queue.put(
+        ChannelMessage(
+            session_id=uuid4(),
+            kind="text",
+            content="from-old",
+            metadata={"telegram_chat_id": 1},
+        )
+    )
+    # A message on the NEW instance must reach the bus.
+    await new.queue.put(
+        ChannelMessage(
+            session_id=uuid4(),
+            kind="text",
+            content="from-new",
+            metadata={"telegram_chat_id": 2},
+        )
+    )
+
+    await asyncio.wait_for(ready.wait(), timeout=1.0)
+    await asyncio.sleep(0.05)
+    await bridge.stop()
+
+    texts = [e.text for e in seen]
+    assert "from-new" in texts
+    assert "from-old" not in texts
+
+
 @pytest.mark.asyncio
 async def test_bridge_ignores_empty_and_system_messages() -> None:
     bus = EventBus()

@@ -152,6 +152,15 @@ def _select_subagent_worker_kind(
         return "subjarvis"
     if sub_jarvis_provider in CODEX_SUBAGENT_SLUGS:
         return "codex_direct"
+    # Explicitly selecting "gemini" routes to the direct GeminiWorker so the
+    # sub-agent actually runs on Gemini (the user's "selected provider must run"
+    # mandate). This is NOT the anti-silent-Gemini case (2026-05-29) — that
+    # forbade gemini as a *silent* fallback when something else was configured;
+    # here the user deliberately picked gemini. The OpenClaw path that this used
+    # to take ("subjarvis") was removed in Welle 4, so without this it silently
+    # ran on Claude instead of Gemini.
+    if sub_jarvis_provider == "gemini":
+        return "gemini"
     if sub_jarvis_provider:
         return "subjarvis"
     # No subagent provider configured — legacy default path.
@@ -456,16 +465,32 @@ async def bootstrap_missions(
             # claude-cli MCP config so it can issue the plugin tool calls (AD-OE4).
             return ClaudeDirectWorker(mcp_servers=_assemble_worker_mcp_servers())
         if kind == "codex_direct":
+            # If a codex subprocess already proved the ChatGPT login dead this
+            # session, skip codex entirely and run on Claude Max directly (one
+            # path, like grok) — re-spawning the dead provider + double-falling-
+            # back every mission doubled the Claude Max load and made the critic
+            # flaky (critic_loop_exhausted). Cleared on a codex success / login.
+            from jarvis.codex_auth_state import codex_needs_reauth
+
+            if codex_needs_reauth():
+                logger.warning(
+                    "Mission worker -> ClaudeDirectWorker: codex ChatGPT login "
+                    "is flagged dead this session — running on Claude Max until "
+                    "`codex login` restores it (avoids the dead-provider double "
+                    "fallback)."
+                )
+                return ClaudeDirectWorker(mcp_servers=_assemble_worker_mcp_servers())
             return CodexDirectWorker()
         if kind == "gemini":
-            # Reached ONLY when no [brain.sub_jarvis].provider is configured.
-            # Make it LOUD — this runs on the Gemini API key, NOT the Claude
-            # Max subscription. A silent Gemini fallback is exactly the trap
-            # the user flagged.
+            # Reached when [brain.sub_jarvis].provider == "gemini" was selected
+            # (the user's "selected provider must run" mandate) OR, legacy, when
+            # no provider is configured but the step model is a gemini model.
+            # Make it LOUD either way — this runs on the Gemini API key, NOT the
+            # Claude Max subscription (so a key/quota issue is the user's to fix).
             logger.warning(
-                "Mission worker -> GeminiWorker (step model=%r) because no "
-                "[brain.sub_jarvis].provider is configured. This uses the "
-                "Gemini API key, NOT the Claude Max subscription.",
+                "Mission worker -> GeminiWorker (step model=%r) — running on the "
+                "Gemini API key (GEMINI_API_KEY/GOOGLE_API_KEY), NOT the Claude "
+                "Max subscription.",
                 getattr(step, "model", ""),
             )
             return GeminiWorker()

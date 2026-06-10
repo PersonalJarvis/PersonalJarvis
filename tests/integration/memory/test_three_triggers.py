@@ -256,6 +256,9 @@ async def stack(tmp_path: Path):
         atomic_writer=writer, page_repo=repo, log_writer=log_writer,
         bus=bus, clock=lambda: clock_holder[0], registry=registry,
     )
+    # D2 (2026-06): the session-page feed is gated off by default; this
+    # integration suite exercises the legacy rollup trigger, so opt back in.
+    rollup._cfg = rollup._cfg.model_copy(update={"wiki_write_enabled": True})  # noqa: SLF001
     await rollup.start()
 
     # Context injector consumes the same on-disk vault.

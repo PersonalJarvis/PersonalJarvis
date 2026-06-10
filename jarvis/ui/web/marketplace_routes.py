@@ -15,7 +15,7 @@ import logging
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Response
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -36,11 +36,21 @@ from jarvis.marketplace.catalog import (
     PatPasteAuth,
 )
 from jarvis.marketplace.catalog_data import load_catalog
+from jarvis.marketplace.channel_runtime import apply_channel_live
+from jarvis.marketplace.discord_connect import (
+    on_discord_connected,
+    on_discord_disconnected,
+)
 from jarvis.marketplace.telegram_connect import (
     on_telegram_connected,
     on_telegram_disconnected,
 )
 from jarvis.marketplace.token_store import Tokens, TokenStore
+
+# Marketplace plugin ids whose "connect" enables an in-repo bidirectional chat
+# channel (token + config), not just a stored token. Kept in sync with the
+# channel adapters under jarvis/channels/.
+_CHANNEL_PLUGIN_IDS = ("telegram", "discord")
 
 log = logging.getLogger(__name__)
 
@@ -57,16 +67,12 @@ def _refresh_plugin_in_live_registry(plugin_id: str) -> None:
 
         reg = get_active_plugin_registry()
         if reg is not None:
-            asyncio.create_task(
-                reg.refresh_plugin(plugin_id), name=f"plugin-refresh:{plugin_id}"
-            )
+            asyncio.create_task(reg.refresh_plugin(plugin_id), name=f"plugin-refresh:{plugin_id}")
     except Exception:  # noqa: BLE001
         # A failed re-expand after the user just connected a plugin is a
         # recoverable workflow failure, not a hot-path event — log at WARNING
         # so it surfaces without a debug flag.
-        log.warning(
-            "live plugin refresh failed for %s", plugin_id, exc_info=True
-        )
+        log.warning("live plugin refresh failed for %s", plugin_id, exc_info=True)
 
 
 # ----------------------------------------------------------------------
@@ -184,10 +190,14 @@ async def list_plugins(response: Response) -> dict[str, Any]:
 
 class PatConnectBody(BaseModel):
     token: str = Field(min_length=1, max_length=2048)
+    # Owner lock for channel plugins (telegram/discord): the numeric user id the
+    # bot will obey. When given, it is added to the allowlist and
+    # trust-on-first-contact is turned off. Not a secret — lives in jarvis.toml.
+    allowed_user_id: int | None = Field(default=None, ge=0)
 
 
 @router.post("/plugins/{plugin_id}/connect/pat")
-async def connect_pat(plugin_id: str, body: PatConnectBody) -> dict[str, Any]:
+async def connect_pat(plugin_id: str, body: PatConnectBody, request: Request) -> dict[str, Any]:
     catalog = load_catalog()
     spec = catalog.by_id(plugin_id)
     if spec is None:
@@ -226,28 +236,40 @@ async def connect_pat(plugin_id: str, body: PatConnectBody) -> dict[str, Any]:
 
     store = TokenStore()
     store.save(plugin_id, Tokens(access=token))
-    if plugin_id == "telegram":
-        # Telegram "connect" enables the in-repo channel. Do not report a
-        # successful Marketplace connect if the canonical channel secret/config
-        # could not be written; otherwise the UI says "connected" while the bot
-        # cannot start.
+    if plugin_id in _CHANNEL_PLUGIN_IDS:
+        # A channel "connect" enables the in-repo bidirectional channel. Do not
+        # report a successful Marketplace connect if the canonical channel
+        # secret/config could not be written; otherwise the UI says "connected"
+        # while the bot cannot start.
         try:
-            on_telegram_connected(token)
+            if plugin_id == "telegram":
+                on_telegram_connected(token, body.allowed_user_id)
+            else:
+                on_discord_connected(token, body.allowed_user_id)
         except Exception as exc:  # noqa: BLE001
             try:
                 store.delete(plugin_id)
             except Exception as cleanup_exc:  # noqa: BLE001
                 log.debug(
-                    "telegram token cleanup after failed enable failed: %s",
+                    "%s token cleanup after failed enable failed: %s",
+                    plugin_id,
                     cleanup_exc,
                 )
-            log.warning("telegram channel enable failed: %s", exc)
+            log.warning("%s channel enable failed: %s", plugin_id, exc)
             raise HTTPException(
                 status_code=500,
-                detail=f"telegram-channel-enable-failed: {type(exc).__name__}",
+                detail=f"{plugin_id}-channel-enable-failed: {type(exc).__name__}",
             ) from exc
     _refresh_plugin_in_live_registry(plugin_id)
-    return {"ok": True, "plugin_id": plugin_id, "status": "connected"}
+    live_applied = False
+    if plugin_id in _CHANNEL_PLUGIN_IDS:
+        live_applied = await apply_channel_live(request.app.state, plugin_id)
+    return {
+        "ok": True,
+        "plugin_id": plugin_id,
+        "status": "connected",
+        "live_applied": live_applied,
+    }
 
 
 # ----------------------------------------------------------------------
@@ -256,9 +278,7 @@ async def connect_pat(plugin_id: str, body: PatConnectBody) -> dict[str, Any]:
 
 
 @router.post("/plugins/{plugin_id}/connect/start")
-async def connect_start(
-    plugin_id: str, background: BackgroundTasks
-) -> dict[str, Any]:
+async def connect_start(plugin_id: str, background: BackgroundTasks) -> dict[str, Any]:
     """Kick off an OAuth-redirect flow. Returns a session the UI renders.
 
     The handler runs `await_completion()` in a background task — the UI
@@ -304,9 +324,7 @@ async def connect_start(
                 # Slack-specific: PKCE-enabled apps must use user_scope= per
                 # docs.slack.dev/authentication/using-pkce. When the catalog
                 # marks a plugin user-scopes-only, route the param.
-                scope_param_name=(
-                    "user_scope" if spec.auth.user_scopes_only else "scope"
-                ),
+                scope_param_name=("user_scope" if spec.auth.user_scopes_only else "scope"),
                 callback_path=spec.auth.callback_path,
                 resource=spec.auth.resource,
                 offline_access=spec.auth.offline_access,
@@ -344,9 +362,7 @@ async def connect_start(
             try:
                 slot.result = await handler.await_completion(session)
             except Exception as exc:  # noqa: BLE001
-                log.warning(
-                    "plugin %s connect/await failed: %s", plugin_id, exc
-                )
+                log.warning("plugin %s connect/await failed: %s", plugin_id, exc)
                 slot.result = FlowResult(tokens=None, error=str(exc))
             else:
                 if slot.result.tokens is not None:
@@ -399,9 +415,7 @@ async def connect_poll(plugin_id: str, flow_id: str) -> dict[str, Any]:
 
 
 @router.get("/oauth/callback", response_model=None)
-async def oauth_callback(
-    code: str = "", state: str = "", error: str = ""
-) -> HTMLResponse:
+async def oauth_callback(code: str = "", state: str = "", error: str = "") -> HTMLResponse:
     """Public redirect target for hosted-mode OAuth flows.
 
     The provider redirects the user's browser here with ``?code=&state=``. We
@@ -438,7 +452,7 @@ async def oauth_callback(
 
 
 @router.delete("/plugins/{plugin_id}")
-async def disconnect(plugin_id: str) -> dict[str, Any]:
+async def disconnect(plugin_id: str, request: Request) -> dict[str, Any]:
     catalog = load_catalog()
     if catalog.by_id(plugin_id) is None:
         raise HTTPException(status_code=404, detail=f"plugin {plugin_id!r} not in catalog")
@@ -449,4 +463,17 @@ async def disconnect(plugin_id: str) -> dict[str, Any]:
             on_telegram_disconnected()
         except Exception as exc:  # noqa: BLE001
             log.warning("telegram channel disable failed: %s", exc)
-    return {"ok": True, "plugin_id": plugin_id, "status": "not_connected"}
+    elif plugin_id == "discord":
+        try:
+            on_discord_disconnected()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("discord channel disable failed: %s", exc)
+    live_applied = False
+    if plugin_id in _CHANNEL_PLUGIN_IDS:
+        live_applied = await apply_channel_live(request.app.state, plugin_id)
+    return {
+        "ok": True,
+        "plugin_id": plugin_id,
+        "status": "not_connected",
+        "live_applied": live_applied,
+    }

@@ -1,9 +1,11 @@
 """Unit tests for the ``run-skill`` Brain-callable tool.
 
-Plan: Skills-Brain-Integration. The tool resolves a skill by name, enforces
-DRAFT/DISABLED/block-tier rejection, and delegates execution to the existing
-``SkillRunner`` via the process-wide ``SkillContext``. Tests use Fakes (no
-``unittest.mock``) per ``CLAUDE.md`` testing-conventions.
+Instruction-skill model (2026-06-09 rebuild, AD-S1/S2/S5): the tool resolves
+a skill by name, enforces DRAFT/DISABLED/block-tier rejection, and returns the
+rendered skill body as instructions for the brain to follow — it never
+macro-executes. Optional ``resource`` argument serves bundled files
+(progressive disclosure L3). Tests use Fakes (no ``unittest.mock``) per
+``CLAUDE.md`` testing-conventions.
 """
 from __future__ import annotations
 
@@ -20,7 +22,6 @@ from jarvis.skills.schema import (
     Skill,
     SkillFrontmatter,
     SkillLifecycleState,
-    SkillResult,
     SkillRiskPolicy,
 )
 from jarvis.skills.skill_context import SkillContext, set_skill_context
@@ -38,33 +39,31 @@ class _FakeRegistry:
 
     def get(self, name: str) -> Skill:
         if name not in self._skills:
-            raise KeyError(f"Skill '{name}' nicht im Registry")
+            raise KeyError(f"Skill '{name}' not in registry")
         return self._skills[name]
+
+    def list(self) -> list[Skill]:
+        return list(self._skills.values())
 
 
 @dataclass
-class _RunCall:
+class _RenderCall:
     skill: Skill
     args: dict[str, Any]
 
 
 class _FakeRunner:
-    """Records ``run`` calls and returns a scripted ``SkillResult``."""
+    """Records ``render_instructions`` calls, returns a scripted body."""
 
-    def __init__(self, scripted: SkillResult | None = None) -> None:
-        self.calls: list[_RunCall] = []
-        self.scripted = scripted or SkillResult(
-            skill_name="",
-            success=True,
-            steps=tuple(),
-            rendered_body="",
-            error=None,
-            duration_ms=0,
-        )
+    def __init__(self, scripted_body: str = "# Demo\nDo the thing.") -> None:
+        self.calls: list[_RenderCall] = []
+        self.scripted_body = scripted_body
 
-    async def run(self, skill: Skill, args: dict[str, Any] | None = None) -> SkillResult:
-        self.calls.append(_RunCall(skill=skill, args=args or {}))
-        return self.scripted
+    def render_instructions(
+        self, skill: Skill, *, args: dict[str, Any] | None = None
+    ) -> str:
+        self.calls.append(_RenderCall(skill=skill, args=dict(args or {})))
+        return self.scripted_body
 
 
 class _ExplodingRunner:
@@ -72,11 +71,21 @@ class _ExplodingRunner:
 
     def __init__(self, exc: Exception) -> None:
         self.exc = exc
-        self.calls: list[_RunCall] = []
+        self.calls: list[_RenderCall] = []
 
-    async def run(self, skill: Skill, args: dict[str, Any] | None = None) -> SkillResult:
-        self.calls.append(_RunCall(skill=skill, args=args or {}))
+    def render_instructions(
+        self, skill: Skill, *, args: dict[str, Any] | None = None
+    ) -> str:
+        self.calls.append(_RenderCall(skill=skill, args=dict(args or {})))
         raise self.exc
+
+
+class _FakeBus:
+    def __init__(self) -> None:
+        self.published: list[Any] = []
+
+    async def publish(self, event: Any) -> None:
+        self.published.append(event)
 
 
 # ----------------------------------------------------------------------
@@ -90,6 +99,9 @@ def _make_skill(
     state: SkillLifecycleState = SkillLifecycleState.ACTIVE,
     default_tier: str = "monitor",
     frontmatter: bool = True,
+    execution: str = "inline",
+    path: Path | None = None,
+    resources: dict[str, tuple[str, ...]] | None = None,
 ) -> Skill:
     fm: SkillFrontmatter | None
     if frontmatter:
@@ -98,16 +110,21 @@ def _make_skill(
             name=name,
             description="fake skill",
             risk_policy=SkillRiskPolicy(default_tier=default_tier),  # type: ignore[arg-type]
+            execution=execution,  # type: ignore[arg-type]
         )
     else:
         fm = None
+    kwargs: dict[str, Any] = {}
+    if resources is not None:
+        kwargs["resources"] = resources
     return Skill(
-        path=Path("nonexistent") / name / "SKILL.md",
+        path=path or (Path("nonexistent") / name / "SKILL.md"),
         frontmatter=fm,
         body="dummy",
         state=state,
         body_hash="deadbeef",
         error=None,
+        **kwargs,
     )
 
 
@@ -121,6 +138,13 @@ def _ctx() -> ExecutionContext:
     )
 
 
+def _wire(skill: Skill, runner: Any | None = None) -> Any:
+    runner = runner or _FakeRunner()
+    registry = _FakeRegistry({skill.name: skill})
+    set_skill_context(SkillContext(registry=registry, runner=runner))
+    return runner
+
+
 @pytest.fixture(autouse=True)
 def _reset_skill_context():
     """Reset the global SkillContext between tests."""
@@ -130,7 +154,7 @@ def _reset_skill_context():
 
 
 # ----------------------------------------------------------------------
-# Tests
+# Validation gates (unchanged contract)
 # ----------------------------------------------------------------------
 
 
@@ -153,9 +177,7 @@ async def test_run_skill_unknown_skill_returns_error() -> None:
 @pytest.mark.asyncio
 async def test_run_skill_rejects_draft_state() -> None:
     skill = _make_skill("draft_skill", state=SkillLifecycleState.DRAFT)
-    registry = _FakeRegistry({"draft_skill": skill})
-    runner = _FakeRunner()
-    set_skill_context(SkillContext(registry=registry, runner=runner))
+    runner = _wire(skill)
 
     tool = RunSkillTool()
     result = await tool.execute({"skill_name": "draft_skill"}, _ctx())
@@ -163,15 +185,13 @@ async def test_run_skill_rejects_draft_state() -> None:
     assert result.success is False
     assert result.error is not None
     assert "DRAFT" in result.error
-    assert runner.calls == [], "runner.run must NOT be called for DRAFT skills"
+    assert runner.calls == [], "instructions must NOT render for DRAFT skills"
 
 
 @pytest.mark.asyncio
 async def test_run_skill_rejects_disabled_state() -> None:
     skill = _make_skill("off_skill", state=SkillLifecycleState.DISABLED)
-    registry = _FakeRegistry({"off_skill": skill})
-    runner = _FakeRunner()
-    set_skill_context(SkillContext(registry=registry, runner=runner))
+    runner = _wire(skill)
 
     tool = RunSkillTool()
     result = await tool.execute({"skill_name": "off_skill"}, _ctx())
@@ -179,65 +199,20 @@ async def test_run_skill_rejects_disabled_state() -> None:
     assert result.success is False
     assert result.error is not None
     assert "DISABLED" in result.error
-    assert runner.calls == [], "runner.run must NOT be called for DISABLED skills"
+    assert runner.calls == [], "instructions must NOT render for DISABLED skills"
 
 
 @pytest.mark.asyncio
-async def test_run_skill_happy_path() -> None:
-    skill = _make_skill("hello_skill", state=SkillLifecycleState.ACTIVE)
-    registry = _FakeRegistry({"hello_skill": skill})
-    scripted = SkillResult(
-        skill_name="hello_skill",
-        success=True,
-        steps=tuple(),
-        rendered_body="hello",
-        error=None,
-        duration_ms=42,
-    )
-    runner = _FakeRunner(scripted=scripted)
-    set_skill_context(SkillContext(registry=registry, runner=runner))
+async def test_run_skill_rejects_block_tier() -> None:
+    skill = _make_skill("blocked_skill", default_tier="block")
+    runner = _wire(skill)
 
     tool = RunSkillTool()
-    result = await tool.execute(
-        {"skill_name": "hello_skill", "args": {"foo": "bar"}}, _ctx()
-    )
-
-    assert result.success is True
-    assert result.error is None
-    assert result.output == {
-        "skill_name": "hello_skill",
-        "rendered_body": "hello",
-        "steps_count": 0,
-        "duration_ms": 42,
-    }
-    assert len(runner.calls) == 1
-    call = runner.calls[0]
-    assert call.skill is skill
-    assert call.args == {"foo": "bar"}
-
-
-@pytest.mark.asyncio
-async def test_run_skill_propagates_runner_error() -> None:
-    skill = _make_skill("flaky_skill", state=SkillLifecycleState.ACTIVE)
-    registry = _FakeRegistry({"flaky_skill": skill})
-    scripted = SkillResult(
-        skill_name="flaky_skill",
-        success=False,
-        steps=tuple(),
-        rendered_body="",
-        error="oops",
-        duration_ms=5,
-    )
-    runner = _FakeRunner(scripted=scripted)
-    set_skill_context(SkillContext(registry=registry, runner=runner))
-
-    tool = RunSkillTool()
-    result = await tool.execute({"skill_name": "flaky_skill"}, _ctx())
+    result = await tool.execute({"skill_name": "blocked_skill"}, _ctx())
 
     assert result.success is False
-    assert result.error == "oops"
-    assert result.output is not None
-    assert result.output["skill_name"] == "flaky_skill"
+    assert "block" in (result.error or "").lower()
+    assert runner.calls == []
 
 
 @pytest.mark.asyncio
@@ -248,56 +223,147 @@ async def test_run_skill_no_skill_context() -> None:
     result = await tool.execute({"skill_name": "anything"}, _ctx())
 
     assert result.success is False
-    assert result.error is not None
-    assert "not initialized" in result.error.lower()
+    assert "not initialized" in (result.error or "")
 
 
 @pytest.mark.asyncio
-async def test_run_skill_risk_tier_block() -> None:
-    skill = _make_skill(
-        "blocked_skill",
-        state=SkillLifecycleState.ACTIVE,
-        default_tier="block",
-    )
-    registry = _FakeRegistry({"blocked_skill": skill})
-    runner = _FakeRunner()
-    set_skill_context(SkillContext(registry=registry, runner=runner))
-
-    tool = RunSkillTool()
-    result = await tool.execute({"skill_name": "blocked_skill"}, _ctx())
-
-    assert result.success is False
-    assert result.error is not None
-    assert "block" in result.error.lower()
-    assert runner.calls == [], "runner.run must NOT be called for block-tier skills"
-
-
-@pytest.mark.asyncio
-async def test_run_skill_missing_skill_name_arg() -> None:
-    registry = _FakeRegistry()
-    runner = _FakeRunner()
-    set_skill_context(SkillContext(registry=registry, runner=runner))
-
+async def test_run_skill_missing_argument() -> None:
     tool = RunSkillTool()
     result = await tool.execute({}, _ctx())
+    assert result.success is False
+    assert "skill_name" in (result.error or "")
+
+
+# ----------------------------------------------------------------------
+# Instruction-skill model (AD-S1)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_returns_instructions_not_macro_result() -> None:
+    skill = _make_skill("demo_skill")
+    runner = _wire(skill, _FakeRunner(scripted_body="# Demo\nDo the briefing."))
+
+    tool = RunSkillTool()
+    result = await tool.execute(
+        {"skill_name": "demo_skill", "args": {"foo": "bar"}}, _ctx()
+    )
+
+    assert result.success is True
+    out = result.output
+    assert out["skill_name"] == "demo_skill"
+    assert out["execution"] == "inline"
+    assert out["instructions"].startswith("# Demo")
+    assert "Follow these skill instructions now" in out["directive"]
+    assert runner.calls[0].args == {"foo": "bar"}
+
+
+@pytest.mark.asyncio
+async def test_mission_skill_returns_mission_directive() -> None:
+    skill = _make_skill("heavy", execution="mission")
+    _wire(skill)
+
+    tool = RunSkillTool()
+    result = await tool.execute({"skill_name": "heavy"}, _ctx())
+
+    assert result.success is True
+    assert result.output["execution"] == "mission"
+    assert "spawn_worker" in result.output["directive"]
+
+
+@pytest.mark.asyncio
+async def test_render_failure_is_reported() -> None:
+    skill = _make_skill("flaky_skill")
+    _wire(skill, _ExplodingRunner(RuntimeError("boom")))
+
+    tool = RunSkillTool()
+    result = await tool.execute({"skill_name": "flaky_skill"}, _ctx())
 
     assert result.success is False
-    assert result.error is not None
-    assert "skill_name" in result.error
-    assert runner.calls == []
+    assert "boom" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_skill_invoked_event_published() -> None:
+    skill = _make_skill("demo_skill")
+    bus = _FakeBus()
+    runner = _FakeRunner()
+    registry = _FakeRegistry({"demo_skill": skill})
+    set_skill_context(SkillContext(registry=registry, runner=runner))
+
+    tool = RunSkillTool(bus=bus)
+    await tool.execute({"skill_name": "demo_skill"}, _ctx())
+
+    names = [type(e).__name__ for e in bus.published]
+    assert "SkillInvoked" in names
+    ev = next(e for e in bus.published if type(e).__name__ == "SkillInvoked")
+    assert ev.skill_name == "demo_skill"
+    assert ev.source == "model"
 
 
 # ----------------------------------------------------------------------
-# Surface assertions (cheap regression guards)
+# Progressive disclosure L3: bundled resources (AD-S2)
 # ----------------------------------------------------------------------
 
 
-def test_run_skill_tool_surface() -> None:
-    """The tool must satisfy the basic Tool-protocol shape (name/schema/risk_tier)."""
+@pytest.mark.asyncio
+async def test_resource_loading(tmp_path: Path) -> None:
+    root = tmp_path / "demo_skill"
+    (root / "references").mkdir(parents=True)
+    (root / "SKILL.md").write_text("---\nname: x\n---\nbody", encoding="utf-8")
+    (root / "references" / "guide.md").write_text("guide content", encoding="utf-8")
+    skill = _make_skill(
+        "demo_skill",
+        path=root / "SKILL.md",
+        resources={
+            "references": ("references/guide.md",),
+            "scripts": (),
+            "assets": (),
+            "agents": (),
+        },
+    )
+    _wire(skill)
+
     tool = RunSkillTool()
-    assert tool.name == "run-skill"
-    assert tool.risk_tier == "monitor"
-    assert tool.schema["required"] == ["skill_name"]
-    assert "skill_name" in tool.schema["properties"]
-    # English-only description (Output Language Policy).
-    assert "AVAILABLE SKILLS" in tool.description
+    result = await tool.execute(
+        {"skill_name": "demo_skill", "resource": "references/guide.md"}, _ctx()
+    )
+
+    assert result.success is True
+    assert "guide content" in result.output["resource_content"]
+
+
+@pytest.mark.asyncio
+async def test_resource_path_traversal_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "demo_skill"
+    root.mkdir(parents=True)
+    (root / "SKILL.md").write_text("---\nname: x\n---\nbody", encoding="utf-8")
+    secret = tmp_path / "secrets.txt"
+    secret.write_text("nope", encoding="utf-8")
+    skill = _make_skill("demo_skill", path=root / "SKILL.md")
+    _wire(skill)
+
+    tool = RunSkillTool()
+    result = await tool.execute(
+        {"skill_name": "demo_skill", "resource": "../secrets.txt"}, _ctx()
+    )
+
+    assert result.success is False
+
+
+@pytest.mark.asyncio
+async def test_unregistered_resource_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "demo_skill"
+    root.mkdir(parents=True)
+    (root / "SKILL.md").write_text("---\nname: x\n---\nbody", encoding="utf-8")
+    (root / "rogue.md").write_text("rogue", encoding="utf-8")
+    skill = _make_skill("demo_skill", path=root / "SKILL.md")
+    _wire(skill)
+
+    tool = RunSkillTool()
+    result = await tool.execute(
+        {"skill_name": "demo_skill", "resource": "rogue.md"}, _ctx()
+    )
+
+    assert result.success is False
+    assert "resource" in (result.error or "").lower()

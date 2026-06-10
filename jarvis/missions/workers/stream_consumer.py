@@ -128,6 +128,13 @@ class ClaudeResult(_ClaudeBase):
     session_id: str | None = None
     duration_ms: int | None = None
     result: str | None = None
+    # True when this terminal result was synthesized after a wall-clock or
+    # first-output TIMEOUT (not a crash/auth error). A structured signal so the
+    # orchestrator can recognise a timeout WITHOUT string-matching the result
+    # text — the codex/gemini timeout result strings used to omit "timeout",
+    # so a real deliverable was discarded as task_error (mission 019eacb8).
+    # Defaulted False → backward-compatible with old stream-json result lines.
+    timed_out: bool = False
 
 
 # Type alias for all Claude stream event variants (NO Pydantic discriminator

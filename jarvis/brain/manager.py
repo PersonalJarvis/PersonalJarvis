@@ -59,6 +59,7 @@ from .dispatcher import BrainDispatcher
 from .healthcheck import BrainConfigError
 from .intent_router import RoutingDecision, classify
 from .local_action_gate import (
+    HARNESS_NAME,
     LocalActionMode,
     _looks_like_desktop_control,
     is_open_app_intent,
@@ -162,6 +163,28 @@ _SECRET_KEY_TO_BRAIN: dict[str, str] = {
 # resolves them to the canonical provider name first, then
 # _resolve_tier_model() looks up here.
 
+# Tool names whose successful execution means a real on-screen DESKTOP ACTION
+# happened (open an app, click, type, scroll, …). When the router brain runs
+# one of these and then produces NO narration text — a known Gemini behaviour
+# after a function call — the turn is NOT empty/confused: a confirmation must be
+# spoken, never a clarifying question (live bug 2026-06-09, AP-19-adjacent: a
+# successful computer_use run that opened Chrome was answered with "Wie meinst
+# du das genau?"). ``computer_use`` + ``open_app`` are the router-reachable
+# desktop tools; the rest are the in-loop GUI primitives, listed for robustness
+# so a future router-exposed action stays covered.
+_DESKTOP_ACTION_TOOL_NAMES: frozenset[str] = frozenset({
+    "computer_use",
+    "open_app",
+    "click",
+    "click_element",
+    "type_text",
+    "hotkey",
+    "scroll",
+    "move_mouse",
+    "switch_window",
+})
+
+
 TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
     "router": {
         # Frontier 2026-Q2 — main Jarvis tier (latency-first, pure dispatcher).
@@ -170,6 +193,14 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         "claude-api": "claude-haiku-4-5-20251001",
         "gemini": "gemini-3-flash-preview",
         "openai": "gpt-5.5",
+        # Codex MUST be listed or `_fast_model("codex")` returns None and
+        # `_build_fallback_chain` silently drops codex from the chain (its
+        # `if fast:` guard) — so an explicitly-active codex brain never gets
+        # called and the turn falls through to a fallback (the live "Gemini
+        # answered while Codex was the active brain" bug, 2026-06-09). gpt-5.5
+        # is the model `codex exec` itself reports; the CLI (ChatGPT-login) path
+        # ignores it, the OpenAI-key path uses it.
+        "codex": "gpt-5.5",
         # grok-4.3 (released 2026-04-30) is simultaneously the fastest
         # AND most capable Grok — replaces 4.1-fast in both tiers.
         "grok": "grok-4.3",
@@ -185,6 +216,9 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         "claude-api": "claude-opus-4-8",
         "gemini": "gemini-3.1-pro-preview",
         "openai": "gpt-5.5-pro",
+        # Codex deep-tier anchor (same reason as the router tier above). The CLI
+        # path ignores the model; this keeps codex in the deep/code chain too.
+        "codex": "gpt-5.5",
         "grok": "grok-4.3",
         "deepseek": "deepseek-reasoner",
         "openrouter": "anthropic/claude-opus-4.8",
@@ -674,6 +708,17 @@ class BrainManager:
         # (live "Jarvis antwortet nie" cause 2026-06-08: conversational turns
         # returned a function_call and the turn ended mute).
         self._last_turn_suppressed: bool = False
+        # AD-OE6 companion signal #2. True for exactly one turn when the winning
+        # provider executed a DESKTOP-ACTION tool (computer_use / open_app /
+        # click / type / …) but produced no narration text. A wordless desktop
+        # action is a SUCCESS the user must hear confirmed — NOT a clarifying
+        # question. Live bug 2026-06-09 (data/jarvis_desktop.log 16:27): the
+        # router brain called computer_use, the CU loop opened Chrome ([cu] step
+        # 1.1 open_app → step 2 done), Gemini emitted no text, and the pipeline
+        # spoke "Wie meinst du das genau?" — so a successful action looked like
+        # incomprehension. The pipeline reads this to speak a confirmation
+        # instead. Reset to False each turn; only the winning provider sets it.
+        self._last_turn_executed_action_tool: bool = False
         # Rotation cursor for the localized "brain unreachable" spoken fallback
         # (_provider_down_phrase). Advances once per total-failure turn so the
         # phrase varies instead of repeating verbatim.
@@ -889,6 +934,26 @@ class BrainManager:
                 key_value = None
             if not key_value:
                 manager._dead_providers.add(provider_name)
+                # codex-as-BRAIN genuinely needs an OpenAI API key, so disabling
+                # it here is correct. But codex-as-SUBAGENT runs on the ChatGPT
+                # OAuth login (no API key), so the bare "deaktiviert" line read as
+                # "codex is unusable" when the sub-agent still works. Log honestly.
+                if provider_name == "codex":
+                    oauth_ok = False
+                    try:
+                        from jarvis.codex_auth import CodexAuthService
+
+                        st = CodexAuthService().status()
+                        oauth_ok = bool(st.connected and st.mode == "chatgpt")
+                    except Exception:  # noqa: BLE001
+                        oauth_ok = False
+                    if oauth_ok:
+                        log.info(
+                            "Pre-Boot-Key-Check: codex hat keinen OpenAI-API-Key -> "
+                            "als BRAIN-Provider deaktiviert, aber als Sub-Agent "
+                            "nutzbar (ChatGPT-OAuth-Login)."
+                        )
+                        continue
                 log.info(
                     "Pre-Boot-Key-Check: kein Key in %s -> Provider '%s' deaktiviert.",
                     provider_to_slots.get(provider_name, [provider_name]),
@@ -1720,16 +1785,240 @@ class BrainManager:
     # e.g. "Hallo, lies mir vor was oben links steht" (live failure 2026-05-31).
     _SMALLTALK_SAFE_TOOLS: frozenset[str] = frozenset({"screenshot"})
 
+    # Skill-aware routing guard (AD-S3, 2026-06-09 rebuild): the Skill matched
+    # for the CURRENT turn, set early in generate() and overwritten on every
+    # turn. While set, force-spawn and the local-action fast path stand down
+    # and run-skill stays visible even on smalltalk turns.
+    _skill_turn_match: Any | None = None
+    # Direct-trigger handoff (AD-S4): the speech pipeline / chat hook notes a
+    # trigger match here instead of macro-running it; generate() consumes it
+    # on the next call and injects the skill instructions into the turn.
+    _pending_forced_skill: tuple[str, str, str] | None = None
+    _skill_turn_content: str = ""
+    _skill_turn_source: str = "match"
+
+    def note_skill_trigger(
+        self, skill_name: str, *, content: str = "", source: str = "trigger"
+    ) -> None:
+        """Record a direct trigger match for the next generate() turn (AD-S4).
+
+        Called by the speech pipeline / desktop chat hook when the
+        TriggerMatcher fires. The skill is NOT executed here — generate()
+        resolves it, injects its instructions into the turn context (or
+        dispatches a mission for ``execution: mission`` skills), and the
+        normal brain turn produces the spoken answer.
+        """
+        self._pending_forced_skill = (skill_name, content, source)
+
+    def _consume_pending_skill_trigger(self, user_text: str) -> None:
+        """Fold a noted trigger into this turn's skill match (AD-S4)."""
+        pending = self._pending_forced_skill
+        self._pending_forced_skill = None
+        self._skill_turn_content = ""
+        self._skill_turn_source = "match"
+        if pending is None:
+            return
+        skill_name, content, source = pending
+        try:
+            from jarvis.skills.skill_context import try_get_skill_context
+
+            ctx = try_get_skill_context()
+            if ctx is None:
+                return
+            skill = ctx.registry.get(skill_name)
+        except Exception:  # noqa: BLE001
+            log.warning("noted skill trigger %r could not be resolved", skill_name)
+            return
+        self._skill_turn_match = skill
+        self._skill_turn_content = content
+        self._skill_turn_source = source
+
+    def _match_skill_for_turn(self, user_text: str, lang: str = "auto") -> Any | None:
+        """Deterministic skill-match probe (AD-S3). Returns the matched Skill or None.
+
+        Uses the TriggerMatcher (incl. its tolerant filler-stripping pass) over
+        the live SkillContext registry. Never raises — routing must not break
+        when the skill subsystem is absent (headless/mock boots).
+        """
+        try:
+            from jarvis.skills.skill_context import try_get_skill_context
+            from jarvis.skills.trigger_matcher import TriggerMatcher
+
+            ctx = try_get_skill_context()
+            if ctx is None:
+                return None
+            res = TriggerMatcher(ctx.registry).match_voice_with_match(
+                user_text, lang=lang
+            )
+            return res[0] if res is not None else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _render_skill_turn_hint(self) -> str | None:
+        """Steering hint appended to the turn context on a skill-matched turn."""
+        skill = self._skill_turn_match
+        if skill is None:
+            return None
+        name = getattr(skill, "name", "")
+        return (
+            f"[Skill match] The user's request matches the installed skill "
+            f"`{name}` — call the run-skill tool with skill_name=\"{name}\" "
+            "now and follow the returned instructions, unless that is "
+            "clearly wrong."
+        )
+
+    def _render_skill_turn_injection(self, user_text: str) -> str | None:
+        """Render the matched skill's instructions for direct turn injection.
+
+        AD-S4: a matched turn short-circuits the run-skill round trip — the
+        rendered instructions ride on the turn context, so the model executes
+        them in this very turn (guaranteed invocation). Publishes
+        ``SkillInvoked``. Falls back to the steering hint when rendering
+        fails (the model can still call run-skill itself).
+        """
+        skill = self._skill_turn_match
+        if skill is None:
+            return None
+        name = getattr(skill, "name", "")
+        try:
+            from jarvis.skills.skill_context import try_get_skill_context
+
+            ctx = try_get_skill_context()
+            if ctx is None:
+                return self._render_skill_turn_hint()
+            instructions = ctx.runner.render_instructions(
+                skill,
+                args={
+                    "content": self._skill_turn_content,
+                    "utterance": user_text,
+                    "_trigger": self._skill_turn_source,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            log.warning(
+                "skill instruction render failed for %s — hint fallback", name,
+                exc_info=True,
+            )
+            return self._render_skill_turn_hint()
+        self._publish_skill_invoked(name, source=self._skill_turn_source)
+        return (
+            f"[Skill instructions for `{name}` — the user's request matched "
+            "this installed skill]\n"
+            f"{instructions}\n\n"
+            "Follow these skill instructions now, step by step, using your "
+            "available tools; skip a step gracefully when its integration is "
+            "unavailable. Answer the user with the RESULT — never read the "
+            "instructions aloud."
+        )
+
+    def _publish_skill_invoked(self, skill_name: str, *, source: str) -> None:
+        """Fire-and-forget SkillInvoked publish (AD-S6 observability)."""
+        try:
+            from jarvis.skills.schema import SkillInvoked
+
+            event = SkillInvoked(
+                source_layer="brain.manager",
+                skill_name=skill_name,
+                source=source,
+            )
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._bus.publish(event))
+        except Exception:  # noqa: BLE001
+            log.debug("SkillInvoked publish failed", exc_info=True)
+
+    async def _maybe_dispatch_skill_mission(
+        self, user_text: str, *, trace_id: UUID | None = None
+    ) -> str | None:
+        """Dispatch an ``execution: mission`` skill as a worker brief (AD-S5).
+
+        Returns the optimistic ACK string when the mission was dispatched, or
+        ``None`` for inline skills / when dispatch is impossible (the caller
+        then keeps the inline-injection path — AD-OE6: no silent drop).
+        """
+        skill = self._skill_turn_match
+        if skill is None:
+            return None
+        fm = getattr(skill, "frontmatter", None)
+        if fm is None or getattr(fm, "execution", "inline") != "mission":
+            return None
+        tool = self._tools.get("spawn_worker")
+        if tool is None or self._tool_executor is None:
+            log.warning(
+                "mission skill %s matched but spawn_worker unavailable — "
+                "falling back to inline execution",
+                getattr(skill, "name", "?"),
+            )
+            return None
+        name = getattr(skill, "name", "")
+        try:
+            from jarvis.skills.skill_context import try_get_skill_context
+
+            ctx = try_get_skill_context()
+            if ctx is None:
+                return None
+            instructions = ctx.runner.render_instructions(
+                skill,
+                args={
+                    "content": self._skill_turn_content,
+                    "utterance": user_text,
+                    "_trigger": self._skill_turn_source,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            log.warning(
+                "mission skill %s could not render — inline fallback", name,
+                exc_info=True,
+            )
+            return None
+        args = {
+            "utterance": (
+                f"Execute the installed skill '{name}' as a background "
+                f"mission. The user said: {user_text!r}\n\n"
+                f"Skill instructions:\n{instructions}"
+            ),
+            "context_hints": [
+                f"Dispatched deterministically from the skill system "
+                f"(execution: mission, skill: {name})."
+            ],
+            "action": "",
+            "target": "",
+        }
+        log.info("Mission skill dispatch: %s (%r)", name, user_text[:120])
+        try:
+            result = await self._tool_executor.execute(
+                tool,
+                args,
+                user_utterance=user_text,
+                trace_id=trace_id or uuid4(),
+            )
+        except Exception:  # noqa: BLE001
+            log.warning("mission skill dispatch failed — inline fallback", exc_info=True)
+            return None
+        if not result.success:
+            log.warning(
+                "mission skill dispatch unsuccessful (%s) — inline fallback",
+                result.error,
+            )
+            return None
+        self._publish_skill_invoked(name, source=self._skill_turn_source)
+        return str(result.output or "")
+
     def _smalltalk_tool_override(self) -> dict[str, "Tool"]:
         """Tool set visible on a smalltalk turn: only the read-only safe tools.
 
         Returns ``{}`` when none of the safe tools are registered — identical to
         the previous full-hide behaviour for deployments without a screenshot
-        tool, so the anti-fake-spawn guard is unchanged there.
+        tool, so the anti-fake-spawn guard is unchanged there. On a
+        skill-matched turn (AD-S3) ``run-skill`` stays visible so a greeting-
+        style trigger ("guten Morgen" → morning-routine) can still invoke the
+        skill.
         """
+        allowed = self._SMALLTALK_SAFE_TOOLS
+        if self._skill_turn_match is not None:
+            allowed = allowed | {"run-skill"}
         return {
             n: t for n, t in self._tools.items()
-            if n in self._SMALLTALK_SAFE_TOOLS
+            if n in allowed
         }
 
     def _apply_plugin_relevance(
@@ -1923,6 +2212,13 @@ class BrainManager:
         # 2026-06-08: "Ich möchte, dass du mir Hermes Agent öffnest, also …").
         if is_open_app_intent(t):
             return False
+        # Skill-aware guard (AD-S3, 2026-06-09 rebuild): an utterance that
+        # matches an installed, active skill is the skill's turn — never a
+        # heavy-worker spawn. generate() sets _skill_turn_match early; the
+        # direct probe is defense-in-depth for callers outside generate().
+        if self._skill_turn_match is not None or self._match_skill_for_turn(t) is not None:
+            log.info("force-spawn skipped: utterance matches an installed skill")
+            return False
         if "dispatch_to_harness" in self._tools and _looks_like_pc_control(t):
             return False
         # User-Mandate 2026-05-14: strict-mode is the default. The router
@@ -2071,7 +2367,22 @@ class BrainManager:
             tool = self._local_action_tools.get("dispatch_to_harness")
             if tool is None:
                 return None
-            timeout_s = float(getattr(local_cfg, "harness_timeout_s", 30.0))
+            # A multi-step CU mission ("navigate to amazon, search, click") needs a
+            # generous OUTER cap — the harness has its own per-step timeout +
+            # step-budget + no-progress/consecutive-failure guards, so this is only
+            # a backstop. The old 30 s ``harness_timeout_s`` aborted legit
+            # multi-step missions; the router-tool path already used 120 s. The
+            # mission is OFFLOADED (immediate ACK), so a longer cap never blocks
+            # the spoken turn. Honour a larger configured value if set.
+            _configured_timeout = float(getattr(local_cfg, "harness_timeout_s", 30.0))
+            timeout_s = max(_configured_timeout, 180.0)
+            if _configured_timeout < 180.0:
+                log.debug(
+                    "CU offload: harness_timeout_s=%.0fs raised to 180s floor "
+                    "(offloaded multi-step mission; harness has its own per-step + "
+                    "step-budget + no-progress guards)",
+                    _configured_timeout,
+                )
             if self._cost_meter is not None:
                 if self._cost_meter.is_in_cooldown():
                     return ("Cost-Cooldown aktiv — Tagesbudget erschoepft. "
@@ -2096,7 +2407,12 @@ class BrainManager:
             # therefore still executes and is ACK'd, but its result lands as a
             # voice announcement rather than in the chat transcript — an
             # acceptable trade for never freezing the spoken turn.
-            harness_name = plan.harness or "computer-use"
+            # HARNESS_NAME ("screenshot") is the REGISTERED in-process CU harness
+            # entry-point; "computer-use" is the router-tool name, NOT a harness,
+            # so the old fallback would KeyError in HarnessManager if plan.harness
+            # were ever empty. The gate always sets plan.harness=HARNESS_NAME, so
+            # this is hygiene — but use the correct constant (review 2026-06-09).
+            harness_name = plan.harness or HARNESS_NAME
             bg_tasks = getattr(self, "_cu_background_tasks", None)
             if bg_tasks is None:
                 bg_tasks = set()
@@ -2475,7 +2791,20 @@ class BrainManager:
         #    _fast_model → gemini-3-flash for a deep request instead of
         #    gemini-3.1-pro-preview).
         deep_brain = self._config.brain.deep_brain
-        if level in ("deep", "code") and deep_brain and deep_brain in self._registry.available():
+        # When the user has explicitly made codex the active brain, codex leads
+        # for ALL turns — the deep_brain (e.g. gemini) must NOT jump ahead for
+        # deep/code intents, or codex would never actually answer a hard question
+        # despite being the chosen brain (it would silently fall through to the
+        # deep_brain). codex (gpt-5.5) is itself a frontier model, so there is no
+        # capability reason to delegate. Other active brains keep the deep_brain
+        # routing unchanged.
+        if (
+            level in ("deep", "code")
+            and deep_brain
+            and deep_brain != active
+            and active != "codex"
+            and deep_brain in self._registry.available()
+        ):
             preferred_deep = self._deep_model(deep_brain) or self._fast_model(deep_brain)
             chain.append((deep_brain, preferred_deep))
 
@@ -2569,6 +2898,7 @@ class BrainManager:
         # early-returns ("") that follow correctly leave it False.
         self._last_turn_all_failed = False
         self._last_turn_suppressed = False
+        self._last_turn_executed_action_tool = False
         turn_trace_id = trace_id or uuid4()
 
         if self._detect_cancel_intent(user_text):
@@ -2635,17 +2965,49 @@ class BrainManager:
                 "set_mission_command_handlers() rufen."
             )
 
-        local_action = await self._run_local_action_fast_path(
-            user_text, trace_id=turn_trace_id,
-        )
-        if local_action is not None:
-            await self._record_response_side_effects(
-                user_text=user_text,
-                response_text=local_action,
-                use_history=use_history,
-                trace_id=turn_trace_id,
+        # Skill-aware routing guard (AD-S3): probe ONCE per turn, before any
+        # fast path can grab the utterance. "starte die Morgenroutine" is an
+        # is_open_app_intent hit AND a spawn-verb hit — without this early
+        # probe the skill never gets a chance (the root cause of "Jarvis
+        # never calls a skill"). Overwritten on every turn.
+        self._skill_turn_match = self._match_skill_for_turn(user_text)
+        # AD-S4: a trigger noted by the speech pipeline / chat hook takes
+        # precedence — it carries the captured content and the source label.
+        self._consume_pending_skill_trigger(user_text)
+        if self._skill_turn_match is not None:
+            log.info(
+                "Skill-matched turn: %r → skill %s (fast paths stand down)",
+                user_text[:80],
+                getattr(self._skill_turn_match, "name", "?"),
             )
-            return local_action
+            # AD-S5: mission skills never run inline — dispatch the worker
+            # with the rendered instructions as the brief and return the
+            # optimistic ACK. Falls through to the inline path when the
+            # dispatch is not possible (AD-OE6: no silent drop).
+            mission_reply = await self._maybe_dispatch_skill_mission(
+                user_text, trace_id=turn_trace_id,
+            )
+            if mission_reply is not None:
+                await self._record_response_side_effects(
+                    user_text=user_text,
+                    response_text=mission_reply,
+                    use_history=use_history,
+                    trace_id=turn_trace_id,
+                )
+                return mission_reply
+
+        if self._skill_turn_match is None:
+            local_action = await self._run_local_action_fast_path(
+                user_text, trace_id=turn_trace_id,
+            )
+            if local_action is not None:
+                await self._record_response_side_effects(
+                    user_text=user_text,
+                    response_text=local_action,
+                    use_history=use_history,
+                    trace_id=turn_trace_id,
+                )
+                return local_action
 
         # Navigation fast-path: a clear "go to section X" command moves the UI
         # deterministically (a dumb action, AD-OE3). Placed BEFORE the capability
@@ -2669,7 +3031,13 @@ class BrainManager:
         # capability covers it, return a deterministic "not supported" reply
         # and skip both brain and openclaw.  No LLM call, no latency cost
         # (AP-11 compliant — pure regex + registry lookup).
-        unsupported = self._check_unsupported_intent(user_text)
+        # AD-S3: a matched skill IS the capability — the unsupported-intent
+        # refusal must not fire on a skill turn.
+        unsupported = (
+            None
+            if self._skill_turn_match is not None
+            else self._check_unsupported_intent(user_text)
+        )
         if unsupported is not None:
             await self._record_response_side_effects(
                 user_text=user_text,
@@ -2806,6 +3174,16 @@ class BrainManager:
         # message (keeping the cached system prompt stable); empty in legacy
         # mode. Reused for every provider in the fallback chain below.
         turn_context = self._build_turn_context()
+
+        # AD-S3/S4: on a skill-matched turn the rendered instructions ride on
+        # the per-turn context (guaranteed invocation, no run-skill round
+        # trip needed) — deterministic code, not a prompt-only hope. The
+        # cached system prefix stays byte-stable.
+        _skill_block = self._render_skill_turn_injection(user_text)
+        if _skill_block:
+            turn_context = (
+                f"{turn_context}\n\n{_skill_block}" if turn_context else _skill_block
+            )
 
         # AI Pointer (deictic push): collect the result of the resolution started
         # above. When the utterance points at the mouse cursor ("was ist das da?")
@@ -2974,6 +3352,18 @@ class BrainManager:
                 # empty turn (function_call/CU without speech). See
                 # ``SpeechPipeline._handle_silent_brain_turn``.
                 self._last_turn_suppressed = suppressed
+                # AD-OE6 companion signal #2: did THIS winning turn SUCCESSFULLY
+                # execute a desktop-action tool (computer_use / open_app / …)?
+                # If so and it produced no narration, the voice pipeline speaks
+                # a success confirmation instead of a clarifying question
+                # (live bug 2026-06-09). Read ``executed_tool_names`` — the tools
+                # that REALLY ran — not ``tool_calls`` (which also holds calls a
+                # guard blocked, e.g. computer_use refused on a how-to question);
+                # speaking "Erledigt." for a blocked action would be a lie.
+                executed = getattr(agg, "executed_tool_names", None) or set()
+                self._last_turn_executed_action_tool = bool(
+                    set(executed) & _DESKTOP_ACTION_TOOL_NAMES
+                )
                 used_provider, used_model = prov_name, model
 
                 # Bug C Fix (2026-04-29) — BrainTurnStarted/Completed publishen

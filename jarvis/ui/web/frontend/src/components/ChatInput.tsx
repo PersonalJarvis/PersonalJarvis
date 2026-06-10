@@ -17,6 +17,15 @@ export function ChatInput() {
   const connected = useEventStore((s) => s.connected);
   const chatThinking = useEventStore((s) => s.chatThinking);
   const setChatThinking = useEventStore((s) => s.setChatThinking);
+  // Most recent live reasoning step — the pill mirrors what the trace card
+  // shows ("Using tool · wiki-recall") instead of a static "thinking…" label.
+  // The selector returns a stable object ref while that step is unchanged.
+  const activeStep = useEventStore((s) => {
+    for (let i = s.thinkingSteps.length - 1; i >= 0; i--) {
+      if (s.thinkingSteps[i].status === "active") return s.thinkingSteps[i];
+    }
+    return undefined;
+  });
   // Mic-dictation: live transcript streams into the box as the user speaks.
   const dictating = useEventStore((s) => s.dictating);
   const dictationText = useEventStore((s) => s.dictationText);
@@ -127,16 +136,19 @@ export function ChatInput() {
     <div className="flex flex-col gap-2">
       {chatThinking && (
         <div
-          className="flex items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs text-primary"
+          className="flex min-w-0 items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs text-primary"
           role="status"
           aria-live="polite"
         >
-          <div className="flex items-center gap-1" aria-hidden>
-            <span className="h-1.5 w-1.5 rounded-full bg-primary animate-bounce [animation-delay:-0.3s]" />
-            <span className="h-1.5 w-1.5 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]" />
-            <span className="h-1.5 w-1.5 rounded-full bg-primary animate-bounce" />
-          </div>
-          <span className="font-medium">{t("chats_view.thinking_label")}</span>
+          <span
+            aria-hidden
+            className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-primary/25 border-t-primary"
+          />
+          <span className="thinking-shimmer min-w-0 truncate font-medium">
+            {activeStep
+              ? `${t(activeStep.labelKey)}${activeStep.detail ? ` · ${activeStep.detail}` : ""}`
+              : t("thinking.label")}
+          </span>
         </div>
       )}
       {dictating && (

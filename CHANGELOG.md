@@ -7,39 +7,26 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
-## [v0.2.0] — 2026-06-09
-
-A broad feature + reliability release: a local self-configuration API, a
-shareable Board stats card, login autostart, Codex as a brain provider, and a
-batch of voice/mission reliability fixes.
+## [0.3.0] - 2026-06-09
 
 ### Added
+- Local Control API (`/api/control/*`): authenticated self-configuration for local agents (per-user key, fail-closed bind, hot-reload of `brain.reply_language`), plus the "Jarvis API" settings panel and a built-in `control-api` documentation skill.
+- Cross-platform login autostart (Windows shortcut / macOS LaunchAgent / Linux desktop entry), enabled by default, with the new "App settings" panel.
+- Configurable voice keybinds with two-key chord capture, an on-screen keyboard map, and live re-apply without restart.
+- Discord and Telegram channel connectors with a shared channel runtime wired into the worker chat path.
+- Shareable stats card on the Board (PNG export, copy to clipboard, share on X).
+- Wiki conversation curator (wave 1): durable candidate journal, secret/PII write guard, vault cleanup, FTS5 boot indexing.
+- Skill system rebuild: instruction-skill model with `when_to_use` metadata, bulk delete, drag reorder, and on/off toggles.
 
-- **Jarvis Control API** — a local authenticated HTTP API (`/api/control/*`) for
-  self-configuration: a per-user `jctl_` key (keyring → 0600 file → env,
-  headless-friendly), fail-closed bind, and a hot-reloadable `brain.reply_language`.
-  Files: `jarvis/ui/web/control_routes.py`, `control_auth.py`,
-  `jarvis/core/control_key.py`, the `control-api` builtin skill, and a
-  `JarvisApiGroup` settings panel.
-- **Board "Share Stats" card** — a shareable 1080² PNG (Copy / Save / Share-on-X)
-  with the Jarvis mark: `ShareCard.tsx`, `ShareDialog.tsx`, `useShareHandle.ts`,
-  `lib/shareImage.ts`.
-- **App Settings → Launch app at login** — cross-platform autostart via
-  `AppSettingsGroup.tsx`.
-- **Codex as a selectable brain provider** (parity with Gemini, gated on an
-  OpenAI key) and as a subagent backend.
-- **Plugin–skill pairing** so connected plugins become voice-reachable.
+### Changed
+- Voice fallback phrases now follow the speaker's language (full Whisper language names like "german" are recognized); the playback watchdog no longer aborts a desktop-automation turn that is still actively working.
+- Desktop control utterances (open app / navigate / screenshot / window ops / drag) route deterministically to computer-use, independent of the active brain provider.
+- Codex can back the conversational brain via an OpenAI API key or the ChatGPT-login CLI path; missions on non-Claude providers fall back legibly to Claude instead of failing.
+- Mission deadline raised to 70 minutes and worker timeouts no longer discard delivered work (structured `timed_out` signal).
+- Sidebar reorganized into grouped sections; Telephony folded into API Keys; Languages folded into Settings.
 
-### Changed / Fixed
-
-- Voice playback watchdog now measures per-turn progress instead of cross-turn
-  idle, fixing a spurious "Jarvis listens forever" abort (BUG-032 / AP-19).
-- Voice-latency fixes around the audio-device TTS wedge.
-- Mission-reliability wave 1: recovery preserves delivered work instead of
-  mislabeling timeouts as task errors.
-- "Languages" folded into Settings as the first settings group.
-
----
+### Removed
+- Standalone Telephony and Languages screens (their section ids remain valid and land on the merged views).
 
 ## [v1.0.0-board] — 2026-04-25
 

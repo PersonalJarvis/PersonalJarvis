@@ -66,16 +66,21 @@ def test_is_open_app_intent_false(utterance: str) -> None:
     [
         "Ich möchte, dass du mir Hermes Agent öffnest, also",
         "öffne für mich Hermes Agent",
-        "kannst du mir Discord aufmachen",
     ],
 )
 def test_open_app_intent_non_alias_falls_through_to_brain(utterance: str) -> None:
-    """A non-alias open command is NOT handled deterministically: it must fall
-    through (``None``) so the brain's proven ``computer-use`` tool path handles
-    it. Live 2026-06-08: the deterministic ``dispatch_to_harness(screenshot)``
-    path stalled (no [cu] steps, 120s TTS-ceiling abort), so open-app intents are
-    kept off it — the force-spawn guard (test_open_app_intent_does_not_force_spawn)
-    still keeps them off the sub-agent path."""
+    """An UNKNOWN-app open command (no alias, not in open_app's KNOWN_APPS) is
+    NOT handled deterministically: it must fall through (``None``) so the brain's
+    proven ``computer-use`` tool path handles it. Live 2026-06-08: the
+    deterministic ``dispatch_to_harness(screenshot)`` path stalled (no [cu]
+    steps, 120s TTS-ceiling abort), so open-app intents are kept off it — the
+    force-spawn guard (test_open_app_intent_does_not_force_spawn) still keeps
+    them off the sub-agent path.
+
+    NOTE: KNOWN apps like Discord now DO take the fast DIRECT open_app path (see
+    test_common_messaging_media_apps_take_direct_path) — that path is the clean
+    instant launch (app_resolver Start Menu .lnk), NOT the stalling screenshot
+    harness, so it is exempt from this fall-through rule."""
     plan = match_local_action(utterance, _registry=None)
     assert plan is None, (
         f"{utterance!r} produced plan {plan!r}; expected None (fall through to "
@@ -177,6 +182,160 @@ def test_direct_open_app_commands_return_open_app_plan(text: str, app: str) -> N
         mode=LocalActionMode.DIRECT,
         tool_calls=(LocalToolCall(name="open_app", args={"app_name": app}),),
     )
+
+
+@pytest.mark.parametrize(
+    ("text", "app"),
+    [
+        # Live bug 2026-06-09 17:36: "Kannst du bitte für mich einmal mein
+        # Spotify öffnen?" matched NO verb-first DIRECT pattern (verb at the end,
+        # fillers "mein/einmal/für mich"), fell to the router LLM, which did not
+        # even call computer_use and went silent → clarifying question. Spotify
+        # never opened. Verb-at-end / filler-heavy open phrasings must still take
+        # the deterministic DIRECT path when the app is known.
+        ("Kannst du bitte für mich einmal mein Spotify öffnen?", "spotify"),
+        ("kannst du mein Spotify öffnen", "spotify"),
+        ("Spotify aufmachen", "spotify"),
+        ("öffnest du mir mal Discord", "discord"),
+        ("mach mir mein WhatsApp auf", "whatsapp"),
+        ("kannst du Chrome öffnen", "chrome"),
+    ],
+)
+def test_verb_at_end_open_phrasings_take_direct_path(text: str, app: str) -> None:
+    """Any open-app intent in any phrasing — including verb-at-end and
+    filler-heavy — must reach the deterministic DIRECT open_app path for a known
+    app, NOT fall through to the unreliable router LLM (which produced silence +
+    a clarifying question, with the app never opening). Cross-platform: open_app
+    → app_resolver branches per OS."""
+    plan = match_local_action(text, _registry=None)
+    assert plan is not None, f"{text!r} fell through to the brain"
+    assert plan.mode is LocalActionMode.DIRECT, f"{text!r} → {plan.mode}, want DIRECT"
+    assert plan.tool_calls[0].args == {"app_name": app}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "ich will Spotify nicht öffnen",
+        "bitte Chrome nicht starten",
+        "mach mir kein Spotify auf",
+        "öffne Discord lieber nicht",
+    ],
+)
+def test_negated_open_never_launches(text: str) -> None:
+    """A NEGATED open command must NEVER trigger a DIRECT launch (regression for
+    the 2026-06-09 review finding: the verb-at-end fallback scans the whole
+    utterance for a known app and would otherwise launch Spotify for 'ich will
+    Spotify nicht öffnen'). Falling through to the brain (None) is the safe
+    outcome — with clarify off by default the user is not nagged either."""
+    plan = match_local_action(text, _registry=None)
+    # Strong guard: a negated open must fall all the way through to the brain —
+    # neither a DIRECT launch nor a COMPUTER_USE offload.
+    assert plan is None, f"{text!r} wrongly produced a local plan: {plan}"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Verb-at-end multi-step: open AND do more → the computer-use loop
+        # (offload path), so the follow-up action ("play Shape of You") is not
+        # silently dropped. Verb-first compounds already route here via
+        # _COMPOUND_OPEN_CONTROL_RE; this covers the "kannst du X öffnen und …"
+        # shape that the verb-first regex misses.
+        "kannst du Spotify öffnen und Shape of You spielen",
+        "öffne mir mal Chrome und geh auf Amazon",
+    ],
+)
+def test_verb_at_end_compound_open_routes_to_computer_use(text: str) -> None:
+    plan = match_local_action(text, _registry=None)
+    assert plan is not None, f"{text!r} fell through to the brain"
+    assert plan.mode is LocalActionMode.COMPUTER_USE, f"{text!r} → {plan.mode}, want COMPUTER_USE"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "navigiere zu youtube und such ein Video",
+        "navigiere zu amazon",
+        "mach einen Screenshot",
+        "mach mal einen Screenshot vom Bildschirm",
+        "schließ das Fenster",
+        "minimier das Fenster",
+        "maximier den Browser",
+        "wechsel zum nächsten Tab",
+        "zieh die Datei nach links",
+    ],
+)
+def test_general_desktop_control_routes_to_computer_use(text: str) -> None:
+    """General Computer-Use commands (navigate / screenshot / window-ops / drag)
+    the narrow GUI-verb + compound-open patterns missed must route
+    DETERMINISTICALLY to the CU harness offload — NOT depend on the LLM talker
+    calling computer_use. Live regression 2026-06-09: brain.primary=codex (CLI
+    OAuth path) drops ALL tools and can never emit a tool_call, so every CU task
+    that fell to the talker went silent — ~30% of common CU commands. Making the
+    gate comprehensive makes CU work regardless of the talker's tool capability."""
+    plan = match_local_action(text, _registry=None)
+    assert plan is not None, f"{text!r} fell through to the (tool-less) brain"
+    assert plan.mode is LocalActionMode.COMPUTER_USE, f"{text!r} → {plan.mode}, want COMPUTER_USE"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "schreib mir ein Gedicht über den Herbst",
+        "was ist die Hauptstadt von Frankreich",
+        "erzähl mir einen Witz",
+        "wie navigiere ich zu den Einstellungen",
+        "wie mache ich einen Screenshot",
+        "erklär mir was ein Tab ist",
+        # Informational / non-take mentions of "screenshot" must NOT launch a CU
+        # mission (review finding 2026-06-09: the bare-noun pattern over-routed).
+        "ich habe einen Screenshot gemacht",
+        "zeig mir den letzten Screenshot",
+        "schick mir einen Screenshot per Mail",
+        # Non-desktop "verschieb"/"zieh" objects stay brain answers.
+        "verschieb den Termin auf Montag",
+        "zieh das bitte in Betracht",
+    ],
+)
+def test_non_control_utterances_do_not_route_to_computer_use(text: str) -> None:
+    """Precision guard: questions, how-to, and content-generation must NOT be
+    mistaken for desktop control — they stay normal brain answers (None here)."""
+    plan = match_local_action(text, _registry=None)
+    if plan is not None:
+        assert plan.mode is not LocalActionMode.COMPUTER_USE, (
+            f"{text!r} wrongly routed to COMPUTER_USE: {plan}"
+        )
+
+
+@pytest.mark.parametrize(
+    ("text", "app"),
+    [
+        ("Öffne Discord", "discord"),
+        ("öffne Discord für mich", "discord"),
+        ("kannst du mir Discord aufmachen", "discord"),
+        ("Mach Slack auf", "slack"),
+        ("Starte Telegram", "telegram"),
+        ("Öffne WhatsApp", "whatsapp"),
+        ("Mach mir Signal auf", "signal"),
+        ("Öffne Teams", "teams"),
+        ("Starte VLC", "vlc"),
+        ("Öffne Steam", "steam"),
+    ],
+)
+def test_common_messaging_media_apps_take_direct_path(text: str, app: str) -> None:
+    """Common chat/media apps a voice user opens by name must take the clean
+    instant DIRECT open path (open_app → app_resolver, which resolves Squirrel
+    installs like Discord/Slack via the Start Menu .lnk fallback added
+    2026-06-09), NOT the slower LLM-driven computer-use loop. Live bug
+    2026-06-09: these were absent from the gate's _APP_ALIASES, so "öffne
+    Discord" fell through to the brain — which opened it via computer_use but,
+    producing no narration, was answered with "Wie meinst du das genau?".
+    open_app's KNOWN_APPS already accepts every app here."""
+    plan = match_local_action(text, _registry=None)
+    assert plan is not None, f"{text!r} fell through to the brain"
+    assert plan.mode is LocalActionMode.DIRECT, f"{text!r} → {plan.mode}, want DIRECT"
+    assert plan.tool_calls[0].args == {"app_name": app}
 
 
 @pytest.mark.parametrize(

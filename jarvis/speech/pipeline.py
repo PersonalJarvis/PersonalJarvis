@@ -38,6 +38,7 @@ from jarvis.audio.vad import VAD_FRAME_SAMPLES, SileroEndpointer
 from jarvis.audio.vad_reasons import FORCED_CUT_REASONS
 from jarvis.brain.output_filter import scrub_for_voice
 from jarvis.core.events import (
+    CU_PROGRESS_EVENTS,
     ActionPlanned,
     AnnouncementRequested,
     AudioOutFirst,
@@ -162,6 +163,40 @@ _CLARIFY_QUESTION_PHRASE: dict[str, str] = {
     "de": "Wie meinst du das genau?",
     "en": "What do you mean exactly?",
 }
+
+# AD-OE6 confirmation for a SUCCESSFUL wordless desktop-action turn. When the
+# router brain runs a desktop-action tool (computer_use / open_app / click / …)
+# and the CU loop does the work but the brain emits no narration text, the turn
+# is NOT empty/confused — the action LANDED. Live bug 2026-06-09
+# (data/jarvis_desktop.log 16:27): computer_use opened Chrome, then the silent-
+# turn handler spoke the clarifying question "Wie meinst du das genau?", so a
+# success looked like incomprehension ("er checkt das nicht"). We instead speak
+# a short confirmation. Substantive (not a forbidden filler — "Erledigt." is the
+# canonical butler confirmation, see output_filter), bilingual, TTS-clean
+# (``_speak`` does not scrub).
+_ACTION_DONE_PHRASE: dict[str, str] = {
+    "de": "Erledigt.",
+    "en": "Done.",
+}
+
+
+def _phrase_lang(lang: str | None) -> str:
+    """Normalize a detected-language tag to a canned-phrase key ("de"/"en").
+
+    The utterance language reaches the phrase pickers in two shapes: full
+    language NAMES from the STT transcript (``(transcript.language or
+    "en").lower()`` → ``"german"`` for Groq Whisper) and BCP-47-ish CODES
+    ("de", "de-DE") from config pins / announcements. The pickers used to test
+    ``lang.startswith("de")`` only — ``"german"`` does not start with "de", so
+    every canned AD-OE6 fallback (clarify question, action-done ack,
+    brain-timeout, brain/STT-unavailable, smalltalk fallback) was spoken in
+    ENGLISH to a German speaker, and the German variants were dead code (live
+    bug 2026-06-09: "antwortet fast immer mit einer englischen
+    Standardphrase"). "deutsch" is covered by the prefix check; "german" needs
+    the explicit name match. Unknown/missing → "en" (phrases exist de/en only).
+    """
+    norm = (lang or "").strip().lower()
+    return "de" if norm.startswith("de") or norm == "german" else "en"
 
 # Transient STT failures worth a retry: cloud rate-limit (429) and transient
 # gateway/server errors (5xx). Anything else (401 bad key, 400 bad audio) is a
@@ -418,7 +453,7 @@ def _smalltalk_fallback_for_non_substantive(prompt: str, lang: str) -> str | Non
     )
     if not any(marker in low for marker in wellbeing_markers):
         return None
-    if lang.lower().startswith("de"):
+    if _phrase_lang(lang) == "de":
         return "Mir geht's gut, Alex. Was machen wir als Naechstes?"
     return "I'm good, Alex. What's next?"
 
@@ -770,6 +805,10 @@ class SpeechPipeline:
         # _run_parallel_wake aborts early and _wake_loop re-arms with the new
         # detector/model/matcher — the wake word changes WITHOUT an app restart.
         self._wake_reload_event = asyncio.Event()
+        # Live-apply signal: set_keybinds() flips this so the running hotkey
+        # trigger re-arms with the new Call/Hangup/Talk combos — a keybind change
+        # takes effect WITHOUT an app restart (mirrors the wake live-reload).
+        self._hotkey_reload_event = asyncio.Event()
         if wake is not None:
             self._wake = wake
         elif wake_plan is not None:
@@ -1031,13 +1070,18 @@ class SpeechPipeline:
             # Computer-use liveness: a desktop-automation loop (computer_use)
             # runs as ONE opaque tool call that streams NO text, so the brain
             # stall guard cannot tell "stepping through a 20-action plan" from
-            # "provider wedged" by watching text chunks. The loop DOES emit one
-            # ObservationCaptured (observe) + ActionPlanned (act) per step on
-            # the bus; treat each as brain progress so a working desktop task is
-            # never cut off mid-work (live bug 2026-06-07: OBS automation killed
-            # at 30 s). See _on_agent_progress + _run_brain_with_stall_guard.
-            self._bus.subscribe(ObservationCaptured, self._on_agent_progress)
-            self._bus.subscribe(ActionPlanned, self._on_agent_progress)
+            # "provider wedged" by watching text chunks. The loop emits
+            # liveness events per step phase (observe / act / per-phase
+            # CUStepProfiled — the latter covers long THINK phases that emit
+            # neither of the former); treat each as brain progress so a
+            # working desktop task is never cut off mid-work (live bugs
+            # 2026-06-07 OBS killed at 30 s; 2026-06-09 CapCut beheaded by the
+            # 20 s TTS ceiling). The subscription iterates the
+            # CU_PROGRESS_EVENTS contract tuple — a new loop event type is
+            # added THERE, never here (contract test in
+            # tests/unit/harness/test_cu_wave0.py).
+            for _ev_type in CU_PROGRESS_EVENTS:
+                self._bus.subscribe(_ev_type, self._on_agent_progress)
 
         # Skills-Brain-Integration: Direct-Trigger + Cron. Ohne gesetzten
         # SkillContext bleiben beide Pfade no-op.
@@ -1174,6 +1218,60 @@ class SpeechPipeline:
         )
         # Re-arm the running wake loop with the new detectors.
         self._wake_reload_event.set()
+
+    def set_keybinds(
+        self,
+        *,
+        call: list[str] | None = None,
+        hangup: list[str] | None = None,
+        ptt: list[str] | None = None,
+    ) -> None:
+        """Live-apply changed voice keybinds — no app/pipeline restart.
+
+        Root cause of "I set a key and pressing it does nothing": the Call /
+        Hangup / Talk combos are armed once at pipeline start (the
+        ``async with HotkeyTrigger`` block), so a UI/toml save only reached the
+        OS on the next boot. This updates the stored combos and flips
+        ``_hotkey_reload_event`` so the running hotkey trigger re-arms in place.
+
+        Mirrors the ``set_wake_plan`` live-apply contract: safe to call from the
+        FastAPI handler thread — it shares the pipeline's event loop. Only the
+        actions passed are changed; ``None`` leaves that action untouched.
+        """
+        if call is not None:
+            self._call_hotkeys = list(call)
+        if hangup is not None:
+            self._hangup_hotkeys = list(hangup)
+        if ptt is not None:
+            self._ptt_hotkeys = list(ptt)
+        log.info(
+            "Keybind-Live-Switch: CALL=[%s] PTT=[%s] HANGUP=[%s]",
+            ", ".join(self._call_hotkeys),
+            ", ".join(self._ptt_hotkeys) or "off",
+            ", ".join(self._hangup_hotkeys),
+        )
+        self._hotkey_reload_event.set()
+
+    async def _hotkey_reload_loop(self, trigger: HotkeyTrigger) -> None:
+        """Re-arm the live hotkey trigger whenever set_keybinds flips the event.
+
+        Keeps the outer ``async with HotkeyTrigger`` (and the whole voice
+        session) intact — only the OS registrations are swapped — so a keybind
+        change applies without an app restart. A failed re-arm is contained
+        inside ``HotkeyTrigger.rearm`` (degrade, never raise).
+        """
+        while True:
+            await self._hotkey_reload_event.wait()
+            self._hotkey_reload_event.clear()
+            bindings: dict[str, list[str]] = {
+                "call": list(self._call_hotkeys),
+                "hangup": list(self._hangup_hotkeys),
+            }
+            ptt_events: set[str] = set()
+            if self._ptt_hotkeys:
+                bindings["ptt"] = list(self._ptt_hotkeys)
+                ptt_events.add("ptt")
+            await trigger.rearm(bindings, push_to_talk=ptt_events)
 
     # ------------------------------------------------------------------
     # Bus / Supervisor Helper — no-op wenn nicht konfiguriert
@@ -1564,11 +1662,15 @@ class SpeechPipeline:
     # ------------------------------------------------------------------
 
     async def _try_skill_direct_trigger(self, text: str, lang: str) -> bool:
-        """Pre-Brain-Hook: Voice-Pattern-Match auf installierte Skills.
+        """Pre-brain hook: voice-pattern match against installed skills.
 
-        Returns True wenn ein Skill direkt getriggert + ausgefuehrt + via TTS
-        beantwortet wurde — der Caller soll dann den Brain-Pfad ueberspringen.
-        Returns False wenn kein Match (Brain-Pfad geht weiter wie bisher).
+        Instruction-skill model (2026-06-09 rebuild, AD-S4): a trigger match
+        no longer macro-runs the skill and reads raw Markdown aloud. It notes
+        the match on the BrainManager (``note_skill_trigger``) and returns
+        ``False`` so the normal brain turn proceeds — the manager injects the
+        rendered skill instructions into that turn (guaranteed invocation,
+        uniform voice output through scrub_for_voice). Always returns
+        ``False``; the brain path is never bypassed anymore.
         """
         skill_ctx = try_get_skill_context()
         if skill_ctx is None:
@@ -1580,9 +1682,9 @@ class SpeechPipeline:
             return False
         matched, regex_match = match_result
 
-        # Letzte non-empty Capture-Group ist der "Inhalt" (z.B. der Tail
-        # nach dem Trigger-Wort: "merk dir: <content>"). Skills wie
-        # memory-save erwarten {{content}} im Jinja-Render-Context.
+        # The last non-empty capture group is the "content" (e.g. the tail
+        # after the trigger phrase: "merk dir: <content>"). Skills reference
+        # it as {{ content }} in their Jinja render context.
         content = ""
         groups = regex_match.groups()
         for grp in reversed(groups):
@@ -1590,31 +1692,17 @@ class SpeechPipeline:
                 content = grp.strip()
                 break
 
-        log.info("Skill direkt-getriggert: '%s' fuer '%s'", matched.name, text)
+        log.info("Skill trigger matched: '%s' for '%s'", matched.name, text)
         await self._emit_skill_direct(matched.name, "voice_direct")
-        await self._set_turn_state(TurnTakingState.PROCESSING)
-        try:
-            result = await skill_ctx.runner.run(
-                matched,
-                args={
-                    "_trigger": "voice_direct",
-                    "utterance": text,
-                    "content": content,
-                    "detected_language": lang if lang in ("de", "en") else "unknown",
-                },
+        note = getattr(self._brain, "note_skill_trigger", None)
+        if callable(note):
+            note(matched.name, content=content, source="trigger")
+        else:
+            log.warning(
+                "brain has no note_skill_trigger — skill %s rides on the "
+                "routing-guard probe only", matched.name,
             )
-            if result.success:
-                body = (result.rendered_body or "").strip()
-                summary = body[:400] if body else "Skill ausgefuehrt."
-            else:
-                summary = result.error or "Skill konnte nicht ausgefuehrt werden."
-        except Exception as exc:  # noqa: BLE001
-            log.exception("Skill-Direct-Run fehlgeschlagen: %s", exc)
-            summary = "Skill konnte nicht ausgefuehrt werden."
-        await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
-        await self._speak(summary, language=lang)
-        await self._set_turn_state(TurnTakingState.LISTENING)
-        return True
+        return False
 
     async def _emit_skill_direct(self, skill_name: str, trigger_type: str) -> None:
         """Bus-Event SkillDirectTriggered — no-op wenn kein bus konfiguriert."""
@@ -2155,6 +2243,12 @@ class SpeechPipeline:
         async with HotkeyTrigger(hotkey_bindings, push_to_talk=ptt_events) as trigger:
             hotkey_task = asyncio.create_task(self._hotkey_loop(trigger), name="hotkey")
             hotkey_task.add_done_callback(_log_task_exit)
+            # Live keybind re-arm: set_keybinds() flips _hotkey_reload_event and
+            # this task re-registers the new combos in place (no app restart).
+            hotkey_reload_task = asyncio.create_task(
+                self._hotkey_reload_loop(trigger), name="hotkey-reload"
+            )
+            hotkey_reload_task.add_done_callback(_log_task_exit)
             wake_task = (
                 asyncio.create_task(self._wake_loop(), name="wake")
                 if self._wake_listening_enabled()
@@ -2182,7 +2276,7 @@ class SpeechPipeline:
                 await main_task
             finally:
                 self._cron_stop.set()
-                tasks_to_cancel: list[asyncio.Task] = [hotkey_task]
+                tasks_to_cancel: list[asyncio.Task] = [hotkey_task, hotkey_reload_task]
                 if wake_task is not None:
                     tasks_to_cancel.append(wake_task)
                 if self._cron_task is not None:
@@ -3414,6 +3508,12 @@ class SpeechPipeline:
         # Natural end (or runaway): finalize the merged audio as one turn.
         self._carry_pcm = bytearray()
         self._carry_started_monotonic = None
+        if not pcm:
+            # Empty VAD tail flush with nothing buffered (e.g. the runaway
+            # guard already finalized the carry): zero bytes of audio — skip
+            # the STT round-trip and keep listening.
+            await self._set_turn_state(TurnTakingState.LISTENING)
+            return True
         # -------------------------------------------------------------------
         # Wave 0 (omni-latency): anchor a fresh per-turn latency tracker at
         # utterance finalize. perf_counter marks are free; emission is
@@ -3987,7 +4087,12 @@ class SpeechPipeline:
         """
         self._cancel_clarify_question()
         cfg = getattr(self._config, "voice", None)
-        if cfg is not None and not getattr(cfg, "clarify_incomplete_enabled", True):
+        # Default False: if the field is absent (committed HEAD never carried it,
+        # or a config-reload edge), the SAFE behaviour is "do NOT interrogate the
+        # user" — the clarify question is opt-in only (maintainer mandate
+        # 2026-06-09). A True default here was the live footgun: a config without
+        # the field armed the question on every trailed-off / empty turn.
+        if cfg is not None and not getattr(cfg, "clarify_incomplete_enabled", False):
             return  # feature off — preserve the legacy silent-hold behaviour
         try:
             loop = asyncio.get_running_loop()
@@ -4023,7 +4128,7 @@ class SpeechPipeline:
             return
         # Clear the stale fragment so it cannot pollute the next turn, THEN ask.
         buf.discard()
-        picker_lang = "de" if lang.startswith("de") else "en"
+        picker_lang = _phrase_lang(lang)
         phrase = _CLARIFY_QUESTION_PHRASE[picker_lang]
         log.info("⏳→❓ Incomplete trailed off (%.1fs) — asking clarifying question.", delay_s)
         try:
@@ -4327,7 +4432,7 @@ class SpeechPipeline:
                     "incomplete": {"de": "Mhm?", "en": "Mhm?"},
                     "abort": {"de": "Okay.", "en": "Okay."},
                 }
-                lang_key = "de" if lang.startswith("de") else "en"
+                lang_key = _phrase_lang(lang)
                 phrase = spoken_phrases.get(kind, {}).get(lang_key, "Mhm?")
                 try:
                     await self._speak(phrase, language=lang_key)
@@ -4643,6 +4748,25 @@ class SpeechPipeline:
             getattr(getattr(self, "_brain", None), "_last_turn_suppressed", False)
         )
 
+    def _brain_turn_executed_action(self) -> bool:
+        """True when the just-finished brain turn executed a DESKTOP-ACTION tool
+        (computer_use / open_app / click / …) but produced no narration text.
+
+        Reads ``BrainManager._last_turn_executed_action_tool`` (set for exactly
+        one turn). Such a turn DID something on screen — the action landed — so
+        the pipeline must speak a success confirmation, NOT a clarifying
+        question (live bug 2026-06-09: a successful ``computer_use`` run that
+        opened Chrome was answered with "Wie meinst du das genau?"). Degrades to
+        ``False`` for echo/mock brains that do not expose the flag.
+        """
+        return bool(
+            getattr(
+                getattr(self, "_brain", None),
+                "_last_turn_executed_action_tool",
+                False,
+            )
+        )
+
     async def _handle_silent_brain_turn(self, lang: str, text: str = "") -> None:
         """AD-OE6 zero-silent-drop for a brain turn that produced no speech.
 
@@ -4671,10 +4795,36 @@ class SpeechPipeline:
             return  # legit background spawn — its feedback arrives over the bus
         if text and is_cancel(text):
             return  # user explicitly aborted ("vergiss das") — stay quiet
+        # A SUCCESSFUL wordless desktop action (computer_use / open_app / …) is
+        # NOT an empty/confused turn — the action landed on screen. Confirm it
+        # ("Erledigt.") instead of asking a clarifying question (live bug
+        # 2026-06-09: computer_use opened Chrome, then "Wie meinst du das
+        # genau?" was spoken, so a success looked like incomprehension). This is
+        # an AD-OE6 success ack, so it fires independently of the
+        # clarify-question toggle below.
+        if self._brain_turn_executed_action():
+            picker_lang = _phrase_lang(lang)
+            log.info(
+                "✅ Brain ran a desktop action without narration — speaking "
+                "confirmation instead of a clarifying question (AD-OE6)."
+            )
+            try:
+                await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
+                await self._speak(
+                    _ACTION_DONE_PHRASE[picker_lang], language=picker_lang
+                )
+            except Exception as exc:  # noqa: BLE001 — ack must never crash the turn
+                log.warning(
+                    "Silent-brain-turn action-confirmation speak failed: %s", exc
+                )
+            return
         cfg = getattr(self._config, "voice", None)
-        if cfg is not None and not getattr(cfg, "clarify_incomplete_enabled", True):
+        # Default False (defense-in-depth): see _arm_clarify_question above. An
+        # empty brain turn must never interrogate the user when the field is
+        # absent — the clarify question is opt-in only.
+        if cfg is not None and not getattr(cfg, "clarify_incomplete_enabled", False):
             return  # feature off → preserve the legacy silent behaviour
-        picker_lang = "de" if lang.startswith("de") else "en"
+        picker_lang = _phrase_lang(lang)
         phrase = _CLARIFY_QUESTION_PHRASE[picker_lang]
         log.info("🤷 Brain produced no speech (not a spawn) — clarifying question (AD-OE6).")
         try:
@@ -4693,7 +4843,7 @@ class SpeechPipeline:
         phrase is spoken verbatim. Failures here are swallowed: the fallback
         must never itself crash the turn.
         """
-        picker_lang = "de" if lang.startswith("de") else "en"
+        picker_lang = _phrase_lang(lang)
         phrase = _BRAIN_UNAVAILABLE_PHRASE[picker_lang]
         try:
             await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
@@ -4710,7 +4860,7 @@ class SpeechPipeline:
         primary; runtime TTS auto-detects anyway). Failures here are swallowed:
         the fallback must never itself crash the turn.
         """
-        picker_lang = "de" if lang.startswith("de") else "en"
+        picker_lang = _phrase_lang(lang)
         phrase = _STT_UNAVAILABLE_PHRASE[picker_lang]
         try:
             await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
@@ -4839,7 +4989,7 @@ class SpeechPipeline:
         ``_speak_brain_unavailable``. Failures here are swallowed: the fallback
         must never itself crash the turn.
         """
-        picker_lang = "de" if lang.startswith("de") else "en"
+        picker_lang = _phrase_lang(lang)
         phrase = _BRAIN_TIMEOUT_PHRASE[picker_lang]
         try:
             await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
@@ -4888,7 +5038,7 @@ class SpeechPipeline:
 
     def _pick_task_ack_pcm(self, lang: str) -> bytes:
         """Liefert PCM-Bytes einer zufaelligen Start-Ack-Phrase fuer die Sprache."""
-        picker_lang = "de" if lang.startswith("de") else "en"
+        picker_lang = _phrase_lang(lang)
         phrase = self._phrase_picker.pick("start_ack", picker_lang)  # type: ignore[arg-type]
         pcm = self._task_ack_pcm.get((picker_lang, phrase), b"")
         if pcm:
@@ -4947,6 +5097,22 @@ class SpeechPipeline:
                 # the "Jarvis listens forever / answer never heard" root cause.
                 # Only a generous no-first-frame backstop applies here; it covers
                 # a provider that never yields any audio at all.
+                #
+                # A desktop-tool step (computer_use loop → ObservationCaptured/
+                # ActionPlanned → _on_agent_progress) that landed AFTER this
+                # await began means the turn is actively WORKING — the brain
+                # simply has not started narrating, so there is legitimately
+                # nothing to play yet. Re-arm the window from that heartbeat so
+                # the ceiling bounds silence since the LAST step, never total
+                # CU work time (live bug 2026-06-09: "öffne CapCut" — the CU
+                # loop was beheaded on step 4 at 20 s and the turn came back
+                # empty/mute). Strictly-greater keeps a heartbeat from BEFORE
+                # this await out of the decision — per-unit re-arm, the BUG-032
+                # stale-counter lesson; the brain stall guard applies the same
+                # suspension to its absolute ceiling.
+                heartbeat = getattr(self, "_long_tool_last_activity", 0.0)
+                if heartbeat > start:
+                    start = heartbeat
                 if (time.monotonic() - start) >= ceiling:
                     log.warning(
                         "TTS produced no audio within %.0fs — aborting "

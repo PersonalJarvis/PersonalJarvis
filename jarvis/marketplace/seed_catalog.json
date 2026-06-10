@@ -213,7 +213,7 @@
     {
       "id": "discord",
       "display_name": "Discord",
-      "description": "Read and send messages in your servers (bot)",
+      "description": "Chat with Jarvis from Discord (your bot)",
       "category": "Communication",
       "logo_slug": "discord",
       "logo_color": "F4F4F5",
@@ -224,14 +224,9 @@
         "token_creation_url": "https://discord.com/developers/applications",
         "token_prefix": "",
         "validation_endpoint": "https://discord.com/api/v10/users/@me",
-        "instruction_md": "1. Open https://discord.com/developers/applications and click 'New Application'.\n2. Go to the 'Bot' page, click 'Reset Token', and copy it (shown once).\n3. Under 'Privileged Gateway Intents', enable 'Message Content Intent' so the bot can read message text.\n4. Invite the bot to your server: OAuth2 -> URL Generator -> scope 'bot' + the permissions you want (View Channels, Read Message History, Send Messages), open the link, pick your server, Authorize.\n5. Paste the bot token below."
+        "instruction_md": "1. Open https://discord.com/developers/applications and click 'New Application'.\n2. Go to the 'Bot' page, click 'Reset Token', and copy it (shown once).\n3. Under 'Privileged Gateway Intents', enable 'Message Content Intent' so the bot can read message text.\n4. Invite the bot to your server: OAuth2 -> URL Generator -> scope 'bot' + the permissions you want (View Channels, Read Message History, Send Messages), open the link, pick your server, Authorize.\n5. Paste the bot token below, plus your numeric Discord user id (Developer Mode -> right-click yourself -> Copy User ID) so only you can command the bot."
       },
-      "mcp_server": {
-        "transport": "stdio",
-        "install": ["npx", "-y", "mcp-discord", "--config", "$plugin_discord_access_token"],
-        "env_template": {"DISCORD_TOKEN": "$plugin_discord_access_token"}
-      },
-      "post_install_hint_md": "The bot only sees servers it has been invited to. This MCP server (community: barryyip0625/mcp-discord) needs Node/npx on the host."
+      "post_install_hint_md": "This enables the Discord channel — message your bot to talk to Jarvis. Outbound replies pass through the voice scrubber and your allowlist."
     },
     {
       "id": "telegram",

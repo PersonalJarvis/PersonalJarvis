@@ -54,7 +54,19 @@ from .stream_consumer import (
 logger = logging.getLogger(__name__)
 
 
-_DEFAULT_TIMEOUT_S: float = 600.0
+# Per-attempt wall-clock cap (20 min). Raised from 600 s so a genuinely
+# complex multi-step sub-agent can FINISH, not just deliver partials (user
+# mandate 2026-06-09: "more time for complex tasks"). Preserve-partial-work +
+# the first-output gate keep a true hang from burning the full cap.
+_DEFAULT_TIMEOUT_S: float = 1200.0
+# First-output ("startup") gate — mirrors ClaudeDirectWorker. codex is killed +
+# flagged for retry when it emits ZERO bytes within this window (a hung startup
+# / OAuth contention) instead of burning the full hard cap. Once streaming has
+# begun the full cap applies so a legitimately long task is never cut off.
+_DEFAULT_FIRST_OUTPUT_TIMEOUT_S: float = 120.0
+# Bytes pulled on the first read; codex's opening thread.started line is far
+# under this, so the read returns as soon as codex emits anything.
+_FIRST_READ_BYTES: int = 65536
 
 
 def _resolve_codex_binary() -> str | None:
@@ -194,6 +206,28 @@ _CODEX_AUTH_EXPIRED_MARKERS: tuple[str, ...] = (
     "expired token",
 )
 
+# Markers that mean the codex ChatGPT plan is temporarily UNAVAILABLE (usage /
+# rate / credit cap), even though the login is valid — e.g. "You've hit your
+# usage limit … try again at 7:40 PM". The login is fine (no `codex login`
+# needed); codex just can't run right now. We fall back to the Claude Max worker
+# so the mission completes, and the user keeps using codex once the cap resets
+# (2026-06-09: a re-authenticated codex hit its usage limit and the mission
+# failed task_error instead of falling back).
+_CODEX_USAGE_LIMIT_MARKERS: tuple[str, ...] = (
+    "usage limit",
+    "hit your usage limit",
+    "purchase more credits",
+    "try again at",
+    "try again later",
+    "upgrade to pro",
+    "rate limit",
+    "rate_limit",
+    "too many requests",
+    "429",
+    "quota",
+    "insufficient_quota",
+)
+
 
 def _coerce_codex_error_text(obj: dict[str, Any]) -> str:
     """Extract a plain string from a codex ``error`` / ``turn.failed`` event.
@@ -226,6 +260,13 @@ def _codex_error_is_auth_expired(text: str) -> bool:
     """True when a codex error string signals a dead/unrefreshable ChatGPT login."""
     low = (text or "").lower()
     return any(marker in low for marker in _CODEX_AUTH_EXPIRED_MARKERS)
+
+
+def _codex_error_is_usage_limited(text: str) -> bool:
+    """True when codex is temporarily unavailable (usage/rate/credit cap), even
+    though the login is valid — fall back to Claude Max, no `codex login` needed."""
+    low = (text or "").lower()
+    return any(marker in low for marker in _CODEX_USAGE_LIMIT_MARKERS)
 
 
 class CodexDirectWorker:
@@ -263,6 +304,7 @@ class CodexDirectWorker:
         resume_session_id: str | None = None,
         extra_args: tuple[str, ...] = (),
         timeout_s: float = _DEFAULT_TIMEOUT_S,
+        first_output_timeout_s: float = _DEFAULT_FIRST_OUTPUT_TIMEOUT_S,
         mission_id: str = "",
         **_unused: Any,
     ) -> AsyncIterator[Any]:
@@ -351,20 +393,54 @@ class CodexDirectWorker:
                 worker_id, exc,
             )
 
+        # First-output gate + preserve-partial-work on a hard-cap timeout
+        # (mirrors ClaudeDirectWorker). codex that emits ZERO bytes within the
+        # startup window is killed for a fast retry; once streaming has begun, a
+        # hard-cap timeout PRESERVES first_chunk so the item.completed /
+        # file_change events survive parsing (the deliverable itself is already
+        # on disk in the worktree, captured by git after the worker exits).
+        # `timed_out` is the STRUCTURED signal the orchestrator reads — not the
+        # result-text wording — so a timed-out codex run that left a real diff is
+        # GRADED, not discarded as task_error (live bug, mission 019eacb8).
+        timed_out = False
+        timeout_message = ""
+        stderr_bytes = b""
+        first_chunk = b""
+        assert proc.stdout is not None  # noqa: S101 — PIPE always created above
         try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout_s + 30.0
+            first_chunk = await asyncio.wait_for(
+                proc.stdout.read(_FIRST_READ_BYTES),
+                timeout=first_output_timeout_s,
             )
         except asyncio.TimeoutError:
+            timed_out = True
+            timeout_message = (
+                f"CodexDirectWorker: subprocess produced no output within "
+                f"{first_output_timeout_s:.0f}s startup timeout (codex emitted "
+                f"zero bytes); killed for retry"
+            )
+
+        if not timed_out:
+            try:
+                rest_stdout, stderr_bytes = await asyncio.wait_for(
+                    proc.communicate(), timeout=timeout_s + 30.0
+                )
+            except asyncio.TimeoutError:
+                timed_out = True
+                rest_stdout = b""
+                timeout_message = (
+                    f"CodexDirectWorker: subprocess wait_for timeout "
+                    f"({timeout_s + 30.0}s) after streaming started"
+                )
+            stdout_bytes = first_chunk + rest_stdout
+
+        if timed_out:
             with suppress(ProcessLookupError):
                 proc.kill()
             with suppress(Exception):
                 await asyncio.wait_for(proc.wait(), timeout=5.0)
-            stdout_bytes = b""
-            stderr_bytes = (
-                f"CodexDirectWorker: subprocess wait_for timeout "
-                f"({timeout_s + 30.0}s)"
-            ).encode("utf-8")
+            stdout_bytes = first_chunk  # PRESERVE partial output, never discard
+            stderr_bytes = timeout_message.encode("utf-8")
 
         try:
             stdout_log.write_bytes(stdout_bytes)
@@ -461,6 +537,12 @@ class CodexDirectWorker:
                 continue
             if t == "turn.completed":
                 terminal_kind = "success"
+                # codex ran successfully -> its ChatGPT login is alive; clear any
+                # stale needs_reauth flag so the session uses codex natively again
+                # (e.g. after the user ran `codex login`).
+                from jarvis.codex_auth_state import clear_codex_needs_reauth
+
+                clear_codex_needs_reauth()
                 usage = obj.get("usage", {}) or {}
                 if isinstance(usage, dict):
                     in_tok = usage.get("input_tokens") or 0
@@ -475,25 +557,47 @@ class CodexDirectWorker:
         wall_ms = int((time.perf_counter() - t0) * 1000)
         exit_code = proc.returncode if proc.returncode is not None else -1
 
-        # Codex ChatGPT login dead → fall back to the Claude Max worker so the
-        # mission COMPLETES instead of failing (2026-06-08 "all sub-missions fail
-        # on codex" incident — expired token, `codex status` still lied
-        # connected=True). Guarded to codex having done NO real work (no tool use
-        # / file change) so delivered work is never discarded. We intentionally
-        # do NOT yield the codex error event: _spawn_worker_collect only sets
-        # worker_error on an is_error event, so skipping it lets the claude result
-        # drive the outcome; the git diff is captured from the worktree after.
-        if (
-            terminal_kind == "error"
-            and not any_tool_use
-            and _codex_error_is_auth_expired(terminal_message or "")
-        ):
-            logger.warning(
-                "CodexDirectWorker[%s]: codex ChatGPT login expired (%r) — "
-                "falling back to the Claude Max OAuth worker so the mission "
-                "completes. Run `codex login` to use codex again.",
-                worker_id, (terminal_message or "")[:160],
-            )
+        # Codex temporarily can't run → fall back to the Claude Max worker so the
+        # mission COMPLETES instead of failing. Two cases, both guarded to codex
+        # having done NO real work (so delivered work is never discarded):
+        #   * login DEAD (400/401/"log in again") — needs `codex login`; flag the
+        #     session so we don't re-spawn the dead provider every mission
+        #     (2026-06-08 incident).
+        #   * usage/rate/credit CAP ("hit your usage limit … try again at 7:40 PM")
+        #     — login is fine, codex just resumes once the cap resets; fall back
+        #     but do NOT flag, so the next mission retries codex automatically
+        #     (2026-06-09: a re-authed codex hit its cap and failed task_error).
+        # We intentionally do NOT yield the codex error event: _spawn_worker_collect
+        # only sets worker_error on an is_error event, so skipping it lets the
+        # claude result drive the outcome; the git diff is captured after.
+        _err = terminal_message or ""
+        _auth_dead = (
+            terminal_kind == "error" and not any_tool_use
+            and _codex_error_is_auth_expired(_err)
+        )
+        _usage_capped = (
+            terminal_kind == "error" and not any_tool_use
+            and not _auth_dead
+            and _codex_error_is_usage_limited(_err)
+        )
+        if _auth_dead or _usage_capped:
+            if _auth_dead:
+                logger.warning(
+                    "CodexDirectWorker[%s]: codex ChatGPT login expired (%r) — "
+                    "falling back to the Claude Max OAuth worker so the mission "
+                    "completes. Run `codex login` to use codex again.",
+                    worker_id, _err[:160],
+                )
+                from jarvis.codex_auth_state import mark_codex_needs_reauth
+
+                mark_codex_needs_reauth()
+            else:
+                logger.warning(
+                    "CodexDirectWorker[%s]: codex usage/rate limit hit (%r) — "
+                    "falling back to the Claude Max OAuth worker so the mission "
+                    "completes. codex resumes automatically once the cap resets.",
+                    worker_id, _err[:160],
+                )
             from .claude_direct_worker import ClaudeDirectWorker
 
             async for ev in ClaudeDirectWorker().spawn(
@@ -514,15 +618,20 @@ class CodexDirectWorker:
             return
 
         final = ClaudeResult(
-            subtype="success" if terminal_kind == "success" and exit_code == 0
+            subtype="success"
+            if terminal_kind == "success" and exit_code == 0 and not timed_out
             else "error_during_execution",
-            is_error=(terminal_kind != "success" or exit_code != 0),
+            is_error=(timed_out or terminal_kind != "success" or exit_code != 0),
+            timed_out=timed_out,
             cost_usd=cost_usd,
             num_turns=None,
             session_id=session_id,
             duration_ms=wall_ms,
             result=str(
-                terminal_message
+                # On timeout the message wins (carries "timeout" + the structured
+                # timed_out flag); otherwise the parsed terminal message / text.
+                timeout_message
+                or terminal_message
                 or ("\n".join(text_acc) if text_acc else "")
                 or f"codex exited with code {exit_code}"
             ),

@@ -132,30 +132,52 @@ class GlobalHotkeysBackend:
         # may have left these combos in the shared singleton (historically the
         # broken __aexit__ never cleaned them up). Pre-removing makes re-entry
         # safe — otherwise register_hotkeys raises "already registered" and
-        # EVERY hotkey dies. Removing an unregistered combo is a no-op.
-        try:
-            gh.remove_hotkeys(combo_strings)
-        except Exception:  # noqa: BLE001 — best-effort cleanup of stale state
-            log.debug("Pre-register cleanup of stale hotkeys skipped",
-                      exc_info=True)
+        # EVERY hotkey dies. Removing an unregistered combo is a no-op. Done
+        # per-combo so one un-removable combo cannot abort the cleanup of the
+        # others (the real remove_hotkeys raises on an unknown key mid-list).
+        for cs in combo_strings:
+            try:
+                gh.remove_hotkeys([cs])
+            except Exception:  # noqa: BLE001 — best-effort cleanup of stale state
+                log.debug("Pre-register cleanup of %r skipped", cs, exc_info=True)
 
-        # Guard registration: an unrecoverable failure (invalid combo, internal
-        # global_hotkeys error) must NOT propagate — that would crash the whole
-        # voice pipeline at ``async with HotkeyTrigger(...)``. Degrade instead.
-        try:
-            gh.register_hotkeys(list(bindings))
-        except Exception:  # noqa: BLE001 — degrade, never crash the pipeline
+        # Register each binding INDIVIDUALLY. The old single
+        # ``register_hotkeys(all)`` was all-or-nothing: one unknown key name
+        # (e.g. a numpad combo emitted under the wrong token) raised and took
+        # EVERY hotkey down with it — the "I set a key and now nothing works"
+        # report. Now a bad combo is skipped and logged; the rest stay live. An
+        # exception must never propagate — it would crash the whole voice
+        # pipeline at ``async with HotkeyTrigger(...)`` — so we degrade instead.
+        registered_rows: list[list] = []
+        registered_strings: list[str] = []
+        for row in bindings:
+            try:
+                gh.register_hotkeys([row])
+            except Exception:  # noqa: BLE001 — skip the bad combo, keep the rest
+                log.error(
+                    "Hotkey combo %r could not be registered (unknown key / "
+                    "invalid combo) — skipping it; the other hotkeys stay active.",
+                    row[0],
+                    exc_info=True,
+                )
+                continue
+            registered_rows.append(row)
+            registered_strings.append(row[0])
+
+        if not registered_rows:
+            # Package present but NOT ONE combo registered — degrade like a hard
+            # failure so the checker never starts on an empty registration;
+            # voice still works via wake word / mascot click.
             log.error(
-                "register_hotkeys failed — hotkeys disabled for this session; "
-                "voice still works via wake word / mascot click.",
-                exc_info=True,
+                "No hotkey combo could be registered — hotkeys disabled for "
+                "this session; voice still works via wake word / mascot click."
             )
             self._gh = None
             return
 
         self._gh = gh
-        self._registered = list(bindings)
-        self._combo_strings = combo_strings
+        self._registered = registered_rows
+        self._combo_strings = registered_strings
 
     def start(self) -> None:
         """Start the single shared checker (only on a successful register)."""
