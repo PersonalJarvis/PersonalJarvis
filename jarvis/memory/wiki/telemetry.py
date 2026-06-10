@@ -54,6 +54,11 @@ DEFAULT_COUNTERS: tuple[str, ...] = (
     "session_rollups_failed",
     "wiki_pages_created",
     "wiki_pages_updated",
+    # D2 (2026-06): session-page feed retirement + conversation-only feed.
+    "session_rollups_wiki_write_disabled",
+    "wiki_links_refused_dangling",
+    "wiki_writes_blocked_pii",
+    "wiki_writes_blocked_truncated",
 )
 
 

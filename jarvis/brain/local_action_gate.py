@@ -118,15 +118,72 @@ _GUI_VERB_RE = re.compile(
     re.I,
 )
 
+# Broader Computer-Use commands the narrow GUI-verb + compound-open patterns
+# miss but that are unambiguously "operate the desktop" — they MUST reach the
+# computer-use loop deterministically, never depend on the LLM talker calling
+# computer_use. Live regression 2026-06-09: the talker (brain.primary=codex, CLI
+# OAuth path) DROPS ALL TOOLS and can never emit a tool_call, so every CU task
+# that fell to it went silent — ~30% of common CU commands (navigate /
+# screenshot / window-ops / drag). Each pattern is high-precision; how-to
+# questions ("wie navigiere ich…") are excluded in _looks_like_desktop_control
+# so they stay normal brain answers. Inputs are pre-_normalize'd (umlauts → ascii:
+# "schließ" → "schliess", "nächste" → "naechste", "vergrößer" → "vergroesser").
+# Only directional prepositions (zu/auf/nach/in) — "navigiere DURCH das Menü" is
+# deliberately excluded (too close to an explain/walk-me-through request).
+_NAVIGATE_RE = re.compile(r"\bnavigier\w*\s+(?:zu|auf|nach|in)\b", re.IGNORECASE)
+# Screenshot — verb-anchored on BOTH sides so a TAKE imperative matches
+# ("mach/nimm/erstell/knips einen Screenshot", "Screenshot machen") but an
+# informational or send/show mention does NOT ("ich habe einen Screenshot
+# gemacht", "schick mir einen Screenshot", "zeig den letzten Screenshot") —
+# review finding 2026-06-09. "gemacht" never matches \bmach\w* (no word boundary
+# before "mach" inside "gemacht").
+_SCREENSHOT_RE = re.compile(
+    r"\b(?:mach|nimm|erstell|knips|capture|take|grab)\w*\b[\w\s]{0,14}?"
+    r"\b(?:screenshot|bildschirmfoto|bildschirmaufnahme)\b"
+    r"|\b(?:screenshot|bildschirmfoto|bildschirmaufnahme)\b[\w\s]{0,10}?"
+    r"\b(?:mach|nimm|erstell|knips)\w*",
+    re.IGNORECASE,
+)
+# "schließ/minimier/maximier … (das) Fenster/Tab/App" — the verb ALONE is too
+# ambiguous ("schließ die Tür"), so a desktop-context noun within ~18 chars is
+# required. Plus tab-switching ("wechsel zum nächsten Tab", "nächster Tab").
+_WINDOW_OP_RE = re.compile(
+    r"\b(?:schliess|minimier|maximier|verklein|vergroesser)\w*\b[\w\s]{0,18}?"
+    r"\b(?:fenster|tab|app|programm|browser|seite|dialog)\b"
+    r"|\bwechsel\w*\s+(?:zu|auf|zum|zur|in|den|das|die|naechste[nr]?)\b[\w\s]{0,12}?"
+    r"\b(?:tab|fenster|app|programm)\b"
+    r"|\b(?:naechst|vorherig|letzt|erst)\w*\s+tab\b",
+    re.IGNORECASE,
+)
+# Drag / move — "zieh"/"verschieb"/"drag" are common words, so a desktop object
+# or a direction is required to avoid "zieh dich an".
+_DRAG_RE = re.compile(
+    r"\b(?:zieh|drag|verschieb)\w*\b[\w\s]{0,20}?"
+    r"\b(?:fenster|datei|icon|maus|cursor|element|nach\s+(?:links|rechts|oben|unten))\b",
+    re.IGNORECASE,
+)
+
 
 def _looks_like_desktop_control(text: str) -> bool:
     """True for GUI-manipulation commands that should drive the computer-use loop.
 
-    Conservative on purpose: only fires for a compound open-and-operate command
-    or an unambiguous GUI verb, so plain "oeffne chrome" stays the fast DIRECT
-    path and "schreib mir ein Gedicht" stays a normal brain answer.
+    Conservative on purpose: a compound open-and-operate command, an unambiguous
+    GUI verb (klick/scroll/tippe/…), or a broader desktop-control verb
+    (navigate / screenshot / window-op / drag) — so plain "oeffne chrome" stays
+    the fast DIRECT path and "schreib mir ein Gedicht" stays a normal brain
+    answer. The broader verbs are guarded against how-to questions so
+    "wie navigiere ich…" / "wie mache ich einen Screenshot" stay brain answers.
     """
-    return bool(_COMPOUND_OPEN_CONTROL_RE.match(text) or _GUI_VERB_RE.search(text))
+    if _COMPOUND_OPEN_CONTROL_RE.match(text) or _GUI_VERB_RE.search(text):
+        return True
+    if _OPEN_INSTRUCTIONAL_RE.search(text):
+        return False
+    return bool(
+        _NAVIGATE_RE.search(text)
+        or _SCREENSHOT_RE.search(text)
+        or _WINDOW_OP_RE.search(text)
+        or _DRAG_RE.search(text)
+    )
 
 
 # Open / launch verbs in ANY conjugation. Inputs are pre-normalised
@@ -139,6 +196,23 @@ _OPEN_VERB_RE = re.compile(
 )
 # Separable verb "mach … auf" (particle trails the object): "mach mir Spotify auf".
 _MACH_AUF_RE = re.compile(r"\bmach(?:e|st|t)?\b[\w\s]*\bauf\b", re.IGNORECASE)
+# A coordinating "und" splits an open command from a follow-up action
+# ("…Spotify öffnen UND Shape of You spielen") → the request is multi-step and
+# belongs on the computer-use loop, not a single DIRECT open. Word-boundaried so
+# it never fires inside a token. Operates on the normalised (transliterated)
+# utterance, where "und" is stable.
+_AND_RE = re.compile(r"\bund\b", re.IGNORECASE)
+# Negated open ("ich will Spotify NICHT öffnen", "bitte KEIN Chrome starten",
+# "öffne Discord lieber nicht") must NEVER launch. The verb-at-end fallback below
+# scans the WHOLE utterance for a known app name, so without this guard it would
+# happily launch the very app the user said NOT to open (review finding
+# 2026-06-09). High-precision, low-cost: a negation token anywhere in the
+# utterance suppresses the deterministic launch; the turn then falls to the brain
+# (which, with clarify off by default, does not nag the user). Deliberately NOT
+# folded into ``is_open_app_intent`` — that predicate is also the force-spawn
+# guard, and a negated open must still count as an open there (to stay OFF the
+# sub-agent worker path), just not trigger an actual launch here.
+_OPEN_NEGATION_RE = re.compile(r"\bnicht\b|\bkein\w*\b|\bniemals\b", re.IGNORECASE)
 # Signals that the request is NOT a plain desktop app-open but heavy worker /
 # external-system work, which a sandboxed worker (not computer-use) owns.
 _NOT_OPEN_APP_RE = re.compile(
@@ -202,6 +276,27 @@ _APP_ALIASES = {
     "terminal": "wt",
     "wt": "wt",
     "spotify": "spotify",
+    # Chat / communication + media apps a voice user opens by name. Every value
+    # is already in open_app's KNOWN_APPS and resolvable by app_resolver
+    # (App Paths / PATH / the Start Menu .lnk fallback for Squirrel installs
+    # like Discord/Slack, added 2026-06-09). Before this, "öffne Discord" was
+    # absent here, fell through to the brain, and the router opened it via
+    # computer_use but — producing no narration — was answered with the
+    # clarifying question "Wie meinst du das genau?" instead of just launching
+    # it on the fast deterministic path (live bug 2026-06-09).
+    "discord": "discord",
+    "slack": "slack",
+    "telegram": "telegram",
+    "whatsapp": "whatsapp",
+    "whats app": "whatsapp",
+    "signal": "signal",
+    "teams": "teams",
+    "microsoft teams": "teams",
+    "zoom": "zoom",
+    "skype": "skype",
+    "vlc": "vlc",
+    "steam": "steam",
+    "outlook": "outlook",
 }
 
 # Filler words / articles voice users sprinkle between the verb and the app
@@ -498,14 +593,6 @@ def match_local_action(
     if direct is not None:
         return direct
 
-    # NOTE: a non-alias open command ("…dass du mir Hermes Agent öffnest") is
-    # deliberately NOT routed here to the deterministic dispatch_to_harness
-    # (screenshot) computer-use path — live 2026-06-08 that path stalled (no [cu]
-    # steps, 120s TTS-ceiling abort). Open-app intents fall through to the brain's
-    # proven `computer-use` tool instead; the force-spawn guard in
-    # BrainManager._should_force_spawn (is_open_app_intent) keeps them off the
-    # sub-agent path. See is_open_app_intent.
-
     if _matches_visual_target(normalized):
         return LocalActionPlan(
             mode=LocalActionMode.COMPUTER_USE,
@@ -525,6 +612,40 @@ def match_local_action(
             prompt=original,
         )
 
+    # Robust open-app fallback (live bug 2026-06-09 17:36): an open-app intent in
+    # ANY phrasing the strict verb-first gates above missed — verb-at-end +
+    # filler-heavy ("Kannst du bitte für mich einmal mein Spotify öffnen?",
+    # "Spotify aufmachen", "öffnest du mir mal Discord"). That utterance matched
+    # no DIRECT pattern, fell to the router LLM, which produced no speech (it did
+    # not even call computer_use) → "Wie meinst du das genau?" and Spotify NEVER
+    # opened. Execute deterministically instead, cross-platform (open_app →
+    # app_resolver branches per OS), with no LLM in the loop:
+    #   • "…öffnen UND <do more>"  → multi-step → computer-use offload (same path
+    #     as the verb-first compounds above) so the follow-up isn't dropped.
+    #   • known app, single step    → instant DIRECT open_app.
+    #   • app NOT in the known set  → fall through to the brain (unchanged): the
+    #     screenshot loop would have to hunt an unknown name on screen, the path
+    #     that stalled live 2026-06-08. The force-spawn guard (is_open_app_intent)
+    #     still keeps such a turn off the sub-agent path.
+    if is_open_app_intent(original) and not _OPEN_NEGATION_RE.search(normalized):
+        if _AND_RE.search(normalized):
+            # "...öffnen und <do more>" → multi-step. (A benign "und zwar …" also
+            # lands here; acceptable — the CU loop still opens the app and handles
+            # the qualifier, at the cost of one screenshot cycle.)
+            return LocalActionPlan(
+                mode=LocalActionMode.COMPUTER_USE,
+                harness=HARNESS_NAME,
+                prompt=original,
+            )
+        # Gate already confirmed by is_open_app_intent (+ negation excluded) above,
+        # so a bare app mention in a non-open sentence can never reach here.
+        app = _extract_known_app(normalized)
+        if app is not None:
+            return LocalActionPlan(
+                mode=LocalActionMode.DIRECT,
+                tool_calls=(LocalToolCall(name="open_app", args={"app_name": app}),),
+            )
+
     return None
 
 
@@ -537,6 +658,28 @@ def _match_scripted_local_plan(text: str) -> LocalActionPlan | None:
             tool_calls=_open_terminal_calls(terminal_count),
         )
 
+    return None
+
+
+def _extract_known_app(text: str) -> str | None:
+    """Return the canonical app for the FIRST known app name in a normalised
+    open-app utterance, else ``None``.
+
+    Scans 2-word then 1-word windows so a multi-word alias ("microsoft teams",
+    "windows terminal", "whats app", "google chrome") wins over a 1-word
+    sub-match. This catches the verb-at-end and filler-heavy phrasings the strict
+    verb-first ``_DIRECT_PATTERNS`` miss ("Kannst du bitte für mich einmal mein
+    Spotify öffnen?", "Spotify aufmachen", "öffnest du mir mal Discord"). Callers
+    MUST first confirm :func:`is_open_app_intent` so a bare app mention in a
+    non-open sentence ("ich höre Spotify gern") never launches anything.
+    """
+    tokens = [t for t in text.split() if t]
+    for window in (2, 1):
+        for i in range(len(tokens) - window + 1):
+            phrase = " ".join(tokens[i:i + window])
+            app = _APP_ALIASES.get(phrase)
+            if app is not None:
+                return app
     return None
 
 

@@ -3,10 +3,11 @@ import { ArrowLeft, Loader2, Share2 } from "lucide-react";
 
 import { ViewHeader } from "@/views/ChatsView";
 import { useT } from "@/i18n";
+import { cn } from "@/lib/utils";
 import { BrandIcon } from "./BrandIcon";
 import { SocialTile, type SocialGroup } from "./SocialTile";
 import { SocialLinkRow } from "./SocialLinkRow";
-import { platformLabel } from "./brands";
+import { glyphIsWordmark, platformLabel } from "./brands";
 import { listSocials, type SocialEntry } from "./api";
 
 /**
@@ -133,7 +134,15 @@ function PlatformDetail({ group, onBack }: { group: SocialGroup; onBack: () => v
           <ArrowLeft className="h-4 w-4" />
         </button>
         <BrandIcon platform={group.platform} size={40} />
-        <h3 className="font-display text-lg font-semibold tracking-tight">
+        {/* When the brand glyph already is the wordmark (X), keep the heading
+            for screen readers and document structure but hide it visually — the
+            icon beside an "X" text label otherwise reads as two X logos. */}
+        <h3
+          className={cn(
+            "font-display text-lg font-semibold tracking-tight",
+            glyphIsWordmark(group.platform) && "sr-only",
+          )}
+        >
           {platformLabel(group.platform)}
         </h3>
       </div>

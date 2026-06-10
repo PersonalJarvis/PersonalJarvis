@@ -193,3 +193,72 @@ describe("SkillsView — delete", () => {
     expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
   });
 });
+
+describe("SkillsView — multi-select bulk delete", () => {
+  it("selects multiple skills and deletes them in one confirmed batch", async () => {
+    const calls = installFetchMock({
+      "GET /api/skills": () => ({
+        body: {
+          skills: [
+            skill({ name: "alpha" }),
+            skill({ name: "beta" }),
+            skill({ name: "gamma" }),
+          ],
+          total: 3,
+        },
+      }),
+      "POST /api/skills/bulk-delete": () => ({
+        body: { deleted: ["alpha", "beta"], failed: [] },
+      }),
+    });
+    renderView();
+
+    await screen.findByText("alpha");
+
+    // Enter selection mode, then check two skills.
+    fireEvent.click(screen.getByRole("button", { name: "Select" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /alpha/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /beta/i }));
+
+    // The bulk action reflects the count and opens a confirm dialog first.
+    fireEvent.click(screen.getByRole("button", { name: /Delete \(2\)/ }));
+    const dialog = await screen.findByRole("dialog");
+    expect(calls.some((c) => c.url.endsWith("/bulk-delete"))).toBe(false);
+
+    // One confirmation deletes the whole batch in a single request.
+    fireEvent.click(within(dialog).getByRole("button", { name: /Delete \(2\)/ }));
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (c) =>
+            c.method === "POST" && c.url.endsWith("/api/skills/bulk-delete"),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it("select-all checks every deletable skill but never a built-in", async () => {
+    installFetchMock({
+      "GET /api/skills": () => ({
+        body: {
+          skills: [
+            skill({ name: "alpha" }),
+            skill({ name: "locked", is_builtin: true, state: "active" }),
+            skill({ name: "beta" }),
+          ],
+          total: 3,
+        },
+      }),
+    });
+    renderView();
+
+    await screen.findByText("alpha");
+    fireEvent.click(screen.getByRole("button", { name: "Select" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /select all/i }));
+
+    // Two user skills selected, the built-in excluded.
+    expect(
+      screen.getByRole("button", { name: /Delete \(2\)/ }),
+    ).toBeTruthy();
+  });
+});

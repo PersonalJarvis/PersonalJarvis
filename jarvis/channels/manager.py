@@ -20,6 +20,7 @@ Lifecycle:
     ``start_all()`` starts all channels but collects errors individually.
     ``stop_all()`` is symmetric and idempotent.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -44,7 +45,7 @@ class ChannelContext:
     """Dependencies that channels can receive upon instantiation."""
 
     bus: EventBus
-    friend_registry: "FriendRegistry | None" = None
+    friend_registry: FriendRegistry | None = None
     config: dict[str, Any] = field(default_factory=dict)
 
 
@@ -99,6 +100,23 @@ class ChannelManager:
         return sorted(self._started)
 
     # ------------------------------------------------------------------
+    # Context (mutable so a live reload can pick up fresh config)
+    # ------------------------------------------------------------------
+
+    @property
+    def context(self) -> ChannelContext:
+        return self._ctx
+
+    def set_context(self, context: ChannelContext) -> None:
+        """Swap the context used to instantiate channels from now on.
+
+        Existing cached instances are untouched; call :meth:`reload` to rebuild
+        a single channel against the new context (used by the marketplace
+        connect flow to apply a freshly written config without a restart).
+        """
+        self._ctx = context
+
+    # ------------------------------------------------------------------
     # Instantiation
     # ------------------------------------------------------------------
 
@@ -139,6 +157,18 @@ class ChannelManager:
             log.error("Channel '%s' start failed: %s", name, exc)
             raise ChannelStartError(f"Channel '{name}' konnte nicht starten: {exc}") from exc
 
+    async def reload(self, name: str) -> None:
+        """Stop, drop the cached instance, and start ``name`` afresh.
+
+        Re-instantiates from the current context, so a config swapped in via
+        :meth:`set_context` takes effect. Raises :class:`ChannelStartError` if
+        the fresh start fails (same contract as :meth:`start`).
+        """
+        await self.stop(name)
+        self._instances.pop(name, None)
+        self._start_errors.pop(name, None)
+        await self.start(name)
+
     async def start_all(self) -> dict[str, str]:
         names = self.available()
         if not names:
@@ -174,6 +204,4 @@ class ChannelManager:
         names = list(self._started)
         if not names:
             return
-        await asyncio.gather(
-            *(self.stop(n) for n in names), return_exceptions=True
-        )
+        await asyncio.gather(*(self.stop(n) for n in names), return_exceptions=True)

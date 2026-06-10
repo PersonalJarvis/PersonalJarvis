@@ -50,10 +50,12 @@ class FakeBrain:
         *,
         sleep_s: float = 0.0,
         raise_exc: BaseException | None = None,
+        finish_reason: str = "stop",
     ) -> None:
         self.response_text = response_text
         self.sleep_s = sleep_s
         self.raise_exc = raise_exc
+        self.finish_reason = finish_reason
         self.received_requests: list[BrainRequest] = []
 
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
@@ -63,7 +65,10 @@ class FakeBrain:
         if self.raise_exc is not None:
             raise self.raise_exc
         yield BrainDelta(content=self.response_text)
-        yield BrainDelta(finish_reason="stop", usage={"input_tokens": 10, "output_tokens": 20})
+        yield BrainDelta(
+            finish_reason=self.finish_reason,
+            usage={"input_tokens": 10, "output_tokens": 20},
+        )
 
     def estimate_cost(self, req: BrainRequest) -> float:  # pragma: no cover
         return 0.0
@@ -607,32 +612,74 @@ async def test_propose_updates_uses_default_registry_if_none_injected(
 # ---------------------------------------------------------------------
 
 
-def test_resolve_provider_and_model_fallbacks() -> None:
-    """Both fallbacks fire as documented in the briefing."""
+def test_resolve_empty_provider_empty_model_uses_cheap_router_model_gemini() -> None:
+    """Empty provider + empty model => brain.primary + its cheap router model.
+
+    Even when the provider's brain.providers entry lists a frontier chat
+    model, the resolver must NOT use that — it picks the cheap router-tier
+    model instead.
+    """
 
     from jarvis.memory.wiki.curator_llm import _resolve_provider_and_model
 
-    cfg = _make_config(primary="gemini")
+    # brain.providers["gemini"] has the frontier model set, but the
+    # resolver should ignore it and return the cheap router-tier model.
+    cfg = _make_config(
+        primary="gemini",
+        providers={"gemini": BrainProviderConfig(model="gemini-3.1-pro-preview")},
+    )
     provider, model = _resolve_provider_and_model(cfg.memory.wiki.curator, cfg)
     assert provider == "gemini"
     assert model == "gemini-3-flash-preview"
 
 
-def test_resolve_provider_and_model_explicit_overrides() -> None:
-    """Non-empty fields skip the fallback."""
+def test_resolve_claude_api_primary_uses_haiku_not_opus() -> None:
+    """claude-api primary + empty model resolves to Haiku, not Opus."""
 
     from jarvis.memory.wiki.curator_llm import _resolve_provider_and_model
 
     cfg = _make_config(
-        primary="gemini", curator_provider="claude-api", curator_model="claude-opus-4-7",
+        primary="claude-api",
+        providers={"claude-api": BrainProviderConfig(model="claude-opus-4-8")},
     )
     provider, model = _resolve_provider_and_model(cfg.memory.wiki.curator, cfg)
     assert provider == "claude-api"
-    assert model == "claude-opus-4-7"
+    assert model == "claude-haiku-4-5-20251001"
 
 
-def test_resolve_provider_returns_none_model_when_unknown() -> None:
-    """When ``brain.providers[<name>]`` is missing, model resolves to ``None``."""
+def test_resolve_explicit_curator_model_wins() -> None:
+    """An explicit curator model override beats the cheap router-tier model."""
+
+    from jarvis.memory.wiki.curator_llm import _resolve_provider_and_model
+
+    cfg = _make_config(
+        primary="gemini",
+        curator_provider="claude-api",
+        curator_model="claude-opus-4-8",
+    )
+    provider, model = _resolve_provider_and_model(cfg.memory.wiki.curator, cfg)
+    assert provider == "claude-api"
+    assert model == "claude-opus-4-8"
+
+
+def test_resolve_explicit_provider_empty_model_uses_cheap_router_model() -> None:
+    """Explicit provider + empty model => that provider's cheap router model."""
+
+    from jarvis.memory.wiki.curator_llm import _resolve_provider_and_model
+
+    cfg = _make_config(
+        primary="gemini",
+        curator_provider="grok",
+        curator_model="",
+        providers={"grok": BrainProviderConfig(model="grok-4-frontier")},
+    )
+    provider, model = _resolve_provider_and_model(cfg.memory.wiki.curator, cfg)
+    assert provider == "grok"
+    assert model == "grok-4.3"
+
+
+def test_resolve_unknown_provider_returns_none_model() -> None:
+    """An unknown provider (not in the cheap-model map) resolves model to None."""
 
     from jarvis.memory.wiki.curator_llm import _resolve_provider_and_model
 
@@ -645,3 +692,108 @@ def test_resolve_provider_returns_none_model_when_unknown() -> None:
     provider, model = _resolve_provider_and_model(cfg.memory.wiki.curator, cfg)
     assert provider == "never-heard-of-it"
     assert model is None
+
+
+# ---------------------------------------------------------------------
+# _cheap_model_for — live-lookup vs. local fallback map
+# ---------------------------------------------------------------------
+
+
+def test_cheap_model_for_uses_local_map_when_brain_manager_unimportable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the lazy ``jarvis.brain.manager`` import fails, the local map wins.
+
+    Forces the ``except`` branch in ``_cheap_model_for`` by replacing the
+    module entry in ``sys.modules`` with ``None`` (a sentinel that makes
+    ``from jarvis.brain.manager import ...`` raise ``ImportError``). The
+    returned value must come from ``_CHEAP_MODEL_FALLBACK``.
+    """
+
+    import sys
+
+    from jarvis.memory.wiki.curator_llm import _CHEAP_MODEL_FALLBACK, _cheap_model_for
+
+    # ``None`` in sys.modules makes the import statement raise ImportError.
+    # monkeypatch restores the previous state automatically after the test.
+    monkeypatch.setitem(sys.modules, "jarvis.brain.manager", None)
+
+    assert _cheap_model_for("gemini") == "gemini-3-flash-preview"
+    assert _cheap_model_for("gemini") == _CHEAP_MODEL_FALLBACK["gemini"]
+    # Unknown providers still degrade to ``None`` even on the fallback path.
+    assert _cheap_model_for("never-heard-of-it") is None
+
+
+def test_cheap_model_fallback_map_matches_live_router_defaults() -> None:
+    """Drift guard: every fallback entry must match the live router default.
+
+    The local ``_CHEAP_MODEL_FALLBACK`` is only a last-resort mirror of
+    ``jarvis.brain.manager.get_tier_default_model("router", provider)``. If
+    a router default changes upstream, this test fails so the fallback map
+    cannot silently drift. Skips when ``jarvis.brain.manager`` is
+    unimportable (minimal install).
+    """
+
+    from jarvis.memory.wiki.curator_llm import _CHEAP_MODEL_FALLBACK
+
+    try:
+        from jarvis.brain.manager import get_tier_default_model
+    except Exception:  # noqa: BLE001
+        pytest.skip("jarvis.brain.manager unimportable in this environment")
+
+    for provider, fallback_model in _CHEAP_MODEL_FALLBACK.items():
+        live = get_tier_default_model("router", provider)
+        assert live == fallback_model, (
+            f"_CHEAP_MODEL_FALLBACK[{provider!r}]={fallback_model!r} drifted "
+            f"from live router default {live!r}"
+        )
+
+
+# ---------------------------------------------------------------------
+# Truncation guard — length-capped generations are discarded (Wave-1)
+# ---------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_propose_updates_rejects_length_capped_response(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A response that hit the output-token cap is discarded, not persisted."""
+
+    cfg = _make_config()
+    # Well-formed JSON array, but the stream reports it was cut off at the cap.
+    brain = FakeBrain(_ok_response(), finish_reason="length")
+    registry = FakeRegistry(brain)
+
+    llm = WikiCuratorLLM(
+        config=cfg,
+        schema_path=_write_schema(tmp_path),
+        registry=registry,
+    )
+    caplog.set_level("WARNING")
+    result = await llm.propose_updates(
+        "real source text", "label", repo=FakeRepo(), vault=FakeVault(),
+    )
+    assert result == []
+    assert any("output-token cap" in rec.message.lower() for rec in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_propose_updates_accepts_naturally_stopped_response(
+    tmp_path: Path,
+) -> None:
+    """A complete response (finish_reason='stop') still writes normally."""
+
+    cfg = _make_config()
+    brain = FakeBrain(_ok_response(), finish_reason="stop")
+    registry = FakeRegistry(brain)
+
+    llm = WikiCuratorLLM(
+        config=cfg,
+        schema_path=_write_schema(tmp_path),
+        registry=registry,
+    )
+    updates = await llm.propose_updates(
+        "real source text", "label", repo=FakeRepo(), vault=FakeVault(),
+    )
+    assert len(updates) == 1

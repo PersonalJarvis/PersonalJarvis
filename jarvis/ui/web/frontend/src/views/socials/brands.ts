@@ -83,3 +83,13 @@ export function platformLabel(platform: string): string {
   if (platform === "website") return "Website / Other";
   return platform.charAt(0).toUpperCase() + platform.slice(1);
 }
+
+/**
+ * Whether a platform's glyph already *is* its name, so a text label set beside
+ * the icon would read as a duplicate. X's mark is the letter "X", so the "X"
+ * wordmark next to the X glyph looks like two logos; every other brand mark is
+ * a symbol distinct from its name, where the label still earns its place.
+ */
+export function glyphIsWordmark(platform: string): boolean {
+  return platform.toLowerCase() === "x";
+}

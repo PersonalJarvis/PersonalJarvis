@@ -125,7 +125,9 @@ export type WorkerKilledReason =
   | "user"
   | "budget"
   | "parent_cancelled"
-  | "injection_detected";
+  | "injection_detected"
+  | "path_guard"
+  | "worker_error";
 
 export interface WorkerKilled extends BasePayload {
   event_type: "WorkerKilled";

@@ -9,7 +9,7 @@ Owned by Instance A. See ``docs/phase-b1-wiki-curator/README.md`` Part 4.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -58,6 +58,7 @@ class WriteResult:
     skipped_due_to_recent_edit: list[Path]  # the 30s-lock case
     failed_validation: list[Path]           # pages that the writer rolled back
     backup_path: Path                       # the tar of the pre-write state
+    blocked_pii: list[Path] = field(default_factory=list)  # refused: secret/PII body (AP-2)
 
 
 @runtime_checkable

@@ -22,13 +22,18 @@ belongs in a worker tool set (AP-5/AP-14).
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import Any
 
 from jarvis.brain.local_action_gate import HARNESS_NAME
 from jarvis.core.bus import EventBus
+from jarvis.core.events import AnnouncementRequested
 from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.harness.manager import HarnessManager
 from jarvis.plugins.tool.dispatch_to_harness import DispatchToHarnessTool
+
+log = logging.getLogger(__name__)
 
 #: Default ceiling for a single computer-use run, in seconds. A multi-step GUI
 #: loop (open app → screenshot → click/type → verify) needs a generous budget;
@@ -80,17 +85,80 @@ class ComputerUseTool:
             manager=manager,
             max_output_chars=max_output_chars,
         )
+        self._bus = bus
         self._timeout_s = float(timeout_s)
+        # Strong refs so background missions are never garbage-collected
+        # mid-flight (same pattern as BrainManager._cu_background_tasks).
+        self._background_tasks: set[asyncio.Task[None]] = set()
 
     async def execute(self, args: dict[str, Any], ctx: ExecutionContext) -> ToolResult:
         goal = (args.get("goal") or "").strip()
         if not goal:
             return ToolResult(success=False, output=None, error="goal missing")
-        return await self._dispatch.execute(
-            {
-                "harness": HARNESS_NAME,
-                "prompt": goal,
-                "timeout_s": self._timeout_s,
-            },
-            ctx,
+        # Wave 0 (frontier-speed, 2026-06-09): with a bus wired (production),
+        # the mission runs as a BACKGROUND task and the brain turn gets an
+        # immediate ACK. Run inline, the mission would live inside the brain
+        # turn's task — the speech stall guard's task.cancel() (or any turn
+        # unwind, e.g. a TTS abort) would behead a healthy desktop mission.
+        # The outcome is ALWAYS announced (AD-OE1/OE5/OE6: zero silent drops).
+        # Without a bus there is nowhere to announce, so the old synchronous
+        # contract stays (tests / minimal wiring).
+        if self._bus is None:
+            return await self._dispatch.execute(
+                {
+                    "harness": HARNESS_NAME,
+                    "prompt": goal,
+                    "timeout_s": self._timeout_s,
+                },
+                ctx,
+            )
+        task = asyncio.create_task(
+            self._run_background(goal, ctx), name="computer-use-tool-background",
         )
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return ToolResult(
+            success=True,
+            output=(
+                "Desktop mission started in the background; the outcome will "
+                "be announced to the user when it finishes. Reply with a brief "
+                "acknowledgement only — do NOT claim the task is already done."
+            ),
+        )
+
+    async def _run_background(self, goal: str, ctx: ExecutionContext) -> None:
+        """Run the mission off the brain turn and announce the outcome.
+
+        Never raises — a background crash must not leak into the event loop.
+        """
+        text: str
+        try:
+            result = await self._dispatch.execute(
+                {
+                    "harness": HARNESS_NAME,
+                    "prompt": goal,
+                    "timeout_s": self._timeout_s,
+                },
+                ctx,
+            )
+            if result.success:
+                text = "Erledigt."  # i18n-allow
+            else:
+                err = str(getattr(result, "error", "") or "")
+                text = (
+                    f"Das am Bildschirm hat nicht geklappt: {err}"  # i18n-allow
+                    if err
+                    else "Das am Bildschirm hat nicht geklappt."  # i18n-allow
+                )
+        except Exception as exc:  # noqa: BLE001
+            log.error("computer_use background mission failed: %r", exc, exc_info=True)
+            text = "Beim Erledigen am Bildschirm ist leider etwas schiefgegangen."  # i18n-allow
+        try:
+            await self._bus.publish(AnnouncementRequested(
+                text=text,
+                priority="normal",
+                language="de",
+                kind="completion",
+            ))
+        except Exception:  # noqa: BLE001
+            log.debug("computer_use completion announce failed", exc_info=True)

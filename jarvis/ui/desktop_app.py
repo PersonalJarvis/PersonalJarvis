@@ -687,19 +687,18 @@ class DesktopApp:
             from loguru import logger
 
             # ------------------------------------------------------------------
-            # Pre-Brain-Hook: TriggerMatcher fuer exakte Voice-Patterns
-            # ("merk dir: X", "guten morgen", ...). Wenn ein Skill matcht,
-            # fuehren wir ihn direkt aus und ueberspringen den Brain-Call —
-            # das ist die Chat-Pendant-Variante zu speech/pipeline.py:1500.
-            # Latenz-Win: ~50ms statt ~800ms; und es umgeht den
-            # sporadischen Tool-Call-Leak fuer haeufige Phrasen.
+            # Pre-brain hook (instruction-skill model, 2026-06-09 rebuild,
+            # AD-S4): a TriggerMatcher hit no longer macro-runs the skill —
+            # it is noted on the BrainManager, which injects the rendered
+            # skill instructions into the upcoming brain turn. Uniform chat
+            # output path, guaranteed invocation, no raw-Markdown replies.
             # ------------------------------------------------------------------
             try:
                 from jarvis.skills.skill_context import try_get_skill_context
                 from jarvis.skills.trigger_matcher import TriggerMatcher
 
                 skill_ctx = try_get_skill_context()
-                if skill_ctx is not None:
+                if skill_ctx is not None and brain is not None:
                     matcher = TriggerMatcher(skill_ctx.registry)
                     match_result = matcher.match_voice_with_match(
                         evt.text, lang="auto"
@@ -713,64 +712,16 @@ class DesktopApp:
                                 content = grp.strip()
                                 break
 
-                        await supervisor.set_state("THINKING")
-                        try:
-                            skill_result = await skill_ctx.runner.run(
-                                matched,
-                                args={
-                                    "_trigger": "chat_direct",
-                                    "utterance": evt.text,
-                                    "content": content,
-                                    "detected_language": "de",
-                                },
+                        note = getattr(brain, "note_skill_trigger", None)
+                        if callable(note):
+                            note(matched.name, content=content, source="chat")
+                            logger.info(
+                                "Skill trigger matched (chat): '{}' — handed "
+                                "to the brain turn", matched.name,
                             )
-                        except Exception as exc:  # noqa: BLE001
-                            logger.opt(exception=exc).warning(
-                                "Skill-Direct-Run im Chat fehlgeschlagen"
-                            )
-                            skill_result = None
-
-                        # Wahrheits-Pflicht: bei Skill-Fail NICHT schoenfaerben.
-                        if skill_result is None:
-                            reply_text = "Skill konnte nicht ausgefuehrt werden."
-                        elif not skill_result.success:
-                            err = skill_result.error or "unbekannter Fehler"
-                            reply_text = f"Hat nicht geklappt: {err}"
-                        else:
-                            # Ersten erfolgreichen ToolResult.output nehmen,
-                            # falls nicht vorhanden: Standard-Bestaetigung.
-                            outputs = [
-                                str(s.get("output"))
-                                for s in (skill_result.steps or ())
-                                if s.get("success") and s.get("output")
-                            ]
-                            reply_text = (
-                                outputs[0] if outputs else
-                                f"Skill {matched.name} ausgefuehrt."
-                            )
-
-                        await chat_store.add_message(
-                            thread_id=thread_id,
-                            role="assistant",
-                            text=reply_text,
-                        )
-                        await server.bus.publish(
-                            ResponseGenerated(
-                                trace_id=evt.trace_id,
-                                text=reply_text,
-                                language="de",
-                                source_layer="brain.chat_direct",
-                            )
-                        )
-                        await supervisor.set_state("IDLE")
-                        logger.info(
-                            "Skill direkt-getriggert (chat): '{}' -> '{}'",
-                            matched.name, reply_text[:60],
-                        )
-                        return
             except Exception as exc:  # noqa: BLE001
-                # Pre-Brain-Hook ist defensiv — Crash hier darf nie den
-                # Chat-Pfad blockieren. Faellt im Fail-Case zum Brain durch.
+                # The pre-brain hook is defensive — a crash here must never
+                # block the chat path. Fall through to the brain.
                 logger.opt(exception=exc).debug("Skill-Pre-Hook (chat) skipped")
 
             if brain is None:

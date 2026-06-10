@@ -3,10 +3,12 @@ import {
   Phone,
   Loader2,
   AlertCircle,
+  ArrowLeft,
   Copy,
   Check,
   CheckCircle2,
   XCircle,
+  ListChecks,
   PlugZap,
   PhoneCall,
   ScrollText,
@@ -128,16 +130,131 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 // ----------------------------------------------------------------------
-// TelephonyView — root
+// TelephonyPanel — the data-loading body (status / credentials / scripts /
+// calls), WITHOUT any page chrome (no ViewHeader, no scroll container). This is
+// the embeddable unit: it renders the same inside the standalone TelephonyView
+// and inside the "Telephony" section of the API-Keys view. Owning its own fetch
+// means it stays self-contained wherever it is mounted.
 // ----------------------------------------------------------------------
 
-export function TelephonyView() {
+export function TelephonyPanel() {
   const t = useT();
 
   const [status, setStatus] = useState<TelephonyStatus | null>(null);
   const [config, setConfig] = useState<TelephonyConfig | null>(null);
-  const [scripts, setScripts] = useState<TelephonyScript[]>([]);
   const [calls, setCalls] = useState<TelephonyCall[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Setup scripts are NOT loaded here anymore — they (plus the step-by-step
+  // guide) live on the dedicated TelephonySetupView, reached via the "Setup
+  // script" button in the credentials card. Keeping them off this panel is what
+  // keeps the embedded API-Keys telephony section compact.
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [statusRes, configRes, callsRes] = await Promise.all([
+        fetchJson<TelephonyStatus>("/api/telephony/status"),
+        fetchJson<TelephonyConfig>("/api/telephony/config"),
+        fetchJson<{ calls: TelephonyCall[] }>("/api/telephony/calls?limit=20"),
+      ]);
+      setStatus(statusRes);
+      setConfig(configRes);
+      setCalls(callsRes.calls ?? []);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  return (
+    <>
+      {loading && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" /> {t("common.loading")}
+        </div>
+      )}
+
+      {error && (
+        <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="min-w-0 flex-1 break-words">
+            {t("telephony_view.load_error")} ({error}).
+            <button onClick={() => void load()} className="ml-2 underline">
+              {t("common.retry")}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!loading && !error && status && config && (
+        <div className="space-y-6">
+          {!status.available && <NotAvailableNotice />}
+
+          <StatusCard status={status} />
+          <CredentialsCard
+            status={status}
+            config={config}
+            onSaved={() => void load()}
+          />
+          <CallsCard calls={calls} onReload={() => void load()} />
+        </div>
+      )}
+
+      {!loading && !error && status && !status.configured && status.available && (
+        <p className="mt-6 text-xs text-muted-foreground">
+          {t("telephony_view.not_configured_hint")}
+        </p>
+      )}
+    </>
+  );
+}
+
+// ----------------------------------------------------------------------
+// TelephonyView — standalone screen wrapper (header + scroll container) around
+// TelephonyPanel. The app no longer routes a sidebar entry here (telephony is a
+// section inside the API-Keys view now), but the wrapper is kept as the
+// self-contained full-screen variant and is exercised by TelephonyView.test.tsx.
+// ----------------------------------------------------------------------
+
+export function TelephonyView() {
+  const t = useT();
+  return (
+    <div className="flex h-full flex-col">
+      <ViewHeader
+        icon={<Phone className="h-4 w-4 text-primary" />}
+        title={t("telephony_view.title")}
+        subtitle={t("telephony_view.subtitle")}
+      />
+
+      <div className="flex-1 overflow-y-auto scrollbar-jarvis p-6">
+        <TelephonyPanel />
+      </div>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------
+// TelephonySetupView — the dedicated "setup" page. Reached ONLY via the "Setup
+// script" button in the telephony credentials card (setActive("telephony-
+// setup")); it is not a sidebar entry. Holds the heavier content that would
+// bloat the embedded telephony section: a step-by-step setup guide plus the
+// setup scripts. Owns its own fetch (status + scripts). A "back" link returns
+// to the API-Keys view.
+// ----------------------------------------------------------------------
+
+export function TelephonySetupView() {
+  const t = useT();
+  const setActive = useEventStore((s) => s.setActiveSection);
+
+  const [status, setStatus] = useState<TelephonyStatus | null>(null);
+  const [scripts, setScripts] = useState<TelephonyScript[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -145,16 +262,12 @@ export function TelephonyView() {
     setLoading(true);
     setError(null);
     try {
-      const [statusRes, configRes, scriptsRes, callsRes] = await Promise.all([
+      const [statusRes, scriptsRes] = await Promise.all([
         fetchJson<TelephonyStatus>("/api/telephony/status"),
-        fetchJson<TelephonyConfig>("/api/telephony/config"),
         fetchJson<{ scripts: TelephonyScript[] }>("/api/telephony/scripts"),
-        fetchJson<{ calls: TelephonyCall[] }>("/api/telephony/calls?limit=20"),
       ]);
       setStatus(statusRes);
-      setConfig(configRes);
       setScripts(scriptsRes.scripts ?? []);
-      setCalls(callsRes.calls ?? []);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -169,52 +282,110 @@ export function TelephonyView() {
   return (
     <div className="flex h-full flex-col">
       <ViewHeader
-        icon={<Phone className="h-4 w-4 text-primary" />}
-        title={t("telephony_view.title")}
-        subtitle={t("telephony_view.subtitle")}
+        icon={<ScrollText className="h-4 w-4 text-primary" />}
+        title={t("telephony_setup.title")}
+        subtitle={t("telephony_setup.subtitle")}
       />
 
       <div className="flex-1 overflow-y-auto scrollbar-jarvis p-6">
-        {loading && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> {t("common.loading")}
-          </div>
-        )}
+        <div className="space-y-6">
+          <button
+            type="button"
+            onClick={() => setActive("apikeys")}
+            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" /> {t("telephony_setup.back")}
+          </button>
 
-        {error && (
-          <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-            <div className="min-w-0 flex-1 break-words">
-              {t("telephony_view.load_error")} ({error}).
-              <button onClick={() => void load()} className="ml-2 underline">
-                {t("common.retry")}
-              </button>
+          <SetupGuideCard status={status} />
+
+          {loading && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> {t("common.loading")}
             </div>
-          </div>
-        )}
+          )}
 
-        {!loading && !error && status && config && (
-          <div className="space-y-6">
-            {!status.available && <NotAvailableNotice />}
+          {error && (
+            <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div className="min-w-0 flex-1 break-words">
+                {t("telephony_view.load_error")} ({error}).
+                <button onClick={() => void load()} className="ml-2 underline">
+                  {t("common.retry")}
+                </button>
+              </div>
+            </div>
+          )}
 
-            <StatusCard status={status} />
-            <CredentialsCard
-              status={status}
-              config={config}
-              onSaved={() => void load()}
-            />
-            <ScriptsCard scripts={scripts} />
-            <CallsCard calls={calls} onReload={() => void load()} />
-          </div>
-        )}
-
-        {!loading && !error && status && !status.configured && status.available && (
-          <p className="mt-6 text-xs text-muted-foreground">
-            {t("telephony_view.not_configured_hint")}
-          </p>
-        )}
+          {!loading && !error && <ScriptsCard scripts={scripts} />}
+        </div>
       </div>
     </div>
+  );
+}
+
+// ----------------------------------------------------------------------
+// SetupGuideCard — the step-by-step "deep dive". Steps come from i18n; the live
+// public URL + webhook URL (from status) are surfaced with copy buttons so the
+// operator can paste them straight into the tunnel + Twilio console.
+// ----------------------------------------------------------------------
+
+function SetupGuideCard({ status }: { status: TelephonyStatus | null }) {
+  const t = useT();
+  const steps = [1, 2, 3, 4, 5].map((n) => ({
+    title: t(`telephony_setup.step${n}_title`),
+    body: t(`telephony_setup.step${n}_body`),
+  }));
+
+  return (
+    <section className="card-outline space-y-4 p-4">
+      <div className="flex items-center gap-2">
+        <ListChecks className="h-4 w-4 text-primary" />
+        <h3 className="font-display text-sm font-semibold tracking-tight">
+          {t("telephony_setup.guide_title")}
+        </h3>
+      </div>
+      <p className="text-xs text-muted-foreground break-words">
+        {t("telephony_setup.intro")}
+      </p>
+
+      <ol className="space-y-3">
+        {steps.map((s, i) => (
+          <li key={i} className="flex gap-3">
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[11px] font-semibold text-primary">
+              {i + 1}
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium">{s.title}</div>
+              <p className="mt-0.5 text-xs text-muted-foreground break-words">
+                {s.body}
+              </p>
+            </div>
+          </li>
+        ))}
+      </ol>
+
+      {status && (status.public_base_url || status.webhook_url) && (
+        <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 border-t border-border/60 pt-3 text-xs">
+          <dt className="text-muted-foreground">{t("telephony_setup.public_url")}</dt>
+          <dd className="min-w-0">
+            <CopyValue
+              value={status.public_base_url}
+              label={t("telephony_setup.public_url")}
+              emptyLabel={t("telephony_view.status.not_set")}
+            />
+          </dd>
+          <dt className="text-muted-foreground">{t("telephony_setup.webhook")}</dt>
+          <dd className="min-w-0">
+            <CopyValue
+              value={status.webhook_url}
+              label={t("telephony_setup.webhook")}
+              emptyLabel={t("telephony_view.status.not_set")}
+            />
+          </dd>
+        </dl>
+      )}
+    </section>
   );
 }
 
@@ -447,6 +618,7 @@ function CredentialsCard({
 }) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
+  const setActive = useEventStore((s) => s.setActiveSection);
 
   const [enabled, setEnabled] = useState(config.enabled);
   const [accountSid, setAccountSid] = useState(config.account_sid);
@@ -649,6 +821,17 @@ function CredentialsCard({
         >
           {selfTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Volume2 className="h-3.5 w-3.5" />}
           {t("telephony_view.creds.self_test")}
+        </Button>
+        {/* Opens the dedicated setup page (scripts + step-by-step guide). Kept
+            here next to the action buttons so the heavy script/guide content
+            lives on its own page instead of bloating this section. */}
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setActive("telephony-setup")}
+        >
+          <ScrollText className="h-3.5 w-3.5" />
+          {t("telephony_view.creds.setup_script")}
         </Button>
       </div>
 

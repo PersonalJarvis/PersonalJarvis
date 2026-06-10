@@ -245,6 +245,66 @@ async def test_list_outputs_mission_dir_failed_state(
 
 
 @pytest.mark.asyncio
+async def test_list_outputs_running_mission_duration_ticks_from_created(
+    app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
+) -> None:
+    """A RUNNING mission shows now-minus-created, not updated-minus-created.
+
+    Live bug (mission 019eae15-5a31, 2026-06-09): right after dispatch
+    created_ms == updated_ms, so the card rendered "RUNNING 0.0s" and
+    froze there until the next mission event (potentially 20 minutes
+    later). For non-terminal states the duration must be wall-clock
+    elapsed since created_ms — the frontend polls every 3 s, so the
+    badge ticks automatically.
+    """
+    mission_id = "019e3600-d000-7000-8000-000000000004"
+    _make_mission_dir(tmp_path, mission_id)
+    now_ms = int(time.time() * 1000)
+    await _insert_mission(
+        db_conn,
+        mission_id=mission_id,
+        state="RUNNING",
+        created_ms=now_ms - 120_000,
+        updated_ms=now_ms - 120_000,  # fresh dispatch: no events yet
+    )
+
+    with TestClient(app) as client:
+        r = client.get("/api/outputs")
+    sess = r.json()["sessions"][0]
+    assert sess["duration_s"] is not None
+    assert sess["duration_s"] >= 110.0, (
+        f"running mission must tick from created_ms, got {sess['duration_s']}"
+    )
+    # A still-running mission has no completion timestamp.
+    assert sess["completed_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_list_outputs_terminal_mission_duration_frozen(
+    app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
+) -> None:
+    """Terminal missions keep updated-minus-created (frozen, not ticking)."""
+    mission_id = "019e3600-e000-7000-8000-000000000005"
+    _make_mission_dir(tmp_path, mission_id)
+    now_ms = int(time.time() * 1000)
+    await _insert_mission(
+        db_conn,
+        mission_id=mission_id,
+        state="FAILED",
+        created_ms=now_ms - 300_000,
+        updated_ms=now_ms - 200_000,
+    )
+
+    with TestClient(app) as client:
+        r = client.get("/api/outputs")
+    sess = r.json()["sessions"][0]
+    assert sess["duration_s"] == pytest.approx(100.0, abs=5.0)
+    assert sess["completed_at"] == pytest.approx(
+        (now_ms - 200_000) / 1000.0, abs=5.0
+    )
+
+
+@pytest.mark.asyncio
 async def test_list_outputs_mission_dir_no_db_row_falls_back_to_unknown(
     app: FastAPI, tmp_path: Path
 ) -> None:

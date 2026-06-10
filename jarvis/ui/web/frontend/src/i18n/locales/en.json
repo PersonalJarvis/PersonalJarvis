@@ -160,6 +160,23 @@
     "group_earlier": "Earlier",
     "resize_hint": "Drag to resize · double-click to reset"
   },
+  "thinking": {
+    "label": "Thinking",
+    "thought_for": "Thought for",
+    "steps": "steps",
+    "earlier": "earlier steps",
+    "step_brain": "Reasoning",
+    "step_tool": "Using tool",
+    "step_update": "Progress update",
+    "step_worker": "Delegating to background worker",
+    "step_cu_observe": "Looking at the screen",
+    "step_cu_uia": "Reading UI elements",
+    "step_cu_plan": "Planning next action",
+    "step_cu_think": "Deliberating",
+    "step_cu_act": "Performing action",
+    "step_cu_verify": "Verifying result",
+    "step_cu_settle": "Waiting for the screen"
+  },
   "subagents_view": {
     "title": "Sub-Agents",
     "stat_active": "active",
@@ -241,7 +258,12 @@
     "delete_cancel": "Cancel",
     "delete_confirm": "Delete",
     "builtin_protected": "Built-in skill — can't be deleted",
-    "drag_hint": "Drag to reorder"
+    "drag_hint": "Drag to reorder",
+    "select": "Select",
+    "select_all": "Select all",
+    "selected": "selected",
+    "bulk_delete_title": "Delete skills?",
+    "bulk_delete_body": "These skills will be permanently removed:"
   },
   "sessions_view": {
     "title": "Transcription",
@@ -566,6 +588,7 @@
     "tier_tts": "Voice Output (TTS)",
     "tier_stt": "Voice Input (STT)",
     "tier_subagent": "Subagent (heavy tasks)",
+    "tier_telephony": "Telephony",
     "active_tooltip": "Already active",
     "click_to_activate": "Click to activate this provider",
     "needs_codex": "First connect Codex or save API key, then activate",
@@ -688,17 +711,34 @@
     },
     "keybinds": {
       "title": "Voice Keybinds",
-      "description": "Set the keys for Call, Hangup and Talk (push-to-talk). Click Record and press your combination, or reset to default. Changes apply after a restart.",
+      "description": "Set the keys for Call, Hangup and Talk (push-to-talk). Click Record and press your combination — or click keys on the on-screen keyboard. Changes apply instantly.",
       "call_label": "Call (answer / start talking)",
       "hangup_label": "Hangup",
       "talk_label": "Talk / Push-to-talk",
       "record": "Record",
       "stop": "Stop",
-      "recording": "Press your keys now — hold several at once for a combo (Esc to cancel)",
+      "recording": "Press your keys…",
+      "recording_hint": "Hold the keys you want (then let go), or click them on the keyboard below. Esc cancels.",
       "save": "Save",
       "saved": "Keybind saved",
       "reset": "Reset to default",
-      "restart_required": "Restart required to take effect."
+      "restart_required": "Restart required to take effect.",
+      "validation": {
+        "only_modifiers": "Add a real key — Ctrl/Alt/Shift alone can't be a trigger.",
+        "solo_typing_key": "This key fires every time you type — add Ctrl/Alt/Shift or a second key. Function keys (F5) and navigation keys (↑, Home) also work on their own.",
+        "windows_reserved": "The Windows key is reserved by the system — use Ctrl, Alt or Shift instead.",
+        "alt_f4": "Alt+F4 closes the active window — choose another combination.",
+        "ctrl_c": "Ctrl+C is the copy shortcut — choose another combination.",
+        "collision": "Overlaps with {action} ({combo}) — one press would trigger both. Choose different keys.",
+        "solo_nav": "Allowed — but note: this key also fires while navigating text."
+      },
+      "keyboard": {
+        "legend_pressed": "Pressed",
+        "legend_selected": "In combo",
+        "legend_bound": "Already used",
+        "hint": "Press keys or click them to build the combo",
+        "reserved": "Reserved by the system"
+      }
     },
     "codex_title": "OpenAI Codex CLI",
     "codex_description": "Manual path for Windows PATH issues. Empty uses 'codex' from PATH.",
@@ -745,6 +785,7 @@
       "greeting_placeholder": "Leave empty for the Jarvis butler default",
       "test_connection": "Test connection",
       "self_test": "Self-test voice",
+      "setup_script": "Setup script",
       "saved": "Telephony settings saved",
       "test_ok": "Twilio reachable",
       "test_failed": "Twilio not reachable",
@@ -777,6 +818,25 @@
       "failed": "Failed",
       "no_audio": "No audio"
     }
+  },
+  "telephony_setup": {
+    "title": "Telephony setup",
+    "subtitle": "Step-by-step guide and setup scripts for Twilio telephony.",
+    "back": "Back to API Keys",
+    "guide_title": "Setup",
+    "intro": "How to make Jarvis reachable by phone — from the Twilio number to the first call.",
+    "step1_title": "Install the telephony extra",
+    "step1_body": "Run `pip install \"personal-jarvis[telephony]\"` on the server and restart Jarvis. Only needed if the status above reports the extra is missing.",
+    "step2_title": "Create a Twilio account",
+    "step2_body": "Sign up at twilio.com, copy your Account SID and Auth Token, and buy a voice-capable phone number.",
+    "step3_title": "Expose Jarvis publicly",
+    "step3_body": "Twilio must reach Jarvis over HTTPS. Run the tunnel script below and paste the printed URL as the public base URL.",
+    "step4_title": "Point the Twilio webhook at Jarvis",
+    "step4_body": "In the Twilio console, set your number's Voice webhook to the webhook URL shown below.",
+    "step5_title": "Enter credentials and test",
+    "step5_body": "Back on the API Keys page, enter the Account SID, Auth Token and phone number, enable telephony, then run \"Test connection\" and \"Self-test voice\".",
+    "public_url": "Public base URL",
+    "webhook": "Webhook URL"
   },
   "debug_view": {
     "title": "Debug",
@@ -834,6 +894,19 @@
   },
   "provider_switcher": {
     "loading_hint": "Provider list is loading — if it stays empty, check the backend."
+  },
+  "wiki_provider": {
+    "tier_label": "Wiki (long-term memory)",
+    "description": "The Knowledge Wiki uses a dedicated model to write and tidy your long-term notes. Leave the provider on \"Same as brain\" and the model empty to use a cheap, fast default — or pin a specific provider and model here.",
+    "provider_label": "Wiki provider",
+    "follow_primary": "Same as brain (cheap default)",
+    "model_label": "Model (optional)",
+    "model_follow_primary": "Same as brain (cheap default)",
+    "model_hint": "Empty means the chosen provider's cheap/fast model. Pick a model id only to override it.",
+    "apply": "Apply",
+    "applying": "Applying…",
+    "loading": "Loading Wiki settings…",
+    "load_error": "Could not load the Wiki provider settings."
   },
   "cli_connect": {
     "is_connected": "{0} is connected",

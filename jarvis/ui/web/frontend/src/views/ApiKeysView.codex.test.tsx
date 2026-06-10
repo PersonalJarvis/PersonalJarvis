@@ -128,6 +128,38 @@ const OPENCLAW_EMPTY = {
   mapping: [],
 };
 
+// The Telephony section now lives inside ApiKeysView (a tier section below the
+// Subagent tier), so mounting the view fires the telephony panel's load(). Stub
+// the four telephony endpoints with a graceful not-available/not-configured
+// shape so the per-route fetch mock never throws on them.
+const TELEPHONY_STATUS_EMPTY = {
+  available: false,
+  configured: false,
+  enabled: false,
+  account_sid_masked: "",
+  phone_number: "",
+  public_base_url: "",
+  webhook_url: "",
+  auth_token_set: false,
+  twilio_reachable: false,
+  twilio_error: null,
+  tts_provider: "",
+  tts_voice: "",
+  active_calls: 0,
+  max_call_seconds: 600,
+};
+const TELEPHONY_CONFIG_EMPTY = {
+  enabled: false,
+  account_sid: "",
+  phone_number: "",
+  public_base_url: "",
+  greeting: "",
+  language_code: "de-DE",
+  fallback_mode: "media",
+  max_call_seconds: 600,
+  auth_token_set: false,
+};
+
 function routesFor(
   provider: Record<string, unknown>,
 ): Record<string, () => RouteResult> {
@@ -135,6 +167,10 @@ function routesFor(
     "/api/providers": () => ({ body: { providers: [provider] } }),
     "/api/openclaw/status": () => ({ body: OPENCLAW_EMPTY }),
     "/api/brain/switch": () => ({ body: { ok: true, active: "codex", persisted: true } }),
+    "/api/telephony/status": () => ({ body: TELEPHONY_STATUS_EMPTY }),
+    "/api/telephony/config": () => ({ body: TELEPHONY_CONFIG_EMPTY }),
+    "/api/telephony/scripts": () => ({ body: { scripts: [] } }),
+    "/api/telephony/calls": () => ({ body: { calls: [] } }),
   };
 }
 
@@ -154,8 +190,9 @@ describe("ApiKeysView — Codex is a selectable brain (parity with Gemini)", () 
     expect(screen.getByRole("radio")).toBeTruthy();
     // Compact connected badge for the ChatGPT login...
     expect(screen.getByTestId("codex-connected")).toBeTruthy();
-    // ...plus an OpenAI key field — the only way to enable Codex as a brain.
-    expect(screen.getByTestId("codex-brain-key")).toBeTruthy();
+    // No OpenAI key field on the card — Codex works as a brain over the ChatGPT
+    // login (the OpenAI key, if any, lives on the separate "OpenAI" provider).
+    expect(screen.queryByTestId("codex-brain-key")).toBeNull();
   });
 
   it("disables the brain radio (no error popup, no switch) when Codex has no OpenAI key", async () => {
@@ -202,7 +239,7 @@ describe("ApiKeysView — Codex is a selectable brain (parity with Gemini)", () 
     expect(screen.queryByTestId("codex-connected")).toBeNull();
     // Selector stays present for parity with the other brain providers.
     expect(screen.getByRole("radio")).toBeTruthy();
-    // The OpenAI key field is available even before logging in.
-    expect(screen.getByTestId("codex-brain-key")).toBeTruthy();
+    // No OpenAI key field on the card (Codex is a brain over the ChatGPT login).
+    expect(screen.queryByTestId("codex-brain-key")).toBeNull();
   });
 });

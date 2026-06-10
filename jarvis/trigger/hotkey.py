@@ -88,6 +88,19 @@ _MODIFIER_TOKENS = frozenset(
     }
 )
 
+# Keys that are safe to bind SOLO (no modifier, no second key): function keys
+# are never produced while typing text, and the navigation cluster only fires
+# during cursor navigation — a deliberate user choice, not an accident. Bare
+# letters / digits / space / enter stay rejected: those fire on every
+# keystroke of normal typing and would make the assistant trigger constantly.
+_SOLO_SAFE_KEYS = frozenset({f"f{i}" for i in range(1, 25)}) | frozenset(
+    {
+        "up", "down", "left", "right",
+        "home", "end", "page_up", "page_down",
+        "insert", "delete",
+    }
+)
+
 
 def validate_hotkey(combo: str) -> tuple[bool, str]:
     """Validate a user-supplied push-to-talk hotkey string.
@@ -116,10 +129,15 @@ def validate_hotkey(combo: str) -> tuple[bool, str]:
 
     if not non_modifiers:
         return False, "Add a real key — a combo of only Ctrl/Alt/Shift cannot be a trigger."
-    if not modifiers and len(parts) < 2:
+    if (
+        not modifiers
+        and len(parts) < 2
+        and parts[0] not in _SOLO_SAFE_KEYS
+    ):
         return False, (
-            "Add a modifier (Ctrl/Alt/Shift) or a second key — a single key "
-            "would trigger every time you type it."
+            "This key fires while typing normal text — add Ctrl/Alt/Shift or a "
+            "second key. (Function keys and navigation keys like F5 or Arrow Up "
+            "can be used on their own.)"
         )
     if any(p in ("win", "window") for p in modifiers):
         return False, "Windows-key combos are reserved by the OS — pick Ctrl/Alt/Shift."
@@ -305,6 +323,64 @@ class HotkeyTrigger:
         self._registered = []
         self._combo_strings = []
         self._backend = None
+
+    async def rearm(
+        self,
+        bindings: dict[str, list[str]],
+        push_to_talk: frozenset[str] | set[str] = frozenset(),
+    ) -> None:
+        """Re-register the live bindings in place — a keybind change WITHOUT an
+        app restart.
+
+        Root cause of "I set a key but pressing it does nothing": the bindings
+        were armed once at ``__aenter__`` and never re-read, so a UI/toml change
+        only took effect on the next voice boot. This mirrors the ``set_wake_plan``
+        live-apply contract: tear the backend's OS registration down and bring it
+        back up with the new combos, reusing the exact lifecycle calls
+        ``__aenter__``/``__aexit__`` use (so the relocated remove-by-string +
+        refcount invariants are preserved). The single shared checker is stopped
+        then restarted, keeping the refcount balanced (one stop, one start).
+
+        Degrade-safe (AD-OE6): a failed re-arm logs and leaves hotkeys inactive
+        rather than propagating — a keybind hiccup must never crash voice.
+        """
+        self._bindings_cfg = bindings
+        self._ptt_events = frozenset(push_to_talk)
+        backend = self._backend
+        if backend is None:
+            return  # entered degraded (no package) — nothing to re-arm
+
+        new_bindings, combo_strings = self._build_bindings()
+        try:
+            backend.stop()
+            backend.unregister()
+            backend.register(new_bindings)
+            if (
+                type(backend).__name__ == "GlobalHotkeysBackend"
+                and getattr(backend, "_gh", None) is None
+            ):
+                # Every new combo failed to register: leave it degraded but do
+                # not start an empty checker.
+                self._registered = []
+                self._combo_strings = []
+                log.warning("Hotkey re-arm degraded — no combo could be registered.")
+                return
+            backend.start()
+            self._registered = new_bindings
+            self._combo_strings = combo_strings
+            log.info(
+                "🔁 Hotkey-Live-Reload — re-armed: %s",
+                ", ".join(
+                    f"{name}=[{', '.join(combos)}]"
+                    for name, combos in self._bindings_cfg.items()
+                ),
+            )
+        except Exception:  # noqa: BLE001 — never crash voice on a re-arm hiccup
+            log.error(
+                "Hotkey re-arm failed — hotkeys may be inactive until the next "
+                "restart; voice still works via wake word / mascot click.",
+                exc_info=True,
+            )
 
     async def events(self) -> AsyncIterator[str]:
         """Yield event names ("call" / "hangup" / ...) on every press."""

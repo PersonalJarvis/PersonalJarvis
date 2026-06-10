@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   Settings,
   Mic,
@@ -17,10 +17,16 @@ import {
   useKeybinds,
   chordToCombo,
   codeToKeyToken,
+  composeCombo,
+  comboTokens,
+  validateCombo,
+  type ComboValidation,
   type KeybindAction,
   type KeybindsConfig,
   type KeybindSaveResult,
 } from "@/hooks/useHotkey";
+import { KeyboardMap } from "@/views/settings/KeyboardMap";
+import { detectKeyboardPlatform } from "@/views/settings/keyboardLayout";
 import { useAssistantName } from "@/hooks/useAssistantName";
 import { WAKE_ENGINES, WAKE_ENGINE_I18N_KEY } from "@/constants/wakeEngines";
 import { useEventStore } from "@/store/events";
@@ -389,10 +395,32 @@ function formatCombo(combo: string): string {
     shift: "Shift",
     win: "Win",
     space: "Space",
+    // Navigation / editing cluster + numpad operators (the backend key names).
+    up: "↑",
+    down: "↓",
+    left: "←",
+    right: "→",
+    insert: "Insert",
+    delete: "Delete",
+    home: "Home",
+    end: "End",
+    page_up: "PageUp",
+    page_down: "PageDown",
+    enter: "Enter",
+    tab: "Tab",
+    backspace: "Backspace",
+    add_key: "Num +",
+    subtract_key: "Num −",
+    multiply_key: "Num *",
+    divide_key: "Num /",
+    decimal_key: "Num .",
   };
+  // Numpad digits render as "Num 3" rather than "NUMPAD_3".
+  const numpad = (p: string) =>
+    /^numpad_[0-9]$/.test(p) ? "Num " + p.slice(7) : null;
   return combo
     .split("+")
-    .map((p) => labels[p] ?? (p.length === 1 ? p.toUpperCase() : p.toUpperCase()))
+    .map((p) => labels[p] ?? numpad(p) ?? p.toUpperCase())
     .join(" + ");
 }
 
@@ -443,6 +471,47 @@ export function KeybindsPanel() {
   );
 }
 
+// The keyboard family (Mac vs PC modifier labels) is fixed for the session.
+const _KB_PLATFORM = detectKeyboardPlatform();
+
+// Each action's i18n label key — used to mark a key "already used by <action>".
+const _ACTION_LABEL_KEY: Record<KeybindAction, string> = {
+  call: "settings_view.keybinds.call_label",
+  hangup: "settings_view.keybinds.hangup_label",
+  ptt: "settings_view.keybinds.talk_label",
+};
+
+/** The combo rendered as keycap chips ("Ctrl + F5" → [Ctrl] + [F5]). */
+function ComboChips({ combo }: { combo: string }) {
+  const parts = formatCombo(combo).split(" + ");
+  return (
+    <>
+      {parts.map((p, i) => (
+        <Fragment key={`${p}-${i}`}>
+          {i > 0 && <span className="text-muted-foreground/50">+</span>}
+          <kbd className="rounded border border-border bg-muted/70 px-1.5 py-0.5 font-mono text-[11px] leading-none text-foreground shadow-[inset_0_-1px_0_rgba(0,0,0,0.35)]">
+            {p}
+          </kbd>
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
+/** The localized live-validation message for the combo being built, or null. */
+function validationText(
+  v: ComboValidation,
+  t: (key: string) => string,
+): string | null {
+  if (v.status !== "error" && v.status !== "warning") return null;
+  if (v.reason === "collision") {
+    return t("settings_view.keybinds.validation.collision")
+      .replace("{action}", v.conflict.action)
+      .replace("{combo}", formatCombo(v.conflict.combo));
+  }
+  return t(`settings_view.keybinds.validation.${v.reason}`);
+}
+
 function KeybindRow({
   action,
   label,
@@ -465,35 +534,119 @@ function KeybindRow({
   const [capturing, setCapturing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  // Physical codes currently held — mirrored from the recorder so the on-screen
+  // keyboard lights up live as the user presses keys.
+  const [pressedCodes, setPressedCodes] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (config) setCombo(config.keybinds[action]);
   }, [config, action]);
 
+  // Tokens already bound to the OTHER actions → marked "used" on the keyboard so
+  // the user can pick a free key (their keys "can't be free", as reported).
+  const boundTokens = useMemo(() => {
+    const out: Record<string, string> = {};
+    if (!config) return out;
+    for (const [act, c] of Object.entries(config.keybinds)) {
+      if (act === action) continue;
+      const lbl = t(_ACTION_LABEL_KEY[act as KeybindAction]);
+      for (const tok of comboTokens(c)) out[tok] = lbl;
+    }
+    return out;
+  }, [config, action, t]);
+
+  // The OTHER actions' combos keyed by their translated label, so a collision
+  // message names the action exactly the way the UI labels it.
+  const otherCombos = useMemo(() => {
+    const out: Record<string, string> = {};
+    if (!config) return out;
+    for (const [act, c] of Object.entries(config.keybinds)) {
+      if (act !== action) out[t(_ACTION_LABEL_KEY[act as KeybindAction])] = c;
+    }
+    return out;
+  }, [config, action, t]);
+
+  // Live validation — every backend rule surfaces HERE, while the user builds
+  // the combo, instead of as a cryptic post-Save error toast (the reported
+  // "I picked Arrow Up and got a weird error message" experience).
+  const validation = useMemo(
+    () => validateCombo(combo, otherCombos),
+    [combo, otherCombos],
+  );
+  const invalid = validation.status === "error";
+  const validationMsg = validationText(validation, t);
+
+  // Click-to-assign: toggle a key in/out of the combo without a physical press.
+  // Functional update — toggles dispatched before the next render must each
+  // build on the previous one, not on a stale closure combo (last-click-wins).
+  function onToggleToken(token: string) {
+    setCombo((prev) => {
+      const tokens = comboTokens(prev);
+      if (tokens.has(token)) tokens.delete(token);
+      else tokens.add(token);
+      return composeCombo(tokens);
+    });
+    setSaved(false);
+  }
+
   // While capturing, listen on `window` (capture phase) instead of on a single
-  // button. Two reasons:
+  // button. Three reasons:
   //   1. Focus: clicking the "Record" button puts focus on THAT button, so a
   //      key listener living only on the display field never fired — the combo
   //      was silently dropped. A window listener catches the chord no matter
   //      which control has focus.
-  //   2. Chord: a held set accumulates every non-modifier key, so two ordinary
-  //      keys pressed together (F7+F8, I+Y) — which the global-hotkeys backend
-  //      registers natively (the Call default is f3+f4) — are captured instead
-  //      of aborting on the first key.
+  //   2. Chord: a held set accumulates every non-modifier key, so several keys
+  //      pressed together (WASD, F7+F8, I+Y) — which the global-hotkeys backend
+  //      registers natively (the Call default is f3+f4) — all land in the combo
+  //      instead of only the first one.
+  //   3. Commit on FULL release, not on the first keyup. We track every
+  //      physically-held key (incl. modifiers, by `event.code`) and only commit
+  //      once the user has let go of everything. Committing on the first keyup
+  //      ended the recording the instant any one key lifted, so a human pressing
+  //      a chord (whose key releases are never perfectly simultaneous, and whose
+  //      presses roll in one after another) only ever got the first key — the
+  //      reported "press several, only one is recorded" bug. Now the rule is the
+  //      natural one: "hold your keys, then let go".
   // preventDefault on both edges also stops the keystrokes from leaking into
   // the rest of the app while recording (the "everything lags" symptom).
+  // What Escape restores: the SAVED value (the server truth), falling back to
+  // the combo as of recording start when nothing is saved yet. Kept in a ref so
+  // the capture effect (deps: [capturing]) always reads the live value — a
+  // mid-recording save refetches the config, and restoring a stale snapshot
+  // would silently diverge the field from what the server actually has.
+  const currentRef = useRef(current);
+  currentRef.current = current;
+  const comboBeforeCapture = useRef(combo);
+
   useEffect(() => {
     if (!capturing) return;
-    const held = new Set<string>();
-    let pending: string | null = null;
+    comboBeforeCapture.current = combo; // fallback when nothing is saved yet
+    setPressedCodes(new Set()); // fresh highlight state for this gesture
+    const held = new Set<string>(); // non-modifier key tokens seen this gesture
+    const pressed = new Set<string>(); // physical event.codes currently down
+    let pending: string | null = null; // fullest chord captured so far
+    let idle: ReturnType<typeof setTimeout> | undefined; // fallback-commit timer
+
+    function commit() {
+      if (pending) {
+        setCombo(pending);
+        setSaved(false);
+        setCapturing(false);
+      }
+    }
 
     function onKeyDown(e: KeyboardEvent) {
       e.preventDefault();
       e.stopPropagation();
       if (e.key === "Escape") {
+        if (idle) clearTimeout(idle); // cancel a pending fallback commit
+        // Undo the live preview: back to the saved value (server truth).
+        setCombo(currentRef.current || comboBeforeCapture.current);
         setCapturing(false);
         return;
       }
+      pressed.add(e.code);
+      setPressedCodes(new Set(pressed)); // live keyboard highlight
       const tok = codeToKeyToken(e.code);
       if (tok) held.add(tok);
       const next = chordToCombo(e, held);
@@ -502,26 +655,43 @@ function KeybindRow({
         setCombo(next); // live preview as the chord grows
         setSaved(false);
       }
+      // Fallback: some keys — function keys especially, and any key whose
+      // release lands while the window is losing focus — do NOT reliably
+      // deliver a keyup. Without this the "commit on full release" path below
+      // would hang forever ("F5+F6 never records"). Re-arm an idle timer on
+      // every keydown; once the user stops pressing for ~900 ms, commit the
+      // chord we have even if a keyup never came.
+      if (idle) clearTimeout(idle);
+      idle = setTimeout(commit, 900);
     }
 
     function onKeyUp(e: KeyboardEvent) {
       e.preventDefault();
       e.stopPropagation();
-      // Commit on the first release once a real key has landed: `pending` holds
-      // the fullest chord seen, so releasing F7 before F8 still saves "f7+f8".
-      if (pending) {
-        setCombo(pending);
-        setSaved(false);
-        setCapturing(false);
+      pressed.delete(e.code);
+      setPressedCodes(new Set(pressed)); // live keyboard highlight
+      // Fast path: commit the instant EVERY key is released. `pending` holds
+      // the fullest chord seen during the gesture, so the release order never
+      // matters and early-lifted keys are not lost.
+      if (pressed.size === 0 && pending) {
+        if (idle) clearTimeout(idle);
+        commit();
       }
     }
 
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("keyup", onKeyUp, true);
     return () => {
+      if (idle) clearTimeout(idle);
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("keyup", onKeyUp, true);
     };
+  }, [capturing]);
+
+  // Clear the live highlight on the falling edge of capturing, so reopening the
+  // picker never flashes the previous chord's keys before the first new press.
+  useEffect(() => {
+    if (!capturing) setPressedCodes(new Set());
   }, [capturing]);
 
   async function onSaveClick() {
@@ -532,6 +702,10 @@ function KeybindRow({
     try {
       const res = await onSave(action, trimmed);
       setSaved(res.restart_required);
+      // The save concludes the recording session. Leaving the recorder open
+      // kept a stale pre-recording snapshot around that a later Esc would
+      // "restore" — silently diverging the field from the saved value.
+      setCapturing(false);
       pushToast("success", t("settings_view.keybinds.saved"));
     } catch (e) {
       // Backend rejected the combo (unsafe / collision) — show its reason.
@@ -566,19 +740,28 @@ function KeybindRow({
       <div className="mt-2 flex items-center gap-2">
         <button
           type="button"
+          data-testid={`combo-field-${action}`}
           onClick={() => setCapturing((c) => !c)}
           disabled={loading}
-          className={`flex-1 rounded-md border px-3 py-2 text-left font-mono text-sm transition-colors focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 ${
+          className={`flex min-h-[34px] flex-1 flex-wrap items-center gap-1 rounded-md border px-3 py-1.5 text-left text-sm transition-colors focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 ${
             capturing
-              ? "border-primary bg-primary/10 text-primary"
+              ? "border-primary bg-primary/10"
               : "border-input bg-background"
           }`}
         >
-          {capturing
-            ? t("settings_view.keybinds.recording")
-            : combo
-              ? formatCombo(combo)
-              : "—"}
+          {capturing && (
+            <span className="relative mr-1 flex h-2 w-2 shrink-0">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+            </span>
+          )}
+          {combo ? (
+            <ComboChips combo={combo} />
+          ) : (
+            <span className="text-muted-foreground">
+              {capturing ? t("settings_view.keybinds.recording") : "—"}
+            </span>
+          )}
         </button>
         <Button
           size="sm"
@@ -590,10 +773,40 @@ function KeybindRow({
             ? t("settings_view.keybinds.stop")
             : t("settings_view.keybinds.record")}
         </Button>
-        <Button size="sm" onClick={onSaveClick} disabled={saving || loading || !dirty}>
+        <Button
+          size="sm"
+          onClick={onSaveClick}
+          disabled={saving || loading || !dirty || invalid}
+        >
           {saving ? t("settings_view.saving") : t("settings_view.keybinds.save")}
         </Button>
       </div>
+      {/* ONE stable status line: the validation message when there is one,
+          the recording hint otherwise. Two separately appearing lines made the
+          keyboard below jump vertically on every combo click. */}
+      {(capturing || validationMsg) && (
+        <p
+          data-testid={validationMsg ? `keybind-validation-${action}` : undefined}
+          className={`mt-2 text-[11px] ${
+            validationMsg
+              ? validation.status === "error"
+                ? "text-destructive"
+                : "text-amber-400"
+              : "text-muted-foreground"
+          }`}
+        >
+          {validationMsg ?? t("settings_view.keybinds.recording_hint")}
+        </p>
+      )}
+      {capturing && (
+        <KeyboardMap
+          pressedCodes={pressedCodes}
+          selectedTokens={comboTokens(combo)}
+          boundTokens={boundTokens}
+          platform={_KB_PLATFORM}
+          onToggleToken={onToggleToken}
+        />
+      )}
       {saved && (
         <p className="mt-2 text-[11px] text-muted-foreground">
           {t("settings_view.keybinds.restart_required")}

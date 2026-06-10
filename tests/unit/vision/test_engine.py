@@ -315,6 +315,42 @@ async def test_engine_close_closes_sources():
 # Heuristik ohne explicit filter — nutzt GetForegroundWindow-Fallback
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Screenshot-Modus: window_title aus dem Foreground-Hint (BUG-CU-EMPTYTITLE)
+#
+# Text-heavy Apps (Chrome, VS Code, Slack, …) laufen im Screenshot-Modus, wo
+# die ScreenshotSource window_title="" liefert. Der CU-Loop-Regression-
+# Detektor las den leeren Titel als "Fenster weg / Desktop vorne" und wies
+# das Modell an, die gerade geoeffnete App neu zu oeffnen. Die Engine kennt
+# den Foreground-Titel bereits (Mode-Heuristik) — sie muss ihn in die
+# Observation uebernehmen.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_auto_screenshot_mode_fills_window_title_from_filter_hint():
+    engine = VisionEngine(
+        screenshot_source=_FakeScreenshotSource(),
+        uia_source=_FakeUIATreeSource(),
+    )
+    obs = await engine.observe(mode="auto", window_title_filter="Chrome - GitHub")
+    assert obs.source == "screenshot_only"
+    assert obs.window_title == "Chrome - GitHub"
+
+
+@pytest.mark.asyncio
+async def test_explicit_screenshot_mode_fills_window_title_from_probe():
+    engine = VisionEngine(
+        screenshot_source=_FakeScreenshotSource(),
+        uia_source=_FakeUIATreeSource(),
+    )
+    with patch.object(
+        VisionEngine, "_guess_active_app_hint",
+        staticmethod(lambda _: "Google Chrome"),
+    ):
+        obs = await engine.observe(mode="screenshot")
+    assert obs.window_title == "Google Chrome"
+
+
 @pytest.mark.asyncio
 async def test_auto_mode_without_filter_falls_back_to_composite():
     """Wenn kein filter und kein Windows-Fenster erkennbar ist, sollte

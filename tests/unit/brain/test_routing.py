@@ -903,7 +903,14 @@ async def test_local_visual_click_fast_path_dispatches_computer_use() -> None:
     assert tool.name == "dispatch_to_harness"
     assert args["harness"] == "screenshot"
     assert args["prompt"] == "Klick auf den Senden Button"
-    assert args["timeout_s"] == manager._config.local_action.harness_timeout_s
+    # CU missions get a generous OUTER backstop (>=180 s) so a multi-step mission
+    # is not aborted by the 30 s harness_timeout_s; the harness has its own
+    # per-step + step-budget guards, and the mission is offloaded so the longer
+    # cap never blocks the spoken turn (2026-06-09 general-CU restore).
+    assert args["timeout_s"] == max(
+        manager._config.local_action.harness_timeout_s, 180.0
+    )
+    assert args["timeout_s"] >= 180.0
     assert user_utterance == "Klick auf den Senden Button"
 
 

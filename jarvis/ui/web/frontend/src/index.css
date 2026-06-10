@@ -162,6 +162,59 @@
     animation: jarvis-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
 
+  /* ===========================================================
+     Reasoning-trace (chat thinking indicator)
+     A gold light band sweeps through the label text; the core orb
+     pulses with two expanding rings; the card glow breathes.
+     =========================================================== */
+  @keyframes thinking-shimmer {
+    0% { background-position: 200% 50%; }
+    100% { background-position: -200% 50%; }
+  }
+  .thinking-shimmer {
+    background: linear-gradient(
+      90deg,
+      hsl(var(--muted-foreground)) 0%,
+      hsl(var(--muted-foreground)) 38%,
+      #ffe552 50%,
+      hsl(var(--muted-foreground)) 62%,
+      hsl(var(--muted-foreground)) 100%
+    );
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: thinking-shimmer 2.4s linear infinite;
+  }
+  @keyframes thinking-ring {
+    0% { transform: scale(0.6); opacity: 0.8; }
+    100% { transform: scale(2.4); opacity: 0; }
+  }
+  .thinking-ring {
+    animation: thinking-ring 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+  }
+  .thinking-core {
+    box-shadow: 0 0 12px 2px rgba(255, 214, 10, 0.45);
+  }
+  @keyframes thinking-breathe {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 1; }
+  }
+  .thinking-breathe {
+    animation: thinking-breathe 3.4s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .thinking-shimmer {
+      animation: none;
+      background: none;
+      color: hsl(var(--muted-foreground));
+    }
+    .thinking-ring,
+    .thinking-breathe {
+      animation: none;
+    }
+  }
+
   /* Weiche Float-Animation fürs Hero-Orb */
   @keyframes jarvis-float {
     0%, 100% { transform: translateY(0px); }

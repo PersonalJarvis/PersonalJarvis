@@ -240,3 +240,39 @@ async def test_start_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
     inst.started = False
     await mgr.start("bus_only")
     assert inst.started is False
+
+
+def test_context_property_returns_current(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_entry_points(monkeypatch, [])
+    ctx = ChannelContext(bus=EventBus())
+    mgr = ChannelManager(ctx)
+    assert mgr.context is ctx
+    new_ctx = ChannelContext(bus=ctx.bus)
+    mgr.set_context(new_ctx)
+    assert mgr.context is new_ctx
+
+
+@pytest.mark.asyncio
+async def test_reload_reinstantiates_with_fresh_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_entry_points(
+        monkeypatch, [_FakeEntryPoint(name="ctx_aware", target=_ContextAwareChannel)]
+    )
+    bus = EventBus()
+    mgr = ChannelManager(ChannelContext(bus=bus, config={"token": "old"}))
+    await mgr.start("ctx_aware")
+    old = mgr.get("ctx_aware")
+    assert old.config_marker == "old"
+    assert old.started is True
+
+    # Swap the context (fresh config) and reload just this one channel.
+    mgr.set_context(ChannelContext(bus=bus, config={"token": "new"}))
+    await mgr.reload("ctx_aware")
+
+    new = mgr.get("ctx_aware")
+    assert new is not old
+    assert new.config_marker == "new"
+    assert new.started is True
+    assert old.stopped is True
+    assert "ctx_aware" in mgr.started()

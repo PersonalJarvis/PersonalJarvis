@@ -356,8 +356,11 @@ class AnnouncementRequested(Event):
     language: str = "de"
     # Discriminator for the new ack_brain Flash-Brain producer. None keeps
     # backwards compatibility with the existing MissionAnnouncer callers
-    # that only pass text+priority+language.
-    kind: Literal["preamble", "completion", "info"] | None = None  # noqa: UP037
+    # that only pass text+priority+language. "progress" (2026-06-09, CU
+    # frontier-speed Wave 0) marks throttled mid-mission milestone updates
+    # from the Computer-Use loop ("Schritt 2 von 5 erledigt.") — spoken like
+    # "info" but droppable when stale.
+    kind: Literal["preamble", "completion", "info", "progress"] | None = None  # noqa: UP037
 
 
 # Voice mute (user-facing toggle, e.g. mascot double-click)
@@ -504,6 +507,37 @@ class ActionVerified(Event):
     action_kind: str = ""
     success: bool = False
     reason: str = ""                    # bei Fail: was hat der Verify-Observer gesehen?
+
+
+@dataclass(frozen=True, slots=True)
+class CUStepProfiled(Event):
+    """One Computer-Use loop phase finished (2026-06-09 frontier-speed Wave 0).
+
+    Dual purpose: (a) per-phase latency instrumentation for cu_bench (where
+    does the step's wall-clock go: observe / uia / plan / think / act /
+    verify / settle), and (b) a liveness heartbeat for the speech pipeline —
+    a long think phase emits no ObservationCaptured/ActionPlanned, so without
+    this event the TTS no-first-frame ceiling could behead a working mission.
+    """
+    phase: Literal[
+        "observe", "uia", "plan", "think", "act", "verify", "settle",
+    ] = "observe"  # noqa: UP037
+    duration_ms: int = 0
+    step_idx: int = 0
+    engine: str = "v1"
+    cache_read_tokens: int = 0
+
+
+#: Heartbeat contract (2026-06-09): every event type the Computer-Use loop
+#: publishes as a liveness signal. The speech pipeline subscribes its
+#: ``_on_agent_progress`` handler to EXACTLY this tuple — extending the loop
+#: with a new progress event means adding it here, and the contract test in
+#: tests/unit/harness/test_cu_wave0.py keeps both sides honest.
+CU_PROGRESS_EVENTS: tuple[type, ...] = (
+    ObservationCaptured,
+    ActionPlanned,
+    CUStepProfiled,
+)
 
 
 # Task-Queue (Capability 4)

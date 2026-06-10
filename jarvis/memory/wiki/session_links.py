@@ -36,7 +36,18 @@ from dataclasses import dataclass
 # Closed wikilink, not backslash-escaped. Inner group forbids brackets and
 # newlines so we never absorb adjacent tokens. Mirrors ``wikilink._WIKILINK_RE``
 # but is kept local so this pure module has no import-time coupling.
+# Exported (see __all__) as the package's single wikilink-counting regex —
+# curator.py and cleanup tooling import it instead of duplicating the pattern.
 _WIKILINK_RE = re.compile(r"(?<!\\)\[\[([^\[\]\n]+)\]\]")
+
+__all__ = [
+    "_WIKILINK_RE",
+    "SlugIndex",
+    "build_related_footer",
+    "rewrite_body_links",
+    "slugify",
+    "strip_dangling_wikilinks",
+]
 
 # Page-type directories, in the order the schema lists them. Used to render a
 # bare slug into a canonical ``dir/slug`` and to recognise dir-prefixed input.

@@ -51,6 +51,7 @@ from .backup import (
     BackupManager,
 )
 from .protocols import PageRepository, PageUpdate, WriteResult
+from .secret_guard import find_secrets
 from .telemetry import telemetry
 
 log = logging.getLogger(__name__)
@@ -182,9 +183,30 @@ class AtomicWriter:
         # ----- Step 1: 30s concurrent-edit lock --------------------------
         pending: list[_PendingWrite] = []
         skipped: list[Path] = []
+        blocked: list[Path] = []
         now = self._clock()
         for upd in updates:
             target = upd.target_path.resolve()
+
+            # ----- Step 0.5: secret/PII guard (AP-2) ---------------------
+            # A body that contains an API key, bearer token, password, or
+            # other opaque credential must never reach disk or the FTS
+            # index. Regex-only, no LLM. Archive ops carry no meaningful
+            # body, so only create/update/rename are screened. We log the
+            # pattern *names* only, never the matched value.
+            if upd.operation != "archive":
+                hits = find_secrets(upd.new_body)
+                if hits:
+                    log.warning(
+                        "atomic_writer: refusing write to %s — body matched "
+                        "secret/PII patterns %s (AP-2)",
+                        target,
+                        hits,
+                    )
+                    telemetry.inc("wiki_writes_blocked_pii")
+                    blocked.append(target)
+                    continue
+
             try:
                 target.relative_to(self._vault_root)
             except ValueError as exc:
@@ -260,6 +282,7 @@ class AtomicWriter:
                 skipped_due_to_recent_edit=skipped,
                 failed_validation=[],
                 backup_path=Path(),
+                blocked_pii=blocked,
             )
 
         # ----- Step 2: single backup snapshot ----------------------------
@@ -376,6 +399,7 @@ class AtomicWriter:
             skipped_due_to_recent_edit=skipped,
             failed_validation=failed_validation,
             backup_path=backup_path,
+            blocked_pii=blocked,
         )
 
     # ------------------------------------------------------------------

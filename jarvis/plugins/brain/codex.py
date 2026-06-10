@@ -26,6 +26,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from typing import Any
@@ -136,12 +137,16 @@ class CodexBrain:
     # ---- CLI (ChatGPT-OAuth) path ------------------------------------
 
     async def _complete_via_cli(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
-        """Drive ``codex exec`` over the ChatGPT login and yield its answer.
+        """Drive ``codex exec`` over the ChatGPT login and stream its answer.
 
-        Single non-streaming chunk: the codex agent emits its text in a terminal
-        ``agent_message`` frame, so we collect it and yield once. Slow (~15-20 s)
-        by nature of the agent spin-up — the caller's stall guard tolerates a
-        single turn under its no-progress window.
+        The codex agent emits JSON event frames; the answer arrives in a terminal
+        ``agent_message`` frame (~15-20 s in). ``proc.communicate()`` drains both
+        pipes safely (no stderr-buffer deadlock); we await it as a task and emit a
+        no-text progress tick every few seconds so the dispatcher's *no-progress*
+        stall deadline keeps resetting — otherwise a single ~20 s silent await is
+        cancelled and the turn falls back to another provider (the live "Gemini
+        answered while Codex was the active brain" bug). INFO logging makes the
+        desktop log show whether the turn ran, how long it took, or why it failed.
         """
         binary = _resolve_codex_binary()
         if binary is None:
@@ -169,7 +174,12 @@ class CodexBrain:
             "approval_policy=never",
         ]
         creationflags = NO_WINDOW_CREATIONFLAGS if sys.platform == "win32" else 0
+        log.info(
+            "CodexBrain CLI: spawning '%s exec' for the ChatGPT-login brain "
+            "(prompt=%d chars)", binary, len(prompt),
+        )
 
+        t0 = time.monotonic()
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -180,7 +190,10 @@ class CodexBrain:
                 stderr=asyncio.subprocess.PIPE,
                 creationflags=creationflags,
             )
-        except FileNotFoundError as exc:
+        except (FileNotFoundError, OSError) as exc:
+            with suppress(OSError):
+                shutil.rmtree(workdir, ignore_errors=True)
+            log.warning("CodexBrain CLI: spawn failed: %s", exc)
             raise RuntimeError(f"Codex CLI could not be launched: {exc}") from exc
 
         try:
@@ -191,13 +204,31 @@ class CodexBrain:
         except (BrokenPipeError, ConnectionResetError):
             pass
 
+        comm_task = asyncio.create_task(proc.communicate())
+        deadline = t0 + _CLI_TIMEOUT_S
+        stdout_bytes = b""
+        stderr_bytes = b""
         try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=_CLI_TIMEOUT_S
-            )
+            while True:
+                slice_timeout = min(3.0, deadline - time.monotonic())
+                if slice_timeout <= 0:
+                    raise TimeoutError
+                done, _ = await asyncio.wait({comm_task}, timeout=slice_timeout)
+                if done:
+                    stdout_bytes, stderr_bytes = comm_task.result()
+                    break
+                # No-text progress tick: keeps the caller's no-progress deadline
+                # alive through the ~20 s codex spin-up (yields nothing visible).
+                yield BrainDelta(content="")
         except TimeoutError as exc:
+            comm_task.cancel()
             with suppress(ProcessLookupError):
                 proc.kill()
+            with suppress(Exception):
+                await asyncio.wait_for(proc.wait(), timeout=3.0)
+            log.warning(
+                "CodexBrain CLI: no answer within %.0fs (killed)", _CLI_TIMEOUT_S
+            )
             raise RuntimeError(
                 f"Codex (ChatGPT login) did not answer within {_CLI_TIMEOUT_S:.0f}s."
             ) from exc
@@ -229,18 +260,26 @@ class CodexBrain:
                 error_text = str(msg) if msg else "codex turn failed"
 
         answer = "\n".join(text_parts).strip()
+        elapsed = time.monotonic() - t0
         if not answer:
             detail = error_text or (
                 stderr_bytes.decode("utf-8", errors="replace").strip()[:300]
                 if stderr_bytes
                 else ""
             )
+            log.warning(
+                "CodexBrain CLI: empty answer after %.1fs rc=%s detail=%s",
+                elapsed, proc.returncode, detail[:200],
+            )
             raise RuntimeError(
                 "Codex (ChatGPT login) returned no answer"
                 + (f": {detail}" if detail else ".")
             )
 
-        log.info("CodexBrain CLI turn ok: %d chars via ChatGPT login", len(answer))
+        log.info(
+            "CodexBrain CLI turn ok: %d chars in %.1fs via ChatGPT login",
+            len(answer), elapsed,
+        )
         yield BrainDelta(content=answer)
         yield BrainDelta(finish_reason="stop")
 
@@ -249,11 +288,17 @@ class CodexBrain:
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
         api_key = self._api_key()
         if api_key:
+            log.info("CodexBrain.complete: API-key path (model=%s)", self._model)
             client = self._ensure_client(api_key)
             async for delta in stream_complete(client, self._model, req):
                 yield delta
             return
-        if _codex_oauth_connected():
+        oauth = _codex_oauth_connected()
+        log.info(
+            "CodexBrain.complete: no API key — oauth=%s, %d tool(s) requested "
+            "(ignored on the CLI path)", oauth, len(req.tools or ()),
+        )
+        if oauth:
             async for delta in self._complete_via_cli(req):
                 yield delta
             return

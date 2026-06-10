@@ -223,6 +223,91 @@ def _build_router(
 
 
 # ----------------------------------------------------------------------
+# Silent desktop-action flag (manager side of the 2026-06-09 clarify fix)
+# ----------------------------------------------------------------------
+
+
+class _AggDispatcher:
+    """Dispatcher stub that returns a pre-built aggregate (wordless turn whose
+    only output is a single tool call). Signature mirrors the real
+    BrainDispatcher so it slots into ``_build_dispatcher`` (which the manager
+    calls with a keyword ``tools_override``).
+
+    ``requested`` is the tool the model asked for (lands in ``tool_calls``);
+    ``executed`` is the set that ACTUALLY ran (lands in ``executed_tool_names``).
+    They differ when a guard blocks the call — the case the action-confirmation
+    flag must NOT mistake for a real side effect."""
+
+    def __init__(self, *, requested: str, executed: set[str] | None = None) -> None:
+        self._requested = requested
+        self._executed = executed if executed is not None else {requested}
+
+    def tools_payload(self) -> list[dict[str, Any]]:
+        return []
+
+    async def dispatch(self, user_text: str, **_kw: Any) -> StreamingAggregate:
+        agg = StreamingAggregate()
+        agg.text = ""  # wordless — the exact bug condition (no narration)
+        agg.finish_reason = "stop"
+        agg.tool_calls = [
+            {"name": self._requested, "input": {"goal": "open chrome"}, "id": "t1"}
+        ]
+        agg.executed_tool_names = set(self._executed)
+        return agg
+
+
+@pytest.mark.asyncio
+async def test_generate_flags_executed_desktop_action_tool() -> None:
+    """Manager side of the 2026-06-09 fix: when the winning turn SUCCESSFULLY
+    executed a DESKTOP-ACTION tool (computer_use / open_app / …) but produced no
+    narration text, ``generate`` (the method the live ``generate_stream`` path
+    delegates to) sets ``_last_turn_executed_action_tool=True`` so the voice
+    pipeline speaks a confirmation ("Erledigt.") instead of the clarifying
+    question that made a successful Chrome-open look like incomprehension
+    (data/jarvis_desktop.log 16:27)."""
+    router, _recorder = _build_router()
+    router.manager._build_dispatcher = (  # type: ignore[method-assign]
+        lambda _brain, *, tools_override=None: _AggDispatcher(requested="computer_use")
+    )
+
+    await router.manager.generate("was ist das hier")
+    assert router.manager._last_turn_executed_action_tool is True
+
+
+@pytest.mark.asyncio
+async def test_generate_does_not_flag_non_action_tool() -> None:
+    """A wordless turn whose only tool is read-only (e.g. wiki_recall) is NOT a
+    desktop action — the flag stays False so such a turn keeps the existing
+    clarify-question behaviour."""
+    router, _recorder = _build_router()
+    router.manager._build_dispatcher = (  # type: ignore[method-assign]
+        lambda _brain, *, tools_override=None: _AggDispatcher(requested="wiki_recall")
+    )
+
+    await router.manager.generate("was ist das hier")
+    assert router.manager._last_turn_executed_action_tool is False
+
+
+@pytest.mark.asyncio
+async def test_generate_does_not_flag_requested_but_blocked_action_tool() -> None:
+    """Regression for the 2026-06-09 review finding: a desktop-action tool the
+    model REQUESTED but that a guard BLOCKED (e.g. computer_use refused on a
+    how-to question) lands in ``tool_calls`` with success=False but NEVER in
+    ``executed_tool_names``. The flag must stay False so the pipeline does NOT
+    speak "Erledigt." for an action that never happened — it falls back to the
+    clarifying question as before."""
+    router, _recorder = _build_router()
+    router.manager._build_dispatcher = (  # type: ignore[method-assign]
+        lambda _brain, *, tools_override=None: _AggDispatcher(
+            requested="computer_use", executed=set()
+        )
+    )
+
+    await router.manager.generate("wie öffne ich Chrome?")
+    assert router.manager._last_turn_executed_action_tool is False
+
+
+# ----------------------------------------------------------------------
 # Vision-Inject Tests
 # ----------------------------------------------------------------------
 

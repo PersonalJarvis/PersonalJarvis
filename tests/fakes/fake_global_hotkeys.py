@@ -47,6 +47,10 @@ class FakeGlobalHotkeys:
         # Test knob: when set, register_hotkeys raises this to simulate an
         # unrecoverable registration failure (e.g. an invalid combo).
         self.register_error: Exception | None = None
+        # Test knob: combos (whitespace-stripped) that should raise on
+        # registration, mirroring the real package raising on an unknown key
+        # name — used to prove a single bad combo does NOT disable the rest.
+        self.register_error_combos: set[str] = set()
 
     # ------------------------------------------------------------------
     # Real API surface (what HotkeyTrigger imports as ``gh``)
@@ -59,6 +63,10 @@ class FakeGlobalHotkeys:
             combo = _norm(row[0])
             on_press = row[1] if len(row) > 1 else None
             on_release = row[2] if len(row) > 2 else None
+            if combo in self.register_error_combos:
+                # Faithful to global_hotkeys: an unknown key name raises
+                # "not a valid virtual keystroke" mid-registration.
+                raise Exception(f"The key in [{combo}] is not a valid virtual keystroke.")
             if combo in self.registered:
                 # Faithful to global_hotkeys.HotkeyChecker.register_hotkey.
                 raise Exception(f"The hotkey [{combo}] is already registered.")

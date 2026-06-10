@@ -67,7 +67,10 @@ from .provider_chain import _resolve_provider_chain
 logger = logging.getLogger(__name__)
 
 
-_DEFAULT_TIMEOUT_S: float = 600.0
+# Per-attempt wall-clock cap (20 min). Raised from 600 s so complex tasks can
+# finish (user mandate 2026-06-09); preserve-partial-work + the first-output
+# gate keep a true hang from burning the full cap.
+_DEFAULT_TIMEOUT_S: float = 1200.0
 # First-output ("startup") timeout. ClaudeDirectWorker kills + flags a retry
 # when ``claude`` emits ZERO bytes within this window — the signature of a
 # Claude Max OAuth-contention hang: when several claude-direct workers/critics

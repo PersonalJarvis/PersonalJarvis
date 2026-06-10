@@ -101,6 +101,11 @@ class WorkerKilled(_PayloadBase):
         "parent_cancelled",
         "injection_detected",
         "path_guard",
+        # Honest catch-all for a non-timeout/non-billing worker failure
+        # (crash / auth / SSL / permission). Replaces the old "user" mislabel,
+        # which falsely implied the user cancelled. Five-layer parity:
+        # tests/missions/test_worker_killed_reason_parity.py.
+        "worker_error",
     ]
 
 

@@ -28,6 +28,8 @@ import {
   Github,
   Trash2,
   GripVertical,
+  ListChecks,
+  Check,
 } from "lucide-react";
 import { SkillFinderDialog } from "@/views/SkillFinderDialog";
 import { SkillCreateDialog } from "@/views/SkillCreateDialog";
@@ -48,6 +50,7 @@ import {
   useLocalSkillSearch,
   useSkillLinkHealth,
   useDeleteSkill,
+  useBulkDeleteSkills,
   useReorderSkills,
   RESOURCE_KINDS,
   RESOURCE_LABELS,
@@ -104,10 +107,19 @@ export function SkillsView() {
   const setEnabled = useSetSkillEnabled();
   const reorder = useReorderSkills();
   const del = useDeleteSkill();
+  const bulkDel = useBulkDeleteSkills();
   const [selected, setSelected] = useState<string | null>(null);
   const [finderOpen, setFinderOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<SkillSummary | null>(null);
+
+  // Multi-select: a "selection mode" turns the per-row drag handle into a
+  // checkbox so the user can tick several skills and delete them in ONE
+  // confirmed batch (instead of repeating the single-delete flow per skill).
+  // Built-ins are never selectable — they can't be deleted anyway.
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [confirmBulk, setConfirmBulk] = useState(false);
 
   const [queryInput, setQueryInput] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -141,6 +153,50 @@ export function SkillsView() {
     [setEnabled],
   );
 
+  // Names that may actually be deleted — built-ins are protected, so they are
+  // never tickable and never counted in "select all".
+  const deletableNames = useMemo(
+    () => items.filter((s) => !s.is_builtin).map((s) => s.name),
+    [items],
+  );
+  const allDeletableChecked =
+    deletableNames.length > 0 && deletableNames.every((n) => checked.has(n));
+
+  const toggleChecked = useCallback((name: string) => {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    setChecked((prev) =>
+      deletableNames.length > 0 && deletableNames.every((n) => prev.has(n))
+        ? new Set()
+        : new Set(deletableNames),
+    );
+  }, [deletableNames]);
+
+  const exitSelection = useCallback(() => {
+    setSelectionMode(false);
+    setChecked(new Set());
+    setConfirmBulk(false);
+  }, []);
+
+  const handleBulkDelete = useCallback(() => {
+    const names = Array.from(checked);
+    bulkDel.mutate(names, {
+      onSuccess: () => {
+        const removed = new Set(names);
+        if (selected && removed.has(selected)) setSelected(null);
+        setItems((prev) => prev.filter((s) => !removed.has(s.name)));
+        exitSelection();
+      },
+    });
+  }, [checked, bulkDel, selected, exitSelection]);
+
   // Debounce: 250ms nach letztem Tastendruck
   useEffect(() => {
     const tmr = setTimeout(() => setDebouncedQuery(queryInput.trim()), 250);
@@ -151,6 +207,12 @@ export function SkillsView() {
     debouncedQuery.length > 0 ||
     ownerFilter !== "all" ||
     categoryFilter !== null;
+
+  // Search and selection don't mix (selection acts on the ordered full list),
+  // so a search starting mid-selection drops us back out of selection mode.
+  useEffect(() => {
+    if (searchActive) exitSelection();
+  }, [searchActive, exitSelection]);
 
   const searchFilters: LocalSkillQueryFilters = useMemo(
     () => ({
@@ -211,6 +273,19 @@ export function SkillsView() {
               <Sparkles className="h-3.5 w-3.5" />
               Skill suchen
             </Button>
+            {!searchActive && items.length > 0 && (
+              <Button
+                size="sm"
+                variant={selectionMode ? "secondary" : "ghost"}
+                onClick={() => (selectionMode ? exitSelection() : setSelectionMode(true))}
+                className="gap-1.5"
+              >
+                <ListChecks className="h-3.5 w-3.5" />
+                {selectionMode
+                  ? t("skills_view.delete_cancel")
+                  : t("skills_view.select")}
+              </Button>
+            )}
             <Button
               size="sm"
               variant="ghost"
@@ -255,6 +330,15 @@ export function SkillsView() {
               },
             })
           }
+        />
+      )}
+
+      {confirmBulk && (
+        <BulkDeleteConfirmDialog
+          names={Array.from(checked)}
+          pending={bulkDel.isPending}
+          onCancel={() => setConfirmBulk(false)}
+          onConfirm={handleBulkDelete}
         />
       )}
 
@@ -335,6 +419,15 @@ export function SkillsView() {
               </div>
             )}
           </div>
+          {selectionMode && (
+            <SelectionToolbar
+              total={deletableNames.length}
+              checkedCount={checked.size}
+              allChecked={allDeletableChecked}
+              onToggleAll={toggleSelectAll}
+              onDelete={() => setConfirmBulk(true)}
+            />
+          )}
           <ScrollArea className="flex-1">
             <div className="space-y-3 p-4">
               {isLoading && (
@@ -368,6 +461,9 @@ export function SkillsView() {
                         key={s.name}
                         skill={s}
                         selected={selected === s.name}
+                        selectionMode={selectionMode}
+                        checked={checked.has(s.name)}
+                        onCheckChange={() => toggleChecked(s.name)}
                         onSelect={() => setSelected(s.name)}
                         onToggle={(on) => onToggle(s.name, on)}
                         onDelete={() => setConfirmDelete(s)}
@@ -403,6 +499,9 @@ export function SkillsView() {
 function SkillRowDraggable({
   skill,
   selected,
+  selectionMode,
+  checked,
+  onCheckChange,
   onSelect,
   onToggle,
   onDelete,
@@ -410,6 +509,9 @@ function SkillRowDraggable({
 }: {
   skill: SkillSummary;
   selected: boolean;
+  selectionMode: boolean;
+  checked: boolean;
+  onCheckChange: () => void;
   onSelect: () => void;
   onToggle: (on: boolean) => void;
   onDelete: () => void;
@@ -419,6 +521,14 @@ function SkillRowDraggable({
   const controls = useDragControls();
   const isDraft = skill.state === "draft";
   const on = isSkillOn(skill.state);
+  // In selection mode the whole row body toggles the checkbox (built-ins are
+  // protected and stay inert); otherwise it opens the detail panel.
+  const selectable = selectionMode && !skill.is_builtin;
+  const onBodyClick = selectionMode
+    ? selectable
+      ? onCheckChange
+      : () => {}
+    : onSelect;
 
   return (
     <Reorder.Item
@@ -433,24 +543,44 @@ function SkillRowDraggable({
           "flex items-start gap-1.5 rounded-md border p-2.5 transition-colors",
           selected
             ? "border-primary/60 bg-primary/5"
-            : "border-border hover:bg-muted/40",
+            : checked
+              ? "border-primary/60 bg-primary/10"
+              : "border-border hover:bg-muted/40",
+          // Built-ins can't be deleted — recede them visually in selection mode.
+          selectionMode && skill.is_builtin && "opacity-50",
         )}
       >
-        {/* Drag handle — only this starts a reorder (dragListener is off). */}
-        <button
-          type="button"
-          onPointerDown={(e) => controls.start(e)}
-          className="mt-0.5 cursor-grab touch-none text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing"
-          title={t("skills_view.drag_hint")}
-          aria-label={t("skills_view.drag_hint")}
-        >
-          <GripVertical className="h-3.5 w-3.5" />
-        </button>
+        {selectionMode ? (
+          /* Selection mode: a styled checkbox replaces the drag handle. Built-ins
+             can't be deleted, so they get an inert spacer (the lock next to the
+             name already marks them protected) instead of a second lock icon. */
+          skill.is_builtin ? (
+            <span className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />
+          ) : (
+            <SelectBox
+              checked={checked}
+              onChange={onCheckChange}
+              label={`${t("skills_view.select")} ${skill.name}`}
+              className="mt-0.5"
+            />
+          )
+        ) : (
+          /* Drag handle — only this starts a reorder (dragListener is off). */
+          <button
+            type="button"
+            onPointerDown={(e) => controls.start(e)}
+            className="mt-0.5 cursor-grab touch-none text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing"
+            title={t("skills_view.drag_hint")}
+            aria-label={t("skills_view.drag_hint")}
+          >
+            <GripVertical className="h-3.5 w-3.5" />
+          </button>
+        )}
 
         {/* Select area */}
         <button
           type="button"
-          onClick={onSelect}
+          onClick={onBodyClick}
           className="min-w-0 flex-1 text-left"
         >
           <div className="flex items-center gap-1.5">
@@ -486,42 +616,189 @@ function SkillRowDraggable({
           </div>
         </button>
 
-        {/* Right rail: On/Off switch (or error lock) + delete */}
-        <div className="flex flex-shrink-0 items-center gap-1.5">
-          {isDraft ? (
-            <span
-              className="flex items-center gap-1 text-[10px] font-medium text-destructive"
-              title={skill.error ?? undefined}
-            >
-              <AlertTriangle className="h-3.5 w-3.5" />
-              {t("skills_view.error")}
-            </span>
-          ) : (
-            <Switch
-              checked={on}
-              onCheckedChange={onToggle}
-              aria-label={`${skill.name}: ${on ? t("skills_view.on") : t("skills_view.off")}`}
-            />
-          )}
-          {skill.is_builtin ? (
-            <Lock
-              className="h-3.5 w-3.5 text-muted-foreground/40"
-              aria-label={t("skills_view.builtin_protected")}
-            />
-          ) : (
-            <button
-              type="button"
-              onClick={onDelete}
-              aria-label={t("skills_view.delete")}
-              title={t("skills_view.delete")}
-              className="rounded p-1 text-muted-foreground/60 hover:bg-destructive/10 hover:text-destructive"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
+        {/* Right rail: On/Off switch (or error lock) + delete. Hidden in
+            selection mode — the bulk toolbar owns deletion there. */}
+        {!selectionMode && (
+          <div className="flex flex-shrink-0 items-center gap-1.5">
+            {isDraft ? (
+              <span
+                className="flex items-center gap-1 text-[10px] font-medium text-destructive"
+                title={skill.error ?? undefined}
+              >
+                <AlertTriangle className="h-3.5 w-3.5" />
+                {t("skills_view.error")}
+              </span>
+            ) : (
+              <Switch
+                checked={on}
+                onCheckedChange={onToggle}
+                aria-label={`${skill.name}: ${on ? t("skills_view.on") : t("skills_view.off")}`}
+              />
+            )}
+            {skill.is_builtin ? (
+              <Lock
+                className="h-3.5 w-3.5 text-muted-foreground/40"
+                aria-label={t("skills_view.builtin_protected")}
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={onDelete}
+                aria-label={t("skills_view.delete")}
+                title={t("skills_view.delete")}
+                className="rounded p-1 text-muted-foreground/60 hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </Reorder.Item>
+  );
+}
+
+// ----------------------------------------------------------------------
+// Selection toolbar (multi-select) + bulk delete confirmation
+// ----------------------------------------------------------------------
+
+/**
+ * A theme-styled checkbox (native checkboxes render as a stark white box that
+ * clashes with the dark UI). It is a real checkbox to assistive tech via
+ * ``role="checkbox"`` + ``aria-checked``, and fills with the accent colour and a
+ * check mark when ticked.
+ */
+function SelectBox({
+  checked,
+  onChange,
+  label,
+  disabled,
+  className,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  label: string;
+  disabled?: boolean;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onChange}
+      className={cn(
+        "flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border transition-colors",
+        checked
+          ? "border-primary bg-primary text-primary-foreground"
+          : "border-muted-foreground/50 hover:border-muted-foreground",
+        disabled && "cursor-not-allowed opacity-40",
+        className,
+      )}
+    >
+      {checked && <Check className="h-3 w-3" strokeWidth={3} />}
+    </button>
+  );
+}
+
+function SelectionToolbar({
+  total,
+  checkedCount,
+  allChecked,
+  onToggleAll,
+  onDelete,
+}: {
+  total: number;
+  checkedCount: number;
+  allChecked: boolean;
+  onToggleAll: () => void;
+  onDelete: () => void;
+}) {
+  const t = useT();
+  const hasSelection = checkedCount > 0;
+  return (
+    <div className="flex items-center gap-2.5 border-b border-border bg-muted/20 px-3 py-2">
+      <SelectBox
+        checked={allChecked}
+        onChange={onToggleAll}
+        disabled={total === 0}
+        label={t("skills_view.select_all")}
+      />
+      <button
+        type="button"
+        onClick={total === 0 ? undefined : onToggleAll}
+        disabled={total === 0}
+        className="text-xs text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {t("skills_view.select_all")}
+      </button>
+      <span className="ml-auto text-xs text-muted-foreground">
+        {checkedCount} {t("skills_view.selected")}
+      </span>
+      <Button
+        size="sm"
+        variant={hasSelection ? "destructive" : "ghost"}
+        disabled={!hasSelection}
+        onClick={onDelete}
+        className={cn("gap-1.5", !hasSelection && "text-muted-foreground")}
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+        {t("skills_view.delete")} ({checkedCount})
+      </Button>
+    </div>
+  );
+}
+
+function BulkDeleteConfirmDialog({
+  names,
+  pending,
+  onCancel,
+  onConfirm,
+}: {
+  names: string[];
+  pending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const t = useT();
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      role="dialog"
+      aria-label={t("skills_view.bulk_delete_title")}
+    >
+      <div className="w-[420px] rounded-lg border border-border bg-card p-6 shadow-xl">
+        <h3 className="flex items-center gap-2 text-base font-semibold">
+          <Trash2 className="h-4 w-4 text-destructive" />
+          {t("skills_view.bulk_delete_title")}
+        </h3>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {t("skills_view.bulk_delete_body")}
+        </p>
+        <ul className="mt-2 max-h-40 space-y-0.5 overflow-y-auto rounded-md border border-border bg-muted/20 p-2">
+          {names.map((n) => (
+            <li key={n} className="truncate font-mono text-xs">
+              {n}
+            </li>
+          ))}
+        </ul>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button size="sm" variant="ghost" onClick={onCancel} disabled={pending}>
+            {t("skills_view.delete_cancel")}
+          </Button>
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={onConfirm}
+            disabled={pending}
+          >
+            {t("skills_view.delete_confirm")} ({names.length})
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 
