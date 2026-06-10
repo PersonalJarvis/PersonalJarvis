@@ -55,3 +55,15 @@ def test_telemetry_counter_names_follow_decisions() -> None:
         "wiki_consolidator_noop",
         "wiki_consolidator_invalidate",
     }
+
+
+def test_decision_counters_are_pre_registered_in_default_counters() -> None:
+    """B8: every quality counter shows up as 0 in a fresh snapshot, so the
+    /api/wiki/telemetry dashboard never sees a key appear out of nowhere."""
+    from jarvis.memory.wiki.telemetry import DEFAULT_COUNTERS
+
+    expected = {f"wiki_consolidator_{d}" for d in CURATOR_DECISIONS} | {
+        "wiki_candidates_extracted",
+        "wiki_consolidator_runs",
+    }
+    assert expected.issubset(set(DEFAULT_COUNTERS))

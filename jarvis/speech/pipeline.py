@@ -891,6 +891,11 @@ class SpeechPipeline:
         # waiting out the ceiling — the core fix for the 60-156 s "open app"
         # voice-hangs.
         self._speak_playback_stall_s = _TTS_PLAYBACK_STALL_S
+        # Per-turn mark: the no-first-frame ceiling beheaded this turn's
+        # playback. Read by _handle_silent_brain_turn so a beheaded-and-empty
+        # turn ends with an audible timeout notice instead of silent LISTENING
+        # (AD-OE6; live bug 2026-06-10 14:34). Reset at every turn finalize.
+        self._playback_aborted_no_first_frame = False
         self._pending_context_flush_s = max(0.5, float(pending_context_flush_s))
         self._pending_flush_task: asyncio.Task[None] | None = None
         self._vad = SileroEndpointer(
@@ -1718,11 +1723,12 @@ class SpeechPipeline:
             log.warning("SkillDirectTriggered-Publish fehlgeschlagen: %s", exc)
 
     async def _skill_cron_loop(self, stop_event: asyncio.Event) -> None:
-        """Cron-Scheduler fuer Skills (Phase Skills-1).
+        """Cron scheduler for skills.
 
-        Laeuft als parallele asyncio-Task, yielded Skill wenn ein Cron-Trigger
-        feuert, fuehrt Skill ohne Brain-Pfad aus. Kein TTS-Echo direkt — wenn
-        ein Cron-Skill was sagen will muss er ``AnnouncementRequested`` emitten.
+        Runs as a parallel asyncio task; yields a skill when its cron trigger
+        fires and hands it to ``_handle_cron_skill`` (instruction-skill model,
+        AD-S4: the brain executes the skill; the spoken result goes out as an
+        announcement through the normal scrubbed announcement path).
         """
         ctx = try_get_skill_context()
         if ctx is None:
@@ -1733,18 +1739,67 @@ class SpeechPipeline:
         try:
             async for skill in matcher.run_cron_scheduler(stop_event):
                 try:
-                    await self._emit_skill_direct(skill.name, "cron")
-                    result = await ctx.runner.run(skill, args={"_trigger": "cron"})
-                    log.info(
-                        "Cron-Skill '%s' completed: success=%s",
-                        skill.name, result.success,
-                    )
+                    await self._handle_cron_skill(skill)
                 except Exception as exc:  # noqa: BLE001
-                    log.exception("Cron-Skill '%s' failed: %s", skill.name, exc)
+                    log.exception("Cron skill '%s' failed: %s", skill.name, exc)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
             log.exception("Skill-Cron-Loop crashed: %s", exc)
+
+    async def _handle_cron_skill(self, skill: Any) -> None:
+        """Run one scheduled skill fire through the brain (AD-S4 extension).
+
+        The brain receives a synthetic scheduled-run turn with the skill
+        noted (``note_skill_trigger`` → instruction injection + SkillInvoked
+        source="cron"); the reply is announced via ``AnnouncementRequested``
+        (scrubbed TTS path). Falls back to the legacy macro runner when the
+        wired brain cannot take the handoff (echo/mock brains).
+        """
+        from jarvis.skills.schema import SkillLifecycleState
+
+        state = getattr(skill, "state", None)
+        if state not in (
+            SkillLifecycleState.ACTIVE, SkillLifecycleState.VALIDATED,
+        ):
+            log.debug("cron fire for %s skipped (state=%s)", skill.name, state)
+            return
+        fm = getattr(skill, "frontmatter", None)
+        if fm is not None and fm.risk_policy.default_tier == "block":
+            log.info("cron fire for %s skipped (block tier)", skill.name)
+            return
+
+        await self._emit_skill_direct(skill.name, "cron")
+        note = getattr(self._brain, "note_skill_trigger", None)
+        if not callable(note):
+            # Legacy fallback: no brain handoff available (echo/mock brain).
+            ctx = try_get_skill_context()
+            if ctx is not None:
+                result = await ctx.runner.run(skill, args={"_trigger": "cron"})
+                log.info(
+                    "Cron skill '%s' (legacy runner): success=%s",
+                    skill.name, result.success,
+                )
+            return
+
+        note(skill.name, source="cron")
+        reply = await self._brain(
+            f"[scheduled run] It is time for the '{skill.name}' skill. "
+            "Execute its instructions now and report the result briefly."
+        )
+        text = (reply or "").strip()
+        if text and self._bus is not None:
+            try:
+                await self._bus.publish(
+                    AnnouncementRequested(
+                        source_layer="speech.pipeline",
+                        text=text,
+                        priority="normal",
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("cron skill announcement failed: %s", exc)
+        log.info("Cron skill '%s' executed via brain turn", skill.name)
 
     async def _on_announcement(self, event: AnnouncementRequested) -> None:
         """TTS-Bypass-Handler (CL-13): spricht sofort, ohne Brain-Pfad.
@@ -3520,6 +3575,9 @@ class SpeechPipeline:
         # fire-and-forget so the hot path never blocks on telemetry.
         lat_cfg = getattr(self._config, "latency", None)
         self._latency_first_audio_marked = False
+        # Per-turn re-arm of the beheaded-playback mark (BUG-032 lesson: never
+        # let a previous turn's abort leak into this turn's empty-turn handling).
+        self._playback_aborted_no_first_frame = False
         self._latency_tracker = LatencyTracker(
             self._bus,
             uuid4(),
@@ -4818,6 +4876,20 @@ class SpeechPipeline:
                     "Silent-brain-turn action-confirmation speak failed: %s", exc
                 )
             return
+        if getattr(self, "_playback_aborted_no_first_frame", False):
+            # The no-first-frame TTS ceiling beheaded this turn — a FAILURE,
+            # not a "confused" empty turn. Always audible (AD-OE6), independent
+            # of the opt-in clarify toggle below: the 2026-06-09 mandate keeps
+            # the interrogating question off, but an honest "taking longer"
+            # notice is a different speech act (live bug 2026-06-10 14:34 — a
+            # 20 s mute brain turn ended in silent LISTENING + idle hang-up).
+            self._playback_aborted_no_first_frame = False
+            log.info(
+                "⏱ Empty turn after a no-first-frame ceiling abort — speaking "
+                "the timeout notice (AD-OE6)."
+            )
+            await self._speak_brain_timeout(lang)
+            return
         cfg = getattr(self._config, "voice", None)
         # Default False (defense-in-depth): see _arm_clarify_question above. An
         # empty brain turn must never interrogate the user when the field is
@@ -5118,6 +5190,10 @@ class SpeechPipeline:
                         "TTS produced no audio within %.0fs — aborting "
                         "(no first frame).", ceiling,
                     )
+                    # Mark the turn as beheaded so the empty-turn handler can
+                    # speak an audible timeout notice (AD-OE6) instead of
+                    # dropping the user into silent LISTENING.
+                    self._playback_aborted_no_first_frame = True
                     self._abort_playback_device()
                     return set()
                 continue

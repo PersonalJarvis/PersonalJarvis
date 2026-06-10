@@ -1402,11 +1402,12 @@ class DesktopApp:
             logger.opt(exception=exc).warning("Audio ducking not started")
             self._ducker = None
 
-        # Skills-Brain-Integration: Phase Skills-1 — SkillContext aufsetzen
-        # bevor die Pipeline startet. Pipeline holt sich den Context lazy via
-        # ``try_get_skill_context()``; ohne diesen Block bleibt der Pre-Brain-
-        # Hook ein no-op (Backward-Compat). Setup-Fehler sind nicht fatal —
-        # Pipeline laeuft dann ohne Skill-Direkt-Trigger weiter wie vorher.
+        # Skill context wiring. Since the AD-S6 boot-race fix the brain
+        # factory already set a minimal context at build time; this block is
+        # the idempotent UPGRADE to the authoritative instances — the web
+        # server's watchdog-backed registry (hot-reload on SKILL.md edits)
+        # and a runner with the populated mini tool registry. Setup errors
+        # are non-fatal: the factory-time context keeps skills working.
         try:
             from jarvis.skills.bootstrap import ensure_user_skills_dir
             from jarvis.skills.registry import SkillRegistry

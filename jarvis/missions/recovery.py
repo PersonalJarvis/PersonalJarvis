@@ -30,6 +30,7 @@ cloud-first headless-VPS case alike):
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 
@@ -55,6 +56,21 @@ log = logging.getLogger(__name__)
 # whereas a too-short window re-introduces the false-FAILED bug by sweeping a
 # mission another live instance is actively running.
 RECOVERY_STALE_AFTER_MS: int = 30 * 60 * 1000  # 30 minutes
+
+
+# How often the periodic re-sweep re-runs ``startup_recover`` after boot.
+#
+# ``startup_recover`` is BOOT-ONLY by itself: a mission that was active when the
+# orchestrator booted (last event/heartbeat younger than RECOVERY_STALE_AFTER_MS,
+# so the active-guard correctly SKIPPED it) is never re-checked, so when its
+# owning instance dies it stays non-terminal (e.g. CRITIQUING) forever in the DB
+# and the UI ("missions never find an end" — live forensic 2026-06-10, mission
+# 019eb25c). The re-sweep fixes that by re-running the same conservative,
+# active-guarded sweep on a timer: once an orphaned mission crosses the existing
+# staleness threshold it is finalized on the next tick. The interval is short
+# relative to the 30-min staleness window, so the worst-case extra lifetime of an
+# orphan is one interval beyond the threshold.
+RECOVERY_RESWEEP_INTERVAL_S: int = 10 * 60  # 10 minutes
 
 
 # Terminal event type -> header state to reconcile to.
@@ -229,6 +245,84 @@ async def startup_recover(
             skipped_active,
         )
     return recovered_ids
+
+
+async def periodic_recovery_sweep(
+    store: MissionEventStore,
+    *,
+    interval_s: int = RECOVERY_RESWEEP_INTERVAL_S,
+    stale_after_ms: int = RECOVERY_STALE_AFTER_MS,
+    now_fn: Callable[[], int] = now_ms,
+) -> None:
+    """Re-run :func:`startup_recover` on a timer so orphaned missions finalize.
+
+    ``startup_recover`` runs once at boot and, thanks to the active-guard, SKIPS
+    any mission that still looks live (recent event/heartbeat). That is correct
+    at boot — a parallel ``--no-lock`` instance may genuinely own it — but it
+    means a mission whose owner dies *after* boot is never re-checked and stays
+    non-terminal forever (mission 019eb25c, 2026-06-10). This loop closes that
+    gap: every ``interval_s`` it re-runs the SAME conservative sweep, so once an
+    orphan's last activity crosses ``stale_after_ms`` the next tick finalizes it.
+
+    Safety:
+        * Each tick's :func:`startup_recover` call is wrapped — any exception is
+          caught and logged, never allowed to kill the loop (mirrors the
+          EventBus ``_safe_dispatch`` philosophy, AP-18). A transient DB error on
+          one tick must not stop all future sweeps.
+        * The loop logs at most a debug-level line per no-op tick and stays quiet
+          otherwise; it only logs at info level when a tick actually recovered
+          one or more missions.
+        * Cancellation (``asyncio.CancelledError``) exits cleanly — the loop is
+          meant to be started via ``asyncio.create_task`` and cancelled on app
+          shutdown.
+
+    Args:
+        store: open :class:`MissionEventStore` (same instance the live mission
+            stack uses).
+        interval_s: seconds between sweeps (default
+            :data:`RECOVERY_RESWEEP_INTERVAL_S`).
+        stale_after_ms: quiet-time after which a non-terminal mission is treated
+            as orphaned — forwarded unchanged to :func:`startup_recover` (default
+            :data:`RECOVERY_STALE_AFTER_MS`, the same conservative window the boot
+            sweep uses). Never tightened here.
+        now_fn: clock function, forwarded to :func:`startup_recover`; injectable
+            for tests.
+    """
+    log.info(
+        "Mission recovery re-sweep: starting (interval=%ds, stale_after=%dms)",
+        interval_s,
+        stale_after_ms,
+    )
+    try:
+        while True:
+            await asyncio.sleep(interval_s)
+            try:
+                recovered = await startup_recover(
+                    store,
+                    stale_after_ms=stale_after_ms,
+                    now_fn=now_fn,
+                )
+            except Exception:  # noqa: BLE001
+                # A bad tick (e.g. a transient DB error) must never kill the
+                # loop — log it and keep sweeping on the next interval.
+                log.warning(
+                    "Mission recovery re-sweep: tick failed — loop continues",
+                    exc_info=True,
+                )
+                continue
+
+            if recovered:
+                log.info(
+                    "Mission recovery re-sweep: finalized %d orphaned "
+                    "mission(s): %s",
+                    len(recovered),
+                    recovered,
+                )
+            else:
+                log.debug("Mission recovery re-sweep: tick — nothing to recover")
+    except asyncio.CancelledError:
+        log.info("Mission recovery re-sweep: cancelled — shutting down")
+        raise
 
 
 def _last_terminal_state(events: list[EventEnvelope]) -> str | None:

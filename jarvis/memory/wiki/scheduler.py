@@ -39,7 +39,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from jarvis.core.config import SchedulerConfig
@@ -55,6 +55,9 @@ class TriggerSource(str, Enum):
     SESSION_END = "session_end"
     PERIODIC = "periodic"
     MANUAL = "manual"
+    # Wave-2: Stage-1 journal pressure — drain a candidate batch through
+    # the Stage-2 consolidator (honours cooldown + lock like SESSION_END).
+    JOURNAL = "journal"
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,7 +71,8 @@ class SchedulerResult:
     skip_reason:
         Empty string when the curator ran, otherwise a short token
         describing why it was skipped.  Always one of: ``""``,
-        ``"cooldown"``, ``"locked"``, ``"periodic_disabled"``.
+        ``"cooldown"``, ``"locked"``, ``"periodic_disabled"``,
+        ``"no_consolidator"``.
     curator_output_label:
         The ``source_label`` string passed to ``WikiCurator.ingest``,
         or ``""`` when the curator was not invoked.
@@ -103,13 +107,26 @@ class CuratorScheduler:
         curator: "WikiCurator",
         lock: "VaultLock",
         config: "SchedulerConfig",
+        consolidator: Any = None,
     ) -> None:
         self._curator = curator
         self._lock = lock
         self._config = config
+        # Wave-2: optional Stage-2 consolidator. When present, JOURNAL
+        # triggers drain the candidate journal through it instead of the
+        # legacy curator.ingest path. Duck-typed: needs ``run_once()``.
+        self._consolidator = consolidator
         # Monotonic timestamp of the last completed curator run.
-        # 0.0 means "never ran" — always older than any cooldown window.
-        self._last_run_ts: float = 0.0
+        # ``None`` means "never ran" — the first trigger always passes the
+        # cooldown gate. (A 0.0 sentinel is wrong: when the machine's
+        # monotonic clock is younger than the cooldown window — e.g. a
+        # freshly booted host with cooldown_seconds=3600 — elapsed would
+        # be < cooldown and the very first run would be throttled.)
+        self._last_run_ts: float | None = None
+
+    def attach_consolidator(self, consolidator: Any) -> None:
+        """Late-bind the Stage-2 consolidator (built after the scheduler)."""
+        self._consolidator = consolidator
 
     # ------------------------------------------------------------------
     # Public API
@@ -173,8 +190,16 @@ class CuratorScheduler:
                 curator_output_label="",
             )
 
-        # ----- gate 2: cooldown (MANUAL bypasses) ----------------------
-        if source is not TriggerSource.MANUAL:
+        # ----- gate 1b: journal trigger needs a consolidator ------------
+        if source is TriggerSource.JOURNAL and self._consolidator is None:
+            return SchedulerResult(
+                triggered=False,
+                skip_reason="no_consolidator",
+                curator_output_label="",
+            )
+
+        # ----- gate 2: cooldown (MANUAL bypasses; first run always passes)
+        if source is not TriggerSource.MANUAL and self._last_run_ts is not None:
             elapsed = time.monotonic() - self._last_run_ts
             if elapsed < self._config.cooldown_seconds:
                 return SchedulerResult(
@@ -195,8 +220,13 @@ class CuratorScheduler:
         # Lock is held from this point — guarantee release.
         source_label = self._build_source_label(source, episode_paths)
         try:
-            source_content = self._build_source_content(episode_paths)
-            await self._curator.ingest(source_content, source_label)
+            if source is TriggerSource.JOURNAL:
+                # Wave-2: drain one candidate batch through the body-aware
+                # Stage-2 consolidator (it does its own retrieval + writes).
+                source_label = await self._consolidator.run_once()
+            else:
+                source_content = self._build_source_content(episode_paths)
+                await self._curator.ingest(source_content, source_label)
             self._last_run_ts = time.monotonic()
         finally:
             self._lock.release()

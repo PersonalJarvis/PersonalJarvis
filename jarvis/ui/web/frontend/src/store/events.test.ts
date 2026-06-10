@@ -44,3 +44,69 @@ describe("useEventStore.pushMessage idempotency", () => {
     expect(useEventStore.getState().messages).toHaveLength(2);
   });
 });
+
+describe("reasoning trace (thinkingSteps / thinkingTraces)", () => {
+  beforeEach(() => {
+    useEventStore.setState({
+      chatThinking: false,
+      thinkingSteps: [],
+      thinkingStartedTs: null,
+      thinkingTraces: {},
+    });
+  });
+
+  it("ignores events while the chat is not waiting (voice turns stay invisible)", () => {
+    useEventStore
+      .getState()
+      .ingestThinkingEvent("ToolCallStarted", { tool_name: "wiki-recall" }, 1);
+    expect(useEventStore.getState().thinkingSteps).toHaveLength(0);
+  });
+
+  it("collects steps while thinking and re-arms on a new turn", () => {
+    const store = useEventStore.getState();
+    store.setChatThinking(true);
+    store.ingestThinkingEvent("ToolCallStarted", { tool_name: "wiki-recall" }, 1);
+    expect(useEventStore.getState().thinkingSteps).toHaveLength(1);
+    expect(useEventStore.getState().thinkingStartedTs).not.toBeNull();
+
+    // A re-send starts a fresh trace — old steps belong to the superseded turn.
+    store.setChatThinking(true);
+    expect(useEventStore.getState().thinkingSteps).toHaveLength(0);
+  });
+
+  it("discards the live trace on timeout/error without a snapshot", () => {
+    const store = useEventStore.getState();
+    store.setChatThinking(true);
+    store.ingestThinkingEvent("ToolCallStarted", { tool_name: "x" }, 1);
+    store.setChatThinking(false);
+    const s = useEventStore.getState();
+    expect(s.thinkingSteps).toHaveLength(0);
+    expect(Object.keys(s.thinkingTraces)).toHaveLength(0);
+  });
+
+  it("finishThinking snapshots the finalized trace onto the reply message", () => {
+    const store = useEventStore.getState();
+    store.setChatThinking(true);
+    store.ingestThinkingEvent("ToolCallStarted", { tool_name: "wiki-recall" }, 1);
+    store.finishThinking("msg-1");
+
+    const s = useEventStore.getState();
+    expect(s.chatThinking).toBe(false);
+    expect(s.thinkingSteps).toHaveLength(0);
+    expect(s.thinkingStartedTs).toBeNull();
+    const trace = s.thinkingTraces["msg-1"];
+    expect(trace).toBeDefined();
+    expect(trace.steps).toHaveLength(1);
+    // Active steps are finalized so the disclosure never shows a spinner.
+    expect(trace.steps[0].status).toBe("done");
+    expect(trace.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("stores no trace for step-less fast turns (no disclosure noise)", () => {
+    const store = useEventStore.getState();
+    store.setChatThinking(true);
+    store.finishThinking("msg-2");
+    expect(useEventStore.getState().thinkingTraces["msg-2"]).toBeUndefined();
+    expect(useEventStore.getState().chatThinking).toBe(false);
+  });
+});

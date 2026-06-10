@@ -118,7 +118,7 @@ class Capability:
     """
 
     id: str
-    source: Literal["router_tool", "mcp", "harness", "local_action", "skill"]
+    source: Literal["router_tool", "mcp", "harness", "local_action", "skill", "cli"]
     verbs: tuple[str, ...]
     objects: tuple[str, ...]
     description: str
@@ -207,12 +207,14 @@ class CapabilityRegistry:
                 re.search(r"\b" + re.escape(_normalize(o)) + r"\b", normalised)
                 for o in cap.objects
             )
-            # Plugin/paired-skill capabilities are DOMAIN-SPECIFIC: they must
-            # match a domain object (noun), not just a generic dispatch verb.
-            # Without this, gmail's generic "sende"/"schick" would hijack a
-            # different domain's request ("Sende eine WhatsApp"). Seed
-            # tool/harness/local caps keep their verb-only match (unchanged).
-            if cap.source == "skill" and not obj_hit:
+            # Plugin/paired-skill AND CLI capabilities are DOMAIN-SPECIFIC:
+            # they must match a domain object (noun), not just a generic
+            # dispatch verb. Without this, gmail's generic "sende"/"schick"
+            # would hijack a different domain's request ("Sende eine
+            # WhatsApp"), and a CLI's generic "zeig"/"list" would hijack
+            # unrelated requests (AD-CLI2/AD-CLI6). Seed tool/harness/local
+            # caps keep their verb-only match (unchanged).
+            if cap.source in ("skill", "cli") and not obj_hit:
                 continue
             score = 2 if obj_hit else 1
             # A domain-specific paired-skill match (verb + its own domain noun)

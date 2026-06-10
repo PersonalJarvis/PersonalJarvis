@@ -281,8 +281,14 @@ async def bootstrap_missions(
     # Audit-4 counted ~60 of these on disk. Best-effort, never raises;
     # `prune_and_sweep_leaked` swallows its own errors and returns a
     # telemetry dict that we log for forensics.
+    # Off-loop via to_thread: the sweep is blocking work (git subprocesses +
+    # rmtree over deep trees) and bootstrap runs on the event loop that
+    # serves /api/health at boot — blocking it here kept the desktop window
+    # from appearing (10s of the 30s-launch bug, 2026-06-10).
     try:
-        sweep_report = worktree_mgr.prune_and_sweep_leaked(max_age_hours=6.0)
+        sweep_report = await asyncio.to_thread(
+            worktree_mgr.prune_and_sweep_leaked, max_age_hours=6.0
+        )
         if (
             sweep_report.get("swept_run_dirs", 0) > 0
             or sweep_report.get("errors", 0) > 0

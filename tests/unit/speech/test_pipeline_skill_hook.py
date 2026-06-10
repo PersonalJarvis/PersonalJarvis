@@ -188,3 +188,74 @@ async def test_trigger_matcher_cached_after_first_match(pipeline_with_brain) -> 
     cached = pipeline._trigger_matcher
     await pipeline._try_skill_direct_trigger("starte das experiment", lang="de")
     assert pipeline._trigger_matcher is cached
+
+
+# ----------------------------------------------------------------------
+# Cron fires route through the brain (AD-S4 extension)
+# ----------------------------------------------------------------------
+
+
+class FakeCronBrain(FakeBrain):
+    def __init__(self, reply: str = "Briefing done.") -> None:
+        super().__init__()
+        self.turns: list[str] = []
+        self.reply = reply
+
+    async def __call__(self, text: str) -> str:
+        self.turns.append(text)
+        return self.reply
+
+
+@pytest.mark.asyncio
+async def test_cron_fire_routes_through_brain_and_announces(
+    skill_ctx_with_bus: EventBus,
+) -> None:
+    from jarvis.core.events import AnnouncementRequested
+    from jarvis.skills.skill_context import get_skill_context
+
+    bus = skill_ctx_with_bus
+    brain = FakeCronBrain(reply="Briefing done.")
+    pipeline = SpeechPipeline(
+        tts=FakeTTS(), bus=bus, brain_callback=brain, enable_whisper_wake=False
+    )
+    announced: list[AnnouncementRequested] = []
+
+    async def _capture(event: AnnouncementRequested) -> None:
+        announced.append(event)
+
+    bus.subscribe(AnnouncementRequested, _capture)
+    skill = get_skill_context().registry.get("voice_test_skill")
+
+    await pipeline._handle_cron_skill(skill)
+
+    assert brain.noted == [("voice_test_skill", "", "cron")]
+    assert len(brain.turns) == 1
+    assert "voice_test_skill" in brain.turns[0]
+    import asyncio as _asyncio
+
+    await _asyncio.sleep(0.01)
+    assert len(announced) == 1
+    assert announced[0].text == "Briefing done."
+
+
+@pytest.mark.asyncio
+async def test_cron_fire_legacy_fallback_without_brain_handoff(
+    skill_ctx_with_bus: EventBus,
+) -> None:
+    """A brain without note_skill_trigger falls back to the legacy runner."""
+    from jarvis.skills.skill_context import get_skill_context
+
+    bus = skill_ctx_with_bus
+
+    async def plain_brain(text: str) -> str:  # no note_skill_trigger attr
+        raise AssertionError("legacy fallback must not call the brain")
+
+    pipeline = SpeechPipeline(
+        tts=FakeTTS(), bus=bus, brain_callback=plain_brain,
+        enable_whisper_wake=False,
+    )
+    skill = get_skill_context().registry.get("voice_test_skill")
+
+    # Must not raise; the legacy macro runner handles it (no TOOL lines →
+    # success with zero steps).
+    await pipeline._handle_cron_skill(skill)

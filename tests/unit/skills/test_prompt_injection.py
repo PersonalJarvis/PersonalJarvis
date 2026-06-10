@@ -192,3 +192,48 @@ def test_framing_mentions_instruction_loading() -> None:
     assert out is not None
     assert "run-skill" in out
     assert "instructions" in out
+
+
+# ----------------------------------------------------------------------
+# AD-S2 L1: total char budget with least-recently-modified eviction
+# ----------------------------------------------------------------------
+
+
+@dataclass
+class _FakeSkillWithMtime(_FakeSkill):
+    mtime: float = 0.0
+
+
+def test_total_budget_drops_least_recently_modified_first() -> None:
+    skills = [
+        _FakeSkillWithMtime(
+            name=f"skill-{i}",
+            frontmatter=_FakeFrontmatter(description="D" * 200),
+            mtime=float(i),  # skill-0 is the oldest
+        )
+        for i in range(5)
+    ]
+    registry = _FakeRegistry(skills=skills)  # type: ignore[arg-type]
+
+    out = render_available_skills_section(
+        registry, total_char_budget=700,  # type: ignore[arg-type]
+    )
+
+    assert out is not None
+    # Newest survive, oldest evicted, overflow tail counts the dropped.
+    assert "- `skill-4`" in out
+    assert "- `skill-0`" not in out
+    assert "more" in out.splitlines()[-4] or "more" in out  # overflow bullet
+
+
+def test_total_budget_keeps_all_when_under_budget() -> None:
+    registry = _FakeRegistry(skills=[
+        _FakeSkill(name="a", frontmatter=_FakeFrontmatter(description="short")),
+        _FakeSkill(name="b", frontmatter=_FakeFrontmatter(description="short")),
+    ])
+
+    out = render_available_skills_section(registry)  # type: ignore[arg-type]
+
+    assert out is not None
+    assert "- `a`" in out and "- `b`" in out
+    assert "more" not in out

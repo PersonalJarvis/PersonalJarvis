@@ -10,7 +10,7 @@ There are TWO GitHub repos and sessions keep mixing them up. This is the truth t
 
 | Repo | Role | Who writes to it |
 |---|---|---|
-| **`PersonalJarvis/PersonalJarvis`** (PascalCase) | **THE project.** The one public-facing flagship repo the maintainer means when they say "the GitHub repo", "veröffentliche", "push it", "sichere den Stand", "update GitHub". | **ONLY** the `ship-public-release` skill (depersonalized snapshot — never raw `git push`, never secrets/PII/`data/`/Vault). |
+| **`PersonalJarvis/PersonalJarvis`** (PascalCase) | **THE project.** The one public-facing flagship repo the maintainer means when they say "the GitHub repo", "veröffentliche", "push it", "sichere den Stand", "update GitHub". | **ONLY** the `ship-public-release` skill (depersonalized snapshot — never raw `git push`, never secrets/PII/`data/`/Vault). <!-- i18n-allow: quoted German maintainer trigger phrases --> |
 | `PersonalJarvis/personal-jarvis` (lowercase, remote `origin`) | Private **backstage**: raw dev history, branches, maintainer identity, day-to-day commits. | Dev sessions, as infrastructure. It is NOT "the project" the maintainer talks about. |
 
 **Binding rules:**

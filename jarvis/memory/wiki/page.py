@@ -32,6 +32,8 @@ DIR_TO_TYPE: dict[str, str] = {
     "concepts": "concept",
     "projects": "project",
     "sessions": "session",
+    # Mirrored address-book contacts (jarvis/memory/wiki/contact_mirror.py).
+    "people": "person",
 }
 
 # Required frontmatter keys per page type. Derived from schema.md
@@ -42,6 +44,7 @@ REQUIRED_KEYS: dict[str, frozenset[str]] = {
     "project": frozenset({"type", "slug", "status"}),
     "session": frozenset({"type", "session_id"}),
     "meta": frozenset({"type"}),
+    "person": frozenset({"type", "slug"}),
 }
 
 # Canonical section headings per page type, in expected order. Used by
@@ -56,6 +59,9 @@ CANONICAL_SECTIONS: dict[str, tuple[str, ...]] = {
     ),
     "session": (),
     "meta": (),
+    # Person pages carry a machine-managed block + free-form learned
+    # content; no canonical section order is enforced.
+    "person": (),
 }
 
 _FM_BOUNDARY = "---"
@@ -261,7 +267,7 @@ def _is_schema_valid(
     # Filename slug must match the frontmatter slug for the three
     # long-term page types. Sessions use a date-prefixed filename whose
     # session_id is stored separately, so they are exempt.
-    if fm_type in {"entity", "concept", "project"}:
+    if fm_type in {"entity", "concept", "project", "person"}:
         if frontmatter.get("slug") != path.stem:
             return False
 

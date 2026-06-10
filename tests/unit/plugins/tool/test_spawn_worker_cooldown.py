@@ -26,12 +26,18 @@ from uuid import uuid4
 
 import pytest
 
+from jarvis.brain.ack_brain.spawn_announcement import _FALLBACK_ALREADY_RUNNING
 from jarvis.core.bus import EventBus
 from jarvis.core.protocols import ExecutionContext
 from jarvis.plugins.tool.spawn_worker import (
     _COOLDOWN_SECONDS,
-    _COOLDOWN_SUPPRESS_ACKS,
     SpawnWorkerTool,
+)
+
+# The suppress ACK is composed by SpawnAnnouncementComposer in its
+# deterministic "already_running" mode — bilingual pools, no LLM.
+_SUPPRESS_POOL = set(_FALLBACK_ALREADY_RUNNING["de"]) | set(
+    _FALLBACK_ALREADY_RUNNING["en"]
 )
 
 
@@ -83,8 +89,8 @@ async def test_cooldown_suppresses_duplicate_spawn() -> None:
     )
 
     assert result.success is True, "suppressed call returns success (ACK only)"
-    assert result.output in _COOLDOWN_SUPPRESS_ACKS, (
-        f"suppress ACK must come from the variant set, got {result.output!r}"
+    assert result.output in _SUPPRESS_POOL, (
+        f"suppress ACK must come from the already-running pool, got {result.output!r}"
     )
     assert mgr.dispatch_calls == [], (
         f"duplicate spawn within cooldown must NOT dispatch, got {mgr.dispatch_calls!r}"
@@ -167,7 +173,7 @@ async def test_not_suppressed_when_no_dispatch_in_flight() -> None:
         {"utterance": "andere Aufgabe, neuer Versuch", "action": "x"}, _ctx()
     )
 
-    assert result.output not in _COOLDOWN_SUPPRESS_ACKS, (
+    assert result.output not in _SUPPRESS_POOL, (
         f"must NOT suppress a retry when nothing is in flight, got {result.output!r}"
     )
     await asyncio.sleep(0.05)  # let the fire-and-forget bg task run dispatch
@@ -249,7 +255,7 @@ async def test_first_spawn_passes_cooldown_gate() -> None:
     # The first call must succeed (real bg dispatch fires) and the output
     # must NOT be a suppress-ACK string.
     assert result.success is True
-    assert result.output not in _COOLDOWN_SUPPRESS_ACKS, (
+    assert result.output not in _SUPPRESS_POOL, (
         f"first call must not hit the suppress branch, got {result.output!r}"
     )
 
@@ -271,7 +277,7 @@ async def test_cooldown_expires_after_threshold() -> None:
         _ctx(),
     )
     assert result.success is True
-    assert result.output not in _COOLDOWN_SUPPRESS_ACKS, (
+    assert result.output not in _SUPPRESS_POOL, (
         "after cooldown expired, the suppress branch MUST NOT fire — got "
         f"{result.output!r}"
     )
@@ -292,14 +298,20 @@ def test_cooldown_seconds_is_positive_and_reasonable() -> None:
 
 
 def test_suppress_acks_are_short_and_unique() -> None:
-    assert len(_COOLDOWN_SUPPRESS_ACKS) >= 3, "need variety to avoid robot repetition"
-    assert len(set(_COOLDOWN_SUPPRESS_ACKS)) == len(_COOLDOWN_SUPPRESS_ACKS)
-    for ack in _COOLDOWN_SUPPRESS_ACKS:
-        assert 5 <= len(ack) <= 60, (
-            f"ACK must be TTS-readable, got {len(ack)} chars: {ack!r}"
-        )
-        # Must signal an in-flight job, not a refusal
-        text = ack.lower()
-        assert any(
-            k in text for k in ("schon", "läuft", "dabei", "dran", "bereits")
-        ), f"ACK must indicate in-flight job: {ack!r}"
+    for lang, pool in _FALLBACK_ALREADY_RUNNING.items():
+        assert len(pool) >= 3, "need variety to avoid robot repetition"
+        assert len(set(pool)) == len(pool)
+        in_flight_markers = {
+            # German marker words below are the data under test.
+            "de": ("schon", "läuft", "dabei", "dran", "bereits", "arbeit"),  # i18n-allow
+            "en": ("already", "still", "running", "working", "progress"),
+        }[lang]
+        for ack in pool:
+            assert 5 <= len(ack) <= 60, (
+                f"ACK must be TTS-readable, got {len(ack)} chars: {ack!r}"
+            )
+            # Must signal an in-flight job, not a refusal
+            text = ack.lower()
+            assert any(k in text for k in in_flight_markers), (
+                f"ACK must indicate in-flight job: {ack!r}"
+            )

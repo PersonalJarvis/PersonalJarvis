@@ -14,11 +14,13 @@ import { cn } from "@/lib/utils";
 import { ViewHeader } from "@/views/ChatsView";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { PlanStepList } from "@/components/PlanStepList";
+import { HoldToAbortButton } from "@/components/HoldToAbortButton";
 import {
   useOutputsList,
   usePlanForOutput,
   useArtifactsForOutput,
   useArtifactFile,
+  useCancelMission,
   type OutputSummary,
   type ArtifactSummary,
 } from "@/hooks/useOutputs";
@@ -28,8 +30,20 @@ const STATUS_BADGE: Record<string, string> = {
   success: "border-emerald-400/40 bg-emerald-400/10 text-emerald-400",
   error: "border-destructive/40 bg-destructive/10 text-destructive",
   running: "border-primary/40 bg-primary/10 text-primary",
+  // Deliberate user abort — amber, not the destructive red of a failure.
+  cancelled: "border-amber-400/40 bg-amber-400/10 text-amber-400",
   unknown: "border-border bg-secondary/40 text-muted-foreground",
 };
+
+/** Tiny ping dot inside the RUNNING badge — inherits the badge colour. */
+function PulseDot() {
+  return (
+    <span className="relative flex h-1.5 w-1.5" aria-hidden="true">
+      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-60" />
+      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-current" />
+    </span>
+  );
+}
 
 const URL_REGEX = /(https?:\/\/[^\s)]+[^\s.,;:!?)])/g;
 
@@ -127,10 +141,12 @@ function SessionRow({
   onOpenDesktop: () => void;
 }) {
   const t = useT();
+  const cancel = useCancelMission();
   const statusKey = meta.status ?? "unknown";
   const badgeClass = STATUS_BADGE[statusKey] ?? STATUS_BADGE.unknown;
   const ts = meta.completed_at ?? meta.started_at;
   const tsLabel = ts ? new Date(ts * 1000).toLocaleString() : "--";
+  const canAbort = statusKey === "running" && !!meta.mission_id;
 
   return (
     <button
@@ -153,13 +169,30 @@ function SessionRow({
           )}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
-          <span
-            className={cn(
-              "rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-              badgeClass,
+          <span className="flex items-center gap-1.5">
+            {canAbort && (
+              <HoldToAbortButton
+                size="sm"
+                pending={cancel.isPending}
+                onConfirm={() => {
+                  if (meta.mission_id) cancel.mutate(meta.mission_id);
+                }}
+                label={
+                  cancel.isPending
+                    ? t("outputs_view.aborting")
+                    : t("outputs_view.abort_hold")
+                }
+              />
             )}
-          >
-            {statusKey}
+            <span
+              className={cn(
+                "flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                badgeClass,
+              )}
+            >
+              {statusKey === "running" && <PulseDot />}
+              {statusKey}
+            </span>
           </span>
           {meta.github_url && (
             <a
@@ -205,9 +238,12 @@ function SessionRow({
 }
 
 function SessionDetail({ meta }: { meta: OutputSummary }) {
+  const t = useT();
+  const cancel = useCancelMission();
   const plan = usePlanForOutput(meta.slug);
   const statusKey = meta.status ?? "unknown";
   const badgeClass = STATUS_BADGE[statusKey] ?? STATUS_BADGE.unknown;
+  const canAbort = statusKey === "running" && !!meta.mission_id;
   const hasPlan =
     !plan.isLoading && plan.data && plan.data.plan !== null;
   const isSingleShot =
@@ -223,15 +259,37 @@ function SessionDetail({ meta }: { meta: OutputSummary }) {
             </h3>
             <span
               className={cn(
-                "rounded border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                "flex items-center gap-1.5 rounded border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
                 badgeClass,
               )}
             >
+              {statusKey === "running" && <PulseDot />}
               {statusKey}
             </span>
             {typeof meta.duration_s === "number" && (
               <span className="text-xs text-muted-foreground">
                 {meta.duration_s.toFixed(1)}s
+              </span>
+            )}
+            {canAbort && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-destructive/30 bg-destructive/5 py-0.5 pl-1 pr-2.5">
+                <HoldToAbortButton
+                  size="md"
+                  pending={cancel.isPending}
+                  onConfirm={() => {
+                    if (meta.mission_id) cancel.mutate(meta.mission_id);
+                  }}
+                  label={
+                    cancel.isPending
+                      ? t("outputs_view.aborting")
+                      : t("outputs_view.abort_label")
+                  }
+                />
+                <span className="text-[11px] text-muted-foreground">
+                  {cancel.isPending
+                    ? t("outputs_view.aborting")
+                    : t("outputs_view.abort_hold")}
+                </span>
               </span>
             )}
             {meta.github_url && (

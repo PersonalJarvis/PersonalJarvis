@@ -83,6 +83,22 @@ class RiskConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class CliCapabilityDecl:
+    """Declares what a CLI can do, in capability-registry vocabulary.
+
+    Mirrors the paired-skill pairing fields (intent verbs + domain nouns) so
+    ``resolve_intent`` works without changes. ``domains`` ties the CLI to the
+    evidence-gate domains (see jarvis/clis/capability_provider.py
+    ``DOMAIN_VOCAB``).
+    """
+
+    domains: tuple[str, ...]
+    verbs: tuple[str, ...]
+    objects: tuple[str, ...]
+    description: str
+
+
+@dataclass(frozen=True, slots=True)
 class CliSpec:
     name: str
     display_name: str
@@ -98,6 +114,7 @@ class CliSpec:
     icon: str = ""
     category: str = "other"
     source: Literal["seed", "custom"] = "seed"
+    capabilities: tuple[CliCapabilityDecl, ...] = ()
 
     @classmethod
     def from_model(cls, model: "CliSpecModel") -> "CliSpec":
@@ -141,6 +158,15 @@ class CliSpec:
             icon=model.icon or "",
             category=model.category or "other",
             source=model.source or "seed",
+            capabilities=tuple(
+                CliCapabilityDecl(
+                    domains=tuple(c.domains),
+                    verbs=tuple(c.verbs),
+                    objects=tuple(c.objects),
+                    description=c.description,
+                )
+                for c in model.capabilities
+            ),
         )
 
 
@@ -193,6 +219,13 @@ class RiskConfigModel(BaseModel):
     whitelist_patterns: list[str] = Field(default_factory=list)
 
 
+class CliCapabilityDeclModel(BaseModel):
+    domains: list[str] = Field(min_length=1)
+    verbs: list[str] = Field(min_length=1)
+    objects: list[str] = Field(min_length=1)
+    description: str = Field(min_length=1, max_length=200)
+
+
 class CliSpecModel(BaseModel):
     name: str = Field(pattern=r"^[a-z][a-z0-9_-]{1,30}$")
     display_name: str = Field(min_length=1, max_length=80)
@@ -208,6 +241,9 @@ class CliSpecModel(BaseModel):
     icon: str = ""
     category: str = "other"
     source: Literal["seed", "custom"] = "seed"
+    capabilities: list[CliCapabilityDeclModel] = Field(
+        default_factory=list, max_length=5,
+    )
 
     @field_validator("install")
     @classmethod
@@ -225,5 +261,7 @@ class CliSpecModel(BaseModel):
 __all__ = [
     "AuthType", "StatusParseStrategy", "RiskTier",
     "InstallMethods", "AuthConfig", "RiskConfig", "CliSpec", "CliStatus",
+    "CliCapabilityDecl",
     "CliSpecModel", "InstallMethodsModel", "AuthConfigModel", "RiskConfigModel",
+    "CliCapabilityDeclModel",
 ]

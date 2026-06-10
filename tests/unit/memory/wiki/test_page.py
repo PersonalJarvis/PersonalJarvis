@@ -410,6 +410,7 @@ def test_dir_to_type_constant_complete() -> None:
         "concepts": "concept",
         "projects": "project",
         "sessions": "session",
+        "people": "person",
     }
 
 

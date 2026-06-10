@@ -278,11 +278,16 @@ def _load_tools_for_tier(
                 # without it the voice path would only persist a PENDING
                 # mission and never trigger run_mission, leaving the user
                 # in silence (BUG-016 — voice silent after spawn_worker).
+                #
+                # The announcer composes the spoken spawn confirmation
+                # (brain spoken_ack → flash-LLM → bilingual fallback pool);
+                # build_spawn_announcer never raises and never returns None.
                 inst = cls(
                     bus=bus,
                     manager=mission_manager,
                     manager_resolver=_resolve_mission_manager,
                     kontrollierer_resolver=_resolve_kontrollierer,
+                    announcer=build_spawn_announcer(config),
                 )
             elif ep.name == "dispatch-to-harness":
                 inst = cls(
@@ -1271,6 +1276,48 @@ def build_default_brain(
     except Exception as exc:  # noqa: BLE001 — a seed hiccup must not kill the brain build
         log.warning("CapabilityRegistry seed failed: %s", exc)
 
+    # Boot-race fix (AD-S6, 2026-06-09 rebuild): the skill context used to be
+    # set only late in desktop_app._start_speech_and_orb — the first voice
+    # turn could build a system prompt WITHOUT the AVAILABLE SKILLS section
+    # (RC2 of "Jarvis never calls a skill"). Set a minimal context here, at
+    # the single authoritative brain entry point, when none exists yet. The
+    # desktop app later re-sets it with the web server's shared registry —
+    # an idempotent upgrade (set_skill_context also re-registers paired
+    # capabilities). The empty tool_registry is fine: the instruction-skill
+    # model never executes TOOL: lines through this runner.
+    try:
+        from jarvis.skills.bootstrap import ensure_user_skills_dir
+        from jarvis.skills.prefs import load_state_overrides
+        from jarvis.skills.registry import SkillRegistry
+        from jarvis.skills.runner import SkillRunner
+        from jarvis.skills.skill_context import (
+            SkillContext,
+            set_skill_context,
+            try_get_skill_context,
+        )
+
+        if try_get_skill_context() is None:
+            _skills_root = ensure_user_skills_dir()
+            _registry = SkillRegistry(
+                root=_skills_root,
+                bus=bus,
+                state_prefs_loader=load_state_overrides,
+            )
+            _registry.reload_sync()
+            set_skill_context(
+                SkillContext(
+                    registry=_registry,
+                    runner=SkillRunner(registry=_registry, tool_registry={}, bus=bus),
+                )
+            )
+            log.info(
+                "Skill context set at brain build time (%d skills from %s)",
+                len(_registry.list()),
+                _skills_root,
+            )
+    except Exception as exc:  # noqa: BLE001 — skills must never block boot
+        log.warning("skill-context bootstrap at brain build failed: %s", exc)
+
     # Plugin<->Skill pairing (2026-06-07): after the static seed, register a
     # capability for every live paired skill so connected plugins resolve.
     # Placed after seed_registry so an explicit paired cap overrides the weak
@@ -1359,43 +1406,10 @@ def build_ack_brain(jcfg: Any | None = None) -> Any:
             return None
 
         from jarvis.brain.ack_brain import AckGenerator, CircuitBreaker
-        from jarvis.brain.ack_brain.providers import REGISTRY
 
-        provider_name = ack_cfg.provider
-        # "follow_brain" meta-value: resolve to whatever brain.primary
-        # currently points at, so the user does not have to keep two
-        # provider settings in sync. If the main brain is on a provider
-        # the Flash-Brain has no adapter for (openrouter, claude_api),
-        # fall back to "gemini" — the historical default.
-        if provider_name == "follow_brain":
-            brain_cfg = getattr(jcfg, "brain", None)
-            primary = getattr(brain_cfg, "primary", None) if brain_cfg else None
-            if primary and primary in REGISTRY:
-                log.info(
-                    "Flash-Brain: follow_brain -> %s (from brain.primary).",
-                    primary,
-                )
-                provider_name = primary
-            else:
-                log.warning(
-                    "Flash-Brain: brain.primary=%r has no Flash adapter "
-                    "(REGISTRY=%s); falling back to gemini.",
-                    primary, sorted(REGISTRY.keys()),
-                )
-                provider_name = "gemini"
-            # Mutate the config so AckGenerator's telemetry labels show
-            # the resolved provider name, not the literal "follow_brain".
-            ack_cfg.provider = provider_name
-        provider_cls = REGISTRY.get(provider_name)
-        if provider_cls is None:
-            log.warning(
-                "Flash-Brain: provider %r not in REGISTRY (have %s); disabled.",
-                provider_name,
-                sorted(REGISTRY.keys()),
-            )
+        provider = _build_flash_provider(jcfg, ack_cfg)
+        if provider is None:
             return None
-        provider_cfg = getattr(ack_cfg.providers, provider_name)
-        provider = provider_cls(provider_cfg)
         breaker = CircuitBreaker(
             threshold=ack_cfg.circuit_breaker_threshold,
             cooldown_s=ack_cfg.circuit_breaker_cooldown_s,
@@ -1403,10 +1417,113 @@ def build_ack_brain(jcfg: Any | None = None) -> Any:
         ack_gen = AckGenerator(provider=provider, config=ack_cfg, breaker=breaker)
         log.info(
             "Flash-Brain: AckGenerator wired (provider=%s, timeout_ms=%d).",
-            provider_name,
+            ack_cfg.provider,
             ack_cfg.timeout_ms,
         )
         return ack_gen
     except Exception as exc:  # noqa: BLE001
         log.warning("Flash-Brain: build_ack_brain() failed: %s — disabling.", exc)
         return None
+
+
+def _build_flash_provider(jcfg: Any, ack_cfg: Any) -> Any:
+    """Construct the flash-LLM provider adapter for ``ack_cfg``, or ``None``.
+
+    Shared by :func:`build_ack_brain` and :func:`build_spawn_announcer` so
+    both flash consumers resolve providers identically. Handles the
+    "follow_brain" meta-value: resolve to whatever ``brain.primary``
+    currently points at, so the user does not have to keep two provider
+    settings in sync. If the main brain is on a provider the Flash-Brain
+    has no adapter for (openrouter, claude_api), fall back to "gemini" —
+    the historical default. Mutates ``ack_cfg.provider`` to the resolved
+    name so telemetry labels show the concrete provider.
+    """
+    from jarvis.brain.ack_brain.providers import REGISTRY
+
+    provider_name = ack_cfg.provider
+    if provider_name == "follow_brain":
+        brain_cfg = getattr(jcfg, "brain", None)
+        primary = getattr(brain_cfg, "primary", None) if brain_cfg else None
+        if primary and primary in REGISTRY:
+            log.info(
+                "Flash-Brain: follow_brain -> %s (from brain.primary).",
+                primary,
+            )
+            provider_name = primary
+        else:
+            log.warning(
+                "Flash-Brain: brain.primary=%r has no Flash adapter "
+                "(REGISTRY=%s); falling back to gemini.",
+                primary, sorted(REGISTRY.keys()),
+            )
+            provider_name = "gemini"
+        ack_cfg.provider = provider_name
+    provider_cls = REGISTRY.get(provider_name)
+    if provider_cls is None:
+        log.warning(
+            "Flash-Brain: provider %r not in REGISTRY (have %s); disabled.",
+            provider_name,
+            sorted(REGISTRY.keys()),
+        )
+        return None
+    provider_cfg = getattr(ack_cfg.providers, provider_name)
+    return provider_cls(provider_cfg)
+
+
+def build_spawn_announcer(jcfg: Any | None = None) -> Any:
+    """Build the ``SpawnAnnouncementComposer`` for the ``spawn_worker`` tool.
+
+    Never raises and never returns ``None``: when the flash-LLM path is
+    unavailable (``[ack_brain].enabled = false``, ``spawn_announcements =
+    false``, missing adapter, construction error) the composer is returned
+    in fallback-only mode — the spoken spawn confirmation is then drawn
+    from the curated bilingual no-repeat pool, so the user always hears an
+    acknowledgement (AD-OE6).
+
+    The composer gets its OWN provider instance and circuit breaker. The
+    breaker state is intentionally not shared with the pre-thinking
+    AckGenerator (built later in ``desktop_app``): both protect the same
+    provider class, but their call sites have different latency stakes and
+    a shared mutable singleton across the two build paths would couple the
+    desktop-app wiring to the brain factory for marginal gain.
+    """
+    from jarvis.brain.ack_brain.spawn_announcement import (
+        SpawnAnnouncementComposer,
+    )
+
+    try:
+        if jcfg is None:
+            from jarvis.core.config import load_config
+            jcfg = load_config()
+        ack_cfg = getattr(jcfg, "ack_brain", None)
+        if (
+            ack_cfg is None
+            or not getattr(ack_cfg, "enabled", False)
+            or not getattr(ack_cfg, "spawn_announcements", True)
+        ):
+            log.info(
+                "Spawn-Announcer: flash path disabled — fallback pool only."
+            )
+            return SpawnAnnouncementComposer()
+
+        from jarvis.brain.ack_brain import CircuitBreaker
+
+        provider = _build_flash_provider(jcfg, ack_cfg)
+        if provider is None:
+            return SpawnAnnouncementComposer()
+        breaker = CircuitBreaker(
+            threshold=ack_cfg.circuit_breaker_threshold,
+            cooldown_s=ack_cfg.circuit_breaker_cooldown_s,
+        )
+        log.info(
+            "Spawn-Announcer: LLM composition wired (provider=%s).",
+            ack_cfg.provider,
+        )
+        return SpawnAnnouncementComposer(
+            provider=provider, config=ack_cfg, breaker=breaker
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "build_spawn_announcer() failed: %s — fallback pool only.", exc
+        )
+        return SpawnAnnouncementComposer()

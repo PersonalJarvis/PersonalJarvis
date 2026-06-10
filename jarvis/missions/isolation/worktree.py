@@ -23,11 +23,14 @@ we do not let the worker fall into a path-length trap.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
+import stat
 import subprocess
 import time
 import uuid
+from collections.abc import Callable
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from pathlib import Path
@@ -95,20 +98,38 @@ class WorktreeManager:
         mission_slug: str,
         task_id: str,
         base_branch: str = "main",
+        needs_repo: bool = True,
     ) -> Path:
-        """Create a new worktree and return the `workspace/` path.
+        """Create a new workspace and return the `workspace/` path.
 
         Inputs:
             mission_slug: short mission identifier (will be slugified).
             task_id: task identifier (will be slugified, typically `01__refactor-router`).
             base_branch: branch from which the worktree branch is forked.
+            needs_repo: when True (default) the workspace is a full `git
+                worktree add` checkout of the repo at ``base_branch`` — the
+                isolated, registered worktree every repo task has always
+                received. When False the workspace is a LEAN repo: a fresh
+                ``git init`` directory with one initial empty commit and NO
+                files from the host repo. The lean path is for external-artefact
+                tasks ("create an HTML file with today's news") that would
+                otherwise burn minutes + millions of tokens exploring the
+                codebase before a trivial write (live mission 019eb17d).
 
         Output:
             Path to `<run_dir>/tasks/<NN>__<task-slug>/workspace/`.
 
         Raises:
             ValueError: when the path exceeds 200 chars (path-length cap).
-            subprocess.CalledProcessError: when `git worktree add` fails.
+            subprocess.CalledProcessError: when `git worktree add` (full mode)
+                or `git init`/the initial commit (lean mode) fails.
+
+        Lean-vs-full diff parity (CRITICAL): both modes produce a real git repo
+        with a resolvable HEAD, so ``Kontrollierer._capture_diff`` — which runs
+        ``git add -A .`` then ``git diff HEAD`` against the workspace —
+        surfaces the worker's written files identically in either mode. The
+        lean repo's initial commit is the empty tree, so a freshly-written file
+        shows up as a plain add, exactly like a new file in a full worktree.
         """
         mission_part = _slugify(mission_slug)
         task_part = _slugify(task_id)
@@ -130,6 +151,9 @@ class WorktreeManager:
 
         workspace.parent.mkdir(parents=True, exist_ok=True)
 
+        if not needs_repo:
+            return self._create_lean(workspace, branch_hint=task_part)
+
         branch_name = f"agent/{task_part}-{short_uuid}"
 
         cmd = [
@@ -144,6 +168,45 @@ class WorktreeManager:
         logger.info("WorktreeManager.create: %s", " ".join(cmd))
         self._run_git(cmd)
 
+        return workspace
+
+    # Identity used for the lean repo's initial commit. A fresh ``git init``
+    # repo inherits no ``user.name``/``user.email`` from the host repo's local
+    # config, and the host machine may have none set globally — so we always
+    # pass an explicit identity via ``-c`` to make the initial commit
+    # deterministic and never prompt. This commit is throwaway scaffolding.
+    _LEAN_COMMIT_NAME = "Personal Jarvis"
+    _LEAN_COMMIT_EMAIL = "noreply@personal-jarvis.local"
+
+    def _create_lean(self, workspace: Path, *, branch_hint: str) -> Path:
+        """Create a lean (empty) git workspace with one initial empty commit.
+
+        The directory is a standalone git repo — NOT a registered worktree of
+        the host repo — so cleanup must route around ``git worktree remove``
+        (see :meth:`remove`). Initialising on a fixed ``main`` branch keeps the
+        HEAD name predictable; the empty initial commit gives ``HEAD`` a base so
+        the diff-capture sequence (``git diff --cached HEAD``) works.
+        """
+        workspace.mkdir(parents=True, exist_ok=True)
+        logger.info("WorktreeManager.create (lean): git init at %s", workspace)
+        self._run_git_in(["git", "init", "-b", "main", str(workspace)], cwd=workspace)
+        # One empty initial commit so HEAD exists. ``--allow-empty`` because the
+        # tree is empty; the explicit ``-c user.*`` identity avoids depending on
+        # any global git config on the host.
+        self._run_git_in(
+            [
+                "git",
+                "-c",
+                f"user.name={self._LEAN_COMMIT_NAME}",
+                "-c",
+                f"user.email={self._LEAN_COMMIT_EMAIL}",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "lean-workspace-init",
+            ],
+            cwd=workspace,
+        )
         return workspace
 
     # BUG-LIVE-05 (2026-05-14) — Retry delays for the Windows file-
@@ -177,7 +240,22 @@ class WorktreeManager:
         this transient state without paying the cost of the full
         `shutil.rmtree` fallback. The fallback path is preserved as a
         last resort so cleanup never blocks the mission loop.
+
+        Lean-workspace mode: a lean workspace (created with
+        ``create(..., needs_repo=False)``) is a STANDALONE ``git init`` repo,
+        not a registered worktree of the host repo. ``git worktree remove``
+        would fail on it (``is not a working tree``) AND, worse, could leave a
+        stale registration if a path ever collided. So when the workspace's
+        ``.git`` is a real directory (lean) rather than the worktree link FILE
+        (full mode), we skip git entirely and remove the directory tree
+        directly. Plain directory removal leaves nothing for the host repo's
+        ``git worktree prune`` to clean up, because the lean repo was never
+        registered there in the first place.
         """
+        if self._is_lean_workspace(path):
+            self._remove_lean(path)
+            return
+
         cmd = ["git", "worktree", "remove"]
         if force:
             cmd.append("--force")
@@ -323,10 +401,14 @@ class WorktreeManager:
                 child, (time.time() - age) / 3600.0, max_age_hours,
             )
             try:
-                shutil.rmtree(child, ignore_errors=True)
-                # rmtree(ignore_errors=True) may leave a broken tree on
-                # Windows when handles are held; treat partial removal
-                # as still-stale rather than success.
+                # `onerror` clears the read-only bit git sets on its object
+                # store — with plain ignore_errors=True those files survived,
+                # so the same dirs were re-swept (and re-failed) on EVERY
+                # boot: 10s of blocked startup per launch (2026-06-10).
+                shutil.rmtree(child, onerror=self._on_rmtree_error)
+                # The onerror handler swallows residual failures, which may
+                # leave a broken tree on Windows when handles are held; treat
+                # partial removal as still-stale rather than success.
                 if child.exists():
                     logger.warning(
                         "prune_and_sweep_leaked: partial removal of %s "
@@ -345,6 +427,97 @@ class WorktreeManager:
         return report
 
     # --- Internals ----------------------------------------------------------
+
+    @staticmethod
+    def _is_lean_workspace(path: Path) -> bool:
+        """True when ``path`` is a lean (standalone ``git init``) workspace.
+
+        A full ``git worktree add`` checkout links back to the host repo via a
+        ``.git`` FILE (``gitdir: …``). A lean ``git init`` repo has a real
+        ``.git`` DIRECTORY. That structural difference is the cheapest reliable
+        discriminator and needs no extra bookkeeping. If ``.git`` is absent
+        entirely (e.g. the directory was already partly torn down) we treat it
+        as lean so cleanup falls through to a plain ``rmtree`` rather than a
+        doomed ``git worktree remove``.
+        """
+        git_path = path / ".git"
+        if git_path.is_dir():
+            return True
+        if git_path.is_file():
+            return False
+        # No `.git` at all → not a registered worktree; safe to rmtree.
+        return True
+
+    @staticmethod
+    def _on_rmtree_error(
+        func: Callable[..., object], target: str, _exc_info: object
+    ) -> None:
+        """``shutil.rmtree`` onerror handler that clears the read-only bit.
+
+        On Windows git marks objects under ``.git`` (pack files, loose objects)
+        read-only, and ``shutil.rmtree`` raises ``PermissionError`` trying to
+        unlink them. Clear the bit and retry the failing operation once. Any
+        residual failure is swallowed — the lean teardown is best-effort and
+        must never block the mission loop.
+        """
+        try:
+            os.chmod(target, stat.S_IWRITE)
+            func(target)
+        except OSError:
+            pass
+
+    @classmethod
+    def _remove_lean(cls, path: Path) -> None:
+        """Tear down a lean workspace with a plain ``rmtree`` (no git call).
+
+        Mirrors the force-path's tolerance: a half-held Windows handle should
+        never block the mission loop, so failures are swallowed and a warning is
+        logged if anything survives. The ``onerror`` handler clears the
+        read-only bit git sets on its object store so the empty lean repo
+        actually deletes on Windows.
+        """
+        logger.info("WorktreeManager.remove (lean rmtree): %s", path)
+        if path.exists():
+            shutil.rmtree(path, onerror=cls._on_rmtree_error)
+            if path.exists():
+                logger.warning(
+                    "lean workspace partial removal (handles held): %s", path
+                )
+
+    def _run_git_in(
+        self, cmd: list[str], *, cwd: Path
+    ) -> subprocess.CompletedProcess[str]:
+        """Like :meth:`_run_git` but runs with ``cwd`` set to a specific path.
+
+        Used for lean-workspace creation, where ``git init``/``git commit`` must
+        operate INSIDE the new lean repo, not in the host ``repo_root``. Shares
+        the same ``-c core.longpaths=true`` injection, UTF-8 handling, no-window
+        creation flag, and stderr logging as :meth:`_run_git`.
+        """
+        if cmd and cmd[0] == "git":
+            patched = ["git", "-c", "core.longpaths=true", *cmd[1:]]
+        else:
+            patched = list(cmd)
+        try:
+            return subprocess.run(  # noqa: S603 — no shell=True, args controlled
+                patched,
+                cwd=str(cwd),
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+            )
+        except subprocess.CalledProcessError as exc:
+            logger.error(
+                "git command failed (exit=%s): %s\nstderr: %s\nstdout: %s",
+                exc.returncode,
+                " ".join(patched),
+                (exc.stderr or "").strip(),
+                (exc.stdout or "").strip(),
+            )
+            raise
 
     def _run_git(self, cmd: list[str]) -> subprocess.CompletedProcess[str]:
         """Synchronous git call, cwd=repo_root, no shell=True.

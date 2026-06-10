@@ -138,7 +138,15 @@ class BackupManager:
             with tarfile.open(target, "w:gz") as tar:
                 for item in self._iter_vault_members():
                     arcname = item.relative_to(self._vault_root).as_posix()
-                    tar.add(item, arcname=arcname, recursive=False)
+                    try:
+                        tar.add(item, arcname=arcname, recursive=False)
+                    except FileNotFoundError:
+                        # The file vanished between the walk and the add —
+                        # a concurrent writer's tempfile being os.replace()d
+                        # (e.g. the LogWriter's .log.md.<rand>.tmp). Such
+                        # transients are not part of the rollback surface;
+                        # skip instead of aborting the whole snapshot.
+                        log.debug("backup: skipping vanished file %s", arcname)
         except OSError as exc:
             # Best-effort cleanup of a partial archive on failure.
             try:
@@ -304,7 +312,14 @@ class BackupManager:
             root_path = Path(root)
             if root_path == self._vault_root:
                 dirs[:] = [d for d in dirs if d not in EXCLUDED_VAULT_DIRS]
+            # Hidden dirs (.obsidian) are never part of the rollback surface.
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
             for filename in files:
+                # Dot-prefixed files are tempfiles mid-replace (the atomic
+                # writers use .<name>.<rand>.tmp) or editor metadata — both
+                # transient, neither restorable state.
+                if filename.startswith("."):
+                    continue
                 members.append(root_path / filename)
         members.sort()
         return members

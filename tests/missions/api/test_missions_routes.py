@@ -267,6 +267,69 @@ def test_cancel_already_cancelled_returns_409(
 
 
 # ---------------------------------------------------------------------------
+# Cancel kills the in-flight run (UI hold-to-abort feature)
+# ---------------------------------------------------------------------------
+
+
+class _CancelStubKontrollierer:
+    """``run_mission`` no-op + records ``cancel_running_mission`` calls."""
+
+    def __init__(self, *, cancel_result: bool = True) -> None:
+        self.cancel_calls: list[str] = []
+        self._cancel_result = cancel_result
+
+    async def run_mission(self, mission_id: str) -> None:
+        return None
+
+    def cancel_running_mission(self, mission_id: str) -> bool:
+        self.cancel_calls.append(mission_id)
+        return self._cancel_result
+
+
+def test_cancel_invokes_kontrollierer_task_kill(
+    app_with_manager: FastAPI,
+) -> None:
+    """POST /cancel must also kill the in-flight run_mission task —
+    flipping the DB state alone leaves the worker burning tokens."""
+    stub = _CancelStubKontrollierer(cancel_result=True)
+    app_with_manager.state.kontrollierer = stub
+    with TestClient(app_with_manager) as client:
+        d = client.post("/api/missions/dispatch", json={"prompt": "abort me"})
+        mid = d.json()["mission_id"]
+        c = client.post(f"/api/missions/{mid}/cancel")
+    assert c.status_code == 200
+    body = c.json()
+    assert body["worker_killed"] is True
+    assert stub.cancel_calls == [mid]
+
+
+def test_cancel_reports_worker_killed_false_without_kontrollierer(
+    app_with_manager: FastAPI,
+) -> None:
+    with TestClient(app_with_manager) as client:
+        d = client.post("/api/missions/dispatch", json={"prompt": "x"})
+        mid = d.json()["mission_id"]
+        c = client.post(f"/api/missions/{mid}/cancel")
+    assert c.status_code == 200
+    assert c.json()["worker_killed"] is False
+
+
+def test_cancel_appends_mission_cancelled_event(
+    app_with_manager: FastAPI,
+) -> None:
+    """Cancel writes the canonical ``MissionCancelled`` terminal event —
+    recovery reconciliation and the voice announcer both key off it."""
+    with TestClient(app_with_manager) as client:
+        d = client.post("/api/missions/dispatch", json={"prompt": "x"})
+        mid = d.json()["mission_id"]
+        c = client.post(f"/api/missions/{mid}/cancel")
+        assert c.status_code == 200
+        g = client.get(f"/api/missions/{mid}")
+    types = [e["payload"]["event_type"] for e in g.json()["events"]]
+    assert "MissionCancelled" in types
+
+
+# ---------------------------------------------------------------------------
 # Kill
 # ---------------------------------------------------------------------------
 

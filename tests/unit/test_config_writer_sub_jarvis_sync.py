@@ -177,3 +177,69 @@ def test_updates_live_os_environ(
     import os
 
     assert os.environ.get("JARVIS__BRAIN__SUB_JARVIS__PROVIDER") == "openai"
+
+
+# ---------------------------------------------------------------------------
+# [brain.sub_jarvis].model — the dedicated subagent LLM override (C2).
+# Also pinned in config-soll.json, so the same 3-layer rule applies: a
+# TOML-only write would be reverted by the drift-guard within minutes.
+# ---------------------------------------------------------------------------
+
+
+def test_set_model_writes_all_three_layers(
+    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)
+    env_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        config_writer, "_set_user_env_var",
+        lambda name, value: env_calls.append((name, value)),
+    )
+
+    config_writer.set_sub_jarvis_model("claude-sonnet-4-6", path=sample_toml)
+
+    toml_raw = sample_toml.read_text(encoding="utf-8")
+    assert "[brain.sub_jarvis]" in toml_raw
+    assert 'model = "claude-sonnet-4-6"' in toml_raw
+    # provider untouched.
+    assert 'provider = "claude-api"' in toml_raw
+
+    soll = json.loads(sample_soll.read_text(encoding="utf-8"))
+    assert soll["brain.sub_jarvis"]["model"] == "claude-sonnet-4-6"
+    assert soll["brain.sub_jarvis"]["provider"] == "claude-api"
+
+    assert env_calls == [("JARVIS__BRAIN__SUB_JARVIS__MODEL", "claude-sonnet-4-6")]
+
+
+def test_set_model_empty_string_resets_to_provider_default(
+    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Empty model is the documented sentinel: provider's deep model wins."""
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)
+    env_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        config_writer, "_set_user_env_var",
+        lambda name, value: env_calls.append((name, value)),
+    )
+
+    config_writer.set_sub_jarvis_model("claude-sonnet-4-6", path=sample_toml)
+    config_writer.set_sub_jarvis_model("", path=sample_toml)
+
+    toml_raw = sample_toml.read_text(encoding="utf-8")
+    assert 'model = ""' in toml_raw
+    soll = json.loads(sample_soll.read_text(encoding="utf-8"))
+    assert soll["brain.sub_jarvis"]["model"] == ""
+    assert env_calls[-1] == ("JARVIS__BRAIN__SUB_JARVIS__MODEL", "")
+
+
+def test_set_model_missing_soll_does_not_break_toml(
+    sample_toml: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    nonexistent = tmp_path / "no-such-config-soll.json"
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: nonexistent)
+    monkeypatch.setattr(config_writer, "_set_user_env_var", lambda name, value: None)
+
+    config_writer.set_sub_jarvis_model("gemini-3.1-pro-preview", path=sample_toml)
+
+    assert 'model = "gemini-3.1-pro-preview"' in sample_toml.read_text(encoding="utf-8")
+    assert not nonexistent.exists()

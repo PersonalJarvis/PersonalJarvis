@@ -49,6 +49,7 @@ class CliToolRegistry:
             tool = CliTool(spec, auth=self._auth, usage_log=self._usage)
             self._tools[tool.name] = tool
         self._bootstrapped = True
+        self._sync_capabilities()
         log.info(
             "cli-registry: %d von %d CLIs als Tools exponiert",
             len(self._tools),
@@ -150,6 +151,7 @@ class CliToolRegistry:
         # connecting a CLI in the UI would not surface ``cli_<name>`` to the
         # running brain until the next app restart.
         if tool_set_changed:
+            self._sync_capabilities()
             await self._publish_brain_tools_changed(cli_name, tool_name in self._tools)
         return status
 
@@ -211,6 +213,21 @@ class CliToolRegistry:
                 self._bus.publish(event)
         except Exception as exc:  # noqa: BLE001
             log.debug("bus publish failed: %s", exc)
+
+    def _sync_capabilities(self) -> None:
+        """Mirror the usable-CLI set into the global CapabilityRegistry.
+
+        Defensive: a capabilities-module failure must never break the CLI
+        lifecycle (bootstrap/refresh), only disable intent resolution
+        (AD-CLI3 — registered while usable, withdrawn on disconnect).
+        """
+        try:
+            from jarvis.clis.capability_provider import sync_registry
+            from jarvis.core.capabilities import get_registry
+
+            sync_registry(self, get_registry())
+        except Exception:  # noqa: BLE001
+            log.debug("cli capability sync skipped", exc_info=True)
 
     @staticmethod
     def _is_usable(spec: CliSpec, status: CliStatus) -> bool:

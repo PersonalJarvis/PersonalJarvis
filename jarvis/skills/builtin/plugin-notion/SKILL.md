@@ -2,6 +2,7 @@
 schema_version: "1"
 name: plugin-notion
 description: Read and edit the user's Notion pages and databases.
+when_to_use: Use when the user mentions Notion or wants to read, search, or edit Notion pages and databases.
 category: productivity
 plugin_id: notion
 intent_verbs: [zeig, lies, erstell, such, aktualisier, ergänz]  # i18n-allow

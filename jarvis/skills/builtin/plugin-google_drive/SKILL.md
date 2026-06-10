@@ -2,6 +2,7 @@
 schema_version: "1"
 name: plugin-google_drive
 description: Search, read, and manage files in the user's Google Drive.
+when_to_use: Use when the user mentions Google Drive or wants to search, read, share, or manage Drive files.
 category: productivity
 plugin_id: google_drive
 intent_verbs: [zeig, lies, such, öffne, teil, lade]  # i18n-allow

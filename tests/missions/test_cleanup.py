@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
+import stat
 import time
 from pathlib import Path
 
@@ -14,7 +16,6 @@ from jarvis.missions.cleanup import (
     daily_cleanup_task,
     startup_sweep,
 )
-
 
 # --- startup_sweep ---
 
@@ -130,6 +131,70 @@ async def test_sweep_handles_locked_files_gracefully(tmp_path: Path) -> None:
     stats = await startup_sweep(isolation_root=root, cleanup_days=14)
     # In normaler Fall: removed=1
     assert stats["scanned"] == 1
+
+
+@pytest.mark.asyncio
+async def test_sweep_removes_directories_with_readonly_files(tmp_path: Path) -> None:
+    """Git object/pack files inside mission worktrees are read-only on
+    Windows; a plain ``shutil.rmtree`` fails with PermissionError there, so
+    the backlog was never deleted and grew forever (the 30s-launch bug:
+    128 failing rmtree attempts on every boot)."""
+    root = tmp_path / "outputs"
+    root.mkdir()
+    old = root / "mission_old"
+    pack_dir = old / "workspace" / ".git" / "objects" / "pack"
+    pack_dir.mkdir(parents=True)
+    pack = pack_dir / "pack-abc.idx"
+    pack.write_text("binary-ish")
+    pack.chmod(stat.S_IREAD)
+
+    thirty_days_ago = time.time() - (30 * 86400)
+    os.utime(old, (thirty_days_ago, thirty_days_ago))
+
+    stats = await startup_sweep(isolation_root=root, cleanup_days=14)
+
+    assert stats["removed"] == 1
+    assert stats["errors"] == 0
+    assert not old.exists()
+
+
+@pytest.mark.asyncio
+async def test_sweep_does_not_block_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sweep runs at boot on the same loop that serves /api/health; if
+    it blocks, the desktop window cannot appear until the sweep finishes
+    (the 30s-launch bug). A heartbeat task must keep ticking while a slow
+    removal is in progress."""
+    root = tmp_path / "outputs"
+    root.mkdir()
+    old = root / "mission_old"
+    old.mkdir()
+    thirty_days_ago = time.time() - (30 * 86400)
+    os.utime(old, (thirty_days_ago, thirty_days_ago))
+
+    def slow_remove(entry: Path, *, repo_root: Path | None) -> bool:
+        time.sleep(0.5)  # simulates rmtree/git churning through a big tree
+        shutil.rmtree(entry, ignore_errors=True)
+        return True
+
+    monkeypatch.setattr("jarvis.missions.cleanup._remove_entry", slow_remove)
+
+    ticks = 0
+
+    async def heartbeat() -> None:
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.02)
+            ticks += 1
+
+    hb = asyncio.create_task(heartbeat())
+    try:
+        await startup_sweep(isolation_root=root, cleanup_days=14)
+    finally:
+        hb.cancel()
+
+    assert ticks >= 5, f"event loop was blocked during the sweep (ticks={ticks})"
 
 
 # --- daily_cleanup_task ---

@@ -103,6 +103,13 @@ class WikiIntegrationHandle:
     # monkey-patched) so shutdown() can stop it — otherwise its TranscriptFinal
     # / ResponseGenerated subscriptions leak on every teardown.
     _voice_bridge: Any = field(default=None)
+    # Wave-2: the Stage-1 candidate journal (SQLite). Closed on shutdown so
+    # the connection does not leak across test bootstraps.
+    _journal: Any = field(default=None)
+    # Contact → person-page mirror: detach callback (notify sink + bus
+    # subscription) and the boot reconciliation task.
+    _contact_mirror_cleanup: Callable[[], None] | None = field(default=None)
+    _contact_reconcile_task: asyncio.Task[Any] | None = field(default=None)
 
     async def shutdown(self) -> None:
         """Unsubscribe the ``IdleEntered`` handler and cancel pending tasks.
@@ -116,6 +123,20 @@ class WikiIntegrationHandle:
         except Exception:  # noqa: BLE001
             log.debug("wiki_integration: unsubscribe_idle failed; already detached")
 
+        # Detach the contact mirror (sink + bus subscription) and stop a
+        # still-running boot reconciliation.
+        if self._contact_mirror_cleanup is not None:
+            try:
+                self._contact_mirror_cleanup()
+            except Exception:  # noqa: BLE001
+                log.debug(
+                    "wiki_integration: contact mirror cleanup failed; continuing"
+                )
+            self._contact_mirror_cleanup = None
+        if self._contact_reconcile_task is not None:
+            self._contact_reconcile_task.cancel()
+            self._contact_reconcile_task = None
+
         # Stop the voice-fact bridge so its bus subscriptions are released.
         if self._voice_bridge is not None:
             try:
@@ -123,6 +144,15 @@ class WikiIntegrationHandle:
             except Exception:  # noqa: BLE001
                 log.debug("wiki_integration: voice_bridge.stop() failed; continuing teardown")
             self._voice_bridge = None
+
+        # Close the Stage-1 candidate journal (after the bridge stopped, so
+        # no in-flight extraction appends into a closed connection).
+        if self._journal is not None:
+            try:
+                self._journal.close()
+            except Exception:  # noqa: BLE001
+                log.debug("wiki_integration: journal.close() failed; continuing teardown")
+            self._journal = None
 
         # Stop the rollup worker (unsubscribes its own IdleEntered handler).
         if self._worker_stop is not None:
@@ -237,19 +267,13 @@ async def bootstrap_wiki_integration(
     _set_running_curator(curator)
 
     # ------------------------------------------------------------------
-    # Decide scheduler vs. direct ingest
+    # Build the scheduler whenever a factory is provided. Wave-2 needs it
+    # for the JOURNAL-pressure drain regardless of the legacy direct-ingest
+    # preference; ``use_scheduler`` below only decides whether the (D2-
+    # retired-by-default) session re-ingest pass routes through it.
     # ------------------------------------------------------------------
-    use_scheduler = (
-        scheduler_factory is not None
-        and not config.fallback_to_direct_ingest
-    )
     scheduler: "CuratorScheduler | None" = None
-
-    if not use_scheduler:
-        log.info(
-            "wiki_integration: scheduler not wired, using direct ingest"
-        )
-    else:
+    if scheduler_factory is not None:
         try:
             scheduler = scheduler_factory(curator=curator)  # type: ignore[call-arg]
         except Exception as exc:  # noqa: BLE001
@@ -258,6 +282,12 @@ async def bootstrap_wiki_integration(
                 exc,
             )
             scheduler = None
+
+    use_scheduler = scheduler is not None and not config.fallback_to_direct_ingest
+    if not use_scheduler:
+        log.info(
+            "wiki_integration: legacy re-ingest pass (if enabled) uses direct ingest"
+        )
 
     # ------------------------------------------------------------------
     # Build the SessionRollupWorker (B7)
@@ -282,6 +312,20 @@ async def bootstrap_wiki_integration(
     # but when the feed is retired we never subscribe the re-ingest handler.
     rollup_cfg = root_cfg.memory.wiki.session_rollup
     wiki_write_enabled = bool(getattr(rollup_cfg, "wiki_write_enabled", False))
+
+    # Wave-2 B6 (D4): make sure the living user profile page exists and
+    # carries the structured sections the consolidator maintains. One-time
+    # idempotent skeleton pass; failures never break boot.
+    try:
+        from jarvis.memory.wiki.profile import ensure_profile_skeleton
+
+        user_slug = str(getattr(rollup_cfg, "user_entity_slug", "") or "")
+        if user_slug:
+            await ensure_profile_skeleton(
+                vault_root=vault_path, slug=user_slug, curator=curator,
+            )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("wiki_integration: profile skeleton pass failed: %s", exc)
 
     # Start the worker — this subscribes it to IdleEntered internally.
     if config.subscribe_idle:
@@ -325,7 +369,10 @@ async def bootstrap_wiki_integration(
                 _flush_and_ingest(
                     worker=worker,
                     curator=curator,
-                    scheduler=scheduler,
+                    # Legacy path choice: only route through the scheduler
+                    # when the operator explicitly disabled the direct-
+                    # ingest fallback (pre-Wave-2 semantics preserved).
+                    scheduler=scheduler if use_scheduler else None,
                     config=config,
                 ),
                 name="wiki-integration-flush",
@@ -353,19 +400,149 @@ async def bootstrap_wiki_integration(
     # The bridge closes that gap with an explicit "brain said notiert"
     # heuristic.
     # ------------------------------------------------------------------
+    # Wave-2 Stage 1: candidate journal + conversation fact extractor.
+    # Guarded: any failure degrades to the legacy direct-ingest bridge
+    # (extractor=None) so the conversation->wiki path never goes dark.
+    extractor = None
+    journal = None
+    try:
+        extractor_cfg = root_cfg.memory.wiki.extractor
+        if bool(getattr(extractor_cfg, "enabled", True)):
+            from jarvis.memory.wiki.extractor import ConversationFactExtractor
+            from jarvis.memory.wiki.journal import CandidateJournal
+
+            data_dir = Path(getattr(root_cfg.memory, "data_dir", "./data"))
+            journal = CandidateJournal(data_dir / "jarvis.db")
+            extractor = ConversationFactExtractor(config=root_cfg, journal=journal)
+            handle._journal = journal  # noqa: SLF001
+            if scheduler is not None:
+                # NOTE the TOML key: the scheduler section is the TOP-LEVEL
+                # [wiki_scheduler] table (JarvisConfig.wiki_scheduler), NOT
+                # [memory.wiki.scheduler] — a key set there is silently
+                # ignored. Moving it under WikiMemoryConfig is a tracked
+                # cleanup task (config.py comment near wiki_scheduler).
+                threshold = int(
+                    getattr(
+                        getattr(root_cfg, "wiki_scheduler", None),
+                        "consolidate_after_candidates",
+                        8,
+                    )
+                )
+                extractor.attach_scheduler(scheduler, consolidate_after=threshold)
+            log.info(
+                "wiki_integration: Stage-1 fact extractor active "
+                "(journal db=%s, journal trigger=%s)",
+                data_dir / "jarvis.db",
+                "scheduler" if scheduler is not None else "off",
+            )
+        else:
+            log.info(
+                "wiki_integration: [memory.wiki.extractor] disabled — "
+                "bridge keeps the legacy direct curator ingest"
+            )
+    except Exception as exc:  # noqa: BLE001
+        extractor = None
+        if journal is not None:
+            try:
+                journal.close()
+            except Exception:  # noqa: BLE001
+                pass
+            journal = None
+        log.warning(
+            "wiki_integration: Stage-1 extractor unavailable (%s) — "
+            "falling back to the legacy direct curator ingest", exc,
+        )
+
+    # Wave-2 Stage 2: body-aware consolidator, drained via the scheduler's
+    # JOURNAL trigger; refreshes the self-documentation page after each run.
+    if journal is not None and scheduler is not None:
+        try:
+            from jarvis.memory.wiki.consolidator import Consolidator
+            from jarvis.memory.wiki.search import VaultSearch
+            from jarvis.memory.wiki.self_doc import refresh_memory_page
+
+            try:
+                consolidator_search: Any = VaultSearch(vault_path)
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "wiki_integration: VaultSearch unavailable for the "
+                    "consolidator (%s) — slug-overlap retrieval only", exc,
+                )
+                consolidator_search = None
+
+            async def _refresh_self_doc() -> None:
+                await refresh_memory_page(
+                    curator=curator, vault_root=vault_path, journal=journal,
+                )
+
+            consolidator = Consolidator(
+                config=root_cfg,
+                journal=journal,
+                curator=curator,
+                search=consolidator_search,
+                vault_root=vault_path,
+                on_run_complete=_refresh_self_doc,
+            )
+            scheduler.attach_consolidator(consolidator)
+            log.info("wiki_integration: Stage-2 consolidator attached to scheduler")
+            # C1: drain any backlog left over from the previous run so small
+            # leftovers (< pressure threshold) consolidate without waiting
+            # for new conversation.
+            kick_journal_backlog(journal, scheduler)
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "wiki_integration: Stage-2 consolidator unavailable (%s) — "
+                "journal entries stay pending", exc,
+            )
+
+    # B7: make sure the self-documentation page exists from first boot.
+    try:
+        from jarvis.memory.wiki.self_doc import refresh_memory_page as _boot_refresh
+
+        await _boot_refresh(curator=curator, vault_root=vault_path, journal=journal)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("wiki_integration: self-doc boot refresh failed: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Contact → person-page mirror (deterministic, no LLM). One page per
+    # saved contact under people/, archived on delete, healed at boot.
+    # Spec: docs/superpowers/specs/2026-06-10-contact-wiki-mirror-design.md
+    # Own AtomicWriter instance, mirroring _build_curator /
+    # _build_rollup_worker (each write surface gets its own writer).
+    # ------------------------------------------------------------------
+    try:
+        from jarvis.memory.wiki.atomic_writer import AtomicWriter as _MirrorWriter
+        from jarvis.memory.wiki.contact_mirror import wire_contact_mirror
+
+        _mirror_writer = _MirrorWriter(
+            vault_root=vault_path, backup_dir=vault_path.parent / "wiki-backups"
+        )
+        contact_mirror, _mirror_cleanup = wire_contact_mirror(
+            bus=bus, vault_root=vault_path, writer=_mirror_writer, repo=repo,
+        )
+        handle._contact_mirror_cleanup = _mirror_cleanup  # noqa: SLF001
+        handle._contact_reconcile_task = asyncio.create_task(  # noqa: SLF001
+            contact_mirror.reconcile_all(), name="contact-mirror-reconcile"
+        )
+        log.info("wiki_integration: contact mirror wired (people/ pages)")
+    except Exception as exc:  # noqa: BLE001 — contacts absent ≠ wiki broken
+        log.warning("wiki_integration: contact mirror not wired — %s", exc)
+
     try:
         from jarvis.memory.wiki.voice_bridge import VoiceFactBridge
         voice_bridge = VoiceFactBridge(
             bus=bus,
             curator=curator,
             config=voice_bridge_config,
+            extractor=extractor,
         )
         voice_bridge.start()
         handle._voice_bridge = voice_bridge  # noqa: SLF001
         log.info(
             "wiki_integration: VoiceFactBridge attached "
-            "(aggressive_mode=%s)",
+            "(aggressive_mode=%s, extractor=%s)",
             getattr(voice_bridge_config, "aggressive_mode", "default(True)"),
+            "stage-1" if extractor is not None else "legacy-direct",
         )
     except Exception as exc:  # noqa: BLE001
         log.warning("wiki_integration: VoiceFactBridge failed to start: %s", exc)
@@ -574,6 +751,46 @@ def _build_curator(
         log_writer=log_writer,
         vault_root=vault_root,
     )
+
+
+def kick_journal_backlog(journal: Any, scheduler: Any) -> None:
+    """Boot-time backlog drain (Wave-2 C1).
+
+    The journal-pressure trigger only fires once ``consolidate_after_candidates``
+    facts pile up — a small leftover (1..7 candidates from the previous run)
+    would otherwise sit pending until enough NEW conversation arrives. At boot
+    we fire one JOURNAL trigger whenever anything is pending; the scheduler's
+    cooldown + lock still gate the actual run. Fire-and-forget (AP-9) and
+    fully guarded — boot never blocks or breaks on this.
+    """
+    try:
+        if journal is None or scheduler is None:
+            return
+        if journal.backlog_count() <= 0:
+            return
+        from jarvis.memory.wiki.scheduler import TriggerSource
+
+        task = asyncio.create_task(
+            scheduler.trigger(TriggerSource.JOURNAL),
+            name="wiki-journal-boot-drain",
+        )
+
+        def _log_outcome(t: "asyncio.Task[Any]") -> None:
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc is not None:
+                log.warning("wiki_integration: boot journal drain failed: %s", exc)
+
+        task.add_done_callback(_log_outcome)
+        log.info(
+            "wiki_integration: boot drain triggered for %d pending candidate(s)",
+            journal.backlog_count(),
+        )
+    except RuntimeError:
+        log.debug("wiki_integration: no event loop for the boot journal drain")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("wiki_integration: boot journal drain skipped: %s", exc)
 
 
 def _load_root_config() -> Any:

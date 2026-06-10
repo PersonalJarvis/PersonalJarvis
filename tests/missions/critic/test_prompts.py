@@ -133,6 +133,24 @@ def test_template_has_ground_truth_rule() -> None:
     assert "log is hearsay" in CRITIC_SYSTEM_PROMPT
 
 
+def test_template_has_meta_phrase_rule() -> None:
+    """Live false-positive mission_019eb1ac (2026-06-10): the user asked Jarvis
+    to "spawn a subagent that creates an HTML file". The worker produced a
+    substantial HTML file, but the Critic treated the routing meta-instruction
+    ("spawn a subagent") as part of the deliverable and returned verdict=revise
+    demanding evidence that an agent was actually spawned. The mission runtime
+    IS the spawned subagent; such phrases are routing meta-language, never a
+    deliverable. The Critic must never demand agent/subagent-spawning evidence
+    nor fail an axis for missing it."""
+    assert "META-PHRASE-RULE" in CRITIC_SYSTEM_PROMPT
+    assert "spawn a subagent" in CRITIC_SYSTEM_PROMPT
+    assert "The mission runtime IS that subagent" in CRITIC_SYSTEM_PROMPT
+    assert (
+        "Never demand evidence that an agent" in CRITIC_SYSTEM_PROMPT
+        or "never demand evidence that an agent" in CRITIC_SYSTEM_PROMPT
+    )
+
+
 def test_ground_truth_rule_recognizes_verified_external_writes() -> None:
     """mission_019e7abd (2026-05-30): a worker may legitimately write to an
     absolute path OUTSIDE the worktree (e.g. the user's Desktop). The

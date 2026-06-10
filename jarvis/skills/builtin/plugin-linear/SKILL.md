@@ -2,6 +2,7 @@
 schema_version: "1"
 name: plugin-linear
 description: Manage the user's Linear issues, projects, and cycles.
+when_to_use: Use when the user mentions Linear or wants to view, create, update, or close Linear issues and cycles.
 category: developer
 plugin_id: linear
 intent_verbs: [zeig, lies, erstell, aktualisier, schließ, zuweis]  # i18n-allow

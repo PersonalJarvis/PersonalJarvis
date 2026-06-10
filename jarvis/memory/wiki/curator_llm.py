@@ -144,6 +144,30 @@ def _resolve_provider_and_model(
     return provider, (model or None)
 
 
+def instantiate_curator_brain(
+    registry: Any, provider: str, model: str | None,
+) -> Any:
+    """Instantiate a curator-tier brain with extended thinking DISABLED.
+
+    Background curation (extractor, judge, legacy curator) is deterministic
+    JSON work; Gemini 3 thinking models otherwise burn the
+    ``max_output_tokens`` budget on internal reasoning tokens and the
+    visible output hits MAX_TOKENS after a few sentences — every batch then
+    dies in the truncation guard (live finding 2026-06-10). Mirrors the
+    ``BrainManager`` fast-path rules: ``thinking_budget=0`` only for
+    Gemini NON-pro models (pro rejects 0 with a 400); other providers
+    never see the kwarg; a ``TypeError`` from an older provider signature
+    falls back to plain instantiation.
+    """
+    kwargs: dict[str, Any] = {"model": model}
+    if provider == "gemini" and "pro" not in (model or "").lower():
+        kwargs["thinking_budget"] = 0
+    try:
+        return registry.instantiate(provider, **kwargs)
+    except TypeError:
+        return registry.instantiate(provider)
+
+
 def _extract_json_array(text: str) -> Any:
     """Best-effort JSON-array extraction from a possibly-noisy response.
 
@@ -449,11 +473,11 @@ class WikiCuratorLLM:
             self._resolved_model = model
 
             try:
-                kwargs: dict[str, Any] = {}
-                if model is not None:
-                    kwargs["model"] = model
+                # Thinking disabled for the curator tier (Gemini non-pro):
+                # background JSON work must not burn the token budget on
+                # internal reasoning (see instantiate_curator_brain).
                 brain = await asyncio.to_thread(
-                    self._registry.instantiate, provider, **kwargs,
+                    instantiate_curator_brain, self._registry, provider, model,
                 )
             except Exception as exc:                              # noqa: BLE001
                 logger.warning(

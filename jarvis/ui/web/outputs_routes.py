@@ -224,7 +224,8 @@ _STATE_TO_STATUS: dict[str, str] = {
     "AWAITING_CORRECTION": "running",
     "APPROVED": "success",
     "FAILED": "error",
-    "CANCELLED": "error",
+    # Deliberate user action, not a failure — gets its own badge in the UI.
+    "CANCELLED": "cancelled",
     "TIMED_OUT": "error",
     "ESCALATED": "error",
     "ORCHESTRATOR_CRASH": "error",
@@ -236,8 +237,12 @@ async def list_outputs(request: Request) -> dict[str, Any]:
     """List output directories newest-first.
 
     Each entry mirrors `OutputSummary` in `useOutputs.ts`:
-        {slug, utterance, status, summary?, started_at?, completed_at?,
-         duration_s?, github_url?, error?}
+        {slug, utterance, status, mission_id?, summary?, started_at?,
+         completed_at?, duration_s?, github_url?, error?}
+
+    `mission_id` is the full missions.id when the dir resolved to a DB row
+    (None otherwise) — the frontend needs it to POST
+    `/api/missions/{id}/cancel` for the hold-to-abort affordance.
     """
     root = _outputs_root(request)
     if not root.is_dir():
@@ -303,6 +308,7 @@ async def list_outputs(request: Request) -> dict[str, Any]:
             "slug": entry.name,
             "utterance": parsed["utterance"],
             "status": "unknown",
+            "mission_id": None,
             "started_at": parsed["started_at"],
             "completed_at": None,
             "duration_s": None,
@@ -312,6 +318,7 @@ async def list_outputs(request: Request) -> dict[str, Any]:
         if mission_row is not None:
             status = _STATE_TO_STATUS.get(str(mission_row["state"]), "unknown")
             summary["status"] = status
+            summary["mission_id"] = mission_row.get("full_id")
             summary["utterance"] = (
                 summary["utterance"] or mission_row.get("prompt")
             )

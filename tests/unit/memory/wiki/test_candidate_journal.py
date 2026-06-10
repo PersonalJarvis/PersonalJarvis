@@ -82,6 +82,25 @@ def test_survives_reopen(tmp_path: Path) -> None:
         j2.close()
 
 
+def test_close_is_terminal_no_silent_reopen(tmp_path: Path) -> None:
+    """A background task landing after shutdown must NOT re-open the DB.
+
+    close() is terminal: every later operation degrades to a logged no-op
+    (append -> 0, pending -> [], backlog -> 0, seen_turn -> False) instead
+    of silently re-opening a connection on a closing process.
+    """
+    j = CandidateJournal(tmp_path / "jarvis.db")
+    j.append(_facts()[:1], source_label="s", turn_hash="h")
+    j.close()
+
+    assert j.append(_facts(), source_label="late", turn_hash="h9") == 0
+    assert j.pending() == []
+    assert j.backlog_count() == 0
+    assert j.seen_turn("h") is False
+    j.mark([1], status="skipped")  # must not raise
+    assert j._conn is None  # noqa: SLF001 — the terminal-close contract
+
+
 def test_sql_check_rejects_invalid_status(journal: CandidateJournal) -> None:
     """The vocab is enforced at the SQL layer, not only in Python."""
     journal.append(_facts()[:1], source_label="s", turn_hash="h")
