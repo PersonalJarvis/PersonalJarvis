@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import replace
 from typing import TYPE_CHECKING, Literal
 
 from jarvis.core.events import ObservationCaptured
@@ -103,7 +104,8 @@ class VisionEngine:
         if cancel_token is not None and cancel_token.is_cancelled():
             raise RuntimeError(f"cancelled: {cancel_token.reason}")
 
-        effective_mode = self._resolve_mode(mode, window_title_filter)
+        hint = self._guess_active_app_hint(window_title_filter)
+        effective_mode = self._resolve_mode(mode, hint)
 
         obs = await self._dispatch(
             effective_mode,
@@ -115,6 +117,14 @@ class VisionEngine:
         # the cache or emitting an event.
         if obs is None:
             return None
+
+        # BUG-CU-EMPTYTITLE (2026-06-09): in screenshot mode the source cannot
+        # know the window title, so it stays "". Downstream consumers (the CU
+        # loop's regression detector, the cache freshness check) need a real
+        # title — and we already probed the foreground window for the mode
+        # heuristic, so carry that hint into the observation.
+        if effective_mode == "screenshot" and not obs.window_title and hint:
+            obs = replace(obs, window_title=hint)
 
         # Cache-Check ueber Hash. Wenn wir die exakt gleiche Observation
         # schon hatten, recyclen wir.
@@ -136,12 +146,12 @@ class VisionEngine:
     def _resolve_mode(
         self,
         mode: ObserveMode,
-        window_title_filter: str | None,
+        hint: str,
     ) -> Literal["screenshot", "ui_tree", "composite"]:
-        """Wandelt `auto` in einen konkreten Modus um."""
+        """Wandelt `auto` in einen konkreten Modus um. ``hint`` ist der vom
+        Caller bereits ermittelte Foreground-Hinweis (Titel/Filter)."""
         if mode != "auto":
             return mode
-        hint = self._guess_active_app_hint(window_title_filter)
         if hint and any(h in hint.lower() for h in _TEXT_HEAVY_HINTS):
             return "screenshot"
         return "composite"

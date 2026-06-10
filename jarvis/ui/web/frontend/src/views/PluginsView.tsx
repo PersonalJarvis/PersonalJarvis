@@ -132,135 +132,8 @@ const COMING_SOON = [
   "Asana",
 ];
 
-type TabId = "browse" | "installed" | "roadmap";
+type TabId = "browse" | "installed";
 type FilterId = "all" | Category;
-
-interface RoadmapItem {
-  name: string;
-  description: string;
-  group: string;
-}
-
-const JARVIS_PLUGIN_ROADMAP: RoadmapItem[] = [
-  {
-    name: "Stripe",
-    description: "Customers, products, subscriptions, invoices and webhook events.",
-    group: "Payments",
-  },
-  {
-    name: "Cloudflare",
-    description: "Workers, Pages, DNS, R2, D1, logs and deploy automation.",
-    group: "Developer",
-  },
-  {
-    name: "Discord",
-    description: "Servers, channels, DMs, moderation context and bot workflows.",
-    group: "Communication",
-  },
-  {
-    name: "Google Drive",
-    description: "Files, folders, document lookup, sharing and workspace search.",
-    group: "Productivity",
-  },
-  {
-    name: "Gmail",
-    description: "Inbox triage, search, drafts, send actions and follow-up queues.",
-    group: "Productivity",
-  },
-  {
-    name: "Telegram",
-    description: "Personal chat channel, notifications and remote Jarvis commands.",
-    group: "Communication",
-  },
-  {
-    name: "Asana",
-    description: "Tasks, projects, assignees, due dates and team status updates.",
-    group: "Productivity",
-  },
-];
-
-const CODEX_PLUGIN_ROADMAP: RoadmapItem[] = [
-  {
-    name: "Browser",
-    description: "Open, inspect, click, type and screenshot local web targets.",
-    group: "Local testing",
-  },
-  {
-    name: "Build iOS Apps",
-    description: "Xcode simulator builds, SwiftUI UI work, App Intents and profiling.",
-    group: "Apple",
-  },
-  {
-    name: "Build macOS Apps",
-    description: "macOS SwiftUI and AppKit build, run, debug and packaging workflows.",
-    group: "Apple",
-  },
-  {
-    name: "Cloudflare",
-    description: "Workers, Pages, Durable Objects, Wrangler and Agents SDK workflows.",
-    group: "Cloud",
-  },
-  {
-    name: "Codex Security",
-    description: "Security scans, PR diff reviews, threat models and finding fixes.",
-    group: "Security",
-  },
-  {
-    name: "Documents",
-    description: "Create, edit, redline and export Word-style document artifacts.",
-    group: "Office",
-  },
-  {
-    name: "GitHub",
-    description: "Repositories, issues, pull requests, CI triage and publishing.",
-    group: "Developer",
-  },
-  {
-    name: "Hugging Face",
-    description: "Models, datasets, Spaces, papers, training and evaluation workflows.",
-    group: "AI",
-  },
-  {
-    name: "HyperFrames by HeyGen",
-    description: "HTML video compositions, GSAP motion, captions and voiceovers.",
-    group: "Video",
-  },
-  {
-    name: "OpenAI Developers",
-    description: "OpenAI APIs, Agents SDK, ChatGPT Apps and platform key setup.",
-    group: "AI",
-  },
-  {
-    name: "Presentations",
-    description: "PowerPoint and slide deck creation, verification and export.",
-    group: "Office",
-  },
-  {
-    name: "Remotion",
-    description: "Programmatic React videos, animations, captions and rendering.",
-    group: "Video",
-  },
-  {
-    name: "Spreadsheets",
-    description: "Workbook creation, sheet edits, analysis, charts and exports.",
-    group: "Office",
-  },
-  {
-    name: "Supabase",
-    description: "Projects, Auth, Postgres, Edge Functions and database workflows.",
-    group: "Database",
-  },
-  {
-    name: "Superpowers",
-    description: "Planning, TDD, debugging, review and verification workflows.",
-    group: "Workflow",
-  },
-  {
-    name: "Test Android Apps",
-    description: "Emulator QA, screenshots, UI inspection, logs and performance checks.",
-    group: "Android",
-  },
-];
 
 const FILTERS: { id: FilterId; label: string }[] = [
   { id: "all", label: "All" },
@@ -286,11 +159,21 @@ export function PluginsView() {
   });
 
   const connectMutation = useMutation({
-    mutationFn: async ({ pluginId, token }: { pluginId: string; token: string }) => {
+    mutationFn: async ({
+      pluginId,
+      token,
+      allowedUserId,
+    }: {
+      pluginId: string;
+      token: string;
+      allowedUserId?: number | null;
+    }) => {
+      const body: { token: string; allowed_user_id?: number } = { token };
+      if (allowedUserId != null) body.allowed_user_id = allowedUserId;
       const res = await fetch(`/api/marketplace/plugins/${pluginId}/connect/pat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
@@ -431,15 +314,6 @@ export function PluginsView() {
     () => allPlugins.filter((p) => p.status === "connected"),
     [allPlugins],
   );
-  const availablePluginNames = useMemo(
-    () => new Set(allPlugins.map((p) => p.name)),
-    [allPlugins],
-  );
-  const plannedIntegrations = useMemo(
-    () => JARVIS_PLUGIN_ROADMAP.filter((p) => !availablePluginNames.has(p.name)),
-    [availablePluginNames],
-  );
-  const roadmapCount = plannedIntegrations.length + CODEX_PLUGIN_ROADMAP.length;
 
   const visible = useMemo(() => {
     const base = tab === "installed" ? installed : allPlugins;
@@ -489,19 +363,11 @@ export function PluginsView() {
           active={tab === "installed"}
           onClick={() => setTab("installed")}
         />
-        <Tab
-          label="Roadmap"
-          count={roadmapCount}
-          active={tab === "roadmap"}
-          onClick={() => setTab("roadmap")}
-        />
       </div>
 
       <ScrollArea className="flex-1">
         <div className="relative mx-auto max-w-3xl px-6 pb-20 pt-14">
-          {tab === "roadmap" ? (
-            <RoadmapLayout plannedIntegrations={plannedIntegrations} />
-          ) : tab === "browse" ? (
+          {tab === "browse" ? (
             <BrowseLayout
               plugins={visible}
               query={query}
@@ -512,7 +378,6 @@ export function PluginsView() {
               onDisconnect={(id) =>
                 setDisconnectingPlugin(allPlugins.find((p) => p.id === id) ?? null)
               }
-              onOpenRoadmap={() => setTab("roadmap")}
             />
           ) : (
             <InstalledLayout
@@ -538,8 +403,12 @@ export function PluginsView() {
             setConnectingPlugin(null);
             connectMutation.reset();
           }}
-          onSubmit={(token) =>
-            connectMutation.mutate({ pluginId: connectingPlugin.id, token })
+          onSubmit={(token, allowedUserId) =>
+            connectMutation.mutate({
+              pluginId: connectingPlugin.id,
+              token,
+              allowedUserId,
+            })
           }
           isPending={connectMutation.isPending}
           errorMessage={
@@ -629,8 +498,7 @@ function BrowseLayout({
   setFilter,
   onConnect,
   onDisconnect,
-  onOpenRoadmap,
-}: { plugins: Plugin[]; onOpenRoadmap: () => void } & SearchControlsProps & ConnectHandlers) {
+}: { plugins: Plugin[] } & SearchControlsProps & ConnectHandlers) {
   return (
     <>
       <Hero query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} />
@@ -641,7 +509,7 @@ function BrowseLayout({
         onConnect={onConnect}
         onDisconnect={onDisconnect}
       />
-      <ComingSoonStrip taken={plugins.map((p) => p.name)} onOpenRoadmap={onOpenRoadmap} />
+      <ComingSoonStrip taken={plugins.map((p) => p.name)} />
     </>
   );
 }
@@ -677,40 +545,6 @@ function InstalledLayout({
         />
       )}
     </>
-  );
-}
-
-function RoadmapLayout({
-  plannedIntegrations,
-}: {
-  plannedIntegrations: RoadmapItem[];
-}) {
-  return (
-    <div className="space-y-10">
-      <header className="text-center">
-        <h1 className="font-display text-2xl font-semibold tracking-tight sm:text-3xl">
-          Plugin roadmap
-        </h1>
-        <p className="mx-auto mt-2 max-w-lg text-xs leading-relaxed text-muted-foreground">
-          Planned Jarvis connectors and the plugin bundles currently available in this
-          Codex session.
-        </p>
-      </header>
-
-      <RoadmapSection
-        title="Planned Jarvis integrations"
-        count={plannedIntegrations.length}
-        items={plannedIntegrations}
-        status="Planned"
-      />
-
-      <RoadmapSection
-        title="ChatGPT Codex plugins"
-        count={CODEX_PLUGIN_ROADMAP.length}
-        items={CODEX_PLUGIN_ROADMAP}
-        status="Available"
-      />
-    </div>
   );
 }
 
@@ -1035,71 +869,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 // PluginRow — bigger tile + bigger icon for multicolor logos
 // ---------------------------------------------------------------------------
 
-function RoadmapSection({
-  title,
-  count,
-  items,
-  status,
-}: {
-  title: string;
-  count: number;
-  items: RoadmapItem[];
-  status: string;
-}) {
-  return (
-    <section>
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="font-display text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-          {title}
-        </h2>
-        <span className="rounded-full border border-border/70 bg-card/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-          {count}
-        </span>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {items.map((item) => (
-          <RoadmapCard key={`${status}-${item.name}`} item={item} status={status} />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function RoadmapCard({ item, status }: { item: RoadmapItem; status: string }) {
-  return (
-    <article className="flex min-h-[92px] items-start gap-3 rounded-lg border border-border bg-card/40 px-3 py-3">
-      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border/60 bg-background/60 text-xs font-semibold text-primary">
-        {initials(item.name)}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <h3 className="text-sm font-semibold tracking-tight text-foreground">
-            {item.name}
-          </h3>
-          <span className="rounded-full bg-secondary/70 px-2 py-0.5 text-[9px] font-medium uppercase tracking-wider text-muted-foreground">
-            {status}
-          </span>
-        </div>
-        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-          {item.description}
-        </p>
-        <p className="mt-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
-          {item.group}
-        </p>
-      </div>
-    </article>
-  );
-}
-
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("");
-}
-
 function PluginRow({
   plugin,
   onConnect,
@@ -1222,13 +991,7 @@ function EmptyInstalled({ totalAvailable }: { totalAvailable: number }) {
   );
 }
 
-function ComingSoonStrip({
-  taken = [],
-  onOpenRoadmap,
-}: {
-  taken?: string[];
-  onOpenRoadmap: () => void;
-}) {
+function ComingSoonStrip({ taken = [] }: { taken?: string[] }) {
   // Drop any teaser that now has a real catalog entry, so a newly-added
   // connector (e.g. Linear) never shows as both connectable and "coming soon".
   const upcoming = COMING_SOON.filter((name) => !taken.includes(name));
@@ -1248,14 +1011,6 @@ function ComingSoonStrip({
           </span>
         ))}
       </div>
-      <button
-        type="button"
-        onClick={onOpenRoadmap}
-        className="mt-3 inline-flex items-center text-[10px] uppercase tracking-wider text-muted-foreground/60 transition-colors hover:text-primary"
-      >
-        Vote on the roadmap
-        <ArrowRight className="ml-1 inline h-3 w-3" />
-      </button>
     </section>
   );
 }
@@ -1728,7 +1483,12 @@ function DisconnectConfirmDialog({
 // creation page in a new tab, takes a paste, sends it to the backend.
 // ---------------------------------------------------------------------------
 
-function PatConnectDialog({
+// Channel plugins (bidirectional chat over Telegram/Discord) can be locked to
+// the owner: connecting captures the owner's numeric user id so the bot obeys
+// only them. Other plugins never show the field.
+const OWNER_LOCK_PLUGIN_IDS = new Set(["telegram", "discord"]);
+
+export function PatConnectDialog({
   plugin,
   onClose,
   onSubmit,
@@ -1737,15 +1497,22 @@ function PatConnectDialog({
 }: {
   plugin: Plugin;
   onClose: () => void;
-  onSubmit: (token: string) => void;
+  onSubmit: (token: string, allowedUserId: number | null) => void;
   isPending: boolean;
   errorMessage: string | null;
 }) {
   const [token, setToken] = useState("");
+  const [userId, setUserId] = useState("");
+  const ownerLock = OWNER_LOCK_PLUGIN_IDS.has(plugin.id);
   const auth = plugin.authConfig as unknown as PatPasteAuthDetail;
   const expectedPrefix = auth.token_prefix ?? "";
   const prefixOk = !expectedPrefix || token.trim().startsWith(`${expectedPrefix}_`);
-  const canSubmit = token.trim().length > 0 && prefixOk && !isPending;
+  const userIdTrimmed = userId.trim();
+  const userIdOk = !ownerLock || userIdTrimmed === "" || /^\d+$/.test(userIdTrimmed);
+  const parsedUserId =
+    ownerLock && /^\d+$/.test(userIdTrimmed) ? Number(userIdTrimmed) : null;
+  const canSubmit = token.trim().length > 0 && prefixOk && userIdOk && !isPending;
+  const submit = () => onSubmit(token.trim(), parsedUserId);
 
   // Close on Escape — small but expected affordance.
   useEffect(() => {
@@ -1824,7 +1591,7 @@ function PatConnectDialog({
               value={token}
               onChange={(e) => setToken(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && canSubmit) onSubmit(token.trim());
+                if (e.key === "Enter" && canSubmit) submit();
               }}
               placeholder={expectedPrefix ? `${expectedPrefix}_…` : "Token"}
               className="mt-2 w-full rounded-md border border-border bg-input px-3 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
@@ -1838,6 +1605,35 @@ function PatConnectDialog({
               </p>
             )}
           </Step>
+
+          {ownerLock && (
+            <Step num={3} title="Lock the bot to you (recommended)">
+              <input
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                spellCheck={false}
+                aria-label="Your numeric user id"
+                value={userId}
+                onChange={(e) => setUserId(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && canSubmit) submit();
+                }}
+                placeholder="123456789"
+                className="mt-2 w-full rounded-md border border-border bg-input px-3 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
+                disabled={isPending}
+              />
+              <p className="mt-1.5 text-[11px] text-muted-foreground">
+                Only this user id can command the bot. Leave blank to let the
+                first person who messages it claim access instead.
+              </p>
+              {userIdTrimmed !== "" && !userIdOk && (
+                <p className="mt-1 text-[11px] text-amber-400">
+                  User id must be digits only.
+                </p>
+              )}
+            </Step>
+          )}
 
           {errorMessage && (
             <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -1857,7 +1653,7 @@ function PatConnectDialog({
           </button>
           <button
             type="button"
-            onClick={() => onSubmit(token.trim())}
+            onClick={submit}
             disabled={!canSubmit}
             className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:shadow-[0_0_16px_rgba(255,214,10,0.4)] disabled:cursor-not-allowed disabled:opacity-40"
           >

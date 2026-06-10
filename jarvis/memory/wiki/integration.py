@@ -262,11 +262,26 @@ async def bootstrap_wiki_integration(
     # ------------------------------------------------------------------
     # Build the SessionRollupWorker (B7)
     # ------------------------------------------------------------------
+    # Load the root config ONCE and hand the same snapshot to the worker
+    # and to the D2 gate below — two independent load_config() calls could
+    # diverge on a racy partial config write, making the gate inconsistent
+    # with the worker's own wiki_write_enabled view.
+    root_cfg = _load_root_config()
     worker = _build_rollup_worker(
         repo=repo,
         vault_root=vault_path,
         bus=bus,
+        root_config=root_cfg,
     )
+
+    # D2 (2026-06): the awareness-episode -> durable session-page feed is
+    # retired by default. ``wiki_write_enabled`` (SessionRollupConfig) gates
+    # BOTH the worker's own page write (handled inside flush_session) AND the
+    # integration's redundant re-read-and-re-ingest second curator pass below.
+    # The worker is still started so its lifecycle/shutdown stays symmetric,
+    # but when the feed is retired we never subscribe the re-ingest handler.
+    rollup_cfg = root_cfg.memory.wiki.session_rollup
+    wiki_write_enabled = bool(getattr(rollup_cfg, "wiki_write_enabled", False))
 
     # Start the worker — this subscribes it to IdleEntered internally.
     if config.subscribe_idle:
@@ -291,7 +306,14 @@ async def bootstrap_wiki_integration(
         _worker_stop=worker.stop if config.subscribe_idle else None,
     )
 
-    if config.subscribe_idle:
+    if not wiki_write_enabled:
+        log.info(
+            "wiki_integration: session-page feed retired (D2) — "
+            "skipping the awareness re-ingest pass; conversation "
+            "(VoiceFactBridge) remains the sole wiki feed"
+        )
+
+    if config.subscribe_idle and wiki_write_enabled:
         async def _on_idle_entered(event: IdleEntered) -> None:  # noqa: RUF029
             """Non-blocking IdleEntered handler.
 
@@ -526,13 +548,8 @@ def _build_curator(
     vault = VaultIndex(repo=repo)
 
     # Load root config for the LLM; fall back to default config when not
-    # available in the current environment.
-    try:
-        from jarvis.core.config import load_config
-        root_config = load_config()
-    except Exception:  # noqa: BLE001
-        from jarvis.core.config import JarvisConfig
-        root_config = JarvisConfig()
+    # available in the current environment (logged inside the helper).
+    root_config = _load_root_config()
 
     schema_path = vault_root / "schema.md"
     # CRIT-4 (2026-05-17 audit-7): missing schema.md silently broke every
@@ -559,16 +576,39 @@ def _build_curator(
     )
 
 
+def _load_root_config() -> Any:
+    """Load the root ``JarvisConfig`` once (default config on failure).
+
+    The fallback is logged at WARNING — a silently swallowed load failure
+    would let the curator/rollup stack run on default provider settings
+    with no diagnosis trail.
+    """
+    try:
+        from jarvis.core.config import load_config
+        return load_config()
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "wiki_integration: load_config() failed (%s) — using default "
+            "JarvisConfig for the rollup/curator stack",
+            exc,
+        )
+        from jarvis.core.config import JarvisConfig
+        return JarvisConfig()
+
+
 def _build_rollup_worker(
     *,
     repo: "PageRepository",
     vault_root: Path,
     bus: "EventBus",
+    root_config: Any | None = None,
 ) -> Any:
     """Construct a :class:`~jarvis.memory.wiki.session_rollup.SessionRollupWorker`.
 
     Opens or reuses the default recall store from the configured data
-    directory.  Uses default config loaded from ``jarvis.toml``.
+    directory. ``root_config`` lets the caller hand in an already-loaded
+    snapshot (single source for the D2 gate AND the worker); when ``None``
+    the config is loaded here.
     """
     from jarvis.memory.wiki.atomic_writer import AtomicWriter
     from jarvis.memory.wiki.log_writer import LogWriter
@@ -578,13 +618,11 @@ def _build_rollup_worker(
     writer = AtomicWriter(vault_root=vault_root, backup_dir=backup_dir)
     log_writer = LogWriter(log_path=vault_root / "log.md")
 
+    if root_config is None:
+        root_config = _load_root_config()
     try:
-        from jarvis.core.config import load_config
-        root_config = load_config()
         data_dir = Path(root_config.memory.data_dir)
     except Exception:  # noqa: BLE001
-        from jarvis.core.config import JarvisConfig
-        root_config = JarvisConfig()
         data_dir = Path("./data")
 
     from jarvis.memory.recall import RecallStore

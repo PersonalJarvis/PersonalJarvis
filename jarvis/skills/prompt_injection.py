@@ -21,6 +21,10 @@ from __future__ import annotations
 
 from jarvis.skills.registry import SkillRegistry
 
+# Per-entry cap on the rendered description+when_to_use text (mirrors the
+# 1536-char listing cap in Claude Code's skill listing, AD-S2).
+_PER_ENTRY_CHAR_CAP = 1536
+
 
 def render_available_skills_section(
     registry: SkillRegistry,
@@ -54,6 +58,14 @@ def render_available_skills_section(
         description = (fm.description or "").strip()
         if not description:
             description = "(no description)"
+        # AD-S2 L1: when_to_use is appended to the description (Anthropic
+        # Agent Skills listing convention) and the combined text is capped
+        # per entry so one verbose skill cannot blow the prompt budget.
+        when_to_use = (getattr(fm, "when_to_use", None) or "").strip()
+        if when_to_use:
+            description = f"{description} {when_to_use}"
+        if len(description) > _PER_ENTRY_CHAR_CAP:
+            description = description[: _PER_ENTRY_CHAR_CAP - 1] + "…"
         bullets.append(f"- `{skill.name}` — {description}")
 
     if not bullets:
@@ -62,18 +74,17 @@ def render_available_skills_section(
     overflow = max(0, len(bullets) - max_skills)
     if overflow:
         bullets = bullets[:max_skills]
-        bullets.append(f"- … und {overflow} weitere")
+        bullets.append(f"- … and {overflow} more")
 
     header = "## AVAILABLE SKILLS\n"
     intro = (
-        "Du kannst die folgenden vom User installierten Skills via "
-        "`run_skill`-Tool aufrufen. Wähle einen Skill nur dann, wenn "
-        "die User-Anfrage klar zur Skill-Description passt:\n"
+        "The user has these skills installed. When a request matches a "
+        "skill's description, call the `run-skill` tool with its name — "
+        "the tool returns the skill's instructions for you to follow:\n"
     )
     body = "\n".join(bullets)
     outro = (
-        "\n\nBei Mehrdeutigkeit: kurz nachfragen statt raten. "
-        "Drafts/Disabled-Skills werden vom Tool automatisch abgelehnt — "
-        "versuch sie nicht zu callen."
+        "\n\nIf several skills could match, pick the most specific one. "
+        "Draft/disabled skills are rejected by the tool automatically."
     )
     return f"{header}\n{intro}\n{body}{outro}"

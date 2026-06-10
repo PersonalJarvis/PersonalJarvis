@@ -12,7 +12,6 @@ import {
   Notebook,
   Sparkles,
   Mic,
-  Phone,
   Terminal,
   Share2,
   Contact,
@@ -36,43 +35,61 @@ interface NavItem {
   matchIds?: SectionId[];
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { id: "chats", labelKey: "nav.chats", icon: MessageSquare },
-  { id: "agents", labelKey: "nav.agents", icon: Users },
-  // Skills & Tools — Skills + Plugins + MCPs behind one tab switch. The id
-  // "skills" is the default landing (Skills tab); matchIds keeps the row
-  // highlighted for any of the fronted sections.
-  {
-    id: "skills",
-    labelKey: "nav.extensions",
-    icon: Boxes,
-    matchIds: ["skills", "plugins", "mcps"],
-  },
-  { id: "docs", labelKey: "nav.docs", icon: BookOpen },
-  { id: "tasks", labelKey: "nav.tasks", icon: ListTodo },
-  { id: "sessions", labelKey: "nav.sessions", icon: Mic },
-  // CLIs — the CLIs list + the CLI Test Hub behind one tab switch (CLIs first).
-  { id: "clis", labelKey: "nav.clis_hub", icon: Terminal, matchIds: ["clis", "cli-test-hub"] },
-  { id: "board", labelKey: "nav.board", icon: Sparkles },
-  { id: "profile", labelKey: "nav.profile", icon: UserCircle2 },
-  { id: "contacts", labelKey: "nav.contacts", icon: Contact },
-  { id: "memory", labelKey: "nav.wiki", icon: Notebook },
-  { id: "apikeys", labelKey: "nav.apikeys", icon: KeyRound },
-  { id: "telephony", labelKey: "nav.telephony", icon: Phone },
-  // Settings also fronts the former "Taskbar" and "Languages" sections (overlay
-  // + dictation controls live in OverlayTaskbarGroup, language selectors in
-  // LanguagesGroup now). matchIds keeps this row highlighted when a "geh zur
-  // Taskleiste" or "zeig die Sprachen" voice command lands on those ids.
-  {
-    id: "settings",
-    labelKey: "nav.settings",
-    icon: Settings,
-    matchIds: ["settings", "taskbar", "languages"],
-  },
-  { id: "debug", labelKey: "nav.debug", icon: Activity },
-  { id: "outputs", labelKey: "nav.outputs", icon: FolderOpen },
-  // Socials — pinned at the very bottom: the project's social-media links.
-  { id: "socials", labelKey: "nav.socials", icon: Share2 },
+// Sidebar nav, clustered into logical groups separated by a thin divider:
+//   1) daily tools   2) content & data   3) configuration   4) social links.
+// The render walks the groups in order and draws a separator between them, so
+// the order below IS the on-screen order.
+const NAV_GROUPS: NavItem[][] = [
+  // 1) Daily tools — what the user reaches for most often.
+  [
+    { id: "chats", labelKey: "nav.chats", icon: MessageSquare },
+    { id: "agents", labelKey: "nav.agents", icon: Users },
+    // Skills & Tools — Skills + Plugins + MCPs behind one tab switch. The id
+    // "skills" is the default landing (Skills tab); matchIds keeps the row
+    // highlighted for any of the fronted sections.
+    {
+      id: "skills",
+      labelKey: "nav.extensions",
+      icon: Boxes,
+      matchIds: ["skills", "plugins", "mcps"],
+    },
+    // CLIs — the CLIs list + the CLI Test Hub behind one tab switch (CLIs first).
+    { id: "clis", labelKey: "nav.clis_hub", icon: Terminal, matchIds: ["clis", "cli-test-hub"] },
+  ],
+  // 2) Content & data — things the user reads, edits, or browses.
+  [
+    { id: "tasks", labelKey: "nav.tasks", icon: ListTodo },
+    { id: "sessions", labelKey: "nav.sessions", icon: Mic },
+    { id: "board", labelKey: "nav.board", icon: Sparkles },
+    { id: "memory", labelKey: "nav.wiki", icon: Notebook },
+    { id: "contacts", labelKey: "nav.contacts", icon: Contact },
+    { id: "profile", labelKey: "nav.profile", icon: UserCircle2 },
+    { id: "docs", labelKey: "nav.docs", icon: BookOpen },
+  ],
+  // 3) Configuration. API Keys now also fronts the former "Telephony" screen —
+  // the telephony status/credentials/scripts/calls live as a section inside the
+  // API-Keys view, so matchIds keeps this row highlighted when a "geh zur
+  // Telefonie" voice command lands on the "telephony" id. Settings likewise
+  // fronts the former "Taskbar" + "Languages" sections (overlay/dictation
+  // controls live in OverlayTaskbarGroup, language selectors in LanguagesGroup).
+  [
+    {
+      id: "apikeys",
+      labelKey: "nav.apikeys",
+      icon: KeyRound,
+      matchIds: ["apikeys", "telephony", "telephony-setup"],
+    },
+    {
+      id: "settings",
+      labelKey: "nav.settings",
+      icon: Settings,
+      matchIds: ["settings", "taskbar", "languages"],
+    },
+    { id: "debug", labelKey: "nav.debug", icon: Activity },
+    { id: "outputs", labelKey: "nav.outputs", icon: FolderOpen },
+  ],
+  // 4) Social links — pinned to the bottom group.
+  [{ id: "socials", labelKey: "nav.socials", icon: Share2 }],
 ];
 
 const VOICE_STATE_STYLE: Record<string, { dot: string; pulse: boolean }> = {
@@ -141,18 +158,27 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 overflow-y-auto scrollbar-jarvis p-2">
-        <ul className="space-y-0.5">
-          {NAV_ITEMS.map((item) => (
-            <NavRow
-              key={item.id}
-              item={item}
-              label={t(item.labelKey)}
-              active={item.matchIds ? item.matchIds.includes(active) : item.id === active}
-              badge={item.id === "agents" ? agentsCount : undefined}
-              onClick={() => setActive(item.id)}
-            />
-          ))}
-        </ul>
+        {NAV_GROUPS.map((group, groupIndex) => (
+          <ul
+            key={groupIndex}
+            className={cn(
+              "space-y-0.5",
+              // Thin divider + breathing room above every group after the first.
+              groupIndex > 0 && "mt-2 border-t border-border/40 pt-2",
+            )}
+          >
+            {group.map((item) => (
+              <NavRow
+                key={item.id}
+                item={item}
+                label={t(item.labelKey)}
+                active={item.matchIds ? item.matchIds.includes(active) : item.id === active}
+                badge={item.id === "agents" ? agentsCount : undefined}
+                onClick={() => setActive(item.id)}
+              />
+            ))}
+          </ul>
+        ))}
       </nav>
 
       <div className="border-t border-border p-3">

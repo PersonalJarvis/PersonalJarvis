@@ -46,6 +46,9 @@ vi.mock("@/hooks/useHotkey", () => ({
   }),
   chordToCombo: vi.fn(),
   codeToKeyToken: vi.fn(),
+  composeCombo: vi.fn(() => ""),
+  comboTokens: vi.fn(() => new Set<string>()),
+  validateCombo: vi.fn(() => ({ status: "empty" })),
 }));
 
 // Silence settings sub-groups that hit their own endpoints.

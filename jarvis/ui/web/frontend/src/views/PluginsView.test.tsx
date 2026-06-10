@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { PluginsView } from "@/views/PluginsView";
@@ -72,26 +72,25 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("PluginsView roadmap", () => {
-  it("opens the roadmap from the coming-soon call to action and lists Codex plugins", async () => {
+describe("PluginsView has no roadmap tab", () => {
+  it("exposes only Browse and Installed tabs and drops the hardcoded Codex list", async () => {
     installCatalogFetchMock();
 
     renderPluginsView();
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /^Roadmap\b/i })).toBeDefined();
+      expect(screen.getByRole("button", { name: /^Browse\b/i })).toBeDefined();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /Vote on the roadmap/i }));
-
-    expect(screen.getByRole("button", { name: /^Roadmap\b/i }).className).toContain(
-      "text-foreground",
-    );
-    expect(screen.getByText("Planned Jarvis integrations")).toBeDefined();
-    expect(screen.getByText("ChatGPT Codex plugins")).toBeDefined();
-    expect(screen.getByText("OpenAI Developers")).toBeDefined();
-    expect(screen.getByText("Supabase")).toBeDefined();
-    expect(screen.getByText("Documents")).toBeDefined();
+    // The roadmap tab carried a static "AVAILABLE" list of Codex plugins that
+    // were never installable in Jarvis — it has been removed entirely.
+    expect(screen.getByRole("button", { name: /^Installed\b/i })).toBeDefined();
+    expect(screen.queryByRole("button", { name: /^Roadmap\b/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Vote on the roadmap/i })).toBeNull();
+    expect(screen.queryByText("ChatGPT Codex plugins")).toBeNull();
+    expect(screen.queryByText("Planned Jarvis integrations")).toBeNull();
+    expect(screen.queryByText("OpenAI Developers")).toBeNull();
+    expect(screen.queryByText("Documents")).toBeNull();
   });
 });
 

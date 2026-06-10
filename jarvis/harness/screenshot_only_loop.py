@@ -53,7 +53,12 @@ import time
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
-from jarvis.core.events import ActionPlanned, ObservationCaptured
+from jarvis.core.events import (
+    ActionPlanned,
+    AnnouncementRequested,
+    CUStepProfiled,
+    ObservationCaptured,
+)
 from jarvis.core.protocols import (
     BrainMessage,
     BrainRequest,
@@ -511,20 +516,62 @@ def _validate_action_dict(obj: Any) -> dict[str, Any]:
 # even tighter budget because a wedged COM call cannot be cancelled (the
 # asyncio.wait_for over a to_thread call only stops awaiting; the thread runs
 # on) -- so we must never give it a large budget.
-_PER_OP_TIMEOUT_CAP_S = 12.0
 _UIA_TIMEOUT_S = 3.0
-_OBSERVE_TIMEOUT_S = 6.0
+#: Screenshot capture+encode budget (2026-06-09 Wave 0: per-phase budgets
+#: replace the old silent 12s `_PER_OP_TIMEOUT_CAP_S` blanket). Measured worst
+#: case on a 4K monitor is ~1.05s; 3s leaves headroom without letting a
+#: wedged GDI call eat the step.
+_OBSERVE_TIMEOUT_S = 3.0
+#: Single tool execution (click/type/open_app/...). App launches are the slow
+#: end; anything beyond this is a wedged tool, not a slow action.
+_ACT_TIMEOUT_S = 5.0
+#: Model-call ceiling (think/plan/judge). The configured per_step_timeout_s
+#: still applies when SMALLER; this cap bounds a hung provider call.
+_THINK_TIMEOUT_CAP_S = 10.0
 
 
-def _timeout_s(ctx: "ComputerUseContext") -> float:
-    """Per-operation timeout: the configured per_step value, but hard-capped so
-    no single op can consume the whole mission budget (BUG-CU-STALL)."""
+def _think_timeout_s(ctx: ComputerUseContext) -> float:
+    """Model-call timeout: the configured per_step value, capped at the named
+    think ceiling (no more silent blanket cap over every phase)."""
     cfg_v = float(getattr(ctx, "per_step_timeout_s", 30.0) or 30.0)
-    return max(0.001, min(cfg_v, _PER_OP_TIMEOUT_CAP_S))
+    return max(0.001, min(cfg_v, _THINK_TIMEOUT_CAP_S))
+
+
+def _internal_deadline_s(timeout_s: float) -> float:
+    """Loop-internal mission budget: end cleanly BEFORE the harness guillotine
+    (``ComputerUseHarness.invoke`` wraps the stream in ``asyncio.wait_for``).
+    90% of the outer budget, floored so tiny test budgets stay positive."""
+    return max(5.0, float(timeout_s) * 0.9)
 
 
 def _is_cancelled(cancel_token: CancelToken | None) -> bool:
     return bool(cancel_token is not None and cancel_token.is_cancelled())
+
+
+#: Minimum gap between spoken mid-mission progress announcements — milestones,
+#: not narration (frontier-speed Wave 0).
+_PROGRESS_MIN_INTERVAL_S = 8.0
+
+
+async def _profile_phase(
+    ctx: ComputerUseContext, *, phase: str, step_idx: int, t0: float,
+) -> None:
+    """Publish one CUStepProfiled phase span (Wave 0 instrumentation).
+
+    Dual purpose: cu_bench latency breakdown AND the speech-pipeline liveness
+    heartbeat (a long THINK phase emits no ObservationCaptured/ActionPlanned,
+    so this event keeps the TTS ceiling suspended). Never raises.
+    """
+    if ctx.bus is None:
+        return
+    try:
+        await ctx.bus.publish(CUStepProfiled(
+            phase=phase,  # type: ignore[arg-type]
+            duration_ms=max(0, int((time.monotonic() - t0) * 1000)),
+            step_idx=step_idx,
+        ))
+    except Exception:  # noqa: BLE001
+        log.debug("CUStepProfiled publish failed", exc_info=True)
 
 
 def _capture_monitor_geometry() -> tuple[int, int, int, int]:
@@ -581,14 +628,26 @@ _COORD_NORM_MAX = 1000
 
 
 async def _observe(
-    ctx: "ComputerUseContext",
+    ctx: ComputerUseContext,
     cancel_token: CancelToken | None,
 ) -> Observation:
-    """Capture one screenshot and emit ObservationCaptured."""
+    """Capture one screenshot and emit ObservationCaptured.
+
+    Mode is explicitly ``screenshot`` (2026-06-09 latency fix): the loop
+    never reads ``observation.nodes`` -- clickable labels come from the
+    separate ``_foreground_clickable_labels`` enumeration -- so the old
+    ``auto`` mode paid a full composite UIA enumeration per step for
+    nothing. The window title still arrives via the engine's foreground
+    probe (BUG-CU-EMPTYTITLE fix in jarvis/vision/engine.py).
+    """
     obs = await asyncio.wait_for(
-        ctx.vision_engine.observe(mode="auto", cancel_token=cancel_token),
-        timeout=_timeout_s(ctx),
+        ctx.vision_engine.observe(mode="screenshot", cancel_token=cancel_token),
+        timeout=_OBSERVE_TIMEOUT_S,
     )
+    if obs is None:
+        # Transient GDI/BitBlt failure (locked screen, display asleep) — fail
+        # with a clear message instead of an AttributeError downstream.
+        raise CULoopError("screenshot capture returned no frame (transient GDI failure)")
     if ctx.bus is not None:
         try:
             await ctx.bus.publish(ObservationCaptured(
@@ -630,8 +689,33 @@ def _select_fast_model(manager: Any, provider: Any) -> str | None:
 # Brain dispatch
 # ---------------------------------------------------------------------------
 
+# Per-image byte budget for the model payload (2026-06-09 latency fix). The
+# loop used to ship the raw full-resolution screenshot (a 4K monitor every
+# step) -- encode + upload + model ingest paid for pixels the vision models
+# resample away anyway (~1568px internally). ``cap_image_b64`` downscales to
+# 2048px longest side and JPEG-encodes toward this budget; on any failure it
+# returns the original image, so the vision path never breaks.
+_CU_IMAGE_MAX_BYTES = 300_000
+
+
+async def _load_observation_image(obs: Observation) -> ImageBlock | None:
+    """Read the observation's screenshot and cap it for the model payload.
+
+    Returns ``None`` when the observation has no screenshot on disk. Raises
+    on unreadable files -- callers treat that like the previous read failure
+    (log + skip the image).
+    """
+    if not obs.screenshot_path:
+        return None
+    from jarvis.brain.router import _read_observation_image_b64  # noqa: PLC0415
+    from jarvis.vision.image_budget import cap_image_b64  # noqa: PLC0415
+
+    mime, image_b64 = await _read_observation_image_b64(obs)
+    mime, image_b64 = cap_image_b64(mime, image_b64, _CU_IMAGE_MAX_BYTES)
+    return ImageBlock(mime=mime, data_b64=image_b64, source_hash=obs.screenshot_hash)
+
 async def _call_brain(
-    ctx: "ComputerUseContext",
+    ctx: ComputerUseContext,
     *,
     observation: Observation,
     user_goal: str,
@@ -686,25 +770,22 @@ async def _call_brain(
                 f"BrainManager._get_brain({provider!r}, {model!r}) returned None"
             )
 
-        # Attach screenshot(s). ``frame_b`` lets the two-frame motion verifier
-        # send Frame A + Frame B in one call so the model can compare them.
-        from jarvis.brain.router import _read_observation_image_b64  # noqa: PLC0415
-
+        # Attach screenshot(s), capped to the model-payload budget
+        # (2026-06-09 latency fix). ``frame_b`` lets the two-frame motion
+        # verifier send Frame A + Frame B in one call for comparison.
         images: list[ImageBlock] = []
         for obs in (observation, frame_b):
             if obs is None or not obs.screenshot_path:
                 continue
             try:
-                mime, image_b64 = await _read_observation_image_b64(obs)
-                images.append(ImageBlock(
-                    mime=mime,
-                    data_b64=image_b64,
-                    source_hash=obs.screenshot_hash,
-                ))
+                block = await _load_observation_image(obs)
+                if block is None:
+                    continue
+                images.append(block)
                 log.info(
                     "ComputerUseLoop screenshot attached: hash=%s len=%d",
                     obs.screenshot_hash[:16] if obs.screenshot_hash else "?",
-                    len(image_b64),
+                    len(block.data_b64),
                 )
             except Exception as exc:  # noqa: BLE001
                 log.warning("ComputerUseLoop screenshot attach failed: %s", exc)
@@ -725,63 +806,6 @@ async def _call_brain(
     if callable(manager):
         return str(await manager(f"{system_prompt}\n\n{user_message}"))
 
-
-async def _decide_native_batch(
-    ctx: "ComputerUseContext",
-    observation: Observation,
-    task_prompt: str,
-    history: list[str],
-    step_idx: int,
-) -> list[dict[str, Any]] | None:
-    """Wave 3 hybrid: ask the native Gemini computer_use engine for the next
-    action(s). Returns validated loop-action dicts, or ``None`` when native is
-    disabled/unavailable or fails for ANY reason -- the caller then runs the
-    hand-rolled vision+JSON path for this step. Default: ``ctx.native_cu`` is
-    None (``[computer_use].prefer_native`` defaults False), so this is a no-op.
-    """
-    native = getattr(ctx, "native_cu", None)
-    if native is None:
-        return None
-    # Reuse the existing observation->image reader (handles path + mime), then
-    # decode to raw bytes for the native call.
-    try:
-        from jarvis.brain.router import _read_observation_image_b64  # noqa: PLC0415
-
-        _mime, image_b64 = await _read_observation_image_b64(observation)
-        screenshot = base64.b64decode(image_b64)
-    except Exception as exc:  # noqa: BLE001
-        log.info("[cu] native CU screenshot read failed (step %d): %s", step_idx, exc)
-        return None
-    try:
-        actions = await asyncio.wait_for(
-            native.decide(
-                screenshot_png=screenshot,
-                goal=task_prompt,
-                history=list(history[-12:]),
-            ),
-            timeout=_timeout_s(ctx),
-        )
-    except Exception as exc:  # noqa: BLE001 — any native failure -> hand-rolled fallback
-        log.info("[cu] native CU decide failed (step %d), falling back: %s", step_idx, exc)
-        return None
-    if not actions:
-        return None
-    # Defense-in-depth: validate through the same schema the hand-rolled path
-    # uses, so a mapping bug can never feed a malformed action to the executor.
-    try:
-        validated = [_validate_action_dict(dict(a)) for a in actions]
-    except CULoopError as exc:
-        log.info(
-            "[cu] native CU produced invalid action (step %d), falling back: %s",
-            step_idx, exc,
-        )
-        return None
-    log.info(
-        "[cu] step %d used native Gemini computer_use (%d action(s))",
-        step_idx, len(validated),
-    )
-    return validated
-
     raise CULoopError(
         "BrainManager exposes neither complete_text, _get_brain, nor __call__"
         " -- screenshot-only loop cannot dispatch."
@@ -789,7 +813,7 @@ async def _decide_native_batch(
 
 
 async def _decide_native_batch(
-    ctx: "ComputerUseContext",
+    ctx: ComputerUseContext,
     observation: Observation,
     task_prompt: str,
     history: list[str],
@@ -821,7 +845,7 @@ async def _decide_native_batch(
                 goal=task_prompt,
                 history=list(history[-12:]),
             ),
-            timeout=_timeout_s(ctx),
+            timeout=_think_timeout_s(ctx),
         )
     except Exception as exc:  # noqa: BLE001 — any native failure -> hand-rolled fallback
         log.info("[cu] native CU decide failed (step %d), falling back: %s", step_idx, exc)
@@ -880,6 +904,50 @@ _GOAL_NEEDS_SEARCH_RE = re.compile(r"\b(spiel|abspiel|play)\b", re.I)
 def _goal_needs_search(goal: str) -> bool:
     return bool(_GOAL_NEEDS_SEARCH_RE.search(goal or ""))
 
+
+# Multi-step goals beyond music (2026-06-09 shippability fix): a compound
+# command ("oeffne X und ...", "... dann ...") or an explicit navigation goal
+# needs the ordered plan just as much as a play goal -- the reactive loop
+# loses the thread on them. Conservative connectives only; a single-verb goal
+# ("mach einen Screenshot") stays on the cheap stateless path.
+_MULTI_STEP_GOAL_RE = re.compile(
+    r"\bund\b|\bdann\b|\bdanach\b|\banschliessend\b|"
+    r"\bnavigier\w*\b|\bnavigate\b|"
+    r"\band\s+(?:go|open|click|navigate|type|search)\b|\bthen\b",
+    re.I,
+)
+
+
+def _goal_needs_plan(goal: str) -> bool:
+    """True when the goal benefits from an ordered plan: music/search goals
+    (the original plan-first class) plus any compound or navigation goal.
+    Compute goals (calculator) never plan -- their connectives ("rechne 7
+    und 3") are part of the arithmetic, not a step sequence, and the
+    stateless path is faster (review finding 2026-06-09)."""
+    if _goal_needs_result(goal):
+        return False
+    return _goal_needs_search(goal) or bool(_MULTI_STEP_GOAL_RE.search(goal or ""))
+
+
+# Anti-shortcut block for music/search goals (BUG-CU-WRONG-SONG). Shared by
+# the plan-path prompt AND the VERIFY-FIRST fallback prompt so a failed
+# planner can never silently drop the discipline (review finding 2026-06-09).
+_SEARCH_DISCIPLINE_BLOCK = (
+    "\n\nSEARCH DISCIPLINE (critical): to 'play a song' you MUST search "
+    "for and select a NEW track. The sequence is: click the search "
+    "box, TYPE a concrete song or artist name (a real 'type' action "
+    "with text -- never skip this), press Enter (key 'enter') to "
+    "open the FULL results page, then click the top row under "
+    "'Songs'/'Titel' (a track row -- NOT an autocomplete dropdown "
+    "item, NOT a music video, podcast, or artist header). Only that "
+    "starts a fresh track.\n"
+    "FORBIDDEN SHORTCUT: do NOT just press the play button on "
+    "whatever track was already loaded when you started -- resuming "
+    "a pre-loaded song does NOT satisfy 'play a song'. If you have "
+    "not yet typed a search query and clicked a result this session, "
+    "you are NOT done, even if a track is already playing."
+)
+
 # Interval between the two verification frames -- long enough for a real
 # media timer to tick at least 1 second, short enough to barely add latency.
 _VERIFY_FRAME_GAP_S = 1.3
@@ -911,6 +979,31 @@ def _goal_needs_verification(goal: str) -> bool:
     return bool(_VERIFY_GOAL_RE.search(goal or "")) or _goal_needs_result(goal)
 
 
+# Generic single-frame completion judge (2026-06-09 shippability fix). Every
+# goal class that is neither compute (calculator display check) nor a media
+# toggle (two-frame motion check) is judged against the CURRENT screenshot:
+# "open Chrome" must show an open Chrome window, not the word "chrome" typed
+# into a search box. Single-frame keeps the added latency to one model call
+# at mission end -- no 1.3 s two-frame gap for goals that do not need motion.
+_GENERIC_VERIFIER_SYSTEM_PROMPT = (
+    "You are a STRICT completion judge for a desktop automation task. Look "
+    "at the screenshot and decide whether the user's GOAL is OBSERVABLY "
+    "achieved RIGHT NOW. Output exactly ONE JSON object, no prose, no code "
+    "fences: {\"done\": true|false, \"proof\": \"<the exact on-screen "
+    "evidence you used>\"}\n"
+    "Rules:\n"
+    "* done:true ONLY if the screenshot PROVES the goal. For an 'open <app>' "
+    "goal that means the app's window is visibly OPEN -- the app's name "
+    "typed into a search box or shown in a start-menu result list is NOT "
+    "enough. For a navigation goal the target page/screen must be visible.\n"
+    "* If the goal has multiple parts (open X AND do Y), ALL parts must be "
+    "proven on screen.\n"
+    "* Never guess. When unsure, answer false.\n"
+    "* Quote the concrete proof element (window, title, page content) in "
+    "'proof'."
+)
+
+
 _COMPUTE_VERIFIER_SYSTEM_PROMPT = (
     "You are a STRICT result judge for a calculator task. Read the calculator's "
     "result display in the screenshot. Output exactly ONE JSON object, no prose, "
@@ -926,7 +1019,7 @@ _COMPUTE_VERIFIER_SYSTEM_PROMPT = (
 
 
 async def _verify_goal_done(
-    ctx: "ComputerUseContext",
+    ctx: ComputerUseContext,
     *,
     observation: Observation,
     user_goal: str,
@@ -960,10 +1053,35 @@ async def _verify_goal_done(
                         "Read the calculator result and judge. JSON object only."
                     ),
                 ),
-                timeout=_timeout_s(ctx),
+                timeout=_think_timeout_s(ctx),
             )
-        except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001
+        except (TimeoutError, Exception) as exc:  # noqa: BLE001
             log.debug("[cu] compute-verifier failed (non-fatal): %s", exc)
+            return (False, "")
+        return _parse_verdict(raw)
+
+    # Non-media goals (open/navigate/click/...) get the generic SINGLE-frame
+    # judge -- no motion gap needed; the proof is a static screen state
+    # (an open window, a visible page). Media/submit goals fall through to
+    # the two-frame motion verifier below.
+    if not _VERIFY_GOAL_RE.search(user_goal or ""):
+        try:
+            raw = await asyncio.wait_for(
+                _call_brain(
+                    ctx,
+                    observation=observation,
+                    user_goal=user_goal,
+                    history_text="",
+                    system_prompt=_GENERIC_VERIFIER_SYSTEM_PROMPT,
+                    user_message=(
+                        f"GOAL: {user_goal}\n\n"
+                        "Judge the screenshot per the rules. JSON object only."
+                    ),
+                ),
+                timeout=_think_timeout_s(ctx),
+            )
+        except (TimeoutError, Exception) as exc:  # noqa: BLE001
+            log.debug("[cu] generic verifier failed (non-fatal): %s", exc)
             return (False, "")
         return _parse_verdict(raw)
 
@@ -971,9 +1089,9 @@ async def _verify_goal_done(
     try:
         await asyncio.sleep(_VERIFY_FRAME_GAP_S)
         frame_b = await asyncio.wait_for(
-            _observe(ctx, None), timeout=_timeout_s(ctx),
+            _observe(ctx, None), timeout=_OBSERVE_TIMEOUT_S + 0.5,
         )
-    except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001
+    except (TimeoutError, Exception) as exc:  # noqa: BLE001
         log.debug("[cu] verifier frame-B capture failed (non-fatal): %s", exc)
         return (False, "")
 
@@ -999,9 +1117,9 @@ async def _verify_goal_done(
                 user_message=user_message,
                 frame_b=frame_b,
             ),
-            timeout=_timeout_s(ctx),
+            timeout=_think_timeout_s(ctx),
         )
-    except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001
+    except (TimeoutError, Exception) as exc:  # noqa: BLE001
         log.debug("[cu] verifier call failed/timed out (non-fatal): %s", exc)
         return (False, "")
     return _parse_verdict(raw)
@@ -1060,7 +1178,7 @@ _PLANNER_SYSTEM_PROMPT = (
 
 
 async def _make_plan(
-    ctx: "ComputerUseContext",
+    ctx: ComputerUseContext,
     *,
     observation: Observation,
     user_goal: str,
@@ -1083,9 +1201,9 @@ async def _make_plan(
                 user_message=user_message,
                 max_tokens=512,
             ),
-            timeout=_timeout_s(ctx),
+            timeout=_think_timeout_s(ctx),
         )
-    except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001
+    except (TimeoutError, Exception) as exc:  # noqa: BLE001
         log.debug("[cu] planner call failed/timed out (non-fatal): %s", exc)
         return []
     import json as _json  # noqa: PLC0415
@@ -1132,6 +1250,24 @@ _CLICKABLE_UIA_ROLES = frozenset({
 })
 
 
+# Cached UI tree source for the per-step label enumeration (2026-06-09
+# latency fix): constructing a fresh source every step paid setup cost for
+# the same foreground enumeration. Built lazily on first use.
+# Note for tests: reset to None via monkeypatch before exercising
+# _get_ui_tree_source() directly (see test_cu_loop_robustness.py).
+_UI_TREE_SOURCE: Any = None
+
+
+def _get_ui_tree_source() -> Any:
+    """Build the per-OS UI tree source once and reuse it across steps."""
+    global _UI_TREE_SOURCE
+    if _UI_TREE_SOURCE is None:
+        from jarvis.vision.tree_factory import make_ui_tree_source  # noqa: PLC0415
+
+        _UI_TREE_SOURCE = make_ui_tree_source()
+    return _UI_TREE_SOURCE
+
+
 async def _foreground_clickable_labels(timeout_s: float, max_n: int = 28) -> list[str]:
     """Enumerate the foreground window's clickable UIA control names so the
     executor can click_element by an EXACT real name. Returns ``[]`` on any
@@ -1144,10 +1280,8 @@ async def _foreground_clickable_labels(timeout_s: float, max_n: int = 28) -> lis
     Name (what the model reads on screen) and let click_element resolve it.
     """
     try:
-        from jarvis.vision.tree_factory import make_ui_tree_source  # noqa: PLC0415
-
-        obs = await asyncio.wait_for(make_ui_tree_source().observe(), timeout=timeout_s)
-    except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001
+        obs = await asyncio.wait_for(_get_ui_tree_source().observe(), timeout=timeout_s)
+    except (TimeoutError, Exception) as exc:  # noqa: BLE001
         log.debug("[cu] UI-tree label enumeration failed (non-fatal): %s", exc)
         return []
     names: list[str] = []
@@ -1213,7 +1347,7 @@ def _resolve_click_pixel(
 
 async def _execute_action(
     obj: dict[str, Any],
-    ctx: "ComputerUseContext",
+    ctx: ComputerUseContext,
     *,
     trace_id: Any,
     user_goal: str,
@@ -1252,9 +1386,9 @@ async def _execute_action(
                 executor.execute(
                     tool, args, user_utterance="computer-use", trace_id=trace_id,
                 ),
-                timeout=_timeout_s(ctx),
+                timeout=_ACT_TIMEOUT_S,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise
         except Exception as exc:  # noqa: BLE001
             return False, f"click crash: {type(exc).__name__}: {exc}"
@@ -1273,9 +1407,9 @@ async def _execute_action(
                     tool, {"text": str(obj.get("text", ""))},
                     user_utterance="computer-use", trace_id=trace_id,
                 ),
-                timeout=_timeout_s(ctx),
+                timeout=_ACT_TIMEOUT_S,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise
         except Exception as exc:  # noqa: BLE001
             return False, f"type crash: {type(exc).__name__}: {exc}"
@@ -1299,9 +1433,9 @@ async def _execute_action(
                     tool, {"keys": list(keys)},
                     user_utterance="computer-use", trace_id=trace_id,
                 ),
-                timeout=_timeout_s(ctx),
+                timeout=_ACT_TIMEOUT_S,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise
         except Exception as exc:  # noqa: BLE001
             return False, f"key crash: {type(exc).__name__}: {exc}"
@@ -1321,9 +1455,9 @@ async def _execute_action(
                     tool, {"name": str(obj.get("name", ""))},
                     user_utterance="computer-use", trace_id=trace_id,
                 ),
-                timeout=_timeout_s(ctx),
+                timeout=_ACT_TIMEOUT_S,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise
         except Exception as exc:  # noqa: BLE001
             return False, f"click_element crash: {type(exc).__name__}: {exc}"
@@ -1364,9 +1498,9 @@ async def _execute_action(
                 executor.execute(
                     tool, args, user_utterance="computer-use", trace_id=trace_id,
                 ),
-                timeout=_timeout_s(ctx),
+                timeout=_ACT_TIMEOUT_S,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise
         except Exception as exc:  # noqa: BLE001
             return False, f"scroll crash: {type(exc).__name__}: {exc}"
@@ -1388,9 +1522,9 @@ async def _execute_action(
                     tool, {"app_name": str(obj.get("name", ""))},
                     user_utterance="computer-use", trace_id=trace_id,
                 ),
-                timeout=_timeout_s(ctx),
+                timeout=_ACT_TIMEOUT_S,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise
         except Exception as exc:  # noqa: BLE001
             return False, f"open_app crash: {type(exc).__name__}: {exc}"
@@ -1408,7 +1542,7 @@ async def _execute_action(
 
 async def run_cu_loop(
     task: HarnessTask,
-    ctx: "ComputerUseContext",
+    ctx: ComputerUseContext,
     *,
     cancel_token: CancelToken | None = None,
 ) -> AsyncIterator[HarnessResult]:
@@ -1439,7 +1573,7 @@ async def run_cu_loop(
 
 async def _run_screenshot_loop(
     task: HarnessTask,
-    ctx: "ComputerUseContext",
+    ctx: ComputerUseContext,
     *,
     cancel_token: CancelToken | None = None,
 ) -> AsyncIterator[HarnessResult]:
@@ -1476,6 +1610,31 @@ async def _run_screenshot_loop(
     # this many actions in a row we give up rather than burn the budget.
     _MAX_CONSECUTIVE_FAILURES = 4
     consecutive_failures = 0
+    # LLM-failure retry budget (2026-06-09 shippability fix): a single
+    # malformed model response, provider hiccup, or slow brain call used to
+    # END the whole mission instantly (exit 2/124) — the #1 "task aborted in
+    # the middle" source. Now each such failure injects a correction note
+    # into the history and retries from a fresh screenshot; only this many
+    # failures per mission end it, with a clean error message.
+    _MAX_LLM_FAILURES = 3
+    llm_failures = 0
+    # Done-verification gate (2026-06-09 shippability fix): a model-emitted
+    # "done" is only accepted once the strict judge confirms the goal on the
+    # CURRENT screenshot (``ctx.verify_after_each_step`` -- previously a dead
+    # config knob). A rejected done feeds the judge's proof back into the
+    # history so the model self-corrects; after this many rejects the mission
+    # ends with an explicit "not verifiably achieved" failure instead of
+    # looping forever or silently claiming success.
+    _MAX_DONE_REJECTS = 3
+    done_rejects = 0
+    verify_done_enabled = bool(getattr(ctx, "verify_after_each_step", True))
+    # The last successful state-changing action -- fed into the next executor
+    # turn as a VERIFY FIRST directive so the model checks the fresh
+    # screenshot for the action's effect before acting again.
+    last_state_change = ""
+    # Count of successful state-changing actions this mission; drives the
+    # plan's >>> current-step marker (pure waits never advance the plan).
+    completed_state_changes = 0
     # Anti-oscillation + no-reopen guards (BUG-CU-TOGGLE, 2026-05-28). The
     # no-progress hash guard above only catches an UNCHANGED screen; a
     # play/pause toggle FLIPS the icon every click (screen changes), so it
@@ -1543,28 +1702,62 @@ async def _run_screenshot_loop(
 
     yield _progress(f"[cu] Start: {task_prompt[:80]}")
 
+    # Loop-internal mission deadline (Wave 0): end cleanly with an explicit
+    # budget result BEFORE the harness wait_for guillotines the stream
+    # mid-step — the user then hears an honest completion announcement
+    # instead of a hard timeout.
+    mission_deadline = time.monotonic() + _internal_deadline_s(
+        float(getattr(task, "timeout_s", 120) or 120),
+    )
+    # Spoken progress milestones (kind="progress"), throttled.
+    last_progress_announce_ts = 0.0
+    announced_steps = 0
+
     for step_idx in range(1, max_steps + 1):
         if _is_cancelled(cancel_token):
             yield _final(stderr="[cu] cancelled\n", exit_code=_CANCEL_EXIT_CODE)
             return
+        if time.monotonic() >= mission_deadline:
+            yield _final(
+                stderr=(
+                    f"[cu] mission budget exhausted at step {step_idx} — "
+                    "ending cleanly before the harness deadline\n"
+                ),
+                exit_code=_BUDGET_EXIT_CODE,
+            )
+            return
 
         # Observe. Heartbeat first so a stall here is attributable in the log
         # (BUG-CU-STALL: a silent 28s do-nothing was impossible to localize).
-        log.info("[cu] step %d phase=observe", step_idx)
+        # The UIA label enumeration is independent I/O and runs CONCURRENTLY
+        # with the screenshot (2026-06-09 latency fix): per step we pay
+        # max(screenshot, uia) instead of screenshot + uia.
+        log.info("[cu] step %d phase=observe+uia", step_idx)
+        t_observe = time.monotonic()
+        labels_task = asyncio.create_task(
+            _foreground_clickable_labels(_UIA_TIMEOUT_S),
+            name=f"cu-labels-step-{step_idx}",
+        )
         try:
             observation = await _observe(ctx, cancel_token)
-        except asyncio.TimeoutError:
+        except TimeoutError:
+            labels_task.cancel()
             yield _final(
                 stderr=f"[cu] observe timeout (step {step_idx})\n",
                 exit_code=_TIMEOUT_EXIT_CODE,
             )
             return
         except Exception as exc:  # noqa: BLE001
+            labels_task.cancel()
             yield _final(
                 stderr=f"[cu] observe failed: {exc}\n",
                 exit_code=_OBSERVE_EXIT_CODE,
             )
             return
+        # Collect the enumeration result NOW so no task dangles on any of the
+        # early-return paths below (_foreground_clickable_labels never raises).
+        control_labels = await labels_task
+        await _profile_phase(ctx, phase="observe", step_idx=step_idx, t0=t_observe)
 
         # No-progress guard: if the last _STUCK_LIMIT screenshots are
         # identical, Gemini's clicks are landing on empty space and
@@ -1595,15 +1788,14 @@ async def _run_screenshot_loop(
         # so the foreground hasn't drifted before we use it.
         monitor_geom = _capture_monitor_geometry()
 
-        # UIA-first grounding (BUG-CU-GROUNDING): enumerate the foreground
-        # window's clickable control names so the model can click_element by an
-        # EXACT name (deterministic) instead of pixel-guessing a small button.
-        # Empty for label-less surfaces (Spotify/games) -> the hint is omitted
-        # and the loop stays pixel-first. TIGHT 3s budget (BUG-CU-STALL): a
-        # wedged UIA COM call must never block the click path -- it returns []
-        # and the loop proceeds with pixel grounding rather than stalling.
-        log.info("[cu] step %d phase=uia", step_idx)
-        control_labels = await _foreground_clickable_labels(_UIA_TIMEOUT_S)
+        # UIA-first grounding (BUG-CU-GROUNDING): the clickable control names
+        # were already enumerated concurrently with the screenshot above, so
+        # the model can click_element by an EXACT name (deterministic) instead
+        # of pixel-guessing a small button. Empty for label-less surfaces
+        # (Spotify/games) -> the hint is omitted and the loop stays
+        # pixel-first. TIGHT 3s budget (BUG-CU-STALL): a wedged UIA COM call
+        # must never block the click path -- it returns [] and the loop
+        # proceeds with pixel grounding rather than stalling.
         controls_hint = ""
         if control_labels:
             controls_hint = (
@@ -1613,17 +1805,19 @@ async def _run_screenshot_loop(
             )
 
         # Plan-first: generate the ordered plan once, after the first
-        # screenshot, ONLY for multi-app SEARCH goals (play/search) that truly
-        # need decomposition. A compute goal ("rechne 8x8") or a simple
-        # "open X + click" must NOT pay a planner round-trip on step 1 -- that
-        # extra brain call was part of what blew the step-1 budget
+        # screenshot, for every MULTI-STEP goal -- music/search goals (the
+        # original class) plus compound/navigation goals ("oeffne X und ...",
+        # 2026-06-09 shippability fix). A compute goal ("rechne 8x8") or a
+        # simple single-verb action still skips the planner round-trip
         # (BUG-CU-STALL). On planner failure plan stays [] -> stateless loop.
-        if not plan_attempted and _goal_needs_search(task_prompt):
+        if not plan_attempted and _goal_needs_plan(task_prompt):
             plan_attempted = True
             log.info("[cu] step %d phase=plan", step_idx)
+            t_plan = time.monotonic()
             plan = await _make_plan(
                 ctx, observation=observation, user_goal=task_prompt,
             )
+            await _profile_phase(ctx, phase="plan", step_idx=step_idx, t0=t_plan)
             if plan:
                 log.info(
                     "[cu] plan: %d steps -> %s",
@@ -1639,16 +1833,22 @@ async def _run_screenshot_loop(
         # check false-fire constantly (live bug 2026-05-29). The desktop/shell
         # check still catches the real "misclick closed everything" case
         # without ever tripping on a normal title change.
+        # BUG-CU-EMPTYTITLE (2026-06-09): an EMPTY title is NOT proof of the
+        # desktop — text-heavy apps (Chrome, VS Code, Slack, …) run in
+        # screenshot mode where the source historically reported "" for every
+        # frame, so the old `wt == ""` arm fired a false REGRESSION right
+        # after open_app and told the model to re-open the app it was using.
+        # Only the explicit shell titles count as "fell to the desktop".
         win_title = (getattr(observation, "window_title", "") or "")
         wt = win_title.strip().lower()
         if (expected_window_token and step_idx > 1
-                and wt in ("", "program manager", "task switching")):
+                and wt in ("program manager", "task switching")):
             log.info(
                 "[cu] REGRESSION: foreground fell to the desktop (title=%r) — "
                 "last action likely closed the app", win_title,
             )
             history.append(
-                f"REGRESSION: the app window is gone — the desktop is now in "
+                "REGRESSION: the app window is gone — the desktop is now in "
                 "front. Your last click probably hit a close button. Re-open "
                 "the app with open_app and resume."
             )
@@ -1703,12 +1903,11 @@ async def _run_screenshot_loop(
         # "emit ONE JSON action" message is used (stateless reactive path).
         plan_user_message: str | None = None
         if plan:
-            # Heuristically advance the current step: count completed steps as
-            # roughly the number of successful actions so far, clamped.
-            current_step = min(
-                sum(1 for h in history if " ok " in h or " OK " in h),
-                len(plan) - 1,
-            )
+            # Advance the current step by counting successful STATE-CHANGING
+            # actions (clicks/types/keys/launches). The old heuristic counted
+            # " ok " substrings in the history, so pure waits and incidental
+            # notes pushed the >>> marker ahead of reality (2026-06-09 fix).
+            current_step = min(completed_state_changes, len(plan) - 1)
             cur = plan[current_step]
             plan_user_message = (
                 f"GOAL: {task_prompt}\n\n"
@@ -1718,22 +1917,14 @@ async def _run_screenshot_loop(
                 f"RECENT_STEPS:\n{chr(10).join(history[-8:]) or '(none)'}\n\n"
                 "Do ONLY the current step. Emit the JSON action(s) for it. "
                 "Emit {\"action\":\"done\"} ONLY when the FINAL plan step's "
-                "success is visibly proven in the screenshot.\n\n"
-                "SEARCH DISCIPLINE (critical): to 'play a song' you MUST search "
-                "for and select a NEW track. The sequence is: click the search "
-                "box, TYPE a concrete song or artist name (a real 'type' action "
-                "with text -- never skip this), press Enter (key 'enter') to "
-                "open the FULL results page, then click the top row under "
-                "'Songs'/'Titel' (a track row -- NOT an autocomplete dropdown "
-                "item, NOT a music video, podcast, or artist header). Only that "
-                "starts a fresh track.\n"
-                "FORBIDDEN SHORTCUT: do NOT just press the play button on "
-                "whatever track was already loaded when you started -- resuming "
-                "a pre-loaded song does NOT satisfy 'play a song'. If you have "
-                "not yet typed a search query and clicked a result this session, "
-                "you are NOT done, even if a track is already playing."
-                + controls_hint
+                "success is visibly proven in the screenshot."
             )
+            if _goal_needs_search(task_prompt):
+                # Music-goal-only block (BUG-CU-WRONG-SONG). Injecting it into
+                # every planned turn confused navigation goals with Spotify
+                # rules, so it is scoped to play/search goals (2026-06-09).
+                plan_user_message += _SEARCH_DISCIPLINE_BLOCK
+            plan_user_message += controls_hint
         elif controls_hint:
             # No plan (simple/stateless goal) but the foreground exposes UIA
             # controls -> give the model the exact names so it click_elements
@@ -1744,7 +1935,36 @@ async def _run_screenshot_loop(
                 "Inspect the screenshot and emit ONE JSON action."
                 + controls_hint
             )
+        # VERIFY FIRST directive (2026-06-09): after a state-changing action,
+        # the next executor turn explicitly names that action and instructs
+        # the model to check the fresh screenshot for its effect before
+        # acting again -- the zero-extra-latency half of after-step
+        # verification (the screenshot is taken anyway; no extra model call).
+        if verify_done_enabled and last_state_change:
+            verify_note = (
+                f"\n\nVERIFY FIRST: your previous action was "
+                f"[{last_state_change}]. Check the CURRENT screenshot: did it "
+                "have the intended effect? If NOT, do not repeat it blindly -- "
+                "try a DIFFERENT element or approach. If the whole goal is now "
+                "visibly achieved, emit {\"action\": \"done\"}."
+            )
+            if plan_user_message is None:
+                plan_user_message = (
+                    f"GOAL: {task_prompt}\n"
+                    f"PREVIOUS_STEPS:\n"
+                    f"{chr(10).join(history[-12:]) or '(none)'}\n\n"
+                    "Inspect the screenshot and emit ONE JSON action."
+                    + verify_note
+                )
+                # A failed planner on a music goal lands here -- the
+                # anti-shortcut discipline must survive that path too
+                # (review finding 2026-06-09).
+                if _goal_needs_search(task_prompt):
+                    plan_user_message += _SEARCH_DISCIPLINE_BLOCK
+            else:
+                plan_user_message += verify_note
         log.info("[cu] step %d phase=think", step_idx)
+        t_think = time.monotonic()
         # Wave 3 hybrid: try the native Gemini computer_use engine first when
         # enabled (ctx.native_cu). It returns loop-vocabulary actions on the
         # same 0-1000 grid, or None on ANY failure -- in which case we fall
@@ -1763,20 +1983,49 @@ async def _run_screenshot_loop(
                         history_text="\n".join(history[-12:]),
                         user_message=plan_user_message,
                     ),
-                    timeout=_timeout_s(ctx),
+                    timeout=_think_timeout_s(ctx),
                 )
-            except asyncio.TimeoutError:
-                yield _final(
-                    stderr=f"[cu] brain timeout (step {step_idx})\n",
-                    exit_code=_TIMEOUT_EXIT_CODE,
+            except TimeoutError:
+                llm_failures += 1
+                log.info(
+                    "[cu] brain timeout (step %d, failure %d/%d)",
+                    step_idx, llm_failures, _MAX_LLM_FAILURES,
                 )
-                return
+                if llm_failures >= _MAX_LLM_FAILURES:
+                    yield _final(
+                        stderr=(
+                            f"[cu] giving up after {llm_failures} model "
+                            f"failures (last: brain timeout at step "
+                            f"{step_idx})\n"
+                        ),
+                        exit_code=_TIMEOUT_EXIT_CODE,
+                    )
+                    return
+                await _profile_phase(ctx, phase="think", step_idx=step_idx, t0=t_think)
+                yield _progress(
+                    f"[cu] step {step_idx}: brain timeout -- retrying"
+                )
+                continue
             except Exception as exc:  # noqa: BLE001
-                yield _final(
-                    stderr=f"[cu] brain failed (step {step_idx}): {exc}\n",
-                    exit_code=_PARSE_EXIT_CODE,
+                llm_failures += 1
+                log.info(
+                    "[cu] brain failed (step %d, failure %d/%d): %s",
+                    step_idx, llm_failures, _MAX_LLM_FAILURES, exc,
                 )
-                return
+                if llm_failures >= _MAX_LLM_FAILURES:
+                    yield _final(
+                        stderr=(
+                            f"[cu] giving up after {llm_failures} model "
+                            f"failures (last: {exc})\n"
+                        ),
+                        exit_code=_PARSE_EXIT_CODE,
+                    )
+                    return
+                await _profile_phase(ctx, phase="think", step_idx=step_idx, t0=t_think)
+                yield _progress(
+                    f"[cu] step {step_idx}: brain failed -- retrying"
+                )
+                continue
 
             # Parse — model may return a single action object OR a list of
             # action objects (a batch). Both shapes are validated and normalised
@@ -1784,12 +2033,33 @@ async def _run_screenshot_loop(
             try:
                 batch = _parse_actions(raw)
             except CULoopError as exc:
-                yield _final(
-                    stderr=f"[cu] parse (step {step_idx}): {exc}\n",
-                    exit_code=_PARSE_EXIT_CODE,
+                llm_failures += 1
+                log.info(
+                    "[cu] parse failed (step %d, failure %d/%d): %s",
+                    step_idx, llm_failures, _MAX_LLM_FAILURES, exc,
                 )
-                return
+                if llm_failures >= _MAX_LLM_FAILURES:
+                    yield _final(
+                        stderr=(
+                            f"[cu] giving up after {llm_failures} model "
+                            f"failures (last parse error: {exc})\n"
+                        ),
+                        exit_code=_PARSE_EXIT_CODE,
+                    )
+                    return
+                # Teach the model what went wrong so the retry self-corrects.
+                history.append(
+                    f"YOUR LAST RESPONSE WAS INVALID ({str(exc)[:80]}). "
+                    "Respond with the JSON action object(s) ONLY -- no prose, "
+                    "no code fences."
+                )
+                await _profile_phase(ctx, phase="think", step_idx=step_idx, t0=t_think)
+                yield _progress(
+                    f"[cu] step {step_idx}: invalid model response -- retrying"
+                )
+                continue
 
+        await _profile_phase(ctx, phase="think", step_idx=step_idx, t0=t_think)
         if len(batch) > 1:
             log.info(
                 "[cu] step %d batch size = %d (plan-then-execute)",
@@ -1800,6 +2070,10 @@ async def _run_screenshot_loop(
         # ``done`` or ``fail`` ends the mission immediately; any other
         # action failure breaks the batch and falls back to the outer
         # loop for a fresh screenshot + re-plan.
+        # Tracks whether THIS batch already changed the screen state — the
+        # done-judge must then re-observe instead of judging the stale
+        # pre-batch screenshot (review finding 2026-06-09).
+        batch_did_state_change = False
         for batch_idx, action_obj in enumerate(batch, start=1):
             action = action_obj["action"]
             tag = f"step {step_idx}.{batch_idx}"
@@ -1895,30 +2169,73 @@ async def _run_screenshot_loop(
 
             # Terminal actions short-circuit the entire mission.
             if action == "done":
-                # Compute goals: a model-emitted ``done`` must be checked
-                # against the actual result on screen, not taken on faith
-                # (BUG-CU-RESULT: Calc showed 130, model claimed done). Read
-                # the display and verify it equals the computed answer; on a
-                # mismatch, refuse to finish and inject a correction so the
-                # loop fixes it. Non-compute goals finish as before.
-                if _goal_needs_result(task_prompt):
+                # Done-gate (2026-06-09): EVERY "done" is checked by the
+                # strict judge while verify_after_each_step is on -- compute
+                # goals against the calculator display (BUG-CU-RESULT), media
+                # goals against frame motion, everything else against the
+                # generic single-frame proof ("open Chrome" must show an open
+                # Chrome window, not a typed search query). Disabled only via
+                # config; compute goals stay verified regardless (their old
+                # always-on behaviour).
+                if verify_done_enabled or _goal_needs_result(task_prompt):
+                    # If this batch already executed a state-changing action
+                    # (e.g. [open_app, done]), the step screenshot predates
+                    # that action -- re-observe so the judge sees the CURRENT
+                    # screen, not the stale pre-batch frame (review 2026-06-09).
+                    verify_obs = observation
+                    if batch_did_state_change:
+                        try:
+                            verify_obs = await _observe(ctx, cancel_token)
+                        except Exception:  # noqa: BLE001
+                            log.debug(
+                                "[cu] fresh verify observe failed; judging the "
+                                "pre-batch frame", exc_info=True,
+                            )
+                    t_verify = time.monotonic()
                     ok, proof = await _verify_goal_done(
-                        ctx, observation=observation, user_goal=task_prompt,
+                        ctx, observation=verify_obs, user_goal=task_prompt,
+                    )
+                    await _profile_phase(
+                        ctx, phase="verify", step_idx=step_idx, t0=t_verify,
                     )
                     if not ok:
+                        done_rejects += 1
                         log.info(
-                            "[cu] %s done REJECTED — result not verified (%s)",
-                            tag, proof[:80],
+                            "[cu] %s done REJECTED (%d/%d) — not verified (%s)",
+                            tag, done_rejects, _MAX_DONE_REJECTS, proof[:80],
                         )
-                        history.append(
-                            f"RESULT NOT CONFIRMED ({proof[:120]}). The "
-                            "calculator does not show the correct answer yet. "
-                            "Clear it (press 'Escape' or click 'C') and re-enter "
-                            "the calculation using click_element on the named "
-                            "digit/operator keys, then press 'Gleich'."
-                        )
+                        if done_rejects >= _MAX_DONE_REJECTS:
+                            yield _final(
+                                stderr=(
+                                    f"[cu] goal not verifiably achieved after "
+                                    f"{done_rejects} completion attempts "
+                                    f"(last evidence: {proof[:100] or 'none'})\n"
+                                ),
+                                exit_code=_FAIL_EXIT_CODE,
+                            )
+                            return
+                        if _goal_needs_result(task_prompt):
+                            history.append(
+                                f"RESULT NOT CONFIRMED ({proof[:120]}). The "
+                                "calculator does not show the correct answer yet. "
+                                "Clear it (press 'Escape' or click 'C') and re-enter "
+                                "the calculation using click_element on the named "
+                                "digit/operator keys, then press 'Gleich'."
+                            )
+                        else:
+                            history.append(
+                                f"DONE REJECTED: the screenshot does not prove "
+                                f"the goal yet ({proof[:120] or 'no evidence'}). "
+                                "Keep working: pick the next concrete action "
+                                "that visibly advances the goal."
+                            )
                         break  # re-plan from a fresh screenshot
                     log.info("[cu] %s done verified: %s", tag, proof[:80])
+                    yield _final(
+                        stdout=f"[cu] done at {tag} (verified: {proof[:80]})\n",
+                        exit_code=0,
+                    )
+                    return
                 yield _final(
                     stdout=f"[cu] done at {tag}\n", exit_code=0,
                 )
@@ -1943,18 +2260,20 @@ async def _run_screenshot_loop(
             )
 
             # Act.
+            t_act = time.monotonic()
             try:
                 success, message = await _execute_action(
                     action_obj, ctx,
                     trace_id=observation.trace_id, user_goal=task_prompt,
                     monitor_geom=monitor_geom,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 yield _final(
                     stderr=f"[cu] action timeout at {tag}\n",
                     exit_code=_TIMEOUT_EXIT_CODE,
                 )
                 return
+            await _profile_phase(ctx, phase="act", step_idx=step_idx, t0=t_act)
 
             history.append(
                 f"{tag}: {action} {'ok' if success else 'FAIL'} ({message[:60]})",
@@ -2014,6 +2333,41 @@ async def _run_screenshot_loop(
                 break  # exit batch, fall through to next outer step (fresh screenshot)
             # A successful action resets the consecutive-failure streak.
             consecutive_failures = 0
+            # Remember the last state-changing action for the next turn's
+            # VERIFY FIRST directive (wait is a pure pause, never state).
+            if action != "wait":
+                last_state_change = f"{action} " + json.dumps(
+                    {k: v for k, v in action_obj.items() if k != "action"},
+                )[:80]
+                completed_state_changes += 1
+                batch_did_state_change = True
+                # Spoken milestone (Wave 0): "Schritt N von M erledigt." —
+                # deterministic, no LLM call (AP-11 spirit), throttled so a
+                # fast batch never produces a barrage of speech. kind=
+                # "progress" lets the pipeline drop stale ones.
+                if plan and ctx.bus is not None:
+                    done_steps = min(completed_state_changes, len(plan))
+                    _now = time.monotonic()
+                    if (done_steps > announced_steps
+                            and _now - last_progress_announce_ts
+                            >= _PROGRESS_MIN_INTERVAL_S):
+                        announced_steps = done_steps
+                        last_progress_announce_ts = _now
+                        try:
+                            await ctx.bus.publish(AnnouncementRequested(
+                                text=(
+                                    f"Schritt {done_steps} von {len(plan)} "  # i18n-allow
+                                    "erledigt."  # i18n-allow
+                                ),
+                                priority="normal",
+                                language="de",
+                                kind="progress",
+                            ))
+                        except Exception:  # noqa: BLE001
+                            log.debug(
+                                "progress announcement publish failed",
+                                exc_info=True,
+                            )
             # Remember that a real search query was typed this mission -- the
             # done-gate uses this to reject "resumed the already-loaded track"
             # for play goals (BUG-CU-WRONG-SONG, 2026-05-29).

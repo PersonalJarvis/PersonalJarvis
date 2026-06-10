@@ -9,6 +9,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ChatInput } from "@/components/ChatInput";
 import { MascotGigi } from "@/components/MascotGigi";
+import { ThinkingTrace, ThoughtTraceDisclosure } from "@/components/ThinkingTrace";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { useResizablePane } from "@/hooks/useResizablePane";
@@ -165,7 +166,7 @@ export function ChatsView() {
                 {messages.map((m) => (
                   <MessageBubble key={m.id} message={m} />
                 ))}
-                {chatThinking && <ThinkingBubble />}
+                {chatThinking && <ThinkingTrace />}
                 <div ref={endRef} />
               </div>
             </ScrollArea>
@@ -424,34 +425,13 @@ function AssistantLabel() {
   );
 }
 
-function ThinkingBubble() {
-  const t = useT();
-  return (
-    <div
-      className="flex justify-start"
-      role="status"
-      aria-live="polite"
-      aria-label={t("chats_view.thinking_aria")}
-    >
-      <div className="max-w-[80%] rounded-2xl rounded-bl-sm border border-border bg-card px-4 py-3 text-sm leading-relaxed">
-        <AssistantLabel />
-        <div className="mt-1.5 flex items-center gap-2">
-          <div className="flex items-center gap-1" aria-hidden>
-            <span className="h-1.5 w-1.5 rounded-full bg-primary/70 animate-bounce [animation-delay:-0.3s]" />
-            <span className="h-1.5 w-1.5 rounded-full bg-primary/70 animate-bounce [animation-delay:-0.15s]" />
-            <span className="h-1.5 w-1.5 rounded-full bg-primary/70 animate-bounce" />
-          </div>
-          <span className="text-xs italic text-muted-foreground">{t("chats_view.thinking_label")}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
   const isPreamble = message.role === "preamble";
+  // Finished reasoning trace for this reply (assistant messages only) —
+  // renders as the collapsible "Thought for Xs" disclosure above the text.
+  const trace = useEventStore((s) => s.thinkingTraces[message.id]);
 
   if (isSystem) {
     return (
@@ -490,6 +470,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         )}
       >
         {!isUser && <AssistantLabel />}
+        {!isUser && trace && <ThoughtTraceDisclosure trace={trace} />}
         <div className={cn("whitespace-pre-wrap", !isUser && "mt-1.5")}>{message.content}</div>
       </div>
     </div>

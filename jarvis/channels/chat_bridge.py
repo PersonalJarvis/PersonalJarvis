@@ -1,4 +1,5 @@
 """Bridge ChannelAdapter inboxes into the normal Jarvis chat event path."""
+
 from __future__ import annotations
 
 import asyncio
@@ -53,6 +54,31 @@ class ChannelChatBridge:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         log.info("ChannelChatBridge gestoppt")
+
+    async def refresh(self, name: str) -> None:
+        """Rebind the consumer for ``name`` to the manager's current instance.
+
+        A live reload (marketplace connect) drops the old channel instance and
+        builds a new one. The old consumer task is still iterating the old,
+        now-detached ``messages()`` iterator, so inbound messages on the new
+        instance would never reach the bus. This cancels the stale consumer and
+        spawns a fresh one bound to ``manager.get(name)``. Idempotent and
+        no-op-safe if the channel is unknown.
+        """
+        task = self._tasks.pop(name, None)
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        try:
+            channel = self._manager.get(name)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ChannelChatBridge.refresh konnte '%s' nicht holen: %s", name, exc)
+            return
+        self._tasks[name] = asyncio.create_task(
+            self._consume(name, channel),
+            name=f"channel-chat-bridge:{name}",
+        )
+        log.info("ChannelChatBridge consumer fuer '%s' neu gebunden", name)
 
     async def _consume(self, name: str, channel: ChannelAdapter) -> None:
         try:

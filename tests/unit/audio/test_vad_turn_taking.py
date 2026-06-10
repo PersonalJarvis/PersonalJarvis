@@ -288,6 +288,111 @@ async def test_probe_reports_tail_loud_for_bleed_and_quiet_for_pause() -> None:
 
 
 @pytest.mark.asyncio
+async def test_forced_cut_then_pure_silence_flushes_tail_endpoint() -> None:
+    """Regression for the 2026-06-09 "Jarvis listens forever" hang.
+
+    When the max-utterance cap force-cuts an utterance, the pipeline buffers
+    the fragment (``_carry_pcm``) and relies on the VAD to deliver ANOTHER
+    endpoint to finalize the merged turn. But a silence endpoint only exists
+    inside an active speech phase — if the user finished their sentence right
+    inside the capped window and stays silent, no speech phase ever starts
+    again, no endpoint ever fires, and the buffered sentence is never
+    submitted (LISTENING forever; log evidence 2026-06-09 22:24:13).
+
+    Fix contract: after a ``max_utterance`` cut, ``silence_ms`` of post-cut
+    silence must yield an (empty) tail with reason ``silence`` so the
+    consumer finalizes its carry.
+    """
+    endpoint_reasons: list[str] = []
+    vad = SileroEndpointer(
+        silence_ms=320,        # 10 silence frames to endpoint
+        min_speech_ms=96,
+        max_utterance_s=1,     # cap at 16_000 samples
+        on_endpoint=lambda reason: endpoint_reasons.append(reason),
+    )
+    # 31 speech frames hit the cap exactly (the start frame is counted twice
+    # via the pre-buffer, so total_frames reaches 32 = the 16_000-sample cap
+    # on the 31st frame), then pure silence — the user finished right inside
+    # the capped window.
+    probs = [0.9] * 31 + [0.0] * 15
+    _stub_vad(vad, probs)
+    frames = [_pcm_frame(0.05) for _ in range(31)] + [
+        _pcm_frame(0.0) for _ in range(15)
+    ]
+
+    utterances = await _collect(vad, frames)
+
+    assert endpoint_reasons[0] == "max_utterance"
+    assert "silence" in endpoint_reasons, (
+        "post-cut silence must fire a tail-flush endpoint so the pipeline "
+        "finalizes its forced-cut carry"
+    )
+    assert len(utterances) == 2
+    assert utterances[1] == b""
+
+
+@pytest.mark.asyncio
+async def test_forced_cut_then_false_start_blip_still_flushes_tail() -> None:
+    """Second hole of the same class: after a forced cut, a short noise blip
+    (< min_speech_ms) is discarded as ``false_start`` WITHOUT yielding —
+    the carry must still be flushed by the next silence run instead of
+    hanging forever."""
+    endpoint_reasons: list[str] = []
+    vad = SileroEndpointer(
+        silence_ms=320,        # 10 silence frames
+        min_speech_ms=96,      # 3 speech frames required
+        max_utterance_s=1,
+        on_endpoint=lambda reason: endpoint_reasons.append(reason),
+    )
+    # 31 speech frames → cut; 5 silence; 1-frame blip (the pre-buffer start
+    # double-count makes it 2 speech frames < the 3-frame minimum → false
+    # start); then silence.
+    probs = [0.9] * 31 + [0.0] * 5 + [0.9] * 1 + [0.0] * 25
+    _stub_vad(vad, probs)
+    frames = (
+        [_pcm_frame(0.05) for _ in range(31)]
+        + [_pcm_frame(0.0) for _ in range(5)]
+        + [_pcm_frame(0.05) for _ in range(1)]
+        + [_pcm_frame(0.0) for _ in range(25)]
+    )
+
+    utterances = await _collect(vad, frames)
+
+    assert endpoint_reasons[0] == "max_utterance"
+    assert "false_start" in endpoint_reasons
+    assert endpoint_reasons[-1] == "silence"
+    assert len(utterances) == 2
+    assert utterances[1] == b""
+
+
+@pytest.mark.asyncio
+async def test_forced_cut_then_user_resumes_no_extra_tail_flush() -> None:
+    """When the user keeps talking after the cut (the normal case), the
+    follow-up segment ends with a regular silence endpoint that already
+    finalizes the carry — no additional empty tail flush may follow."""
+    endpoint_reasons: list[str] = []
+    vad = SileroEndpointer(
+        silence_ms=320,
+        min_speech_ms=96,
+        max_utterance_s=1,
+        on_endpoint=lambda reason: endpoint_reasons.append(reason),
+    )
+    # 31 speech frames → cut; user keeps talking 10 frames; 25 silence frames
+    # (10 fire the natural endpoint, the surplus 15 must NOT flush again).
+    probs = [0.9] * 31 + [0.9] * 10 + [0.0] * 25
+    _stub_vad(vad, probs)
+    frames = [_pcm_frame(0.05) for _ in range(41)] + [
+        _pcm_frame(0.0) for _ in range(25)
+    ]
+
+    utterances = await _collect(vad, frames)
+
+    assert endpoint_reasons == ["max_utterance", "silence"]
+    assert len(utterances) == 2
+    assert utterances[1] != b""
+
+
+@pytest.mark.asyncio
 async def test_probe_payload_is_tail_only_not_full_buffer() -> None:
     """The probe must receive only the last `probe_tail_ms` of audio,
     not the entire growing utterance buffer. This is critical: probing

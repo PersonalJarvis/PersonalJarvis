@@ -9,7 +9,11 @@ import tomllib
 
 import pytest
 
-from jarvis.core.config_writer import add_discord_allowed_user_id
+from jarvis.core.config_writer import (
+    add_discord_allowed_user_id,
+    set_discord_enabled,
+    set_discord_pairing,
+)
 
 
 def test_add_allowed_user_id_creates_nested_table_and_list(tmp_path):
@@ -41,3 +45,44 @@ def test_add_allowed_user_id_is_idempotent_and_appends(tmp_path):
 def test_raises_when_config_missing(tmp_path):
     with pytest.raises(FileNotFoundError):
         add_discord_allowed_user_id(1, path=tmp_path / "absent.toml")
+
+
+def test_set_discord_enabled_creates_nested_table(tmp_path):
+    cfg = tmp_path / "jarvis.toml"
+    cfg.write_text('[brain]\nprimary = "gemini"\n', encoding="utf-8")
+
+    set_discord_enabled(True, path=cfg)
+
+    data = tomllib.loads(cfg.read_text(encoding="utf-8"))
+    assert data["integrations"]["discord"]["enabled"] is True
+    assert data["brain"]["primary"] == "gemini"
+
+
+def test_set_discord_enabled_toggles_and_preserves_siblings(tmp_path):
+    cfg = tmp_path / "jarvis.toml"
+    cfg.write_text(
+        "[integrations.discord]\nenabled = true\nallowed_user_ids = [42]\n",
+        encoding="utf-8",
+    )
+
+    set_discord_enabled(False, path=cfg)
+
+    data = tomllib.loads(cfg.read_text(encoding="utf-8"))
+    assert data["integrations"]["discord"]["enabled"] is False
+    assert data["integrations"]["discord"]["allowed_user_ids"] == [42]
+
+
+def test_set_discord_pairing_writes_flag(tmp_path):
+    cfg = tmp_path / "jarvis.toml"
+    cfg.write_text("[integrations.discord]\nenabled = true\n", encoding="utf-8")
+
+    set_discord_pairing(False, path=cfg)
+
+    data = tomllib.loads(cfg.read_text(encoding="utf-8"))
+    assert data["integrations"]["discord"]["pair_on_first_dm"] is False
+    assert data["integrations"]["discord"]["enabled"] is True
+
+
+def test_set_discord_enabled_raises_when_config_missing(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        set_discord_enabled(True, path=tmp_path / "absent.toml")

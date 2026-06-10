@@ -325,10 +325,13 @@ class GeminiWorker:
                     "GeminiWorker[%s]: job.assign(pid=%d) failed",
                     worker_id, proc_local.pid, exc_info=True,
                 )
-            # 600 s hard cap mirrors OpenClaw's default agent timeout.
+            # 1200 s (20 min) hard cap — raised from 600 s so complex tasks can
+            # finish (user mandate 2026-06-09). The "timeout" substring in the
+            # stderr below still flags is_timeout to the orchestrator, which then
+            # grades the on-disk diff instead of discarding it.
             try:
                 out, err = await asyncio.wait_for(
-                    proc_local.communicate(), timeout=600.0
+                    proc_local.communicate(), timeout=1200.0
                 )
             except asyncio.TimeoutError:
                 with suppress(ProcessLookupError):
@@ -337,7 +340,7 @@ class GeminiWorker:
                 # asyncio transport tears down and the Win32 handle drops.
                 with suppress(Exception):
                     await asyncio.wait_for(proc_local.wait(), timeout=5.0)
-                out, err = b"", b"GeminiWorker: subprocess wait_for timeout (600s)"
+                out, err = b"", b"GeminiWorker: subprocess wait_for timeout (1200s)"
             exit_local = (
                 proc_local.returncode if proc_local.returncode is not None else -1
             )

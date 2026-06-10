@@ -84,6 +84,18 @@ import pytest as _pytest  # noqa: E402
         "ctrl+shift+space",
         "f3+f4",              # two-key chord, no modifier — still safe
         "ctrl+alt+m",
+        # Solo function keys: never hit while typing, the natural PTT keys
+        # (Discord-style). The old blanket "single key" rejection blocked these.
+        "f5",
+        "f13",
+        # Solo navigation-cluster keys: allowed deliberately (user choice) —
+        # they only fire during text navigation, not while typing characters.
+        "up",
+        "home",
+        "page_up",
+        "delete",
+        # Modifier + nav key still fine.
+        "ctrl+up",
     ],
 )
 def test_validate_hotkey_accepts_safe_combos(combo):
@@ -99,7 +111,13 @@ def test_validate_hotkey_accepts_safe_combos(combo):
         "",                 # empty
         "   ",              # blank
         "ctrl+alt+shift",   # modifiers only — no real key
-        "j",                # single bare key — fires while typing
+        "j",                # single bare letter — fires on every keystroke
+        "5",                # single bare digit — fires while typing numbers
+        "space",            # typing key solo — fires on every space
+        "enter",            # typing key solo
+        "tab",              # typing key solo
+        "backspace",        # typing key solo
+        "numpad_5",         # numpad digit solo — fires while typing numbers
         "win+j",            # Windows key reserved
         "alt+f4",           # closes windows
         "ctrl+c",           # copy / interrupt
@@ -255,6 +273,64 @@ async def test_concurrent_instances_share_a_single_checker(fake_gh):
             assert fake_gh.checker_running
     assert fake_gh.peak_live == 1
     assert not fake_gh.checker_running
+
+
+# ----------------------------------------------------------------------
+# Live re-arm — a keybind change applies without an app restart
+# ----------------------------------------------------------------------
+
+async def test_rearm_swaps_bindings_live_without_reentry(fake_gh):
+    """``rearm`` re-registers in place: the OLD combo stops firing, the NEW one
+    starts — the fix for "I set a key but nothing happens until I restart". The
+    single shared checker is preserved (no leaked second loop)."""
+    import jarvis.trigger.hotkey as hk
+    from jarvis.trigger.hotkey import HotkeyTrigger
+
+    async with HotkeyTrigger({"call": ["f3+f4"]}) as trig:
+        fake_gh.fire("f3+f4")
+        assert await _next_event(trig) == "call"
+
+        await trig.rearm({"call": ["f7+f8"]})
+
+        assert "f3+f4" not in fake_gh.registered  # old binding gone
+        assert "f7+f8" in fake_gh.registered       # new binding live
+        assert fake_gh.checker_running
+        assert hk._CHECKER_REFCOUNT == 1           # refcount balanced
+        assert fake_gh.peak_live == 1              # never spawned a 2nd checker
+
+        # The old combo is dead; the new one yields the call event.
+        fake_gh.fire("f3+f4")
+        fake_gh.fire("f7+f8")
+        assert await _next_event(trig) == "call"
+
+
+async def test_rearm_switches_a_toggle_into_push_to_talk(fake_gh):
+    """Re-arming can also flip an action into push-to-talk (both edges)."""
+    from jarvis.trigger.hotkey import HotkeyTrigger
+
+    async with HotkeyTrigger({"call": ["f3+f4"]}) as trig:
+        await trig.rearm({"ptt": ["ctrl+right_alt+j"]}, push_to_talk={"ptt"})
+        on_press, on_release = fake_gh.registered["control+alt+j"]
+        assert on_press is not None  # PTT needs the down edge
+        fake_gh.fire_press("control + alt + j")
+        assert await _next_event(trig) == "ptt_press"
+
+
+async def test_rearm_when_degraded_is_a_safe_noop():
+    """Re-arming a trigger that entered degraded (no package) never raises."""
+    from jarvis.trigger.hotkey import HotkeyTrigger
+
+    saved = sys.modules.get("global_hotkeys")
+    sys.modules["global_hotkeys"] = None
+    try:
+        async with HotkeyTrigger(LIVE_BINDINGS) as trig:
+            assert trig._gh is None
+            await trig.rearm({"call": ["f7+f8"]})  # must not raise
+    finally:
+        if saved is not None:
+            sys.modules["global_hotkeys"] = saved
+        else:
+            sys.modules.pop("global_hotkeys", None)
 
 
 # ----------------------------------------------------------------------

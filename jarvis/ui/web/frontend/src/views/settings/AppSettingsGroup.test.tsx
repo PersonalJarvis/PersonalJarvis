@@ -10,6 +10,7 @@ const SUPPORTED_ON = {
   installed: true,
   matches_spec: true,
   platform: "win32",
+  mechanism: "none",
   resolved_command: "pythonw.exe -m jarvis.ui.web.launcher",
   entry_path: "C:\\Users\\me\\...\\Startup\\Personal Jarvis.lnk",
   detail: "Autostart entry is current.",

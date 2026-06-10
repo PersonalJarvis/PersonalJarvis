@@ -1411,6 +1411,17 @@ class WebServer:
                 "WikiIntegration-Init fehlgeschlagen — wiki write-wiring inaktiv"
             )
 
+        # Build the FTS5 search index once if it is empty so a pre-existing
+        # or restored vault returns search hits immediately (idempotent,
+        # guarded — never blocks boot).
+        try:
+            self._init_wiki_boot_index()
+        except Exception as exc:  # noqa: BLE001
+            logger.opt(exception=exc).warning(
+                "WikiBootIndex-Init failed — vault search may return no hits "
+                "until the first page write or a manual reindex"
+            )
+
         # Phase B3 wiki live-reload — start the WikiWatcher so file
         # changes in the vault publish WikiPageChanged events that the
         # /api/wiki/live WS endpoint forwards to the desktop tab.
@@ -1744,6 +1755,60 @@ class WebServer:
         )
         self._wiki_integration_handle = handle
         logger.info("wiki_integration: bootstrap_wiki_integration succeeded")
+
+    def _init_wiki_boot_index(self) -> None:
+        """One-shot FTS5 index build at boot for a pre-existing/restored vault.
+
+        ``wiki_fts`` is only populated incrementally by
+        ``AtomicWriter.upsert_page`` (on write) and the manual ``reindex``
+        CLI. A vault that already has pages on disk at first boot — a fresh
+        clone, a restored backup, or a hand-edited Obsidian vault — therefore
+        returns zero search hits until something happens to rewrite a page.
+
+        This runs ``index_vault`` exactly once when the FTS table is empty, so
+        ``wiki-recall`` / ``WikiContextInjector`` return hits immediately. It
+        is fully idempotent (``index_vault`` upserts by path) and guarded so a
+        failure can never block boot. It is **not** on the voice critical path
+        (AP-9): it runs synchronously during ``start()`` before the speech
+        pipeline accepts a turn.
+        """
+        import sqlite3
+
+        from jarvis.memory.wiki.fts_index import ensure_schema, index_vault
+
+        wiki_cfg = self.cfg.wiki_integration
+        if not wiki_cfg.enabled:
+            return
+
+        vault_root = Path(wiki_cfg.vault_root)
+        if not vault_root.is_absolute():
+            vault_root = Path.cwd() / vault_root
+        if not vault_root.is_dir():
+            logger.info("wiki_boot_index: vault missing — skipping ({})", vault_root)
+            return
+
+        data_dir = Path(self.cfg.memory.data_dir)
+        db_path = data_dir / "jarvis.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        try:
+            ensure_schema(conn)
+            row_count = conn.execute("SELECT COUNT(*) FROM wiki_fts").fetchone()[0]
+            if row_count:
+                logger.info(
+                    "wiki_boot_index: FTS index already populated ({} rows) — skipping",
+                    row_count,
+                )
+                return
+            indexed = index_vault(vault_root, conn)
+            logger.info(
+                "wiki_boot_index: built FTS index for {} page(s) from {}",
+                indexed,
+                vault_root,
+            )
+        finally:
+            conn.close()
 
     def _init_wiki_watcher(self) -> None:
         """Phase B3 — start the WikiWatcher for desktop live-reload.

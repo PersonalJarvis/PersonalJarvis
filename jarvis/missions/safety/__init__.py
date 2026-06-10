@@ -18,6 +18,7 @@ from .injection_scanner import (
     InjectionDetection,
     InjectionSeverity,
     InjectionWhere,
+    extract_worker_authored_text,
     has_high_severity,
     scan,
 )
@@ -37,6 +38,7 @@ __all__ = [
     "InjectionSeverity",
     "InjectionWhere",
     "check_prompt_for_blocked_paths",
+    "extract_worker_authored_text",
     "filter_diff_paths",
     "has_high_severity",
     "is_blocked",

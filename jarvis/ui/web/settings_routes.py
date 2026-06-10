@@ -26,11 +26,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from jarvis.brain.manager import SUPPORTED_REPLY_LANGUAGES
+from jarvis.memory.wiki.integration import get_running_curator
+
+if TYPE_CHECKING:
+    from jarvis.core.config import WikiCuratorConfig
 
 log = logging.getLogger(__name__)
 
@@ -401,9 +406,11 @@ async def put_ptt_hotkey(body: PttHotkeyBody, request: Request) -> dict[str, obj
 
 # ---------------------------------------------------------------------------
 # Voice keybinds (editable): Call / Hangup / Talk-PTT. GET all three + defaults;
-# PUT one action at a time. Persisted to jarvis.toml [trigger]; applies on the
-# next voice bootstrap (a Jarvis restart) — bindings are armed once at pipeline
-# start. The legacy /ptt-hotkey route above stays for backward compatibility.
+# PUT one action at a time. Persisted to jarvis.toml [trigger] AND live-applied
+# to the running voice pipeline (set_keybinds → HotkeyTrigger.rearm), so a
+# change takes effect immediately without a restart; a headless/down pipeline
+# falls back to "applies on next start". The legacy /ptt-hotkey route above
+# stays for backward compatibility.
 # ---------------------------------------------------------------------------
 
 
@@ -433,12 +440,16 @@ async def get_keybinds(request: Request) -> dict[str, object]:
     cfg = _config(request)
     trig = getattr(cfg, "trigger", None) if cfg is not None else None
     d = TriggerConfig()
+    # A change only needs a restart when there is no live pipeline to re-arm
+    # (headless / not yet started). With a running pipeline, saves apply live.
+    pipeline = getattr(request.app.state, "speech_pipeline", None)
+    restart_required = pipeline is None or not hasattr(pipeline, "set_keybinds")
     return {
         "keybinds": _keybind_values(trig),
         "defaults": {"call": d.hotkey_call, "hangup": d.hotkey_hangup, "ptt": d.hotkey},
         "push_to_talk": bool(getattr(trig, "push_to_talk", True)) if trig else True,
         "suggestions": list(_HOTKEY_SUGGESTIONS),
-        "restart_required": True,
+        "restart_required": restart_required,
     }
 
 
@@ -461,14 +472,25 @@ async def put_keybind(body: KeybindBody, request: Request) -> dict[str, object]:
     cfg = _config(request)
     trig = getattr(cfg, "trigger", None) if cfg is not None else None
 
-    # Collision check: one chord can't both answer and hang up.
+    # Collision check: one chord can't both answer and hang up. Exact equality
+    # is not enough — the polling hotkey backend matches a combo as soon as its
+    # keys are down, so a key-set SUBSET of another action's combo fires both
+    # (call=f1 + hangup=f1+f2 → F1+F2 triggers call AND hangup). Reject any
+    # subset/superset relation between the key sets, in both directions.
+    new_keys = {p.strip() for p in hotkey.split("+") if p.strip()}
     for other_action, other_combo in _keybind_values(trig).items():
-        if other_action != action and other_combo.strip().lower() == hotkey:
+        if other_action == action:
+            continue
+        other_keys = {
+            p.strip() for p in other_combo.strip().lower().split("+") if p.strip()
+        }
+        if new_keys <= other_keys or other_keys <= new_keys:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"'{hotkey}' is already bound to '{other_action}' — "
-                    "pick a different combo."
+                    f"'{hotkey}' overlaps with '{other_action}' "
+                    f"('{other_combo.strip().lower()}') — pressing one would "
+                    "trigger both. Pick keys that don't contain each other."
                 ),
             )
 
@@ -489,14 +511,31 @@ async def put_keybind(body: KeybindBody, request: Request) -> dict[str, object]:
         except Exception as exc:  # noqa: BLE001
             log.warning("keybind persist failed: %s", exc)
 
+    # Live-apply to the running voice pipeline so the new combo fires
+    # immediately — no app restart. This is the fix for "I set a key but
+    # pressing it does nothing": the bindings were armed once at startup, so a
+    # UI save only took effect on the next boot. Best-effort — a headless/down
+    # pipeline just means it applies on next start.
+    applied_live = False
+    pipeline = getattr(request.app.state, "speech_pipeline", None)
+    if pipeline is not None and hasattr(pipeline, "set_keybinds"):
+        try:
+            # The action name ("call" / "hangup" / "ptt") is the set_keybinds
+            # keyword; only that action is re-armed, the others stay as-is.
+            pipeline.set_keybinds(**{action: [hotkey]})
+            applied_live = True
+        except Exception as exc:  # noqa: BLE001 — never fail the save on a live-apply hiccup
+            log.warning("keybind live-apply failed (persisted; applies on restart): %s", exc)
+
     return {
         "ok": True,
         "action": action,
         "hotkey": hotkey,
         "persisted": persisted,
-        # Bindings are armed once at SpeechPipeline construction, so a keybind
-        # change needs a voice restart to take effect.
-        "restart_required": True,
+        # When live-applied the running trigger already re-armed; no restart
+        # needed. Otherwise it takes effect on the next voice start.
+        "applied_live": applied_live,
+        "restart_required": not applied_live,
     }
 
 
@@ -669,18 +708,14 @@ async def put_autostart(body: AutostartBody, request: Request) -> dict[str, obje
         log.warning("autostart live-apply failed (persisted; applies on restart): %s", exc)
         status = await asyncio.to_thread(manager.status, spec)
 
+    # Reuse the GET payload shape (so the response carries `mechanism` — the
+    # frontend reads it to pick the right toast after "enable instant start" and
+    # to decide whether to keep showing the upgrade affordance).
     return {
+        **_autostart_payload(enabled, caps, spec, status),
         "ok": True,
-        "enabled": enabled,
-        "supported": status.supported,
-        "installed": status.installed,
-        "matches_spec": status.matches_spec,
-        "platform": caps.platform,
-        "resolved_command": spec.command_line(),
-        "entry_path": status.entry_path,
         "applied_live": applied_live,
         "persisted": persisted,
-        "detail": status.detail,
         "restart_required": False,
     }
 
@@ -741,7 +776,9 @@ async def put_overlay_style(body: OverlayStyleBody, request: Request) -> dict[st
         try:
             # swap_overlay touches Tk (spawns a daemon thread) — keep it off the loop.
             result = await asyncio.to_thread(swap, style)
-            applied_live = bool(result.get("applied_live")) if isinstance(result, dict) else bool(result)
+            applied_live = (
+                bool(result.get("applied_live")) if isinstance(result, dict) else bool(result)
+            )
         except Exception as exc:  # noqa: BLE001 — never fail the toggle on an apply hiccup
             log.warning("overlay-style live-apply failed (persisted; applies on restart): %s", exc)
             detail = str(exc)
@@ -871,3 +908,172 @@ async def put_mute_music(body: BoolToggleBody, request: Request) -> dict[str, ob
         except Exception as exc:  # noqa: BLE001
             log.warning("mute_music live-apply failed: %s", exc)
     return {"ok": True, "enabled": enabled, "persisted": persisted, "applied_live": applied_live}
+
+
+# ---------------------------------------------------------------------------
+# Wiki curator model picker. GET current + selectable providers/models; PUT to
+# change. The dedicated long-term-memory LLM is provider-agnostic: an empty
+# provider falls back to brain.primary and an empty model falls back to that
+# provider's CHEAP/FAST router model (mirrors the ack-brain follow_brain
+# pattern). Persisted to jarvis.toml [memory.wiki.curator]; applied live to a
+# running WikiCurator when one exists, else takes effect on the next ingest /
+# restart. Reads/writes the EXISTING WikiCuratorConfig fields resolved through
+# jarvis.memory.wiki.curator_llm._resolve_provider_and_model.
+# ---------------------------------------------------------------------------
+
+
+class WikiProviderBody(BaseModel):
+    # Empty strings are meaningful: provider="" => brain.primary,
+    # model="" => the provider's cheap/fast router model. The frontend sends a
+    # concrete provider and either a concrete model or "" for "cheap default".
+    provider: str = Field(default="", max_length=64)
+    model: str = Field(default="", max_length=128)
+    persist: bool = Field(default=True, description="Persist to jarvis.toml")
+
+
+def _wiki_curator_cfg(request: Request) -> WikiCuratorConfig | None:
+    cfg = _config(request)
+    memory = getattr(cfg, "memory", None)
+    wiki = getattr(memory, "wiki", None)
+    return getattr(wiki, "curator", None)
+
+
+def _available_brain_providers(request: Request) -> list[dict[str, object]]:
+    """Selectable (provider, models) pairs for the Wiki picker.
+
+    Provider list comes from the live BrainManager registry when reachable
+    (same source as the brain-switch path), else from the TIER_DEFAULTS table.
+    Each provider lists its cheap router model first, then its deep model, so
+    the UI can offer "cheap default" plus an upgrade. The provider's own
+    [brain.providers.<name>].model override (if set) is surfaced too.
+    """
+    from jarvis.brain.manager import TIER_DEFAULTS_BY_PROVIDER
+
+    names: list[str] = []
+    brain = getattr(request.app.state, "brain", None)
+    if brain is not None and hasattr(brain, "available_providers"):
+        try:
+            names = list(brain.available_providers())
+        except Exception:  # noqa: BLE001
+            names = []
+    if not names:
+        names = sorted(TIER_DEFAULTS_BY_PROVIDER.get("router", {}))
+
+    cfg = _config(request)
+    providers_cfg = getattr(getattr(cfg, "brain", None), "providers", {}) or {}
+
+    out: list[dict[str, object]] = []
+    for name in names:
+        models: list[str] = []
+        # Cheap/fast first (what an empty model resolves to), then deep.
+        for tier in ("router", "deep"):
+            m = TIER_DEFAULTS_BY_PROVIDER.get(tier, {}).get(name)
+            if m and m not in models:
+                models.append(m)
+        # Surface a user override from [brain.providers.<name>].model.
+        override = getattr(providers_cfg.get(name), "model", "") if providers_cfg else ""
+        if override and override not in models:
+            models.insert(0, override)
+        out.append({"provider": name, "models": models})
+    return out
+
+
+@router.get("/wiki-provider")
+async def get_wiki_provider(request: Request) -> dict[str, object]:
+    """Current Wiki-curator provider/model + the selectable matrix.
+
+    Returns the RAW config values (empty string = "follow brain.primary" /
+    "cheap default"); the frontend renders the empty state explicitly so the
+    user sees they are tracking the main brain rather than a stale concrete
+    pin.
+    """
+    curator = _wiki_curator_cfg(request)
+    return {
+        "provider": getattr(curator, "provider", "") or "",
+        "model": getattr(curator, "model", "") or "",
+        "available": _available_brain_providers(request),
+    }
+
+
+@router.put("/wiki-provider")
+async def put_wiki_provider(body: WikiProviderBody, request: Request) -> dict[str, object]:
+    provider = body.provider.strip()
+    model = body.model.strip()
+
+    # Resolve the selectable matrix ONCE: reused for validation below and for
+    # the response body (avoids a second BrainManager round-trip per PUT).
+    available = _available_brain_providers(request)
+
+    # Validate the provider against the selectable matrix. An empty provider is
+    # valid and means "follow brain.primary" (resolved later by the curator).
+    if provider:
+        known = {p["provider"] for p in available}
+        if provider not in known:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unknown brain provider {body.provider!r} "
+                    f"(available: {sorted(known)})."
+                ),
+            )
+
+    # Persist FIRST: jarvis.toml is the only source of truth, so the in-memory
+    # cfg must not show a value the disk never received (live would show the new
+    # provider while a restart reverts it). Persist to [memory.wiki.curator]
+    # (AP-7: lock + tempfile + BOM-safe via config_writer). Best-effort: a
+    # read-only / locked toml must not break a live apply.
+    persisted = False
+    if body.persist:
+        try:
+            from jarvis.core import config_writer
+            from jarvis.core.config import resolve_config_path
+
+            config_writer.set_wiki_curator_provider(
+                provider, model=model, path=resolve_config_path()
+            )
+            persisted = True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("wiki-provider persist failed (live apply still attempted): %s", exc)
+
+    # In-memory cfg update so a later cfg read agrees pre-restart — ONLY when the
+    # disk write succeeded (or persist was not requested). Skipping it on a
+    # persist failure keeps the live cfg in sync with what a restart will read.
+    if persisted or not body.persist:
+        curator_cfg = _wiki_curator_cfg(request)
+        if curator_cfg is not None:
+            for attr, value in (("provider", provider), ("model", model)):
+                try:
+                    setattr(curator_cfg, attr, value)
+                except Exception as exc:  # noqa: BLE001 — frozen model is not an error
+                    log.debug("in-memory wiki.curator.%s update skipped: %s", attr, exc)
+
+    # Live-apply: a running WikiCurator holds a WikiCuratorLLM (._llm) whose
+    # ._cfg is the WikiCuratorConfig and whose ._brain is a lazily-cached Brain.
+    # Mutating ._cfg and clearing ._brain makes the NEXT ingest re-resolve the
+    # provider/model through _resolve_provider_and_model — no restart needed.
+    applied_live = False
+    curator = get_running_curator()
+    llm = getattr(curator, "_llm", None)
+    live_cfg = getattr(llm, "_cfg", None)
+    if live_cfg is not None:
+        try:
+            live_cfg.provider = provider
+            live_cfg.model = model
+            llm._brain = None  # force re-resolution on the next ingest
+            llm._resolved_provider = None
+            llm._resolved_model = None
+            applied_live = True
+        except Exception as exc:  # noqa: BLE001 — never fail the save on a live hiccup
+            log.warning("wiki-provider live-apply failed (persisted; applies next ingest): %s", exc)
+
+    return {
+        "ok": True,
+        "provider": provider,
+        "model": model,
+        "available": available,
+        "persisted": persisted,
+        "applied_live": applied_live,
+        # The curator re-resolves on the next ingest; when not live-applied it
+        # takes effect after the next ingest / restart.
+        "restart_required": not applied_live,
+    }

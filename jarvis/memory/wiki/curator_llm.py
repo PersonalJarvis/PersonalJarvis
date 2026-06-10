@@ -5,7 +5,9 @@ Wraps one Brain provider in the ``CuratorLLM`` Protocol from
 ``[memory.wiki.curator]`` with two fallbacks:
 
 1. ``provider`` empty → use ``brain.primary``.
-2. ``model`` empty → use ``brain.providers[<resolved-provider>].model``.
+2. ``model`` empty → use the provider's CHEAP/FAST router-tier model
+   (``get_tier_default_model("router", provider)``), NOT the provider's
+   full frontier chat model. An explicit ``model`` override always wins.
 
 The brain call is wrapped in ``asyncio.wait_for(timeout=cfg.timeout_s)``
 so a hung provider never blocks an ingest forever. Any failure — JSON
@@ -30,7 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from jarvis.brain.provider_registry import BrainProviderRegistry
-from jarvis.brain.streaming import aggregate
+from jarvis.brain.streaming import aggregate, is_length_truncated
 from jarvis.core.protocols import BrainMessage, BrainRequest
 from jarvis.memory.wiki.prompt import (
     build_system_prompt,
@@ -39,6 +41,7 @@ from jarvis.memory.wiki.prompt import (
     select_top_slugs,
 )
 from jarvis.memory.wiki.protocols import PageUpdate
+from jarvis.memory.wiki.telemetry import telemetry
 
 if TYPE_CHECKING:
     from jarvis.core.config import JarvisConfig, WikiCuratorConfig
@@ -59,24 +62,84 @@ _VALID_OPERATIONS: frozenset[str] = frozenset({"create", "update", "rename", "ar
 # called. Avoids burning tokens on empty events.
 _MIN_SOURCE_CHARS = 3
 
+# Cheap/fast model per provider for the curator's default path. This is
+# the long-term-memory tier: background ingest must NOT bill the user's
+# frontier chat model. We mirror the router-tier ("fast") defaults from
+# jarvis.brain.manager.TIER_DEFAULTS_BY_PROVIDER["router"]; the live
+# values are read from there at resolve time, this map is only the
+# last-resort fallback when that import is unavailable.
+_CHEAP_MODEL_FALLBACK: dict[str, str] = {
+    "claude-api": "claude-haiku-4-5-20251001",
+    "gemini": "gemini-3-flash-preview",
+    "openai": "gpt-5.5",
+    "codex": "gpt-5.5",
+    "grok": "grok-4.3",
+    "deepseek": "deepseek-chat",
+    "openrouter": "anthropic/claude-haiku-4.5",
+    "mistral": "mistral-small-3.1",
+}
+
+
+def _cheap_model_for(provider: str) -> str | None:
+    """Cheap/fast model for the curator's default path.
+
+    Prefers the live router-tier default from ``jarvis.brain.manager``
+    (single source of truth); falls back to the local ``_CHEAP_MODEL_FALLBACK``
+    map if that module cannot be imported (minimal VPS / partial install).
+    Returns ``None`` for an unknown provider so the registry picks its own
+    default.
+    """
+
+    try:
+        from jarvis.brain.manager import get_tier_default_model
+
+        live = get_tier_default_model("router", provider)
+        if live:
+            return live
+    except ImportError:
+        # Minimal VPS / partial install — expected, fallback map is the plan.
+        logger.debug(
+            "_cheap_model_for(%r): jarvis.brain.manager unimportable, "
+            "using _CHEAP_MODEL_FALLBACK",
+            provider,
+        )
+    except Exception as exc:  # noqa: BLE001
+        # Anything else is unexpected — make it diagnosable.
+        logger.warning(
+            "_cheap_model_for(%r): get_tier_default_model failed (%s) — "
+            "using _CHEAP_MODEL_FALLBACK",
+            provider, exc,
+        )
+    return _CHEAP_MODEL_FALLBACK.get(provider)
+
 
 def _resolve_provider_and_model(
     cfg: WikiCuratorConfig, root: JarvisConfig,
 ) -> tuple[str, str | None]:
-    """Apply the documented two-step fallback to (provider, model).
+    """Resolve (provider, model) for the curator LLM.
 
-    Returns ``(provider_name, model_or_none)``. ``model_or_none`` is
-    ``None`` when the registry should pick the provider's own default
-    (matches ``BrainProviderRegistry.instantiate(name, model=None)``).
+    Provider: ``cfg.provider`` if set, else ``brain.primary``.
+
+    Model precedence (cheap-by-default — long-term memory must not bill
+    the user's frontier chat model):
+
+    1. An explicit ``cfg.model`` always wins.
+    2. Otherwise the resolved provider's CHEAP/FAST router-tier model
+       (``jarvis.brain.manager.get_tier_default_model("router", provider)``,
+       mirrored by ``_CHEAP_MODEL_FALLBACK``).
+    3. Otherwise ``None`` — the registry instantiates its own default
+       (matches ``BrainProviderRegistry.instantiate(name, model=None)``).
+
+    Note: ``brain.providers[provider].model`` (the user's full frontier
+    chat model) is intentionally NOT used here — that is the expensive
+    path this resolver exists to avoid.
     """
 
     provider = cfg.provider.strip() or root.brain.primary
     model = cfg.model.strip()
 
     if not model:
-        provider_cfg = root.brain.providers.get(provider)
-        if provider_cfg is not None and provider_cfg.model:
-            model = provider_cfg.model
+        model = _cheap_model_for(provider) or ""
 
     return provider, (model or None)
 
@@ -330,6 +393,17 @@ class WikiCuratorLLM:
                 "WikiCuratorLLM brain-call failed after %dms (provider=%s): %s",
                 duration_ms, self._resolved_provider, exc,
             )
+            return []
+
+        if is_length_truncated(agg.finish_reason, agg.text):
+            duration_ms = (time.time_ns() - start_ns) // 1_000_000
+            logger.warning(
+                "WikiCuratorLLM: response hit the output-token cap "
+                "(finish_reason=%r, %d chars, %dms, provider=%s) — discarding "
+                "truncated updates rather than persisting a half-written page",
+                agg.finish_reason, len(agg.text), duration_ms, self._resolved_provider,
+            )
+            telemetry.inc("wiki_writes_blocked_truncated")
             return []
 
         try:

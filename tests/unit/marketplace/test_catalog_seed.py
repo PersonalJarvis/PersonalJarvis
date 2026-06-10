@@ -75,14 +75,16 @@ def test_cloudflare_is_dcr_one_click_with_http_mcp() -> None:
     assert spec.mcp_server["url"] == "https://observability.mcp.cloudflare.com/mcp"
 
 
-def test_discord_is_bot_pat_with_stdio_mcp() -> None:
+def test_discord_is_bot_pat_channel_no_mcp() -> None:
+    # AD-3 (2026-06-09): connecting Discord enables the in-repo bidirectional
+    # channel (like Telegram), not a competing mcp-discord server that would
+    # open a second Discord gateway over the same bot token.
     spec = _seed().by_id("discord")
     assert spec is not None
     assert spec.display_name == "Discord"
     assert spec.auth.mode == "pat_paste"
     assert spec.auth.auth_scheme == "bot"
-    assert spec.mcp_server["transport"] == "stdio"
-    assert "mcp-discord" in spec.mcp_server["install"]
+    assert spec.mcp_server is None
 
 
 def test_telegram_is_pat_telegram_path_no_mcp() -> None:

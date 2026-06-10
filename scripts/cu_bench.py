@@ -38,13 +38,70 @@ except Exception:
 
 import argparse
 import asyncio
+import json
+import statistics
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from jarvis.core.bus import EventBus
+from jarvis.core.events import CUStepProfiled
 from jarvis.core.protocols import HarnessTask
+
+# ---------------------------------------------------------------------------
+# SLOs (frontier-speed master plan, Wave 0). --assert-slo turns these into a
+# hard gate: per-step p50 <= 1.5s, p95 <= 4s, plus the per-task wall-clock
+# budgets declared on each BenchTask below.
+# ---------------------------------------------------------------------------
+
+SLO_STEP_P50_S = 1.5
+SLO_STEP_P95_S = 4.0
+
+
+class PhaseCollector:
+    """Collects CUStepProfiled spans from the bus, scoped per bench task."""
+
+    def __init__(self, bus: EventBus) -> None:
+        self.spans: list[CUStepProfiled] = []
+        self._active = False
+        bus.subscribe(CUStepProfiled, self._on_span)
+
+    async def _on_span(self, event: CUStepProfiled) -> None:
+        if self._active:
+            self.spans.append(event)
+
+    def start(self) -> None:
+        self.spans = []
+        self._active = True
+
+    def stop(self) -> list[CUStepProfiled]:
+        self._active = False
+        return list(self.spans)
+
+
+def _phase_stats(spans: list[CUStepProfiled]) -> dict[str, dict[str, float]]:
+    """Per-phase p50/p95 in ms, plus call counts."""
+    by_phase: dict[str, list[int]] = {}
+    for s in spans:
+        by_phase.setdefault(s.phase, []).append(s.duration_ms)
+    out: dict[str, dict[str, float]] = {}
+    for phase, durations in sorted(by_phase.items()):
+        durations.sort()
+        out[phase] = {
+            "count": float(len(durations)),
+            "p50_ms": float(statistics.median(durations)),
+            "p95_ms": float(durations[max(0, int(len(durations) * 0.95) - 1)]),
+        }
+    return out
+
+
+def _step_durations_s(spans: list[CUStepProfiled]) -> list[float]:
+    """Wall-clock per step = sum of that step's phase spans (seconds)."""
+    by_step: dict[int, int] = {}
+    for s in spans:
+        by_step[s.step_idx] = by_step.get(s.step_idx, 0) + s.duration_ms
+    return [ms / 1000.0 for _idx, ms in sorted(by_step.items())]
 
 # ---------------------------------------------------------------------------
 # Oracles + cleanup helpers (best-effort, never raise)
@@ -122,6 +179,8 @@ class BenchTask:
     timeout_s: int = 120
     oracle: Callable[[], Awaitable[bool | None]] | None = None
     cleanup_procs: tuple[str, ...] = field(default_factory=tuple)
+    #: Wall-clock SLO for --assert-slo (frontier-speed plan); 0 = no gate.
+    slo_s: float = 0.0
 
 
 _TERMINAL_PROCS = ("windowsterminal.exe", "cmd.exe", "powershell.exe")
@@ -137,6 +196,7 @@ def _catalog() -> list[BenchTask]:
             prompt="Open a terminal (Windows Terminal). Finish once its window is visible.",
             oracle=_oracle_proc(_TERMINAL_PROCS),
             cleanup_procs=_TERMINAL_PROCS,
+            slo_s=8.0,
         ),
         BenchTask(
             id="open_calc_compute",
@@ -162,6 +222,7 @@ def _catalog() -> list[BenchTask]:
             prompt="Open the Chrome web browser. Finish once a browser window is visible.",
             oracle=_oracle_proc(_CHROME_PROCS),
             cleanup_procs=_CHROME_PROCS,
+            slo_s=8.0,
         ),
         BenchTask(
             id="browser_navigate",
@@ -172,6 +233,7 @@ def _catalog() -> list[BenchTask]:
             timeout_s=160,
             oracle=_oracle_uia_contains("example"),
             cleanup_procs=_CHROME_PROCS,
+            slo_s=15.0,
         ),
         BenchTask(
             id="open_explorer",
@@ -217,6 +279,22 @@ class BenchResult:
     oracle: bool | None
     elapsed_s: float
     chunks: int
+    slo_s: float = 0.0
+    spans: list[CUStepProfiled] = field(default_factory=list)
+
+    @property
+    def model_calls(self) -> int:
+        return sum(1 for s in self.spans if s.phase in ("think", "plan", "verify"))
+
+    @property
+    def step_durations_s(self) -> list[float]:
+        return _step_durations_s(self.spans)
+
+    @property
+    def slo_ok(self) -> bool | None:
+        if self.slo_s <= 0:
+            return None
+        return self.elapsed_s <= self.slo_s
 
     @property
     def passed(self) -> bool:
@@ -235,12 +313,16 @@ class BenchResult:
         return "PASS~"  # exit 0 but no oracle -> operator should eyeball
 
 
-async def _run_task(harness, task: BenchTask) -> BenchResult:
+async def _run_task(
+    harness, task: BenchTask, collector: PhaseCollector | None = None,
+) -> BenchResult:
     # Honest oracle: close any pre-existing instance so a stale window can't
     # make a no-op look like success.
     if task.cleanup_procs:
         _kill_procs(task.cleanup_procs)
         await asyncio.sleep(0.5)
+    if collector is not None:
+        collector.start()
 
     ht = HarnessTask(
         prompt=task.prompt,
@@ -278,9 +360,15 @@ async def _run_task(harness, task: BenchTask) -> BenchResult:
     elapsed = time.perf_counter() - t0
     if task.cleanup_procs:
         _kill_procs(task.cleanup_procs)
-    res = BenchResult(task.id, exit_code, oracle_val, elapsed, chunks)
+    spans = collector.stop() if collector is not None else []
+    res = BenchResult(
+        task.id, exit_code, oracle_val, elapsed, chunks,
+        slo_s=task.slo_s, spans=spans,
+    )
+    steps = res.step_durations_s
     print(f"    -> {res.mark}  exit={exit_code} oracle={oracle_val} "
-          f"({elapsed:.1f}s, {chunks} chunks)")
+          f"({elapsed:.1f}s, {chunks} chunks, {len(steps)} steps, "
+          f"{res.model_calls} model calls)")
     return res
 
 
@@ -321,10 +409,80 @@ def _write_report(results: list[BenchResult], native: bool) -> Path:
     return out
 
 
+def _write_json_report(results: list[BenchResult], native: bool) -> Path:
+    """Machine-readable run record — the baseline/regression artifact the
+    frontier-speed plan's promotion gate compares against."""
+    all_spans = [s for r in results for s in r.spans]
+    all_steps = sorted(d for r in results for d in r.step_durations_s)
+
+    def _pctl(vals: list[float], q: float) -> float | None:
+        if not vals:
+            return None
+        return vals[max(0, int(len(vals) * q) - 1)]
+
+    payload = {
+        "engine": "native" if native else "hand-rolled-v1",
+        "slo": {"step_p50_s": SLO_STEP_P50_S, "step_p95_s": SLO_STEP_P95_S},
+        "aggregate": {
+            "step_p50_s": statistics.median(all_steps) if all_steps else None,
+            "step_p95_s": _pctl(all_steps, 0.95),
+            "phase_stats_ms": _phase_stats(all_spans),
+        },
+        "tasks": [
+            {
+                "id": r.id,
+                "mark": r.mark,
+                "exit_code": r.exit_code,
+                "oracle": r.oracle,
+                "elapsed_s": round(r.elapsed_s, 2),
+                "slo_s": r.slo_s,
+                "slo_ok": r.slo_ok,
+                "steps": len(r.step_durations_s),
+                "model_calls": r.model_calls,
+                "step_durations_s": [round(d, 2) for d in r.step_durations_s],
+                "phase_stats_ms": _phase_stats(r.spans),
+            }
+            for r in results
+        ],
+    }
+    out = Path.home() / "Downloads" / "Jarvis-Computer-Use-Benchmark.json"
+    try:
+        out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[report] could not write {out}: {exc}")
+    return out
+
+
+def _assert_slo(results: list[BenchResult]) -> list[str]:
+    """Return the list of SLO violations (empty = gate passes)."""
+    violations: list[str] = []
+    all_steps = sorted(d for r in results for d in r.step_durations_s)
+    if all_steps:
+        p50 = statistics.median(all_steps)
+        p95 = all_steps[max(0, int(len(all_steps) * 0.95) - 1)]
+        if p50 > SLO_STEP_P50_S:
+            violations.append(f"step p50 {p50:.2f}s > {SLO_STEP_P50_S}s")
+        if p95 > SLO_STEP_P95_S:
+            violations.append(f"step p95 {p95:.2f}s > {SLO_STEP_P95_S}s")
+    for r in results:
+        if not r.passed:
+            violations.append(f"task {r.id} failed (exit={r.exit_code})")
+        elif r.slo_ok is False:
+            violations.append(
+                f"task {r.id} took {r.elapsed_s:.1f}s > SLO {r.slo_s:.0f}s"
+            )
+    return violations
+
+
 async def main() -> int:
     parser = argparse.ArgumentParser(description="Everyday Computer-Use benchmark")
     parser.add_argument("--list", action="store_true", help="list task ids and exit")
     parser.add_argument("--only", default="", help="comma-separated task ids to run")
+    parser.add_argument(
+        "--assert-slo", action="store_true",
+        help="exit non-zero when the frontier-speed SLOs are violated "
+             "(step p50/p95 + per-task wall-clock budgets)",
+    )
     args = parser.parse_args()
 
     catalog = _catalog()
@@ -365,14 +523,26 @@ async def main() -> int:
         print("[2] ABORT: harness not healthy (vision/brain/executor missing)")
         return 3
 
+    collector = PhaseCollector(bus)
     results: list[BenchResult] = []
     for task in catalog:
-        results.append(await _run_task(harness, task))
+        results.append(await _run_task(harness, task, collector))
 
     passed = sum(1 for r in results if r.passed)
     report = _write_report(results, native)
+    json_report = _write_json_report(results, native)
     print("\n" + "=" * 66)
     print(f"SCORE: {passed}/{len(results)} passed   (report: {report})")
+    print(f"JSON:  {json_report}")
+    if args.assert_slo:
+        violations = _assert_slo(results)
+        if violations:
+            print("SLO GATE: FAIL")
+            for v in violations:
+                print(f"  - {v}")
+            print("=" * 66)
+            return 1
+        print("SLO GATE: PASS")
     print("=" * 66)
     return 0 if passed == len(results) else 1
 

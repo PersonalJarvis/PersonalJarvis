@@ -65,7 +65,7 @@ if TYPE_CHECKING:
     from .protocols import PageRepository
 
 from jarvis.brain.provider_registry import BrainProviderRegistry
-from jarvis.brain.streaming import aggregate
+from jarvis.brain.streaming import aggregate, is_length_truncated
 from jarvis.core.events import IdleEntered
 from jarvis.core.protocols import BrainMessage, BrainRequest
 
@@ -99,7 +99,7 @@ _ALIASES_RE = re.compile(r"^aliases:\s*(.+)$", re.MULTILINE)
 RollupStatus = str
 """``"ok" | "skipped_too_few_episodes" | "skipped_recent_edit" |
 "llm_unavailable" | "llm_timeout" | "llm_failure" | "rollback" |
-"disabled"``"""
+"disabled" | "disabled_wiki_write"``"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,6 +225,23 @@ class SessionRollupWorker:
         if not self._cfg.enabled:
             return SessionRollupResult(status="disabled")
 
+        # D2 (2026-06): the awareness-episode -> durable session-page feed is
+        # retired. Awareness L1/L2 keeps recording episodes; we simply stop
+        # turning them into wiki pages here. Conversation (VoiceFactBridge)
+        # is now the sole wiki feed. Short-circuit before the brain call and
+        # the AtomicWriter so this path produces neither a page nor an LLM
+        # round-trip.
+        if not getattr(self._cfg, "wiki_write_enabled", False):
+            telemetry.inc("session_rollups_wiki_write_disabled")
+            log.debug(
+                "SessionRollupWorker: wiki_write_enabled is off — "
+                "not writing a session page from awareness episodes"
+            )
+            # Advance the session marker so a later re-enable starts a clean
+            # window rather than replaying the whole backlog.
+            self._session_start_ns = self._clock()
+            return SessionRollupResult(status="disabled_wiki_write")
+
         episodes = await self._recall.recent_episodes(
             limit=1000,
             since_ns=self._session_start_ns,
@@ -327,6 +344,11 @@ class SessionRollupWorker:
             )
 
         # ----- Rolling window: archive oldest beyond the cap ----------
+        # Deliberately synchronous on the event loop: the loop serialises
+        # the rename batch against concurrent AtomicWriter snapshots (a
+        # to_thread version races the voice-ingest backup walk, which then
+        # fails on a file vanishing mid-tar). Bounded by
+        # max_active_sessions (default 5) renames — microseconds.
         archived = self._archive_old_sessions()
         if archived:
             # The archiver renames files directly (bypassing AtomicWriter), so
@@ -448,6 +470,16 @@ class SessionRollupWorker:
             return None
         except Exception as exc:    # noqa: BLE001
             log.warning("SessionRollupWorker: brain call raised: %s", exc)
+            return None
+
+        if is_length_truncated(agg.finish_reason, agg.text):
+            log.warning(
+                "SessionRollupWorker: digest hit the output-token cap "
+                "(finish_reason=%r, %d chars) — discarding truncated paragraph "
+                "rather than writing a half-finished session page",
+                agg.finish_reason, len(agg.text or ""),
+            )
+            telemetry.inc("wiki_writes_blocked_truncated")
             return None
 
         text = (agg.text or "").strip()

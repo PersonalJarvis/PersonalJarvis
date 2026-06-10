@@ -186,6 +186,10 @@ async def stack(tmp_path: Path):
         clock=lambda: clock_holder[0],
     )
 
+    # D2 (2026-06): the session-page feed is gated off by default; these
+    # tests exercise the legacy brain-call machinery, so opt back in.
+    worker._cfg = worker._cfg.model_copy(update={"wiki_write_enabled": True})  # noqa: SLF001
+
     yield worker, recall, vault_root, clock_holder
 
     await recall.close()
@@ -384,7 +388,9 @@ async def test_max_tokens_propagates_into_brainrequest(stack):
     # Bump max_output_tokens to a recognisable non-default value.
     worker._cfg = worker._cfg.model_copy(update={"max_output_tokens": 1234})    # noqa: SLF001
 
-    brain = FakeBrain([BrainDelta(content="ok")])
+    # A natural stop: the Wave-1 truncation guard discards reason-less,
+    # punctuation-less streams, so the fake mirrors a real provider here.
+    brain = FakeBrain([BrainDelta(content="ok."), BrainDelta(finish_reason="stop")])
     _attach_brain(worker, brain)
 
     result = await worker.flush_session()
@@ -421,3 +427,31 @@ async def test_multi_chunk_stream_concatenates(stack):
     assert result.page_path is not None
     body = result.page_path.read_text(encoding="utf-8")
     assert "First part of the rollup paragraph with [[entities/alex]] reference." in body
+
+
+# ----------------------------------------------------------------------
+# Truncation guard — a length-capped digest is discarded (Wave-1)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rollup_rejects_length_capped_digest(stack):
+    """A digest that hit the output-token cap is discarded; no page is written."""
+
+    worker, recall, vault_root, clock_holder = stack
+    base = clock_holder[0]
+    worker._session_start_ns = base - 60 * NS_PER_MIN    # noqa: SLF001
+    await _seed_two_episodes(recall, base)
+
+    # Stream ends with a length-cap finish_reason: the guard must turn this
+    # into the existing llm_failure path instead of writing a half sentence.
+    brain = FakeBrain([
+        BrainDelta(content="The session focused on the wiki guard and"),
+        BrainDelta(finish_reason="length"),
+    ])
+    _attach_brain(worker, brain)
+
+    result = await worker.flush_session()
+    assert result.status == "llm_failure"
+    assert result.page_path is None
+    assert list((vault_root / "sessions").glob("*.md")) == []

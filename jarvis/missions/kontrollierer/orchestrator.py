@@ -69,6 +69,7 @@ from .deliverable import (
     deliver_to_user_folder,
 )
 from ..safety import (
+    extract_worker_authored_text,
     filter_diff_paths,
     has_high_severity,
     scan as injection_scan,
@@ -94,7 +95,11 @@ worker (Opus, long tool calls, Computer-Use) is never swept as orphaned."""
 # 630s worker cap does not. Deliberately GENEROUS (worst legitimate mission seen
 # ~18 min): this catches a genuine runaway/hang, never slow-but-working code.
 # Measured AFTER the concurrency semaphore is acquired (queue wait is excluded).
-_MISSION_DEADLINE_S: float = 2400.0  # 40 minutes
+# 70 minutes — raised from 40 so the bigger per-worker cap (1200 s × up to
+# MAX_CRITIC_LOOPS=3 + critic time) fits inside the mission deadline; a complex
+# task can finish across its retries instead of being cut off (user mandate
+# 2026-06-09: "more time for complex tasks"). Still a backstop, rarely hit.
+_MISSION_DEADLINE_S: float = 4200.0
 
 
 # BUG-LIVE-05 (Recon-Agent 2, 2026-05-16): when persona files (AGENTS.md
@@ -972,16 +977,36 @@ class Kontrollierer:
             # immediately above the failure announcement.
             if spawn_result.worker_error:
                 err_lower = spawn_result.worker_error.lower()
-                is_timeout = "timeout" in err_lower
+                # Structured flag first (robust), result-text "timeout" as a
+                # belt-and-suspenders fallback. The flag is why a codex/gemini
+                # timeout that left a real diff now reaches the grade-partial
+                # branch below instead of being discarded as task_error.
+                is_timeout = spawn_result.worker_timed_out or "timeout" in err_lower
+                # A transient provider error (rate-limit / overloaded / 429 /
+                # 503) is NOT a real failure — retry on a fresh, serialised spawn
+                # like a timeout instead of killing the mission as task_error.
+                # Keeps every provider reliable when the shared Claude Max OAuth
+                # subscription throttles under load (2026-06-09 codex verify:
+                # task_error rounds were throttle, not a code fault).
+                is_transient = any(
+                    m in err_lower for m in (
+                        "rate limit", "rate_limit", "ratelimit",
+                        "too many requests", "429", "overloaded",
+                        "503", "service unavailable", "please try again",
+                    )
+                )
                 kill_reason: Literal[
                     "timeout", "user", "budget", "parent_cancelled",
-                    "injection_detected", "path_guard",
+                    "injection_detected", "path_guard", "worker_error",
                 ] = (
                     "budget"
                     if ("balance" in err_lower or "billing" in err_lower
                         or "credit" in err_lower)
                     else "timeout" if is_timeout
-                    else "user"
+                    # Honest: a non-timeout/non-billing worker error is NOT a
+                    # user cancellation. "worker_error" replaces the old "user"
+                    # mislabel (five-layer: events.py / TS / voice / parity).
+                    else "worker_error"
                 )
                 logger.error(
                     "Task %s iter %d: worker terminal error (%s) — %s",
@@ -1001,9 +1026,9 @@ class Kontrollierer:
                 # diff means nothing was produced (a genuine zero-output hang,
                 # e.g. Claude Max OAuth contention), so keep the transient-retry
                 # / hard-fail behaviour for that case.
-                if is_timeout and not _real_diff_is_empty(diff_text):
+                if (is_timeout or is_transient) and not _real_diff_is_empty(diff_text):
                     logger.warning(
-                        "Task %s iter %d: worker hit the wall-clock cap but "
+                        "Task %s iter %d: worker hit a timeout/transient error but "
                         "left a non-empty diff (%d bytes) — grading the partial "
                         "work with the critic instead of failing as task_error",
                         step.task_id, iteration, len(diff_text),
@@ -1023,11 +1048,12 @@ class Kontrollierer:
                 # the whole mission — the heavy-phase semaphore (_mission_sem,
                 # default 1) serialises the retry so it no longer competes with
                 # the spawn that just timed out. Budget/auth errors stay fatal.
-                elif is_timeout and iteration < MAX_CRITIC_LOOPS - 1:
+                elif (is_timeout or is_transient) and iteration < MAX_CRITIC_LOOPS - 1:
                     logger.warning(
-                        "Task %s iter %d: worker timed out with no output — "
+                        "Task %s iter %d: worker %s with no usable output — "
                         "retrying on a fresh spawn",
                         step.task_id, iteration,
+                        "timed out" if is_timeout else "hit a transient/rate-limit error",
                     )
                     continue
                 else:
@@ -1237,11 +1263,18 @@ class Kontrollierer:
             tokens_used: int,
             session_id: str | None,
             worker_error: str | None = None,
+            worker_timed_out: bool = False,
         ) -> None:
             self.worker_id = worker_id
             self.cost_usd = cost_usd
             self.tokens_used = tokens_used
             self.session_id = session_id
+            # True when the worker's terminal result carried the structured
+            # `timed_out` flag (a wall-clock / first-output timeout). The
+            # orchestrator keys is_timeout off THIS, not a "timeout" substring
+            # in worker_error — so a codex/gemini timeout that left a real diff
+            # is graded, not discarded (mission 019eacb8).
+            self.worker_timed_out = worker_timed_out
             # Non-None when the worker subprocess returned a terminal
             # `result` event with is_error=True. Carries the upstream
             # error message verbatim (e.g. "Credit balance is too low"
@@ -1277,6 +1310,7 @@ class Kontrollierer:
         session_id: str | None = resume_session_id
         spawned_emitted = False
         worker_error: str | None = None
+        worker_timed_out = False
 
         async with job:
             hb_stop = asyncio.Event()
@@ -1369,6 +1403,12 @@ class Kontrollierer:
                             or "worker reported is_error=True"
                         )
                         worker_error = str(upstream)[:300]
+                    # Structured timeout signal — read independently of is_error
+                    # so the orchestrator recognises a timeout without matching
+                    # the result-text wording (codex/gemini used to omit
+                    # "timeout" → real work discarded).
+                    if getattr(ev, "timed_out", False):
+                        worker_timed_out = True
             finally:
                 hb_stop.set()
                 await hb_task
@@ -1379,6 +1419,7 @@ class Kontrollierer:
             tokens_used=tokens,
             session_id=session_id,
             worker_error=worker_error,
+            worker_timed_out=worker_timed_out,
         )
 
     # --- Phase-5 Safety -----------------------------------------------------
@@ -1398,9 +1439,20 @@ class Kontrollierer:
             oder "path_guard:.env"). In dem Fall publiziert die Methode auch
             ein WorkerKilled-Event.
         """
-        # 1) Injection-Scanner — high/critical blocks, med/low logged
+        # 1) Injection-Scanner — high/critical blocks, med/low logged.
+        # The stream log is reduced to worker-AUTHORED text first: the raw
+        # stream.jsonl carries the output of the worker's read commands
+        # (rg / Get-Content / tool_result blocks), and any worker reading
+        # this repo's own safety blacklist, security docs or frontend
+        # secret-panel code was killed AFTER delivering a clean diff
+        # (live mission 019eadaf-272d, 2026-06-09 — 20 min of work
+        # discarded via WorkerKilled(injection_detected) on rm -rf / from
+        # jarvis.toml.example). Authored channels (assistant prose,
+        # commands, tool_use inputs) stay fully scanned.
         detections = injection_scan(diff_text, where="diff")
-        detections += injection_scan(log_text, where="log")
+        detections += injection_scan(
+            extract_worker_authored_text(log_text), where="log"
+        )
         if has_high_severity(detections):
             top = next(
                 (d for d in detections if d.severity in ("critical", "high")),
@@ -1446,7 +1498,10 @@ class Kontrollierer:
         # unterscheidet path_guard vs injection_detected fuer praezisere TTS).
         if reason.startswith("path_guard"):
             mapped: str = "path_guard"
-        elif reason in ("budget", "timeout", "user", "parent_cancelled", "injection_detected"):
+        elif reason in (
+            "budget", "timeout", "user", "parent_cancelled",
+            "injection_detected", "worker_error",
+        ):
             mapped = reason
         else:
             mapped = "injection_detected"

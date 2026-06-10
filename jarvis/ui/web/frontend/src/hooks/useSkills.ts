@@ -223,6 +223,39 @@ export function useDeleteSkill() {
   });
 }
 
+export interface BulkDeleteResult {
+  deleted: string[];
+  failed: { name: string; detail: string }[];
+}
+
+async function bulkDeleteSkills(names: string[]): Promise<BulkDeleteResult> {
+  const res = await fetch("/api/skills/bulk-delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ names }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * Delete several user skills in one request. The backend deletes each name
+ * independently (built-ins / unknown names land in ``failed``), so a single bad
+ * entry never blocks the rest of the batch.
+ */
+export function useBulkDeleteSkills() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: bulkDeleteSkills,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["skills"] });
+    },
+  });
+}
+
 /**
  * Persist the user's custom skill order (list view only). The order is applied
  * server-side, so it survives a restart and follows the user across devices.

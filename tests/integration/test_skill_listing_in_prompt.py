@@ -100,7 +100,7 @@ def test_skill_section_present_in_prompt_when_context_set(tmp_path: Path) -> Non
     prompt = brain._build_system_prompt()
 
     assert "## AVAILABLE SKILLS" in prompt
-    assert "`run_skill`" in prompt
+    assert "`run-skill`" in prompt
     assert "memory-save" in prompt
     assert "morning-routine" in prompt
     assert "Speichert einen Fakt im Long-Term-Memory." in prompt

@@ -160,6 +160,23 @@
     "group_earlier": "Antes",
     "resize_hint": "Arrastra para redimensionar · doble clic para restablecer"
   },
+  "thinking": {
+    "label": "Pensando",
+    "thought_for": "Pensó durante",
+    "steps": "pasos",
+    "earlier": "pasos anteriores",
+    "step_brain": "Razonando",
+    "step_tool": "Usando herramienta",
+    "step_update": "Actualización",
+    "step_worker": "Delegando a un worker en segundo plano",
+    "step_cu_observe": "Observando la pantalla",
+    "step_cu_uia": "Leyendo elementos de la UI",
+    "step_cu_plan": "Planeando la siguiente acción",
+    "step_cu_think": "Deliberando",
+    "step_cu_act": "Ejecutando acción",
+    "step_cu_verify": "Verificando el resultado",
+    "step_cu_settle": "Esperando la pantalla"
+  },
   "subagents_view": {
     "title": "Sub-Agentes",
     "stat_active": "activos",
@@ -241,7 +258,12 @@
     "delete_cancel": "Cancelar",
     "delete_confirm": "Eliminar",
     "builtin_protected": "Habilidad incorporada — no se puede eliminar",
-    "drag_hint": "Arrastra para reordenar"
+    "drag_hint": "Arrastra para reordenar",
+    "select": "Seleccionar",
+    "select_all": "Seleccionar todo",
+    "selected": "seleccionadas",
+    "bulk_delete_title": "¿Eliminar habilidades?",
+    "bulk_delete_body": "Estas habilidades se eliminarán permanentemente:"
   },
   "sessions_view": {
     "title": "Transcripción",
@@ -566,6 +588,7 @@
     "tier_tts": "Salida de voz (TTS)",
     "tier_stt": "Entrada de voz (STT)",
     "tier_subagent": "Subagente (tareas pesadas)",
+    "tier_telephony": "Telefonía",
     "active_tooltip": "Ya activo",
     "click_to_activate": "Clic para activar este proveedor",
     "needs_codex": "Primero conecta Codex o guarda la clave API",
@@ -688,17 +711,34 @@
     },
     "keybinds": {
       "title": "Atajos de voz",
-      "description": "Configura las teclas para Llamar, Colgar y Hablar (pulsar para hablar). Pulsa Grabar y presiona tu combinación, o restablece el valor predeterminado. Los cambios se aplican tras reiniciar.",
+      "description": "Configura las teclas para Llamar, Colgar y Hablar (pulsar para hablar). Pulsa Grabar y presiona tu combinación — o haz clic en las teclas del teclado en pantalla. Los cambios se aplican al instante.",
       "call_label": "Llamar (responder / empezar a hablar)",
       "hangup_label": "Colgar",
       "talk_label": "Hablar / Pulsar para hablar",
       "record": "Grabar",
       "stop": "Detener",
-      "recording": "Presiona tus teclas ahora — mantén varias a la vez para una combinación (Esc para cancelar)",
+      "recording": "Presiona tus teclas…",
+      "recording_hint": "Mantén las teclas que quieras (y suéltalas) — o haz clic en ellas en el teclado de abajo. Esc cancela.",
       "save": "Guardar",
       "saved": "Atajo guardado",
       "reset": "Restablecer predeterminado",
-      "restart_required": "Reinicio necesario para que surta efecto."
+      "restart_required": "Reinicio necesario para que surta efecto.",
+      "validation": {
+        "only_modifiers": "Añade una tecla real — Ctrl/Alt/Mayús por sí solas no pueden activar.",
+        "solo_typing_key": "Esta tecla se dispara cada vez que escribes — añade Ctrl/Alt/Mayús o una segunda tecla. Las teclas de función (F5) y de navegación (↑, Inicio) también funcionan solas.",
+        "windows_reserved": "La tecla Windows está reservada por el sistema — usa Ctrl, Alt o Mayús.",
+        "alt_f4": "Alt+F4 cierra la ventana activa — elige otra combinación.",
+        "ctrl_c": "Ctrl+C es el atajo de copiar — elige otra combinación.",
+        "collision": "Se solapa con {action} ({combo}) — una pulsación activaría ambas. Elige otras teclas.",
+        "solo_nav": "Permitido — pero ten en cuenta: esta tecla también se dispara al navegar por el texto."
+      },
+      "keyboard": {
+        "legend_pressed": "Pulsada",
+        "legend_selected": "En combinación",
+        "legend_bound": "Ya usada",
+        "hint": "Pulsa teclas o haz clic en ellas para crear la combinación",
+        "reserved": "Reservada por el sistema"
+      }
     },
     "codex_title": "OpenAI Codex CLI",
     "codex_description": "Ruta manual para problemas de PATH en Windows. Vacío usa 'codex' del PATH.",
@@ -745,6 +785,7 @@
       "greeting_placeholder": "Déjalo vacío para el saludo de mayordomo de Jarvis por defecto",
       "test_connection": "Probar conexión",
       "self_test": "Autoprueba de voz",
+      "setup_script": "Script de configuración",
       "saved": "Ajustes de telefonía guardados",
       "test_ok": "Twilio accesible",
       "test_failed": "Twilio no accesible",
@@ -777,6 +818,25 @@
       "failed": "Fallida",
       "no_audio": "Sin audio"
     }
+  },
+  "telephony_setup": {
+    "title": "Configuración de telefonía",
+    "subtitle": "Guía paso a paso y scripts de configuración para la telefonía Twilio.",
+    "back": "Volver a Claves API",
+    "guide_title": "Configuración",
+    "intro": "Cómo hacer que Jarvis sea accesible por teléfono — desde el número de Twilio hasta la primera llamada.",
+    "step1_title": "Instala el extra de telefonía",
+    "step1_body": "Ejecuta `pip install \"personal-jarvis[telephony]\"` en el servidor y reinicia Jarvis. Solo necesario si el estado de arriba indica que falta el extra.",
+    "step2_title": "Crea una cuenta de Twilio",
+    "step2_body": "Regístrate en twilio.com, copia tu Account SID y Auth Token, y compra un número de teléfono con capacidad de voz.",
+    "step3_title": "Expón Jarvis públicamente",
+    "step3_body": "Twilio debe alcanzar a Jarvis por HTTPS. Ejecuta el script de túnel de abajo y pega la URL mostrada como URL base pública.",
+    "step4_title": "Apunta el webhook de Twilio a Jarvis",
+    "step4_body": "En la consola de Twilio, configura el webhook de voz de tu número con la URL de webhook mostrada abajo.",
+    "step5_title": "Introduce credenciales y prueba",
+    "step5_body": "De vuelta en la página de Claves API, introduce el Account SID, el Auth Token y el número, activa la telefonía y ejecuta \"Probar conexión\" y \"Autoprueba de voz\".",
+    "public_url": "URL base pública",
+    "webhook": "URL del webhook"
   },
   "debug_view": {
     "title": "Depuración",
@@ -834,6 +894,19 @@
   },
   "provider_switcher": {
     "loading_hint": "Cargando lista de proveedores — si sigue vacía, revisa el backend."
+  },
+  "wiki_provider": {
+    "tier_label": "Wiki (memoria a largo plazo)",
+    "description": "El Wiki de conocimiento usa un modelo dedicado para escribir y ordenar tus notas a largo plazo. Deja el proveedor en «Igual que la IA» y el modelo vacío para usar un valor predeterminado barato y rápido — o fija aquí un proveedor y un modelo concretos.",
+    "provider_label": "Proveedor del Wiki",
+    "follow_primary": "Igual que la IA (predeterminado barato)",
+    "model_label": "Modelo (opcional)",
+    "model_follow_primary": "Igual que la IA (predeterminado barato)",
+    "model_hint": "Vacío significa el modelo barato/rápido del proveedor elegido. Elige un id de modelo solo para sobrescribirlo.",
+    "apply": "Aplicar",
+    "applying": "Aplicando…",
+    "loading": "Cargando ajustes del Wiki…",
+    "load_error": "No se pudieron cargar los ajustes del proveedor del Wiki."
   },
   "cli_connect": {
     "is_connected": "{0} está conectado",

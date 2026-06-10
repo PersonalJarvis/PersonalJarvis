@@ -501,3 +501,65 @@ def test_writer_uses_provided_backup_manager(
     # Backup landed in the custom dir, not the default one.
     assert any((tmp_path / "custom-backups").glob("wiki-*.tar.gz"))
     assert not (tmp_path / "default-backups").exists()
+
+
+# ---------------------------------------------------------------------------
+# AP-2 — secret/PII write guard
+# ---------------------------------------------------------------------------
+
+
+def test_body_with_api_key_is_blocked(
+    writer: AtomicWriter, vault_root: Path, fake_repo: FakePageRepository
+) -> None:
+    """A create whose body carries an API-key shape is refused at write time.
+
+    The page never lands on disk, surfaces in ``WriteResult.blocked_pii``,
+    and the ``wiki_writes_blocked_pii`` counter increments (AP-2).
+    """
+    from jarvis.memory.wiki.telemetry import telemetry
+
+    before = telemetry.get("wiki_writes_blocked_pii")
+    target = vault_root / "entities" / "leaky.md"
+    secret_body = _valid_entity_body(
+        "leaky",
+        body="the deploy key is sk-proj-AbCdEf0123456789AbCdEf0123456789",
+    )
+    update = PageUpdate(
+        target_path=target,
+        operation="create",
+        new_body=secret_body,
+        reason="should be blocked",
+    )
+
+    result = asyncio.run(writer.apply([update], repo=fake_repo))
+
+    assert result.blocked_pii == [target.resolve()]
+    assert result.applied == []
+    assert result.failed_validation == []
+    # The page never reached disk.
+    assert not target.exists()
+    # No backup is taken when nothing survives to the write step.
+    assert result.backup_path == Path()
+    # Telemetry counter advanced by exactly one.
+    assert telemetry.get("wiki_writes_blocked_pii") == before + 1
+
+
+def test_clean_body_passes_the_guard(
+    writer: AtomicWriter, vault_root: Path, fake_repo: FakePageRepository
+) -> None:
+    """An ordinary body with no credential shape is written normally."""
+    target = vault_root / "entities" / "clean.md"
+    update = PageUpdate(
+        target_path=target,
+        operation="create",
+        new_body=_valid_entity_body(
+            "clean", body="Alex prefers a multi-provider brain."
+        ),
+        reason="normal write",
+    )
+
+    result = asyncio.run(writer.apply([update], repo=fake_repo))
+
+    assert result.applied == [target.resolve()]
+    assert result.blocked_pii == []
+    assert target.exists()

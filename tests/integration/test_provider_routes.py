@@ -386,13 +386,17 @@ def test_brain_switch_503_when_brain_missing(web_server: WebServer, secret_store
 
 
 def test_brain_switch_codex_requires_api_key(
-    server_with_brain: WebServer, secret_store: _InMemorySecretStore
+    server_with_brain: WebServer,
+    secret_store: _InMemorySecretStore,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Codex as a BRAIN needs an OpenAI API key.
+    """With NO credential (no key AND no ChatGPT login) -> 409, no switch.
 
-    The ChatGPT subscription (OAuth) only powers the Codex *subagent*; a
-    chat-completions brain cannot use it. Without a key -> 409, no switch.
+    Codex-as-brain now also works over a ChatGPT login via the slow codex-exec
+    CLI path (see ``test_brain_switch_codex_accepts_chatgpt_login``); here codex
+    is pinned to disconnected so neither path is available.
     """
+    _patch_codex_status(monkeypatch, connected=False)
     fake: _FakeBrainManager = server_with_brain.app.state.brain
     with TestClient(server_with_brain.app) as client:
         resp = client.post("/api/brain/switch", json={"provider": "codex"})

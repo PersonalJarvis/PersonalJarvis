@@ -44,10 +44,13 @@ def test_other_providers_route_subjarvis(provider: str) -> None:
     assert _select_subagent_worker_kind(provider, "gemini-3.1-pro") == "subjarvis"
 
 
-def test_gemini_as_subagent_provider_uses_openclaw_not_api_worker() -> None:
-    """Choosing 'gemini' as the subagent provider routes through OpenClaw
-    (SubJarvisWorker), NOT the direct GeminiWorker API path."""
-    assert _select_subagent_worker_kind("gemini", "") == "subjarvis"
+def test_gemini_as_subagent_provider_uses_direct_gemini_worker() -> None:
+    """Post-Welle-4: explicitly choosing 'gemini' routes to the direct
+    GeminiWorker so the sub-agent actually RUNS on Gemini. The OpenClaw path it
+    used to take was removed, so without this it silently ran on Claude. This is
+    an EXPLICIT selection, NOT the anti-silent-Gemini fallback case."""
+    assert _select_subagent_worker_kind("gemini", "") == "gemini"
+    assert _select_subagent_worker_kind("gemini", "claude-opus-4-8") == "gemini"
 
 
 # --- Legacy fallback: gemini worker ONLY when NOTHING is configured ------

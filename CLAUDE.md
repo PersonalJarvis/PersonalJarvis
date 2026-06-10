@@ -4,6 +4,22 @@ Guidance for OpenClaw (claude.ai/code) and any sub-agent working in this reposit
 
 ---
 
+## ⚠️ THE GitHub repository (read BEFORE any push — recurring confusion, settled 2026-06-09)
+
+There are TWO GitHub repos and sessions keep mixing them up. This is the truth table — case-sensitive on the **second** path segment:
+
+| Repo | Role | Who writes to it |
+|---|---|---|
+| **`PersonalJarvis/PersonalJarvis`** (PascalCase) | **THE project.** The one public-facing flagship repo the maintainer means when they say "the GitHub repo", "veröffentliche", "push it", "sichere den Stand", "update GitHub". | **ONLY** the `ship-public-release` skill (depersonalized snapshot — never raw `git push`, never secrets/PII/`data/`/Vault). |
+| `PersonalJarvis/personal-jarvis` (lowercase, remote `origin`) | Private **backstage**: raw dev history, branches, maintainer identity, day-to-day commits. | Dev sessions, as infrastructure. It is NOT "the project" the maintainer talks about. |
+
+**Binding rules:**
+1. When the maintainer asks to save/publish/push their work to GitHub, the user-visible deliverable is an updated **`PersonalJarvis/PersonalJarvis`** via the `ship-public-release` skill. Never ask "which repo". A raw-work push to `origin` may happen *in addition* (dev safety net), but it does not fulfill the request by itself.
+2. Never `git push` raw working state to `PersonalJarvis/PersonalJarvis`. That repo only ever receives the scrubbed release snapshot.
+3. Full doctrine + history: [`CLOUD.md`](CLOUD.md) § "Canonical repositories" (points 1–5).
+
+---
+
 ## Output Language Policy (HIGHEST PRIORITY)
 
 **Every artifact an agent produces in this repo is English.** No exceptions.

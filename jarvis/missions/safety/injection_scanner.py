@@ -15,11 +15,11 @@ Pattern sources:
 """
 from __future__ import annotations
 
+import json
 import re
 from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict
-
 
 InjectionSeverity = Literal["low", "med", "high", "critical"]
 InjectionWhere = Literal["diff", "log", "stdout", "prompt"]
@@ -205,11 +205,78 @@ def has_high_severity(detections: list[InjectionDetection]) -> bool:
     return any(d.severity in ("high", "critical") for d in detections)
 
 
+def extract_worker_authored_text(stream_text: str) -> str:
+    """Reduce a stream.jsonl transcript to the text the worker AUTHORED.
+
+    The injection scan exists to catch a worker that *does* something
+    malicious — runs a destructive command, leaks a secret in its prose,
+    writes an exfil call. What the world hands BACK to the worker (file
+    contents returned by read commands, tool_result blocks) is input,
+    not output: a worker that reads its own repo's safety blacklist or
+    a doc explaining `rm -rf /` has not authored an attack.
+
+    Live mission 019eadaf-272d (2026-06-09) proved the failure mode:
+    after 20 minutes of work and a clean 30 KB diff, the worker was
+    killed via WorkerKilled(injection_detected) because the raw
+    stream.jsonl contained `rm -rf /` (from jarvis.toml.example's own
+    safety blacklist, read via Get-Content), `OPENAI_API_KEY=...` (a
+    wizard docstring) and `fetch('/api/secret...')` (frontend code) —
+    all of them rg/Get-Content OUTPUT, none of them worker-authored.
+
+    Strategy: targeted EXCLUSION of the two known world->worker input
+    channels, keep everything else scannable (fail-closed on format
+    drift — an unknown event format degrades to a possible false
+    positive, never to a missed attack):
+
+    - Codex `item.*` / `command_execution`: drop `aggregated_output`
+      (the read result), keep `command` (what the worker wants to run).
+      Other item types (e.g. `agent_message` — the worker's own prose)
+      pass through unmodified: they are worker-authored and must remain
+      scannable.
+    - Claude `user` events: drop the whole line (tool_result blocks).
+      The worker's own commands stay scannable via the `tool_use`
+      inputs inside `assistant` events.
+    - Non-JSON lines (plain CLI stdout) and every other event type:
+      kept verbatim.
+    """
+    if not stream_text:
+        return ""
+    out_lines: list[str] = []
+    for line in stream_text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            obj = json.loads(stripped)
+        except json.JSONDecodeError:
+            out_lines.append(line)
+            continue
+        if not isinstance(obj, dict):
+            out_lines.append(line)
+            continue
+        type_ = obj.get("type")
+        if isinstance(type_, str) and type_.startswith("item"):
+            item = obj.get("item")
+            if isinstance(item, dict) and item.get("type") == "command_execution":
+                redacted = {
+                    k: v for k, v in item.items() if k != "aggregated_output"
+                }
+                out_lines.append(json.dumps(redacted, ensure_ascii=False))
+                continue
+            out_lines.append(line)
+            continue
+        if type_ == "user":
+            continue
+        out_lines.append(line)
+    return "\n".join(out_lines)
+
+
 __all__ = [
     "INJECTION_PATTERNS",
     "InjectionDetection",
     "InjectionSeverity",
     "InjectionWhere",
+    "extract_worker_authored_text",
     "has_high_severity",
     "scan",
 ]

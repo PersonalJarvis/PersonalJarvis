@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any, Literal
 
 log = logging.getLogger(__name__)
@@ -190,6 +191,33 @@ def _needs_vision_engine(*, per_turn_vision: bool, cu_enabled: bool) -> bool:
     previously gated on the single ``[brain.router.vision].enabled`` flag.
     """
     return per_turn_vision or cu_enabled
+
+
+def _resolve_wiki_vault_root(config: Any) -> Path:
+    """Resolve the wiki vault root for the router-tier context injector.
+
+    Reads ``config.wiki_integration.vault_root`` — the SAME field every
+    other wiki consumer uses (``wiki_recall._build_search_instance``,
+    ``wiki_routes._resolve_vault_root``). Falls back to the standard
+    ``<project>/wiki/obsidian-vault`` path only as a last resort when the
+    config has no ``wiki_integration`` section (older config) or its value
+    is empty.
+
+    Historical bug: this previously read ``config.memory.vault_root``,
+    a field that never existed on ``MemoryConfig`` — so it always
+    resolved to ``None`` and a user's ``[wiki_integration].vault_root``
+    was silently ignored on the voice path.
+    """
+    from jarvis.core import config as cfg
+
+    raw = getattr(getattr(config, "wiki_integration", None), "vault_root", None)
+    if raw is None or str(raw).strip() == "":
+        # Last-resort default: the standard in-repo vault location.
+        return cfg.PROJECT_ROOT / "wiki" / "obsidian-vault"
+    path = Path(raw)
+    if not path.is_absolute():
+        path = (cfg.PROJECT_ROOT / path)
+    return path
 
 
 def _load_tools_for_tier(
@@ -1013,14 +1041,11 @@ def _phase2_full_brain(
                 from jarvis.brain.wiki_context import WikiContextInjector
                 from jarvis.memory.wiki.search import VaultSearch
 
-                vault_root = getattr(
-                    getattr(config, "memory", None), "vault_root", None
-                )
-                if vault_root is None:
-                    # Fallback: look for a standard wiki vault path
-                    vault_root = cfg.PROJECT_ROOT / "wiki" / "obsidian-vault"
-                from pathlib import Path
-                vault_path = Path(vault_root) if not hasattr(vault_root, "exists") else vault_root
+                # Resolve the vault from [wiki_integration].vault_root — the
+                # single source of truth shared with wiki-recall / wiki-page-read
+                # / wiki_routes. The hardcoded project path is the last-resort
+                # fallback only (see _resolve_wiki_vault_root).
+                vault_path = _resolve_wiki_vault_root(config)
                 search = VaultSearch(vault_path)
                 manager._wiki_injector = WikiContextInjector(
                     search=search,

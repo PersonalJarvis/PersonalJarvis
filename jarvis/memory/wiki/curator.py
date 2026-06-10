@@ -41,6 +41,13 @@ from .protocols import (
     VaultIndex,
     WriteResult,
 )
+from .session_links import (
+    _WIKILINK_RE,
+    SlugIndex,
+    rewrite_body_links,
+    strip_dangling_wikilinks,
+)
+from .telemetry import telemetry
 
 log = logging.getLogger(__name__)
 
@@ -166,6 +173,13 @@ class WikiCurator:
             )
             return _empty_result(self._writer.backup_manager.backup_dir)
 
+        # ----- 1b. enforce the schema's create-or-refuse link rule -----
+        # schema.md:148 — a [[wikilink]] that resolves to no existing page
+        # (or no page created in THIS same batch) must be demoted to plain
+        # text, never left dangling. Deterministic, regex only, no LLM,
+        # no I/O — mirrors the session-rollup post-pass.
+        updates = self._demote_dangling_links(updates)
+
         # ----- 2. hand the proposal to the writer ----------------------
         # The writer takes the snapshot, applies each update via
         # tempfile+rename, re-validates each written page through repo,
@@ -223,6 +237,81 @@ class WikiCurator:
             rename_from=rename_from,
             reason=upd.reason,
         )
+
+    def _demote_dangling_links(
+        self, updates: list[PageUpdate]
+    ) -> list[PageUpdate]:
+        """Rewrite each update's body so no ``[[wikilink]]`` is left dangling.
+
+        For every update, strips token-truncated ``[[`` fragments and then
+        canonicalises resolvable links / demotes unresolvable ones to plain
+        text (``session_links.rewrite_body_links``). "Resolvable" means the
+        target maps to an existing durable vault page OR to a page being
+        created/renamed in THIS same batch — the schema's "create the
+        missing page during the same ingest" arm of the rule. Returns a new
+        list of ``PageUpdate`` objects with cleaned bodies; updates whose
+        body did not change are passed through unmodified. Increments
+        ``wiki_links_refused_dangling`` once per demoted link.
+
+        Pure: regex only, no LLM call, no disk write (AP-9/AP-11).
+        """
+        index = self._build_batch_slug_index(updates)
+        cleaned: list[PageUpdate] = []
+        for upd in updates:
+            before_links = len(_WIKILINK_RE.findall(upd.new_body))
+            body = strip_dangling_wikilinks(upd.new_body)
+            body, _resolved = rewrite_body_links(body, index)
+            # Every closed link either survived as [[...]] (resolved) or was
+            # demoted to plain text; the difference is the refusal count.
+            after_links = len(_WIKILINK_RE.findall(body))
+            refused = before_links - after_links
+            if refused > 0:
+                telemetry.inc("wiki_links_refused_dangling", refused)
+            if body == upd.new_body:
+                cleaned.append(upd)
+                continue
+            cleaned.append(
+                PageUpdate(
+                    target_path=upd.target_path,
+                    operation=upd.operation,
+                    new_body=body,
+                    rename_from=upd.rename_from,
+                    reason=upd.reason,
+                )
+            )
+        return cleaned
+
+    def _build_batch_slug_index(self, updates: list[PageUpdate]) -> SlugIndex:
+        """Build a :class:`SlugIndex` of every page a link may resolve to.
+
+        Combines (a) the durable pages already on disk
+        (``entities/`` ``concepts/`` ``projects/`` ``sessions/``) with
+        (b) the slugs of pages this batch creates or renames into existence,
+        so a sibling page born in the same ingest counts as "existing" and
+        its link is preserved rather than refused. Slug is the filename stem
+        relative to the vault root; the directory is its first path segment.
+        """
+        pages: list[tuple[str, str, list[str]]] = []
+        for directory in ("entities", "concepts", "projects", "sessions"):
+            page_dir = self._vault_root / directory
+            if not page_dir.is_dir():
+                continue
+            for md_path in sorted(page_dir.glob("*.md")):
+                if md_path.name.startswith("."):
+                    continue
+                pages.append((directory, md_path.stem, []))
+        # Same-batch creations/renames resolve as if they already exist.
+        for upd in updates:
+            if upd.operation not in ("create", "rename"):
+                continue
+            try:
+                rel = upd.target_path.resolve().relative_to(self._vault_root)
+            except ValueError:
+                continue
+            parts = rel.with_suffix("").parts
+            if len(parts) >= 2:
+                pages.append((parts[0], parts[-1], []))
+        return SlugIndex.from_pages(pages)
 
     def _summarise(
         self,

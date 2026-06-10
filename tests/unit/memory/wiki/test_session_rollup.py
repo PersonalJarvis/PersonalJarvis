@@ -131,6 +131,12 @@ async def worker_stack(tmp_path: Path):
         clock=lambda: clock_holder[0],
     )
 
+    # D2 (2026-06): the awareness-episode session-page feed is retired and
+    # gated off by default (wiki_write_enabled=False). These tests exercise
+    # the legacy write machinery itself, so they opt back in explicitly.
+    # The default-off behaviour is pinned by test_d2_no_session_page_feed.py.
+    worker._cfg = worker._cfg.model_copy(update={"wiki_write_enabled": True})  # noqa: SLF001
+
     # Replace the brain provider so we never hit the network. The fake
     # always streams a fixed paragraph as a BrainDelta sequence — same
     # shape as a real provider's async generator.

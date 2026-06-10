@@ -140,6 +140,17 @@ class SileroEndpointer:
         peak_speech_rms = 0.0
         last_probe_frame = 0
         self._endpoint_requested = False
+        # True after a ``max_utterance`` forced cut until the NEXT yield. The
+        # consumer buffered that fragment and waits for another endpoint to
+        # finalize it — but a regular silence endpoint only exists inside an
+        # active speech phase. If the user finished their sentence right
+        # inside the capped window (or only a false-start blip follows), no
+        # endpoint would ever fire again and the buffered turn would hang
+        # forever ("Jarvis listens forever", 2026-06-09). While pending,
+        # ``silence_ms`` of idle silence yields an empty tail with reason
+        # ``silence`` so the consumer flushes its carry.
+        tail_pending = False
+        tail_silent_run = 0
 
         async for chunk in chunks:
             samples = pcm_bytes_to_np(chunk.pcm)
@@ -179,6 +190,7 @@ class SileroEndpointer:
                         active_frames.append(frame)
                         speaking = True
                         silent_run = 0
+                        tail_silent_run = 0
                         total_frames = len(active_frames)
                         speech_frames = 1
                         peak_speech_rms = rms
@@ -189,6 +201,19 @@ class SileroEndpointer:
                             rms,
                             self._threshold,
                         )
+                    elif tail_pending:
+                        tail_silent_run += 1
+                        if tail_silent_run >= self._silence_frames:
+                            tail_pending = False
+                            tail_silent_run = 0
+                            self._notify(self._on_endpoint, VAD_REASON_SILENCE)
+                            log.info(
+                                "VAD tail flush: %d ms of silence after a "
+                                "forced cut — yielding empty tail so the "
+                                "buffered utterance finalizes.",
+                                self._silence_frames * 32,
+                            )
+                            yield b""
                 else:
                     active_frames.append(frame)
                     total_frames += 1
@@ -293,6 +318,11 @@ class SileroEndpointer:
                                 speech_frames * 32,
                                 silent_run * 32,
                             )
+                            # A forced cut arms the tail flush; any natural
+                            # yield clears it (the carry was finalized). A
+                            # false start leaves it untouched — the carry is
+                            # still waiting.
+                            tail_pending = reason == VAD_REASON_MAX_UTTERANCE
                             yield _float32_to_int16_bytes(utterance)
                         else:
                             self._notify(self._on_endpoint, VAD_REASON_FALSE_START)
@@ -307,6 +337,7 @@ class SileroEndpointer:
                         speaking = False
                         silent_run = 0
                         resume_run = 0
+                        tail_silent_run = 0
                         total_frames = 0
                         speech_frames = 0
                         peak_speech_rms = 0.0

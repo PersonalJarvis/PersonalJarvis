@@ -160,6 +160,23 @@
     "group_earlier": "Früher",
     "resize_hint": "Zum Verändern ziehen · Doppelklick zum Zurücksetzen"
   },
+  "thinking": {
+    "label": "Denkt nach",
+    "thought_for": "Denkzeit",
+    "steps": "Schritte",
+    "earlier": "frühere Schritte",
+    "step_brain": "Überlegt",
+    "step_tool": "Nutzt Werkzeug",
+    "step_update": "Zwischenstand",
+    "step_worker": "Übergibt an Hintergrund-Worker",
+    "step_cu_observe": "Schaut auf den Bildschirm",
+    "step_cu_uia": "Liest UI-Elemente",
+    "step_cu_plan": "Plant nächste Aktion",
+    "step_cu_think": "Denkt nach",
+    "step_cu_act": "Führt Aktion aus",
+    "step_cu_verify": "Prüft Ergebnis",
+    "step_cu_settle": "Wartet auf den Bildschirm"
+  },
   "subagents_view": {
     "title": "Sub-Agents",
     "stat_active": "aktiv",
@@ -241,7 +258,12 @@
     "delete_cancel": "Abbrechen",
     "delete_confirm": "Löschen",
     "builtin_protected": "Builtin-Skill — kann nicht gelöscht werden",
-    "drag_hint": "Zum Umsortieren ziehen"
+    "drag_hint": "Zum Umsortieren ziehen",
+    "select": "Auswählen",
+    "select_all": "Alle auswählen",
+    "selected": "ausgewählt",
+    "bulk_delete_title": "Skills löschen?",
+    "bulk_delete_body": "Diese Skills werden dauerhaft entfernt:"
   },
   "sessions_view": {
     "title": "Transkription",
@@ -566,6 +588,7 @@
     "tier_tts": "Voice-Output (TTS)",
     "tier_stt": "Voice-Input (STT)",
     "tier_subagent": "Subagent (Heavy-Tasks)",
+    "tier_telephony": "Telefonie",
     "active_tooltip": "Bereits aktiv",
     "click_to_activate": "Klick aktiviert diesen Provider",
     "needs_codex": "Erst Codex verbinden oder API-Key speichern",
@@ -688,17 +711,34 @@
     },
     "keybinds": {
       "title": "Sprach-Tastenkürzel",
-      "description": "Lege die Tasten für Anruf, Auflegen und Sprechen (Push-to-Talk) fest. Klick auf Aufnehmen und drücke deine Kombination, oder setze auf Standard zurück. Änderungen greifen nach einem Neustart.",
+      "description": "Lege die Tasten für Anruf, Auflegen und Sprechen (Push-to-Talk) fest. Klick auf Aufnehmen und drücke deine Kombination — oder klick die Tasten auf der Bildschirm-Tastatur an. Änderungen greifen sofort.",
       "call_label": "Anruf (annehmen / Sprechen starten)",
       "hangup_label": "Auflegen",
       "talk_label": "Sprechen / Push-to-Talk",
       "record": "Aufnehmen",
       "stop": "Stopp",
-      "recording": "Drücke jetzt deine Tasten — mehrere gleichzeitig halten für eine Kombi (Esc zum Abbrechen)",
+      "recording": "Drücke deine Tasten…",
+      "recording_hint": "Halte die gewünschten Tasten (dann loslassen) — oder klick sie unten auf der Tastatur an. Esc bricht ab.",
       "save": "Speichern",
       "saved": "Tastenkürzel gespeichert",
       "reset": "Auf Standard zurücksetzen",
-      "restart_required": "Neustart nötig, damit es wirkt."
+      "restart_required": "Neustart nötig, damit es wirkt.",
+      "validation": {
+        "only_modifiers": "Füge eine richtige Taste hinzu — Strg/Alt/Umschalt allein können nicht auslösen.",
+        "solo_typing_key": "Diese Taste löst bei jedem Tippen aus — füge Strg/Alt/Umschalt oder eine zweite Taste hinzu. Funktionstasten (F5) und Navigationstasten (↑, Pos1) gehen auch allein.",
+        "windows_reserved": "Die Windows-Taste ist vom System reserviert — nutze stattdessen Strg, Alt oder Umschalt.",
+        "alt_f4": "Alt+F4 schließt das aktive Fenster — wähle eine andere Kombination.",
+        "ctrl_c": "Strg+C ist der Kopieren-Shortcut — wähle eine andere Kombination.",
+        "collision": "Überschneidet sich mit {action} ({combo}) — ein Tastendruck würde beides auslösen. Wähle andere Tasten.",
+        "solo_nav": "Erlaubt — aber beachte: Diese Taste löst auch beim Navigieren im Text aus."
+      },
+      "keyboard": {
+        "legend_pressed": "Gedrückt",
+        "legend_selected": "In Kombi",
+        "legend_bound": "Schon belegt",
+        "hint": "Tasten drücken oder anklicken, um die Kombi zu bauen",
+        "reserved": "Vom System reserviert"
+      }
     },
     "codex_title": "OpenAI Codex CLI",
     "codex_description": "Manueller Pfad für Windows-PATH-Probleme. Leer lassen nutzt 'codex' aus PATH.",
@@ -745,6 +785,7 @@
       "greeting_placeholder": "Leer lassen für die Jarvis-Butler-Standardbegrüßung",
       "test_connection": "Verbindung testen",
       "self_test": "Stimme selbst testen",
+      "setup_script": "Setup-Skripte",
       "saved": "Telefonie-Einstellungen gespeichert",
       "test_ok": "Twilio erreichbar",
       "test_failed": "Twilio nicht erreichbar",
@@ -777,6 +818,25 @@
       "failed": "Fehlgeschlagen",
       "no_audio": "Kein Audio"
     }
+  },
+  "telephony_setup": {
+    "title": "Telefonie-Setup",
+    "subtitle": "Schritt-für-Schritt-Anleitung und Setup-Skripte für die Twilio-Telefonie.",
+    "back": "Zurück zu den API-Keys",
+    "guide_title": "Einrichtung",
+    "intro": "So machst du Jarvis telefonierbar — von der Twilio-Nummer bis zum ersten Anruf.",
+    "step1_title": "Telefonie-Erweiterung installieren",
+    "step1_body": "Auf dem Server `pip install \"personal-jarvis[telephony]\"` ausführen und Jarvis neu starten. Nur nötig, wenn der Status oben meldet, dass die Erweiterung fehlt.",
+    "step2_title": "Twilio-Konto anlegen",
+    "step2_body": "Bei twilio.com registrieren, Account-SID und Auth-Token kopieren und eine sprachfähige Telefonnummer kaufen.",
+    "step3_title": "Jarvis öffentlich erreichbar machen",
+    "step3_body": "Twilio muss Jarvis über HTTPS erreichen. Führe das Tunnel-Skript unten aus und trag die ausgegebene URL als öffentliche Basis-URL ein.",
+    "step4_title": "Twilio-Webhook auf Jarvis zeigen lassen",
+    "step4_body": "Stell in der Twilio-Konsole den Voice-Webhook deiner Nummer auf die unten angezeigte Webhook-URL.",
+    "step5_title": "Zugangsdaten eintragen und testen",
+    "step5_body": "Zurück auf der API-Keys-Seite Account-SID, Auth-Token und Nummer eintragen, Telefonie aktivieren und „Verbindung testen\" sowie „Stimme selbst testen\" ausführen.",
+    "public_url": "Öffentliche Basis-URL",
+    "webhook": "Webhook-URL"
   },
   "debug_view": {
     "title": "Debug",
@@ -834,6 +894,19 @@
   },
   "provider_switcher": {
     "loading_hint": "Provider-Liste wird geladen — falls dauerhaft leer, prüfe das Backend."
+  },
+  "wiki_provider": {
+    "tier_label": "Wiki (Langzeitgedächtnis)",
+    "description": "Das Wissens-Wiki nutzt ein eigenes Modell, um deine Langzeit-Notizen zu schreiben und aufzuräumen. Lass den Provider auf „Wie das Brain“ und das Modell leer für einen günstigen, schnellen Standard — oder lege hier einen festen Provider und ein festes Modell fest.",
+    "provider_label": "Wiki-Provider",
+    "follow_primary": "Wie das Brain (günstiger Standard)",
+    "model_label": "Modell (optional)",
+    "model_follow_primary": "Wie das Brain (günstiger Standard)",
+    "model_hint": "Leer bedeutet das günstige/schnelle Modell des gewählten Providers. Wähle nur dann eine Modell-ID, wenn du es überschreiben willst.",
+    "apply": "Übernehmen",
+    "applying": "Übernehme…",
+    "loading": "Wiki-Einstellungen werden geladen…",
+    "load_error": "Konnte die Wiki-Provider-Einstellungen nicht laden."
   },
   "cli_connect": {
     "is_connected": "{0} ist verbunden",

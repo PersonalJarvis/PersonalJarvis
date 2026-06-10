@@ -1,5 +1,11 @@
 import { create } from "zustand";
 import type { MessageRole } from "@/types/messages";
+import {
+  finalizeThinkingSteps,
+  reduceThinkingSteps,
+  type ThinkingStep,
+  type ThinkingTraceSnapshot,
+} from "@/lib/thinkingSteps";
 
 export type VoiceState = "idle" | "listening" | "thinking" | "speaking" | "error";
 
@@ -21,6 +27,7 @@ export type SectionId =
   | "apikeys"
   | "settings"
   | "telephony"
+  | "telephony-setup"
   | "debug"
   | "outputs"
   | "socials"
@@ -45,6 +52,7 @@ export const SECTION_IDS = [
   "apikeys",
   "settings",
   "telephony",
+  "telephony-setup",
   "debug",
   "outputs",
   "socials",
@@ -74,6 +82,7 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   apikeys: "API-Keys",
   settings: "Einstellungen",
   telephony: "Telefonie",
+  "telephony-setup": "Telefonie-Setup",
   debug: "Debug",
   outputs: "Outputs",
   socials: "Socials",
@@ -162,6 +171,16 @@ interface EventStore {
   // bzw. 60s-Timeout) setzt zurueck. Bewusst getrennt vom globalen voiceState,
   // weil der auch durch Voice-Pipeline-Turns gesetzt wird (kein Text-Chat-Wait).
   chatThinking: boolean;
+  // Live reasoning trace rendered inside the ThinkingTrace card. Steps are
+  // ingested from WS events ONLY while chatThinking is true (voice turns in
+  // the background must not paint ghost steps into the text chat).
+  thinkingSteps: ThinkingStep[];
+  // Wall-clock ms when the current thinking phase began (drives the live
+  // elapsed timer in the card header). Null when idle.
+  thinkingStartedTs: number | null;
+  // Finished traces keyed by the assistant message id that ended the turn —
+  // renders as the collapsible "Thought for Xs" disclosure above the reply.
+  thinkingTraces: Record<string, ThinkingTraceSnapshot>;
   brainProvider: string;
   // Chat mic-dictation (transcribe-only). ``dictating`` is true while the mic
   // session runs; ``dictationText`` is the live interim tail (overwritten by
@@ -195,6 +214,10 @@ interface EventStore {
    *  conversation is unsaved or a (read-only) voice session. */
   ensureActiveThread: () => Promise<string>;
   setChatThinking: (thinking: boolean) => void;
+  /** Feed one WS event into the live reasoning trace (no-op while idle). */
+  ingestThinkingEvent: (name: string, payload: unknown, tsMs: number) => void;
+  /** Turn ended with an assistant reply: snapshot the trace onto that message. */
+  finishThinking: (messageId: string) => void;
   setBrainProvider: (p: string) => void;
   setDictating: (b: boolean) => void;
   setDictationInterim: (text: string) => void;
@@ -207,6 +230,9 @@ interface EventStore {
 const MAX_EVENTS = 500;
 const MAX_MESSAGES = 200;
 const TOAST_TTL_MS = 3500;
+// Finished reasoning traces are per-message UI sugar, not history — cap the
+// map so a long session cannot grow it unbounded (insertion order = age).
+const MAX_TRACES = 24;
 
 export const useEventStore = create<EventStore>((set, get) => ({
   events: [],
@@ -221,6 +247,9 @@ export const useEventStore = create<EventStore>((set, get) => ({
   activeThreadId: null,
   activeKind: "text",
   chatThinking: false,
+  thinkingSteps: [],
+  thinkingStartedTs: null,
+  thinkingTraces: {},
   brainProvider: "unknown",
   dictating: false,
   dictationText: "",
@@ -298,7 +327,49 @@ export const useEventStore = create<EventStore>((set, get) => ({
     return data.id;
   },
 
-  setChatThinking: (thinking) => set({ chatThinking: thinking }),
+  setChatThinking: (thinking) =>
+    set(
+      thinking
+        ? // New turn: arm the live trace. A re-send while already thinking
+          // restarts the trace — the old steps belonged to the superseded turn.
+          { chatThinking: true, thinkingSteps: [], thinkingStartedTs: Date.now() }
+        : // Timeout / brain error: discard the live trace without a snapshot.
+          { chatThinking: false, thinkingSteps: [], thinkingStartedTs: null },
+    ),
+
+  ingestThinkingEvent: (name, payload, tsMs) => {
+    const { chatThinking, thinkingSteps } = get();
+    if (!chatThinking) return;
+    const next = reduceThinkingSteps(thinkingSteps, name, payload, tsMs);
+    if (next) set({ thinkingSteps: next });
+  },
+
+  finishThinking: (messageId) => {
+    const { chatThinking, thinkingSteps, thinkingStartedTs, thinkingTraces } = get();
+    if (!chatThinking) return;
+    const now = Date.now();
+    const idle = {
+      chatThinking: false,
+      thinkingSteps: [] as ThinkingStep[],
+      thinkingStartedTs: null,
+    };
+    // Fast turns with zero observed steps get no disclosure — a "Thought for
+    // 0.4s · 0 steps" row on every smalltalk reply would be pure noise.
+    if (thinkingSteps.length === 0) {
+      set(idle);
+      return;
+    }
+    const snapshot: ThinkingTraceSnapshot = {
+      steps: finalizeThinkingSteps(thinkingSteps, now),
+      durationMs: Math.max(0, now - (thinkingStartedTs ?? now)),
+    };
+    const traces = { ...thinkingTraces, [messageId]: snapshot };
+    const keys = Object.keys(traces);
+    if (keys.length > MAX_TRACES) {
+      for (const k of keys.slice(0, keys.length - MAX_TRACES)) delete traces[k];
+    }
+    set({ ...idle, thinkingTraces: traces });
+  },
 
   setBrainProvider: (p) => set({ brainProvider: p }),
 

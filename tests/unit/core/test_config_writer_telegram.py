@@ -11,6 +11,7 @@ import pytest
 from jarvis.core.config_writer import (
     add_telegram_allowed_user_id,
     set_telegram_enabled,
+    set_telegram_pairing,
 )
 
 
@@ -70,3 +71,14 @@ def test_add_allowed_user_id_is_idempotent(tmp_path):
 
     data = tomllib.loads(cfg.read_text(encoding="utf-8"))
     assert data["integrations"]["telegram"]["allowed_user_ids"] == [12345, 67890]
+
+
+def test_set_telegram_pairing_writes_flag(tmp_path):
+    cfg = tmp_path / "jarvis.toml"
+    cfg.write_text("[integrations.telegram]\nenabled = true\n", encoding="utf-8")
+
+    set_telegram_pairing(False, path=cfg)
+
+    data = tomllib.loads(cfg.read_text(encoding="utf-8"))
+    assert data["integrations"]["telegram"]["pair_on_first_private_message"] is False
+    assert data["integrations"]["telegram"]["enabled"] is True

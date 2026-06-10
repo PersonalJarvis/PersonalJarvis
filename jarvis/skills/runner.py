@@ -128,6 +128,18 @@ class SkillRunner:
             log.warning("jinja render failed for %s: %s", skill.name, exc)
             return skill.body
 
+    def render_instructions(
+        self, skill: Skill, *, args: dict[str, Any] | None = None
+    ) -> str:
+        """Render the skill body as instructions for the brain (AD-S1).
+
+        Instruction-skill model (2026-06-09 rebuild): the rendered body is
+        returned verbatim for the LLM to follow with its own tools — no
+        ``TOOL:`` line is executed here. Jinja context matches :meth:`render`
+        (``config``, time vars) plus the caller-supplied ``args``.
+        """
+        return self.render(skill, extra_context=dict(args or {}))
+
     # ------------------------------------------------------------------
     # Tool-Call-Extraction
     # ------------------------------------------------------------------
@@ -240,6 +252,7 @@ class SkillRunner:
         rendered = self.render(skill, extra_context=args)
         calls = self.extract_tool_calls(rendered)
         steps: list[dict[str, Any]] = []
+        unresolved_tools: list[str] = []
 
         for idx, (tool_name, tool_args) in enumerate(calls):
             allowed, reason = self._check_risk(skill, tool_name)
@@ -282,6 +295,7 @@ class SkillRunner:
 
             tool_obj = await self._resolve_tool(tool_name)
             if tool_obj is None:
+                unresolved_tools.append(tool_name)
                 step = {
                     "tool": tool_name,
                     "args": tool_args,
@@ -345,6 +359,18 @@ class SkillRunner:
 
         duration_ms = int((time.monotonic() - t_start) * 1000)
         overall_success = all(s["success"] for s in steps) if steps else True
+        # Honest failure detail (AD-S6): name the tools that could not be
+        # resolved instead of the generic "step failure" — this was the
+        # silent-no-op signature of the pre-rebuild builtins (fictional
+        # MCP tool names skipped one by one).
+        failure_error: str | None = None
+        if not overall_success:
+            if unresolved_tools:
+                failure_error = (
+                    "unresolvable tools: " + ", ".join(unresolved_tools)
+                )
+            else:
+                failure_error = "step failure"
         if overall_success:
             await self._publish(
                 SkillCompleted(
@@ -361,7 +387,7 @@ class SkillRunner:
                     trace_id=trace_id,
                     source_layer="skills",
                     skill_name=skill.name,
-                    error="one or more steps failed",
+                    error=failure_error or "one or more steps failed",
                 )
             )
         return SkillResult(
@@ -369,6 +395,6 @@ class SkillRunner:
             success=overall_success,
             steps=tuple(steps),
             rendered_body=rendered,
-            error=None if overall_success else "step failure",
+            error=failure_error,
             duration_ms=duration_ms,
         )

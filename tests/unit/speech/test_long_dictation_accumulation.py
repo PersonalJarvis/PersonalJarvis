@@ -137,6 +137,40 @@ async def test_stt_stable_also_finalizes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_empty_tail_flush_finalizes_carry() -> None:
+    """Contract for the VAD tail flush (2026-06-09 "listens forever" fix):
+    after a forced cut the VAD yields an EMPTY pcm with reason ``silence``
+    when the user never resumes speaking — that empty flush must finalize
+    the buffered carry as the turn."""
+    stt = RecordingSTT()
+    pipe, _states = _make_pipeline(stt)
+
+    pipe._last_endpoint_reason = "max_utterance"
+    await pipe._handle_utterance(b"AAAA")
+    pipe._last_endpoint_reason = "silence"
+    await pipe._handle_utterance(b"")
+
+    assert stt.calls == [b"AAAA"]
+    assert bytes(pipe._carry_pcm) == b""
+
+
+@pytest.mark.asyncio
+async def test_empty_flush_without_carry_skips_stt() -> None:
+    """An empty tail flush with nothing buffered (e.g. the runaway guard
+    already finalized the carry) must not waste an STT round-trip on zero
+    bytes of audio — just keep listening."""
+    stt = RecordingSTT()
+    pipe, states = _make_pipeline(stt)
+
+    pipe._last_endpoint_reason = "silence"
+    keep_going = await pipe._handle_utterance(b"")
+
+    assert keep_going is True
+    assert stt.calls == []
+    assert states and states[-1] is TurnTakingState.LISTENING
+
+
+@pytest.mark.asyncio
 async def test_runaway_guard_finalizes_even_on_forced_cut(monkeypatch) -> None:
     stt = RecordingSTT()
     pipe, _states = _make_pipeline(stt)

@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -314,13 +315,25 @@ async def list_outputs(request: Request) -> dict[str, Any]:
             summary["utterance"] = (
                 summary["utterance"] or mission_row.get("prompt")
             )
-            if mission_row["updated_ms"]:
+            # Running missions tick wall-clock from created_ms: right after
+            # dispatch created_ms == updated_ms, so updated-minus-created
+            # rendered a frozen "RUNNING 0.0s" until the next mission event
+            # (live mission 019eae15-5a31). The frontend polls every 3 s,
+            # so now-minus-created ticks without a client-side timer. A
+            # still-running mission also has no completion timestamp —
+            # the card then falls back to started_at for its time label.
+            running = status == "running"
+            if mission_row["updated_ms"] and not running:
                 summary["completed_at"] = mission_row["updated_ms"] / 1000.0
-            if mission_row["created_ms"] and mission_row["updated_ms"]:
-                summary["duration_s"] = max(
-                    0.0,
-                    (mission_row["updated_ms"] - mission_row["created_ms"]) / 1000.0,
+            if mission_row["created_ms"]:
+                end_ms = (
+                    time.time() * 1000.0 if running else mission_row["updated_ms"]
                 )
+                if end_ms:
+                    summary["duration_s"] = max(
+                        0.0,
+                        (end_ms - mission_row["created_ms"]) / 1000.0,
+                    )
         sessions.append(summary)
 
     return {"sessions": sessions}

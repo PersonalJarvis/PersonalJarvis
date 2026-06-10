@@ -563,6 +563,15 @@ class ToolUseLoop:
                         "output": result.output,
                         "error": result.error,
                     }
+                    # Record a tool that ACTUALLY ran (success only) so consumers
+                    # can tell a real side effect from a merely-requested or
+                    # guard-blocked call. The guard branches above never reach
+                    # here, so a blocked computer_use / open_app is correctly
+                    # absent — this is what keeps the voice pipeline from speaking
+                    # "Erledigt." for a desktop action that did not happen
+                    # (2026-06-09).
+                    if result.success:
+                        final_agg.executed_tool_names.add(tool_name)
                     # suppress_response=True: tool provides its own final response,
                     # the second brain iteration is skipped (fix for 1-3 s stall
                     # after fire-and-forget tool calls like spawn_worker).

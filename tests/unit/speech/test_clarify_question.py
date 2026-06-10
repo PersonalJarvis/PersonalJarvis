@@ -29,7 +29,11 @@ import pytest
 
 from jarvis.core.config import VoiceConfig
 from jarvis.speech.continuation_buffer import ContinuationBuffer
-from jarvis.speech.pipeline import SpeechPipeline, TurnTakingState
+from jarvis.speech.pipeline import (
+    _CLARIFY_QUESTION_PHRASE,
+    SpeechPipeline,
+    TurnTakingState,
+)
 
 
 def _make_pipe(
@@ -73,9 +77,15 @@ def _make_pipe(
 
 def test_voice_config_has_clarify_defaults() -> None:
     cfg = VoiceConfig()
-    # User-mandated 2026-06-08: ask a clarifying question instead of silently
-    # dropping an abandoned incomplete fragment.
-    assert cfg.clarify_incomplete_enabled is True
+    # User-mandated 2026-06-09 (REVERSES the 2026-06-08 opt-in): the maintainer
+    # was constantly interrogated with "Wie meinst du das genau?" because every
+    # empty brain turn (Gemini function_call without narration / Codex CLI
+    # timing out on the voice path) fell through to the clarifying question. The
+    # original "Jarvis hört für immer zu" cause was the watchdog stale-counter
+    # (BUG-032), fixed separately — so the clarify question lost its only real
+    # purpose and now just blames the user for a brain glitch. Shipped default
+    # is OFF; the feature stays available as an explicit opt-in.
+    assert cfg.clarify_incomplete_enabled is False
     assert cfg.clarify_after_ms == 2500
 
 
@@ -173,19 +183,33 @@ async def test_disabled_flag_keeps_the_old_silent_behaviour() -> None:
 
 
 class _FakeBrain:
-    def __init__(self, *, failed: bool, suppressed: bool) -> None:
+    def __init__(
+        self,
+        *,
+        failed: bool,
+        suppressed: bool,
+        executed_action: bool = False,
+    ) -> None:
         self._last_turn_all_failed = failed
         self._last_turn_suppressed = suppressed
+        # Live bug 2026-06-09: the router brain ran a desktop-action tool
+        # (computer_use → opened Chrome) but produced no narration. This flag
+        # lets the pipeline distinguish a SUCCESSFUL wordless action from a
+        # genuinely empty/confused turn.
+        self._last_turn_executed_action_tool = executed_action
 
 
 def _make_silent_pipe(
     *,
     failed: bool = False,
     suppressed: bool = False,
+    executed_action: bool = False,
     enabled: bool = True,
 ) -> SpeechPipeline:
     pipe = SpeechPipeline.__new__(SpeechPipeline)
-    pipe._brain = _FakeBrain(failed=failed, suppressed=suppressed)
+    pipe._brain = _FakeBrain(
+        failed=failed, suppressed=suppressed, executed_action=executed_action
+    )
 
     voice_cfg = MagicMock()
     voice_cfg.clarify_incomplete_enabled = enabled
@@ -219,6 +243,65 @@ async def test_empty_non_spawn_turn_speaks_a_clarifying_question() -> None:
     assert text.strip().endswith("?")
     assert lang == "de"
     assert TurnTakingState.JARVIS_SPEAKING in pipe._state_history
+
+
+@pytest.mark.asyncio
+async def test_successful_action_turn_speaks_confirmation_not_clarify() -> None:
+    # Live bug 2026-06-09 (data/jarvis_desktop.log 16:27): the router brain
+    # (Gemini) emitted a function_call to `computer_use`, the CU loop opened
+    # Chrome ([cu] step 1.1 open_app chrome → step 2 done), but Gemini produced
+    # NO narration text. `_handle_silent_brain_turn` then spoke the clarifying
+    # question "Wie meinst du das genau?" — making a SUCCESSFUL desktop action
+    # look like incomprehension ("er checkt das nicht"). A turn that executed a
+    # desktop-action tool must speak a positive CONFIRMATION, never the clarify
+    # question.
+    pipe = _make_silent_pipe(failed=False, suppressed=False, executed_action=True)
+    await pipe._handle_silent_brain_turn("de", "kannst du chrome oeffnen")
+    assert len(pipe._spoken) == 1, pipe._spoken
+    text, lang = pipe._spoken[0]
+    assert lang == "de"
+    # NOT the clarifying question.
+    assert not text.strip().endswith("?"), text
+    assert text != _CLARIFY_QUESTION_PHRASE["de"], text
+    # It actually spoke (so the user hears the action landed).
+    assert TurnTakingState.JARVIS_SPEAKING in pipe._state_history
+
+
+@pytest.mark.asyncio
+async def test_successful_action_turn_confirmation_is_english() -> None:
+    pipe = _make_silent_pipe(failed=False, suppressed=False, executed_action=True)
+    await pipe._handle_silent_brain_turn("en", "can you open chrome")
+    assert len(pipe._spoken) == 1, pipe._spoken
+    text, lang = pipe._spoken[0]
+    assert lang == "en"
+    assert not text.strip().endswith("?"), text
+    assert text != _CLARIFY_QUESTION_PHRASE["en"], text
+
+
+@pytest.mark.asyncio
+async def test_action_confirmation_fires_even_when_clarify_disabled() -> None:
+    # The success confirmation is an AD-OE6 action ack, not a clarifying
+    # question — turning OFF clarifying questions must NOT silence the
+    # "your action landed" feedback.
+    pipe = _make_silent_pipe(
+        failed=False, suppressed=False, executed_action=True, enabled=False
+    )
+    await pipe._handle_silent_brain_turn("de", "mach mir spotify auf")
+    assert len(pipe._spoken) == 1, pipe._spoken
+    text, _lang = pipe._spoken[0]
+    assert not text.strip().endswith("?"), text
+
+
+@pytest.mark.asyncio
+async def test_empty_turn_without_action_still_clarifies() -> None:
+    # Regression guard: a genuinely empty, NON-action turn (no desktop tool ran)
+    # MUST still ask the clarifying question — the AD-OE6 behaviour is preserved
+    # for the case it was built for.
+    pipe = _make_silent_pipe(failed=False, suppressed=False, executed_action=False)
+    await pipe._handle_silent_brain_turn("de")
+    assert len(pipe._spoken) == 1, pipe._spoken
+    text, _lang = pipe._spoken[0]
+    assert text.strip().endswith("?"), text
 
 
 @pytest.mark.asyncio
@@ -257,4 +340,62 @@ async def test_explicit_cancel_does_not_trigger_clarifying_question() -> None:
     pipe = _make_silent_pipe(failed=False, suppressed=False)
     await pipe._handle_silent_brain_turn("de", "vergiss das")
     assert pipe._spoken == []
+    assert TurnTakingState.JARVIS_SPEAKING not in pipe._state_history
+
+
+class _BareVoiceCfg:
+    """A ``voice`` config object that genuinely LACKS ``clarify_incomplete_enabled``.
+
+    Mirrors the committed-HEAD shape, where the field was never committed (it
+    lives only in the working tree). The guard reads the attribute via
+    ``getattr(cfg, "clarify_incomplete_enabled", <default>)`` — so when the field
+    is absent the ``getattr`` DEFAULT decides. The safe default must be "do not
+    interrogate" (False), otherwise the clarify question fires for everyone on
+    HEAD and after any working-tree reset (live bug 2026-06-09).
+    """
+
+    clarify_after_ms = 80  # keep the Path-A timer fast for the test
+
+
+@pytest.mark.asyncio
+async def test_silent_turn_stays_silent_when_field_absent_from_config() -> None:
+    # Defense-in-depth durability guard: even if VoiceConfig lacks the field
+    # entirely (HEAD shape / config reload edge), an empty brain turn must NOT
+    # speak the clarifying question. This pins the getattr fallback at
+    # pipeline.py:_handle_silent_brain_turn to False.
+    pipe = _make_silent_pipe(failed=False, suppressed=False)
+    pipe._config.voice = _BareVoiceCfg()  # field absent → getattr default decides
+    await pipe._handle_silent_brain_turn("de", "was geht ab")
+    assert pipe._spoken == [], pipe._spoken
+    assert TurnTakingState.JARVIS_SPEAKING not in pipe._state_history
+
+
+@pytest.mark.asyncio
+async def test_armed_clarify_stays_silent_when_field_absent_from_config() -> None:
+    # Same defense-in-depth guard for the incomplete-fragment timer path
+    # (_arm_clarify_question): a config lacking the field must NOT arm the timer.
+    pipe = _make_pipe(clarify_after_ms=80)
+    pipe._config.voice = _BareVoiceCfg()  # field absent → getattr default decides
+    pipe._continuation_buffer.process("erinnere mich daran, dass", language="de")
+    pipe._arm_clarify_question("de")
+    await asyncio.sleep(0.3)
+    assert pipe._clarify_timer_task is None
+    assert pipe._spoken == []
+    assert TurnTakingState.JARVIS_SPEAKING not in pipe._state_history
+
+
+@pytest.mark.asyncio
+async def test_default_config_empty_turn_does_not_interrogate_user() -> None:
+    # User mandate 2026-06-09 ("er fragt mich ständig 'Wie meinst du das?' —
+    # ich will, dass er einfach normal antwortet wie damals"): with the SHIPPED
+    # default config (no [voice] override in jarvis.toml → the dataclass
+    # default governs), an empty brain turn must NOT speak the clarifying
+    # question. This ties the behaviour to the real ``VoiceConfig`` default
+    # instead of a forced MagicMock, so a future flip back to True is caught.
+    default_enabled = VoiceConfig().clarify_incomplete_enabled
+    pipe = _make_silent_pipe(
+        failed=False, suppressed=False, enabled=default_enabled
+    )
+    await pipe._handle_silent_brain_turn("de", "kannst du mein spotify öffnen")
+    assert pipe._spoken == [], pipe._spoken
     assert TurnTakingState.JARVIS_SPEAKING not in pipe._state_history

@@ -16,7 +16,7 @@ import { OutputsView } from "@/views/OutputsView";
 import { SessionsView } from "@/views/SessionsView";
 import { SocialsView } from "@/views/socials/SocialsView";
 import { ContactsView } from "@/views/contacts/ContactsView";
-import { TelephonyView } from "@/views/TelephonyView";
+import { TelephonySetupView } from "@/views/TelephonyView";
 
 /**
  * Main area to the right of the sidebar. All views are switched the classic
@@ -67,8 +67,18 @@ function SwitchOnActiveSection({ active }: { active: string }) {
       return <ProfileView />;
     case "memory":
       return <WikiView />;
+    // "telephony" no longer has its own screen — the telephony status /
+    // credentials / scripts / calls now live as a section inside the API-Keys
+    // view. The id stays valid so the existing "geh zur Telefonie" voice alias
+    // keeps working and lands on API Keys (mirrors taskbar/languages → Settings).
     case "apikeys":
+    case "telephony":
       return <ApiKeysView />;
+    // Dedicated telephony setup page (scripts + step-by-step guide). Not a
+    // sidebar entry — reached only via the "Setup script" button in the
+    // telephony credentials card.
+    case "telephony-setup":
+      return <TelephonySetupView />;
     // "taskbar" and "languages" no longer have their own screens — the former
     // Taskbar controls live in Settings (OverlayTaskbarGroup) and the language
     // selectors live in Settings (LanguagesGroup) now. The ids stay valid so the
@@ -78,8 +88,6 @@ function SwitchOnActiveSection({ active }: { active: string }) {
     case "taskbar":
     case "languages":
       return <SettingsView />;
-    case "telephony":
-      return <TelephonyView />;
     case "debug":
       return <DebugView />;
     case "outputs":
