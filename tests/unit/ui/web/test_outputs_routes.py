@@ -245,6 +245,53 @@ async def test_list_outputs_mission_dir_failed_state(
 
 
 @pytest.mark.asyncio
+async def test_list_outputs_running_card_carries_mission_id(
+    app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
+) -> None:
+    """The card must expose the full mission id so the UI can POST
+    ``/api/missions/{id}/cancel`` for the hold-to-abort button."""
+    mission_id = "019e3600-f000-7000-8000-000000000042"
+    _make_mission_dir(tmp_path, mission_id)
+    await _insert_mission(db_conn, mission_id=mission_id, state="RUNNING")
+
+    with TestClient(app) as client:
+        r = client.get("/api/outputs")
+    sessions = r.json()["sessions"]
+    assert sessions[0]["mission_id"] == mission_id
+
+
+@pytest.mark.asyncio
+async def test_list_outputs_unenriched_card_has_null_mission_id(
+    app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
+) -> None:
+    """A mission dir without a DB row still renders — with mission_id None
+    (the UI then simply offers no abort affordance)."""
+    _make_mission_dir(tmp_path, "019e3600-f200-7000-8000-000000000044")
+
+    with TestClient(app) as client:
+        r = client.get("/api/outputs")
+    sessions = r.json()["sessions"]
+    assert len(sessions) == 1
+    assert sessions[0]["mission_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_list_outputs_cancelled_maps_to_cancelled_status(
+    app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
+) -> None:
+    """CANCELLED is a deliberate user action, not a failure — the card
+    gets its own badge instead of lying with ``error``."""
+    mission_id = "019e3600-f100-7000-8000-000000000043"
+    _make_mission_dir(tmp_path, mission_id)
+    await _insert_mission(db_conn, mission_id=mission_id, state="CANCELLED")
+
+    with TestClient(app) as client:
+        r = client.get("/api/outputs")
+    sessions = r.json()["sessions"]
+    assert sessions[0]["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
 async def test_list_outputs_running_mission_duration_ticks_from_created(
     app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
 ) -> None:

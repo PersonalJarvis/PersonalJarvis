@@ -47,7 +47,6 @@ from .verdict import (
     is_approval_valid,
 )
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -85,7 +84,7 @@ class CapabilityHonestyCheck:
 # --- Tool-call evidence extraction ---
 
 
-# Patterns for the two known harness output formats.
+# Patterns for the known harness output formats.
 # 1. OpenClaw stream.jsonl: ``"type": "tool_use"`` frames with ``"name": "<tool>"``
 _RE_TOOL_USE_NAME = re.compile(
     r'"type"\s*:\s*"tool_use"[^}]*?"name"\s*:\s*"([^"]+)"',
@@ -95,15 +94,30 @@ _RE_TOOL_USE_NAME = re.compile(
 _RE_TOOL_USE_MARKER = re.compile(r'\[TOOL_USE\]\s*([^\s\]]+)')
 # 3. dispatch-result event names (mission event bus serialisation).
 _RE_DISPATCH_RESULT = re.compile(r'"dispatch-result"[^}]*?"tool"\s*:\s*"([^"]+)"', re.DOTALL)
+# 4. Codex ``exec --json`` NDJSON: real actions are ``item.started`` /
+#    ``item.completed`` events whose item type is command_execution /
+#    file_change / mcp_tool_call / web_search. Live mission 019eb17d
+#    (2026-06-10): a codex worker genuinely analysed Gmail and wrote
+#    email-analyse.html, but the gate saw zero evidence (it only knew the
+#    Claude tool_use shape) and discarded three 12-minute iterations.
+#    ``agent_message`` / ``reasoning`` / ``collab_tool_call`` deliberately do
+#    NOT count: prose and sub-agent orchestration prove no side-effect.
+_RE_CODEX_ACTION_ITEM = re.compile(
+    r'"type"\s*:\s*"item\.(?:started|completed)"[^\n]*?'
+    r'"type"\s*:\s*"(command_execution|file_change|mcp_tool_call|web_search)"'
+)
 
 
 def _extract_tool_call_evidence(worker_output: str) -> tuple[str, ...]:
     """Parse tool-call evidence from worker output in a defensive, format-agnostic way.
 
-    Supports three harness output formats:
+    Supports four harness output formats:
     - OpenClaw stream.jsonl ``"type":"tool_use"`` frames.
     - ``[TOOL_USE] <tool_name>`` CLI markers.
     - ``"dispatch-result"`` mission event bus entries.
+    - Codex ``exec --json`` action items (command_execution / file_change /
+      mcp_tool_call / web_search) — the matched item type doubles as the
+      evidence name.
 
     If the output format is unrecognised or the text is empty, returns an
     empty tuple — the caller (``enforce_capability_honesty``) treats this as
@@ -116,6 +130,7 @@ def _extract_tool_call_evidence(worker_output: str) -> tuple[str, ...]:
     names.extend(_RE_TOOL_USE_NAME.findall(worker_output))
     names.extend(_RE_TOOL_USE_MARKER.findall(worker_output))
     names.extend(_RE_DISPATCH_RESULT.findall(worker_output))
+    names.extend(_RE_CODEX_ACTION_ITEM.findall(worker_output))
 
     # Deduplicate while preserving first-seen order.
     seen: set[str] = set()
@@ -309,8 +324,8 @@ def build_critic_cmd(
     from jarvis.missions.worker_runtime.provider_map import to_provider_slug
     from jarvis.missions.workers.provider_chain import (
         _build_openclaw_cmd,
-        _resolve_worker_argv_prefix,
         _resolve_provider_chain,
+        _resolve_worker_argv_prefix,
     )
 
     chain = _resolve_provider_chain(requested_provider=provider)
@@ -484,23 +499,28 @@ class CriticRunner:
         # nicht gereicht" announcement — even though Sonnet answered
         # perfectly on iter0.
         #
-        # The distinguishing signal: a genuine ``"type":"tool_use"`` record
-        # in the worker log. Whenever the worker actually invoked a tool we
-        # let the Critic LLM grade the on-disk state instead of auto-rejecting.
-        # This covers two legitimate empty-diff shapes:
+        # The distinguishing signal: genuine tool-call evidence in the worker
+        # log. Whenever the worker actually invoked a tool we let the Critic
+        # LLM grade the on-disk state instead of auto-rejecting.
+        # This covers three legitimate empty-diff shapes:
         #   - Read-Only task (Read/Grep, no write) — BUG-LIVE-09 2026-05-17.
         #   - Edit-only task whose final diff is empty because the requested
         #     state already held (an Edit re-applied byte-identical content on
         #     a tracked file → ``git diff --cached HEAD`` is empty) —
         #     2026-05-27 hardening finding #5. Auto-revising this burned all
         #     three critic loops into ``critic_loop_exhausted`` on valid work.
-        # The hard veto STAYS for an empty diff with NO genuine tool_use
+        #   - MCP-only side-effect task (e.g. send a mail via mcp_tool_call):
+        #     real external action, nothing written to the worktree. The old
+        #     check matched only Claude's ``"type":"tool_use"`` shape, so a
+        #     codex worker burned all three loops here (2026-06-10, sibling
+        #     blindness to the honesty-gate fix for mission 019eb17d).
+        # ``_extract_tool_call_evidence`` recognises all harness formats —
+        # the honesty gate and this pre-gate must judge by the SAME evidence.
+        # The hard veto STAYS for an empty diff with NO genuine tool-call
         # record — the "claims success without invoking any tool"
         # hallucination (BUG-LIVE-02, mission_019e2c18): there is nothing on
         # disk for the LLM to grade, so log text alone cannot earn an approve.
-        import re as _re  # noqa: PLC0415 — keep import local
-        _has_tool_use = bool(_re.search(r'"type"\s*:\s*"tool_use"', worker_log))
-        _defer_empty_diff_to_llm = _has_tool_use
+        _defer_empty_diff_to_llm = bool(_extract_tool_call_evidence(worker_log))
 
         if not worker_diff.strip() and not _defer_empty_diff_to_llm:
             ran_but_no_output = bool(worker_log.strip())
@@ -794,11 +814,12 @@ class CriticRunner:
         # (via _resolve_provider_chain) so the cliBackends override
         # only fires when the resolved provider is actually claude-cli.
         try:
+            from jarvis.missions.worker_runtime.provider_map import (
+                UnknownJarvisProviderError,
+                to_provider_slug,
+            )
             from jarvis.missions.workers.provider_chain import (
                 _resolve_provider_chain,
-            )
-            from jarvis.missions.worker_runtime.provider_map import (
-                to_provider_slug, UnknownJarvisProviderError,
             )
             _chain = _resolve_provider_chain()
             _primary = _chain[0] if _chain else None
@@ -1073,7 +1094,7 @@ class CriticRunner:
             stdout_b, stderr_b = await asyncio.wait_for(
                 proc.communicate(), timeout=self._timeout
             )
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             with _suppress(ProcessLookupError):
                 proc.kill()
             # Audit-2 H3 -- always wait() after kill() so the transport
@@ -1226,7 +1247,7 @@ class CriticRunner:
             stdout_b, stderr_b = await asyncio.wait_for(
                 proc.communicate(), timeout=self._timeout
             )
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             with _suppress(ProcessLookupError):
                 proc.kill()
             with _suppress(Exception):

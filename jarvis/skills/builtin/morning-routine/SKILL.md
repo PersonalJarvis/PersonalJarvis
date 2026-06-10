@@ -1,121 +1,77 @@
 ---
 schema_version: "1"
 name: morning-routine
-version: "1.0.0"
-description: |
-  Morning check-in: calendar briefing, email triage, weather, build status, Slack unread.
-  Trigger: "guten morgen" / "good morning" / "starte morgenroutine" or daily at 07:00.
+version: "2.0.0"
+description: >-
+  Delivers the user's spoken morning briefing: today's calendar, unread
+  email summary, weather, and anything urgent. Use when the user asks for
+  a morning briefing or day overview, says good morning, starts their day,
+  or asks "what's on today" / "wie sieht mein Tag aus".
+when_to_use: >-
+  Use when the user says "starte die Morgenroutine", "guten Morgen",
+  "good morning", "morning briefing", "Tagesueberblick", "what's my day
+  looking like", or asks for their schedule first thing in the day.
 category: productivity
 tags: [daily, routine, mail, calendar, weather]
 author: builtin
 license: MIT
 triggers:
   - type: voice
-    # R10 mitigation 2026-05-01: anchored patterns + imperative variants
-    # for power users. "guten morgen" / "good morning" stay as natural
-    # greeting activation (anchored ^...$ prevents partial matches like "guten morgen, schatz").
-    pattern: "^(guten morgen|good morning|start day|starte (die )?morgen[-\\s]?routine|begin morning routine|run morning routine)$"
+    pattern: "(morgenroutine|morgen[-\\s]?briefing|morning routine|morning briefing|start day|tages(ue|ü)berblick)"
+    language: [de, en]
+  - type: voice
+    pattern: "^(guten morgen|good morning)[.!\\s]*$"
     language: [de, en]
   - type: schedule
     cron: "0 7 * * *"
     language: [de, en]
-requires_tools:
-  - gmail-mcp/list_unread
-  - google-calendar-mcp/list_today
-  - fetch-mcp/fetch_weather
-  - remember
+requires_tools: []
 risk_policy:
   default_tier: monitor
-  per_tool_overrides:
-    gmail-mcp/list_unread: safe
-    google-calendar-mcp/list_today: safe
-    fetch-mcp/fetch_weather: safe
 config:
   email_limit: 5
   calendar_days_ahead: 1
   weather_location: "Berlin"
   weather_format: metric
 token_budget_estimate: 3000
+execution: inline
 ---
 
 # Morning Routine
 
-A friendly morning briefing. Triggered either by voice ("guten morgen" (good morning) / "good morning")
-or automatically at 07:00 via cron. Goal: give an overview of the day, mailbox,
-and weather in under 30 seconds — no walls of text, no reading out 20 emails.
+Deliver a short spoken morning briefing — an overview of the day in under
+30 seconds. No walls of text, no reading out 20 emails. Work through the
+steps below with the tools you actually have; skip a step gracefully
+(one short clause, e.g. "calendar is not connected yet") when its
+integration is unavailable. Never invent data.
 
-## Workflow
+## Steps
 
-The supervisor runs the steps sequentially. Errors in individual steps
-are not fatal — if Slack is missing, for example, the block is skipped and a message is spoken:
-"Slack nicht verfuegbar, ueberspringe." (Slack not available, skipping.)
+1. **Calendar.** If a calendar plugin or tool is connected (e.g. a
+   `google-calendar/...` tool), fetch today's events
+   ({{ config.calendar_days_ahead }} day ahead).
+   - 0 events: say the calendar is free today.
+   - 1 event: name it with its time.
+   - Several: give the count and the next one with its time.
+   - If the next event starts within 60 minutes, add a heads-up.
 
-### 1. Calendar of the day
+2. **Email.** If the Gmail plugin is connected (tools namespaced
+   `gmail/...`), check unread mail (limit {{ config.email_limit }}).
+   - 0 unread: "inbox is empty".
+   - Up to 3: mention sender and subject briefly.
+   - More: give the count and the 1-2 most important senders.
+   Never read full bodies; never read out secrets or codes.
 
-TOOL: google-calendar-mcp/list_today {"days_ahead": 1, "include_cancelled": false}
+3. **Weather.** If a web search tool is available, get today's weather for
+   {{ config.weather_location }} ({{ config.weather_format }}). One clause:
+   condition, high/low. Skip silently if unavailable.
 
-Turn the result into a TTS-suitable summary:
+4. **Anything urgent.** If a running mission or an unread important
+   notification is visible to you, mention it in one sentence.
 
-- 0 events: "Heute ist dein Kalender frei." (Today your calendar is free.)
-- 1 event:  "Heute ein Termin: {title} um {time}." (Today one appointment: {title} at {time}.)
-- several:  "Heute {n} Termine. Der naechste: {first.title} um {first.time}." (Today {n} appointments. Next: {first.title} at {first.time}.)
+## Answer format
 
-If the next event starts in less than 60 minutes, additionally warn:
-"Achtung, {title} startet in {mins} Minuten." (Heads up, {title} starts in {mins} minutes.)
-
-### 2. Email triage
-
-TOOL: gmail-mcp/list_unread {"limit": 5, "important_only": false}
-
-Format:
-- 0 unread:  "Posteingang leer." (Inbox empty.)
-- <= 3 unread: list the subject lines and senders.
-- >  3 unread: "{n} ungelesene Mails, davon {important_n} wichtig." ({n} unread emails, {important_n} important.)
-
-If the tool delivers an `importance_score`, sort descending and read out
-only the top 3. The remainder is summarized in a single line.
-
-### 3. Weather
-
-TOOL: fetch-mcp/fetch_weather {"location": "{{config.weather_location}}", "format": "{{config.weather_format}}"}
-
-Compact format: "{condition} bei {temp_c}C, Hoch {high_c}, Tief {low_c}. {precip_hint}"
-precip_hint: "Regenwahrscheinlichkeit {p}%" (Rain probability {p}%) when p > 30, otherwise omitted.
-
-### 4. Build / CI status (optional)
-
-If `github-mcp` is available: fetch the last 3 workflow runs of the main repo.
-If everything is green, just say "CI: alles gruen" (CI: all green). On errors: name the failing job.
-
-### 5. Remember
-
-TOOL: remember {"namespace": "routine-log", "key": "morning-{{date.iso}}", "value": {"calendar_count": ..., "unread_count": ..., "weather": ...}}
-
-### 6. Summary
-
-The supervisor summarizes the steps in **one** TTS output.
-At most ~40 words — equivalent to approximately 15 seconds of speech.
-
-Prosody hints for TTS:
-- Start calm, no high energy. "Guten Morgen. ..." (Good morning. ...)
-- Emphasize numbers (`<emphasis level="moderate">`).
-- A short breath pause between blocks (`<break time="250ms"/>`).
-- Slightly rising tone at the end: "... Schoenen Start in den Tag." (... Have a great start to the day.)
-
-## Fallbacks
-
-- No Google account configured: "Kalender/Mail nicht angebunden, ueberspringe." (Calendar/Mail not connected, skipping.)
-- Weather API unavailable: "Wetter gerade nicht verfuegbar." (Weather currently not available.)
-- No internet: offline parts only (build status from the last cache, memory recap).
-
-## Do not do
-
-- Do not read out the complete email list — that is noise.
-- Do not name every event participant — only the title.
-- Do not weave in news feeds without explicit user opt-in (privacy).
-
-## Trace output
-
-The runner writes one `SkillStepExecuted` event per step. The flight recorder
-persists the duration, the tool name, and whether a fallback was active. With
-`jarvis --debug` the user sees: "morning-routine: 4 Schritte, 1 fallback, 1.8s." (morning-routine: 4 steps, 1 fallback, 1.8s.)
+Compose ONE flowing, friendly briefing of 3-5 short sentences — natural
+spoken language, no lists, no markdown, no tool names. End with the most
+actionable item (e.g. the next appointment). Answer in the user's
+language.

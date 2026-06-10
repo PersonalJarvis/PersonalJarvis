@@ -2,6 +2,7 @@
 schema_version: "1"
 name: plugin-slack
 description: Read and post messages in the user's Slack workspace and channels.
+when_to_use: Use when the user mentions Slack or wants to read or post messages in their Slack workspace.
 category: communication
 plugin_id: slack
 intent_verbs: [schick, sende, poste, zeig, lies, antworte]  # i18n-allow

@@ -1,12 +1,12 @@
 {
   "schema_version": "1",
   "updated": "2026-04-23",
-  "note": "Kuratierter Seed-Katalog fuer die CLI-Integration. 20 Eintraege aus 7 Kategorien (cloud/paas/baas/git/payments/container/cloud). Alle Risk-Tier-Defaults orientiert an Business-Impact: payments/prod-cluster -> ask, alles sonst -> monitor + Blacklist.",
+  "note": "Curated seed catalog for the CLI integration. 21 entries across 7 categories (cloud/paas/baas/git/payments/container/workspace). All risk-tier defaults follow business impact: payments/prod-cluster -> ask, everything else -> monitor + blacklist.",
   "entries": [
     {
       "name": "gcloud",
-      "display_name": "Google Cloud SDK",
-      "description": "Google Cloud Platform CLI fuer Compute, Storage, IAM, GKE, Run.",
+      "display_name": "Google Cloud CLI",
+      "description": "Google Cloud Platform CLI for Compute, Storage, IAM, GKE, Cloud Run.",
       "homepage": "https://cloud.google.com/sdk",
       "binary_name": "gcloud",
       "check_command": [
@@ -63,7 +63,12 @@
           "gcloud * describe *",
           "gcloud auth *",
           "gcloud config *",
-          "gcloud projects list*"
+          "gcloud projects list*",
+          "gcloud * list*",
+          "gcloud * describe*",
+          "gcloud config list*",
+          "gcloud auth list*",
+          "gcloud --version*"
         ]
       },
       "tool_schema_examples": [
@@ -73,7 +78,67 @@
         "gcloud run services list --region=europe-west1"
       ],
       "icon": "cloud",
-      "category": "cloud"
+      "category": "cloud",
+      "capabilities": [
+        {
+          "domains": [
+            "cloud",
+            "deployments"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "checke",
+            "describe",
+            "deploy",
+            "guck",
+            "gucke",
+            "gucken",
+            "schau",
+            "schaue",
+            "look",
+            "pruef",
+            "pruefe"
+          ],
+          "objects": [
+            "gcp",
+            "google cloud",
+            "google cli",
+            "google-cli",
+            "gcloud",
+            "compute",
+            "cloud run",
+            "instanz",
+            "instanzen",
+            "instances",
+            "bucket",
+            "buckets",
+            "kosten",
+            "cost",
+            "costs",
+            "billing",
+            "rechnung",
+            "ausgaben",
+            "budget",
+            "budgets",
+            "google-kosten",
+            "google kosten",
+            "cloud-kosten",
+            "projekt",
+            "projekte",
+            "project",
+            "projects",
+            "google-projekte",
+            "apis",
+            "dienste",
+            "services"
+          ],
+          "description": "Google Cloud: list/describe projects, compute instances, Cloud Run services, storage, billing accounts and budgets (cost overview)."
+        }
+      ]
     },
     {
       "name": "az",
@@ -126,13 +191,17 @@
           "az group delete *",
           "az vm delete *",
           "az aks delete *",
-          "az storage account delete *"
+          "az storage account delete *",
+          "az * delete*"
         ],
         "whitelist_patterns": [
           "az * list",
           "az * show *",
           "az account *",
-          "az config *"
+          "az config *",
+          "az * list*",
+          "az * show*",
+          "az account show*"
         ]
       },
       "tool_schema_examples": [
@@ -141,12 +210,34 @@
         "az aks get-credentials --resource-group rg --name cluster"
       ],
       "icon": "cloud",
-      "category": "cloud"
+      "category": "cloud",
+      "capabilities": [
+        {
+          "domains": [
+            "cloud"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check"
+          ],
+          "objects": [
+            "azure",
+            "az",
+            "resource group",
+            "vm",
+            "vms"
+          ],
+          "description": "Azure: list/show resource groups, VMs, services."
+        }
+      ]
     },
     {
       "name": "aws",
       "display_name": "AWS CLI v2",
-      "description": "Amazon Web Services CLI — S3, EC2, Lambda, IAM, uvm.",
+      "description": "Amazon Web Services CLI — S3, EC2, Lambda, IAM, and more.",
       "homepage": "https://aws.amazon.com/cli",
       "binary_name": "aws",
       "check_command": [
@@ -195,14 +286,18 @@
           "aws s3 rm * --recursive*",
           "aws s3 rb *",
           "aws iam delete-*",
-          "aws ec2 terminate-instances *"
+          "aws ec2 terminate-instances *",
+          "aws * delete*",
+          "aws * terminate-instances*"
         ],
         "whitelist_patterns": [
           "aws * list-*",
           "aws * describe-*",
           "aws * get-*",
           "aws s3 ls*",
-          "aws sts get-caller-identity*"
+          "aws sts get-caller-identity*",
+          "aws * list*",
+          "aws * describe*"
         ]
       },
       "tool_schema_examples": [
@@ -211,7 +306,31 @@
         "aws lambda list-functions"
       ],
       "icon": "cloud",
-      "category": "cloud"
+      "category": "cloud",
+      "capabilities": [
+        {
+          "domains": [
+            "cloud"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "describe"
+          ],
+          "objects": [
+            "aws",
+            "s3",
+            "ec2",
+            "lambda",
+            "bucket",
+            "buckets"
+          ],
+          "description": "AWS: list/describe S3, EC2, Lambda resources."
+        }
+      ]
     },
     {
       "name": "wrangler",
@@ -261,12 +380,16 @@
         "blacklist_patterns": [
           "wrangler delete *",
           "wrangler r2 bucket delete *",
-          "wrangler d1 delete *"
+          "wrangler d1 delete *",
+          "wrangler delete*",
+          "wrangler kv:key delete*"
         ],
         "whitelist_patterns": [
           "wrangler whoami*",
           "wrangler * list*",
-          "wrangler tail*"
+          "wrangler tail*",
+          "wrangler deployments list*",
+          "wrangler pages project list*"
         ]
       },
       "tool_schema_examples": [
@@ -275,12 +398,36 @@
         "wrangler r2 bucket list"
       ],
       "icon": "cloud",
-      "category": "cloud"
+      "category": "cloud",
+      "capabilities": [
+        {
+          "domains": [
+            "deployments",
+            "cloud"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "deploy"
+          ],
+          "objects": [
+            "cloudflare",
+            "wrangler",
+            "worker",
+            "workers",
+            "pages"
+          ],
+          "description": "Cloudflare: list Workers and Pages projects, tail logs, deploy."
+        }
+      ]
     },
     {
       "name": "vercel",
       "display_name": "Vercel CLI",
-      "description": "Vercel Deployments, Projects, Env-Variablen.",
+      "description": "Vercel deployments, projects, env variables.",
       "homepage": "https://vercel.com/cli",
       "binary_name": "vercel",
       "check_command": [
@@ -325,13 +472,17 @@
         "blacklist_patterns": [
           "vercel remove *",
           "vercel rm *",
-          "vercel project rm *"
+          "vercel project rm *",
+          "vercel domains rm *",
+          "vercel env rm *"
         ],
         "whitelist_patterns": [
           "vercel whoami*",
           "vercel ls*",
           "vercel list*",
-          "vercel inspect*"
+          "vercel inspect*",
+          "vercel project ls*",
+          "vercel logs*"
         ]
       },
       "tool_schema_examples": [
@@ -340,7 +491,36 @@
         "vercel env ls"
       ],
       "icon": "cloud",
-      "category": "paas"
+      "category": "paas",
+      "capabilities": [
+        {
+          "domains": [
+            "deployments"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "deploy",
+            "deploye"
+          ],
+          "objects": [
+            "deployment",
+            "deployments",
+            "vercel",
+            "build",
+            "builds",
+            "preview",
+            "projekt",
+            "projekte",
+            "project",
+            "projects"
+          ],
+          "description": "Vercel: list deployments and projects, inspect builds, read logs, deploy."
+        }
+      ]
     },
     {
       "name": "netlify",
@@ -390,12 +570,14 @@
         "default_tier": "monitor",
         "blacklist_patterns": [
           "netlify sites:delete *",
-          "netlify env:unset *"
+          "netlify env:unset *",
+          "netlify sites:delete*"
         ],
         "whitelist_patterns": [
           "netlify status*",
           "netlify sites:list*",
-          "netlify env:list*"
+          "netlify env:list*",
+          "netlify api listSiteDeploys*"
         ]
       },
       "tool_schema_examples": [
@@ -404,7 +586,30 @@
         "netlify deploy --prod"
       ],
       "icon": "cloud",
-      "category": "paas"
+      "category": "paas",
+      "capabilities": [
+        {
+          "domains": [
+            "deployments"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "deploy"
+          ],
+          "objects": [
+            "netlify",
+            "deployment",
+            "deployments",
+            "site",
+            "sites"
+          ],
+          "description": "Netlify: list sites and deploys, read status."
+        }
+      ]
     },
     {
       "name": "heroku",
@@ -454,13 +659,16 @@
         "blacklist_patterns": [
           "heroku apps:destroy *",
           "heroku addons:destroy *",
-          "heroku pg:reset *"
+          "heroku pg:reset *",
+          "heroku apps:destroy*",
+          "heroku addons:destroy*"
         ],
         "whitelist_patterns": [
           "heroku apps*",
           "heroku logs*",
           "heroku config*",
-          "heroku ps*"
+          "heroku ps*",
+          "heroku releases*"
         ]
       },
       "tool_schema_examples": [
@@ -469,7 +677,29 @@
         "heroku ps --app myapp"
       ],
       "icon": "cloud",
-      "category": "paas"
+      "category": "paas",
+      "capabilities": [
+        {
+          "domains": [
+            "deployments"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check"
+          ],
+          "objects": [
+            "heroku",
+            "app",
+            "apps",
+            "dyno",
+            "dynos"
+          ],
+          "description": "Heroku: list apps, dynos, releases; read logs."
+        }
+      ]
     },
     {
       "name": "railway",
@@ -518,7 +748,8 @@
         "default_tier": "monitor",
         "blacklist_patterns": [
           "railway down *",
-          "railway delete *"
+          "railway delete *",
+          "railway delete*"
         ],
         "whitelist_patterns": [
           "railway whoami*",
@@ -533,7 +764,30 @@
         "railway variables"
       ],
       "icon": "cloud",
-      "category": "paas"
+      "category": "paas",
+      "capabilities": [
+        {
+          "domains": [
+            "deployments"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "deploy"
+          ],
+          "objects": [
+            "railway",
+            "deployment",
+            "deployments",
+            "service",
+            "services"
+          ],
+          "description": "Railway: list projects/services, read status and logs."
+        }
+      ]
     },
     {
       "name": "flyctl",
@@ -586,13 +840,16 @@
         "blacklist_patterns": [
           "flyctl apps destroy *",
           "flyctl volumes destroy *",
-          "flyctl machine destroy *"
+          "flyctl machine destroy *",
+          "flyctl apps destroy*",
+          "flyctl machine destroy*"
         ],
         "whitelist_patterns": [
           "flyctl status*",
           "flyctl apps list*",
           "flyctl logs*",
-          "flyctl auth whoami*"
+          "flyctl auth whoami*",
+          "flyctl machine list*"
         ]
       },
       "tool_schema_examples": [
@@ -601,7 +858,32 @@
         "flyctl logs --app myapp"
       ],
       "icon": "cloud",
-      "category": "paas"
+      "category": "paas",
+      "capabilities": [
+        {
+          "domains": [
+            "deployments"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "deploy"
+          ],
+          "objects": [
+            "fly",
+            "fly.io",
+            "flyctl",
+            "app",
+            "apps",
+            "machine",
+            "machines"
+          ],
+          "description": "Fly.io: list apps and machines, read status and logs."
+        }
+      ]
     },
     {
       "name": "render",
@@ -645,12 +927,15 @@
       "risk": {
         "default_tier": "monitor",
         "blacklist_patterns": [
-          "render services delete *"
+          "render services delete *",
+          "render services delete*"
         ],
         "whitelist_patterns": [
           "render services list*",
           "render logs*",
-          "render whoami*"
+          "render whoami*",
+          "render services*",
+          "render deploys list*"
         ]
       },
       "tool_schema_examples": [
@@ -658,7 +943,29 @@
         "render logs srv-xxxxx"
       ],
       "icon": "cloud",
-      "category": "paas"
+      "category": "paas",
+      "capabilities": [
+        {
+          "domains": [
+            "deployments"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check"
+          ],
+          "objects": [
+            "render",
+            "service",
+            "services",
+            "deployment",
+            "deployments"
+          ],
+          "description": "Render: list services and deploys, read status."
+        }
+      ]
     },
     {
       "name": "supabase",
@@ -710,12 +1017,15 @@
         "blacklist_patterns": [
           "supabase projects delete *",
           "supabase db reset*",
-          "supabase migration repair*"
+          "supabase migration repair*",
+          "supabase projects delete*"
         ],
         "whitelist_patterns": [
           "supabase projects list*",
           "supabase status*",
-          "supabase functions list*"
+          "supabase functions list*",
+          "supabase migration list*",
+          "supabase --version*"
         ]
       },
       "tool_schema_examples": [
@@ -724,7 +1034,32 @@
         "supabase db diff"
       ],
       "icon": "database",
-      "category": "baas"
+      "category": "baas",
+      "capabilities": [
+        {
+          "domains": [
+            "database"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check"
+          ],
+          "objects": [
+            "supabase",
+            "datenbank",
+            "database",
+            "tabelle",
+            "tabellen",
+            "tables",
+            "migration",
+            "migrations"
+          ],
+          "description": "Supabase: list projects, migrations, database status."
+        }
+      ]
     },
     {
       "name": "firebase",
@@ -779,7 +1114,8 @@
         "whitelist_patterns": [
           "firebase projects:list*",
           "firebase login:list*",
-          "firebase apps:list*"
+          "firebase apps:list*",
+          "firebase hosting:sites:list*"
         ]
       },
       "tool_schema_examples": [
@@ -787,7 +1123,32 @@
         "firebase apps:list --project myproj"
       ],
       "icon": "database",
-      "category": "baas"
+      "category": "baas",
+      "capabilities": [
+        {
+          "domains": [
+            "deployments"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "deploy"
+          ],
+          "objects": [
+            "firebase",
+            "hosting",
+            "functions",
+            "projekt",
+            "projekte",
+            "project",
+            "projects"
+          ],
+          "description": "Firebase: list projects, apps, hosting sites; deploy."
+        }
+      ]
     },
     {
       "name": "pscale",
@@ -841,12 +1202,15 @@
         "blacklist_patterns": [
           "pscale database delete *",
           "pscale branch delete *",
-          "pscale deploy-request cancel*"
+          "pscale deploy-request cancel*",
+          "pscale database delete*",
+          "pscale branch delete*"
         ],
         "whitelist_patterns": [
           "pscale database list*",
           "pscale branch list*",
-          "pscale deploy-request list*"
+          "pscale deploy-request list*",
+          "pscale org list*"
         ]
       },
       "tool_schema_examples": [
@@ -854,7 +1218,30 @@
         "pscale branch list my-db"
       ],
       "icon": "database",
-      "category": "baas"
+      "category": "baas",
+      "capabilities": [
+        {
+          "domains": [
+            "database"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check"
+          ],
+          "objects": [
+            "planetscale",
+            "pscale",
+            "datenbank",
+            "database",
+            "branch",
+            "branches"
+          ],
+          "description": "PlanetScale: list databases, branches, deploy requests."
+        }
+      ]
     },
     {
       "name": "neonctl",
@@ -902,7 +1289,9 @@
         "default_tier": "monitor",
         "blacklist_patterns": [
           "neonctl projects delete *",
-          "neonctl branches delete *"
+          "neonctl branches delete *",
+          "neonctl projects delete*",
+          "neonctl branches delete*"
         ],
         "whitelist_patterns": [
           "neonctl projects list*",
@@ -915,7 +1304,32 @@
         "neonctl branches list --project-id abc"
       ],
       "icon": "database",
-      "category": "baas"
+      "category": "baas",
+      "capabilities": [
+        {
+          "domains": [
+            "database"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check"
+          ],
+          "objects": [
+            "neon",
+            "datenbank",
+            "database",
+            "branch",
+            "branches",
+            "projekt",
+            "project",
+            "projects"
+          ],
+          "description": "Neon: list projects, branches, databases."
+        }
+      ]
     },
     {
       "name": "gh",
@@ -968,14 +1382,22 @@
         "blacklist_patterns": [
           "gh repo delete *",
           "gh release delete *",
-          "gh secret delete *"
+          "gh secret delete *",
+          "gh secret set *"
         ],
         "whitelist_patterns": [
           "gh auth status*",
           "gh repo view*",
           "gh pr list*",
           "gh issue list*",
-          "gh run list*"
+          "gh run list*",
+          "gh pr view*",
+          "gh pr status*",
+          "gh issue view*",
+          "gh repo list*",
+          "gh run view*",
+          "gh release list*",
+          "gh --version*"
         ]
       },
       "tool_schema_examples": [
@@ -984,7 +1406,44 @@
         "gh run list --limit 5"
       ],
       "icon": "github",
-      "category": "git"
+      "category": "git",
+      "capabilities": [
+        {
+          "domains": [
+            "repos"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "lies",
+            "read",
+            "erstell",
+            "erstelle",
+            "create",
+            "merge"
+          ],
+          "objects": [
+            "pull request",
+            "pull requests",
+            "pr",
+            "prs",
+            "issue",
+            "issues",
+            "repo",
+            "repos",
+            "repository",
+            "github",
+            "release",
+            "releases",
+            "workflow",
+            "actions"
+          ],
+          "description": "GitHub: list/read/create repos, pull requests, issues, releases, workflow runs."
+        }
+      ]
     },
     {
       "name": "glab",
@@ -1037,13 +1496,15 @@
         "blacklist_patterns": [
           "glab repo delete *",
           "glab issue delete *",
-          "glab mr close *"
+          "glab mr close *",
+          "glab repo delete*"
         ],
         "whitelist_patterns": [
           "glab auth status*",
           "glab mr list*",
           "glab issue list*",
-          "glab repo view*"
+          "glab repo view*",
+          "glab pipeline list*"
         ]
       },
       "tool_schema_examples": [
@@ -1051,7 +1512,40 @@
         "glab issue list --state opened"
       ],
       "icon": "github",
-      "category": "git"
+      "category": "git",
+      "capabilities": [
+        {
+          "domains": [
+            "repos"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "lies",
+            "read",
+            "create",
+            "erstell",
+            "erstelle"
+          ],
+          "objects": [
+            "gitlab",
+            "merge request",
+            "merge requests",
+            "mr",
+            "mrs",
+            "issue",
+            "issues",
+            "repo",
+            "repos",
+            "pipeline",
+            "pipelines"
+          ],
+          "description": "GitLab: list/read merge requests, issues, pipelines."
+        }
+      ]
     },
     {
       "name": "stripe",
@@ -1103,14 +1597,19 @@
           "stripe charges * --live*",
           "stripe subscriptions cancel *",
           "stripe * delete *",
-          "stripe customers delete *"
+          "stripe customers delete *",
+          "stripe * delete*",
+          "stripe refunds create*"
         ],
         "whitelist_patterns": [
           "stripe listen*",
           "stripe logs tail*",
           "stripe events list*",
           "stripe products list*",
-          "stripe customers list*"
+          "stripe customers list*",
+          "stripe charges list*",
+          "stripe invoices list*",
+          "stripe balance retrieve*"
         ]
       },
       "tool_schema_examples": [
@@ -1118,7 +1617,36 @@
         "stripe events list --limit 10"
       ],
       "icon": "credit-card",
-      "category": "payments"
+      "category": "payments",
+      "capabilities": [
+        {
+          "domains": [
+            "payments"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check"
+          ],
+          "objects": [
+            "stripe",
+            "zahlung",
+            "zahlungen",
+            "payment",
+            "payments",
+            "kunde",
+            "kunden",
+            "customer",
+            "customers",
+            "invoice",
+            "invoices",
+            "umsatz"
+          ],
+          "description": "Stripe: list customers, charges, invoices, products; read balance."
+        }
+      ]
     },
     {
       "name": "twilio",
@@ -1170,12 +1698,14 @@
         "default_tier": "ask",
         "blacklist_patterns": [
           "twilio api:core:messages:create *",
-          "twilio * delete *"
+          "twilio * delete *",
+          "twilio api:core:*:remove*"
         ],
         "whitelist_patterns": [
           "twilio profiles*",
           "twilio api:core:messages:list*",
-          "twilio phone-numbers:list*"
+          "twilio phone-numbers:list*",
+          "twilio api:core:calls:list*"
         ]
       },
       "tool_schema_examples": [
@@ -1183,7 +1713,34 @@
         "twilio api:core:messages:list --limit 10"
       ],
       "icon": "credit-card",
-      "category": "payments"
+      "category": "payments",
+      "capabilities": [
+        {
+          "domains": [
+            "messaging"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check"
+          ],
+          "objects": [
+            "twilio",
+            "sms",
+            "nachricht",
+            "nachrichten",
+            "message",
+            "messages",
+            "anruf",
+            "anrufe",
+            "call",
+            "calls"
+          ],
+          "description": "Twilio: list messages, calls, phone numbers."
+        }
+      ]
     },
     {
       "name": "docker",
@@ -1243,7 +1800,9 @@
           "docker images*",
           "docker logs*",
           "docker info*",
-          "docker inspect *"
+          "docker inspect *",
+          "docker inspect*",
+          "docker version*"
         ]
       },
       "tool_schema_examples": [
@@ -1252,7 +1811,35 @@
         "docker images"
       ],
       "icon": "container",
-      "category": "container"
+      "category": "container",
+      "capabilities": [
+        {
+          "domains": [
+            "containers"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "starte",
+            "start",
+            "stoppe",
+            "stop"
+          ],
+          "objects": [
+            "docker",
+            "container",
+            "containers",
+            "image",
+            "images",
+            "volume",
+            "volumes"
+          ],
+          "description": "Docker: list/inspect containers, images, volumes; read logs."
+        }
+      ]
     },
     {
       "name": "kubectl",
@@ -1308,7 +1895,8 @@
           "kubectl logs *",
           "kubectl config get-*",
           "kubectl config current-context*",
-          "kubectl top *"
+          "kubectl top *",
+          "kubectl version*"
         ]
       },
       "tool_schema_examples": [
@@ -1317,7 +1905,148 @@
         "kubectl logs my-pod --tail=100"
       ],
       "icon": "container",
-      "category": "container"
+      "category": "container",
+      "capabilities": [
+        {
+          "domains": [
+            "kubernetes"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "describe"
+          ],
+          "objects": [
+            "kubernetes",
+            "k8s",
+            "pod",
+            "pods",
+            "cluster",
+            "namespace",
+            "namespaces",
+            "node",
+            "nodes"
+          ],
+          "description": "Kubernetes: get/describe pods, deployments, services; read logs."
+        }
+      ]
+    },
+    {
+      "name": "gam",
+      "display_name": "Google Workspace CLI (GAM)",
+      "description": "Google Workspace CLI: Calendar events, Gmail messages, Drive, Users.",
+      "homepage": "https://github.com/GAM-team/GAM",
+      "binary_name": "gam",
+      "check_command": [
+        "gam",
+        "version"
+      ],
+      "version_parse_regex": "GAM (\\S+)",
+      "install": {
+        "winget_id": null,
+        "scoop_package": null,
+        "npm_package": null,
+        "pip_package": null,
+        "cargo_package": null,
+        "script_url": null,
+        "manual_url": "https://github.com/GAM-team/GAM/wiki",
+        "recommended": null
+      },
+      "auth": {
+        "type": "oauth_cli",
+        "login_command": [
+          "gam",
+          "oauth",
+          "create"
+        ],
+        "logout_command": [
+          "gam",
+          "oauth",
+          "delete"
+        ],
+        "status_command": [
+          "gam",
+          "oauth",
+          "info"
+        ],
+        "status_parse": "text_contains_email",
+        "secret_keys": [],
+        "env_vars": []
+      },
+      "risk": {
+        "default_tier": "monitor",
+        "blacklist_patterns": [
+          "gam * delete *",
+          "gam * remove *",
+          "gam update user * password *"
+        ],
+        "whitelist_patterns": [
+          "gam calendar * print *",
+          "gam calendar * show *",
+          "gam user * print *",
+          "gam user * show *",
+          "gam oauth info*",
+          "gam version*"
+        ]
+      },
+      "tool_schema_examples": [
+        "gam calendar <primary-email> printevents after today before tomorrow",
+        "gam user <primary-email> print messages query \"is:unread\" maxmessages 10"
+      ],
+      "icon": "google",
+      "category": "workspace",
+      "capabilities": [
+        {
+          "domains": [
+            "calendar"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "lies",
+            "check",
+            "list",
+            "show",
+            "read"
+          ],
+          "objects": [
+            "kalender",
+            "termin",
+            "termine",
+            "calendar",
+            "appointment",
+            "appointments"
+          ],
+          "description": "Google Workspace Calendar: list and read events."
+        },
+        {
+          "domains": [
+            "email"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "lies",
+            "check",
+            "list",
+            "show",
+            "read"
+          ],
+          "objects": [
+            "mail",
+            "mails",
+            "email",
+            "gmail",
+            "posteingang",
+            "inbox",
+            "postfach"
+          ],
+          "description": "Google Workspace Gmail: list and read messages."
+        }
+      ]
     }
   ]
 }

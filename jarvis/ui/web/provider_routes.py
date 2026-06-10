@@ -260,6 +260,30 @@ def _apply_sub_jarvis_in_memory(request: Request, provider: str) -> None:
         log.debug("In-memory sub_jarvis.provider update skipped: %s", exc)
 
 
+def _apply_sub_jarvis_model_in_memory(request: Request, model: str) -> None:
+    """Best-effort in-memory update of ``cfg.brain.sub_jarvis.model``.
+
+    Mirrors :func:`_apply_sub_jarvis_in_memory`; a missing ``sub_jarvis``
+    block is created with the router primary as provider so the override is
+    never silently dropped.
+    """
+    cfg = _resolve_cfg(request)
+    if cfg is None or getattr(cfg, "brain", None) is None:
+        return
+    sub = getattr(cfg.brain, "sub_jarvis", None)
+    try:
+        if sub is None:
+            from jarvis.core.config import BrainTierConfig
+
+            cfg.brain.sub_jarvis = BrainTierConfig(
+                provider=getattr(cfg.brain, "primary", "") or "", model=model,
+            )
+        else:
+            sub.model = model
+    except Exception as exc:  # noqa: BLE001 — frozen models / detached cfg are not errors
+        log.debug("In-memory sub_jarvis.model update skipped: %s", exc)
+
+
 async def _emit(request: Request, event: Any) -> None:
     bus = getattr(request.app.state, "bus", None) or _bus_from_brain(request)
     if bus is None:
@@ -769,6 +793,60 @@ async def subagent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     return {
         "ok": True,
         "active": provider,
+        "persisted": persisted,
+        "restart_required": True,
+    }
+
+
+class SubagentModelBody(BaseModel):
+    """Body for the subagent model override. Empty string is meaningful:
+    it resets to the active subagent provider's deep (frontier) model."""
+
+    model: str = Field(default="", max_length=128)
+    persist: bool = Field(default=True)
+
+
+@router.post("/subagent/model")
+async def subagent_model(body: SubagentModelBody, request: Request) -> dict[str, Any]:
+    """Pin which MODEL the heavy-task sub-agents run (``[brain.sub_jarvis].model``).
+
+    The dedicated subagent LLM, separate from the router brain: the worker
+    chain reads it per spawn (``provider_chain._resolve_provider_chain``) and
+    ``/openclaw/status`` displays it as ``sub_model_override`` /
+    ``model_resolved``. No allowlist on the model id — providers add models
+    faster than we could pin them; a typo simply falls back at the provider
+    when rejected. Empty string = the documented sentinel for "provider's
+    deep model".
+
+    3-layer persist via ``config_writer.set_sub_jarvis_model`` —
+    ``brain.sub_jarvis.model`` is drift-guard pinned, so a TOML-only write
+    would be reverted within minutes (BUG-010 class).
+    """
+    model = body.model.strip()
+
+    persisted = False
+    if body.persist:
+        try:
+            from jarvis.core.config_writer import set_sub_jarvis_model
+
+            set_sub_jarvis_model(model)
+            persisted = True
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=500, detail=f"TOML write failed: {exc}"
+            ) from exc
+
+    # Best-effort in-memory update so the next /openclaw/status reflects the
+    # choice immediately (workers resolve their chain per spawn from config).
+    _apply_sub_jarvis_model_in_memory(request, model)
+
+    await _emit(request, SecretConfigured(key="brain.sub_jarvis.model", action="set"))
+
+    return {
+        "ok": True,
+        "model": model,
         "persisted": persisted,
         "restart_required": True,
     }

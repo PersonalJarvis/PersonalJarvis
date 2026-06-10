@@ -137,6 +137,21 @@ async def test_stt_stable_also_finalizes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_finalized_turn_resets_beheaded_mark() -> None:
+    """Each finalized turn starts with a clean no-first-frame-abort mark, so a
+    ceiling abort from a PREVIOUS turn can never make a later empty turn speak
+    a stale timeout notice (per-unit reset — the BUG-032 lesson)."""
+    stt = RecordingSTT()
+    pipe, _states = _make_pipeline(stt)
+    pipe._playback_aborted_no_first_frame = True
+
+    pipe._last_endpoint_reason = "silence"
+    await pipe._handle_utterance(b"CCCC")
+
+    assert pipe._playback_aborted_no_first_frame is False
+
+
+@pytest.mark.asyncio
 async def test_empty_tail_flush_finalizes_carry() -> None:
     """Contract for the VAD tail flush (2026-06-09 "listens forever" fix):
     after a forced cut the VAD yields an EMPTY pcm with reason ``silence``

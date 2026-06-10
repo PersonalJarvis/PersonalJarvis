@@ -507,6 +507,45 @@ class BrainTierConfig(BaseModel):
     vision: RouterVisionConfig = Field(default_factory=RouterVisionConfig)
 
 
+class EvidenceDomainsConfig(BaseModel):
+    """Evidence-required domains (CLI first-class capabilities, 2026-06-10).
+
+    Questions in these domains are never answered from the model's head:
+    either a capability covers the domain (the gate injects a mandatory-tool
+    directive) or the gate returns a deterministic honest refusal. Keyword
+    lists are DE+EN, lowercase; matching is word-boundary, umlaut-normalised
+    (jarvis/brain/evidence_gate.py). TOML shape:
+
+        [brain.evidence_domains]
+        enabled = true
+        [brain.evidence_domains.domains]
+        calendar = ["kalender", "termin", ...]
+    """
+
+    enabled: bool = True
+    domains: dict[str, list[str]] = Field(default_factory=lambda: {
+        "calendar": [
+            "kalender", "termin", "termine", "steht heute", "steht morgen",
+            "steht diese woche", "calendar", "appointment", "appointments",
+        ],
+        "email": [
+            "mail", "mails", "e-mail", "e-mails", "email", "emails",
+            "posteingang", "postfach", "inbox", "ungelesene",
+        ],
+        "tasks": [
+            "aufgaben", "todo", "todos", "to-do", "task", "tasks",
+        ],
+        "repos": [
+            "pull request", "pull requests", "pull-request", "pr", "prs",
+            "issue", "issues", "repo", "repos", "repository",
+        ],
+        "deployments": [
+            "deployment", "deployments", "deploy-status",
+            "build-status", "build status",
+        ],
+    })
+
+
 class BrainConfig(BaseModel):
     primary: str = "claude-api"
     # For deep/code intents an API-key provider can be preferred.
@@ -546,6 +585,10 @@ class BrainConfig(BaseModel):
     # Persona mandate Phase 4: plausibility thresholds for tool execution.
     plausibility: BrainPlausibilityConfig = Field(
         default_factory=BrainPlausibilityConfig,
+    )
+    # CLI first-class capabilities: evidence-required external-data domains.
+    evidence_domains: EvidenceDomainsConfig = Field(
+        default_factory=EvidenceDomainsConfig,
     )
     healthcheck_on_start: bool = True
 
@@ -652,6 +695,10 @@ class SchedulerConfig(BaseModel):
     periodic_interval_minutes: int = 30
     lock_path: Path = Path("data/wiki_curator.lock")
     lock_stale_after_seconds: int = 300
+    # Wave-2 journal pressure: once this many candidate facts sit pending
+    # in the Stage-1 journal, a JOURNAL trigger asks the consolidator to
+    # drain a batch (still subject to cooldown + lock).
+    consolidate_after_candidates: int = 8
 
 
 class VoiceBridgeConfig(BaseModel):

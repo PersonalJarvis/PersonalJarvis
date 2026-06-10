@@ -119,6 +119,40 @@ def test_from_model_projects_to_dataclass() -> None:
     assert hash(spec) is not None
 
 
+def test_capabilities_block_roundtrip() -> None:
+    payload = _minimal_payload(
+        capabilities=[{
+            "domains": ["repos"],
+            "verbs": ["zeig", "list", "show"],
+            "objects": ["pull request", "issue"],
+            "description": "GitHub repos, PRs and issues.",
+        }],
+    )
+    spec = CliSpec.from_model(CliSpecModel.model_validate(payload))
+    assert spec.capabilities[0].domains == ("repos",)
+    assert spec.capabilities[0].verbs == ("zeig", "list", "show")
+    assert spec.capabilities[0].objects == ("pull request", "issue")
+    assert spec.capabilities[0].description == "GitHub repos, PRs and issues."
+
+
+def test_capabilities_default_empty() -> None:
+    spec = CliSpec.from_model(CliSpecModel.model_validate(_minimal_payload()))
+    assert spec.capabilities == ()
+
+
+def test_capabilities_reject_empty_lists() -> None:
+    payload = _minimal_payload(
+        capabilities=[{
+            "domains": [],
+            "verbs": ["x"],
+            "objects": ["y"],
+            "description": "broken",
+        }],
+    )
+    with pytest.raises(ValidationError):
+        CliSpecModel.model_validate(payload)
+
+
 def test_seed_catalog_entries_all_validate() -> None:
     """Every shipped seed entry must validate — regression guard against a
     bad edit to ``seed_catalog.json``."""

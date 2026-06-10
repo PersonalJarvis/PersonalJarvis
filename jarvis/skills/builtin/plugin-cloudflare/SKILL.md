@@ -2,6 +2,7 @@
 schema_version: "1"
 name: plugin-cloudflare
 description: Manage the user's Cloudflare DNS records, zones, and Workers.
+when_to_use: Use when the user mentions Cloudflare or wants to inspect or change DNS records, zones, or Workers.
 category: developer
 plugin_id: cloudflare
 intent_verbs: [zeig, lies, erstell, konfigurier, aktualisier]  # i18n-allow

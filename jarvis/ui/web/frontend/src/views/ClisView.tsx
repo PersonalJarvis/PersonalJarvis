@@ -7,6 +7,7 @@ import {
   CreditCard,
   Github,
   Container,
+  Briefcase,
   ExternalLink,
   ChevronRight,
   Plus,
@@ -72,6 +73,7 @@ const ICONS_BY_CATEGORY: Record<string, React.ComponentType<{ className?: string
   git: Github,
   payments: CreditCard,
   container: Container,
+  workspace: Briefcase,
   other: Terminal,
 };
 
@@ -292,7 +294,10 @@ function CliRow({
         {iconForCli(cli)}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium">{cli.name}</span>
+            <span className="truncate text-sm font-medium">{cli.display_name}</span>
+            <span className="shrink-0 rounded bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+              {cli.name}
+            </span>
             <span className="rounded-full border border-border px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground/80">
               {cli.category}
             </span>
@@ -303,7 +308,7 @@ function CliRow({
             )}
           </div>
           <div className="truncate text-xs text-muted-foreground/80">
-            {cli.display_name} · {cli.description}
+            {cli.description}
           </div>
         </div>
         <span className="hidden w-20 text-right font-mono text-[11px] text-muted-foreground tabular-nums sm:inline">

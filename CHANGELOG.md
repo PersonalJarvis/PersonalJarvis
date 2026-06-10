@@ -7,6 +7,24 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
+## [0.4.0] - 2026-06-10
+
+### Added
+- Hold-to-abort for running sub-agent missions: RUNNING cards in the Outputs view carry a stop ring you hold for 1.2s (no confirm dialog, no accidental one-click kill). Cancelling kills the in-flight orchestrator run and its worker process tree, emits the canonical `MissionCancelled` event (spoken announcement + recovery reconciliation), and the card flips to a distinct amber "cancelled" badge instead of "error".
+- Outputs API now exposes each card's full mission id; the cancel endpoint reports whether a live worker was actually killed (`worker_killed`).
+- Live reasoning trace in chat: a thinking card with real step-by-step progress (tool calls, worker delegation, computer-use phases) plus a "Thought for Xs" disclosure on finished replies.
+- Profile view reimagined as "The Ledger": a butler-style house book with a generative knowledge seal, acquaintance tiers, and "still unwritten" voice prompts.
+- Dynamic context-aware spawn announcements: the voice ACK for background workers names the actual task instead of a canned phrase.
+- Connected CLI tools (gcloud, gh, ...) are first-class router capabilities with object-required matching and an evidence gate against hallucinated results.
+
+### Changed
+- Sub-agent missions use a lean standalone workspace when the task does not need the repository, instead of cloning the full repo for every step.
+- The injection scanner now scans only worker-authored output, so a mission is no longer killed after delivering clean work just because the worker read security documentation.
+
+### Fixed
+- "Listens forever" after an 8s forced utterance cut: the buffered sentence is now flushed at the next voice-activity endpoint.
+- An explicit "spawn a sub-agent" command beats a coincidental skill match, and a muted beheaded turn now ends audibly.
+
 ## [0.3.0] - 2026-06-09
 
 ### Added

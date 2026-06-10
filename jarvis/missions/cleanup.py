@@ -19,14 +19,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
+import stat
 import subprocess
 import time
 from pathlib import Path
 from typing import Final
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
-
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,29 @@ async def startup_sweep(
 
     Returns:
         Stats dict ``{"scanned": N, "removed": M, "errors": E}``.
+
+    The actual filesystem/git work is fully blocking (``subprocess.run`` +
+    ``shutil.rmtree`` over deep worktrees), so it runs in a worker thread via
+    ``asyncio.to_thread``. This sweep executes on the same event loop that
+    serves ``/api/health`` at boot — blocking it kept the desktop window
+    from appearing for the entire sweep duration (the 30s-launch bug,
+    2026-06-10).
     """
+    return await asyncio.to_thread(
+        _sweep_blocking,
+        isolation_root=isolation_root,
+        cleanup_days=cleanup_days,
+        repo_root=repo_root,
+    )
+
+
+def _sweep_blocking(
+    *,
+    isolation_root: Path,
+    cleanup_days: int,
+    repo_root: Path | None,
+) -> dict[str, int]:
+    """Synchronous sweep body — only ever called off-loop (see above)."""
     stats = {"scanned": 0, "removed": 0, "errors": 0}
 
     if not isolation_root.exists():
@@ -88,6 +111,27 @@ async def startup_sweep(
     return stats
 
 
+def _on_rmtree_error(func, path, exc_info) -> None:  # type: ignore[no-untyped-def]
+    """``shutil.rmtree`` onerror hook: clear the read-only bit and retry.
+
+    Git marks object/pack files read-only; on Windows ``os.unlink`` fails on
+    them with PermissionError, so without this hook stale mission worktrees
+    were NEVER deletable — the backlog grew forever and every boot re-failed
+    on the same entries. ``path`` always lies inside the tree being removed
+    (rmtree does not follow symlinks/junctions), so the chmod cannot touch
+    anything outside the mission directory.
+    """
+    exc = exc_info[1]
+    if isinstance(exc, PermissionError):
+        try:
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+            return
+        except OSError:
+            pass
+    raise exc
+
+
 def _remove_entry(entry: Path, *, repo_root: Path | None) -> bool:
     """Attempts ``git worktree remove --force`` (when repo_root is given),
     falling back to ``shutil.rmtree``. Returns True on success.
@@ -103,7 +147,7 @@ def _remove_entry(entry: Path, *, repo_root: Path | None) -> bool:
                 _try_git_worktree_remove(workspace, repo_root)
 
     try:
-        shutil.rmtree(entry, ignore_errors=False)
+        shutil.rmtree(entry, onerror=_on_rmtree_error)
         return True
     except OSError as exc:
         logger.warning("_remove_entry: rmtree failed for %s: %s", entry, exc)

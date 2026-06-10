@@ -48,6 +48,7 @@ from jarvis.core.paths import user_data_dir
 from jarvis.memory.frontmatter import parse_frontmatter, write_frontmatter
 from jarvis.memory.workspace import person_slug
 
+from .notify import notify_contact_changed
 from .schema import normalize_relationship
 
 # A pragmatic, dependency-free e-mail check (cloud-first base install stays light —
@@ -362,6 +363,7 @@ class ContactStore:
             if k in _ADDRESS_KEYS and v and str(v).strip()
         }
 
+        created = slug is None
         if slug is None:
             slug = self._unique_slug(clean_name)
 
@@ -374,6 +376,7 @@ class ContactStore:
         body = (note or "").strip()
         body = f"{body}\n" if body else ""
         self._write(slug, meta, body)
+        notify_contact_changed("created" if created else "updated", slug, clean_name)
         return Contact.load(self._path(slug))
 
     def update(self, slug: str, **fields: Any) -> Contact | None:
@@ -401,12 +404,16 @@ class ContactStore:
     # Contract 1 — delete + prompt block
     # ------------------------------------------------------------------
     def delete(self, slug: str) -> bool:
+        existing = self.get(slug)
         path = self._path(slug)
         try:
             path.unlink()
-            return True
         except FileNotFoundError:
             return False
+        notify_contact_changed(
+            "deleted", slug, existing.name if existing is not None else slug
+        )
+        return True
 
     def render_for_prompt(self, *, max_chars: int = 800) -> str:
         """Compact ``## Contacts`` block: names + relationship only.

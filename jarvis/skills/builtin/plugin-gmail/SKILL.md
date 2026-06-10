@@ -2,6 +2,7 @@
 schema_version: "1"
 name: plugin-gmail
 description: Read and send email from the user's connected Gmail inbox.
+when_to_use: Use when the user mentions Gmail, their inbox, or mail and wants to read, search, send, or answer email.
 category: communication
 plugin_id: gmail
 intent_verbs: [lies, lese, schick, sende, antworte, zeig, check]  # i18n-allow

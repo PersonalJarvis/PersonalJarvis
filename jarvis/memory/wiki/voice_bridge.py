@@ -36,20 +36,34 @@ the ack path is always on.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from jarvis.core.bus import EventBus
-from jarvis.core.events import ResponseGenerated, TranscriptFinal
+from jarvis.core.events import MessageSent, ResponseGenerated, TranscriptFinal
 from jarvis.memory.wiki.telemetry import telemetry
 
 if TYPE_CHECKING:
     from jarvis.core.config import VoiceBridgeConfig
     from jarvis.memory.wiki.curator import WikiCurator
+    from jarvis.memory.wiki.extractor import ConversationFactExtractor
 
 log = logging.getLogger(__name__)
+
+# Bounded in-memory dedupe of recently dispatched turns. A voice turn can
+# surface twice (TranscriptFinal AND the server's MessageSent mirror); the
+# hash gate makes sure only one extraction fires per distinct turn text.
+_SEEN_HASHES_MAX = 128
+
+
+def _turn_hash(text: str) -> str:
+    """Stable hash of a normalised turn text (case/whitespace-insensitive)."""
+    normalised = " ".join((text or "").casefold().split())
+    return hashlib.sha1(normalised.encode("utf-8")).hexdigest()  # noqa: S324 — dedupe key, not security
 
 
 # Keywords (lowercase, simple substring match) that mark the brain's
@@ -75,11 +89,14 @@ _MIN_ACK_USER_CHARS = 12
 
 @dataclass
 class _PendingTurn:
-    """User text from TranscriptFinal, held until ResponseGenerated."""
+    """User text from TranscriptFinal/MessageSent, held until ResponseGenerated."""
 
     user_text: str = ""
     user_language: str = ""
     captured_at_ns: int = 0
+    # "voice" (TranscriptFinal) or "chat" (MessageSent role=user) — only
+    # labels the journal source; the processing pipeline is identical.
+    origin: str = "voice"
 
 
 class VoiceFactBridge:
@@ -100,6 +117,7 @@ class VoiceFactBridge:
         bus: EventBus,
         curator: "WikiCurator",
         config: "VoiceBridgeConfig | None" = None,
+        extractor: "ConversationFactExtractor | None" = None,
     ) -> None:
         # Late import keeps the dataclass-only module import-cheap and
         # avoids a circular-import risk with ``jarvis.core.config`` in
@@ -110,10 +128,18 @@ class VoiceFactBridge:
         self._bus = bus
         self._curator = curator
         self._cfg = config
+        # Wave-2: when an extractor is attached, both paths feed the
+        # candidate journal (Stage 1) instead of the legacy blind
+        # per-turn curator ingest. ``None`` keeps the legacy behaviour
+        # (WikiIntegrationConfig.fallback_to_direct_ingest posture).
+        self._extractor = extractor
         self._pending = _PendingTurn()
         self._unsubs: list[Any] = []
         self._inflight: set[asyncio.Task[Any]] = set()
         self._started = False
+        # Recently dispatched turn hashes (bounded LRU) — dedupes the
+        # TranscriptFinal/MessageSent double delivery of the same turn.
+        self._seen_hashes: OrderedDict[str, None] = OrderedDict()
         # Monotonic ns -- never compared across reboots, so wall-clock
         # drift is irrelevant. Initialised to a value far enough in the
         # past that the first aggressive ingest always passes the gate.
@@ -124,11 +150,14 @@ class VoiceFactBridge:
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        """Subscribe to TranscriptFinal and ResponseGenerated."""
+        """Subscribe to TranscriptFinal, MessageSent and ResponseGenerated."""
         if self._started:
             return
         self._unsubs.append(
             self._bus.subscribe(TranscriptFinal, self._on_transcript_final)
+        )
+        self._unsubs.append(
+            self._bus.subscribe(MessageSent, self._on_user_message)
         )
         self._unsubs.append(
             self._bus.subscribe(ResponseGenerated, self._on_response_generated)
@@ -176,9 +205,35 @@ class VoiceFactBridge:
             captured_at_ns=ts_ns,
         )
 
+    async def _on_user_message(self, event: MessageSent) -> None:
+        """Capture a CHAT user turn (desktop chat, Discord/Telegram channels).
+
+        Mirrors :meth:`_on_transcript_final` for the text path so chat turns
+        feed the same journal. Non-user roles (assistant/preamble/...) are
+        ignored. A voice turn that the server mirrors as ``MessageSent`` is
+        deduped later by the turn-hash gate, never double-extracted.
+        """
+        if (getattr(event, "role", "") or "") != "user":
+            return
+        text = (getattr(event, "text", "") or "").strip()
+        if not text:
+            return
+        ts_ns = getattr(event, "timestamp_ns", 0) or 0
+        # A voice turn already sits in pending (TranscriptFinal fired first):
+        # do not downgrade its origin to "chat" when the server mirrors it.
+        if self._pending.user_text and _turn_hash(self._pending.user_text) == _turn_hash(text):
+            return
+        self._pending = _PendingTurn(
+            user_text=text,
+            user_language="",
+            captured_at_ns=ts_ns,
+            origin="chat",
+        )
+
     async def _on_response_generated(self, event: ResponseGenerated) -> None:
-        """Run ack-path first, then aggressive-path. At most one ingest fires."""
-        jarvis_text = (getattr(event, "text", "") or "").strip().lower()
+        """Run ack-path first, then aggressive-path. At most one dispatch fires."""
+        reply_raw = (getattr(event, "text", "") or "").strip()
+        jarvis_text = reply_raw.lower()
         if not jarvis_text:
             return
 
@@ -198,11 +253,11 @@ class VoiceFactBridge:
             self._pending = _PendingTurn()
             telemetry.inc("voice_turns_ingested_ack")
             log.info(
-                "VoiceFactBridge[ack]: brain acked storage, ingesting user text "
-                "(%d chars, lang=%s)",
-                len(pending.user_text), pending.user_language,
+                "VoiceFactBridge[ack]: brain acked storage, capturing user text "
+                "(%d chars, lang=%s, origin=%s)",
+                len(pending.user_text), pending.user_language, pending.origin,
             )
-            self._spawn_ingest(pending, source_kind="voice-fact")
+            self._dispatch(pending, reply_raw, source_kind=f"{pending.origin}-fact")
             return
 
         # ---- Path 2: aggressive ingest -----------------------------------
@@ -224,15 +279,54 @@ class VoiceFactBridge:
         telemetry.inc("voice_turns_ingested_aggressive")
         log.info(
             "VoiceFactBridge[aggressive]: brain did not ack but user text "
-            "looks fact-shaped, ingesting via curator salience filter "
-            "(%d chars, lang=%s)",
-            len(pending.user_text), pending.user_language,
+            "looks fact-shaped, capturing via salience filter "
+            "(%d chars, lang=%s, origin=%s)",
+            len(pending.user_text), pending.user_language, pending.origin,
         )
-        self._spawn_ingest(pending, source_kind="voice-aggressive")
+        self._dispatch(pending, reply_raw, source_kind=f"{pending.origin}-aggressive")
 
     # ------------------------------------------------------------------
     # ingest plumbing
     # ------------------------------------------------------------------
+
+    def _dispatch(
+        self, pending: _PendingTurn, reply_raw: str, *, source_kind: str,
+    ) -> None:
+        """Route one captured turn to Stage-1 extraction (or legacy ingest).
+
+        Extractor mode dedupes by turn hash FIRST (in-memory LRU + the
+        journal's durable ``seen_turn``) so the TranscriptFinal/MessageSent
+        double delivery of one turn never extracts twice. Always
+        fire-and-forget — the voice path is never blocked (AP-9).
+        """
+        if self._extractor is None:
+            self._spawn_ingest(pending, source_kind=source_kind)
+            return
+
+        turn_hash = _turn_hash(pending.user_text)
+        if turn_hash in self._seen_hashes:
+            log.debug(
+                "VoiceFactBridge: duplicate turn (hash=%s) — skipping extraction",
+                turn_hash[:12],
+            )
+            return
+
+        task = asyncio.create_task(
+            self._extract_safe(
+                pending, reply_raw, source_kind=source_kind, turn_hash=turn_hash,
+            ),
+            name=f"voice-fact-bridge-extract-{source_kind}",
+        )
+        # Record the hash only AFTER the task was actually created — a
+        # create_task failure (loop shutting down) must not permanently
+        # block this turn text for the rest of the process lifetime. The
+        # dispatch path runs on the event loop, so add-after-create cannot
+        # race a concurrent dispatch of the same hash.
+        self._seen_hashes[turn_hash] = None
+        while len(self._seen_hashes) > _SEEN_HASHES_MAX:
+            self._seen_hashes.popitem(last=False)
+        self._inflight.add(task)
+        task.add_done_callback(self._inflight.discard)
 
     def _spawn_ingest(self, pending: _PendingTurn, *, source_kind: str) -> None:
         """Start a fire-and-forget ingest task. Voice path is never blocked."""
@@ -242,6 +336,42 @@ class VoiceFactBridge:
         )
         self._inflight.add(task)
         task.add_done_callback(self._inflight.discard)
+
+    async def _extract_safe(
+        self,
+        pending: _PendingTurn,
+        reply_raw: str,
+        *,
+        source_kind: str,
+        turn_hash: str,
+    ) -> None:
+        """Stage-1 extraction with broad exception handling (background only).
+
+        The conversation must never notice a memory failure — log and move
+        on; the worst case is one lost candidate fact.
+        """
+        try:
+            if self._extractor.seen_turn(turn_hash):
+                log.debug(
+                    "VoiceFactBridge: turn already journaled (hash=%s) — skipping",
+                    turn_hash[:12],
+                )
+                return
+            count = await self._extractor.extract_and_journal(
+                pending.user_text,
+                reply_raw,
+                source_label=f"{source_kind}:{pending.captured_at_ns}",
+                turn_hash=turn_hash,
+            )
+            log.info(
+                "VoiceFactBridge[%s]: extraction done — %d candidate(s) journaled",
+                source_kind, count,
+            )
+        except Exception:  # noqa: BLE001
+            log.exception(
+                "VoiceFactBridge[%s]: extraction failed, candidates lost.",
+                source_kind,
+            )
 
     def _aggressive_rate_limit_ok(self) -> bool:
         """True when at least ``rate_limit_seconds`` have passed since the last fire."""

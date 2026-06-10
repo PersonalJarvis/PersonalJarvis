@@ -1276,8 +1276,41 @@ class BrainManager:
                 _skills_section = render_available_skills_section(_skill_ctx.registry)
                 if _skills_section:
                     parts.append(_skills_section)
+            elif not self._skills_omit_warned:
+                # AD-S6: silently omitting the section was RC2 of "Jarvis
+                # never calls a skill" — warn once per manager lifetime.
+                self._skills_omit_warned = True
+                log.warning(
+                    "skills section omitted: skill context not initialized"
+                )
         except Exception:  # noqa: BLE001
-            pass
+            if not self._skills_omit_warned:
+                self._skills_omit_warned = True
+                log.warning(
+                    "skills section omitted: renderer failed", exc_info=True
+                )
+
+        # CLI first-class capabilities (design 2026-06-10, §5.3): list the
+        # connected CLIs so the brain can pick them for matching requests.
+        # Mirrors the skills section above. Rendered from the shared registry
+        # published by the UI server; absent registry → section omitted.
+        try:
+            from jarvis.clis.prompt_section import render_connected_clis_section
+            from jarvis.clis.shared import get_active_registry
+
+            _cli_reg = get_active_registry()
+            if _cli_reg is not None:
+                _cli_section = render_connected_clis_section(_cli_reg)
+                if _cli_section:
+                    parts.append(_cli_section)
+        except Exception:  # noqa: BLE001
+            log.debug("connected-CLIs section omitted", exc_info=True)
+
+        # Evidence gate directive (per-turn, AD-CLI8): forces a tool call
+        # before any answer about an external-data domain. Empty on normal
+        # turns; set by generate() when the gate returns require_tool.
+        if self._evidence_directive:
+            parts.append(self._evidence_directive)
 
         if self._system_prompt_extra:
             parts.append(self._system_prompt_extra)
@@ -1728,6 +1761,48 @@ class BrainManager:
             log.debug("_check_unsupported_intent: registry error", exc_info=True)
         return None
 
+    def _run_evidence_gate(self, user_text: str) -> "EvidenceVerdict":
+        """Defensive wrapper around ``check_evidence_domain`` (AD-CLI4..8).
+
+        Any infrastructure fault (missing config field, no shared CLI
+        registry, capabilities module error) degrades to PASS — the gate adds
+        behaviour, it must never block the voice path.
+        """
+        from jarvis.brain.evidence_gate import EvidenceVerdict, check_evidence_domain
+
+        try:
+            cfg = self._config.brain.evidence_domains
+            if not cfg.enabled:
+                return EvidenceVerdict(kind="pass")
+            from jarvis.clis.capability_provider import (
+                connected_domain_tool_map,
+                refusal_hint,
+            )
+            from jarvis.clis.shared import get_active_registry
+            from jarvis.core.capabilities import get_registry
+
+            cli_reg = get_active_registry()
+            domain_map = (
+                connected_domain_tool_map(cli_reg) if cli_reg is not None else {}
+            )
+
+            def _hint(domain: str, lang: str) -> str:
+                if cli_reg is None:
+                    return ""
+                return refusal_hint(domain, cli_reg, lang)
+
+            return check_evidence_domain(
+                user_text,
+                enabled=cfg.enabled,
+                domains=cfg.domains,
+                capability_registry=get_registry(),
+                domain_tool_map=domain_map,
+                refusal_hint_fn=_hint,
+            )
+        except Exception:  # noqa: BLE001
+            log.debug("evidence gate degraded to PASS", exc_info=True)
+            return EvidenceVerdict(kind="pass")
+
     def _is_smalltalk(self, user_text: str) -> bool:
         """Pure smalltalk allowlist check — independent of spawn-verb logic.
 
@@ -1796,6 +1871,15 @@ class BrainManager:
     _pending_forced_skill: tuple[str, str, str] | None = None
     _skill_turn_content: str = ""
     _skill_turn_source: str = "match"
+    # AD-S6: warn exactly once per manager lifetime when the AVAILABLE
+    # SKILLS section cannot be rendered (RC2 used to be silent).
+    _skills_omit_warned: bool = False
+    # Evidence gate (CLI first-class capabilities, 2026-06-10): per-turn
+    # mandatory-tool directive + the tool that must stay visible even on a
+    # smalltalk-classified turn ("was steht heute an" matches the smalltalk
+    # allowlist forms). Reset at the start of every generate() turn.
+    _evidence_directive: str = ""
+    _evidence_required_tool: str = ""
 
     def note_skill_trigger(
         self, skill_name: str, *, content: str = "", source: str = "trigger"
@@ -1829,6 +1913,9 @@ class BrainManager:
         except Exception:  # noqa: BLE001
             log.warning("noted skill trigger %r could not be resolved", skill_name)
             return
+        if self._skill_is_blocked(skill):
+            log.info("noted skill %r is block-tier — ignored", skill_name)
+            return
         self._skill_turn_match = skill
         self._skill_turn_content = content
         self._skill_turn_source = source
@@ -1850,9 +1937,30 @@ class BrainManager:
             res = TriggerMatcher(ctx.registry).match_voice_with_match(
                 user_text, lang=lang
             )
-            return res[0] if res is not None else None
+            if res is None:
+                return None
+            skill = res[0]
+            if self._skill_is_blocked(skill):
+                log.info(
+                    "skill %s matched but is block-tier — turn not captured",
+                    getattr(skill, "name", "?"),
+                )
+                return None
+            return skill
         except Exception:  # noqa: BLE001
             return None
+
+    @staticmethod
+    def _skill_is_blocked(skill: Any) -> bool:
+        """True for risk_policy block-tier skills — they must never capture a
+        turn (mirrors the run-skill tool's block gate)."""
+        fm = getattr(skill, "frontmatter", None)
+        if fm is None:
+            return True
+        try:
+            return fm.risk_policy.default_tier == "block"
+        except Exception:  # noqa: BLE001
+            return False
 
     def _render_skill_turn_hint(self) -> str | None:
         """Steering hint appended to the turn context on a skill-matched turn."""
@@ -2016,6 +2124,11 @@ class BrainManager:
         allowed = self._SMALLTALK_SAFE_TOOLS
         if self._skill_turn_match is not None:
             allowed = allowed | {"run-skill"}
+        if self._evidence_required_tool:
+            # "was steht heute an" can classify as smalltalk; the mandated
+            # evidence tool must stay visible or the directive is
+            # unfulfillable (AD-CLI8).
+            allowed = allowed | {self._evidence_required_tool}
         return {
             n: t for n, t in self._tools.items()
             if n in allowed
@@ -2212,6 +2325,15 @@ class BrainManager:
         # 2026-06-08: "Ich möchte, dass du mir Hermes Agent öffnest, also …").
         if is_open_app_intent(t):
             return False
+        # AD-S9 (2026-06-10): an EXPLICIT heavy-work trigger ("Sub-Agent",
+        # "OpenClaw", "spawne", "deep dive", …) outranks the skill guard
+        # below — the user is naming the execution vehicle, not just touching
+        # a skill's topic. Live bug 2026-06-10 14:34: "spawne einen Sub-Agent
+        # … Gmail …" matched the gmail pairing skill, AD-S3 disarmed
+        # force-spawn, and the turn ran inline and died mute (no mission,
+        # no ACK, idle hang-up).
+        if self._get_force_spawn_pattern().search(t):
+            return True
         # Skill-aware guard (AD-S3, 2026-06-09 rebuild): an utterance that
         # matches an installed, active skill is the skill's turn — never a
         # heavy-worker spawn. generate() sets _skill_turn_match early; the
@@ -2231,8 +2353,8 @@ class BrainManager:
         # `brain.routing.force_spawn_mode = "permissive"`.
         mode = (self._config.brain.routing.force_spawn_mode or "strict").lower()
         if mode == "strict":
-            if self._get_force_spawn_pattern().search(t):
-                return True
+            # Explicit trigger phrases already returned True above (AD-S9
+            # moved that check ahead of the skill guard for every mode).
             # 2026-06-01: the sub-agent is the universal capability for generic
             # work. The capability gate no longer refuses such tasks, so spawn
             # them natively here — the user must NOT have to say "Subagent". A
@@ -2541,6 +2663,18 @@ class BrainManager:
             except RuntimeError:
                 log.debug("Curator-Task nicht scheduled (kein Event-Loop)")
 
+    def _spawn_ack_language(self, user_text: str) -> str:
+        """Resolve the language for the spoken spawn acknowledgement.
+
+        A pinned reply language (``brain.reply_language`` = de/en) wins;
+        otherwise detect from the user's words. The spawn-announcement
+        composer supports de/en only (ack-brain convention), so an "es"
+        pin falls through to detection like "auto" does.
+        """
+        if self._reply_language in ("de", "en"):
+            return self._reply_language
+        return "de" if _looks_german(user_text) else "en"
+
     def _build_history_hints(self, *, max_turns: int = 3, max_chars_per_msg: int = 240) -> list[str]:
         """Formats the last N turn pairs as compact ``context_hints``.
 
@@ -2625,13 +2759,17 @@ class BrainManager:
         args = {
             "utterance": user_text,
             "context_hints": context_hints,
-            # Empty action signals the spawn tool's ACK builder to pick from
-            # its short variant rotation instead of emitting the long generic
-            # template phrase. Live regression 2026-05-26: the previously
-            # hardcoded "den vom User beschriebenen Workflow" turned every
-            # force-spawn ACK into the same canned 17-syllable sentence.
+            # Empty action: the force-spawn heuristic has no LLM
+            # interpretation. The spawn tool's announcement composer then
+            # phrases the spoken ACK itself (flash-LLM with the delegation
+            # persona, deterministic bilingual fallback) — see
+            # jarvis/brain/ack_brain/spawn_announcement.py. Live regression
+            # 2026-05-26 / redesign 2026-06-10: no canned template phrases.
             "action": "",
             "target": "",
+            # Turn language for the spoken ACK: honour a reply-language pin,
+            # otherwise detect from the user's words.
+            "language": self._spawn_ack_language(user_text),
         }
         log.info("Force-Spawn OpenClaw: %r", user_text[:160])
         result = await self._tool_executor.execute(
@@ -2683,10 +2821,16 @@ class BrainManager:
         args = {
             "utterance": utterance,
             "context_hints": context_hints,
-            # Prefer the brain-leaked action verb; empty fallback rotates
-            # short generic ACK variants instead of the old long template.
+            # Prefer the brain-leaked interpretation; the spawn tool's
+            # announcement composer validates the leaked spoken_ack (if any)
+            # and otherwise phrases the ACK itself.
             "action": str(leaked.get("action") or ""),
             "target": str(leaked.get("target") or ""),
+            "spoken_ack": str(leaked.get("spoken_ack") or ""),
+            "language": (
+                str(leaked.get("language") or "")
+                or self._spawn_ack_language(user_text)
+            ),
         }
         log.warning(
             "Recovered leaked spawn_worker tool-call from brain text "
@@ -2971,9 +3115,29 @@ class BrainManager:
         # probe the skill never gets a chance (the root cause of "Jarvis
         # never calls a skill"). Overwritten on every turn.
         self._skill_turn_match = self._match_skill_for_turn(user_text)
+        # Evidence-gate state is strictly per-turn — a stale directive must
+        # never leak into a later prompt build (e.g. a skill turn that
+        # early-returns before the gate runs).
+        self._evidence_directive = ""
+        self._evidence_required_tool = ""
         # AD-S4: a trigger noted by the speech pipeline / chat hook takes
         # precedence — it carries the captured content and the source label.
         self._consume_pending_skill_trigger(user_text)
+        # AD-S9: an explicit heavy-work trigger ("Sub-Agent", "OpenClaw",
+        # "spawne", "deep dive", …) names the execution vehicle — the mission
+        # path owns such a turn, not the inline skill prompt. Live bug
+        # 2026-06-10 14:34: "spawne einen Sub-Agent … Gmail …" became a mute
+        # inline gmail-skill turn instead of a mission.
+        if (
+            self._skill_turn_match is not None
+            and self._get_force_spawn_pattern().search(user_text)
+        ):
+            log.info(
+                "Skill match %s stands down — explicit heavy-work trigger in "
+                "the utterance wins (AD-S9: mission, not inline skill).",
+                getattr(self._skill_turn_match, "name", "?"),
+            )
+            self._skill_turn_match = None
         if self._skill_turn_match is not None:
             log.info(
                 "Skill-matched turn: %r → skill %s (fast paths stand down)",
@@ -3065,6 +3229,30 @@ class BrainManager:
                 trace_id=turn_trace_id,
             )
             return forced_spawn
+
+        # Evidence gate (AD-CLI4..AD-CLI8): questions about external-data
+        # domains (calendar/email/tasks/repos/deployments) are never answered
+        # from the model's head. Either a connected CLI covers the domain
+        # (mandatory-tool directive for this turn) or the answer is a
+        # deterministic honest refusal. Pure regex + registry lookup, no LLM
+        # (AP-11). Skill turns already returned above; non-CLI capabilities
+        # (paired skills, router tools, MCP) make the gate stand down (PASS).
+        verdict = self._run_evidence_gate(user_text)
+        if verdict.kind == "honest_refusal":
+            await self._record_response_side_effects(
+                user_text=user_text,
+                response_text=verdict.refusal_text,
+                use_history=use_history,
+                trace_id=turn_trace_id,
+            )
+            return verdict.refusal_text
+        if verdict.kind == "require_tool":
+            log.info(
+                "Evidence gate: domain=%s requires tool %s this turn",
+                verdict.domain, verdict.tool_name,
+            )
+            self._evidence_directive = verdict.directive
+            self._evidence_required_tool = verdict.tool_name
 
         # Phase 5 / ADR-0006: pre-call budget gate. Block rather than request
         # when cooldown is active or the task/daily budget is exhausted.

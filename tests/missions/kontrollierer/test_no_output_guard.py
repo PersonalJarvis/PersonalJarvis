@@ -48,6 +48,7 @@ def _make_kontrollierer(view: _FakeView) -> tuple[Kontrollierer, _FakeManager]:
     mgr = _FakeManager(view)
     k._manager = mgr
     k._state_locks = {}
+    k._running_missions = {}  # run_mission tracks its in-flight task here
     return k, mgr
 
 
@@ -100,5 +101,6 @@ def test_run_mission_unknown_mission_raises() -> None:
     k = object.__new__(Kontrollierer)
     k._manager = _NoneManager()
     k._state_locks = {}
+    k._running_missions = {}  # run_mission tracks its in-flight task here
     with pytest.raises(KeyError):
         asyncio.run(k.run_mission("ghost"))

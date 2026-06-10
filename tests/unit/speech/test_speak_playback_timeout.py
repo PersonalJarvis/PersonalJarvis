@@ -204,6 +204,29 @@ class WedgeAfterFirstFramePlayer:
 
 
 @pytest.mark.asyncio
+async def test_no_first_frame_ceiling_abort_marks_beheaded_turn() -> None:
+    """The ceiling abort must leave a per-turn mark
+    (``_playback_aborted_no_first_frame``) so the empty-turn handler can speak
+    an audible timeout notice instead of dropping to silent LISTENING (live
+    bug 2026-06-10 14:34)."""
+    bus = EventBus()
+    pipeline = SpeechPipeline(tts=FakeTTS(), bus=bus, enable_whisper_wake=False)
+    player = HangingPlayer()  # never writes a frame
+    pipeline._player = player  # type: ignore[assignment]
+    pipeline._speak_playback_ceiling_s = 0.2  # type: ignore[attr-defined]
+
+    play_task = asyncio.create_task(player.play_chunks(_empty_chunks()))
+    done = await asyncio.wait_for(
+        pipeline._await_playback(play_task, set()), timeout=5.0
+    )
+
+    assert done == set()
+    assert getattr(pipeline, "_playback_aborted_no_first_frame", False) is True
+    if not play_task.done():  # the abort released the player; tidy up anyway
+        play_task.cancel()
+
+
+@pytest.mark.asyncio
 async def test_no_first_frame_ceiling_deferred_while_desktop_tool_steps() -> None:
     """An actively-stepping computer_use turn must not be beheaded pre-first-frame.
 

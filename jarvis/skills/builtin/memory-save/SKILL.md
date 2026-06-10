@@ -1,24 +1,24 @@
 ---
 schema_version: "1"
 name: memory-save
-version: "1.1.0"
-description: |
-  DEPRECATED in B5 (2026-05-13). Triggers removed so 'merk dir' phrases fall
-  through to the normal brain pipeline and land in the new wiki via the
-  Awareness layer + WikiCurator. Kept in tree as a reference; will be deleted
-  in Phase B4 cleanup.
+version: "2.0.0"
+description: >-
+  DEPRECATED since B5 (2026-05-13) and disabled. Long-term-memory writes
+  go through the wiki pipeline (Awareness layer, SessionRollupWorker,
+  WikiCurator). Use when nothing — this skill must not be re-enabled;
+  "merk dir" phrases belong to the normal brain pipeline.
+when_to_use: >-
+  Use when never — kept on disk only as a reference until the B4 hard-cut
+  deletes it. Re-enabling it would hijack the B5 wiki path.
 category: memory
 tags: [memory, notes, recall, deprecated]
 author: builtin
 license: MIT
 state: disabled
 triggers: []
-requires_tools:
-  - remember
+requires_tools: []
 risk_policy:
   default_tier: safe
-  per_tool_overrides:
-    remember: safe
 config:
   namespace: "user-facts"
   max_length_chars: 2000
@@ -26,74 +26,18 @@ config:
 token_budget_estimate: 1500
 ---
 
-> **Note (B5, 2026-05-13):** This skill is disabled. The empty `triggers:` block
-> means it no longer matches any voice phrase. Long-term-memory writes now go
-> through the B5 pipeline (Awareness → SessionRollupWorker → WikiCurator →
-> Obsidian vault). The full deletion is queued for Phase B4 Cleanup.
+> **Note (B5, 2026-05-13):** This skill is disabled. The empty
+> `triggers:` block means it never matches a voice phrase, and the
+> `state: disabled` keeps both invocation paths (trigger and run-skill)
+> closed. Long-term-memory writes flow through the B5 pipeline
+> (Awareness → SessionRollupWorker → WikiCurator → Obsidian vault).
+> Full deletion is queued for the B4 hard-cut.
 
-# Memory Save
+# Memory Save (deprecated)
 
-A very short, very frequent skill. The user states a fact — Jarvis
-saves it. No big processing, no LLM analysis (for now): the
-user input is stored directly, tagged with a timestamp and language.
-
-## Workflow
-
-### 1. Extract the content
-
-The `TriggerMatcher` delivers the capture group of the regex as `match.groups[1]`.
-That is the text to save. Example:
-
-Utterance: "merk dir: mein Hemd ist in der Waesche"
--> content = "mein Hemd ist in der Waesche"
-
-Utterance: "remember this milk is in the fridge"
--> content = "milk is in the fridge"
-
-If `len(content) > config.max_length_chars`, truncate + warning:
-"Nachricht gekuerzt auf {max} Zeichen." (message truncated to {max} characters)
-
-### 2. Determine the language (optional)
-
-If `config.auto_tag_language == true`:
-- First trigger token "merk" -> `de`
-- First trigger token "remember" -> `en`
-- Fallback: `unknown`
-
-### 3. Persist
-
-We use the built-in `remember` tool — it writes into
-`data/core_memory.json`, which is injected directly into the system prompt.
-The next brain call therefore sees the fact immediately.
-
-TOOL: remember {"fact": "{{content or utterance}}", "category": "{{detected_language or 'general'}}"}
-
-### 5. Confirm
-
-Short TTS output — deliberately minimal so that a frequent "merk dir X" does not annoy:
-
-- DE: "Gemerkt."
-- EN: "Got it."
-
-No echoing the content back (privacy: the user knows what they said).
-On error: "Konnte nicht speichern: {reason}." (could not save: {reason})
-
-## Fallbacks
-
-- memory-mcp down: local fallback (step 4).
-- Empty content (trigger word only): "Was soll ich merken?" (what should I remember?) — re-prompt.
-- Duplicate detection: _not_ in the skill — that is the job of the memory-mcp layer.
-
-## Do not do
-
-- No LLM summary of the content (too slow, too expensive for high frequency).
-- No automatic categorization (privacy + cost).
-- No "do you really want to save this" — tier `safe`, no confirmation.
-
-## Trace
-
-Skill execution traces `SkillStarted` -> `SkillStepExecuted` (memory-mcp/put) ->
-`SkillCompleted`. The content itself is NOT stored in the flight recorder
-(privacy); only length, language, success/failure. The user can retrieve the note via
-`jarvis --skills recall` (v1.1) or directly by voice: "was weisst du
-ueber die Waesche" (what do you know about the laundry) (Memory-Recall skill, separate).
+Historical behavior, for reference only: the user stated a fact
+("merk dir: X" / "remember this: X"), the trigger captured the tail as
+`content`, and the fact was persisted into core memory with a one-word
+spoken confirmation. That entire flow now lives in the brain pipeline
+plus the wiki tier (`wiki-ingest` for deterministic saves) — do not
+rebuild it here.

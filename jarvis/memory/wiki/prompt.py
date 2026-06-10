@@ -394,7 +394,108 @@ def build_user_prompt(
     )
 
 
+# ---------------------------------------------------------------------------
+# Wave-2 Stage-2 consolidator prompt (body-aware ADD/UPDATE/NOOP/INVALIDATE)
+# ---------------------------------------------------------------------------
+
+_CONSOLIDATOR_SYSTEM = """\
+You are the consolidating editor of a personal knowledge wiki (an Obsidian
+vault). You receive a batch of CANDIDATE FACTS extracted from the user's
+conversations, together with the FULL BODIES of the existing pages most
+related to each candidate. Decide, per candidate, how the vault changes.
+
+Return ONLY a JSON array. One object per candidate:
+  {"candidate_id": <int>, "decision": "add" | "update" | "noop" | "invalidate",
+   "target": "<dir>/<slug>.md", "new_body": "<full page markdown>",
+   "superseded_by": "<slug>", "reason": "<short why>"}
+
+Decision semantics:
+- "add": the fact is NEW knowledge with no fitting existing page. Provide
+  "target" (entities/, concepts/ or projects/) and a complete "new_body"
+  (frontmatter + sections per the page-type template below).
+- "update": the fact belongs on an existing page shown to you. Provide
+  "target" and the page's complete "new_body" with the fact merged in.
+  MAKE THE SMALLEST CORRECT EDIT: every existing fact, section and link
+  of the shown body MUST survive unless the candidate directly corrects it.
+- "noop": the vault already knows this (the shown bodies cover it).
+  Provide only "candidate_id", "decision", "reason".
+- "invalidate": the fact CONTRADICTS a shown page so that page (or
+  statement) is now outdated. Provide "target" (the superseded page) and
+  "superseded_by" (the slug of the page that replaces it — usually one you
+  "add" or "update" in this same batch). Do NOT provide "new_body"; the
+  system marks the page superseded mechanically. Nothing is ever deleted.
+
+Page-type templates (frontmatter keys are mandatory):
+- entities/<slug>.md: type: entity, entity_kind (person|tool|repository|
+  service|device), slug, aliases, created, updated. Sections: # Name,
+  ## Summary, ## Facts, ## Relationships, ## Sources.
+- concepts/<slug>.md: type: concept, slug, aliases, created, updated.
+  Sections: ## Summary, ## Definition, ## Examples, ## Related, ## Sources.
+- projects/<slug>.md: type: project, slug, status, started, last_activity.
+  Sections: ## Goal, ## Current Status, ## Recent Activity, ## Open Threads,
+  ## Related, ## Sources.
+
+Linking rules:
+- Cross-link related pages with [[wikilinks]] in their Relationships /
+  Related sections — when a fact connects two pages, update BOTH if both
+  are shown to you.
+- Only link pages that exist or that you create in THIS batch; anything
+  else write as plain text.
+- The user's profile page (the user entity) is the preferred "update"
+  target for identity/preference facts about the user; keep its section
+  structure intact.
+- Never write credentials or secrets. No prose outside the JSON array.
+"""
+
+
+def build_consolidator_prompt(
+    candidates: Iterable[Any],
+    neighbours: dict[str, str],
+    *,
+    user_entity_slug: str = "",
+) -> tuple[str, str]:
+    """Build (system, user) prompts for the Stage-2 judge.
+
+    ``candidates`` are journal rows (need ``.id``, ``.fact``, ``.kind``,
+    ``.subjects``); ``neighbours`` maps a vault-relative path to the FULL
+    page body (this is the body-awareness that the legacy curator lacked).
+    Pure function — no I/O, no LLM call.
+    """
+    parts: list[str] = []
+    # Anchor the model in real time: without this, frontmatter dates and
+    # "in the spring of <year>" prose get hallucinated into the wrong year
+    # (live finding 2026-06-10: pages created with created: 2024-*).
+    import datetime as _dt
+
+    parts.append(f"Today is {_dt.date.today().isoformat()}.\n")
+    if user_entity_slug:
+        parts.append(
+            f"The user's profile page is entities/{user_entity_slug}.md.\n"
+        )
+
+    parts.append("----- EXISTING PAGES (full bodies) -----")
+    if neighbours:
+        for rel_path, body in neighbours.items():
+            parts.append(f"=== {rel_path} ===\n{body.rstrip()}")
+    else:
+        parts.append("(no related pages found — the vault is empty here)")
+    parts.append("----- END EXISTING PAGES -----\n")
+
+    parts.append("----- CANDIDATE FACTS -----")
+    for row in candidates:
+        subjects = ", ".join(getattr(row, "subjects", ()) or ()) or "-"
+        parts.append(
+            f"candidate_id={row.id} kind={row.kind} subjects=[{subjects}]\n"
+            f"  {row.fact}"
+        )
+    parts.append("----- END CANDIDATE FACTS -----\n")
+    parts.append("Return the JSON array now (one object per candidate).")
+
+    return _CONSOLIDATOR_SYSTEM, "\n".join(parts)
+
+
 __all__ = [
+    "build_consolidator_prompt",
     "build_system_prompt",
     "build_user_prompt",
     "compute_vault_summary",

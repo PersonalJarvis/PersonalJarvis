@@ -3,7 +3,7 @@ import { Bot, CheckCircle2, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
-import { switchSubagentProvider } from "@/hooks/useProviders";
+import { saveSubagentModel, switchSubagentProvider } from "@/hooks/useProviders";
 
 /**
  * Subagent tier for the API-Keys view.
@@ -44,6 +44,9 @@ interface SubagentStatus {
   brain_primary: string;
   provider_slug: string | null;
   model_override: string | null;
+  /** The dedicated subagent LLM pin ([brain.sub_jarvis].model); empty/null
+   * means "the active provider's deep model" (shown via model_resolved). */
+  sub_model_override: string | null;
   model_resolved: string | null;
   mapping: SubagentMappingRow[];
 }
@@ -111,6 +114,9 @@ export function SubagentSection() {
         <li>
           <BridgeCard status={bridge} />
         </li>
+        <li>
+          <SubagentModelCard status={bridge} onSaved={reload} />
+        </li>
         {bridge.mapping.map((row) => (
           <li key={row.jarvis}>
             <SubagentProviderCard row={row} onSwitched={reload} />
@@ -118,6 +124,81 @@ export function SubagentSection() {
         ))}
       </ul>
     </section>
+  );
+}
+
+/**
+ * The dedicated subagent LLM model pin. Mirrors the Wiki card's
+ * "model (optional)" pattern: empty means the active provider's deep
+ * (frontier) model — shown in the hint via `model_resolved` — and a concrete
+ * id overrides it for every heavy-task worker spawn.
+ */
+function SubagentModelCard({
+  status,
+  onSaved,
+}: {
+  status: SubagentStatus;
+  onSaved: () => void;
+}) {
+  const t = useT();
+  const pushToast = useEventStore((s) => s.pushToast);
+  const [model, setModel] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  // Controlled value falls back to the server state until the user edits it.
+  const value = model ?? status.sub_model_override ?? "";
+
+  async function handleApply() {
+    setPending(true);
+    try {
+      const next = await saveSubagentModel(value.trim());
+      setModel(null);
+      pushToast(
+        "success",
+        next.restart_required
+          ? t("subagent_model.saved_restart")
+          : t("subagent_model.saved"),
+      );
+      window.dispatchEvent(new Event("jarvis:subagent-switched"));
+      onSaved();
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="card-outline space-y-3 p-4">
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        {t("subagent_model.description")}
+      </p>
+      <label className="block">
+        <span className="mb-1 block text-xs uppercase tracking-wide text-muted-foreground">
+          {t("subagent_model.model_label")}
+        </span>
+        <input
+          type="text"
+          aria-label={t("subagent_model.model_label")}
+          value={value}
+          onChange={(e) => setModel(e.target.value)}
+          placeholder={t("subagent_model.model_placeholder")}
+          className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm"
+        />
+        <span className="mt-1 block text-[11px] text-muted-foreground">
+          {t("subagent_model.model_hint")}
+          {status.model_resolved ? ` (${status.model_resolved})` : ""}
+        </span>
+      </label>
+      <button
+        type="button"
+        onClick={handleApply}
+        disabled={pending}
+        className="w-full rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
+      >
+        {pending ? t("subagent_model.applying") : t("subagent_model.apply")}
+      </button>
+    </div>
   );
 }
 

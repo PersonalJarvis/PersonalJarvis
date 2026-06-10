@@ -16,13 +16,16 @@ HEAD`, and `git ls-files --others --exclude-standard` together.
 """
 from __future__ import annotations
 
+import shutil
 import subprocess
 import uuid
 from pathlib import Path
 
 import pytest
 
+from jarvis.missions.isolation.worktree import WorktreeManager
 from jarvis.missions.kontrollierer.orchestrator import Kontrollierer
+from jarvis.missions.worker_runtime.workspace import materialize_worker_contract
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -111,6 +114,77 @@ def test_capture_diff_returns_empty_string_for_untouched_worktree(
     (which BUG-LIVE-02's pre-gate then short-circuits on)."""
     diff = kontrollierer._capture_diff(worktree)
     assert diff == "", f"expected empty diff for untouched worktree, got: {diff!r}"
+
+
+# --- lean workspace (needs_repo=False) diff parity -------------------------
+#
+# The whole lean-workspace design hinges on _capture_diff producing the SAME
+# result against a lean (`git init`) repo as it does against a full worktree.
+# These tests run the real WorktreeManager + materialize_worker_contract flow
+# against a lean workspace and assert the worker's file shows up in the captured
+# diff while the materialized AGENTS.md contract stays out of it (live mission
+# 019eb17d). Skips when git is absent.
+
+_GIT_AVAILABLE = shutil.which("git") is not None
+
+
+@pytest.fixture
+def lean_manager(tmp_path: Path) -> WorktreeManager:
+    """A WorktreeManager whose outputs land under tmp_path. The lean path uses
+    `git init` (no host-repo checkout), so repo_root only needs to be a real
+    git repo for the manager's own bookkeeping — point it at the host repo."""
+    return WorktreeManager(
+        repo_root=PROJECT_ROOT, outputs_root=tmp_path / "lean-outputs"
+    )
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not in PATH")
+def test_capture_diff_on_lean_workspace_surfaces_worker_file(
+    lean_manager: WorktreeManager, kontrollierer: Kontrollierer
+) -> None:
+    """A file written into a LEAN workspace must appear in the captured diff
+    via the identical `git add -A .` + `git diff --cached HEAD` sequence — the
+    lean repo's empty initial commit gives HEAD a base to diff against."""
+    ws = lean_manager.create(
+        mission_slug="news", task_id="01-lean-diff", needs_repo=False
+    )
+    try:
+        (ws / "today.html").write_text(
+            "<h1>Today's headlines</h1>\n", encoding="utf-8"
+        )
+        diff = kontrollierer._capture_diff(ws)
+        assert diff, "expected non-empty diff for a lean-workspace file"
+        assert "today.html" in diff, f"deliverable missing from diff: {diff!r}"
+        assert "Today's headlines" in diff
+    finally:
+        lean_manager.remove(ws, force=True)
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not in PATH")
+def test_capture_diff_on_lean_workspace_strips_materialized_contract(
+    lean_manager: WorktreeManager, kontrollierer: Kontrollierer
+) -> None:
+    """materialize_worker_contract must work against the lean repo (it resolves
+    the lean repo's own gitdir and excludes AGENTS.md), so the captured diff
+    shows ONLY the worker's deliverable, never the contract file."""
+    ws = lean_manager.create(
+        mission_slug="news", task_id="01-lean-contract", needs_repo=False
+    )
+    try:
+        materialize_worker_contract(ws, "019eb17d-0000-7000-8000-000000000000")
+        assert (ws / "AGENTS.md").exists(), "contract must be on disk"
+        (ws / "robot-haiku.txt").write_text("silicon dreams\n", encoding="utf-8")
+
+        diff = kontrollierer._capture_diff(ws)
+
+        assert "robot-haiku.txt" in diff, f"deliverable missing: {diff!r}"
+        # The materialized contract must be excluded from the diff exactly like
+        # in the full-worktree path (BUG-LIVE-05 false-APPROVE vector).
+        assert "AGENTS.md" not in diff, (
+            f"materialized contract leaked into lean diff: {diff!r}"
+        )
+    finally:
+        lean_manager.remove(ws, force=True)
 
 
 def test_capture_diff_marks_files_missed_by_add_n(

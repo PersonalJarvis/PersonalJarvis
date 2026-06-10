@@ -78,10 +78,10 @@ def _write_skill(root: Path, name: str, pattern: str) -> None:
     )
 
 
-def _make_manager() -> BrainManager:
+def _make_manager(mode: str = "permissive") -> BrainManager:
     executor = _RecordingExecutor()
     config = JarvisConfig()
-    config.brain.routing.force_spawn_mode = "permissive"
+    config.brain.routing.force_spawn_mode = mode
     return BrainManager(
         config=config,
         bus=EventBus(),
@@ -121,7 +121,7 @@ def test_control_action_verb_spawns_without_skill_match() -> None:
     # "lies …" is a plain spawn verb that no other fast path intercepts —
     # ("starte X" is grabbed by is_open_app_intent before force-spawn,
     # which is exactly why the skill guard must run early in generate()).
-    assert m._should_force_spawn("lies die README und fasse sie zusammen") is True
+    assert m._should_force_spawn("lies die README und fasse sie zusammen") is True  # i18n-allow: German voice command exercising the German routing pattern
 
 
 # ----------------------------------------------------------------------
@@ -135,7 +135,7 @@ def test_skill_match_blocks_force_spawn(tmp_path: Path) -> None:
     registry.reload_sync()
     set_skill_context(SkillContext(registry=registry, runner=_StubRunner()))  # type: ignore[arg-type]
     m = _make_manager()
-    assert m._should_force_spawn("lies die README und fasse sie zusammen") is False
+    assert m._should_force_spawn("lies die README und fasse sie zusammen") is False  # i18n-allow: German voice command exercising the German routing pattern
 
 
 def test_non_skill_action_still_spawns(skill_ctx) -> None:
@@ -153,6 +153,33 @@ def test_match_skill_for_turn_returns_skill(skill_ctx) -> None:
 def test_match_skill_for_turn_none_without_context() -> None:
     m = _make_manager()
     assert m._match_skill_for_turn("starte die morgenroutine") is None
+
+
+def test_block_tier_skill_never_matches_the_turn(tmp_path: Path) -> None:
+    """A risk_policy block skill must not capture the turn (no injection,
+    no guard) — exactly like the run-skill tool refuses it."""
+    d = tmp_path / "blocked-skill"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(
+        "---\n"
+        'schema_version: "1"\n'
+        "name: blocked-skill\n"
+        "description: Should never run.\n"
+        "risk_policy:\n"
+        "  default_tier: block\n"
+        "triggers:\n"
+        "  - type: voice\n"
+        '    pattern: "(blocked job)"\n'
+        "    language: [de, en]\n"
+        "---\n"
+        "Forbidden body.\n",
+        encoding="utf-8",
+    )
+    registry = SkillRegistry(root=tmp_path)
+    registry.reload_sync()
+    set_skill_context(SkillContext(registry=registry, runner=_StubRunner()))  # type: ignore[arg-type]
+    m = _make_manager()
+    assert m._match_skill_for_turn("run the blocked job") is None
 
 
 # ----------------------------------------------------------------------
@@ -191,6 +218,91 @@ def test_turn_hint_names_the_skill(skill_ctx) -> None:
 def test_turn_hint_none_without_match() -> None:
     m = _make_manager()
     assert m._render_skill_turn_hint() is None
+
+
+# ----------------------------------------------------------------------
+# AD-S9: an EXPLICIT heavy-work trigger outranks the skill match
+# ----------------------------------------------------------------------
+
+
+def test_explicit_spawn_trigger_beats_skill_match(tmp_path: Path) -> None:
+    """AD-S9: when the user explicitly names the execution vehicle
+    ("Sub-Agent", "OpenClaw", "spawne", "deep dive", …), the force-spawn wins
+    over a topical skill match. Live bug 2026-06-10 14:34: "spawne einen
+    Sub-Agent … Gmail …" matched the gmail pairing skill, AD-S3 disarmed
+    force-spawn, the turn ran inline and died mute — no mission, no ACK,
+    idle hang-up."""
+    _write_skill(tmp_path, "plugin-gmail", "(gmail)")
+    registry = SkillRegistry(root=tmp_path)
+    registry.reload_sync()
+    set_skill_context(SkillContext(registry=registry, runner=_StubRunner()))  # type: ignore[arg-type]
+    m = _make_manager(mode="strict")
+    utterance = (
+        "Ich möchte, dass du für mich einen Sub-Agent spawnst, "  # i18n-allow: German voice command exercising the German routing pattern
+        "der meine Gmail Mails analysiert"
+    )
+    # Premise: the collision is real — the skill DOES match this utterance.
+    assert m._match_skill_for_turn(utterance) is not None
+    assert m._should_force_spawn(utterance) is True
+
+
+class _SpawnPathProbeManager(BrainManager):
+    """Stubs every side-effectful stage around the skill-match decision so
+    ``generate()`` can run as a pure routing probe."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.spawn_calls: list[str] = []
+
+    async def _maybe_dispatch_skill_mission(
+        self, user_text: str, *, trace_id: Any = None
+    ) -> str | None:
+        return None
+
+    async def _run_local_action_fast_path(
+        self, user_text: str, *, trace_id: Any = None
+    ) -> str | None:
+        return None
+
+    async def _run_navigation_fast_path(
+        self, user_text: str, *, trace_id: Any = None
+    ) -> str | None:
+        return None
+
+    async def _force_spawn_worker(
+        self, user_text: str, *, trace_id: Any = None
+    ) -> str | None:
+        self.spawn_calls.append(user_text)
+        return "SPAWN_SENTINEL"
+
+    def _build_fallback_chain(self, level: Any) -> list:
+        return []  # force the provider-down exit — no LLM in unit tests
+
+
+async def test_generate_drops_skill_match_on_explicit_spawn_trigger(
+    tmp_path: Path,
+) -> None:
+    """generate() must not treat an explicit-spawn utterance as a skill turn:
+    ``_skill_turn_match`` stays None so the mission path (force-spawn + ACK)
+    owns the turn instead of the inline skill prompt."""
+    _write_skill(tmp_path, "plugin-gmail", "(gmail)")
+    registry = SkillRegistry(root=tmp_path)
+    registry.reload_sync()
+    set_skill_context(SkillContext(registry=registry, runner=_StubRunner()))  # type: ignore[arg-type]
+    executor = _RecordingExecutor()
+    m = _SpawnPathProbeManager(
+        config=JarvisConfig(),
+        bus=EventBus(),
+        tools={"spawn_worker": _FakeSpawnTool(), "run-skill": _FakeRunSkillTool()},
+        tool_executor=executor,  # type: ignore[arg-type]
+    )
+    reply = await m.generate(
+        "Ich möchte, dass du für mich einen Sub-Agent spawnst, "  # i18n-allow: German voice command exercising the German routing pattern
+        "der meine Gmail Mails analysiert"
+    )
+    assert m._skill_turn_match is None
+    assert reply == "SPAWN_SENTINEL"
+    assert len(m.spawn_calls) == 1
 
 
 # ----------------------------------------------------------------------

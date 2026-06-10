@@ -2,6 +2,7 @@
 schema_version: "1"
 name: plugin-github
 description: Work with the user's GitHub repositories, issues, and pull requests.
+when_to_use: Use when the user mentions GitHub, a repo, an issue, or a pull request and wants to inspect or act on it.
 category: developer
 plugin_id: github
 intent_verbs: [zeig, lies, erstell, öffne, schließ, merge, review, kommentier]  # i18n-allow

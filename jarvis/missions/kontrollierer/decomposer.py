@@ -41,6 +41,41 @@ EXTERNAL_SYSTEM_MARKERS: Final[tuple[str, ...]] = (
 )
 
 
+# Repo-affinity markers — when ANY of these appear in a single-step prompt we
+# keep the full git worktree (needs_repo=True) even though the step would
+# otherwise qualify for a lean workspace. This is the conservative guard for
+# the lean path: the moment a task smells like it touches THIS repo's code
+# (a path, a file extension, a git/branch/commit mention, a refactor/bugfix
+# verb) we must not strip its checkout. When in any doubt → full worktree.
+#
+# Deliberately a SUPERSET-aware companion to EXTERNAL_SYSTEM_MARKERS (which is
+# about *whether* to split into multiple steps); this regex is about *whether*
+# the single step needs the codebase on disk. It never weakens multi-step
+# classification — it is only consulted on the deterministic single-step paths.
+_REPO_AFFINITY_RE: Final = re.compile(
+    r"""
+    \b(?:
+        repo | repository | repos
+      | git | github | gitlab | branch | branches
+      | commit | commits | merge | rebase | pull[ -]?request | \bPR\b
+      | pyproject | requirements\.txt | codebase | code[ -]?base
+      | refactor | refactors | refactoring
+      | bugfix | bug[ -]?fix | hotfix
+      | regression | unit[ -]?test | pytest
+    )\b
+    | \bfix(?:es|ed|ing)?\b[^.]*\bbug\b   # "fix the bug", "fixing a nasty bug"
+    | \bjarvis/                           # an in-repo path reference
+    | \b[\w./-]+\.(?:py|ts|tsx|js|jsx|toml|cfg|ini|yaml|yml|sql|sh|ps1)\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _has_repo_affinity(prompt: str) -> bool:
+    """True when the prompt points at THIS repo's code (keep full worktree)."""
+    return _REPO_AFFINITY_RE.search(prompt) is not None
+
+
 # Type for a brain caller (compatible with BrainManager.generate).
 BrainCallerFn = Callable[[str], Awaitable[str]]
 
@@ -62,6 +97,20 @@ class Step(BaseModel):
     # (HTTP 400). See docs/openclaw-spawn-failure-analysis-2026-05-18.md.
     model: str = ""
     allowed_tools: str = "Read,Edit,Write,Bash,Grep,Glob"
+    # Whether this step needs a full git worktree of the Personal Jarvis repo
+    # as its workspace. Default True keeps every existing path byte-compatible:
+    # old persisted plan payloads (which never carried the field) deserialize
+    # fine, and any step the decomposer does NOT explicitly classify as a lean
+    # external-artefact task gets the full, isolated worktree it always had.
+    #
+    # When False the orchestrator hands the worker a LEAN workspace — a fresh
+    # empty `git init` repo with one initial commit — instead of a checkout of
+    # the whole codebase. This is reserved for single-step tasks that produce a
+    # standalone deliverable ("create an HTML file with today's news") and have
+    # no affinity to this repo's code, where cloning + exploring the repo
+    # otherwise burned 10+ minutes and >1.3M input tokens before a trivial
+    # write (live mission 019eb17d, 2026-06-10).
+    needs_repo: bool = True
 
 
 class MissionPlan(BaseModel):
@@ -99,14 +148,25 @@ class MissionDecomposer:
         if not mission_prompt or not mission_prompt.strip():
             raise ValueError("MissionDecomposer: leerer prompt")
 
+        # A single step qualifies for a LEAN workspace only when it has no
+        # affinity to this repo's code. The default everywhere else is the full
+        # worktree (needs_repo=True) — conservative by design.
+        lean_eligible = not _has_repo_affinity(mission_prompt)
+
         # Heuristic 1: short prompts are never multi-step
         if len(mission_prompt) < SHORT_PROMPT_CHAR_LIMIT:
-            return self._single_step_plan(mission_prompt, reason="short_prompt")
+            return self._single_step_plan(
+                mission_prompt, reason="short_prompt", needs_repo=not lean_eligible
+            )
 
         # Heuristic 2: exactly one external-system marker is sufficient for 1 step
         marker_count = self._count_external_markers(mission_prompt)
         if marker_count <= 1:
-            return self._single_step_plan(mission_prompt, reason="single_external_target")
+            return self._single_step_plan(
+                mission_prompt,
+                reason="single_external_target",
+                needs_repo=not lean_eligible,
+            )
 
         # LLM-Pfad — Brain not bound -> Fallback Single-Step.
         if self._brain is None:
@@ -132,8 +192,17 @@ class MissionDecomposer:
 
     # --- Internals ---
 
-    def _single_step_plan(self, mission_prompt: str, *, reason: str) -> MissionPlan:
-        """Fallback: entire mission as a single step."""
+    def _single_step_plan(
+        self, mission_prompt: str, *, reason: str, needs_repo: bool = True
+    ) -> MissionPlan:
+        """Fallback: entire mission as a single step.
+
+        ``needs_repo`` defaults to True so every non-heuristic fallback
+        (no_brain_available, brain_error, parse_failed) stays conservative and
+        keeps the full worktree. Only the deterministic ``short_prompt`` and
+        ``single_external_target`` heuristics pass ``needs_repo=False`` (and
+        only when the prompt has no repo affinity).
+        """
         slug = _slugify(mission_prompt)[:40] or "task"
         return MissionPlan(
             steps=[
@@ -142,6 +211,7 @@ class MissionDecomposer:
                     prompt=mission_prompt,
                     worker_cli="claude",
                     model="",  # let the worker pick its configured primary
+                    needs_repo=needs_repo,
                 )
             ],
             n_workers=1,

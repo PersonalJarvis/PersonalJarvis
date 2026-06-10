@@ -8,6 +8,10 @@ description: |
   (Codex CLI, Claude Code) read and change settings, switch brain/STT/TTS
   providers, switch the reply language, and rotate API keys — all over HTTP on
   the loopback interface.
+when_to_use: >-
+  Use when a coding agent must change a Jarvis setting on this machine —
+  switch a provider, change the reply language, adjust TTS speed, or
+  rotate an API key — without driving the desktop UI.
 category: meta
 tags: [self-config, control-api, agent, settings]
 author: builtin

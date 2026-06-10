@@ -151,6 +151,46 @@ async def test_continuation_cancels_pending_clarifying_question() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Beheaded turn (no-first-frame TTS ceiling): always audible, clarify-off     #
+# notwithstanding (AD-OE6)                                                     #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_beheaded_turn_speaks_timeout_notice_despite_clarify_off() -> None:
+    """A turn beheaded by the no-first-frame TTS ceiling must end AUDIBLY even
+    with the clarify question disabled (its shipped default). Live bug
+    2026-06-10 14:34: a 20 s mute brain turn was ceiling-aborted, came back
+    empty, and the session dropped to silent LISTENING until the idle hang-up.
+    The timeout notice is an error report, not an interrogating question, so
+    the 2026-06-09 clarify-off mandate does not cover it."""
+    pipe = _make_pipe(enabled=False)
+    pipe._playback_aborted_no_first_frame = True
+
+    await pipe._handle_silent_brain_turn("de", "spawne einen sub-agent")  # i18n-allow: quoted German voice command
+
+    assert len(pipe._spoken) == 1, pipe._spoken
+    spoken_text, spoken_lang = pipe._spoken[0]
+    from jarvis.speech.pipeline import _BRAIN_TIMEOUT_PHRASE
+
+    assert spoken_text == _BRAIN_TIMEOUT_PHRASE["de"]
+    assert spoken_lang == "de"
+    # The mark is consumed — the next empty turn must not re-fire the notice.
+    assert pipe._playback_aborted_no_first_frame is False
+
+
+@pytest.mark.asyncio
+async def test_empty_turn_without_beheading_stays_silent_with_clarify_off() -> None:
+    """Guard for the 2026-06-09 user mandate: a plain empty turn (no ceiling
+    abort) with the clarify question off keeps the silent behaviour."""
+    pipe = _make_pipe(enabled=False)
+
+    await pipe._handle_silent_brain_turn("de", "irgendein befehl")  # i18n-allow: quoted German voice command
+
+    assert pipe._spoken == []
+
+
+# --------------------------------------------------------------------------- #
 # Backwards-compat: the feature can be turned off (old silent behaviour)       #
 # --------------------------------------------------------------------------- #
 

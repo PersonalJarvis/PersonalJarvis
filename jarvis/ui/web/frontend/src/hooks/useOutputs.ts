@@ -5,7 +5,7 @@
  * Voller Hook (mit Polling-Stop bei abgeschlossenem Run) folgt; aktuell
  * minimal aber funktional.
  */
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 export type PlanStepStatus =
   | "pending"
@@ -43,6 +43,8 @@ export interface OutputSummary {
   slug: string;
   utterance?: string;
   status?: string;
+  /** Full missions.id when the dir resolved to a DB row — enables cancel. */
+  mission_id?: string | null;
   summary?: string;
   duration_s?: number;
   completed_at?: number;
@@ -64,6 +66,34 @@ export function useOutputsList() {
     },
     staleTime: 5_000,
     refetchInterval: 3_000,
+  });
+}
+
+export interface CancelMissionResponse {
+  ok: boolean;
+  mission_id: string;
+  state: string;
+  worker_killed: boolean;
+}
+
+/**
+ * Cancels a running mission (hold-to-abort). Flips the mission to
+ * CANCELLED server-side and kills the in-flight orchestrator run; the
+ * outputs list refetches so the badge flips without waiting for the
+ * 3s poll.
+ */
+export function useCancelMission() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (missionId: string) => {
+      const r = await fetch(
+        `/api/missions/${encodeURIComponent(missionId)}/cancel`,
+        { method: "POST" },
+      );
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return (await r.json()) as CancelMissionResponse;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["outputs"] }),
   });
 }
 

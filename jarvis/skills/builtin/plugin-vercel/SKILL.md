@@ -2,6 +2,7 @@
 schema_version: "1"
 name: plugin-vercel
 description: Inspect the user's Vercel projects and deployments.
+when_to_use: Use when the user mentions Vercel or asks about deployment status, projects, or build results.
 category: developer
 plugin_id: vercel
 intent_verbs: [zeig, lies, prüf, check]  # i18n-allow

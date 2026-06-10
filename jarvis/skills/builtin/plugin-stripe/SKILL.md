@@ -2,6 +2,7 @@
 schema_version: "1"
 name: plugin-stripe
 description: Look up Stripe customers, payments, invoices, and account balance.
+when_to_use: Use when the user mentions Stripe, payments, invoices, customers, or their account balance.
 category: developer
 plugin_id: stripe
 intent_verbs: [zeig, lies, erstatt, prüf, such]  # i18n-allow

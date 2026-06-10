@@ -2,6 +2,7 @@
 schema_version: "1"
 name: plugin-discord
 description: Read and post messages in the user's Discord server.
+when_to_use: Use when the user mentions Discord or wants to read or post messages in their Discord server.
 category: communication
 plugin_id: discord
 intent_verbs: [schick, sende, poste, zeig, lies, antworte]  # i18n-allow

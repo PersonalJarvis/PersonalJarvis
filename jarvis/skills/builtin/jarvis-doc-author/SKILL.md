@@ -2,25 +2,21 @@
 schema_version: "1"
 name: jarvis-doc-author
 version: "1.0.0"
-description: |
+description: >-
   Authoritative skill for writing internal Personal-Jarvis docs under
-  ``docs/``, ``Latenz/``, ``Jarvis Long-Term Memory/``, ``SubAgentenSt/`` and
-  related directories. Enforces a Diataxis-compliant classification
-  (concept/how-to/tutorial/reference/troubleshooting/adr), a uniform
-  YAML frontmatter schema, a style canon (active voice, imperative in
-  instructions, code identifiers in English, prose in English) and hard
-  anti-patterns (no quadrant mixing, no filler intros, no "Click here").
-  Activate this skill ALWAYS when the user or a Sub-Jarvis creates a new
-  Jarvis doc, fundamentally reworks an existing doc, writes an ADR,
-  produces a phase test report, or generally writes a Markdown file
-  under ``docs/`` and siblings — even when the user does not explicitly say
-  the word "doc" ("dokumentier mal X" (document X), "schreib eine Anleitung"
-  (write a guide), "leg ein Konzept-Paper an" (create a concept paper),
-  "fass das als ADR zusammen" (summarize as ADR), "schreib mir einen
-  Report ueber Phase 7" (write me a Phase 7 report)). The skill does NOT
-  trigger on code comments, commit messages, PR descriptions, memory entries,
-  skill authoring (the ``skill-creator`` exists for that) or
-  voice-output-filter templates.
+  ``docs/`` and sibling directories. Enforces a Diataxis-compliant
+  classification (concept/how-to/tutorial/reference/troubleshooting/adr),
+  a uniform YAML frontmatter schema, a style canon (active voice,
+  imperative instructions, English prose), and hard anti-patterns (no
+  quadrant mixing, no filler intros, no "Click here"). Use when writing
+  or fundamentally reworking any Markdown doc under ``docs/``.
+when_to_use: >-
+  Use when the user or a worker creates a new Jarvis doc, reworks an
+  existing one, writes an ADR, or produces a phase/test report — even
+  without the word "doc" ("dokumentier mal X", "schreib eine Anleitung",
+  "fass das als ADR zusammen", "write me a Phase 7 report"). Not for code
+  comments, commit messages, PR descriptions, memory entries, or skill
+  authoring (skill-creator owns that).
 category: meta
 tags: [meta, docs, authoring, diataxis, documentation, style-guide]
 author: builtin

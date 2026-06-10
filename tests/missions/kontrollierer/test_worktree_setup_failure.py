@@ -26,12 +26,18 @@ class _NoopBudget:
 
 
 class _PathCapWorktrees:
-    def create(self, *, mission_slug: str, task_id: str):  # noqa: ANN201
+    # Signature mirrors WorktreeManager.create, including the needs_repo kwarg
+    # the orchestrator now forwards (lean-workspace feature, mission 019eb17d).
+    def create(
+        self, *, mission_slug: str, task_id: str, needs_repo: bool = True
+    ):  # noqa: ANN201
         raise ValueError("Worktree-Pfad zu lang (250 > 200): ...")
 
 
 class _GitLockWorktrees:
-    def create(self, *, mission_slug: str, task_id: str):  # noqa: ANN201
+    def create(
+        self, *, mission_slug: str, task_id: str, needs_repo: bool = True
+    ):  # noqa: ANN201
         raise subprocess.CalledProcessError(
             128, ["git", "worktree", "add"], stderr="index.lock exists"
         )

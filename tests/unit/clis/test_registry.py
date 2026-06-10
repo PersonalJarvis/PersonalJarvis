@@ -238,6 +238,44 @@ async def test_refresh_status_removes_tool_on_disconnect(tmp_path: Path) -> None
     assert tools_changed.events[0].reason == "cli_disconnected:gh"
 
 
+# --- capability-registry sync (AD-CLI3) ----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_syncs_capability_registry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Connect transition registers cli.<name>; disconnect deregisters it."""
+    from dataclasses import replace
+
+    import jarvis.core.capabilities as cap_mod
+    from jarvis.clis.spec import CliCapabilityDecl
+
+    spy = cap_mod.CapabilityRegistry()
+    monkeypatch.setattr(cap_mod, "get_registry", lambda: spy)
+
+    spec = replace(
+        _spec("gh", auth_type="oauth_cli"),
+        capabilities=(
+            CliCapabilityDecl(
+                domains=("repos",),
+                verbs=("zeig",),
+                objects=("issue",),
+                description="Test cap.",
+            ),
+        ),
+    )
+    statuses = {"gh": CliStatus(installed=True, auth_status="connected")}
+    reg = _registry({"gh": spec}, statuses, tmp_path=tmp_path)
+
+    await reg.bootstrap()
+    assert any(c.id == "cli.gh" for c in spy.all())
+
+    reg._prober.statuses["gh"] = CliStatus(installed=True, auth_status="not_connected")
+    await reg.refresh_status("gh")
+    assert not any(c.id == "cli.gh" for c in spy.all())
+
+
 @pytest.mark.asyncio
 async def test_refresh_status_no_event_when_tool_set_unchanged(tmp_path: Path) -> None:
     bus = EventBus()

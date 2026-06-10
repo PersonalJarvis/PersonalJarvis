@@ -231,3 +231,23 @@ export async function switchSubagentProvider(
   return body as PipelineSwitchResult;
 }
 
+/**
+ * Pins the dedicated subagent LLM model (`[brain.sub_jarvis].model`).
+ * Empty string resets to the active subagent provider's deep model.
+ * 3-layer persisted server-side (drift-guard pinned key).
+ */
+export async function saveSubagentModel(
+  model: string,
+): Promise<PipelineSwitchResult> {
+  const res = await fetch("/api/subagent/model", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, persist: true }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as PipelineSwitchResult;
+}
+

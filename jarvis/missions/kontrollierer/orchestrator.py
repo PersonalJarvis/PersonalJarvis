@@ -577,12 +577,47 @@ class Kontrollierer:
         # voice readback speaks the actual answer instead of "Mission
         # abgeschlossen." See jarvis.missions.stream_evidence.readonly_answer.
         self._task_answers: dict[str, list[str]] = {}
+        # In-flight run_mission tasks by mission_id — lets an external
+        # cancel (UI hold-to-abort) abort a running mission mid-flight.
+        self._running_missions: dict[str, asyncio.Task[Any]] = {}
 
     async def run_mission(self, mission_id: str) -> MissionState:
         """Runs a mission end-to-end and returns the final state.
 
         Returns: APPROVED | FAILED | CANCELLED | TIMED_OUT.
+
+        The in-flight asyncio task is tracked in ``_running_missions`` so an
+        external cancel (REST ``POST /api/missions/{id}/cancel``) can abort
+        the run mid-flight via :meth:`cancel_running_mission`.
         """
+        task = asyncio.current_task()
+        if task is not None:
+            self._running_missions[mission_id] = task
+        try:
+            return await self._run_mission_inner(mission_id)
+        finally:
+            self._running_missions.pop(mission_id, None)
+
+    def cancel_running_mission(self, mission_id: str) -> bool:
+        """Cancel the in-flight ``run_mission`` task for this mission.
+
+        Returns ``True`` iff a live task was found and received the cancel
+        request. The cancellation propagates through the per-step TaskGroup;
+        every worker's Job-Object context manager closes on exit and kills
+        the worker subprocess tree — the same teardown path the wall-clock
+        mission timeout uses. Callers must flip the mission state to
+        CANCELLED *before* calling this so a late terminal transition from
+        the dying task cannot race the user's decision (``_safe_transition``
+        and ``_fail_mission`` both tolerate the already-terminal state).
+        """
+        task = self._running_missions.get(mission_id)
+        if task is None or task.done():
+            return False
+        task.cancel()
+        return True
+
+    async def _run_mission_inner(self, mission_id: str) -> MissionState:
+        """Mission body — the tracking wrapper lives in :meth:`run_mission`."""
         view = await self._manager.mission(mission_id)
         if view is None:
             raise KeyError(f"Mission nicht gefunden: {mission_id}")
@@ -760,9 +795,17 @@ class Kontrollierer:
                 return TaskOutcome.BUDGET_EXCEEDED
 
             try:
+                # `step.needs_repo` (default True) decides the workspace shape:
+                # True → full registered worktree of the repo (isolation for
+                # repo tasks); False → lean empty git repo for standalone
+                # external-artefact tasks so the worker isn't forced to explore
+                # the whole codebase first. The AGENTS.md contract is
+                # materialised into BOTH shapes identically (below), and
+                # `_capture_diff` works against both because each has a HEAD.
                 worktree = self._worktrees.create(
                     mission_slug=_short_slug(mission_prompt),
                     task_id=step.task_id,
+                    needs_repo=step.needs_repo,
                 )
             except (subprocess.CalledProcessError, ValueError) as exc:
                 logger.exception("Task %s: worktree-create failed: %s", step.task_id, exc)
