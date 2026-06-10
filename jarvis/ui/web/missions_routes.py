@@ -22,7 +22,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel
 
-from jarvis.missions.events import EventEnvelope
+from jarvis.missions.events import EventEnvelope, MissionCancelled, now_ms
 from jarvis.missions.manager import MissionManager
 from jarvis.missions.state_machine import (
     IllegalStateTransition,
@@ -264,11 +264,15 @@ async def dispatch_mission(
 
 @router.post("/{mission_id}/cancel")
 async def cancel_mission(mission_id: str, request: Request) -> dict[str, Any]:
-    """Best-effort State-Transition zu CANCELLED.
+    """Cancel a mission: terminal state transition + kill the in-flight run.
 
-    Returns ``409`` wenn die Mission bereits in einem Terminal-State ist
-    (APPROVED/FAILED/CANCELLED/TIMED_OUT) — das wirft die State-Machine
-    als ``IllegalStateTransition``.
+    Order matters: the DB state flips to CANCELLED first so the dying
+    orchestrator task cannot race a late APPROVED/FAILED transition, then
+    the in-flight ``run_mission`` asyncio task is cancelled (the TaskGroup
+    propagation closes the per-worker Job Objects, killing the worker
+    subprocesses). Returns ``409`` when the mission is already in a
+    terminal state (APPROVED/FAILED/CANCELLED/TIMED_OUT) — the state
+    machine raises that as ``IllegalStateTransition``.
     """
     mgr = _require_manager(request)
     view = await mgr.mission(mission_id)
@@ -287,11 +291,39 @@ async def cancel_mission(mission_id: str, request: Request) -> dict[str, Any]:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from None
 
+    # Best-effort: abort the in-flight orchestrator task (if any). A missing
+    # Kontrollierer (or one without the method) degrades to the pure state
+    # flip — the pre-feature behaviour.
+    worker_killed = False
+    kontrollierer = _optional_kontrollierer(request)
+    canceller = getattr(kontrollierer, "cancel_running_mission", None)
+    if canceller is not None:
+        try:
+            worker_killed = bool(canceller(mission_id))
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "cancel_running_mission(%s) failed — state is already "
+                "CANCELLED, the run dies at its next transition",
+                mission_id,
+            )
+
+    # Canonical terminal event: recovery reconciliation and the voice
+    # announcer key off MissionCancelled (a MissionStateChanged alone is
+    # not a terminal-event marker).
+    cancel_env = EventEnvelope(
+        mission_id=mission_id,
+        source_actor="ui",
+        ts_ms=now_ms(),
+        payload=MissionCancelled(cascade=worker_killed, reason="ui_cancel"),
+    )
+    await mgr.store.append_and_publish(cancel_env)
+
     return {
         "ok": True,
         "mission_id": mission_id,
         "state": MissionState.CANCELLED.value,
         "event_seq": env.seq,
+        "worker_killed": worker_killed,
     }
 
 

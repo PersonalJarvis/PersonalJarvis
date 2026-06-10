@@ -28,6 +28,23 @@ def _reset_shared_registry():
     shared.set_active_registry(previous)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_global_capability_registry():
+    """Isolate the global CapabilityRegistry singleton around each test.
+
+    The sync-context fallback test bootstraps a PRIVATE registry against the
+    real seed catalog on the real machine — with AD-CLI3 that registers real
+    ``cli.*`` capabilities into the global singleton, which would leak into
+    later test files in the same process (observed: routing-heuristic tests
+    changed verdicts once real CLI capabilities were visible)."""
+    import jarvis.core.capabilities as cap_mod
+
+    previous = cap_mod._registry_instance
+    cap_mod._registry_instance = None
+    yield
+    cap_mod._registry_instance = previous
+
+
 class _FakeCatalog:
     def __init__(self, specs: dict[str, CliSpec]) -> None:
         self._specs = specs

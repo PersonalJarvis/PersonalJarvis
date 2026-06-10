@@ -59,6 +59,14 @@ DEFAULT_COUNTERS: tuple[str, ...] = (
     "wiki_links_refused_dangling",
     "wiki_writes_blocked_pii",
     "wiki_writes_blocked_truncated",
+    # Wave-2 two-stage curator quality counters (B8). Decision names follow
+    # constants.CURATOR_DECISIONS (parity-tested).
+    "wiki_candidates_extracted",
+    "wiki_consolidator_add",
+    "wiki_consolidator_update",
+    "wiki_consolidator_noop",
+    "wiki_consolidator_invalidate",
+    "wiki_consolidator_runs",
 )
 
 

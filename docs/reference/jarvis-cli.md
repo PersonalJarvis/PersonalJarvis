@@ -231,7 +231,7 @@ entry carries a spec, auth profiles, a risk-tier default, and a probe status.
 
 | Name | Display | Description |
 |---|---|---|
-| ``gcloud`` | Google Cloud SDK | Compute, Storage, IAM, GKE, Run |
+| ``gcloud`` | Google Cloud CLI | Compute, Storage, IAM, GKE, Run |
 | ``az`` | Azure CLI | Resources, VMs, AKS, Functions |
 | ``aws`` | AWS CLI v2 | S3, EC2, Lambda, IAM, RDS |
 | ``wrangler`` | Cloudflare Wrangler | Workers, Pages, R2, D1 |
@@ -251,6 +251,7 @@ entry carries a spec, auth profiles, a risk-tier default, and a probe status.
 | ``twilio`` | Twilio CLI | Numbers, Messages, Voice, Verify, Flex |
 | ``docker`` | Docker CLI | Containers, Images, Volumes, Networks |
 | ``kubectl`` | Kubernetes CLI | Cluster management: pods, deployments etc. |
+| ``gam`` | Google Workspace CLI (GAM) | Calendar events, Gmail messages, Drive, Users |
 
 ### Architecture components
 

@@ -47,6 +47,8 @@ data/workspace/
 │   └── <slug>.md
 ├── sessions/             ← rolling mid-term session rollups (last 5 active)
 │   └── <YYYY-MM-DD>-<short-id>.md
+├── people/               ← one page per saved address-book contact (machine-mirrored)
+│   └── <contact-slug>.md
 ├── attachments/          ← raw source files (PDFs, images, pasted articles)
 └── _archive/             ← retired session rollups, deprecated pages
 ```
@@ -137,6 +139,38 @@ session_id: <short-id>
 
 Body: free-form prose, max 400 words, must reference relevant entities
 and projects via `[[wikilinks]]`. Older than 7 days → move to `_archive/sessions/`.
+
+### Person page (`people/<contact-slug>.md`)
+
+One page per saved contact from the user's address book. Created and kept
+in sync by the deterministic contact mirror (no LLM involved), archived to
+`_archive/` when the contact is deleted.
+
+Required frontmatter:
+
+```yaml
+---
+type: person
+slug: <contact-slug>        # must match the filename stem
+contact_slug: <contact-slug>
+relationship: friend | family | colleague | partner | acquaintance | other | ""
+aliases: [list]
+last_synced: <ISO timestamp>
+---
+```
+
+The block between `<!-- contact-mirror:start -->` and
+`<!-- contact-mirror:end -->` is machine-managed and rewritten on every
+contact edit — **never edit, move, or delete it**.
+
+Rules for the curator:
+
+- New facts learned about a known contact belong on that person's existing
+  `people/` page, BELOW the managed block. Do not create a duplicate page
+  under `entities/` for someone who already has a `people/` page.
+- Phone numbers, e-mail addresses, and street addresses must never be
+  written to the wiki. They live in the address book and are resolved on
+  demand via the `contact-lookup` tool.
 
 ## Wikilinks
 

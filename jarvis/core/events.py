@@ -235,6 +235,21 @@ class ProfileUpdated(Event):
     evidence: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class ContactChanged(Event):
+    """A contact in the user-curated address book was written or removed.
+
+    Emitted (via ``jarvis.contacts.notify``) after every successful
+    ``ContactStore`` write. ``action`` vocabulary is owned by
+    ``jarvis.contacts.notify.CONTACT_CHANGE_ACTIONS``:
+    ``created`` | ``updated`` | ``deleted``.
+    Consumed by the wiki contact mirror (deterministic person-page sync).
+    """
+    action: str = ""
+    slug: str = ""
+    name: str = ""
+
+
 # ----------------------------------------------------------------------
 # Lifecycle
 # ----------------------------------------------------------------------

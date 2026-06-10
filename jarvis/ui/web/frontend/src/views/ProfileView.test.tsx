@@ -12,7 +12,7 @@
  * did not. These tests pin the contract for the nested section.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { ProfileView } from "@/views/ProfileView";
@@ -175,12 +175,74 @@ describe("ProfileView — open knowledge matrix (no concealment)", () => {
 
     const { container } = renderWithClient(<ProfileView />);
 
+    // The hero leads with a conversational, named headline — not a
+    // classification strip.
     await waitFor(() => {
-      expect(screen.getByText("Knowledge base")).toBeDefined();
+      expect(screen.getByText("A fresh page, Alex.")).toBeDefined();
     });
 
     // The secrecy signals are gone.
     expect(screen.queryByText("Confidential")).toBeNull();
     expect(container.querySelector(".dossier-hatch")).toBeNull();
+  });
+});
+
+// The "Knows you" treatment: a blank profile must read as an invitation, not
+// as a wall of grey "not known yet" repetitions. These tests pin the pillars:
+// a named acquaintance stage instead of a bare percentage, ONE rotating
+// question card with a speakable prompt, and the knowledge wave.
+describe("ProfileView — the knows-you treatment for a blank profile", () => {
+  function mockBlankProfile() {
+    installFetchMock({
+      "/api/profile/reviews": () => ({
+        status: 503,
+        body: { detail: CURATOR_503_DETAIL },
+      }),
+      "/api/profile/raw": () => ({ body: RAW_OK }),
+      "/api/profile": () => ({ body: PROFILE_OK }),
+    });
+  }
+
+  it("names the acquaintance stage instead of leading with a bare percent", async () => {
+    mockBlankProfile();
+    renderWithClient(<ProfileView />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/A blank page/).length).toBeGreaterThan(0);
+    });
+  });
+
+  it("shows one open question with a speakable prompt and rotates on Next", async () => {
+    mockBlankProfile();
+    renderWithClient(<ProfileView />);
+
+    // The top-priority open field (name) surfaces as the current question…
+    await waitFor(() => {
+      expect(
+        screen.getByText("What name shall I write on the first page?"),
+      ).toBeDefined();
+    });
+    // …and carries the literal sentence the user can speak to Jarvis.
+    expect(screen.getAllByText(/Just say/).length).toBeGreaterThan(0);
+
+    // Clicking Next advances to the second-priority question.
+    fireEvent.click(screen.getByTestId("ask-next"));
+    await waitFor(() => {
+      expect(
+        screen.getByText("How would you like to be addressed?"),
+      ).toBeDefined();
+    });
+  });
+
+  it("summarizes progress as one quiet text line, not metric tiles", async () => {
+    mockBlankProfile();
+    renderWithClient(<ProfileView />);
+
+    // The open hero carries a single inline summary sentence…
+    await waitFor(() => {
+      expect(screen.getByText("0 of 18 things learned")).toBeDefined();
+    });
+    // …and the decorative waveform is gone for good.
+    expect(screen.queryByTestId("knowledge-wave")).toBeNull();
   });
 });

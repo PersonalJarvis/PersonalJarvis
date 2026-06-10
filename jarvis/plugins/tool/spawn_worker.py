@@ -31,11 +31,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import random
 import time
 from collections.abc import Callable
 from typing import Any, Final
 
+from jarvis.brain.ack_brain.spawn_announcement import SpawnAnnouncementComposer
 from jarvis.core.bus import EventBus
 from jarvis.core.events import OpenClawAnnouncement, OpenClawBackgroundCompleted
 from jarvis.core.protocols import ExecutionContext, ToolResult
@@ -68,87 +68,14 @@ KontrollierersResolver = Callable[[], "Any | None"]
 # window (a real second user-request typically follows much later).
 _COOLDOWN_SECONDS: Final[float] = 30.0
 
-# Voice-friendly ACK variants when the cooldown suppresses a duplicate spawn.
-# All short, TTS-readable, signal that the previous job is still running so the
-# user does not feel ignored.
-_COOLDOWN_SUPPRESS_ACKS: Final[tuple[str, ...]] = (
-    "Bin schon dran, läuft im Hintergrund.",
-    "Schon dabei, einen Moment noch.",
-    "Mach ich gerade, läuft schon.",
-    "Bereits unterwegs.",
-)
-
-
-# Short, varied generic acknowledgements for the empty-action path. Used when
-# the force-spawn heuristic (BrainManager._force_spawn_worker) bypasses the
-# LLM tool-choice loop and therefore has no contextual action verb to splice
-# in. Without rotation the user would hear the same 17-syllable template phrase
-# on every force-spawn ("Mach ich, ich kümmere mich im Hintergrund darum, den
-# vom User beschriebenen Workflow.") — live regression 2026-05-26: that
-# stock phrasing felt like a generic standard sentence rather than a personal
-# acknowledgement. All variants are short (<60 chars) so TTS reads them
-# briskly and the user is back to LISTENING faster.
-_GENERIC_ACK_VARIANTS: Final[tuple[str, ...]] = (
-    "Mach ich, bin dran.",
-    "Klar, kümmere mich drum.",
-    "Mach ich gleich.",
-    "Bin dabei, läuft im Hintergrund.",
-    "Alles klar, läuft.",
-    "Schon dabei.",
-)
-
-
-def _build_context_ack(action: str, target: str) -> str:
-    """Builds the spoken acknowledgement that Jarvis says right after the
-    background worker has been dispatched.
-
-    The Router brain hands us `action` as a clean infinitive clause
-    ("ein Hello-World-Programm in Python schreibt", "die Datei x
-    analysiert"). We splice it into a fixed scaffold so the user
-    hears a natural, contextual confirmation — not a robotic "Okay,
-    mache ich" template.
-
-    Examples produced:
-      action="ein Hello-World-Programm schreibt", target=""
-        → "Mach ich, ich kümmere mich im Hintergrund darum, ein
-           Hello-World-Programm schreiben."
-      action="die Datei test.py analysiert", target=""
-        → "Mach ich, ich kümmere mich im Hintergrund darum, die
-           Datei test.py analysieren."
-
-    2026-05-24: the spoken acknowledgement no longer names "OpenClaw"
-    or "Sub-Agent". The user reversed the 2026-05-13 vocabulary mandate
-    because the OpenClaw subprocess was retired — the worker now runs
-    Opus 4.7 directly. Jarvis must not claim to spawn an "OpenClaw
-    subagent" that no longer exists, so the scrubber now strips
-    "OpenClaw" instead of whitelisting it.
-
-    Action verb translation: the brain passes 3rd-person-singular
-    ("schreibt", "analysiert", "baut") because the original sentence
-    is "ich delegiere an einen Worker, der X macht". When we say
-    "ich lasse einen Subagent X-en", we need the infinitive — drop
-    the trailing -t and add -en for regular verbs. Done with a
-    minimal rule that covers the common case; irregular verbs slip
-    through as-is and the user still understands the meaning.
-    """
-    if not action:
-        # Force-spawn / leak-recovery paths supply no contextual action verb;
-        # rotate through short generic variants so the user does not keep
-        # hearing the same stock phrase (2026-05-26 live regression).
-        return random.choice(_GENERIC_ACK_VARIANTS)
-    # Best-effort 3rd-person → infinitive ("schreibt" → "schreiben")
-    inf = action
-    if inf.endswith("t") and not inf.endswith("et") and len(inf) > 3:
-        inf = inf[:-1] + "en"
-    elif inf.endswith("et") and len(inf) > 4:
-        inf = inf[:-2] + "en"
-
-    if target:
-        return (
-            f"Mach ich, ich kümmere mich im Hintergrund darum, "
-            f"{inf} {target}."
-        )
-    return f"Mach ich, ich kümmere mich im Hintergrund darum, {inf}."
+# The spoken acknowledgement is composed dynamically — see
+# ``jarvis.brain.ack_brain.spawn_announcement.SpawnAnnouncementComposer``.
+# History: a fixed scaffold ("Mach ich, ich kümmere mich im Hintergrund  # i18n-allow
+# darum, ...") plus a 6-phrase rotation lived here until 2026-06-10. The
+# user flagged the stock phrasing twice (2026-05-26 and 2026-06-10) as
+# robotic, so any finite hardcoded phrase list in this module is a
+# regression. The composer prefers a brain-supplied ``spoken_ack``, then
+# a flash-LLM phrasing, and only then its own no-repeat fallback pool.
 
 
 # Generic ACK filler used when no contextual action verb is available (the
@@ -283,6 +210,25 @@ class SpawnWorkerTool:
                 ),
                 "default": "",
             },
+            "spoken_ack": {
+                "type": "string",
+                "description": (
+                    "A SHORT spoken confirmation (1-2 sentences, 20 words "
+                    "max) in the user's language, phrased freshly for THIS "
+                    "exact request: name the concrete topic and naturally "
+                    "convey that it runs on the side and may take a moment. "
+                    "NEVER a generic stock phrase, never claim the task is "
+                    "already done, no internal component names."
+                ),
+                "default": "",
+            },
+            "language": {
+                "type": "string",
+                "description": (
+                    "Language of the current user turn: 'de' or 'en'."
+                ),
+                "default": "",
+            },
         },
         "required": ["utterance", "action"],
     }
@@ -294,6 +240,7 @@ class SpawnWorkerTool:
         manager_resolver: MissionManagerResolver | None = None,
         kontrollierer: Any | None = None,
         kontrollierer_resolver: KontrollierersResolver | None = None,
+        announcer: Any | None = None,
     ) -> None:
         """Wires the tool to a MissionManager directly or via lazy resolver.
 
@@ -307,6 +254,11 @@ class SpawnWorkerTool:
         kontrollierer after persisting the mission. Without them the
         mission stays in PENDING — the legacy behaviour kept for tests
         that don't care about execution.
+
+        ``announcer`` composes the spoken spawn acknowledgement (see
+        ``jarvis.brain.factory.build_spawn_announcer``). When omitted, a
+        fallback-only :class:`SpawnAnnouncementComposer` is used so the
+        spoken confirmation is guaranteed even without the flash-LLM.
         """
         if manager is None and manager_resolver is None:
             raise ValueError(
@@ -317,6 +269,9 @@ class SpawnWorkerTool:
         self._manager_resolver = manager_resolver
         self._kontrollierer = kontrollierer
         self._kontrollierer_resolver = kontrollierer_resolver
+        self._announcer = (
+            announcer if announcer is not None else SpawnAnnouncementComposer()
+        )
         # Cooldown LIVENESS gate (2026-05-27 hardening audit). Two pieces of
         # state, both reset on tool instantiation so a brain rebuild starts
         # clean:
@@ -362,6 +317,11 @@ class SpawnWorkerTool:
         if not utterance:
             return ToolResult(success=False, error="empty utterance")
 
+        # Turn language for the spoken acknowledgement. Supplied by the brain
+        # tool-call or the force-spawn caller; the composer falls back to its
+        # own utterance heuristic when absent.
+        ack_language = (args.get("language") or "").strip() or None
+
         # Spawn cooldown — suppress duplicate spawns while a dispatch is in
         # flight AND within _COOLDOWN_SECONDS of the last arm. Live regression
         # 2026-05-27: a single user voice request fragmented across VAD turns
@@ -378,7 +338,13 @@ class SpawnWorkerTool:
             and self._last_spawn_at > 0
             and (now - self._last_spawn_at) < _COOLDOWN_SECONDS
         ):
-            ack = random.choice(_COOLDOWN_SUPPRESS_ACKS)
+            # "already_running" is the composer's deterministic fast path —
+            # no LLM round-trip on a turn that is pure duplicate rejection.
+            ack = await self._announcer.compose(
+                utterance=utterance,
+                language=ack_language,
+                kind="already_running",
+            )
             log.info(
                 "spawn_worker cooldown active (%.1fs since last spawn < %.0fs) "
                 "— suppressing duplicate spawn, returning ACK %r",
@@ -489,18 +455,19 @@ class SpawnWorkerTool:
                 # the decrement — release the gate so it never wedges shut.
                 self._active_dispatches -= 1
 
-        # Build a CONTEXT-aware spoken acknowledgement. The user
-        # explicitly wants Jarvis to confirm the spawn naturally —
-        # "Mach ich, ich lasse dafür einen OpenClaw-Subagent xyz" —
-        # not the generic "Okay, mache ich" phrase we used earlier.
-        # The action/target args already came from the Router brain
-        # phrased as an infinitive clause ("ein Hello-World-Programm
-        # schreibt", "die Datei x analysiert"), so we just embed them
-        # in a fixed scaffold. Empty target → no trailing space.
-        # Output-Filter exception: "OpenClaw" is a brand-name (the
-        # user's own term), not engineering jargon — whitelisted in
-        # `scrub_for_voice` so this phrase survives the scrubber.
-        ack = _build_context_ack(action, target)
+        # Compose the CONTEXT-aware spoken acknowledgement AFTER the dispatch
+        # is armed (AD-OE1: the promise follows the handover, never delays
+        # it). Preference order inside the composer: brain-supplied
+        # ``spoken_ack`` (zero latency) → flash-LLM with the delegation
+        # persona (bounded by [ack_brain].timeout_ms + breaker) → bilingual
+        # no-repeat fallback pool. Guaranteed non-empty, never raises.
+        ack = await self._announcer.compose(
+            utterance=utterance,
+            language=ack_language,
+            candidate=(args.get("spoken_ack") or "").strip() or None,
+            action=raw_action,
+            target=target,
+        )
         return ToolResult(
             success=True,
             output=ack,

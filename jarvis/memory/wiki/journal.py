@@ -69,12 +69,23 @@ class CandidateJournal:
         self._clock = clock
         self._lock = threading.Lock()
         self._conn: sqlite3.Connection | None = None
+        self._closed = False
 
     # ------------------------------------------------------------------
     # connection / schema
     # ------------------------------------------------------------------
 
-    def _connection(self) -> sqlite3.Connection:
+    def _connection(self) -> sqlite3.Connection | None:
+        """Lazy connection. ``None`` once :meth:`close` ran.
+
+        ``close()`` is terminal: an in-flight background task that lands
+        after shutdown must NOT silently re-open the database — its
+        operation degrades to a logged no-op instead (one lost candidate
+        on teardown beats a connection leak on a closing process).
+        Must be called with ``self._lock`` held.
+        """
+        if self._closed:
+            return None
         if self._conn is None:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
             conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
@@ -87,7 +98,9 @@ class CandidateJournal:
         return self._conn
 
     def close(self) -> None:
+        """Close the connection. Terminal — later calls become no-ops."""
         with self._lock:
+            self._closed = True
             if self._conn is not None:
                 try:
                     self._conn.close()
@@ -126,6 +139,12 @@ class CandidateJournal:
             return 0
         with self._lock:
             conn = self._connection()
+            if conn is None:
+                log.warning(
+                    "CandidateJournal: append after close — %d candidate(s) "
+                    "dropped (process is shutting down)", len(rows),
+                )
+                return 0
             conn.executemany(
                 "INSERT INTO wiki_candidate_journal "
                 "(created_ms, source_label, turn_hash, fact, kind, subjects) "
@@ -143,6 +162,8 @@ class CandidateJournal:
         """Oldest ``pending`` rows, FIFO, up to ``limit``."""
         with self._lock:
             conn = self._connection()
+            if conn is None:
+                return []
             cur = conn.execute(
                 "SELECT id, created_ms, source_label, turn_hash, fact, kind, "
                 "subjects, status FROM wiki_candidate_journal "
@@ -183,6 +204,9 @@ class CandidateJournal:
         consolidated_ms = int(self._clock() * 1000)
         with self._lock:
             conn = self._connection()
+            if conn is None:
+                log.warning("CandidateJournal: mark after close — %d id(s) lost", len(ids))
+                return
             conn.executemany(
                 "UPDATE wiki_candidate_journal "
                 "SET status = ?, decision = ?, target_path = ?, consolidated_ms = ? "
@@ -199,6 +223,8 @@ class CandidateJournal:
         """Number of ``pending`` rows (drives the journal-pressure trigger)."""
         with self._lock:
             conn = self._connection()
+            if conn is None:
+                return 0
             row = conn.execute(
                 "SELECT COUNT(*) FROM wiki_candidate_journal WHERE status = 'pending'"
             ).fetchone()
@@ -208,6 +234,8 @@ class CandidateJournal:
         """True when a turn with this hash was already journaled (dedupe)."""
         with self._lock:
             conn = self._connection()
+            if conn is None:
+                return False
             row = conn.execute(
                 "SELECT 1 FROM wiki_candidate_journal WHERE turn_hash = ? LIMIT 1",
                 (turn_hash,),

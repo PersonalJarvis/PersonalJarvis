@@ -127,6 +127,13 @@ class AckBrainConfig(BaseModel):
     # when the provider has no run_stream / the stream errors. The suppress gate
     # is re-evaluated at first-sentence-ready instead of polling after the text.
     streaming: bool = Field(default=True)
+    # 2026-06-10: LLM-composed spawn announcements. When True, the
+    # spawn_worker tool phrases its spoken dispatch confirmation via the
+    # flash provider (dedicated delegation persona) instead of a canned
+    # phrase pool. False keeps the deterministic bilingual fallback pool
+    # only — the kill switch for latency-sensitive setups. See
+    # jarvis/brain/ack_brain/spawn_announcement.py.
+    spawn_announcements: bool = Field(default=True)
     providers: _ProvidersBundle = Field(default_factory=_ProvidersBundle)
 
     @field_validator("provider")

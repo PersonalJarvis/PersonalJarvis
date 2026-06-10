@@ -158,6 +158,34 @@ class WikiCurator:
             vault=self._vault,
         )
 
+        if not updates:
+            log.debug(
+                "WikiCurator: LLM proposed no updates for %r (salience filter or empty source)",
+                source_label,
+            )
+            return _empty_result(self._writer.backup_manager.backup_dir)
+
+        return await self.apply_external_updates(
+            updates, source_label=source_label, verb="ingest",
+        )
+
+    async def apply_external_updates(
+        self,
+        updates: list[PageUpdate],
+        *,
+        source_label: str,
+        verb: str = "merge",
+    ) -> WriteResult:
+        """Apply pre-built updates through the full guarded write pipeline.
+
+        The shared write surface for the legacy ``ingest`` path AND the
+        Wave-2 Stage-2 consolidator / profile / self-doc writers: anchors
+        vault-relative targets, enforces the create-or-refuse link rule,
+        writes via the AtomicWriter (backup → secret guard → validate →
+        rollback → FTS upsert), and chronicles applied writes in ``log.md``
+        under ``verb`` (one of the schema.md log verbs — consolidation runs
+        use ``merge``).
+        """
         # The LLM is taught (via schema.md) to emit vault-relative targets
         # like "entities/alex.md". Python's Path() treats that as a
         # relative path, which the atomic writer then resolves against the
@@ -167,10 +195,6 @@ class WikiCurator:
         updates = [self._anchor_to_vault(u) for u in updates]
 
         if not updates:
-            log.debug(
-                "WikiCurator: LLM proposed no updates for %r (salience filter or empty source)",
-                source_label,
-            )
             return _empty_result(self._writer.backup_manager.backup_dir)
 
         # ----- 1b. enforce the schema's create-or-refuse link rule -----
@@ -193,7 +217,7 @@ class WikiCurator:
         # already logged the details internally.
         if result.applied:
             await self._log.append_log_entry(
-                verb="ingest",
+                verb=verb,
                 subject=source_label,
                 pages_touched=[
                     _wikilink_for(p, self._vault_root) for p in result.applied

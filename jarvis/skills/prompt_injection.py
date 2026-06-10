@@ -26,10 +26,22 @@ from jarvis.skills.registry import SkillRegistry
 _PER_ENTRY_CHAR_CAP = 1536
 
 
+def _skill_mtime(skill: object) -> float:
+    """Last-modified time used for budget eviction; 0.0 when unknown."""
+    try:
+        return skill.path.stat().st_mtime  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001
+        try:
+            return float(getattr(skill, "mtime", 0.0))
+        except Exception:  # noqa: BLE001
+            return 0.0
+
+
 def render_available_skills_section(
     registry: SkillRegistry,
     *,
     max_skills: int = 20,
+    total_char_budget: int = 8000,
 ) -> str | None:
     """Render the AVAILABLE SKILLS markdown section for the system prompt.
 
@@ -40,14 +52,18 @@ def render_available_skills_section(
         registry: The live ``SkillRegistry``. Only ACTIVE/VALIDATED skills
             are considered (``registry.list_active()``).
         max_skills: Hard cap on the number of bullets rendered. Skills
-            beyond the cap are folded into a single ``… und N weitere``
+            beyond the cap are folded into a single ``… and N more``
             tail bullet so the prompt does not grow unbounded.
+        total_char_budget: Overall character budget for the bullet block
+            (AD-S2 L1, mirrors Claude Code's listing budget). When exceeded,
+            the least-recently-modified skills are evicted first — names of
+            fresh skills stay visible, stale ones fold into the tail bullet.
     """
     active = registry.list_active()
     if not active:
         return None
 
-    bullets: list[str] = []
+    entries: list[tuple[str, float]] = []
     skipped_no_frontmatter = 0
     for skill in active:
         fm = skill.frontmatter
@@ -66,14 +82,27 @@ def render_available_skills_section(
             description = f"{description} {when_to_use}"
         if len(description) > _PER_ENTRY_CHAR_CAP:
             description = description[: _PER_ENTRY_CHAR_CAP - 1] + "…"
-        bullets.append(f"- `{skill.name}` — {description}")
+        entries.append((f"- `{skill.name}` — {description}", _skill_mtime(skill)))
 
-    if not bullets:
+    if not entries:
         return None
 
-    overflow = max(0, len(bullets) - max_skills)
+    overflow = max(0, len(entries) - max_skills)
     if overflow:
-        bullets = bullets[:max_skills]
+        entries = entries[:max_skills]
+
+    # Total budget eviction (AD-S2): drop least-recently-modified first
+    # while preserving the display order of the survivors.
+    def _block_len(items: list[tuple[str, float]]) -> int:
+        return sum(len(b) + 1 for b, _ in items)
+
+    while len(entries) > 1 and _block_len(entries) > total_char_budget:
+        oldest_idx = min(range(len(entries)), key=lambda i: entries[i][1])
+        entries.pop(oldest_idx)
+        overflow += 1
+
+    bullets = [b for b, _ in entries]
+    if overflow:
         bullets.append(f"- … and {overflow} more")
 
     header = "## AVAILABLE SKILLS\n"

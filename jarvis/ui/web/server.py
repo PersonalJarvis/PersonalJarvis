@@ -799,6 +799,9 @@ class WebServer:
                 "brain_primary": primary,
                 "provider_slug": provider_slug,
                 "model_override": oc_cfg.model if oc_cfg else None,
+                # The dedicated subagent LLM pin ([brain.sub_jarvis].model);
+                # empty/None means "provider's deep model" (model_resolved).
+                "sub_model_override": sub_model_override,
                 "model_resolved": model_resolved,
                 "mapping": mapping_rows,
             }
@@ -1722,6 +1725,24 @@ class WebServer:
             sweep["scanned"], sweep["removed"], sweep["errors"],
         )
 
+        # Periodic recovery re-sweep (2026-06-10, mission 019eb25c): boot
+        # recovery runs ONCE and — correctly — skips a mission whose owner still
+        # looks live (active-guard). But that guard is boot-only: when the owning
+        # instance dies AFTER boot, the orphan stays non-terminal (e.g.
+        # CRITIQUING) in the DB and UI forever ("missions never find an end").
+        # This timer re-runs the SAME conservative, active-guarded sweep so an
+        # orphan is finalized on the next tick once it crosses the unchanged
+        # staleness threshold. Gated on the same primary-instance flag as boot
+        # recovery — a secondary/--no-lock instance must never sweep a primary's
+        # live missions. Cancelled on shutdown (see start()'s cleanup path).
+        if _is_primary:
+            from jarvis.missions.recovery import periodic_recovery_sweep
+
+            self._missions_resweep_task = asyncio.create_task(
+                periodic_recovery_sweep(result["manager"].store),
+                name="mission-recovery-resweep",
+            )
+
     async def _init_wiki_integration(self) -> None:
         """Phase B5 wiki write-wiring: bootstrap SessionRollupWorker + WikiCurator.
 
@@ -1744,13 +1765,35 @@ class WebServer:
             # of the app — CWD is the repo root at runtime).
             vault_root = Path.cwd() / vault_root
 
+        def _wiki_scheduler_factory(*, curator):  # noqa: ANN001, ANN202
+            """Build the CuratorScheduler (cooldown + VaultLock, Wave-2 B4).
+
+            Gates the Stage-2 consolidation drain; the consolidator itself is
+            attached later via ``scheduler.attach_consolidator``.
+            """
+            from jarvis.memory.wiki.lock import VaultLock
+            from jarvis.memory.wiki.scheduler import CuratorScheduler
+
+            sched_cfg = self.cfg.wiki_scheduler
+            lock_path = Path(sched_cfg.lock_path)
+            if not lock_path.is_absolute():
+                lock_path = Path.cwd() / lock_path
+            return CuratorScheduler(
+                curator=curator,
+                lock=VaultLock(
+                    lock_path,
+                    stale_after_seconds=int(sched_cfg.lock_stale_after_seconds),
+                ),
+                config=sched_cfg,
+            )
+
         handle = await bootstrap_wiki_integration(
             bus=self.bus,
             repo=repo,
             vault_root=vault_root,
             config=wiki_cfg,
             brain_caller=None,      # curator uses BrainProviderRegistry internally
-            scheduler_factory=None, # Agent D not yet merged; fallback to direct ingest
+            scheduler_factory=_wiki_scheduler_factory,
             voice_bridge_config=self.cfg.memory.wiki.voice_bridge,
         )
         self._wiki_integration_handle = handle
@@ -2112,7 +2155,18 @@ class WebServer:
             logger.opt(exception=exc).warning("PTY-Cleanup fehlgeschlagen")
 
         # Phase-6 Mission-Stack ordentlich runterfahren — Connection schliesst
-        # die SQLite-DB. Cleanup-Task cancellen (wenn opt-in war).
+        # die SQLite-DB. Periodic recovery re-sweep + Cleanup-Task cancellen
+        # BEVOR der Store schliesst (sonst tickt das Re-Sweep gegen eine
+        # geschlossene Connection).
+        resweep_task = getattr(self, "_missions_resweep_task", None)
+        if resweep_task is not None:
+            resweep_task.cancel()
+            try:
+                await asyncio.wait_for(resweep_task, timeout=2.0)
+            except (TimeoutError, asyncio.CancelledError):
+                pass
+            self._missions_resweep_task = None
+
         cleanup_task = getattr(self, "_missions_cleanup_task", None)
         if cleanup_task is not None:
             cleanup_task.cancel()

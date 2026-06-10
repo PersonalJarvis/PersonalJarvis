@@ -93,6 +93,137 @@ def test_create_two_tasks_get_different_paths(manager: WorktreeManager) -> None:
     assert a.exists() and b.exists()
 
 
+# --- lean (needs_repo=False) mode -------------------------------------------
+#
+# For external-artefact tasks ("create an HTML file with today's news") the
+# worker does not need a full checkout of the repo. A lean workspace is a fresh
+# empty `git init` repo with one empty initial commit, so the same diff-capture
+# sequence (`git add -A .` + `git diff --cached HEAD`) still surfaces the
+# worker's written files — but the worker is not tempted to explore 1.3M tokens
+# of unrelated code first (live mission 019eb17d, 2026-06-10).
+
+
+def _git_out(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args], cwd=str(cwd), check=False, capture_output=True, text=True
+    )
+
+
+def test_lean_create_yields_git_repo_with_head(manager: WorktreeManager) -> None:
+    """A lean workspace must be a valid git repo that already has a HEAD, so
+    `git diff --cached HEAD` (the diff-capture sequence) has a base to compare
+    against."""
+    workspace = manager.create(
+        mission_slug="news", task_id="01-html-news", needs_repo=False
+    )
+    assert workspace.exists() and workspace.is_dir()
+    # A real repo: `.git` is a DIRECTORY here (not the worktree link FILE).
+    assert (workspace / ".git").is_dir()
+    # HEAD resolves to a real commit (the initial empty commit).
+    rev = _git_out(["rev-parse", "HEAD"], workspace)
+    assert rev.returncode == 0, f"HEAD missing in lean repo: {rev.stderr!r}"
+    assert rev.stdout.strip(), "HEAD did not resolve to a commit"
+
+
+def test_lean_workspace_is_empty_no_repo_files(manager: WorktreeManager) -> None:
+    """The whole point: the repo's tracked files (README.md etc.) must NOT be
+    present in a lean workspace — only the fresh empty repo."""
+    workspace = manager.create(
+        mission_slug="news", task_id="01-empty", needs_repo=False
+    )
+    assert not (workspace / "README.md").exists()
+    # Only `.git` should exist at the top level (no checked-out tree).
+    non_git = [p for p in workspace.iterdir() if p.name != ".git"]
+    assert non_git == [], f"lean workspace is not empty: {non_git}"
+
+
+def test_lean_workspace_not_registered_as_worktree(
+    manager: WorktreeManager, tmp_git_repo: Path
+) -> None:
+    """A lean workspace is NOT a registered worktree of the host repo — so
+    `git worktree list` in the host repo must not mention it. This is what lets
+    cleanup skip `git worktree remove` (which would fail on it)."""
+    workspace = manager.create(
+        mission_slug="news", task_id="01-unreg", needs_repo=False
+    )
+    listed = _git_out(["worktree", "list", "--porcelain"], tmp_git_repo)
+    assert str(workspace.resolve()) not in listed.stdout
+    # And the lean repo itself has exactly one worktree: itself.
+    own = _git_out(["worktree", "list", "--porcelain"], workspace)
+    # Only the lean repo's own root is listed; no link back to the host repo.
+    assert str(tmp_git_repo.resolve()) not in own.stdout
+
+
+def test_lean_workspace_written_file_shows_in_capture_diff_sequence(
+    manager: WorktreeManager,
+) -> None:
+    """The diff-capture contract: a file the worker writes into the lean
+    workspace MUST be visible via the exact commands `_capture_diff` runs
+    (`git add -A .` then `git diff --cached HEAD`). This guarantees the Critic
+    sees the deliverable identically to the full-worktree path."""
+    workspace = manager.create(
+        mission_slug="news", task_id="01-diff", needs_repo=False
+    )
+    (workspace / "today.html").write_text(
+        "<h1>Headlines</h1>\n", encoding="utf-8"
+    )
+    add = _git_out(["add", "-A", "."], workspace)
+    assert add.returncode == 0, f"git add failed: {add.stderr!r}"
+    diff = _git_out(["diff", "--cached", "HEAD"], workspace)
+    assert diff.returncode == 0, f"git diff failed: {diff.stderr!r}"
+    assert "today.html" in diff.stdout, f"file missing from diff: {diff.stdout!r}"
+    assert "Headlines" in diff.stdout
+
+
+def test_lean_cleanup_via_remove_does_not_error(manager: WorktreeManager) -> None:
+    """`remove()` must tear down a lean workspace without calling
+    `git worktree remove` (which would fail: it is not a registered worktree).
+    The directory must be gone afterwards."""
+    workspace = manager.create(
+        mission_slug="news", task_id="01-clean", needs_repo=False
+    )
+    (workspace / "out.txt").write_text("done\n", encoding="utf-8")
+    assert workspace.exists()
+    manager.remove(workspace, force=True)
+    assert not workspace.exists()
+
+
+def test_lean_cleanup_leaves_no_host_worktree_registration(
+    manager: WorktreeManager, tmp_git_repo: Path
+) -> None:
+    """After lean cleanup, `git worktree prune` in the host repo must find
+    nothing to prune that points at the lean dir — no stale registration leaks
+    (the lean repo was never registered with the host in the first place)."""
+    workspace = manager.create(
+        mission_slug="news", task_id="01-noleak", needs_repo=False
+    )
+    manager.remove(workspace, force=True)
+    # The host repo's worktree state must be clean of the lean path.
+    listed = _git_out(["worktree", "list", "--porcelain"], tmp_git_repo)
+    assert str(workspace.resolve()) not in listed.stdout
+
+
+def test_lean_create_respects_path_length_cap(
+    tmp_git_repo: Path, tmp_path: Path
+) -> None:
+    """The 200-char path cap is a hard safety invariant and applies to lean
+    workspaces too (files written inside must still fit under MAX_PATH)."""
+    very_deep = tmp_path / ("x" * 220)
+    mgr = WorktreeManager(repo_root=tmp_git_repo, outputs_root=very_deep)
+    with pytest.raises(ValueError, match="zu lang"):
+        mgr.create(mission_slug="m", task_id="01", needs_repo=False)
+
+
+def test_full_create_still_default_when_needs_repo_omitted(
+    manager: WorktreeManager,
+) -> None:
+    """Backwards-compat: calling create() WITHOUT needs_repo behaves exactly
+    like before — a full registered worktree with the repo's files."""
+    workspace = manager.create(mission_slug="m", task_id="01-default")
+    assert (workspace / "README.md").exists()
+    assert (workspace / ".git").is_file()  # worktree link FILE, not a dir
+
+
 def test_create_path_layout_matches_spec(manager: WorktreeManager, tmp_path: Path) -> None:
     """Pfad-Pattern: outputs/<run-dir>/tasks/<NN>__<task-slug>/workspace/."""
     workspace = manager.create(mission_slug="hello", task_id="01-router")
@@ -268,6 +399,32 @@ def test_prune_and_sweep_leaked_removes_old_run_dir(
     report = manager.prune_and_sweep_leaked(max_age_hours=6.0)
     assert not fake_run.exists(), "leaked run-dir must be removed"
     assert report["swept_run_dirs"] >= 1
+
+
+def test_prune_and_sweep_leaked_removes_run_dir_with_readonly_files(
+    manager: WorktreeManager,
+) -> None:
+    """Leaked run-dirs contain real git checkouts whose object/pack files are
+    read-only on Windows; ``rmtree(ignore_errors=True)`` leaves them behind,
+    so the same ~50 dirs were re-swept (and re-failed) on EVERY boot — 10s of
+    blocked event loop at launch (the 30s-launch bug, 2026-06-10)."""
+    import os
+    import stat
+
+    fake_run = manager._outputs_root / "20251201T000000__stale__cafe0001"
+    pack_dir = fake_run / "tasks" / "01__x" / "workspace" / ".git" / "objects" / "pack"
+    pack_dir.mkdir(parents=True)
+    pack = pack_dir / "pack-abc.idx"
+    pack.write_text("binary-ish")
+    pack.chmod(stat.S_IREAD)
+
+    very_old = time.time() - 24 * 3600
+    os.utime(fake_run, (very_old, very_old))
+
+    report = manager.prune_and_sweep_leaked(max_age_hours=6.0)
+    assert not fake_run.exists(), "run-dir with read-only git files must be removed"
+    assert report["swept_run_dirs"] >= 1
+    assert report["errors"] == 0
 
 
 def test_prune_and_sweep_leaked_skips_young_run_dirs(

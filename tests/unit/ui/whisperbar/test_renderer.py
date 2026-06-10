@@ -25,12 +25,150 @@ def test_bar_heights_grow_with_level():
         assert 4.0 <= h <= 40.0 + 1e-6
 
 
-def test_wave_points_bounded_inside_pill():
-    pts = R.wave_points(0.4, 200, 52, cx=150, cy=36, n=48)
-    assert len(pts) == 49
-    for x, y in pts:
-        assert 50 <= x <= 250
-        assert 36 - 26 <= y <= 36 + 26  # within ±height*0.5
+# --- thinking: "orbital core" (replaces the old generic sine wave) -----------
+
+
+def test_sine_wave_is_gone():
+    # The travelling sine was explicitly rejected as a generic-AI visual.
+    # Guard against a future session resurrecting it.
+    assert not hasattr(R, "wave_points")
+    assert not hasattr(R, "wave_width_for")
+
+
+def test_orbit_points_bounded_inside_pill():
+    # Sparks (incl. their glow margin) must stay inside every pill size the
+    # ease-in passes through — COLLAPSED (tiny) up to ACTIVE.
+    sizes = [
+        (R.ACTIVE_W, R.ACTIVE_H),
+        (R.OPEN_W, R.OPEN_H),
+        (R.COLLAPSED_W, R.COLLAPSED_H),
+    ]
+    for pw, ph in sizes:
+        for spec in R.ORBITS:
+            for k in range(80):
+                t = k * 7.0 / 80.0
+                dx, dy, _depth = R.orbit_point(t, spec, pw, ph)
+                assert abs(dx) <= pw / 2.0, (pw, ph, t)
+                assert abs(dy) <= ph / 2.0, (pw, ph, t)
+
+
+def test_orbit_trail_head_matches_current_position():
+    spec = R.ORBITS[0]
+    trail = R.orbit_trail(1.3, spec, R.ACTIVE_W, R.ACTIVE_H)
+    assert len(trail) == R.TRAIL_N + 1
+    head = R.orbit_point(1.3, spec, R.ACTIVE_W, R.ACTIVE_H)
+    assert trail[0] == head
+
+
+def test_orbit_sparks_move_over_time():
+    spec = R.ORBITS[0]
+    a = R.orbit_point(0.0, spec, R.ACTIVE_W, R.ACTIVE_H)
+    b = R.orbit_point(0.25, spec, R.ACTIVE_W, R.ACTIVE_H)
+    assert (a[0], a[1]) != (b[0], b[1])
+
+
+def test_orbits_counter_rotate_and_never_sync():
+    # Opposite spin directions → gyroscope feel; incommensurate periods → the
+    # composite figure never visibly loops.
+    assert R.ORBITS[0].period_s * R.ORBITS[1].period_s < 0
+    ratio = abs(R.ORBITS[0].period_s / R.ORBITS[1].period_s)
+    frac = ratio - int(ratio)
+    assert 0.05 < frac < 0.95
+
+
+def test_core_radius_breathes_within_bounds():
+    ph = float(R.ACTIVE_H)
+    radii = [R.core_radius(k * 0.05, ph) for k in range(200)]
+    assert max(radii) < ph / 2.0
+    assert min(radii) > 0.0
+    assert max(radii) > min(radii)  # it actually breathes
+
+
+def test_core_drifts_instead_of_being_pinned():
+    # The user called a position-fixed core "starr" twice — the whole reactor
+    # must float. The drift has to be clearly visible (several px on the
+    # ACTIVE pill) within a short thinking phase (~3 s).
+    pw, ph = float(R.ACTIVE_W), float(R.ACTIVE_H)
+    points = [R.core_drift(t, pw, ph) for t in (0.0, 1.0, 2.0, 3.0)]
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    assert max(xs) - min(xs) >= 2.0  # visibly moves horizontally within 3 s
+    assert max(ys) - min(ys) >= 0.8  # and vertically
+
+
+def test_core_drift_is_bounded_and_organic():
+    pw, ph = float(R.ACTIVE_W), float(R.ACTIVE_H)
+    for k in range(400):
+        dx, dy = R.core_drift(k * 0.1, pw, ph)
+        assert abs(dx) <= pw * R.DRIFT_AX_FRAC + 1e-6
+        assert abs(dy) <= ph * R.DRIFT_AY_FRAC + 1e-6
+    # Non-synchronised frequencies → the float never settles into a loop.
+    ratio = R._DRIFT_WX / R._DRIFT_WY
+    frac = ratio - int(ratio)
+    assert 0.05 < frac < 0.95
+
+
+def test_sparks_plus_drift_stay_inside_the_pill():
+    # Orbits are clamped with the drift budget reserved — the floating system
+    # as a whole must never poke outside any pill size the ease passes.
+    sizes = [(R.ACTIVE_W, R.ACTIVE_H), (R.OPEN_W, R.OPEN_H), (R.COLLAPSED_W, R.COLLAPSED_H)]
+    for pw, ph in sizes:
+        for k in range(120):
+            t = k * 7.0 / 120.0
+            ddx, ddy = R.core_drift(t, pw, ph)
+            for spec in R.ORBITS:
+                dx, dy, _ = R.orbit_point(t, spec, pw, ph)
+                assert abs(ddx + dx) <= pw / 2.0, (pw, ph, t)
+                assert abs(ddy + dy) <= ph / 2.0, (pw, ph, t)
+
+
+def test_core_ring_stays_near_the_core_and_inside_the_pill():
+    # The saturn ring hugs the core — it must never reach the spark orbits
+    # (which start ~0.2*ph further out) nor the pill edge.
+    ph = float(R.ACTIVE_H)
+    r = R.core_radius(0.0, ph)
+    for t in (0.0, 0.7, 1.9, 4.2):
+        for dx, dy, _depth, glint in R.core_ring_points(t, r):
+            assert abs(dx) <= r * 2.4
+            assert abs(dy) <= r * 1.2
+            assert 0.0 <= glint <= 1.0
+
+
+def test_core_ring_glint_travels_around_the_ring():
+    # The bright spot must move along the ring over time — a static ring
+    # would just be a bigger static dot, which is what we're replacing.
+    ph = float(R.ACTIVE_H)
+    r = R.core_radius(0.0, ph)
+
+    def brightest_index(t: float) -> int:
+        pts = R.core_ring_points(t, r)
+        return max(range(len(pts)), key=lambda i: pts[i][3])
+
+    indices = {brightest_index(t) for t in (0.0, 0.4, 0.8, 1.2)}
+    assert len(indices) >= 3
+
+
+def test_core_highlight_swings_across_the_sphere():
+    # The specular highlight drifts horizontally (a slowly turning sphere)
+    # and always stays well inside the core body.
+    ph = float(R.ACTIVE_H)
+    r = R.core_radius(0.0, ph)
+    xs = []
+    for t in (0.0, 1.0, 2.0, 3.0, 4.0):
+        hx, hy = R.core_highlight_offset(t, r)
+        xs.append(hx)
+        assert abs(hx) <= r * 0.5
+        assert abs(hy) <= r * 0.5
+    assert max(xs) > min(xs)  # it actually moves
+
+
+def test_render_think_mode_animates_over_time():
+    r = R.WhisperBarRenderer()
+    for _ in range(60):  # settle pill size
+        r.render(0.0, "think", 0.0)
+    a = list(r.render(1.0, "think", 0.0).getdata())
+    b = list(r.render(1.25, "think", 0.0).getdata())
+    assert a != b
 
 
 def test_render_returns_image_for_every_mode():
@@ -87,19 +225,20 @@ def test_visual_mode_shows_bars_while_sound_is_recent():
     assert R.visual_mode("speak", 0.49, hold_s=0.5) == "speak"
 
 
-def test_visual_mode_wave_only_while_thinking():
-    # The wave (the "indicator") appears ONLY while actively thinking/processing
-    # — coarse "think" is the THINKING state AND the silent TTS-synthesis
-    # lead-in (the bridge shows "think" for SPEAKING too). That is the only
-    # place an animated indicator belongs.
+def test_visual_mode_indicator_only_while_thinking():
+    # The orbital core (the "indicator") appears ONLY while actively
+    # thinking/processing — coarse "think" is the THINKING state AND the
+    # silent TTS-synthesis lead-in (the bridge shows "think" for SPEAKING
+    # too). That is the only place an animated indicator belongs.
     assert R.visual_mode("think", 5.0, hold_s=0.5) == "think"
     assert R.visual_mode("think", 99.0, hold_s=0.5) == "think"
 
 
-def test_visual_mode_listening_silence_is_still_bars_not_wave():
+def test_visual_mode_listening_silence_is_still_bars_not_indicator():
     # After "Hey Jarvis" with no speech yet, Jarvis is WAITING, not thinking —
-    # the user explicitly does NOT want the wave there. Silence in any
-    # non-thinking active state shows bars, which render flat/still at level 0.
+    # the user explicitly does NOT want the thinking indicator there. Silence
+    # in any non-thinking active state shows bars, which render flat/still at
+    # level 0.
     assert R.visual_mode("listen", 2.0, hold_s=0.5) == "speak"
     assert R.visual_mode("listen", 99.0, hold_s=0.5) == "speak"
 
@@ -114,8 +253,9 @@ def test_visual_mode_shows_bars_while_tts_playback_is_active():
     assert R.visual_mode("speak", 99.0, hold_s=0.5, playback_active=True) == "speak"
     # idle is still idle even if a stray playback flag lingers.
     assert R.visual_mode("idle", 0.0, hold_s=0.5, playback_active=True) == "idle"
-    # Playback over + stale level: a THINKING turn falls back to the wave, but a
-    # LISTENING turn falls back to still bars (waiting, not thinking).
+    # Playback over + stale level: a THINKING turn falls back to the orbital
+    # core, but a LISTENING turn falls back to still bars (waiting, not
+    # thinking).
     assert R.visual_mode("think", 4.0, hold_s=0.5, playback_active=False) == "think"
     assert R.visual_mode("listen", 4.0, hold_s=0.5, playback_active=False) == "speak"
 

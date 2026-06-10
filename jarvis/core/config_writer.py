@@ -45,6 +45,7 @@ _BRAIN_PRIMARY_ENV = "JARVIS__BRAIN__PRIMARY"
 # ``JARVIS__BRAIN__SUB_JARVIS__PROVIDER`` -> ``brain.sub_jarvis.provider``
 # (``sub_jarvis`` survives because it carries only a single underscore).
 _SUB_JARVIS_PROVIDER_ENV = "JARVIS__BRAIN__SUB_JARVIS__PROVIDER"
+_SUB_JARVIS_MODEL_ENV = "JARVIS__BRAIN__SUB_JARVIS__MODEL"
 
 # Canonical User-scope ENV vars that override ``[tts] provider`` / ``[stt]
 # provider`` at boot. Both section + key are single words, so
@@ -104,6 +105,36 @@ def set_sub_jarvis_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> N
     _patch_sub_jarvis_provider_toml(path, name)
     # Layers 2 + 3 — best-effort, never raise.
     _sync_sub_jarvis_provider_drift_soll(name)
+
+
+def set_sub_jarvis_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Set ``[brain.sub_jarvis] model`` (the dedicated subagent LLM override)
+    across all persistence layers.
+
+    The write-side counterpart to the read-side resolution in
+    ``jarvis.missions.workers.provider_chain._resolve_provider_chain`` (the
+    worker's primary model) and the ``/api/openclaw/status`` ``model_resolved``
+    display. Empty string is the documented sentinel: the active subagent
+    provider's ``deep_model`` (frontier) wins.
+
+    ``brain.sub_jarvis.model`` is pinned in ``config-soll.json`` like the
+    provider, so a TOML-only write would be reverted by the drift-guard within
+    minutes (BUG-010 class). Three layers, same shape as
+    :func:`set_sub_jarvis_provider`:
+
+      1. ``jarvis.toml`` ``[brain.sub_jarvis] model``                (TOML)
+      2. ``scripts/config-soll.json`` ``brain.sub_jarvis.model``     (drift-soll)
+      3. ``JARVIS__BRAIN__SUB_JARVIS__MODEL`` User-scope ENV var     (boot override)
+
+    Layers 2 + 3 are best-effort cloud-first enhancements: graceful no-op on a
+    headless Linux VPS and never raise out of this function nor break the TOML
+    write. Takes effect for the NEXT mission (the worker resolves its chain per
+    spawn).
+    """
+    # Layer 1 — universal, runs on every platform. May raise FileNotFoundError.
+    _patch_sub_jarvis_key_toml(path, "model", model)
+    # Layers 2 + 3 — best-effort, never raise.
+    _sync_sub_jarvis_model_drift_soll(model)
 
 
 def set_tts_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -876,6 +907,40 @@ def _patch_sub_jarvis_provider_toml(path: Path, name: str) -> None:
         _atomic_write(path, out)
 
 
+def _patch_sub_jarvis_key_toml(path: Path, key: str, value: object) -> None:
+    """Set one key under the nested ``[brain.sub_jarvis]`` table.
+
+    Generalised sibling of :func:`_patch_sub_jarvis_provider_toml` (kept
+    untouched for parallel-session safety): walks ``brain`` -> ``sub_jarvis``
+    (creating either level if missing), preserves comments, sibling keys, and
+    the optional BOM.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"Config-Datei fehlt: {path}")
+
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+
+        brain = doc.get("brain")
+        if brain is None:
+            brain = tomlkit.table()
+            doc["brain"] = brain
+        sub = brain.get("sub_jarvis")
+        if sub is None:
+            sub = tomlkit.table()
+            brain["sub_jarvis"] = sub
+        sub[key] = value
+
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
+
+
 def _patch_wake_word_toml(path: Path, values: dict[str, object]) -> None:
     """Set keys under the nested ``[trigger.wake_word]`` table.
 
@@ -1003,6 +1068,27 @@ def _sync_sub_jarvis_provider_drift_soll(name: str) -> None:
         )
 
 
+def _sync_sub_jarvis_model_drift_soll(model: str) -> None:
+    """Best-effort sync of ``brain.sub_jarvis.model`` into config-soll + ENV.
+
+    NEVER raises and NEVER breaks the (already-completed) TOML write. Same
+    two-step shape as :func:`_sync_sub_jarvis_provider_drift_soll`.
+    """
+    try:
+        _update_config_soll_sub_jarvis_key("model", model)
+    except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
+        log.warning("Could not sync sub_jarvis model to config-soll.json: %s", exc)
+
+    try:
+        _set_user_env_var(_SUB_JARVIS_MODEL_ENV, model)
+    except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
+        log.warning(
+            "Could not sync %s to the User environment: %s",
+            _SUB_JARVIS_MODEL_ENV,
+            exc,
+        )
+
+
 def _sync_tts_provider_drift_soll(applied: dict[str, str]) -> None:
     """Best-effort sync of the TTS block into the drift-soll + ENV layers.
 
@@ -1125,6 +1211,34 @@ def _update_config_soll_sub_jarvis_provider(name: str) -> None:
         if block.get("provider") == name:
             return  # already in sync — avoid a needless rewrite
         block["provider"] = name
+
+        out = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+        _atomic_write_text(soll_path, out)
+
+
+def _update_config_soll_sub_jarvis_key(key: str, value: str) -> None:
+    """Atomically set ``data["brain.sub_jarvis"][key] = value`` in
+    config-soll.json.
+
+    Generalised sibling of :func:`_update_config_soll_sub_jarvis_provider`
+    (same FLAT dotted-key layout, same preservation guarantees, same graceful
+    no-op when the file is absent).
+    """
+    soll_path = _config_soll_path()
+    if not soll_path.exists():
+        log.debug("config-soll.json absent (%s) — skipping drift-soll sync", soll_path)
+        return
+
+    with _WRITE_LOCK:
+        raw = soll_path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        block = data.get("brain.sub_jarvis")
+        if not isinstance(block, dict):
+            block = {}
+            data["brain.sub_jarvis"] = block
+        if block.get(key) == value:
+            return  # already in sync — avoid a needless rewrite
+        block[key] = value
 
         out = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
         _atomic_write_text(soll_path, out)

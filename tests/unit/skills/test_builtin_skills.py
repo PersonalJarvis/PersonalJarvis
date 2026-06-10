@@ -120,13 +120,17 @@ def test_control_api_specifics() -> None:
 
 
 def test_morning_routine_specifics() -> None:
+    """Instruction-skill model (2026-06-09): no fictional MCP tool names in
+    requires_tools — the body instructs the brain to use whatever calendar/
+    mail/web tools are actually connected."""
     skill = parse_skill(builtin_skill_path("morning-routine"))
     fm = skill.frontmatter
     assert fm is not None
     trig_types = {t.type for t in fm.triggers}
     assert "voice" in trig_types
     assert "schedule" in trig_types
-    assert "gmail-mcp/list_unread" in fm.requires_tools
+    assert fm.requires_tools == []
+    assert fm.execution == "inline"
     assert fm.config.get("weather_location") == "Berlin"
 
 

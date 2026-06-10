@@ -358,6 +358,35 @@ async def test_spawn_inputs_dispatch_one_call_verbatim(utterance: str) -> None:
     )
 
 
+@pytest.mark.asyncio
+async def test_force_spawn_passes_turn_language() -> None:
+    """Force-spawn must hand the turn language to the spawn tool so the
+    spoken acknowledgement is composed in the user's language (2026-06-10
+    dynamic spawn-announcement redesign)."""
+    manager, executor = _manager_with_spawn()
+    await manager._force_spawn_worker(SPAWN_INPUTS[0])  # German input
+    _tool, args, _utt = executor.calls[0]
+    assert args["language"] == "de"
+
+    manager_en, executor_en = _manager_with_spawn()
+    await manager_en._force_spawn_worker(
+        "Spawn a subagent that checks the GitHub repo please"
+    )
+    _tool, args_en, _utt = executor_en.calls[0]
+    assert args_en["language"] == "en"
+
+
+@pytest.mark.asyncio
+async def test_force_spawn_honours_reply_language_pin() -> None:
+    """A pinned reply language (brain.reply_language) must override the
+    utterance heuristic for the spoken spawn acknowledgement."""
+    manager, executor = _manager_with_spawn()
+    manager.set_reply_language("en")
+    await manager._force_spawn_worker(SPAWN_INPUTS[0])  # German input
+    _tool, args, _utt = executor.calls[0]
+    assert args["language"] == "en"
+
+
 # ---------------------------------------------------------------------------
 # Konsistenz-Asserts: Recursion-Schutz und exaktes Pure-Dispatcher-Set.
 #

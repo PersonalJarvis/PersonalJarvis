@@ -8,10 +8,16 @@
 # --- Deliberately German persona / soul prompts (load-bearing, not translated) ---
 jarvis/brain/JARVIS_PERSONA.md
 jarvis/brain/ack_brain/persona_prompt.py
+jarvis/brain/ack_brain/spawn_announcement.py
 jarvis/brain/persona_loader.py
 jarvis/brain/router.py
 jarvis/memory/soul.py
 jarvis/speech/persona.py
+
+# --- Spawn-announcement tests: German voice fixtures + pool phrases are the
+#     content under test (bilingual DE+EN voice product) ---
+tests/unit/brain/test_spawn_announcement.py
+tests/unit/plugins/tool/test_spawn_worker_ack.py
 
 # --- The translation tooling itself (necessarily contains German word lists) ---
 scripts/bulk_translate*.py
@@ -28,6 +34,11 @@ tests/unit/ci/test_check_no_new_german.py
 */locales/*
 *.de.json
 *.de.ts
+
+# --- Built-in skill manifests: voice triggers and quoted example phrases are
+#     bilingual by design (DE+EN voice product) — the German there is content,
+#     not an untranslated artifact. ---
+jarvis/skills/builtin/*/SKILL.md
 
 # --- Historical session logs (internal memory, not an outward-facing artifact) ---
 wiki/obsidian-vault/*

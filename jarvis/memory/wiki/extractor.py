@@ -32,6 +32,7 @@ from jarvis.core.protocols import BrainMessage, BrainRequest
 from jarvis.memory.wiki.curator_llm import (
     _extract_json_array,
     _resolve_provider_and_model,
+    instantiate_curator_brain,
 )
 from jarvis.memory.wiki.journal import CandidateFact
 from jarvis.memory.wiki.telemetry import telemetry
@@ -54,6 +55,22 @@ _MAX_ASSISTANT_CONTEXT_CHARS = 500
 _KNOWN_KINDS = frozenset(
     {"identity", "preference", "person", "project", "decision", "event", "other"}
 )
+
+def _log_trigger_outcome(task: "asyncio.Task[Any]") -> None:
+    """Done-callback for the fire-and-forget journal-pressure trigger.
+
+    Retrieves the exception (silences the never-retrieved warning) but —
+    unlike a bare ``t.exception()`` lambda — actually logs real failures.
+    A lost trigger is retried on the next append, so WARNING suffices.
+    """
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.warning(
+            "ConversationFactExtractor: journal-pressure trigger failed: %s", exc,
+        )
+
 
 _SYSTEM_PROMPT = """\
 You extract durable personal-memory facts from ONE conversation turn between
@@ -96,6 +113,11 @@ class ConversationFactExtractor:
         self._brain: Any = None
         self._resolved_provider: str | None = None
         self._resolved_model: str | None = None
+        # Wave-2 journal pressure: when attached, an append that pushes the
+        # backlog past the threshold fires a background JOURNAL trigger so
+        # the Stage-2 consolidator drains a batch (cooldown/lock gated there).
+        self._scheduler: Any = None
+        self._consolidate_after: int = 0
 
     # ------------------------------------------------------------------
     # public API
@@ -134,7 +156,43 @@ class ConversationFactExtractor:
                 "ConversationFactExtractor: %d candidate fact(s) journaled (%s)",
                 appended, source_label,
             )
+            self._maybe_trigger_consolidation()
         return appended
+
+    def attach_scheduler(self, scheduler: Any, *, consolidate_after: int) -> None:
+        """Enable the journal-pressure trigger (Wave-2 B4).
+
+        ``scheduler`` is duck-typed: needs ``trigger(TriggerSource.JOURNAL)``.
+        """
+        self._scheduler = scheduler
+        self._consolidate_after = max(1, int(consolidate_after))
+
+    def _maybe_trigger_consolidation(self) -> None:
+        """Fire a background JOURNAL trigger when the backlog is heavy.
+
+        Fire-and-forget (AP-9): the conversation turn never waits for the
+        consolidator; the scheduler applies its own cooldown + vault lock.
+        """
+        if self._scheduler is None:
+            return
+        try:
+            if self._journal.backlog_count() < self._consolidate_after:
+                return
+            from jarvis.memory.wiki.scheduler import TriggerSource
+
+            task = asyncio.create_task(
+                self._scheduler.trigger(TriggerSource.JOURNAL),
+                name="wiki-journal-pressure-trigger",
+            )
+            task.add_done_callback(_log_trigger_outcome)
+        except RuntimeError:
+            # No running event loop (sync test context) — next append from
+            # an async context will retry.
+            log.debug("ConversationFactExtractor: no event loop for journal trigger")
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "ConversationFactExtractor: journal-pressure trigger failed: %s", exc,
+            )
 
     # ------------------------------------------------------------------
     # internals
@@ -146,7 +204,11 @@ class ConversationFactExtractor:
             return []
 
         context = assistant_text[:_MAX_ASSISTANT_CONTEXT_CHARS]
+        # Real-time anchor so relative phrases ("last month", "this spring")
+        # resolve to the correct year downstream.
+        today = time.strftime("%Y-%m-%d")
         user_prompt = (
+            f"Today is {today}.\n\n"
             f"User said:\n{user_text}\n\n"
             f"Assistant replied (context only):\n{context or '(none)'}"
         )
@@ -231,7 +293,9 @@ class ConversationFactExtractor:
             return self._brain
         provider, model = _resolve_provider_and_model(self._curator_cfg, self._root_cfg)
         try:
-            self._brain = self._registry.instantiate(provider, model=model)
+            # Thinking disabled for Gemini non-pro: extraction is small,
+            # deterministic JSON output (see instantiate_curator_brain).
+            self._brain = instantiate_curator_brain(self._registry, provider, model)
             self._resolved_provider = provider
             self._resolved_model = model
         except Exception as exc:  # noqa: BLE001
@@ -242,6 +306,13 @@ class ConversationFactExtractor:
             )
             self._brain = None
         return self._brain
+
+    def seen_turn(self, turn_hash: str) -> bool:
+        """Durable dedupe: True when this turn hash is already journaled."""
+        try:
+            return self._journal.seen_turn(turn_hash)
+        except Exception:  # noqa: BLE001
+            return False
 
     def reset_brain(self) -> None:
         """Drop the cached brain so the next turn re-resolves provider/model.

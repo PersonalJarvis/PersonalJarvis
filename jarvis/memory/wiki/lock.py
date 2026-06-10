@@ -4,9 +4,15 @@ Uses ``open(path, "x")`` semantics (``O_CREAT | O_EXCL``) for atomic
 creation, which works on every OS without OS-specific primitives such as
 ``fcntl`` (Unix-only) or ``msvcrt.locking`` (Windows-only).
 
-The lock file contains the writing process's PID and a monotonic
-timestamp so a stale lock — one left behind by a crashed process — can
-be detected and stolen automatically.
+The lock file contains the writing process's PID and a WALL-CLOCK
+(``time.time()``) timestamp so a stale lock — one left behind by a
+crashed process — can be detected and stolen automatically by ANY later
+process. The timestamp in the file must never be ``time.monotonic()``:
+the monotonic clock restarts near zero on every boot and is only
+comparable within one process, so a cross-process/cross-reboot staleness
+check against it is meaningless (a pre-reboot lock could look "fresh" or
+"from the future" forever). The in-process acquire deadline loop DOES
+use monotonic — correct for a local timeout.
 
     with VaultLock(Path("data/wiki_curator.lock"), stale_after_seconds=300):
         ...  # only one process enters here at a time
@@ -23,14 +29,21 @@ log = logging.getLogger(__name__)
 # Field separator inside the lock file.  Must not appear in PID or timestamp.
 _SEP = ";"
 
+# Wall clocks on two machines/processes may disagree slightly; a timestamp
+# up to this many seconds in the future still counts as "fresh". Anything
+# further ahead is impossible for a wall clock and is treated as corrupt
+# (e.g. a pre-fix monotonic value left by an old build).
+_FUTURE_TOLERANCE_S = 60.0
+
 
 class VaultLock:
     """File-based exclusive lock for curator runs.
 
     Uses ``open(path, "x")`` semantics so creation is atomic on every
-    OS.  Writes the current PID + a monotonic timestamp into the lock
+    OS.  Writes the current PID + a wall-clock timestamp into the lock
     file so a stale lock (older than ``stale_after_seconds``) can be
-    detected and stolen on next ``acquire``.
+    detected and stolen on next ``acquire`` — even by another process
+    after a reboot.
 
     Always usable as a context manager::
 
@@ -107,8 +120,9 @@ class VaultLock:
         try:
             # ``open(path, "x")`` raises FileExistsError when the file
             # already exists — identical to O_CREAT|O_EXCL semantics.
+            # Wall clock in the file (cross-process staleness contract).
             with open(self._path, "x") as fh:
-                fh.write(f"{os.getpid()}{_SEP}{time.monotonic()}")
+                fh.write(f"{os.getpid()}{_SEP}{time.time()}")
             self._held = True
             return True
         except FileExistsError:
@@ -136,18 +150,29 @@ class VaultLock:
         owner_pid, owner_ts = self._parse_lock_content(content)
 
         if owner_ts is not None:
-            age = time.monotonic() - owner_ts
-            if age <= self._stale_after:
+            age = time.time() - owner_ts
+            if -_FUTURE_TOLERANCE_S <= age <= self._stale_after:
                 # Lock is fresh — do not steal.
                 return False
-            log.warning(
-                "VaultLock: stealing stale lock (age=%.1fs, stale_after=%ds, "
-                "owner_pid=%s) at %s",
-                age,
-                self._stale_after,
-                owner_pid if owner_pid is not None else "?",
-                self._path,
-            )
+            if age < 0:
+                # Far-future timestamp: a pre-fix monotonic remnant or a
+                # corrupt file — a wall-clock timestamp can never be this
+                # far ahead. Treat as stale and steal.
+                log.warning(
+                    "VaultLock: lock file %s carries a future timestamp "
+                    "(%.1fs ahead) — treating as corrupt and stealing it",
+                    self._path,
+                    -age,
+                )
+            else:
+                log.warning(
+                    "VaultLock: stealing stale lock (age=%.1fs, stale_after=%ds, "
+                    "owner_pid=%s) at %s",
+                    age,
+                    self._stale_after,
+                    owner_pid if owner_pid is not None else "?",
+                    self._path,
+                )
         else:
             # Unparseable lock file — treat as stale.
             log.warning(
@@ -164,7 +189,7 @@ class VaultLock:
 
         try:
             with open(self._path, "x") as fh:
-                fh.write(f"{os.getpid()}{_SEP}{time.monotonic()}")
+                fh.write(f"{os.getpid()}{_SEP}{time.time()}")
             self._held = True
             return True
         except FileExistsError:
@@ -173,7 +198,7 @@ class VaultLock:
 
     @staticmethod
     def _parse_lock_content(content: str) -> tuple[int | None, float | None]:
-        """Parse ``"<pid>;<monotonic_ts>"`` from lock file content.
+        """Parse ``"<pid>;<wall_clock_ts>"`` from lock file content.
 
         Returns ``(pid, timestamp)``; either value may be ``None`` when
         the file is corrupt.
