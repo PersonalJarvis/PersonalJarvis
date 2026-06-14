@@ -2190,6 +2190,22 @@ class WebServer:
                 )
             self._screenshot_retention_task = None
 
+        # Finalize in-flight missions BEFORE the store closes: a restart used
+        # to kill the process with missions still running, leaving them
+        # non-terminal until the recovery re-sweep buried them 30 min later as
+        # opaque crash_recovery/ERROR cards (live missions 019eb27f/019eb288,
+        # 2026-06-10 19:24). cancel_all_running flips each to an honest
+        # CANCELLED('app_shutdown') and awaits the dying run tasks briefly.
+        kontrollierer = getattr(self.app.state, "kontrollierer", None)
+        cancel_all = getattr(kontrollierer, "cancel_all_running", None)
+        if cancel_all is not None:
+            try:
+                await cancel_all(reason="app_shutdown")
+            except Exception as exc:  # noqa: BLE001
+                logger.opt(exception=exc).warning(
+                    "In-flight mission finalize on shutdown failed"
+                )
+
         mission_manager = getattr(self.app.state, "mission_manager", None)
         if mission_manager is not None:
             try:

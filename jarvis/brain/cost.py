@@ -35,7 +35,8 @@ log = logging.getLogger(__name__)
 # continues to return values; they are NOT in the tier defaults —
 # the frontier resolver picks only the most recent variant.
 PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
-    # ── Anthropic Claude (Frontier: Opus 4.8, Sonnet 4.6, Haiku 4.5) ──
+    # ── Anthropic Claude (Frontier: Fable 5, Sonnet 4.6, Haiku 4.5) ──
+    "claude-fable-5": (10.0, 50.0),
     "claude-opus-4-8": (15.0, 75.0),
     "claude-opus-4-7-20251022": (15.0, 75.0),
     "claude-opus-4-7": (15.0, 75.0),

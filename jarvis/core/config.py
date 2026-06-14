@@ -436,6 +436,32 @@ class BrainRoutingConfig(BaseModel):
     # heuristic. Default is "strict" per user mandate 2026-05-14.
     force_spawn_mode: str = "strict"
 
+    # Heavy-research force-spawn (live bug 2026-06-14, the Berlin→Melbourne
+    # turn): a multi-step research/analysis request must be OFFLOADED to a
+    # background mission, not run inline on the deep brain where it blows the
+    # ~20 s voice budget and gets beheaded. Conjunctive gate (precision over
+    # recall): a research/analysis VERB must be present AND a heaviness signal —
+    # a horizon/multi-step marker, OR >= heavy_research_min_verbs_multiclause
+    # verb matches (multi-clause), OR length >= heavy_research_min_chars with a
+    # verb. Length alone never spawns; a quick "recherchier das mal kurz" stays
+    # inline. Strict-mode only, evaluated after every stand-down guard (skills /
+    # open-app / instructional / nav / pointer still win). See ADR-0011.
+    heavy_research_enabled: bool = True
+    heavy_research_verbs: list[str] = Field(default_factory=lambda: [
+        "recherchier", "analysier", "untersuch",  # i18n-allow: DE routing verb stems
+        "vergleich", "evaluier", "bewert",  # i18n-allow: DE routing verb stems
+        "research", "analyz", "analys", "investigat", "compar", "evaluat",
+        "assess", "summari",
+    ])
+    heavy_research_markers: list[str] = Field(default_factory=lambda: [
+        "nächsten", "naechsten", "kommenden",  # i18n-allow: DE routing markers
+        "mehrere", "verschiedene", "schritt für schritt",  # i18n-allow: DE routing markers
+        "brauche", "benötige", "benoetige", "checkliste",  # i18n-allow: DE routing markers
+        "next two weeks", "over the next", "step by step", "checklist",
+    ])
+    heavy_research_min_chars: int = 120
+    heavy_research_min_verbs_multiclause: int = 2
+
     # Smalltalk allowlist — when the utterance matches one of these patterns,
     # NEVER spawn, even if the verb or marker heuristic fires. Pure wake/
     # smalltalk inputs go straight through the brain, not via OpenClaw spawn.
@@ -858,7 +884,7 @@ class OpenClawConfig(BaseModel):
     # (wrapper in the NPM global bin folder).
     binary_path: str = "openclaw"
     # Empty = bridge resolves frontier-pro from cfg.brain.primary (AD-6).
-    # Explicitly set e.g. "anthropic/claude-opus-4-7" or
+    # Explicitly set e.g. "anthropic/claude-fable-5" or
     # "google/gemini-3.1-pro-preview" to pin the model statically.
     model: str | None = None
     # Time-cap fixed per AD-19; per-mission override deliberately not allowed.
@@ -1234,6 +1260,16 @@ class ComputerUseConfig(BaseModel):
     max_replans: int = Field(default=2, ge=0, le=40)
     per_step_timeout_s: float = Field(default=30.0, gt=0.0, le=300.0)
     verify_after_each_step: bool = True
+    # Spoken per-step milestones ("Schritt N von M erledigt."). Default OFF
+    # (2026-06-10): the milestone counter tracks successful actions, not
+    # verified plan steps, so it announced "6 von 6 erledigt" on a mission
+    # that was still struggling. Opt-in for users who want the narration.
+    announce_progress: bool = False
+    # 2026-06-14: switched from claude-fable-5 to claude-opus-4-8. The CU
+    # planner calls the Brain API directly with no model-unavailable retry, and
+    # fable-5 is approved-access-only / unreachable on the Claude Max
+    # subscription ("Claude Fable 5 is currently unavailable") — so the planner
+    # default must be a model we can actually reach.
     plan_model: str = "claude-opus-4-8"
     step_model: str = "claude-haiku-4-5-20251001"
     step_budget: int = Field(default=100, ge=1, le=1000)
@@ -1494,6 +1530,27 @@ class VoiceConfig(BaseModel):
     # fragment), short enough that the user is never left hanging. A continuation
     # arriving within this window cancels the question and joins the turn.
     clarify_after_ms: int = 2500
+    # Floor (seconds) below which the canned "that took too long, say it again"
+    # phrase is structurally SUPPRESSED, as a stale-state guard. None of the
+    # three timeout paths (20 s no-first-frame ceiling / 30 s no-progress stall /
+    # 30 s total cap) can legitimately fire faster than this, so a turn that
+    # genuinely ran under the floor and is still about to apologise for slowness
+    # is being driven by stale per-turn state (the no-first-frame mark — an
+    # AP-19/BUG-032-class process-global flag), not a real timeout. Live user
+    # report 2026-06-14: Jarvis apologised "right after" a sub-second turn.
+    # Defaults to the stall window so the two stay consistent; the pipeline
+    # clamps the effective value to <= the stall window so it can never muzzle a
+    # genuine timeout. Raising it above the stall window has no effect (clamped).
+    min_timeout_phrase_s: float = 30.0
+    # Per-site floor for the NO-FIRST-FRAME timeout path specifically. That path
+    # is beheaded at the (shorter) TTS no-first-frame ceiling, not the brain
+    # stall window, so its suppression floor must track the ceiling — clamping it
+    # to the 30 s stall window (as min_timeout_phrase_s does) would make a real
+    # ~20 s abort fall under the floor and stay silent (live bug 2026-06-14: the
+    # Berlin→Melbourne research turn). None → the pipeline derives it as a
+    # fraction of the no-first-frame ceiling. Any set value is clamped to <= the
+    # ceiling so it can never invert and re-introduce guaranteed silence.
+    no_first_frame_phrase_floor_s: float | None = None
 
 
 class CompletenessConfig(BaseModel):

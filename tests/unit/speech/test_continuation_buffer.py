@@ -41,6 +41,36 @@ def test_incomplete_utterance_is_buffered_returns_none() -> None:
     assert buf.has_pending(), "buffer must hold the fragment for continuation"
 
 
+def test_last_reason_exposes_buffered_fragment_reason() -> None:
+    """The buffer surfaces WHY it held the fragment so the pipeline can scope
+    the clarifying question to trail-offs only (2026-06-14)."""
+    from jarvis.speech.completion import (
+        REASON_TRAILING_COMMA,
+        REASON_TRAILING_ELLIPSIS,
+    )
+
+    buf = ContinuationBuffer(timeout_s=8.0)
+    assert buf.process("Kannst du mir sagen, was genau...", language="de") is None
+    assert buf.last_reason == REASON_TRAILING_ELLIPSIS
+
+    buf2 = ContinuationBuffer(timeout_s=8.0)
+    assert buf2.process("Schreib eine Mail an Tom,", language="de") is None
+    assert buf2.last_reason == REASON_TRAILING_COMMA
+
+
+def test_last_reason_is_cleared_after_join_dispatch() -> None:
+    """After a held fragment is joined + dispatched, ``last_reason`` returns ""
+    so a stale reason can never force a clarify on a later unrelated turn."""
+    buf = ContinuationBuffer(timeout_s=8.0)
+    assert buf.process("Kannst du mir sagen, was genau...", language="de") is None
+    assert buf.last_reason != ""
+    # A completing continuation arrives → joined & dispatched, buffer drained.
+    joined = buf.process("die Curie entdeckt hat", language="de")
+    assert joined is not None
+    assert buf.has_pending() is False
+    assert buf.last_reason == ""
+
+
 # --------------------------------------------------------------------------- #
 # Join path: pending fragment + complete continuation → joined text returned.  #
 # --------------------------------------------------------------------------- #

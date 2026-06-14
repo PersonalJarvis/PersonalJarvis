@@ -154,10 +154,15 @@ async def run_bench(runs: int, real: bool, assert_slo: bool) -> int:
     by_cat_ttft: dict[str, list[float]] = {}
 
     for cat, text in SCENARIOS:
+        # Renamed during the 2026-06-10 spawn-threshold rework; support both
+        # so the bench keeps running on older checkouts.
+        decide = (
+            getattr(bm, "_should_force_spawn", None) or bm._should_force_openclaw
+        )
         decision_ms: list[float] = []
         for _ in range(max(runs * 5, 50)):
             t = time.perf_counter_ns()
-            bm._should_force_openclaw(text)  # type: ignore[attr-defined]
+            decide(text)
             decision_ms.append((time.perf_counter_ns() - t) / 1_000_000)
         router_all.extend(decision_ms)
         by_cat_router.setdefault(cat, []).extend(decision_ms)
@@ -217,4 +222,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from _grpc_exit import hard_exit  # noqa: E402 — sibling helper in scripts/
+
+    # --real hits live providers, leaking non-daemon gRPC threads that would
+    # otherwise hang process exit for minutes. hard_exit flushes + os._exit.
+    hard_exit(main())

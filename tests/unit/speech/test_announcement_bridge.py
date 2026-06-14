@@ -408,3 +408,126 @@ async def test_openclaw_completion_signal_does_speak_with_summary() -> None:
 
     assert tts.calls == [("Fertig. Fertig gebaut", "de-DE")]
     assert player.plays == 1
+
+
+# ---------------------------------------------------------------------------
+# Late mission readback must survive a hang-up (live bug 2026-06-14): once a
+# heavy research request is OFFLOADED to a background mission, its result often
+# arrives AFTER the user said "auflegen". A fresh kind="completion" readback is
+# the answer the user asked for — it must punch through the hangup gate (a NEW
+# turn, AD-OE5/OE6), while a stale preamble / plain late announcement stays
+# correctly dropped. priority="normal" keeps it queued behind current speech.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_completion_announcement_speaks_after_hangup() -> None:
+    """A kind="completion" announcement must be SPOKEN even after hangup — it is
+    the offloaded answer, a fresh turn. RED before WS3b (the hangup gate drops
+    every announcement regardless of kind)."""
+    bus = EventBus()
+    tts = FakeTTS()
+    player = FakePlayer()
+    pipeline = _make_pipeline(tts, bus, player)
+    pipeline._hangup_event.set()  # type: ignore[attr-defined]
+
+    await bus.publish(
+        AnnouncementRequested(
+            text="Deine Reise-Recherche ist fertig.",
+            language="de",
+            priority="normal",
+            kind="completion",
+        )
+    )
+
+    assert tts.calls == [("Deine Reise-Recherche ist fertig.", "de-DE")]
+    assert player.plays == 1
+
+
+@pytest.mark.asyncio
+async def test_stale_preamble_dropped_after_hangup() -> None:
+    """A stale kind="preamble" announcement after hangup stays dropped (it is a
+    leftover from the aborted turn, not the answer). Guard for WS3b."""
+    bus = EventBus()
+    tts = FakeTTS()
+    player = FakePlayer()
+    pipeline = _make_pipeline(tts, bus, player)
+    pipeline._hangup_event.set()  # type: ignore[attr-defined]
+
+    await bus.publish(
+        AnnouncementRequested(
+            text="Einen Moment, ich schaue nach.",
+            language="de",
+            priority="normal",
+            kind="preamble",
+        )
+    )
+
+    assert tts.calls == []
+    assert player.plays == 0
+
+
+@pytest.mark.asyncio
+async def test_plain_late_announcement_still_dropped_after_hangup() -> None:
+    """An untagged (kind=None) late announcement after hangup stays dropped —
+    only a deliberate completion punches through. Guard for WS3b."""
+    bus = EventBus()
+    tts = FakeTTS()
+    player = FakePlayer()
+    pipeline = _make_pipeline(tts, bus, player)
+    pipeline._hangup_event.set()  # type: ignore[attr-defined]
+
+    await bus.publish(
+        AnnouncementRequested(text="irgendeine späte ansage", language="de")
+    )
+
+    assert tts.calls == []
+    assert player.plays == 0
+
+
+@pytest.mark.asyncio
+async def test_background_completed_speaks_after_hangup() -> None:
+    """An OpenClawBackgroundCompleted readback is by definition fresh — it must
+    be spoken even after hangup. RED before WS3b (the hangup gate dropped it)."""
+    bus = EventBus()
+    tts = FakeTTS()
+    player = FakePlayer()
+    pipeline = _make_pipeline(tts, bus, player)
+    pipeline._hangup_event.set()  # type: ignore[attr-defined]
+
+    await bus.publish(
+        OpenClawBackgroundCompleted(
+            success=True,
+            utterance="recherchier mir fuenf themen",
+            summary="Fuenf Recherche-Themen liegen bereit.",
+            error="",
+            duration_s=12.3,
+        )
+    )
+
+    assert tts.calls == [
+        ("Fertig. Fuenf Recherche-Themen liegen bereit.", "de-DE")
+    ]
+    assert player.plays == 1
+
+
+@pytest.mark.asyncio
+async def test_completion_announcement_still_silenced_when_muted() -> None:
+    """Mute is the user's explicit choice and stays above the completion gate:
+    a muted completion is silent (the result is still visible in the UI)."""
+    bus = EventBus()
+    tts = FakeTTS()
+    player = FakePlayer()
+    pipeline = _make_pipeline(tts, bus, player)
+    pipeline._muted = True  # type: ignore[attr-defined]
+
+    await bus.publish(
+        AnnouncementRequested(
+            text="Deine Reise-Recherche ist fertig.",
+            language="de",
+            kind="completion",
+        )
+    )
+
+    assert tts.calls == []
+    assert player.plays == 0

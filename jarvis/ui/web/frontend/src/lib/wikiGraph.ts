@@ -97,6 +97,30 @@ export function colourForKind(kind: string): string {
   return NODE_COLOUR[kind] ?? DEFAULT_NODE_COLOUR;
 }
 
+/** Pixel canvas size of the Memory-Map. */
+export interface CanvasSize {
+  w: number;
+  h: number;
+}
+
+/**
+ * True only when a new canvas measurement differs from the previous one by at
+ * least `threshold` pixels on either axis.
+ *
+ * The graph canvas is driven by a ResizeObserver. Real layouts emit a stream of
+ * sub-pixel measurements (scrollbar flicker, DPI rounding); accepting every one
+ * churns React state for no visible benefit and — together with the old
+ * remount-on-size-change — used to restart the whole force simulation, which is
+ * what made the network flail/oscillate when the window jittered. A small
+ * threshold absorbs that noise while still reacting to genuine resizes.
+ */
+export function sizeChanged(prev: CanvasSize, next: CanvasSize, threshold = 2): boolean {
+  const dw = Math.abs(next.w - prev.w);
+  const dh = Math.abs(next.h - prev.h);
+  if (dw === 0 && dh === 0) return false;
+  return dw >= threshold || dh >= threshold;
+}
+
 /**
  * Compute a node radius in canvas pixels from its inbound link count.
  *

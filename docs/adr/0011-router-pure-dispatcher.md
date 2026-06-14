@@ -523,3 +523,101 @@ PFLICHT routing tests `test_mail_by_name_stays_router_tier` /
 `tests/unit/plugins/tool/test_contact_upsert.py`,
 `tests/unit/plugins/tool/test_call_contact.py`,
 `tests/unit/brain/test_contacts_integration.py`.
+
+## Amendment: Inline web search (`search-web`) + heavy-only spawn threshold (2026-06-10)
+
+### What changed
+
+1. `ROUTER_TOOLS` gains `search-web` (`jarvis/plugins/tool/search_web.py:
+   SearchWebTool`, LLM-facing name `search_web`). Read-only DuckDuckGo
+   Instant-Answer call via `httpx`, risk `safe`, no key required —
+   cloud-first compatible (plain HTTPS, works on the €5-VPS baseline).
+2. The router system prompt (`router.py:SYSTEM_PROMPT`) replaces the
+   "research/analysis/comparison → spawn_worker" doctrine and the
+   "on uncertainty: delegate" default with an effort-based three-way split:
+   - LIGHT: answer directly, no tool.
+   - MEDIUM: finish it YOURSELF this turn with the router's own tools
+     (`search_web`, plugin tools, `cli_*`, `run_shell`, `computer_use`,
+     `wiki-recall`) — multiple tool calls and a few seconds of thinking are
+     fine. Never a spawn.
+   - HEAVY: `spawn_worker` ONLY when the task builds a real work product
+     (code/app/file/document/HTML report/refactor) or clearly needs
+     multi-minute, multi-step focused work — or the user explicitly asks
+     for a background agent.
+   On uncertainty the router now tries itself first ("BEI UNSICHERHEIT:
+   MACH ES SELBST") instead of delegating.
+3. The `spawn_worker` tool description was rewritten to the same heavy-only
+   contract with an explicit negative boundary (questions, news, single
+   lookups are NEVER spawned). LLMs select tools primarily by description —
+   the lesson from the 2026-05-29 computer-use amendment, applied in the
+   restrictive direction.
+
+### Why (the bug)
+
+Live complaint 2026-06-10: "was sind die aktuellsten News?" spawned a
+multi-minute worker mission. Root cause was twofold:
+
+- The prompt classified EVERY research-ish utterance as SPAWN_WORKER
+  ("Recherche, Analyse, Vergleich", "ALLES was laenger als ~5 Sekunden
+  dauert", "BEI UNSICHERHEIT: DELEGIERE") and falsely framed delegation as
+  costing "wenige Sekunden" — a real mission runs minutes.
+- The router had NO inline web path at all: `search_web` existed as a
+  plugin but was deliberately kept out of `ROUTER_TOOLS` (the 2026-05-25
+  phantom-tool fix removed the *advertisement* instead of registering the
+  *tool*), so the model literally could not answer a news question except
+  by spawning.
+
+The deterministic force-spawn heuristic was NOT involved (a question
+carries no action verb); the LLM tool-choice path was. The heuristic is
+therefore unchanged by this amendment.
+
+### Why `search-web` belongs in `ROUTER_TOOLS` (and nowhere else)
+
+It is a **direct, read-only, safe-gated lookup** — architecturally the same
+shape as `wiki-recall` (read-only search the router answers from). It is
+not a generic direct action like `open_app`/`type_text` (those stay
+delegated): it has no side effects, needs no confirmation, and answering a
+question inline is exactly the router's job. It is never a spawn and never
+enters a worker tool-set (AP-5/AP-14). The 2026-05-25 phantom-call bug
+class cannot recur in the inverse direction because the parity test now
+pins BOTH halves: tool registered ↔ tool advertised
+(`tests/unit/brain/test_router_prompt_tool_parity.py::
+test_search_web_is_a_real_router_tool_and_advertised`).
+
+### Pure-dispatcher spirit
+
+This amendment formalizes what the 2026-05-24/05-29/06-01 amendments
+already practiced: the router answers light AND medium requests directly
+through safe-gated tools and reserves the heavy worker for genuinely heavy
+chunks. The "When in doubt, SPAWN" reflex that ADR-0011 §Context originally
+diagnosed as the *bug* had crept back into the prompt as doctrine; this
+amendment removes it again — in the opposite direction this time
+(over-spawning instead of over-acting).
+
+### Regression guards
+
+- `tests/unit/brain/test_routing.py::test_search_web_in_router_tools`
+- `tests/unit/brain/test_routing.py::test_router_tools_is_pure_dispatcher_set`
+  (exact-match set updated to include `search-web`)
+- `tests/unit/brain/test_router_prompt_tool_parity.py` (parity in both
+  directions; `open_app`/`remember` stay phantom-listed)
+- `tests/unit/test_router_delegator_policy.py`
+  (`test_spawn_is_reserved_for_heavy_tasks`,
+  `test_default_on_uncertainty_is_self_serve`,
+  `test_news_question_routed_to_search_web_not_spawn`,
+  `test_minutes_vs_seconds_cost_framing_present`)
+- `tests/unit/plugins/tool/test_spawn_worker_description.py` (heavy-only
+  description contract)
+
+### Related model pin (same user mandate, 2026-06-10)
+
+The heavy tier itself was pinned to the frontier model `claude-fable-5`
+with NO automatic `claude-opus-*` fallback anywhere:
+`[brain.sub_jarvis] provider="claude-api", model="claude-fable-5"`,
+`[brain.providers.claude-api].deep_model="claude-fable-5"`,
+`claude_direct_worker._DEFAULT_CLAUDE_MODEL`, critic escalation
+(`jarvis/missions/critic/escalation.py` — escalation rounds now target
+`FRONTIER_MODEL` instead of the `"opus"` CLI alias), and the computer-use
+planner default (`config.py plan_model`). Drift-guard source
+`scripts/config-soll.json` updated in the same change so the pin survives
+the 5-minute drift sweep (BUG-010 triple defense).

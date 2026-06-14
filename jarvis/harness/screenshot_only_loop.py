@@ -8,7 +8,10 @@ Action schema (the model returns either a single object OR a list of
 objects per turn -- the executor handles both):
 
     {"action": "click_element", "name": "<UIA label>"}   UIA-grounded click
-    {"action": "click",         "x": <int>, "y": <int>}  0-1000 normalized coords
+    {"action": "click",         "x": <int>, "y": <int>,
+                                "target": "<element>"}   0-1000 normalized coords
+                                                         (target arms the zoom-
+                                                         refinement pass)
     {"action": "type",          "text": "<string>"}      type into focused field
     {"action": "open_app",      "name": "<app name>"}    launch an app by name
     {"action": "wait",          "ms": <int 0-10000>}     in-loop pause, no LLM
@@ -105,6 +108,16 @@ _MAX_WAIT_MS: int = 10_000
 # we re-screenshot and re-plan.
 _MAX_BATCH: int = 6
 
+# Guard-hit cap (live failure 2026-06-10 20:46): a mission that keeps
+# producing guard-BLOCKED actions (suppressed relaunches, repeated-click
+# toggle-stops) is circling — the model has lost the thread and no longer
+# finds a productive action. Pre-fix such a run ground through the whole
+# step/time budget (8x suppressed open_app + 3x toggle-stop over 2 minutes,
+# exit 4). The counter is CUMULATIVE per mission (no reset on a success in
+# between): guard hits are symptoms of disorientation, and the live run
+# interleaved useless-but-"ok" clicks between them.
+_MAX_GUARD_HITS: int = 5
+
 # Exit codes — kept stable for callers that branch on them (voice/UI layer).
 _TIMEOUT_EXIT_CODE = 124
 _FAIL_EXIT_CODE = 5
@@ -137,7 +150,8 @@ _SYSTEM_PROMPT = (
     "       {\"action\": \"click\", \"x\": 100, \"y\": 280}]\n\n"
     "Allowed action shapes:\n"
     "  {\"action\": \"click_element\", \"name\": \"<UI element label>\"}\n"
-    "  {\"action\": \"click\",         \"x\": <int>, \"y\": <int>}\n"
+    "  {\"action\": \"click\",         \"x\": <int>, \"y\": <int>, "
+    "\"target\": \"<2-6 words: the element you aim at>\"}\n"
     "  {\"action\": \"type\",          \"text\": \"<string>\"}\n"
     "  {\"action\": \"key\",           \"key\": \"<enter|tab|esc|...>\"}\n"
     "  {\"action\": \"scroll\",        \"direction\": \"<up|down|left|right>\", "
@@ -176,6 +190,9 @@ _SYSTEM_PROMPT = (
     "media scrubbers / transport bars (Spotify play/pause), game canvases, "
     "video surfaces, custom-painted UIs -- OR when click_element reports the "
     "label is genuinely absent from the available controls.\n"
+    "* ALWAYS include \"target\" on a pixel click (e.g. \"skip forward "
+    "button\"): a zoomed verification pass uses it to re-locate the exact "
+    "element and silently corrects your coordinates before clicking.\n"
     "* To type into a field: first focus it (click_element the field, or "
     "click it), then ``type``. Never type blindly into an unfocused screen.\n"
     "* If click_element misses, it returns the available labels -- pick the "
@@ -251,6 +268,21 @@ _SYSTEM_PROMPT = (
 # JSON action parsing
 # ---------------------------------------------------------------------------
 
+def _normalize_click_target(obj: dict[str, Any]) -> None:
+    """Keep an optional ``target`` description on a click action, drop junk.
+
+    The zoom-refinement stage (2026-06-10 click-accuracy fix) uses the
+    description to re-locate the element inside a zoomed crop. It is
+    best-effort metadata: a missing or malformed value must never fail the
+    action, so anything that is not a non-empty string is silently removed.
+    """
+    target = obj.get("target")
+    if isinstance(target, str) and target.strip():
+        obj["target"] = target.strip()
+    elif "target" in obj:
+        obj.pop("target", None)
+
+
 def _parse_action(raw: str) -> dict[str, Any]:
     """Parse a single-action JSON response and validate the schema.
 
@@ -298,6 +330,7 @@ def _parse_action(raw: str) -> dict[str, Any]:
         if isinstance(y, bool) or not isinstance(y, (int, float)):
             raise CULoopError("click action requires integer x and y")
         obj["x"], obj["y"] = int(x), int(y)
+        _normalize_click_target(obj)
     elif action == "type":
         text = obj.get("text")
         if not isinstance(text, str):
@@ -449,6 +482,7 @@ def _validate_action_dict(obj: Any) -> dict[str, Any]:
         if isinstance(y, bool) or not isinstance(y, (int, float)):
             raise CULoopError("click action requires integer x and y")
         obj["x"], obj["y"] = int(x), int(y)
+        _normalize_click_target(obj)
     elif action == "type":
         text = obj.get("text")
         if not isinstance(text, str):
@@ -552,16 +586,87 @@ def _is_cancelled(cancel_token: CancelToken | None) -> bool:
 #: not narration (frontier-speed Wave 0).
 _PROGRESS_MIN_INTERVAL_S = 8.0
 
+#: Strong refs for fire-and-forget announcement publishes. ``bus.publish``
+#: awaits TYPED subscribers uncapped (the AP-18 timeout covers only wildcard
+#: observers) and ``SpeechPipeline._on_announcement`` synthesizes TTS inline —
+#: awaiting the publish therefore froze the CU loop 6-10 s per spoken
+#: milestone (BUG-CU-ANNOUNCE-BLOCK, live log 2026-06-10 20:46: every step
+#: gap ended exactly at AudioOutFirst). The loop detaches every announcement
+#: publish instead; the set keeps the tasks alive until done.
+_ANNOUNCE_TASKS: set[asyncio.Task[None]] = set()
+
+
+def _publish_announcement_nonblocking(bus: Any, event: Any) -> None:
+    async def _run() -> None:
+        try:
+            await bus.publish(event)
+        except Exception:  # noqa: BLE001
+            log.debug("announcement publish failed", exc_info=True)
+
+    task = asyncio.create_task(_run(), name="cu-announce")
+    _ANNOUNCE_TASKS.add(task)
+    task.add_done_callback(_ANNOUNCE_TASKS.discard)
+
+
+#: Settle probe after a successful open_app (2026-06-10 latency plan Task 6).
+#: open_app is a fire-and-forget Popen — observing immediately catches the
+#: pre-launch desktop and burns a full observe+think round (~3-5 s) on a
+#: stale frame. Poll the cheap foreground-title hint until the app's window
+#: is up, then observe.
+_OPEN_APP_SETTLE_TIMEOUT_S = 3.0
+_OPEN_APP_SETTLE_POLL_S = 0.3
+
+
+async def _settle_after_open_app(ctx: ComputerUseContext, app_token: str) -> None:
+    """Wait (max ``_OPEN_APP_SETTLE_TIMEOUT_S``) until the freshly launched
+    app's window is in the foreground.
+
+    The probe is the vision engine's foreground-title hint (a ctypes
+    GetForegroundWindow read — microseconds, no screenshot, no UIA walk).
+    Structural seam: any engine exposing ``_guess_active_app_hint`` works;
+    fakes without it (and engines on platforms whose probe returns "") cost
+    one short settle beat at most. Never raises."""
+    if not app_token:
+        return
+    probe = getattr(
+        getattr(ctx, "vision_engine", None), "_guess_active_app_hint", None,
+    )
+    if probe is None:
+        return
+    deadline = time.monotonic() + _OPEN_APP_SETTLE_TIMEOUT_S
+    while time.monotonic() < deadline:
+        try:
+            title = str(await asyncio.to_thread(probe, None) or "")
+        except Exception:  # noqa: BLE001
+            log.debug("[cu] settle probe failed (non-fatal)", exc_info=True)
+            return
+        if not title:
+            # No title available (empty desktop focus, or a platform whose
+            # probe returns "") — one fixed settle beat instead of a blind
+            # poll-until-timeout.
+            await asyncio.sleep(min(1.0, _OPEN_APP_SETTLE_TIMEOUT_S / 3))
+            return
+        if app_token in title.lower():
+            return
+        await asyncio.sleep(_OPEN_APP_SETTLE_POLL_S)
+
 
 async def _profile_phase(
     ctx: ComputerUseContext, *, phase: str, step_idx: int, t0: float,
+    acc: dict[str, float] | None = None,
 ) -> None:
     """Publish one CUStepProfiled phase span (Wave 0 instrumentation).
 
     Dual purpose: cu_bench latency breakdown AND the speech-pipeline liveness
     heartbeat (a long THINK phase emits no ObservationCaptured/ActionPlanned,
     so this event keeps the TTS ceiling suspended). Never raises.
+
+    ``acc`` (latency plan Task 7): per-mission phase accumulator — feeds the
+    one-line ``[cu] mission profile`` summary every ``_final`` emits.
+    Accumulated before the bus gate so the profile works without a bus too.
     """
+    if acc is not None:
+        acc[phase] = acc.get(phase, 0.0) + (time.monotonic() - t0) * 1000.0
     if ctx.bus is None:
         return
     try:
@@ -724,6 +829,7 @@ async def _call_brain(
     user_message: str | None = None,
     frame_b: Observation | None = None,
     max_tokens: int = 256,
+    images_override: list[ImageBlock] | None = None,
 ) -> str:
     """Send screenshot + goal + history to the active brain, return raw text.
 
@@ -773,22 +879,28 @@ async def _call_brain(
         # Attach screenshot(s), capped to the model-payload budget
         # (2026-06-09 latency fix). ``frame_b`` lets the two-frame motion
         # verifier send Frame A + Frame B in one call for comparison.
+        # ``images_override`` replaces the observation frames entirely — the
+        # click-refinement pass sends a zoomed live crop instead of the full
+        # (and by now stale) step screenshot.
         images: list[ImageBlock] = []
-        for obs in (observation, frame_b):
-            if obs is None or not obs.screenshot_path:
-                continue
-            try:
-                block = await _load_observation_image(obs)
-                if block is None:
+        if images_override is not None:
+            images = list(images_override)
+        else:
+            for obs in (observation, frame_b):
+                if obs is None or not obs.screenshot_path:
                     continue
-                images.append(block)
-                log.info(
-                    "ComputerUseLoop screenshot attached: hash=%s len=%d",
-                    obs.screenshot_hash[:16] if obs.screenshot_hash else "?",
-                    len(block.data_b64),
-                )
-            except Exception as exc:  # noqa: BLE001
-                log.warning("ComputerUseLoop screenshot attach failed: %s", exc)
+                try:
+                    block = await _load_observation_image(obs)
+                    if block is None:
+                        continue
+                    images.append(block)
+                    log.info(
+                        "ComputerUseLoop screenshot attached: hash=%s len=%d",
+                        obs.screenshot_hash[:16] if obs.screenshot_hash else "?",
+                        len(block.data_b64),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("ComputerUseLoop screenshot attach failed: %s", exc)
 
         req = BrainRequest(
             messages=(BrainMessage(
@@ -1018,6 +1130,30 @@ _COMPUTE_VERIFIER_SYSTEM_PROMPT = (
 )
 
 
+#: Matches goals that are NOTHING but "open <app>" (any common conjugation /
+#: politeness filler, DE+EN). Used for the deterministic done check below —
+#: a non-match simply falls through to the LLM judge, so this regex only has
+#: to be precise, never complete.
+_OPEN_GOAL_RE = re.compile(
+    r"^(?:hey\s+)?(?:jarvis[,\s]+)?"
+    r"(?:oeffne|öffne|öffnest|offne|starte|open|start|launch)\s+"  # i18n-allow: German voice-command pattern
+    r"(?:mir\s+|mal\s+|bitte\s+|kurz\s+|einmal\s+|den\s+|die\s+|das\s+|der\s+"  # i18n-allow: German voice-command pattern
+    r"|my\s+|the\s+|f(?:ue|ü)r\s+mich\s+)*"  # i18n-allow: German voice-command pattern
+    r"(?P<app>[\w .-]{2,40}?)"
+    r"\s*(?:f(?:ue|ü)r\s+mich|bitte|mal|kurz|jetzt|now|please)?\s*[.!?]?\s*$",  # i18n-allow: German voice-command pattern
+    re.IGNORECASE,
+)
+
+
+def _open_goal_app_token(task_prompt: str) -> str | None:
+    """The app name when the WHOLE goal is just "open <app>", else ``None``."""
+    m = _OPEN_GOAL_RE.match((task_prompt or "").strip())
+    if not m:
+        return None
+    token = m.group("app").strip().lower()
+    return token or None
+
+
 async def _verify_goal_done(
     ctx: ComputerUseContext,
     *,
@@ -1036,6 +1172,23 @@ async def _verify_goal_done(
 
     Returns ``(done, proof)``. Never raises -- on any error returns
     ``(False, "")`` so verification can only HELP, never block the loop."""
+    # Deterministic fast path (2026-06-10 latency plan Task 4): a pure
+    # "open <app>" goal is proven by the foreground window title the
+    # observation already carries — no vision-LLM judge call (~1.5 s saved
+    # per mission, and no done-reject loop risk for the most common goal
+    # class). The model has already claimed done at this point; the title is
+    # corroboration. A non-matching title falls through to the judge — this
+    # branch can only ever SKIP cost, never reject.
+    app_token = _open_goal_app_token(user_goal)
+    if app_token:
+        wt = str(getattr(observation, "window_title", "") or "").lower()
+        if wt and app_token in wt:
+            log.info(
+                "[cu] done verified deterministically: %r in foreground "
+                "title %r — skipping the LLM judge", app_token, wt[:60],
+            )
+            return (True, f"foreground window title proves '{app_token}' is open")
+
     # Compute goals (calculator) are a SINGLE-frame check: the model reads the
     # result display and compares it to the arithmetic it computes itself. No
     # motion / two-frame gap needed (BUG-CU-RESULT).
@@ -1345,6 +1498,331 @@ def _resolve_click_pixel(
     return raw_x + left, raw_y + top
 
 
+# ---------------------------------------------------------------------------
+# Pixel-click zoom refinement + post-click verification (2026-06-10).
+#
+# Root cause of the chronic "agent misses its click targets" bug: on
+# label-less surfaces (Spotify transport bar, custom-painted UIs) the loop
+# executed the vision model's SINGLE coarse 0-1000 estimate directly — and
+# vision LLMs cannot reliably ground a small control on a full-screen frame
+# (live evidence 2026-05-27: six straight misses on the Calc "7" button).
+# click_element fixed that for labeled controls; this fixes the pixel path:
+#
+#   1. REFINE — crop a zoomed region of the LIVE screen around the coarse
+#      estimate, ask the brain to re-locate the target INSIDE the crop
+#      (0-1000 normalized within the crop), map back to absolute pixels.
+#   2. VERIFY — compare a small region around the clicked point before and
+#      after the click. Unchanged pixels = the click hit dead space -> one
+#      more refine round on a fresh crop, retry at the corrected position.
+#
+# Toggle safety (BUG-CU-TOGGLE family): a retry NEVER re-clicks within
+# _REFINE_TOL_PX of an already-clicked point — a click that DID land (but
+# whose effect shows elsewhere, e.g. skip resets the track title across the
+# bar) must not be repeated, or it would skip a second song.
+#
+# Hermetic gates: the whole pass needs a real observation frame
+# (screenshot_path) AND known monitor geometry; fakes/headless contexts keep
+# the legacy single-click path. Every failure degrades to the coarse click.
+# ---------------------------------------------------------------------------
+
+#: Max click attempts per action: 1 initial + 2 corrected retries.
+_CLICK_MAX_ATTEMPTS = 3
+#: Refined point within this many pixels of an already-clicked point ->
+#: do not click again (the first click is assumed to have landed).
+_REFINE_TOL_PX = 12
+#: Settle time between click and the post-click verification grab — long
+#: enough for the UI to react, short enough to not drag the act phase.
+_CLICK_VERIFY_SETTLE_S = 0.6
+#: Verification crop half-side around the clicked point (mirrors the AI
+#: Pointer's DEFAULT_CROP_RADIUS — big enough to include the reaction of a
+#: transport bar, tight enough to ignore unrelated screen regions).
+_VERIFY_CROP_RADIUS_PX = 110
+#: Refine crop half-side as a fraction of the monitor width, floored. ~3.5x
+#: zoom on a 2560px monitor — covers a coarse estimate that is off by up to
+#: ~14% of the screen while keeping the target readable.
+_REFINE_CROP_FRAC = 0.14
+_REFINE_CROP_MIN_RADIUS_PX = 180
+
+_REFINE_SYSTEM_PROMPT = (
+    "You are a precision click-refinement assistant for desktop automation. "
+    "You are given a ZOOMED-IN crop of the live screen, centered on a coarse "
+    "click estimate. Locate the element described by TARGET inside the crop. "
+    "Output exactly ONE JSON object, no prose, no code fences:\n"
+    "  {\"found\": true, \"x\": <0-1000>, \"y\": <0-1000>} -- x/y on a "
+    "0-1000 grid WITHIN THIS CROP (0,0 = crop top-left, 1000,1000 = crop "
+    "bottom-right), aimed at the CENTER of the target element.\n"
+    "  {\"found\": false} -- the target is NOT visible anywhere in the crop.\n"
+    "Never guess a position for an element you cannot actually see."
+)
+
+
+def _refine_crop_bbox(
+    x: int, y: int, monitor_geom: tuple[int, int, int, int],
+) -> dict[str, int]:
+    """Zoom-crop bbox around ``(x, y)``, clamped to the captured monitor."""
+    from jarvis.vision.screenshot import region_bbox_around  # noqa: PLC0415
+
+    left, top, width, height = monitor_geom
+    radius = max(_REFINE_CROP_MIN_RADIUS_PX, round(width * _REFINE_CROP_FRAC))
+    return region_bbox_around(x, y, radius, virtual_bounds=(left, top, width, height))
+
+
+def _grab_region_jpeg(bbox: dict[str, int]) -> bytes | None:
+    """Capture one live screen region as JPEG bytes; ``None`` on any failure
+    (headless, mss missing, transient GDI error) so refinement/verification
+    silently degrade to the plain click."""
+    try:
+        from jarvis.vision.screenshot import capture_region  # noqa: PLC0415
+
+        return capture_region(bbox)
+    except Exception:  # noqa: BLE001
+        log.debug("[cu] region grab failed (non-fatal)", exc_info=True)
+        return None
+
+
+def _crop_norm_to_abs(bbox: dict[str, int], nx: int, ny: int) -> tuple[int, int]:
+    """Map crop-relative 0-1000 coordinates to absolute screen pixels,
+    clamped so a refined click can never leave the refined region."""
+    nx = min(max(int(nx), 0), _COORD_NORM_MAX)
+    ny = min(max(int(ny), 0), _COORD_NORM_MAX)
+    ax = bbox["left"] + round(nx / _COORD_NORM_MAX * bbox["width"])
+    ay = bbox["top"] + round(ny / _COORD_NORM_MAX * bbox["height"])
+    ax = min(max(ax, bbox["left"]), bbox["left"] + bbox["width"] - 1)
+    ay = min(max(ay, bbox["top"]), bbox["top"] + bbox["height"] - 1)
+    return ax, ay
+
+
+def _parse_refine_verdict(raw: str) -> tuple[bool, int, int] | None:
+    """Parse {"found": bool, "x": n, "y": n} (fence-tolerant).
+
+    Returns ``(True, nx, ny)`` with clamped crop-norm coordinates,
+    ``(False, 0, 0)`` for an explicit not-visible verdict, or ``None`` on any
+    malformed input — the caller then keeps the coarse estimate."""
+    cleaned = (raw or "").strip()
+    fence = _JSON_FENCE_RE.search(cleaned)
+    if fence is not None:
+        cleaned = fence.group(1).strip()
+    start, end = cleaned.find("{"), cleaned.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        obj = json.loads(cleaned[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    found = obj.get("found")
+    if found is False:
+        return (False, 0, 0)
+    if found is not True:
+        return None
+    x, y = obj.get("x"), obj.get("y")
+    if isinstance(x, bool) or not isinstance(x, (int, float)):
+        return None
+    if isinstance(y, bool) or not isinstance(y, (int, float)):
+        return None
+    nx = min(max(int(x), 0), _COORD_NORM_MAX)
+    ny = min(max(int(y), 0), _COORD_NORM_MAX)
+    return (True, nx, ny)
+
+
+async def _refine_click_point(
+    ctx: ComputerUseContext,
+    observation: Observation,
+    x: int,
+    y: int,
+    monitor_geom: tuple[int, int, int, int],
+    *,
+    user_goal: str,
+    target: str,
+    retry_note: str = "",
+) -> tuple[bool, int, int] | None:
+    """One zoom-refinement round: live crop around ``(x, y)`` -> brain ->
+    corrected absolute pixel. Returns ``(True, ax, ay)``, ``(False, 0, 0)``
+    (target not in crop) or ``None`` on any failure (keep coarse estimate)."""
+    bbox = _refine_crop_bbox(x, y, monitor_geom)
+    jpeg = await asyncio.to_thread(_grab_region_jpeg, bbox)
+    if not jpeg:
+        return None
+    block = ImageBlock(
+        mime="image/jpeg", data_b64=base64.b64encode(jpeg).decode("ascii"),
+    )
+    user_message = (
+        f"TARGET: {target or '(the element the GOAL needs clicked next)'}\n"
+        f"GOAL: {user_goal}\n"
+        f"The attached image is a zoomed-in crop of the live screen, "
+        f"{bbox['width']}x{bbox['height']} screen pixels, centered on the "
+        "current click estimate."
+        + (f"\nNOTE: {retry_note}" if retry_note else "")
+        + "\nReply with the JSON object only."
+    )
+    try:
+        raw = await asyncio.wait_for(
+            _call_brain(
+                ctx,
+                observation=observation,
+                user_goal=user_goal,
+                history_text="",
+                system_prompt=_REFINE_SYSTEM_PROMPT,
+                user_message=user_message,
+                max_tokens=64,
+                images_override=[block],
+            ),
+            timeout=_think_timeout_s(ctx),
+        )
+    except (TimeoutError, Exception) as exc:  # noqa: BLE001 — degrade to coarse
+        log.debug("[cu] click refine call failed (non-fatal): %s", exc)
+        return None
+    verdict = _parse_refine_verdict(raw)
+    if verdict is None:
+        return None
+    found, nx, ny = verdict
+    if not found:
+        return (False, 0, 0)
+    ax, ay = _crop_norm_to_abs(bbox, nx, ny)
+    if (ax, ay) != (x, y):
+        log.info(
+            "[cu] click refine: (%d,%d) -> (%d,%d) [crop %dx%d at %d,%d]",
+            x, y, ax, ay, bbox["width"], bbox["height"], bbox["left"], bbox["top"],
+        )
+    return (True, ax, ay)
+
+
+async def _dispatch_raw_click(
+    executor: Any, tool: Any, x: int, y: int, trace_id: Any,
+) -> tuple[bool, str]:
+    """The plain click-tool dispatch (extracted unchanged from the old click
+    branch). TimeoutError propagates — the outer loop turns it into the
+    mission timeout exactly as before."""
+    args = {"x": x, "y": y, "button": "left", "double": False}
+    try:
+        res = await asyncio.wait_for(
+            executor.execute(
+                tool, args, user_utterance="computer-use", trace_id=trace_id,
+            ),
+            timeout=_ACT_TIMEOUT_S,
+        )
+    except TimeoutError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        return False, f"click crash: {type(exc).__name__}: {exc}"
+    return (
+        bool(getattr(res, "success", False)),
+        str(getattr(res, "output", "") or getattr(res, "error", "") or ""),
+    )
+
+
+async def _click_with_refine(
+    obj: dict[str, Any],
+    ctx: ComputerUseContext,
+    *,
+    executor: Any,
+    tool: Any,
+    trace_id: Any,
+    user_goal: str,
+    monitor_geom: tuple[int, int, int, int],
+    observation: Observation | None,
+) -> tuple[bool, str]:
+    """Refine -> click -> verify -> (maybe) corrected retry for one pixel click."""
+    abs_x, abs_y = _resolve_click_pixel(obj, monitor_geom)
+    left, top, width, height = monitor_geom
+    target = str(obj.get("target") or "").strip()
+    refine_enabled = (
+        width > 0
+        and height > 0
+        and observation is not None
+        and bool(getattr(observation, "screenshot_path", None))
+    )
+    if not refine_enabled:
+        return await _dispatch_raw_click(executor, tool, abs_x, abs_y, trace_id)
+    verify_enabled = bool(getattr(ctx, "verify_after_each_step", True))
+
+    x, y = abs_x, abs_y
+    clicked: list[tuple[int, int]] = []
+    last_msg = ""
+    retry_note = ""
+    for _attempt in range(_CLICK_MAX_ATTEMPTS):
+        refined = None
+        if clicked:
+            # Trust-first (2026-06-10 latency plan Task 3): the refine pass is
+            # a full LLM round-trip, and on the FIRST attempt it corrected the
+            # model's point by <=5 px in live runs — pure cost (the executor
+            # and the refiner see the same frame). Reserve it for retries
+            # after a verified miss, where the zoomed live crop genuinely
+            # re-locates the target.
+            refined = await _refine_click_point(
+                ctx, observation, x, y, monitor_geom,
+                user_goal=user_goal, target=target, retry_note=retry_note,
+            )
+        if refined is not None:
+            found, rx, ry = refined
+            if not found:
+                if clicked:
+                    # Already clicked once and the target is no longer in the
+                    # crop — likely the click DID work and the UI moved on.
+                    return True, (
+                        last_msg + " (target no longer in the refine crop — "
+                        "verify via the next screenshot)"
+                    )
+                if target:
+                    # The coarse estimate was so far off that the named
+                    # target is not even in the zoom crop. Clicking blindly
+                    # risks hitting the wrong control — re-plan instead.
+                    return False, (
+                        f"refine: target {target!r} not found near "
+                        f"({x},{y}) — re-plan from a fresh screenshot"
+                    )
+                # No description to search for -> keep the coarse estimate.
+            else:
+                x, y = rx, ry
+        if any(
+            abs(px - x) <= _REFINE_TOL_PX and abs(py - y) <= _REFINE_TOL_PX
+            for px, py in clicked
+        ):
+            # Toggle safety: the corrected point is the point we already
+            # clicked. Re-clicking would double-fire (skip two songs, undo a
+            # toggle) — accept click #1 and let the semantic layer judge.
+            return True, (
+                last_msg + " (refined point unchanged — not re-clicking; "
+                "verify via the next screenshot)"
+            )
+        pre: bytes | None = None
+        verify_bbox: dict[str, int] | None = None
+        if verify_enabled:
+            from jarvis.vision.screenshot import region_bbox_around  # noqa: PLC0415
+
+            verify_bbox = region_bbox_around(
+                x, y, _VERIFY_CROP_RADIUS_PX,
+                virtual_bounds=(left, top, width, height),
+            )
+            pre = await asyncio.to_thread(_grab_region_jpeg, verify_bbox)
+        ok, last_msg = await _dispatch_raw_click(executor, tool, x, y, trace_id)
+        if not ok:
+            return ok, last_msg
+        clicked.append((x, y))
+        if not verify_enabled or pre is None or verify_bbox is None:
+            return ok, last_msg
+        await asyncio.sleep(_CLICK_VERIFY_SETTLE_S)
+        post = await asyncio.to_thread(_grab_region_jpeg, verify_bbox)
+        if post is None or post != pre:
+            # Something near the click visibly reacted (or we cannot tell) —
+            # accept; the loop's fresh screenshot judges the semantics.
+            return ok, last_msg
+        log.info(
+            "[cu] click at (%d,%d) produced no local change — refining for a "
+            "corrected retry (%d/%d)", x, y, len(clicked), _CLICK_MAX_ATTEMPTS,
+        )
+        retry_note = (
+            "A click at the crop center just produced NO visible change — it "
+            "likely missed the element. Find the target's true position in "
+            "this fresh crop."
+        )
+    return True, (
+        last_msg + f" (no visible reaction near the target after "
+        f"{len(clicked)} click(s) — verify and re-plan if needed)"
+    )
+
+
 async def _execute_action(
     obj: dict[str, Any],
     ctx: ComputerUseContext,
@@ -1352,6 +1830,7 @@ async def _execute_action(
     trace_id: Any,
     user_goal: str,
     monitor_geom: tuple[int, int, int, int] = (0, 0, 0, 0),
+    observation: Observation | None = None,
 ) -> tuple[bool, str]:
     """Run one parsed action through the tool layer.
 
@@ -1363,6 +1842,10 @@ async def _execute_action(
     screenshot was captured from. Click coordinates are translated from
     Gemini's 0-1000 normalized grid to an absolute screen pixel via
     :func:`_resolve_click_pixel` (BUG-CU-MULTIMON + BUG-CU-NORMCOORD).
+
+    ``observation`` (the step's screenshot observation) arms the pixel-click
+    zoom-refinement + verification pass; without it (direct callers, fakes,
+    headless) the legacy single-click path runs unchanged.
     """
     action = obj["action"]
     tools = ctx.tools or {}
@@ -1374,27 +1857,11 @@ async def _execute_action(
         tool = tools.get("click")
         if tool is None:
             return False, "click tool not wired"
-        abs_x, abs_y = _resolve_click_pixel(obj, monitor_geom)
-        args = {
-            "x": abs_x,
-            "y": abs_y,
-            "button": "left",
-            "double": False,
-        }
-        try:
-            res = await asyncio.wait_for(
-                executor.execute(
-                    tool, args, user_utterance="computer-use", trace_id=trace_id,
-                ),
-                timeout=_ACT_TIMEOUT_S,
-            )
-        except TimeoutError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            return False, f"click crash: {type(exc).__name__}: {exc}"
-        return (
-            bool(getattr(res, "success", False)),
-            str(getattr(res, "output", "") or getattr(res, "error", "") or ""),
+        return await _click_with_refine(
+            obj, ctx,
+            executor=executor, tool=tool, trace_id=trace_id,
+            user_goal=user_goal, monitor_geom=monitor_geom,
+            observation=observation,
         )
 
     if action == "type":
@@ -1662,6 +2129,8 @@ async def _run_screenshot_loop(
     recent_click_targets: _deque[tuple[int, int]] = _deque(maxlen=6)
     opened_apps: dict[str, int] = {}
     toggle_stop_engaged = False
+    # Cumulative guard-blocked actions this mission (see _MAX_GUARD_HITS).
+    guard_hits = 0
     # On-demand done-verifier: set when a state-change click lands and the goal
     # looks like a play/submit/start action. The NEXT iteration runs one strict
     # judge call against the fresh screenshot before planning, so the loop stops
@@ -1688,10 +2157,25 @@ async def _run_screenshot_loop(
     # was loaded before we started.
     typed_query = False
 
+    # Per-mission phase wall-time accumulator (latency plan Task 7) — turned
+    # into the one-line "[cu] mission profile" summary on every _final, so a
+    # single log line answers "where did the time go".
+    phase_ms: dict[str, float] = {}
+    step_idx = 0
+
     def _final(stdout: str = "", stderr: str = "", exit_code: int = 0) -> HarnessResult:
+        total_s = (time.time_ns() - t_start) / 1e9
+        parts = " ".join(
+            f"{k}={v / 1000.0:.1f}s" for k, v in sorted(phase_ms.items())
+        )
+        profile = (
+            f"[cu] mission profile: steps={step_idx} "
+            f"total={total_s:.1f}s {parts}".rstrip() + "\n"
+        )
+        log.info(profile.rstrip())
         return HarnessResult(
             stdout=stdout,
-            stderr=stderr,
+            stderr=stderr + profile,
             exit_code=exit_code,
             duration_ms=(time.time_ns() - t_start) // 1_000_000,
             is_final=True,
@@ -1757,7 +2241,9 @@ async def _run_screenshot_loop(
         # Collect the enumeration result NOW so no task dangles on any of the
         # early-return paths below (_foreground_clickable_labels never raises).
         control_labels = await labels_task
-        await _profile_phase(ctx, phase="observe", step_idx=step_idx, t0=t_observe)
+        await _profile_phase(
+            ctx, phase="observe", step_idx=step_idx, t0=t_observe, acc=phase_ms,
+        )
 
         # No-progress guard: if the last _STUCK_LIMIT screenshots are
         # identical, Gemini's clicks are landing on empty space and
@@ -1817,7 +2303,9 @@ async def _run_screenshot_loop(
             plan = await _make_plan(
                 ctx, observation=observation, user_goal=task_prompt,
             )
-            await _profile_phase(ctx, phase="plan", step_idx=step_idx, t0=t_plan)
+            await _profile_phase(
+                ctx, phase="plan", step_idx=step_idx, t0=t_plan, acc=phase_ms,
+            )
             if plan:
                 log.info(
                     "[cu] plan: %d steps -> %s",
@@ -2001,7 +2489,10 @@ async def _run_screenshot_loop(
                         exit_code=_TIMEOUT_EXIT_CODE,
                     )
                     return
-                await _profile_phase(ctx, phase="think", step_idx=step_idx, t0=t_think)
+                await _profile_phase(
+                    ctx, phase="think", step_idx=step_idx, t0=t_think,
+                    acc=phase_ms,
+                )
                 yield _progress(
                     f"[cu] step {step_idx}: brain timeout -- retrying"
                 )
@@ -2021,7 +2512,10 @@ async def _run_screenshot_loop(
                         exit_code=_PARSE_EXIT_CODE,
                     )
                     return
-                await _profile_phase(ctx, phase="think", step_idx=step_idx, t0=t_think)
+                await _profile_phase(
+                    ctx, phase="think", step_idx=step_idx, t0=t_think,
+                    acc=phase_ms,
+                )
                 yield _progress(
                     f"[cu] step {step_idx}: brain failed -- retrying"
                 )
@@ -2053,13 +2547,18 @@ async def _run_screenshot_loop(
                     "Respond with the JSON action object(s) ONLY -- no prose, "
                     "no code fences."
                 )
-                await _profile_phase(ctx, phase="think", step_idx=step_idx, t0=t_think)
+                await _profile_phase(
+                    ctx, phase="think", step_idx=step_idx, t0=t_think,
+                    acc=phase_ms,
+                )
                 yield _progress(
                     f"[cu] step {step_idx}: invalid model response -- retrying"
                 )
                 continue
 
-        await _profile_phase(ctx, phase="think", step_idx=step_idx, t0=t_think)
+        await _profile_phase(
+            ctx, phase="think", step_idx=step_idx, t0=t_think, acc=phase_ms,
+        )
         if len(batch) > 1:
             log.info(
                 "[cu] step %d batch size = %d (plan-then-execute)",
@@ -2124,6 +2623,18 @@ async def _run_screenshot_loop(
                         f"again."
                     )
                     consecutive_failures = 0
+                    guard_hits += 1
+                    if guard_hits >= _MAX_GUARD_HITS:
+                        yield _final(
+                            stderr=(
+                                f"[cu] mission is circling: {guard_hits} "
+                                "guard-blocked actions this mission (suppressed "
+                                "relaunches / repeated clicks) — no productive "
+                                "next action found\n"
+                            ),
+                            exit_code=_FAIL_EXIT_CODE,
+                        )
+                        return
                     continue
                 if _app:
                     opened_apps[_app] = _launches + 1
@@ -2153,6 +2664,18 @@ async def _run_screenshot_loop(
                         "[cu] %s repeated click ~(%d,%d) x%d — toggle-stop "
                         "(not executed)", tag, _tx, _ty, _near,
                     )
+                    guard_hits += 1
+                    if guard_hits >= _MAX_GUARD_HITS:
+                        yield _final(
+                            stderr=(
+                                f"[cu] mission is circling: {guard_hits} "
+                                "guard-blocked actions this mission (suppressed "
+                                "relaunches / repeated clicks) — no productive "
+                                "next action found\n"
+                            ),
+                            exit_code=_FAIL_EXIT_CODE,
+                        )
+                        return
                     break
 
             # Telemetry — swallowed on failure to protect the loop.
@@ -2197,6 +2720,7 @@ async def _run_screenshot_loop(
                     )
                     await _profile_phase(
                         ctx, phase="verify", step_idx=step_idx, t0=t_verify,
+                        acc=phase_ms,
                     )
                     if not ok:
                         done_rejects += 1
@@ -2265,7 +2789,7 @@ async def _run_screenshot_loop(
                 success, message = await _execute_action(
                     action_obj, ctx,
                     trace_id=observation.trace_id, user_goal=task_prompt,
-                    monitor_geom=monitor_geom,
+                    monitor_geom=monitor_geom, observation=observation,
                 )
             except TimeoutError:
                 yield _final(
@@ -2273,7 +2797,9 @@ async def _run_screenshot_loop(
                     exit_code=_TIMEOUT_EXIT_CODE,
                 )
                 return
-            await _profile_phase(ctx, phase="act", step_idx=step_idx, t0=t_act)
+            await _profile_phase(
+                ctx, phase="act", step_idx=step_idx, t0=t_act, acc=phase_ms,
+            )
 
             history.append(
                 f"{tag}: {action} {'ok' if success else 'FAIL'} ({message[:60]})",
@@ -2333,6 +2859,13 @@ async def _run_screenshot_loop(
                 break  # exit batch, fall through to next outer step (fresh screenshot)
             # A successful action resets the consecutive-failure streak.
             consecutive_failures = 0
+            # Settle probe: a launched app needs 1-3 s to paint its window;
+            # observing immediately wastes a full think round on the stale
+            # pre-launch frame (latency plan Task 6).
+            if action == "open_app":
+                await _settle_after_open_app(
+                    ctx, str(action_obj.get("name", "")).strip().lower(),
+                )
             # Remember the last state-changing action for the next turn's
             # VERIFY FIRST directive (wait is a pure pause, never state).
             if action != "wait":
@@ -2345,7 +2878,13 @@ async def _run_screenshot_loop(
                 # deterministic, no LLM call (AP-11 spirit), throttled so a
                 # fast batch never produces a barrage of speech. kind=
                 # "progress" lets the pipeline drop stale ones.
-                if plan and ctx.bus is not None:
+                # OFF by default since 2026-06-10: completed_state_changes
+                # counts ok-ACTIONS, not verified plan steps, so the spoken
+                # counter inflated to "6 von 6 erledigt" on a mission that
+                # then kept running and failed. Opt in via
+                # [computer_use].announce_progress.
+                if (plan and ctx.bus is not None
+                        and getattr(ctx, "announce_progress", False)):
                     done_steps = min(completed_state_changes, len(plan))
                     _now = time.monotonic()
                     if (done_steps > announced_steps
@@ -2353,21 +2892,18 @@ async def _run_screenshot_loop(
                             >= _PROGRESS_MIN_INTERVAL_S):
                         announced_steps = done_steps
                         last_progress_announce_ts = _now
-                        try:
-                            await ctx.bus.publish(AnnouncementRequested(
-                                text=(
-                                    f"Schritt {done_steps} von {len(plan)} "  # i18n-allow
-                                    "erledigt."  # i18n-allow
-                                ),
-                                priority="normal",
-                                language="de",
-                                kind="progress",
-                            ))
-                        except Exception:  # noqa: BLE001
-                            log.debug(
-                                "progress announcement publish failed",
-                                exc_info=True,
-                            )
+                        # Detached on purpose: awaiting this publish blocks
+                        # the loop for the whole TTS synthesis (BUG-CU-
+                        # ANNOUNCE-BLOCK) — see _publish_announcement_nonblocking.
+                        _publish_announcement_nonblocking(ctx.bus, AnnouncementRequested(
+                            text=(
+                                f"Schritt {done_steps} von {len(plan)} "  # i18n-allow
+                                "erledigt."  # i18n-allow
+                            ),
+                            priority="normal",
+                            language="de",
+                            kind="progress",
+                        ))
             # Remember that a real search query was typed this mission -- the
             # done-gate uses this to reject "resumed the already-loaded track"
             # for play goals (BUG-CU-WRONG-SONG, 2026-05-29).

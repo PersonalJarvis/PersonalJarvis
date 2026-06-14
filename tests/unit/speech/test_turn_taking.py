@@ -613,6 +613,70 @@ async def test_streaming_empty_non_suppressed_speaks_clarifying_question() -> No
     assert pipe._turn_state == TurnTakingState.LISTENING
 
 
+@pytest.mark.asyncio
+async def test_streaming_long_tool_loop_speaks_real_answer_not_timeout() -> None:
+    """Integration regression for the 2026-06-14 "Jarvis hangs up / that took
+    too long" bug (data/jarvis_desktop.log 14:21 + 14:24, "weather in Melbourne").
+
+    A NON-computer-use brain tool-use loop (geocoding + DuckDuckGo + open-meteo,
+    ~20 s of real work) produces NO spoken sentence for longer than the
+    no-first-frame TTS ceiling, while pinging ``on_progress`` on every tool-use-
+    loop round — exactly what ``ToolUseLoop`` does (tool_use_loop.py:400). Before
+    the fix, ``_await_playback`` only honoured the computer_use heartbeat, so the
+    20 s ceiling beheaded the working turn: the answer was discarded and the
+    empty-turn handler spoke ``_BRAIN_TIMEOUT_PHRASE`` ("…zu lange gedauert…").
+
+    This drives the REAL streaming path end-to-end (``_handle_utterance`` →
+    ``_run_brain_with_stall_guard`` → ``_brain_streaming`` → ``_await_playback``)
+    and pins both halves: the real answer reaches TTS, and the "took too long"
+    fallback is NEVER spoken. It is the production-altitude guard the
+    ``_await_playback`` unit test (test_speak_playback_timeout.py) complements.
+    """
+    pipe = _make_streaming_pipeline(
+        FakeSTT(text="What's the weather in Melbourne"),
+        stream_chunks=[],  # replaced by the custom brain below
+        all_failed=False,
+        suppressed=False,
+    )
+    # Tiny no-first-frame ceiling; the simulated tool loop runs ~4x longer. The
+    # brain stall window stays generous so it is provably NOT the trigger here.
+    pipe._speak_playback_ceiling_s = 0.2  # type: ignore[attr-defined]
+    pipe._brain_timeout_s = 5.0  # type: ignore[attr-defined]
+    # Production runs conversation mode (log: TURN-MODE=conversation), so a
+    # completed answer returns to LISTENING rather than the one-shot hang-up.
+    pipe._continue_listening_after_response = True  # type: ignore[attr-defined]
+
+    answer = "It is eighteen degrees and sunny in Melbourne."
+
+    class _SlowToolLoopBrain:
+        _last_turn_all_failed = False
+        _last_turn_suppressed = False
+        _last_turn_executed_action_tool = False
+
+        async def generate_stream(self, _text, on_progress=None):
+            # ~0.8 s of tool-use-loop rounds: each pings the brain heartbeat
+            # (on_progress) but yields NO text — the brain is fetching weather.
+            for _ in range(16):
+                if on_progress is not None:
+                    on_progress()
+                await asyncio.sleep(0.05)
+            yield answer  # data is in → the brain finally narrates
+
+    pipe._brain = _SlowToolLoopBrain()
+
+    keep_session = await pipe._handle_utterance(b"\x01\x00" * 1024)
+
+    assert keep_session is True
+    assert any("Melbourne" in t for t in pipe._synthesized), (
+        "the working tool-loop answer was beheaded before reaching TTS"
+    )
+    spoken_blob = " ".join(t.lower() for t, _ in pipe._spoken)
+    assert "zu lange" not in spoken_blob and "too long" not in spoken_blob, (
+        f"timeout fallback wrongly spoken on a working turn: {pipe._spoken}"
+    )
+    assert pipe._turn_state == TurnTakingState.LISTENING
+
+
 # ---------------------------------------------------------------------------
 # BUG-018 (2026-05-11): STT-probe truncated real speech on low Whisper
 # confidence. The probe's "empty tail" signal originally accepted three

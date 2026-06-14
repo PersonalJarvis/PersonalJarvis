@@ -39,8 +39,17 @@ class TestTierDefaultsCatalog:
     def test_sub_models_look_frontier(self):
         for provider, model in TIER_DEFAULTS_BY_PROVIDER["deep"].items():
             assert any(tag in model.lower() for tag in
-                       ("opus", "pro", "large", "reasoner", "gpt-4", "gpt-5", "grok-4")), \
+                       ("fable", "opus", "pro", "large", "reasoner", "gpt-4", "gpt-5", "grok-4")), \
                 f"{provider}: {model} sieht nicht nach Frontier-Tier aus"
+
+    def test_claude_deep_tier_is_reachable_opus_never_fable(self):
+        """Maintainer decision 2026-06-14 (supersedes the 2026-06-10 fable
+        mandate): claude-fable-5 is approved-access-only and the Claude Max
+        subscription cannot reach it ("Claude Fable 5 is currently
+        unavailable"). This deep-tier default feeds the computer-use planner and
+        the deep brain — both call the Brain API directly with no
+        model-unavailable retry — so it must pin a model we can actually reach."""
+        assert TIER_DEFAULTS_BY_PROVIDER["deep"]["claude-api"] == "claude-opus-4-8"
 
     def test_router_and_deep_tiers_present(self):
         assert "router" in TIER_DEFAULTS_BY_PROVIDER

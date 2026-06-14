@@ -53,3 +53,8 @@ tests/unit/sessions/test_formatter.py
 # --- Forensic voice-bug deep-dive: an internal diagnosis doc that necessarily
 #     quotes the German voice phrases, log lines and user utterance it analyses ---
 docs/phantom-worker-aborted-deep-dive/*
+
+# --- Manual voice-QA scripts: the test utterances a human speaks to Jarvis are
+#     bilingual (DE+EN) by design — the German phrases are the content under
+#     test, not an untranslated artifact ---
+docs/qa/*

@@ -343,7 +343,7 @@
         "brand": "PERSONAL JARVIS",
         "hero_label": "Palabras dichas",
         "jarvis_suffix": "dichas por Jarvis",
-        "talk_line": "{0} h hablando · {1} chats",
+        "talk_line": "{0} h activo · {1} chats",
         "streak": "Mejor racha · {0} días"
       }
     },
@@ -355,7 +355,7 @@
       "streak": "Racha de días",
       "streak_sub": "{0} días activos en total",
       "streak_sub_one": "{0} día activo en total",
-      "talk_time": "Tiempo de conversación",
+      "talk_time": "Tiempo activo",
       "talk_time_sub": "en {0} conversaciones",
       "talk_time_sub_one": "en {0} conversación"
     },
@@ -385,7 +385,7 @@
       "active_days_one": "{0} día activo",
       "active_since": "Activo desde {0}"
     },
-    "heatmap_tooltip": "{0} · {1} actividades · {2} h hablando",
+    "heatmap_tooltip": "{0} · {1} actividades · {2} h activo",
     "heatmap_less": "Menos",
     "heatmap_more": "Más",
     "stats": {
@@ -396,9 +396,9 @@
       "voice_first_try": "Tasa de acierto en primer intento (voz)",
       "voice_first_try_sub": "Base: {0} comandos",
       "voice_no_data": "Aún sin datos de voz",
-      "hours_saved": "Horas Sub-Jarvis ahorradas",
+      "hours_saved": "Horas de trabajo Sub-Jarvis",
       "hours_saved_sub": "Sumado en todas las ejecuciones",
-      "conversation_hours": "Horas de conversación con Jarvis",
+      "conversation_hours": "Horas activas con Jarvis",
       "conversation_hours_sub": "{0} h en los últimos {1} días"
     },
     "activity_title": "Actividad",
@@ -454,7 +454,7 @@
         "unit": "Comandos"
       },
       "most_hours_saved_in_a_day": {
-        "title": "Día con más tiempo ahorrado",
+        "title": "Día con más trabajo Sub-Jarvis",
         "unit": "Horas"
       },
       "most_active_events_in_a_day": {
@@ -462,7 +462,7 @@
         "unit": "Actividades"
       },
       "most_conversation_hours_in_a_day": {
-        "title": "Día con más conversación",
+        "title": "Día activo más largo",
         "unit": "Horas"
       }
     }
@@ -767,6 +767,21 @@
       "save": "Guardar nombre",
       "saved": "Nombre guardado",
       "restart_required": "Reinicio necesario para que surta efecto."
+    },
+    "system_prompt": {
+      "title": "Prompt del sistema",
+      "description": "Las instrucciones que definen cómo piensa y habla tu asistente. Edita el Markdown para personalizarlo o restablece el valor predeterminado cuando quieras.",
+      "custom_badge": "Personalizado",
+      "default_badge": "Predeterminado",
+      "editor_label": "Prompt del sistema (Markdown)",
+      "placeholder": "Escribe tu propio prompt del sistema…",
+      "chars": "{0} caracteres",
+      "empty_hint": "No puede estar vacío — usa Restablecer para recuperar el predeterminado.",
+      "save": "Guardar prompt",
+      "saved": "Prompt del sistema guardado",
+      "reset": "Restablecer predeterminado",
+      "reset_done": "Restablecido al prompt del sistema predeterminado",
+      "applies_next_turn": "Se aplica en el próximo mensaje de tu asistente — sin reiniciar."
     },
     "hotkey": {
       "title": "Atajo Push-to-Talk",

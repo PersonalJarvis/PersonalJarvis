@@ -13,6 +13,7 @@ screenshots, no real UIA, no real model calls.
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Callable
 from typing import Any
@@ -38,9 +39,24 @@ class FakeVisionEngine:
     """Yields a fresh observation per call (unique hash so the no-progress
     guard never trips) with a configurable window title sequence."""
 
-    def __init__(self, window_titles: list[str] | None = None) -> None:
+    def __init__(self, window_titles: list[str] | None = None,
+                 probe_titles: list[str] | None = None) -> None:
         self.calls = 0
         self._titles = window_titles
+        # Cheap foreground-title probe (mirrors VisionEngine._guess_active_
+        # app_hint): its own sequence so the settle-probe poll cadence is
+        # testable independently of the observe() counter.
+        self.probe_titles = list(probe_titles or [])
+        self.probe_calls = 0
+
+    def _guess_active_app_hint(self, window_title_filter: str | None = None) -> str:
+        if self.probe_titles:
+            idx = min(self.probe_calls, len(self.probe_titles) - 1)
+            self.probe_calls += 1
+            return self.probe_titles[idx]
+        if self._titles is None:
+            return ""
+        return self._titles[min(self.calls, len(self._titles) - 1)]
 
     async def observe(self, *, mode: str = "auto", cancel_token: Any = None,
                       window_title_filter: str | None = None) -> Observation:
@@ -111,21 +127,26 @@ class FakeExecutor:
 
 
 def make_ctx(brain: FakeBrain, *, titles: list[str] | None = None,
-             verify: bool = False, step_budget: int = 10) -> ComputerUseContext:
+             verify: bool = False, step_budget: int = 10,
+             bus: Any = None, announce_progress: bool = False,
+             probe_titles: list[str] | None = None) -> ComputerUseContext:
     tools = {
         name: FakeTool(name)
         for name in ("open_app", "click", "type_text", "hotkey",
                      "click_element", "scroll")
     }
     return ComputerUseContext(
-        vision_engine=FakeVisionEngine(window_titles=titles),
+        vision_engine=FakeVisionEngine(
+            window_titles=titles, probe_titles=probe_titles,
+        ),
         brain_manager=brain,
         tool_executor=FakeExecutor(),
         tools=tools,
-        bus=None,
+        bus=bus,
         step_budget=step_budget,
         per_step_timeout_s=5.0,
         verify_after_each_step=verify,
+        announce_progress=announce_progress,
     )
 
 
@@ -150,6 +171,10 @@ def _isolate_host(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     # Keep the UI-tree-source singleton hermetic between tests.
     monkeypatch.setattr(loop_mod, "_UI_TREE_SOURCE", None, raising=False)
+    # Neutralize the post-open_app settle probe suite-wide (it sleeps up to
+    # 1 s per launch on empty fake titles). The dedicated settle tests
+    # re-enable it with their own explicit timeout/poll values.
+    monkeypatch.setattr(loop_mod, "_OPEN_APP_SETTLE_TIMEOUT_S", 0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +366,135 @@ async def test_done_accepted_directly_when_verification_disabled() -> None:
     assert len(brain.judge_calls) == 0
 
 
+async def test_open_app_done_is_verified_without_an_llm_call() -> None:
+    """'oeffne chrome' + a foreground title containing 'chrome' is proof
+    enough (2026-06-10 latency plan Task 4). The vision done-judge — one
+    extra LLM call plus reject-loop risk — is reserved for goals the window
+    title cannot prove."""
+    brain = FakeBrain([
+        '{"action": "open_app", "name": "chrome"}',
+        '{"action": "done"}',
+    ])
+    ctx = make_ctx(
+        brain, verify=True,
+        titles=["Program Manager", "New Tab - Google Chrome"],
+    )
+    results = await run_loop(ctx, "oeffne chrome")
+
+    assert results[-1].exit_code == 0
+    # 2 executor think calls only — NO third judge call.
+    assert len(brain.requests) == 2
+
+
+async def test_open_app_waits_for_the_window_before_next_think(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """open_app is a fire-and-forget Popen. Observing immediately catches the
+    pre-launch desktop and burns a full think round on a stale frame (latency
+    plan Task 6). The loop polls the cheap foreground-title probe until the
+    app's window is up, THEN observes."""
+    monkeypatch.setattr(loop_mod, "_OPEN_APP_SETTLE_TIMEOUT_S", 5.0)
+    monkeypatch.setattr(loop_mod, "_OPEN_APP_SETTLE_POLL_S", 0.005)
+    brain = FakeBrain([
+        '{"action": "open_app", "name": "chrome"}',
+        '{"action": "done"}',
+    ])
+    ctx = make_ctx(
+        brain, verify=True,
+        titles=["Program Manager", "New Tab - Google Chrome"],
+        # Probe sequence: window appears on the third poll.
+        probe_titles=[
+            "Program Manager", "Program Manager", "New Tab - Google Chrome",
+        ],
+    )
+    results = await run_loop(ctx, "oeffne chrome")
+
+    assert results[-1].exit_code == 0
+    engine = ctx.vision_engine
+    assert engine.probe_calls >= 3, "settle probe did not poll for the window"
+    # Still exactly 2 think calls — the settle wait replaced the wasted
+    # stale-frame round, it did not add LLM cost.
+    assert len(brain.requests) == 2
+
+
+async def test_open_app_settle_gives_up_when_window_never_appears(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A window that never appears must not wedge the loop: the probe gives
+    up after its timeout and the mission continues (and may fail honestly)."""
+    monkeypatch.setattr(loop_mod, "_OPEN_APP_SETTLE_POLL_S", 0.005)
+    monkeypatch.setattr(loop_mod, "_OPEN_APP_SETTLE_TIMEOUT_S", 0.05)
+    brain = FakeBrain([
+        '{"action": "open_app", "name": "spotify"}',
+        '{"action": "fail", "reason": "window never appeared"}',
+    ])
+    ctx = make_ctx(
+        brain,
+        titles=["Program Manager"],
+        probe_titles=["Program Manager"],
+    )
+    start = time.monotonic()
+    results = await run_loop(ctx, "oeffne spotify")
+
+    assert time.monotonic() - start < 1.0, "settle probe wedged the loop"
+    assert results[-1].is_final
+
+
+async def test_mission_profile_summary_is_emitted() -> None:
+    """Every mission ends with one '[cu] mission profile:' line breaking the
+    wall time into phases (latency plan Task 7) — the measurement that keeps
+    the latency work honest and debuggable from a single log line."""
+    brain = FakeBrain([
+        '{"action": "open_app", "name": "chrome"}',
+        '{"action": "done"}',
+    ])
+    ctx = make_ctx(brain, titles=["New Tab - Google Chrome"])
+    results = await run_loop(ctx, "oeffne chrome")
+
+    assert results[-1].exit_code == 0
+    stderr = "".join(r.stderr or "" for r in results)
+    assert "[cu] mission profile:" in stderr
+    assert "think=" in stderr
+    assert "observe=" in stderr
+    assert "act=" in stderr
+
+
+async def test_loop_overhead_without_llm_is_subsecond() -> None:
+    """Everything that is not the brain call must stay near-zero. Regression
+    net for future blocking additions on the step path (the class of bug
+    behind BUG-CU-ANNOUNCE-BLOCK: 6-10 s of TTS wait per step)."""
+    brain = FakeBrain(
+        ['{"action": "hotkey", "keys": "ctrl+l"}'] * 4 + ['{"action": "done"}']
+    )
+    ctx = make_ctx(brain, titles=["Some App"], step_budget=12)
+    start = time.monotonic()
+    await run_loop(ctx, "tu was in der app")
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 1.0, (
+        f"5 fake-brain steps took {elapsed:.2f}s of pure loop overhead"
+    )
+
+
+async def test_open_goal_without_title_proof_still_pays_the_judge() -> None:
+    """The deterministic title check must only ever SKIP the judge when it
+    proves the goal; a non-matching title falls through to the LLM judge
+    unchanged (never a false 'done', never a false reject)."""
+    brain = JudgingBrain(
+        executor_script=[
+            '{"action": "open_app", "name": "spotify"}',
+            '{"action": "done"}',
+        ],
+        judge_script=['{"done": true, "proof": "spotify main window visible"}'],
+    )
+    # Title never mentions spotify (e.g. minimized to tray) -> judge decides.
+    ctx = make_ctx(brain, verify=True, titles=["Program Manager", ""])
+    results = await run_loop(ctx, "oeffne spotify")
+
+    assert results[-1].exit_code == 0
+    assert len(brain.judge_calls) == 1
+
+
 async def test_repeated_done_rejections_fail_cleanly() -> None:
     """A model that insists on a wrong done must not loop forever: after the
     reject budget the mission ends with an explicit failure."""
@@ -444,6 +598,58 @@ async def test_search_discipline_not_injected_for_non_music_goals() -> None:
     for _system, user in brain.executor_calls:
         assert "FORBIDDEN SHORTCUT" not in user
         assert "play a song" not in user
+
+
+class SlowAnnouncementBus:
+    """A bus whose publish blocks like the live TTS announcement path.
+
+    Only ``AnnouncementRequested`` is slow — mirroring production, where the
+    announcement handler synthesizes TTS inline while the liveness-event
+    handlers are cheap."""
+
+    def __init__(self, block_s: float = 0.75) -> None:
+        self.block_s = block_s
+        self.events: list[Any] = []
+
+    async def publish(self, event: Any) -> None:
+        self.events.append(event)
+        if type(event).__name__ == "AnnouncementRequested":
+            await asyncio.sleep(self.block_s)
+
+
+async def test_progress_announcement_does_not_block_the_loop() -> None:
+    """BUG-CU-ANNOUNCE-BLOCK (2026-06-10): ``bus.publish`` awaits typed
+    subscribers uncapped (bus.py) and ``pipeline._on_announcement`` runs the
+    full TTS synthesis inside that dispatch, so every spoken
+    'Schritt N von M erledigt.' froze the CU loop for 6-10 s (measured live,
+    log 20:46). The loop must fire announcements without awaiting them."""
+    brain = PlanningBrain(
+        executor_script=[
+            '{"action": "open_app", "name": "chrome"}',
+            '{"action": "done"}',
+        ],
+        plan_script=[_CHROME_PLAN],
+        judge_script=['{"done": true, "proof": "ok"}'],
+    )
+    bus = SlowAnnouncementBus(block_s=0.75)
+    ctx = make_ctx(brain, verify=True, bus=bus, announce_progress=True)
+
+    start = time.monotonic()
+    chunks = await run_loop(ctx, "oeffne chrome und navigiere zu den einstellungen")  # i18n-allow: German voice-command test fixture
+    elapsed = time.monotonic() - start
+
+    assert chunks[-1].exit_code == 0
+    # With the old blocking publish, the single announced state change costs
+    # >= block_s on the loop's own wall clock. Non-blocking must stay well
+    # under one block interval.
+    assert elapsed < 0.5, f"loop blocked on announcement publish ({elapsed:.2f}s)"
+
+    # The announcement must still go out (fire-and-forget, not dropped).
+    pending = set(getattr(loop_mod, "_ANNOUNCE_TASKS", set()))
+    if pending:
+        await asyncio.wait(pending, timeout=2.0)
+    progress = [e for e in bus.events if getattr(e, "kind", "") == "progress"]
+    assert progress, "progress announcement was dropped instead of fired in background"
 
 
 async def test_plan_step_advances_on_state_change_not_on_wait() -> None:

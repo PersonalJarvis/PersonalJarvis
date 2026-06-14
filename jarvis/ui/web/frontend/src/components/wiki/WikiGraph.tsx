@@ -16,6 +16,7 @@ import type { ForceGraphMethods, NodeObject } from "react-force-graph-2d";
 import {
   BROKEN_EDGE_COLOUR,
   NODE_COLOUR,
+  sizeChanged,
   toGraphData,
   type RenderEdge,
   type RenderNode,
@@ -97,7 +98,9 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
     let observer: ResizeObserver | null = null;
     let stopped = false;
     const apply = (w: number, h: number) => {
-      setWinSize((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
+      // Absorb sub-pixel jitter (scrollbar flicker, DPI rounding) so a noisy
+      // ResizeObserver stream doesn't churn React state for no visible change.
+      setWinSize((prev) => (sizeChanged(prev, { w, h }) ? { w, h } : prev));
     };
     const poll = () => {
       if (stopped) return;
@@ -162,6 +165,21 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
     }, 2500);
     return () => window.clearTimeout(timer);
   }, [graphData.nodes.length]);
+
+  // Re-frame after a resize. Now that the canvas resizes in place (no remount),
+  // the settled graph keeps its positions but can sit off-centre in the new
+  // viewport — so once the size stops changing we fit it back into view. The
+  // 220 ms debounce collapses a whole window-drag into a single fit at the end
+  // instead of one per intermediate size. A resize is an explicit layout
+  // change, so this re-fit intentionally overrides a prior manual pan.
+  useEffect(() => {
+    if (graphData.nodes.length === 0) return;
+    const timer = window.setTimeout(() => {
+      panInteractedRef.current = false;
+      graphRef.current?.zoomToFit(400, 80);
+    }, 220);
+    return () => window.clearTimeout(timer);
+  }, [winSize.w, winSize.h, graphData.nodes.length]);
 
   if (isLoading) {
     return (
@@ -273,16 +291,15 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
       </ul>
 
       <ForceGraph2D<RenderNode, RenderEdge>
-        // The key forces a full remount when the wrap container size
-        // changes. force-graph-2d does NOT react to width/height prop
-        // changes after mount — it just snapshots them once. Without
-        // this key the canvas stayed at its first-paint size (typically
-        // a small fallback or window.innerWidth) for the lifetime of
-        // the component, producing the visible cutoff at the wrap edge.
-        // Remount cost is acceptable here because (a) it only happens
-        // when the user resizes the window or the dev sidebar opens
-        // and (b) the graph re-settles in <2 seconds with warmupTicks.
-        key={`fg-${winSize.w}x${winSize.h}`}
+        // NO remount key. react-force-graph-2d (via react-kapsule) maps the
+        // width/height props onto live `.width()/.height()` calls that resize
+        // the canvas WITHOUT restarting the simulation, so node positions
+        // survive a resize. A `key={WxH}` here used to unmount+remount the
+        // whole graph on every pixel of size change, restarting the force sim
+        // from scratch — so any stream of resize events (window drag/maximise,
+        // DPI rounding, scrollbar flicker) made the network flail and fly off
+        // screen. The settled layout is preserved now; a debounced zoomToFit
+        // (see the winSize effect above) just re-frames it after a real resize.
         ref={graphRef}
         graphData={graphData}
         width={winSize.w}

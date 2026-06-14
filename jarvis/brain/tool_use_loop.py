@@ -20,6 +20,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from jarvis.core.protocols import Brain, BrainMessage, BrainRequest, ImageBlock, Tool
+from jarvis.core.turn_language import resolve_turn_language
 from jarvis.safety.tool_executor import ToolExecutor
 
 from .iteration_budget import IterationBudget
@@ -136,6 +137,59 @@ def _is_research_intent(utterance: str, intent_level: str | None = None) -> bool
 def _is_meta_debug_intent(utterance: str) -> bool:
     """User is talking about Jarvis/provider behaviour, not about a task."""
     return bool(_META_DEBUG_KEYWORDS.search(utterance or ""))
+
+
+# Spoken fallback phrases, localized. Live bug 2026-06-10 23:13
+# (data/jarvis_desktop.log): the anti-silence fallback was a hardcoded German
+# string, so the English turn "Hey, what's the weather like today?" was
+# answered in German. A pinned reply language (brain.reply_language) wins;
+# in "auto" mode the phrase mirrors the language detected from the user's
+# text; ambiguous text keeps the historical German default.
+_ANTI_SILENCE_PHRASES: dict[str, str] = {
+    "de": (
+        "Das kann ich gerade nicht ausfuehren — "  # i18n-allow: spoken German TTS
+        "mir fehlt dafuer das passende Werkzeug."  # i18n-allow: spoken German TTS
+    ),
+    "en": "I can't do that right now — I'm missing the right tool for it.",
+    "es": "Ahora mismo no puedo hacerlo — me falta la herramienta adecuada.",
+}
+
+_META_DEBUG_ACK_PHRASES: dict[str, str] = {
+    "de": (
+        "Verstanden, ich notiere das Feedback. "  # i18n-allow: spoken German TTS
+        "Soll ich es genauer untersuchen?"  # i18n-allow: spoken German TTS
+    ),
+    "en": "Understood, I'm noting that feedback. Want me to look into it?",
+    "es": "Entendido, tomo nota. ¿Quieres que lo investigue más a fondo?",
+}
+
+
+def _localized_phrase(
+    phrases: dict[str, str], user_utterance: str, reply_language: str
+) -> str:
+    """Pick the phrase variant matching the pin or the user's turn language.
+
+    A pinned ``reply_language`` (de/en/es) wins outright. In ``auto`` mode the
+    language is detected from the utterance TEXT — the tool-use loop never
+    receives the STT language tag (the pipeline resolves the turn language from
+    that tag separately, and the loop is only handed ``user_utterance``), so we
+    pass ``"unknown"`` as the tag and let the text decide. Ambiguous text keeps
+    the historical German default. (Under the common ``[stt].language="de"`` pin
+    the tag would resolve to ``de`` anyway, so the text-only path is equivalent
+    there and strictly better when the text is clearly English/Spanish.)
+    """
+    lang = reply_language if reply_language in phrases else resolve_turn_language(
+        "unknown", user_utterance, default="de"
+    )
+    return phrases.get(lang, phrases["de"])
+
+
+def _anti_silence_phrase(user_utterance: str, reply_language: str = "auto") -> str:
+    return _localized_phrase(_ANTI_SILENCE_PHRASES, user_utterance, reply_language)
+
+
+def _meta_debug_ack_phrase(user_utterance: str, reply_language: str = "auto") -> str:
+    return _localized_phrase(_META_DEBUG_ACK_PHRASES, user_utterance, reply_language)
 
 
 def _is_instructional_question(utterance: str) -> bool:
@@ -275,6 +329,7 @@ class ToolUseLoop:
         text_consumer: Callable[[str], None] | None = None,
         ack_emitter: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
         on_progress: Callable[[], None] | None = None,
+        reply_language: str = "auto",
     ) -> StreamingAggregate:
         """Executes the complete loop and returns the final aggregate.
 
@@ -306,6 +361,10 @@ class ToolUseLoop:
         re-emit — multi-step tool plans get a single ack at the start, not
         chatter at every step. Emitter exceptions are logged but do not
         block tool execution.
+
+        ``reply_language`` (live bug 2026-06-10): the ``brain.reply_language``
+        pin (``auto``/``de``/``en``/``es``) — selects the language of the
+        spoken fallback phrases; ``auto`` mirrors the user's utterance.
         """
         tid = trace_id or uuid4()
         current_messages = list(messages)
@@ -468,9 +527,8 @@ class ToolUseLoop:
                         "Anti-Stille-Fallback statt leerer Antwort", tool_name,
                     )
                     tool_result_payload = {"error": f"Tool '{tool_name}' nicht verfügbar"}
-                    suppress_output = (
-                        "Das kann ich gerade nicht ausfuehren — mir fehlt dafuer "
-                        "das passende Werkzeug."
+                    suppress_output = _anti_silence_phrase(
+                        user_utterance, reply_language
                     )
                 elif tool_name == "spawn_worker" and _is_meta_debug_intent(user_utterance):
                     log.info(
@@ -490,9 +548,8 @@ class ToolUseLoop:
                     # with a neutral acknowledgement so the user always hears
                     # *something*, and let the LLM weigh in next turn instead
                     # of stalling this one.
-                    suppress_output = (
-                        "Verstanden, ich notiere das Feedback. "
-                        "Soll ich es genauer untersuchen?"
+                    suppress_output = _meta_debug_ack_phrase(
+                        user_utterance, reply_language
                     )
                     tool_result_payload = {
                         "success": False,

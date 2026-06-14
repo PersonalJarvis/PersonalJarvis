@@ -83,6 +83,7 @@ class BrainDispatcher:
         ack_emitter: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
         on_progress: Callable[[], None] | None = None,
         turn_context: str = "",
+        reply_language: str = "auto",
     ) -> StreamingAggregate:
         """Execute a complete turn (including the tool-use loop if tools are configured).
 
@@ -133,6 +134,7 @@ class BrainDispatcher:
                 text_consumer=text_consumer,
                 ack_emitter=ack_emitter,
                 on_progress=on_progress,
+                reply_language=reply_language,
             )
 
         # Simple mode: no tool use, streaming only

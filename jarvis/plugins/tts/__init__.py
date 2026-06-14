@@ -197,6 +197,11 @@ def _build_provider(tts_cfg: Any, provider: str) -> Any:
         # Voice-consistency knobs (2026-05-24). getattr keeps older TTSConfig
         # shapes / test doubles working: missing field → historical default.
         chunk_by_sentence=bool(getattr(tts_cfg, "chunk_by_sentence", True)),
+        # True streaming (2026-06-10): [tts].streaming promised "Echtes
+        # Streaming" but was never forwarded — first audio waited for the
+        # FULL sentence generation (2.4–8.1 s measured). getattr keeps
+        # legacy TTSConfig shapes / fakes on the blocking path.
+        streaming=bool(getattr(tts_cfg, "streaming", False)),
         seed=getattr(tts_cfg, "seed", None),
         temperature=getattr(tts_cfg, "temperature", None),
         # Vertex AI path (2026-05-26). Same getattr defence so legacy fakes

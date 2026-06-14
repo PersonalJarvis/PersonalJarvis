@@ -102,3 +102,35 @@ def test_claude_alias_set_is_exactly_three() -> None:
     change so the LLM emits the same vocabulary as the validator
     accepts. Guarded here so a silent enlargement is impossible."""
     assert _CLAUDE_MODEL_ALIASES == frozenset({"sonnet", "opus", "haiku"})
+
+
+# --- D9 recursion guard: codex must not spawn NESTED sub-agents ---
+
+from pathlib import Path  # noqa: E402
+
+from jarvis.missions.workers.codex_direct_worker import (  # noqa: E402
+    _build_codex_direct_cmd,
+)
+
+
+def test_codex_cmd_disables_multi_agent_collab_tools() -> None:
+    """A mission worker IS the sub-agent — it must NEVER use codex's native
+    multi_agent collaboration tools (spawn_agent / wait) to spawn a NESTED codex
+    agent and block on it.
+
+    Live mission 019ec708 (2026-06-14): the prompt was phrased "spawn a
+    sub-agent which will help me plan a trip from London to Taiwan"; the codex
+    worker called spawn_agent("Hooke") then `wait` and hung for the full worker
+    timeout (frozen stream, no WorkerDraftReady for 7+ min). Jarvis's D9
+    recursion guard (AP-5 / AP-14: no spawn tool in any worker set) governs
+    Jarvis's own tool registry — codex's native feature bypasses it, so the
+    argv must disable it. `--disable <FEATURE>` == `-c features.<name>=false`.
+    """
+    cmd = _build_codex_direct_cmd(worktree=Path("/tmp/wt"), model=None)
+    disabled = [
+        cmd[i + 1]
+        for i, a in enumerate(cmd)
+        if a == "--disable" and i + 1 < len(cmd)
+    ]
+    assert "multi_agent" in disabled, f"multi_agent not disabled in argv: {cmd}"
+    assert "multi_agent_v2" in disabled, f"multi_agent_v2 not disabled: {cmd}"
