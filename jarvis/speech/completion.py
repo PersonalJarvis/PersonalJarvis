@@ -42,6 +42,14 @@ REASON_PREPOSITION: Final[str] = "preposition"
 # is usually a complete verb / noun before the comma. Checked AFTER the more
 # specific reasons so "...send it to Tom and," still reports CONJUNCTION.
 REASON_TRAILING_COMMA: Final[str] = "trailing_comma"
+# Live regression 2026-06-14: the cut-off fragment "Kannst du mir sagen, was
+# genau..." was dispatched as a COMPLETE turn (last word "genau" matches no open
+# marker, no trailing comma) and the brain, handed a contentless half-sentence,
+# hallucinated a screen description. STT emits a trailing ellipsis ("..." or the
+# unicode "…") exactly when the speaker audibly broke off, so it is a
+# high-precision "trailed off" signal — the structural twin of the trailing
+# comma. A SINGLE trailing period is a normal terminator and never fires.
+REASON_TRAILING_ELLIPSIS: Final[str] = "trailing_ellipsis"
 
 
 @dataclass(frozen=True)
@@ -141,6 +149,11 @@ _MIN_TOKENS: Final[int] = 2
 
 _WORD_RE: Final[re.Pattern[str]] = re.compile(r"[a-zA-ZäöüÄÖÜß']+")
 
+# Trailing ellipsis: two or more ASCII dots, or the unicode ellipsis (U+2026).
+# A single trailing "." is a normal sentence terminator and is deliberately NOT
+# matched. Whitespace before the end is tolerated (``text.rstrip()`` upstream).
+_TRAILING_ELLIPSIS_RE: Final[re.Pattern[str]] = re.compile(r"(?:\.{2,}|…)$")
+
 # --- Cancel phrases (discard a pending fragment) -------------------------- #
 _CANCEL_RE: Final[re.Pattern[str]] = re.compile(
     r"\b(?:"
@@ -207,6 +220,15 @@ def is_incomplete(text: str | None, language: str = "") -> IncompleteVerdict | N
             reason=REASON_TRAILING_COMMA, marker=",", language=lang
         )
 
+    # Trailing ellipsis — an explicit "trailed off / cut off" marker (live bug
+    # 2026-06-14). Checked LAST so a more specific tail (open conjunction such as
+    # "ich gehe los und...") keeps its REASON_CONJUNCTION verdict. A lone "." is
+    # excluded by ``_TRAILING_ELLIPSIS_RE`` (needs 2+ dots or the unicode "…").
+    if _TRAILING_ELLIPSIS_RE.search(text.rstrip()):
+        return IncompleteVerdict(
+            reason=REASON_TRAILING_ELLIPSIS, marker="…", language=lang
+        )
+
     return None
 
 
@@ -220,6 +242,7 @@ __all__ = [
     "REASON_DETERMINER",
     "REASON_PREPOSITION",
     "REASON_TRAILING_COMMA",
+    "REASON_TRAILING_ELLIPSIS",
     "IncompleteVerdict",
     "is_cancel",
     "is_incomplete",

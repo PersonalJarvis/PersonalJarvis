@@ -4,15 +4,23 @@ Nutzt AI-Studio / `google-genai` mit einfachem API-Key-Auth. Gemini liefert
 `audio/l16; rate=24000; channels=1` — Raw Linear-PCM, kein Header, kein
 ffmpeg-Decoding nötig.
 
-Kein *echtes* Streaming (AI-Studio-API liefert nur komplette Responses).
-Pseudo-Streaming via Satz-für-Satz-Synthese ist implementiert: bei
-`chunk_by_sentence=True` wird der Text an `.!?`-Grenzen gesplittet, jeder
-Satz einzeln synthetisiert, Chunks werden sofort geyielded — der erste
-Satz kann abgespielt werden während der zweite noch synthetisiert.
+Streaming (since 2026-06-10): with ``streaming=True`` the first sentence is
+synthesized via ``client.aio.models.generate_content_stream`` and its PCM
+pieces are yielded AS THEY ARRIVE — measured time-to-first-audio drops from
+2.4–8.1 s (blocking full generation) to 0.6–1.3 s on the same model/voice.
+It is still ONE generation per sentence (seed/temperature apply unchanged),
+so voice consistency is identical to the blocking path. The historical note
+"AI-Studio liefert nur komplette Responses" was disproven empirically
+(114 incremental chunks over Vertex, scripts/probe_tts_streaming.py).
+
+Pseudo-streaming via sentence-by-sentence synthesis also remains: with
+``chunk_by_sentence=True`` the text splits at ``.!?`` boundaries; sentence 1
+streams live, sentences 2..N prefetch in parallel and yield in order.
 """
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import re
 import time
@@ -95,6 +103,7 @@ class GeminiFlashTTS:
         language_code: str = "en-US",
         style_prompt: str | None = None,  # Gemini-TTS verträgt keinen Inline-Stil — deaktiviert
         chunk_by_sentence: bool = True,
+        streaming: bool = False,
         allow_sapi5_fallback: bool = False,
         sibling_bridge_model: str | None = "gemini-2.5-flash-preview-tts",
         seed: int | None = None,
@@ -109,6 +118,12 @@ class GeminiFlashTTS:
         self._language_code = language_code
         self._style_prompt = style_prompt
         self._chunk_by_sentence = chunk_by_sentence
+        # True streaming (2026-06-10 latency collapse): synthesize sentence 1
+        # via ``generate_content_stream`` and yield PCM pieces as they arrive.
+        # Default False so bare ``GeminiFlashTTS()`` call sites keep their
+        # historical blocking behaviour; production wires [tts].streaming here
+        # through build_tts_from_config.
+        self._streaming = streaming
         self._allow_sapi5_fallback = allow_sapi5_fallback
         # Vertex AI path (2026-05-26). When use_vertex=True we authenticate via
         # service-account credentials instead of an AI-Studio API key, bypassing
@@ -301,6 +316,43 @@ class GeminiFlashTTS:
         if not sentences:
             return
 
+        log = logging.getLogger("jarvis.tts.gemini")
+
+        # True-streaming fast path ([tts].streaming, 2026-06-10): sentence 1's
+        # PCM pieces are yielded AS THE MODEL GENERATES them — measured
+        # time-to-first-audio 0.6–1.3 s vs 2.4–8.1 s for the buffered call.
+        # Zero streamed audio (quota cooldown, transport error before the
+        # first byte) leaves ``sentences`` untouched, so the buffered flow
+        # below synthesizes it with the complete fallback ladder (cooldown →
+        # sibling bridge → SAPI5/silence). After ≥1 streamed piece the
+        # sentence is DONE even if the stream broke mid-way: re-synthesizing
+        # would replay its opening words (same policy as FallbackTTS).
+        if self._streaming:
+            streamed_any = False
+            stream_gen = self._synthesize_stream_one(sentences[0], voice)
+            try:
+                async for piece in stream_gen:
+                    if piece:
+                        streamed_any = True
+                        yield AudioChunk(
+                            pcm=piece,
+                            sample_rate=GEMINI_TTS_SAMPLE_RATE,
+                            timestamp_ns=0,
+                            channels=1,
+                        )
+            finally:
+                # ``async for`` never closes its iterator (PEP 525). On a
+                # barge-in the GeneratorExit lands on the yield above and
+                # would leave the inner generator — and the genai HTTP
+                # stream inside it — to nondeterministic GC finalization.
+                # Closing it here runs its finally NOW.
+                with contextlib.suppress(Exception):
+                    await stream_gen.aclose()
+            if streamed_any:
+                sentences = sentences[1:]
+                if not sentences:
+                    return
+
         # 2026-04-24: Alle Saetze parallel in Flight, in Original-Reihenfolge
         # yielden. Satz 1 gleich schnell wie vorher, Saetze 2..N aber bereits
         # synthetisiert wenn Satz 1 abgespielt ist — keine seriellen Netzwerk-
@@ -309,7 +361,6 @@ class GeminiFlashTTS:
             asyncio.create_task(self._synthesize_one(s, voice))
             for s in sentences
         ]
-        log = logging.getLogger("jarvis.tts.gemini")
         for i, task in enumerate(tasks):
             pcm = await task
             if pcm:
@@ -435,6 +486,78 @@ class GeminiFlashTTS:
                 self._model_name, self._sibling_bridge_model, voice,
             )
         return pcm
+
+    async def _synthesize_stream_one(
+        self, text: str, voice: str
+    ) -> AsyncIterator[bytes]:
+        """True-streaming synthesis of ONE sentence — yields raw PCM pieces.
+
+        Same model / voice / seed / temperature as the blocking call, so the
+        delivery is ONE generation either way (voice consistency unchanged);
+        only the transport differs: ``generate_content_stream`` hands out the
+        audio while the model is still generating.
+
+        Failure contract (composes with the blocking ladder + FallbackTTS):
+          * primary quota-cooldown active → yield nothing; the caller falls
+            back to ``_synthesize_one`` (which routes to the sibling bridge).
+          * stream fails BEFORE the first audio byte → yield nothing (caller
+            falls back, zero audio lost).
+          * stream fails AFTER audio was yielded → stop with the partial
+            audio; never re-synthesize (would replay the opening words).
+          * RESOURCE_EXHAUSTED arms the same ``_quota_blocked_until`` cooldown
+            the blocking path maintains.
+        """
+        log = logging.getLogger("jarvis.tts")
+        if self._quota_blocked_until and time.monotonic() < self._quota_blocked_until:
+            return
+        produced = False
+        stream = None
+        try:
+            stream = await self._client.aio.models.generate_content_stream(
+                model=self._model_name,
+                contents=text,
+                config=self._build_config(voice),
+            )
+            async for chunk in stream:
+                for cand in chunk.candidates or []:
+                    content = cand.content
+                    for part in (content.parts if content else None) or []:
+                        data = part.inline_data.data if part.inline_data else None
+                        if data:
+                            produced = True
+                            yield data
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — degrade to the blocking ladder
+            msg = str(exc)
+            if "RESOURCE_EXHAUSTED" in msg or "429" in msg:
+                retry_s = _parse_retry_delay(msg)
+                self._quota_blocked_until = time.monotonic() + retry_s
+                log.warning(
+                    "Gemini-TTS stream quota-blocked on %s (retry in %.0f min).",
+                    self._model_name, retry_s / 60,
+                )
+            if produced:
+                log.warning(
+                    "Gemini-TTS stream broke mid-sentence (%s) — keeping the "
+                    "partial audio, not re-synthesizing.",
+                    exc.__class__.__name__,
+                )
+                return
+            log.warning(
+                "Gemini-TTS stream failed before first audio (%s) — blocking "
+                "fallback will synthesize this sentence.",
+                exc.__class__.__name__,
+            )
+        finally:
+            # GeneratorExit (barge-in) bypasses both except clauses above —
+            # this finally is the only deterministic release of the genai
+            # HTTP stream. Awaiting inside a closing async generator's
+            # finally is legal (PEP 525); only yielding is not.
+            aclose = getattr(stream, "aclose", None)
+            if aclose is not None:
+                with contextlib.suppress(Exception):
+                    await aclose()
 
     def _synthesize_sync(self, text: str, voice: str, model: str | None = None) -> bytes:
         import logging

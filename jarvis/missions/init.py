@@ -467,6 +467,28 @@ async def bootstrap_missions(
             sub_jarvis_provider, getattr(step, "model", "") or ""
         )
         if kind == "claude_direct":
+            # Proactive quota routing (mirror of the codex_needs_reauth branch
+            # below): if a Claude worker already proved the Max window exhausted
+            # this session, route STRAIGHT to codex (a separate ChatGPT
+            # subscription) instead of wasting a ~16 s Claude probe per mission
+            # until the window resets. The cooldown self-expires, then Claude is
+            # re-probed; a Claude success clears it. Guarded on codex being a
+            # viable backend (oauth present, not flagged dead).
+            from jarvis.claude_quota_state import claude_in_quota_cooldown
+
+            if claude_in_quota_cooldown():
+                from jarvis.codex_auth_state import codex_needs_reauth
+                from jarvis.missions.workers.codex_direct_worker import (
+                    _codex_oauth_available,
+                )
+
+                if _codex_oauth_available() and not codex_needs_reauth():
+                    logger.warning(
+                        "Mission worker -> CodexDirectWorker: Claude Max is in "
+                        "quota cooldown this session — routing to codex until the "
+                        "window resets (avoids a wasted Claude probe per mission)."
+                    )
+                    return CodexDirectWorker()
             # Give the delegated worker the connected marketplace plugins as a
             # claude-cli MCP config so it can issue the plugin tool calls (AD-OE4).
             return ClaudeDirectWorker(mcp_servers=_assemble_worker_mcp_servers())

@@ -34,13 +34,17 @@ from jarvis.missions.workers.provider_chain import _FallbackStep
 
 @pytest.fixture(autouse=True)
 def _reset_codex_auth_marker():
-    """The codex needs_reauth flag is a process global — reset it around every
-    test so the auth-expiry test doesn't pollute the rest of the suite."""
+    """The codex needs_reauth + claude quota-cooldown flags are process globals
+    — reset both around every test so a fallback test doesn't pollute the rest
+    of the suite."""
+    from jarvis.claude_quota_state import clear_claude_quota_cooldown
     from jarvis.codex_auth_state import clear_codex_needs_reauth
 
     clear_codex_needs_reauth()
+    clear_claude_quota_cooldown()
     yield
     clear_codex_needs_reauth()
+    clear_claude_quota_cooldown()
 
 
 # --- pure-unit: the crash-proofing helpers --------------------------------
@@ -90,12 +94,22 @@ class _FakeStream:
     def __init__(self, *, data: bytes = b"") -> None:
         self._data = data
         self._sent = False
+        self._lines = data.splitlines(keepends=True)
+        self._line_idx = 0
 
     async def read(self, n: int = -1) -> bytes:
         if self._sent:
             return b""
         self._sent = True
         return self._data
+
+    async def readline(self) -> bytes:
+        # Line-by-line view of the same data (codex streams via readline now).
+        if self._line_idx >= len(self._lines):
+            return b""
+        line = self._lines[self._line_idx]
+        self._line_idx += 1
+        return line
 
     def write(self, _b: bytes) -> None:
         pass
@@ -110,17 +124,28 @@ class _FakeStream:
 class _FakeProc:
     """A subprocess whose communicate() returns a fixed (stdout, stderr)."""
 
-    def __init__(self, stdout: bytes, *, returncode: int = 0, streaming: bytes | None = None) -> None:
+    def __init__(
+        self,
+        stdout: bytes,
+        *,
+        returncode: int = 0,
+        streaming: bytes | None = None,
+        stderr: bytes = b"",
+    ) -> None:
         self.pid = 4242
         self.returncode = returncode
         self.stdin = _FakeStream()
-        # codex reads via communicate(); claude reads via stdout.read()
-        self.stdout = _FakeStream(data=streaming or b"")
+        # codex reads line-by-line from stdout (live streaming); the claude
+        # fallback path reads a first chunk via stdout.read() then drains the
+        # rest via communicate(). `streaming` overrides what stdout serves
+        # (used by claude-path fakes); codex fakes serve the stdout bytes.
+        self.stdout = _FakeStream(data=streaming if streaming is not None else stdout)
         self.stderr = _FakeStream()
         self._stdout_bytes = stdout
+        self._stderr_bytes = stderr
 
     async def communicate(self) -> tuple[bytes, bytes]:
-        return self._stdout_bytes, b""
+        return self._stdout_bytes, self._stderr_bytes
 
     async def wait(self) -> int:
         return self.returncode
@@ -233,18 +258,28 @@ async def test_codex_hardcap_timeout_preserves_work_and_flags_timed_out(
         b'"text":"Created the HTML."}}\n'
     )
 
+    class _HangingStream(_FakeStream):
+        """Serves its lines, then hangs forever (no EOF) — a stuck codex."""
+
+        async def readline(self) -> bytes:
+            line = await super().readline()
+            if line:
+                return line
+            await asyncio.Event().wait()  # block until cancelled by wait_for
+            return b""
+
     class _TimeoutProc:
-        """Streams a first chunk (work done) then hangs on communicate()."""
+        """Streams its lines (work done) then hangs until the hard cap."""
 
         def __init__(self) -> None:
             self.pid = 7
             self.returncode = -9
             self.stdin = _FakeStream()
-            self.stdout = _FakeStream(data=ndjson)
+            self.stdout = _HangingStream(data=ndjson)
             self.stderr = _FakeStream()
 
         async def communicate(self) -> tuple[bytes, bytes]:
-            raise asyncio.TimeoutError  # simulate the hard-cap timeout
+            raise asyncio.TimeoutError  # legacy path — not used by streaming
 
         async def wait(self) -> int:
             return -9
@@ -256,6 +291,7 @@ async def test_codex_hardcap_timeout_preserves_work_and_flags_timed_out(
         return _TimeoutProc()
 
     monkeypatch.setattr(cdw.asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(cdw, "_HARDCAP_GRACE_S", 0.2)
 
     worker = CodexDirectWorker()
     events: list[Any] = []
@@ -266,8 +302,8 @@ async def test_codex_hardcap_timeout_preserves_work_and_flags_timed_out(
         job=_Job(),
         worker_id="t",
         log_dir=tmp_path / "logs",
-        timeout_s=5.0,
-        first_output_timeout_s=5.0,
+        timeout_s=1.0,
+        first_output_timeout_s=1.0,
     ):
         events.append(ev)
 
@@ -287,3 +323,302 @@ async def test_codex_hardcap_timeout_preserves_work_and_flags_timed_out(
         for ev in events
     )
     assert tool_use_seen, "file_change tool_use must survive the timeout (work preserved)"
+
+
+# --- mirror direction: claude quota-limited -> codex fallback ---------------
+
+
+@pytest.mark.asyncio
+async def test_claude_session_limit_falls_back_to_codex(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Live mission 019eb2fd (2026-06-10 21:23): with sub_jarvis.provider =
+    claude-api and the Claude Max five-hour window exhausted, every mission
+    died in ~16 s with "You've hit your session limit · resets 11:10pm".
+    codex (a separate subscription) was healthy the whole time. Mirror of
+    the codex->claude fallback: a quota-limited claude run that did NO real
+    work must transparently complete on the codex worker.
+    """
+    claude_limit_line = (
+        b'{"type":"result","subtype":"success","is_error":true,'
+        b'"result":"You\'ve hit your session limit \xc2\xb7 resets 11:10pm '
+        b'(Europe/Berlin)","session_id":"s1"}\n'
+    )
+    codex_ndjson = (
+        b'{"type":"thread.started","thread_id":"t9"}\n'
+        b'{"type":"item.completed","item":{"type":"agent_message",'
+        b'"text":"codex took over"}}\n'
+        b'{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}\n'
+    )
+
+    calls: dict[str, Any] = {"n": 0}
+
+    async def _fake_exec(*args: Any, **_k: Any) -> _FakeProc:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _FakeProc(b"", returncode=1, streaming=claude_limit_line)
+        return _FakeProc(b"", returncode=0, streaming=codex_ndjson)
+
+    monkeypatch.setattr(cdw.asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(
+        cdw_claude, "_resolve_provider_chain",
+        lambda *a, **k: (_FallbackStep("claude-api", "claude-opus-4-8"),),
+    )
+    monkeypatch.setattr(cdw_claude, "_resolve_claude_argv_prefix", lambda: ["claude"])
+    monkeypatch.setattr(cdw, "_codex_oauth_available", lambda: True)
+
+    worker = cdw_claude.ClaudeDirectWorker()
+    events: list[Any] = []
+    async for ev in worker.spawn(
+        "do the task",
+        worktree=tmp_path,
+        env={},
+        job=_Job(),
+        worker_id="cl",
+        log_dir=tmp_path / "logs",
+        timeout_s=5.0,
+    ):
+        events.append(ev)
+
+    final = events[-1]
+    assert getattr(final, "is_error", None) is False, (
+        f"expected codex-fallback success, got {final!r}"
+    )
+    assert "codex took over" in (final.result or "")
+    assert calls["n"] == 2, "expected a second (codex) spawn after the claude limit"
+
+
+@pytest.mark.asyncio
+async def test_claude_limit_no_fallback_when_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Anti-ping-pong: a nested fallback run (allow_backend_fallback=False)
+    must surface the limit error honestly instead of bouncing back."""
+    claude_limit_line = (
+        b'{"type":"result","subtype":"success","is_error":true,'
+        b'"result":"You\'ve hit your session limit \xc2\xb7 resets 11:10pm",'
+        b'"session_id":"s1"}\n'
+    )
+    calls: dict[str, Any] = {"n": 0}
+
+    async def _fake_exec(*_a: Any, **_k: Any) -> _FakeProc:
+        calls["n"] += 1
+        return _FakeProc(b"", returncode=1, streaming=claude_limit_line)
+
+    monkeypatch.setattr(cdw.asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(
+        cdw_claude, "_resolve_provider_chain",
+        lambda *a, **k: (_FallbackStep("claude-api", "claude-opus-4-8"),),
+    )
+    monkeypatch.setattr(cdw_claude, "_resolve_claude_argv_prefix", lambda: ["claude"])
+    monkeypatch.setattr(cdw, "_codex_oauth_available", lambda: True)
+
+    worker = cdw_claude.ClaudeDirectWorker()
+    events: list[Any] = []
+    async for ev in worker.spawn(
+        "do the task",
+        worktree=tmp_path,
+        env={},
+        job=_Job(),
+        worker_id="cl",
+        log_dir=tmp_path / "logs",
+        timeout_s=5.0,
+        allow_backend_fallback=False,
+    ):
+        events.append(ev)
+
+    final = events[-1]
+    assert final.is_error is True
+    assert "session limit" in (final.result or "").lower()
+    assert calls["n"] == 1, "nested fallback run must not spawn another backend"
+
+
+# --- proactive quota cooldown flag (claude_quota_state) --------------------
+
+
+@pytest.mark.asyncio
+async def test_claude_quota_limit_arms_cooldown_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Claude quota limit arms the session cooldown so the factory can route
+    subsequent missions straight to codex (no wasted probe)."""
+    from jarvis.claude_quota_state import claude_in_quota_cooldown
+
+    claude_limit_line = (
+        b'{"type":"result","subtype":"success","is_error":true,'
+        b'"result":"You\'ve hit your session limit \xc2\xb7 resets 11:10pm",'
+        b'"session_id":"s1"}\n'
+    )
+    codex_ndjson = (
+        b'{"type":"thread.started","thread_id":"t9"}\n'
+        b'{"type":"item.completed","item":{"type":"agent_message",'
+        b'"text":"done"}}\n'
+        b'{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}\n'
+    )
+    calls: dict[str, Any] = {"n": 0}
+
+    async def _fake_exec(*_a: Any, **_k: Any) -> _FakeProc:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _FakeProc(b"", returncode=1, streaming=claude_limit_line)
+        return _FakeProc(b"", returncode=0, streaming=codex_ndjson)
+
+    monkeypatch.setattr(cdw.asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(
+        cdw_claude, "_resolve_provider_chain",
+        lambda *a, **k: (_FallbackStep("claude-api", "claude-opus-4-8"),),
+    )
+    monkeypatch.setattr(cdw_claude, "_resolve_claude_argv_prefix", lambda: ["claude"])
+    monkeypatch.setattr(cdw, "_codex_oauth_available", lambda: True)
+
+    assert claude_in_quota_cooldown() is False
+    async for _ in cdw_claude.ClaudeDirectWorker().spawn(
+        "task", worktree=tmp_path, env={}, job=_Job(), worker_id="cl",
+        log_dir=tmp_path / "logs", timeout_s=5.0,
+    ):
+        pass
+    assert claude_in_quota_cooldown() is True, "quota limit must arm the cooldown"
+
+
+@pytest.mark.asyncio
+async def test_claude_success_clears_cooldown_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A healthy Claude run clears the cooldown (the window recovered)."""
+    from jarvis.claude_quota_state import (
+        claude_in_quota_cooldown,
+        mark_claude_quota_cooldown,
+    )
+
+    success_line = (
+        b'{"type":"result","subtype":"success","is_error":false,'
+        b'"result":"OK","session_id":"s1"}\n'
+    )
+
+    async def _fake_exec(*_a: Any, **_k: Any) -> _FakeProc:
+        return _FakeProc(b"", returncode=0, streaming=success_line)
+
+    monkeypatch.setattr(cdw.asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(
+        cdw_claude, "_resolve_provider_chain",
+        lambda *a, **k: (_FallbackStep("claude-api", "claude-opus-4-8"),),
+    )
+    monkeypatch.setattr(cdw_claude, "_resolve_claude_argv_prefix", lambda: ["claude"])
+
+    mark_claude_quota_cooldown()
+    assert claude_in_quota_cooldown() is True
+    async for _ in cdw_claude.ClaudeDirectWorker().spawn(
+        "task", worktree=tmp_path, env={}, job=_Job(), worker_id="cl",
+        log_dir=tmp_path / "logs", timeout_s=5.0,
+    ):
+        pass
+    assert claude_in_quota_cooldown() is False, "a Claude success must clear cooldown"
+
+
+# --- claude model-unavailable -> retry without --model (CLI default) -------
+
+
+def test_claude_error_is_model_unavailable() -> None:
+    from jarvis.missions.workers.claude_direct_worker import (
+        _claude_error_is_model_unavailable as f,
+    )
+
+    assert f("Claude Fable 5 is currently unavailable. Learn more: ...")
+    assert f("There's an issue with the selected model (claude-fable-5). "
+             "It may not exist or you may not have access to it.")
+    assert f("model not found")
+    assert not f("Compilation failed")
+    assert not f("")
+
+
+@pytest.mark.asyncio
+async def test_claude_unavailable_model_retries_without_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An approved-access model the subscription lacks (claude-fable-5, live
+    mission 019ec615 2026-06-14) must transparently retry on the CLI default
+    so the mission completes — not die as task_error."""
+    unavailable = (
+        b'{"type":"result","subtype":"success","is_error":true,'
+        b'"result":"Claude Fable 5 is currently unavailable.","session_id":"s1"}\n'
+    )
+    success = (
+        b'{"type":"result","subtype":"success","is_error":false,'
+        b'"result":"DONE","session_id":"s2"}\n'
+    )
+    spawns: list[list[str]] = []
+
+    async def _fake_exec(*args: Any, **_k: Any) -> _FakeProc:
+        spawns.append(list(args))
+        line = unavailable if len(spawns) == 1 else success
+        return _FakeProc(b"", returncode=0 if len(spawns) > 1 else 1, streaming=line)
+
+    monkeypatch.setattr(cdw.asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(
+        cdw_claude, "_resolve_provider_chain",
+        lambda *a, **k: (_FallbackStep("claude-api", "claude-fable-5"),),
+    )
+    monkeypatch.setattr(cdw_claude, "_resolve_claude_argv_prefix", lambda: ["claude"])
+
+    events: list[Any] = []
+    async for ev in cdw_claude.ClaudeDirectWorker().spawn(
+        "task", worktree=tmp_path, env={}, job=_Job(), worker_id="cl",
+        log_dir=tmp_path / "logs", timeout_s=5.0,
+    ):
+        events.append(ev)
+
+    final = events[-1]
+    assert final.is_error is False, f"expected default-model retry success, got {final!r}"
+    assert final.result == "DONE"
+    assert len(spawns) == 2, "must retry exactly once"
+    assert "--model" in spawns[0], "first attempt carries the configured model"
+    assert "claude-fable-5" in spawns[0]
+    assert "--model" not in spawns[1], "retry must omit --model (use CLI default)"
+
+
+@pytest.mark.asyncio
+async def test_claude_unavailable_model_on_stderr_only_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GAP-2: the claude CLI can write the model-rejection to STDERR while
+    stdout carries no `result` record at all (so the assembled result text is
+    just 'claude exited with code 1'). The unavailable-model detector must read
+    stderr too, otherwise the rejection slips past and the mission fails instead
+    of retrying on the CLI default."""
+    success = (
+        b'{"type":"result","subtype":"success","is_error":false,'
+        b'"result":"DONE","session_id":"s2"}\n'
+    )
+    spawns: list[list[str]] = []
+
+    async def _fake_exec(*args: Any, **_k: Any) -> _FakeProc:
+        spawns.append(list(args))
+        if len(spawns) == 1:
+            # empty stdout, error ONLY on stderr, non-zero exit
+            return _FakeProc(
+                b"", returncode=1, streaming=b"",
+                stderr=b"There's an issue with the selected model "
+                       b"(claude-fable-5). It may not exist or you may not "
+                       b"have access to it.",
+            )
+        return _FakeProc(b"", returncode=0, streaming=success)
+
+    monkeypatch.setattr(cdw.asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(
+        cdw_claude, "_resolve_provider_chain",
+        lambda *a, **k: (_FallbackStep("claude-api", "claude-fable-5"),),
+    )
+    monkeypatch.setattr(cdw_claude, "_resolve_claude_argv_prefix", lambda: ["claude"])
+
+    events: list[Any] = []
+    async for ev in cdw_claude.ClaudeDirectWorker().spawn(
+        "task", worktree=tmp_path, env={}, job=_Job(), worker_id="cl",
+        log_dir=tmp_path / "logs", timeout_s=5.0,
+    ):
+        events.append(ev)
+
+    final = events[-1]
+    assert final.is_error is False, f"stderr-only rejection must retry, got {final!r}"
+    assert final.result == "DONE"
+    assert len(spawns) == 2, "must retry exactly once on a stderr-only rejection"
+    assert "--model" not in spawns[1], "retry must omit --model (use CLI default)"

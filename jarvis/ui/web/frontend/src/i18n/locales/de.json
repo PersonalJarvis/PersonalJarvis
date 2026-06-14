@@ -343,7 +343,7 @@
         "brand": "PERSONAL JARVIS",
         "hero_label": "Wörter gesprochen",
         "jarvis_suffix": "von Jarvis gesprochen",
-        "talk_line": "{0} h gesprochen · {1} Gespräche",
+        "talk_line": "{0} h aktiv · {1} Gespräche",
         "streak": "{0} Tage Bestserie"
       }
     },
@@ -355,7 +355,7 @@
       "streak": "Tage-Serie",
       "streak_sub": "{0} aktive Tage insgesamt",
       "streak_sub_one": "{0} aktiver Tag insgesamt",
-      "talk_time": "Gesprächszeit",
+      "talk_time": "Aktive Zeit",
       "talk_time_sub": "über {0} Gespräche",
       "talk_time_sub_one": "über {0} Gespräch"
     },
@@ -385,7 +385,7 @@
       "active_days_one": "{0} aktiver Tag",
       "active_since": "Aktiv seit {0}"
     },
-    "heatmap_tooltip": "{0} · {1} Aktivitäten · {2} h Gespräch",
+    "heatmap_tooltip": "{0} · {1} Aktivitäten · {2} h aktiv",
     "heatmap_less": "Weniger",
     "heatmap_more": "Mehr",
     "stats": {
@@ -396,9 +396,9 @@
       "voice_first_try": "Voice-First-Try-Rate",
       "voice_first_try_sub": "Basis: {0} Kommandos",
       "voice_no_data": "Noch keine Voice-Daten",
-      "hours_saved": "Sub-Jarvis-Stunden gespart",
+      "hours_saved": "Sub-Jarvis-Arbeitsstunden",
       "hours_saved_sub": "Summiert über alle Runs",
-      "conversation_hours": "Gesprächsstunden mit Jarvis",
+      "conversation_hours": "Aktive Stunden mit Jarvis",
       "conversation_hours_sub": "{0} h in den letzten {1} Tagen"
     },
     "activity_title": "Aktivität",
@@ -454,7 +454,7 @@
         "unit": "Kommandos"
       },
       "most_hours_saved_in_a_day": {
-        "title": "Größter Zeit-Spar-Tag",
+        "title": "Aktivster Sub-Jarvis-Tag",
         "unit": "Stunden"
       },
       "most_active_events_in_a_day": {
@@ -462,7 +462,7 @@
         "unit": "Aktivitäten"
       },
       "most_conversation_hours_in_a_day": {
-        "title": "Längster Gesprächstag",
+        "title": "Längster aktiver Tag",
         "unit": "Stunden"
       }
     }
@@ -767,6 +767,21 @@
       "save": "Name speichern",
       "saved": "Name gespeichert",
       "restart_required": "Neustart nötig, damit es wirkt."
+    },
+    "system_prompt": {
+      "title": "System-Prompt",
+      "description": "Die Anweisungen, die bestimmen, wie dein Assistent denkt und spricht. Bearbeite das Markdown, um ihn zu personalisieren, oder setze ihn jederzeit auf den Standard zurück.",
+      "custom_badge": "Eigen",
+      "default_badge": "Standard",
+      "editor_label": "System-Prompt (Markdown)",
+      "placeholder": "Schreibe deinen eigenen System-Prompt…",
+      "chars": "{0} Zeichen",
+      "empty_hint": "Darf nicht leer sein — nutze Zurücksetzen, um den Standard wiedersampleustellen.",
+      "save": "Prompt speichern",
+      "saved": "System-Prompt gespeichert",
+      "reset": "Auf Standard zurücksetzen",
+      "reset_done": "Auf den Standard-System-Prompt zurückgesetzt",
+      "applies_next_turn": "Wirkt ab der nächsten Antwort deines Assistenten — kein Neustart nötig."
     },
     "hotkey": {
       "title": "Push-to-Talk-Hotkey",

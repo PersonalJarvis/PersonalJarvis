@@ -37,14 +37,14 @@ import asyncio
 import json
 import logging
 import shutil
-import sys
 import time
 import uuid
+from collections.abc import AsyncIterator
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, AsyncIterator, ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
-from .process_utils import worker_creationflags as _win32_creationflags
+from .process_utils import create_worker_subprocess
 from .stream_consumer import (
     ClaudeAssistantMessage,
     ClaudeResult,
@@ -67,6 +67,16 @@ _DEFAULT_FIRST_OUTPUT_TIMEOUT_S: float = 120.0
 # Bytes pulled on the first read; codex's opening thread.started line is far
 # under this, so the read returns as soon as codex emits anything.
 _FIRST_READ_BYTES: int = 65536
+# StreamReader buffer limit for line-by-line reads. asyncio's default is
+# 64 KiB; a single codex ``item.completed`` line carrying a command's
+# ``aggregated_output`` routinely exceeds that (multi-hundred-KB lines seen
+# live), and ``readline()`` raises ValueError past the limit. 8 MiB keeps
+# even pathological lines readable without buffering the whole run.
+_STREAM_READLINE_LIMIT: int = 8 * 1024 * 1024
+# Grace added on top of ``timeout_s`` for the wall-clock hard cap (parity with
+# the pre-streaming ``communicate(timeout=timeout_s + 30)`` behaviour). Module
+# constant so tests can shrink it instead of sleeping 30 real seconds.
+_HARDCAP_GRACE_S: float = 30.0
 
 
 def _resolve_codex_binary() -> str | None:
@@ -177,6 +187,19 @@ def _build_codex_direct_cmd(
         # the agent_message frame -- worker doesn't.
         "--sandbox", sandbox,
         "-c", f"approval_policy={approval_policy}",
+        # D9 recursion guard at the codex level. A mission worker IS the
+        # sub-agent — it must NEVER use codex's native multi-agent collaboration
+        # tools (spawn_agent / wait) to spawn a NESTED codex agent and block on
+        # it. Live mission 019ec708 (2026-06-14): a prompt phrased "spawn a
+        # sub-agent which will plan a trip" made the worker call
+        # spawn_agent("Hooke") then `wait`, freezing the mission for the full
+        # worker timeout. Jarvis's tool-layer guard (AP-5 / AP-14: no spawn tool
+        # in any worker set) can't see codex's built-in feature, so we turn it
+        # off here. `--disable <FEATURE>` == `-c features.<name>=false`;
+        # multi_agent is `stable`/on-by-default, multi_agent_v2 is the
+        # in-development successor (future-proofing).
+        "--disable", "multi_agent",
+        "--disable", "multi_agent_v2",
         "--add-dir", str(worktree),
     ]
     if model:
@@ -216,6 +239,10 @@ _CODEX_AUTH_EXPIRED_MARKERS: tuple[str, ...] = (
 _CODEX_USAGE_LIMIT_MARKERS: tuple[str, ...] = (
     "usage limit",
     "hit your usage limit",
+    # Claude Max five-hour-window phrasing — the marker list is shared with
+    # ClaudeDirectWorker's mirror fallback (live mission 019eb2fd,
+    # 2026-06-10: "You've hit your session limit · resets 11:10pm").
+    "session limit",
     "purchase more credits",
     "try again at",
     "try again later",
@@ -306,6 +333,7 @@ class CodexDirectWorker:
         timeout_s: float = _DEFAULT_TIMEOUT_S,
         first_output_timeout_s: float = _DEFAULT_FIRST_OUTPUT_TIMEOUT_S,
         mission_id: str = "",
+        allow_backend_fallback: bool = True,
         **_unused: Any,
     ) -> AsyncIterator[Any]:
         """Spawn ``codex exec --json`` with the prompt on stdin.
@@ -350,17 +378,19 @@ class CodexDirectWorker:
             worker_id, worktree, model or "<default>", cmd,
         )
 
+        # The helper sources the Windows creation flags itself and degrades
+        # CREATE_BREAKAWAY_FROM_JOB gracefully when the host process is in a job
+        # that forbids breakaway (WinError 5, live mission 019ec602 2026-06-14).
         t0 = time.perf_counter()
-        creationflags = _win32_creationflags() if sys.platform == "win32" else 0
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
+            proc = await create_worker_subprocess(
+                cmd,
                 cwd=str(worktree),
                 env=env_for_codex,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                creationflags=creationflags,
+                limit=_STREAM_READLINE_LIMIT,
             )
         except FileNotFoundError as exc:
             yield ClaudeResult(
@@ -393,92 +423,109 @@ class CodexDirectWorker:
                 worker_id, exc,
             )
 
-        # First-output gate + preserve-partial-work on a hard-cap timeout
-        # (mirrors ClaudeDirectWorker). codex that emits ZERO bytes within the
-        # startup window is killed for a fast retry; once streaming has begun, a
-        # hard-cap timeout PRESERVES first_chunk so the item.completed /
-        # file_change events survive parsing (the deliverable itself is already
-        # on disk in the worktree, captured by git after the worker exits).
-        # `timed_out` is the STRUCTURED signal the orchestrator reads — not the
-        # result-text wording — so a timed-out codex run that left a real diff is
-        # GRADED, not discarded as task_error (live bug, mission 019eacb8).
+        # Live line-by-line streaming (2026-06-10 root-cause fix, missions
+        # 019eb27f/019eb288): the previous first_chunk-read + communicate()
+        # collected ALL stdout until process exit, so during the worker's whole
+        # runtime there was NO stream.jsonl on disk, NO translated events
+        # upstream, and NO visible progress. A gpt-5.5 xhigh worker
+        # legitimately "thinks" for many minutes between NDJSON lines — that
+        # silence was indistinguishable from a hang, the user pressed the
+        # app's Restart button mid-run (jarvis_desktop.log 19:24:12), and the
+        # orphaned missions surfaced 30 min later as opaque crash_recovery /
+        # ERROR cards with zero artifacts. Now every raw line is tee'd to
+        # stream.jsonl IMMEDIATELY (forensics survive ANY exit, including a
+        # hard kill) and translated events are yielded while the process runs
+        # (UI progress + DB events + heartbeats).
+        #
+        # Timeout semantics are unchanged: zero bytes within
+        # ``first_output_timeout_s`` -> killed for a fast retry; once streaming
+        # has begun only the wall-clock hard cap (``timeout_s`` + 30 s grace)
+        # applies — there is deliberately NO idle-gap limit between lines, a
+        # long silent reasoning phase is legitimate (BUG-032 class).
+        # ``timed_out`` stays the STRUCTURED signal the orchestrator reads, and
+        # partial output is never discarded (live bug, mission 019eacb8).
+        #
+        # Translated codex frames (same mapping as before):
+        #   thread.started   -> capture thread_id (resume anchor)
+        #   item.completed (type=agent_message) -> ClaudeAssistantMessage
+        #   item.completed (type=file_change|command_execution) -> synthetic
+        #       tool_use ClaudeAssistantMessage (Critic tool-use detection)
+        #   turn.completed  -> terminal ClaudeResult(success)
+        #   turn.failed | error -> terminal ClaudeResult(error)
         timed_out = False
         timeout_message = ""
         stderr_bytes = b""
-        first_chunk = b""
-        assert proc.stdout is not None  # noqa: S101 — PIPE always created above
-        try:
-            first_chunk = await asyncio.wait_for(
-                proc.stdout.read(_FIRST_READ_BYTES),
-                timeout=first_output_timeout_s,
-            )
-        except asyncio.TimeoutError:
-            timed_out = True
-            timeout_message = (
-                f"CodexDirectWorker: subprocess produced no output within "
-                f"{first_output_timeout_s:.0f}s startup timeout (codex emitted "
-                f"zero bytes); killed for retry"
-            )
-
-        if not timed_out:
-            try:
-                rest_stdout, stderr_bytes = await asyncio.wait_for(
-                    proc.communicate(), timeout=timeout_s + 30.0
-                )
-            except asyncio.TimeoutError:
-                timed_out = True
-                rest_stdout = b""
-                timeout_message = (
-                    f"CodexDirectWorker: subprocess wait_for timeout "
-                    f"({timeout_s + 30.0}s) after streaming started"
-                )
-            stdout_bytes = first_chunk + rest_stdout
-
-        if timed_out:
-            with suppress(ProcessLookupError):
-                proc.kill()
-            with suppress(Exception):
-                await asyncio.wait_for(proc.wait(), timeout=5.0)
-            stdout_bytes = first_chunk  # PRESERVE partial output, never discard
-            stderr_bytes = timeout_message.encode("utf-8")
-
-        try:
-            stdout_log.write_bytes(stdout_bytes)
-        except OSError as exc:
-            logger.warning(
-                "CodexDirectWorker: stream.jsonl write failed: %s", exc,
-            )
-        if stderr_bytes:
-            try:
-                stderr_log.write_bytes(stderr_bytes)
-            except OSError as exc:
-                logger.warning("CodexDirectWorker: stderr.log write failed: %s", exc)
-
-        # Translate codex events to Claude-shaped events for downstream
-        # parity. Codex frames we care about:
-        #
-        #   thread.started   -> capture thread_id (resume anchor)
-        #   item.completed (type=agent_message) -> emit ClaudeAssistantMessage
-        #                                          with a synthetic content
-        #                                          block carrying the text
-        #   item.completed (type=file_change)   -> not surfaced to brain --
-        #                                          the diff is captured via
-        #                                          git after the worker exits
-        #   turn.completed  -> terminal ClaudeResult(success)
-        #   turn.failed | error -> terminal ClaudeResult(error)
-        #
-        # We also detect ``item.completed`` rows of type=command_execution
-        # or file_change so the existing log-summarizer / tool-use
-        # heuristics in the Critic can see "the worker did do tool calls".
         text_acc: list[str] = []
         any_tool_use = False
         terminal_kind: str = "success"
         terminal_message: str | None = None
         cost_usd: float | None = None
         tokens_used: int | None = None
+        got_first_line = False
+        deadline = time.monotonic() + timeout_s + _HARDCAP_GRACE_S
+        assert proc.stdout is not None  # noqa: S101 — PIPE always created above
+        assert proc.stderr is not None  # noqa: S101 — PIPE always created above
+        # Drain stderr concurrently: codex writes progress/errors there, and a
+        # full stderr pipe would deadlock the child once the buffer fills.
+        stderr_task = asyncio.create_task(proc.stderr.read())
 
-        for raw_line in stdout_bytes.decode("utf-8", errors="replace").splitlines():
-            line = raw_line.strip()
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                timeout_message = (
+                    f"CodexDirectWorker: subprocess wall-clock timeout "
+                    f"({timeout_s + _HARDCAP_GRACE_S:.0f}s) exceeded while streaming"
+                )
+                break
+            read_cap = (
+                remaining
+                if got_first_line
+                else min(first_output_timeout_s, remaining)
+            )
+            try:
+                raw = await asyncio.wait_for(
+                    proc.stdout.readline(), timeout=read_cap
+                )
+            except TimeoutError:
+                if got_first_line:
+                    # read_cap == remaining here, so the deadline check at the
+                    # top of the loop turns this into the hard-cap timeout.
+                    continue
+                timed_out = True
+                timeout_message = (
+                    f"CodexDirectWorker: subprocess produced no output within "
+                    f"{first_output_timeout_s:.0f}s startup timeout (codex emitted "
+                    f"zero bytes); killed for retry"
+                )
+                break
+            except ValueError:
+                # One NDJSON line exceeded _STREAM_READLINE_LIMIT — the stream
+                # buffer is poisoned and cannot be resynced. Fail LOUDLY with
+                # the real cause instead of hanging or returning garbage.
+                terminal_kind = "error"
+                terminal_message = (
+                    "CodexDirectWorker: a stdout line exceeded the "
+                    f"{_STREAM_READLINE_LIMIT // (1024 * 1024)} MiB stream "
+                    "limit; aborting the read loop"
+                )
+                logger.error("%s", terminal_message)
+                break
+            if not raw:
+                break  # EOF — codex closed stdout.
+            got_first_line = True
+            try:
+                # Append-per-line (open/close each time): no long-lived handle
+                # to leak when the generator is cancelled mid-run, and the
+                # forensics file is complete up to the very last line no
+                # matter how this coroutine ends.
+                with stdout_log.open("ab") as stream_fh:
+                    stream_fh.write(raw)
+            except OSError as exc:
+                logger.warning(
+                    "CodexDirectWorker: stream.jsonl append failed: %s", exc,
+                )
+            line = raw.decode("utf-8", errors="replace").strip()
             if not line:
                 continue
             try:
@@ -554,6 +601,25 @@ class CodexDirectWorker:
                 terminal_message = _coerce_codex_error_text(obj)
                 continue
 
+        if timed_out:
+            with suppress(ProcessLookupError):
+                proc.kill()
+        with suppress(Exception):
+            await asyncio.wait_for(proc.wait(), timeout=10.0)
+        with suppress(Exception):
+            stderr_bytes = await asyncio.wait_for(stderr_task, timeout=5.0)
+        if timed_out:
+            # Surface the timeout verdict in stderr.log alongside whatever
+            # codex itself wrote — never lose the real stderr to the synthetic
+            # message (pre-fix behaviour overwrote it).
+            joiner = b"\n" if stderr_bytes else b""
+            stderr_bytes = stderr_bytes + joiner + timeout_message.encode("utf-8")
+        if stderr_bytes:
+            try:
+                stderr_log.write_bytes(stderr_bytes)
+            except OSError as exc:
+                logger.warning("CodexDirectWorker: stderr.log write failed: %s", exc)
+
         wall_ms = int((time.perf_counter() - t0) * 1000)
         exit_code = proc.returncode if proc.returncode is not None else -1
 
@@ -580,7 +646,10 @@ class CodexDirectWorker:
             and not _auth_dead
             and _codex_error_is_usage_limited(_err)
         )
-        if _auth_dead or _usage_capped:
+        # `allow_backend_fallback=False` marks a NESTED fallback run (the
+        # claude worker already fell back to codex) — surface the error
+        # honestly instead of bouncing codex->claude->codex forever.
+        if (_auth_dead or _usage_capped) and allow_backend_fallback:
             if _auth_dead:
                 logger.warning(
                     "CodexDirectWorker[%s]: codex ChatGPT login expired (%r) — "
@@ -613,6 +682,7 @@ class CodexDirectWorker:
                 max_turns=max_turns,
                 timeout_s=timeout_s,
                 mission_id=mission_id,
+                allow_backend_fallback=False,  # no codex->claude->codex loop
             ):
                 yield ev
             return

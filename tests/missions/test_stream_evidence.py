@@ -248,6 +248,126 @@ def test_summarize_answers_joins_and_caps() -> None:
     assert len(summarize_answers([long], cap=600)) <= 600
 
 
+# --- is_informational_request + conversational (no-tool) answer ------------
+#
+# Live mission 019ec638 (2026-06-14): "which city would you recommend for a
+# trip to Australia?" was dispatched as a heavy mission. The worker answered
+# correctly in text but wrote no file, so the empty-diff veto rejected it 3×
+# and the mission FAILED (critic_loop_exhausted). A pure question's deliverable
+# IS the spoken answer — but the relaxation must key off the REQUEST shape,
+# never the worker's claim, so the anti-hallucination veto still fires for a
+# do-task that produced nothing.
+from jarvis.missions.stream_evidence import is_informational_request  # noqa: E402
+
+# The standing quality directive spawn_worker prepends to EVERY mission prompt
+# (_QUALITY_DIRECTIVE) — the classifier must look past it at the real request.
+_DIRECTIVE = (
+    "Deliver a complete, polished, production-quality result that fully "
+    'satisfies the request. A skeleton, stub, placeholder, or "content '
+    'follows" / "Inhalt folgt" shell is a FAILURE — never ship one. If a '
+    "detail is unspecified, build the finished artefact."
+)
+
+
+def test_is_informational_request_true_for_questions() -> None:
+    assert is_informational_request(
+        "Could you please tell me which city you would recommend if I would "
+        "like to book a trip to Australia?"
+    )
+    assert is_informational_request("Was hältst du von exp.com?")
+    assert is_informational_request("Explain how the event bus works.")
+    assert is_informational_request("Welche Stadt empfiehlst du für eine Reise?")
+    # behind the standing quality directive (the real dispatched shape)
+    assert is_informational_request(
+        f"{_DIRECTIVE}\n\nWhich city would you recommend for a trip to Australia?"
+    )
+
+
+def test_is_informational_request_false_for_do_tasks() -> None:
+    assert not is_informational_request(
+        "Write a 180-word founding myth into a file named stonehollow.txt"
+    )
+    assert not is_informational_request("Erstelle eine HTML-Seite namens index.html")
+    assert not is_informational_request("Build a Flask app on port 8000")
+    # an action task wearing a question mark must NOT pass — the action verb wins
+    assert not is_informational_request("Can you create a file report.md?")
+    assert not is_informational_request(
+        f"{_DIRECTIVE}\n\nCan you open Chrome and go to example.com?"
+    )
+
+
+def test_is_informational_request_false_for_noun_phrase_do_tasks() -> None:
+    """Adversarial (code review 2026-06-14): a do-task phrased as a noun phrase
+    with a trailing '?' must NOT slip past the veto — otherwise its no-file text
+    answer would be wrongly approved. The deliverable here is an artefact, not an
+    answer. Caught by the action/artefact verb list."""
+    assert not is_informational_request("A PDF export of the Q1 spreadsheet?")
+    assert not is_informational_request("The conversion of the Word document to HTML?")
+    assert not is_informational_request("A ZIP archive of the project files?")
+    assert not is_informational_request("Rendering of the report to PDF?")
+    assert not is_informational_request("A summary table, exported to data.csv?")
+
+
+def test_is_informational_request_true_for_advisory_imperatives() -> None:
+    """Doable advisory / planning imperatives have NO file deliverable — the plan
+    or answer IS the result. Live mission 019ec708 (2026-06-14): "plan a trip"
+    failed because the old rule required an interrogative lead word it lacks. The
+    rule covers questions AND advisory triggers (plan/suggest/research/…) alike."""
+    assert is_informational_request("plan a trip from London to Taiwan")
+    assert is_informational_request("Suggest three restaurants near the Louvre.")
+    assert is_informational_request("Research the best laptops under 1000 euros.")
+    assert is_informational_request("Give me a weekend itinerary for Lisbon.")
+    # the exact live shape (meta-phrase + standing quality directive)
+    assert is_informational_request(
+        f"{_DIRECTIVE}\n\nI would like you to spawn a sub-agent which will help "
+        "me plan a trip from London to Taiwan."
+    )
+
+
+def test_is_informational_request_false_for_do_and_transaction_tasks() -> None:
+    """Two classes stay NON-informational: (a) file/code/side-effect do-tasks,
+    and (b) impossible real-world TRANSACTIONS ("book me a trip", "buy me X").
+    Transactions lack any informational trigger, so they fall through to the
+    capability-refusal path (one-shot honest reject) rather than a wrongful
+    approve — and "book" the verb never collides with "book" the noun."""
+    # file/code do-tasks (no trigger and/or an action verb)
+    assert not is_informational_request("Refactor the auth module.")
+    assert not is_informational_request("Configure nginx as a reverse proxy.")
+    assert not is_informational_request("Rename all the test files.")
+    assert not is_informational_request("Send an email to the team.")
+    # impossible transactions — handled by capability-refusal, NOT informational
+    assert not is_informational_request("Please book me a trip from Melbourne to Tokyo.")
+    assert not is_informational_request("Buy me a flight to Tokyo for under 800 euros.")
+    # but "book" the NOUN inside a real advisory request stays informational
+    assert is_informational_request("Recommend a good book about the Roman Empire.")
+
+
+def test_readonly_answer_accepts_no_tool_answer_for_informational_prompt() -> None:
+    # pure Q&A: no tool calls, no diff — the spoken answer IS the deliverable.
+    convo = _stream([
+        {"type": "result",
+         "result": "I'd recommend Sydney as your first stop.",
+         "subtype": "success"},
+    ])
+    prompt = "Which city would you recommend for a trip to Australia?"
+    assert (
+        readonly_answer("", convo, prompt=prompt)
+        == "I'd recommend Sydney as your first stop."
+    )
+    # without the prompt the anti-hallucination guard still returns None
+    assert readonly_answer("", convo) is None
+
+
+def test_readonly_answer_rejects_no_tool_answer_for_do_task_prompt() -> None:
+    # a do-task that produced no tools/diff but claims success: still vetoed,
+    # even with the prompt — the request is not informational.
+    convo = _stream([
+        {"type": "result", "result": "I have created the file.", "subtype": "success"},
+    ])
+    prompt = "Create a file report.md with the analysis."
+    assert readonly_answer("", convo, prompt=prompt) is None
+
+
 # --- extract_write_targets: out-of-worktree deliverable verification --------
 #
 # Root cause of mission_019e7abd (2026-05-30): the worker wrote a file to an

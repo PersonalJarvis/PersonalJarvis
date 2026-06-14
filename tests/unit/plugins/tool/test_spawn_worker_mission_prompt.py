@@ -12,7 +12,6 @@ loss), so the fix enriches the mission prompt with the interpreted `action`
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -149,3 +148,20 @@ async def test_execute_dispatches_enriched_prompt_not_raw_fragment() -> None:
     assert "Würfelspiel.html" in prompt, (
         f"dispatched prompt must carry the interpreted intent, got {prompt!r}"
     )
+
+
+def test_quality_directive_has_honest_impossibility_escape() -> None:
+    """Latency (2026-06-14): the standing quality directive must let the worker
+    exit fast on a task it genuinely cannot do, instead of spiralling under the
+    'never downgrade / build the finished artefact' floor (live mission 019ec708:
+    'book a trip' ran 535s producing nothing). The floor governs the QUALITY of a
+    doable task, never a mandate to fake an undoable one."""
+    prompt = _build_mission_prompt(
+        utterance="book me a trip from London to Taiwan",
+        action="",
+    )
+    low = prompt.lower()
+    assert "cannot be completed with the tools available" in low, prompt
+    assert "do not simulate" in low or "do not simulate," in low or "not simulate" in low
+    # The anti-stub floor must still be present (regression guard).
+    assert "production-quality" in low

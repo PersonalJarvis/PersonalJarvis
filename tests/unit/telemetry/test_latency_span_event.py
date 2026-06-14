@@ -56,6 +56,14 @@ def test_latency_phase_is_a_string_enum_source_of_truth() -> None:
         "brain_first_token",
         "brain_first_audio",
         "turn_to_first_audio",
+        # LATENCY_REPORT_001 t0..t9 diagnostic milestones (marked on the
+        # streaming hot path; consumed by latency_log._DURATION_PAIRS).
+        "stt_first_partial",
+        "brain_request_sent",
+        "brain_last_token",
+        "tts_request_sent",
+        "tts_first_chunk",
+        "tts_stream_done",
     }
     assert {p.value for p in LatencyPhase} == expected
 

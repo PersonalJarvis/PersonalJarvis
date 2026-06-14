@@ -255,6 +255,37 @@ PURE_SMALLTALK_INCL_GREETING = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Greeting-prefixed QUESTION bug (live forensic 2026-06-10 23:13,
+# data/jarvis_desktop.log): "Hey, what's the weather like today?" matched the
+# smalltalk allowlist via the leading "hey"; the greeting-prefix guard only
+# rescued action COMMANDS, so this information question stayed smalltalk, all
+# tools (incl. search_web) were hidden, and the brain hit the anti-silence
+# refusal. A greeting prefix must never change the classification of the
+# remainder — a non-smalltalk remainder keeps the turn a real request, action
+# verb or not.
+# ---------------------------------------------------------------------------
+
+GREETING_PREFIXED_QUESTIONS = [
+    "Hey, what's the weather like today? Please give me an honest review and "
+    "tell me what's the weather.",
+    "Hey, what's the weather like today?",
+    "Hallo, wie ist das Wetter morgen?",  # i18n-allow: German voice fixture
+    "Hi, who won the match yesterday?",
+]
+
+
+@pytest.mark.parametrize("utterance", GREETING_PREFIXED_QUESTIONS)
+def test_greeting_prefixed_question_is_not_smalltalk(utterance: str) -> None:
+    """A greeting prefix in front of a real information question must NOT
+    classify the turn as smalltalk — otherwise search_web & friends are hidden
+    and the brain speaks the anti-silence refusal."""
+    manager, _executor = _manager_with_spawn()
+    assert manager._is_smalltalk(utterance) is False, (
+        f"greeting-prefixed question {utterance!r} wrongly classified as smalltalk"
+    )
+
+
 @pytest.mark.parametrize("utterance", PURE_SMALLTALK_INCL_GREETING)
 def test_pure_smalltalk_still_smalltalk(utterance: str) -> None:
     """Pure smalltalk — including a greeting followed by more smalltalk — must
@@ -1131,17 +1162,38 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             "contact-lookup",
             "contact-upsert",
             "call-contact",
+            # Inline web search (2026-06-10, user mandate): the router answers
+            # news/knowledge/research QUESTIONS inline instead of spawning a
+            # multi-minute worker mission for a single lookup. Read-only
+            # DuckDuckGo call, risk safe, never a spawn (AP-5/AP-14). See
+            # ADR-0011 amendment "Inline web search".
+            "search-web",
         }
     )
     assert ROUTER_TOOLS == expected, (
         f"ROUTER_TOOLS {sorted(ROUTER_TOOLS)} weicht ab vom erwarteten "
         f"{sorted(expected)}. Persona-Mandat Phase 3 + Master-Plan §22 + "
         "ADR-0011 (inkl. Phase-7/8/Awareness-Erweiterungen + Welle-4-Migration). "
-        "Direkt-Aktionen wie open_app/type_text/search_web/whoami DUERFEN NICHT "
+        "Direkt-Aktionen wie open_app/type_text/whoami DUERFEN NICHT "
         "hinzu — die gehoeren an die OpenClaw-Bridge. Sanktionierte Ausnahmen "
-        "sind deterministische Schreib-Tools mit eigenem ADR-0011-Eintrag "
-        "(wiki-ingest, update-profile)."
+        "sind deterministische Tools mit eigenem ADR-0011-Eintrag "
+        "(wiki-ingest, update-profile, search-web)."
     )
+
+
+def test_search_web_in_router_tools() -> None:
+    """``search-web`` must live in ROUTER_TOOLS (2026-06-10 user mandate).
+
+    A news/knowledge question ("was sind die aktuellsten News?") must be
+    answerable INLINE by the router. Without this entry the router has no
+    web path at all and the system prompt's research doctrine degenerates
+    into "spawn a worker mission for every question" — the exact
+    over-spawning the user reported. See ADR-0011 amendment "Inline web
+    search".
+    """
+    from jarvis.brain.factory import ROUTER_TOOLS
+
+    assert "search-web" in ROUTER_TOOLS
 
 
 def test_update_profile_in_router_tools() -> None:
@@ -1986,3 +2038,70 @@ def test_call_by_name_resolves_to_call_contact_capability(utterance: str) -> Non
     seed_registry(reg)
     cap = reg.resolve_intent(utterance)
     assert cap is not None and cap.id == "tool.call-contact"
+
+
+# ---------------------------------------------------------------------------
+# Heavy-research force-spawn (live bug 2026-06-14, the Berlin→Melbourne turn):
+# a multi-step research/analysis request must OFFLOAD to a background mission
+# instead of running inline on the deep brain (where it blew the ~20 s voice
+# budget and was beheaded → silence). Conjunctive gate: a research/analysis
+# VERB must be present AND a heaviness signal. Length alone never spawns, so a
+# quick "recherchier das mal kurz" stays inline.
+# ---------------------------------------------------------------------------
+
+_HEAVY_RESEARCH_SHOULD_SPAWN = [
+    # The live failure (two research verbs + horizon marker + length).
+    (
+        "Ich möchte, dass du mir dabei hilfst, zu recherchieren, was ich für "
+        "eine Reise von Berlin nach Melbourne brauche, und analysiere auch den "
+        "Wetterbericht der nächsten zwei Wochen."
+    ),
+    # Two verbs (analysieren + vergleichen) → multi-clause.
+    "Analysiere die letzten zwölf Monate meiner Ausgaben und vergleiche sie mit dem Vorjahr",
+    # English: two verbs + horizon marker.
+    "Research the top five vector databases and compare them over the next quarter",
+    # One verb + requirements marker ("brauche").
+    "Recherchiere ausführlich, was ich für meinen Umzug in eine andere Stadt alles brauche",
+]
+
+_HEAVY_RESEARCH_STAYS_INLINE = [
+    "Was ist das Wetter in Melbourne?",  # no research verb → fast lookup
+    "Wie spät ist es in Sydney?",  # no research verb
+    "Recherchier das mal kurz",  # verb but no scope (short, 1 verb, no marker)
+    "Analysier kurz den Satz",  # verb but no scope
+    "Wie geht's dir?",  # smalltalk, no verb
+]
+
+
+@pytest.mark.parametrize("utterance", _HEAVY_RESEARCH_SHOULD_SPAWN)
+def test_is_heavy_research_should_spawn(utterance: str) -> None:
+    manager, _ = _manager_with_spawn(force_spawn_mode="strict")
+    assert manager._is_heavy_research(utterance) is True
+
+
+@pytest.mark.parametrize("utterance", _HEAVY_RESEARCH_STAYS_INLINE)
+def test_is_heavy_research_stays_inline(utterance: str) -> None:
+    manager, _ = _manager_with_spawn(force_spawn_mode="strict")
+    assert manager._is_heavy_research(utterance) is False
+
+
+def test_heavy_research_force_spawns_via_should_force_spawn() -> None:
+    """End-to-end through the strict-mode guard chain: the live Berlin→Melbourne
+    research prompt must force-spawn. RED before WS3a (strict mode reached
+    _is_generic_subagent_work, which is False for this Q&A-shaped request)."""
+    manager, _ = _manager_with_spawn(force_spawn_mode="strict")
+    prompt = _HEAVY_RESEARCH_SHOULD_SPAWN[0]
+    assert manager._should_force_spawn(prompt) is True
+
+
+def test_quick_weather_lookup_does_not_force_spawn() -> None:
+    """A quick weather lookup must STILL stay inline (no false spawn)."""
+    manager, _ = _manager_with_spawn(force_spawn_mode="strict")
+    assert manager._should_force_spawn("Was ist das Wetter in Melbourne?") is False
+
+
+def test_heavy_research_disabled_flag_restores_inline() -> None:
+    """With the kill switch off, heavy research is no longer force-spawned."""
+    manager, _ = _manager_with_spawn(force_spawn_mode="strict")
+    manager._config.brain.routing.heavy_research_enabled = False
+    assert manager._is_heavy_research(_HEAVY_RESEARCH_SHOULD_SPAWN[0]) is False

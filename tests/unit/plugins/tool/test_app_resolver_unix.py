@@ -18,6 +18,7 @@ Coverage:
 
 from __future__ import annotations
 
+import os
 import subprocess
 from uuid import uuid4
 
@@ -278,3 +279,34 @@ async def test_execute_open_a_with_args_splits_into_dash_dash_args(
     assert calls == [
         (["open", "-a", "Safari", "--args", "--foo", "bar"], {"shell": False})
     ]
+
+
+# --------------------------------------------------------------------------- #
+# URL launch on POSIX (2026-06-10 browser+URL fast-path, latency plan Task 2).
+# URLs resolve to the "startfile" verb on EVERY OS, but os.startfile only
+# exists on Windows — the old fallback exec'd the URL as a binary and died
+# with FileNotFoundError. POSIX must hand URLs to the OS opener instead.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("plat", "opener"), [("darwin", "open"), ("linux", "xdg-open")],
+)
+async def test_execute_url_uses_os_opener_on_posix(
+    monkeypatch: pytest.MonkeyPatch, plat: str, opener: str
+) -> None:
+    _force_platform(monkeypatch, plat)
+    calls: list[tuple[list[str], dict]] = []
+    monkeypatch.setattr(
+        subprocess, "Popen", lambda argv, **kw: calls.append((argv, kw))
+    )
+    # POSIX runtimes have no os.startfile — simulate that from the Windows box.
+    monkeypatch.delattr(os, "startfile", raising=False)
+
+    result = await OpenAppTool().execute({"app_name": "https://x.com"}, _ctx())
+
+    assert result.success
+    assert calls, "no launch happened"
+    assert calls[0][0] == [opener, "https://x.com"]
+    assert calls[0][1].get("shell", False) is False

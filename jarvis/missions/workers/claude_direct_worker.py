@@ -47,14 +47,13 @@ import asyncio
 import json
 import logging
 import shutil
-import sys
 import time
 import uuid
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, AsyncIterator, ClassVar, Literal
 
-from .process_utils import worker_creationflags as _win32_creationflags
+from .process_utils import create_worker_subprocess
 from .stream_consumer import (
     ClaudeAssistantMessage,
     ClaudeResult,
@@ -97,8 +96,37 @@ _MCP_CONFIG_FILENAME: str = ".jarvis-mcp.json"
 # heavy-worker fallback for a non-claude sub_jarvis provider (see spawn()). A
 # real claude model — NEVER a foreign slug like ``grok-4.3``, which the claude
 # CLI rejects. Overridden by ``[brain.providers.claude-api].deep_model`` when
-# the config is readable.
+# the config is readable. Maintainer decision 2026-06-14 (supersedes the
+# 2026-06-10 fable mandate): ``claude-fable-5`` is approved-access-only and the
+# Claude Max subscription cannot reach it via the CLI ("Claude Fable 5 is
+# currently unavailable", live mission 019ec615), so the last-resort default is
+# ``claude-opus-4-8`` — a model the subscription CAN reach. The
+# model-unavailable retry below is the safety net on top of this constant.
 _DEFAULT_CLAUDE_MODEL: str = "claude-opus-4-8"
+
+
+_MODEL_UNAVAILABLE_MARKERS: tuple[str, ...] = (
+    "is currently unavailable",
+    "issue with the selected model",
+    "may not exist",
+    "may not have access",
+    "model not found",
+    "invalid model",
+    "unknown model",
+)
+
+
+def _claude_error_is_model_unavailable(text: str) -> bool:
+    """True when ``claude --print`` rejected the requested ``--model``.
+
+    Live mission 019ec615 (2026-06-14): the config pins the worker to
+    ``claude-fable-5`` (an approved-access model the Claude Max subscription
+    cannot reach via the CLI), so every claude worker died with "Claude Fable 5
+    is currently unavailable". The CLI default model IS accessible, so a
+    model-rejection is recoverable: retry without ``--model``.
+    """
+    low = (text or "").lower()
+    return any(m in low for m in _MODEL_UNAVAILABLE_MARKERS)
 
 
 def _resolve_claude_model(primary: Any) -> str:
@@ -110,7 +138,7 @@ def _resolve_claude_model(primary: Any) -> str:
       ``grok`` / ``gemini`` / ``openai`` / ``openrouter`` / unset provider here
       because none of them has a direct worker anymore — resolve the
       ``[brain.providers.claude-api].deep_model`` from config, falling back to a
-      sane Opus default. We must NEVER pass the foreign chain model (e.g.
+      sane fable default. We must NEVER pass the foreign chain model (e.g.
       ``grok-4.3``) to ``claude --model``: that is the 2026-06-08 instant-fail
       bug (``primary provider is grok, expected claude-api``).
     """
@@ -119,7 +147,7 @@ def _resolve_claude_model(primary: Any) -> str:
     if provider == "claude-api" and model:
         return str(model)
     # Config read is best-effort — a missing/unreadable config falls through to
-    # the sane Opus default below rather than crashing the worker spawn.
+    # the sane fable default below rather than crashing the worker spawn.
     with suppress(Exception):
         from jarvis.core.config import load_config
 
@@ -247,6 +275,8 @@ class ClaudeDirectWorker:
         timeout_s: float = _DEFAULT_TIMEOUT_S,
         first_output_timeout_s: float = _DEFAULT_FIRST_OUTPUT_TIMEOUT_S,
         mission_id: str = "",
+        allow_backend_fallback: bool = True,
+        force_default_model: bool = False,
         **_unused: Any,
     ) -> AsyncIterator[Any]:
         """Spawn ``claude --print --output-format=stream-json`` with the prompt on stdin.
@@ -294,7 +324,11 @@ class ClaudeDirectWorker:
         session_id = resume_session_id or str(uuid.uuid4())
         self.last_session_id = session_id
 
-        # 2. Build the claude argv.
+        # 2. Build the claude argv. ``force_default_model`` omits ``--model``
+        # entirely so the CLI picks its own accessible default — the recovery
+        # path when the configured model is approved-access-only and the
+        # subscription can't reach it (live mission 019ec615, 2026-06-14:
+        # claude-fable-5 "is currently unavailable").
         argv_prefix = _resolve_claude_argv_prefix()
         cmd: list[str] = [
             *argv_prefix,
@@ -303,8 +337,9 @@ class ClaudeDirectWorker:
             "--verbose",  # required by --print + stream-json
             "--permission-mode", permission_mode,
             "--add-dir", str(worktree),
-            "--model", claude_model,
         ]
+        if not force_default_model:
+            cmd.extend(["--model", claude_model])
         if allowed_tools:
             cmd.extend(["--allowedTools", allowed_tools])
         # Connected marketplace plugins / mcp.json -> claude-cli MCP config so
@@ -325,18 +360,19 @@ class ClaudeDirectWorker:
             worker_id, worktree, claude_model,
         )
 
-        # 3. Spawn the subprocess with the prompt on stdin.
+        # 3. Spawn the subprocess with the prompt on stdin. The helper sources
+        # the Windows creation flags itself and degrades CREATE_BREAKAWAY_FROM_JOB
+        # gracefully when the host process is in a job that forbids breakaway
+        # (WinError 5, live mission 019ec602 2026-06-14).
         t0 = time.perf_counter()
-        creationflags = _win32_creationflags() if sys.platform == "win32" else 0
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
+            proc = await create_worker_subprocess(
+                cmd,
                 cwd=str(worktree),
                 env=env,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                creationflags=creationflags,
             )
         except FileNotFoundError as exc:
             # The MCP config (with its inlined secret) was already written when
@@ -529,6 +565,126 @@ class ClaudeDirectWorker:
             any_tool_use,
             session_id,
         )
+
+        # A healthy Claude run means the Max window is available again — clear
+        # any armed quota cooldown so the factory resumes routing to Claude.
+        if not final_result.is_error and not timed_out:
+            from jarvis.claude_quota_state import clear_claude_quota_cooldown
+
+            clear_claude_quota_cooldown()
+
+        # Model-unavailable recovery (live mission 019ec615, 2026-06-14): the
+        # configured --model (claude-fable-5) is approved-access-only and the
+        # Claude Max subscription can't reach it via the CLI. The CLI default
+        # IS accessible, so retry once WITHOUT --model rather than failing.
+        # Guarded on no work done (delivered work is graded, never re-run) and
+        # not already on the default-model attempt (no infinite retry).
+        # GAP-2 (2026-06-14): the CLI can write the model rejection to STDERR
+        # while stdout carries no `result` record (so final_result.result is
+        # just "claude exited with code 1"). Scan stderr too, otherwise the
+        # rejection slips past and the mission fails instead of retrying on the
+        # CLI default. (`not timed_out` above means stderr_bytes here is the
+        # subprocess's real stderr, never the synthetic timeout message.)
+        stderr_text = (
+            stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
+        )
+        if (
+            final_result.is_error
+            and not timed_out
+            and not any_tool_use
+            and not force_default_model
+            and _claude_error_is_model_unavailable(
+                (final_result.result or "") + "\n" + stderr_text
+            )
+        ):
+            logger.warning(
+                "ClaudeDirectWorker[%s]: model %r rejected by the CLI (%r) — "
+                "retrying without --model so the CLI picks an accessible "
+                "default and the mission completes.",
+                worker_id, claude_model, (final_result.result or "")[:160],
+            )
+            async for ev in self.spawn(
+                prompt,
+                worktree=worktree,
+                env=env,
+                job=job,
+                worker_id=worker_id,
+                log_dir=log_dir,
+                model=model,
+                allowed_tools=allowed_tools,
+                permission_mode=permission_mode,
+                max_turns=max_turns,
+                resume_session_id=None,
+                extra_args=extra_args,
+                timeout_s=timeout_s,
+                first_output_timeout_s=first_output_timeout_s,
+                mission_id=mission_id,
+                allow_backend_fallback=allow_backend_fallback,
+                force_default_model=True,
+            ):
+                yield ev
+            return
+
+        # Claude Max quota fallback (mirror of the codex->claude direction).
+        # Live mission 019eb2fd (2026-06-10 21:23): with the Claude Max
+        # five-hour window exhausted ("You've hit your session limit · resets
+        # 11:10pm"), every claude-routed mission died in ~16 s while codex (a
+        # separate ChatGPT subscription) was healthy. When the limit hit
+        # BEFORE any real work (no tool_use — delivered work is never
+        # discarded, the orchestrator grades it instead), complete the
+        # mission on the codex worker. `allow_backend_fallback=False` on the
+        # nested spawn prevents claude->codex->claude ping-pong.
+        if (
+            allow_backend_fallback
+            and final_result.is_error
+            and not timed_out
+            and not any_tool_use
+        ):
+            from jarvis.codex_auth_state import codex_needs_reauth
+
+            from .codex_direct_worker import (
+                CodexDirectWorker,
+                _codex_error_is_usage_limited,
+                _codex_oauth_available,
+            )
+
+            if _codex_error_is_usage_limited(final_result.result or ""):
+                # Arm the session quota cooldown so the worker factory routes
+                # subsequent missions STRAIGHT to codex (no wasted ~16 s Claude
+                # probe) until the window resets — the proactive complement to
+                # this reactive fallback.
+                from jarvis.claude_quota_state import mark_claude_quota_cooldown
+
+                mark_claude_quota_cooldown()
+
+            if (
+                _codex_error_is_usage_limited(final_result.result or "")
+                and _codex_oauth_available()
+                and not codex_needs_reauth()
+            ):
+                logger.warning(
+                    "ClaudeDirectWorker[%s]: Claude Max quota limit hit (%r) "
+                    "with no work delivered — falling back to the codex "
+                    "(ChatGPT) worker so the mission completes. claude "
+                    "resumes automatically once its window resets.",
+                    worker_id, (final_result.result or "")[:160],
+                )
+                async for ev in CodexDirectWorker().spawn(
+                    prompt,
+                    worktree=worktree,
+                    env=env,
+                    job=job,
+                    worker_id=worker_id,
+                    log_dir=log_dir,
+                    model="",  # codex picks its ChatGPT default
+                    allowed_tools=allowed_tools,
+                    max_turns=max_turns,
+                    timeout_s=timeout_s,
+                    mission_id=mission_id,
+                    allow_backend_fallback=False,
+                ):
+                    yield ev
+                return
 
         yield final_result
 

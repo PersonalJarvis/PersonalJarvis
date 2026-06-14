@@ -343,7 +343,7 @@
         "brand": "PERSONAL JARVIS",
         "hero_label": "Words spoken",
         "jarvis_suffix": "spoken by Jarvis",
-        "talk_line": "{0} h talked · {1} chats",
+        "talk_line": "{0} h active · {1} chats",
         "streak": "{0}-day best streak"
       }
     },
@@ -355,7 +355,7 @@
       "streak": "Day streak",
       "streak_sub": "{0} active days in total",
       "streak_sub_one": "{0} active day in total",
-      "talk_time": "Talk time",
+      "talk_time": "Active time",
       "talk_time_sub": "across {0} conversations",
       "talk_time_sub_one": "across {0} conversation"
     },
@@ -385,7 +385,7 @@
       "active_days_one": "{0} active day",
       "active_since": "Active since {0}"
     },
-    "heatmap_tooltip": "{0} · {1} activities · {2} h talking",
+    "heatmap_tooltip": "{0} · {1} activities · {2} h active",
     "heatmap_less": "Less",
     "heatmap_more": "More",
     "stats": {
@@ -396,9 +396,9 @@
       "voice_first_try": "Voice First-Try Rate",
       "voice_first_try_sub": "Base: {0} commands",
       "voice_no_data": "No voice data yet",
-      "hours_saved": "Sub-Jarvis hours saved",
+      "hours_saved": "Sub-Jarvis work hours",
       "hours_saved_sub": "Summed across all runs",
-      "conversation_hours": "Conversation hours with Jarvis",
+      "conversation_hours": "Active hours with Jarvis",
       "conversation_hours_sub": "{0} h in the last {1} days"
     },
     "activity_title": "Activity",
@@ -454,7 +454,7 @@
         "unit": "Commands"
       },
       "most_hours_saved_in_a_day": {
-        "title": "Biggest time-saver day",
+        "title": "Busiest Sub-Jarvis day",
         "unit": "Hours"
       },
       "most_active_events_in_a_day": {
@@ -462,7 +462,7 @@
         "unit": "Activities"
       },
       "most_conversation_hours_in_a_day": {
-        "title": "Longest conversation day",
+        "title": "Longest active day",
         "unit": "Hours"
       }
     }
@@ -767,6 +767,21 @@
       "save": "Save name",
       "saved": "Name saved",
       "restart_required": "Restart required to take effect."
+    },
+    "system_prompt": {
+      "title": "System Prompt",
+      "description": "The instructions that define how your assistant thinks and speaks. Edit the Markdown to personalize it, or reset to the default at any time.",
+      "custom_badge": "Custom",
+      "default_badge": "Default",
+      "editor_label": "System prompt (Markdown)",
+      "placeholder": "Write your own system prompt…",
+      "chars": "{0} characters",
+      "empty_hint": "Can't be empty — use Reset to restore the default.",
+      "save": "Save prompt",
+      "saved": "System prompt saved",
+      "reset": "Reset to default",
+      "reset_done": "Reset to the default system prompt",
+      "applies_next_turn": "Applies on your assistant's next message — no restart needed."
     },
     "hotkey": {
       "title": "Push-to-Talk Hotkey",

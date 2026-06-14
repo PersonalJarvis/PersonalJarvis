@@ -90,3 +90,110 @@ def load_persona_prompt() -> str:
 def invalidate_cache() -> None:
     """Cache invalidieren — für Tests oder Hot-Reload nach MD-Edit."""
     load_persona_prompt.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# Custom (user-editable) system prompt override.
+#
+# The user can replace the packaged JARVIS persona with their own Markdown from
+# the Settings UI and reset back to the shipped default with one click. The
+# override is a sidecar file (``data/custom_system_prompt.md``); the packaged
+# ``JARVIS_PERSONA.md`` is never mutated, so "reset to default" is just a delete
+# and the default is always recoverable.
+#
+# Unlike the default block (cached for the process lifetime above), the override
+# is read FRESH on every call so an edit takes effect on the next turn without a
+# restart — ``_build_system_prompt`` reassembles the prompt each turn anyway.
+# ---------------------------------------------------------------------------
+
+_CUSTOM_PROMPT_FILENAME = "custom_system_prompt.md"
+
+
+def custom_prompt_path() -> Path:
+    """Path to the user's custom system-prompt override file.
+
+    Lives under the canonical ``DATA_DIR`` (alongside core memory) so it is
+    user-writable, git-ignored, and portable to a headless VPS. Resolved at call
+    time from ``jarvis.core.config.DATA_DIR`` so tests can redirect it.
+    """
+    from jarvis.core import config as core_config
+
+    return core_config.DATA_DIR / _CUSTOM_PROMPT_FILENAME
+
+
+def read_custom_prompt() -> str | None:
+    """Return the stored custom prompt, or ``None`` when there is no usable one.
+
+    A missing file, an unreadable file, or a whitespace-only file all count as
+    "no custom prompt" — the caller falls back to the packaged default. The
+    returned text is stripped of surrounding whitespace.
+    """
+    path = custom_prompt_path()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        log.warning("custom_system_prompt.md not readable (%s) — using default.", exc)
+        return None
+    text = text.strip()
+    return text or None
+
+
+def has_custom_prompt() -> bool:
+    """True when a non-empty custom prompt override is in effect."""
+    return read_custom_prompt() is not None
+
+
+def default_persona_prompt() -> str:
+    """The packaged default persona block (from ``JARVIS_PERSONA.md``)."""
+    return load_persona_prompt()
+
+
+def load_effective_persona_prompt() -> str:
+    """The persona block the brain should use: custom override if set, else default."""
+    custom = read_custom_prompt()
+    if custom is not None:
+        return custom
+    return default_persona_prompt()
+
+
+def save_custom_prompt(text: str) -> None:
+    """Persist a custom system prompt atomically (tempfile + ``os.replace``).
+
+    Written UTF-8 without a BOM (AP-7: a BOM breaks downstream readers). The
+    text is stripped of surrounding whitespace before writing.
+    """
+    import os
+    import tempfile
+
+    body = (text or "").strip()
+    path = custom_prompt_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=".custom_system_prompt.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(body)
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+def reset_custom_prompt() -> bool:
+    """Delete the custom override so the brain reverts to the packaged default.
+
+    Returns True when a file was removed, False when there was nothing to remove
+    (idempotent — a double reset is not an error).
+    """
+    path = custom_prompt_path()
+    try:
+        path.unlink()
+        return True
+    except FileNotFoundError:
+        return False

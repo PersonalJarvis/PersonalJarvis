@@ -229,6 +229,74 @@ _OPEN_INSTRUCTIONAL_RE = re.compile(
     r"^\s*(?:wie|how|was|what|warum|why|wieso|weshalb)\b", re.IGNORECASE
 )
 
+# ---------------------------------------------------------------------------
+# Browser+URL fast-path (2026-06-10 latency collapse, Task 2).
+#
+# "oeffne chrome und gehe auf x.com" is ONE deterministic argv launch —
+# browsers accept a URL argument on win/mac/linux, and open_app already
+# whitelists http(s):// targets and forwards ``arguments``. Without this
+# branch the compound regex routed the goal into the vision-LLM loop, which
+# took ~3 minutes live (log 2026-06-10 20:46) for what is a 1-second launch.
+# Both regexes are end-anchored: a site followed by MORE work ("… und poste
+# einen tweet") must keep the computer-use loop, which has to act on the page.
+# ---------------------------------------------------------------------------
+_BROWSER_TOKENS = (
+    "chrome", "firefox", "edge", "brave", "opera", "safari", "chromium",
+    "vivaldi",
+)
+#: A bare domain or URL ("x.com", "https://github.com/foo"). Requires a dot +
+#: TLD-like tail so "geh auf nummer sicher" never matches.
+_SITE_PATTERN = r"(?P<site>(?:https?://)?[\w-]+(?:\.[\w-]+)+(?:/\S*)?)"
+_GOTO_VERBS = (
+    r"(?:geh(?:e|st)?\s+(?:auf|zu|nach)|navigiere?\s+(?:zu|auf|nach)"
+    r"|go\s+to|navigate\s+to|oeffne|open)"
+)
+_OPEN_BROWSER_GOTO_RE = re.compile(
+    r"^(?:hey\s+)?(?:jarvis[,\s]+)?(?:oeffne|starte|open|start|launch)\b[^.!?]*?"
+    r"\b(?P<app>" + "|".join(_BROWSER_TOKENS) + r")\b.*?\b"
+    + _GOTO_VERBS + r"\s+" + _SITE_PATTERN + r"\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+_BARE_GOTO_RE = re.compile(
+    r"^(?:hey\s+)?(?:jarvis[,\s]+)?" + _GOTO_VERBS + r"\s+" + _SITE_PATTERN
+    + r"\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _site_to_url(site: str) -> str:
+    return site if site.startswith(("http://", "https://")) else f"https://{site}"
+
+
+def _match_browser_url_fast_path(normalized: str) -> LocalActionPlan | None:
+    """Deterministic browser+URL launch, or None to fall through."""
+    if _OPEN_NEGATION_RE.search(normalized):
+        return None
+    if _OPEN_INSTRUCTIONAL_RE.search(normalized):
+        return None
+    m = _OPEN_BROWSER_GOTO_RE.match(normalized)
+    if m:
+        return LocalActionPlan(
+            mode=LocalActionMode.DIRECT,
+            tool_calls=(LocalToolCall(
+                name="open_app",
+                args={
+                    "app_name": m.group("app").lower(),
+                    "arguments": _site_to_url(m.group("site")),
+                },
+            ),),
+        )
+    m = _BARE_GOTO_RE.match(normalized)
+    if m:
+        return LocalActionPlan(
+            mode=LocalActionMode.DIRECT,
+            tool_calls=(LocalToolCall(
+                name="open_app",
+                args={"app_name": _site_to_url(m.group("site"))},
+            ),),
+        )
+    return None
+
 
 def is_open_app_intent(text: str) -> bool:
     """True for a request to OPEN / LAUNCH an application or window on the
@@ -592,6 +660,13 @@ def match_local_action(
     direct = _match_direct_open_app(normalized)
     if direct is not None:
         return direct
+
+    # Browser+URL goals are a single argv launch — checked BEFORE the
+    # visual-target / desktop-control branches, which would otherwise send
+    # them into the multi-minute vision loop (2026-06-10 latency collapse).
+    browser_url = _match_browser_url_fast_path(normalized)
+    if browser_url is not None:
+        return browser_url
 
     if _matches_visual_target(normalized):
         return LocalActionPlan(

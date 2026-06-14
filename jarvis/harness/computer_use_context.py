@@ -42,6 +42,12 @@ class ComputerUseContext:
     plan_model_override: str | None = None
     verify_after_each_step: bool = True
     max_replans: int = 2                    # from ADR-0008; configurable
+    # Spoken per-step milestones ("Schritt N von M erledigt."). OFF by default
+    # (2026-06-10): the counter counts successful ACTIONS, not verified plan
+    # steps, so it inflated to "6 von 6 erledigt" on a mission that then kept
+    # running and failed — spoken misinformation. Opt back in via
+    # ``[computer_use].announce_progress``.
+    announce_progress: bool = False
     # Wave 3 (2026-05-29): optional native Gemini computer_use engine
     # (jarvis.harness.native_computer_use.GeminiNativeCU) or None. When set,
     # the loop tries it for the per-step action decision and falls back to the
@@ -103,6 +109,29 @@ def cancel_active_cu(reason: str = "voice_hangup") -> bool:
         return False
 
 
+def cu_mission_active() -> bool:
+    """True while a Computer-Use mission is running (token registered and not
+    cancelled).
+
+    The voice pipeline polls this in its idle-timeout branch and in the
+    single-turn hangup decision so the session stays open while the agent is
+    still working (live bug 2026-06-10: the idle timeout fired 40 s into a
+    running CU mission — the user naturally says nothing while watching the
+    agent — closing the session/orb while the mission kept clicking invisibly
+    for two more minutes). A CANCELLED token does not count: the hangup that
+    cancelled it wants the session closed. Bounded: the harness clears the
+    token in its ``finally`` and every mission has a hard deadline, so this
+    can never wedge the session open forever. Never raises.
+    """
+    tok = _ACTIVE_CU_TOKEN
+    if tok is None:
+        return False
+    try:
+        return not bool(tok.is_cancelled())
+    except Exception:  # noqa: BLE001 — unknown token shape: assume live
+        return True
+
+
 def cu_recently_cancelled() -> bool:
     """True if a voice hangup fired within the suppression window -- a CU
     mission starting now should abort (the user just hung up on it)."""
@@ -135,6 +164,7 @@ _RELOADABLE_FIELDS: tuple[str, ...] = (
     "per_step_timeout_s",
     "max_replans",
     "verify_after_each_step",
+    "announce_progress",
 )
 _subscribed_bus_id: int | None = None
 
