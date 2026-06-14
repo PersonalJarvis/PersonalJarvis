@@ -76,6 +76,20 @@ def test_auto_directive_mirrors_user_language() -> None:
     assert "MANDATORY" not in d
 
 
+def test_auto_directive_forbids_defaulting_to_german() -> None:
+    """Auto mode must not let the German-heavy prompt pull replies to German.
+
+    The whole system prompt above this directive is German; a soft "please
+    mirror" line let the model anchor to German on clean English input. The
+    directive must explicitly forbid defaulting to the prompt language while
+    staying a soft mirror (no hard pin) so it remains byte-stable across turns.
+    """
+    d = _manager("auto")._reply_language_directive()
+    assert "default" in d.lower()
+    assert "English in English" in d  # the explicit per-language mirror rule
+    assert "MANDATORY" not in d  # still not a hard pin (cache-stable contract)
+
+
 # ---------------------------------------------------- system-prompt injection
 
 

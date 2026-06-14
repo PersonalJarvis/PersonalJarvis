@@ -12,6 +12,7 @@ import { OverlayTaskbarGroup } from "@/views/settings/OverlayTaskbarGroup";
 import { LanguagesGroup } from "@/views/settings/LanguagesGroup";
 import { AppSettingsGroup } from "@/views/settings/AppSettingsGroup";
 import { JarvisApiGroup } from "@/views/settings/JarvisApiGroup";
+import { SystemPromptGroup } from "@/views/settings/SystemPromptGroup";
 import { useWakeWord, type WakeWordSaveResult } from "@/hooks/useWakeWord";
 import {
   useKeybinds,
@@ -64,6 +65,7 @@ export function SettingsView() {
         <AppSettingsGroup />
         <JarvisApiGroup />
         <AssistantNamePanel />
+        <SystemPromptGroup />
         <WakeWordPanel />
         <KeybindsPanel />
 

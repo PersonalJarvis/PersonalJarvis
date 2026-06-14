@@ -51,6 +51,7 @@ from jarvis.core.protocols import (
     ImageBlock,
     Tool,
 )
+from jarvis.core.turn_language import detect_text_language, resolve_turn_language
 from jarvis.memory import CoreMemory, PersonStore, RecallStore, Soul, UserProfile
 from jarvis.memory.curator import Curator
 from jarvis.safety.tool_executor import ToolExecutor
@@ -69,7 +70,7 @@ from .local_action_gate import (
 from .local_action_gate import _normalize as _gate_normalize
 from .mission_command_gate import match_mission_command
 from .assistant_name import DEFAULT_ASSISTANT_NAME, resolve_assistant_name
-from .persona_loader import load_persona_prompt
+from .persona_loader import load_effective_persona_prompt
 from .provider_registry import BrainProviderRegistry
 from .rate_limit_tracker import RateLimitTracker
 from .streaming import aggregate
@@ -210,9 +211,11 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
     },
     "deep": {
         # Frontier 2026-Q2 — deep brain (user mandate 2026-04-29:
-        # frontier everywhere). 2026-05-28: Opus 4.7 -> 4.8 (claude-opus-4-8
-        # is the current Anthropic frontier; 4.7 is superseded). Stable
-        # alias, no dated snapshot so the ID does not rotate per release.
+        # frontier everywhere). 2026-06-14: switched from claude-fable-5 to
+        # claude-opus-4-8 — fable-5 is approved-access-only and the Claude Max
+        # subscription cannot reach it ("Claude Fable 5 is currently
+        # unavailable"); this deep tier calls the Brain API directly and has no
+        # model-unavailable retry, so the pinned model must be one we can reach.
         "claude-api": "claude-opus-4-8",
         "gemini": "gemini-3.1-pro-preview",
         "openai": "gpt-5.5-pro",
@@ -516,6 +519,60 @@ def _looks_like_tool_use_leak(text: str) -> bool:
     return s.startswith("[") or s.startswith("{")
 
 
+def _render_recovered_tool_output(output: Any) -> str:
+    """Speakable plain-text rendering of a recovered tool's output.
+
+    Why this exists (live repro 2026-06-14, voice "Was hältst du von exp.com?"):
+    a *read* tool such as ``search_web`` returns STRUCTURED data
+    (``{"query": …, "results": [{"title", "snippet", …}]}``), not a spoken
+    sentence. A properly-invoked tool call re-injects that data for a follow-up
+    brain turn that phrases it; the leaked-recovery shortcut
+    (:meth:`BrainManager._recover_leaked_tool`) has no such turn, so it used to
+    return ``str(result.output)`` — a ``{``-prefixed Python repr. The streaming
+    guard :func:`_looks_like_tool_use_leak` then mistook that ANSWER for ANOTHER
+    leaked tool_use block, dropped it, and the user heard the canned
+    "Ich habe die Aktion erkannt, konnte sie aber nicht ausführen." even though
+    the search had succeeded.
+
+    This renders structured output to readable text that never begins with
+    ``{``/``[``. An empty return means "nothing speakable" — the caller then
+    supplies a localized 'nothing found' fallback (never a repr, never the
+    failure phrase).
+    """
+    if output is None:
+        return ""
+    if isinstance(output, str):
+        s = output.strip()
+        return "" if _looks_like_tool_use_leak(s) else s
+    if isinstance(output, dict):
+        results = output.get("results")
+        if isinstance(results, list):
+            parts: list[str] = []
+            for item in results:
+                if not isinstance(item, dict):
+                    continue
+                title = str(item.get("title") or "").strip()
+                snippet = str(item.get("snippet") or "").strip()
+                if snippet and title and title.lower() not in snippet.lower():
+                    parts.append(f"{title}: {snippet}")
+                else:
+                    parts.append(snippet or title)
+            joined = " ".join(p for p in parts if p).strip()
+            return joined[:600]
+        # Other structured tools: surface the first human-readable text field,
+        # never the dict repr.
+        for key in ("text", "answer", "summary", "message", "content", "result"):
+            val = output.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()[:600]
+        return ""
+    if isinstance(output, (list, tuple)):
+        joined = " ".join(str(x).strip() for x in output if str(x).strip()).strip()
+        return "" if _looks_like_tool_use_leak(joined) else joined[:600]
+    text = str(output).strip()
+    return "" if _looks_like_tool_use_leak(text) else text
+
+
 def _extract_leaked_tool_call(text: str) -> tuple[str, dict[str, Any]] | None:
     """Return ``(tool_name, input_dict)`` of ANY leaked tool_use block, else None.
 
@@ -768,6 +825,11 @@ class BrainManager:
         # Lazily compiled from self._config.brain.routing.
         self._routing_patterns: tuple[
             re.Pattern[str], re.Pattern[str], re.Pattern[str]
+        ] | None = None
+        # Heavy-research force-spawn patterns (verb + heaviness-marker), lazily
+        # compiled from brain.routing.heavy_research_*. Live bug 2026-06-14.
+        self._heavy_research_patterns: tuple[
+            re.Pattern[str], re.Pattern[str]
         ] | None = None
         # User-Mandate 2026-05-14: strict-mode trigger-phrase regex
         # (compiled from `brain.routing.force_spawn_phrases`). Cached so
@@ -1116,12 +1178,40 @@ class BrainManager:
                 f"unchanged in their original form — never translate them. Keep the "
                 f"reply natural and fluent in {name}."
             )
-        # auto: mirror whatever the user used.
+        # auto: mirror whatever the user used. The system prompt above is
+        # almost entirely German; a soft "please mirror" line let the model
+        # anchor to German on clean English input (live bug 2026-06-14: an
+        # English travel question answered in German). The explicit
+        # "do NOT default to German" clause counters that pull. Kept a soft
+        # mirror (no hard "MANDATORY" pin) so this block stays byte-stable
+        # across turns and prompt-cache-friendly.
         return (
-            "REPLY LANGUAGE: Reply in the same language the user writes or speaks "
-            "in — auto-detect German, English or Spanish and mirror it. Keep proper "
-            "nouns and technical identifiers in their original form."
+            "REPLY LANGUAGE: Reply in the SAME language as the user's latest "
+            "message — detect it fresh each turn and mirror it: English in "
+            "English, German in German, Spanish in Spanish. Do NOT default to "
+            "German just because the rest of this prompt is German; the user's "
+            "language always wins. Keep proper nouns, brand / product names and "
+            "technical identifiers in their original form — never translate them."
         )
+
+    def _action_failed_phrase(self, user_text: str) -> str:
+        """Localized leak-recovery fallback (live bug 2026-06-10 23:12).
+
+        Spoken when a provider leaked a tool_use block as text and the
+        recovery produced no speakable final. Was a hardcoded German string —
+        an English turn ("What's weather like tomorrow?") was answered in
+        German. A pinned reply language wins; ``auto`` mirrors the user's
+        text; ambiguous text keeps the historical German default.
+
+        ``generate()`` only ever receives ``user_text`` (the pipeline resolves
+        the STT tag separately), so auto-mode detection is text-only — hence
+        ``"unknown"`` as the tag. See ``tool_use_loop._localized_phrase`` for
+        the same contract.
+        """
+        lang = self._reply_language
+        if lang not in _ACTION_FAILED_PHRASES:
+            lang = resolve_turn_language("unknown", user_text, default="de")
+        return _ACTION_FAILED_PHRASES.get(lang, _ACTION_FAILED_PHRASES["de"])
 
     def _build_system_prompt(self) -> str:
         """Builds the system prompt with OpenClaw-style workspace injection.
@@ -1159,8 +1249,11 @@ class BrainManager:
 
         # Mandate phase 2 (reactivated 2026-04-28): persona block from
         # JARVIS_PERSONA.md incl. ECHO-PARAPHRASE section and hangup contract.
-        # Loader returns empty string when file is missing — no init crash.
-        persona_block = load_persona_prompt()
+        # The "effective" loader returns the user's custom system prompt when one
+        # is set in Settings (data/custom_system_prompt.md), else the packaged
+        # default. Read fresh each turn, so an edit/reset applies on the next turn
+        # without a restart. Empty string when nothing is available — no crash.
+        persona_block = load_effective_persona_prompt()
         if persona_block:
             parts.append(persona_block)
 
@@ -1634,6 +1727,58 @@ class BrainManager:
             )
         return self._routing_patterns
 
+    def _get_heavy_research_patterns(
+        self,
+    ) -> tuple[re.Pattern[str], re.Pattern[str]]:
+        """Lazily compile the (verb, heaviness-marker) regexes for heavy-research
+        force-spawn from BrainRoutingConfig. Verbs use ``\\b<stem>\\w*\\b`` so
+        conjugations match; markers are word/phrase boundaries."""
+        if self._heavy_research_patterns is None:
+            cfg = self._config.brain.routing
+            verbs = list(getattr(cfg, "heavy_research_verbs", []) or [])
+            markers = list(getattr(cfg, "heavy_research_markers", []) or [])
+            self._heavy_research_patterns = (
+                _build_verb_pattern(verbs),
+                _build_marker_pattern(markers),
+            )
+        return self._heavy_research_patterns
+
+    def _is_heavy_research(self, user_text: str) -> bool:
+        """True iff the utterance is HEAVY multi-step research/analysis that must
+        be OFFLOADED to a background mission, not answered inline on the deep
+        brain (where it blows the ~20 s voice budget and is beheaded — live bug
+        2026-06-14, the Berlin→Melbourne turn).
+
+        Conjunctive gate (precision over recall): a research/analysis VERB must
+        be present AND a heaviness signal — a horizon/multi-step/requirements
+        marker, OR >= ``heavy_research_min_verbs_multiclause`` verb matches
+        (multi-clause), OR length >= ``heavy_research_min_chars`` with a verb.
+        Length alone never spawns, so a quick "recherchier das mal kurz" stays
+        inline. Pure regex (AP-11 safe, cross-platform). The caller
+        (``_should_force_spawn``, strict mode) runs this AFTER every stand-down
+        guard, so skills / open-app / instructional / nav / pointer keep
+        precedence.
+        """
+        cfg = self._config.brain.routing
+        if not getattr(cfg, "heavy_research_enabled", True):
+            return False
+        t = (user_text or "").strip()
+        if not t:
+            return False
+        verb_re, marker_re = self._get_heavy_research_patterns()
+        verbs_found = verb_re.findall(t)
+        if not verbs_found:
+            return False  # (A) no research/analysis verb → never heavy research
+        min_verbs = max(
+            2, int(getattr(cfg, "heavy_research_min_verbs_multiclause", 2))
+        )
+        if len(verbs_found) >= min_verbs:
+            return True  # multi-clause "recherchier X und analysier Y"
+        if marker_re.search(t):
+            return True  # verb + horizon / multi-step / requirements marker
+        min_chars = int(getattr(cfg, "heavy_research_min_chars", 120))
+        return len(t) >= min_chars  # verb + sheer length
+
     def _get_force_spawn_pattern(self) -> re.Pattern[str]:
         """Compile the strict-mode trigger-phrase regex (User-Mandate 2026-05-14).
 
@@ -1821,11 +1966,20 @@ class BrainManager:
         smalltalk, the action tools were hidden, and the brain spoke the
         anti-silence refusal "Das kann ich gerade nicht ausführen — mir fehlt
         dafür das passende Werkzeug." A greeting/politeness prefix in front of a
-        REAL command is NOT smalltalk: strip the leading greeting run and, if
-        what remains is itself a non-smalltalk action request, classify the turn
-        as a command (return False) so the tools stay visible and force-spawn
-        can fire. Standalone smalltalk ("Hallo", "Hallo, wie geht's?") and
+        REAL request is NOT smalltalk: strip the leading greeting run and, if
+        what remains is itself non-smalltalk, classify the turn as a real
+        request (return False) so the tools stay visible and force-spawn can
+        fire. Standalone smalltalk ("Hallo", "Hallo, wie geht's?") and
         greeting-less chit-chat ("was machst du") are unaffected.
+
+        2026-06-10 23:13 recurrence (same log): "Hey, what's the weather like
+        today?" — the original guard additionally required an ACTION verb in
+        the remainder, so a greeting-prefixed information QUESTION stayed
+        smalltalk, search_web was hidden, and the brain refused with the
+        anti-silence fallback. The greeting prefix must never change the
+        classification of the remainder: a non-smalltalk remainder keeps the
+        turn a real request, action verb or not (exactly as the same words
+        without the greeting would classify).
         """
         t = (user_text or "").strip()
         if not t:
@@ -1838,26 +1992,20 @@ class BrainManager:
             stripped                                # something survives the greeting
             and stripped != t                       # a greeting prefix was removed
             and not smalltalk_re.search(stripped)   # the remainder isn't smalltalk too
-            and self._remainder_has_action(stripped)  # the remainder is a real command
         ):
             return False
         return True
 
-    def _remainder_has_action(self, text: str) -> bool:
-        """True when *text* (a greeting-stripped remainder) is a real action
-        command — an action verb, an external-system marker, or a desktop-control
-        phrase. Pure regex, no LLM / no registry IO (AP-9/AP-11)."""
-        verb_re, marker_re, _ = self._get_routing_patterns()
-        if verb_re.search(text) or marker_re.search(text):
-            return True
-        return _looks_like_desktop_control(_gate_normalize(text))
-
     # Read-only tools that stay visible even on a smalltalk turn. The toolless
     # smalltalk path (2026-05-01) exists to stop the LLM hallucinating a
     # spawn_worker on chit-chat — that risk is the spawn/action tools, NOT the
-    # read-only screenshot tool. Keeping `screenshot` visible lets the brain
-    # look at the screen on demand (Wave 2) even on a greeting-prefixed turn,
-    # e.g. "Hallo, lies mir vor was oben links steht" (live failure 2026-05-31).
+    # read-only screenshot tool. Keeping `screenshot` here lets the brain look
+    # at the screen on demand (Wave 2) even on a greeting-prefixed turn, e.g.
+    # "Hallo, lies mir vor was oben links steht" (live failure 2026-05-31).
+    # NOTE: `_gate_screen_tool` runs AFTER this override and removes `screenshot`
+    # again unless the utterance carries a visual-reference marker (2026-06-14
+    # screen-narration guard) — the 2026-05-31 case survives because "lies" /
+    # "oben links" / "steht" are markers, so it still reaches the tool.
     _SMALLTALK_SAFE_TOOLS: frozenset[str] = frozenset({"screenshot"})
 
     # Skill-aware routing guard (AD-S3, 2026-06-09 rebuild): the Skill matched
@@ -2134,6 +2282,41 @@ class BrainManager:
             if n in allowed
         }
 
+    def _gate_screen_tool(
+        self,
+        tools: dict[str, "Tool"],
+        *,
+        user_text: str,
+        has_image: bool,
+        pointing_turn: bool = False,
+    ) -> dict[str, "Tool"]:
+        """Drop the on-demand ``screenshot`` tool on a turn that is not about the screen.
+
+        The validation the screen-narration bug needed (live 2026-06-14): a
+        small-talk / knowledge / cut-off fragment with no screen reference
+        ("Kannst du mir sagen, was genau...") must not be able to invoke the
+        screenshot function and then narrate the screen. Confirm the utterance
+        is actually screen-related BEFORE offering the tool.
+
+        The tool stays available when an image is already attached, on a pointer
+        turn (which is by definition about the screen), or when the utterance
+        carries a visual-reference marker — the same ``should_attach_screenshot``
+        signal that gates passive image attach, so the marker-bearing screen
+        questions of 2026-05-31 ("lies mir vor was oben links steht") keep it.
+        Tradeoff: a genuinely screen-related question that matches no marker
+        loses the auto-screenshot fallback; the prompt then steers the brain to
+        say it cannot see the screen or ask, rather than fabricate one.
+        """
+        if not isinstance(tools, dict) or "screenshot" not in tools:
+            return tools
+        if pointing_turn or has_image:
+            return tools
+        from jarvis.brain.vision_gate import should_attach_screenshot
+
+        if should_attach_screenshot(user_text):
+            return tools
+        return {n: t for n, t in tools.items() if n != "screenshot"}
+
     def _apply_plugin_relevance(
         self, user_text: str, tools: dict[str, "Tool"]
     ) -> dict[str, "Tool"]:
@@ -2363,6 +2546,13 @@ class BrainManager:
             # (mail/calendar/Spotify/social/delivery) is generic sub-agent work.
             # Live forensic 2026-06-01: a sub-agent task was refused, then only
             # spawned once the user said "Subagent" explicitly.
+            # Heavy multi-step research/analysis must ALSO offload to a
+            # background mission rather than block/behead the voice turn on the
+            # inline deep brain (live bug 2026-06-14, the Berlin→Melbourne turn).
+            # Checked here — after every stand-down guard above — so skills /
+            # open-app / instructional / nav / pointer keep precedence.
+            if self._is_heavy_research(t):
+                return True
             return self._is_generic_subagent_work(t)
         if verb_re.search(t):
             return True
@@ -2890,7 +3080,22 @@ class BrainManager:
             return result.error or (
                 f"Die Aktion '{name}' konnte nicht ausgefuehrt werden."
             )
-        return str(result.output or "")
+        # A read tool (search_web, wiki-recall, …) returns STRUCTURED data, not
+        # a spoken sentence. Render it to speakable text — ``str(result.output)``
+        # on a dict put a ``{``-prefixed repr on the wire that the streaming
+        # guard dropped as a "leak", so a successful search dead-ended in the
+        # canned action-failed phrase (live repro 2026-06-14 "Was hältst du von
+        # exp.com?"). See :func:`_render_recovered_tool_output`.
+        spoken = _render_recovered_tool_output(result.output)
+        if spoken:
+            return spoken
+        # Tool ran but produced nothing speakable (e.g. an empty search). Give a
+        # real spoken sentence, never silence and never the failure phrase.
+        return (
+            "Dazu habe ich nichts gefunden."  # i18n-allow: spoken German TTS
+            if _looks_german(user_text)
+            else "I couldn't find anything on that."
+        )
 
     def _cancel_all_background_tasks(self) -> int:
         """Cancels all running background OpenClaw tasks.
@@ -3472,6 +3677,18 @@ class BrainManager:
                 _turn_tools = {
                     k: v for k, v in _turn_tools.items() if k != "inspect-pointer"
                 }
+            # Screen-relevance gate (2026-06-14): the on-demand ``screenshot``
+            # tool is only in scope when the utterance refers to the screen (or
+            # an image is attached / it is a pointer turn). On a plain
+            # conversation or cut-off small-talk fragment the brain must not be
+            # able to reach for — and then narrate — the screen.
+            if isinstance(_turn_tools, dict):
+                _turn_tools = self._gate_screen_tool(
+                    _turn_tools,
+                    user_text=user_text,
+                    has_image=bool(images),
+                    pointing_turn=pointing_turn,
+                )
             disp = self._build_dispatcher(brain, tools_override=_turn_tools)
             try:
                 # CostMeter: start per-trace tracking (idempotent if already started).
@@ -3486,6 +3703,7 @@ class BrainManager:
                     text_consumer=text_consumer,
                     on_progress=on_progress,
                     turn_context=turn_context,
+                    reply_language=self._reply_language,
                 )
                 # Post-call cost hook: aggregated usage → meter.
                 # The meter cancels on overrun via CancelToken (see ADR-0006);
@@ -3898,7 +4116,7 @@ class BrainManager:
                 if final and not _looks_like_tool_use_leak(final):
                     yield final
                 elif leaked:
-                    yield "Ich habe die Aktion erkannt, konnte sie aber nicht ausfuehren."
+                    yield self._action_failed_phrase(user_text)
         finally:
             if not task.done():
                 task.cancel()
@@ -4222,13 +4440,31 @@ def _is_rate_limit_exc(exc: Exception) -> bool:
     return False
 
 
+# Leak-recovery fallback variants — see BrainManager._action_failed_phrase.
+_ACTION_FAILED_PHRASES: dict[str, str] = {
+    "de": (
+        "Ich habe die Aktion erkannt, "  # i18n-allow: spoken German TTS
+        "konnte sie aber nicht ausfuehren."  # i18n-allow: spoken German TTS
+    ),
+    "en": "I recognized the action but couldn't execute it.",
+    "es": "Reconocí la acción, pero no pude ejecutarla.",
+}
+
+
 def _looks_german(text: str) -> bool:
-    t = text.lower()
-    hints_de = ("ich", "nicht", "das", "ist", "und", "oder", "bitte", "entschuldigung", "ja", "nein")
-    hints_en = ("the", "and", "is", "are", "hello", "hi", "yes", "no")
-    score_de = sum(1 for h in hints_de if f" {h} " in f" {t} ")
-    score_en = sum(1 for h in hints_en if f" {h} " in f" {t} ")
-    return score_de >= score_en
+    """True when *text* is clearly German.
+
+    Delegates to the canonical ``detect_text_language`` (the single source of
+    truth the pipeline uses for the turn language) instead of a private
+    stop-word list. The old heuristic compared two tiny hint lists with
+    ``score_de >= score_en``, so any text with no recognised stop-word in
+    either list scored 0-0 and was declared German. A clean English sentence
+    ("Could you please tell me which city ... in Australia?") therefore tied to
+    German and was acknowledged / labelled German (live bug 2026-06-14). The
+    canonical detector returns ``"unknown"`` on ambiguity, so English, Spanish
+    and zero-signal text are now correctly NOT German.
+    """
+    return detect_text_language(text) == "de"
 
 
 def _is_missing_key_exc(msg: str) -> bool:

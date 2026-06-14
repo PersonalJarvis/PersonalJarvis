@@ -56,6 +56,11 @@ class ContinuationBuffer:
         self._max_chain = int(max_chain)
         self._fragments: list[str] = []
         self._deadline: float | None = None
+        # Reason of the most recently buffered fragment (one of the
+        # ``completion.REASON_*`` constants), or ``""`` when nothing is held.
+        # The pipeline reads this right after ``process()`` returns ``None`` to
+        # scope the clarifying question to trail-offs only (2026-06-14).
+        self._last_reason: str = ""
 
     # ------------------------------------------------------------------ #
     # Introspection                                                      #
@@ -64,6 +69,16 @@ class ContinuationBuffer:
     def has_pending(self) -> bool:
         """``True`` iff a fragment is currently buffered."""
         return bool(self._fragments)
+
+    @property
+    def last_reason(self) -> str:
+        """Reason the currently-held fragment was buffered (``""`` if none).
+
+        One of the ``completion.REASON_*`` constants. Lets the pipeline ask a
+        clarifying question for trail-offs (``REASON_TRAILING_ELLIPSIS``) while
+        keeping every other incomplete reason on the silent-hold default.
+        """
+        return self._last_reason if self._fragments else ""
 
     def discard(self) -> None:
         """Drop the buffer unconditionally. Called by hangup / cancel paths."""
@@ -74,6 +89,7 @@ class ContinuationBuffer:
             )
         self._fragments.clear()
         self._deadline = None
+        self._last_reason = ""
 
     # ------------------------------------------------------------------ #
     # Main API                                                           #
@@ -108,6 +124,7 @@ class ContinuationBuffer:
             )
             self._fragments.clear()
             self._deadline = None
+            self._last_reason = ""
 
         # 2. Classify. Fail open: any exception treats the utterance as COMPLETE
         #    (AD-OE6 — we MUST NOT silently swallow the user on a bug here).
@@ -123,6 +140,7 @@ class ContinuationBuffer:
         if verdict is not None:
             # 3a. INCOMPLETE — buffer this fragment.
             self._fragments.append(text)
+            self._last_reason = verdict.reason
             chain_len = len(self._fragments)
             if chain_len >= self._max_chain:
                 # Bounded buffering: flush rather than buffer forever.
@@ -135,6 +153,7 @@ class ContinuationBuffer:
                 )
                 self._fragments.clear()
                 self._deadline = None
+                self._last_reason = ""
                 return joined
             self._deadline = now + self._timeout_s
             logger.info(
@@ -157,6 +176,7 @@ class ContinuationBuffer:
             )
             self._fragments.clear()
             self._deadline = None
+            self._last_reason = ""
             return joined
         return text
 

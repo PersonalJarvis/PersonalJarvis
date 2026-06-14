@@ -58,6 +58,7 @@ class SileroEndpointer:
         probe_interval_ms: int = 1000,
         probe_min_active_ms: int = 1500,
         probe_tail_ms: int = 2000,
+        tail_loud_window_ms: int = 320,
     ) -> None:
         self._threshold = speech_threshold
         self._silence_frames = max(1, silence_ms // 32)
@@ -88,6 +89,9 @@ class SileroEndpointer:
         self._probe_interval_frames = max(1, probe_interval_ms // 32)
         self._probe_min_active_frames = max(1, probe_min_active_ms // 32)
         self._probe_tail_frames = max(1, probe_tail_ms // 32)
+        # Window (much shorter than the transcription tail) over which the
+        # probe's loud/quiet discriminator is measured — see the probe block.
+        self._tail_loud_window_frames = max(1, tail_loud_window_ms // 32)
         self._endpoint_requested = False
 
     def request_endpoint(self) -> None:
@@ -269,22 +273,30 @@ class SileroEndpointer:
                     ):
                         tail = active_frames[-self._probe_tail_frames:]
                         tail_arr = np.concatenate(tail)
-                        # Tell the probe whether the tail carries speaker-bleed
-                        # energy, reusing the per-frame relative-silence
-                        # calibration. A tail at/below ``peak * ratio`` is a
-                        # genuine (quiet) pause: the relative-silence gate is
-                        # already accumulating ``silent_run``, so the silence
-                        # endpoint will own it — the probe must NOT force one and
-                        # cut the user off mid-thought. Only a loud tail (music /
-                        # TV bleed, where Silero never yields silence) needs the
-                        # probe to force the endpoint. The two thresholds are the
-                        # same on purpose: tail_loud=False <=> silence will fire.
-                        tail_rms = float(np.sqrt(np.mean(np.square(tail_arr))))
+                        # Tell the probe whether the tail is loud (speaker bleed)
+                        # or a quiet thinking pause, reusing the per-frame
+                        # relative-silence calibration. Measure only the most
+                        # RECENT ``tail_loud_window_frames`` of audio, NOT the
+                        # whole ``probe_tail_ms`` tail: the tail is dominated by
+                        # the speech preceding a pause, so a full-tail RMS stays
+                        # "loud" right through the pause and the probe cuts the
+                        # user off mid-thought ("no time to think"; recurred
+                        # 2026-06-14 as stt_stable endpoints at silence_ms=32..864).
+                        # A short recent window goes quiet within ~one window of
+                        # the user stopping → defer to the natural ``silence_ms``
+                        # endpoint; yet it still averages over the loud beats of
+                        # dynamic speaker bleed (music/TV with quiet dips) → force
+                        # the endpoint, since the silence endpoint never fires
+                        # there. Loud tail + empty/stable transcript = bleed;
+                        # quiet tail = pause.
+                        recent = active_frames[-self._tail_loud_window_frames:]
+                        recent_arr = np.concatenate(recent)
+                        recent_rms = float(np.sqrt(np.mean(np.square(recent_arr))))
                         relative_silence_rms = max(
                             self._min_speech_rms * 1.5,
                             peak_speech_rms * self._relative_silence_rms_ratio,
                         )
-                        tail_loud = tail_rms > relative_silence_rms
+                        tail_loud = recent_rms > relative_silence_rms
                         probe_pcm = _float32_to_int16_bytes(tail_arr)
                         self._notify(self._probe_callback, probe_pcm, tail_loud)
                         last_probe_frame = total_frames

@@ -793,6 +793,66 @@ async def put_overlay_style(body: OverlayStyleBody, request: Request) -> dict[st
     }
 
 
+# ---------------------------------------------------------------------------
+# Custom system prompt (personalize-your-assistant feature). The user can
+# replace the packaged JARVIS persona with their own Markdown and reset back to
+# the default with one click. Stored as a sidecar file (data/custom_system_prompt.md);
+# reset is a delete. No restart needed: _build_system_prompt reads the override
+# fresh each turn, so a save/reset applies on the next message.
+# ---------------------------------------------------------------------------
+
+
+class SystemPromptBody(BaseModel):
+    # The full Markdown system prompt. Whitespace-only is rejected (a blank
+    # persona would strip Jarvis of its instructions) — to clear, DELETE instead.
+    content: str = Field(..., min_length=1)
+
+
+def _system_prompt_payload() -> dict[str, object]:
+    from jarvis.brain import persona_loader
+
+    content = persona_loader.load_effective_persona_prompt()
+    return {
+        "content": content,
+        "is_custom": persona_loader.has_custom_prompt(),
+        "default": persona_loader.default_persona_prompt(),
+        "char_count": len(content),
+    }
+
+
+@router.get("/system-prompt")
+async def get_system_prompt() -> dict[str, object]:
+    """Current effective system prompt + the packaged default (for reset)."""
+    return _system_prompt_payload()
+
+
+@router.put("/system-prompt")
+async def put_system_prompt(body: SystemPromptBody) -> dict[str, object]:
+    """Save a custom system prompt. Applies on the next turn (no restart)."""
+    from jarvis.brain import persona_loader
+
+    if not body.content.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="System prompt must not be empty. Use reset to restore the default.",
+        )
+    try:
+        persona_loader.save_custom_prompt(body.content)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not save: {exc}") from exc
+
+    return {"ok": True, "restart_required": False, **_system_prompt_payload()}
+
+
+@router.delete("/system-prompt")
+async def delete_system_prompt() -> dict[str, object]:
+    """Reset to the packaged default by removing the custom override."""
+    from jarvis.brain import persona_loader
+
+    removed = persona_loader.reset_custom_prompt()
+    return {"ok": True, "removed": removed, "restart_required": False, **_system_prompt_payload()}
+
+
 @router.post("/restart-app")
 async def restart_app(request: Request) -> dict[str, object]:
     """Cleanly self-restart the desktop app.

@@ -1,8 +1,16 @@
-"""Policy-Tests fuer den Router-Delegator-Prompt.
+"""Policy tests for the router delegator prompt.
 
-Diese Tests sind KEINE LLM-Aufrufe — sie pruefen nur dass die Policy-
-Strings im SYSTEM_PROMPT sind. Echte Klassifikations-Accuracy-Tests
-gibt es in test_tier_router.py (Goldset mit 50 Utterances).
+These tests make NO LLM calls — they only pin that the policy strings are
+present in SYSTEM_PROMPT. Real classification-accuracy tests live in
+test_tier_router.py (goldset with 50 utterances).
+
+Update 2026-06-10 (user mandate): spawn_worker is reserved for GENUINELY
+HEAVY tasks. Light AND medium requests (news/knowledge/research questions,
+single reads, anything the router can finish inline with its own tools) are
+handled by the router itself — thinking a little longer is fine; a
+multi-minute worker mission for a single lookup is not. The
+on-uncertainty default flipped accordingly: try it yourself first,
+delegate only clear heavy chunks.
 """
 from __future__ import annotations
 
@@ -11,29 +19,54 @@ from jarvis.brain.router import SYSTEM_PROMPT
 
 class TestDelegatorPolicyInPrompt:
     def test_delegator_principle_present(self) -> None:
-        assert "Delegator" in SYSTEM_PROMPT
-        assert "reasonst NIE" in SYSTEM_PROMPT or "reasonst nicht lange" in SYSTEM_PROMPT.lower() or "Millisekunden" in SYSTEM_PROMPT
+        assert "Delegator" in SYSTEM_PROMPT or "Dispatcher" in SYSTEM_PROMPT
+        assert "Millisekunden" in SYSTEM_PROMPT or "reasonst nicht lange" in SYSTEM_PROMPT.lower()
 
     def test_three_categories_named(self) -> None:
         assert "TRIVIAL" in SYSTEM_PROMPT
         assert "DIRECT_ACTION" in SYSTEM_PROMPT
-        assert "SPAWN_OPENCLAW" in SYSTEM_PROMPT
+        assert "SPAWN_WORKER" in SYSTEM_PROMPT
 
-    def test_five_second_threshold_mentioned(self) -> None:
-        # Der 5-Sekunden-Heuristik sollte irgendwo referenziert sein
-        assert "5 Sekunden" in SYSTEM_PROMPT or "5 sec" in SYSTEM_PROMPT or "laenger als" in SYSTEM_PROMPT.lower()
+    def test_spawn_is_reserved_for_heavy_tasks(self) -> None:
+        """The heavy-only doctrine must be pinned verbatim (2026-06-10)."""
+        assert "NUR fuer wirklich schwere" in SYSTEM_PROMPT, (
+            "spawn_worker must be explicitly reserved for genuinely heavy "
+            "tasks — the over-spawning complaint of 2026-06-10."
+        )
 
-    def test_default_on_uncertainty_is_delegate(self) -> None:
+    def test_minutes_vs_seconds_cost_framing_present(self) -> None:
+        """The honest cost framing (worker = minutes, inline = seconds)
+        replaces the old false '5 seconds' claim that justified spawning."""
         low = SYSTEM_PROMPT.lower()
-        assert "unsicherheit" in low or "unsicher" in low
-        # und der Tenor "im Zweifel delegieren"
-        assert "delegier" in low
+        assert "minuten" in low, (
+            "prompt must state that a worker mission costs MINUTES so the "
+            "model stops treating delegation as the cheap option"
+        )
+
+    def test_default_on_uncertainty_is_self_serve(self) -> None:
+        """Flipped 2026-06-10: when unsure, try it yourself — do NOT default
+        to delegation. The old doctrine spawned a worker mission for plain
+        news questions."""
+        assert "BEI UNSICHERHEIT: DELEGIERE" not in SYSTEM_PROMPT, (
+            "the old delegate-on-uncertainty doctrine resurfaced — it made "
+            "the router spawn worker missions for simple questions"
+        )
+        assert "BEI UNSICHERHEIT: MACH ES SELBST" in SYSTEM_PROMPT
+        # The reversed doctrine keeps 'delegier' for the genuinely heavy case.
+        assert "delegier" in SYSTEM_PROMPT.lower()
+
+    def test_news_question_routed_to_search_web_not_spawn(self) -> None:
+        """The concrete 2026-06-10 complaint, pinned as a prompt example:
+        a news question is answered inline via search_web, never spawned."""
+        low = SYSTEM_PROMPT.lower()
+        assert "search_web" in low
+        assert "news" in low
 
     def test_build_trigger_words_listed(self) -> None:
-        # Wichtige Trigger-Worte die zu SPAWN fuehren muessen
+        # Heavy-task examples must keep naming the classic build verbs.
         low = SYSTEM_PROMPT.lower()
         for word in ["bau", "programmier", "refactor", "plane", "analysier"]:
-            assert word in low, f"Trigger-Wort fehlt: {word}"
+            assert word in low, f"heavy-example verb missing: {word}"
 
     def test_on_screen_belongs_to_direct_action(self) -> None:
         low = SYSTEM_PROMPT.lower()
@@ -49,13 +82,12 @@ class TestDelegatorPolicyInPrompt:
 
     def test_trivial_examples_mention_facts(self) -> None:
         low = SYSTEM_PROMPT.lower()
-        # Fakten-Fragen sollten als TRIVIAL kategorisiert sein (keine Sub-Agent)
+        # Fact questions must be categorized as TRIVIAL (no sub-agent).
         assert "einstein" in low or "hauptstadt" in low or "fakten" in low
 
     def test_forbidden_behaviors_listed(self) -> None:
         assert "VERBOTEN" in SYSTEM_PROMPT
         low = SYSTEM_PROMPT.lower()
-        # Selber komplexe Aufgabe
         assert "selber" in low or "selbst" in low
 
     def test_wellbeing_smalltalk_is_not_status_filler(self) -> None:
@@ -83,12 +115,12 @@ class TestDelegatorPolicyInPrompt:
         )
 
     def test_absolute_rules_preserved(self) -> None:
-        # Die existierenden ABSOLUTE REGELN (Anti-Halluzination) bleiben drin
+        # The existing ABSOLUTE REGELN (anti-hallucination) stay in.
         assert "ABSOLUTE REGELN" in SYSTEM_PROMPT
-        assert "Provider" in SYSTEM_PROMPT  # Anti-Provider-Switch-Regel
+        assert "Provider" in SYSTEM_PROMPT  # anti-provider-switch rule
 
     def test_argument_format_preserved(self) -> None:
-        # SPAWN_OPENCLAW-Argument-Format (action/target) bleibt dokumentiert
+        # The SPAWN_WORKER argument format (action/target) stays documented.
         assert "action" in SYSTEM_PROMPT
         assert "target" in SYSTEM_PROMPT
         assert "utterance" in SYSTEM_PROMPT

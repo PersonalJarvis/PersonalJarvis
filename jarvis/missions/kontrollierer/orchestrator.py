@@ -27,12 +27,15 @@ import logging
 import re
 import shutil
 import subprocess
+import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Final, Literal
 
 from ...core.process_utils import NO_WINDOW_CREATIONFLAGS
 from ..budget import BudgetExceeded, BudgetTracker
 from ..critic.reflections import ReflectionMemory
+from ..critic.escalation import FRONTIER_MODEL
 from ..critic.runner import MAX_CRITIC_LOOPS, CriticRunner
 from ..critic.verdict import (
     CriticSchemaInvalid,
@@ -90,16 +93,67 @@ mission header while a worker is draining. Recovery uses
 max(last_event_ts, last_heartbeat_ms) as freshness so a busy-but-silent
 worker (Opus, long tool calls, Computer-Use) is never swept as orphaned."""
 
+# Mission time-budget shape (user mandate 2026-06-10: "a task should take
+# 5-15 minutes on average and never run much past 20 — nobody waits longer,
+# but the output must stay remarkable"). Supersedes the 2026-06-09 "more
+# time" mandate that allowed 3 x 20-minute iterations (38-49-minute missions,
+# live 019eb27f/019eb288 — users gave up and restarted the app mid-run).
+#
+# The shape: iteration 0 (the main build) gets the large budget; correction
+# iterations get the short one — they refine an EXISTING workspace guided by
+# the critic's correction_instruction, they do not rebuild from scratch. A
+# worker that overruns its slice is killed-with-work-preserved and its
+# partial diff is still GRADED (never discarded), so quality control stays
+# fully active. MAX_CRITIC_LOOPS is untouched (ADR-0009); the time guard
+# below is an additional bound, not a loop-count change.
+_ITER0_WORKER_TIMEOUT_S: float = 720.0
+_CORRECTION_WORKER_TIMEOUT_S: float = 360.0
+# Soft per-task budget consulted BEFORE starting a correction iteration: when
+# elapsed + (correction slice + one critic call) would overshoot, the loop
+# ends with the existing exhausted semantics instead of overrunning the
+# 20-minute target. 1380 s = 12-min iter0 + a fast critic + one full 6-min
+# correction still fits; a second correction almost never does (by design).
+_TASK_TIME_BUDGET_S: float = 1380.0
+# One critic subprocess call (mirrors critic.runner.DEFAULT_TIMEOUT_SECONDS).
+_CRITIC_TIME_RESERVE_S: float = 240.0
+
+
+def _worker_error_is_transient(err: str) -> bool:
+    """True when a worker's terminal error is a passing condition, not a fault.
+
+    Transient errors qualify delivered work for critic grading (non-empty
+    diff) or a fresh-spawn retry (empty diff) instead of an opaque
+    ``task_error``. Two families:
+
+    - Throttling/availability: rate limits, 429, overloaded, 5xx.
+    - Subscription-window limits (live mission 019eb2fd, 2026-06-10 21:23):
+      Claude Max says "You've hit your session limit · resets 11:10pm",
+      ChatGPT/codex say "hit your usage limit" / "out of credits". The
+      worker died AFTER writing the complete deliverable and the old
+      matcher (rate-limit phrasings only) discarded it as task_error.
+      A window that resets is transient by definition.
+    """
+    if not err:
+        return False
+    err_lower = err.lower()
+    return any(
+        m in err_lower
+        for m in (
+            "rate limit", "rate_limit", "ratelimit",
+            "too many requests", "429", "overloaded",
+            "503", "service unavailable", "please try again",
+            "session limit", "usage limit", "out of credits",
+            "out_of_credits",
+        )
+    )
+
 # Mission-level wall-clock safety net. Bounds TOTAL execution time across all
 # critic iterations + the critic subprocess + decomposition — the per-iteration
-# 630s worker cap does not. Deliberately GENEROUS (worst legitimate mission seen
-# ~18 min): this catches a genuine runaway/hang, never slow-but-working code.
-# Measured AFTER the concurrency semaphore is acquired (queue wait is excluded).
-# 70 minutes — raised from 40 so the bigger per-worker cap (1200 s × up to
-# MAX_CRITIC_LOOPS=3 + critic time) fits inside the mission deadline; a complex
-# task can finish across its retries instead of being cut off (user mandate
-# 2026-06-09: "more time for complex tasks"). Still a backstop, rarely hit.
-_MISSION_DEADLINE_S: float = 4200.0
+# worker cap does not. Measured AFTER the concurrency semaphore is acquired
+# (queue wait is excluded). 25 minutes: the degressive per-iteration budgets
+# above keep the normal worst case near 20 minutes; this catches a genuine
+# runaway/hang, never slow-but-working code.
+_MISSION_DEADLINE_S: float = 1500.0
 
 
 # BUG-LIVE-05 (Recon-Agent 2, 2026-05-16): when persona files (AGENTS.md
@@ -616,6 +670,55 @@ class Kontrollierer:
         task.cancel()
         return True
 
+    async def cancel_all_running(self, *, reason: str = "app_shutdown") -> list[str]:
+        """Finalize + kill every in-flight mission (shutdown/restart path).
+
+        Live incident 2026-06-10 19:24:12 (missions 019eb27f + 019eb288):
+        the app's self-restart killed the process with two missions in
+        flight; nothing finalized them, so they lingered non-terminal until
+        the recovery re-sweep buried them 30 minutes later as opaque
+        crash_recovery / ERROR cards with zero artifacts. On shutdown each
+        tracked mission is flipped to CANCELLED FIRST (terminal wall — the
+        same protocol as the REST cancel route), then its run task is
+        cancelled and awaited briefly so the dying tasks finish their
+        teardown before the mission store closes.
+
+        Returns the mission ids that were finalized. Never raises — a
+        failing state flip is logged and the task is cancelled anyway.
+        """
+        finalized: list[str] = []
+        tasks: list[asyncio.Task[Any]] = []
+        for mission_id in list(self._running_missions.keys()):
+            task = self._running_missions.get(mission_id)
+            if task is None or task.done():
+                continue
+            try:
+                await self._manager.transition_state(
+                    mission_id,
+                    MissionState.CANCELLED,
+                    reason=reason,
+                    source_actor="kontrollierer",
+                )
+            except IllegalStateTransition:
+                # Already terminal — still cancel the zombie task below.
+                pass
+            except Exception:  # noqa: BLE001 — shutdown must never crash here
+                logger.exception(
+                    "cancel_all_running: state flip failed for %s", mission_id
+                )
+            task.cancel()
+            tasks.append(task)
+            finalized.append(mission_id)
+        if tasks:
+            with suppress(Exception):
+                await asyncio.wait(tasks, timeout=5.0)
+            logger.info(
+                "cancel_all_running: finalized %d in-flight mission(s) as "
+                "CANCELLED (%s): %s",
+                len(finalized), reason, finalized,
+            )
+        return finalized
+
     async def _run_mission_inner(self, mission_id: str) -> MissionState:
         """Mission body — the tracking wrapper lives in :meth:`run_mission`."""
         view = await self._manager.mission(mission_id)
@@ -873,6 +976,10 @@ class Kontrollierer:
     ) -> str:
         """Inner critic-loop body. Extracted so the worktree-finally in the
         caller wraps every return path."""
+        # Anchor for the per-task time budget (queue wait excluded — the
+        # caller already holds the concurrency semaphore, mirroring
+        # _MISSION_DEADLINE_S semantics).
+        task_t0 = time.monotonic()
         session_id: str | None = None
         # Track per-iteration critic outcomes so the failure-reason mapper
         # can distinguish "Critic was broken all the way through" from
@@ -907,6 +1014,23 @@ class Kontrollierer:
             #   transition back into CRITIQUING below is legal (CRITIQUING ->
             #   CRITIQUING would be illegal and silently swallowed).
             if iteration > 0:
+                # Time-budget guard (2026-06-10 mandate): a correction
+                # iteration only starts when it can FINISH inside the task
+                # budget (its worker slice + one critic call). Otherwise the
+                # loop ends here with the existing exhausted semantics — a
+                # late, rushed correction would overshoot the 20-minute
+                # target without improving the deliverable.
+                elapsed_s = time.monotonic() - task_t0
+                needed_s = _CORRECTION_WORKER_TIMEOUT_S + _CRITIC_TIME_RESERVE_S
+                if elapsed_s + needed_s > _TASK_TIME_BUDGET_S:
+                    logger.warning(
+                        "Task %s: time budget exhausted before iter-%d "
+                        "(elapsed=%.0fs + needed=%.0fs > budget=%.0fs) — "
+                        "ending the critic loop with the current state",
+                        step.task_id, iteration, elapsed_s, needed_s,
+                        _TASK_TIME_BUDGET_S,
+                    )
+                    break
                 await self._safe_transition(
                     mission_id, MissionState.LOOPING, f"iter-{iteration}-revise"
                 )
@@ -1031,13 +1155,7 @@ class Kontrollierer:
                 # Keeps every provider reliable when the shared Claude Max OAuth
                 # subscription throttles under load (2026-06-09 codex verify:
                 # task_error rounds were throttle, not a code fault).
-                is_transient = any(
-                    m in err_lower for m in (
-                        "rate limit", "rate_limit", "ratelimit",
-                        "too many requests", "429", "overloaded",
-                        "503", "service unavailable", "please try again",
-                    )
-                )
+                is_transient = _worker_error_is_transient(err_lower)
                 kill_reason: Literal[
                     "timeout", "user", "budget", "parent_cancelled",
                     "injection_detected", "path_guard", "worker_error",
@@ -1261,12 +1379,14 @@ class Kontrollierer:
 
             # Verdict evaluation
             if is_approval_valid(verdict):
-                # Read-only / informational task (empty diff + real tool
-                # evidence + a substantive answer): capture the worker's answer
+                # Read-only / informational task: capture the worker's answer
                 # so the mission speaks it back instead of "Mission
-                # abgeschlossen." Code tasks (non-empty diff) yield None here
-                # and keep the generic summary.
-                answer = readonly_answer(diff_text, log_text)
+                # abgeschlossen." Two shapes qualify — (a) empty diff + real
+                # tool evidence + answer, and (b) a pure question (no tools, no
+                # diff) whose answer IS the deliverable (mission_prompt is
+                # informational; live mission 019ec638, 2026-06-14). Code tasks
+                # (non-empty diff) yield None here and keep the generic summary.
+                answer = readonly_answer(diff_text, log_text, prompt=mission_prompt)
                 if answer:
                     self._task_answers.setdefault(mission_id, []).append(answer)
                 return TaskOutcome.APPROVED
@@ -1287,7 +1407,7 @@ class Kontrollierer:
                 worker_id=spawn_result.worker_id,
                 instruction=verdict.correction_instruction or "address critic feedback",
                 iteration=iteration,
-                next_model=("opus" if iteration + 1 >= 2 else "sonnet"),
+                next_model=(FRONTIER_MODEL if iteration + 1 >= 2 else "sonnet"),
             )
 
         # MAX_CRITIC_LOOPS exhausted without approval
@@ -1381,6 +1501,16 @@ class Kontrollierer:
                 kwargs: dict[str, Any] = {
                     "model": step.model,
                     "allowed_tools": step.allowed_tools,
+                    # Degressive per-iteration budget (2026-06-10 mandate):
+                    # the main build gets the large slice, corrections the
+                    # short one — they refine an existing workspace. Workers
+                    # preserve + grade partial work on timeout, so an overrun
+                    # costs the cap, never the deliverable.
+                    "timeout_s": (
+                        _ITER0_WORKER_TIMEOUT_S
+                        if iteration == 0
+                        else _CORRECTION_WORKER_TIMEOUT_S
+                    ),
                 }
                 if resume_session_id:
                     kwargs["resume_session_id"] = resume_session_id

@@ -21,7 +21,6 @@ from jarvis.missions.budget import BudgetTracker
 from jarvis.missions.kontrollierer.orchestrator import Kontrollierer
 from jarvis.missions.manager import MissionManager
 from jarvis.missions.state_machine import MissionState
-
 from tests.missions.kontrollierer.test_loop import (
     FakeCriticRunner,
     FakeJobObject,
@@ -125,3 +124,38 @@ async def test_tracking_cleared_after_normal_completion(
     end_state = await k.run_mission(mid)
     assert end_state == MissionState.APPROVED
     assert k.cancel_running_mission(mid) is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_running_finalizes_inflight_missions(
+    manager: MissionManager, tmp_path: Path
+) -> None:
+    """App shutdown finalizes every in-flight mission as CANCELLED.
+
+    Live incident 2026-06-10 19:24:12 (missions 019eb27f + 019eb288): the
+    app's self-restart killed the process with two missions in flight;
+    nothing finalized them, so they lingered non-terminal until the
+    recovery re-sweep buried them 30 minutes later as opaque
+    crash_recovery / ERROR cards with zero artifacts. The shutdown path
+    must flip each tracked mission to a terminal CANCELLED immediately
+    (honest UI card with a real reason), then cancel the run task.
+    """
+    decomposer = HangingDecomposer()
+    k = _make_hanging_kontrollierer(
+        manager=manager, tmp_path=tmp_path, decomposer=decomposer
+    )
+    mid = await manager.dispatch(prompt="hang forever")
+    task = asyncio.create_task(k.run_mission(mid))
+    await asyncio.wait_for(decomposer.entered.wait(), timeout=5.0)
+
+    finalized = await k.cancel_all_running(reason="app_shutdown")
+
+    assert finalized == [mid]
+    await asyncio.wait([task], timeout=5.0)
+    assert task.done(), "run_mission task must end after shutdown cancel"
+    view = await manager.mission(mid)
+    assert view is not None
+    assert view.state == MissionState.CANCELLED
+
+    # Idempotent: nothing left in flight.
+    assert await k.cancel_all_running(reason="app_shutdown") == []

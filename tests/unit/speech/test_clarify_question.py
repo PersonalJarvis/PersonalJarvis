@@ -118,6 +118,56 @@ async def test_abandoned_incomplete_fragment_triggers_clarifying_question() -> N
 
 
 @pytest.mark.asyncio
+async def test_ellipsis_trailoff_clarifies_even_when_globally_disabled() -> None:
+    # User choice 2026-06-14: a TRAILED-OFF sentence ("...") asks "what exactly?"
+    # even with the global clarify default OFF — scoped to trail-offs only, so
+    # the 2026-05-26 silent mandate stays intact for every OTHER incomplete case.
+    from jarvis.speech.completion import REASON_TRAILING_ELLIPSIS
+
+    pipe = _make_pipe(enabled=False, clarify_after_ms=80)
+    held = pipe._continuation_buffer.process(
+        "Kannst du mir sagen, was genau...", language="de"
+    )
+    assert held is None
+    assert pipe._continuation_buffer.last_reason == REASON_TRAILING_ELLIPSIS
+
+    # The pipeline forces the clarify for a trail-off despite the disabled flag.
+    pipe._arm_clarify_question("de", force=True)
+    await asyncio.sleep(0.3)
+
+    assert len(pipe._spoken) == 1, pipe._spoken
+    spoken_text, spoken_lang = pipe._spoken[0]
+    assert spoken_text.strip().endswith("?"), spoken_text
+    assert spoken_lang == "de"
+
+
+@pytest.mark.asyncio
+async def test_non_ellipsis_incomplete_stays_silent_when_disabled() -> None:
+    # Scoping guard: a NON-trail-off incomplete (dangling conjunction) with the
+    # global flag OFF must still stay silent — force is only set for trail-offs.
+    pipe = _make_pipe(enabled=False, clarify_after_ms=80)
+    pipe._continuation_buffer.process("erinnere mich daran, dass", language="de")
+    pipe._arm_clarify_question("de", force=False)
+    await asyncio.sleep(0.3)
+    assert pipe._clarify_timer_task is None
+    assert pipe._spoken == []
+
+
+@pytest.mark.asyncio
+async def test_absent_voice_config_stays_silent_for_non_ellipsis() -> None:
+    # Safe-default guard: if the voice config is missing entirely, a non-forced
+    # (non-trail-off) incomplete must NOT arm the clarify timer — the absent
+    # config defaults to OFF, not ON (2026-06-09 "don't interrogate me" mandate).
+    pipe = _make_pipe(enabled=False, clarify_after_ms=80)
+    pipe._config.voice = None  # no voice section at all
+    pipe._continuation_buffer.process("erinnere mich daran, dass", language="de")
+    pipe._arm_clarify_question("de", force=False)
+    await asyncio.sleep(0.2)
+    assert pipe._clarify_timer_task is None
+    assert pipe._spoken == []
+
+
+@pytest.mark.asyncio
 async def test_clarifying_question_is_english_for_english_fragment() -> None:
     pipe = _make_pipe(clarify_after_ms=80)
     held = pipe._continuation_buffer.process("remind me tomorrow that", language="en")

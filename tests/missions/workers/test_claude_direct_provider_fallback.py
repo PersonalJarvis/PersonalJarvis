@@ -162,3 +162,29 @@ def test_resolve_claude_model_never_returns_foreign_slug() -> None:
     # None primary -> safe claude default, never a crash.
     none_model = cdw._resolve_claude_model(None)
     assert none_model.startswith("claude") or none_model in {"opus", "sonnet", "haiku"}
+
+
+def test_default_model_is_reachable_opus_never_fable(monkeypatch) -> None:
+    """Maintainer decision 2026-06-14 (supersedes the 2026-06-10 fable mandate):
+    ``claude-fable-5`` is approved-access-only and the Claude Max subscription
+    cannot reach it via the CLI ("Claude Fable 5 is currently unavailable",
+    live mission 019ec615) — so the last-resort default must be a model the
+    subscription CAN reach (``claude-opus-4-8``), never the unreachable fable.
+
+    The module constant is the last line of defense when neither
+    ``[brain.sub_jarvis].model`` nor ``[brain.providers.claude-api].deep_model``
+    is configured; the worker's model-unavailable retry is the safety net on top.
+    """
+    assert cdw._DEFAULT_CLAUDE_MODEL == "claude-opus-4-8"
+    # With config access broken entirely, the resolver must land on the
+    # reachable opus default — never the unreachable fable slug, never a crash.
+    # (load_config is imported function-locally, so patch it at its source.)
+    def _boom(*_a, **_k):
+        raise RuntimeError("config unavailable")
+
+    monkeypatch.setattr("jarvis.core.config.load_config", _boom)
+    resolved = cdw._resolve_claude_model(None)
+    assert resolved == "claude-opus-4-8"
+    assert resolved != "claude-fable-5", (
+        f"unreachable fable default resurfaced: {resolved!r}"
+    )

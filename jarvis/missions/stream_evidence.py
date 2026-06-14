@@ -456,17 +456,135 @@ def _has_inworktree_hunk(diff_text: str) -> bool:
     return any(ln.startswith("diff --git ") for ln in diff_text.splitlines())
 
 
-def readonly_answer(diff_text: str, stream_text: str) -> str | None:
-    """Return the worker's answer iff this was a genuine read-only / external
-    result.
+# --- informational / question request detection ----------------------------
+#
+# A pure question ("which city would you recommend for Australia?", "explain
+# how X works") has NO file deliverable — the spoken answer IS the result. The
+# Worker-Critic empty-diff veto would otherwise reject it as "no work done"
+# (live mission 019ec638, 2026-06-14: a travel question failed
+# critic_loop_exhausted). We classify the REQUEST, never the worker's claim, so
+# a do-task that produced nothing is still vetoed (the hallucination guard).
 
-    Speak-back applies to two shapes: (a) a read-only / informational task
-    (empty git diff), and (b) an out-of-worktree deliverable whose diff contains
-    only ``diff --external-target`` blocks (no in-worktree ``diff --git`` hunk).
-    Both need REAL tool-call evidence + a substantive final answer. The
-    tool-evidence requirement is the anti-hallucination guard — an empty diff
-    with no tool calls (the worker just claimed "done") is NOT a success and
-    returns None, so the existing empty-diff veto in the critic still applies.
+# Action / artefact verbs (EN + DE) — their presence means the task demanded a
+# FILE or a SIDE EFFECT, so its deliverable is an artefact, NOT a text answer.
+# This is THE guard: a request with one of these verbs and an empty diff is a
+# hallucination ("I created the file" with no Write), so it stays vetoed. A
+# request WITHOUT any of these verbs has no artefact to fake — its deliverable
+# is the text itself (a trip plan, an answer, a recommendation), so a no-diff
+# text answer is a valid completion (live missions 019ec66c/019ec674/019ec708:
+# "plan / book a trip" failed critic_loop_exhausted because the deliverable is a
+# plan, not a file). Keep this list comprehensive; advisory verbs
+# (plan/book/recommend/suggest/research/…) deliberately stay OUT.
+_ACTION_VERB_RE = re.compile(
+    r"\b("
+    r"creat|writ|wrote|build|buil|made|make|implement|generat|"
+    r"saved|save|refactor|fix|fixe|install|open|run|ran|launch|start|"
+    r"deploy|push|commit|delete|remov|send|sent|post|email|download|"
+    r"click|draft|"
+    # noun-form do-tasks the question-mark heuristic used to miss
+    # (code review 2026-06-14: "a PDF export of …?", "a ZIP archive of …?").
+    r"export|convert|conversion|render|compil|transform|packag|archiv|produc|extract|"
+    r"migrat|updat|upgrad|backup|sync|compress|zip|scrape|plot|"
+    r"erstell|schreib|geschrieben|baue|bau|mach|implementier|generier|"
+    r"speicher|installier|öffne|oeffne|starte|lösch|loesch|sende|programmier"
+    r")\w*",
+    re.IGNORECASE,
+)
+
+# File / artefact markers — a named file or a real extension means a deliverable.
+_ARTEFACT_RE = re.compile(
+    r"(file named|datei|\.(md|py|txt|html?|json|csv|js|ts|tsx|jsx|css|"
+    r"toml|ya?ml|xml|sh|ps1|pdf|docx?|xlsx?|png|svg))\b",
+    re.IGNORECASE,
+)
+
+# Informational TRIGGER words (EN + DE): interrogatives AND advisory verbs/nouns
+# whose deliverable is text, not a file. A request must carry one of these to be
+# treated as informational. This positive requirement is what separates an
+# advisory task whose deliverable IS text ("PLAN a trip", "SUGGEST restaurants",
+# "RESEARCH laptops") from an impossible real-world transaction the worker cannot
+# perform ("BOOK me a trip", "BUY me X") — the latter has no trigger, so it falls
+# through to the capability-refusal path (one-shot honest reject), never an
+# approve. It also avoids the "book"-the-noun collision ("recommend a book").
+_INFO_TRIGGER_RE = re.compile(
+    r"\b("
+    r"which|what|whats|how|who|whom|whose|why|where|when|"
+    r"recommend|recommendation|recommendations|suggest|suggestion|suggestions|"
+    r"advise|advice|explain|describe|summarize|summarise|summary|"
+    r"compare|comparison|research|plan|plans|outline|brainstorm|"
+    r"itinerary|itineraries|overview|guide|idea|ideas|tip|tips|option|options|"
+    r"welche|welcher|welches|was|wie|warum|wieso|weshalb|wer|wem|wen|wo|wann|"
+    r"erkläre|erklär|erklaere|beschreibe|beschreib|vergleiche|vergleich|"
+    r"empfiehl|empfehl|empfehlung|nenne|plane|schlage|recherchiere|"
+    r"vorschlag|übersicht|idee|tipp|reiseplan|reiseroute"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _request_body(prompt: str) -> str:
+    """Strip the standing quality directive that spawn_worker prepends so the
+    classifier sees only the real request.
+
+    ``spawn_worker._build_mission_prompt`` joins
+    ``f"{_QUALITY_DIRECTIVE}\\n\\n{body}"``; the directive is recognised by its
+    stable phrasing. When no directive is present (tests / other callers) the
+    whole prompt is classified.
+    """
+    head, sep, tail = prompt.partition("\n\n")
+    low = head.lower()
+    if sep and tail.strip() and (
+        "production-quality" in low
+        or "never ship one" in low
+        or "inhalt folgt" in low
+    ):
+        return tail
+    return prompt
+
+
+def is_informational_request(prompt: str) -> bool:
+    """True when the request's deliverable is a spoken/written ANSWER, not a file.
+
+    The rule keys off the REQUEST, never the worker's claim. Two conditions:
+    (1) NO action/artefact verb and NO named file — a request that says
+    create/write/build/export/send/… or names a file demanded an artefact, so an
+    empty diff for it is a hallucination and stays vetoed. (2) a real
+    informational TRIGGER word (which/what/how/recommend/plan/suggest/research/…).
+
+    The trigger requirement is deliberate: it covers questions AND doable advisory
+    imperatives ("plan a trip from London to Taiwan", "suggest restaurants") whose
+    deliverable IS text, while leaving an impossible real-world transaction
+    ("book me a trip", "buy me X") as NON-informational — that has no trigger and
+    falls through to the capability-refusal path (one-shot honest reject), never
+    a wrongful approve. Hallucination guard intact: "create a file report.md" →
+    `creat` + `.md` → vetoed; "send an email" → `send` → vetoed.
+    """
+    body = _request_body(prompt or "").strip()
+    if not body:
+        return False
+    if _ACTION_VERB_RE.search(body) or _ARTEFACT_RE.search(body):
+        return False
+    return bool(_INFO_TRIGGER_RE.search(body))
+
+
+def readonly_answer(
+    diff_text: str, stream_text: str, *, prompt: str | None = None
+) -> str | None:
+    """Return the worker's answer iff this was a genuine read-only / external
+    result, OR a pure informational request answered in text.
+
+    Speak-back applies to three shapes: (a) a read-only / informational task
+    that invoked tools (empty git diff + tool evidence), (b) an out-of-worktree
+    deliverable whose diff contains only ``diff --external-target`` blocks (no
+    in-worktree ``diff --git`` hunk), and (c) — when ``prompt`` is supplied and
+    classifies as a question/informational request — a pure conversational
+    answer with NO tool calls (the spoken answer IS the deliverable; live
+    mission 019ec638, 2026-06-14).
+
+    The anti-hallucination contract is intact: shape (c) is gated on the
+    *request* being informational (``is_informational_request``), never on the
+    worker's claim — so an empty diff + no tool calls for a DO-task ("I created
+    the file" with no Write) returns None and the empty-diff veto still applies.
 
     An in-worktree code change (a real ``diff --git`` hunk) returns None — those
     keep the diff/delivered-files summary instead of a spoken answer.
@@ -474,12 +592,82 @@ def readonly_answer(diff_text: str, stream_text: str) -> str | None:
     if _has_inworktree_hunk(diff_text):
         return None  # in-worktree code change -> not informational
     ev = extract_stream_evidence(stream_text)
-    if not ev.has_tool_evidence:
-        return None  # no real work -> let the empty-diff veto handle it
+    if not ev.has_tool_evidence and not (
+        prompt and is_informational_request(prompt)
+    ):
+        # No tool evidence AND not a question -> let the empty-diff veto handle
+        # it (anti-hallucination: a bare "done" claim is not a success).
+        return None
     answer = ev.final_answer.strip()
     if len(answer) < 3:
         return None
     return answer
+
+
+# Capability-refusal phrases (EN + DE). When the worker invoked NO tools, wrote
+# NOTHING, and its final answer says it cannot do the task, retrying is futile —
+# the worker already decided it lacks the capability. Surfacing the honest
+# refusal once beats burning three critic loops into ``critic_loop_exhausted``
+# (live mission 019ec674, 2026-06-14: "book me a trip from Melbourne to Tokyo").
+# Anchored to an explicit inability + object. Bare substrings like "i can't",
+# "i cannot", "i can not", "no access to", "that's outside" were REMOVED — they
+# false-match success-with-caveat answers ("I implemented it; I can't guarantee
+# every edge case") and constructions like "I can not only X but also Y",
+# turning a recoverable revise into a terminal one-shot reject and discarding
+# real work (the honesty-gate-discards-work bug class). Prefer false negatives
+# (fall through to the empty-diff veto, the safe direction) over false positives.
+_REFUSAL_PHRASES: tuple[str, ...] = (
+    # EN — anchored inability/capability phrases
+    "i'm not able to", "i am not able to", "i'm unable to", "i am unable to",
+    "i'm not able to access", "not able to access",
+    "i can't access", "i cannot access",
+    "i can't do that", "i cannot do that",
+    "i can't help with", "i cannot help with",
+    "i do not have access", "i don't have access", "i dont have access",
+    "do not have the ability", "don't have the ability", "dont have the ability",
+    "outside what i can do", "outside of what i can do",
+    "beyond my capabilities", "not something i can do",
+    # DE
+    "ich kann das nicht", "das kann ich nicht", "ich kann dir nicht",
+    "ich habe keinen zugriff", "keinen zugriff",
+    "ich bin nicht in der lage", "nicht in der lage",
+    "liegt außerhalb", "liegt ausserhalb", "außerhalb dessen", "ausserhalb dessen",
+)
+
+
+def capability_refusal_answer(
+    stream_text: str, *, prompt: str | None = None
+) -> str | None:
+    """Return the worker's refusal text iff it honestly reported it CANNOT do the task.
+
+    Fires only on the unambiguous "impossible task" shape: the worker invoked
+    NO tools, produced a substantive final answer, and that answer expresses an
+    inability/capability limit. The caller (the critic empty-diff pre-gate) uses
+    this to return a one-shot ``reject`` instead of three deterministic
+    ``revise`` loops — a re-prompt cannot grant a capability the worker lacks.
+
+    Anti-hallucination contract (BUG-LIVE-02) preserved on two axes:
+      * Informational requests (``which/what/how/...``) are NOT refusals — they
+        are answered and approved by :func:`readonly_answer` upstream; this
+        returns None for them so the two paths never fight.
+      * A "done!" success claim is NOT a refusal — it returns None and stays
+        subject to the empty-diff veto (a bare success claim with no tools and
+        no diff is the classic hallucination this whole gate defends against).
+      * Any tool evidence at all returns None: the worker attempted real work,
+        so re-prompting may yet succeed — defer to the Critic LLM.
+    """
+    if prompt and is_informational_request(prompt):
+        return None
+    ev = extract_stream_evidence(stream_text or "")
+    if ev.has_tool_evidence:
+        return None
+    answer = ev.final_answer.strip()
+    if len(answer) < 10:
+        return None
+    low = answer.lower()
+    if any(phrase in low for phrase in _REFUSAL_PHRASES):
+        return answer
+    return None
 
 
 def summarize_answers(answers: list[str], *, cap: int = 600) -> str:
@@ -496,6 +684,7 @@ __all__ = [
     "extract_verified_commands",
     "extract_verified_desktop_actions",
     "extract_write_targets",
+    "is_informational_request",
     "readonly_answer",
     "summarize_answers",
 ]

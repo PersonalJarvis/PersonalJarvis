@@ -7,44 +7,32 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
-## [0.4.0] - 2026-06-10
+## [0.5.0] — 2026-06-14
 
 ### Added
-- Hold-to-abort for running sub-agent missions: RUNNING cards in the Outputs view carry a stop ring you hold for 1.2s (no confirm dialog, no accidental one-click kill). Cancelling kills the in-flight orchestrator run and its worker process tree, emits the canonical `MissionCancelled` event (spoken announcement + recovery reconciliation), and the card flips to a distinct amber "cancelled" badge instead of "error".
-- Outputs API now exposes each card's full mission id; the cancel endpoint reports whether a live worker was actually killed (`worker_killed`).
-- Live reasoning trace in chat: a thinking card with real step-by-step progress (tool calls, worker delegation, computer-use phases) plus a "Thought for Xs" disclosure on finished replies.
-- Profile view reimagined as "The Ledger": a butler-style house book with a generative knowledge seal, acquaintance tiers, and "still unwritten" voice prompts.
-- Dynamic context-aware spawn announcements: the voice ACK for background workers names the actual task instead of a canned phrase.
-- Connected CLI tools (gcloud, gh, ...) are first-class router capabilities with object-required matching and an evidence gate against hallucinated results.
+
+- **Custom System Prompt**: edit the assistant persona from Settings with a
+  reset-to-default; an override file takes effect on the next turn without a
+  restart.
+- **Streaming TTS** path for sub-second first audio, plus voice-latency
+  instrumentation and measurement tooling.
+- `search_web` weather lookup so spoken weather questions resolve directly.
 
 ### Changed
-- Sub-agent missions use a lean standalone workspace when the task does not need the repository, instead of cloning the full repo for every step.
-- The injection scanner now scans only worker-authored output, so a mission is no longer killed after delivering clean work just because the worker read security documentation.
 
-### Fixed
-- "Listens forever" after an 8s forced utterance cut: the buffered sentence is now flushed at the next voice-activity endpoint.
-- An explicit "spawn a sub-agent" command beats a coincidental skill match, and a muted beheaded turn now ends audibly.
-
-## [0.3.0] - 2026-06-09
-
-### Added
-- Local Control API (`/api/control/*`): authenticated self-configuration for local agents (per-user key, fail-closed bind, hot-reload of `brain.reply_language`), plus the "Jarvis API" settings panel and a built-in `control-api` documentation skill.
-- Cross-platform login autostart (Windows shortcut / macOS LaunchAgent / Linux desktop entry), enabled by default, with the new "App settings" panel.
-- Configurable voice keybinds with two-key chord capture, an on-screen keyboard map, and live re-apply without restart.
-- Discord and Telegram channel connectors with a shared channel runtime wired into the worker chat path.
-- Shareable stats card on the Board (PNG export, copy to clipboard, share on X).
-- Wiki conversation curator (wave 1): durable candidate journal, secret/PII write guard, vault cleanup, FTS5 boot indexing.
-- Skill system rebuild: instruction-skill model with `when_to_use` metadata, bulk delete, drag reorder, and on/off toggles.
-
-### Changed
-- Voice fallback phrases now follow the speaker's language (full Whisper language names like "german" are recognized); the playback watchdog no longer aborts a desktop-automation turn that is still actively working.
-- Desktop control utterances (open app / navigate / screenshot / window ops / drag) route deterministically to computer-use, independent of the active brain provider.
-- Codex can back the conversational brain via an OpenAI API key or the ChatGPT-login CLI path; missions on non-Claude providers fall back legibly to Claude instead of failing.
-- Mission deadline raised to 70 minutes and worker timeouts no longer discard delivered work (structured `timed_out` signal).
-- Sidebar reorganized into grouped sections; Telephony folded into API Keys; Languages folded into Settings.
-
-### Removed
-- Standalone Telephony and Languages screens (their section ids remain valid and land on the merged views).
+- **Voice timeout handling**: a per-turn wall-clock floor guard prevents the
+  canned "that took too long, say it again" phrase from firing on fast turns
+  (it was being triggered by stale per-turn state, not real slowness).
+  Per-site floors and a pre-first-token "thinking" heartbeat keep a genuinely
+  slow brain from being cut off before its first token, and every timeout
+  phrase is now logged with the path and elapsed time that triggered it.
+- **Bilingual turn handling**: STT language autodetection, localized fallback
+  phrases, and spawn-acknowledgement language that matches the spoken turn.
+- **Computer-use robustness**: runaway guards, pre-click target refinement,
+  and keeping the voice session alive during long desktop automations.
+- **Mission critic & workers**: capability honesty/refusal checks, a per-task
+  time budget, a periodic recovery sweep, spawn-breakaway fallback, and
+  Claude quota-state tracking.
 
 ## [v1.0.0-board] — 2026-04-25
 

@@ -250,7 +250,12 @@ class OpenAppTool:
                 elif hasattr(os, "startfile"):
                     os.startfile(value)  # type: ignore[attr-defined]  # noqa: S606
                 else:
-                    subprocess.Popen([value], shell=False)  # noqa: ASYNC220, S606
+                    # POSIX: URLs/paths resolve to "startfile" on every OS
+                    # (the resolver's escape hatch runs before the platform
+                    # branch), but exec'ing a URL dies with FileNotFoundError.
+                    # Hand it to the OS opener instead (browser+URL fast-path).
+                    opener = "open" if detect_platform() == "darwin" else "xdg-open"
+                    subprocess.Popen([opener, value], shell=False)  # noqa: ASYNC220, S606
             return ToolResult(success=True, output=f"Gestartet: {app_name}")
         except FileNotFoundError:
             return ToolResult(

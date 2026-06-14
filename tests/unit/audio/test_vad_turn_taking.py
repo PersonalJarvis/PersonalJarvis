@@ -393,6 +393,167 @@ async def test_forced_cut_then_user_resumes_no_extra_tail_flush() -> None:
 
 
 @pytest.mark.asyncio
+async def test_quiet_pause_reports_not_loud_with_production_tail_geometry() -> None:
+    """Regression (2026-06-14): a sustained quiet thinking-pause must be
+    reported ``tail_loud=False`` even when the probe tail window is LONGER than
+    the silence window.
+
+    Production wires ``probe_tail_ms=1800`` but ``silence_ms=1500``. The
+    original implementation derived ``tail_loud`` from the RMS of the *entire*
+    1800 ms tail, which stays speech-dominated throughout any pause shorter than
+    the whole window — so ``tail_loud`` never went False before the silence
+    endpoint fired, and the probe kept forcing ``stt_stable`` endpoints at
+    32-864 ms of silence (live log evidence ``data/jarvis_desktop.log``,
+    e.g. ``empty tail (text='and') ... silence_ms=32``).
+
+    Contract: once the user has gone quiet, ``tail_loud`` must turn False well
+    before the silence endpoint fires and must NOT flip back to loud while the
+    user stays silent, so the pipeline defers to ``silence_ms``. (The recent-
+    energy window may still read the very first probe as loud while the speech
+    tail drains out of it — harmless, because the 1800 ms transcription tail is
+    still full of speech then and cannot look empty/stable to force an
+    endpoint. What matters is that quiet wins and stays won.)
+    """
+    loud_flags: list[bool] = []
+    vad = SileroEndpointer(
+        silence_ms=1500,            # production value (47 frames to endpoint)
+        min_speech_ms=160,
+        min_speech_rms=0.002,
+        probe_callback=lambda _pcm, loud: loud_flags.append(loud),
+        probe_interval_ms=320,      # probe-eligible every 10 frames
+        probe_min_active_ms=320,    # first probe only after 10 active frames
+        probe_tail_ms=1800,         # production tail — LONGER than silence_ms
+    )
+    # 8 loud speech frames (fewer than probe_min_active, so NO probe fires
+    # during speech), then a long quiet pause. The original full-tail RMS stayed
+    # dominated by the 8 leading speech frames and reported loud for the WHOLE
+    # pause; the fix must report quiet once the user has been silent a moment.
+    probs = [0.9] * 8 + [0.0] * 55
+    _stub_vad(vad, probs)
+    frames = [_pcm_frame(0.06) for _ in range(8)] + [
+        _pcm_frame(0.001) for _ in range(55)
+    ]
+
+    await _collect(vad, frames)
+
+    assert loud_flags, "expected at least one probe to fire during the quiet pause"
+    assert False in loud_flags, (
+        "a sustained quiet thinking-pause was never reported as quiet (tail_loud "
+        f"stayed True) — the probe will force a premature endpoint: {loud_flags}"
+    )
+    first_quiet = loud_flags.index(False)
+    assert all(flag is False for flag in loud_flags[first_quiet:]), (
+        f"tail_loud flipped back to loud during continuous silence: {loud_flags}"
+    )
+    assert loud_flags[-1] is False, (
+        f"deep in a quiet pause the probe still reported loud: {loud_flags}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_short_mid_sentence_pause_does_not_split_turn_via_probe() -> None:
+    """End-to-end: speech -> ~0.5 s quiet pause -> resumed speech -> end silence
+    must yield exactly ONE utterance.
+
+    The probe callback models the live pipeline's STT empty/stable gate: it
+    forces the endpoint only when the VAD reports the tail is loud (NOT a
+    thinking pause) AND the most recent audio is quiet (the tail "transcribes
+    to nothing new"). Under the fixed VAD a quiet pause reports ``loud=False``,
+    so the two conditions can never both hold mid-pause and the turn stays open
+    until the user truly stops. Under the old VAD the full-tail RMS reports
+    ``loud=True`` during the pause, so the probe forces an endpoint and splits
+    the turn in two.
+    """
+
+    def _recent_rms_int16(pcm: bytes, n_samples: int = 2560) -> float:
+        arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+        recent = arr[-n_samples:]
+        if recent.size == 0:
+            return 0.0
+        return float(np.sqrt(np.mean(np.square(recent))))
+
+    vad = SileroEndpointer(
+        silence_ms=1500,
+        min_speech_ms=160,
+        min_speech_rms=0.002,
+        probe_interval_ms=320,
+        probe_min_active_ms=320,
+        probe_tail_ms=1800,
+    )
+
+    def probe(pcm: bytes, loud: bool) -> None:
+        # last ~160 ms quiet → the user appears to have stopped (empty/stable)
+        appears_stopped = _recent_rms_int16(pcm) < 500.0
+        if loud and appears_stopped:
+            vad.request_endpoint()
+
+    vad._probe_callback = probe  # type: ignore[assignment]
+
+    probs = [0.9] * 8 + [0.0] * 16 + [0.9] * 20 + [0.0] * 50
+    _stub_vad(vad, probs)
+    frames = (
+        [_pcm_frame(0.06) for _ in range(8)]
+        + [_pcm_frame(0.001) for _ in range(16)]   # ~0.5 s thinking pause
+        + [_pcm_frame(0.06) for _ in range(20)]    # user resumes mid-sentence
+        + [_pcm_frame(0.001) for _ in range(50)]   # genuine end-of-turn silence
+    )
+
+    utterances = await _collect(vad, frames)
+
+    assert len(utterances) == 1, (
+        f"the mid-sentence pause split the turn into {len(utterances)} utterances "
+        "— the probe forced a premature endpoint during the pause"
+    )
+
+
+@pytest.mark.asyncio
+async def test_dynamic_range_bleed_still_reports_loud_so_cure_fires() -> None:
+    """Regression for the dynamic-range speaker-bleed gap (code-review Finding 1).
+
+    Speaker bleed is not always stationary: music/TV has loud beats separated by
+    brief quiet dips. A dip drops below the relative-silence floor, so the
+    per-frame gate trips and a silence timer starts; if the loud beats are
+    shorter than ``cancel_hysteresis`` they never reset it, so an
+    instantaneous ``silent_run == 0`` discriminator reads quiet for the WHOLE
+    bleed and the probe never forces the endpoint — the turn drags to the
+    ``max_utterance`` cap (a softer recurrence of "Silero records music
+    forever"). ``tail_loud`` must instead reflect the *recent* audio energy,
+    which averages over beats+dips and stays loud, so the bleed cure still
+    fires while a genuine (fully quiet) pause still defers.
+    """
+    loud_flags: list[bool] = []
+    vad = SileroEndpointer(
+        silence_ms=10_000,          # silence endpoint can't fire → only the probe can cure
+        min_speech_ms=96,           # 3 frames of speech establishes the turn
+        min_speech_rms=0.002,
+        cancel_hysteresis_ms=160,   # 5 frames; beats below this never reset silent_run
+        probe_callback=lambda _pcm, loud: loud_flags.append(loud),
+        probe_interval_ms=64,       # probe every 2 frames
+        probe_min_active_ms=320,    # first probe after 10 frames → none during the 4 speech frames
+        probe_tail_ms=1800,
+    )
+    # 4 real speech frames (sets peak, fewer than probe_min_active so no probe
+    # fires here), then dynamic bleed: quiet dips (3 frames, < cancel_hysteresis
+    # so silent_run is held, never reset) alternating with loud beats (3 frames).
+    # silent_run is > 0 at every probe, so the instantaneous-silent_run rule
+    # reports loud=False forever; the recent-energy window reports loud.
+    probs = [0.9] * 4
+    frames = [_pcm_frame(0.06) for _ in range(4)]
+    for _ in range(8):
+        probs += [0.0] * 3 + [0.95] * 3
+        frames += [_pcm_frame(0.001) for _ in range(3)] + [_pcm_frame(0.06) for _ in range(3)]
+    _stub_vad(vad, probs)
+
+    await _collect(vad, frames)
+
+    assert True in loud_flags, (
+        "dynamic-range bleed (loud beats + quiet dips) was never reported as "
+        "loud — the speaker-bleed cure is starved and the turn drags to "
+        f"max_utterance: {loud_flags}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_probe_payload_is_tail_only_not_full_buffer() -> None:
     """The probe must receive only the last `probe_tail_ms` of audio,
     not the entire growing utterance buffer. This is critical: probing

@@ -22,11 +22,12 @@ log = logging.getLogger(__name__)
 
 BrainCallback = Callable[[str], Awaitable[str]]
 
-# Router-tier: pure-dispatcher set. SIX tools (as of 2026-04-29; audit
-# F-AUDIT-7) plus three self-mod tools (Phase 7.3, registered separately in
-# the loader). See ``router.py:SYSTEM_PROMPT`` and ADR-0011 (including the
-# Phase-7/8 amendment + Wave-4 amendment ``spawn-sub-jarvis`` -> ``spawn-worker``)
-# and Master-Plan §22 / Persona-Mandate Phase 3.
+# Router-tier: pure-dispatcher set (grown via documented ADR-0011 amendments;
+# the exact-match regression test pins the current membership) plus three
+# self-mod tools (Phase 7.3, registered separately in the loader). See
+# ``router.py:SYSTEM_PROMPT`` and ADR-0011 (including the Phase-7/8 amendment
+# + Wave-4 amendment ``spawn-sub-jarvis`` -> ``spawn-worker``) and
+# Master-Plan §22 / Persona-Mandate Phase 3.
 #
 # Baseline (Mandate-Phase-3): run-shell, screen-snapshot, multi-spawn,
 # spawn-worker. Phase 5 re-introduced dispatch-to-harness; Phase 8.4
@@ -34,8 +35,12 @@ BrainCallback = Callable[[str], Awaitable[str]]
 # extend the set without breaking the pure-dispatcher spirit.
 #
 # Rationale: Hauptjarvis is a pure dispatcher. Direct actions outside this
-# list (open_app, type_text, search_web, remember, whoami …) belong to the
-# OpenClaw bridge — the router delegates them via ``spawn_worker``.
+# list (open_app, type_text, remember, whoami …) belong to the OpenClaw
+# bridge — the router delegates them via ``spawn_worker``. Read-only lookups
+# (search-web, wiki-recall, awareness-recall) and safe-gated direct actions
+# (computer-use, cli-tools, plugin-tools) are router-tier by design — see the
+# ADR-0011 amendments (2026-05-24 CLI, 2026-05-29 Computer-Use, 2026-06-01
+# plugins, 2026-06-10 inline web search).
 # This prevents the spawn-reflex behaviour documented in
 # ``docs/persona-research.md`` Section 2 and keeps the tool set deterministic.
 ROUTER_TOOLS = frozenset({
@@ -160,6 +165,14 @@ ROUTER_TOOLS = frozenset({
     "contact-lookup",
     "contact-upsert",
     "call-contact",
+    # Inline web search (2026-06-10, user mandate): answer news/knowledge/
+    # research QUESTIONS inline instead of spawning a multi-minute worker
+    # mission for a single lookup. The previous "research -> spawn_worker"
+    # doctrine turned "what's in the news?" into a heavy mission (live
+    # complaint 2026-06-10). Read-only DuckDuckGo call, risk safe, a direct
+    # safe-gated action — never a spawn, so it never enters a worker tool-set
+    # (AP-5/AP-14). See ADR-0011 amendment "Inline web search".
+    "search-web",
 })
 
 # Phase 7.3 — self-mod tools are registered directly in the router loader in
@@ -974,6 +987,7 @@ def _phase2_full_brain(
                 plan_model_override=cu_cfg.plan_model,
                 verify_after_each_step=cu_cfg.verify_after_each_step,
                 max_replans=cu_cfg.max_replans,
+                announce_progress=getattr(cu_cfg, "announce_progress", False),
                 native_cu=native_cu,
             ))
             # Hot-reload: refresh the live context's step_budget / timeout /

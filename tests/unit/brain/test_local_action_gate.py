@@ -701,3 +701,63 @@ def test_no_registry_unsupported_intent_returns_none() -> None:
 
     # No existing pattern matches this → gate returns None, brain is invoked.
     assert plan is None
+
+
+# ---------------------------------------------------------------------------
+# Browser+URL fast-path (2026-06-10 latency collapse, plan Task 2): "open
+# <browser> and go to <site>" is ONE deterministic argv launch — browsers
+# accept a URL argument on every OS, and open_app already whitelists
+# http(s):// targets. The vision-LLM loop took ~3 minutes for exactly this
+# goal shape (live log 20:46).
+# ---------------------------------------------------------------------------
+
+
+class TestBrowserUrlFastPath:
+    def test_open_browser_and_goto_site_is_direct(self) -> None:
+        plan = match_local_action("öffne chrome und gehe auf x.com")
+        assert plan is not None
+        assert plan.mode is LocalActionMode.DIRECT
+        call = plan.tool_calls[0]
+        assert call.name == "open_app"
+        assert call.args["app_name"] == "chrome"
+        assert call.args["arguments"] == "https://x.com"
+
+    def test_open_browser_and_goto_site_en(self) -> None:
+        plan = match_local_action("open firefox and go to github.com", lang="en")
+        assert plan is not None
+        assert plan.mode is LocalActionMode.DIRECT
+        assert plan.tool_calls[0].args == {
+            "app_name": "firefox", "arguments": "https://github.com",
+        }
+
+    def test_bare_goto_site_opens_url_directly(self) -> None:
+        plan = match_local_action("geh auf x.com")
+        assert plan is not None
+        assert plan.mode is LocalActionMode.DIRECT
+        assert plan.tool_calls[0].args["app_name"] == "https://x.com"
+
+    def test_existing_url_scheme_is_preserved(self) -> None:
+        plan = match_local_action("öffne chrome und gehe auf https://x.com")
+        assert plan is not None
+        assert plan.tool_calls[0].args["arguments"] == "https://x.com"
+
+    def test_negated_open_stays_off_the_fast_path(self) -> None:
+        plan = match_local_action("öffne chrome bitte nicht und geh auf x.com")
+        assert plan is None or plan.mode is not LocalActionMode.DIRECT
+
+    def test_howto_question_stays_brain(self) -> None:
+        plan = match_local_action("wie gehe ich auf x.com")
+        assert plan is None or plan.mode is not LocalActionMode.DIRECT
+
+    def test_browser_with_followup_work_still_goes_to_cu(self) -> None:
+        # Site + further UI work must keep the CU loop (it has to act there).
+        plan = match_local_action(
+            "öffne chrome und gehe auf x.com und poste einen tweet"
+        )
+        assert plan is not None
+        assert plan.mode is LocalActionMode.COMPUTER_USE
+
+    def test_plain_sentence_with_domain_noun_stays_brain(self) -> None:
+        # A domain mention without a goto/open verb shape must not launch.
+        plan = match_local_action("was haeltst du von x.com")
+        assert plan is None or plan.mode is not LocalActionMode.DIRECT

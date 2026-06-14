@@ -145,6 +145,12 @@ class MissionAnnouncer:
                 text=text,
                 priority=priority,
                 language=lang,
+                # Every MissionAnnouncer event is a TERMINAL outcome (approved /
+                # failed / cancelled / timed-out) — the answer the user asked
+                # for. Tag it so the pipeline's hangup gate lets it through even
+                # when the mission finished after "auflegen" (live bug
+                # 2026-06-14: an offloaded research result was silently dropped).
+                kind="completion",
             )
         )
 

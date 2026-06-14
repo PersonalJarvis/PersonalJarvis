@@ -83,6 +83,10 @@ class LatencyTracker:
         return self._trace_id
 
     @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    @property
     def anchor_ns(self) -> int:
         return self._anchor_ns
 

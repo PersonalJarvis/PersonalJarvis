@@ -79,11 +79,14 @@ def test_verify_prefix_false_for_stt_match_custom_name() -> None:
     assert plan.verify_prefix is False
 
 
-def test_verify_prefix_true_for_degraded_fallback_to_jarvis() -> None:
-    # Computer without whisper -> falls back to hey_jarvis, which DOES need it.
+def test_degraded_fallback_to_rhasspy_neutral_model() -> None:
+    # Trademark neutralization (wake_phrase.py step 4): an unknown phrase
+    # without local Whisper degrades to the bundled, product-name-neutral
+    # ``hey_rhasspy`` model — which is its own discriminator, so the STT
+    # prefix verifier must NOT run (verify_prefix=False).
     plan = resolve_wake_plan(_cfg(phrase="Computer"), local_whisper_available=False)
-    assert plan.oww_keyword == "hey_jarvis"
-    assert plan.verify_prefix is True
+    assert plan.oww_keyword == "hey_rhasspy"
+    assert plan.verify_prefix is False
 
 
 # --------------------------------------------------------------------------

@@ -28,7 +28,11 @@ from jarvis.missions.critic.runner import (
     _strip_json_fences,
     _validate_verdict_tolerant,
 )
-from jarvis.missions.critic.verdict import REQUIRED_AXES, CriticVerdict
+from jarvis.missions.critic.verdict import (
+    REQUIRED_AXES,
+    CriticVerdict,
+    is_approval_valid,
+)
 
 
 def _valid_verdict_json(verdict: str = "approve") -> str:
@@ -156,6 +160,32 @@ async def test_claude_direct_path_approves_when_resolver_picks_claude_api(
     assert argv[argv.index("--model") + 1] == "claude-sonnet-4-6"
     # OpenClaw must NOT have been spawned -- no openclaw.json gets written.
     assert not (tmp_path / "openclaw.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_critic_caps_agentic_turns(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Latency (2026-06-14): the critic must pass ``--max-turns`` so it grades
+    from the in-prompt diff instead of spending a dozen disk-verify turns
+    (21-61s to grade a 200-word story). The diff is embedded in the prompt, so a
+    small turn cap is sufficient and preserves the GROUND-TRUTH discipline."""
+    from jarvis.missions.critic.runner import _CRITIC_MAX_TURNS
+
+    captured = _patch_direct(monkeypatch, stdout=_valid_verdict_json("approve"))
+    await CriticRunner().run(
+        mission_prompt="Build X",
+        worker_diff="diff",
+        worker_log="log",
+        prior_reflections="",
+        iteration=0,
+        worktree=tmp_path,
+        env={},
+    )
+    argv = captured["argv"]
+    assert "--max-turns" in argv, argv
+    assert argv[argv.index("--max-turns") + 1] == str(_CRITIC_MAX_TURNS)
+    assert _CRITIC_MAX_TURNS <= 3, "turn cap must stay small to bound critic latency"
 
 
 @pytest.mark.parametrize("provider,foreign_model", [
@@ -582,3 +612,146 @@ async def test_claude_direct_recovers_over_long_summary_from_narration(
     )
     assert verdict.verdict == "approve"
     assert len(verdict.summary) <= 280
+
+
+@pytest.mark.asyncio
+async def test_critic_unavailable_model_retries_without_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Live mission 019ec61b (2026-06-14): the critic model FRONTIER_MODEL=
+    claude-fable-5 is approved-access-only; the CLI rejects it. The critic
+    must retry without --model (CLI default) rather than fail the mission.
+
+    Tests ``_invoke_via_claude_direct`` directly so the model arg is forced
+    verbatim (``run()`` resolves it via ``primary_model or model``)."""
+    monkeypatch.setattr(
+        "jarvis.missions.workers.claude_direct_worker._resolve_claude_argv_prefix",
+        lambda: ["claude"],
+    )
+
+    spawns: list[list[str]] = []
+
+    async def fake(*args: Any, **kwargs: Any) -> _FakeProc:
+        spawns.append(list(args))
+        if len(spawns) == 1:
+            return _FakeProc(b"Claude Fable 5 is currently unavailable.", returncode=1)
+        return _FakeProc(_valid_verdict_json("approve").encode("utf-8"), returncode=0)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake)
+
+    verdict = await CriticRunner()._invoke_via_claude_direct(
+        prompt="grade this", worktree=tmp_path, env={},
+        model="claude-fable-5", iteration=0, adversarial_reframe=False,
+    )
+
+    assert verdict is not None and verdict.verdict == "approve"
+    assert len(spawns) == 2, "must retry exactly once on model-unavailable"
+    assert "--model" in spawns[0] and "claude-fable-5" in spawns[0]
+    assert "--model" not in spawns[1], "retry must omit --model (CLI default)"
+
+
+# --- conversational / informational task (empty diff, no tools) -------------
+
+
+@pytest.mark.asyncio
+async def test_pure_question_no_files_is_approved_not_revised(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Live mission 019ec638 (2026-06-14): "which city would you recommend for
+    a trip to Australia?" produced a correct text answer but no file, so the
+    empty-diff veto rejected it 3x -> critic_loop_exhausted -> FAILED. A pure
+    question's deliverable IS the answer: the pre-gate must approve it
+    deterministically, WITHOUT spawning an LLM."""
+    def _boom(*_a: Any, **_k: Any):
+        raise AssertionError("pre-gate must not spawn a subprocess for a question")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _boom)
+
+    worker_log = json.dumps({
+        "type": "result",
+        "result": "I'd recommend Sydney as your first stop, then Melbourne.",
+        "subtype": "success",
+    })
+
+    verdict = await CriticRunner().run(
+        mission_prompt=(
+            "Could you please tell me which city you would recommend if I "
+            "would like to book a trip to Australia?"
+        ),
+        worker_diff="",
+        worker_log=worker_log,
+        prior_reflections="",
+        iteration=0,
+        worktree=tmp_path,
+        env={},
+    )
+
+    assert verdict.verdict == "approve"
+    assert is_approval_valid(verdict), "approval must carry evidence on every axis"
+
+
+@pytest.mark.asyncio
+async def test_advisory_trip_planning_no_files_is_approved(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Live missions 019ec66c/019ec674/019ec708 (2026-06-14): "plan/book a trip"
+    failed critic_loop_exhausted — an advisory task whose deliverable is a text
+    plan, not a file. The pre-gate must approve it deterministically (the plan IS
+    the deliverable), exactly like a question."""
+    def _boom(*_a: Any, **_k: Any):
+        raise AssertionError("advisory pre-gate must not spawn a subprocess")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _boom)
+
+    worker_log = json.dumps({
+        "type": "result",
+        "result": (
+            "Here's a 9-day London-to-Taiwan itinerary: fly LHR-TPE, 3 nights "
+            "Taipei (Taipei 101, Jiufen), 2 nights Tainan, 2 nights Taroko Gorge…"
+        ),
+        "subtype": "success",
+    })
+
+    verdict = await CriticRunner().run(
+        mission_prompt=(
+            "I would like you to spawn a sub-agent which will help me plan a "
+            "trip from London to Taiwan."
+        ),
+        worker_diff="",
+        worker_log=worker_log,
+        prior_reflections="",
+        iteration=0,
+        worktree=tmp_path,
+        env={},
+    )
+
+    assert verdict.verdict == "approve"
+    assert is_approval_valid(verdict)
+
+
+@pytest.mark.asyncio
+async def test_do_task_with_no_files_still_revised(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The conversational-answer relaxation must NOT reopen the hallucination
+    hole: a DO-task ("create a file") that produced no diff and no tool calls —
+    only a 'done' claim — is still deterministically revised."""
+    def _boom(*_a: Any, **_k: Any):
+        raise AssertionError("do-task veto must not spawn a subprocess either")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _boom)
+
+    worker_log = json.dumps({
+        "type": "result",
+        "result": "I have created the file report.md.",
+        "subtype": "success",
+    })
+
+    verdict = await CriticRunner().run(
+        mission_prompt="Create a file report.md with the analysis.",
+        worker_diff="",
+        worker_log=worker_log,
+        prior_reflections="",
+        iteration=0,
+        worktree=tmp_path,
+        env={},
+    )
+
+    assert verdict.verdict == "revise"

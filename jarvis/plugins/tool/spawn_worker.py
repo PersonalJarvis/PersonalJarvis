@@ -102,7 +102,17 @@ _QUALITY_DIRECTIVE: Final[str] = (
     "finished artefact; never downgrade the task to a minimal version, and "
     'treat any hint (even one that says "Grundgerüst" / "skeleton") as a '
     "floor, not a ceiling. This raises the quality of exactly what was asked "
-    "— it does not add unrequested features."
+    "— it does not add unrequested features. "
+    # Honest-impossibility escape (latency 2026-06-14): without this, the "never
+    # downgrade / build the finished artefact" floor pushes the worker to spiral
+    # on a task it cannot actually do (e.g. "book a trip" with no booking tool —
+    # live mission 019ec708 ran 535s producing nothing). The floor applies to
+    # the QUALITY of a doable task, never as a mandate to fake an undoable one.
+    "If the task genuinely cannot be completed with the tools available to you "
+    "(for example it requires a real-world action like booking, purchasing, "
+    "sending, or signing into an external account for which you have no tool), "
+    "do NOT simulate, partially attempt, or keep retrying it — state plainly and "
+    "briefly that you cannot do it and why, then stop."
 )
 
 
@@ -166,12 +176,23 @@ class SpawnWorkerTool:
     """
 
     name: str = "spawn_worker"
+    # LLMs pick tools primarily by description (ADR-0011, computer-use
+    # amendment). The old wording sold this tool for generic "Recherche",
+    # which pulled plain news/knowledge questions into multi-minute worker
+    # missions (live complaint 2026-06-10). Keep the heavy-only contract and
+    # the explicit negative boundary in sync with router.py SPAWN-CRITERIA
+    # and tests/unit/plugins/tool/test_spawn_worker_description.py.
     description: str = (
-        "Delegiert eine komplexe Aufgabe an die OpenClaw-Bridge "
-        "(Frontier-Worker, Mission-Manager-orchestriert). "
-        "Nutze das fuer Code-Builds, App-Entwicklung, mehrstufige "
-        "Recherche. Uebergib die User-Utterance verbatim und optional "
-        "3-5 kurze Brainstorm-Gedanken als ``context_hints``."
+        "Delegates a GENUINELY HEAVY task to a background frontier worker "
+        "(mission-manager orchestrated; runs for several minutes). Use it "
+        "ONLY when the task builds a real work product (code, app, script, "
+        "refactor, file, document, HTML report) or clearly needs many steps "
+        "of multi-minute focused work (deep multi-source research WITH a "
+        "deliverable report). NEVER use it for simple or medium requests: "
+        "questions, news, quick lookups, single web searches, or anything "
+        "you can answer inline with your own tools in this turn. Pass the "
+        "user utterance verbatim plus optional 3-5 short brainstorm notes "
+        "as ``context_hints``."
     )
     risk_tier: str = "monitor"
     suppress_response: bool = True

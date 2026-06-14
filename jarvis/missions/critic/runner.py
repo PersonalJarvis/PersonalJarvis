@@ -32,6 +32,9 @@ from typing import Final
 
 from pydantic import ValidationError
 
+from ..stream_evidence import capability_refusal_answer, readonly_answer
+from ..workers.claude_direct_worker import _claude_error_is_model_unavailable
+from ..workers.process_utils import create_worker_subprocess
 from .escalation import choose_critic_model
 from .log_summarizer import TriageFn, summarize_log
 from .prompts import render_critic_prompt
@@ -291,6 +294,20 @@ MAX_CRITIC_LOOPS: Final[int] = 3
 DEFAULT_TIMEOUT_SECONDS: Final[float] = 240.0
 """Subprocess wall-clock cap for one Critic call."""
 
+_CRITIC_MAX_TURNS: Final[int] = 2
+"""Agentic-turn cap on the critic ``claude --print`` run (latency 2026-06-14).
+
+Under ``--permission-mode bypassPermissions`` the critic behaves as a full
+agent: left uncapped it spends 12-15 self-initiated Read/Glob/Bash turns
+re-verifying the worker's diff against the worktree before emitting its JSON
+verdict — 21-61s to grade a 200-word story (worker took 18s). But the diff is
+already embedded in the prompt (and external writes are inlined as
+``diff --external-target`` blocks), so the critic does NOT need to read disk to
+grade. Capping turns forces it to grade from the in-prompt ground truth with at
+most one optional verify read, collapsing the critic to ~1 model round-trip
+without weakening the GROUND-TRUTH discipline (the evidence is in the prompt,
+not on disk)."""
+
 
 def _win32_creationflags() -> int:
     """CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB."""
@@ -523,6 +540,91 @@ class CriticRunner:
         _defer_empty_diff_to_llm = bool(_extract_tool_call_evidence(worker_log))
 
         if not worker_diff.strip() and not _defer_empty_diff_to_llm:
+            # A pure question / informational request has NO file deliverable —
+            # the worker's spoken answer IS the result. Auto-revising it burned
+            # all three critic loops -> critic_loop_exhausted -> FAILED (live
+            # mission 019ec638, 2026-06-14: "which city would you recommend for
+            # a trip to Australia?"). readonly_answer() keys this off the
+            # REQUEST shape (is_informational_request), NEVER the worker's claim,
+            # so a DO-task that only claims "done" with no tools still falls
+            # through to the deterministic veto below (hallucination guard).
+            info_answer = readonly_answer(
+                worker_diff, worker_log, prompt=mission_prompt
+            )
+            if info_answer is not None:
+                logger.info(
+                    "CriticRunner: empty diff + no tool calls, but the request "
+                    "is informational and the worker answered (%d chars) -> "
+                    "approve (the spoken answer is the deliverable); no "
+                    "deterministic revise (iter=%d).",
+                    len(info_answer), iteration,
+                )
+                answer_axis = CriticAxis(
+                    status="pass",
+                    evidence=[f"informational answer delivered: {info_answer[:200]}"],
+                )
+                return CriticVerdict(
+                    verdict="approve",
+                    axes={ax: answer_axis for ax in REQUIRED_AXES},
+                    issues=[],
+                    correction_instruction="",
+                    summary=(
+                        "Informational request answered; the spoken answer is "
+                        "the deliverable."
+                    ),
+                    summary_de=(
+                        "Frage beantwortet; die Antwort selbst ist das Ergebnis."
+                    ),
+                    confidence=1.0,
+                    suggested_next_action="accept",
+                )
+            # Honest capability refusal: the worker invoked NO tools, wrote
+            # nothing, and its answer says it CANNOT do the task ("book me a
+            # trip" -> "I can't access travel booking systems"; live mission
+            # 019ec674, 2026-06-14). Re-prompting cannot grant a missing
+            # capability, so a 3-loop revise -> critic_loop_exhausted is pure
+            # waste and surfaces a scary "three attempts failed" ERROR for a
+            # request that was simply impossible. Return a ONE-SHOT reject ->
+            # the orchestrator maps it to critic_rejected (honest, terminal),
+            # carrying the worker's own words in the verdict summary. Gated on
+            # the empty-diff + no-tools branch, so the hallucination veto below
+            # still owns the "claims done without doing anything" attack.
+            refusal = capability_refusal_answer(worker_log, prompt=mission_prompt)
+            if refusal is not None:
+                logger.info(
+                    "CriticRunner: empty diff + no tool calls + honest "
+                    "capability refusal (%d chars) -> one-shot reject "
+                    "(critic_rejected, not a 3-loop revise) (iter=%d).",
+                    len(refusal), iteration,
+                )
+                refusal_axis = CriticAxis(
+                    status="fail",
+                    evidence=[
+                        f"worker reported it cannot perform the task: {refusal[:200]}"
+                    ],
+                )
+                # CriticVerdict.summary / summary_de are Field(max_length=280) —
+                # refusals are wordy, so the snippet MUST be sliced to fit the
+                # whole string (prefix + body), else pydantic raises
+                # ValidationError on construction and the one-shot reject becomes
+                # an uncaught crash. summary_de is a fixed short German phrase so
+                # the German TTS field never carries the worker's English refusal.
+                refusal_snippet = " ".join(refusal.split())
+                summary = (
+                    "Worker reports the task is outside its capabilities; "
+                    f"its answer: {refusal_snippet}"
+                )[:280]
+                summary_de = "Aufgabe außerhalb der Fähigkeiten des Workers."  # i18n-allow
+                return CriticVerdict(
+                    verdict="reject",
+                    axes={ax: refusal_axis for ax in REQUIRED_AXES},
+                    issues=[],
+                    correction_instruction="",
+                    summary=summary,
+                    summary_de=summary_de,
+                    confidence=1.0,
+                    suggested_next_action="escalate_to_user",
+                )
             ran_but_no_output = bool(worker_log.strip())
             if ran_but_no_output:
                 hint = (
@@ -1048,11 +1150,14 @@ class CriticRunner:
             # is touched regardless of permission mode.
             "--permission-mode", "bypassPermissions",
             "--add-dir", str(worktree),
+            # Cap agentic turns: the diff is in the prompt, so the critic must
+            # grade from in-prompt ground truth rather than spending 12-15
+            # disk-verify turns (the 21-61s latency, 2026-06-14). See
+            # _CRITIC_MAX_TURNS.
+            "--max-turns", str(_CRITIC_MAX_TURNS),
         ]
         if model:
             cmd.extend(["--model", model])
-
-        creationflags = _win32_creationflags()
 
         logger.info(
             "CriticRunner: spawn (claude-direct) cwd=%s model=%s adv_reframe=%s",
@@ -1063,14 +1168,17 @@ class CriticRunner:
 
         t0 = time.perf_counter()
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
+            # create_worker_subprocess sources the Windows flags and degrades
+            # CREATE_BREAKAWAY_FROM_JOB gracefully (WinError 5) — same fix as
+            # the worker (live mission 019ec61b, 2026-06-14: the critic spawn
+            # died on breakaway in the app's restrictive job).
+            proc = await create_worker_subprocess(
+                cmd,
                 cwd=str(worktree),
                 env=env,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                creationflags=creationflags,
             )
         except FileNotFoundError as exc:
             logger.warning(
@@ -1108,6 +1216,29 @@ class CriticRunner:
         wall_ms = int((time.perf_counter() - t0) * 1000)
         if proc.returncode != 0:
             stderr_text = stderr_b.decode("utf-8", errors="replace")[:1000]
+            stdout_text = stdout_b.decode("utf-8", errors="replace")
+            # Model-unavailable recovery (live mission 019ec61b, 2026-06-14):
+            # the critic model (FRONTIER_MODEL=claude-fable-5) is approved-
+            # access-only and the Claude Max subscription can't reach it via
+            # the CLI. The CLI default IS accessible — retry once without
+            # --model rather than failing the critic (-> critic_unavailable ->
+            # whole mission FAILED even though the worker delivered).
+            if model and _claude_error_is_model_unavailable(
+                stderr_text + " " + stdout_text
+            ):
+                logger.warning(
+                    "CriticRunner: claude critic model %r rejected by the CLI "
+                    "— retrying without --model (accessible CLI default).",
+                    model,
+                )
+                return await self._invoke_via_claude_direct(
+                    prompt=prompt,
+                    worktree=worktree,
+                    env=env,
+                    model="",
+                    iteration=iteration,
+                    adversarial_reframe=adversarial_reframe,
+                )
             logger.warning(
                 "CriticRunner: claude-direct returncode=%d wall_ms=%d stderr=%r",
                 proc.returncode, wall_ms, stderr_text,
@@ -1201,7 +1332,6 @@ class CriticRunner:
         if model:
             cmd.extend(["--model", model])
 
-        creationflags = _win32_creationflags()
         # OAuth: strip OPENAI_API_KEY so codex falls back to auth.json.
         # Also strip CODEX_HOME (build_worker_env sets it per-mission,
         # but the OAuth bearer lives in the user's global ~/.codex/auth.json).
@@ -1217,14 +1347,14 @@ class CriticRunner:
 
         t0 = time.perf_counter()
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
+            # create_worker_subprocess: breakaway-flag degradation (WinError 5).
+            proc = await create_worker_subprocess(
+                cmd,
                 cwd=str(worktree),
                 env=env_for_codex,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                creationflags=creationflags,
             )
         except FileNotFoundError as exc:
             logger.warning(
