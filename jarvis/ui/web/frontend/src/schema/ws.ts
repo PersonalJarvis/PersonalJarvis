@@ -47,6 +47,9 @@ export const WSCommand = z.object({
     "terminal.close",
     // Chat mic-dictation: payload {mode:"start"|"stop"} — transcribe-only.
     "stt_dictate",
+    // Drag-drop a mission card onto the Jarvis dock — pulls the sub-agent
+    // task into the live conversation context.
+    "mission.inject",
   ]),
   payload: z.record(z.unknown()).default({}),
 });

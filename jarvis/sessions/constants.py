@@ -69,6 +69,76 @@ session row whose recorder has not finalized yet (still running). Order
 is intentionally stable for tests that assert against
 ``typing.get_args(HangupReason)``."""
 
+# ----------------------------------------------------------------------
+# Spoken-track kinds (SpeechSpoken.spoken_kind)
+# ----------------------------------------------------------------------
+#
+# Same anti-drift contract as HANGUP_REASONS: every phrase Jarvis VOICES that
+# is not the brain's normal reply is published as a ``SpeechSpoken`` event and
+# tagged with one of these kinds. The Transcription view renders a per-kind
+# label, so the set has to agree across Python (this module), the Pydantic
+# mirror (``models.py``), the TS const (``types.ts``) and the UI label map
+# (``TurnCard.tsx``). The parity test in
+# ``tests/unit/sessions/test_spoken_kind_parity.py`` fails on any drift.
+#
+# Deliberately NOT a member: ``"reply"``. That is the sentinel default of
+# ``SpeechPipeline._speak`` for the ordinary brain reply, which is already
+# documented via ``ResponseGenerated`` -> ``jarvis_text``; ``_emit_spoken``
+# suppresses it so it never reaches the spoken track.
+
+SPOKEN_KIND_CLARIFY: Final[str] = "clarify"
+"""A clarifying question ('Wie meinst du das genau?') for an empty/incomplete turn."""
+
+SPOKEN_KIND_TIMEOUT: Final[str] = "timeout"
+"""The brain-took-too-long apology (no-first-frame ceiling / stall window)."""
+
+SPOKEN_KIND_UNAVAILABLE: Final[str] = "unavailable"
+"""The whole brain provider chain was unreachable."""
+
+SPOKEN_KIND_STT_UNAVAILABLE: Final[str] = "stt_unavailable"
+"""Speech-to-text exhausted its retries — Jarvis could not hear the user."""
+
+SPOKEN_KIND_PRIVACY: Final[str] = "privacy"
+"""A privacy acknowledgement ('Ja.' / 'Ich sehe wieder.') for the vision toggle."""
+
+SPOKEN_KIND_COMPLETION: Final[str] = "completion"
+"""A background mission / OpenClaw result read back after it finished."""
+
+SPOKEN_KIND_ACTION_DONE: Final[str] = "action_done"
+"""A short 'done' confirmation after a wordless desktop action succeeded."""
+
+SPOKEN_KIND_BACKCHANNEL: Final[str] = "backchannel"
+"""A short conversational cue ('Mhm?') mid-dialogue."""
+
+SPOKEN_KIND_ANNOUNCEMENT: Final[str] = "announcement"
+"""A generic interstitial announcement (skill output, spawn ack, cron skill)."""
+
+SPOKEN_KIND_PREAMBLE: Final[str] = "preamble"
+"""The sub-second flash-brain 'let me check…' preamble before the deep reply."""
+
+SPOKEN_KIND_PROGRESS: Final[str] = "progress"
+"""A 'still working' nudge while a long background mission runs."""
+
+SPOKEN_KIND_OTHER: Final[str] = "other"
+"""Catch-all for any voiced phrase without a more specific tag."""
+
+SPOKEN_KINDS: Final[tuple[str, ...]] = (
+    SPOKEN_KIND_CLARIFY,
+    SPOKEN_KIND_TIMEOUT,
+    SPOKEN_KIND_UNAVAILABLE,
+    SPOKEN_KIND_STT_UNAVAILABLE,
+    SPOKEN_KIND_PRIVACY,
+    SPOKEN_KIND_COMPLETION,
+    SPOKEN_KIND_ACTION_DONE,
+    SPOKEN_KIND_BACKCHANNEL,
+    SPOKEN_KIND_ANNOUNCEMENT,
+    SPOKEN_KIND_PREAMBLE,
+    SPOKEN_KIND_PROGRESS,
+    SPOKEN_KIND_OTHER,
+)
+"""All accepted ``SpeechSpoken.spoken_kind`` values. Order is stable for tests."""
+
+
 __all__ = [
     "HANGUP_ERROR",
     "HANGUP_HOTKEY",
@@ -77,4 +147,17 @@ __all__ = [
     "HANGUP_SHUTDOWN",
     "HANGUP_TURN_COMPLETE",
     "HANGUP_VOICE_PATTERN",
+    "SPOKEN_KIND_ACTION_DONE",
+    "SPOKEN_KIND_ANNOUNCEMENT",
+    "SPOKEN_KIND_BACKCHANNEL",
+    "SPOKEN_KIND_CLARIFY",
+    "SPOKEN_KIND_COMPLETION",
+    "SPOKEN_KIND_OTHER",
+    "SPOKEN_KIND_PREAMBLE",
+    "SPOKEN_KIND_PRIVACY",
+    "SPOKEN_KIND_PROGRESS",
+    "SPOKEN_KIND_STT_UNAVAILABLE",
+    "SPOKEN_KIND_TIMEOUT",
+    "SPOKEN_KIND_UNAVAILABLE",
+    "SPOKEN_KINDS",
 ]

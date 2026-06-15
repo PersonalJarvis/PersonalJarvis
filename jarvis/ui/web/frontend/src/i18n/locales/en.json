@@ -1,4 +1,9 @@
 {
+  "jarvis_dock": {
+    "aria": "Jarvis — drop a mission here to talk about it",
+    "hint": "Drag a sub-agent output here to pull it into the conversation",
+    "drop_here": "Drop to discuss"
+  },
   "topbar": {
     "restart": "Restart",
     "restart_confirm": "Confirm restart?",

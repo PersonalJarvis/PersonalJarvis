@@ -814,6 +814,15 @@ class Kontrollierer:
 
         # MissionPlanReady on bus + DB
         await self._publish_plan_ready(mission_id, plan)
+        logger.info(
+            "swarm team: coordinator -> scouts -> builders mission=%s "
+            "steps=%d n_workers=%d slugs=%s expected_output=%r",
+            mission_id,
+            len(plan.steps),
+            plan.n_workers,
+            ",".join(step.slug for step in plan.steps),
+            plan.expected_output,
+        )
 
         # Mission directory for reflections + logs.
         # 2026-05-17 (BUG-LIVE-10): UUID7 IDs share the first 8 hex chars

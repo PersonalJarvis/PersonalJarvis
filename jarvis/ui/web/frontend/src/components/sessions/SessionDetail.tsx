@@ -12,7 +12,7 @@ import {
   FileText,
   Loader2,
 } from "lucide-react";
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,7 +28,10 @@ import { useT } from "@/i18n";
 
 import { fetchSessionExport } from "./api";
 import { TurnCard } from "./TurnCard";
-import type { SessionDetail as SessionDetailModel } from "./types";
+import type {
+  SessionDetail as SessionDetailModel,
+  VoiceSpokenLine,
+} from "./types";
 
 type ExportFormat = "markdown" | "plain" | "json";
 
@@ -47,6 +50,31 @@ interface Props {
 export function SessionDetail({ detail, loading, error }: Props) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
+
+  // Group the SpeechSpoken raw events under their turn so each TurnCard can
+  // render the "Spoken output" track (every voiced non-reply phrase). Hook
+  // runs unconditionally (before the early returns) per the rules of hooks.
+  const spokenByTurn = useMemo(() => {
+    const map = new Map<string, VoiceSpokenLine[]>();
+    for (const e of detail?.events ?? []) {
+      if (e.kind !== "SpeechSpoken") continue;
+      const text = String((e.payload as { text?: unknown })?.text ?? "");
+      if (!text.trim()) continue;
+      const line: VoiceSpokenLine = {
+        turn_id: e.turn_id,
+        ts_ms: e.ts_ms,
+        text,
+        spoken_kind: String(
+          (e.payload as { spoken_kind?: unknown })?.spoken_kind ?? "other",
+        ),
+      };
+      const arr = map.get(e.turn_id ?? "") ?? [];
+      arr.push(line);
+      map.set(e.turn_id ?? "", arr);
+    }
+    for (const arr of map.values()) arr.sort((a, b) => a.ts_ms - b.ts_ms);
+    return map;
+  }, [detail]);
 
   const copyAs = useCallback(
     async (format: ExportFormat) => {
@@ -198,7 +226,13 @@ export function SessionDetail({ detail, loading, error }: Props) {
               ohne Folge-Utterance.
             </div>
           ) : (
-            turns.map((t) => <TurnCard key={t.id} turn={t} />)
+            turns.map((t) => (
+              <TurnCard
+                key={t.id}
+                turn={t}
+                spoken={spokenByTurn.get(t.id) ?? []}
+              />
+            ))
           )}
         </div>
       </ScrollArea>

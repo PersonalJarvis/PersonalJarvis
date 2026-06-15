@@ -408,7 +408,9 @@ def _silent_turn_pipeline(
     p._spoke_this_turn = False  # type: ignore[attr-defined]
     spoken: list[str] = []
 
-    async def _fake_speak(text: str, language: str | None = None) -> bool:
+    async def _fake_speak(
+        text: str, language: str | None = None, *, kind: str = "reply"
+    ) -> bool:
         spoken.append(text)
         return False
 

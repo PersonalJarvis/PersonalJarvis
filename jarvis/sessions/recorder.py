@@ -85,6 +85,12 @@ _RAW_EVENT_KINDS: frozenset[str] = frozenset(
         "VoiceSessionEnded",
         "VoiceTurnStarted",
         "VoiceTurnCompleted",
+        # Every phrase Jarvis VOICES that is not the brain's normal reply —
+        # timeout/unavailable apologies, clarifying questions, skill/mission
+        # announcements, the "still working" progress nudge. Without this the
+        # Transcription view only shows the conversational reply and silently
+        # drops everything else the user actually heard (2026-06-15).
+        "SpeechSpoken",
     }
 )
 
@@ -674,6 +680,10 @@ def _payload_for(event: Event) -> dict[str, Any]:
         "cost_usd",
         "text_len",
         "finish_reason",
+        # SpeechSpoken: the phrase-kind tag (timeout / announcement / clarify /
+        # …). ``text`` + ``language`` are already whitelisted above, so a
+        # persisted SpeechSpoken row carries {text, language, spoken_kind}.
+        "spoken_kind",
         "new_state",
         "previous",
         "session_id",

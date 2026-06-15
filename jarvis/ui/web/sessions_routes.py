@@ -107,15 +107,18 @@ async def export_session(
     if session is None:
         raise HTTPException(status_code=404, detail="session-not-found")
     turns = store.get_turns(session_id)
+    # Raw events carry the SpeechSpoken track (every voiced non-reply phrase).
+    # All three export formats document it: markdown tags each by kind, plain
+    # folds them into the dialogue, JSON ships the raw events.
+    events = store.get_events(session_id)
 
     if format == "markdown":
-        body = format_session_markdown(session, turns)
+        body = format_session_markdown(session, turns, events)
         return PlainTextResponse(content=body, media_type="text/markdown; charset=utf-8")
     if format == "plain":
-        body = format_session_plain(session, turns)
+        body = format_session_plain(session, turns, events)
         return PlainTextResponse(content=body, media_type="text/plain; charset=utf-8")
     # JSON-Variant — wir geben den vollen Detail-Payload zurueck.
-    events = store.get_events(session_id)
     detail = SessionDetail(session=session, turns=turns, events=events)
     return Response(
         content=detail.model_dump_json(indent=2),

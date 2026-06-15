@@ -121,6 +121,73 @@ export function sizeChanged(prev: CanvasSize, next: CanvasSize, threshold = 2): 
   return dw >= threshold || dh >= threshold;
 }
 
+/** A graph-space axis-aligned bounding box, matching `getGraphBbox()`. */
+export interface GraphBbox {
+  x: [number, number];
+  y: [number, number];
+}
+
+/** The camera centre in graph coordinates (what `centerAt()` reports). */
+export interface GraphCenter {
+  x: number;
+  y: number;
+}
+
+/**
+ * Clamp the Memory-Map camera centre so the graph can never be panned entirely
+ * out of view.
+ *
+ * Why this exists: react-force-graph allows unbounded background panning, and a
+ * pure pan does NOT reheat the simulation — so the `onEngineStop` re-fit never
+ * fires to rescue a graph the user has dragged off-screen. The result was the
+ * reported bug: drag the network toward an edge and it vanishes ("the right
+ * wall disappears"), with no way back except the Zentrieren button.
+ *
+ * The guarantee: after a pan, at least `minVisibleFraction` of each viewport
+ * dimension keeps overlapping the graph's bounding box — but never more overlap
+ * than the graph actually spans (a graph smaller than the viewport stays FULLY
+ * visible instead of being stranded the moment its centre leaves the screen).
+ *
+ * Pure + framework-free so it is unit-testable without a canvas. The component
+ * feeds it `centerAt()` / `zoom()` / `getGraphBbox()` from `onZoomEnd` and only
+ * issues a corrective `centerAt()` when the returned centre actually moved.
+ *
+ * @param center  current camera centre, graph coordinates
+ * @param zoom    current zoom factor (screen px per graph unit)
+ * @param bbox    graph bounding box, graph coordinates
+ * @param view    viewport size in CSS pixels
+ * @param minVisibleFraction  fraction of each viewport axis kept over the graph
+ * @returns the clamped centre (identical values when already in bounds)
+ */
+export function clampCenterToView(
+  center: GraphCenter,
+  zoom: number,
+  bbox: GraphBbox,
+  view: CanvasSize,
+  minVisibleFraction = 0.25,
+): GraphCenter {
+  // No usable zoom yet (canvas not laid out) → never touch the centre.
+  if (!Number.isFinite(zoom) || zoom <= 0) return center;
+
+  const halfW = view.w / (2 * zoom);
+  const halfH = view.h / (2 * zoom);
+  const bboxW = bbox.x[1] - bbox.x[0];
+  const bboxH = bbox.y[1] - bbox.y[0];
+
+  // How much of the graph must stay on screen, in graph units. Capped at the
+  // graph's own span so a small graph is kept wholly visible, not half-off.
+  const keepX = Math.min((view.w * minVisibleFraction) / zoom, bboxW);
+  const keepY = Math.min((view.h * minVisibleFraction) / zoom, bboxH);
+
+  const clampAxis = (c: number, lo: number, hi: number): number =>
+    lo > hi ? (lo + hi) / 2 : Math.min(hi, Math.max(lo, c));
+
+  return {
+    x: clampAxis(center.x, bbox.x[0] - halfW + keepX, bbox.x[1] + halfW - keepX),
+    y: clampAxis(center.y, bbox.y[0] - halfH + keepY, bbox.y[1] + halfH - keepY),
+  };
+}
+
 /**
  * Compute a node radius in canvas pixels from its inbound link count.
  *

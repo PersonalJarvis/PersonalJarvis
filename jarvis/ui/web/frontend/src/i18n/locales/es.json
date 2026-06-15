@@ -1,4 +1,9 @@
 {
+  "jarvis_dock": {
+    "aria": "Jarvis — suelta una misión aquí para hablar de ella",
+    "hint": "Arrastra un resultado de sub-agente aquí para llevarlo a la conversación",
+    "drop_here": "Suelta para comentar"
+  },
   "topbar": {
     "restart": "Reiniciar",
     "restart_confirm": "¿Confirmar reinicio?",

@@ -24,15 +24,41 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Iterable
 
-from .models import VoiceSessionRow, VoiceTurnRow
+from .models import VoiceEventRow, VoiceSessionRow, VoiceTurnRow
+
+
+def _spoken_by_turn(
+    events: Iterable[VoiceEventRow] | None,
+) -> dict[str, list[tuple[str, str]]]:
+    """Group SpeechSpoken raw events by turn_id into ``[(text, kind), …]``.
+
+    These are the voiced phrases that are not the brain's normal reply
+    (timeout / clarify / announcement / …). Ordered by event ``ts_ms`` so the
+    spoken track reads in the order the user heard it.
+    """
+    grouped: dict[str, list[tuple[int, str, str]]] = {}
+    for e in events or []:
+        if e.kind != "SpeechSpoken":
+            continue
+        text = str(e.payload.get("text", "")).strip()
+        if not text:
+            continue
+        kind = str(e.payload.get("spoken_kind", "other"))
+        grouped.setdefault(e.turn_id or "", []).append((e.ts_ms, text, kind))
+    return {
+        tid: [(text, kind) for _ts, text, kind in sorted(items)]
+        for tid, items in grouped.items()
+    }
 
 
 def format_session_markdown(
     session: VoiceSessionRow,
     turns: Iterable[VoiceTurnRow],
+    events: Iterable[VoiceEventRow] | None = None,
 ) -> str:
     """Markdown-Version fuer reichen Copy-Paste-Konsum."""
     turns_list = list(turns)
+    spoken_map = _spoken_by_turn(events)
     lines: list[str] = []
 
     # --- Header ---
@@ -101,6 +127,14 @@ def format_session_markdown(
             lines.append(f"> {t.jarvis_text}")
             lines.append("")
 
+        spoken = spoken_map.get(t.id, [])
+        if spoken:
+            lines.append("**🗣 Also spoken:**")
+            lines.append("")
+            for text, kind in spoken:
+                lines.append(f"- _({kind})_ {text}")
+            lines.append("")
+
         if t.latency_total_ms > 0 or t.think_ms > 0 or t.speak_ms > 0:
             parts: list[str] = []
             if t.latency_total_ms > 0:
@@ -121,6 +155,7 @@ def format_session_markdown(
 def format_session_plain(
     session: VoiceSessionRow,
     turns: Iterable[VoiceTurnRow],
+    events: Iterable[VoiceEventRow] | None = None,
 ) -> str:
     """Schlichte Gespraechs-Transkription — reiner Dialog, kein Slop.
 
@@ -129,8 +164,14 @@ def format_session_plain(
     getrennt. Bewusst *weggelassen*: Emojis, Markdown, sowie jede
     Pro-Turn-Telemetrie (Tier/Provider/Model/Tokens/Kosten/Latenz/Tools).
     Wer diese Maschinen-Details braucht, nutzt den ``json``-Export.
+
+    Every VOICED non-reply phrase (timeout / clarify / announcement text from
+    the SpeechSpoken events) also appears here as a ``Jarvis:`` line — without
+    a kind tag, to keep the dialogue clean. That way even the plain export
+    documents everything the user heard.
     """
     turns_list = list(turns)
+    spoken_map = _spoken_by_turn(events)
     lines: list[str] = []
 
     # --- Schlanke Kopfzeile: "Voice-Session · 07.06.2026, 19:24 · 1 min 42 s"
@@ -154,6 +195,8 @@ def format_session_plain(
             blocks.append(f"Du: {t.user_text}")
         if t.jarvis_text:
             blocks.append(f"Jarvis: {t.jarvis_text}")
+        for text, _kind in spoken_map.get(t.id, []):
+            blocks.append(f"Jarvis: {text}")
 
     if blocks:
         lines.append("\n\n".join(blocks))

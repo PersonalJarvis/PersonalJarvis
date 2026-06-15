@@ -13,7 +13,17 @@ from jarvis.sessions.formatter import (
     format_session_markdown,
     format_session_plain,
 )
-from jarvis.sessions.models import VoiceSessionRow, VoiceTurnRow
+from jarvis.sessions.models import VoiceEventRow, VoiceSessionRow, VoiceTurnRow
+
+
+def _spoken(turn_id: str, text: str, kind: str, ts_ms: int = 1_717_780_001_000) -> VoiceEventRow:
+    return VoiceEventRow(
+        session_id="sess-1",
+        turn_id=turn_id,
+        ts_ms=ts_ms,
+        kind="SpeechSpoken",
+        payload={"text": text, "language": "de", "spoken_kind": kind},
+    )
 
 # Emojis the markdown renderer uses as visual anchors — none may leak into
 # the clean ``plain`` transcript.
@@ -164,3 +174,35 @@ def test_markdown_renderer_unchanged_still_has_emojis() -> None:
     # clean ``plain`` path was supposed to change.
     assert "\U0001f3a4" in out  # 🎤
     assert "## Turn 1" in out
+
+
+# --- The spoken track (every voiced non-reply phrase) ----------------------
+
+
+def test_markdown_includes_the_spoken_track_with_kind_label() -> None:
+    # A turn whose only audible output was a canned timeout phrase — no normal
+    # reply. It must still surface in the rich export, tagged by kind.
+    turns = [_turn(0, "Wie spät ist es?", "")]
+    spoken = [_spoken("turn-0", "Das hat zu lange gedauert.", "timeout")]
+    out = format_session_markdown(_session(), turns, spoken)
+    assert "Das hat zu lange gedauert." in out
+    assert "timeout" in out  # the kind is surfaced as a tag
+
+
+def test_plain_includes_spoken_phrases_as_clean_dialogue() -> None:
+    turns = [_turn(0, "Wie spät ist es?", "")]
+    spoken = [_spoken("turn-0", "Das hat zu lange gedauert.", "timeout")]
+    out = format_session_plain(_session(), turns, spoken)
+    # The voiced phrase reads as part of the dialogue — no kind tag, no slop.
+    assert "Jarvis: Das hat zu lange gedauert." in out
+    assert "timeout" not in out  # plain export stays clean of meta-tags
+
+
+def test_spoken_track_is_grouped_under_its_own_turn() -> None:
+    turns = [_turn(0, "Erste Frage", "Erste Antwort"), _turn(1, "Zweite Frage", "")]
+    spoken = [_spoken("turn-1", "Bin noch dran.", "progress")]
+    out = format_session_markdown(_session(), turns, spoken)
+    # The progress nudge belongs to turn 2, not turn 1.
+    turn2_section = out.split("## Turn 2")[1]
+    assert "Bin noch dran." in turn2_section
+    assert "Bin noch dran." not in out.split("## Turn 2")[0]

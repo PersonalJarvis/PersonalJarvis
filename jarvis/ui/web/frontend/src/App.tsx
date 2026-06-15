@@ -4,6 +4,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { TopBar } from "@/components/layout/TopBar";
 import { MainView } from "@/components/layout/MainView";
 import { ToastLayer } from "@/components/ToastLayer";
+import { JarvisDock } from "@/components/JarvisDock";
 import { CliConnectPoller } from "@/components/CliConnectPoller";
 import { WakeWordOnboardingGate } from "@/components/onboarding/WakeWordOnboardingGate";
 
@@ -29,6 +30,9 @@ export default function App() {
       </main>
 
       <ToastLayer />
+      {/* Always-present "Jarvis presence" drop dock — drag a mission/output
+          card here to pull it into the live conversation context. */}
+      <JarvisDock />
       {/* Hintergrund-Polling fuer CLI-OAuth-Logins — pollt /check alle 3s
           solange ein cliConnectCoach im Store gesetzt ist. */}
       <CliConnectPoller />
