@@ -718,11 +718,23 @@ _SPAWN_META_RE = re.compile(
     rf"|\b{_SPAWN_NOUN}\b[^.?!\n]{{0,40}}?\b{_SPAWN_VERB}\b",
     re.IGNORECASE,
 )
+_MAKE_RESEARCH_IDIOM_RE = re.compile(
+    r"\bmake\s+(?:me|us)\s+(?:(?:a|an)\s+)?"
+    r"(?:(?:deep|detailed|comprehensive|thorough|full)\s+){0,3}"
+    r"research(?:\s+(?:report|brief|analysis|overview))?\b"
+    r"(?=\s*(?:$|[.?!,;:]|\b(?:about|on|regarding|for|with|into|from|how|what|where|which)\b))",
+    re.IGNORECASE,
+)
 
 
 def _strip_spawn_meta(text: str) -> str:
     """Remove spawn/routing meta-clauses so the classifier sees the real task."""
     return _SPAWN_META_RE.sub(" ", text)
+
+
+def _normalize_informational_idioms(text: str) -> str:
+    """Rewrite colloquial research idioms that otherwise hit generic do-verbs."""
+    return _MAKE_RESEARCH_IDIOM_RE.sub("research", text)
 
 
 def _request_body(prompt: str) -> str:
@@ -762,7 +774,9 @@ def is_informational_request(prompt: str) -> bool:
     a wrongful approve. Hallucination guard intact: "create a file report.md" →
     `creat` + `.md` → vetoed; "send an email" → `send` → vetoed.
     """
-    body = _strip_spawn_meta(_request_body(prompt or "")).strip()
+    body = _normalize_informational_idioms(
+        _strip_spawn_meta(_request_body(prompt or ""))
+    ).strip()
     if not body:
         return False
     if _ACTION_VERB_RE.search(body) or _ARTEFACT_RE.search(body):

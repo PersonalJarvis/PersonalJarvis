@@ -51,6 +51,7 @@ def _make_manager(executor, bus):
     mgr._tool_executor = executor
     mgr._local_action_tools = {"dispatch_to_harness": object()}
     mgr._cost_meter = None
+    mgr._reply_language = "auto"
     return mgr
 
 

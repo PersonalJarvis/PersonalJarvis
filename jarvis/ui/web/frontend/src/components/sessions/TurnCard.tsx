@@ -4,7 +4,17 @@
  * Per Click-to-Copy-Button kann der User den Turn-Text alleine kopieren
  * (ohne Session-Frame).
  */
-import { Brain, Clock, Copy, Download, Hourglass, Mic2, Volume2, Wrench } from "lucide-react";
+import {
+  Brain,
+  Clock,
+  Copy,
+  Download,
+  Hourglass,
+  MessageSquareWarning,
+  Mic2,
+  Volume2,
+  Wrench,
+} from "lucide-react";
 import { useCallback } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -13,26 +23,46 @@ import { Card, CardContent } from "@/components/ui/card";
 import { downloadAs, robustCopy } from "@/lib/clipboard";
 import { useEventStore } from "@/store/events";
 
-import type { VoiceTurnRow } from "./types";
+import type { VoiceSpokenLine, VoiceTurnRow } from "./types";
+
+// Human-readable label per SpeechSpoken spoken_kind. Mirror of
+// jarvis/sessions/constants.py SPOKEN_KINDS — every kind needs an entry
+// (parity: tests/unit/sessions/test_spoken_kind_parity.py). An unknown kind
+// falls back to the kind string itself so it still renders.
+export const SPOKEN_KIND_LABEL: Record<string, string> = {
+  clarify: "Clarifying question",
+  timeout: "Timeout notice",
+  unavailable: "Brain unavailable",
+  stt_unavailable: "Couldn't hear you",
+  privacy: "Privacy",
+  completion: "Background result",
+  action_done: "Action confirmed",
+  backchannel: "Backchannel",
+  announcement: "Announcement",
+  preamble: "Preamble",
+  progress: "Progress update",
+  other: "Spoken",
+};
 
 interface Props {
   turn: VoiceTurnRow;
+  spoken?: VoiceSpokenLine[];
 }
 
-export function TurnCard({ turn }: Props) {
+export function TurnCard({ turn, spoken = [] }: Props) {
   const pushToast = useEventStore((s) => s.pushToast);
 
   const copyTurn = useCallback(async () => {
-    const text = formatTurnPlain(turn);
+    const text = formatTurnPlain(turn, spoken);
     const ok = await robustCopy(text);
     pushToast(
       ok ? "success" : "error",
       ok ? `Turn ${turn.idx + 1} kopiert` : "Kopieren fehlgeschlagen",
     );
-  }, [turn, pushToast]);
+  }, [turn, spoken, pushToast]);
 
   const downloadTurn = useCallback(() => {
-    const text = formatTurnPlain(turn);
+    const text = formatTurnPlain(turn, spoken);
     const stamp = new Date(turn.started_ms);
     const pad = (n: number): string => String(n).padStart(2, "0");
     const filename =
@@ -40,7 +70,7 @@ export function TurnCard({ turn }: Props) {
       `_${pad(stamp.getHours())}-${pad(stamp.getMinutes())}-${pad(stamp.getSeconds())}.txt`;
     downloadAs(filename, text, "text/plain;charset=utf-8");
     pushToast("success", `Heruntergeladen als ${filename}`);
-  }, [turn, pushToast]);
+  }, [turn, spoken, pushToast]);
 
   const startedAt = new Date(turn.started_ms).toLocaleTimeString("de", {
     hour: "2-digit",
@@ -176,6 +206,35 @@ export function TurnCard({ turn }: Props) {
           </div>
         )}
 
+        {/* Spoken output — every phrase Jarvis VOICED that is not the normal
+            reply (timeout/clarify/announcement/…). Without this the log only
+            shows the conversational reply and hides what the user actually
+            heard (user report 2026-06-15). */}
+        {spoken.length > 0 && (
+          <div className="space-y-1.5 border-t border-border/50 pt-2">
+            <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-sky-300">
+              <MessageSquareWarning className="h-3 w-3" />
+              Spoken output
+            </div>
+            <div className="space-y-1">
+              {spoken.map((s, i) => (
+                <div
+                  key={`${s.ts_ms}-${i}`}
+                  className="flex items-start gap-2 rounded-md border border-sky-400/20 bg-sky-400/5 p-2 text-sm"
+                >
+                  <Badge
+                    variant="secondary"
+                    className="mt-0.5 shrink-0 text-[9px] uppercase tracking-wide"
+                  >
+                    {SPOKEN_KIND_LABEL[s.spoken_kind] ?? s.spoken_kind}
+                  </Badge>
+                  <span className="min-w-0 flex-1 break-words">{s.text}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Latenz-Aufschluesselung — wie lang Jarvis nachgedacht / gesprochen hat */}
         {(turn.think_ms > 0 || turn.speak_ms > 0) && (
           <div className="grid grid-cols-2 gap-2 border-t border-border/50 pt-2 text-[11px]">
@@ -207,7 +266,7 @@ function formatMs(ms: number): string {
   return `${(ms / 1000).toFixed(2)} s`;
 }
 
-function formatTurnPlain(turn: VoiceTurnRow): string {
+function formatTurnPlain(turn: VoiceTurnRow, spoken: VoiceSpokenLine[] = []): string {
   const lines: string[] = [];
   lines.push(`--- Turn ${turn.idx + 1} ---`);
   if (turn.user_text) lines.push(`[USER]   ${turn.user_text}`);
@@ -229,5 +288,9 @@ function formatTurnPlain(turn: VoiceTurnRow): string {
     lines.push(`[TOOLS]  ${turn.tool_calls.join(", ")}`);
   }
   if (turn.jarvis_text) lines.push(`[JARVIS] ${turn.jarvis_text}`);
+  for (const s of spoken) {
+    const label = (SPOKEN_KIND_LABEL[s.spoken_kind] ?? s.spoken_kind).toUpperCase();
+    lines.push(`[SPOKEN: ${label}] ${s.text}`);
+  }
   return lines.join("\n");
 }

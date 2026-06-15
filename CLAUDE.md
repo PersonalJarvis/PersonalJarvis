@@ -77,13 +77,20 @@ The short version:
 |---|---|---|
 | **0–4 — Foundations** | ✅ | Plugin system + protocols, FastAPI/React desktop app, speech pipeline, skill system, tool-use loop, risk-tier executor, core memory, harness dispatch. Detail in `docs/phase{0,1,1a,1c,2,4}-*.md`. |
 | **5 — Vision/Action/Admin/Async/Control + Tiered Routing** | ✅ | `jarvis/{vision,admin,tasks,control,telemetry}/`. Computer-Use enabled. Tiered routing via `ROUTER_TOOLS` frozenset. ADR-0001..0011. |
-| **6 — Self-Healing Worker-Critic** | ✅ | `jarvis/missions/` (event store, manager, recovery, state machine, budget, cleanup, workers, critic, kontrollierer, safety, voice, isolation). ADR-0009, `docs/phase6-*.md`. Wired into REST + voice path via `bootstrap_missions`. |
-| **7 — Self-Mod (foundation + writer + tools)** | ✅ | `jarvis/core/self_mod/` (audit, errors, pending, registry, schema, writer). Three router-tier tools: `list_mutable_settings`, `get_config_value`, `set_config_value`. ADR + writeup in `docs/self_mod.md`. **7.5 `spawn_skill_author` not yet registered in `pyproject.toml`.** |
+| **6 — Self-Healing Worker-Critic** | ✅ | `jarvis/missions/` (event store, manager, recovery, state machine, budget, cleanup, workers, critic, kontrollierer, safety, voice, isolation). ADR-0009, `docs/phase6-*.md`. Wired into REST + voice path via `bootstrap_missions`. **Live progress (2026-06-15):** both the Codex worker and `ClaudeDirectWorker` stream stdout line-by-line; the orchestrator drain loop emits throttled `WorkerProgress` (`jarvis/missions/events.py`) → WS → `ReasoningPanel` (the chain was dormant before). **Re-run (2026-06-15):** `POST /api/missions/{id}/rerun` re-dispatches a terminal mission's stored prompt as a NEW mission linked via `parent_mission_id` ("Continue" cancelled / "Restart" failed) — the source card is untouched audit; **no state-machine or idempotency change** (deliberate, avoids AP-14). |
+| **7 — Self-Mod (foundation + writer + tools)** | ✅ | `jarvis/core/self_mod/` (audit, errors, pending, registry, schema, writer). Three router-tier tools: `list_mutable_settings`, `get_config_value`, `set_config_value`. ADR + writeup in `docs/self_mod.md`. **7.5 `spawn-skill-author` IS now registered** (`pyproject.toml` → `jarvis.brain.tools.skill_authoring:SpawnSkillAuthorTool`, router-tier, `ask`; spawns the `SkillAuthoringRunner`). Generated skills land as `state="draft"` and are never auto-activated (AP-15). |
 | **Awareness A0–A5** | ✅ | `jarvis/awareness/` (state, story, salience, verdichter, working_set, episode, recall_store, watchers, probes). Router-tier tools `awareness-snapshot` (A1) + `awareness-recall` (A3). ADR-0009/0010/0012. Hard rule: **never on the voice critical path**. |
 | **Wiki B0/B1/B2/B3/B5/B7/B8/B9** | ✅ | `jarvis/memory/wiki/` (curator, atomic_writer, page_repository, integration, session_rollup, voice_bridge, telemetry, scheduler). Three router-tier tools: `wiki-recall`, `wiki-page-read`, `wiki-ingest`. ADR-0013/0014/0015. B2 = `docs/obsidian-setup.md` + B9-Wizard. B3 = `WikiView.tsx` + 6-endpoint `wiki_routes.py` + `wiki_ws.py` live-reload. **B4 soft-disabled** 2026-05-17 via `[memory.legacy_curator] enabled = false` — legacy Curator package + `data/workspace/` snapshot stay on disk; Hart-Cut (vault migration + reader refactor + package delete) remains open. **B6 not started**. |
 | **OpenClaw bridge** | ⚙ Welle 1+4 done | `jarvis/plugins/harness/openclaw.py`, `jarvis/missions/openclaw/`. `[harness.openclaw].enabled=true`. Welle 2 (live bridge as default) + Welle 3 (live-mode wrap) open. |
 | **Ack-Brain (pre-thinking)** | ✅ | `jarvis/brain/ack_brain/` — sub-second butler ACK before the deep brain replies. Gemini 3.1 Flash Lite primary, Grok fallback. UI preamble bubble. Suppress-if-fast gate at 2000ms (`[ack_brain].suppress_if_brain_faster_than_ms`). ADR-0014 (flash-brain). |
-| **CLI catalog + terminal view** | ✅ | `jarvis/clis/` (catalog, installer, loader, prober, registry, risk_integration, usage_log) + `jarvis/terminal/` (ConPTY via `pywinpty`). Tools `cli-tools` + `spawn-cli-worker`. UI views: `ClisView`, `TerminalView`. |
+| **CLI catalog + terminal view** | ✅ | `jarvis/clis/` (catalog, installer, loader, prober, registry, risk_integration, usage_log) + `jarvis/terminal/` (cross-platform PTY via `terminal.backend.make_pty_backend` — ConPTY/`pywinpty` on Windows, `ptyprocess` on POSIX). Router tool `cli-tools` (virtual loader → one `cli_<name>` tool per connected CLI). UI views: `ClisView`, `TerminalView`. **`spawn-cli-worker` was REMOVED 2026-05-24** (dead entry point; heavy multi-step CLI work goes through `spawn-worker`, single-step through the `cli_<name>` tools — never re-add a CLI spawn tool, it is a D9 recursion vector, AP-5/AP-14). |
+| **Board / Profile ("Knows-you" dashboard)** | ✅ | `jarvis/board/` (aggregator, store, achievements, evaluator, bio prompts, scheduler, `schema.sql`) → `data/board/personal.db`. Parses FlightRecorder JSONL into daily stats / personal records / 10 achievements + an anti-cliché AI-bio. Routes `board_routes.py` (`/api/board/*`) + `profile_routes.py`; views `BoardView.tsx`, `ProfileView.tsx`, `frontend/src/views/profile/`. Deterministic profile writes via the `update-profile` tool. Separate standalone service stub in `board-backend/` (FastAPI + Docker). CHANGELOG `v1.0.0-board`. |
+| **Channels (Web / Telegram / Discord)** | ✅ | `jarvis/channels/` (`base.py` ChannelAdapter, `manager.py`, `bootstrap.py` `bootstrap_channels`, `chat_bridge.py`, `web.py`/`telegram.py`/`discord.py`). Bridges a DM/guild message into the normal Jarvis chat path. Entry points `web` (base), `telegram` (base dep `python-telegram-bot`), `discord` (optional `[channels]` extra, lazy-imported, graceful `ChannelStartError` when absent). Tokens via Credential Manager. |
+| **Friends + Socials** | ✅ | `jarvis/friends/` (`registry.py` `FriendRegistry` on `aiosqlite`, `status_publisher.py`, `status_filter.py`, `messages.py`, `schemas.py`). Routes `friends_routes.py` + `socials_routes.py`; views `FriendsView.tsx`, `frontend/src/views/friends/` + `socials/`. Telegram channel is the live transport (F-FRIENDS F0/F1). |
+| **Contacts + Telephony** | ✅ | `jarvis/contacts/` (`store.py`, `schema.py`, `notify.py`) — contacts mirror to guaranteed Wiki person pages `people/<slug>.md` on `ContactChanged` (PII stays out of the page). Tools `contact-lookup` (safe), `contact-upsert` (monitor, write), `call-contact` (ask, echo-confirm). `jarvis/telephony/` (`outbound.py`, `twiml.py`, `provisioning.py`, `security.py`, `session.py`) places real outbound calls via Twilio. **Twilio is the optional `[telephony]` extra** — routes (`telephony_routes.py`) + `TelephonyManager` degrade gracefully when absent (AD-T8). Views `TelephonyView.tsx`, `frontend/src/views/contacts/`. |
+| **Marketplace plugins** | ✅ | `jarvis/marketplace/` (catalog + `auth/` OAuth + `oauth_callback_server.py` + `plugin_loader.py`/`plugin_registry.py`/`plugin_relevance.py` + `mcp_bridge.py`). The `plugin-tools` entry-point loader expands connected marketplace plugins into live brain tools. Native REST tools where a catalog transport was insufficient: `gmail` (`gmail_rest`, ask — send is consequential) + `vercel` (`vercel_rest`, monitor — read-only). Router-tier, never a spawn (AP-5/AP-14). Route `marketplace_routes.py`; views `PluginsView.tsx`, `ExtensionsView.tsx`. |
+
+There are additional newer routers/views not yet rowed here (`conductor`, `workflows`, `federation_proxy`, `frontier`, `chats`/`sessions`, `preview`, `sub_agents`/`outputs`). Treat the absence of a row as "undocumented, not absent" — `ls jarvis/ui/web/*routes*.py` + `git log -- <module>` is the source of truth.
 
 Status drift moves fast. Verify with `git log -- <module>` rather than trusting this table.
 
@@ -132,6 +139,8 @@ Multi-provider is mandatory — **never hardcode** Anthropic/Claude. Config unde
 
 Ack-Brain (`jarvis/brain/ack_brain/`) emits a sub-second butler-style preamble before the deep brain replies. Suppress-if-fast gate at 2000ms keeps it out of the way when the deep brain is already fast.
 
+**Persona / custom system prompt:** the live persona comes from `jarvis/brain/persona_loader.py`. `load_effective_persona_prompt()` returns an editable override (`data/custom_system_prompt.md`, written atomically via the Settings UI / `settings_routes.py`) when present, else the packaged `JARVIS_PERSONA.md`. Edits apply on the **next turn** (no restart); `invalidate_cache()` clears the in-process cache. Never hardcode the persona string elsewhere.
+
 ### Risk-Tier system
 
 Four levels: `safe` / `monitor` / `ask` / `block`. Priority is **blacklist > whitelist > tool default** (`jarvis/safety/risk_tier.py`). Whitelist downgrades a tier to `safe` with `approved_by="whitelist"` — this is the anti-confirmation-fatigue contract. **Direct calls to `Tool.execute()` are a bug**; only `ToolExecutor.execute()` is authorized.
@@ -154,6 +163,10 @@ Brain output → TTS goes through `scrub_for_voice` in `jarvis/brain/output_filt
 - `_on_announcement` (skill/sub-agent announcements, OpenClaw `summary_de` readback) (`pipeline.py:647`).
 
 Whitelist (sacred, never scrubbed): `Datei, Email, Browser, Terminal, Notiz, Termin, Kalender`. Hyphen-compounds preserved (`Browser-Provider` stays). For the full blacklist (tool leaks, jargon, Sir-opener, markdown, self-reference, echo paraphrase, fillers, post-scrub fallback): see the module docstring and `tests/unit/brain/test_output_filter.py` (40 cases). ADR-0010.
+
+### Web search (`search_web`, router-tier)
+
+The `search-web` tool (`jarvis/plugins/tool/search_web.py`) runs a **priority backend chain** in `jarvis/plugins/tool/search_backends.py` (added 2026-06-15): keyed Brave API (if a key is set) → **real DuckDuckGo SERP via the key-free `ddgs` dependency (default)** → DuckDuckGo Instant Answer (last-resort encyclopedic abstract). Backend preference is `[search].backend`; the chain stays key-free so the base VPS install still searches. **Honesty contract:** each attempt returns a `SearchOutcome` with status `ok` / `empty` / `unavailable`. `empty` = searched, genuinely nothing; `unavailable` = backend unreachable — the brain must NOT say "no results" for `unavailable`, it must say search is down. Do not re-flatten these into one reply (that was the charts/weather "found nothing" forensic). The old Instant-Answer-only backend had no real-time index, so freshness queries (charts, news, prices, sports) always came back empty.
 
 ### Atomic config writes
 
@@ -357,12 +370,13 @@ pytest tests/integration/test_openclaw_lazy_bootstrap.py
 | AP-17 | Run Jarvis as a Windows Service | SYSTEM has no mic/headset access |
 | AP-18 | Propagate a subscriber exception from `EventBus._safe_dispatch` | One handler kills the pipeline |
 | AP-19 | Reuse a process-global progress counter in a stall/heartbeat watchdog without resetting it per unit of work | BUG-032: watchdog measures the idle gap *between* turns → spuriously aborts a fresh TTS answer before its first frame ("Jarvis listens forever") |
+| AP-20 | `continue` (instead of `break`) a WS receive loop on an error that isn't `WebSocketDisconnect` | Unclean client disconnects raise `RuntimeError("WebSocket is not connected")`, not `WebSocketDisconnect` → the loop re-reads a dead socket forever → ~9 MB/s log storm + app self-restart that kills in-flight missions. Catch `RuntimeError` and `break` (`server.py` `_handle_ws`, fixed 1793ceaf) |
 
 ---
 
 ## Recurring bug classes (must internalize)
 
-Detail in [`docs/BUGS.md`](docs/BUGS.md). Six classes recur — recognize the signal, apply the defense:
+Detail in [`docs/BUGS.md`](docs/BUGS.md). Seven classes recur — recognize the signal, apply the defense:
 
 1. **Four-layer restore trap** (BUG-006 → -014 → -015): worktree + frontend build + RAM + **editable-install pin to a deleted clone**. Signal: fix "works in tests" but Jarvis behavior unchanged after restart. Defense: `pwsh scripts/preflight.ps1` + `python -c "import jarvis; print(jarvis.__file__)"`.
 2. **Multi-layer enum drift** (BUG-008, 4 episodes): empty UI list while DB has rows, HTTP 500, `literal_error` in Pydantic. Defense: `docs/anti-drift-three-layer.md` pattern + parity test.
@@ -370,6 +384,18 @@ Detail in [`docs/BUGS.md`](docs/BUGS.md). Six classes recur — recognize the si
 4. **Subprocess console flicker** (BUG-012): missing `NO_WINDOW_CREATIONFLAGS` on `pythonw.exe`. Defense: every new subprocess call imports from `jarvis.core.process_utils`.
 5. **Audio host-API blocking-write trap** (BUG-014): WDM-KS picked by auto-resolver, PortAudio blocking API crashes. Defense: `_FORBIDDEN_OUTPUT_HOSTAPIS` filter; shortest-unique-token device matching.
 6. **Watchdog stale cross-unit counter** (BUG-032): a stall/heartbeat watchdog reads a process-global progress counter (`last_write_ns`) that is never reset per unit, so it measures idle time *between* units and fires spuriously — e.g. the TTS playback watchdog aborted a fresh answer before its first frame ("Jarvis listens forever / never speaks") whenever the brain thought longer than the 5 s stall window. Signal: a "wedge" abort whose timestamps are impossible (fires earlier than the threshold; the resource responds *after* the abort). Defense: reset the counter at unit start (before any lock wait); re-arm the "not started yet" guard per unit, not at construction; guards in `tests/unit/audio/test_player_stall_recovery.py` + `tests/unit/speech/test_speak_playback_timeout.py`.
+7. **Loop on an unexpected teardown error** (AP-20, WS dead-socket): a receive/stream loop catches the *expected* clean-disconnect exception but `continue`s on any other error, so an unclean teardown that raises a *different* exception (here `RuntimeError` from FastAPI, not `WebSocketDisconnect`) spins forever — log storm + self-restart. Signal: runaway CPU/log growth + ErrorOccurred every turn after a client drops. Defense: on the socket loop, treat any read error as terminal — `break`, never `continue`.
+
+---
+
+## Working tree is frequently SHARED (operational reality)
+
+This repo's working tree is routinely edited by **several parallel agent sessions at once** (the MEMORY.md history is full of "shared tree", "a parallel session swept my index", "broke HEAD"). Treat the index as contested:
+
+- **Never assume the staged diff is only yours.** Before committing, stage and commit **hunk-isolated** (`git add -p` / pathspec-scoped commits) so you don't sweep another session's in-flight work into your commit.
+- A large uncommitted diff (this snapshot opened with ~65 changed files across `jarvis/`, `tests/`, frontend, docs) is the **normal** state, not a signal that something is broken. Most belong to other sessions; touch only what your task owns.
+- If the index or HEAD looks corrupted by a concurrent write, the recovery pattern that has worked here is a **temp-index commit + `update-ref` CAS + safety branch** (see the custom-system-prompt and mission-rerun memory entries). Reach for `git-rescue` when it is repo-wide disorder.
+- App restart is **`POST /api/settings/restart-app`**, not `Stop-Process` (which returns Access Denied under the tray `pythonw.exe`). Most uncommitted fixes are loaded via the editable install but still need this restart to take effect.
 
 ---
 

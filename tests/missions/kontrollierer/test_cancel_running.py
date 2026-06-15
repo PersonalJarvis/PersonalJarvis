@@ -159,3 +159,78 @@ async def test_cancel_all_running_finalizes_inflight_missions(
 
     # Idempotent: nothing left in flight.
     assert await k.cancel_all_running(reason="app_shutdown") == []
+
+
+@pytest.mark.asyncio
+async def test_cancel_cannot_be_followed_by_stale_state_transition(
+    manager: MissionManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stale in-flight transition must not append after CANCELLED.
+
+    Live DB evidence (2026-06-15, mission 019ecbb2-c9ff): shutdown wrote
+    RUNNING -> CANCELLED, then a concurrently running iteration appended
+    RUNNING -> CRITIQUING afterward. That leaves the UI showing active work
+    for an already terminal mission.
+    """
+    mid = await manager.dispatch(prompt="race")
+    await manager.transition_state(
+        mid, MissionState.RUNNING, reason="start", source_actor="kontrollierer"
+    )
+
+    original_append = manager.store.append_and_publish
+    stale_transition_ready = asyncio.Event()
+    release_stale_transition = asyncio.Event()
+
+    async def _gated_append(envelope):
+        payload = envelope.payload
+        if (
+            payload.event_type == "MissionStateChanged"
+            and payload.to_state == MissionState.CRITIQUING.value
+        ):
+            stale_transition_ready.set()
+            await release_stale_transition.wait()
+        return await original_append(envelope)
+
+    monkeypatch.setattr(manager.store, "append_and_publish", _gated_append)
+
+    stale_transition = asyncio.create_task(
+        manager.transition_state(
+            mid,
+            MissionState.CRITIQUING,
+            reason="iter-0-start",
+            source_actor="kontrollierer",
+        )
+    )
+    await asyncio.wait_for(stale_transition_ready.wait(), timeout=5.0)
+
+    cancel = asyncio.create_task(
+        manager.transition_state(
+            mid,
+            MissionState.CANCELLED,
+            reason="app_shutdown",
+            source_actor="kontrollierer",
+        )
+    )
+    await asyncio.sleep(0.05)
+    release_stale_transition.set()
+    await asyncio.wait_for(asyncio.gather(stale_transition, cancel), timeout=5.0)
+
+    state_changes = [
+        e.payload
+        for e in await manager.store.events_for_mission(mid)
+        if e.payload.event_type == "MissionStateChanged"
+    ]
+    seen_cancel = False
+    for payload in state_changes:
+        if seen_cancel:
+            pytest.fail(
+                "state transition appended after CANCELLED: "
+                f"{payload.from_state}->{payload.to_state} ({payload.reason})"
+            )
+        if payload.to_state == MissionState.CANCELLED.value:
+            seen_cancel = True
+
+    assert seen_cancel, "test setup must produce a CANCELLED transition"
+    view = await manager.mission(mid)
+    assert view is not None
+    assert view.state == MissionState.CANCELLED

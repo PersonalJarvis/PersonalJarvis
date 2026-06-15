@@ -31,6 +31,37 @@ export const KNOWN_VOICE_TIERS = [
 
 export type VoiceTier = string;
 
+// Mirror of jarvis/sessions/constants.py SPOKEN_KINDS. Every phrase Jarvis
+// VOICES that is not the brain's normal reply is recorded as a SpeechSpoken
+// event tagged with one of these. Parity: tests/unit/sessions/
+// test_spoken_kind_parity.py. Kept ``string`` (not a union) for the same
+// BUG-008 reason as the others — an unknown kind must degrade, not crash.
+export const KNOWN_SPOKEN_KINDS = [
+  "clarify",
+  "timeout",
+  "unavailable",
+  "stt_unavailable",
+  "privacy",
+  "completion",
+  "action_done",
+  "backchannel",
+  "announcement",
+  "preamble",
+  "progress",
+  "other",
+] as const;
+
+export type SpokenKind = string;
+
+// One voiced phrase, extracted from the SpeechSpoken raw events of a session
+// and grouped under its turn for rendering the "Spoken output" track.
+export interface VoiceSpokenLine {
+  turn_id: string | null;
+  ts_ms: number;
+  text: string;
+  spoken_kind: SpokenKind;
+}
+
 export interface VoiceEventRow {
   seq: number | null;
   session_id: string;

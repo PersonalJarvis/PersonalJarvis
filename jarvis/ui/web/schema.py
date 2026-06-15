@@ -79,6 +79,10 @@ class WSCommand(BaseModel):
         # Chat mic-dictation: payload {"mode": "start" | "stop"}. Transcribe-only
         # into the chat input — never reaches the brain.
         "stt_dictate",
+        # Drag-drop a mission/output card onto the Jarvis dock: payload
+        # {slug, utterance, status, summary?, error?, mission_id?, thread_id?}.
+        # Pulls the sub-agent task into the live conversation context.
+        "mission.inject",
     ]
     payload: dict[str, Any] = Field(default_factory=dict)
 

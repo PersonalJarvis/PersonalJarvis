@@ -64,3 +64,36 @@ docs/qa/*
 #     research misroute) are necessarily German — content under test, not an
 #     untranslated artifact ---
 tests/unit/brain/test_local_action_gate.py
+
+# --- DIRECT-path acknowledgement language test: proves the German open_app
+#     launch ack is localized for English/Spanish turns and preserved for German
+#     turns — the German fixtures are the content under test ---
+tests/unit/brain/test_local_action_ack_language.py
+
+# --- Computer-use / local-action readback localization tests: prove the
+#     German fast-path status phrases are localized per turn. The German
+#     utterances and phrase fixtures are the content under test ---
+tests/unit/brain/test_cu_readback_language.py
+tests/unit/voice/test_action_phrases.py
+
+# --- Voice-intent detection regexes: these classifiers MUST contain German
+#     tokens to match German voice utterances (same rationale as router.py).
+#     The German is matching data, not an untranslated artifact ---
+jarvis/brain/local_action_gate.py
+jarvis/missions/stream_evidence.py
+
+# --- Screen-narration guard test: the German voice fixtures and the assertions
+#     on the German persona/system-prompt content are the behaviour under test ---
+tests/unit/brain/test_screen_narration_guard.py
+
+# --- Completion-ellipsis test: German "trailed-off" voice fixtures are the
+#     turn-completion content under test ---
+tests/unit/speech/test_completion_ellipsis.py
+
+# --- Re-run mission design spec: the i18n key table documents the localized
+#     (DE/EN/ES) UI strings — the German column is reference data ---
+docs/superpowers/specs/2026-06-15-rerun-missions-continue-restart-design.md
+
+# --- Computer-use fail-gate design spec: quotes the German harness log traces
+#     and voice phrases it analyses — the German is faithful captured evidence ---
+docs/superpowers/specs/2026-06-15-cu-fail-gate-completion-enforcement-design.md

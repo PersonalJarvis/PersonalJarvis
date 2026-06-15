@@ -153,6 +153,11 @@ wiki/obsidian-vault/entities/
 wiki/obsidian-vault/concepts/
 wiki/obsidian-vault/projects/
 wiki/obsidian-vault/log.md
+# Runtime-regenerated vault self-documentation page (live stats + person links).
+wiki/obsidian-vault/memory.md
+
+# Local CI repro artifact (JUnit XML), regenerated per run — never committed.
+ci-repro-report.xml
 # Personal Obsidian UI state (theme + plugin-config defaults stay tracked as a seed).
 wiki/obsidian-vault/.obsidian/graph.json
 wiki/obsidian-vault/.obsidian/hotkeys.json

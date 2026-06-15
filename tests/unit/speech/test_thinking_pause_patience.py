@@ -55,9 +55,10 @@ def _make_probe_pipe(probe_stt: object, vad: _RecordingVad) -> SpeechPipeline:
     pipe._probe_last_text = ""
     pipe._probe_live_text = ""
     pipe._probe_stable_count = 0
-    pipe._probe_required_stable = 1
+    pipe._probe_required_stable = 2  # production default — no force on one reading
     pipe._probe_empty_count = 0
     pipe._probe_required_empty = 2
+    pipe._probe_seen_real_speech = False
     pipe._probe_min_text_len = 4
     return pipe
 
@@ -160,6 +161,10 @@ async def test_quiet_stable_tail_does_not_force_endpoint() -> None:
     pipe = _make_probe_pipe(_InstantSTT(text="und dann"), vad)
     pipe._probe_last_text = "und dann"  # already seen once → next probe is "stable"
 
+    # Two quiet stable probes reach the persistence threshold; the quiet tail
+    # must still defer (the user may be mid-thought), never force.
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=False)
+    await asyncio.gather(*_probe_tasks())
     pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=False)
     await asyncio.gather(*_probe_tasks())
 
@@ -170,14 +175,240 @@ async def test_quiet_stable_tail_does_not_force_endpoint() -> None:
 
 @pytest.mark.asyncio
 async def test_loud_stable_tail_still_forces_endpoint() -> None:
-    """Positive control for Signal 2: a loud stable tail is bleed → force."""
+    """Positive control for Signal 2: a loud stable tail is speaker bleed → force.
+
+    Updated 2026-06-15: stable now requires the same 2-probe persistence as the
+    empty/boilerplate path — a single loud stable reading no longer forces (it
+    cut the user off mid-sentence). The text is deliberately NOT syntactically
+    open-ended, so the trailed-off guard does not apply and the bleed still ends
+    the turn after persistence.
+    """
     vad = _RecordingVad()
     pipe = _make_probe_pipe(_InstantSTT(text="background hum"), vad)
-    pipe._probe_last_text = "background hum"
+    pipe._probe_last_text = "background hum"  # already seen → next probe is "stable"
+
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)  # stable 1/2 → defer
+    await asyncio.gather(*_probe_tasks())
+    assert vad.request_endpoint_calls == 0, (
+        "a single loud stable tail forced — stable must now persist 2 probes"
+    )
+
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)  # stable 2/2 → force
+    await asyncio.gather(*_probe_tasks())
+    assert vad.request_endpoint_calls == 1, (
+        "a sustained loud stable tail (speaker bleed) failed to force the endpoint"
+    )
+
+
+@pytest.mark.asyncio
+async def test_hallucination_tail_after_real_speech_does_not_force() -> None:
+    """The live recurrence (2026-06-15 16:54): after the user has already
+    produced real speech, a loud tail that Whisper mis-decodes as boilerplate
+    must NOT force the endpoint.
+
+    Log proof: the probe correctly deferred 'can you help me?' (real speech),
+    then 0.6 s later faster-whisper rendered the loud, still-ongoing-speech tail
+    as 'thank you for your help.' (conf 0.43). That matched
+    ``_STT_HALLUCINATION_RE`` and the probe force-endpointed *immediately* at
+    silence_ms=320 — cutting the user off mid-sentence. Once real speech is on
+    the record, a boilerplate tail is a mis-transcription of ongoing speech, not
+    deterministic speaker bleed: it must defer like a loud empty tail.
+    """
+    vad = _RecordingVad()
+    pipe = _make_probe_pipe(_InstantSTT(text="can you help me"), vad)
+
+    # Probe 1: real speech → registers that the user holds the floor.
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)
+    await asyncio.gather(*_probe_tasks())
+    assert vad.request_endpoint_calls == 0
+
+    # Probe 2: Whisper mis-transcribes the loud ongoing-speech tail as boilerplate.
+    pipe._probe_stt = _InstantSTT(text="thank you for your help.")
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)
+    await asyncio.gather(*_probe_tasks())
+
+    assert vad.request_endpoint_calls == 0, (
+        "a boilerplate tail after real speech force-cut the user mid-sentence"
+    )
+
+
+@pytest.mark.asyncio
+async def test_sustained_boilerplate_after_real_speech_still_forces() -> None:
+    """The deadlock-breaker survives: if loud boilerplate genuinely PERSISTS
+    after the user spoke (real bleed starts mid/after the turn), it still forces
+    — just after the same 2-probe persistence as an empty tail, not on probe 1.
+    """
+    vad = _RecordingVad()
+    pipe = _make_probe_pipe(_InstantSTT(text="can you help me"), vad)
+
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)  # real → flag set
+    await asyncio.gather(*_probe_tasks())
+
+    pipe._probe_stt = _InstantSTT(text="thank you for your help.")
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)  # boilerplate 1/2 → defer
+    await asyncio.gather(*_probe_tasks())
+    assert vad.request_endpoint_calls == 0
+
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)  # boilerplate 2/2 → force
+    await asyncio.gather(*_probe_tasks())
+    assert vad.request_endpoint_calls == 1, (
+        "sustained loud boilerplate after real speech never finalized the turn"
+    )
+
+
+@pytest.mark.asyncio
+async def test_real_speech_resets_boilerplate_defer_run() -> None:
+    """Intervening real speech resets the boilerplate-defer run, so a user who
+    speaks, gets one mis-transcription, then keeps talking is never force-cut on
+    a stale count (the boilerplate path shares the empty-tail counter)."""
+    vad = _RecordingVad()
+    pipe = _make_probe_pipe(_InstantSTT(text="can you help me"), vad)
+
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)  # real → flag set
+    await asyncio.gather(*_probe_tasks())
+
+    pipe._probe_stt = _InstantSTT(text="thank you for your help.")
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)  # boilerplate 1/2
+    await asyncio.gather(*_probe_tasks())
+
+    pipe._probe_stt = _InstantSTT(text="and then i want")
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)  # real → reset run to 0
+    await asyncio.gather(*_probe_tasks())
+
+    pipe._probe_stt = _InstantSTT(text="thank you for your help.")
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)  # boilerplate back to 1/2 → defer
+    await asyncio.gather(*_probe_tasks())
+
+    assert vad.request_endpoint_calls == 0, (
+        "boilerplate-defer run was not reset by intervening real speech"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Live recurrence 2026-06-15: "I would like you to [pause] open your Chrome
+# browser" was force-cut after only "I would like you to..." (two sessions,
+# 18:47:55 + 19:07:37). Both forced via the STT probe at silence_ms≈0 while the
+# user was still mid-sentence — the 1.5 s silence rule was never reached because
+# request_endpoint() bypasses it. Two surviving one-shot force branches caused
+# it; these tests pin the corrected, uniform "no force on a single reading and
+# never on a trailed-off tail" contract.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_stable_trailed_off_tail_does_not_force() -> None:
+    """Occurrence A (18:47:55): the probe transcribed the tail as
+    'i would like you to...'. Whisper's trailing ellipsis ('...') marks a
+    CLIPPED, still-ongoing utterance — the user trailed off mid-sentence, they
+    are not done. The stable-tail signal force-cut it anyway at silence_ms=0.
+
+    A tail that ``completion.is_incomplete`` flags as syntactically open-ended
+    (trailing '...', open conjunction/determiner, trailing comma) must DEFER to
+    the natural silence endpoint and never force — even when loud and stable.
+    ``_probe_required_stable`` is pinned to 1 here so the stable threshold is
+    reached on the first repeat, isolating the trailed-off guard from the
+    persistence count.
+    """
+    vad = _RecordingVad()
+    pipe = _make_probe_pipe(_InstantSTT(text="i would like you to..."), vad)
+    pipe._probe_required_stable = 1
+    pipe._probe_last_text = "i would like you to..."  # already seen → next is "stable"
 
     pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)
     await asyncio.gather(*_probe_tasks())
 
+    assert vad.request_endpoint_calls == 0, (
+        "a loud, stable, trailed-off tail ('...') force-cut the user mid-sentence"
+    )
+
+
+@pytest.mark.asyncio
+async def test_open_conjunction_tail_does_not_force() -> None:
+    """Companion to the ellipsis case: a stable tail ending in an open
+    conjunction ('... open chrome and') is also syntactically incomplete — the
+    user is mid-list, not done — and must defer, not force."""
+    vad = _RecordingVad()
+    pipe = _make_probe_pipe(_InstantSTT(text="open chrome and"), vad)
+    pipe._probe_required_stable = 1
+    pipe._probe_last_text = "open chrome and"
+
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)
+    await asyncio.gather(*_probe_tasks())
+
+    assert vad.request_endpoint_calls == 0, (
+        "a stable tail ending in an open conjunction force-cut the user"
+    )
+
+
+@pytest.mark.asyncio
+async def test_pre_speech_hallucination_single_probe_does_not_force() -> None:
+    """Occurrence B (19:07:37): the user's real opening speech 'I would like you
+    to' was mis-decoded by faster-whisper as the boilerplate 'i would like to
+    thank you for your time.' (matches _STT_HALLUCINATION_RE) on the FIRST probe.
+    Because no clean probe had landed yet, ``_probe_seen_real_speech`` was still
+    False and the old code force-cut immediately as 'pure pre-speech bleed'.
+
+    A single loud hallucination reading cannot be distinguished from a user whose
+    live speech is being hallucinated — so it must DEFER (require persistence),
+    not behead the turn on one probe.
+    """
+    vad = _RecordingVad()
+    pipe = _make_probe_pipe(
+        _InstantSTT(text="i would like to thank you for your time."), vad
+    )
+    assert pipe._probe_seen_real_speech is False  # fresh turn, no real speech yet
+
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)
+    await asyncio.gather(*_probe_tasks())
+
+    assert vad.request_endpoint_calls == 0, (
+        "a single loud pre-speech hallucination probe force-cut the user "
+        "mid-sentence (their real speech was mis-decoded as boilerplate)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_pre_speech_hallucination_then_real_speech_never_forces() -> None:
+    """Occurrence B, full sequence: probe 1 hallucinates the user's opening words
+    as boilerplate (defers), then probe 2 — ~0.6 s later — sees the user's
+    continued real speech. The turn must never be force-cut."""
+    vad = _RecordingVad()
+    pipe = _make_probe_pipe(
+        _InstantSTT(text="i would like to thank you for your time."), vad
+    )
+
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)  # hallucinated → defer
+    await asyncio.gather(*_probe_tasks())
+    assert vad.request_endpoint_calls == 0
+
+    # The user keeps talking; the probe now decodes the real continuation.
+    pipe._probe_stt = _InstantSTT(text="open your chrome browser")
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)
+    await asyncio.gather(*_probe_tasks())
+
+    assert vad.request_endpoint_calls == 0, (
+        "the turn was force-cut despite the user's real continuation arriving"
+    )
+
+
+@pytest.mark.asyncio
+async def test_sustained_pre_speech_bleed_still_forces() -> None:
+    """Positive control: removing the one-shot pre-speech force must NOT kill the
+    speaker-bleed cure. Pure pre-speech boilerplate that PERSISTS (TV keeps
+    playing) still forces — just after the same 2-probe persistence as every
+    other empty/boilerplate tail, not on probe 1.
+    """
+    vad = _RecordingVad()
+    pipe = _make_probe_pipe(_InstantSTT(text="vielen dank."), vad)
+
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)  # bleed 1/2 → defer
+    await asyncio.gather(*_probe_tasks())
+    assert vad.request_endpoint_calls == 0, (
+        "a single pre-speech boilerplate probe force-cut — should defer first"
+    )
+
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)  # bleed 2/2 → force
+    await asyncio.gather(*_probe_tasks())
     assert vad.request_endpoint_calls == 1, (
-        "loud stable tail (speaker bleed) failed to force the endpoint"
+        "sustained pre-speech speaker bleed never forced — the bleed cure broke"
     )

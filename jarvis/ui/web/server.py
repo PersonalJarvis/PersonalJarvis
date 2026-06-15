@@ -1090,8 +1090,39 @@ class WebServer:
             self._handle_terminal_close(cmd.payload)
         elif cmd.action == "stt_dictate":
             await self._handle_dictation(cmd.payload)
+        elif cmd.action == "mission.inject":
+            await self._handle_mission_inject(session_id, cmd.payload)
         # provider_switch/set_state laufen jetzt über REST (POST /api/brain/switch
         # bzw. POST /api/secrets/{key}). Doppelte Code-Pfade hier entfernt.
+
+    async def _handle_mission_inject(
+        self, session_id: str, payload: dict[str, Any]
+    ) -> None:
+        """Drag-drop a mission card → inject it into the live conversation.
+
+        Composes a bounded, human-readable user turn from the card's own data
+        and publishes it as a normal ``MessageSent``. The existing brain
+        dispatcher then answers it (spoken on voice, shown in chat) and the
+        text lands in ``BrainManager._history`` so follow-ups stay in context.
+        A distinct ``source_layer`` marks the turn for traceability; the brain
+        dispatcher does NOT skip it (only ``"chat"``/``"brain:mock"`` are
+        skipped), so it triggers a turn exactly like a typed message.
+        """
+        from jarvis.ui.web.mission_inject import compose_mission_inject_text
+
+        text = compose_mission_inject_text(payload)
+        if not text:
+            logger.debug("mission.inject: empty/unparseable payload — ignored")
+            return
+        thread_id = str(payload.get("thread_id") or session_id)
+        await self.bus.publish(
+            MessageSent(
+                thread_id=thread_id,
+                role="user",
+                text=text,
+                source_layer="ui.web.ws.mission_inject",
+            )
+        )
 
     async def _handle_dictation(self, payload: dict[str, Any]) -> None:
         """Start/stop chat mic-dictation on the live SpeechPipeline.

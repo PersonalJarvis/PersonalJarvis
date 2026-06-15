@@ -48,6 +48,22 @@ function PulseDot() {
 
 const URL_REGEX = /(https?:\/\/[^\s)]+[^\s.,;:!?)])/g;
 
+/** MIME type carrying a mission reference between a card and the Jarvis dock.
+ *  Must match `MISSION_DND_MIME` in `components/JarvisDock.tsx`. */
+export const MISSION_DND_MIME = "application/x-jarvis-mission";
+
+/** Serialise the fields the dock/server need from a dragged Outputs card. */
+export function buildMissionDragPayload(meta: OutputSummary): string {
+  return JSON.stringify({
+    slug: meta.slug,
+    utterance: meta.utterance ?? "",
+    status: meta.status ?? "unknown",
+    summary: meta.summary ?? "",
+    error: meta.error ?? "",
+    mission_id: meta.mission_id ?? null,
+  });
+}
+
 export function OutputsView() {
   const t = useT();
   const { data, isLoading, error } = useOutputsList();
@@ -152,9 +168,14 @@ function SessionRow({
   return (
     <button
       type="button"
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData(MISSION_DND_MIME, buildMissionDragPayload(meta));
+        e.dataTransfer.effectAllowed = "copy";
+      }}
       onClick={onSelect}
       className={cn(
-        "w-full rounded-lg border p-3 text-left transition-colors hover:border-primary/40",
+        "w-full cursor-grab rounded-lg border p-3 text-left transition-colors hover:border-primary/40 active:cursor-grabbing",
         isSelected
           ? "border-primary/40 bg-primary/10"
           : "border-border bg-card/40",

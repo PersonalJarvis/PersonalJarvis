@@ -7,6 +7,7 @@ reflections, budget-integration.
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterable
@@ -1325,6 +1326,41 @@ async def test_worker_progress_events_emitted_during_run(
     )
     # Progress is attributed to the worker that produced it.
     assert all(p.worker_id for p in progress)  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_swarm_phase_output_is_logged_for_mission_run(
+    manager: MissionManager, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The mission log should show the human-readable team flow from the Bridge
+    runbook: coordinator -> scouts -> builders."""
+    critic = FakeCriticRunner(_make_approve_verdict(), _make_approve_verdict())
+    plan = MissionPlan(
+        steps=[
+            Step(slug="research", prompt="research current AI news", needs_repo=False),
+            Step(slug="write-report", prompt="write the report", needs_repo=False),
+        ],
+        n_workers=2,
+        expected_output="research report",
+    )
+    k = _make_kontrollierer(
+        manager=manager,
+        tmp_path=tmp_path,
+        critic=critic,
+        decomposer_plan=plan,
+        worker_factory_fn=lambda step: FakeWorker(),
+    )
+    mid = await manager.dispatch(prompt="deep research")
+
+    with caplog.at_level(logging.INFO, logger="jarvis.missions.kontrollierer.orchestrator"):
+        end = await k.run_mission(mid)
+
+    assert end == MissionState.APPROVED
+    log_text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "coordinator -> scouts -> builders" in log_text
+    assert mid in log_text
+    assert "research" in log_text
+    assert "write-report" in log_text
 
 
 @pytest.mark.asyncio

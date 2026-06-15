@@ -704,9 +704,14 @@ async def test_verify_first_fallback_keeps_search_discipline_for_music() -> None
     brain = PlanningBrain(
         executor_script=[
             '{"action": "click", "x": 500, "y": 500}',
-            '{"action": "fail", "reason": "test ends here"}',
+            # End the test at call 2 via a verified done. (Was a bare fail; the
+            # 2026-06-15 fail-gate now re-plans a premature fail, so it no
+            # longer terminates instantly. The 2nd executor PROMPT — the thing
+            # this test inspects — is built identically either way.)
+            '{"action": "done"}',
         ],
         plan_script=['{"plan": []}'],  # planner returns nothing usable
+        judge_script=['{"done": true, "proof": "track playing"}'],
     )
     ctx = make_ctx(brain, verify=True)
     await run_loop(ctx, "spiel shape of you")

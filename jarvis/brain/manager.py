@@ -52,6 +52,7 @@ from jarvis.core.protocols import (
     Tool,
 )
 from jarvis.core.turn_language import detect_text_language, resolve_turn_language
+from jarvis.voice.action_phrases import action_phrase
 from jarvis.memory import CoreMemory, PersonStore, RecallStore, Soul, UserProfile
 from jarvis.memory.curator import Curator
 from jarvis.safety.tool_executor import ToolExecutor
@@ -62,6 +63,7 @@ from .intent_router import RoutingDecision, classify
 from .local_action_gate import (
     HARNESS_NAME,
     LocalActionMode,
+    LocalToolCall,
     _looks_like_desktop_control,
     is_open_app_intent,
     match_local_action,
@@ -275,6 +277,42 @@ def get_tier_default_model(tier: str, provider: str) -> str | None:
 # greedy match-everything regex.
 
 _NEVER_MATCH_RE: re.Pattern[str] = re.compile(r"(?!.*)", re.IGNORECASE)
+
+
+# Option A (2026-06-15): a heavy-research request whose deliverable is an ANSWER
+# (comparison / overview / recommendation / summary) is answered INLINE via the
+# router's search_web tool; only research that BUILDS a verifiable ARTIFACT (a
+# file / report / document) offloads to a sub-agent mission, because the
+# Worker->Critic pipeline grades artifacts via git diff and is hostile to an
+# answer-only research turn (empty-diff veto -> critic_loop_exhausted, live
+# mission 019ecb56, 2026-06-15). These three regexes decide "wants an artifact".
+#
+# A build/produce VERB (write/create/build/generate/export/save + DE forms).
+# Deliberately disjoint from the research/analysis verbs in
+# ``heavy_research_verbs`` (recherchier/analysier/compar/...) so a pure research
+# answer never matches.
+_BUILD_VERB_RE: re.Pattern[str] = re.compile(
+    r"\b(writ|wrote|creat|build|buil|generat|produc|draft|compil|render|"
+    r"export|saved?|"
+    r"schreib|geschrieben|erstell|baue|bau|generier|verfass|speicher|exportier)"
+    r"\w*",
+    re.IGNORECASE,
+)
+# A document / artefact NOUN — the thing being built is a file-shaped deliverable.
+_DOC_NOUN_RE: re.Pattern[str] = re.compile(
+    r"\b(report|document|deck|slides?|spreadsheet|presentation|"
+    r"bericht|dokument|tabelle|praesentation|präsentation)\b",  # i18n-allow: DE artefact nouns
+    re.IGNORECASE,
+)
+# A named file / real extension, or an explicit "into a file" instruction — an
+# artefact deliverable on its own, no build verb required ("... into ai_news.md").
+_NAMED_FILE_RE: re.Pattern[str] = re.compile(
+    r"\.(md|txt|html?|json|csv|pdf|docx?|xlsx?|pptx?|ya?ml|toml)\b"
+    r"|\bfile\s+named\b|\bnamed\s+\S+\.\w+"
+    r"|\bdatei\s+namens\b|\bin\s+eine\s+datei\b|\bin\s+die\s+datei\b"  # i18n-allow: DE file phrasing
+    r"|\binto\s+a\s+file\b",
+    re.IGNORECASE,
+)
 
 
 # BUG-LIVE-04 (Recon-Agent 3, 2026-05-16): Whisper transcribes silence,
@@ -1233,6 +1271,42 @@ class BrainManager:
         if lang not in _ACTION_FAILED_PHRASES:
             lang = resolve_turn_language("unknown", user_text, default="de")
         return _ACTION_FAILED_PHRASES.get(lang, _ACTION_FAILED_PHRASES["de"])
+
+    def _direct_ack_language(self, user_text: str) -> str:
+        """Resolve ``de``/``en``/``es`` for a DIRECT fast-path acknowledgement.
+
+        Mirrors :meth:`_action_failed_phrase`: an explicit ``reply_language``
+        pin (the desktop "Languages" view) wins; otherwise the turn's language
+        is detected from the text; ambiguous text keeps the historical German
+        default. The DIRECT path runs off the LLM, so this is the only place the
+        turn language can be applied to the spoken acknowledgement.
+        """
+        lang = self._reply_language
+        if lang in _OPEN_APP_ACK_PREFIX:
+            return lang
+        return resolve_turn_language("unknown", user_text, default="de")
+
+    def _localize_direct_ack(
+        self, call: LocalToolCall, raw_output: str, lang: str
+    ) -> str:
+        """Localize a deterministic DIRECT-path acknowledgement.
+
+        The DIRECT local-action path surfaces the tool ``output`` VERBATIM to
+        the user (no LLM re-render), so a tool's hardcoded German success string
+        would otherwise reach an English/Spanish speaker untranslated (live bug
+        2026-06-15: an English "open my explorer" turn was acknowledged in
+        German). ``open_app`` is the one fast-path tool whose success output
+        is a spoken acknowledgement; translate only its leading German verb and
+        keep the suffix (the actual app / URL it reported). Any non-matching
+        output — a future tool, a test stand-in — passes through unchanged.
+        """
+        if call.name != "open_app" or lang == "de":
+            return raw_output
+        de_prefix = _OPEN_APP_ACK_PREFIX["de"]
+        target_prefix = _OPEN_APP_ACK_PREFIX.get(lang)
+        if target_prefix is not None and raw_output.startswith(de_prefix):
+            return target_prefix + raw_output[len(de_prefix):]
+        return raw_output
 
     def _build_system_prompt(self) -> str:
         """Builds the system prompt with OpenClaw-style workspace injection.
@@ -2406,6 +2480,18 @@ class BrainManager:
         section = match_navigation_intent(user_text)
         if section is None:
             return None
+        # User mandate (2026-06-15): an EXPLICIT heavy-work trigger ("subagent",
+        # "spawn", "openclaw", …) outranks this deterministic "dumb" navigation
+        # fast-path — exactly as it outranks the skill guard (AD-S9). A nav-tail
+        # combo like "Spawne einen Subagenten UND zeig mir die Socials" names the
+        # execution vehicle, so it must reach force-spawn rather than merely
+        # switch the sidebar section. Stand down and let the normal path spawn.
+        if self._get_force_spawn_pattern().search(user_text):
+            log.info(
+                "navigation fast-path stands down — explicit heavy-work trigger "
+                "in the utterance wins (mission, not a sidebar switch)."
+            )
+            return None
         tool = self._tools.get("navigate")
         if tool is None or self._tool_executor is None:
             return None
@@ -2488,6 +2574,22 @@ class BrainManager:
         # _heavy_worker_provider_viable.
         if not self._heavy_worker_provider_viable():
             return False
+        # User mandate (2026-06-15, "when I say subagent it MUST spawn"): an
+        # EXPLICIT heavy-work trigger ("subagent", "spawn", "openclaw",
+        # "delegate", "deep dive", …) names the execution vehicle. That is an
+        # UNAMBIGUOUS request to dispatch a worker, so it is checked FIRST —
+        # ahead of every disambiguation guard below (instructional / pointer /
+        # navigation / smalltalk / open-app / skill). Those guards exist only to
+        # suppress AMBIGUOUS, implicit spawns; they must never veto a request in
+        # which the user literally named the vehicle. Before this hoist, an
+        # explicit "Starte OpenClaw" / "Spawne einen Subagenten und zeig …" was
+        # swallowed by the open-app / navigation guard and never spawned
+        # ("sometimes saying subagent doesn't spawn a subagent"). The fatal
+        # preconditions above (no tool/executor, Whisper-FP seed, min length,
+        # worker not viable) still win — they mean a spawn is impossible or the
+        # transcript is noise, not that the user changed their mind.
+        if self._get_force_spawn_pattern().search(t):
+            return True
         verb_re, marker_re, _smalltalk_re = self._get_routing_patterns()
         if _is_instructional_question(t):
             return False
@@ -2529,15 +2631,12 @@ class BrainManager:
         # 2026-06-08: "Ich möchte, dass du mir Hermes Agent öffnest, also …").
         if is_open_app_intent(t):
             return False
-        # AD-S9 (2026-06-10): an EXPLICIT heavy-work trigger ("Sub-Agent",
-        # "OpenClaw", "spawne", "deep dive", …) outranks the skill guard
-        # below — the user is naming the execution vehicle, not just touching
-        # a skill's topic. Live bug 2026-06-10 14:34: "spawne einen Sub-Agent
-        # … Gmail …" matched the gmail pairing skill, AD-S3 disarmed
-        # force-spawn, and the turn ran inline and died mute (no mission,
-        # no ACK, idle hang-up).
-        if self._get_force_spawn_pattern().search(t):
-            return True
+        # NOTE: the EXPLICIT heavy-work trigger check (AD-S9, 2026-06-10) was
+        # hoisted to the top of this method (above every disambiguation guard)
+        # per the 2026-06-15 user mandate — see the comment there. It used to sit
+        # here, between the open-app guard and the skill guard, which let the
+        # open-app / navigation guards veto an explicit "Starte OpenClaw" /
+        # "Spawne … und zeig …" before the trigger was ever evaluated.
         # Skill-aware guard (AD-S3, 2026-06-09 rebuild): an utterance that
         # matches an installed, active skill is the skill's turn — never a
         # heavy-worker spawn. generate() sets _skill_turn_match early; the
@@ -2567,13 +2666,22 @@ class BrainManager:
             # (mail/calendar/Spotify/social/delivery) is generic sub-agent work.
             # Live forensic 2026-06-01: a sub-agent task was refused, then only
             # spawned once the user said "Subagent" explicitly.
-            # Heavy multi-step research/analysis must ALSO offload to a
-            # background mission rather than block/behead the voice turn on the
-            # inline deep brain (live bug 2026-06-14, the Berlin→Melbourne turn).
-            # Checked here — after every stand-down guard above — so skills /
-            # open-app / instructional / nav / pointer keep precedence.
+            # Heavy research routing (Option A, 2026-06-15): a research request
+            # whose deliverable is an ANSWER (comparison / overview /
+            # recommendation / summary) is answered INLINE via the router's
+            # search_web tool — fast, and it avoids the empty-diff critic veto the
+            # Worker->Critic pipeline applies to answer-only research (it grades
+            # built artifacts via git diff and cannot verify a spoken answer or a
+            # web citation → critic_loop_exhausted, live mission 019ecb56).
+            # Offload to a mission ONLY when the request asks for a BUILT ARTIFACT
+            # (a file / report) the critic can verify. The inline brain is
+            # protected from the no-first-frame TTS ceiling by
+            # _brain_thinking_heartbeat, so inline research no longer beheads the
+            # voice turn — the reason this offload existed (Berlin→Melbourne) is
+            # separately fixed. An EXPLICIT mission phrase ("sub-agent"/"deep
+            # dive"/"umfassende"/...) already returned True above (AD-S9 trigger).
             if self._is_heavy_research(t):
-                return True
+                return self._research_wants_artifact(t)
             return self._is_generic_subagent_work(t)
         if verb_re.search(t):
             return True
@@ -2603,6 +2711,27 @@ class BrainManager:
             return bool(reg.has_action_intent(t) and reg.resolve_intent(t) is None)
         except Exception:  # noqa: BLE001 — registry error must not block spawn decision
             return False
+
+    def _research_wants_artifact(self, t: str) -> bool:
+        """True iff a (heavy-research) request asks for a BUILT ARTIFACT — a
+        file / report / document — rather than a spoken/written ANSWER.
+
+        Option A (2026-06-15): research whose deliverable is an ANSWER goes
+        INLINE via the router's search_web tool (fast, no critic friction);
+        research that builds a verifiable file OFFLOADS to a mission (the
+        Worker->Critic pipeline grades artifacts via git diff). The
+        discriminator: a named file / "into a file" instruction on its own, OR a
+        build/produce verb paired with a document noun. A research/analysis verb
+        (recherchier/analysier/compare/...) is NOT a build verb, so "research X
+        and compare Y" (an answer) does not match — it stays inline. Pure regex
+        (AP-11 safe, cross-platform); empty/blank text → False.
+        """
+        text = t or ""
+        if not text.strip():
+            return False
+        if _NAMED_FILE_RE.search(text):
+            return True
+        return bool(_BUILD_VERB_RE.search(text) and _DOC_NOUN_RE.search(text))
 
     def _heavy_worker_provider_viable(self) -> bool:
         """True when a heavy-worker backend can run a force-spawn, decoupled from
@@ -2667,6 +2796,10 @@ class BrainManager:
         if plan.mode == LocalActionMode.DIRECT:
             outputs: list[str] = []
             timeout_s = float(getattr(local_cfg, "direct_timeout_s", 3.0))
+            # The DIRECT path surfaces tool output verbatim (no LLM re-render),
+            # so the spoken acknowledgement must be localized HERE — the
+            # language pin/detection that governs LLM replies never reaches it.
+            ack_lang = self._direct_ack_language(user_text)
             for call in plan.tool_calls:
                 tool = self._local_action_tools.get(call.name)
                 if tool is None:
@@ -2691,15 +2824,24 @@ class BrainManager:
                     ))
                     return f"{call.name} timeout after {timeout_s:.3g}s"
                 if not result.success:
-                    return result.error or f"{call.name} fehlgeschlagen."
+                    return result.error or action_phrase(
+                        "tool_failed", ack_lang, tool=call.name
+                    )
                 if result.output is not None:
-                    outputs.append(str(result.output))
+                    outputs.append(
+                        self._localize_direct_ack(call, str(result.output), ack_lang)
+                    )
             return "\n".join(outputs)
 
         if plan.mode == LocalActionMode.COMPUTER_USE:
             tool = self._local_action_tools.get("dispatch_to_harness")
             if tool is None:
                 return None
+            # Resolve the turn language ONCE here (while it is current) for the
+            # spoken cost messages, the immediate ACK, and the background
+            # readback — the offloaded task runs after the turn returns and must
+            # not read the per-turn state itself (live bug 2026-06-15).
+            cu_lang = self._direct_ack_language(user_text)
             # A multi-step CU mission ("navigate to amazon, search, click") needs a
             # generous OUTER cap — the harness has its own per-step timeout +
             # step-budget + no-progress/consecutive-failure guards, so this is only
@@ -2718,12 +2860,11 @@ class BrainManager:
                 )
             if self._cost_meter is not None:
                 if self._cost_meter.is_in_cooldown():
-                    return ("Cost-Cooldown aktiv — Tagesbudget erschoepft. "
-                            "Neue Anfragen werden erst nach dem Cooldown-Ende bearbeitet.")
+                    return action_phrase("cost_cooldown", cu_lang)
                 if self._cost_meter.over_task_budget(tid):
-                    return "Task-Budget fuer diese Konversation ueberschritten."
+                    return action_phrase("task_budget", cu_lang)
                 if self._cost_meter.over_daily_budget():
-                    return "Tagesbudget ueberschritten."
+                    return action_phrase("daily_budget", cu_lang)
             # Wave-4 latency fix: Computer-Use is OFFLOADED off the voice turn.
             # Previously the harness was awaited inline for up to ~31 s, so a
             # "do it on screen" command froze the spoken turn the whole time.
@@ -2758,6 +2899,7 @@ class BrainManager:
                     timeout_s=timeout_s,
                     user_text=user_text,
                     trace_id=tid,
+                    lang=cu_lang,
                 ),
                 name="computer-use-background",
             )
@@ -2765,10 +2907,7 @@ class BrainManager:
             # mid-flight, and drop it on completion.
             bg_tasks.add(task)
             task.add_done_callback(bg_tasks.discard)
-            return (
-                "Mach ich — ich erledige das direkt am Bildschirm und sage "
-                "Bescheid, sobald es fertig ist."
-            )
+            return action_phrase("cu_dispatch_ack", cu_lang)
 
         return None
 
@@ -2781,6 +2920,7 @@ class BrainManager:
         timeout_s: float,
         user_text: str,
         trace_id: UUID,
+        lang: str,
     ) -> None:
         """Run the Computer-Use harness off the voice turn and speak the result.
 
@@ -2790,6 +2930,11 @@ class BrainManager:
         as an ``AnnouncementRequested(kind="completion")`` readback
         (AD-OE5/OE6: zero silent drops). Never raises — a background-task crash
         must not leak into the event loop.
+
+        ``lang`` is captured at dispatch and threaded in: this task runs AFTER
+        the turn returns, so ``self._turn_detected_lang`` may already belong to a
+        later turn — reading it here would speak the wrong language (live bug
+        2026-06-15: an English CU turn ended with the German "Erledigt.").
         """
         text: str
         try:
@@ -2807,18 +2952,15 @@ class BrainManager:
                 timeout=timeout_s + 1.0,
             )
             if result.success:
-                text = str(result.output or "").strip() or "Erledigt."
+                text = str(result.output or "").strip() or action_phrase("cu_done", lang)
             else:
                 err = getattr(result, "error", None)
                 text = (
-                    f"Das am Bildschirm hat nicht geklappt: {err}"
-                    if err else "Das am Bildschirm hat nicht geklappt."
+                    action_phrase("cu_failed_reason", lang, error=err)
+                    if err else action_phrase("cu_failed", lang)
                 )
         except TimeoutError:
-            text = (
-                f"Das am Bildschirm hat zu lange gedauert "
-                f"(ueber {timeout_s:.0f} Sekunden) und wurde abgebrochen."
-            )
+            text = action_phrase("cu_timeout", lang, secs=f"{timeout_s:.0f}")
             try:
                 await self._bus.publish(ActionExecuted(
                     trace_id=trace_id,
@@ -2831,14 +2973,14 @@ class BrainManager:
                 log.debug("CU-background ActionExecuted publish failed", exc_info=True)
         except Exception as exc:  # noqa: BLE001 — a background crash must not leak
             log.error("Computer-Use background task failed: %r", exc, exc_info=True)
-            text = "Beim Erledigen am Bildschirm ist leider etwas schiefgegangen."
+            text = action_phrase("cu_crashed", lang)
         # AD-OE6 zero silent drops: ALWAYS speak the outcome at the next turn
         # boundary (announcement -> scrub_for_voice -> TTS).
         try:
             await self._bus.publish(AnnouncementRequested(
                 text=text,
                 priority="normal",
-                language="de",
+                language=lang,
                 kind="completion",
             ))
         except Exception:  # noqa: BLE001
@@ -4480,6 +4622,21 @@ _ACTION_FAILED_PHRASES: dict[str, str] = {
     ),
     "en": "I recognized the action but couldn't execute it.",
     "es": "Reconocí la acción, pero no pude ejecutarla.",
+}
+
+# DIRECT local-action acknowledgement — see BrainManager._localize_direct_ack.
+# open_app hardcodes a German launch acknowledgement that the DIRECT fast path
+# surfaces VERBATIM (no LLM re-render), so its leading verb is translated to the
+# turn language here (live bug 2026-06-15: an English "open my explorer" turn was
+# acknowledged in German even with the English pin set). Only the verb prefix is
+# swapped — the suffix (the actual app / URL the tool reported) is preserved
+# untouched. The "de" entry MUST match open_app's literal prefix in
+# jarvis/plugins/tool/open_app.py; a mismatch degrades safely to passthrough
+# (the historical German string), never a crash.
+_OPEN_APP_ACK_PREFIX: dict[str, str] = {
+    "de": "Gestartet:",  # i18n-allow: spoken German TTS acknowledgement
+    "en": "Opened:",
+    "es": "Abierto:",
 }
 
 

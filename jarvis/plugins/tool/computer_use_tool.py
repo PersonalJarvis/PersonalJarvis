@@ -32,6 +32,7 @@ from jarvis.core.events import AnnouncementRequested
 from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.harness.manager import HarnessManager
 from jarvis.plugins.tool.dispatch_to_harness import DispatchToHarnessTool
+from jarvis.voice.action_phrases import action_phrase, resolve_phrase_language
 
 log = logging.getLogger(__name__)
 
@@ -131,6 +132,11 @@ class ComputerUseTool:
 
         Never raises — a background crash must not leak into the event loop.
         """
+        # The outcome readback is spoken VERBATIM (no LLM re-render), so localize
+        # it to the turn's language. The tool has no reply_language pin — detect
+        # from the user's own words (live bug 2026-06-15: an English CU turn ended
+        # with the German "Erledigt.").
+        lang = resolve_phrase_language(None, ctx.user_utterance)
         text: str
         try:
             result = await self._dispatch.execute(
@@ -142,22 +148,22 @@ class ComputerUseTool:
                 ctx,
             )
             if result.success:
-                text = "Erledigt."  # i18n-allow
+                text = action_phrase("cu_done", lang)
             else:
                 err = str(getattr(result, "error", "") or "")
                 text = (
-                    f"Das am Bildschirm hat nicht geklappt: {err}"  # i18n-allow
+                    action_phrase("cu_failed_reason", lang, error=err)
                     if err
-                    else "Das am Bildschirm hat nicht geklappt."  # i18n-allow
+                    else action_phrase("cu_failed", lang)
                 )
         except Exception as exc:  # noqa: BLE001
             log.error("computer_use background mission failed: %r", exc, exc_info=True)
-            text = "Beim Erledigen am Bildschirm ist leider etwas schiefgegangen."  # i18n-allow
+            text = action_phrase("cu_crashed", lang)
         try:
             await self._bus.publish(AnnouncementRequested(
                 text=text,
                 priority="normal",
-                language="de",
+                language=lang,
                 kind="completion",
             ))
         except Exception:  # noqa: BLE001

@@ -770,6 +770,59 @@ async def test_advisory_codex_agent_message_no_files_is_approved(
 
 
 @pytest.mark.asyncio
+async def test_advisory_codex_tool_evidence_no_files_is_approved(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Regression 019ecc48: an informational Codex worker used tools and
+    answered in prose, but the empty diff was deferred to the LLM critic
+    because tool evidence existed, causing critic_loop_exhausted."""
+    def _boom(*_a: Any, **_k: Any):
+        raise AssertionError("advisory tool-evidence pre-gate must not spawn")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _boom)
+
+    worker_log = "\n".join([
+        json.dumps({
+            "type": "item.completed",
+            "item": {
+                "type": "command_execution",
+                "command": "web_search Australia first visit city",
+                "aggregated_output": (
+                    "Sydney, Melbourne and Brisbane are common first-trip options."
+                ),
+                "exit_code": "0",
+            },
+        }),
+        json.dumps({
+            "type": "item.completed",
+            "item": {
+                "type": "agent_message",
+                "text": (
+                    "For a first trip to Australia, I recommend Sydney because "
+                    "it combines iconic sights, beaches, transit, and easy day "
+                    "trips."
+                ),
+            },
+        }),
+    ])
+
+    verdict = await CriticRunner().run(
+        mission_prompt=(
+            "Which Australian city would you recommend for a first visit, "
+            "and why? Reply with a short paragraph."
+        ),
+        worker_diff="",
+        worker_log=worker_log,
+        prior_reflections="",
+        iteration=0,
+        worktree=tmp_path,
+        env={},
+    )
+
+    assert verdict.verdict == "approve"
+    assert is_approval_valid(verdict)
+
+
+@pytest.mark.asyncio
 async def test_advisory_gemini_plain_text_no_files_is_approved(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
