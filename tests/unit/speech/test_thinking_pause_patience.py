@@ -56,6 +56,8 @@ def _make_probe_pipe(probe_stt: object, vad: _RecordingVad) -> SpeechPipeline:
     pipe._probe_live_text = ""
     pipe._probe_stable_count = 0
     pipe._probe_required_stable = 1
+    pipe._probe_empty_count = 0
+    pipe._probe_required_empty = 2
     pipe._probe_min_text_len = 4
     return pipe
 
@@ -86,21 +88,63 @@ async def test_quiet_empty_tail_does_not_force_endpoint() -> None:
 
 
 @pytest.mark.asyncio
-async def test_loud_empty_tail_still_forces_endpoint() -> None:
-    """Positive control: a loud empty tail is speaker bleed → still force endpoint.
+async def test_loud_empty_tail_defers_until_sustained() -> None:
+    """A SINGLE loud empty tail must NOT force; only a sustained one does.
 
-    Guards against 'fixing' the pause bug by neutering the probe — the
-    speaker-bleed backstop (where the silence endpoint can never fire) must
-    keep working.
+    Live recurrence 2026-06-14 (turn 2): the user said a quiet hesitation
+    ("och ha...") that Whisper rendered as 'um' (empty) while still acoustically
+    active — ``silence_ms=0``, no pause detected. The probe forced ``stt_stable``
+    on that single empty reading and cut the user off mid-thought. A brief
+    mumble/half-formed syllable that transcribes empty is indistinguishable from
+    speaker bleed on ONE probe, so the empty signal must persist (like the
+    stable signal) before forcing: a transient miss defers and keeps the floor;
+    only sustained emptiness (real bleed, where the silence endpoint can never
+    fire) forces.
     """
     vad = _RecordingVad()
     pipe = _make_probe_pipe(_InstantSTT(text=""), vad)
 
+    # First loud empty probe → defer (the user may still be speaking).
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)
+    await asyncio.gather(*_probe_tasks())
+    assert vad.request_endpoint_calls == 0, (
+        "a single loud empty tail forced the endpoint — a brief mumble/"
+        "hesitation (silence_ms=0) cuts the user off mid-thought"
+    )
+
+    # Second consecutive loud empty probe → sustained → force (speaker-bleed
+    # backstop, where the natural silence endpoint can never fire).
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)
+    await asyncio.gather(*_probe_tasks())
+    assert vad.request_endpoint_calls == 1, (
+        "a sustained loud empty tail (speaker bleed) failed to force the endpoint"
+    )
+
+
+@pytest.mark.asyncio
+async def test_intervening_speech_resets_empty_tail_run() -> None:
+    """A real word between two empty probes must reset the empty-run, so the
+    user who mumbles, then speaks clearly, then mumbles again is never force-cut
+    on a stale empty count. Only CONSECUTIVE empty tails accumulate toward the
+    force."""
+    vad = _RecordingVad()
+    pipe = _make_probe_pipe(_InstantSTT(text=""), vad)
+
+    # One empty probe → count 1.
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)
+    await asyncio.gather(*_probe_tasks())
+    # The user speaks a real word → non-empty tail → empty-run must reset.
+    pipe._probe_stt = _InstantSTT(text="Melbourne")
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)
+    await asyncio.gather(*_probe_tasks())
+    # Another single empty probe → count back to 1, NOT 2 → must still defer.
+    pipe._probe_stt = _InstantSTT(text="")
     pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)
     await asyncio.gather(*_probe_tasks())
 
-    assert vad.request_endpoint_calls == 1, (
-        "loud empty tail (speaker bleed) failed to force the endpoint"
+    assert vad.request_endpoint_calls == 0, (
+        "empty-tail count was not reset by intervening real speech — the user "
+        "was force-cut on a stale empty run"
     )
 
 

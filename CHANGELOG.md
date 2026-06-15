@@ -7,6 +7,26 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
+## [0.5.1] — 2026-06-15
+
+### Fixed
+
+- **Voice — screen narration on small talk**: the assistant no longer describes
+  the screen when no screenshot is attached, and a trailed-off ("…") fragment is
+  treated as incomplete instead of answered as a complete turn. Regression tests
+  added for both the screen-relevance gate and the trailing-ellipsis detection.
+- **WebSocket receive loop**: stopped an infinite loop on an unclean socket
+  disconnect that produced a log storm and a self-restart which cancelled
+  in-flight missions.
+- **Sub-agent missions**: fixed advisory-task and Codex-recursion failures and
+  reduced sub-agent latency.
+
+### Changed
+
+- STT endpointing hardened: the empty-tail probe now requires sustained
+  emptiness before forcing an endpoint, so a brief mid-sentence pause is less
+  likely to cut a turn short. Local action-gate refinements.
+
 ## [0.5.0] — 2026-06-14
 
 ### Added

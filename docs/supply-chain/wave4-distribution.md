@@ -1,5 +1,15 @@
 # Wave 4 — Distribution via Package Managers + Post-Quantum Migration
 
+> **RETIRED (2026-06-14).** The Scoop bucket (`PersonalJarvis/scoop-jarvis`) and
+> Homebrew tap (`PersonalJarvis/homebrew-jarvis`) distribution channel described
+> below was dropped in favour of a single cross-platform `pip install` path —
+> the same install flow on macOS, Windows, and Linux, consistent with the
+> cloud-first doctrine. The two distribution repos are being deleted and the
+> local `scoop-bucket/` + `homebrew-tap/` scaffolds have been removed. The
+> bootstrap-trust and post-quantum (ML-DSA-65) **analysis** below is kept as a
+> security record; the **package-manager delivery mechanism** it recommends is
+> no longer the plan.
+
 **Status:** Foundation complete (SA-1). Integration into the CI/CD workflow + verifier + signing pipeline is the work of SA-W4-2..SA-W4-5 follow-up sub-agents.
 
 **Branch:** `feat/wave4-foundation`.

@@ -134,3 +134,21 @@ def test_codex_cmd_disables_multi_agent_collab_tools() -> None:
     ]
     assert "multi_agent" in disabled, f"multi_agent not disabled in argv: {cmd}"
     assert "multi_agent_v2" in disabled, f"multi_agent_v2 not disabled: {cmd}"
+
+
+def test_codex_cmd_caps_reasoning_effort_for_speed() -> None:
+    """Mission latency (live mission 019ec742, 2026-06-14): the codex worker ran
+    452s then 399s at the user's `~/.codex/config.toml` `model_reasoning_effort
+    = "xhigh"` → 899s critic_loop_exhausted. A sub-agent mission worker re-runs
+    across up to MAX_CRITIC_LOOPS iterations, so a 7-minute xhigh pass per run is
+    unacceptable. The argv MUST override config.toml to a FAST tier via
+    `-c model_reasoning_effort=<low|medium>`, never inheriting xhigh."""
+    import re
+
+    cmd = _build_codex_direct_cmd(worktree=Path("/tmp/wt"), model=None)
+    joined = " ".join(cmd)
+    m = re.search(r"model_reasoning_effort=(\w+)", joined)
+    assert m, f"no reasoning-effort cap in argv (inherits config xhigh): {cmd}"
+    assert m.group(1) in {"low", "medium"}, (
+        f"reasoning effort must be a fast tier, got {m.group(1)!r}"
+    )

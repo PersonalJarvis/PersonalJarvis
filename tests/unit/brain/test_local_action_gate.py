@@ -10,6 +10,7 @@ from jarvis.brain.local_action_gate import (
     _unsupported_response,
     is_open_app_intent,
     match_local_action,
+    requires_external_integration,
 )
 
 
@@ -761,3 +762,49 @@ class TestBrowserUrlFastPath:
         # A domain mention without a goto/open verb shape must not launch.
         plan = match_local_action("was haeltst du von x.com")
         assert plan is None or plan.mode is not LocalActionMode.DIRECT
+
+
+# ---------------------------------------------------------------------------
+# requires_external_integration — real-world booking/transaction requests no
+# generic sub-agent worker can fulfil (no travel/lodging/ticketing tool exists).
+# Live gap 2026-06-14: "book me a trip from Melbourne to Tokyo" was NOT caught
+# (the noun list had mail/calendar/Spotify/food-delivery but no travel nouns),
+# so it force-spawned a worker that produced no file -> 3-loop empty-diff
+# critic_loop_exhausted FAIL, and the spawn ACK falsely promised the booking.
+# These nouns route it to the honest inline refusal instead (still gated on
+# resolve_intent being None downstream, so a real travel MCP would win).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "book me a trip from Melbourne to Tokyo",
+        "Buche mir eine Reise von Melbourne nach Tokio",
+        "buche mir einen Flug nach Tokio",
+        "book a flight to London for me",
+        "reserviere mir ein Hotel in Berlin",
+        "book a hotel in Paris",
+        "reserviere einen Tisch im Restaurant heute Abend",
+        "book a table at a restaurant tonight",
+        "bestell mir ein Ticket für den Zug nach München",
+    ],
+)
+def test_booking_transactions_require_external_integration(text: str) -> None:
+    assert requires_external_integration(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Coding/research that merely NAMES travel — generic sub-agent work,
+        # must NOT be refused (build/research verb, or no dispatch verb at all).
+        "schreib ein Skript das günstige Flüge sucht",
+        "baue mir einen Reise-Budget-Rechner",
+        "recherchier welche Stadt sich für eine Reise nach Australien lohnt",
+        "erzähl mir etwas über meine letzte Reise",
+        "was kostet ungefähr ein Flug nach Tokio",
+    ],
+)
+def test_travel_mentions_without_dispatch_verb_stay_generic(text: str) -> None:
+    assert requires_external_integration(text) is False
