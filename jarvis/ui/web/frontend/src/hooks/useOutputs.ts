@@ -97,6 +97,65 @@ export function useCancelMission() {
   });
 }
 
+export interface RerunMissionResponse {
+  ok: boolean;
+  parent_mission_id: string;
+  mission_id: string;
+  action: "continue" | "restart";
+  started: boolean;
+}
+
+/** Thrown by {@link useRerunMission} when the stored prompt looks destructive
+ *  and the server wants an explicit confirmation before re-running. */
+export interface RerunRequiresConfirm {
+  requiresConfirm: true;
+  pattern_id?: string;
+  matched_text?: string;
+  target_hint?: string;
+  warning?: string;
+}
+
+/**
+ * Re-runs a terminal mission by re-dispatching its original prompt as a new
+ * linked mission. Used for "Continue" (cancelled) and "Restart"
+ * (failed/timed-out) on the Outputs cards. The source mission is untouched;
+ * the new run appears as a fresh card on the next poll, so we invalidate the
+ * outputs query on success.
+ *
+ * A destructive stored prompt yields a 409 `requires_confirm` — re-thrown as a
+ * {@link RerunRequiresConfirm} so the button can ask for a second confirming
+ * click (no native dialog — those freeze the desktop webview).
+ */
+export function useRerunMission() {
+  const qc = useQueryClient();
+  return useMutation<
+    RerunMissionResponse,
+    RerunRequiresConfirm | Error,
+    { missionId: string; confirmed?: boolean }
+  >({
+    mutationFn: async ({ missionId, confirmed = false }) => {
+      const r = await fetch(
+        `/api/missions/${encodeURIComponent(missionId)}/rerun`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ confirmed }),
+        },
+      );
+      if (r.status === 409) {
+        const data = await r.json().catch(() => ({}));
+        if (data?.requires_confirm) {
+          throw { requiresConfirm: true, ...data } as RerunRequiresConfirm;
+        }
+        throw new Error(data?.detail ?? "HTTP 409");
+      }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return (await r.json()) as RerunMissionResponse;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["outputs"] }),
+  });
+}
+
 export function usePlanForOutput(slug: string | null) {
   return useQuery<PlanResponse>({
     queryKey: ["output-plan", slug],

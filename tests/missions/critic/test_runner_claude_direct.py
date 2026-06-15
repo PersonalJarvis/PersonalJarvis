@@ -729,3 +729,101 @@ async def test_do_task_with_no_files_still_revised(
     )
 
     assert verdict.verdict == "revise"
+
+
+@pytest.mark.asyncio
+async def test_advisory_codex_agent_message_no_files_is_approved(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Multi-provider (2026-06-15, live mission 019ec761): the SAME advisory
+    approve must hold when the worker is CODEX, whose answer is an
+    ``item.completed`` ``agent_message`` frame (not claude's ``result``). Before
+    the multi-format evidence fix this codex answer was invisible -> 3x
+    deterministic revise -> critic_loop_exhausted."""
+    def _boom(*_a: Any, **_k: Any):
+        raise AssertionError("advisory pre-gate must not spawn a subprocess")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _boom)
+
+    worker_log = json.dumps({
+        "type": "item.completed",
+        "item": {
+            "type": "agent_message",
+            "text": (
+                "For a first trip to Australia I recommend Melbourne: walkable, "
+                "world-class coffee, and close to the Great Ocean Road."
+            ),
+        },
+    })
+
+    verdict = await CriticRunner().run(
+        mission_prompt="Which city would you recommend for a first trip to Australia?",
+        worker_diff="",
+        worker_log=worker_log,
+        prior_reflections="",
+        iteration=0,
+        worktree=tmp_path,
+        env={},
+    )
+
+    assert verdict.verdict == "approve"
+    assert is_approval_valid(verdict)
+
+
+@pytest.mark.asyncio
+async def test_advisory_gemini_plain_text_no_files_is_approved(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Multi-provider (2026-06-15): a GEMINI worker runs ``--output-format text``,
+    so its stream.jsonl is plain text with no JSON frames at all. The advisory
+    approve must still fire (the plain-text answer IS the deliverable)."""
+    def _boom(*_a: Any, **_k: Any):
+        raise AssertionError("advisory pre-gate must not spawn a subprocess")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _boom)
+
+    worker_log = (
+        "Here is my recommendation:\n"
+        "Sydney offers the best balance for a first visit to Australia — iconic "
+        "harbour, beaches, and easy day trips to the Blue Mountains."
+    )
+
+    verdict = await CriticRunner().run(
+        mission_prompt="Which city would you recommend for a first trip to Australia?",
+        worker_diff="",
+        worker_log=worker_log,
+        prior_reflections="",
+        iteration=0,
+        worktree=tmp_path,
+        env={},
+    )
+
+    assert verdict.verdict == "approve"
+    assert is_approval_valid(verdict)
+
+
+@pytest.mark.asyncio
+async def test_do_task_codex_agent_message_claim_still_revised(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The multi-format fix must NOT reopen the hallucination hole for codex: a
+    DO-task whose codex ``agent_message`` only CLAIMS "done" (no file_change
+    frame, empty diff) is still deterministically revised, not approved."""
+    def _boom(*_a: Any, **_k: Any):
+        raise AssertionError("do-task veto must not spawn a subprocess either")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _boom)
+
+    worker_log = json.dumps({
+        "type": "item.completed",
+        "item": {"type": "agent_message", "text": "I have created the file report.md."},
+    })
+
+    verdict = await CriticRunner().run(
+        mission_prompt="Create a file report.md with the analysis.",
+        worker_diff="",
+        worker_log=worker_log,
+        prior_reflections="",
+        iteration=0,
+        worktree=tmp_path,
+        env={},
+    )
+
+    assert verdict.verdict == "revise"

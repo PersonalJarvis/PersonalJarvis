@@ -81,9 +81,16 @@ _DEFAULT_TIMEOUT_S: float = 1200.0
 # mid-work. The result text carries "timeout" so the orchestrator labels the
 # WorkerKilled reason "timeout" and retries on a fresh (serialised) spawn.
 _DEFAULT_FIRST_OUTPUT_TIMEOUT_S: float = 120.0
-# Bytes pulled on the first read; the opening stream-json system-init line is
-# far under this, so the read returns as soon as claude emits anything.
-_FIRST_READ_BYTES: int = 65536
+# StreamReader buffer limit for line-by-line reads (mirrors CodexDirectWorker).
+# asyncio's default is 64 KiB; a single claude stream-json line carrying a large
+# tool_result / assistant block can exceed that, and readline() raises ValueError
+# past the limit. 8 MiB keeps even pathological lines readable without buffering
+# the whole run.
+_STREAM_READLINE_LIMIT: int = 8 * 1024 * 1024
+# Grace added on top of timeout_s for the wall-clock hard cap (parity with the
+# pre-streaming communicate(timeout=timeout_s + 30) behaviour). Module constant
+# so tests can shrink it instead of sleeping 30 real seconds.
+_HARDCAP_GRACE_S: float = 30.0
 # The per-worker claude-cli MCP config. It inlines RESOLVED plugin secrets
 # (e.g. a GitHub PAT in the github MCP server's env block), so it is written to
 # the mission log dir (kept out of the git diff) AND deleted as soon as the
@@ -373,6 +380,7 @@ class ClaudeDirectWorker:
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                limit=_STREAM_READLINE_LIMIT,
             )
         except FileNotFoundError as exc:
             # The MCP config (with its inlined secret) was already written when
@@ -409,81 +417,105 @@ class ClaudeDirectWorker:
                 worker_id, exc,
             )
 
-        # 4. Drain stdout/stderr. A first-output ("startup") gate catches the
-        # Claude Max OAuth-contention hang: under concurrent claude-direct
-        # load the CLI blocks before emitting a single byte and the old single
-        # communicate() cap burned the full 630s (0-byte stream.jsonl ->
-        # task_error). We kill fast on a silent startup so the orchestrator can
-        # retry on a fresh, serialised spawn; once streaming has begun we allow
-        # the full hard cap so a legitimately long task is never cut off.
+        # 4. Drain stdout LINE-BY-LINE so progress is observable WHILE the
+        # worker runs (parity with CodexDirectWorker, 2026-06-10). The old
+        # first-chunk read + communicate() collected ALL stdout until process
+        # exit: during the whole run there were NO incremental events upstream
+        # and NO on-disk stream.jsonl, so a long-but-healthy worker looked
+        # identical to a hang — the user pressed the app's Restart button
+        # mid-run and the finished work was discarded as app_shutdown (live
+        # missions 019ecb35 / 019ec708, forensic 2026-06-15). Now every raw
+        # line is tee'd to stream.jsonl immediately and translated events are
+        # yielded as they arrive, so the orchestrator can emit live
+        # WorkerProgress and the forensics file survives any exit.
+        #
+        # Timeout semantics are unchanged: zero bytes within
+        # first_output_timeout_s -> killed for a fast retry (Claude Max OAuth
+        # contention); once streaming has begun only the wall-clock hard cap
+        # (timeout_s + grace) applies — there is deliberately NO idle-gap limit
+        # between lines, a long silent reasoning phase is legitimate (BUG-032
+        # class). timed_out stays the STRUCTURED signal the orchestrator reads.
         timed_out = False
         timeout_message = ""
         stderr_bytes = b""
-        first_chunk = b""
-        assert proc.stdout is not None  # noqa: S101 — PIPE always created above
-        try:
-            first_chunk = await asyncio.wait_for(
-                proc.stdout.read(_FIRST_READ_BYTES),
-                timeout=first_output_timeout_s,
-            )
-        except asyncio.TimeoutError:
-            timed_out = True
-            timeout_message = (
-                f"ClaudeDirectWorker: subprocess produced no output within "
-                f"{first_output_timeout_s:.0f}s startup timeout (claude emitted "
-                f"zero bytes — likely Claude Max OAuth contention); killed for retry"
-            )
-
-        if not timed_out:
-            # First bytes arrived — drain the remainder under the hard cap.
-            try:
-                rest_stdout, stderr_bytes = await asyncio.wait_for(
-                    proc.communicate(), timeout=timeout_s + 30.0
-                )
-            except asyncio.TimeoutError:
-                timed_out = True
-                rest_stdout = b""
-                timeout_message = (
-                    f"ClaudeDirectWorker: subprocess wait_for timeout "
-                    f"({timeout_s + 30.0}s) after streaming started"
-                )
-            stdout_bytes = first_chunk + rest_stdout
-
-        if timed_out:
-            with suppress(ProcessLookupError):
-                proc.kill()
-            # Audit-2 H3 (2026-05-17): kill() without wait() leaves the
-            # asyncio transport attached + an open Win32 handle. Wait
-            # briefly so the process is reaped before we drop our
-            # reference.
-            with suppress(Exception):
-                await asyncio.wait_for(proc.wait(), timeout=5.0)
-            stdout_bytes = first_chunk
-            stderr_bytes = timeout_message.encode("utf-8")
-
-        try:
-            stdout_log.write_bytes(stdout_bytes)
-        except OSError as exc:
-            logger.warning("ClaudeDirectWorker: stream.jsonl write failed: %s", exc)
-        if stderr_bytes:
-            try:
-                stderr_log.write_bytes(stderr_bytes)
-            except OSError as exc:
-                logger.warning("ClaudeDirectWorker: stderr.log write failed: %s", exc)
-
-        # Scrub the MCP config now that the subprocess has exited — it inlined a
-        # plaintext plugin secret (e.g. a GitHub PAT) and is not needed post-run
-        # (claude read it at startup). This keeps the token from persisting in
-        # the mission logs as a secret-at-rest (security 2026-05-28).
-        with suppress(OSError):
-            (log_dir / _MCP_CONFIG_FILENAME).unlink(missing_ok=True)
-
-        # 5. Parse the NDJSON stdout for the terminal result.
         final_result: ClaudeResult | None = None
         text_acc: list[str] = []
         any_tool_use = False
-        for raw_line in stdout_bytes.decode("utf-8", errors="replace").splitlines():
-            line = raw_line.strip()
+        got_first_line = False
+        deadline = time.monotonic() + timeout_s + _HARDCAP_GRACE_S
+        assert proc.stdout is not None  # noqa: S101 — PIPE always created above
+        assert proc.stderr is not None  # noqa: S101 — PIPE always created above
+        # Truncate any prior-iteration stream.jsonl (the orchestrator reuses one
+        # log_dir across critic iterations) so the file holds only THIS spawn's
+        # output — preserving the pre-streaming per-spawn overwrite semantics
+        # the Critic's stream-evidence reader relies on.
+        with suppress(OSError):
+            stdout_log.write_bytes(b"")
+        # Drain stderr concurrently: claude writes errors there, and a full
+        # stderr pipe would deadlock the child once the OS buffer fills.
+        stderr_task = asyncio.create_task(proc.stderr.read())
+
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                timeout_message = (
+                    f"ClaudeDirectWorker: subprocess wall-clock timeout "
+                    f"({timeout_s + _HARDCAP_GRACE_S:.0f}s) exceeded while streaming"
+                )
+                break
+            read_cap = (
+                remaining
+                if got_first_line
+                else min(first_output_timeout_s, remaining)
+            )
+            try:
+                raw = await asyncio.wait_for(
+                    proc.stdout.readline(), timeout=read_cap
+                )
+            except TimeoutError:
+                if got_first_line:
+                    # read_cap == remaining here, so the deadline check at the
+                    # top of the loop turns this into the hard-cap timeout.
+                    continue
+                timed_out = True
+                timeout_message = (
+                    f"ClaudeDirectWorker: subprocess produced no output within "
+                    f"{first_output_timeout_s:.0f}s startup timeout (claude emitted "
+                    f"zero bytes — likely Claude Max OAuth contention); killed for retry"
+                )
+                break
+            except ValueError:
+                # One NDJSON line exceeded _STREAM_READLINE_LIMIT — the stream
+                # buffer is poisoned and cannot be resynced. Fail loudly with
+                # the real cause instead of hanging or returning garbage.
+                final_result = ClaudeResult(
+                    subtype="error_during_execution",
+                    is_error=True,
+                    session_id=session_id,
+                    duration_ms=int((time.perf_counter() - t0) * 1000),
+                    result=(
+                        "ClaudeDirectWorker: a stdout line exceeded the "
+                        f"{_STREAM_READLINE_LIMIT // (1024 * 1024)} MiB stream "
+                        "limit; aborting the read loop"
+                    ),
+                )
+                logger.error("%s", final_result.result)
+                break
+            if not raw:
+                break  # EOF — claude closed stdout.
+            got_first_line = True
+            try:
+                # Append-per-line (open/close each time): no long-lived handle
+                # to leak if the generator is cancelled mid-run, and the
+                # forensics file is complete up to the very last line.
+                with stdout_log.open("ab") as stream_fh:
+                    stream_fh.write(raw)
+            except OSError as exc:
+                logger.warning(
+                    "ClaudeDirectWorker: stream.jsonl append failed: %s", exc
+                )
+            line = raw.decode("utf-8", errors="replace").strip()
             if not line:
                 continue
             try:
@@ -528,14 +560,45 @@ class ClaudeDirectWorker:
                 continue
             # ignore "system" events — we already emitted our synthetic init.
 
+        # Reap the subprocess + collect stderr.
+        if timed_out:
+            with suppress(ProcessLookupError):
+                proc.kill()
+        # Audit-2 H3 (2026-05-17): always wait() after the loop so the asyncio
+        # transport is torn down and we don't leak a zombie + open Win32 handle.
+        with suppress(Exception):
+            await asyncio.wait_for(proc.wait(), timeout=5.0)
+        with suppress(Exception):
+            stderr_bytes = await asyncio.wait_for(stderr_task, timeout=5.0)
+        if timed_out:
+            # Surface the timeout verdict in stderr.log alongside whatever claude
+            # itself wrote — never lose the real stderr to the synthetic message.
+            joiner = b"\n" if stderr_bytes else b""
+            stderr_bytes = stderr_bytes + joiner + timeout_message.encode("utf-8")
+        if stderr_bytes:
+            try:
+                stderr_log.write_bytes(stderr_bytes)
+            except OSError as exc:
+                logger.warning("ClaudeDirectWorker: stderr.log write failed: %s", exc)
+
+        # Scrub the MCP config now that the subprocess has exited — it inlined a
+        # plaintext plugin secret (e.g. a GitHub PAT) and is not needed post-run
+        # (claude read it at startup). This keeps the token from persisting in
+        # the mission logs as a secret-at-rest (security 2026-05-28).
+        with suppress(OSError):
+            (log_dir / _MCP_CONFIG_FILENAME).unlink(missing_ok=True)
+
+        # 5. Build the terminal result when the stream carried no `result` line.
         if final_result is None:
             if timed_out:
                 # Surface the timeout verbatim so the orchestrator's worker_error
-                # handling labels the kill reason "timeout" and retries (vs the
-                # generic "claude exited with code -1" which read as a hard error).
+                # handling labels the kill reason "timeout" and retries. The
+                # structured timed_out flag is the robust signal (the result-text
+                # "timeout" match is a belt-and-suspenders fallback).
                 final_result = ClaudeResult(
                     subtype="error_during_execution",
                     is_error=True,
+                    timed_out=True,
                     cost_usd=None,
                     num_turns=None,
                     session_id=session_id,
@@ -555,6 +618,11 @@ class ClaudeDirectWorker:
                     if text_acc
                     else f"claude exited with code {exit_code}",
                 )
+        elif timed_out:
+            # A `result` line was parsed but the hard cap fired before EOF — mark
+            # the structured timeout flag so the orchestrator treats it as a
+            # timeout (preserve-partial-work), never a clean success.
+            final_result = final_result.model_copy(update={"timed_out": True})
 
         logger.info(
             "ClaudeDirectWorker[%s] done: exit=%s wall_ms=%s tool_use_seen=%s "

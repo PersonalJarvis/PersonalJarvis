@@ -939,7 +939,11 @@
     "delete": "Delete",
     "abort_label": "Abort mission",
     "abort_hold": "Hold to abort",
-    "aborting": "Aborting…"
+    "aborting": "Aborting…",
+    "continue_label": "Continue",
+    "restart_label": "Restart",
+    "rerun_starting": "Starting…",
+    "rerun_confirm": "Confirm re-run"
   },
   "common": {
     "save": "Save",

@@ -1247,6 +1247,86 @@ class _DesktopLaunchWorker:
         yield _FakeWorkerEvent()
 
 
+# ---------------------------------------------------------------------------
+# Live WorkerProgress emission (transparency: long-but-healthy missions must
+# show what they are doing so the user doesn't restart them mid-run, 2026-06-15)
+# ---------------------------------------------------------------------------
+
+
+class _ToolUseProgressWorker:
+    """Yields one assistant tool_use event and one assistant text event WHILE
+    running (before the terminal result), modelling an incrementally-streaming
+    worker. The orchestrator must translate that activity into WorkerProgress
+    events on the bus/store so the UI ReasoningPanel can render live progress."""
+
+    cli = "claude"
+
+    def __init__(self) -> None:
+        self.last_pid = 4242
+
+    async def spawn(self, prompt, *, worktree, env, job, worker_id, log_dir, **kw):  # type: ignore[no-untyped-def]
+        from jarvis.missions.workers.stream_consumer import (
+            ClaudeAssistantMessage,
+            ClaudeResult,
+        )
+
+        log_dir.mkdir(parents=True, exist_ok=True)
+        (log_dir / "stream.jsonl").write_text(
+            '{"type":"result","subtype":"success"}\n', encoding="utf-8"
+        )
+        yield ClaudeAssistantMessage(
+            message={
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "name": "Bash",
+                     "input": {"command": "git push origin main"}}
+                ],
+            },
+            session_id="s1",
+        )
+        yield ClaudeAssistantMessage(
+            message={
+                "role": "assistant",
+                "content": [{"type": "text", "text": "Analysing the repository layout"}],
+            },
+            session_id="s1",
+        )
+        yield ClaudeResult(
+            subtype="success", is_error=False, result="done", session_id="s1"
+        )
+
+
+@pytest.mark.asyncio
+async def test_worker_progress_events_emitted_during_run(
+    manager: MissionManager, tmp_path: Path
+) -> None:
+    """The orchestrator must emit WorkerProgress events as the worker streams
+    activity, so the (already-built, dormant) UI ReasoningPanel lights up. The
+    note must carry a human-readable description of the latest activity."""
+    critic = FakeCriticRunner(_make_approve_verdict())
+    worker = _ToolUseProgressWorker()
+    k = _make_kontrollierer(
+        manager=manager, tmp_path=tmp_path, critic=critic,
+        worker_factory_fn=lambda step: worker,
+    )
+    mid = await manager.dispatch(prompt="push to main and analyse")
+    end = await k.run_mission(mid)
+    assert end == MissionState.APPROVED
+
+    events = await manager.store.events_for_mission(mid)
+    progress = [
+        e.payload for e in events if e.payload.event_type == "WorkerProgress"
+    ]
+    assert progress, "expected at least one WorkerProgress event during the run"
+    # The note describes the latest worker activity (tool name / text snippet).
+    notes = " | ".join((p.note or "") for p in progress)  # type: ignore[attr-defined]
+    assert "Bash" in notes or "git push" in notes, (
+        f"expected a tool-use note in WorkerProgress, got: {notes!r}"
+    )
+    # Progress is attributed to the worker that produced it.
+    assert all(p.worker_id for p in progress)  # type: ignore[attr-defined]
+
+
 @pytest.mark.asyncio
 async def test_desktop_launch_evidence_reaches_critic_as_nonempty_diff(
     manager: MissionManager, tmp_path: Path

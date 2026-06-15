@@ -280,6 +280,61 @@ def test_general_desktop_control_routes_to_computer_use(text: str) -> None:
     assert plan.mode is LocalActionMode.COMPUTER_USE, f"{text!r} → {plan.mode}, want COMPUTER_USE"
 
 
+# ---------------------------------------------------------------------------
+# Sub-agent research mission misroute (live bug 2026-06-15, sessions.db session
+# 236877e6 14:12): "Ich möchte, dass du eine Sub-Agent-Mission startest und dann
+# recherchierst …" was classified COMPUTER_USE and run on the screenshot harness
+# ("ich erledige das direkt am Bildschirm"), which then 403'd on its provider so
+# the user heard "das hat nicht geklappt". Root cause: the open/launch verb
+# regex (`start\w*`) overcaptures "Mission STARTEST" as an app-open, and
+# `_NOT_OPEN_APP_RE` had no research/sub-agent/mission vocabulary to veto it.
+# An explicit sub-agent / research / mission request is heavy worker work — it
+# must fall through (None) to the force-spawn path, NEVER computer-use.
+# ---------------------------------------------------------------------------
+
+
+_SUBAGENT_RESEARCH_UTTERANCES = [
+    # The exact live STT utterance that broke (line-712 open-app fallback:
+    # open-verb "startest" + "und").
+    "Ich möchte, dass du für mich bitte eine Sub-Agent-Mission startest "
+    "und dann genau recherchierst, was die aktuellsten KI-News sind",
+    # Adjacent hole (RC3): a verb-first compound "Starte … und …" reaches the
+    # same misroute via _COMPOUND_OPEN_CONTROL_RE / _looks_like_desktop_control.
+    "Starte eine Sub-Agent-Mission und recherchiere die neuesten KI-News",
+    "Starte eine gründliche Recherche und fasse die KI-News zusammen",
+    # The retry that worked live ONLY because it lacked "und"; it must stay
+    # correct (None) AND no longer count as an open-app intent.
+    "Kannst du mir bitte eine Sub-Agent-Mission starten, in der du "
+    "recherchierst, was die aktuellen KI-News sind",
+]
+
+
+@pytest.mark.parametrize("utterance", _SUBAGENT_RESEARCH_UTTERANCES)
+def test_subagent_research_mission_is_not_open_app_intent(utterance: str) -> None:
+    """An explicit sub-agent / research / mission request is heavy worker work,
+    NOT an app-open — even though it contains the launch verb "starte/startest".
+    `is_open_app_intent` is the single predicate that BOTH the COMPUTER_USE gate
+    and the force-spawn veto (manager.py:2530) consult, so it must return False
+    or the turn is hijacked to the screen harness (live bug 2026-06-15)."""
+    assert is_open_app_intent(utterance) is False, (
+        f"{utterance!r} wrongly classified as an open-app intent"
+    )
+
+
+@pytest.mark.parametrize("utterance", _SUBAGENT_RESEARCH_UTTERANCES)
+def test_subagent_research_mission_falls_through_to_force_spawn(utterance: str) -> None:
+    """The deterministic local-action gate must NOT produce a plan for an
+    explicit sub-agent research mission: it falls through (None) so the brain's
+    force-spawn path dispatches a real research worker. Before the fix this
+    returned COMPUTER_USE (screenshot harness) → "ich erledige das am Bildschirm"
+    → provider 403 → spoken failure (sessions.db 236877e6, 2026-06-15)."""
+    plan = match_local_action(utterance, _registry=None)
+    assert plan is None, (
+        f"{utterance!r} wrongly produced a local plan {plan} — must fall "
+        "through to force-spawn, never the screen harness"
+    )
+
+
 @pytest.mark.parametrize(
     "text",
     [

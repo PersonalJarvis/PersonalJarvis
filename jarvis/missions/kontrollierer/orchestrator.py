@@ -53,6 +53,7 @@ from ..events import (
     WorkerCorrectionRequired,
     WorkerDraftReady,
     WorkerKilled,
+    WorkerProgress,
     WorkerSpawned,
     now_ms,
 )
@@ -92,6 +93,21 @@ _HEARTBEAT_INTERVAL_S: float = 20.0
 mission header while a worker is draining. Recovery uses
 max(last_event_ts, last_heartbeat_ms) as freshness so a busy-but-silent
 worker (Opus, long tool calls, Computer-Use) is never swept as orphaned."""
+
+_WORKER_PROGRESS_MIN_INTERVAL_S: float = 1.5
+"""Throttle for live WorkerProgress events emitted from the worker drain loop.
+A streaming worker can emit many assistant/tool events per second; we surface a
+human-readable progress note to the UI ReasoningPanel at most this often (the
+first note always goes out) so the bus / event store / WebSocket fan-out are
+not flooded on a long, busy mission. Pure transparency — read-only, never on the
+voice critical path (AP-9). The dominant slow-mission symptom this addresses:
+a long-but-healthy worker that emits no visible progress looks identical to a
+hang, so the user restarts the app mid-run and finished work is discarded as
+app_shutdown (forensic 2026-06-15, missions 019ecb35 / 019ec708)."""
+
+_PROGRESS_NOTE_MAX_CHARS: int = 160
+"""Cap on a single WorkerProgress note — enough for a tool name + a command /
+path / text snippet, short enough to keep the event small."""
 
 # Mission time-budget shape (user mandate 2026-06-10: "a task should take
 # 5-15 minutes on average and never run much past 20 — nobody waits longer,
@@ -512,6 +528,50 @@ def _extract_new_file_paths_from_diff(diff: str) -> list[str]:
             raw = raw[1:-1]
         paths.append(_decode_git_quoted_path(raw))
     return paths
+
+
+def _worker_progress_note(ev: Any) -> str | None:
+    """Build a short, human-readable progress note from a worker stream event.
+
+    Returns a note for an ``assistant`` message that carried a tool_use (an
+    action — preferred) or visible text; ``None`` for events not worth surfacing
+    as live progress (the terminal result, token deltas, tool_result echoes).
+
+    Both ClaudeDirectWorker and CodexDirectWorker translate their native frames
+    into these Claude-shaped assistant events (codex maps file_change -> a
+    synthetic ``Write`` tool_use, command_execution -> ``Bash``), so this single
+    extractor lights up progress for both backends.
+    """
+    if getattr(ev, "type", None) != "assistant":
+        return None
+    message = getattr(ev, "message", None)
+    if not isinstance(message, dict):
+        return None
+    text_bits: list[str] = []
+    for blk in message.get("content") or []:
+        if not isinstance(blk, dict):
+            continue
+        if blk.get("type") == "tool_use":
+            name = str(blk.get("name") or "tool")
+            tool_input = blk.get("input")
+            detail = ""
+            if isinstance(tool_input, dict):
+                detail = str(
+                    tool_input.get("command")
+                    or tool_input.get("file_path")
+                    or tool_input.get("path")
+                    or tool_input.get("pattern")
+                    or ""
+                ).strip()
+            note = f"{name}: {detail}" if detail else name
+            return note[:_PROGRESS_NOTE_MAX_CHARS]
+        if blk.get("type") == "text":
+            t = str(blk.get("text") or "").strip()
+            if t:
+                text_bits.append(t)
+    if text_bits:
+        return " ".join(text_bits)[:_PROGRESS_NOTE_MAX_CHARS]
+    return None
 
 
 # Type aliases
@@ -1474,6 +1534,7 @@ class Kontrollierer:
         spawned_emitted = False
         worker_error: str | None = None
         worker_timed_out = False
+        last_progress_at: float | None = None
 
         async with job:
             hb_stop = asyncio.Event()
@@ -1582,6 +1643,36 @@ class Kontrollierer:
                     # "timeout" → real work discarded).
                     if getattr(ev, "timed_out", False):
                         worker_timed_out = True
+
+                    # Live progress: translate streamed worker activity into a
+                    # WorkerProgress event so the UI ReasoningPanel shows what a
+                    # long-but-healthy mission is doing (instead of an opaque
+                    # spinner the user restarts mid-run). Throttled so a fast
+                    # stream can't flood the bus/store; the first note always
+                    # goes out. Read-only, off the voice critical path (AP-9);
+                    # a failure here must never disturb the worker drain.
+                    note = _worker_progress_note(ev)
+                    if note:
+                        now_mono = time.monotonic()
+                        if (
+                            last_progress_at is None
+                            or now_mono - last_progress_at
+                            >= _WORKER_PROGRESS_MIN_INTERVAL_S
+                        ):
+                            last_progress_at = now_mono
+                            try:
+                                await self._publish_worker_progress(
+                                    mission_id=mission_id,
+                                    worker_id=worker_id,
+                                    note=note,
+                                    tokens_so_far=tokens,
+                                    cost_so_far=cost,
+                                )
+                            except Exception:  # noqa: BLE001 — progress is best-effort
+                                logger.debug(
+                                    "WorkerProgress publish failed (non-fatal)",
+                                    exc_info=True,
+                                )
             finally:
                 hb_stop.set()
                 await hb_task
@@ -1657,6 +1748,35 @@ class Kontrollierer:
             return reason
 
         return None
+
+    async def _publish_worker_progress(
+        self,
+        *,
+        mission_id: str,
+        worker_id: str,
+        note: str,
+        tokens_so_far: int,
+        cost_so_far: float,
+    ) -> None:
+        """Emit a lightweight WorkerProgress event for the UI live-progress panel.
+
+        Transparency only — the payload carries a human-readable ``note`` plus
+        the running token/cost totals. The WS fan-out + frontend ReasoningPanel
+        already render this event type; the producer was the only missing link.
+        """
+        env = EventEnvelope(
+            mission_id=mission_id,
+            worker_id=worker_id,
+            source_actor="worker",
+            ts_ms=now_ms(),
+            payload=WorkerProgress(
+                worker_id=worker_id,
+                note=note,
+                tokens_so_far=tokens_so_far,
+                cost_so_far=cost_so_far,
+            ),
+        )
+        await self._manager.store.append_and_publish(env)
 
     async def _publish_worker_killed(
         self,

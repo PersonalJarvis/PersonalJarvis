@@ -748,6 +748,11 @@ class BrainManager:
         # Per-turn wiki context suffix; set in generate() and consumed by
         # _build_system_prompt().  Reset to "" after each turn.
         self._wiki_context_suffix: str = ""
+        # Per-turn detected language (de/en/es or "" when ambiguous/pinned),
+        # set at the top of generate(); consumed by _reply_language_directive()
+        # in auto mode to hard-pin the turn's language so a tool-synthesis turn
+        # cannot drift back to German (live bug 2026-06-14).
+        self._turn_detected_lang: str = ""
         # AD-OE6 zero-silent-drop signal. True for exactly one turn after the
         # whole provider fallback chain failed (no key / depleted credits /
         # rate-limited everywhere). The voice pipeline reads this to decide
@@ -1158,6 +1163,23 @@ class BrainManager:
         self._provider_down_idx += 1
         return phrase
 
+    def _mandatory_lang_directive(self, name: str) -> str:
+        """The hard MANDATORY reply-language pin for a named language.
+
+        Shared by an explicit ``brain.reply_language`` pin and the auto-mode
+        per-turn pin (``_turn_detected_lang``) so both carry identical, strong
+        wording that survives tool-synthesis.
+        """
+        return (
+            f"REPLY LANGUAGE — MANDATORY: Always reply in {name}, no matter "
+            f"which language the user writes or speaks in. This overrides any "
+            f"other language cue anywhere in this prompt. Keep proper nouns, "
+            f"brand / product / company names and technical identifiers "
+            f"(e.g. 'Anthropic', 'GitHub', file paths, code, commands) "
+            f"unchanged in their original form — never translate them. Keep the "
+            f"reply natural and fluent in {name}."
+        )
+
     def _reply_language_directive(self) -> str:
         """The reply-language instruction appended last to the system prompt.
 
@@ -1169,22 +1191,21 @@ class BrainManager:
         """
         name = _REPLY_LANG_NAMES.get(self._reply_language)
         if name is not None:
-            return (
-                f"REPLY LANGUAGE — MANDATORY: Always reply in {name}, no matter "
-                f"which language the user writes or speaks in. This overrides any "
-                f"other language cue anywhere in this prompt. Keep proper nouns, "
-                f"brand / product / company names and technical identifiers "
-                f"(e.g. 'Anthropic', 'GitHub', file paths, code, commands) "
-                f"unchanged in their original form — never translate them. Keep the "
-                f"reply natural and fluent in {name}."
-            )
-        # auto: mirror whatever the user used. The system prompt above is
-        # almost entirely German; a soft "please mirror" line let the model
-        # anchor to German on clean English input (live bug 2026-06-14: an
-        # English travel question answered in German). The explicit
-        # "do NOT default to German" clause counters that pull. Kept a soft
-        # mirror (no hard "MANDATORY" pin) so this block stays byte-stable
-        # across turns and prompt-cache-friendly.
+            return self._mandatory_lang_directive(name)
+        # auto mode: when THIS turn's language is confidently detected, pin it
+        # HARD with the same MANDATORY wording as an explicit pin. A soft
+        # "please mirror" line let the model anchor to German on clean English
+        # input — most visibly on tool-synthesis turns, where the English
+        # question is far from the generation point and the German-heavy prompt
+        # wins (live bug 2026-06-14: an English weather turn answered in German).
+        # ``_turn_detected_lang`` is set per turn by generate(); ambiguous text
+        # detects as "unknown" (not in _REPLY_LANG_NAMES) and falls through to
+        # the soft mirror. The pin only changes when the user's language
+        # changes, so the cached system prefix stays stable within a
+        # single-language conversation.
+        turn_name = _REPLY_LANG_NAMES.get(getattr(self, "_turn_detected_lang", ""))
+        if turn_name is not None:
+            return self._mandatory_lang_directive(turn_name)
         return (
             "REPLY LANGUAGE: Reply in the SAME language as the user's latest "
             "message — detect it fresh each turn and mirror it: English in "
@@ -3249,6 +3270,17 @@ class BrainManager:
         self._last_turn_suppressed = False
         self._last_turn_executed_action_tool = False
         turn_trace_id = trace_id or uuid4()
+
+        # auto mode: detect this turn's language so _reply_language_directive()
+        # hard-pins it (a soft "mirror" drifts to German on tool-synthesis
+        # turns — live bug 2026-06-14: an English weather turn answered in
+        # German). Ambiguous text detects as "unknown" -> soft mirror. Skipped
+        # when an explicit reply_language pin is active.
+        self._turn_detected_lang = (
+            detect_text_language(user_text)
+            if self._reply_language not in _REPLY_LANG_NAMES
+            else ""
+        )
 
         if self._detect_cancel_intent(user_text):
             self._cancel_all_background_tasks()

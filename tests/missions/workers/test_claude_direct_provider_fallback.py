@@ -39,12 +39,22 @@ class _FakeStream:
     def __init__(self, *, data: bytes = b"") -> None:
         self._data = data
         self._sent = False
+        self._lines = data.splitlines(keepends=True)
+        self._line_idx = 0
 
     async def read(self, n: int = -1) -> bytes:
         if self._sent:
             return b""
         self._sent = True
         return self._data
+
+    async def readline(self) -> bytes:
+        # The worker now streams via readline(); serve the data line-by-line.
+        if self._line_idx >= len(self._lines):
+            return b""
+        line = self._lines[self._line_idx]
+        self._line_idx += 1
+        return line
 
     def write(self, _b: bytes) -> None:
         pass
