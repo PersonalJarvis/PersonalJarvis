@@ -127,6 +127,18 @@ _TOOL_EXIT_CODE = 8
 _OBSERVE_EXIT_CODE = 1
 _CANCEL_EXIT_CODE = 130
 
+# Fail-gate reject budget (completion-enforcement, 2026-06-15). A voluntary
+# ``fail`` is the SYMMETRIC sibling of ``done``: it must survive the strict
+# feasibility judge (``_verify_fail_justified``) before it ends the mission,
+# exactly as ``done`` must survive the completion judge. This closes the
+# reward-hack where quitting was free while succeeding was judge-gated — a weak
+# model under friction took the free exit even with the goal nearly achieved
+# (live 2026-06-15 Snipping-Tool turn: emitted ``fail`` with the capture overlay
+# already on screen). Each rejected fail costs ONE re-plan; the bound guarantees
+# a genuinely impossible task still terminates ("verified-impossible after N").
+# Kept module-level (sibling of the exit codes) so it is tunable + test-visible.
+_MAX_FAIL_REJECTS: int = 2
+
 # Defensive: strip ```json``` fences if a model ignores the no-fence rule.
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.+?)\s*```", re.DOTALL)
 
@@ -238,6 +250,9 @@ _SYSTEM_PROMPT = (
     "  action that should have moved toward the goal and the screen still\n"
     "  does not show any element you can usefully click or type into.\n"
     "  Returning \"fail\" without trying anything is FORBIDDEN.\n"
+    "  A \"fail\" is VERIFIED against the current screen: if the goal still\n"
+    "  looks achievable your fail is REJECTED and you must keep working --\n"
+    "  do NOT use \"fail\" to escape a hard-but-doable task.\n"
     "* If the screen looks unchanged from your previous step, your last\n"
     "  click landed on empty space or the element was not reactive --\n"
     "  pick a DIFFERENT pixel target this time, do not repeat the same\n"
@@ -1116,6 +1131,36 @@ _GENERIC_VERIFIER_SYSTEM_PROMPT = (
 )
 
 
+# Feasibility judge for the ``fail`` action (completion-enforcement, 2026-06-15).
+# The SYMMETRIC sibling of the completion judge: when the agent wants to GIVE UP,
+# this decides whether the goal is genuinely impossible from HERE — or still
+# achievable with more actions. The burden of proof is on IMPOSSIBILITY, so the
+# default is keep-working; "it's hard" / "I tried twice" is not impossible. This
+# is what removes the cheap give-up exit (the recorded reward-hack).
+_FAIL_VERIFIER_SYSTEM_PROMPT = (
+    "You are a STRICT feasibility judge for a desktop automation task. The "
+    "automation agent wants to GIVE UP on the user's GOAL. Look at the "
+    "screenshot and decide whether the goal is genuinely IMPOSSIBLE or BLOCKED "
+    "from the CURRENT screen, or whether it is still achievable with more "
+    "actions. Output exactly ONE JSON object, no prose, no code fences: "
+    "{\"give_up\": true|false, \"reason\": \"<the exact on-screen evidence you "
+    "used>\"}\n"
+    "Rules:\n"
+    "* give_up:true ONLY if the screenshot PROVES the goal cannot be reached "
+    "from here -- a hard error/permission dialog, a missing capability, or a "
+    "required element that exists NOWHERE reachable on screen.\n"
+    "* The agent's stated reason is a CLAIM, not proof. Trust the screenshot, "
+    "not the claim. 'It is hard', 'unclear', 'I tried a couple times', or a "
+    "control simply not found yet is NOT impossible -> give_up:false.\n"
+    "* If ANY visible element could plausibly advance the goal (a button, a "
+    "field, a menu, a list row, a search box), the task is still achievable "
+    "-> give_up:false.\n"
+    "* When in ANY doubt, answer give_up:false. The default is to KEEP WORKING.\n"
+    "* Quote the concrete on-screen evidence (the blocking dialog, or the "
+    "element that still makes the goal reachable) in 'reason'."
+)
+
+
 _COMPUTE_VERIFIER_SYSTEM_PROMPT = (
     "You are a STRICT result judge for a calculator task. Read the calculator's "
     "result display in the screenshot. Output exactly ONE JSON object, no prose, "
@@ -1278,9 +1323,15 @@ async def _verify_goal_done(
     return _parse_verdict(raw)
 
 
-def _parse_verdict(raw: str) -> tuple[bool, str]:
-    """Parse a strict-judge JSON {"done":bool,"proof":str} (fence-tolerant).
-    Returns (False, "") on any malformed input -- verification never blocks."""
+def _parse_verdict(
+    raw: str, *, bool_key: str = "done", text_key: str = "proof",
+) -> tuple[bool, str]:
+    """Parse a strict-judge JSON {<bool_key>:bool,<text_key>:str} (fence-tolerant).
+
+    Defaults parse the completion-judge shape {"done":bool,"proof":str}; the
+    fail-gate reuses it with bool_key="give_up", text_key="reason". Returns
+    (False, "") on any malformed input -- verification never blocks (and a
+    fail-judge that returns False means KEEP WORKING, never a free quit)."""
     import json as _json  # noqa: PLC0415
     cleaned = (raw or "").strip()
     fence = _JSON_FENCE_RE.search(cleaned)
@@ -1293,9 +1344,47 @@ def _parse_verdict(raw: str) -> tuple[bool, str]:
         verdict = _json.loads(cleaned[start : end + 1])
     except Exception:  # noqa: BLE001
         return (False, "")
-    done = bool(verdict.get("done") is True)
-    proof = str(verdict.get("proof", ""))[:160]
-    return (done, proof)
+    flag = bool(verdict.get(bool_key) is True)
+    text = str(verdict.get(text_key, ""))[:160]
+    return (flag, text)
+
+
+async def _verify_fail_justified(
+    ctx: ComputerUseContext,
+    *,
+    observation: Observation,
+    user_goal: str,
+    claimed_reason: str,
+) -> tuple[bool, str]:
+    """Strict feasibility judge for the ``fail`` action — the symmetric sibling
+    of :func:`_verify_goal_done`. Single-frame: does the screenshot PROVE the
+    goal is impossible/blocked from here?
+
+    Returns ``(give_up, reason)``. NEVER raises: on ANY error/timeout returns
+    ``(False, "")`` -- i.e. KEEP WORKING. This is the core anti-reward-hack
+    property: a broken/timed-out judge can never become a free quit. The bounded
+    ``_MAX_FAIL_REJECTS`` backstop in the loop guarantees termination instead."""
+    try:
+        raw = await asyncio.wait_for(
+            _call_brain(
+                ctx,
+                observation=observation,
+                user_goal=user_goal,
+                history_text="",
+                system_prompt=_FAIL_VERIFIER_SYSTEM_PROMPT,
+                user_message=(
+                    f"GOAL: {user_goal}\n\n"
+                    f"The agent wants to give up, claiming: {claimed_reason!r}\n"
+                    "Judge feasibility from the screenshot per the rules. "
+                    "Reply with the JSON object only."
+                ),
+            ),
+            timeout=_think_timeout_s(ctx),
+        )
+    except (TimeoutError, Exception) as exc:  # noqa: BLE001
+        log.debug("[cu] fail-verifier failed (non-fatal, keep working): %s", exc)
+        return (False, "")
+    return _parse_verdict(raw, bool_key="give_up", text_key="reason")
 
 
 # ---------------------------------------------------------------------------
@@ -1327,6 +1416,22 @@ _PLANNER_SYSTEM_PROMPT = (
     "assumption.\n"
     "* The final step's success for media playback is: the elapsed-time counter "
     "is ADVANCING (the song is audibly playing), not merely a pause glyph.\n"
+    "* NAVIGATION vs SEARCH (do NOT turn the goal's own words into a site "
+    "search): a goal to FIND, READ, SHOW, OPEN, or LOOK AT a specific person's "
+    "or account's posts, profile, news, latest, tweets, or page on a website "
+    "is accomplished by NAVIGATING to that page (e.g. typing the account's "
+    "profile address into the address bar) and STOPPING there. DO NOT type a "
+    "descriptor word lifted from the goal -- 'news', 'latest', 'post', "
+    "'tweet', 'update', 'profile' -- into the site's SEARCH BOX as a literal "
+    "query: that lands on a generic search-results page, NOT the content the "
+    "user asked for (recorded failure: 'show Elon Musk's news post on X' was "
+    "mis-decomposed into a search for the literal word 'news', which derailed "
+    "an otherwise-finished task). Only plan a typed search when the goal names "
+    "an explicit TOPIC to search FOR (e.g. 'search YouTube for lo-fi beats' -> "
+    "type 'lo-fi beats'); a person's name or account is a NAVIGATION target, "
+    "not a search topic. For a 'see <account>'s posts/news on <site>' goal the "
+    "final step's success is that account's page being visible -- never a "
+    "search box containing one of the goal's words.\n"
 )
 
 
@@ -2094,6 +2199,7 @@ async def _run_screenshot_loop(
     # looping forever or silently claiming success.
     _MAX_DONE_REJECTS = 3
     done_rejects = 0
+    fail_rejects = 0  # symmetric fail-gate budget (module _MAX_FAIL_REJECTS)
     verify_done_enabled = bool(getattr(ctx, "verify_after_each_step", True))
     # The last successful state-changing action -- fed into the next executor
     # turn as a VERIFY FIRST directive so the model checks the fresh
@@ -2769,6 +2875,56 @@ async def _run_screenshot_loop(
                     str(action_obj.get("reason", "")).strip()
                     or "model declined"
                 )
+                # Fail-gate (2026-06-15): the SYMMETRIC sibling of the done-gate
+                # above. While verification is on, a voluntary give-up is NOT
+                # honored on the model's word -- the strict feasibility judge
+                # must AGREE the goal is genuinely impossible/blocked from the
+                # current screen. Otherwise the fail is rejected, the model is
+                # told to keep working, and the loop re-plans from a fresh
+                # screenshot (mirror of done_rejects). Bounded by
+                # _MAX_FAIL_REJECTS so an honestly impossible task still
+                # terminates. This closes the reward-hack where quitting was
+                # free while succeeding was judge-gated (live 2026-06-15
+                # Snipping-Tool turn: emitted fail with the overlay on screen).
+                if verify_done_enabled:
+                    verify_obs = observation
+                    if batch_did_state_change:
+                        try:
+                            verify_obs = await _observe(ctx, cancel_token)
+                        except Exception:  # noqa: BLE001
+                            log.debug(
+                                "[cu] fresh fail-verify observe failed; judging "
+                                "the pre-batch frame", exc_info=True,
+                            )
+                    give_up, jreason = await _verify_fail_justified(
+                        ctx, observation=verify_obs, user_goal=task_prompt,
+                        claimed_reason=reason,
+                    )
+                    if not give_up:
+                        fail_rejects += 1
+                        log.info(
+                            "[cu] %s fail REJECTED (%d/%d) — goal still looks "
+                            "achievable (%s)",
+                            tag, fail_rejects, _MAX_FAIL_REJECTS,
+                            jreason[:80] or "no proof of impossibility",
+                        )
+                        if fail_rejects < _MAX_FAIL_REJECTS:
+                            why = jreason[:120] or "no proof it is impossible"
+                            history.append(
+                                "FAIL REJECTED: the goal still looks achievable "
+                                f"from here ({why}). Do NOT give up. Pick the "
+                                "next concrete action that visibly advances the "
+                                "goal."
+                            )
+                            break  # re-plan from a fresh screenshot
+                        # Budget reached -> honor the give-up: verified-
+                        # impossible after _MAX_FAIL_REJECTS attempts.
+                        log.info(
+                            "[cu] %s fail honored after %d rejects (backstop)",
+                            tag, fail_rejects,
+                        )
+                    elif jreason:
+                        reason = jreason  # surface the judge's VERIFIED reason
                 yield _final(
                     stderr=f"[cu] fail at {tag}: {reason}\n",
                     exit_code=_FAIL_EXIT_CODE,

@@ -373,6 +373,19 @@ def test_is_informational_request_true_despite_start_mission_meta() -> None:
     )
 
 
+def test_is_informational_request_true_for_make_me_deep_research_phrase() -> None:
+    """Live mission 019ecbb8 used "make me a deep research" to mean a research
+    brief, not a file/code side effect. The generic "make" action verb must not
+    mask the surrounding informational research request."""
+    assert is_informational_request(
+        "I would like you to help me research about the topic with the "
+        "sub-agent and the topic is how I can move to the USA from Germany "
+        "and how my chances are realistically if you compare it with "
+        "countries like Mexico or something like that and make me a deep "
+        "research with the sub-agent."
+    )
+
+
 def test_start_mission_meta_strip_does_not_unmask_real_do_tasks() -> None:
     """Stripping the spawn-meta clause must leave the REAL task verb intact, so a
     do-task wrapped in routing meta stays a do-task (anti-hallucination guard)."""
@@ -382,6 +395,9 @@ def test_start_mission_meta_strip_does_not_unmask_real_do_tasks() -> None:
     )
     assert not is_informational_request(
         "Start a worker that creates an index.html landing page."
+    )
+    assert not is_informational_request(
+        "Make me a research script in Python that scrapes example.com."
     )
 
 

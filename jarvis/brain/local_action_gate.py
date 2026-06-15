@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Literal, Protocol, runtime_checkable
+from urllib.parse import quote_plus
 
 #: Entry-point name of the screenshot-based computer-use harness (see
 #: ``pyproject.toml`` ``[project.entry-points."jarvis.harness"]`` +
@@ -107,8 +108,9 @@ _VISUAL_TARGET_PATTERNS = (
 # Ambiguous verbs like "schreib"/"such" alone are deliberately excluded (they
 # often mean "write me a poem" / "search the web", i.e. a plain brain answer).
 _COMPOUND_OPEN_CONTROL_RE = re.compile(
-    r"^(?:hey\s+)?(?:jarvis[,\s]+)?(?:oeffne|starte|mach|geh\s+(?:auf|zu))\b"
-    r".+\bund\b.+",
+    r"^(?:hey\s+)?(?:jarvis[,\s]+)?"
+    r"(?:oeffne|starte|mach|geh\s+(?:auf|zu)|open|start|launch)\b"
+    r".+\b(?:und|and)\b.+",
     re.I,
 )
 _GUI_VERB_RE = re.compile(
@@ -203,12 +205,12 @@ _OPEN_VERB_RE = re.compile(
 )
 # Separable verb "mach … auf" (particle trails the object): "mach mir Spotify auf".
 _MACH_AUF_RE = re.compile(r"\bmach(?:e|st|t)?\b[\w\s]*\bauf\b", re.IGNORECASE)
-# A coordinating "und" splits an open command from a follow-up action
+# A coordinating "und"/"and" splits an open command from a follow-up action
 # ("…Spotify öffnen UND Shape of You spielen") → the request is multi-step and
 # belongs on the computer-use loop, not a single DIRECT open. Word-boundaried so
 # it never fires inside a token. Operates on the normalised (transliterated)
-# utterance, where "und" is stable.
-_AND_RE = re.compile(r"\bund\b", re.IGNORECASE)
+# utterance, where "und" and "and" are stable.
+_AND_RE = re.compile(r"\b(?:und|and)\b", re.IGNORECASE)
 # Negated open ("ich will Spotify NICHT öffnen", "bitte KEIN Chrome starten",
 # "öffne Discord lieber nicht") must NEVER launch. The verb-at-end fallback below
 # scans the WHOLE utterance for a known app name, so without this guard it would
@@ -279,9 +281,42 @@ _BARE_GOTO_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Search-query browser launch (live bug 2026-06-15, sessions.db session
+# c995c9bc): "Open the Chrome browser for me and Google <query>" is ONE
+# deterministic argv launch — open the browser straight to a Google results
+# page. It must NOT take the credit-gated Computer-Use vision loop (which
+# silently no-ops when the desktop extra is unavailable) and must NOT drop the
+# search clause (the old verb-at-end fallback launched only Chrome). Bilingual:
+# both the conjunction (and/und) and the search verb (google / search for /
+# suche nach) are DE+EN — the German-only _AND_RE never split the English "and",
+# so the whole search half was discarded. The search verb is anchored directly
+# after the conjunction so a non-search follow-up ("… und schreib Mama hallo")
+# stays on the Computer-Use loop. End-anchored on the query.
+_BROWSER_SEARCH_VERB_RE = (
+    r"(?:google(?:\s+nach)?|search\s+for|search|look\s+up|"
+    r"such(?:e|st)?(?:\s+nach)?)"
+)
+_OPEN_BROWSER_SEARCH_RE = re.compile(
+    r"^(?:hey\s+)?(?:jarvis[,\s]+)?(?:oeffne|starte|open|start|launch)\b[^.!?]*?"
+    r"\b(?P<app>" + "|".join(_BROWSER_TOKENS) + r")\b[^.!?]*?"
+    r"\b(?:und|and)\b\s*" + _BROWSER_SEARCH_VERB_RE + r"\s+"
+    r"(?P<query>\S.*?)\s*[.!?]*$",
+    re.IGNORECASE,
+)
+
+#: Google results endpoint for the search fast-path. open_app forwards the URL
+#: verbatim to the browser argv (only ``app_name`` is plausibility-gated), so a
+#: ``?q=…`` query string is passed through unchanged — the same contract the
+#: browser+URL fast-path already relies on.
+_SEARCH_URL_PREFIX = "https://www.google.com/search?q="
+
 
 def _site_to_url(site: str) -> str:
     return site if site.startswith(("http://", "https://")) else f"https://{site}"
+
+
+def _search_to_url(query: str) -> str:
+    return _SEARCH_URL_PREFIX + quote_plus(query.strip())
 
 
 def _match_browser_url_fast_path(normalized: str) -> LocalActionPlan | None:
@@ -309,6 +344,18 @@ def _match_browser_url_fast_path(normalized: str) -> LocalActionPlan | None:
             tool_calls=(LocalToolCall(
                 name="open_app",
                 args={"app_name": _site_to_url(m.group("site"))},
+            ),),
+        )
+    m = _OPEN_BROWSER_SEARCH_RE.match(normalized)
+    if m:
+        return LocalActionPlan(
+            mode=LocalActionMode.DIRECT,
+            tool_calls=(LocalToolCall(
+                name="open_app",
+                args={
+                    "app_name": m.group("app").lower(),
+                    "arguments": _search_to_url(m.group("query")),
+                },
             ),),
         )
     return None

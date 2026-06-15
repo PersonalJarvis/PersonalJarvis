@@ -19,6 +19,8 @@ from typing import TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from jarvis.sessions.constants import SPOKEN_KINDS
+
 # BUG-008 (drei Episoden 2026-05-03 / -05 / -10): Pydantic-``Literal`` brach
 # die List-Sessions-API jedes Mal, wenn die Pipeline einen neuen
 # ``hangup_reason``-String einfuehrte (zuletzt ``turn_complete`` aus
@@ -63,6 +65,14 @@ KNOWN_VOICE_TIERS: frozenset[str] = frozenset(
 
 VoiceTier: TypeAlias = str
 """Bewusst ``str`` statt ``Literal`` — siehe ``KNOWN_VOICE_TIERS``."""
+
+
+KNOWN_SPOKEN_KINDS: frozenset[str] = frozenset(SPOKEN_KINDS)
+"""Bekannte ``SpeechSpoken.spoken_kind``-Werte (timeout / announcement /
+clarify / …). Mirror of ``constants.SPOKEN_KINDS`` — the value rides in the
+``voice_events`` payload JSON, not a typed column, so an unknown kind degrades
+to a fallback UI label instead of an HTTP 500 (BUG-008 class). Parity guard:
+``tests/unit/sessions/test_spoken_kind_parity.py``."""
 
 
 class VoiceEventRow(BaseModel):
@@ -151,6 +161,7 @@ class SessionDetail(BaseModel):
 __all__ = [
     "HangupReason",
     "KNOWN_HANGUP_REASONS",
+    "KNOWN_SPOKEN_KINDS",
     "KNOWN_VOICE_TIERS",
     "SessionDetail",
     "SessionListItem",

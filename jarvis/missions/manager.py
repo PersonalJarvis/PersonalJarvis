@@ -12,6 +12,7 @@ Persist-vor-Publish-Disziplin:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -62,6 +63,7 @@ class MissionManager:
         self._bus = bus if bus is not None else MissionBus()
         self._store = MissionEventStore(db_path, self._bus)
         self._started = False
+        self._state_locks: dict[str, asyncio.Lock] = {}
 
     async def start(
         self,
@@ -172,35 +174,37 @@ class MissionManager:
         nicht existiert. Aktualisiert auch den Mission-Header.
         """
         self._ensure_started()
-        current_str = await self._store.get_mission_state(mission_id)
-        if current_str is None:
-            raise KeyError(f"Mission nicht gefunden: {mission_id}")
-        from_state = MissionState(current_str)
-        # validiert oder raises IllegalStateTransition
-        transition(from_state, to_state)
+        lock = self._state_locks.setdefault(mission_id, asyncio.Lock())
+        async with lock:
+            current_str = await self._store.get_mission_state(mission_id)
+            if current_str is None:
+                raise KeyError(f"Mission nicht gefunden: {mission_id}")
+            from_state = MissionState(current_str)
+            # validiert oder raises IllegalStateTransition
+            transition(from_state, to_state)
 
-        prompt = await self._get_prompt(mission_id) or ""
-        ts = now_ms()
-        env = EventEnvelope(
-            mission_id=mission_id,
-            source_actor=source_actor,
-            ts_ms=ts,
-            payload=MissionStateChanged(
-                from_state=from_state.value,
-                to_state=to_state.value,
-                reason=reason,
-            ),
-        )
-        # Event zuerst (authoritative log), Header danach (snapshot fuer fast lookup)
-        await self._store.append_and_publish(env)
-        await self._store.upsert_mission(
-            mission_id=mission_id,
-            prompt=prompt,
-            state=to_state.value,
-            language="de",  # in upsert ueberschreibt nur state+updated_ms (siehe SQL)
-            ts_ms=ts,
-        )
-        return env
+            prompt = await self._get_prompt(mission_id) or ""
+            ts = now_ms()
+            env = EventEnvelope(
+                mission_id=mission_id,
+                source_actor=source_actor,
+                ts_ms=ts,
+                payload=MissionStateChanged(
+                    from_state=from_state.value,
+                    to_state=to_state.value,
+                    reason=reason,
+                ),
+            )
+            # Event zuerst (authoritative log), Header danach (snapshot fuer fast lookup)
+            await self._store.append_and_publish(env)
+            await self._store.upsert_mission(
+                mission_id=mission_id,
+                prompt=prompt,
+                state=to_state.value,
+                language="de",  # in upsert ueberschreibt nur state+updated_ms (siehe SQL)
+                ts_ms=ts,
+            )
+            return env
 
     async def mission(self, mission_id: str) -> MissionView | None:
         """Snapshot eines Mission-Headers oder None wenn nicht vorhanden."""

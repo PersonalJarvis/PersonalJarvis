@@ -35,6 +35,7 @@ from pydantic import ValidationError
 from ..stream_evidence import (
     capability_refusal_answer,
     informational_file_answer,
+    is_informational_request,
     readonly_answer,
 )
 from ..workers.claude_direct_worker import _claude_error_is_model_unavailable
@@ -529,6 +530,43 @@ class CriticRunner:
         # disk for the LLM to grade, so log text alone cannot earn an approve.
         _defer_empty_diff_to_llm = bool(_extract_tool_call_evidence(worker_log))
 
+        if not worker_diff.strip() and is_informational_request(mission_prompt):
+            # Pure informational/advisory requests have no file deliverable.
+            # The spoken answer is the result, including when the worker used
+            # search/read tools before answering. File, code, and side-effect
+            # tasks are excluded by the request-shape gate and keep their
+            # normal critic path.
+            info_answer = readonly_answer(
+                worker_diff, worker_log, prompt=mission_prompt
+            )
+            if info_answer is not None:
+                logger.info(
+                    "CriticRunner: empty diff, but the request is "
+                    "informational and the worker answered (%d chars) -> "
+                    "approve (the spoken answer is the deliverable); no "
+                    "deterministic revise (iter=%d).",
+                    len(info_answer), iteration,
+                )
+                answer_axis = CriticAxis(
+                    status="pass",
+                    evidence=[f"informational answer delivered: {info_answer[:200]}"],
+                )
+                return CriticVerdict(
+                    verdict="approve",
+                    axes={ax: answer_axis for ax in REQUIRED_AXES},
+                    issues=[],
+                    correction_instruction="",
+                    summary=(
+                        "Informational request answered; the spoken answer is "
+                        "the deliverable."
+                    ),
+                    summary_de=(
+                        "Frage beantwortet; die Antwort selbst ist das Ergebnis."
+                    ),
+                    confidence=1.0,
+                    suggested_next_action="accept",
+                )
+
         if not worker_diff.strip() and not _defer_empty_diff_to_llm:
             # A pure question / informational request has NO file deliverable —
             # the worker's spoken answer IS the result. Auto-revising it burned
@@ -664,55 +702,6 @@ class CriticRunner:
                 suggested_next_action="retry",
             )
 
-        # Informational request delivered as a prose document. A research /
-        # advisory request ("recherchiere AI-News", "research laptops", "plan a
-        # trip") whose worker wrote the answer into a Markdown / text REPORT
-        # produces a NON-empty diff, which used to route it to the adversarial
-        # code-critic — graded with a code rubric (correctness/security/
-        # side_effects) and asked for reachable web citations a web-less worker
-        # cannot give -> 3x revise -> critic_loop_exhausted (live mission
-        # 019ecb56, 2026-06-15: a complete, working AI-news report failed three
-        # times; the worker WORKED, the critic demanded the impossible). When the
-        # WHOLE deliverable is substantive prose for an informational request,
-        # the document IS the answer: advisory-approve it (the user gets the
-        # report) without spawning the code-critic. Anti-hallucination intact —
-        # gated on the REQUEST being informational AND a real non-stub document
-        # on disk (named-file/code do-tasks are never informational; a stub fails
-        # the substance gate in informational_file_answer and falls through here).
-        info_document = informational_file_answer(worker_diff, prompt=mission_prompt)
-        if info_document is not None:
-            logger.info(
-                "CriticRunner: informational request delivered as a prose "
-                "document (%d chars) -> advisory approve (no code-critic spawn) "
-                "(iter=%d).",
-                len(info_document),
-                iteration,
-            )
-            doc_axis = CriticAxis(
-                status="pass",
-                evidence=[
-                    f"informational report delivered "
-                    f"({len(info_document)} chars prose)"
-                ],
-            )
-            return CriticVerdict(
-                verdict="approve",
-                axes={ax: doc_axis for ax in REQUIRED_AXES},
-                issues=[],
-                correction_instruction="",
-                summary=(
-                    "Informational/research request answered with a written "
-                    "report; the document is the deliverable."
-                ),
-                summary_de=(
-                    # i18n-allow: German voice readback (sanctioned TTS exception)
-                    "Rechercheauftrag mit schriftlichem Bericht beantwortet; "  # i18n-allow
-                    "das Dokument ist das Ergebnis."  # i18n-allow
-                ),
-                confidence=1.0,
-                suggested_next_action="accept",
-            )
-
         model = choose_critic_model(
             iteration,
             security_tag=security_tag,
@@ -830,6 +819,64 @@ class CriticRunner:
                     honesty.capability_id,
                 )
             verdict = honesty.verdict
+
+        # Last-resort net for an informational request answered as a prose
+        # document. The critic above keeps FULL authority on every round — a
+        # web_search-sourced report (codex worker, commit 18071ed4) is approved
+        # on merit there, so quality/sourcing verification is preserved. This
+        # only rescues a substantive research/advisory document the critic would
+        # otherwise TERMINALLY fail: a one-shot `reject`, or a `revise` on the
+        # final iteration (which the orchestrator turns into
+        # critic_loop_exhausted). Live mission 019ecb56 (2026-06-15): a complete
+        # AI-news report failed 3x because the critic graded prose with a code
+        # rubric and called real 2026 model releases "hallucinated future
+        # claims" — a critic-epistemics gap web_search on the worker cannot
+        # close. We deliver the report (the user judges it) instead of a scary
+        # "three attempts failed" ERROR. Anti-hallucination intact:
+        # informational_file_answer gates on the REQUEST being informational AND
+        # a real, substantive, prose-only document on disk — a code diff, a
+        # named-file/side-effect do-task, or a stub never qualifies.
+        if verdict.verdict != "approve" and (
+            verdict.verdict == "reject" or iteration >= MAX_CRITIC_LOOPS - 1
+        ):
+            info_document = informational_file_answer(
+                worker_diff, prompt=mission_prompt
+            )
+            if info_document is not None:
+                logger.info(
+                    "CriticRunner: critic would terminally fail an "
+                    "informational prose deliverable (%d chars, verdict=%s) on "
+                    "iter=%d -> last-resort advisory approve (the document is "
+                    "the answer; critic feedback retained in evidence).",
+                    len(info_document),
+                    verdict.verdict,
+                    iteration,
+                )
+                doc_axis = CriticAxis(
+                    status="pass",
+                    evidence=[
+                        f"informational report delivered "
+                        f"({len(info_document)} chars prose); critic note: "
+                        f"{(verdict.summary or '')[:120]}"
+                    ],
+                )
+                return CriticVerdict(
+                    verdict="approve",
+                    axes={ax: doc_axis for ax in REQUIRED_AXES},
+                    issues=[],
+                    correction_instruction="",
+                    summary=(
+                        "Informational/research request answered with a written "
+                        "report; delivered as the deliverable after critic "
+                        "review."
+                    ),
+                    summary_de=(  # i18n-allow: German voice readback (TTS exception)
+                        "Rechercheauftrag als Bericht geliefert; das Dokument "  # i18n-allow
+                        "ist das Ergebnis."  # i18n-allow
+                    ),
+                    confidence=1.0,
+                    suggested_next_action="accept",
+                )
 
         return verdict
 

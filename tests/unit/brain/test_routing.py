@@ -53,6 +53,16 @@ class _FakeHotkeyTool:
     schema: dict[str, Any] = {}
 
 
+class _FakeRespawnMascotTool:
+    name = "respawn_mascot"
+    schema: dict[str, Any] = {}
+
+
+class _FakeNavigateTool:
+    name = "navigate"
+    schema: dict[str, Any] = {}
+
+
 class _VisionShouldNotRun:
     async def current(self) -> Any:
         raise AssertionError("local-action fast path must not collect vision")
@@ -2085,13 +2095,195 @@ def test_is_heavy_research_stays_inline(utterance: str) -> None:
     assert manager._is_heavy_research(utterance) is False
 
 
-def test_heavy_research_force_spawns_via_should_force_spawn() -> None:
-    """End-to-end through the strict-mode guard chain: the live Berlin→Melbourne
-    research prompt must force-spawn. RED before WS3a (strict mode reached
-    _is_generic_subagent_work, which is False for this Q&A-shaped request)."""
+# ---------------------------------------------------------------------------
+# User mandate (2026-06-15): "When I say subagent, it HAS to spawn a subagent."
+#
+# An EXPLICIT heavy-work trigger ("subagent", "spawn", "openclaw", "delegate",
+# …) names the execution vehicle — it is an UNAMBIGUOUS spawn request and must
+# outrank the disambiguation guards that exist only to suppress AMBIGUOUS,
+# implicit spawns: the instructional/pointer/navigation/smalltalk/open-app
+# guards in ``_should_force_spawn`` AND, end-to-end through ``generate()``, the
+# capability "I can't do that" refusal and the navigation fast-path. The bug:
+# those guards were checked BEFORE the explicit-trigger check, so a phrasing
+# that also tripped one of them was silently NOT spawned ("sometimes saying
+# subagent doesn't spawn a subagent").
+# ---------------------------------------------------------------------------
+
+# Each of these contains an explicit trigger AND trips a disambiguation guard
+# that today returns False before the trigger is ever evaluated:
+#   - "Starte/Öffne OpenClaw"  → is_open_app_intent (start\w*/open\w* + no veto)
+#   - subagent + "zeig … Socials" → match_navigation_intent (section hit)
+_EXPLICIT_TRIGGER_OVERRIDES_GUARDS = [
+    "Starte OpenClaw",
+    "Öffne OpenClaw",  # i18n-allow: German voice fixture (routing content under test)
+    "Spawne einen Subagenten und zeig mir die Socials",  # i18n-allow: German voice fixture
+    "Kannst du einen Subagenten spawnen und mir die Socials zeigen?",  # i18n-allow
+]
+
+
+@pytest.mark.parametrize("utterance", _EXPLICIT_TRIGGER_OVERRIDES_GUARDS)
+def test_explicit_trigger_outranks_disambiguation_guards(utterance: str) -> None:
+    """An explicit force-spawn trigger must force-spawn even when the utterance
+    also looks like an app-open or a UI-navigation command. The disambiguation
+    guards only suppress AMBIGUOUS implicit spawns — naming the vehicle is
+    unambiguous (User mandate 2026-06-15)."""
     manager, _ = _manager_with_spawn(force_spawn_mode="strict")
-    prompt = _HEAVY_RESEARCH_SHOULD_SPAWN[0]
-    assert manager._should_force_spawn(prompt) is True
+    assert manager._should_force_spawn(utterance) is True, (
+        f"explicit-trigger utterance {utterance!r} did NOT force-spawn — a "
+        "disambiguation guard swallowed the explicit request"
+    )
+
+
+def _seeded_strict_manager_with_local_actions() -> tuple[BrainManager, _RecordingExecutor]:
+    """Strict-mode manager over the REAL seeded registry, with spawn_worker AND
+    the local-action tools (incl. respawn_mascot) wired — the exact production
+    gate path for the end-to-end ``generate()`` mandate tests."""
+    from jarvis.core.capabilities import get_registry
+    from jarvis.core.capabilities_seed import seed_registry
+
+    seed_registry(get_registry())
+    executor = _RecordingExecutor()
+    config = JarvisConfig()
+    config.brain.routing.force_spawn_mode = "strict"
+    manager = BrainManager(
+        config=config,
+        bus=EventBus(),
+        tools={"spawn_worker": _FakeTool()},
+        local_action_tools={
+            "open_app": _FakeOpenAppTool(),
+            "type_text": _FakeTypeTextTool(),
+            "hotkey": _FakeHotkeyTool(),
+            "respawn_mascot": _FakeRespawnMascotTool(),
+        },
+        tool_executor=executor,  # type: ignore[arg-type]
+    )
+    manager._vision_provider = _VisionShouldNotRun()
+    return manager, executor
+
+
+def _spawn_calls(executor: _RecordingExecutor) -> list[Any]:
+    return [c for c in executor.calls if getattr(c[0], "name", "") == "spawn_worker"]
+
+
+# Explicit subagent requests whose TASK also needs an external integration the
+# worker cannot reach (book a trip, send mail). Today the capability gate
+# refuses them ("Das kann ich noch nicht") BEFORE force-spawn, so the explicit
+# "subagent" mention never spawns. Per the mandate, the explicit trigger wins:
+# spawn the universal worker (it does its best / reports honestly).
+_EXPLICIT_SUBAGENT_OVER_REFUSAL = [
+    "Spawn a subagent to book a trip to Berlin",
+    "Spawne einen Subagenten und schick eine Email an meinen Chef",  # i18n-allow
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("utterance", _EXPLICIT_SUBAGENT_OVER_REFUSAL)
+async def test_explicit_subagent_spawns_over_capability_refusal(utterance: str) -> None:
+    """End-to-end through ``generate()``: an explicit subagent request must
+    dispatch spawn_worker even when the task looks like an unsupported external
+    integration — it must NOT be swallowed by the capability refusal gate."""
+    manager, executor = _seeded_strict_manager_with_local_actions()
+    await manager.generate(utterance)
+    assert _spawn_calls(executor), (
+        f"explicit subagent request {utterance!r} did NOT spawn a worker — the "
+        "capability refusal gate swallowed it"
+    )
+
+
+@pytest.mark.asyncio
+async def test_explicit_subagent_outranks_navigation_fast_path() -> None:
+    """End-to-end through ``generate()``: a nav-tail combo that names an explicit
+    subagent trigger ('Spawne einen Subagenten UND zeig mir die Socials') must
+    dispatch spawn_worker — the deterministic navigation fast-path must stand
+    down for an explicit trigger (mirrors AD-S9: the named vehicle wins)."""
+    from jarvis.core.capabilities import get_registry
+    from jarvis.core.capabilities_seed import seed_registry
+
+    seed_registry(get_registry())
+    executor = _RecordingExecutor()
+    config = JarvisConfig()
+    config.brain.routing.force_spawn_mode = "strict"
+    manager = BrainManager(
+        config=config,
+        bus=EventBus(),
+        tools={"spawn_worker": _FakeTool(), "navigate": _FakeNavigateTool()},
+        local_action_tools={"respawn_mascot": _FakeRespawnMascotTool()},
+        tool_executor=executor,  # type: ignore[arg-type]
+    )
+    manager._vision_provider = _VisionShouldNotRun()
+    await manager.generate(
+        "Spawne einen Subagenten und zeig mir die Socials"  # i18n-allow: German voice fixture
+    )
+    assert _spawn_calls(executor), (
+        "explicit subagent + navigation tail did NOT spawn — the navigation "
+        "fast-path swallowed the explicit trigger"
+    )
+    assert not any(
+        getattr(c[0], "name", "") == "navigate" for c in executor.calls
+    ), "navigation fast-path ran instead of standing down for the explicit trigger"
+
+
+@pytest.mark.asyncio
+async def test_mascot_respawn_still_wins_over_explicit_spawn_word() -> None:
+    """No-regression: 'Spawne das Maskottchen' is a deterministic local recovery
+    that legitimately reuses the word 'spawn' — it must respawn the mascot, NOT
+    dispatch a heavy worker."""
+    manager, executor = _seeded_strict_manager_with_local_actions()
+    await manager.generate("Spawne das Maskottchen")
+    assert not _spawn_calls(executor), (
+        "'Spawne das Maskottchen' wrongly dispatched a heavy worker instead of "
+        "respawning the mascot"
+    )
+    assert any(
+        getattr(c[0], "name", "") == "respawn_mascot" for c in executor.calls
+    ), "mascot respawn tool was not called"
+
+
+@pytest.mark.asyncio
+async def test_external_task_without_trigger_still_refuses() -> None:
+    """No-regression: WITHOUT an explicit trigger, an unsupported external task
+    must STILL be refused honestly (no spawn). Only the explicit 'subagent'/
+    'spawn' mention bypasses the refusal — the gate is not weakened globally."""
+    manager, executor = _seeded_strict_manager_with_local_actions()
+    reply = await manager.generate(
+        "Buche mir einen Flug nach Berlin"  # i18n-allow: German voice fixture
+    )
+    assert not _spawn_calls(executor), (
+        "an unsupported external task WITHOUT an explicit trigger must not spawn"
+    )
+    assert reply, "expected an honest refusal reply, got empty"
+
+
+def test_heavy_research_force_spawns_only_when_it_builds_an_artifact() -> None:
+    """Option A (2026-06-15): heavy research force-spawns a mission ONLY when it
+    asks for a BUILT ARTIFACT (a file/report the Worker->Critic pipeline can
+    verify via git diff). Answer-only research routes INLINE via the router's
+    search_web tool.
+
+    Reverses the WS3a contract (2026-06-14): that offloaded the answer-only
+    Berlin->Melbourne prompt to a mission to dodge the ~20s no-first-frame voice
+    ceiling. That ceiling is now re-armed from `_brain_thinking_heartbeat`, so
+    inline research no longer beheads the turn — and the Worker->Critic pipeline
+    can't grade an answer-only research turn anyway (empty-diff veto ->
+    critic_loop_exhausted, live mission 019ecb56)."""
+    manager, _ = _manager_with_spawn(force_spawn_mode="strict")
+    # Answer-only heavy research -> INLINE (the reversal).
+    answer_only = _HEAVY_RESEARCH_SHOULD_SPAWN[0]
+    assert manager._is_heavy_research(answer_only) is True
+    assert manager._should_force_spawn(answer_only) is False, (
+        "answer-only heavy research must route inline (Option A)"
+    )
+    # Heavy research that BUILDS a file/report -> still a mission (no explicit
+    # phrase; spawns purely via the heavy-research + artefact path).
+    artifact = (
+        "Research and compare the top five vector databases, then write a "
+        "detailed comparison report into a file named compare.md"
+    )
+    assert manager._is_heavy_research(artifact) is True
+    assert manager._research_wants_artifact(artifact) is True
+    assert manager._should_force_spawn(artifact) is True, (
+        "research that builds a verifiable artefact must still force-spawn"
+    )
 
 
 def test_quick_weather_lookup_does_not_force_spawn() -> None:
@@ -2105,3 +2297,28 @@ def test_heavy_research_disabled_flag_restores_inline() -> None:
     manager, _ = _manager_with_spawn(force_spawn_mode="strict")
     manager._config.brain.routing.heavy_research_enabled = False
     assert manager._is_heavy_research(_HEAVY_RESEARCH_SHOULD_SPAWN[0]) is False
+
+
+def test_research_question_answer_deliverable_routes_inline_not_spawned() -> None:
+    """Option A (2026-06-15): a research QUESTION whose deliverable is an ANSWER
+    (a comparison / overview / recommendation) must be answered INLINE via the
+    router's search_web tool, NOT offloaded to a sub-agent mission.
+
+    The Worker->Critic pipeline verifies BUILT ARTIFACTS via git diff; it is
+    structurally hostile to an answer-only research turn — it cannot grade a
+    spoken answer or independently verify a web citation, so the request hits the
+    empty-diff veto and loops to critic_loop_exhausted (live mission 019ecb56:
+    "research the AI news of the last years" failed at 1042s). It is STILL heavy
+    research (the detector keeps firing), but the spawn DECISION must send an
+    answer-only request inline. Only an explicit mission phrase (handled earlier
+    in _should_force_spawn) or an artifact/file request offloads to a mission."""
+    manager, _ = _manager_with_spawn(force_spawn_mode="strict")
+    # Two research verbs (research + compare) -> detected as heavy research, but
+    # the deliverable is an ANSWER: no file, no build verb, no explicit phrase.
+    prompt = "Research the leading AI language models and compare their strengths."
+    assert manager._is_heavy_research(prompt) is True, (
+        "precondition: a 2-verb research request IS detected as heavy research"
+    )
+    assert manager._should_force_spawn(prompt) is False, (
+        "answer-deliverable research must route inline, not force-spawn a mission"
+    )

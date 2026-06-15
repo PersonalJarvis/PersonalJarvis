@@ -7,28 +7,37 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
-## [v0.5.2] — 2026-06-15
+## [v0.6.0] — 2026-06-15
 
 ### Added
 
-- **Re-run sub-agent missions from the Outputs view.** Cancelled missions now
-  show a **Continue** button and failed/timed-out missions show a **Restart**
-  button. Either re-dispatches the mission's original task as a new mission
-  linked to the source via `parent_mission_id`; the terminal source mission is
-  left untouched as an audit record. New endpoint
-  `POST /api/missions/{id}/rerun`, single-click with a two-click confirm for
-  destructive prompts. (en/de/es localized.)
-- Real web-search backend chain (Brave / DuckDuckGo SERP) with an honest
-  ok/empty/unavailable status, replacing the instant-answer-only path that
-  returned nothing for fresh queries.
+- **Drag-and-drop mission injection.** A global `JarvisDock` drop target and
+  draggable Outputs cards let you drop a finished mission's context into a new
+  chat turn; new `mission.inject` WebSocket command + `mission_inject.py` route.
+- **"Spoken output" transcription track.** Every voiced phrase — not just the
+  brain reply, but clarify prompts, apologies, skill/mission announcements and
+  progress fillers — is recorded as a `SpeechSpoken` event and shown per turn,
+  with markdown / plain / JSON exports.
+- **Bilingual voice action phrases** (`jarvis/voice/action_phrases.py`).
 
 ### Changed
 
-- Sub-agent research/informational missions are more reliable: web search for
-  the Codex worker, multi-provider stream-evidence handling, and a reply
-  language directive so answers match the language of the request.
-- Routing handles impossible booking/travel requests with an honest refusal
-  instead of a failing mission loop.
+- **Computer-Use `fail` action is gated.** It now passes a symmetric
+  feasibility judge (mirror of the done-gate) so a weak model can no longer take
+  a free give-up while one step from completion.
+- The mission critic recognises informational / prose research documents and
+  reads codex and gemini worker streams (provider-agnostic evidence gates).
+
+### Fixed
+
+- **Voice: the STT probe no longer auto-submits mid-sentence.** A brief pause —
+  or a Whisper boilerplate hallucination of still-ongoing speech — could
+  force-end the turn at ~0 ms of silence. All probe-force branches now require
+  2-probe persistence and defer on a trailed-off (`...`) tail.
+- **"Open Chrome and Google &lt;query&gt;"** in English now runs the search
+  instead of silently dropping the search clause (bilingual local-action gate).
+- The Wiki "Memory Map" graph no longer drifts off-screen behind the side panel.
+- Localized fallback phrases + de / en / es locale string updates.
 
 ## [v1.0.0-board] — 2026-04-25
 

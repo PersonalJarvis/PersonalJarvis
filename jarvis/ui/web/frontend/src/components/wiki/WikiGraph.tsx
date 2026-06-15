@@ -15,6 +15,7 @@ import type { ForceGraphMethods, NodeObject } from "react-force-graph-2d";
 
 import {
   BROKEN_EDGE_COLOUR,
+  clampCenterToView,
   NODE_COLOUR,
   sizeChanged,
   toGraphData,
@@ -156,6 +157,10 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
   // reset. We also bail out of the auto-fit if the user has already
   // touched the canvas (panInteracted ref).
   const panInteractedRef = useRef(false);
+  // Guards the programmatic centerAt() inside onZoomEnd from re-entering itself:
+  // centerAt re-emits zoom events, which would otherwise re-fire the boundary
+  // clamp in a feedback loop.
+  const correctingRef = useRef(false);
   useEffect(() => {
     if (graphData.nodes.length === 0) return;
     const timer = window.setTimeout(() => {
@@ -251,6 +256,40 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
     window.setTimeout(() => ref.zoomToFit(600, 100), 1500);
   };
 
+  // Keep the graph from being panned/zoomed entirely out of view.
+  //
+  // react-force-graph allows unbounded background panning, and a pure pan does
+  // NOT reheat the simulation — so the onEngineStop re-fit can never rescue a
+  // graph the user dragged off-screen. That was the reported bug: drag the
+  // network toward an edge and it vanishes ("the right wall disappears"), with
+  // no way back except the Zentrieren button. Here we re-clamp the camera on
+  // every pan/zoom tick so the graph "sticks" at the viewport edge (a slice
+  // always stays visible; the whole graph stays visible when it is smaller than
+  // the viewport — see clampCenterToView).
+  //
+  // The correction is IMMEDIATE (duration 0). A transitioned centerAt is
+  // unreliable here: force-graph's tween is driven by its render loop, which
+  // throttles once the simulation freezes, so an eased correction stalls
+  // mid-flight (verified live). A synchronous set holds. The guard absorbs the
+  // nested zoom event that translateTo re-emits, so this can't loop.
+  const clampViewToBounds = (): void => {
+    if (correctingRef.current) return;
+    const ref = graphRef.current;
+    if (!ref) return;
+    const bbox = ref.getGraphBbox();
+    if (!bbox) return;
+    const center = ref.screen2GraphCoords(winSize.w / 2, winSize.h / 2);
+    const target = clampCenterToView(center, ref.zoom(), bbox, {
+      w: winSize.w,
+      h: winSize.h,
+    });
+    if (Math.abs(target.x - center.x) > 0.5 || Math.abs(target.y - center.y) > 0.5) {
+      correctingRef.current = true;
+      ref.centerAt(target.x, target.y, 0);
+      correctingRef.current = false;
+    }
+  };
+
   return (
     <div ref={wrapRef} data-testid="wiki-graph-wrap" className="relative h-full w-full overflow-hidden">
       <button
@@ -320,6 +359,14 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
           // this, the 2.5 s pending fit would yank the canvas back to
           // centre right after the user finished dragging.
           panInteractedRef.current = true;
+          // Live wall — keep the graph reachable WHILE the user drags, so it
+          // sticks at the edge instead of sliding off and vanishing.
+          clampViewToBounds();
+        }}
+        onZoomEnd={() => {
+          // Safety net for any pan/zoom that slipped past the live clamp
+          // (e.g. a wheel-zoom that shifts the centre).
+          clampViewToBounds();
         }}
         onNodeDrag={() => {
           panInteractedRef.current = true;

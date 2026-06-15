@@ -49,6 +49,7 @@ from jarvis.core.events import (
     ObservationCaptured,
     OpenClawAnnouncement,
     OpenClawBackgroundCompleted,
+    SpeechSpoken,
     TranscriptFinal,
     TranscriptionUpdate,
     UtteranceCaptured,
@@ -70,6 +71,17 @@ from jarvis.sessions.constants import (
     HANGUP_SHUTDOWN,
     HANGUP_TURN_COMPLETE,
     HANGUP_VOICE_PATTERN,
+    SPOKEN_KIND_ACTION_DONE,
+    SPOKEN_KIND_ANNOUNCEMENT,
+    SPOKEN_KIND_BACKCHANNEL,
+    SPOKEN_KIND_CLARIFY,
+    SPOKEN_KIND_COMPLETION,
+    SPOKEN_KIND_PREAMBLE,
+    SPOKEN_KIND_PRIVACY,
+    SPOKEN_KIND_PROGRESS,
+    SPOKEN_KIND_STT_UNAVAILABLE,
+    SPOKEN_KIND_TIMEOUT,
+    SPOKEN_KIND_UNAVAILABLE,
 )
 from jarvis.skills.schema import SkillDirectTriggered
 from jarvis.skills.skill_context import try_get_skill_context
@@ -112,6 +124,19 @@ _MAX_CARRY_PCM_BYTES = 16_000 * 2 * 60  # 16 kHz * int16 * 60 s ≈ 1.9 MB
 
 
 BrainCallback = Callable[[str], Awaitable[str]]
+
+
+def _announcement_spoken_kind(kind: str | None) -> str:
+    """Map an ``AnnouncementRequested.kind`` to a ``SpeechSpoken.spoken_kind``.
+
+    AnnouncementRequested carries {``preamble``, ``completion``, ``info``,
+    ``progress``, ``None``}. The first three map 1:1 onto the spoken-track
+    vocabulary; ``info`` and the legacy ``None`` default (the MissionAnnouncer
+    and skill-output callers) fall back to the generic ``announcement`` tag.
+    """
+    if kind in (SPOKEN_KIND_PREAMBLE, SPOKEN_KIND_COMPLETION, SPOKEN_KIND_PROGRESS):
+        return kind
+    return SPOKEN_KIND_ANNOUNCEMENT
 
 
 async def _echo_brain(text: str) -> str:
@@ -994,7 +1019,14 @@ class SpeechPipeline:
         self._probe_last_text: str = ""
         self._probe_live_text: str = ""
         self._probe_stable_count: int = 0
-        self._probe_required_stable: int = 1
+        # A loud stable tail must PERSIST across probes before forcing — the same
+        # 2-probe persistence the empty/boilerplate tail already requires
+        # (2026-06-14). A single stable reading is not proof the user stopped:
+        # Whisper hands back the same clipped partial across a brief mid-sentence
+        # pause, and the old one-shot force cut the user off at silence_ms=0
+        # (live 2026-06-15: 'i would like you to...' force-cut on a single probe).
+        # No probe-force may rest on one reading any more.
+        self._probe_required_stable: int = 2
         # Consecutive *loud empty* tails seen this turn. The empty-tail signal
         # forces only after it PERSISTS for ``_probe_required_empty`` probes —
         # a single empty reading mid-speech is a transient Whisper miss on a
@@ -1004,6 +1036,15 @@ class SpeechPipeline:
         # sustained emptiness (real speaker bleed) still forces.
         self._probe_empty_count: int = 0
         self._probe_required_empty: int = 2
+        # True once the user has produced a genuine (non-empty, non-boilerplate)
+        # tail this turn. Monotonic within a turn; reset at the boundary. While
+        # False the turn is "pure bleed so far" and a known-hallucination tail
+        # forces immediately (the original speaker-bleed cure). Once True, a
+        # boilerplate tail is almost always Whisper mis-decoding the user's
+        # ongoing speech (live 2026-06-15: 'thank you for your help.' conf 0.43
+        # mid-sentence) — it must no longer short-circuit the silence patience
+        # and instead defers like a loud empty tail.
+        self._probe_seen_real_speech: bool = False
         self._probe_in_flight: bool = False
         # Monotonic turn-scope token. Captured when a probe is spawned and
         # re-checked when it completes: a probe whose generation no longer
@@ -1423,6 +1464,11 @@ class SpeechPipeline:
         self._probe_live_text = ""
         self._probe_stable_count = 0
         self._probe_empty_count = 0
+        # Per-turn discriminator: a fresh turn has not seen real speech yet, so
+        # boilerplate is treated as pure bleed (immediate force) until the user
+        # actually says something. Cleared here at every turn boundary so it can
+        # never leak into the next turn.
+        self._probe_seen_real_speech = False
         # Turn boundary: advance the generation so any probe still in flight
         # from the just-ended turn is dropped on completion, and release the
         # in-flight latch so the next turn can probe immediately (a stuck
@@ -1537,38 +1583,36 @@ class SpeechPipeline:
                         text[:40],
                     )
                     return
-                if tail_is_hallucination:
-                    # Deterministic boilerplate while loud = speaker bleed where
-                    # the silence endpoint can never fire → force now (the
-                    # original speaker-bleed motivation for the probe).
-                    log.info(
-                        "STT probe: hallucination tail (text=%r conf=%.2f) → force endpoint",
-                        text[:40],
-                        confidence,
-                    )
-                    self._vad.request_endpoint()
-                    self._reset_probe_state()
-                    return
-                # Loud empty / too-short tail: ambiguous — speaker bleed OR a
-                # brief mumble/hesitation the user will continue (e.g. "och
-                # ha..." → 'um' at silence_ms=0, 2026-06-14, the user was
-                # acoustically still active with no silence accumulated). Whisper
-                # drops quiet/half-formed syllables to nothing, so ONE empty
-                # reading is not proof the user stopped. Require the empty tail
-                # to PERSIST across probes before forcing (mirrors the stable-
-                # tail signal): a transient miss defers and keeps the floor;
-                # sustained emptiness (real bleed) still forces.
+                # Loud empty / too-short tail, OR a (possibly known-boilerplate)
+                # tail — whether or not the user has produced clean speech yet
+                # this turn. ALL of these are ambiguous on a single reading:
+                # speaker bleed OR a brief mumble/hesitation OR the user's live
+                # speech that Whisper mis-decoded (e.g. "och ha..." → 'um' at
+                # silence_ms=0, 2026-06-14; 'thank you for your help.' conf 0.43
+                # mid-sentence, 2026-06-15; and the opening words 'I would like
+                # you to' mis-decoded as 'i would like to thank you for your
+                # time.' on the FIRST probe, 2026-06-15 19:07 — which the old
+                # pre-speech one-shot force beheaded). There is NO reliable way to
+                # tell pure pre-speech bleed from hallucinated live speech on a
+                # single probe, so we no longer special-case it: every loud
+                # empty/boilerplate tail must PERSIST across probes before forcing
+                # (mirrors the stable-tail signal). A transient miss defers and
+                # keeps the floor; sustained emptiness/boilerplate (real bleed,
+                # where the silence endpoint can never fire) still forces — just
+                # one probe later. DO NOT re-add a one-shot pre-speech force here:
+                # it cannot distinguish a hallucinated real-speech opener from
+                # bleed and so cuts the user off mid-sentence (recurred 4×).
                 self._probe_empty_count += 1
                 if self._probe_empty_count < self._probe_required_empty:
                     log.info(
-                        "STT probe: loud empty tail (text=%r, %d/%d) → defer",
+                        "STT probe: loud empty/boilerplate tail (text=%r, %d/%d) → defer",
                         text[:40],
                         self._probe_empty_count,
                         self._probe_required_empty,
                     )
                     return
                 log.info(
-                    "STT probe: empty tail sustained (text=%r conf=%.2f, %dx) → force",
+                    "STT probe: empty/boilerplate tail sustained (text=%r conf=%.2f, %dx) → force",
                     text[:40],
                     confidence,
                     self._probe_empty_count,
@@ -1580,6 +1624,15 @@ class SpeechPipeline:
             # Tail is non-empty: the empty-tail run is broken, so reset its
             # counter (only *consecutive* empty tails accumulate toward a force).
             self._probe_empty_count = 0
+            # The user has produced genuine (clean, non-boilerplate) speech this
+            # turn. Kept as a per-turn telemetry/lifecycle marker (monotonic
+            # within the turn; cleared at the boundary by ``_reset_probe_state``,
+            # guarded against cross-turn leak in test_probe_cross_turn_leak.py).
+            # It no longer GATES any endpoint: every empty/boilerplate tail now
+            # defers via the same 2-probe persistence regardless of this flag, so
+            # a hallucinated real-speech opener is never force-cut. Signal 2 (loud
+            # stable tail) still forces on its own persistence path below.
+            self._probe_seen_real_speech = True
 
             # Signal 2: identical to last tail → nothing new arrived.
             self._probe_live_text = _merge_partial_transcript(
@@ -1609,6 +1662,27 @@ class SpeechPipeline:
                         log.info(
                             "STT probe: stable but quiet tail → defer to silence: %r",
                             text[:80],
+                        )
+                        return
+                    if is_incomplete(
+                        raw_text, language=getattr(transcript, "language", "") or ""
+                    ):
+                        # The tail is syntactically OPEN-ENDED — it ends in a
+                        # trailed-off marker ('...'), an open conjunction
+                        # ('... and'), a noun-requiring determiner, or a trailing
+                        # comma. Whisper appends '...' exactly when the speaker
+                        # audibly broke off mid-utterance, so a "stable" reading
+                        # of such a tail is the user PAUSING mid-thought, not
+                        # finishing. Force-cutting it beheads the turn at
+                        # silence_ms≈0 (live 2026-06-15: 'i would like you to...'
+                        # → "What do you mean exactly?"). Defer to the natural
+                        # silence endpoint instead — the same trailed-off signal
+                        # the ContinuationBuffer trusts downstream
+                        # (completion.is_incomplete, single source of truth).
+                        log.info(
+                            "STT probe: stable but incomplete tail (open-ended) → "
+                            "defer to silence: %r",
+                            raw_text[:80],
                         )
                         return
                     log.info(
@@ -2017,6 +2091,13 @@ class SpeechPipeline:
         if not scrubbed.cleaned.strip():
             log.info("Announcement nach Filter leer — schweige.")
             return
+        # Document the announcement in the session log — it is voiced through
+        # this bypass path, not _speak, so it would otherwise be invisible.
+        self._emit_spoken(
+            scrubbed.cleaned,
+            event.language,
+            _announcement_spoken_kind(getattr(event, "kind", None)),
+        )
         try:
             lang_code = None
             if event.language:
@@ -2216,6 +2297,10 @@ class SpeechPipeline:
             "OpenClaw background fertig (success=%s, dauer=%.1fs) — Ansage: %r",
             event.success, event.duration_s, cleaned,
         )
+        # Document the completion readback in the session log — it is voiced
+        # through this background path, not _speak, so it would otherwise be
+        # invisible in the Transcription view.
+        self._emit_spoken(cleaned, "de", SPOKEN_KIND_COMPLETION)
         # Laufendes Playback stoppen damit die Ansage prompt durchkommt.
         try:
             self._player.stop()
@@ -3905,7 +3990,11 @@ class SpeechPipeline:
                     log.warning("Vision-pause() fehlgeschlagen: %s", exc)
                 await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
                 try:
-                    await self._speak("Ja, Alex.", language=lang)
+                    await self._speak(
+                        "Ja, Alex.",  # i18n-allow: bilingual TTS voice ack
+                        language=lang,
+                        kind=SPOKEN_KIND_PRIVACY,
+                    )
                 except Exception as exc:  # noqa: BLE001
                     log.warning("Privacy-ACK-speak fehlgeschlagen: %s", exc)
                 await self._set_turn_state(TurnTakingState.LISTENING)
@@ -3918,7 +4007,11 @@ class SpeechPipeline:
                     log.warning("Vision-resume() fehlgeschlagen: %s", exc)
                 await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
                 try:
-                    await self._speak("Ich sehe wieder.", language=lang)
+                    await self._speak(
+                        "Ich sehe wieder.",  # i18n-allow: bilingual TTS voice ack
+                        language=lang,
+                        kind=SPOKEN_KIND_PRIVACY,
+                    )
                 except Exception as exc:  # noqa: BLE001
                     log.warning("Privacy-ACK-speak fehlgeschlagen: %s", exc)
                 await self._set_turn_state(TurnTakingState.LISTENING)
@@ -4407,7 +4500,7 @@ class SpeechPipeline:
         log.info("⏳→❓ Incomplete trailed off (%.1fs) — asking clarifying question.", delay_s)
         try:
             await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
-            await self._speak(phrase, language=picker_lang)
+            await self._speak(phrase, language=picker_lang, kind=SPOKEN_KIND_CLARIFY)
         except Exception as exc:  # noqa: BLE001 — fallback must never crash the turn
             log.warning("Clarify-question speak failed: %s", exc)
         finally:
@@ -4632,7 +4725,7 @@ class SpeechPipeline:
             else:
                 reply = await self._brain.generate(text)
                 if reply:
-                    await self._speak(reply, language=lang)
+                    await self._speak(reply, language=lang, kind=SPOKEN_KIND_COMPLETION)
         except Exception as exc:  # noqa: BLE001 — AD-OE6: never crash the turn
             log.exception("Buffered-completion dispatch failed: %s", exc)
         finally:
@@ -4709,7 +4802,7 @@ class SpeechPipeline:
                 lang_key = _phrase_lang(lang)
                 phrase = spoken_phrases.get(kind, {}).get(lang_key, "Mhm?")
                 try:
-                    await self._speak(phrase, language=lang_key)
+                    await self._speak(phrase, language=lang_key, kind=SPOKEN_KIND_BACKCHANNEL)
                 except Exception as speak_exc:  # noqa: BLE001
                     log.debug("Completeness spoken cue failed: %s", speak_exc)
         except Exception as exc:  # noqa: BLE001 — AD-OE6: signal failure must never crash the turn
@@ -5109,7 +5202,9 @@ class SpeechPipeline:
             try:
                 await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
                 await self._speak(
-                    _ACTION_DONE_PHRASE[picker_lang], language=picker_lang
+                    _ACTION_DONE_PHRASE[picker_lang],
+                    language=picker_lang,
+                    kind=SPOKEN_KIND_ACTION_DONE,
                 )
             except Exception as exc:  # noqa: BLE001 — ack must never crash the turn
                 log.warning(
@@ -5146,7 +5241,7 @@ class SpeechPipeline:
         log.info("🤷 Brain produced no speech (not a spawn) — clarifying question (AD-OE6).")
         try:
             await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
-            await self._speak(phrase, language=picker_lang)
+            await self._speak(phrase, language=picker_lang, kind=SPOKEN_KIND_CLARIFY)
         except Exception as exc:  # noqa: BLE001 — fallback must never crash the turn
             log.warning("Silent-brain-turn clarify speak failed: %s", exc)
 
@@ -5164,7 +5259,7 @@ class SpeechPipeline:
         phrase = _BRAIN_UNAVAILABLE_PHRASE[picker_lang]
         try:
             await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
-            await self._speak(phrase, language=picker_lang)
+            await self._speak(phrase, language=picker_lang, kind=SPOKEN_KIND_UNAVAILABLE)
         except Exception as exc:  # noqa: BLE001
             log.warning("Brain-unavailable fallback speak failed: %s", exc)
 
@@ -5181,7 +5276,7 @@ class SpeechPipeline:
         phrase = _STT_UNAVAILABLE_PHRASE[picker_lang]
         try:
             await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
-            await self._speak(phrase, language=picker_lang)
+            await self._speak(phrase, language=picker_lang, kind=SPOKEN_KIND_STT_UNAVAILABLE)
         except Exception as exc:  # noqa: BLE001
             log.warning("STT-unavailable fallback speak failed: %s", exc)
 
@@ -5394,7 +5489,7 @@ class SpeechPipeline:
         phrase = _BRAIN_TIMEOUT_PHRASE[picker_lang]
         try:
             await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
-            await self._speak(phrase, language=picker_lang)
+            await self._speak(phrase, language=picker_lang, kind=SPOKEN_KIND_TIMEOUT)
         except Exception as exc:  # noqa: BLE001
             log.warning("Brain-timeout fallback speak failed: %s", exc)
 
@@ -5559,12 +5654,51 @@ class SpeechPipeline:
                 self._abort_playback_device()
                 return set()
 
-    async def _speak(self, text: str, language: str | None = None) -> bool:
+    def _emit_spoken(self, text: str, language: str | None, kind: str) -> None:
+        """Announce a VOICED phrase on the bus as a ``SpeechSpoken`` event.
+
+        The Transcription log was previously blind to everything Jarvis speaks
+        except the brain's normal reply (recorded via ``ResponseGenerated`` ->
+        ``jarvis_text``). This publishes every OTHER voiced phrase so the
+        passive ``SessionRecorder`` can document it in the transcript.
+
+        Fire-and-forget (``asyncio.create_task``), mirroring the
+        ``LatencyTurnComplete`` telemetry emit — the voice hot path never waits
+        on the bus dispatch (AP-9 / AD-OE2). The ``reply`` sentinel is dropped
+        because the reply is already in the transcript; empty text and a
+        missing bus are no-ops, and every error is swallowed so a telemetry
+        hiccup can never break a turn.
+        """
+        if kind == "reply" or not text or not text.strip():
+            return
+        bus = getattr(self, "_bus", None)
+        if bus is None:
+            return
+        try:
+            event = SpeechSpoken(
+                source_layer="speech.pipeline",
+                text=text,
+                language=(language or "de"),
+                spoken_kind=kind,
+            )
+            asyncio.create_task(bus.publish(event))  # noqa: RUF006 — fire-and-forget
+        except Exception:  # noqa: BLE001 — telemetry must never break the turn
+            log.debug("SpeechSpoken emit failed", exc_info=True)
+
+    async def _speak(
+        self, text: str, language: str | None = None, *, kind: str = "reply"
+    ) -> bool:
         """Sprich Text aus — mit Barge-in-Monitor.
 
         `language` = "de"/"en" (Whisper-Code) wird zu "de-DE"/"en-US" gemappt
         und an TTS übergeben (voice bleibt gleich — Gemini-Voices sind
         sprachagnostisch).
+
+        ``kind`` tags WHAT is being voiced for the Transcription log. The
+        default ``"reply"`` is the ordinary brain answer (already documented as
+        ``jarvis_text``, so not re-recorded); a canned phrase passes its
+        specific kind (``"timeout"``, ``"clarify"``, ``"privacy"`` …) and is
+        published as a ``SpeechSpoken`` event via ``_emit_spoken``.
 
         Parallel zum Playback läuft ``_barge_monitor`` auf einer separaten
         Mic-Instanz. Erkennt Silero-VAD dort User-Sprache (Threshold 0.8,
@@ -5578,6 +5712,10 @@ class SpeechPipeline:
         if getattr(self, "_muted", False):
             log.debug("_speak suppressed — voice muted")
             return False
+        # Document the voiced phrase in the session log (no-op for the reply
+        # sentinel and empty text). After the mute check, so a suppressed
+        # phrase — which is never actually voiced — is not recorded.
+        self._emit_spoken(text, language, kind)
         # Track that the assistant has spoken at least once in this session.
         # Used by _emit_completeness_signal to pick earcon vs. spoken cue.
         self._session_has_assistant_spoken = True

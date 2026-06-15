@@ -13,7 +13,6 @@ from jarvis.brain.local_action_gate import (
     requires_external_integration,
 )
 
-
 # ---------------------------------------------------------------------------
 # Open-app intent (live bug 2026-06-08, data/jarvis_desktop.log 17:37): the
 # conversational "Ich möchte, dass du mir Hermes Agent öffnest, also …"
@@ -820,6 +819,126 @@ class TestBrowserUrlFastPath:
 
 
 # ---------------------------------------------------------------------------
+# Browser+SEARCH fast-path (live bug 2026-06-15, sessions.db session c995c9bc):
+# "Open the Chrome browser for me and Google where I can find the new X-Post
+# from Donald Trump" took the single-step DIRECT open and silently DROPPED the
+# entire search clause — only Chrome launched ("Gestartet: chrome"), nothing was
+# searched. Root cause: the conjunction (_AND_RE = "und") and the compound-open
+# regex were German-only, so the English "and" never split the command; and no
+# path turned a "google/search <query>" tail into a real search URL (the browser
+# fast-path only accepted a literal domain). A compound "open <browser> and
+# google/search <query>" must open the browser STRAIGHT to a Google results page
+# — one deterministic argv launch, never the credit-gated Computer-Use loop.
+# ---------------------------------------------------------------------------
+
+
+class TestBrowserSearchFastPath:
+    def test_open_chrome_and_google_query_opens_search_url(self) -> None:
+        # The exact live-bug utterance. The search clause MUST survive.
+        plan = match_local_action(
+            "Open the Chrome browser for me and Google where I can find "
+            "the new X-Post from Donald Trump.",
+            lang="en",
+            _registry=None,
+        )
+        assert plan is not None
+        assert plan.mode is LocalActionMode.DIRECT
+        call = plan.tool_calls[0]
+        assert call.name == "open_app"
+        assert call.args["app_name"] == "chrome"
+        url = call.args["arguments"]
+        assert url.startswith("https://www.google.com/search?q=")
+        assert "donald" in url and "trump" in url  # search clause not dropped
+        assert " " not in url  # query is url-encoded
+
+    def test_open_chrome_and_search_for_query_en(self) -> None:
+        plan = match_local_action(
+            "open chrome and search for the latest Tesla news",
+            lang="en",
+            _registry=None,
+        )
+        assert plan is not None
+        assert plan.mode is LocalActionMode.DIRECT
+        url = plan.tool_calls[0].args["arguments"]
+        assert url.startswith("https://www.google.com/search?q=")
+        assert "tesla" in url and "news" in url
+
+    def test_german_open_browser_and_google_query_opens_search_url(self) -> None:
+        # Previously routed to COMPUTER_USE (the credit-gated screen harness
+        # that silently no-ops). Must now be a clean DIRECT search launch.
+        plan = match_local_action(
+            "Öffne Chrome und google wo ich den neuen X-Post von Donald "
+            "Trump finde",
+            _registry=None,
+        )
+        assert plan is not None
+        assert plan.mode is LocalActionMode.DIRECT
+        assert plan.tool_calls[0].args["app_name"] == "chrome"
+        url = plan.tool_calls[0].args["arguments"]
+        assert url.startswith("https://www.google.com/search?q=")
+        assert "donald" in url and "trump" in url
+
+    def test_search_query_is_url_encoded(self) -> None:
+        plan = match_local_action(
+            "open chrome and google best pizza in new york",
+            lang="en",
+            _registry=None,
+        )
+        assert plan is not None
+        url = plan.tool_calls[0].args["arguments"]
+        assert " " not in url
+        assert "best" in url and "pizza" in url and "york" in url
+
+    def test_genuine_gui_followup_still_routes_to_computer_use(self) -> None:
+        # A non-search follow-up (real UI work) must keep the CU loop and never
+        # be mistaken for a search query.
+        plan = match_local_action(
+            "öffne whatsapp und schreib mama hallo", _registry=None
+        )
+        assert plan is not None
+        assert plan.mode is LocalActionMode.COMPUTER_USE
+
+    def test_browser_and_goto_literal_site_still_navigates(self) -> None:
+        # Regression: a literal domain must still take the URL path, not be
+        # swallowed by the new search arm. ``_registry=None`` keeps the test
+        # hermetic (no production capability-registry singleton touch).
+        plan = match_local_action(
+            "open firefox and go to github.com", lang="en", _registry=None
+        )
+        assert plan is not None
+        assert plan.mode is LocalActionMode.DIRECT
+        assert plan.tool_calls[0].args == {
+            "app_name": "firefox", "arguments": "https://github.com",
+        }
+
+    def test_english_open_browser_and_web_search_with_followup_keeps_cu(self) -> None:
+        # Live log 2026-06-15 19:08: an English "open Chrome browser and do a
+        # web search with computer use..." turn was acknowledged as only
+        # "Gestartet: chrome"; everything after the English "and" was dropped.
+        # A real multi-step browser/account task must stay on the CU loop.
+        utterance = (
+            "Open your Chrome browser and do a web search with computer use. "
+            "Go to your X-account and log in there. You will find out how your "
+            "posts are performing."
+        )
+        plan = match_local_action(utterance, lang="en", _registry=None)
+        assert plan is not None
+        assert plan.mode is LocalActionMode.COMPUTER_USE
+        assert plan.prompt == utterance
+
+    def test_use_computer_use_prefix_does_not_drop_english_followup(self) -> None:
+        # Live log 2026-06-15 18:55: the explicit "Use computer use..." prefix
+        # still fell into the known-app fallback and launched only Chrome.
+        utterance = (
+            "Use computer use to open Chrome browser and navigate to axe.com "
+            "and search for the newest post on axe from Donald Trump."
+        )
+        plan = match_local_action(utterance, lang="en", _registry=None)
+        assert plan is not None
+        assert plan.mode is LocalActionMode.COMPUTER_USE
+        assert plan.prompt == utterance
+
+
 # requires_external_integration — real-world booking/transaction requests no
 # generic sub-agent worker can fulfil (no travel/lodging/ticketing tool exists).
 # Live gap 2026-06-14: "book me a trip from Melbourne to Tokyo" was NOT caught

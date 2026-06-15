@@ -87,7 +87,9 @@ def _make_pipeline(
     async def _brain(_text: str, _lang: str) -> str:
         return brain_response
 
-    async def _speak(text: str, language: str | None = None) -> bool:
+    async def _speak(
+        text: str, language: str | None = None, *, kind: str = "reply"
+    ) -> bool:
         pipe._spoken.append((text, language))
         return speak_barged
 
@@ -769,6 +771,13 @@ async def test_probe_forces_endpoint_on_known_hallucination_phrase() -> None:
     """Whisper-on-silence hallucinations ('Vielen Dank.', 'thanks for
     watching', …) match `_STT_HALLUCINATION_RE` and must still cut the
     turn — that was the original speaker-bleed motivation for the probe.
+
+    Updated 2026-06-15: like the empty tail, a known-boilerplate tail now defers
+    on the FIRST reading and forces only when it PERSISTS. A single such reading
+    is indistinguishable from the user's live speech mis-decoded as boilerplate
+    ('I would like you to' → 'i would like to thank you for your time.'), so the
+    one-shot pre-speech force was removed. Sustained boilerplate (real bleed)
+    still ends the turn.
     """
     pipe, vad = _make_probe_pipe(
         Transcript(
@@ -779,8 +788,11 @@ async def test_probe_forces_endpoint_on_known_hallucination_phrase() -> None:
         )
     )
 
+    # First boilerplate probe defers (could be hallucinated live speech).
     await pipe._stt_probe_async(b"\x00\x00" * 512)
-
+    assert vad.endpoint_requested is False
+    # Sustained boilerplate (real speaker bleed) → force.
+    await pipe._stt_probe_async(b"\x00\x00" * 512)
     assert vad.endpoint_requested is True
 
 

@@ -98,10 +98,18 @@ async def test_stt_probe_suppresses_subtitle_hallucination_partials(
     pipe._probe_last_text = ""  # noqa: SLF001
     pipe._probe_live_text = ""  # noqa: SLF001
     pipe._probe_stable_count = 0  # noqa: SLF001
-    pipe._probe_required_stable = 1  # noqa: SLF001
+    pipe._probe_required_stable = 2  # noqa: SLF001
+    pipe._probe_empty_count = 0  # noqa: SLF001
+    pipe._probe_required_empty = 2  # noqa: SLF001
     pipe._probe_in_flight = True  # noqa: SLF001
     pipe._publish_event = _publish_event  # type: ignore[method-assign]
 
+    # The hallucinated subtitle is never published as a live partial (suppressed
+    # before the publish step), and the turn force-ends once the boilerplate
+    # PERSISTS — a single reading defers (it could be hallucinated live speech).
+    await pipe._stt_probe_async(b"pcm")  # noqa: SLF001
+    assert events == []
+    assert vad.endpoint_requested is False
     await pipe._stt_probe_async(b"pcm")  # noqa: SLF001
 
     assert events == []
@@ -138,10 +146,17 @@ async def test_stt_probe_suppresses_broadcast_boilerplate_partial() -> None:
     pipe._probe_last_text = ""  # noqa: SLF001
     pipe._probe_live_text = ""  # noqa: SLF001
     pipe._probe_stable_count = 0  # noqa: SLF001
-    pipe._probe_required_stable = 1  # noqa: SLF001
+    pipe._probe_required_stable = 2  # noqa: SLF001
+    pipe._probe_empty_count = 0  # noqa: SLF001
+    pipe._probe_required_empty = 2  # noqa: SLF001
     pipe._probe_in_flight = True  # noqa: SLF001
     pipe._publish_event = _publish_event  # type: ignore[method-assign]
 
+    # Broadcast boilerplate is never published as a live partial, and force-ends
+    # the turn only once it PERSISTS (a single reading defers).
+    await pipe._stt_probe_async(b"pcm")  # noqa: SLF001
+    assert events == []
+    assert vad.endpoint_requested is False
     await pipe._stt_probe_async(b"pcm")  # noqa: SLF001
 
     assert events == []

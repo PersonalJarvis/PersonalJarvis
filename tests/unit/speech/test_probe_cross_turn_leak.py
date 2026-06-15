@@ -61,6 +61,22 @@ class _InstantSTT:
         return Transcript(text=self._text, language="de", confidence=0.0, is_partial=False)
 
 
+class _GatedRealSTT:
+    """Gated STT that returns REAL (non-empty, non-boilerplate) text once opened.
+
+    Used to prove a slow probe returning a turn late cannot retro-actively mark
+    the *next* turn as having seen real speech.
+    """
+
+    def __init__(self, text: str = "hello there friend") -> None:
+        self.gate = asyncio.Event()
+        self._text = text
+
+    async def transcribe_pcm(self, _pcm: bytes) -> Transcript:
+        await self.gate.wait()
+        return Transcript(text=self._text, language="de", confidence=0.9, is_partial=False)
+
+
 def _make_probe_pipe(probe_stt: object, vad: _RecordingVad) -> SpeechPipeline:
     pipe = SpeechPipeline.__new__(SpeechPipeline)
     pipe._stt = None
@@ -71,9 +87,10 @@ def _make_probe_pipe(probe_stt: object, vad: _RecordingVad) -> SpeechPipeline:
     pipe._probe_last_text = ""
     pipe._probe_live_text = ""
     pipe._probe_stable_count = 0
-    pipe._probe_required_stable = 1
+    pipe._probe_required_stable = 2  # production default — no force on one reading
     pipe._probe_empty_count = 0
     pipe._probe_required_empty = 2
+    pipe._probe_seen_real_speech = False
     pipe._probe_min_text_len = 4
     return pipe
 
@@ -135,6 +152,71 @@ async def test_probe_forces_endpoint_within_same_turn() -> None:
     await asyncio.gather(*_probe_tasks())
 
     assert vad.request_endpoint_calls == 1  # sustained empty → force
+
+
+@pytest.mark.asyncio
+async def test_seen_real_speech_flag_does_not_leak_across_turns() -> None:
+    """The per-turn ``_probe_seen_real_speech`` flag MUST be cleared at the turn
+    boundary. If it leaked True into the next turn, a fresh turn's pure speaker
+    bleed (loud boilerplate, no user speech) would defer instead of force-cut —
+    silently disabling the bleed cure for every turn after the first spoken one.
+    """
+    vad = _RecordingVad()
+    pipe = _make_probe_pipe(_InstantSTT(text="hello there friend"), vad)
+
+    # Turn A: the user speaks real words → the flag is set.
+    pipe._on_vad_probe(b"\x00\x00" * 256)
+    await asyncio.gather(*_probe_tasks())
+    assert pipe._probe_seen_real_speech is True
+
+    # Turn A ends.
+    pipe._reset_probe_state()
+    assert pipe._probe_seen_real_speech is False, "seen-real-speech flag leaked past the turn boundary"
+
+    # Turn B: pure loud boilerplate bleed with no prior speech still force-ends —
+    # but now after the same 2-probe persistence as every empty/boilerplate tail.
+    # The one-shot pre-speech force was removed 2026-06-15: it could not be told
+    # apart from a hallucinated real-speech opener and cut the user off
+    # mid-sentence. The flag-lifecycle guarantee above is what this test pins;
+    # the bleed cure surviving (at 2 probes) is the positive control.
+    pipe._probe_stt = _InstantSTT(text="vielen dank.")
+    pipe._on_vad_probe(b"\x00\x00" * 256)  # bleed 1/2 → defer
+    await asyncio.gather(*_probe_tasks())
+    assert vad.request_endpoint_calls == 0, (
+        "a single pre-speech boilerplate probe force-cut — should defer first"
+    )
+    pipe._on_vad_probe(b"\x00\x00" * 256)  # bleed 2/2 → force
+    await asyncio.gather(*_probe_tasks())
+    assert vad.request_endpoint_calls == 1, (
+        "pure speaker bleed on a fresh turn failed to force after persistence"
+    )
+
+
+@pytest.mark.asyncio
+async def test_stale_probe_does_not_set_seen_real_speech_on_next_turn() -> None:
+    """A slow probe from a dead turn that returns real text must NOT mark the
+    live turn as having seen real speech (mirrors the endpoint-leak guard for
+    the new flag)."""
+    vad = _RecordingVad()
+    gated = _GatedRealSTT()
+    pipe = _make_probe_pipe(gated, vad)
+
+    # Turn A: spawn the probe; it blocks inside transcribe_pcm.
+    pipe._on_vad_probe(b"\x00\x00" * 256)
+    await asyncio.sleep(0)
+    tasks = _probe_tasks()
+    assert tasks, "probe task should have been spawned"
+
+    # Turn A ends before the probe returns.
+    pipe._reset_probe_state()
+
+    # The slow probe finally returns with real text — into turn B.
+    gated.gate.set()
+    await asyncio.gather(*tasks)
+
+    assert pipe._probe_seen_real_speech is False, (
+        "a stale probe set seen-real-speech on the next turn"
+    )
 
 
 @pytest.mark.asyncio

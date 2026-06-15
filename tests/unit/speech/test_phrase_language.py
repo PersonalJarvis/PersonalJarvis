@@ -55,7 +55,9 @@ def _make_pipe(
     pipe._spoken: list[tuple[str, str | None]] = []
     pipe._state_history: list[TurnTakingState] = []
 
-    async def _fake_speak(text: str, language: str | None = None) -> bool:
+    async def _fake_speak(
+        text: str, language: str | None = None, *, kind: str = "reply"
+    ) -> bool:
         pipe._spoken.append((text, language))
         return True
 
