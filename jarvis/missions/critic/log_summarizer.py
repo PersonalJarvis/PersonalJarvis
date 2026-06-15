@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Awaitable, Callable, Final
+from collections.abc import Awaitable, Callable
+from typing import Final
 
 from jarvis.missions.stream_evidence import extract_stream_evidence
 
@@ -123,11 +124,25 @@ async def summarize_log(
     else:
         triaged = _head_tail_grep(log_text)
 
-    # Tool-evidence header is built FIRST and never truncated, so the critic
-    # always sees which tools ran + the worker's answer even when the raw
-    # head/tail body would otherwise crowd them out.
+    # Tool-evidence header is built FIRST and prioritised over the raw body, so
+    # the critic always sees which tools ran + the worker's answer even when the
+    # raw head/tail body would otherwise crowd them out. It is NOT, however,
+    # exempt from the hard ``max_chars`` budget: a worker whose answer is a long
+    # plain-text transcript (a gemini ``--output-format text`` worker, or a codex
+    # ``agent_message``) can make the header alone exceed the cap, so when it
+    # does we truncate the header itself and drop the raw body — the evidence is
+    # the more valuable half. (Regression: pre-2026-06-15 only claude streams
+    # produced a final answer, so the header never approached the cap.)
     header = _evidence_header(log_text)
     if header:
+        # Reserve room for the truncation marker so the total stays within
+        # ``max_chars`` (+ the test-contracted ~100-char marker allowance).
+        _MARKER_ROOM: Final[int] = 48
+        if len(header) > max_chars - _MARKER_ROOM:
+            return (
+                header[: max(0, max_chars - _MARKER_ROOM)]
+                + f"\n... [truncated at {max_chars} chars]"
+            )
         body_budget = max(0, max_chars - len(header) - 64)
         body = triaged[:body_budget]
         out = header + "\n\n=== RAW LOG (head/tail/grep) ===\n" + body

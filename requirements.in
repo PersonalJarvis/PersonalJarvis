@@ -64,6 +64,11 @@ aiofiles>=24.1
 aiolimiter>=1.1
 tenacity>=9.0
 
+# Web search — real DuckDuckGo SERP for the search_web tool (key-free, pure
+# Python, cross-platform). Lazy-imported, so a minimal install without it
+# degrades to the DuckDuckGo Instant-Answer fallback.
+ddgs>=9.0
+
 # MCP (Model Context Protocol)
 mcp>=1.0
 

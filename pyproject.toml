@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-jarvis"
-version = "0.5.1"
+version = "0.5.2"
 description = "Voice-gesteuerter Meta-Orchestrator für Windows 11"
 requires-python = ">=3.11"
 readme = "README.md"
@@ -45,6 +45,7 @@ dependencies = [
     "opentelemetry-sdk>=1.28",
     "prometheus-client>=0.21",
     "httpx>=0.27",
+    "ddgs>=9.0",  # real DuckDuckGo SERP for the search_web tool (key-free)
     "aiofiles>=24.1",
     "aiolimiter>=1.1",
     "tenacity>=9.0",

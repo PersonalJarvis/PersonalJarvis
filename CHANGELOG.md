@@ -7,52 +7,28 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
-## [0.5.1] — 2026-06-15
-
-### Fixed
-
-- **Voice — screen narration on small talk**: the assistant no longer describes
-  the screen when no screenshot is attached, and a trailed-off ("…") fragment is
-  treated as incomplete instead of answered as a complete turn. Regression tests
-  added for both the screen-relevance gate and the trailing-ellipsis detection.
-- **WebSocket receive loop**: stopped an infinite loop on an unclean socket
-  disconnect that produced a log storm and a self-restart which cancelled
-  in-flight missions.
-- **Sub-agent missions**: fixed advisory-task and Codex-recursion failures and
-  reduced sub-agent latency.
-
-### Changed
-
-- STT endpointing hardened: the empty-tail probe now requires sustained
-  emptiness before forcing an endpoint, so a brief mid-sentence pause is less
-  likely to cut a turn short. Local action-gate refinements.
-
-## [0.5.0] — 2026-06-14
+## [v0.5.2] — 2026-06-15
 
 ### Added
 
-- **Custom System Prompt**: edit the assistant persona from Settings with a
-  reset-to-default; an override file takes effect on the next turn without a
-  restart.
-- **Streaming TTS** path for sub-second first audio, plus voice-latency
-  instrumentation and measurement tooling.
-- `search_web` weather lookup so spoken weather questions resolve directly.
+- **Re-run sub-agent missions from the Outputs view.** Cancelled missions now
+  show a **Continue** button and failed/timed-out missions show a **Restart**
+  button. Either re-dispatches the mission's original task as a new mission
+  linked to the source via `parent_mission_id`; the terminal source mission is
+  left untouched as an audit record. New endpoint
+  `POST /api/missions/{id}/rerun`, single-click with a two-click confirm for
+  destructive prompts. (en/de/es localized.)
+- Real web-search backend chain (Brave / DuckDuckGo SERP) with an honest
+  ok/empty/unavailable status, replacing the instant-answer-only path that
+  returned nothing for fresh queries.
 
 ### Changed
 
-- **Voice timeout handling**: a per-turn wall-clock floor guard prevents the
-  canned "that took too long, say it again" phrase from firing on fast turns
-  (it was being triggered by stale per-turn state, not real slowness).
-  Per-site floors and a pre-first-token "thinking" heartbeat keep a genuinely
-  slow brain from being cut off before its first token, and every timeout
-  phrase is now logged with the path and elapsed time that triggered it.
-- **Bilingual turn handling**: STT language autodetection, localized fallback
-  phrases, and spawn-acknowledgement language that matches the spoken turn.
-- **Computer-use robustness**: runaway guards, pre-click target refinement,
-  and keeping the voice session alive during long desktop automations.
-- **Mission critic & workers**: capability honesty/refusal checks, a per-task
-  time budget, a periodic recovery sweep, spawn-breakaway fallback, and
-  Claude quota-state tracking.
+- Sub-agent research/informational missions are more reliable: web search for
+  the Codex worker, multi-provider stream-evidence handling, and a reply
+  language directive so answers match the language of the request.
+- Routing handles impossible booking/travel requests with an honest refusal
+  instead of a failing mission loop.
 
 ## [v1.0.0-board] — 2026-04-25
 

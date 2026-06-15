@@ -257,7 +257,10 @@ def test_summarize_answers_joins_and_caps() -> None:
 # IS the spoken answer — but the relaxation must key off the REQUEST shape,
 # never the worker's claim, so the anti-hallucination veto still fires for a
 # do-task that produced nothing.
-from jarvis.missions.stream_evidence import is_informational_request  # noqa: E402
+from jarvis.missions.stream_evidence import (  # noqa: E402
+    informational_file_answer,
+    is_informational_request,
+)
 
 # The standing quality directive spawn_worker prepends to EVERY mission prompt
 # (_QUALITY_DIRECTIVE) — the classifier must look past it at the real request.
@@ -342,6 +345,46 @@ def test_is_informational_request_false_for_do_and_transaction_tasks() -> None:
     assert is_informational_request("Recommend a good book about the Roman Empire.")
 
 
+def test_is_informational_request_true_despite_start_mission_meta() -> None:
+    """Routing meta-language ("start a Sub-Edge-Mission that …", "start a worker
+    that …") must NOT mask a genuine research request. Live mission 019ecb56
+    (2026-06-15): a German "please start a Sub-Edge-Mission in which you research
+    the current AI news" was mis-classified as a do-task because the launch verb
+    (German ``starten``) lives in the action-verb list — the mission then ran the
+    adversarial CODE-critic on a research report and died critic_loop_exhausted.
+    The spawn/launch verb paired with an agent/mission noun is routing meta, not
+    an artefact verb; strip it before classifying. The German fixtures below
+    reproduce the exact live shape."""
+    # simulated German user utterances (test fixtures) — i18n-allow per line below
+    assert is_informational_request(
+        "Kannst du mir bitte eine Sub-Edge-Mission starten, in der du "  # i18n-allow
+        "recherchierst, was die aktuellen AI-News sind von den letzten Jahren?"  # i18n-allow
+    )
+    # the exact dispatched shape (standing quality directive + meta + Aufgabe)
+    assert is_informational_request(
+        f"{_DIRECTIVE}\n\nAufgabe: eine umfassende Recherche zu den KI-News der "  # i18n-allow
+        "letzten Jahre durchführt.\nWortlaut des Nutzers: \"Kannst du mir bitte "  # i18n-allow
+        "eine Sub-Edge-Mission starten, in der du recherchierst, was die "  # i18n-allow
+        "aktuellen AI-News sind?\"."  # i18n-allow
+    )
+    # English launch-verb + agent noun, same shape
+    assert is_informational_request(
+        "Start a sub-agent to research the best laptops under 1000 euros."
+    )
+
+
+def test_start_mission_meta_strip_does_not_unmask_real_do_tasks() -> None:
+    """Stripping the spawn-meta clause must leave the REAL task verb intact, so a
+    do-task wrapped in routing meta stays a do-task (anti-hallucination guard)."""
+    # the real verb (schreibt/creates a named file) survives the strip
+    assert not is_informational_request(
+        "Starte einen Sub-Agenten, der eine Datei report.md schreibt."  # i18n-allow
+    )
+    assert not is_informational_request(
+        "Start a worker that creates an index.html landing page."
+    )
+
+
 def test_readonly_answer_accepts_no_tool_answer_for_informational_prompt() -> None:
     # pure Q&A: no tool calls, no diff — the spoken answer IS the deliverable.
     convo = _stream([
@@ -366,6 +409,73 @@ def test_readonly_answer_rejects_no_tool_answer_for_do_task_prompt() -> None:
     ])
     prompt = "Create a file report.md with the analysis."
     assert readonly_answer("", convo, prompt=prompt) is None
+
+
+# --- informational_file_answer: research request answered in a prose document --
+#
+# Root cause of mission_019ecb56 (2026-06-15): "recherchiere AI-News" is an
+# informational request, but the worker reasonably wrote the answer into a
+# Markdown REPORT (KI-News-Bericht.md). A non-empty diff routed it to the
+# adversarial CODE-critic, which demanded reachable web citations a web-less
+# worker cannot produce → 3× revise → critic_loop_exhausted. When an
+# informational request's whole deliverable is substantive PROSE (.md/.txt/…),
+# the document IS the answer — grade it as prose, never as code.
+
+
+def _prose(body: str, path: str = "KI-News-Bericht.md") -> str:
+    plus = "\n".join("+" + ln for ln in body.splitlines())
+    return (
+        f"diff --git a/{path} b/{path}\n"
+        "new file mode 100644\n"
+        "index 0000000..4957e1f\n"
+        f"--- /dev/null\n+++ b/{path}\n"
+        f"@@ -0,0 +1,{len(body.splitlines())} @@\n{plus}\n"
+    )
+
+
+_RESEARCH_PROMPT = (
+    "Start a sub-agent to research the recent AI news of the last few years."
+)
+_REPORT_BODY = (
+    "# Recent AI news of the last few years\n\n"
+    "AI development over the last few years shows a clear acceleration on "
+    "several fronts: larger language models, multimodal systems, and the jump "
+    "from chatbots to agentic workflows have dominated the headlines. This "
+    "report summarises the most important breakthroughs, trends, and their "
+    "context in a structured form, from the foundation models to the most "
+    "recent regulatory debates."
+)
+
+
+def test_informational_file_answer_returns_prose_for_research_request() -> None:
+    answer = informational_file_answer(_prose(_REPORT_BODY), prompt=_RESEARCH_PROMPT)
+    assert answer is not None
+    assert "Recent AI news" in answer
+
+
+def test_informational_file_answer_none_for_code_diff() -> None:
+    # a real code change is NOT a prose deliverable — keep the code-critic.
+    code = _prose("def main():\n    return 42\n", path="app.py")
+    assert informational_file_answer(code, prompt=_RESEARCH_PROMPT) is None
+
+
+def test_informational_file_answer_none_for_do_task_prompt() -> None:
+    # the request named a file / used an artefact verb → not informational.
+    do_prompt = "Create a file report.md summarising the AI news."
+    assert informational_file_answer(_prose(_REPORT_BODY), prompt=do_prompt) is None
+
+
+def test_informational_file_answer_none_for_stub_document() -> None:
+    # a near-empty / stub prose file is not a real answer — let the critic see it.
+    stub = _prose("# KI-News\n\nInhalt folgt.\n")
+    assert informational_file_answer(stub, prompt=_RESEARCH_PROMPT) is None
+
+
+def test_informational_file_answer_none_when_code_mixed_in() -> None:
+    # research request, but the diff also touches a code file → conservative:
+    # fall through to the code-critic (do not blanket-approve).
+    mixed = _prose(_REPORT_BODY) + _prose("print('x')\n", path="gen.py")
+    assert informational_file_answer(mixed, prompt=_RESEARCH_PROMPT) is None
 
 
 # --- extract_write_targets: out-of-worktree deliverable verification --------

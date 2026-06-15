@@ -18,6 +18,7 @@ import re
 from typing import Any, Final
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
+from jarvis.plugins.tool.search_backends import run_search
 
 # Hard ceiling for the DuckDuckGo round-trip. This tool is router-tier since
 # 2026-06-10 (ADR-0011 amendment "Inline web search"), so the call sits on the
@@ -236,34 +237,37 @@ class SearchWebTool:
                     output={"query": query, "results": weather},
                 )
 
+        # General web search: real DuckDuckGo web search, with the DDG
+        # Instant-Answer box as a cheap encyclopedic fallback. Bounded by the
+        # same single voice-path deadline as the weather path.
         try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
-                resp = await client.get(
-                    "https://api.duckduckgo.com/",
-                    params={"q": query, "format": "json", "no_html": 1, "skip_disambig": 1},
-                    follow_redirects=True,
-                )
-            data = resp.json()
-        except Exception as exc:  # noqa: BLE001
-            return ToolResult(success=False, output=None, error=f"Request fehlgeschlagen: {exc}")
+            async with asyncio.timeout(_TIMEOUT_S):
+                async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
+                    outcome = await run_search(query, max_results, client=client)
+        except Exception:  # noqa: BLE001 — incl. TimeoutError: never sink the turn
+            return ToolResult(
+                success=True,
+                output={
+                    "query": query, "results": [], "backend": "none",
+                    "status": "unavailable",
+                    "detail": (
+                        "Web search timed out. Tell the user the search backend "
+                        "could not be reached right now and offer to try again — "
+                        "do not claim there are no results."
+                    ),
+                },
+            )
 
-        results = []
-        abstract = data.get("AbstractText") or data.get("Abstract") or ""
-        if abstract:
-            results.append({"title": data.get("Heading", ""), "snippet": abstract,
-                           "url": data.get("AbstractURL", "")})
-
-        for topic in (data.get("RelatedTopics") or [])[:max_results]:
-            if isinstance(topic, dict) and topic.get("Text"):
-                results.append({
-                    "title": topic.get("Text", "")[:80],
-                    "snippet": topic.get("Text", ""),
-                    "url": topic.get("FirstURL", ""),
-                })
-            if len(results) >= max_results:
-                break
-
-        return ToolResult(
-            success=True,
-            output={"query": query, "results": results[:max_results]},
-        )
+        output: dict[str, Any] = {
+            "query": query,
+            "results": outcome.results,
+            "backend": outcome.backend,
+            "status": outcome.status,
+        }
+        if outcome.status == "unavailable":
+            output["detail"] = (
+                "Web search is temporarily unavailable. Tell the user the search "
+                "backend could not be reached right now and offer to try again — "
+                "do not claim there are no results."
+            )
+        return ToolResult(success=True, output=output)

@@ -38,6 +38,17 @@ class _FakeStream:
         self._sent = True
         return self._data
 
+    async def readline(self) -> bytes:
+        # The worker now streams via readline(); a hang fake blocks past the
+        # gate, otherwise it yields the (single-line) data once then EOF.
+        if self._hang:
+            await asyncio.sleep(30)  # longer than the gate; wait_for cancels it
+            return b""
+        if self._sent:
+            return b""
+        self._sent = True
+        return self._data
+
     def write(self, _b: bytes) -> None:
         pass
 

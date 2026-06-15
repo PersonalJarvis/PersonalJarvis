@@ -201,6 +201,17 @@ def _build_codex_direct_cmd(
         # config (often "xhigh" -> ~7 min/run). A CLI `-c` override wins over
         # config.toml. See _MISSION_REASONING_EFFORT (live mission 019ec742).
         "-c", f"model_reasoning_effort={_MISSION_REASONING_EFFORT}",
+        # Enable web search so research / current-events missions can produce
+        # SOURCED work instead of fabricating it. Without it the worker has no
+        # live data, invents current events (GPT-5.5, a 2026 AI Agent Index),
+        # and the critic correctly rejects the hallucinations 3x ->
+        # critic_loop_exhausted (live mission 019ecb56, 2026-06-15: "research
+        # the AI news of the last years" failed at 1042s). codex's web_search is
+        # a server-routed, read-only tool — a live probe confirmed it returns
+        # current data inside the workspace-write sandbox WITHOUT opening raw
+        # network access, so this is the targeted capability, not a blast-radius
+        # network grant.
+        "-c", "tools.web_search=true",
         # D9 recursion guard at the codex level. A mission worker IS the
         # sub-agent — it must NEVER use codex's native multi-agent collaboration
         # tools (spawn_agent / wait) to spawn a NESTED codex agent and block on
