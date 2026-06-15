@@ -7,6 +7,17 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
+## [v0.6.1] — 2026-06-15
+
+### Changed
+
+- **Repository doctrine hardened.** Contributor/agent guidance now states clearly
+  that a save / commit / push / "put it on main" request targets this flagship
+  repo (`CLAUDE.md`, `CLOUD.md`), and a pre-push guard
+  (`scripts/ci/guard_no_raw_public_push.py`, installed via
+  `scripts/ci/install_git_hooks.py`) blocks accidental raw pushes of unscrubbed
+  working state to the public repo. Documentation/tooling only — no runtime change.
+
 ## [v0.6.0] — 2026-06-15
 
 ### Added
