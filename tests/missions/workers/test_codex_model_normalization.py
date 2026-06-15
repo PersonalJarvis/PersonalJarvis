@@ -152,3 +152,21 @@ def test_codex_cmd_caps_reasoning_effort_for_speed() -> None:
     assert m.group(1) in {"low", "medium"}, (
         f"reasoning effort must be a fast tier, got {m.group(1)!r}"
     )
+
+
+def test_codex_cmd_enables_web_search_for_research() -> None:
+    """A mission worker with no web access cannot research current events — it
+    FABRICATES them, and the critic correctly rejects the hallucinations 3x ->
+    critic_loop_exhausted (live mission 019ecb56, 2026-06-15: "research the AI
+    news of the last years" failed at 1042s after the worker invented GPT-5.5 /
+    Claude Fable / a 2026 AI Agent Index as sourced facts).
+
+    codex's ``web_search`` tool is server-routed — it works inside the
+    workspace-write sandbox WITHOUT opening raw network access, and a live probe
+    confirmed it returns current data (a WSJ URL dated today). The worker argv
+    MUST enable it so research/current-events missions can produce SOURCED work:
+    ``-c tools.web_search=true``."""
+    cmd = _build_codex_direct_cmd(worktree=Path("/tmp/wt"), model=None)
+    assert "tools.web_search=true" in " ".join(cmd), (
+        f"web_search not enabled in argv (worker cannot research): {cmd}"
+    )

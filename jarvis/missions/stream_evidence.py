@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from typing import Final
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +46,172 @@ def _result_text(content) -> str:  # noqa: ANN001 — tolerant of str | list | d
     return str(content)
 
 
+# --- multi-provider stream normalisation ------------------------------------
+#
+# Every extractor below was written for claude `stream-json` (assistant/user/
+# result frames with tool_use/tool_result blocks). Two other worker backends
+# write a DIFFERENT shape to the SAME on-disk stream.jsonl the Critic reads:
+#   * Codex `exec --json`: real actions are `item.completed` frames whose
+#     `item.type` is agent_message / file_change / command_execution /
+#     mcp_tool_call / web_search. (``codex_direct_worker._translate`` maps these
+#     to claude shapes for the LIVE event stream, but the on-disk log the Critic
+#     grades stays RAW codex — live mission 019ec761, 2026-06-15: a codex
+#     informational answer was invisible -> readonly_answer None -> empty-diff
+#     veto fired 3x -> critic_loop_exhausted.)
+#   * Gemini CLI (`--output-format text`): plain text, no JSON frames at all.
+# To keep every gate PROVIDER-AGNOSTIC (the maintainer's multi-provider mandate)
+# we rewrite both shapes into the canonical claude shape ONCE, up front, so the
+# battle-tested extractors are unchanged. A pure-claude stream round-trips
+# unchanged (claude is the canonical internal shape).
+
+_CLAUDE_FRAME_TYPES: frozenset[str] = frozenset(
+    {"assistant", "user", "result", "system", "stream_event"}
+)
+
+# Codex command output embedded into a synthetic tool_result is capped here so a
+# multi-hundred-KB `aggregated_output` line cannot bloat the rewritten stream
+# (the extractors truncate again to ``max_result_chars`` downstream).
+_CODEX_OUTPUT_CAP: int = 4000
+
+
+def _codex_item_to_claude_lines(
+    item: dict, counter: int
+) -> tuple[list[str], int]:  # noqa: ANN001 — tolerant of arbitrary item dicts
+    """Map one codex ``item.completed`` ``item`` to claude-shaped NDJSON lines.
+
+    Returns ``(lines, counter)``. file_change / command_execution / tool items
+    emit an assistant ``tool_use`` + a correlated user ``tool_result`` (so the
+    anti-hearsay id-matching in :func:`extract_write_targets` /
+    :func:`extract_verified_commands` credits them); ``agent_message`` emits
+    assistant text. ``counter`` seeds unique synthetic tool_use ids so multiple
+    items never collide.
+    """
+    itype = item.get("type")
+    lines: list[str] = []
+
+    def _tool_use(name: str, tool_input: dict, tid: str) -> str:
+        return json.dumps({
+            "type": "assistant",
+            "message": {"role": "assistant", "content": [
+                {"type": "tool_use", "id": tid, "name": name, "input": tool_input},
+            ]},
+        })
+
+    def _tool_result(tid: str, content: str, *, is_error: bool) -> str:
+        blk: dict = {"type": "tool_result", "tool_use_id": tid, "content": content}
+        if is_error:
+            blk["is_error"] = True
+        return json.dumps({
+            "type": "user",
+            "message": {"role": "user", "content": [blk]},
+        })
+
+    if itype == "agent_message":
+        txt = str(item.get("text", "") or "").strip()
+        if txt:
+            lines.append(json.dumps({
+                "type": "assistant",
+                "message": {"role": "assistant", "content": [
+                    {"type": "text", "text": txt},
+                ]},
+            }))
+        return lines, counter
+
+    if itype == "file_change":
+        changes = item.get("changes")
+        if not isinstance(changes, list) or not changes:
+            changes = [{}]
+        for change in changes:
+            if not isinstance(change, dict):
+                continue
+            counter += 1
+            tid = f"codex_fc_{counter}"
+            lines.append(_tool_use("Write", change, tid))
+            lines.append(_tool_result(tid, "(file change applied)", is_error=False))
+        return lines, counter
+
+    if itype == "command_execution":
+        counter += 1
+        tid = f"codex_cmd_{counter}"
+        command = str(item.get("command", "") or "")
+        output = str(item.get("aggregated_output", item.get("output", "")) or "")
+        exit_code = item.get("exit_code")
+        # codex emits item.completed only after the command finished; a missing
+        # exit_code is treated as success, a present non-"0" code as failure.
+        is_error = exit_code is not None and str(exit_code).strip() not in ("0", "")
+        lines.append(_tool_use("Bash", {"command": command}, tid))
+        lines.append(_tool_result(tid, output[:_CODEX_OUTPUT_CAP], is_error=is_error))
+        return lines, counter
+
+    if itype in ("mcp_tool_call", "web_search"):
+        counter += 1
+        tid = f"codex_{itype}_{counter}"
+        name = "web_search" if itype == "web_search" else str(
+            item.get("tool") or item.get("server") or "mcp_tool_call"
+        )
+        excerpt = str(
+            item.get("result") or item.get("query") or item.get("output") or ""
+        )[:_CODEX_OUTPUT_CAP]
+        lines.append(_tool_use(name, {}, tid))
+        lines.append(_tool_result(tid, excerpt or "(tool completed)", is_error=False))
+        return lines, counter
+
+    return lines, counter
+
+
+def _normalize_worker_stream(stream_text: str) -> str:
+    """Rewrite codex / gemini worker streams into the canonical claude shape.
+
+    See the module note above. A pure-claude stream returns unchanged; codex
+    ``item.completed`` frames become assistant/user pairs; a gemini plain-text
+    transcript (no JSON frames at all) becomes a single ``result`` frame so the
+    spoken answer is recoverable.
+    """
+    if not stream_text:
+        return stream_text
+    out: list[str] = []
+    plain_text: list[str] = []
+    saw_json = False
+    counter = 0
+
+    for raw in stream_text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            plain_text.append(line)
+            continue
+        if not isinstance(obj, dict):
+            plain_text.append(line)
+            continue
+        saw_json = True
+        otype = obj.get("type")
+        if otype in _CLAUDE_FRAME_TYPES:
+            out.append(line)  # claude frame — passed through unchanged
+            continue
+        if otype == "item.completed":
+            item = obj.get("item")
+            if isinstance(item, dict):
+                mapped, counter = _codex_item_to_claude_lines(item, counter)
+                out.extend(mapped)
+            continue
+        # Any other codex frame (thread.started / turn.* / error / item.created
+        # / item.delta) carries no deliverable evidence — drop it.
+
+    # Gemini `--output-format text`: the whole transcript is plain text with no
+    # JSON frames. Treat it as the worker's final answer so the spoken answer is
+    # recoverable. Gated on NOTHING having parsed as JSON, so a stray non-JSON
+    # line inside a claude/codex stream is never misread as the answer.
+    if not saw_json and plain_text:
+        joined = "\n".join(plain_text).strip()
+        if joined:
+            out.append(json.dumps({"type": "result", "result": joined}))
+
+    return "\n".join(out)
+
+
 def extract_stream_evidence(
     stream_text: str,
     *,
@@ -56,6 +223,7 @@ def extract_stream_evidence(
         stream_text: Raw NDJSON content of the worker's claude stream.
         max_result_chars: Per tool_result truncation cap.
     """
+    stream_text = _normalize_worker_stream(stream_text)
     tool_calls: list[str] = []
     tool_results: list[str] = []
     final_answer = ""
@@ -154,6 +322,7 @@ def extract_write_targets(stream_text: str) -> tuple[str, ...]:
     Tolerant by design: unparseable lines are skipped; a tool_use with no
     resolvable path key is ignored.
     """
+    stream_text = _normalize_worker_stream(stream_text)
     # tool_use_id -> path (write tool_use seen, awaiting its result)
     pending: dict[str, str] = {}
     # path -> True if observed to error; downgraded to False on any success.
@@ -275,6 +444,7 @@ def extract_verified_commands(
     the final judge — this only lets it SEE the evidence instead of vetoing
     blind.
     """
+    stream_text = _normalize_worker_stream(stream_text)
     pending: dict[str, str] = {}          # tool_use_id -> command string
     credited: list[tuple[str, str]] = []
     seen_commands: set[str] = set()
@@ -384,6 +554,7 @@ def extract_verified_desktop_actions(
     diff. The Critic still grades the command + its output as the final judge —
     this only lets it SEE the evidence instead of vetoing blind.
     """
+    stream_text = _normalize_worker_stream(stream_text)
     pending: dict[str, str] = {}          # tool_use_id -> command string
     credited: list[tuple[str, str]] = []
     seen_commands: set[str] = set()
@@ -522,6 +693,38 @@ _INFO_TRIGGER_RE = re.compile(
 )
 
 
+# Spawn / routing meta-language. The user describes HOW the assistant should
+# run the task, e.g. "starte eine Sub-Edge-Mission …" / "start a worker  # i18n-allow
+# that …" / "lass einen Sub-Agenten …" — the mission runtime IS that worker, so
+# the phrase is routing meta, NOT part of the deliverable — exactly the
+# META-PHRASE-RULE the LLM critic already obeys (critic/prompts.py). It matters
+# here because the launch verbs ``start``/``starte``/``launch`` ALSO live in
+# ``_ACTION_VERB_RE`` (a legit "open/launch an app" action), so an unstripped
+# "Mission starten" masks a genuine research request as a do-task and routes it
+# to the adversarial code-critic (live mission 019ecb56, 2026-06-15:
+# critic_loop_exhausted on a working AI-news report). Stripping the spawn-meta
+# clause can only REMOVE text, never add an info trigger — so a real do-task
+# whose deliverable verb sits OUTSIDE the meta clause ("start a worker that
+# CREATES index.html") stays a do-task.
+_SPAWN_VERB = (
+    r"(?:spawn\w*|start\w*|launch\w*|delegate\w*|delegier\w*|dispatch\w*|"
+    r"lass\w*|kick[\s-]?off)"
+)
+_SPAWN_NOUN = (
+    r"(?:sub-?edge-?missions?|sub-?agents?|subagents?|agents?|workers?|missions?)"
+)
+_SPAWN_META_RE = re.compile(
+    rf"\b{_SPAWN_VERB}\b[^.?!\n]{{0,40}}?\b{_SPAWN_NOUN}\b"
+    rf"|\b{_SPAWN_NOUN}\b[^.?!\n]{{0,40}}?\b{_SPAWN_VERB}\b",
+    re.IGNORECASE,
+)
+
+
+def _strip_spawn_meta(text: str) -> str:
+    """Remove spawn/routing meta-clauses so the classifier sees the real task."""
+    return _SPAWN_META_RE.sub(" ", text)
+
+
 def _request_body(prompt: str) -> str:
     """Strip the standing quality directive that spawn_worker prepends so the
     classifier sees only the real request.
@@ -559,7 +762,7 @@ def is_informational_request(prompt: str) -> bool:
     a wrongful approve. Hallucination guard intact: "create a file report.md" →
     `creat` + `.md` → vetoed; "send an email" → `send` → vetoed.
     """
-    body = _request_body(prompt or "").strip()
+    body = _strip_spawn_meta(_request_body(prompt or "")).strip()
     if not body:
         return False
     if _ACTION_VERB_RE.search(body) or _ARTEFACT_RE.search(body):
@@ -602,6 +805,89 @@ def readonly_answer(
     if len(answer) < 3:
         return None
     return answer
+
+
+# --- informational request answered as a prose document --------------------
+#
+# A research / advisory request ("recherchiere AI-News", "research laptops",
+# "plan a trip") has a TEXT deliverable. When the worker writes that text into a
+# prose document (.md/.txt/…) instead of speaking it, the non-empty diff routed
+# the mission to the adversarial CODE-critic, which graded a German news essay
+# with a code rubric (correctness/security/side_effects) and demanded reachable
+# web citations a web-less worker cannot produce -> 3x revise ->
+# critic_loop_exhausted (live mission 019ecb56, 2026-06-15). When the WHOLE
+# deliverable is substantive prose for an informational request, the document IS
+# the answer: grade it as prose, not as code. The anti-hallucination contract is
+# intact — this keys off the REQUEST being informational AND a real, non-stub
+# document existing on disk (a named-file/code do-task is never informational,
+# and a stub document fails the substance gate and falls through to the critic).
+
+# Prose / document extensions whose deliverable is text, not executable code.
+_PROSE_EXTENSIONS: frozenset[str] = frozenset(
+    {".md", ".markdown", ".txt", ".text", ".rst", ".org", ".adoc", ".rtf"}
+)
+# A real document needs real prose. Below this the "report" is a stub/skeleton —
+# let the critic see it rather than blanket-approve an empty shell.
+_MIN_PROSE_CHARS: Final[int] = 300
+_STUB_MARKERS: tuple[str, ...] = (
+    "inhalt folgt", "content follows", "coming soon", "to be done",
+    "to be written", "placeholder", "lorem ipsum", "tbd",
+)
+_DIFF_GIT_PATH_RE = re.compile(r"^diff --git a/.+ b/(.+?)\s*$", re.MULTILINE)
+
+
+def _diff_git_paths(diff_text: str) -> list[str]:
+    """The ``b/`` target paths of every in-worktree ``diff --git`` block."""
+    return _DIFF_GIT_PATH_RE.findall(diff_text or "")
+
+
+def _is_prose_only_diff(diff_text: str) -> bool:
+    """True iff the diff touches ONLY prose/document files (no code)."""
+    paths = _diff_git_paths(diff_text)
+    if not paths:
+        return False
+    return all(
+        ("." + path.rsplit(".", 1)[1].lower()) in _PROSE_EXTENSIONS
+        if "." in path.rsplit("/", 1)[-1]
+        else False
+        for path in paths
+    )
+
+
+def _added_document_text(diff_text: str) -> str:
+    """Concatenated added (``+``) content of the diff, sans diff headers."""
+    out: list[str] = []
+    for line in (diff_text or "").splitlines():
+        if line.startswith("+") and not line.startswith("+++"):
+            out.append(line[1:])
+    return "\n".join(out).strip()
+
+
+def _looks_like_stub_document(text: str) -> bool:
+    low = text.lower()
+    return any(marker in low for marker in _STUB_MARKERS)
+
+
+def informational_file_answer(diff_text: str, *, prompt: str) -> str | None:
+    """Return the document content iff an informational request was answered by a
+    substantive prose document — else None.
+
+    Conditions (all required):
+    1. The REQUEST is informational (``is_informational_request``) — keys off the
+       request shape, never the worker's claim, so do-tasks stay vetoed.
+    2. The diff touches ONLY prose/document files (no code) — a code change keeps
+       the adversarial code-critic.
+    3. The added prose is substantive and not a stub — an empty shell falls
+       through to the critic instead of being blanket-approved.
+    """
+    if not is_informational_request(prompt):
+        return None
+    if not _is_prose_only_diff(diff_text):
+        return None
+    content = _added_document_text(diff_text)
+    if len(content) < _MIN_PROSE_CHARS or _looks_like_stub_document(content):
+        return None
+    return content
 
 
 # Capability-refusal phrases (EN + DE). When the worker invoked NO tools, wrote
@@ -684,6 +970,7 @@ __all__ = [
     "extract_verified_commands",
     "extract_verified_desktop_actions",
     "extract_write_targets",
+    "informational_file_answer",
     "is_informational_request",
     "readonly_answer",
     "summarize_answers",

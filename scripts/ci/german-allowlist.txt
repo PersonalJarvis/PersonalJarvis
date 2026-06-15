@@ -58,3 +58,9 @@ docs/phantom-worker-aborted-deep-dive/*
 #     bilingual (DE+EN) by design — the German phrases are the content under
 #     test, not an untranslated artifact ---
 docs/qa/*
+
+# --- The local-action gate's own tests: the gate classifies German voice
+#     utterances, so its regression fixtures (open-app, computer-use, sub-agent
+#     research misroute) are necessarily German — content under test, not an
+#     untranslated artifact ---
+tests/unit/brain/test_local_action_gate.py

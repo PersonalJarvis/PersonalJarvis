@@ -450,3 +450,175 @@ async def test_get_returns_openclaw_worker_snapshot(
     assert w["reattach_status"] == "killed"
     assert w["ended_reason"] == "user"
     assert w["pid"] == 4242
+
+
+# ---------------------------------------------------------------------------
+# Rerun (Outputs view: Continue cancelled / Restart failed)
+# ---------------------------------------------------------------------------
+
+
+async def _drive_to(
+    manager: MissionManager, mid: str, target: MissionState
+) -> None:
+    """Walk a freshly-dispatched (PENDING) mission to a terminal state."""
+    if target is MissionState.CANCELLED:
+        await manager.transition_state(
+            mid, MissionState.CANCELLED, reason="t", source_actor="ui"
+        )
+    elif target is MissionState.FAILED:
+        await manager.transition_state(
+            mid, MissionState.FAILED, reason="t", source_actor="system"
+        )
+    elif target is MissionState.TIMED_OUT:
+        await manager.transition_state(
+            mid, MissionState.RUNNING, reason="t", source_actor="system"
+        )
+        await manager.transition_state(
+            mid, MissionState.TIMED_OUT, reason="t", source_actor="system"
+        )
+    elif target is MissionState.APPROVED:
+        await manager.transition_state(
+            mid, MissionState.RUNNING, reason="t", source_actor="system"
+        )
+        await manager.transition_state(
+            mid, MissionState.APPROVED, reason="t", source_actor="system"
+        )
+    else:  # pragma: no cover - defensive
+        raise ValueError(f"unhandled target {target}")
+
+
+def _app_for(manager: MissionManager, kontrollierer: Any | None = None):
+    app = FastAPI()
+    app.include_router(missions_router)
+    app.state.mission_manager = manager
+    if kontrollierer is not None:
+        app.state.kontrollierer = kontrollierer
+    return app
+
+
+async def test_rerun_continue_from_cancelled(manager: MissionManager) -> None:
+    """A CANCELLED mission re-runs as a NEW PENDING mission with action
+    'continue'; the source row stays CANCELLED (audit record preserved)."""
+    src = await manager.dispatch(prompt="do the thing", language="en")
+    await _drive_to(manager, src, MissionState.CANCELLED)
+
+    with TestClient(_app_for(manager)) as client:
+        r = client.post(f"/api/missions/{src}/rerun", json={})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["action"] == "continue"
+    assert body["parent_mission_id"] == src
+    new_id = body["mission_id"]
+    assert new_id != src
+    # No kontrollierer wired → created but not started.
+    assert body["started"] is False
+
+    # Source unchanged, new mission PENDING with the same prompt + language.
+    src_state = await manager.store.get_mission_state(src)
+    assert src_state == MissionState.CANCELLED.value
+    new_view = await manager.store.get_mission_view(new_id)
+    assert new_view is not None
+    assert new_view[0] == "do the thing"
+    assert new_view[1] == MissionState.PENDING.value
+    assert new_view[2] == "en"
+
+
+async def test_rerun_links_parent_in_dispatched_event(
+    manager: MissionManager,
+) -> None:
+    """The re-run's MissionDispatched event carries parent_mission_id."""
+    src = await manager.dispatch(prompt="x")
+    await _drive_to(manager, src, MissionState.FAILED)
+    with TestClient(_app_for(manager)) as client:
+        r = client.post(f"/api/missions/{src}/rerun", json={})
+    new_id = r.json()["mission_id"]
+    events = await manager.store.events_for_mission(new_id)
+    dispatched = [
+        e for e in events if e.payload.event_type == "MissionDispatched"
+    ]
+    assert len(dispatched) == 1
+    assert dispatched[0].payload.parent_mission_id == src
+
+
+async def test_rerun_restart_from_failed(manager: MissionManager) -> None:
+    src = await manager.dispatch(prompt="broke")
+    await _drive_to(manager, src, MissionState.FAILED)
+    with TestClient(_app_for(manager)) as client:
+        r = client.post(f"/api/missions/{src}/rerun", json={})
+    assert r.status_code == 200
+    assert r.json()["action"] == "restart"
+
+
+async def test_rerun_restart_from_timed_out(manager: MissionManager) -> None:
+    src = await manager.dispatch(prompt="slow")
+    await _drive_to(manager, src, MissionState.TIMED_OUT)
+    with TestClient(_app_for(manager)) as client:
+        r = client.post(f"/api/missions/{src}/rerun", json={})
+    assert r.status_code == 200
+    assert r.json()["action"] == "restart"
+
+
+async def test_rerun_approved_returns_409(manager: MissionManager) -> None:
+    src = await manager.dispatch(prompt="done well")
+    await _drive_to(manager, src, MissionState.APPROVED)
+    with TestClient(_app_for(manager)) as client:
+        r = client.post(f"/api/missions/{src}/rerun", json={})
+    assert r.status_code == 409
+    assert "not re-runnable" in r.json()["detail"]
+
+
+def test_rerun_unknown_returns_404(app_with_manager: FastAPI) -> None:
+    with TestClient(app_with_manager) as client:
+        r = client.post("/api/missions/no-such-id/rerun", json={})
+    assert r.status_code == 404
+
+
+async def test_rerun_starts_run_with_kontrollierer(
+    manager: MissionManager,
+) -> None:
+    """With a Kontrollierer wired, the re-run schedules run_mission on the
+    NEW mission id and reports started=true."""
+    calls: list[str] = []
+
+    class StubKontrollierer:
+        async def run_mission(self, mission_id: str) -> None:
+            calls.append(mission_id)
+
+    src = await manager.dispatch(prompt="again")
+    await _drive_to(manager, src, MissionState.CANCELLED)
+    with TestClient(_app_for(manager, StubKontrollierer())) as client:
+        r = client.post(f"/api/missions/{src}/rerun", json={})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["started"] is True
+    # run_mission ran for the NEW mission, not the source.
+    assert calls == [body["mission_id"]]
+
+
+async def test_rerun_destructive_prompt_requires_confirm(
+    manager: MissionManager,
+) -> None:
+    """A destructive stored prompt is re-gated: confirmed=false → 409
+    requires_confirm; confirmed=true → proceeds and creates a new mission."""
+    # Seed via the manager (not the route) so the destructive gate doesn't
+    # block creation of the source mission in the first place.
+    src = await manager.dispatch(prompt="please rm -rf / now")
+    await _drive_to(manager, src, MissionState.CANCELLED)
+
+    with TestClient(_app_for(manager)) as client:
+        blocked = client.post(f"/api/missions/{src}/rerun", json={})
+        assert blocked.status_code == 409
+        assert blocked.json()["requires_confirm"] is True
+
+        ok = client.post(
+            f"/api/missions/{src}/rerun", json={"confirmed": True}
+        )
+    assert ok.status_code == 200
+    assert ok.json()["action"] == "continue"
+
+
+def test_rerun_returns_503_without_manager(app_no_manager: FastAPI) -> None:
+    with TestClient(app_no_manager) as client:
+        r = client.post("/api/missions/some-id/rerun", json={})
+    assert r.status_code == 503

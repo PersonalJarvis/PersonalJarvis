@@ -939,7 +939,11 @@
     "delete": "Löschen",
     "abort_label": "Mission abbrechen",
     "abort_hold": "Halten zum Abbrechen",
-    "aborting": "Bricht ab…"
+    "aborting": "Bricht ab…",
+    "continue_label": "Fortsetzen",
+    "restart_label": "Neu starten",
+    "rerun_starting": "Wird gestartet…",
+    "rerun_confirm": "Erneut ausführen"
   },
   "common": {
     "save": "Save",

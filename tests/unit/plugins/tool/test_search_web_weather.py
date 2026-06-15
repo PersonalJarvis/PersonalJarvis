@@ -16,6 +16,7 @@ import httpx
 import pytest
 
 from jarvis.core.protocols import ExecutionContext
+from jarvis.plugins.tool import search_backends
 from jarvis.plugins.tool.search_web import SearchWebTool, _extract_weather_location
 
 
@@ -94,6 +95,11 @@ class _FakeClient:
 def _fake_httpx(monkeypatch: pytest.MonkeyPatch):
     _FakeClient.calls = []
     monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+    # Force the real DDG SERP to return nothing so the fallback resolves through
+    # the monkeypatched httpx Instant-Answer path (the ddgs library uses its own
+    # HTTP client and would otherwise hit the network). These tests assert
+    # weather routing, not which web backend wins.
+    monkeypatch.setattr(search_backends, "_default_ddgs_searcher", lambda q, n: [])
     yield
 
 

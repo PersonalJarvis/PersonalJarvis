@@ -939,7 +939,11 @@
     "delete": "Eliminar",
     "abort_label": "Cancelar misión",
     "abort_hold": "Mantén pulsado para cancelar",
-    "aborting": "Cancelando…"
+    "aborting": "Cancelando…",
+    "continue_label": "Continuar",
+    "restart_label": "Reiniciar",
+    "rerun_starting": "Iniciando…",
+    "rerun_confirm": "Confirmar reejecución"
   },
   "common": {
     "save": "Guardar",

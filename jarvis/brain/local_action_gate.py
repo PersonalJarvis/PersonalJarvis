@@ -174,7 +174,14 @@ def _looks_like_desktop_control(text: str) -> bool:
     answer. The broader verbs are guarded against how-to questions so
     "wie navigiere ich…" / "wie mache ich einen Screenshot" stay brain answers.
     """
-    if _COMPOUND_OPEN_CONTROL_RE.match(text) or _GUI_VERB_RE.search(text):
+    # A "starte/oeffne X und Y" compound is desktop-control ONLY when X/Y is real
+    # GUI work — never when it is heavy worker / research / sub-agent work. Live
+    # bug 2026-06-15: "Starte eine Sub-Agent-Mission und recherchiere …" matched
+    # _COMPOUND_OPEN_CONTROL_RE and ran on the screenshot harness. Unambiguous GUI
+    # verbs (klick/scroll/tippe/…) stay desktop-control regardless of the nouns.
+    if _COMPOUND_OPEN_CONTROL_RE.match(text) and not _NOT_OPEN_APP_RE.search(text):
+        return True
+    if _GUI_VERB_RE.search(text):
         return True
     if _OPEN_INSTRUCTIONAL_RE.search(text):
         return False
@@ -214,13 +221,22 @@ _AND_RE = re.compile(r"\bund\b", re.IGNORECASE)
 # sub-agent worker path), just not trigger an actual launch here.
 _OPEN_NEGATION_RE = re.compile(r"\bnicht\b|\bkein\w*\b|\bniemals\b", re.IGNORECASE)
 # Signals that the request is NOT a plain desktop app-open but heavy worker /
-# external-system work, which a sandboxed worker (not computer-use) owns.
+# external-system work, which a sandboxed worker (not computer-use) owns. This
+# is the single veto consulted by is_open_app_intent (and therefore by both the
+# COMPUTER_USE gate at match_local_action AND the force-spawn guard in
+# manager.py), so research / sub-agent / mission vocabulary MUST live here:
+# "starte eine Sub-Agent-Mission und recherchiere …" overcaptures "startest" as
+# an open-verb, and without this veto it was misrouted to the screenshot harness
+# ("ich erledige das am Bildschirm") instead of a research worker (live bug
+# 2026-06-15, sessions.db session 236877e6).
 _NOT_OPEN_APP_RE = re.compile(
     r"\b(?:"
     r"pr|prs|pull\s*request|repo|repository|github|gitlab|issue|issues|branch|"
     r"baue?|baust|baut|implementier\w*|entwickel\w*|refactor\w*|debugg?\w*|"
     r"analysier\w*|analyz\w*|untersuch\w*|programmier\w*|deploy\w*|"
-    r"datei|dateien|file|files|funktion\w*|skript|script|landingpage"
+    r"datei|dateien|file|files|funktion\w*|skript|script|landingpage|"
+    r"recherch\w*|research\w*|tiefenrecherche\w*|deep[\s-]?dive|"
+    r"sub-?agent\w*|subagent\w*|mission\w*"
     r")\b",
     re.IGNORECASE,
 )

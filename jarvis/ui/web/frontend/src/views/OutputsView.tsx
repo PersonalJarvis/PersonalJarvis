@@ -15,6 +15,7 @@ import { ViewHeader } from "@/views/ChatsView";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { PlanStepList } from "@/components/PlanStepList";
 import { HoldToAbortButton } from "@/components/HoldToAbortButton";
+import { RerunButton } from "@/components/RerunButton";
 import {
   useOutputsList,
   usePlanForOutput,
@@ -184,6 +185,20 @@ function SessionRow({
                 }
               />
             )}
+            {statusKey === "cancelled" && meta.mission_id && (
+              <RerunButton
+                missionId={meta.mission_id}
+                action="continue"
+                size="sm"
+              />
+            )}
+            {statusKey === "error" && meta.mission_id && (
+              <RerunButton
+                missionId={meta.mission_id}
+                action="restart"
+                size="sm"
+              />
+            )}
             <span
               className={cn(
                 "flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
@@ -291,6 +306,20 @@ function SessionDetail({ meta }: { meta: OutputSummary }) {
                     : t("outputs_view.abort_hold")}
                 </span>
               </span>
+            )}
+            {statusKey === "cancelled" && meta.mission_id && (
+              <RerunButton
+                missionId={meta.mission_id}
+                action="continue"
+                size="md"
+              />
+            )}
+            {statusKey === "error" && meta.mission_id && (
+              <RerunButton
+                missionId={meta.mission_id}
+                action="restart"
+                size="md"
+              />
             )}
             {meta.github_url && (
               <a

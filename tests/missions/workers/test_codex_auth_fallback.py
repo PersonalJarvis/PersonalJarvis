@@ -140,7 +140,10 @@ class _FakeProc:
         # rest via communicate(). `streaming` overrides what stdout serves
         # (used by claude-path fakes); codex fakes serve the stdout bytes.
         self.stdout = _FakeStream(data=streaming if streaming is not None else stdout)
-        self.stderr = _FakeStream()
+        # Both workers now drain stderr directly from proc.stderr (not via
+        # communicate()), so serve the stderr bytes there — matching a real
+        # asyncio subprocess whose .stderr is a StreamReader.
+        self.stderr = _FakeStream(data=stderr)
         self._stdout_bytes = stdout
         self._stderr_bytes = stderr
 

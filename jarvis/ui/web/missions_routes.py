@@ -73,6 +73,16 @@ class DispatchBody(BaseModel):
     confirmed: bool = False  # Phase-5 destructive_confirm gate (UI-Path)
 
 
+class RerunBody(BaseModel):
+    """Payload for POST /{mission_id}/rerun.
+
+    Mirrors the ``confirmed`` field of :class:`DispatchBody` so a re-run cannot
+    silently bypass the destructive-confirm gate the original dispatch passed.
+    """
+
+    confirmed: bool = False
+
+
 # ---------------------------------------------------------------------------
 # Listing + Detail
 # ---------------------------------------------------------------------------
@@ -324,6 +334,132 @@ async def cancel_mission(mission_id: str, request: Request) -> dict[str, Any]:
         "state": MissionState.CANCELLED.value,
         "event_seq": env.seq,
         "worker_killed": worker_killed,
+    }
+
+
+# States from which a mission may be re-run. APPROVED is deliberately excluded
+# (a successful mission has nothing to continue/restart). The terminal source
+# mission is never mutated — the re-run is a fresh PENDING mission linked back
+# via ``parent_mission_id``, so no state-machine transition is needed here.
+_RERUNNABLE_STATES: frozenset[MissionState] = frozenset(
+    {
+        MissionState.CANCELLED,
+        MissionState.FAILED,
+        MissionState.TIMED_OUT,
+    }
+)
+
+
+@router.post("/{mission_id}/rerun")
+async def rerun_mission(
+    mission_id: str,
+    body: RerunBody,
+    request: Request,
+    background_tasks: BackgroundTasks,
+) -> Any:
+    """Re-run a terminal mission by re-dispatching its original prompt.
+
+    Used by the Outputs view: "Continue" a CANCELLED mission and "Restart" a
+    FAILED/TIMED_OUT one. Both are the same operation — re-dispatch the stored
+    prompt as a NEW mission linked to the source via ``parent_mission_id``. The
+    source mission is left untouched as a permanent audit record; a fresh card
+    appears in the Outputs view and runs.
+
+    The audit ``action`` is derived from the source state, not supplied by the
+    client: CANCELLED -> "continue", FAILED/TIMED_OUT -> "restart".
+
+    Errors:
+    - ``404`` when the mission is unknown.
+    - ``409`` when the source state is not re-runnable (e.g. APPROVED).
+    - ``409 {requires_confirm: true}`` when the stored prompt looks destructive
+      and ``confirmed`` is false — same gate as ``/dispatch``. UI re-POSTs with
+      ``confirmed: true`` after the user acknowledges.
+    """
+    from fastapi.responses import JSONResponse
+
+    from jarvis.missions.safety.destructive_confirm import is_destructive
+
+    mgr = _require_manager(request)
+
+    view = await mgr.store.get_mission_view(mission_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="Mission not found")
+    prompt, state_str, language = view[0], view[1], view[2]
+
+    try:
+        source_state = MissionState(state_str)
+    except ValueError:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Mission has an unknown state: {state_str!r}",
+        ) from None
+
+    if source_state not in _RERUNNABLE_STATES:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Mission is not re-runnable from state {source_state.value}. "
+                "Only CANCELLED, FAILED or TIMED_OUT missions can be re-run."
+            ),
+        )
+
+    # Destructive re-gate: a re-run must not bypass the safety check the
+    # original dispatch enforced. Same helper + same 409 shape as /dispatch.
+    if not body.confirmed:
+        is_destr, det = is_destructive(prompt)
+        if is_destr and det is not None:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "requires_confirm": True,
+                    "pattern_id": det.pattern_id,
+                    "matched_text": det.matched_text,
+                    "target_hint": det.target_hint,
+                    "warning": (
+                        "Destructive mission detected. Re-POST with "
+                        '"confirmed": true to proceed.'
+                    ),
+                },
+            )
+
+    # Derive intent from the source state for an accurate audit trail — never
+    # trust a client-supplied label.
+    if source_state is MissionState.CANCELLED:
+        action = "continue"
+        source_actor_reason = "ui_continue"
+    else:
+        action = "restart"
+        source_actor_reason = "ui_restart"
+
+    safe_language: Literal["de", "en"] = (
+        language if language in ("de", "en") else "de"
+    )
+    new_mission_id = await mgr.dispatch(
+        prompt=prompt,
+        language=safe_language,
+        source_actor="ui",
+        parent_mission_id=mission_id,
+    )
+    logger.info(
+        "rerun_mission: %s (%s) of source %s as new mission %s",
+        action,
+        source_actor_reason,
+        mission_id,
+        new_mission_id,
+    )
+
+    kontrollierer = _optional_kontrollierer(request)
+    started = False
+    if kontrollierer is not None:
+        background_tasks.add_task(kontrollierer.run_mission, new_mission_id)
+        started = True
+
+    return {
+        "ok": True,
+        "parent_mission_id": mission_id,
+        "mission_id": new_mission_id,
+        "action": action,
+        "started": started,
     }
 
 
