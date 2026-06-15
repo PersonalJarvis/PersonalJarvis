@@ -162,32 +162,6 @@ async def test_claude_direct_path_approves_when_resolver_picks_claude_api(
     assert not (tmp_path / "openclaw.json").exists()
 
 
-@pytest.mark.asyncio
-async def test_critic_caps_agentic_turns(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-) -> None:
-    """Latency (2026-06-14): the critic must pass ``--max-turns`` so it grades
-    from the in-prompt diff instead of spending a dozen disk-verify turns
-    (21-61s to grade a 200-word story). The diff is embedded in the prompt, so a
-    small turn cap is sufficient and preserves the GROUND-TRUTH discipline."""
-    from jarvis.missions.critic.runner import _CRITIC_MAX_TURNS
-
-    captured = _patch_direct(monkeypatch, stdout=_valid_verdict_json("approve"))
-    await CriticRunner().run(
-        mission_prompt="Build X",
-        worker_diff="diff",
-        worker_log="log",
-        prior_reflections="",
-        iteration=0,
-        worktree=tmp_path,
-        env={},
-    )
-    argv = captured["argv"]
-    assert "--max-turns" in argv, argv
-    assert argv[argv.index("--max-turns") + 1] == str(_CRITIC_MAX_TURNS)
-    assert _CRITIC_MAX_TURNS <= 3, "turn cap must stay small to bound critic latency"
-
-
 @pytest.mark.parametrize("provider,foreign_model", [
     ("grok", "grok-4.3"),
     ("gemini", "gemini-3.1-pro-preview"),

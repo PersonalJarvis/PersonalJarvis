@@ -531,7 +531,14 @@ _EXTERNAL_INTEGRATION_NOUN_RE = re.compile(
     # Social
     r"tweets?|twitter|instagram|facebook|linkedin|tiktok|"
     # Real-world commerce / transport
-    r"pizza|uber\s*eats|lyft|doordash|lieferando"
+    r"pizza|uber\s*eats|lyft|doordash|lieferando|"
+    # Travel / lodging / ticketing — no booking integration exists, so
+    # "book a trip/flight/hotel" must refuse honestly, not 3-loop-fail a worker
+    # (live gap 2026-06-14, mission_019ec761 critic_loop_exhausted).
+    r"flights?|fl[uü]ge?|trips?|reisen?|hotels?|unterk[uü]nfte?|airbnb|motel|"
+    r"tickets?|zugticket|bahnticket|flugticket|mietwagen|rental\s+car|"
+    # Dining reservation
+    r"tisch|restaurant|reservierung"
     r")\b",
     re.I,
 )

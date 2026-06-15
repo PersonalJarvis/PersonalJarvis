@@ -946,7 +946,23 @@ class WebServer:
                     raw = await ws.receive_json()
                 except WebSocketDisconnect:
                     break
+                except RuntimeError as exc:
+                    # The socket is gone — e.g. starlette raises
+                    # RuntimeError('WebSocket is not connected ...') after an
+                    # unclean client disconnect instead of WebSocketDisconnect.
+                    # `continue` here re-calls receive_json on the dead socket
+                    # forever: a ~9 MB/s traceback log-storm that wedges the
+                    # event loop and triggers a self-restart cancelling every
+                    # in-flight mission (live incident 2026-06-14). Treat it as
+                    # a disconnect and leave the loop.
+                    logger.opt(exception=exc).warning(
+                        "WS receive aborted; closing connection",
+                        session_id=session_id,
+                    )
+                    break
                 except Exception as exc:  # noqa: BLE001
+                    # Recoverable: a malformed frame from a still-connected
+                    # client (bad JSON). Notify and keep listening.
                     logger.opt(exception=exc).warning(
                         "WS-Decode-Fehler",
                         session_id=session_id,
