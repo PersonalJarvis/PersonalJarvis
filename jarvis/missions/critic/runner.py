@@ -294,20 +294,6 @@ MAX_CRITIC_LOOPS: Final[int] = 3
 DEFAULT_TIMEOUT_SECONDS: Final[float] = 240.0
 """Subprocess wall-clock cap for one Critic call."""
 
-_CRITIC_MAX_TURNS: Final[int] = 2
-"""Agentic-turn cap on the critic ``claude --print`` run (latency 2026-06-14).
-
-Under ``--permission-mode bypassPermissions`` the critic behaves as a full
-agent: left uncapped it spends 12-15 self-initiated Read/Glob/Bash turns
-re-verifying the worker's diff against the worktree before emitting its JSON
-verdict — 21-61s to grade a 200-word story (worker took 18s). But the diff is
-already embedded in the prompt (and external writes are inlined as
-``diff --external-target`` blocks), so the critic does NOT need to read disk to
-grade. Capping turns forces it to grade from the in-prompt ground truth with at
-most one optional verify read, collapsing the critic to ~1 model round-trip
-without weakening the GROUND-TRUTH discipline (the evidence is in the prompt,
-not on disk)."""
-
 
 def _win32_creationflags() -> int:
     """CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB."""
@@ -1150,11 +1136,6 @@ class CriticRunner:
             # is touched regardless of permission mode.
             "--permission-mode", "bypassPermissions",
             "--add-dir", str(worktree),
-            # Cap agentic turns: the diff is in the prompt, so the critic must
-            # grade from in-prompt ground truth rather than spending 12-15
-            # disk-verify turns (the 21-61s latency, 2026-06-14). See
-            # _CRITIC_MAX_TURNS.
-            "--max-turns", str(_CRITIC_MAX_TURNS),
         ]
         if model:
             cmd.extend(["--model", model])

@@ -72,6 +72,8 @@ def _make_probe_pipe(probe_stt: object, vad: _RecordingVad) -> SpeechPipeline:
     pipe._probe_live_text = ""
     pipe._probe_stable_count = 0
     pipe._probe_required_stable = 1
+    pipe._probe_empty_count = 0
+    pipe._probe_required_empty = 2
     pipe._probe_min_text_len = 4
     return pipe
 
@@ -114,18 +116,25 @@ async def test_stale_probe_does_not_leak_endpoint_into_next_turn() -> None:
 
 @pytest.mark.asyncio
 async def test_probe_forces_endpoint_within_same_turn() -> None:
-    """Positive control: an in-turn empty-tail probe still forces the endpoint.
+    """Positive control: an in-turn SUSTAINED empty-tail probe still forces the
+    endpoint.
 
     Guards against 'fixing' the leak by simply disabling the probe — the
-    speaker-bleed backstop must keep working within the live turn.
+    speaker-bleed backstop must keep working within the live turn. A single
+    empty tail now defers (a quiet mumble mid-speech is indistinguishable from
+    bleed on one probe — the "och ha..." cut, 2026-06-14); the persistent empty
+    run forces.
     """
     vad = _RecordingVad()
     pipe = _make_probe_pipe(_InstantSTT(text=""), vad)
 
     pipe._on_vad_probe(b"\x00\x00" * 256)
     await asyncio.gather(*_probe_tasks())
+    assert vad.request_endpoint_calls == 0  # single empty tail defers
+    pipe._on_vad_probe(b"\x00\x00" * 256)
+    await asyncio.gather(*_probe_tasks())
 
-    assert vad.request_endpoint_calls == 1
+    assert vad.request_endpoint_calls == 1  # sustained empty → force
 
 
 @pytest.mark.asyncio

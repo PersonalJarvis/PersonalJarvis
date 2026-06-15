@@ -995,6 +995,15 @@ class SpeechPipeline:
         self._probe_live_text: str = ""
         self._probe_stable_count: int = 0
         self._probe_required_stable: int = 1
+        # Consecutive *loud empty* tails seen this turn. The empty-tail signal
+        # forces only after it PERSISTS for ``_probe_required_empty`` probes —
+        # a single empty reading mid-speech is a transient Whisper miss on a
+        # quiet/half-formed syllable (the "och ha..." → 'um' cut at silence_ms=0,
+        # 2026-06-14), not proof the user stopped. Mirrors the stable-tail
+        # persistence so a still-speaking user is never cut on one bad probe;
+        # sustained emptiness (real speaker bleed) still forces.
+        self._probe_empty_count: int = 0
+        self._probe_required_empty: int = 2
         self._probe_in_flight: bool = False
         # Monotonic turn-scope token. Captured when a probe is spawned and
         # re-checked when it completes: a probe whose generation no longer
@@ -1413,6 +1422,7 @@ class SpeechPipeline:
         self._probe_last_text = ""
         self._probe_live_text = ""
         self._probe_stable_count = 0
+        self._probe_empty_count = 0
         # Turn boundary: advance the generation so any probe still in flight
         # from the just-ended turn is dropped on completion, and release the
         # in-flight latch so the next turn can probe immediately (a stuck
@@ -1505,32 +1515,71 @@ class SpeechPipeline:
             # repetition) still catches the residual case where Whisper
             # latches onto a stable background phrase that escapes the
             # hallucination regex.
-            tail_is_empty = (
-                not text
-                or len(text) < self._probe_min_text_len
-                or _STT_HALLUCINATION_RE.search(text) is not None
-            )
-            if tail_is_empty:
+            # A KNOWN Whisper-on-silence/music boilerplate phrase (subtitle /
+            # broadcast credits / "Vielen Dank.") is a deterministic artifact,
+            # not the user — high-confidence bleed. A merely empty / too-short
+            # tail is ambiguous: bleed OR a quiet half-formed syllable the user
+            # is still producing. Keep them separate (they get different
+            # patience below).
+            tail_is_hallucination = _STT_HALLUCINATION_RE.search(text) is not None
+            tail_is_empty = not text or len(text) < self._probe_min_text_len
+            if tail_is_empty or tail_is_hallucination:
                 if not tail_loud:
-                    # Quiet empty tail = the user paused to think, not speaker
-                    # bleed. Do NOT bypass silence_ms via request_endpoint();
-                    # defer to the natural silence endpoint so the user keeps
-                    # the floor (the "no time to think" bug, 2026-05-25). The
-                    # relative-silence calibration guarantees the silence timer
-                    # is already accumulating, so the turn will still end.
+                    # Quiet tail = the user paused to think, not speaker bleed.
+                    # Do NOT bypass silence_ms via request_endpoint(); defer to
+                    # the natural silence endpoint so the user keeps the floor
+                    # (the "no time to think" bug, 2026-05-25). The relative-
+                    # silence calibration guarantees the silence timer is already
+                    # accumulating, so the turn will still end.
+                    self._probe_empty_count = 0
                     log.info(
-                        "STT probe: quiet empty tail (text=%r) → defer to silence (user may continue)",
+                        "STT probe: quiet empty tail (text=%r) → defer to silence",
                         text[:40],
                     )
                     return
+                if tail_is_hallucination:
+                    # Deterministic boilerplate while loud = speaker bleed where
+                    # the silence endpoint can never fire → force now (the
+                    # original speaker-bleed motivation for the probe).
+                    log.info(
+                        "STT probe: hallucination tail (text=%r conf=%.2f) → force endpoint",
+                        text[:40],
+                        confidence,
+                    )
+                    self._vad.request_endpoint()
+                    self._reset_probe_state()
+                    return
+                # Loud empty / too-short tail: ambiguous — speaker bleed OR a
+                # brief mumble/hesitation the user will continue (e.g. "och
+                # ha..." → 'um' at silence_ms=0, 2026-06-14, the user was
+                # acoustically still active with no silence accumulated). Whisper
+                # drops quiet/half-formed syllables to nothing, so ONE empty
+                # reading is not proof the user stopped. Require the empty tail
+                # to PERSIST across probes before forcing (mirrors the stable-
+                # tail signal): a transient miss defers and keeps the floor;
+                # sustained emptiness (real bleed) still forces.
+                self._probe_empty_count += 1
+                if self._probe_empty_count < self._probe_required_empty:
+                    log.info(
+                        "STT probe: loud empty tail (text=%r, %d/%d) → defer",
+                        text[:40],
+                        self._probe_empty_count,
+                        self._probe_required_empty,
+                    )
+                    return
                 log.info(
-                    "STT probe: empty tail (text=%r conf=%.2f) → force endpoint",
+                    "STT probe: empty tail sustained (text=%r conf=%.2f, %dx) → force",
                     text[:40],
                     confidence,
+                    self._probe_empty_count,
                 )
                 self._vad.request_endpoint()
                 self._reset_probe_state()
                 return
+
+            # Tail is non-empty: the empty-tail run is broken, so reset its
+            # counter (only *consecutive* empty tails accumulate toward a force).
+            self._probe_empty_count = 0
 
             # Signal 2: identical to last tail → nothing new arrived.
             self._probe_live_text = _merge_partial_transcript(

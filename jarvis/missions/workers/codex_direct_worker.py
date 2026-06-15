@@ -78,6 +78,16 @@ _STREAM_READLINE_LIMIT: int = 8 * 1024 * 1024
 # constant so tests can shrink it instead of sleeping 30 real seconds.
 _HARDCAP_GRACE_S: float = 30.0
 
+# Codex reasoning-effort tier for MISSION workers, overriding ~/.codex/config.toml
+# for the worker subprocess ONLY. The user's interactive config may pin a very
+# high tier ("xhigh"), but a sub-agent mission re-runs the worker across up to
+# MAX_CRITIC_LOOPS iterations, so a 7-minute xhigh reasoning pass per run makes a
+# mission drag for 10-15 min (live mission 019ec742, 2026-06-14: 452s + 399s
+# worker runs -> 899s critic_loop_exhausted). "medium" keeps strong code/analysis
+# quality at a fraction of the latency. Passed as `-c model_reasoning_effort=...`,
+# which a CLI override wins over config.toml.
+_MISSION_REASONING_EFFORT: str = "medium"
+
 
 def _resolve_codex_binary() -> str | None:
     """Return the on-PATH ``codex`` binary, considering Windows extensions."""
@@ -187,6 +197,10 @@ def _build_codex_direct_cmd(
         # the agent_message frame -- worker doesn't.
         "--sandbox", sandbox,
         "-c", f"approval_policy={approval_policy}",
+        # Cap reasoning effort for SPEED, overriding the user's interactive
+        # config (often "xhigh" -> ~7 min/run). A CLI `-c` override wins over
+        # config.toml. See _MISSION_REASONING_EFFORT (live mission 019ec742).
+        "-c", f"model_reasoning_effort={_MISSION_REASONING_EFFORT}",
         # D9 recursion guard at the codex level. A mission worker IS the
         # sub-agent — it must NEVER use codex's native multi-agent collaboration
         # tools (spawn_agent / wait) to spawn a NESTED codex agent and block on

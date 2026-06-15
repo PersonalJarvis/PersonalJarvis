@@ -54,7 +54,7 @@
   },
   "brain.sub_jarvis": {
     "provider": "openai-codex",
-    "model": "claude-opus-4-8",
+    "model": "",
     "fallback_provider": "gemini",
     "fallback_model": "gemini-3.1-pro-preview",
     "fallback_provider_2": "gemini",

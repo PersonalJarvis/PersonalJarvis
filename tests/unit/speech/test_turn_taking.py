@@ -711,6 +711,8 @@ def _make_probe_pipe(transcript: Transcript) -> tuple[SpeechPipeline, _StubVAD]:
     pipe._probe_last_text = ""
     pipe._probe_stable_count = 0
     pipe._probe_required_stable = 1
+    pipe._probe_empty_count = 0
+    pipe._probe_required_empty = 2
     pipe._probe_in_flight = True  # mirrors real-world `_on_vad_probe` setup
     vad = _StubVAD()
     pipe._vad = vad  # type: ignore[assignment]
@@ -745,15 +747,20 @@ async def test_probe_does_not_force_endpoint_on_real_speech_with_low_confidence(
 
 
 @pytest.mark.asyncio
-async def test_probe_forces_endpoint_on_empty_tail() -> None:
-    """Speaker-bleed protection still works: a probe that yields no text
-    must force the endpoint."""
+async def test_probe_forces_endpoint_on_sustained_empty_tail() -> None:
+    """Speaker-bleed protection still works: a SUSTAINED empty tail forces the
+    endpoint. A single empty tail now defers (it is indistinguishable from a
+    quiet mumble mid-speech — the "och ha..." cut, 2026-06-14); only the
+    persistent empty run (real bleed) forces."""
     pipe, vad = _make_probe_pipe(
         Transcript(text="", language="de", confidence=0.0, is_partial=False)
     )
 
+    # First empty probe defers (the user may still be speaking).
     await pipe._stt_probe_async(b"\x00\x00" * 512)
-
+    assert vad.endpoint_requested is False
+    # Sustained empty (real speaker bleed) → force.
+    await pipe._stt_probe_async(b"\x00\x00" * 512)
     assert vad.endpoint_requested is True
 
 
