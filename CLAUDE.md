@@ -10,12 +10,12 @@ There are TWO GitHub repos and sessions keep mixing them up. This is the truth t
 
 | Repo | Role | Who writes to it |
 |---|---|---|
-| **`PersonalJarvis/PersonalJarvis`** (PascalCase) | **THE project.** The one public-facing flagship repo the maintainer means when they say "the GitHub repo", "veröffentliche", "push it", "sichere den Stand", "update GitHub". | **ONLY** the `ship-public-release` skill (depersonalized snapshot — never raw `git push`, never secrets/PII/`data/`/Vault). <!-- i18n-allow: quoted German maintainer trigger phrases --> |
+| **`PersonalJarvis/PersonalJarvis`** (PascalCase) | **THE project.** The one public-facing flagship repo the maintainer means by ANY "get my work onto GitHub" request. This includes the plain git phrasings — **"commit to main", "commit this to main", "push", "push to main", "push this", "commit and push", "merge to main", "land it on main", "save to GitHub", "put it on GitHub"** — as well as "the GitHub repo", "veröffentliche", "push it", "sichere den Stand", "update GitHub". | **ONLY** the `ship-public-release` skill (depersonalized snapshot — never raw `git push`, never secrets/PII/`data/`/Vault). <!-- i18n-allow: quoted German maintainer trigger phrases --> |
 | `PersonalJarvis/personal-jarvis` (lowercase, remote `origin`) | Private **backstage**: raw dev history, branches, maintainer identity, day-to-day commits. | Dev sessions, as infrastructure. It is NOT "the project" the maintainer talks about. |
 
 **Binding rules:**
-1. When the maintainer asks to save/publish/push their work to GitHub, the user-visible deliverable is an updated **`PersonalJarvis/PersonalJarvis`** via the `ship-public-release` skill. Never ask "which repo". A raw-work push to `origin` may happen *in addition* (dev safety net), but it does not fulfill the request by itself.
-2. Never `git push` raw working state to `PersonalJarvis/PersonalJarvis`. That repo only ever receives the scrubbed release snapshot.
+1. **Any maintainer request to save / commit / push / publish / "put it on main" / "get it on GitHub" → the deliverable is an updated `PersonalJarvis/PersonalJarvis` via the `ship-public-release` skill.** A bare branch name ("main") or a bare git verb ("commit", "push", "merge") from the maintainer is **still** a publish-to-the-flagship request — do **NOT** quietly reduce it to a plain `git push origin` and call it done. Never ask "which repo". A raw-work push to `origin` (private) may happen *in addition* as a dev safety net, but it **never** fulfills the request by itself. (This exact misread — "commit this to main" treated as a private-repo push — happened on 2026-06-15; this row is the fix.)
+2. Never `git push` raw working state to `PersonalJarvis/PersonalJarvis`. That repo only ever receives the scrubbed release snapshot. **Enforced, not just documented:** the pre-push guard `scripts/ci/guard_no_raw_public_push.py` (wired into `.git/hooks/pre-push`) hard-blocks any raw push from the working repo to the public remote. Install it in a fresh clone with `python scripts/ci/install_git_hooks.py`.
 3. Full doctrine + history: [`CLOUD.md`](CLOUD.md) § "Canonical repositories" (points 1–5).
 
 ---
