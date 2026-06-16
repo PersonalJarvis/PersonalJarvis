@@ -206,6 +206,9 @@ async def _run_headless(cfg) -> int:
     server.app.state.supervisor = supervisor
     server.app.state.chat_store = chat_store
     server.app.state.brain = brain
+    # Headless/VPS: native file actions would open on the SERVER's desktop, not
+    # the user's. Disable them (the frontend hides the buttons; the routes 404).
+    server.app.state.native_file_actions = False
 
     async def _on_user_message(evt: MessageSent) -> None:
         if evt.role != "user":

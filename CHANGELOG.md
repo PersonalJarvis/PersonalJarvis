@@ -7,42 +7,36 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
-## [0.7.0] — 2026-06-16
+## [v0.8.0] — 2026-06-16
 
 ### Added
 
-- **Voice continuation**: a follow-on utterance spoken while Jarvis is still
-  thinking is recombined into the in-flight turn instead of being dropped or
-  starting a new turn (`jarvis/speech/continuation_window.py`, with
-  `[speech]` configuration knobs).
-- **JarvisDock mission drag-drop polish**: a compact custom drag chip, a dock
-  bloom on hover, a full-window catch layer (no more OS "no-drop" cursor), and
-  an absorb animation with a soft WebAudio chime
-  (`frontend/src/lib/missionDragImage.ts`, `lib/sound.ts`,
-  `store/missionDrag.ts`).
-- **Computer-Use literal dictation**: native Unicode `SendInput` typing on
-  Windows so multi-word verbatim input ("type hello hello hello") is entered
-  exactly, independent of keyboard layout.
-
-### Fixed
-
-- **Sub-agent missions started by voice** reliably failed
-  (`critic_loop_exhausted`) whenever the request named the vehicle ("spawn a
-  sub-agent that …"): the routing meta-clause was handed to the worker as its
-  own task. It is now stripped from the worker prompt via a single shared,
-  parity-guarded function so the worker prompt and the critic classifier can
-  never drift apart (`jarvis/missions/stream_evidence.py`,
-  `jarvis/plugins/tool/spawn_worker.py`).
-- **Computer-Use** typing garble and a spurious shell-idiom prefix; planner
-  navigation-vs-search derailment on descriptor keywords; one-shot screenshot
-  over-execution; humanized failure read-back instead of a raw exit code.
-- **Web search** backend timeout caused by the `ddgs` auto mode front-loading
-  its slowest engines.
+- **Adjustable thinking-pause slider** (Settings → Voice). Tune the voice
+  endpoint silence window — how long Jarvis waits in silence before it treats an
+  utterance as finished — anywhere from 0.5 s to 5.0 s (default 1.5 s), with a
+  live readout and a reset-to-default control. The value is persisted to
+  `jarvis.toml` (`[speech].vad_silence_ms`) and applied **live** to the running
+  voice pipeline with no restart. The max-utterance safety cap grows with the
+  window so a long, deliberate pause is never cut short. New route
+  `GET/PUT /api/settings/silence-window`; `SileroEndpointer.set_silence_window_ms`.
+- Cross-platform `jarvis/platform/open_path.py` helper for opening files/paths
+  in the OS default handler.
+- Artifact view (`jarvis/ui/web/artifact_view.py`) for inspecting generated
+  worker outputs from the Outputs view.
 
 ### Changed
 
-- Routing, voice end-pointing patience for delegation composition, and
-  Computer-Use planner-prompt refinements.
+- Voice endpointing: a probe-driven endpoint can no longer end a turn before the
+  configured silence floor is reached, so every utterance keeps its full
+  think-buffer (the slider above makes that floor user-adjustable).
+- JarvisDock and Outputs/Sidebar polish; bilingual (en/de/es) UI strings updated.
+
+### Fixed
+
+- Various voice-pipeline and Computer-Use robustness fixes (continuation
+  recombine, hangup-during-TTS, latency phase marks).
+
+---
 
 ## [v1.0.0-board] — 2026-04-25
 

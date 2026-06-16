@@ -130,6 +130,24 @@ class SileroEndpointer:
         if extra > self._extra_silence_frames:
             self._extra_silence_frames = extra
 
+    def set_silence_window_ms(self, ms: int) -> None:
+        """Live-update the BASE silence window and the matching hard cap.
+
+        The running ``utterances()`` loop reads ``_effective_silence_frames`` and
+        ``_max_samples`` on every frame, so a change here takes effect on the next
+        processed frame — no pipeline rebuild (the user-tunable "think buffer",
+        desktop Settings → Voice). ``_extra_silence_frames`` (delegation patience)
+        stays additive on top of the new base. The max-utterance cap grows with
+        the window so a long thinking pause is never beheaded by the safety net
+        (maintainer choice 2026-06-16): cap = max(8 s, ceil(window_s) + 5 s).
+        Clamps defensively to 500–5000 ms — the route validates, but the VAD must
+        not trust callers or a stray value could wedge endpointing.
+        """
+        ms = max(500, min(5000, int(ms)))
+        self._silence_frames = max(1, ms // 32)
+        cap_s = max(8, (ms + 999) // 1000 + 5)  # (ms+999)//1000 == ceil(ms/1000)
+        self._max_samples = cap_s * VAD_SAMPLE_RATE
+
     @property
     def _effective_silence_frames(self) -> int:
         """Silence frames required to end the turn, including any patience grant."""

@@ -159,6 +159,40 @@ def _should_hold_complete_delegation_for_grace(text: str | None) -> bool:
     return _looks_like_delegation_composition(text)
 
 
+# Minimum word count of the live partial past which we treat the utterance as a
+# long dictation (not a short command) and grant it the wider silence window. A
+# short command ("öffne Chrome", "auflegen") never reaches it → stays snappy.
+_LONG_COMPOSITION_MIN_WORDS = 12
+
+
+def _looks_like_long_composition(partial: str | None) -> bool:
+    """True when the live partial shows an ongoing LONG dictation that deserves a
+    wider silence window — vocabulary-independent, so ANY long prompt (not only
+    delegations) gets room to pause and think mid-composition. A short command
+    ("öffne Chrome", "auflegen") stays well under the threshold → stays snappy.
+
+    Deliberately a word-count signal only: ``completion.is_incomplete`` is too
+    conservative on live partials (it flags a trailing comma/ellipsis but not a
+    bare open preposition like "nach"), and a short open-ended tail is already
+    re-attached downstream by the continuation-recombine path. Deep dive
+    2026-06-16: a long "Agents" / "Agent Team" prompt was chopped at every 1.5 s
+    pause because the old trigger matched only delegation keywords.
+    """
+    if not partial:
+        return False
+    return len(partial.split()) >= _LONG_COMPOSITION_MIN_WORDS
+
+
+def _should_extend_silence_for_composition(partial: str | None) -> bool:
+    """Single entry point for the adaptive-patience decision: widen the silence
+    window when the user is composing a delegation OR any long / open-ended
+    utterance, so the system lets a long dictation finish instead of cutting at
+    every thinking pause."""
+    return _looks_like_delegation_composition(partial) or _looks_like_long_composition(
+        partial
+    )
+
+
 BrainCallback = Callable[[str], Awaitable[str]]
 
 
@@ -1023,14 +1057,16 @@ class SpeechPipeline:
         self._pending_flush_task: asyncio.Task[None] | None = None
         self._vad = SileroEndpointer(
             silence_ms=vad_silence_ms,
-            # Hard-cap of the whole utterance. Original default was 30 s
-            # which felt like an eternity when speaker bleed kept Silero
-            # busy. 8 s is well above any natural single-turn user
-            # utterance — the STT probe path normally fires within ~2.5 s,
-            # so this cap is the last safety net, not the primary path.
-            # User feedback 2026-05-09: 12 s still felt "way too long" in
-            # the very rare cases where neither silence nor probe fired.
-            max_utterance_s=8,
+            # Hard-cap of one captured chunk. The old 2026-05-09 value of 8 s
+            # assumed a cap-hit DISPATCHED (so it "felt too long"), but a
+            # ``max_utterance`` cut now carry-merges (``FORCED_CUT_REASONS`` →
+            # keep listening, no dispatch — see _handle_utterance_turn), so a
+            # higher cap costs no extra wait: it only reduces how often a long
+            # continuous dictation is sliced into carry chunks (which degraded
+            # transcription — deep dive 2026-06-16: an 8 s slice came back as
+            # just "und mehr."). 15 s keeps slicing rare while the carry-runaway
+            # guard (60 s / ~1.9 MB) stays the real backstop.
+            max_utterance_s=15,
             on_speech_start=self._on_vad_speech_start,
             on_silence_start=self._on_vad_silence_start,
             on_silence_cancel=self._on_vad_silence_cancel,
@@ -1262,6 +1298,9 @@ class SpeechPipeline:
             max_chain=int(getattr(_voice_cfg, "continuation_max_chain", 3)),
         )
         self._continuation_dispatched_this_turn = False
+        # Prior text to drop from history when a recombined turn actually
+        # dispatches (deferred so an early-returning guard never mutates history).
+        self._continuation_pending_drop: str | None = None
         # Active timeout the ContinuationBuffer lacks: when a held incomplete
         # fragment is never continued, this fires a clarifying question instead
         # of leaving the user in silence (AD-OE6; "hört für immer zu" fix).
@@ -1292,6 +1331,19 @@ class SpeechPipeline:
         self._tts = new_tts
         self._ack_pcm = b""
         self._task_ack_pcm.clear()
+
+    def set_silence_window_ms(self, ms: int) -> None:
+        """Live-apply a new voice silence window to the running VAD.
+
+        Delegates to ``SileroEndpointer.set_silence_window_ms`` so a Settings
+        change takes effect immediately (no restart). No-op-safe when the VAD is
+        absent (headless / not yet started) — the value still persisted and
+        applies on the next start.
+        """
+        vad = getattr(self, "_vad", None)
+        setter = getattr(vad, "set_silence_window_ms", None)
+        if callable(setter):
+            setter(int(ms))
 
     def set_wake_plan(self, plan: Any) -> None:
         """Live-apply a resolved WakeWordPlan — no app/pipeline restart.
@@ -1687,15 +1739,17 @@ class SpeechPipeline:
                 raw_text,
             )
 
-            # Adaptive patience: the live partial shows a delegation being
-            # composed ("spawn a sub-agent that ...") → grant this utterance a
-            # wider silence window so a pause to formulate the task is not cut
-            # off (live 2026-06-16). Re-asserted on every non-empty probe so it
+            # Adaptive patience: the live partial shows the user composing a
+            # delegation OR any long / open-ended dictation → grant this utterance
+            # a wider silence window so a pause to formulate the task is not cut
+            # off (deep dive 2026-06-16: a long "Agents"/"Agent Team" prompt was
+            # chopped at every 1.5 s pause because the trigger matched only
+            # delegation keywords). Re-asserted on every non-empty probe so it
             # survives a max_utterance carry; the VAD resets it to the snappy
             # default at the next speech start. Guarded so a VAD double without
             # the method (tests) is a harmless no-op and never aborts the force
             # logic below.
-            if _looks_like_delegation_composition(self._probe_live_text):
+            if _should_extend_silence_for_composition(self._probe_live_text):
                 _extend = getattr(self._vad, "extend_silence_window", None)
                 if callable(_extend):
                     _extend(_DELEGATION_SILENCE_MS)
@@ -3826,6 +3880,9 @@ class SpeechPipeline:
                 win = getattr(self, "_continuation_window", None)
                 if win is not None:
                     win.mark_idle()
+            # Drop a parked recombine that never reached dispatch (a guard
+            # returned early) so it cannot leak into the next turn.
+            self._continuation_pending_drop = None
             self._emit_latency_turn_complete()
 
     def _emit_latency_turn_complete(self) -> None:
@@ -3877,14 +3934,15 @@ class SpeechPipeline:
             return text, False
         if not combined or combined == text:
             return text, False
-        prior = window.text
         log.info("↪ Continuation recombine → %r", combined[:120])
-        brain = getattr(self, "_brain", None)
-        if brain is not None and hasattr(brain, "drop_last_turn"):
-            try:
-                brain.drop_last_turn(prior)
-            except Exception:  # noqa: BLE001 — history hygiene must never crash the turn
-                log.debug("drop_last_turn failed (non-fatal)", exc_info=True)
+        # Consume the window NOW so a later guard (ContinuationBuffer hold,
+        # privacy/skill early-return) that prevents dispatch cannot leave the old
+        # prior armed to re-merge on the next utterance (double-coalescing). DEFER
+        # the history drop to _arm_continuation so it is applied only when this
+        # turn truly dispatches — an early return must not mutate history for a
+        # turn the brain never sees.
+        self._continuation_pending_drop = window.text
+        window.clear()
         return combined, True
 
     def _arm_continuation(self, text: str, *, continued: bool) -> None:
@@ -3898,6 +3956,18 @@ class SpeechPipeline:
         if window is None:
             return
         try:
+            # Deferred history drop: a recombine earlier this turn parked the
+            # prior text; apply it ONLY now that the turn actually dispatches, so
+            # an early-returning guard never mutated history.
+            prior = getattr(self, "_continuation_pending_drop", None)
+            if prior:
+                self._continuation_pending_drop = None
+                brain = getattr(self, "_brain", None)
+                if brain is not None and hasattr(brain, "drop_last_turn"):
+                    try:
+                        brain.drop_last_turn(prior)
+                    except Exception:  # noqa: BLE001 — history hygiene never crashes the turn
+                        log.debug("drop_last_turn failed (non-fatal)", exc_info=True)
             window.note_dispatch(text, continued=continued)
             self._continuation_dispatched_this_turn = True
         except Exception:  # noqa: BLE001
@@ -5091,6 +5161,11 @@ class SpeechPipeline:
                         chunk = await channel.get()
                         if chunk is None:
                             break
+                        # First real audio chunk reaches the player: the thinking
+                        # phase is over, so the thinking-interrupt monitor in
+                        # _run_brain_with_stall_guard stands down and the
+                        # per-playback barge monitor takes over interruption.
+                        self._brain_first_frame_played = True
                         yield chunk
                 finally:
                     sentence_channels.task_done()
@@ -5184,7 +5259,6 @@ class SpeechPipeline:
                 # channel queue is at capacity (consumer keeps draining).
                 await sentence_channels.put(None)
 
-        self._brain_first_frame_played = True
         produce_task = asyncio.create_task(_produce(), name="tts-produce-turn")
         play_task = asyncio.create_task(
             self._player.play_chunks(_merged_chunks()), name="tts-play-turn"
@@ -5527,7 +5601,10 @@ class SpeechPipeline:
         if interrupt_monitor and getattr(self, "_continuation_interrupt_enabled", False):
             self._brain_first_frame_played = False
             monitor_task = asyncio.create_task(
-                self._barge_monitor(grace_s=_CONTINUATION_THINKING_GRACE_S),
+                self._barge_monitor(
+                    grace_s=_CONTINUATION_THINKING_GRACE_S,
+                    respect_input_suppression=True,
+                ),
                 name="thinking-interrupt-monitor",
             )
         try:
@@ -5539,6 +5616,10 @@ class SpeechPipeline:
                         # Playback started — _brain_streaming's own barge monitor
                         # now owns interruption; stand our thinking monitor down.
                         monitor_task.cancel()
+                        try:
+                            await monitor_task
+                        except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                            pass
                         monitor_task = None
                     elif (
                         monitor_task in done
@@ -5556,12 +5637,16 @@ class SpeechPipeline:
                         task.cancel()
                         try:
                             await task
-                        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                        except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
                             pass
                         return ("", True)
                 if task in done:
                     if monitor_task is not None:
                         monitor_task.cancel()
+                        try:
+                            await monitor_task
+                        except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                            pass
                     return task.result()
                 now = time.monotonic()
                 stalled = (now - self._brain_last_progress) >= stall_s
@@ -5599,6 +5684,10 @@ class SpeechPipeline:
         finally:
             if monitor_task is not None and not monitor_task.done():
                 monitor_task.cancel()
+                try:
+                    await monitor_task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                    pass
             if not task.done():
                 task.cancel()
                 try:
@@ -5991,7 +6080,9 @@ class SpeechPipeline:
             self._suppress_session_input_after_tts("response")
         return barged
 
-    async def _barge_monitor(self, *, grace_s: float = 1.5) -> bool:
+    async def _barge_monitor(
+        self, *, grace_s: float = 1.5, respect_input_suppression: bool = False
+    ) -> bool:
         """Lauscht auf einer zweiten Mic-Instanz, ob der User während Jarvis'
         TTS-Ausgabe zu sprechen beginnt. Returnt ``True`` sobald das der Fall ist.
 
@@ -6018,6 +6109,18 @@ class SpeechPipeline:
                 residual = np.empty(0, dtype=np.float32)
                 speech_run = 0
                 async for chunk in mic.stream():
+                    # Echo-suppression (spec §4.2): while our own ACK/preamble
+                    # audio is still within the post-TTS suppression window, skip
+                    # detection so the thinking-interrupt monitor never mistakes
+                    # the preamble's speaker->mic leakage for the user speaking.
+                    # Pure read (no mutation) to avoid racing the session-input
+                    # dropper that shares _input_suppressed_until_ns.
+                    if respect_input_suppression:
+                        until_ns = getattr(self, "_input_suppressed_until_ns", 0)
+                        chunk_ts = getattr(chunk, "timestamp_ns", 0) or time.time_ns()
+                        if until_ns > 0 and chunk_ts < until_ns:
+                            speech_run = 0
+                            continue
                     samples = pcm_bytes_to_np(chunk.pcm)
                     buf = np.concatenate([residual, samples])
                     n_full = len(buf) // VAD_FRAME_SAMPLES

@@ -929,6 +929,22 @@ class LatencyTurnComplete(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class VoiceBootStatus(Event):
+    """Voice warm-up readiness signal — drives the UI "voice starting" badge.
+
+    Emitted by the speech pipeline's two-phase warm-up: ``ready=False`` at the
+    very start, then ``ready=True`` once the critical listening path (audio
+    device, VAD, wake-word, TTS client) is live — *before* the background
+    confirmation-audio pre-render finishes. The frontend listens for event_name
+    ``VoiceBootStatus`` and reads ``GET /api/voice/status`` on a late mount
+    (WS events are not persistent). ``detail`` carries a short phase label for
+    logs/diagnostics only.
+    """
+    ready: bool = False
+    detail: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class VoiceSessionStarted(Event):
     """Wake word detected — a new voice session is starting."""
     session_id: str = ""

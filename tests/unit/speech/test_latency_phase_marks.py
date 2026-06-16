@@ -99,7 +99,7 @@ def _make_streaming_pipeline(bus: EventBus | None = None) -> SpeechPipeline:
     pipeline._player = _DrainPlayer()  # type: ignore[assignment]
     pipeline._brain = _TwoSentenceBrain()  # type: ignore[assignment]
 
-    async def _never_barge(*, grace_s: float = 1.5) -> bool:
+    async def _never_barge(**_kwargs) -> bool:
         await asyncio.sleep(3600)
         return False
 

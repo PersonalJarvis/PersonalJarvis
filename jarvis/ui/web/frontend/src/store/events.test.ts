@@ -45,6 +45,25 @@ describe("useEventStore.pushMessage idempotency", () => {
   });
 });
 
+describe("voice boot readiness (voiceReady / setVoiceReady)", () => {
+  beforeEach(() => {
+    // Reset to the documented default before each case.
+    useEventStore.setState({ voiceReady: false });
+  });
+
+  it("defaults to false (voice boots ~20s after the window connects)", () => {
+    expect(useEventStore.getState().voiceReady).toBe(false);
+  });
+
+  it("setVoiceReady(true) flips it ready, setVoiceReady(false) flips it back", () => {
+    useEventStore.getState().setVoiceReady(true);
+    expect(useEventStore.getState().voiceReady).toBe(true);
+
+    useEventStore.getState().setVoiceReady(false);
+    expect(useEventStore.getState().voiceReady).toBe(false);
+  });
+});
+
 describe("reasoning trace (thinkingSteps / thinkingTraces)", () => {
   beforeEach(() => {
     useEventStore.setState({

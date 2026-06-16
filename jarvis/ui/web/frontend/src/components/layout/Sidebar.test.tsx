@@ -52,3 +52,55 @@ describe("Sidebar voice header", () => {
     expect(screen.getByText("auflegen")).toBeTruthy();
   });
 });
+
+describe("Sidebar voice-boot indicator", () => {
+  beforeEach(() => {
+    useEventStore.setState({
+      voiceState: "idle",
+      transcription: "",
+      transcriptionFinal: true,
+      connected: true,
+      voiceReady: false,
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  test("shows a 'Voice starting…' spinner while connected but voice not ready", () => {
+    // The window connects in ~1s but the voice feature warms up ~20s in the
+    // background. During that gap the header must signal "starting", not the
+    // normal idle "Ready" state (which would imply the mic already works).
+    useEventStore.setState({ connected: true, voiceReady: false });
+
+    const { container } = render(<Sidebar />);
+
+    expect(screen.getByText("Voice starting…")).toBeTruthy();
+    expect(container.querySelector('[data-testid="voice-starting-spinner"]')).not.toBeNull();
+    // The normal idle voice label must NOT be shown during warmup.
+    expect(screen.queryByText("Ready")).toBeNull();
+  });
+
+  test("reverts to the normal voice state once voice is ready", () => {
+    useEventStore.setState({ connected: true, voiceReady: true, voiceState: "idle" });
+
+    const { container } = render(<Sidebar />);
+
+    expect(screen.getByText("Ready")).toBeTruthy();
+    expect(screen.queryByText("Voice starting…")).toBeNull();
+    expect(container.querySelector('[data-testid="voice-starting-spinner"]')).toBeNull();
+  });
+
+  test("shows 'Offline' (not the spinner) when disconnected", () => {
+    // Disconnected outranks warmup: there is no live socket to even report
+    // voice readiness, so the honest state is Offline.
+    useEventStore.setState({ connected: false, voiceReady: false });
+
+    const { container } = render(<Sidebar />);
+
+    expect(screen.getByText("Offline")).toBeTruthy();
+    expect(screen.queryByText("Voice starting…")).toBeNull();
+    expect(container.querySelector('[data-testid="voice-starting-spinner"]')).toBeNull();
+  });
+});

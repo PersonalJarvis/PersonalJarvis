@@ -89,10 +89,17 @@ The short version:
 | **Friends + Socials** | ✅ | `jarvis/friends/` (`registry.py` `FriendRegistry` on `aiosqlite`, `status_publisher.py`, `status_filter.py`, `messages.py`, `schemas.py`). Routes `friends_routes.py` + `socials_routes.py`; views `FriendsView.tsx`, `frontend/src/views/friends/` + `socials/`. Telegram channel is the live transport (F-FRIENDS F0/F1). |
 | **Contacts + Telephony** | ✅ | `jarvis/contacts/` (`store.py`, `schema.py`, `notify.py`) — contacts mirror to guaranteed Wiki person pages `people/<slug>.md` on `ContactChanged` (PII stays out of the page). Tools `contact-lookup` (safe), `contact-upsert` (monitor, write), `call-contact` (ask, echo-confirm). `jarvis/telephony/` (`outbound.py`, `twiml.py`, `provisioning.py`, `security.py`, `session.py`) places real outbound calls via Twilio. **Twilio is the optional `[telephony]` extra** — routes (`telephony_routes.py`) + `TelephonyManager` degrade gracefully when absent (AD-T8). Views `TelephonyView.tsx`, `frontend/src/views/contacts/`. |
 | **Marketplace plugins** | ✅ | `jarvis/marketplace/` (catalog + `auth/` OAuth + `oauth_callback_server.py` + `plugin_loader.py`/`plugin_registry.py`/`plugin_relevance.py` + `mcp_bridge.py`). The `plugin-tools` entry-point loader expands connected marketplace plugins into live brain tools. Native REST tools where a catalog transport was insufficient: `gmail` (`gmail_rest`, ask — send is consequential) + `vercel` (`vercel_rest`, monitor — read-only). Router-tier, never a spawn (AP-5/AP-14). Route `marketplace_routes.py`; views `PluginsView.tsx`, `ExtensionsView.tsx`. |
+| **Workflows** | ✅ | `jarvis/workflows/` (`runner.py`, `scheduler.py`, `store.py`, `schema.sql`, `seed.py`). Imperative cron/manual-triggered multi-step pipelines (brain-prompt / harness-dispatch / shell / tool-call / speak steps) — distinct from Phase-6 *missions* (single persistent self-healing action). Route `workflows_routes.py` (CRUD); `bootstrap_workflows` on `app.state`. View `WorkflowsView.tsx`. |
+| **Conductor** | ✅ | **Separate root package `conductor/`** (`api/`, `core/`, `jobs/`, `seed/`, `cli.py`) with its own SQLite store — a YAML-first agentic-workflow canvas (shell/http/agent jobs, cron/webhook/manual triggers, timeline view). Jarvis mounts the Conductor router inside its own FastAPI server → `ConductorView.tsx`. Do not confuse with **Workflows** (imperative, in-`jarvis/`) — Conductor is YAML-first and standalone-capable. |
+| **Sub-Agents / Outputs** | ✅ | `jarvis/agents/registry.py` builds an in-RAM sub-agent event tree from the EventBus (OpenClaw/Brain/Tool signals; TTL-cached, no DB) → `sub_agents_routes.py` (`/api/sub-agents/tree`) + `SubAgentsView.tsx`. **Outputs** (`outputs_routes.py` + `OutputsView.tsx`) list a mission's *deliverables* from the filesystem (`<repo_parent>/sub-agents-outputs/<slug>/`, NOT a DB). An "artifact" is a `.md`/PDF/HTML/code file a worker produced. Per-artifact download (`Content-Disposition` attachment) / view (server-rendered markdown→HTML under a strict `default-src 'none'` CSP) / desktop-only reveal+open-with-default-app via `jarvis/platform/open_path.py`; native actions are off on headless/VPS (`native_file_actions` launcher flag). |
+| **Frontier (model auto-switch)** | ✅ | `jarvis/brain/frontier_{resolver,autoswitch}.py` query each provider's `/v1/models` at boot, detect newer models, and propose switching `BrainProviderConfig`; the user acknowledges via a modal → `POST /api/frontier/ack`. Route `frontier_routes.py` (`/api/frontier/{pending,ack}`); cache `data/frontier_cache.json` (24h TTL). Aligns with the "frontier-quality-before-cost" user preference. |
+| **Preview / Pointer / Federation** | ✅ | `jarvis/preview/registry.py` + `preview_routes.py` — registry of dev-server iframes (Vite `:5173`, Storybook) surfaced in the sidebar; paired with the `start-preview-server` / `verify-localhost` self-verification tools. `jarvis/pointer/` (`intent.py`, `context.py`, `turn.py`) — "AI Pointer": resolves the UI element under the mouse cursor via the OS accessibility tree (not a screenshot), attached only on deictic intent ("what's that", "click there"); router tool `inspect-pointer`. `federation_proxy_routes.py` — local signing proxy to the Board-federation backend (frontend has no privkey; signs with the Credential-Manager key; path-whitelist anti-traversal). |
 
-There are additional newer routers/views not yet rowed here (`conductor`, `workflows`, `federation_proxy`, `frontier`, `chats`/`sessions`, `preview`, `sub_agents`/`outputs`). Treat the absence of a row as "undocumented, not absent" — `ls jarvis/ui/web/*routes*.py` + `git log -- <module>` is the source of truth.
+Infra-only (no UI, consumed internally): `jarvis/hardware/detection.py` (CPU/GPU/VRAM/CUDA probe + Whisper-model sizing for the wizard / `--check`); `jarvis/orchestrator/` (currently a thin L6 seam — most supervisor logic lives in `jarvis/missions/`); `jarvis/diagnostics/`.
 
-Status drift moves fast. Verify with `git log -- <module>` rather than trusting this table.
+Still unrowed (verify with `ls jarvis/ui/web/*routes*.py` + `git log`): `chats`/`sessions`. Treat the absence of a row as "undocumented, not absent" — the filesystem + `git log -- <module>` is the source of truth.
+
+Status drift moves fast. Verify with `git log -- <module>` rather than trusting this table. *(Table cross-checked against the working tree on 2026-06-16; the rows above were added that day after confirming each module's files + route + view exist.)*
 
 ---
 
@@ -327,9 +334,13 @@ pytest -m phase5                             # Phase-5 integration
 pytest -m e2e                                # Phase-7 E2E
 pytest -m voice_latency                      # Phase-L latency
 pytest -m eval                               # golden-query eval
-pytest -m openclaw_live                      # real OpenClaw subprocess (skips when binary missing)
+pytest -m integration                        # real subprocesses / live external services (Codex OAuth, OpenClaw); self-skips when prereqs missing
 pytest -m "not slow"                         # fast subset
 pytest -m skip_ci                            # tests that need desktop/admin/click
+# NOTE: the registered markers are exactly: phase5, skip_ci, e2e, voice_latency,
+# eval, slow, integration (see [tool.pytest.ini_options]). The historical
+# `phase6` / `openclaw_live` markers are NOT registered and select 0 tests today —
+# run those buckets by path instead (`pytest tests/missions/`, `tests/integration/`).
 
 # Layer-targeted
 pytest -k test_tier1_speed                                  # latency regression

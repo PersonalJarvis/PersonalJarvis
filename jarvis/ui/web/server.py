@@ -38,6 +38,7 @@ from jarvis.core.events import (
     TerminalCommandExecuted,
     TerminalOutput,
     TerminalSpawned,
+    VoiceBootStatus,
 )
 from jarvis.core.registry import list_all_plugins
 from jarvis.terminal import PtyManager, discover_shells, get_shell
@@ -345,6 +346,16 @@ class WebServer:
         app.state.config = self.cfg
         app.state.bus = self.bus
 
+        # Voice boot-readiness mirror. WS events are one-shot, so a tab that
+        # connects after warm-up finished would never see VoiceBootStatus.
+        # Persist the latest state here for GET /api/voice/status to read.
+        app.state.voice_ready = False
+
+        async def _track_voice_ready(event: VoiceBootStatus) -> None:
+            app.state.voice_ready = bool(event.ready)
+
+        self.bus.subscribe(VoiceBootStatus, _track_voice_ready)
+
         self._register_static_or_spa(app)
 
         return app
@@ -630,6 +641,17 @@ class WebServer:
             prov_cfg = cfg.brain.providers.get(provider)
             model = getattr(prov_cfg, "model", None) if prov_cfg else None
             return {"provider": provider, "model": model or "unknown"}
+
+        @app.get("/api/voice/status")
+        async def voice_status() -> dict[str, Any]:
+            """Liefert die aktuelle Voice-Boot-Bereitschaft.
+
+            Frontend nutzt das beim Mount, um den "voice starting"-Badge
+            korrekt zu initialisieren — das ``VoiceBootStatus``-WS-Event ist
+            ein One-Shot, eine spät verbundene UI würde es verpassen. Der Wert
+            wird vom Bus-Subscriber in ``_build_app`` gepflegt.
+            """
+            return {"ready": bool(getattr(app.state, "voice_ready", False))}
 
         @app.get("/api/openclaw/status")
         async def openclaw_status() -> dict[str, Any]:

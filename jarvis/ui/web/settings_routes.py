@@ -1137,3 +1137,82 @@ async def put_wiki_provider(body: WikiProviderBody, request: Request) -> dict[st
         # takes effect after the next ingest / restart.
         "restart_required": not applied_live,
     }
+
+
+# ---------------------------------------------------------------------------
+# Voice silence window (the user-tunable "think buffer"). GET current + bounds;
+# PUT to change. Persisted to jarvis.toml [speech].vad_silence_ms AND live-applied
+# to the running SpeechPipeline (set_silence_window_ms → SileroEndpointer), so a
+# change takes effect immediately without a restart; a headless/down pipeline
+# falls back to "applies on next start". Range 500–5000 ms, default 1500.
+# ---------------------------------------------------------------------------
+
+_SILENCE_WINDOW_MIN = 500
+_SILENCE_WINDOW_MAX = 5000
+_SILENCE_WINDOW_DEFAULT = 1500
+
+
+class SilenceWindowBody(BaseModel):
+    ms: int = Field(..., ge=_SILENCE_WINDOW_MIN, le=_SILENCE_WINDOW_MAX)
+    persist: bool = Field(default=True, description="Persist as boot default in jarvis.toml")
+
+
+def _current_silence_window_ms(request: Request) -> int:
+    cfg = _config(request)
+    speech = getattr(cfg, "speech", None)
+    return int(getattr(speech, "vad_silence_ms", _SILENCE_WINDOW_DEFAULT))
+
+
+@router.get("/silence-window")
+async def get_silence_window(request: Request) -> dict[str, object]:
+    return {
+        "ms": _current_silence_window_ms(request),
+        "default": _SILENCE_WINDOW_DEFAULT,
+        "min": _SILENCE_WINDOW_MIN,
+        "max": _SILENCE_WINDOW_MAX,
+    }
+
+
+@router.put("/silence-window")
+async def put_silence_window(body: SilenceWindowBody, request: Request) -> dict[str, object]:
+    ms = int(body.ms)  # already range-validated by the Pydantic Field
+
+    # Best-effort in-memory cfg update so a later cfg read agrees pre-restart.
+    cfg = _config(request)
+    if cfg is not None and getattr(cfg, "speech", None) is not None:
+        try:
+            cfg.speech.vad_silence_ms = ms  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 — frozen model is not an error
+            log.debug("in-memory speech.vad_silence_ms update skipped: %s", exc)
+
+    persisted = False
+    if body.persist:
+        try:
+            from jarvis.core import config_writer
+            from jarvis.core.config import resolve_config_path
+
+            config_writer.set_silence_window_ms(ms, path=resolve_config_path())
+            persisted = True
+        except Exception as exc:  # noqa: BLE001 — persist is best-effort
+            log.warning("silence-window persist failed (live apply still attempted): %s", exc)
+
+    # Live-apply to the running voice pipeline so the new window works
+    # immediately — no app restart. Best-effort: a headless/down pipeline just
+    # means it applies on next start.
+    applied_live = False
+    pipeline = getattr(request.app.state, "speech_pipeline", None)
+    if pipeline is not None and hasattr(pipeline, "set_silence_window_ms"):
+        try:
+            pipeline.set_silence_window_ms(ms)
+            applied_live = True
+        except Exception as exc:  # noqa: BLE001 — never fail the save on a live-apply hiccup
+            log.warning("silence-window live-apply failed (persisted; applies on restart): %s", exc)
+
+    return {
+        "ok": True,
+        "ms": ms,
+        "default": _SILENCE_WINDOW_DEFAULT,
+        "persisted": persisted,
+        "applied_live": applied_live,
+        "restart_required": not applied_live,
+    }
