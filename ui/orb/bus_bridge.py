@@ -497,16 +497,16 @@ class OrbBusBridge:
             self._refresh_voice_bubble()
             self._cancel_idle_scheduler()
         elif state == "SPEAKING":
-            # TTS-Synthese laeuft hier oft noch — der State wechselt zu
-            # SPEAKING bevor das erste Audio-Sample wirklich aus dem
-            # Lautsprecher kommt (Vorlauf 0.5–2 s). Diese stille Vorlaufzeit
-            # ist aus Nutzersicht weiterhin "Verarbeiten", also bleibt das
-            # Overlay auf der THINKING-Welle und wechselt erst auf die
-            # SPEAKING-Bars, wenn wirklich Ton da ist — getrieben vom
-            # AudioOutFirst-Event (siehe _on_audio_out_first). Der Mund + das
-            # "nod" haengen aus demselben Grund am AudioOutFirst-Event. Die
-            # Bubble zeigt jetzt schon Jarvis' Antworttext — dieselbe Quelle
-            # wie die Sidebar-Assistant-Zeile.
+            # TTS synthesis is often still running here — the state flips to
+            # SPEAKING before the first audio sample actually leaves the
+            # speaker (0.5–2 s lead time). From the user's perspective that
+            # silent lead time is still "processing", so the overlay stays on
+            # the THINKING wave and only switches to the SPEAKING bars once
+            # there is real sound — driven by the AudioOutFirst event (see
+            # _on_audio_out_first). The mouth + the "nod" hang off the
+            # AudioOutFirst event for the same reason. The bubble already shows
+            # Jarvis' reply text now — the same source as the sidebar assistant
+            # line.
             self._orb.show(mode="think")
             self._refresh_voice_bubble()
             self._cancel_idle_scheduler()

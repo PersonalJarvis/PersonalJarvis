@@ -17,7 +17,10 @@ from typing import Any
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.platform import detect_platform
-from jarvis.plugins.tool.app_resolver import resolve_app_launch_target
+from jarvis.plugins.tool.app_resolver import (
+    _resolve_via_start_menu,
+    resolve_app_launch_target,
+)
 
 # Bekannte Apps + haeufige Aliases. Reicht fuer 95% der Voice-Commands;
 # exotische Apps laufen ueber PATH-Resolve oder expliziten Pfad.
@@ -138,16 +141,19 @@ _HALLUCINATION_RE = re.compile(
 )
 
 
-def _is_plausible_app_name(app_name: str) -> tuple[bool, str]:
+def _is_plausible_app_name(app_name: str) -> tuple[bool, str, str]:
     """Prueft ob ``app_name`` plausibel ist.
 
-    Returns ``(ok, reason)``. ``reason`` ist leerer String wenn ``ok=True``,
-    sonst eine knappe Begruendung fuers Error-Result.
+    Returns ``(ok, reason, kind)``. ``reason`` ist leerer String wenn
+    ``ok=True``. ``kind`` klassifiziert die Ablehnung fuer eine passende
+    Fehlermeldung: ``"misheard"`` (wirkt wie STT-Halluzination — Rueckfrage an
+    den User) oder ``"not_found"`` (plausibler Name, nur nicht installiert —
+    voller Pfad / genauer Name noetig). ``""`` wenn ``ok=True``.
     """
     if _HALLUCINATION_RE.search(app_name):
-        return False, "enthaelt Werbe-/Outro-Marker (wirkt wie STT-Misshearing)"
+        return False, "enthaelt Werbe-/Outro-Marker (wirkt wie STT-Misshearing)", "misheard"
     if not _APP_NAME_RE.match(app_name):
-        return False, "Format unplausibel (zu lang, Komma-Liste oder Sonderzeichen)"
+        return False, "Format unplausibel (zu lang, Komma-Liste oder Sonderzeichen)", "misheard"
 
     # Layer 2: Whitelist ODER URL ODER Pfad ODER PATH-Resolve
     low = app_name.lower().removesuffix(".exe")
@@ -157,10 +163,22 @@ def _is_plausible_app_name(app_name: str) -> tuple[bool, str]:
         or app_name.startswith((".", "\\", "/"))
     )
     if low in KNOWN_APPS or is_url or is_path:
-        return True, ""
+        return True, "", ""
     if shutil.which(app_name):
-        return True, ""
-    return False, f"'{app_name}' ist weder in der Whitelist noch im PATH"
+        return True, "", ""
+    # Layer 3: Start-Menu shortcut. Many installed apps register ONLY a
+    # per-user .lnk (Electron/Tauri/Squirrel builds: Discord, Slack, and the
+    # user's own desktop apps like BridgeSpace/BridgeVoice) — absent from both
+    # the whitelist and PATH. The resolver already follows these; mirror it
+    # here so the gate is not blinder than the launcher (live failure
+    # 2026-06-16: a real installed app was rejected as a misshearing).
+    if _resolve_via_start_menu({low, app_name.strip()}) is not None:
+        return True, "", ""
+    return (
+        False,
+        f"'{app_name}' nicht gefunden (weder Whitelist, PATH noch Startmenue)",
+        "not_found",
+    )
 
 
 class OpenAppTool:
@@ -192,19 +210,29 @@ class OpenAppTool:
         if not app_name:
             return ToolResult(success=False, output=None, error="app_name fehlt")
 
-        ok, reason = _is_plausible_app_name(app_name)
+        ok, reason, kind = _is_plausible_app_name(app_name)
         if not ok:
-            # Error-Message mit expliziter Handlungsanweisung an das Brain:
-            # KEINE erneute Tool-Retry, sondern Rueckfrage an den User.
+            # Error-Message mit expliziter Handlungsanweisung an das Brain.
+            # Differenziert nach Ablehnungsgrund — ein plausibler, nur nicht
+            # installierter Name darf NICHT als STT-Misshearing abgetan werden
+            # (das schickte den Agenten in die falsche Richtung).
+            if kind == "not_found":
+                hint = (
+                    "Die App ist nicht installiert/auffindbar. Falls sie "
+                    "existiert, gib den vollen Pfad zur .exe an; sonst frage "
+                    "den User nach dem genauen App-Namen. Rufe open_app NICHT "
+                    "erneut mit dem selben Wert auf."
+                )
+            else:
+                hint = (
+                    "Wahrscheinlich STT-Misshearing. Frage den User kurz: "
+                    "'Welche App genau, Alex?' — rufe open_app NICHT erneut "
+                    "mit dem selben Wert auf."
+                )
             return ToolResult(
                 success=False,
                 output=None,
-                error=(
-                    f"App-Name '{app_name[:80]}' abgelehnt ({reason}). "
-                    f"Wahrscheinlich STT-Misshearing. Frage den User kurz: "
-                    f"'Welche App genau, Alex?' — rufe open_app NICHT erneut "
-                    f"mit dem selben Wert auf."
-                ),
+                error=f"App-Name '{app_name[:80]}' abgelehnt ({reason}). {hint}",
             )
 
         try:

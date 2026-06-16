@@ -13,7 +13,7 @@ export interface SectionTab {
  *
  * Each tab maps to a real section id; the active section id (`activeSection` in
  * the event store) doubles as the tab state, so routing, deep-links and voice
- * navigation ("öffne Plugins") keep working unchanged and land on the right
+ * navigation ("öffne Plugins") keep working unchanged and land on the right i18n-allow
  * tab. Clicking a tab just sets the active section.
  */
 export function SectionTabBar({ tabs }: { tabs: readonly SectionTab[] }) {

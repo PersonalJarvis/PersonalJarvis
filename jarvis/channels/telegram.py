@@ -207,8 +207,8 @@ class TelegramChannel:
             return None
         set_secret("telegram_bot_token", tokens.access)
         log.info(
-            "Telegram token aus Marketplace TokenStore gelesen; "
-            "telegram_bot_token wurde best-effort gespiegelt."
+            "Telegram token read from Marketplace TokenStore; "
+            "telegram_bot_token was mirrored best-effort."
         )
         return tokens.access
 
@@ -257,8 +257,8 @@ class TelegramChannel:
             if command in {"/start", "/help"}:
                 await self._send_text(
                     chat_id,
-                    "Telegram ist verbunden. Schreib mir hier, dann leite ich "
-                    "die Nachricht direkt an Jarvis weiter.",
+                    "Telegram is connected. Send a message here and I will "
+                    "forward it directly to Jarvis.",
                     language="de",
                 )
                 return
@@ -345,12 +345,12 @@ class TelegramChannel:
             add_telegram_allowed_user_id(user_id)
         except Exception as exc:  # noqa: BLE001
             log.warning(
-                "Telegram first-user pairing konnte nicht persistiert werden "
+                "Telegram first-user pairing could not be persisted "
                 "(user=%s): %s",
                 user_id,
                 exc,
             )
-        log.info("Telegram first-user pairing: user_id=%s erlaubt", user_id)
+        log.info("Telegram first-user pairing: user_id=%s allowed", user_id)
         return True
 
     async def _resolve_friend(self, chat_id: int, user: Any) -> Friend | None:

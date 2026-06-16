@@ -401,6 +401,51 @@ def test_start_mission_meta_strip_does_not_unmask_real_do_tasks() -> None:
     )
 
 
+def test_is_informational_request_true_for_create_spawn_subagent_research() -> None:
+    """Live regression (2026-06-16, "move to the USA" mission): the explicit
+    voice phrasing "Create and spawn a sub-agent which will help me find out X"
+    was mis-classified as a do-task because the leading creation verb "Create"
+    survived the spawn-meta strip and tripped the action-verb veto. A creation
+    verb governing a routing noun ("create a sub-agent", "create and spawn a
+    sub-agent") is routing meta, not an artefact verb — strip it so the real
+    research request ("find out what I have to be aware of …") is seen."""
+    assert is_informational_request(
+        "Create and spawn a sub-agent which will help me find out what I have "
+        "to be aware of when I move to the USA."
+    )
+    # behind the standing quality directive (the real dispatched shape)
+    assert is_informational_request(
+        f"{_DIRECTIVE}\n\nCreate and spawn a sub-agent which will help me find "
+        "out what I have to be aware of when I move to the USA."
+    )
+    # the direct form ("create a sub-agent to research …")
+    assert is_informational_request(
+        "Create a sub-agent to research the best laptops under 1000 euros."
+    )
+    # German inflected routing noun
+    assert is_informational_request(
+        "Spawne einen Sub-Agenten, der herausfindet, was ich beim "  # i18n-allow
+        "USA-Umzug beachten muss."  # i18n-allow
+    )
+
+
+def test_create_spawn_meta_strip_keeps_real_do_tasks_noninformational() -> None:
+    """The creation-verb strip is restricted to Jarvis routing nouns
+    (sub-agent/worker/mission), so a genuine deliverable governed by a creation
+    verb ("create a file", "build an app/framework") is NEVER unmasked into an
+    informational request — the anti-hallucination veto stays intact."""
+    assert not is_informational_request("Create a file for the agent's config.")
+    assert not is_informational_request("Build an agent framework in Python.")
+    assert not is_informational_request("Write a report about agents.")
+    assert not is_informational_request(
+        "Erstelle eine Datei und teste sie."  # i18n-allow
+    )
+    # a deliverable wrapped in a spawn trigger keeps its real verb/file
+    assert not is_informational_request(
+        "Create a sub-agent that writes a file report.md."
+    )
+
+
 def test_readonly_answer_accepts_no_tool_answer_for_informational_prompt() -> None:
     # pure Q&A: no tool calls, no diff — the spoken answer IS the deliverable.
     convo = _stream([

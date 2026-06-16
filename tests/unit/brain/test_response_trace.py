@@ -23,8 +23,8 @@ async def test_response_side_effects_preserve_trace_id() -> None:
     trace_id = uuid4()
 
     await manager._record_response_side_effects(  # noqa: SLF001
-        user_text="Hallo",
-        response_text="Hallo zurueck",
+        user_text="Hello",
+        response_text="Hello back",
         use_history=False,
         trace_id=trace_id,
     )

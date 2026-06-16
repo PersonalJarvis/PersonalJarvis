@@ -100,23 +100,61 @@ async def ddg_instant_search(query: str, max_results: int, client: Any) -> Searc
 # test searcher and the real library searcher share one code path.
 DdgsSearcher = Callable[[str, int], list[dict[str, Any]]]
 
+# Curated, fast, key-free text engines. The ddgs "auto" default is a trap on the
+# voice path: for text queries it deliberately front-loads the two SLOWEST
+# engines — ``wikipedia`` (DNS-fails on the wt-wt region: it derives the
+# nonexistent host ``wt.wikipedia.org``) and ``grokipedia`` (regularly times
+# out) — and with max_results=5 the first concurrent batch is exactly those two
+# (ddgs sets max_workers = ceil(5/10)+1 = 2). Their aggregate latency blew the
+# 5 s budget enforced by search_web.execute → status="unavailable" → the spoken
+# "search backend timed out", even though Google had already returned. Live
+# forensic 2026-06-16, voice session 15:05 ("best city … no taxes").
+#
+# The engine names MUST be valid ddgs ``text`` backends — an unknown name is
+# silently dropped with a per-call "backends do not exist" warning. As of ddgs
+# 9.14.x the valid text engines are: brave, duckduckgo, google, grokipedia,
+# mojeek, startpage, wikipedia, yahoo, yandex. NOTE: ``bing`` is NOT a text
+# backend (only images/news) — do not add it. ``brave`` is excluded because it
+# rate-limits aggressively (HTTP 429) from a server IP. Any single engine is
+# flaky in isolation (transient "No results"), so BREADTH is the reliability
+# lever and the bounded timeout is the latency lever: this five-engine set
+# returned results in 0.66–0.75 s across 3/3 live runs (validated against the
+# running app, voice session 15:40). Re-validate this list when bumping ddgs.
+_DDGS_BACKENDS: Final[str] = "duckduckgo, mojeek, google, yahoo, startpage"
+
+# Per-engine ceiling inside ddgs. ddgs waits each concurrent batch for up to its
+# DDGS(timeout=…) window; with no timeout a single hung engine blocks until the
+# OUTER asyncio.timeout (5 s) cancels the whole call. A 4 s cap stays below that
+# 5 s budget so a slow engine degrades to "use whatever the fast engines already
+# returned" instead of sinking the turn.
+_DDGS_TIMEOUT_S: Final[float] = 4.0
+
 
 def _default_ddgs_searcher(query: str, max_results: int) -> list[dict[str, Any]]:
     """Real DuckDuckGo SERP via the ``ddgs`` package (renamed from
     ``duckduckgo_search`` in 2025). Pure-Python, cross-platform, key-free, so
     it is safe for the headless VPS base install. Imported lazily so a minimal
     install without it degrades to the Instant-Answer backend. Returns the raw
-    library rows; ddg_serp_search maps them to the SearchResult shape."""
+    library rows; ddg_serp_search maps them to the SearchResult shape.
+
+    Pins an explicit ``backend`` and a bounded ``timeout`` so the slow/flaky
+    engines in ddgs "auto" mode cannot blow the voice budget (see
+    ``_DDGS_BACKENDS`` / ``_DDGS_TIMEOUT_S``)."""
+    text_kwargs: dict[str, Any] = {
+        "region": "wt-wt", "safesearch": "moderate", "max_results": max_results,
+    }
     try:
         from ddgs import DDGS  # type: ignore
+        # ``backend`` is the modern multi-engine ddgs surface; the legacy
+        # ``duckduckgo_search.text`` below does not accept it.
+        text_kwargs["backend"] = _DDGS_BACKENDS
     except Exception:  # noqa: BLE001 — older package name
         try:
             from duckduckgo_search import DDGS  # type: ignore
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError("ddgs not installed") from exc
-    with DDGS() as ddgs:
-        return list(ddgs.text(query, region="wt-wt", safesearch="moderate",
-                              max_results=max_results) or [])
+    with DDGS(timeout=_DDGS_TIMEOUT_S) as ddgs:
+        return list(ddgs.text(query, **text_kwargs) or [])
 
 
 async def ddg_serp_search(

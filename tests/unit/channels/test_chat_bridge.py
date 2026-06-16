@@ -62,7 +62,7 @@ async def test_bridge_publishes_channel_text_as_user_message() -> None:
         ChannelMessage(
             session_id=uuid4(),
             kind="text",
-            content="Hallo",
+            content="Hello",
             trace_id=trace_id,
             metadata={"telegram_chat_id": 12345},
         )
@@ -75,7 +75,7 @@ async def test_bridge_publishes_channel_text_as_user_message() -> None:
     assert seen[0].trace_id == trace_id
     assert seen[0].thread_id == "telegram:12345"
     assert seen[0].role == "user"
-    assert seen[0].text == "Hallo"
+    assert seen[0].text == "Hello"
     assert seen[0].source_layer == "channel.telegram"
 
 

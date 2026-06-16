@@ -26,6 +26,7 @@ from jarvis.core.bus import EventBus
 from jarvis.core.config import JarvisConfig
 from jarvis.core.events import ResponseGenerated
 from jarvis.core.protocols import ToolResult
+from jarvis.ui.web.mission_inject import MISSION_INJECT_SOURCE_LAYER
 
 
 class _FakeTool:
@@ -2322,3 +2323,78 @@ def test_research_question_answer_deliverable_routes_inline_not_spawned() -> Non
     assert manager._should_force_spawn(prompt) is False, (
         "answer-deliverable research must route inline, not force-spawn a mission"
     )
+
+
+# ---------------------------------------------------------------------------
+# Drag-dropped mission recap (ui.web.ws.mission_inject) — must be DISCUSSED
+# inline, NEVER re-dispatched as a new mission.
+#
+# Live doom-loop 2026-06-16 (missions.db 019ed04e / 019ed051): the user dragged
+# a finished/failed mission card onto the JarvisDock to get a recap. The recap
+# directive embeds the dropped card's OWN text verbatim, so a title that
+# contains a spawn trigger ("sub-agent") or an action verb ("Write …") leaks
+# that trigger back into the directive -> the router force-spawned a NEW mission
+# whose deliverable is a conversational recap (no file) -> empty diff ->
+# critic_loop_exhausted -> FAILED. Each failed mission the user dragged to
+# understand spawned another failed mission: every recent mission "failed".
+#
+# A dropped-card recap is a CONVERSATION, never new work (mission_inject.py:
+# "a dropped mission is discussed, never re-dispatched"). The router must
+# exempt the ``ui.web.ws.mission_inject`` source from force-spawn regardless of
+# what the quoted title contains.
+# ---------------------------------------------------------------------------
+
+MISSION_INJECT_SOURCE = MISSION_INJECT_SOURCE_LAYER
+
+
+def test_mission_inject_source_layer_parity() -> None:
+    """Anti-drift: the producer's source_layer must be in the router's exempt
+    set, else a recap silently force-spawns again (multi-layer string drift)."""
+    from jarvis.brain.manager import _NON_SPAWN_SOURCE_LAYERS
+
+    assert MISSION_INJECT_SOURCE_LAYER in _NON_SPAWN_SOURCE_LAYERS
+
+
+def test_dropped_mission_recap_is_never_force_spawned() -> None:
+    """A mission.inject recap directive must not trip the force-spawn heuristic."""
+    from jarvis.ui.web.mission_inject import compose_mission_inject_text
+
+    manager, _ = _manager_with_spawn()
+    # A dropped card whose own text carries a spawn trigger — the verbatim title
+    # leaks "sub-agent" into the composed recap directive.
+    recap = compose_mission_inject_text(
+        {
+            "utterance": "spawn a sub-agent that writes a 200-word story to a file",
+            "status": "error",
+        }
+    )
+    assert recap is not None
+    # Precondition: WITHOUT the inject source this directive DOES force-spawn,
+    # so the exemption (not a weak trigger) is what suppresses it.
+    assert manager._should_force_spawn(recap) is True, (
+        "precondition: the quoted spawn trigger makes this directive force-spawn"
+    )
+    # WITH the inject source it must be answered inline, never spawned.
+    assert (
+        manager._should_force_spawn(recap, source_layer=MISSION_INJECT_SOURCE)
+        is False
+    ), "a dropped-card recap must be discussed inline, never re-dispatched"
+
+
+@pytest.mark.asyncio
+async def test_force_spawn_worker_skips_dropped_mission_recap() -> None:
+    """The deterministic dispatch path must not spawn a worker for a recap."""
+    from jarvis.ui.web.mission_inject import compose_mission_inject_text
+
+    manager, executor = _manager_with_spawn()
+    recap = compose_mission_inject_text(
+        {
+            "utterance": "spawn a sub-agent that writes a 200-word story to a file",
+            "status": "error",
+        }
+    )
+    result = await manager._force_spawn_worker(
+        recap, source_layer=MISSION_INJECT_SOURCE
+    )
+    assert result is None, "no mission for a dropped-card recap"
+    assert executor.calls == [], "zero spawn_worker dispatches for a recap turn"

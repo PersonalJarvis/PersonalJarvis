@@ -69,6 +69,32 @@ def _resolve_vk(key: str) -> int | None:
     return None
 
 
+def _expand_combo_keys(keys: list[str]) -> list[str]:
+    """Split combined hotkey strings like ``"ctrl+v"`` into ``["ctrl", "v"]``.
+
+    LLM callers (notably the screenshot-only Computer-Use loop) frequently emit
+    a whole shortcut as ONE token — ``"ctrl+v"``, ``"ctrl+shift+t"`` — instead
+    of the documented list form. Without this, ``_resolve_vk`` looks up a key
+    literally named "ctrl+v", fails, and the paste/shortcut never fires (live
+    failure 2026-06-16: three ``ctrl+v`` rejections sank a Discord-post mission).
+
+    '+' is the canonical separator. A token is only split when EVERY resulting
+    part resolves to a known key; otherwise it is kept verbatim so a literal
+    '+' key (or an unknown combo) still surfaces the normal "Unbekannte Taste"
+    error instead of silently vanishing.
+    """
+    out: list[str] = []
+    for token in keys:
+        t = token.strip()
+        if "+" in t and len(t) > 1:
+            parts = [p.strip() for p in t.split("+") if p.strip()]
+            if len(parts) >= 2 and all(_resolve_vk(p) is not None for p in parts):
+                out.extend(parts)
+                continue
+        out.append(token)
+    return out
+
+
 def _send_hotkey_windows(keys: list[str]) -> None:
     """Sendet eine Tastenkombination als Win32-SendInput-Sequenz.
 
@@ -209,6 +235,9 @@ class HotkeyTool:
                 error="keys fehlt oder ist keine Liste (Beispiel: ['ctrl', 't'])",
             )
         keys_str = [str(k) for k in keys]
+        # Tolerate a combined shortcut string ("ctrl+v") in place of the
+        # documented list form (["ctrl", "v"]) — LLM callers emit it constantly.
+        keys_str = _expand_combo_keys(keys_str)
 
         # Vorab-Validierung fuer bessere Fehlermeldung — sonst kommt
         # nur "Unbekannte Taste 'X'" aus dem ctypes-Pfad.

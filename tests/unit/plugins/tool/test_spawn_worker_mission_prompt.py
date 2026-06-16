@@ -150,6 +150,82 @@ async def test_execute_dispatches_enriched_prompt_not_raw_fragment() -> None:
     )
 
 
+def test_forcespawn_strips_spawn_meta_from_worker_task() -> None:
+    """Live regression (2026-06-16, "move to the USA" mission): an explicit
+    voice trigger ("spawn a sub-agent which will help me find out X") routes to
+    the force-spawn path (action=""), where the verbatim utterance became the
+    worker's task. The worker then read "spawn a sub-agent" as ITS task — which
+    it cannot do (no spawn tool, AP-5) — instead of doing the research, and the
+    mission died critic_loop_exhausted. The routing wrapper must be stripped so
+    the worker receives the REAL task."""
+    prompt = _build_mission_prompt(
+        utterance=(
+            "Create and spawn a sub-agent which will help me find out what I "
+            "have to be aware of when I move to the USA"
+        ),
+        action="",
+    )
+    low = prompt.lower()
+    # the routing wrapper is gone — the worker is not told to spawn anything
+    assert "spawn a sub-agent" not in low
+    assert "create and spawn" not in low
+    # the actual research task survives verbatim
+    assert "move to the USA" in prompt
+    # the standing quality directive is still present
+    assert "production-quality" in low
+
+
+def test_forcespawn_german_spawn_meta_stripped() -> None:
+    """German is a first-class voice language here. An inflected "Sub-Agenten"
+    must also be recognised as routing meta and stripped, leaving the real
+    research task for the worker."""
+    prompt = _build_mission_prompt(
+        utterance=(
+            "Spawne einen Sub-Agenten, der herausfindet, was ich beim "  # i18n-allow
+            "USA-Umzug beachten muss"  # i18n-allow
+        ),
+        action="",
+    )
+    low = prompt.lower()
+    assert "sub-agent" not in low
+    assert "sub-agenten" not in low
+    # the real task survives
+    assert "USA-Umzug" in prompt
+
+
+def test_forcespawn_pure_meta_phrase_falls_back_to_raw() -> None:
+    """If stripping leaves nothing real (the utterance was ONLY the routing
+    wrapper), the worker must never get an empty task — fall back to the raw
+    utterance so it still has something, and keep the quality directive."""
+    prompt = _build_mission_prompt(utterance="spawn a sub-agent", action="")
+    body = prompt.split("\n\n", 1)[-1].strip()
+    assert body  # never empty
+    assert "production-quality" in prompt.lower()
+
+
+def test_forcespawn_genuine_deliverable_survives() -> None:
+    """A genuine do-task wrapped in a spawn trigger must keep its deliverable:
+    only the routing wrapper is stripped, not the real "writes a file" task."""
+    prompt = _build_mission_prompt(
+        utterance="spawn a sub-agent that writes a file poem.txt with a poem",
+        action="",
+    )
+    low = prompt.lower()
+    assert "spawn a sub-agent" not in low
+    assert "poem.txt" in prompt
+    assert "writes a file" in low
+
+
+def test_forcespawn_no_meta_utterance_unchanged() -> None:
+    """A force-spawn utterance WITHOUT any routing meta must be carried verbatim
+    (the strip is a no-op) — existing force-spawn behaviour is preserved."""
+    prompt = _build_mission_prompt(
+        utterance="lies die Datei x und fasse sie zusammen", action=""
+    )
+    assert "lies die Datei x und fasse sie zusammen" in prompt
+    assert "Aufgabe:" not in prompt
+
+
 def test_quality_directive_has_honest_impossibility_escape() -> None:
     """Latency (2026-06-14): the standing quality directive must let the worker
     exit fast on a task it genuinely cannot do, instead of spiralling under the

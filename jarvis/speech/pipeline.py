@@ -96,6 +96,7 @@ from jarvis.speech.completion import (
     is_incomplete,
 )
 from jarvis.speech.continuation_buffer import ContinuationBuffer
+from jarvis.speech.continuation_window import ContinuationWindow
 from jarvis.speech.hangup import (
     HANGUP_RE,
     contains_end_signal,
@@ -121,6 +122,41 @@ log = logging.getLogger("jarvis.speech.pipeline")
 # a stuck mic / endless speaker-bleed from accumulating forever.
 _MAX_CARRY_SECONDS = 60.0
 _MAX_CARRY_PCM_BYTES = 16_000 * 2 * 60  # 16 kHz * int16 * 60 s ≈ 1.9 MB
+
+# Grace before the thinking-phase continuation-interrupt monitor may fire. Much
+# shorter than the playback barge grace (1.5 s) because during pure thinking
+# there is no TTS playing, so speaker->mic echo is not a concern.
+_CONTINUATION_THINKING_GRACE_S: float = 0.3
+
+# Delegation-composition patience (live 2026-06-16). Forensic: "Could you please
+# start a sub-agent mission which gives me a complete, complete, complete" was
+# submitted on a mid-composition thinking pause — the turn ended at the normal
+# 1.5 s silence window (reason=silence, silence_ms=1472), NOT on a probe
+# force-cut. The word "sub-agent" is not a trigger; composing a delegation simply
+# involves longer pauses than a short command. When the live partial transcript
+# shows a delegation being composed, the STT probe extends THIS utterance's
+# silence window (``SileroEndpointer.extend_silence_window``) so the pause to
+# formulate the task is not mistaken for "done". The marker set mirrors the
+# brain's explicit force-spawn triggers; "mission" alone is excluded as too
+# broad. High precision: a short command never matches → snappy default kept.
+_DELEGATION_SILENCE_MS = 3000
+_DELEGATION_COMPOSITION_RE = re.compile(
+    r"\b(?:"
+    r"sub[\s-]?agent(?:en|s)?(?:[\s-]?mission)?"
+    r"|spawn\w*|delegate|delegier\w*|openclaw"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_delegation_composition(partial: str | None) -> bool:
+    """True if the live partial transcript shows a delegation being composed."""
+    return bool(partial) and _DELEGATION_COMPOSITION_RE.search(partial) is not None
+
+
+def _should_hold_complete_delegation_for_grace(text: str | None) -> bool:
+    """True for complete-looking delegation text that may still receive a follow-up."""
+    return _looks_like_delegation_composition(text)
 
 
 BrainCallback = Callable[[str], Awaitable[str]]
@@ -1215,6 +1251,17 @@ class SpeechPipeline:
         # cut at the comma and the continuation triggered a SEPARATE
         # spawn_worker — producing multiple sub-agent missions for one task.
         self._continuation_buffer: ContinuationBuffer = ContinuationBuffer()
+        # Continuation recombine (2026-06-16): re-attach a fast-follow utterance
+        # to the in-flight turn. See ContinuationWindow + _maybe_recombine_continuation.
+        _voice_cfg = getattr(self._config, "voice", None)
+        self._continuation_interrupt_enabled = bool(
+            getattr(_voice_cfg, "continuation_interrupt_enabled", True)
+        )
+        self._continuation_window = ContinuationWindow(
+            grace_ms=int(getattr(_voice_cfg, "continuation_grace_ms", 2500)),
+            max_chain=int(getattr(_voice_cfg, "continuation_max_chain", 3)),
+        )
+        self._continuation_dispatched_this_turn = False
         # Active timeout the ContinuationBuffer lacks: when a held incomplete
         # fragment is never continued, this fires a clarifying question instead
         # of leaving the user in silence (AD-OE6; "hört für immer zu" fix).
@@ -1639,6 +1686,20 @@ class SpeechPipeline:
                 getattr(self, "_probe_live_text", ""),
                 raw_text,
             )
+
+            # Adaptive patience: the live partial shows a delegation being
+            # composed ("spawn a sub-agent that ...") → grant this utterance a
+            # wider silence window so a pause to formulate the task is not cut
+            # off (live 2026-06-16). Re-asserted on every non-empty probe so it
+            # survives a max_utterance carry; the VAD resets it to the snappy
+            # default at the next speech start. Guarded so a VAD double without
+            # the method (tests) is a harmless no-op and never aborts the force
+            # logic below.
+            if _looks_like_delegation_composition(self._probe_live_text):
+                _extend = getattr(self._vad, "extend_silence_window", None)
+                if callable(_extend):
+                    _extend(_DELEGATION_SILENCE_MS)
+
             publish_event = getattr(self, "_publish_event", None)
             if callable(publish_event):
                 try:
@@ -2833,6 +2894,9 @@ class SpeechPipeline:
         try:
             self._cancel_clarify_question()
             self._continuation_buffer.discard()
+            win = getattr(self, "_continuation_window", None)
+            if win is not None:
+                win.clear()
         except Exception:  # noqa: BLE001 — hangup must never crash
             log.debug("ContinuationBuffer.discard() failed (non-fatal)", exc_info=True)
 
@@ -3159,6 +3223,9 @@ class SpeechPipeline:
                 try:
                     self._cancel_clarify_question()
                     self._continuation_buffer.discard()
+                    win = getattr(self, "_continuation_window", None)
+                    if win is not None:
+                        win.clear()
                 except Exception:  # noqa: BLE001 — teardown must never crash
                     log.debug("Clarify/continuation teardown failed", exc_info=True)
                 await self._publish_event(
@@ -3750,10 +3817,15 @@ class SpeechPipeline:
         """
         self._latency_tracker = None
         try:
+            self._continuation_dispatched_this_turn = False
             return await self._handle_utterance_turn(
                 pcm, skip_completion=skip_completion
             )
         finally:
+            if getattr(self, "_continuation_dispatched_this_turn", False):
+                win = getattr(self, "_continuation_window", None)
+                if win is not None:
+                    win.mark_idle()
             self._emit_latency_turn_complete()
 
     def _emit_latency_turn_complete(self) -> None:
@@ -3780,6 +3852,56 @@ class SpeechPipeline:
             asyncio.create_task(bus.publish(event))  # noqa: RUF006 — fire-and-forget
         except Exception:  # noqa: BLE001 — telemetry must never break the turn
             log.debug("LatencyTurnComplete emit failed", exc_info=True)
+
+    def _maybe_recombine_continuation(self, text: str) -> tuple[str, bool]:
+        """Unit C: if the user kept talking while the brain was thinking/speaking
+        (or within the short grace afterwards), return the COMBINED text plus a
+        ``continued=True`` flag for the subsequent ``_arm_continuation`` call.
+
+        A cancel phrase ("vergiss das") clears the window and never merges.
+        Fail-open: any error returns ``(text, False)`` — the user is never
+        swallowed (AD-OE6). No-op when the feature is disabled or unarmed.
+        """
+        if not getattr(self, "_continuation_interrupt_enabled", False):
+            return text, False
+        window = getattr(self, "_continuation_window", None)
+        if window is None:
+            return text, False
+        if is_cancel(text):
+            window.clear()
+            return text, False
+        try:
+            combined = window.try_recombine(text)
+        except Exception:  # noqa: BLE001 — fail-open by contract
+            log.warning("ContinuationWindow.try_recombine raised; failing open", exc_info=True)
+            return text, False
+        if not combined or combined == text:
+            return text, False
+        prior = window.text
+        log.info("↪ Continuation recombine → %r", combined[:120])
+        brain = getattr(self, "_brain", None)
+        if brain is not None and hasattr(brain, "drop_last_turn"):
+            try:
+                brain.drop_last_turn(prior)
+            except Exception:  # noqa: BLE001 — history hygiene must never crash the turn
+                log.debug("drop_last_turn failed (non-fatal)", exc_info=True)
+        return combined, True
+
+    def _arm_continuation(self, text: str, *, continued: bool) -> None:
+        """Unit A: record the text we are about to dispatch so the NEXT
+        utterance can re-attach to it. Flags that this turn dispatched, so the
+        turn-end hook starts the grace countdown only for armed turns. No-op
+        when disabled."""
+        if not getattr(self, "_continuation_interrupt_enabled", False):
+            return
+        window = getattr(self, "_continuation_window", None)
+        if window is None:
+            return
+        try:
+            window.note_dispatch(text, continued=continued)
+            self._continuation_dispatched_this_turn = True
+        except Exception:  # noqa: BLE001
+            log.debug("continuation note_dispatch failed (non-fatal)", exc_info=True)
 
     async def _handle_utterance_turn(
         self, pcm: bytes, *, skip_completion: bool = False
@@ -3925,6 +4047,13 @@ class SpeechPipeline:
         lang = resolve_turn_language(getattr(transcript, "language", None), text)
         log.info("👤 User [%s]: %s", lang, text)
 
+        # Continuation recombine: attach this utterance to a just-dispatched one
+        # if the user kept talking while the brain was thinking/speaking. Runs
+        # AFTER the hangup / wake-only / hallucination guards above (they already
+        # returned) and BEFORE the ContinuationBuffer below, so the combined text
+        # is re-classified for syntactic completeness as a whole.
+        text, _continued_dispatch = self._maybe_recombine_continuation(text)
+
         await self._publish_event(
             TranscriptionUpdate(
                 source_layer="speech.stt",
@@ -4057,6 +4186,8 @@ class SpeechPipeline:
 
         # User hat aufgehoert zu sprechen, Brain rechnet — Orb auf "think"
         await self._set_turn_state(TurnTakingState.PROCESSING)
+        # Arm/refresh the continuation window with the text we are dispatching.
+        self._arm_continuation(text, continued=_continued_dispatch)
         log.info("→ Brain …")
         if self._latency_tracker is not None:
             self._latency_tracker.mark(LatencyPhase.INTENT_DECISION)
@@ -4090,7 +4221,8 @@ class SpeechPipeline:
                 # mid-work; only a genuinely stalled provider speaks the
                 # fallback (live bug 2026-06-01, see _run_brain_with_stall_guard).
                 response, barged = await self._run_brain_with_stall_guard(
-                    self._brain_streaming(text, lang)
+                    self._brain_streaming(text, lang),
+                    interrupt_monitor=True,
                 )
             except TimeoutError:
                 if self._should_speak_stall_fallback():
@@ -4102,7 +4234,7 @@ class SpeechPipeline:
                     )
                     # AD-OE6 zero-silent-drop: a stalled brain that said NOTHING
                     # must be SPOKEN, not dropped to LISTENING in silence (live
-                    # bug 2026-05-29: "Claude Code öffnen" stalled, hung up mute).
+                    # bug 2026-05-29: "Claude Code oeffnen" stalled, hung up mute).  # i18n-allow
                     await self._speak_brain_timeout(lang, site="stream_stall")
                 else:
                     # Real answer already (partially) spoken this turn — prefer
@@ -4123,6 +4255,12 @@ class SpeechPipeline:
                 return True
             log.info("🤖 Jarvis [%s] (streamed): %s", lang, response)
             if not response.strip():
+                if barged:
+                    # Interrupted before any answer (continuation interrupt or an
+                    # early barge): stay silent — the next utterance recombines
+                    # with this prompt. A clarifying question here would talk over
+                    # the user who is still going.
+                    return await self._finish_after_response(barged=barged)
                 # AD-OE6 zero-silent-drop. A *total* provider-chain failure is
                 # spoken; a fire-and-forget spawn stays silent (bus reports);
                 # ANY other empty turn (function_call/CU without speech, empty
@@ -4320,6 +4458,21 @@ class SpeechPipeline:
         # --- Fresh turn path -----------------------------------------------
         verdict = is_incomplete(text, language=lang)
         if verdict is None:
+            if _should_hold_complete_delegation_for_grace(text):
+                complete_grace_ms = (
+                    int(getattr(cfg, "complete_grace_ms", 1500)) if cfg else 1500
+                )
+                if complete_grace_ms > 0:
+                    log.info(
+                        "Delegation grace: complete-looking delegation buffered "
+                        "for %d ms: %r",
+                        complete_grace_ms,
+                        text[:80],
+                    )
+                    buffer.start(text, language=lang)
+                    self._buffer_is_complete = True
+                    self._schedule_completion_timeout(lang, is_complete=True)
+                    return None
             # Precision-over-recall + latency doctrine (CLAUDE.md intent→ACK
             # budget): a COMPLETE utterance goes STRAIGHT to the brain — no
             # buffering, no grace-hold, no added latency. completion.py's own
@@ -4864,6 +5017,11 @@ class SpeechPipeline:
         paraphrase_stripped = False
         brain_first_token_marked = False
         barged = False
+        # Handoff flag for the thinking-phase interrupt monitor in
+        # _run_brain_with_stall_guard: once playback starts, that monitor stands
+        # down and the per-playback barge monitor (created below) takes over, so
+        # only one extra mic runs at a time.
+        self._brain_first_frame_played = False
         # Wave 0 (omni-latency): turn-local tracker handle + first-sentence
         # gates so the TTS phases are marked exactly once per turn (the
         # tracker keeps the earliest offset anyway, but the gates avoid one
@@ -5026,6 +5184,7 @@ class SpeechPipeline:
                 # channel queue is at capacity (consumer keeps draining).
                 await sentence_channels.put(None)
 
+        self._brain_first_frame_played = True
         produce_task = asyncio.create_task(_produce(), name="tts-produce-turn")
         play_task = asyncio.create_task(
             self._player.play_chunks(_merged_chunks()), name="tts-play-turn"
@@ -5061,7 +5220,7 @@ class SpeechPipeline:
                 # fall through so the turn unwinds and the session re-arms.
                 pass
             elif hangup_task in done and not hangup_task.cancelled():
-                log.info("📵 Hangup während TTS — Turn abbrechen")
+                log.info("📵 Hangup during TTS — aborting turn")
                 barged = True
                 self._player.stop()
             elif (
@@ -5323,12 +5482,12 @@ class SpeechPipeline:
         return not getattr(self, "_spoke_this_turn", False)
 
     async def _run_brain_with_stall_guard(
-        self, coro: Awaitable[tuple[str, bool]]
+        self, coro: Awaitable[tuple[str, bool]], *, interrupt_monitor: bool = False
     ) -> tuple[str, bool]:
         """Await a streaming brain turn with a *no-progress* (stall) timeout
         instead of a hard total-wall-clock cap.
 
-        Live bug 2026-06-01: a vision question ("Was ist das hier?") triggered a
+        Live bug 2026-06-01: a vision question ("What is this?") triggered a
         Gemini tool-use loop (image upload + context cache + function_call + tool
         execution). The whole turn legitimately exceeded the old 25 s TOTAL cap,
         so ``asyncio.wait_for`` cancelled the in-flight turn mid-work and spoke
@@ -5364,10 +5523,45 @@ class SpeechPipeline:
         self._brain_thinking_heartbeat = 0.0
         start = time.monotonic()
         task: asyncio.Task[tuple[str, bool]] = asyncio.ensure_future(coro)
+        monitor_task: asyncio.Task[bool] | None = None
+        if interrupt_monitor and getattr(self, "_continuation_interrupt_enabled", False):
+            self._brain_first_frame_played = False
+            monitor_task = asyncio.create_task(
+                self._barge_monitor(grace_s=_CONTINUATION_THINKING_GRACE_S),
+                name="thinking-interrupt-monitor",
+            )
         try:
             while True:
-                done, _pending = await asyncio.wait({task}, timeout=poll_s)
+                waiters = {task} if monitor_task is None else {task, monitor_task}
+                done, _pending = await asyncio.wait(waiters, timeout=poll_s)
+                if monitor_task is not None:
+                    if getattr(self, "_brain_first_frame_played", False):
+                        # Playback started — _brain_streaming's own barge monitor
+                        # now owns interruption; stand our thinking monitor down.
+                        monitor_task.cancel()
+                        monitor_task = None
+                    elif (
+                        monitor_task in done
+                        and not monitor_task.cancelled()
+                        and monitor_task.result()
+                    ):
+                        # User spoke during thinking → abort the half-formed
+                        # answer. Cancelling the brain skips its history commit,
+                        # so the truncated half never lands; the next utterance
+                        # recombines with this prompt.
+                        log.info(
+                            "✋ Continuation interrupt — user spoke during thinking, "
+                            "aborting brain turn"
+                        )
+                        task.cancel()
+                        try:
+                            await task
+                        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                            pass
+                        return ("", True)
                 if task in done:
+                    if monitor_task is not None:
+                        monitor_task.cancel()
                     return task.result()
                 now = time.monotonic()
                 stalled = (now - self._brain_last_progress) >= stall_s
@@ -5403,6 +5597,8 @@ class SpeechPipeline:
                 if stalled or ceiling_hit:
                     raise TimeoutError
         finally:
+            if monitor_task is not None and not monitor_task.done():
+                monitor_task.cancel()
             if not task.done():
                 task.cancel()
                 try:
@@ -5756,7 +5952,7 @@ class SpeechPipeline:
                 # Watchdog already aborted the wedged device + logged the reason.
                 pass
             elif hangup_task in done and not hangup_task.cancelled():
-                log.info("📵 Hangup während TTS — Turn abbrechen")
+                log.info("📵 Hangup during TTS — aborting turn")
                 self._player.stop()
                 barged = True
             else:
@@ -5777,7 +5973,7 @@ class SpeechPipeline:
                     tail_done = await self._await_playback(play_task, {hangup_task})
                     if play_task not in tail_done:
                         if hangup_task in tail_done:
-                            log.info("📵 Hangup während TTS — Turn abbrechen")
+                            log.info("📵 Hangup during TTS — aborting turn")
                             barged = True
                         # else: watchdog already aborted the wedged device + logged.
                         self._player.stop()
@@ -5795,7 +5991,7 @@ class SpeechPipeline:
             self._suppress_session_input_after_tts("response")
         return barged
 
-    async def _barge_monitor(self) -> bool:
+    async def _barge_monitor(self, *, grace_s: float = 1.5) -> bool:
         """Lauscht auf einer zweiten Mic-Instanz, ob der User während Jarvis'
         TTS-Ausgabe zu sprechen beginnt. Returnt ``True`` sobald das der Fall ist.
 
@@ -5810,7 +6006,7 @@ class SpeechPipeline:
         spricht, nicht bei Lautsprecher-Rueckkopplung.
         """
         try:
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(grace_s)
         except asyncio.CancelledError:
             return False
 

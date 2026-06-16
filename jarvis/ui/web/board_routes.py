@@ -65,7 +65,7 @@ async def _freshen(request: Request, ttl_s: float = _FRESHEN_TTL_S) -> None:
     try:
         await asyncio.to_thread(agg.run_if_stale, ttl_s)
     except Exception:  # noqa: BLE001
-        log.debug("Board freshen-on-read fehlgeschlagen — serviere Cache", exc_info=True)
+        log.debug("Board freshen-on-read failed — serving cache", exc_info=True)
 
 
 def _require_evaluator(request: Request) -> AchievementEvaluator:

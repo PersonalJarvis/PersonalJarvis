@@ -14,6 +14,16 @@ from typing import Any
 # ``_WS_SEND_TIMEOUT_S`` circuit-breaker on the event broadcast.
 MISSION_INJECT_CAP = 4000
 
+#: ``MessageSent.source_layer`` stamped on a drag-dropped mission recap turn.
+#: The router exempts this source from force-spawn so a recap is DISCUSSED
+#: inline, never re-dispatched as a new mission (the doom-loop fixed 2026-06-16:
+#: a dropped card whose own text contains a spawn trigger / action verb leaked
+#: that trigger into the directive -> force-spawn -> empty diff ->
+#: critic_loop_exhausted). The brain mirrors this value in
+#: ``jarvis.brain.manager._NON_SPAWN_SOURCE_LAYERS`` (parity test in
+#: tests/unit/brain/test_routing.py).
+MISSION_INJECT_SOURCE_LAYER = "ui.web.ws.mission_inject"
+
 
 def compose_mission_inject_text(payload: dict[str, Any]) -> str | None:
     """Build the user-turn directive, or ``None`` if there is nothing to inject."""

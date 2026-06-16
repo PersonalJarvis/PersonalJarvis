@@ -62,6 +62,14 @@ class SileroEndpointer:
     ) -> None:
         self._threshold = speech_threshold
         self._silence_frames = max(1, silence_ms // 32)
+        # Adaptive endpoint patience: extra silence frames granted to the CURRENT
+        # utterance on top of ``_silence_frames``. Raised via
+        # ``extend_silence_window`` when the STT probe sees a delegation being
+        # composed (longer thinking pauses than a short command), and reset to 0
+        # at every speech start so short commands keep the snappy default and the
+        # patience never leaks across utterances. See
+        # tests/unit/audio/test_vad_turn_taking.py (adaptive-patience block).
+        self._extra_silence_frames = 0
         self._min_speech_frames = max(1, min_speech_ms // 32)
         self._max_samples = max_utterance_s * VAD_SAMPLE_RATE
         # Number of *consecutive* speech frames required to cancel an
@@ -104,6 +112,29 @@ class SileroEndpointer:
         """
         self._endpoint_requested = True
 
+    def extend_silence_window(self, total_ms: int) -> None:
+        """Raise the silence-endpoint threshold for the CURRENT utterance.
+
+        The STT probe calls this when the live partial transcript shows a
+        delegation is being composed ("spawn a sub-agent that ..."), which
+        involves longer thinking pauses than a short command. The window only
+        ever GROWS within an utterance and resets to the base ``silence_ms`` at
+        the next speech start — so short commands keep the snappy default and the
+        patience never leaks into a later turn. The opposite of
+        ``request_endpoint`` (which shortens), so the two never fight: a genuine
+        speaker-bleed force still ends the turn, only the *natural* silence
+        endpoint is made more patient.
+        """
+        want_frames = max(1, int(total_ms) // 32)
+        extra = max(0, want_frames - self._silence_frames)
+        if extra > self._extra_silence_frames:
+            self._extra_silence_frames = extra
+
+    @property
+    def _effective_silence_frames(self) -> int:
+        """Silence frames required to end the turn, including any patience grant."""
+        return self._silence_frames + self._extra_silence_frames
+
     def _ensure_model(self) -> None:
         if self._model is None:
             from silero_vad import load_silero_vad
@@ -144,6 +175,7 @@ class SileroEndpointer:
         peak_speech_rms = 0.0
         last_probe_frame = 0
         self._endpoint_requested = False
+        self._extra_silence_frames = 0
         # True after a ``max_utterance`` forced cut until the NEXT yield. The
         # consumer buffered that fragment and waits for another endpoint to
         # finalize it — but a regular silence endpoint only exists inside an
@@ -195,6 +227,9 @@ class SileroEndpointer:
                         speaking = True
                         silent_run = 0
                         tail_silent_run = 0
+                        # Fresh utterance → snappy default; the probe re-grants
+                        # patience if a delegation is still being composed.
+                        self._extra_silence_frames = 0
                         total_frames = len(active_frames)
                         speech_frames = 1
                         peak_speech_rms = rms
@@ -303,12 +338,36 @@ class SileroEndpointer:
 
                     # Endpoint: too much silence OR max length OR external
                     # request (e.g. STT probe declared the tail empty/stable).
+                    #
+                    # An external (STT-probe) request is HONOURED only once the
+                    # natural silence floor for THIS utterance has been reached
+                    # (``_effective_silence_frames`` — the 1.5 s base, or the wider
+                    # window a delegation composition was granted). Below the floor
+                    # the request is DISCARDED, not latched: it would behead a
+                    # thinking pause, and the maintainer requires a guaranteed
+                    # silence buffer on EVERY utterance (2026-06-16: "always give me
+                    # ~1.5 s to pause and finish the thought" — delegation /
+                    # Computer-Use prompts were being auto-submitted mid-sentence).
+                    # Binding the force to the floor also stops it from bypassing
+                    # ``extend_silence_window`` (the earlier delegation-patience fix
+                    # only widened the natural endpoint; ``request_endpoint`` still
+                    # short-circuited it). A real speaker-bleed turn still ends:
+                    # moderate bleed lets ``silent_run`` climb via the
+                    # relative-silence calibration so the floor is reached and the
+                    # request lands there; very loud *continuous* bleed (where
+                    # ``silent_run`` never climbs) falls back to the
+                    # ``max_utterance`` cap. The probe re-requests every cycle while
+                    # the tail still looks done, so discarding one early request
+                    # loses nothing. DO NOT honour an external request below the
+                    # floor — that IS the premature auto-submit this guard removes.
                     external_end = self._endpoint_requested
                     if external_end:
                         self._endpoint_requested = False
+                        if silent_run < self._effective_silence_frames:
+                            external_end = False
                     reached_max = total_frames * VAD_FRAME_SAMPLES >= self._max_samples
                     if (
-                        silent_run >= self._silence_frames
+                        silent_run >= self._effective_silence_frames
                         or reached_max
                         or external_end
                     ):

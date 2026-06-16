@@ -39,6 +39,7 @@ def _make_pipe(
     *,
     enabled: bool = True,
     wait_ms: int = 8000,
+    complete_grace_ms: int = 1500,
     max_chain: int = 3,
 ) -> SpeechPipeline:
     """Minimal ``SpeechPipeline`` stub for the completion buffer methods."""
@@ -50,6 +51,7 @@ def _make_pipe(
     voice_cfg = MagicMock()
     voice_cfg.completion_detection_enabled = enabled
     voice_cfg.completion_wait_ms = wait_ms
+    voice_cfg.complete_grace_ms = complete_grace_ms
     voice_cfg.completion_max_chain = max_chain
     cfg = MagicMock()
     cfg.voice = voice_cfg
@@ -97,6 +99,72 @@ async def test_complete_text_returns_unchanged() -> None:
     assert result == "Mach das Licht an"
     assert pipe._completion_buffer.is_pending is False
     assert pipe._spoken == []
+
+
+@pytest.mark.asyncio
+async def test_complete_delegation_fragment_waits_for_short_continuation_grace() -> None:
+    pipe = _make_pipe(complete_grace_ms=10_000)
+
+    result = await pipe._complete_or_buffer_context(
+        "Hallo, du kannst in der SubAgent-Mission starten",
+        lang="de",
+    )
+
+    assert result is None
+    assert pipe._completion_buffer.is_pending is True
+    assert (
+        pipe._completion_buffer.fragment
+        == "Hallo, du kannst in der SubAgent-Mission starten"
+    )
+    assert pipe._completion_timeout_task is not None
+    pipe._cancel_completion_timeout()
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_delegation_grace_merges_followup_before_dispatch() -> None:
+    pipe = _make_pipe(complete_grace_ms=10_000)
+
+    first = await pipe._complete_or_buffer_context(
+        "Hallo, du kannst in der SubAgent-Mission starten",
+        lang="de",
+    )
+    second = await pipe._complete_or_buffer_context(
+        "und dann noch ein bisschen weiter machen",
+        lang="de",
+    )
+
+    assert first is None
+    assert (
+        second
+        == "Hallo, du kannst in der SubAgent-Mission starten "
+        "und dann noch ein bisschen weiter machen"
+    )
+    assert pipe._completion_buffer.is_pending is False
+    assert pipe._completion_timeout_task is None
+
+
+@pytest.mark.asyncio
+async def test_delegation_grace_dispatches_if_no_followup_arrives() -> None:
+    pipe = _make_pipe(complete_grace_ms=80)
+    dispatched: list[tuple[str, str]] = []
+
+    async def _record_dispatch(text: str, lang: str = "de") -> None:
+        dispatched.append((text, lang))
+
+    pipe._handle_flushed_pending_text = _record_dispatch  # type: ignore[method-assign]
+
+    result = await pipe._complete_or_buffer_context(
+        "Hallo, du kannst in der SubAgent-Mission starten",
+        lang="de",
+    )
+    await asyncio.sleep(0.3)
+
+    assert result is None
+    assert dispatched == [
+        ("Hallo, du kannst in der SubAgent-Mission starten", "de")
+    ]
+    assert pipe._completion_buffer.is_pending is False
 
 
 # --------------------------------------------------------------------------- #
