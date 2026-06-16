@@ -128,7 +128,8 @@
     "thinking": "Pensando",
     "speaking": "Hablando",
     "error": "Error",
-    "offline": "Sin conexión"
+    "offline": "Sin conexión",
+    "starting": "Iniciando voz…"
   },
   "sidebar": {
     "wake_hint": "Di tu palabra de activación…",
@@ -672,6 +673,14 @@
     "security_notice": "Las claves se guardan vía keyring en el Administrador de Credenciales de Windows. Jarvis las lee en tiempo de ejecución mediante get_secret() — nunca terminan en jarvis.toml. OpenAI Codex usa solo la CLI oficial de Codex para el login de ChatGPT; Jarvis nunca pide credenciales de ChatGPT."
   },
   "settings_view": {
+    "silence_window": {
+      "title": "Pausa para pensar",
+      "description": "Cuánto espera Jarvis en silencio antes de enviar lo que dijiste. Súbelo para darte más tiempo para pausar y terminar una idea.",
+      "unit_seconds": "s",
+      "reset": "Restablecer al valor predeterminado (1,5 s)",
+      "saved_toast": "Pausa para pensar fijada en {0}.",
+      "restart_caption": "Guardado — se aplica en el próximo inicio."
+    },
     "title": "Ajustes",
     "subtitle": "Palabra de activación, atajos, políticas de seguridad, inicio automático.",
     "overlay_taskbar_group_title": "Barra y superposición",

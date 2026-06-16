@@ -202,6 +202,16 @@ export interface ArtifactFileResponse {
   truncated: boolean;
 }
 
+/**
+ * Encode an artifact relative-path for a URL, segment by segment. `encodeURI`
+ * is wrong here: it leaves `#`, `?`, `&` raw, so a filename like `report#2.md`
+ * would be silently truncated at the `#` (the server then 404s). Each path
+ * component is encoded with `encodeURIComponent`; the `/` separators stay literal.
+ */
+function encodeArtifactPath(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
+}
+
 export function useArtifactFile(
   slug: string | null,
   path: string | null,
@@ -210,7 +220,7 @@ export function useArtifactFile(
     queryKey: ["output-artifact-file", slug, path],
     queryFn: async () => {
       const r = await fetch(
-        `/api/outputs/${slug}/files/${encodeURI(path ?? "")}/raw`,
+        `/api/outputs/${slug}/files/${encodeArtifactPath(path ?? "")}/raw`,
       );
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json();
@@ -218,4 +228,78 @@ export function useArtifactFile(
     enabled: !!slug && !!path,
     staleTime: 5_000,
   });
+}
+
+// --- Capabilities hook ----------------------------------------------------
+
+export interface OutputsCapabilities {
+  native_file_actions: boolean;
+  platform: "win32" | "darwin" | "linux";
+}
+
+export function useOutputsCapabilities() {
+  return useQuery<OutputsCapabilities>({
+    queryKey: ["outputs-capabilities"],
+    queryFn: async () => {
+      const r = await fetch("/api/outputs/capabilities");
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    },
+    staleTime: 60_000,
+  });
+}
+
+// --- Artifact download / open URL helpers ---------------------------------
+
+export function artifactDownloadUrl(slug: string, path: string): string {
+  return `/api/outputs/${slug}/files/${encodeArtifactPath(
+    path,
+  )}/download?disposition=attachment`;
+}
+
+export type ArtifactOpenKind = "rendered" | "inline" | "opaque";
+
+const _INLINE_EXT = [
+  ".pdf", ".html", ".htm", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
+];
+const _RENDERED_EXT = [
+  ".md", ".markdown", ".txt", ".json", ".jsonl", ".csv", ".yaml", ".yml",
+  ".toml", ".log", ".py", ".ts", ".tsx", ".js", ".jsx", ".css", ".sh", ".ps1",
+];
+
+/** Decide how an artifact opens in the browser, by extension. */
+export function classifyArtifact(name: string): ArtifactOpenKind {
+  const lower = name.toLowerCase();
+  if (_INLINE_EXT.some((e) => lower.endsWith(e))) return "inline";
+  if (_RENDERED_EXT.some((e) => lower.endsWith(e))) return "rendered";
+  return "opaque";
+}
+
+/** The URL the "open in browser" button targets, or null for opaque files. */
+export function artifactOpenUrl(slug: string, path: string): string | null {
+  const kind = classifyArtifact(path);
+  const enc = encodeArtifactPath(path);
+  if (kind === "rendered") return `/api/outputs/${slug}/files/${enc}/view`;
+  if (kind === "inline")
+    return `/api/outputs/${slug}/files/${enc}/download?disposition=inline`;
+  return null;
+}
+
+export async function revealArtifact(slug: string, path: string): Promise<void> {
+  const r = await fetch(
+    `/api/outputs/${slug}/files/${encodeArtifactPath(path)}/reveal`,
+    { method: "POST" },
+  );
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+}
+
+export async function openArtifactNative(
+  slug: string,
+  path: string,
+): Promise<void> {
+  const r = await fetch(
+    `/api/outputs/${slug}/files/${encodeArtifactPath(path)}/open-native`,
+    { method: "POST" },
+  );
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
 }

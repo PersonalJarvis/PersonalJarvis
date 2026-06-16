@@ -102,7 +102,7 @@ def _make_pipeline(tts, player, brain) -> SpeechPipeline:
     pipeline._tts_lookahead_sentences = 2  # bounded look-ahead knob
 
     # No real microphone in unit tests: a barge monitor that never fires.
-    async def _never_barge() -> bool:
+    async def _never_barge(**_kwargs) -> bool:
         await asyncio.sleep(3600)
         return False
 

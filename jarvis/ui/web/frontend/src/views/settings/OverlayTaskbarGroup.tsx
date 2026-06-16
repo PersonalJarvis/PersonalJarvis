@@ -303,7 +303,7 @@ function BarPreview() {
   );
 }
 
-function NonePreview() {
+export function NonePreview() {
   return (
     <svg viewBox="0 0 100 40" className="w-20 opacity-50" aria-hidden="true">
       <rect
@@ -317,7 +317,10 @@ function NonePreview() {
         strokeWidth="1.6"
         strokeDasharray="4 3"
       />
-      <line x1="22" y1="31" x2="78" y2="9" stroke="#7c766b" strokeWidth="1.6" strokeLinecap="round" />
+      {/* Diagonal "disabled" strike — kept inside the dashed box (y 11..29)
+          and symmetric about its centre (50, 20) so it never juts out as a
+          stub above/below the pill. */}
+      <line x1="25" y1="25" x2="75" y2="15" stroke="#7c766b" strokeWidth="1.6" strokeLinecap="round" />
     </svg>
   );
 }

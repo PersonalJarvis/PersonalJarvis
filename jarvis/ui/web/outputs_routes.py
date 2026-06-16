@@ -12,7 +12,9 @@ even when the mission row is gone (DB pruned, recovery cleanup).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import mimetypes
 import os
 import re
 import subprocess
@@ -21,6 +23,11 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from starlette.responses import FileResponse, HTMLResponse
+
+from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+from jarvis.platform import detect_platform
+from jarvis.ui.web.artifact_view import VIEW_CSP, render_artifact_html
 
 logger = logging.getLogger(__name__)
 
@@ -346,6 +353,18 @@ async def list_outputs(request: Request) -> dict[str, Any]:
     return {"sessions": sessions}
 
 
+@router.get("/capabilities")
+def outputs_capabilities(request: Request) -> dict[str, Any]:
+    """Report whether native file actions (reveal / open-with-default-app) work here.
+
+    True only on a local desktop run (set by the launcher); False on a headless VPS
+    where opening a file would target the *server's* desktop, not the user's. The
+    frontend hides the native buttons when this is False; the routes 404 too.
+    """
+    native = bool(getattr(request.app.state, "native_file_actions", False))
+    return {"native_file_actions": native, "platform": detect_platform()}
+
+
 @router.get("/{slug}/plan")
 async def get_output_plan(slug: str, request: Request) -> dict[str, Any]:
     """Return the plan + steps for a single session — empty stub for now.
@@ -368,6 +387,10 @@ async def get_output_plan(slug: str, request: Request) -> dict[str, Any]:
 # short preview so the UI sidebar doesn't have to fetch each file.
 _ARTIFACT_PREVIEW_BYTES: int = 4096
 _ARTIFACT_MAX_LISTING: int = 200
+
+# Cap the /view render path so a huge artifact can't block the event loop on the
+# synchronous read or spike memory while rendering. Larger files use /download.
+_VIEW_MAX_BYTES: int = 2 * 1_048_576
 
 
 def _is_deliverable_relpath(rel_parts: tuple[str, ...]) -> bool:
@@ -402,6 +425,35 @@ def _is_deliverable_relpath(rel_parts: tuple[str, ...]) -> bool:
         and rel_parts[2] == "artifacts"
         and rel_parts[3] == "files"
     )
+
+
+def _resolve_artifact_target(request: Request, slug: str, path: str) -> Path:
+    """Resolve + allowlist-validate an artifact file path, or raise HTTPException.
+
+    Mirrors the sandbox of the `/raw` handler: the slug stays inside the outputs
+    root, the resolved file stays inside the session dir, and the relative path is
+    a genuine deliverable (tasks/<id>/artifacts/files/**). Raises 404 (never 403,
+    never confirming a scaffolding file exists) on any violation. Used by the
+    download/view/reveal/open-native routes.
+    """
+    root = _outputs_root(request).resolve()
+    base = (root / slug).resolve()
+    try:
+        base.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid slug") from exc
+    target = (base / path).resolve()
+    try:
+        rel_parts = target.relative_to(base).parts
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=404, detail=f"unknown file: {path}"
+        ) from exc
+    if not _is_deliverable_relpath(rel_parts):
+        raise HTTPException(status_code=404, detail=f"unknown file: {path}")
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail=f"unknown file: {path}")
+    return target
 
 
 def _is_text_filename(name: str) -> bool:
@@ -568,6 +620,99 @@ async def get_output_artifact_raw(
     }
 
 
+@router.get("/{slug}/files/{path:path}/download")
+async def download_output_artifact(
+    slug: str, path: str, request: Request, disposition: str = "attachment"
+) -> FileResponse:
+    """Serve a single artifact file for download or inline viewing.
+
+    ``disposition=attachment`` (default) → browser saves to Downloads;
+    ``disposition=inline`` → browser renders natively (PDF/HTML/image/text).
+    Streams the file (no 1 MiB inline ceiling). Sandboxed via the deliverable
+    allowlist in ``_resolve_artifact_target``.
+    """
+    if disposition not in ("attachment", "inline"):
+        disposition = "attachment"
+    target = _resolve_artifact_target(request, slug, path)
+    media_type, _ = mimetypes.guess_type(target.name)
+    headers = {"X-Content-Type-Options": "nosniff"}
+    # Serving an HTML artifact inline renders it in the app origin; lock it down
+    # with the same no-script CSP the /view route uses so a worker-authored .html
+    # can't execute JS against the app.
+    if disposition == "inline" and (media_type or "").startswith("text/html"):
+        headers["Content-Security-Policy"] = VIEW_CSP
+    return FileResponse(
+        target,
+        media_type=media_type or "application/octet-stream",
+        filename=target.name,
+        content_disposition_type=disposition,
+        headers=headers,
+    )
+
+
+@router.get("/{slug}/files/{path:path}/view")
+async def view_output_artifact(
+    slug: str, path: str, request: Request
+) -> HTMLResponse:
+    """Render a text/markdown artifact as a standalone styled HTML page.
+
+    Markdown is rendered to HTML; other text is shown escaped in <pre>. Carries a
+    strict no-script CSP so artifact content can't execute JS in the app origin.
+    The frontend only routes text/markdown here (binaries use /download?inline).
+    """
+    target = _resolve_artifact_target(request, slug, path)
+    try:
+        size = target.stat().st_size
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"stat failed: {exc}") from exc
+    if size > _VIEW_MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="file too large for browser view — use download",
+        )
+    try:
+        text = target.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500, detail=f"read failed: {exc}"
+        ) from exc
+    return HTMLResponse(
+        render_artifact_html(target.name, text),
+        headers={
+            "Content-Security-Policy": VIEW_CSP,
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.post("/{slug}/files/{path:path}/reveal")
+async def reveal_output_artifact(
+    slug: str, path: str, request: Request
+) -> dict[str, Any]:
+    """Open the OS file manager with the artifact selected. Local desktop only."""
+    if not getattr(request.app.state, "native_file_actions", False):
+        raise HTTPException(status_code=404, detail="native file actions unavailable")
+    target = _resolve_artifact_target(request, slug, path)
+    from jarvis.platform import open_path
+
+    opened = await asyncio.to_thread(open_path.reveal_in_folder, target)
+    return {"opened": bool(opened), "path": str(target)}
+
+
+@router.post("/{slug}/files/{path:path}/open-native")
+async def open_output_artifact_native(
+    slug: str, path: str, request: Request
+) -> dict[str, Any]:
+    """Open the artifact with the OS default application. Local desktop only."""
+    if not getattr(request.app.state, "native_file_actions", False):
+        raise HTTPException(status_code=404, detail="native file actions unavailable")
+    target = _resolve_artifact_target(request, slug, path)
+    from jarvis.platform import open_path
+
+    opened = await asyncio.to_thread(open_path.open_file, target)
+    return {"opened": bool(opened), "path": str(target)}
+
+
 @router.post("/{slug}/open")
 async def open_output(slug: str, request: Request) -> dict[str, Any]:
     """Open the session folder in the OS file explorer (Windows: explorer.exe).
@@ -585,8 +730,9 @@ async def open_output(slug: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"unknown slug: {slug}")
     if os.name == "nt":
         try:
-            subprocess.Popen(  # noqa: S603,S607 — explorer.exe path is os-fixed
+            subprocess.Popen(  # noqa: S603,S607,ASYNC220 — explorer.exe path is os-fixed; Popen returns immediately (no event-loop block)
                 ["explorer.exe", str(target)],
+                creationflags=NO_WINDOW_CREATIONFLAGS,
                 close_fds=True,
             )
         except OSError as exc:

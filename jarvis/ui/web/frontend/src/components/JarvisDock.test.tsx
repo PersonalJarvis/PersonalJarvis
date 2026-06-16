@@ -81,6 +81,22 @@ describe("JarvisDock", () => {
     expect(playDropConfirm).not.toHaveBeenCalled();
   });
 
+  it("stays visually hidden in idle and reveals only while a mission drag is in flight", () => {
+    const { rerender } = render(<JarvisDock />);
+    // Idle: present in the DOM (so the drop handler stays wired) but invisible
+    // and non-interactive — no permanent icon cluttering the corner.
+    const idle = screen.getByTestId("jarvis-dock");
+    expect(idle.className).toContain("opacity-0");
+    expect(idle.className).toContain("pointer-events-none");
+
+    // A mission card lifts → the dock blooms into a visible target.
+    useMissionDrag.getState().begin();
+    rerender(<JarvisDock />);
+    const live = screen.getByTestId("jarvis-dock");
+    expect(live.className).toContain("opacity-100");
+    expect(live.className).not.toContain("opacity-0");
+  });
+
   it("mounts a full-window catch layer only while a mission drag is active", () => {
     const { rerender } = render(<JarvisDock />);
     expect(screen.queryByTestId("jarvis-dock-catch")).toBeNull();

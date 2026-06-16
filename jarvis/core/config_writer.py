@@ -324,6 +324,18 @@ def set_overlay_style(style: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _patch_table(path, "ui", "orb_style", style)
 
 
+def set_silence_window_ms(ms: int, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist the voice silence window to ``[speech] vad_silence_ms`` in jarvis.toml.
+
+    Clamps to the same 500–5000 ms bounds the config field enforces, so a stray
+    value can never wedge endpointing. TOML-only by design (not in the
+    drift-guard's reference snapshot, like :func:`set_overlay_style`); the
+    Settings route applies the change live, this persists the boot default.
+    """
+    clamped = max(500, min(5000, int(ms)))
+    _patch_table(path, "speech", "vad_silence_ms", clamped)
+
+
 def set_bar_persistent(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist ``[ui] bar_persistent`` (the 'show bar at all times' toggle).
 

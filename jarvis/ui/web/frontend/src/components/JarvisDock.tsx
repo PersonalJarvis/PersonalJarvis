@@ -116,6 +116,12 @@ export function JarvisDock() {
       ? t("jarvis_dock.drop_active")
       : null;
 
+  // The dock earns screen space only when a mission card is actually in flight
+  // (`dragging`) or has just landed (`flash`, the brief absorb burst). In idle
+  // it stays mounted — so the drop handler and catch layer remain wired — but
+  // is faded out and non-interactive, so no permanent icon clutters the corner.
+  const visible = dragging || flash;
+
   return (
     <>
       {dragging && (
@@ -132,6 +138,7 @@ export function JarvisDock() {
         data-testid="jarvis-dock"
         role="button"
         aria-label={t("jarvis_dock.aria")}
+        aria-hidden={visible ? undefined : true}
         title={t("jarvis_dock.hint")}
         onDragEnter={(e) => {
           if (hasMission(e.dataTransfer)) setArmed(true);
@@ -141,6 +148,7 @@ export function JarvisDock() {
         onDrop={handleDrop}
         className={cn(
           "fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-full border px-3 py-2 shadow-lg backdrop-blur transition-all duration-300 ease-out",
+          visible ? "opacity-100" : "pointer-events-none opacity-0",
           stateClass,
         )}
       >

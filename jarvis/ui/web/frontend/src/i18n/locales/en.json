@@ -128,7 +128,8 @@
     "thinking": "Thinking",
     "speaking": "Speaking",
     "error": "Error",
-    "offline": "Offline"
+    "offline": "Offline",
+    "starting": "Voice starting…"
   },
   "sidebar": {
     "wake_hint": "Say your wake word…",
@@ -672,6 +673,14 @@
     "security_notice": "Keys are stored via keyring in the Windows Credential Manager. Jarvis reads them at runtime via get_secret() — they never end up in jarvis.toml. OpenAI Codex uses only the official Codex CLI for ChatGPT login; Jarvis never asks for ChatGPT credentials."
   },
   "settings_view": {
+    "silence_window": {
+      "title": "Thinking pause",
+      "description": "How long Jarvis waits in silence before it sends what you said. Raise it to give yourself more time to pause and finish a thought.",
+      "unit_seconds": "s",
+      "reset": "Reset to default (1.5 s)",
+      "saved_toast": "Thinking pause set to {0}.",
+      "restart_caption": "Saved — applies on next start."
+    },
     "title": "Settings",
     "subtitle": "Wake-word, hotkeys, safety policies, autostart.",
     "overlay_taskbar_group_title": "Bar & Overlay",
