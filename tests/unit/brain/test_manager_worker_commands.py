@@ -117,7 +117,9 @@ async def test_no_handler_falls_through(monkeypatch) -> None:
     manager = _bare_manager()
     spawn_called: list[str] = []
 
-    async def fake_force_spawn(user_text: str, *, trace_id=None) -> str | None:
+    async def fake_force_spawn(
+        user_text: str, *, trace_id=None, source_layer=None
+    ) -> str | None:
         spawn_called.append(user_text)
         return "spawned-result"
 
@@ -145,7 +147,9 @@ async def test_smalltalk_does_not_trigger_handler() -> None:
         triggered.append("cancel")
         return "should-not-happen"
 
-    async def fake_force_spawn(user_text: str, *, trace_id=None) -> str | None:
+    async def fake_force_spawn(
+        user_text: str, *, trace_id=None, source_layer=None
+    ) -> str | None:
         return None  # Smalltalk → keine Spawn
 
     manager.set_mission_command_handlers(
@@ -173,7 +177,9 @@ async def test_status_handler_falls_through_when_only_cancel_set() -> None:
         cancel_called.append(mission_id)
         return "cancelled"
 
-    async def fake_force_spawn(user_text: str, *, trace_id=None) -> str | None:
+    async def fake_force_spawn(
+        user_text: str, *, trace_id=None, source_layer=None
+    ) -> str | None:
         return "fell-through"
 
     manager.set_mission_command_handlers(

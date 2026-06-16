@@ -2,7 +2,9 @@
   "jarvis_dock": {
     "aria": "Jarvis — drop a mission here to talk about it",
     "hint": "Drag a sub-agent output here to pull it into the conversation",
-    "drop_here": "Drop to discuss"
+    "drop_here": "Drop to discuss",
+    "drop_active": "Drop to brief Jarvis",
+    "dropped": "Added to conversation"
   },
   "topbar": {
     "restart": "Restart",

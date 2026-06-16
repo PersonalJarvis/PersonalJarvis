@@ -2,7 +2,9 @@
   "jarvis_dock": {
     "aria": "Jarvis — suelta una misión aquí para hablar de ella",
     "hint": "Arrastra un resultado de sub-agente aquí para llevarlo a la conversación",
-    "drop_here": "Suelta para comentar"
+    "drop_here": "Suelta para comentar",
+    "drop_active": "Suelta para informar a Jarvis",
+    "dropped": "Añadido a la conversación"
   },
   "topbar": {
     "restart": "Reiniciar",

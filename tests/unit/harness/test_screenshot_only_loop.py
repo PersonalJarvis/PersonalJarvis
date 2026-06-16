@@ -618,6 +618,51 @@ def test_execute_scroll_reports_missing_tool_cleanly() -> None:
     assert "scroll" in message.lower()
 
 
+def test_execute_type_settles_before_dispatch(monkeypatch) -> None:
+    """The CU loop must pause briefly before typing so a freshly-focused
+    webview/Tauri input is listening -- otherwise leading characters drop
+    (CU typo bug 2026-06-15). The settle is awaited BEFORE the type is sent."""
+    import jarvis.harness.screenshot_only_loop as loop
+
+    # One shared list records both events in execution order, so we can prove
+    # the settle is awaited BEFORE the dispatch -- not merely that both happened.
+    events: list[str] = []
+
+    async def _fake_sleep(seconds):
+        events.append(f"sleep:{seconds}")
+
+    class _OrderRecordingExecutor:
+        def __init__(self) -> None:
+            self.calls: list[tuple[Any, dict[str, Any], str]] = []
+
+        async def execute(self, tool, args, *, user_utterance: str = "", trace_id: Any = None):
+            events.append("dispatch")
+            self.calls.append((tool, args, user_utterance))
+            return _FakeResult(success=True, output="typed")
+
+    monkeypatch.setattr(loop.asyncio, "sleep", _fake_sleep)
+
+    type_tool = object()
+    executor = _OrderRecordingExecutor()
+    ctx = _FakeCtx(executor=executor, tools={"type_text": type_tool})
+
+    success, _message = asyncio.run(
+        _execute_action(
+            {"action": "type", "text": "hello hello hello"},
+            ctx,
+            trace_id=None,
+            user_goal="type hello hello hello into the terminal",
+        ),
+    )
+
+    assert success is True
+    # Ordering proof: the settle is awaited BEFORE the dispatch.
+    assert events == [f"sleep:{loop._PRE_TYPE_SETTLE_S}", "dispatch"]
+    sent_tool, sent_args, _utterance = executor.calls[0]
+    assert sent_tool is type_tool
+    assert sent_args["text"] == "hello hello hello"
+
+
 # ---------------------------------------------------------------------------
 # Per-mission open_app launch cap (window-spam fix, 2026-05-29). A loop that
 # never reaches "done" (a goal it cannot ground, or a model that keeps asking

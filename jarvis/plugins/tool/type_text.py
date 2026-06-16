@@ -1,24 +1,29 @@
-"""type_text-Tool: simuliert Tastatur-Input ins aktive Fenster.
+"""type_text tool: simulate keyboard input into the active window.
 
-Nutzt pyautogui wenn vorhanden. Auf Windows faellt es ohne Zusatz-Dependency
-auf native SendInput-Events zurueck, damit Screen-Control nicht an einer
-fehlenden optionalen Bibliothek scheitert.
-Risk-Tier: safe - Text-Input ins aktive Fenster ist reversibel (Strg+Z).
+On Windows the native KEYEVENTF_UNICODE SendInput path is used as the PRIMARY
+engine — it injects exact Unicode codepoints regardless of the active keyboard
+layout (e.g. German QWERTZ) and is far more robust into webview/Tauri text
+inputs than pyautogui's layout-dependent virtual-key approach. pyautogui is kept
+as a best-effort fallback on Windows and remains the primary engine on other
+platforms. Risk tier: safe — text input into the active window is reversible (Ctrl+Z).
 """
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 from typing import Any
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
 
+log = logging.getLogger(__name__)
+
 
 def _send_text_windows(text: str, delay_s: float) -> None:
-    """Sendet Unicode-Text an das aktive Windows-Fenster via SendInput."""
+    """Send Unicode text to the active Windows window via SendInput."""
     if os.name != "nt":
-        raise RuntimeError("Native Text-Eingabe ohne pyautogui ist nur auf Windows verfuegbar")
+        raise RuntimeError("Native Unicode input is only available on Windows")
 
     import ctypes
     from ctypes import wintypes
@@ -43,7 +48,10 @@ def _send_text_windows(text: str, delay_s: float) -> None:
     class INPUT(ctypes.Structure):
         _fields_ = (("type", wintypes.DWORD), ("union", INPUT_UNION))
 
-    send_input = ctypes.windll.user32.SendInput
+    # use_last_error=True so ctypes.get_last_error() returns the real
+    # GetLastError value (ctypes.windll leaves it at 0 -> bogus [WinError 0]).
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    send_input = user32.SendInput
     send_input.argtypes = (wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int)
     send_input.restype = wintypes.UINT
 
@@ -99,25 +107,33 @@ class TypeTextTool:
         text = args.get("text") or ""
         delay_s = float(args.get("delay_s", 0.02))
         if not text:
-            return ToolResult(success=False, output=None, error="text fehlt")
-        try:
-            import pyautogui
-        except Exception as exc:  # noqa: BLE001
+            return ToolResult(success=False, output=None, error="text missing")
+        # Windows: prefer the native KEYEVENTF_UNICODE SendInput path. It injects
+        # the exact Unicode codepoint regardless of the active keyboard layout
+        # (this machine runs German QWERTZ) and is far more robust into
+        # webview/Tauri text inputs than pyautogui's layout-dependent virtual-key
+        # path, which garbled characters typed into the BridgeSpace Tauri terminal
+        # (CU typo bug 2026-06-15). pyautogui stays a best-effort fallback.
+        if os.name == "nt":
             try:
                 await asyncio.to_thread(_send_text_windows, text, delay_s)
                 return ToolResult(
                     success=True,
-                    output=f"Typed {len(text)} chars via native Windows input",
+                    output=f"Typed {len(text)} chars via native Windows Unicode input",
                 )
             except Exception as native_exc:  # noqa: BLE001
-                return ToolResult(
-                    success=False,
-                    output=None,
-                    error=(
-                        f"pyautogui nicht verfuegbar: {exc}. "
-                        f"Native Windows-Eingabe fehlgeschlagen: {native_exc}"
-                    ),
+                log.warning(
+                    "native Unicode SendInput failed, falling back to pyautogui: %r",
+                    native_exc,
                 )
+        try:
+            import pyautogui
+        except Exception as exc:  # noqa: BLE001
+            return ToolResult(
+                success=False,
+                output=None,
+                error=f"text input unavailable: pyautogui import failed: {exc}",
+            )
         try:
             pyautogui.typewrite(text, interval=delay_s)
             return ToolResult(success=True, output=f"Typed {len(text)} chars")

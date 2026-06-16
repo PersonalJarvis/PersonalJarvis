@@ -32,7 +32,11 @@ from jarvis.core.events import AnnouncementRequested
 from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.harness.manager import HarnessManager
 from jarvis.plugins.tool.dispatch_to_harness import DispatchToHarnessTool
-from jarvis.voice.action_phrases import action_phrase, resolve_phrase_language
+from jarvis.voice.action_phrases import (
+    action_phrase,
+    cu_failure_readback,
+    resolve_phrase_language,
+)
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +44,31 @@ log = logging.getLogger(__name__)
 #: loop (open app → screenshot → click/type → verify) needs a generous budget;
 #: the per-step timeout inside the loop bounds individual actions.
 _DEFAULT_TIMEOUT_S = 120.0
+
+
+def _cu_failure_detail(output: Any) -> tuple[int | None, str | None]:
+    """Pull ``(exit_code, human_detail)`` out of a CU harness failure result.
+
+    ``DispatchToHarnessTool`` returns ``output`` as a dict carrying
+    ``exit_code`` plus ``stderr``/``stdout``; the screenshot loop writes the
+    model's real ``fail`` reason into ``stderr`` (``"[cu] fail at <tag>:
+    <reason>"``). Surfacing it lets the readback forward the human reason
+    instead of the opaque ``error="exit N"``. Best-effort: a non-dict / missing
+    field yields ``(None, None)`` and the readback degrades to the exit-code
+    phrase.
+    """
+    if not isinstance(output, dict):
+        return None, None
+    raw_code = output.get("exit_code")
+    exit_code: int | None
+    try:
+        exit_code = int(raw_code) if raw_code is not None else None
+    except (TypeError, ValueError):
+        exit_code = None
+    stderr = str(output.get("stderr") or "").strip()
+    stdout = str(output.get("stdout") or "").strip()
+    detail = stderr or stdout or None
+    return exit_code, detail
 
 
 class ComputerUseTool:
@@ -151,10 +180,9 @@ class ComputerUseTool:
                 text = action_phrase("cu_done", lang)
             else:
                 err = str(getattr(result, "error", "") or "")
-                text = (
-                    action_phrase("cu_failed_reason", lang, error=err)
-                    if err
-                    else action_phrase("cu_failed", lang)
+                exit_code, detail = _cu_failure_detail(getattr(result, "output", None))
+                text = cu_failure_readback(
+                    lang, error=err, exit_code=exit_code, detail=detail,
                 )
         except Exception as exc:  # noqa: BLE001
             log.error("computer_use background mission failed: %r", exc, exc_info=True)

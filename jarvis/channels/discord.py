@@ -158,7 +158,7 @@ class DiscordChannel:
             import discord  # noqa: WPS433
         except ImportError as exc:
             raise ChannelStartError(
-                "discord.py nicht installiert. Installiere via: "
+                "discord.py not installed. Install via: "
                 "pip install 'discord.py>=2,<3'"
             ) from exc
 
@@ -186,12 +186,12 @@ class DiscordChannel:
         except discord.LoginFailure as exc:
             await self._safe_close_client()
             raise ChannelStartError(
-                "Discord-Token ungueltig (LoginFailure). Pruefe den Bot-Token im "
-                "Developer-Portal oder erneuere ihn via Wizard."
+                "Discord token invalid (LoginFailure). Check the bot token in the "
+                "Developer Portal or renew it via the wizard."
             ) from exc
         except Exception as exc:  # noqa: BLE001
             await self._safe_close_client()
-            raise ChannelStartError(f"Discord login fehlgeschlagen: {exc}") from exc
+            raise ChannelStartError(f"Discord login failed: {exc}") from exc
 
         self._client_task = asyncio.create_task(
             self._run_client(), name="discord-gateway"
@@ -371,7 +371,7 @@ class DiscordChannel:
             add_discord_allowed_user_id(user_id)
         except Exception as exc:  # noqa: BLE001
             log.warning(
-                "Discord first-user pairing konnte nicht persistiert werden "
+                "Discord first-user pairing could not be persisted "
                 "(user=%s): %s",
                 user_id,
                 exc,
@@ -477,10 +477,10 @@ class DiscordChannel:
                 try:
                     target = await fetch(channel_id)
                 except Exception as exc:  # noqa: BLE001
-                    log.warning("Discord channel %s nicht gefunden: %s", channel_id, exc)
+                    log.warning("Discord channel %s not found: %s", channel_id, exc)
                     return
         if target is None:
-            log.warning("Discord channel %s nicht aufloesbar — drop", channel_id)
+            log.warning("Discord channel %s not resolvable — drop", channel_id)
             return
         try:
             await target.send(cleaned)

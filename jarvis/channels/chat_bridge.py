@@ -37,13 +37,13 @@ class ChannelChatBridge:
             try:
                 channel = self._manager.get(name)
             except Exception as exc:  # noqa: BLE001
-                log.warning("ChannelChatBridge konnte '%s' nicht holen: %s", name, exc)
+                log.warning("ChannelChatBridge could not get '%s': %s", name, exc)
                 continue
             self._tasks[name] = asyncio.create_task(
                 self._consume(name, channel),
                 name=f"channel-chat-bridge:{name}",
             )
-        log.info("ChannelChatBridge gestartet fuer Channels: %s", sorted(self._tasks))
+        log.info("ChannelChatBridge started for channels: %s", sorted(self._tasks))
 
     async def stop(self) -> None:
         if not self._tasks:
@@ -87,7 +87,7 @@ class ChannelChatBridge:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
-            log.warning("ChannelChatBridge consumer fuer '%s' beendet: %s", name, exc)
+            log.warning("ChannelChatBridge consumer for '%s' stopped: %s", name, exc)
 
     async def _handle_message(self, name: str, msg: ChannelMessage) -> None:
         if msg.kind not in {"text", "voice"}:

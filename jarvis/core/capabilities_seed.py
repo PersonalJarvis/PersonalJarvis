@@ -354,7 +354,7 @@ _SEED_CAPABILITIES: list[Capability] = [
     # CHUNK B — jarvis-contacts (3)
     # ------------------------------------------------------------------ #
     # These exist so the capability gate routes a named-person action to the
-    # contact surface instead of refusing it ("Das kann ich noch nicht") or
+    # contact surface instead of refusing it ("Das kann ich noch nicht") or  # i18n-allow
     # spawning a contextless worker. CRITICAL constraint (test_capability_
     # coupling_e2e hard-negatives): NONE of these verbs may appear in the
     # canonical dispatch hard-negatives ("schick Email", "trag Termin ein",

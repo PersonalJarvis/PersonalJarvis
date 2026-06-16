@@ -468,7 +468,7 @@ class WhisperBarOverlay:
         """Reset the bar to its default bottom-center anchor.
 
         Bridge-compatible: OrbBusBridge looks this up via getattr on
-        OrbResetRequested ("Orb zurück"). Returning the bar to the default
+        OrbResetRequested ("Orb reset"). Returning the bar to the default
         anchor is the bar's analogue of the orb's position reset.
         """
         if self._root is None:

@@ -32,9 +32,13 @@ class _RecordingVad:
 
     def __init__(self) -> None:
         self.request_endpoint_calls = 0
+        self.extend_calls: list[int] = []
 
     def request_endpoint(self) -> None:
         self.request_endpoint_calls += 1
+
+    def extend_silence_window(self, total_ms: int) -> None:
+        self.extend_calls.append(total_ms)
 
 
 class _InstantSTT:
@@ -411,4 +415,69 @@ async def test_sustained_pre_speech_bleed_still_forces() -> None:
     await asyncio.gather(*_probe_tasks())
     assert vad.request_endpoint_calls == 1, (
         "sustained pre-speech speaker bleed never forced — the bleed cure broke"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Adaptive endpoint patience for delegation composition (live 2026-06-16).
+#
+# Forensic: "Could you please start a sub-agent mission which gives me a
+# complete, complete, complete" was submitted on a mid-composition thinking
+# pause — the turn ENDED at the normal 1.5 s silence window (reason=silence,
+# silence_ms=1472), not on a probe force-cut. The word "sub-agent" is not a
+# trigger; composing a delegation simply takes longer pauses than a short
+# command. Fix: when the live partial shows a delegation is being composed, the
+# STT probe extends THIS utterance's silence window so the pause to formulate
+# the task is not mistaken for "done". Short commands never match → snappy
+# default preserved.
+# --------------------------------------------------------------------------- #
+
+
+def test_looks_like_delegation_composition_matches_bilingual_markers() -> None:
+    from jarvis.speech.pipeline import _looks_like_delegation_composition
+
+    assert _looks_like_delegation_composition(
+        "please spawn a sub-agent that researches"
+    )
+    assert _looks_like_delegation_composition("could you start a subagent mission")
+    assert _looks_like_delegation_composition("starte mir eine Sub-Agent-Mission, die")
+    assert _looks_like_delegation_composition("starte eine SubAgenten-Mission")
+    assert _looks_like_delegation_composition("delegate this to a worker and")
+    # No delegation marker → ordinary command, must NOT match.
+    assert not _looks_like_delegation_composition("open chrome and search for the news")
+    assert not _looks_like_delegation_composition("what is the weather in san francisco")
+    assert not _looks_like_delegation_composition("")
+
+
+@pytest.mark.asyncio
+async def test_delegation_partial_extends_silence_window() -> None:
+    """When the live partial shows a delegation being composed, the probe must
+    extend the silence window so the user is not cut off on a thinking pause."""
+    from jarvis.speech.pipeline import _DELEGATION_SILENCE_MS
+
+    vad = _RecordingVad()
+    pipe = _make_probe_pipe(_InstantSTT(text="spawn a sub-agent that researches"), vad)
+
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)
+    await asyncio.gather(*_probe_tasks())
+
+    assert vad.extend_calls, "a delegation partial did not extend the silence window"
+    assert vad.extend_calls[0] == _DELEGATION_SILENCE_MS
+    # Extending patience must NOT itself end the turn — it only widens the
+    # silence window; the natural endpoint still does the finalizing.
+    assert vad.request_endpoint_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_ordinary_command_partial_does_not_extend_window() -> None:
+    """A short, non-delegation command must keep the snappy default window."""
+    vad = _RecordingVad()
+    pipe = _make_probe_pipe(_InstantSTT(text="open chrome and search the news"), vad)
+
+    pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)
+    await asyncio.gather(*_probe_tasks())
+
+    assert vad.extend_calls == [], (
+        "an ordinary command extended the silence window — short commands must "
+        "stay snappy"
     )

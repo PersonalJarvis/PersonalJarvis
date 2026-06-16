@@ -90,3 +90,49 @@ async def test_english_failure_readback_localized(monkeypatch) -> None:
     assert "Erledigt" not in comp.text
     assert "403 credits" in comp.text
     assert comp.language == "en"
+
+
+@pytest.mark.asyncio
+async def test_bare_exit_code_never_reaches_readback(monkeypatch) -> None:
+    """Live bug (Discord/BridgeMind turn): the user HEARD "That didn't work on
+    screen: exit 5" and asked "what is the exit file?". A bare ``exit N`` error
+    must be mapped to a plain-language sentence — never spoken verbatim."""
+    import re
+
+    bus = _FakeBus()
+    # dispatch_to_harness composes error="exit 5" for the model's `fail` action.
+    mgr = _make_manager(_CUExecutor(success=False, error="exit 5"), bus)
+    await mgr._run_computer_use_background(
+        tool=object(), harness_name="screenshot", prompt="open discord",
+        timeout_s=180.0, user_text="open discord and check the news", trace_id=uuid4(),
+        lang="en",
+    )
+    comp = _completion(bus)
+    assert not re.search(r"\bexit\s*\d+\b", comp.text, re.IGNORECASE), comp.text
+    assert "screen" in comp.text.lower()
+    assert comp.language == "en"
+
+
+@pytest.mark.asyncio
+async def test_harness_detail_reason_is_surfaced_over_exit_code(monkeypatch) -> None:
+    """When the harness output carries the model's real `fail` reason (stderr),
+    surface that human sentence instead of the opaque ``exit 5``."""
+    import re
+
+    bus = _FakeBus()
+    # dispatch_to_harness puts exit_code + stderr in output; error stays "exit 5".
+    output = {
+        "harness": "screenshot",
+        "exit_code": 5,
+        "stdout": "",
+        "stderr": "[cu] fail at step-4: the BridgeMind server has no news channel",
+    }
+    mgr = _make_manager(_CUExecutor(success=False, output=output, error="exit 5"), bus)
+    await mgr._run_computer_use_background(
+        tool=object(), harness_name="screenshot", prompt="open discord",
+        timeout_s=180.0, user_text="open discord and check the news", trace_id=uuid4(),
+        lang="en",
+    )
+    comp = _completion(bus)
+    assert not re.search(r"\bexit\s*\d+\b", comp.text, re.IGNORECASE), comp.text
+    assert "BridgeMind server has no news channel" in comp.text

@@ -86,20 +86,29 @@ async def test_energy_drop_ends_turn_even_when_vad_probability_stays_high() -> N
 
 
 @pytest.mark.asyncio
-async def test_external_endpoint_request_ends_turn_during_continuous_speech() -> None:
-    """Speaker bleed (music, podcast) keeps Silero on 'speech' indefinitely
-    so the silence endpoint never fires. An external stability probe must
-    be able to force the endpoint via the probe hook once enough speech
-    has been collected."""
+async def test_external_request_below_floor_falls_back_to_max_utterance() -> None:
+    """Hard 1.5 s floor (maintainer 2026-06-16): while the user still holds the
+    floor (continuous loud speech → ``silent_run`` never reaches the silence
+    window), a probe-driven endpoint request must be DISCARDED, never honoured.
+
+    Binding the probe force to the silence floor is what guarantees the
+    think-buffer on EVERY utterance — the user asked to always get ~1.5 s to
+    pause and finish a thought (delegation / Computer-Use prompts were being
+    auto-submitted mid-sentence). The cost, accepted explicitly: very loud
+    *continuous* speaker bleed no longer ends instantly via ``stt_stable`` — it
+    falls back to the ``max_utterance`` safety net. This pins both halves: no
+    premature cut below the floor, and the backstop still finalizes the turn.
+
+    Supersedes the old ``..._ends_turn_during_continuous_speech`` test, which
+    pinned the now-removed behaviour (the probe ended the turn at silence_ms≈0).
+    """
     endpoint_reasons: list[str] = []
     probe_calls: list[bytes] = []
-
-    # Build the VAD without probe_callback, then attach one after init so
-    # we can close over the VAD instance (to call request_endpoint()).
     vad = SileroEndpointer(
-        silence_ms=10_000,  # absurd high — silence endpoint would never fire
+        silence_ms=10_000,          # floor unreachable within these frames
         min_speech_ms=96,
         min_speech_rms=0.002,
+        max_utterance_s=1,          # ~31 frames to the cap (keeps the test bounded)
         on_endpoint=lambda reason: endpoint_reasons.append(reason),
         probe_interval_ms=64,
         probe_min_active_ms=320,
@@ -107,21 +116,72 @@ async def test_external_endpoint_request_ends_turn_during_continuous_speech() ->
 
     def probe_request_endpoint(pcm: bytes, _loud: bool) -> None:
         probe_calls.append(pcm)
-        # First probe → request the endpoint.
-        if len(probe_calls) == 1:
-            vad.request_endpoint()
+        vad.request_endpoint()      # every probe insists the user is done
 
     vad._probe_callback = probe_request_endpoint  # type: ignore[assignment]
 
-    probs = [0.9] * 30
+    probs = [0.9] * 40              # continuous speech; no silence ever accrues
     _stub_vad(vad, probs)
-
     frames = [_pcm_frame(0.08) for _ in probs]
+
     utterances = await _collect(vad, frames)
 
+    assert probe_calls, "probe never fired"
+    assert "stt_stable" not in endpoint_reasons, (
+        "an external endpoint request was honoured below the 1.5 s silence floor "
+        "— the premature auto-submit the maintainer reported"
+    )
+    assert endpoint_reasons == ["max_utterance"], (
+        "continuous loud bleed must fall back to the max_utterance cap, "
+        f"got {endpoint_reasons}"
+    )
     assert len(utterances) == 1
-    assert "stt_stable" in endpoint_reasons
-    assert len(probe_calls) >= 1
+
+
+@pytest.mark.asyncio
+async def test_eager_probe_does_not_split_turn_on_short_pause() -> None:
+    """End-to-end think-buffer guarantee (maintainer 2026-06-16): speech, a short
+    pause (below the silence window), resumed speech, then the genuine
+    end-of-turn silence must yield exactly ONE utterance — even when the STT
+    probe insists on ending the turn on every firing.
+
+    The early requests during the short pause are discarded by the floor, so a
+    half-formed prompt can never be auto-submitted on a thinking pause; only the
+    real silence floor finalizes the turn. Under the old behaviour the probe's
+    request was honoured the moment it arrived, splitting the turn in two.
+    """
+    endpoint_reasons: list[str] = []
+    vad = SileroEndpointer(
+        silence_ms=320,             # 10 frames to the floor
+        min_speech_ms=96,
+        min_speech_rms=0.002,
+        on_endpoint=lambda reason: endpoint_reasons.append(reason),
+        probe_interval_ms=64,
+        probe_min_active_ms=160,
+    )
+
+    def eager_probe(_pcm: bytes, _loud: bool) -> None:
+        vad.request_endpoint()      # worst case: convinced the user is done every probe
+
+    vad._probe_callback = eager_probe  # type: ignore[assignment]
+
+    # speech(8) → short pause(5 < 10) → resumed speech(8) → final silence(15 >= 10)
+    probs = [0.9] * 8 + [0.0] * 5 + [0.9] * 8 + [0.0] * 15
+    _stub_vad(vad, probs)
+    frames = (
+        [_pcm_frame(0.08)] * 8
+        + [_pcm_frame(0.0)] * 5
+        + [_pcm_frame(0.08)] * 8
+        + [_pcm_frame(0.0)] * 15
+    )
+
+    utterances = await _collect(vad, frames)
+
+    assert len(utterances) == 1, (
+        f"the eager probe split the turn into {len(utterances)} utterances — an "
+        "early endpoint request beheaded the short pause instead of waiting for "
+        "the silence floor"
+    )
 
 
 @pytest.mark.asyncio
@@ -588,3 +648,101 @@ async def test_probe_payload_is_tail_only_not_full_buffer() -> None:
             f"probe payload should be tail-only "
             f"({expected_tail_bytes} bytes), got {len(payload)}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Adaptive endpoint patience (2026-06-16): composing a delegation ("spawn a
+# sub-agent that ...") involves longer thinking pauses than a short command, so
+# the default silence window cuts the user off mid-sentence. The STT probe calls
+# ``extend_silence_window`` when the live partial shows a delegation; that must
+# raise the silence-endpoint threshold for the CURRENT utterance only, and reset
+# to the snappy default at the next speech start so short commands are unaffected
+# and the patience never leaks across turns.
+# --------------------------------------------------------------------------- #
+
+
+async def _chunks_with_action(
+    frames: list[bytes], *, at_index: int, action
+) -> AsyncIterator[AudioChunk]:
+    for index, pcm in enumerate(frames):
+        if index == at_index:
+            action()
+        yield AudioChunk(
+            pcm=pcm,
+            sample_rate=16_000,
+            timestamp_ns=index,
+            channels=1,
+        )
+
+
+@pytest.mark.asyncio
+async def test_extend_silence_window_defers_the_silence_endpoint() -> None:
+    """After ``extend_silence_window`` a silent run shorter than the extended
+    window must NOT end the turn — a base-length pause would have, but the
+    delegation composer is given room to think."""
+    # base 96 ms → 3 silent frames; extend to 320 ms → 10 silent frames.
+    vad = SileroEndpointer(silence_ms=96, min_speech_ms=96)
+    probs = [0.9] * 5 + [0.0] * 5  # 5 silent frames: >= 3 base, < 10 extended
+    _stub_vad(vad, probs)
+    frames = [_pcm_frame(0.05)] * 5 + [_pcm_frame(0.0)] * 5
+
+    out: list[bytes] = []
+    async for utterance in vad.utterances(
+        _chunks_with_action(
+            frames, at_index=4, action=lambda: vad.extend_silence_window(320)
+        )
+    ):
+        out.append(utterance)
+
+    assert out == [], (
+        "5 silent frames ended the turn despite the window being extended to "
+        "10 — the delegation composer was cut off on a thinking pause"
+    )
+
+
+@pytest.mark.asyncio
+async def test_base_silence_window_still_ends_the_turn_without_extension() -> None:
+    """Control for the test above: the SAME frames, with NO extension, end the
+    turn at the base window — proving the deferral is caused by the extension,
+    not by too-few silent frames."""
+    vad = SileroEndpointer(silence_ms=96, min_speech_ms=96)
+    probs = [0.9] * 5 + [0.0] * 5
+    _stub_vad(vad, probs)
+    frames = [_pcm_frame(0.05)] * 5 + [_pcm_frame(0.0)] * 5
+
+    out = await _collect(vad, frames)
+
+    assert len(out) == 1, "base 96 ms window failed to end the turn after 5 silent frames"
+
+
+@pytest.mark.asyncio
+async def test_extended_silence_window_resets_at_next_speech_start() -> None:
+    """The patience is per-utterance: it must reset to the snappy default at the
+    next speech start so a short command right after a delegation is not made
+    sluggish (no cross-turn leak)."""
+    vad = SileroEndpointer(silence_ms=96, min_speech_ms=96)
+    # Utterance 1: speech, extend mid-stream, then 12 silent frames (>= 10
+    # extended) → ends. Utterance 2: speech, then only 5 silent frames — these
+    # exceed the 3-frame BASE window but are below the 10-frame extended one, so
+    # they may only end the turn if the patience reset at speech start.
+    probs = [0.9] * 5 + [0.0] * 12 + [0.9] * 5 + [0.0] * 5
+    _stub_vad(vad, probs)
+    frames = (
+        [_pcm_frame(0.05)] * 5
+        + [_pcm_frame(0.0)] * 12
+        + [_pcm_frame(0.05)] * 5
+        + [_pcm_frame(0.0)] * 5
+    )
+
+    out: list[bytes] = []
+    async for utterance in vad.utterances(
+        _chunks_with_action(
+            frames, at_index=4, action=lambda: vad.extend_silence_window(320)
+        )
+    ):
+        out.append(utterance)
+
+    assert len(out) == 2, (
+        "the extended window leaked into the next utterance — a short command "
+        "after a delegation stayed sluggish"
+    )

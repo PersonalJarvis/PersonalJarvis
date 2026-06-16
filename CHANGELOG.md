@@ -7,48 +7,42 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
-## [v0.6.1] — 2026-06-15
-
-### Changed
-
-- **Repository doctrine hardened.** Contributor/agent guidance now states clearly
-  that a save / commit / push / "put it on main" request targets this flagship
-  repo (`CLAUDE.md`, `CLOUD.md`), and a pre-push guard
-  (`scripts/ci/guard_no_raw_public_push.py`, installed via
-  `scripts/ci/install_git_hooks.py`) blocks accidental raw pushes of unscrubbed
-  working state to the public repo. Documentation/tooling only — no runtime change.
-
-## [v0.6.0] — 2026-06-15
+## [0.7.0] — 2026-06-16
 
 ### Added
 
-- **Drag-and-drop mission injection.** A global `JarvisDock` drop target and
-  draggable Outputs cards let you drop a finished mission's context into a new
-  chat turn; new `mission.inject` WebSocket command + `mission_inject.py` route.
-- **"Spoken output" transcription track.** Every voiced phrase — not just the
-  brain reply, but clarify prompts, apologies, skill/mission announcements and
-  progress fillers — is recorded as a `SpeechSpoken` event and shown per turn,
-  with markdown / plain / JSON exports.
-- **Bilingual voice action phrases** (`jarvis/voice/action_phrases.py`).
-
-### Changed
-
-- **Computer-Use `fail` action is gated.** It now passes a symmetric
-  feasibility judge (mirror of the done-gate) so a weak model can no longer take
-  a free give-up while one step from completion.
-- The mission critic recognises informational / prose research documents and
-  reads codex and gemini worker streams (provider-agnostic evidence gates).
+- **Voice continuation**: a follow-on utterance spoken while Jarvis is still
+  thinking is recombined into the in-flight turn instead of being dropped or
+  starting a new turn (`jarvis/speech/continuation_window.py`, with
+  `[speech]` configuration knobs).
+- **JarvisDock mission drag-drop polish**: a compact custom drag chip, a dock
+  bloom on hover, a full-window catch layer (no more OS "no-drop" cursor), and
+  an absorb animation with a soft WebAudio chime
+  (`frontend/src/lib/missionDragImage.ts`, `lib/sound.ts`,
+  `store/missionDrag.ts`).
+- **Computer-Use literal dictation**: native Unicode `SendInput` typing on
+  Windows so multi-word verbatim input ("type hello hello hello") is entered
+  exactly, independent of keyboard layout.
 
 ### Fixed
 
-- **Voice: the STT probe no longer auto-submits mid-sentence.** A brief pause —
-  or a Whisper boilerplate hallucination of still-ongoing speech — could
-  force-end the turn at ~0 ms of silence. All probe-force branches now require
-  2-probe persistence and defer on a trailed-off (`...`) tail.
-- **"Open Chrome and Google &lt;query&gt;"** in English now runs the search
-  instead of silently dropping the search clause (bilingual local-action gate).
-- The Wiki "Memory Map" graph no longer drifts off-screen behind the side panel.
-- Localized fallback phrases + de / en / es locale string updates.
+- **Sub-agent missions started by voice** reliably failed
+  (`critic_loop_exhausted`) whenever the request named the vehicle ("spawn a
+  sub-agent that …"): the routing meta-clause was handed to the worker as its
+  own task. It is now stripped from the worker prompt via a single shared,
+  parity-guarded function so the worker prompt and the critic classifier can
+  never drift apart (`jarvis/missions/stream_evidence.py`,
+  `jarvis/plugins/tool/spawn_worker.py`).
+- **Computer-Use** typing garble and a spurious shell-idiom prefix; planner
+  navigation-vs-search derailment on descriptor keywords; one-shot screenshot
+  over-execution; humanized failure read-back instead of a raw exit code.
+- **Web search** backend timeout caused by the `ddgs` auto mode front-loading
+  its slowest engines.
+
+### Changed
+
+- Routing, voice end-pointing patience for delegation composition, and
+  Computer-Use planner-prompt refinements.
 
 ## [v1.0.0-board] — 2026-04-25
 

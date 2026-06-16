@@ -21,7 +21,7 @@ import { McpsView } from "@/views/McpsView";
  * alive in the five-layer nav enum — see `jarvis/plugins/tool/navigate.py` +
  * `store/events.ts` + the parity test `tests/unit/plugins/tool/test_navigate.py`.
  * Only the *sidebar presentation* collapses to one entry; routing, deep-links
- * and voice navigation ("öffne Plugins") keep working unchanged and land on the
+ * and voice navigation ("öffne Plugins") keep working unchanged and land on the i18n-allow
  * right tab. The child views are embedded verbatim — they rehydrate their own
  * state from React Query / the store, so the unmount/remount on tab switch is
  * harmless.

@@ -1530,6 +1530,21 @@ class VoiceConfig(BaseModel):
     # fragment), short enough that the user is never left hanging. A continuation
     # arriving within this window cancels the question and joins the turn.
     clarify_after_ms: int = 2500
+    # --- Continuation recombine (2026-06-16) -------------------------------
+    # When the user keeps talking AFTER an utterance was already dispatched to
+    # the brain (the brain is already thinking/speaking), abort the half-formed
+    # answer and re-think the COMBINED sentence as one turn, instead of dropping
+    # the earlier half as a fresh, context-less message. Master switch; false =
+    # behaves exactly as before this feature. Spec:
+    # docs/superpowers/specs/2026-06-16-voice-continuation-recombine-while-thinking-design.md
+    continuation_interrupt_enabled: bool = True
+    # How long AFTER the answer finished a new utterance still counts as a
+    # continuation (the "kurze Nachfrist"). Kept short to bound the risk that a
+    # genuinely new command is mis-attached.
+    continuation_grace_ms: int = 2500
+    # Max fragments coalesced into one turn before the next utterance is a fresh
+    # turn (mirrors completion_max_chain — bounds indefinite chaining).
+    continuation_max_chain: int = 3
     # Floor (seconds) below which the canned "that took too long, say it again"
     # phrase is structurally SUPPRESSED, as a stale-state guard. None of the
     # three timeout paths (20 s no-first-frame ceiling / 30 s no-progress stall /

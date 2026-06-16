@@ -54,6 +54,7 @@ import logging
 import re
 import time
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from jarvis.core.events import (
@@ -207,6 +208,13 @@ _SYSTEM_PROMPT = (
     "element and silently corrects your coordinates before clicking.\n"
     "* To type into a field: first focus it (click_element the field, or "
     "click it), then ``type``. Never type blindly into an unfocused screen.\n"
+    "* LITERAL DICTATION: when the goal tells you to type, say, write, or enter "
+    "specific words (e.g. 'type hello hello hello', 'say X', 'write Y'), the "
+    "``type`` action's text MUST be exactly those words -- copy them verbatim. "
+    "Do NOT add, wrap, or transform them into a shell command or any prefix; in "
+    "particular NEVER prepend 'echo' or surround them with quotes. Only compute "
+    "different text when the goal explicitly asks you to (e.g. 'search for X' -> "
+    "type the query X; 'go to gmail' -> type the URL).\n"
     "* If click_element misses, it returns the available labels -- pick the "
     "closest real one; do NOT fall back to blind pixel-guessing on a small "
     "control.\n"
@@ -226,7 +234,16 @@ _SYSTEM_PROMPT = (
     "APP LAUNCH:\n"
     "* Use ``open_app`` for launch goals (\"open Spotify\", \"oeffne den "
     "Rechner\"). Common names: \"spotify\", \"calc\", \"notepad\", "
-    "\"chrome\", \"edge\", \"explorer\", \"cmd\".\n"
+    "\"chrome\", \"edge\", \"explorer\", \"cmd\", \"discord\", \"slack\".\n"
+    "* PREFER THE INSTALLED DESKTOP APP over a browser. When the goal names an "
+    "app that has a native desktop client (Discord, Slack, Spotify, Telegram, "
+    "WhatsApp, Steam, ...), open it with ``open_app`` -- do NOT open it inside "
+    "a web browser and do NOT navigate a browser to its website. Only fall "
+    "back to the web version when the goal explicitly says 'in the browser' / "
+    "'web version', or when a desktop launch clearly did not work (the app is "
+    "not installed). open_app already resolves the desktop client across "
+    "platforms; if it is unavailable it reports so and you can then try the "
+    "browser.\n"
     "* If the target app is ALREADY VISIBLE in the current screenshot, do "
     "NOT call open_app again -- re-launching steals window focus and resets "
     "your progress. Interact with the app's existing window instead.\n"
@@ -574,6 +591,11 @@ _OBSERVE_TIMEOUT_S = 3.0
 #: Single tool execution (click/type/open_app/...). App launches are the slow
 #: end; anything beyond this is a wedged tool, not a slow action.
 _ACT_TIMEOUT_S = 5.0
+#: Brief pause before a ``type`` action so a freshly-focused webview/Tauri text
+#: input (e.g. the BridgeSpace terminal) is actually listening before keystrokes
+#: arrive. Without it the focusing click and the type land within ~2 ms and the
+#: first characters are dropped (CU typo bug 2026-06-15).
+_PRE_TYPE_SETTLE_S = 0.15
 #: Model-call ceiling (think/plan/judge). The configured per_step_timeout_s
 #: still applies when SMALLER; this cap bounds a hung provider call.
 _THINK_TIMEOUT_CAP_S = 10.0
@@ -1199,6 +1221,118 @@ def _open_goal_app_token(task_prompt: str) -> str | None:
     return token or None
 
 
+# ---------------------------------------------------------------------------
+# Deterministic screenshot fast path (over-execution fix, 2026-06-16)
+# ---------------------------------------------------------------------------
+# A bare "take a screenshot" goal is a ONE-SHOT capture, not a GUI-exploration
+# task. Routing it through this vision loop made a weak fast-tier model fight the
+# Snipping Tool for 17 steps / 38 s (live turn 2026-06-16 15:14), clicking
+# "Neuer Screenshot" three times — each click DISCARDS the prior capture, which
+# is exactly the "deleted three screenshots" the user reported — before it
+# recognised completion. The loop only stops when the model volunteers ``done``;
+# it never asks "is the goal already satisfied?". So we satisfy the capture
+# directly and never enter the loop. Mirrors the gate's screenshot classifier
+# but anchored to the WHOLE goal so a compound ("screenshot AND send it") still
+# runs the loop.
+
+#: The screenshot noun (DE+EN). A goal with none of these is never a capture.
+_SCREENSHOT_NOUN_RE = re.compile(
+    r"\b(?:screen\s*shots?|bildschirm(?:fotos?|aufnahmen?|abz(?:ug|uege)))\b",  # i18n-allow
+    re.IGNORECASE,
+)
+#: A "capture it NOW" intent verb (DE+EN). "machen/nimm/erstell/knips" + the
+#: English imperatives; "do/get" cover the noisy STT phrasing the live turn
+#: produced ("I do a screenshot from my screen right now").
+_SCREENSHOT_TAKE_RE = re.compile(
+    r"\b(?:mach(?:e|st|en)?|nimm(?:st)?|erstell\w*|knips\w*|"  # i18n-allow: German screenshot verbs
+    r"take|taking|grab|capture|snap|do|get|gib|gimme)\b",
+    re.IGNORECASE,
+)
+#: Intents that are NOT a fresh capture: send / share / show / open / mail a
+#: screenshot, or refer to a previous / saved / already-made one. Any of these
+#: keeps the goal off the fast path (the gate already excludes most, but this is
+#: the loop's own belt-and-braces).
+_SCREENSHOT_NOT_TAKE_RE = re.compile(
+    r"\b(?:send|schick\w*|share|teil\w*|show|zeig\w*|open|oeffne|öffne|"  # i18n-allow
+    r"email|mail|upload|post|"
+    r"last|letzt\w*|previous|vorherig\w*|recent|"  # i18n-allow: German "last/previous"
+    r"saved|gespeichert\w*|already|schon|gemacht)\b",  # i18n-allow: German "saved/already/made"
+    re.IGNORECASE,
+)
+#: A compound goal — a screenshot PLUS a follow-up action joined by und/and/then.
+#: The capture half is real but the loop (or a later turn) must do the rest, so
+#: we do NOT short-circuit it.
+_SCREENSHOT_COMPOUND_RE = re.compile(
+    r"\b(?:und|and|then|dann|danach|anschliessend|afterwards?)\b\s+\w",  # i18n-allow
+    re.IGNORECASE,
+)
+
+
+def _is_pure_screenshot_goal(goal: str) -> bool:
+    """True when the WHOLE goal is just "take a screenshot" (DE+EN).
+
+    Requires a screenshot noun AND a capture-it-now verb, and rejects
+    send/show/last-screenshot intents and compound goals. Deliberately precise
+    over complete: a non-match simply runs the normal loop (no regression)."""
+    g = (goal or "").strip()
+    if not g:
+        return False
+    if not _SCREENSHOT_NOUN_RE.search(g):
+        return False
+    if not _SCREENSHOT_TAKE_RE.search(g):
+        return False
+    if _SCREENSHOT_NOT_TAKE_RE.search(g):
+        return False
+    if _SCREENSHOT_COMPOUND_RE.search(g):
+        return False
+    return True
+
+
+def _user_screenshot_dir() -> Path:
+    """User-facing folder for a saved screenshot: ``~/Pictures/Screenshots``
+    when a Pictures folder exists (Windows/macOS/most Linux), else
+    ``~/Screenshots``. NOT the repo dev-capture folder (that one auto-prunes)."""
+    home = Path.home()
+    pics = home / "Pictures"
+    base = pics if pics.is_dir() else home
+    return base / "Screenshots"
+
+
+def _save_user_screenshot() -> Path | None:
+    """Capture the active monitor and save it as a PNG the user can find.
+
+    The deterministic fulfilment of a bare "take a screenshot" goal — the same
+    mss + PIL capture the ``screenshot`` vision tool uses, but written to disk
+    for the user instead of handed to the brain as a vision artifact. Returns the
+    saved path, or ``None`` on ANY failure (desktop extras absent, headless VPS,
+    a capture error) so the caller falls through to the interactive loop with no
+    regression."""
+    try:
+        import mss  # noqa: PLC0415
+        from PIL import Image  # noqa: PLC0415
+
+        from jarvis.vision.screenshot import select_capture_monitor  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 — desktop extras absent (cloud-first base install)
+        return None
+    try:
+        with mss.mss() as sct:
+            monitors = sct.monitors
+            if len(monitors) < 2:
+                return None
+            target = select_capture_monitor(monitors, strategy="foreground")
+            raw = sct.grab(target)
+            image = Image.frombytes("RGB", raw.size, raw.rgb)
+        dest_dir = _user_screenshot_dir()
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+        path = dest_dir / f"Screenshot_{stamp}.png"
+        image.save(str(path), format="PNG")
+        return path
+    except Exception:  # noqa: BLE001 — mss/PIL/display errors are diverse
+        log.debug("[cu] deterministic screenshot capture failed", exc_info=True)
+        return None
+
+
 async def _verify_goal_done(
     ctx: ComputerUseContext,
     *,
@@ -1405,12 +1539,38 @@ _PLANNER_SYSTEM_PROMPT = (
     "no code fences: {\"plan\": [{\"intent\": \"<one atomic UI action, "
     "imperative>\", \"success\": \"<the concrete thing VISIBLE on screen once "
     "this step is done>\"}, ...]}\n"
+    "You are a capable agent: reason about a normally-phrased, everyday goal "
+    "the way a person would -- you do NOT need the user to spell out every "
+    "click. Infer the obvious intermediate steps yourself.\n"
     "Rules:\n"
-    "* 3-7 steps. Each step is ONE atomic action: open / click / type / select "
-    "/ press.\n"
-    "* Decompose properly. 'play a song' MUST become: open the app -> click the "
-    "search box -> type the song name -> press Enter -> click the matching "
-    "track row -> press play. NEVER collapse it to a single 'click play'.\n"
+    "* Plan as many steps as the goal naturally needs -- usually a handful. "
+    "Each step is ONE concrete UI action: open / click / type / select / "
+    "press. Prefer the shortest sequence that genuinely reaches the goal; do "
+    "not pad with busywork, and do not cram several actions into one step.\n"
+    "* ADAPT as you go: this plan is GUIDANCE, not a rigid macro. The executor "
+    "re-observes the live screen after each action and may take an "
+    "unplanned/reactive step (or re-plan) when the screen differs from your "
+    "expectation -- so plan the sensible happy path and let the executor adapt "
+    "to what actually appears.\n"
+    "* PREFER THE INSTALLED DESKTOP APP. When the goal names an application "
+    "that exists as a native desktop app (Discord, Slack, Spotify, Telegram, "
+    "WhatsApp, Steam, a code editor, ...), the FIRST step opens that DESKTOP "
+    "app via the open_app action (intent like 'open the discord desktop app') "
+    "-- do NOT open the app inside a web browser, and do NOT navigate a browser "
+    "to its website, unless the desktop app is genuinely unavailable (e.g. the "
+    "goal explicitly says 'in the browser' / 'the web version', or after a "
+    "launch attempt the desktop app clearly is not installed). The desktop app "
+    "is faster, already signed in, and the path the user means.\n"
+    "* LITERAL DICTATION: when the goal dictates specific words to type, say, "
+    "write, or enter (e.g. 'type hello hello hello', 'say X'), the typing step's "
+    "intent MUST carry those exact words verbatim -- never wrap them in a shell "
+    "command or prepend 'echo'. This is distinct from a search topic: only "
+    "'search for <topic>' yields a typed query.\n"
+    "* Decompose multi-action goals into their real intermediate steps. E.g. "
+    "'play a song' is: open the app -> click the search box -> type the song "
+    "name -> press Enter -> click the matching track row -> press play -- not a "
+    "single 'click play'. Use your own reasoning to find the analogous steps "
+    "for the goal in front of you.\n"
     "* 'success' must be something a person could SEE on screen (text in a box, "
     "a result row, a now-playing title, an advancing timer) -- never an "
     "assumption.\n"
@@ -1973,6 +2133,9 @@ async def _execute_action(
         tool = tools.get("type_text")
         if tool is None:
             return False, "type_text tool not wired"
+        # Let a freshly-focused input settle before typing (anti leading-char
+        # drop on webview/Tauri terminals; CU typo bug 2026-06-15).
+        await asyncio.sleep(_PRE_TYPE_SETTLE_S)
         try:
             res = await asyncio.wait_for(
                 executor.execute(
@@ -2291,6 +2454,28 @@ async def _run_screenshot_loop(
         return HarnessResult(stdout=msg + "\n", is_final=False)
 
     yield _progress(f"[cu] Start: {task_prompt[:80]}")
+
+    # Deterministic screenshot fast path (over-execution fix, 2026-06-16): a
+    # bare "take a screenshot" goal is a ONE-SHOT capture, not a GUI task. We
+    # satisfy it directly — capture + save in a SINGLE step — instead of asking
+    # a weak fast-tier model to operate the Snipping Tool (the live 17-step /
+    # 38 s flail that re-clicked "Neuer Screenshot" three times, discarding each
+    # capture, which the user saw as "deleted three screenshots"). On ANY
+    # capture failure (headless VPS / missing desktop extras) the helper returns
+    # None and we fall through to the interactive loop unchanged — no regression.
+    if _is_pure_screenshot_goal(task_prompt):
+        saved = _save_user_screenshot()
+        if saved is not None:
+            log.info("[cu] screenshot fast path: saved %s (no GUI loop)", saved)
+            yield _final(
+                stdout=f"[cu] screenshot saved: {saved}\n",
+                exit_code=0,
+            )
+            return
+        log.info(
+            "[cu] screenshot fast path unavailable (capture returned None) — "
+            "falling through to the interactive loop",
+        )
 
     # Loop-internal mission deadline (Wave 0): end cleanly with an explicit
     # budget result BEFORE the harness wait_for guillotines the stream

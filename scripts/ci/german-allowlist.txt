@@ -42,6 +42,60 @@ jarvis/skills/builtin/*/SKILL.md
 
 # --- Historical session logs (internal memory, not an outward-facing artifact) ---
 wiki/obsidian-vault/*
+# --- German speech-recognition intent data (bilingual assistant; the German
+#     phrases ARE the recognizer's input vocabulary, not outward-facing text) ---
+jarvis/pointer/*
+jarvis/brain/navigation_intent.py
+jarvis/brain/local_action_gate.py
+jarvis/plugins/tool/navigate.py
+jarvis/plugins/tool/inspect_pointer.py
+jarvis/plugins/tool/contact_lookup.py
+
+# --- Tests for the above: German fixture utterances are required to exercise
+#     the bilingual recognizers (same rationale as the gate's own tests) ---
+tests/unit/pointer/*
+tests/unit/brain/test_manager_pointer.py
+tests/unit/brain/test_navigation_intent.py
+tests/unit/brain/test_response_max_tokens_cap.py
+tests/unit/brain/test_routing.py
+tests/unit/plugins/tool/test_navigate.py
+tests/unit/channels/test_discord_channel.py
+tests/unit/contacts/test_store.py
+tests/unit/speech/test_brain_stall_guard.py
+tests/unit/telephony/test_outbound.py
+scripts/pointer_smoke.py
+scripts/probe_telephony_e2e.py
+
+# --- Design docs that document the German speech recognition (quoted DE
+#     example utterances are necessary to specify the recognizer) ---
+docs/adr/0011-router-pure-dispatcher.md
+docs/plans/ai-pointer/DESIGN.md
+docs/superpowers/plans/2026-06-02-configurable-keybinds.md
+docs/superpowers/specs/2026-06-02-configurable-keybinds-design.md
+
+# --- Skill that needs bilingual trigger phrases in its description so a
+#     German-speaking user can invoke it (trigger-matching data, like i18n) ---
+.claude/skills/ship-public-release/SKILL.md
+
+# Implementation plan for plugin<->skill pairing (2026-06-07): an internal
+# reference doc that quotes illustrative German voice-input test utterances
+# (intentional — they demonstrate the German speech path the tests exercise).
+docs/superpowers/plans/2026-06-07-plugin-skill-pairing-reachability.md
+
+# --- Forensic voice-bug deep-dive: an internal diagnosis doc that necessarily
+#     quotes the German voice phrases, log lines and user utterance it analyses ---
+docs/phantom-worker-aborted-deep-dive/*
+
+# --- Bilingual skill trigger matcher: the German filler/politeness words ARE
+#     the recognizer's input vocabulary (same rationale as navigate.py) ---
+jarvis/skills/trigger_matcher.py
+tests/unit/skills/test_trigger_matcher.py
+
+# --- Internal design/plan docs that quote German voice phrases to specify the
+#     bilingual speech path (same rationale as the keybinds design docs) ---
+docs/plans/mission-reliability/*
+docs/superpowers/specs/2026-06-07-languages-into-settings-design.md
+docs/superpowers/specs/2026-06-07-move-taskbar-into-settings-design.md
 
 # --- Voice-session transcript renderer: emits LOCALIZED session content
 #     ("Du:" / "Jarvis:" speaker labels, German header) that a user copies in

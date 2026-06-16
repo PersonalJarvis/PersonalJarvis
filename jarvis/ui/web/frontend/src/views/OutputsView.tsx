@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type DragEvent } from "react";
 import {
   FolderOpen,
   ExternalLink,
@@ -26,6 +26,8 @@ import {
   type ArtifactSummary,
 } from "@/hooks/useOutputs";
 import { useT } from "@/i18n";
+import { applyMissionDragImage } from "@/lib/missionDragImage";
+import { useMissionDrag } from "@/store/missionDrag";
 
 const STATUS_BADGE: Record<string, string> = {
   success: "border-emerald-400/40 bg-emerald-400/10 text-emerald-400",
@@ -52,8 +54,14 @@ const URL_REGEX = /(https?:\/\/[^\s)]+[^\s.,;:!?)])/g;
  *  Must match `MISSION_DND_MIME` in `components/JarvisDock.tsx`. */
 export const MISSION_DND_MIME = "application/x-jarvis-mission";
 
+/** The subset of an Outputs card the drag carries to the dock/server. */
+export type OutputsDragMeta = Pick<
+  OutputSummary,
+  "slug" | "utterance" | "status" | "summary" | "error" | "mission_id"
+>;
+
 /** Serialise the fields the dock/server need from a dragged Outputs card. */
-export function buildMissionDragPayload(meta: OutputSummary): string {
+export function buildMissionDragPayload(meta: OutputsDragMeta): string {
   return JSON.stringify({
     slug: meta.slug,
     utterance: meta.utterance ?? "",
@@ -62,6 +70,18 @@ export function buildMissionDragPayload(meta: OutputSummary): string {
     error: meta.error ?? "",
     mission_id: meta.mission_id ?? null,
   });
+}
+
+/**
+ * Begin dragging an Outputs card toward the Jarvis dock. Writes the payload,
+ * swaps the giant native drag ghost for a compact branded chip, and flags the
+ * drag globally so the dock blooms into a big, forgiving target.
+ */
+export function startMissionDrag(e: DragEvent, meta: OutputsDragMeta): void {
+  e.dataTransfer.setData(MISSION_DND_MIME, buildMissionDragPayload(meta));
+  e.dataTransfer.effectAllowed = "copy";
+  applyMissionDragImage(e.dataTransfer, meta.utterance || meta.slug);
+  useMissionDrag.getState().begin();
 }
 
 export function OutputsView() {
@@ -169,10 +189,8 @@ function SessionRow({
     <button
       type="button"
       draggable
-      onDragStart={(e) => {
-        e.dataTransfer.setData(MISSION_DND_MIME, buildMissionDragPayload(meta));
-        e.dataTransfer.effectAllowed = "copy";
-      }}
+      onDragStart={(e) => startMissionDrag(e, meta)}
+      onDragEnd={() => useMissionDrag.getState().end()}
       onClick={onSelect}
       className={cn(
         "w-full cursor-grab rounded-lg border p-3 text-left transition-colors hover:border-primary/40 active:cursor-grabbing",
