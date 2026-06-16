@@ -432,7 +432,7 @@ class BoardAggregator:
             conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
             conn.row_factory = sqlite3.Row
         except sqlite3.Error:
-            log.warning("BoardAggregator: sessions.db nicht lesbar (%s)", path)
+            log.warning("BoardAggregator: sessions.db not readable (%s)", path)
             return
         try:
             for row in conn.execute(
@@ -472,7 +472,7 @@ class BoardAggregator:
                         int(ended) - int(ms)
                     ) / 1000.0
         except sqlite3.Error:
-            log.exception("BoardAggregator: Fehler beim Lesen von sessions.db")
+            log.exception("BoardAggregator: error reading sessions.db")
         finally:
             with contextlib.suppress(sqlite3.Error):
                 conn.close()

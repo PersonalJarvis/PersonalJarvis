@@ -610,7 +610,7 @@ function SkillRowDraggable({
             })}
             {skill.triggers.length === 0 && (
               <span className="text-[10px] text-muted-foreground">
-                kein auto-trigger
+                no auto-trigger
               </span>
             )}
           </div>

@@ -217,7 +217,7 @@ def set_keybind(action: str, hotkey: str, *, path: Path = DEFAULT_CONFIG_FILE) -
     """Persist a voice keybind (call / hangup / ptt) to ``[trigger]`` in jarvis.toml.
 
     Toml-only by design (same rationale as the other [trigger] writers — these
-    keys are NOT tracked in config-soll.json, so the drift-guard never reverts
+    keys are NOT tracked in the drift-guard's reference snapshot, so it never reverts
     them; a plain atomic write suffices and the BUG-010 3-layer rule does not
     apply). Takes effect on the next SpeechPipeline bootstrap (a Jarvis restart):
     bindings are armed once at pipeline start via ``TriggerConfig.resolve_hotkeys``
@@ -317,7 +317,7 @@ def set_overlay_style(style: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the on-screen overlay style to ``[ui] orb_style`` in jarvis.toml.
 
     ``style`` is one of ``"whisper_bar"`` / ``"mascot"`` / ``"none"``. TOML-only
-    by design: ``ui.orb_style`` is NOT tracked in ``config-soll.json``, so the
+    by design: ``ui.orb_style`` is NOT in the drift-guard's reference snapshot, so the
     drift-guard never reverts it (same rationale as :func:`set_autostart`). The
     Settings route applies the change live; this persists the boot default.
     """

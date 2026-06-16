@@ -238,11 +238,10 @@ class SkillImportBody(BaseModel):
 
 
 class SkillOrderBody(BaseModel):
-    """Body fuer ``PUT /api/skills/order`` — die User-definierte Listen-Reihenfolge.
+    """Body for ``PUT /api/skills/order`` — the user-defined list order.
 
-    ``order`` ist eine Liste von Skill-Namen in Anzeige-Reihenfolge. Sie betrifft
-    NUR die Listen-Ansicht — Auslösung + Brain-Einblendung ignorieren die
-    Reihenfolge.
+    ``order`` is a list of skill names in display order. It affects ONLY the
+    list view — triggering + brain injection ignore the order.
     """
     order: list[str] = Field(default_factory=list)
 
@@ -540,7 +539,7 @@ async def get_skill(name: str, request: Request) -> dict[str, Any]:
     try:
         skill = reg.get(name)
     except KeyError:
-        raise HTTPException(status_code=404, detail=f"Skill '{name}' nicht gefunden")
+        raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
     return _skill_to_detail(skill)
 
 
@@ -644,7 +643,7 @@ async def update_skill(
     try:
         skill = reg.get(name)
     except KeyError:
-        raise HTTPException(status_code=404, detail=f"Skill '{name}' nicht gefunden")
+        raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
 
     if _is_builtin(name):
         if not _check_admin_pass(body.admin_password, _security_cfg(request)):
@@ -703,7 +702,7 @@ async def get_skill_link_health(name: str, request: Request) -> dict[str, Any]:
     try:
         skill = reg.get(name)
     except KeyError:
-        raise HTTPException(status_code=404, detail=f"Skill '{name}' nicht gefunden")
+        raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
 
     if skill.frontmatter is None:
         return {"fields": {}, "skill": name}
@@ -759,7 +758,7 @@ async def get_skill_resource(
     try:
         skill = reg.get(name)
     except KeyError:
-        raise HTTPException(status_code=404, detail=f"Skill '{name}' nicht gefunden")
+        raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
 
     target = _resolve_resource_path(skill, kind, filename)
     try:
@@ -779,7 +778,7 @@ def _flip_state(
     try:
         skill = reg.get(name)
     except KeyError:
-        raise HTTPException(status_code=404, detail=f"Skill '{name}' nicht gefunden")
+        raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
 
     # DRAFT bleibt DRAFT — man kann einen kaputten Skill nicht aktivieren.
     if skill.state == SkillLifecycleState.DRAFT:

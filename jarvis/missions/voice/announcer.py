@@ -187,9 +187,9 @@ class MissionAnnouncer:
             # FAILED('interrupted'). Those missions were dispatched by voice in
             # a PRIOR session, so the is_voice gate (keyed on the ORIGINAL
             # MissionDispatched.source_actor) lets them through — and the
-            # announcer would barge in with "Die Mission ist fehlgeschlagen."
+            # announcer would barge in with "Die Mission ist fehlgeschlagen." i18n-allow
             # at interrupt priority. That is exactly the user's "random Mission
-            # fehlgeschlagen, although I never started one" complaint (deep-dive
+            # fehlgeschlagen, although I never started one" complaint (deep-dive i18n-allow
             # 2026-05-29). Suppress both: return empty text so _dispatch skips
             # publishing an AnnouncementRequested. (interrupted added 2026-06-07
             # for commit 13b86605 which emits 'interrupted' instead of

@@ -1104,11 +1104,16 @@ class WebServer:
         and publishes it as a normal ``MessageSent``. The existing brain
         dispatcher then answers it (spoken on voice, shown in chat) and the
         text lands in ``BrainManager._history`` so follow-ups stay in context.
-        A distinct ``source_layer`` marks the turn for traceability; the brain
-        dispatcher does NOT skip it (only ``"chat"``/``"brain:mock"`` are
-        skipped), so it triggers a turn exactly like a typed message.
+        A distinct ``source_layer`` marks the turn for traceability AND is the
+        signal the router uses to exempt a recap from force-spawn — a dropped
+        card is DISCUSSED inline, never re-dispatched as a new mission. The
+        brain dispatcher still runs the turn (only ``"chat"``/``"brain:mock"``
+        are skipped), so it answers exactly like a typed message.
         """
-        from jarvis.ui.web.mission_inject import compose_mission_inject_text
+        from jarvis.ui.web.mission_inject import (
+            MISSION_INJECT_SOURCE_LAYER,
+            compose_mission_inject_text,
+        )
 
         text = compose_mission_inject_text(payload)
         if not text:
@@ -1120,7 +1125,7 @@ class WebServer:
                 thread_id=thread_id,
                 role="user",
                 text=text,
-                source_layer="ui.web.ws.mission_inject",
+                source_layer=MISSION_INJECT_SOURCE_LAYER,
             )
         )
 
@@ -2069,7 +2074,7 @@ class WebServer:
         data_dir.mkdir(parents=True, exist_ok=True)
         friends_db = data_dir / "friends.db"
 
-        # Telegram/Discord configs aus integrations.* (Branch-portable mit getattr)
+        # Telegram/Discord configs from integrations.* (branch-portable via getattr)
         tg_cfg = None
         dc_cfg = None
         integrations = getattr(self.cfg, "integrations", None)
@@ -2320,7 +2325,7 @@ class WebServer:
                 await channel_bridge.stop()
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning(
-                    "ChannelChatBridge-Shutdown fehlgeschlagen"
+                    "ChannelChatBridge shutdown failed"
                 )
             self._channel_chat_bridge = None
             self.app.state.channel_chat_bridge = None

@@ -52,7 +52,7 @@ from jarvis.core.protocols import (
     Tool,
 )
 from jarvis.core.turn_language import detect_text_language, resolve_turn_language
-from jarvis.voice.action_phrases import action_phrase
+from jarvis.voice.action_phrases import action_phrase, cu_failure_readback
 from jarvis.memory import CoreMemory, PersonStore, RecallStore, Soul, UserProfile
 from jarvis.memory.curator import Curator
 from jarvis.safety.tool_executor import ToolExecutor
@@ -279,6 +279,19 @@ def get_tier_default_model(tier: str, provider: str) -> str | None:
 _NEVER_MATCH_RE: re.Pattern[str] = re.compile(r"(?!.*)", re.IGNORECASE)
 
 
+# ``MessageSent.source_layer`` values for CONVERSATIONAL turns that must NEVER
+# force-spawn a mission, whatever their text contains. A drag-dropped mission
+# recap (``ui.web.ws.mission_inject``) embeds the dropped card's OWN text
+# verbatim, so a title carrying a spawn trigger ("sub-agent") or an action verb
+# ("Write …") would otherwise leak that trigger into the directive and spawn a
+# NEW mission whose only deliverable is a conversational recap (no file) ->
+# empty diff -> critic_loop_exhausted. The doom-loop fixed 2026-06-16: every
+# failed mission the user dragged in to discuss spawned another failed mission.
+# Keep in sync with ``jarvis.ui.web.mission_inject.MISSION_INJECT_SOURCE_LAYER``
+# (parity test in tests/unit/brain/test_routing.py).
+_NON_SPAWN_SOURCE_LAYERS: frozenset[str] = frozenset({"ui.web.ws.mission_inject"})
+
+
 # Option A (2026-06-15): a heavy-research request whose deliverable is an ANSWER
 # (comparison / overview / recommendation / summary) is answered INLINE via the
 # router's search_web tool; only research that BUILDS a verifiable ARTIFACT (a
@@ -430,10 +443,10 @@ def _build_smalltalk_pattern(allowlist: list[str]) -> re.Pattern[str]:
 
 # Leading greeting / wake-word / politeness run, stripped before the smalltalk
 # re-check in ``BrainManager._is_smalltalk``. Anchored at ^, repeats so several
-# leading tokens collapse ("Hey Jarvis, hallo, öffne ..."), and swallows the
+# leading tokens collapse ("Hey Jarvis, hallo, öffne ..."), and swallows the i18n-allow
 # trailing separators (comma / period / …). Longer tokens ("hey jarvis") precede
 # their prefix ("hey") so the longest run is consumed. Live bug 2026-06-07
-# (data/jarvis_desktop.log 18:19:07): "Hallo, öffne ihn für mich" was silenced
+# (data/jarvis_desktop.log 18:19:07): "Hallo, öffne ihn für mich" was silenced i18n-allow
 # as smalltalk because the allowlist substring-matched the leading "Hallo".
 _GREETING_PREFIX_RE = re.compile(
     r"^(?:\s*(?:"
@@ -681,13 +694,13 @@ def normalize_reply_language(value: object) -> str:
 # (mirrors the ACK-variant approach). The full diagnostic stays in the logs.
 _PROVIDER_DOWN_PHRASES: dict[str, tuple[str, ...]] = {
     "de": (
-        "Entschuldige, ich komme gerade nicht an mein Sprachmodell. Einen Moment, bitte.",
+        "Entschuldige, ich komme gerade nicht an mein Sprachmodell. Einen Moment, bitte.",  # i18n-allow
         (
-            "Tut mir leid, mein Sprachmodell ist im Moment nicht erreichbar. "
+            "Tut mir leid, mein Sprachmodell ist im Moment nicht erreichbar. "  # i18n-allow
             "Ich versuche es gleich erneut."
         ),
         (
-            "Ich kann gerade nicht antworten — die Verbindung zu meinem Modell hakt. "
+            "Ich kann gerade nicht antworten — die Verbindung zu meinem Modell hakt. "  # i18n-allow
             "Gib mir kurz Zeit."
         ),
     ),
@@ -1384,11 +1397,11 @@ class BrainManager:
         _tools_now = getattr(self, "_tools", None) or {}
         if "contact-lookup" in _tools_now and "gmail" in _tools_now:
             parts.append(
-                "KONTAKTE: Wenn der User eine Person beim Namen nennt, um ihr eine "
-                "E-Mail oder Nachricht zu schicken ('schreib eine Mail an Christoph'), "
-                "rufe `contact-lookup` first, um den Namen zur gespeicherten E-Mail "
-                "aufzuloesen, und sende dann mit `gmail`. Erfinde nie eine Adresse — "
-                "wenn contact-lookup nichts findet, sag das."
+                "CONTACTS: When the user names a person to send them an email or "
+                "message ('write an email to Christoph'), call `contact-lookup` "
+                "first to resolve the name to the stored email, then send with "
+                "`gmail`. Never invent an address — if contact-lookup finds "
+                "nothing, say so."
             )
 
         if self._people is not None:
@@ -1978,7 +1991,7 @@ class BrainManager:
             # external integration the worker cannot satisfy (mail/calendar/
             # Spotify/social/delivery) is genuinely "unsupported". Everything
             # else falls through to the force-spawn path so a sub-agent task is
-            # delegated natively instead of refused with "kann ich noch nicht"
+            # delegated natively instead of refused with "kann ich noch nicht"  # i18n-allow
             # (live forensic 2026-06-01: a sub-agent task was refused, then only
             # spawned once the user said "Subagent" explicitly).
             if not requires_external_integration(t):
@@ -2056,15 +2069,15 @@ class BrainManager:
         tool-use loop receives ``tools={}``, so the LLM can no longer spawn.
 
         Greeting-prefix guard (live bug 2026-06-07, data/jarvis_desktop.log
-        18:19:07): the user said "Hallo, öffne ihn für mich". The allowlist
+        18:19:07): the user said "Hallo, öffne ihn für mich". The allowlist i18n-allow
         substring-matched the leading "Hallo", the turn was treated as
         smalltalk, the action tools were hidden, and the brain spoke the
-        anti-silence refusal "Das kann ich gerade nicht ausführen — mir fehlt
-        dafür das passende Werkzeug." A greeting/politeness prefix in front of a
-        REAL request is NOT smalltalk: strip the leading greeting run and, if
-        what remains is itself non-smalltalk, classify the turn as a real
-        request (return False) so the tools stay visible and force-spawn can
-        fire. Standalone smalltalk ("Hallo", "Hallo, wie geht's?") and
+        anti-silence refusal "Das kann ich gerade nicht ausführen — mir fehlt i18n-allow
+        dafür das passende Werkzeug." A greeting/politeness prefix in front of a i18n-allow
+        REAL command is NOT smalltalk: strip the leading greeting run and, if
+        what remains is itself a non-smalltalk action request, classify the turn
+        as a command (return False) so the tools stay visible and force-spawn
+        can fire. Standalone smalltalk ("Hallo", "Hallo, wie geht's?") and
         greeting-less chit-chat ("was machst du") are unaffected.
 
         2026-06-10 23:13 recurrence (same log): "Hey, what's the weather like
@@ -2509,12 +2522,14 @@ class BrainManager:
             )
             return None
         label = section.replace("-", " ").title()
-        is_de = bool(re.search(r"[äöüÄÖÜß]", user_text)) or bool(
-            re.search(r"\b(zeig\w*|öffne|oeffne|geh\w*|wechs\w*|spring\w*)\b", user_text, re.I)
+        is_de = bool(re.search(r"[äöüÄÖÜß]", user_text)) or bool(  # i18n-allow
+            re.search(r"\b(zeig\w*|öffne|oeffne|geh\w*|wechs\w*|spring\w*)\b", user_text, re.I)  # i18n-allow
         )
-        return f"Öffne {label}." if is_de else f"Opening {label}."
+        return f"Öffne {label}." if is_de else f"Opening {label}."  # i18n-allow
 
-    def _should_force_spawn(self, user_text: str) -> bool:
+    def _should_force_spawn(
+        self, user_text: str, *, source_layer: str | None = None
+    ) -> bool:
         """Deterministic spawn guard for action requests.
 
         Wave-4 migration: previously ``_should_force_sub_jarvis`` with
@@ -2522,12 +2537,20 @@ class BrainManager:
         the OpenClaw bridge — see docs/openclaw-bridge.md §11.
 
         Order:
+          0. Conversational source (drag-dropped mission recap) → never spawn.
           1. Empty text or no spawn_worker tool → False.
           2. Smalltalk allowlist wins → False (even on verb hit).
           3. Action verb (``spawn_verbs``) → True.
           4. External system marker (``external_system_markers``) → True.
           5. Otherwise → False.
         """
+        # A drag-dropped mission recap is a CONVERSATION about a FINISHED job,
+        # never new work — answer it inline regardless of what the quoted card
+        # text contains (doom-loop fixed 2026-06-16; see
+        # ``_NON_SPAWN_SOURCE_LAYERS``). Checked first so a leaked spawn trigger
+        # in the verbatim title cannot reach the explicit-trigger hoist below.
+        if source_layer is not None and source_layer in _NON_SPAWN_SOURCE_LAYERS:
+            return False
         t = (user_text or "").strip()
         if not t:
             return False
@@ -2619,7 +2642,7 @@ class BrainManager:
         except Exception:  # noqa: BLE001 — nav gate must never block routing
             pass
         # Greeting-aware smalltalk check (live bug 2026-06-07): a greeting prefix
-        # ("Hallo, öffne ...") must NOT block the spawn of the real command that
+        # ("Hallo, öffne ...") must NOT block the spawn of the real command that  # i18n-allow
         # follows it. _is_smalltalk strips the greeting and re-evaluates.
         if self._is_smalltalk(t):
             return False
@@ -2911,6 +2934,30 @@ class BrainManager:
 
         return None
 
+    @staticmethod
+    def _cu_failure_detail(output: Any) -> tuple[int | None, str | None]:
+        """Pull ``(exit_code, human_detail)`` out of a CU harness failure result.
+
+        ``dispatch_to_harness`` returns ``output`` as a dict with ``exit_code``
+        plus ``stderr``/``stdout`` — and the screenshot loop writes the model's
+        real ``fail`` reason into ``stderr`` (``"[cu] fail at <tag>: <reason>"``).
+        We surface that reason so the readback can forward it instead of the
+        opaque ``error="exit N"``. Best-effort: any non-dict / missing field
+        yields ``(None, None)`` and the readback degrades to the exit-code phrase.
+        """
+        if not isinstance(output, dict):
+            return None, None
+        raw_code = output.get("exit_code")
+        exit_code: int | None
+        try:
+            exit_code = int(raw_code) if raw_code is not None else None
+        except (TypeError, ValueError):
+            exit_code = None
+        stderr = str(output.get("stderr") or "").strip()
+        stdout = str(output.get("stdout") or "").strip()
+        detail = stderr or stdout or None
+        return exit_code, detail
+
     async def _run_computer_use_background(
         self,
         *,
@@ -2955,9 +3002,11 @@ class BrainManager:
                 text = str(result.output or "").strip() or action_phrase("cu_done", lang)
             else:
                 err = getattr(result, "error", None)
-                text = (
-                    action_phrase("cu_failed_reason", lang, error=err)
-                    if err else action_phrase("cu_failed", lang)
+                exit_code, detail = self._cu_failure_detail(
+                    getattr(result, "output", None)
+                )
+                text = cu_failure_readback(
+                    lang, error=err, exit_code=exit_code, detail=detail,
                 )
         except TimeoutError:
             text = action_phrase("cu_timeout", lang, secs=f"{timeout_s:.0f}")
@@ -3063,6 +3112,7 @@ class BrainManager:
         user_text: str,
         *,
         trace_id: UUID | None = None,
+        source_layer: str | None = None,
     ) -> str | None:
         """Starts ``spawn_worker`` deterministically, without LLM tool-choice.
 
@@ -3076,7 +3126,7 @@ class BrainManager:
             TTS-safe shortened summary via the voice listener path). The caller
             (``generate``) forwards the string as the final brain response.
         """
-        if not self._should_force_spawn(user_text):
+        if not self._should_force_spawn(user_text, source_layer=source_layer):
             return None
 
         tool = self._tools.get("spawn_worker")
@@ -3398,6 +3448,7 @@ class BrainManager:
         trace_id: UUID | None = None,
         text_consumer: "Callable[[str], None] | None" = None,
         on_progress: Callable[[], None] | None = None,
+        source_layer: str | None = None,
     ) -> str:
         # 1. Intercept meta-commands (cancel, switch, depth override).
         # User request 2026-04-25: no standardised confirmation phrases
@@ -3595,7 +3646,7 @@ class BrainManager:
         # inputs (see docs/persona-research.md section 2 — 60% empty smalltalk
         # outputs from the reflexive LLM spawn path).
         forced_spawn = await self._force_spawn_worker(
-            user_text, trace_id=turn_trace_id,
+            user_text, trace_id=turn_trace_id, source_layer=source_layer,
         )
         if forced_spawn is not None:
             # Bug fix 2026-04-30: history update also in the force-spawn path.
@@ -3680,7 +3731,7 @@ class BrainManager:
                     "Provider chain empty (all dead/keyless) — spoken fallback. "
                     "Diagnostic: %s",
                     _format_provider_chain_error([
-                        (p, "", "missing_key", "kein API-Key in dieser Session")
+                        (p, "", "missing_key", "no API key in this session")
                         for p in self._dead_providers
                     ]),
                 )
@@ -3753,7 +3804,7 @@ class BrainManager:
             )
 
         # AI Pointer (deictic push): collect the result of the resolution started
-        # above. When the utterance points at the mouse cursor ("was ist das da?")
+        # above. When the utterance points at the mouse cursor ("was ist das da?")  # i18n-allow
         # the resolved element rides on this turn's context + a tight crop is
         # attached only when the element is unlabeled. Unrelated turns ("how's the
         # weather?") yield ("", None). See docs/plans/ai-pointer/DESIGN.md.
@@ -4351,6 +4402,29 @@ class BrainManager:
 
     def clear_history(self) -> None:
         self._history = []
+
+    def drop_last_turn(self, expected_user_text: str) -> bool:
+        """Remove the most recent (user, assistant) pair when its user message
+        matches ``expected_user_text`` (whitespace-insensitive).
+
+        Used by the voice continuation-recombine path: when a combined turn
+        supersedes the immediately-preceding committed turn, the truncated half
+        must not be duplicated in history. Safe no-op when fewer than two
+        messages are buffered, when the tail is not a user/assistant pair, or
+        when the tail user text does not match — so it does nothing when the
+        prior turn was aborted before commit (the common interrupt case).
+        Returns ``True`` iff a pair was removed.
+        """
+        if len(self._history) < 2:
+            return False
+        last = self._history[-1]
+        prev = self._history[-2]
+        if last.role != "assistant" or prev.role != "user":
+            return False
+        if (prev.content or "").strip() != (expected_user_text or "").strip():
+            return False
+        del self._history[-2:]
+        return True
 
     # Roles the brain conversation buffer accepts for seeding. ``tool``
     # messages need a tool_call_id pairing and are never seeded standalone;

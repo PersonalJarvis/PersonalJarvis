@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import Callable
 from typing import Any, Final
@@ -40,6 +41,7 @@ from jarvis.core.bus import EventBus
 from jarvis.core.events import OpenClawAnnouncement, OpenClawBackgroundCompleted
 from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.missions.manager import MissionManager
+from jarvis.missions.stream_evidence import strip_spawn_meta
 
 log = logging.getLogger(__name__)
 
@@ -82,6 +84,25 @@ _COOLDOWN_SECONDS: Final[float] = 30.0
 # force-spawn / leak-recovery paths). It is NOT a real interpretation of the
 # request and must never become the worker's task instruction.
 _GENERIC_ACTION_FALLBACK: Final[str] = "einer komplexen Aufgabe nachgeht"
+
+
+# Force-spawn task floor. After stripping the spawn/routing meta-clause from the
+# verbatim utterance, a body this short means the utterance was ONLY the routing
+# wrapper ("spawn a sub-agent") with no real task — fall back to the raw words so
+# the worker never receives an empty task.
+_MIN_FORCE_SPAWN_TASK_CHARS: Final[int] = 8
+
+# Punctuation/whitespace the meta-strip can expose at the head of the task.
+_FORCE_SPAWN_HEAD_PUNCT: Final[str] = " ,;:.–—-•\t\n"
+
+# A single orphaned leading connector / relative pronoun the strip can leave
+# behind ("spawn a sub-agent which will help me …" -> "which will help me …").
+# Dropping it makes the residual read as an imperative. Fixed token list ONLY —
+# never a general rewrite (that would be a new bug class).
+_LEADING_CONNECTOR_RE: Final[re.Pattern[str]] = re.compile(
+    r"^(?:and|und|which|that|who|whom|der|die|das|dass)\b",
+    re.IGNORECASE,
+)
 
 
 # Standing quality directive prepended to EVERY dispatched mission prompt.
@@ -141,8 +162,21 @@ def _build_mission_prompt(
     target = (target or "").strip()
     if not action or action == _GENERIC_ACTION_FALLBACK:
         # Force-spawn / no interpretation — the verbatim utterance is all we
-        # have, and it is the full user turn on that path.
-        body = utterance
+        # have. Strip any spawn/routing meta-clause ("spawn a sub-agent that …",
+        # "create and spawn a sub-agent …") so the worker receives the REAL task,
+        # not the routing instruction it cannot act on (no spawn tool, AP-5).
+        # Live regression 2026-06-16: an explicit voice trigger ("spawn a
+        # sub-agent which will help me find out X") made the worker try to spawn
+        # instead of doing X -> empty/off-target diff -> critic_loop_exhausted.
+        # ``strip_spawn_meta`` is the SAME function the critic classifier uses
+        # (jarvis.missions.stream_evidence) so the worker prompt and the
+        # informational classification can never drift apart.
+        stripped = re.sub(r"\s{2,}", " ", strip_spawn_meta(utterance)).strip()
+        stripped = stripped.lstrip(_FORCE_SPAWN_HEAD_PUNCT)
+        stripped = _LEADING_CONNECTOR_RE.sub("", stripped, count=1).lstrip(_FORCE_SPAWN_HEAD_PUNCT)
+        # Floor: if stripping left nothing real (the utterance was ONLY the
+        # routing wrapper), fall back to the raw utterance — never an empty task.
+        body = stripped if len(stripped) >= _MIN_FORCE_SPAWN_TASK_CHARS else utterance
     else:
         parts = [f"Aufgabe: {action}."]
         if target:

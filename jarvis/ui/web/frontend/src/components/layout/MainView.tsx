@@ -69,7 +69,7 @@ function SwitchOnActiveSection({ active }: { active: string }) {
       return <WikiView />;
     // "telephony" no longer has its own screen — the telephony status /
     // credentials / scripts / calls now live as a section inside the API-Keys
-    // view. The id stays valid so the existing "geh zur Telefonie" voice alias
+    // view. The id stays valid so the existing "geh zur Telefonie" voice alias i18n-allow
     // keeps working and lands on API Keys (mirrors taskbar/languages → Settings).
     case "apikeys":
     case "telephony":
@@ -82,7 +82,7 @@ function SwitchOnActiveSection({ active }: { active: string }) {
     // "taskbar" and "languages" no longer have their own screens — the former
     // Taskbar controls live in Settings (OverlayTaskbarGroup) and the language
     // selectors live in Settings (LanguagesGroup) now. The ids stay valid so the
-    // existing "geh zur Taskleiste" / "zeig die Sprachen" voice aliases keep
+    // existing "geh zur Taskleiste" / "zeig die Sprachen" voice aliases keep i18n-allow
     // working and land on Settings.
     case "settings":
     case "taskbar":

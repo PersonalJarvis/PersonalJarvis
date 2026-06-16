@@ -710,12 +710,39 @@ _SPAWN_VERB = (
     r"(?:spawn\w*|start\w*|launch\w*|delegate\w*|delegier\w*|dispatch\w*|"
     r"lass\w*|kick[\s-]?off)"
 )
+# Routing nouns. German inflections (``Sub-Agenten``, ``Missionen``) are covered
+# by the ``(?:en|s)?`` suffix — a ``\b`` after bare ``agents?`` would otherwise
+# miss the dative/accusative ``Agenten`` and leak the meta-clause through (live
+# regression 2026-06-16: a German "Spawne einen Sub-Agenten, der …" was not
+# stripped because "Agenten" did not match).
 _SPAWN_NOUN = (
-    r"(?:sub-?edge-?missions?|sub-?agents?|subagents?|agents?|workers?|missions?)"
+    r"(?:sub-?edge-?mission(?:en|s)?|sub-?agent(?:en|s)?|subagent(?:en|s)?|"
+    r"agent(?:en|s)?|workers?|mission(?:en|s)?)"
+)
+# Creation verbs (EN + DE). Unlike the strong spawn verbs above, these are weak:
+# "create"/"build"/"make" routinely govern a genuine deliverable ("create a
+# file", "build an app"). They count as routing meta ONLY when they directly
+# govern a JARVIS routing noun ("create a sub-agent", "mach einen Worker") — so
+# the creation-verb alternative below is restricted to ``_ROUTING_NOUN`` (no bare
+# "agent"), which keeps real deliverables intact.
+_CREATE_VERB = (
+    r"(?:creat\w*|mak\w*|build\w*|bau\w*|generat\w*|generier\w*|"
+    r"erstell\w*|erzeug\w*|mach\w*)"
+)
+_ROUTING_NOUN = (
+    r"(?:sub-?edge-?mission(?:en|s)?|sub-?agent(?:en|s)?|subagent(?:en|s)?|"
+    r"workers?|mission(?:en|s)?)"
 )
 _SPAWN_META_RE = re.compile(
     rf"\b{_SPAWN_VERB}\b[^.?!\n]{{0,40}}?\b{_SPAWN_NOUN}\b"
-    rf"|\b{_SPAWN_NOUN}\b[^.?!\n]{{0,40}}?\b{_SPAWN_VERB}\b",
+    rf"|\b{_SPAWN_NOUN}\b[^.?!\n]{{0,40}}?\b{_SPAWN_VERB}\b"
+    # Third alternative: a creation verb governing a routing noun, optionally
+    # chained through "(and|und) <spawn-verb>" ("create and spawn a sub-agent").
+    # Narrow on purpose — only ``\s`` + fixed tokens between verb and noun, no
+    # ``[^.?!]{0,40}`` wildcard, so it cannot reach across a clause and eat a
+    # real deliverable.
+    rf"|\b{_CREATE_VERB}\s+(?:(?:and|und)\s+{_SPAWN_VERB}\s+)?"
+    rf"(?:a|an|the|ein|eine|einen|der|die|das)?\s*{_ROUTING_NOUN}\b",
     re.IGNORECASE,
 )
 _MAKE_RESEARCH_IDIOM_RE = re.compile(
@@ -730,6 +757,22 @@ _MAKE_RESEARCH_IDIOM_RE = re.compile(
 def _strip_spawn_meta(text: str) -> str:
     """Remove spawn/routing meta-clauses so the classifier sees the real task."""
     return _SPAWN_META_RE.sub(" ", text)
+
+
+def strip_spawn_meta(text: str) -> str:
+    """Public, shared spawn/routing meta-clause remover.
+
+    Single source of truth for two consumers that MUST stay in lock-step:
+    (1) the critic classifier here (``is_informational_request``), and (2) the
+    worker-prompt builder (``jarvis.plugins.tool.spawn_worker._build_mission_prompt``).
+    Before this was shared, only the classifier stripped the meta-clause, so the
+    worker received "spawn a sub-agent that …" as its OWN task — which it cannot
+    do (no spawn tool, AP-5) — and the mission died ``critic_loop_exhausted``
+    (live regression 2026-06-16). Both callers route through this function so the
+    prompt the worker runs and the prompt the critic classifies can never drift
+    apart again (parity test: ``tests/missions/test_spawn_meta_parity.py``).
+    """
+    return _strip_spawn_meta(text)
 
 
 def _normalize_informational_idioms(text: str) -> str:
@@ -987,5 +1030,6 @@ __all__ = [
     "informational_file_answer",
     "is_informational_request",
     "readonly_answer",
+    "strip_spawn_meta",
     "summarize_answers",
 ]

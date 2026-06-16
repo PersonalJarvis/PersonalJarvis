@@ -2,7 +2,9 @@
   "jarvis_dock": {
     "aria": "Jarvis — zieh eine Mission hierher, um darüber zu sprechen",
     "hint": "Zieh ein Sub-Agent-Ergebnis hierher, um es ins Gespräch zu holen",
-    "drop_here": "Zum Besprechen ablegen"
+    "drop_here": "Zum Besprechen ablegen",
+    "drop_active": "Ablegen, um Jarvis zu briefen",
+    "dropped": "Zur Unterhaltung hinzugefügt"
   },
   "topbar": {
     "restart": "Neu starten",

@@ -72,7 +72,6 @@ def test_disable_clears_secret_and_flag(monkeypatch):
     tc.on_telegram_disconnected()
     assert calls["deleted"] == "telegram_bot_token"
     assert calls["enabled"] is False
-
 @pytest.mark.asyncio
 async def test_connect_pat_telegram_fires_the_enable_hook(monkeypatch):
     fired = {}
@@ -136,6 +135,7 @@ async def test_connect_pat_telegram_fails_when_channel_enable_fails(monkeypatch)
 
     store = _Store()
     monkeypatch.setattr(mr, "load_catalog", lambda: _Cat())
+
     async def _ok(_auth, _token):
         return True, 200
 

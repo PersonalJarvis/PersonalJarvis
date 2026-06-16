@@ -11,6 +11,7 @@ from __future__ import annotations
 import httpx
 
 from jarvis.plugins.tool.search_backends import (
+    _default_ddgs_searcher,
     ddg_instant_search,
     ddg_serp_search,
     run_search,
@@ -82,6 +83,79 @@ async def test_ddg_serp_library_missing_is_unavailable() -> None:
         raise RuntimeError("ddgs not installed")
     outcome = await ddg_serp_search("python", 5, searcher=boom)
     assert outcome.status == "unavailable"
+
+
+# ---------------------------------------------------------------------------
+# Real-library searcher: must NOT inherit ddgs "auto" mode
+# ---------------------------------------------------------------------------
+
+def test_default_searcher_pins_fast_backends_and_bounded_timeout(monkeypatch) -> None:
+    """The real-library searcher must pin an explicit, fast backend list and a
+    bounded DDGS timeout — never inherit ddgs "auto" mode.
+
+    Live forensic 2026-06-16 (voice session 15:05, "best city … no taxes"):
+    ddgs "auto" text mode front-loads the two SLOWEST engines — `wikipedia`
+    (DNS-fails on the wt-wt region; it derives the nonexistent host
+    `wt.wikipedia.org`) and `grokipedia` (times out). With max_results=5 the
+    first concurrent batch is exactly those two (max_workers = ceil(5/10)+1 = 2),
+    and with no DDGS(timeout=…) a single hung engine blocks the per-batch wait
+    for the full default window. The aggregate blew the 5 s voice budget in
+    search_web.execute → status="unavailable" → "search backend timed out",
+    even though Google had already returned results.
+    """
+    import sys
+    import types
+
+    captured: dict[str, object] = {}
+
+    class _FakeDDGS:
+        def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            captured["init_kwargs"] = kwargs
+
+        def __enter__(self) -> _FakeDDGS:
+            return self
+
+        def __exit__(self, *exc: object) -> bool:
+            return False
+
+        def text(self, query, **kwargs):  # noqa: ANN001, ANN003, ANN201
+            captured["text_kwargs"] = kwargs
+            return [{"title": "t", "body": "b", "href": "https://x"}]
+
+    fake_mod = types.ModuleType("ddgs")
+    fake_mod.DDGS = _FakeDDGS  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "ddgs", fake_mod)
+
+    rows = _default_ddgs_searcher("best cities with no income tax", 5)
+    assert rows, "searcher must return the library rows"
+
+    init_kwargs = captured["init_kwargs"]
+    assert isinstance(init_kwargs, dict)
+    timeout = init_kwargs.get("timeout")
+    assert timeout is not None, "DDGS must be constructed with a bounded timeout"
+    assert isinstance(timeout, (int, float)) and 0 < timeout < 5.0
+
+    text_kwargs = captured["text_kwargs"]
+    assert isinstance(text_kwargs, dict)
+    backend = text_kwargs.get("backend")
+    assert backend, "must pin an explicit backend, not inherit ddgs 'auto'"
+    parts = {b.strip().lower() for b in str(backend).split(",")}
+    assert "auto" not in parts and "all" not in parts
+    # The two slow engines that sank the live turn must be excluded.
+    assert "wikipedia" not in parts and "grokipedia" not in parts
+    # Breadth is the reliability lever: any single ddgs engine is flaky
+    # (transient "No results"), but several racing always return.
+    assert len(parts) >= 3, "keep enough fast engines for reliability"
+    # Every pinned name must be a VALID ddgs `text` backend — an unknown name
+    # (e.g. `bing`, which is images/news only) is silently dropped with a
+    # per-call warning, quietly shrinking the pool. Valid set per ddgs 9.14.x;
+    # re-validate when bumping the dependency.
+    _VALID_DDGS_TEXT_BACKENDS = {
+        "brave", "duckduckgo", "google", "grokipedia",
+        "mojeek", "startpage", "wikipedia", "yahoo", "yandex",
+    }
+    unknown = parts - _VALID_DDGS_TEXT_BACKENDS
+    assert not unknown, f"unknown ddgs text backend(s) would be dropped: {unknown}"
 
 
 # ---------------------------------------------------------------------------

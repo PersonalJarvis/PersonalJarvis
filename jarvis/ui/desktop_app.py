@@ -727,7 +727,7 @@ class DesktopApp:
             if brain is None:
                 # Build-Fehler-Pfad: Systemfehler statt Jarvis-Antwort.
                 detail = brain_build_error or "BrainManager nicht initialisiert"
-                message = f"Brain nicht verfuegbar: {detail}"
+                message = f"Brain unavailable: {detail}"
                 await server.bus.publish(
                     ErrorOccurred(
                         layer="brain",
@@ -756,12 +756,20 @@ class DesktopApp:
                 await supervisor.set_state("THINKING")
                 generate = getattr(brain, "generate", None)
                 if callable(generate):
-                    reply = await generate(evt.text, trace_id=evt.trace_id)
+                    # source_layer lets the router exempt a drag-dropped mission
+                    # recap (ui.web.ws.mission_inject) from force-spawn — a recap
+                    # is discussed inline, never re-dispatched (doom-loop fix
+                    # 2026-06-16). Other callers default to None (normal routing).
+                    reply = await generate(
+                        evt.text,
+                        trace_id=evt.trace_id,
+                        source_layer=evt.source_layer,
+                    )
                 else:
                     reply = await brain(evt.text)
             except Exception as exc:  # noqa: BLE001
                 detail = f"{type(exc).__name__}: {exc}"
-                message = f"Brain-Fehler: {detail}"
+                message = f"Brain error: {detail}"
                 logger.opt(exception=exc).warning("BrainManager call failed")
                 await server.bus.publish(
                     ErrorOccurred(

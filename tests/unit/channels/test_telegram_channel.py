@@ -211,14 +211,14 @@ async def test_on_msg_pairs_first_private_user_and_inserts_inbox(
     )
     cfg = TelegramConfig(enabled=True, allowed_user_ids=[])
     ch = _make_channel(cfg)
-    upd = _make_update(user_id=999, chat_id=999, text="Hallo Jarvis")
+    upd = _make_update(user_id=999, chat_id=999, text="Hello Jarvis")
 
     await ch._on_telegram_msg(upd, _ctx=None)  # noqa: SLF001
 
     assert paired == [999]
     assert ch._cfg.allowed_user_ids == [999]  # noqa: SLF001
     msg = await ch._inbox.get()  # noqa: SLF001
-    assert msg.content == "Hallo Jarvis"
+    assert msg.content == "Hello Jarvis"
     assert msg.metadata["telegram_chat_id"] == 999
 
 

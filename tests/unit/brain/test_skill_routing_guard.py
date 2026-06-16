@@ -270,7 +270,7 @@ class _SpawnPathProbeManager(BrainManager):
         return None
 
     async def _force_spawn_worker(
-        self, user_text: str, *, trace_id: Any = None
+        self, user_text: str, *, trace_id: Any = None, source_layer: Any = None
     ) -> str | None:
         self.spawn_calls.append(user_text)
         return "SPAWN_SENTINEL"

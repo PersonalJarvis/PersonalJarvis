@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 
 const send = vi.fn();
+const playDropConfirm = vi.fn();
 vi.mock("@/hooks/useWebSocket", () => ({ getWSClient: () => ({ send }) }));
 vi.mock("@/hooks/useOverlayStyle", () => ({
   useOverlayStyle: () => ({
@@ -12,9 +13,11 @@ vi.mock("@/hooks/useOverlayStyle", () => ({
     saveStyle: vi.fn(),
   }),
 }));
+vi.mock("@/lib/sound", () => ({ playDropConfirm: () => playDropConfirm() }));
 
 import { JarvisDock, MISSION_DND_MIME } from "./JarvisDock";
 import { useEventStore } from "@/store/events";
+import { useMissionDrag } from "@/store/missionDrag";
 
 function fakeDataTransfer(json: string) {
   return {
@@ -29,6 +32,8 @@ function fakeDataTransfer(json: string) {
 describe("JarvisDock", () => {
   beforeEach(() => {
     send.mockClear();
+    playDropConfirm.mockClear();
+    useMissionDrag.getState().end();
     // Inject a deterministic thread resolver (mirrors ChatInput's usage).
     useEventStore.setState({
       ensureActiveThread: async () => "thread-9",
@@ -57,5 +62,51 @@ describe("JarvisDock", () => {
     const zone = screen.getByTestId("jarvis-dock");
     fireEvent.drop(zone, { dataTransfer: fakeDataTransfer("") });
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it("plays the soft confirmation sound on a successful drop", async () => {
+    render(<JarvisDock />);
+    const zone = screen.getByTestId("jarvis-dock");
+    fireEvent.drop(zone, {
+      dataTransfer: fakeDataTransfer(JSON.stringify({ slug: "s", utterance: "u" })),
+    });
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    expect(playDropConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not play the sound for an empty drop", () => {
+    render(<JarvisDock />);
+    const zone = screen.getByTestId("jarvis-dock");
+    fireEvent.drop(zone, { dataTransfer: fakeDataTransfer("") });
+    expect(playDropConfirm).not.toHaveBeenCalled();
+  });
+
+  it("mounts a full-window catch layer only while a mission drag is active", () => {
+    const { rerender } = render(<JarvisDock />);
+    expect(screen.queryByTestId("jarvis-dock-catch")).toBeNull();
+    useMissionDrag.getState().begin();
+    rerender(<JarvisDock />);
+    expect(screen.getByTestId("jarvis-dock-catch")).toBeTruthy();
+  });
+
+  it("injects when a card is dropped on the catch layer (toss near the dock)", async () => {
+    useMissionDrag.getState().begin();
+    render(<JarvisDock />);
+    const catcher = screen.getByTestId("jarvis-dock-catch");
+    fireEvent.drop(catcher, {
+      dataTransfer: fakeDataTransfer(JSON.stringify({ slug: "s", utterance: "u" })),
+    });
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    expect(send.mock.calls[0][0].action).toBe("mission.inject");
+  });
+
+  it("clears the global drag state after a drop", async () => {
+    useMissionDrag.getState().begin();
+    render(<JarvisDock />);
+    const zone = screen.getByTestId("jarvis-dock");
+    fireEvent.drop(zone, {
+      dataTransfer: fakeDataTransfer(JSON.stringify({ slug: "s", utterance: "u" })),
+    });
+    await waitFor(() => expect(useMissionDrag.getState().dragging).toBe(false));
   });
 });
