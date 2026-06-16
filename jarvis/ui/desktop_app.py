@@ -633,6 +633,9 @@ class DesktopApp:
         # _focus_handler holt sich den Wert dynamisch.
         server.app.state.shell = None
         server.app.state.desktop_app = self
+        # Local desktop run: the user IS at this machine, so reveal/open-with-
+        # default-app target their own desktop. Enable the native file actions.
+        server.app.state.native_file_actions = True
 
         # Welle-4 Y Bootstrap-Verdrahtung: Brain-Status-/Cancel-Handler an den
         # MissionManager binden. Bis hier ist sowohl der Brain (oben) als auch
@@ -1570,6 +1573,10 @@ class DesktopApp:
                 call_hotkeys=_call_hk,
                 ptt_hotkeys=_ptt_hk,
                 hangup_hotkeys=(self.cfg.trigger.hotkey_hangup,),
+                # User-tunable voice silence window ("think buffer"). Without this
+                # the constructor default (1500) always won and the Settings
+                # slider could not change the boot value.
+                vad_silence_ms=self.cfg.speech.vad_silence_ms,
                 wake_keywords=("hey_jarvis",),
                 # BUG-009 episode 5 (2026-05-24): the 0.06 over-correction from
                 # episode 4 made OWW fire on the entire ambient band (idle

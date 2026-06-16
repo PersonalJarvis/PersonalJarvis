@@ -15,6 +15,7 @@ import {
   Terminal,
   Share2,
   Contact,
+  Loader2,
   type LucideIcon,
   ChevronRight,
 } from "lucide-react";

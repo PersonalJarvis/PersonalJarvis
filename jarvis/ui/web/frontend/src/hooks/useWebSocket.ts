@@ -31,6 +31,7 @@ export function useWebSocket(): void {
   const setConnected = useEventStore((s) => s.setConnected);
   const pushEvent = useEventStore((s) => s.pushEvent);
   const setVoice = useEventStore((s) => s.setVoice);
+  const setVoiceReady = useEventStore((s) => s.setVoiceReady);
   const setTranscription = useEventStore((s) => s.setTranscription);
   const pushMessage = useEventStore((s) => s.pushMessage);
   const setChatThinking = useEventStore((s) => s.setChatThinking);
@@ -89,6 +90,14 @@ export function useWebSocket(): void {
             const lower = state.toLowerCase();
             if (isVoiceState(lower)) setVoice(lower);
           }
+        }
+
+        // The voice feature warms up ~20s after the window connects; the
+        // backend announces readiness over this envelope. Drives the sidebar
+        // "Voice starting…" indicator. payload: { ready: boolean, detail: string }.
+        if (env.event_name === "VoiceBootStatus") {
+          const ready = (env.payload as { ready?: unknown }).ready;
+          if (typeof ready === "boolean") setVoiceReady(ready);
         }
 
         if (env.event_name === "MessageSent") {
@@ -243,6 +252,7 @@ export function useWebSocket(): void {
     setConnected,
     pushEvent,
     setVoice,
+    setVoiceReady,
     setTranscription,
     pushMessage,
     setChatThinking,

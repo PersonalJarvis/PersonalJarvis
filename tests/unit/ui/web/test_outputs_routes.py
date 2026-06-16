@@ -20,6 +20,7 @@ from __future__ import annotations
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
+from unittest.mock import patch
 
 import aiosqlite
 import pytest
@@ -678,3 +679,174 @@ async def test_raw_404s_for_scaffolding(app: FastAPI, tmp_path: Path) -> None:
             f"/api/outputs/{d.name}/files/claude_config/.claude.json/raw"
         )
     assert r.status_code == 404
+
+
+# --- /download route (Task 3) -------------------------------------------------
+
+
+def _make_deliverable(root: Path, mission_id: str, name: str, content: str) -> str:
+    """Create tasks/<tid>/artifacts/files/<name> under mission_<id>; return rel path."""
+    files_dir = (
+        root / f"mission_{mission_id[:13]}" / "tasks" / "019edeadbeef"
+        / "artifacts" / "files"
+    )
+    files_dir.mkdir(parents=True, exist_ok=True)
+    (files_dir / name).write_text(content, encoding="utf-8")
+    return f"tasks/019edeadbeef/artifacts/files/{name}"
+
+
+def test_download_sets_attachment_disposition(app):
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    rel = _make_deliverable(root, "019ed2dfd0fab1234", "report.md", "# Hi")
+    client = TestClient(app)
+    r = client.get(f"/api/outputs/{slug}/files/{rel}/download")
+    assert r.status_code == 200
+    cd = r.headers["content-disposition"]
+    assert cd.startswith("attachment")
+    assert "report.md" in cd
+    assert r.headers.get("x-content-type-options") == "nosniff"
+    assert r.text == "# Hi"
+
+
+def test_download_inline_disposition(app):
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    rel = _make_deliverable(root, "019ed2dfd0fab1234", "page.html", "<p>x</p>")
+    client = TestClient(app)
+    r = client.get(f"/api/outputs/{slug}/files/{rel}/download?disposition=inline")
+    assert r.status_code == 200
+    assert r.headers["content-disposition"].startswith("inline")
+
+
+def test_download_blocks_non_deliverable(app):
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    d = root / slug
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "reflections.md").write_text("secret", encoding="utf-8")
+    client = TestClient(app)
+    r = client.get(f"/api/outputs/{slug}/files/reflections.md/download")
+    assert r.status_code == 404
+
+
+def test_download_blocks_path_traversal(app):
+    slug = "mission_019ed2dfd0fab"
+    (Path(app.state.outputs_root) / slug).mkdir(parents=True, exist_ok=True)
+    client = TestClient(app)
+    r = client.get(
+        f"/api/outputs/{slug}/files/tasks/x/artifacts/files/..%2f..%2f..%2fsecret/download"
+    )
+    assert r.status_code == 404
+
+
+def test_view_renders_markdown_with_csp(app):
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    rel = _make_deliverable(root, "019ed2dfd0fab1234", "report.md", "# Heading\n\nbody")
+    client = TestClient(app)
+    r = client.get(f"/api/outputs/{slug}/files/{rel}/view")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+    assert "<h1>Heading</h1>" in r.text
+    assert "default-src 'none'" in r.headers["content-security-policy"]
+
+
+def test_view_escapes_plain_text(app):
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    rel = _make_deliverable(root, "019ed2dfd0fab1234", "x.txt", "<script>bad</script>")
+    client = TestClient(app)
+    r = client.get(f"/api/outputs/{slug}/files/{rel}/view")
+    assert r.status_code == 200
+    assert "&lt;script&gt;" in r.text
+    assert "<script>bad</script>" not in r.text
+
+
+def test_capabilities_reports_flag_true(app):
+    app.state.native_file_actions = True
+    client = TestClient(app)
+    r = client.get("/api/outputs/capabilities")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["native_file_actions"] is True
+    assert data["platform"] in ("win32", "darwin", "linux")
+
+
+def test_capabilities_defaults_false_when_unset(app):
+    # The fixture app never sets the flag — must default to False (VPS-safe).
+    client = TestClient(app)
+    r = client.get("/api/outputs/capabilities")
+    assert r.status_code == 200
+    assert r.json()["native_file_actions"] is False
+
+
+# --- /reveal and /open-native routes (Task 6) --------------------------------
+
+
+def test_reveal_404_when_native_disabled(app):
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    rel = _make_deliverable(root, "019ed2dfd0fab1234", "report.md", "# Hi")
+    app.state.native_file_actions = False
+    client = TestClient(app)
+    r = client.post(f"/api/outputs/{slug}/files/{rel}/reveal")
+    assert r.status_code == 404
+
+
+def test_reveal_calls_platform_when_enabled(app):
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    rel = _make_deliverable(root, "019ed2dfd0fab1234", "report.md", "# Hi")
+    app.state.native_file_actions = True
+    client = TestClient(app)
+    with patch("jarvis.platform.open_path.reveal_in_folder", return_value=True) as rev:
+        r = client.post(f"/api/outputs/{slug}/files/{rel}/reveal")
+    assert r.status_code == 200
+    assert r.json()["opened"] is True
+    rev.assert_called_once()
+
+
+def test_open_native_calls_platform_when_enabled(app):
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    rel = _make_deliverable(root, "019ed2dfd0fab1234", "report.md", "# Hi")
+    app.state.native_file_actions = True
+    client = TestClient(app)
+    with patch("jarvis.platform.open_path.open_file", return_value=True) as opn:
+        r = client.post(f"/api/outputs/{slug}/files/{rel}/open-native")
+    assert r.status_code == 200
+    assert r.json()["opened"] is True
+    opn.assert_called_once()
+
+
+def test_download_inline_html_has_csp(app):
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    rel = _make_deliverable(root, "019ed2dfd0fab1234", "page.html", "<script>bad</script>")
+    client = TestClient(app)
+    r = client.get(f"/api/outputs/{slug}/files/{rel}/download?disposition=inline")
+    assert r.status_code == 200
+    assert "default-src 'none'" in r.headers.get("content-security-policy", "")
+
+
+def test_download_attachment_html_no_csp_needed(app):
+    # Attachment (download to disk) is not rendered, so no CSP is required.
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    rel = _make_deliverable(root, "019ed2dfd0fab1234", "page2.html", "<b>x</b>")
+    client = TestClient(app)
+    r = client.get(f"/api/outputs/{slug}/files/{rel}/download")
+    assert r.status_code == 200
+    assert r.headers["content-disposition"].startswith("attachment")
+
+
+def test_view_rejects_oversize_file(app, monkeypatch):
+    import jarvis.ui.web.outputs_routes as oroutes
+    monkeypatch.setattr(oroutes, "_VIEW_MAX_BYTES", 4)
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    rel = _make_deliverable(root, "019ed2dfd0fab1234", "big.md", "# way too long")
+    client = TestClient(app)
+    r = client.get(f"/api/outputs/{slug}/files/{rel}/view")
+    assert r.status_code == 413

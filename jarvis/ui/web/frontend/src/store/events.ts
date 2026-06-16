@@ -154,6 +154,11 @@ export interface CliConnectCoach {
 interface EventStore {
   events: EventItem[];
   voiceState: VoiceState;
+  // The desktop window connects in ~1s, but the voice feature warms up ~20s in
+  // the background (wake/STT/VAD model load). False until the backend announces
+  // readiness (VoiceBootStatus WS event / GET /api/voice/status seed) — drives
+  // the sidebar "Voice starting…" indicator.
+  voiceReady: boolean;
   connected: boolean;
   activeSection: SectionId;
   transcription: string;
@@ -200,6 +205,7 @@ interface EventStore {
   pendingInstallCliName: string | null;
   pushEvent: (e: EventItem) => void;
   setVoice: (v: VoiceState) => void;
+  setVoiceReady: (ready: boolean) => void;
   setConnected: (c: boolean) => void;
   clearEvents: () => void;
   setActiveSection: (s: SectionId) => void;
@@ -237,6 +243,7 @@ const MAX_TRACES = 24;
 export const useEventStore = create<EventStore>((set, get) => ({
   events: [],
   voiceState: "idle",
+  voiceReady: false,
   connected: false,
   activeSection: "chats",
   transcription: "",
@@ -267,6 +274,7 @@ export const useEventStore = create<EventStore>((set, get) => ({
     }),
 
   setVoice: (v) => set({ voiceState: v }),
+  setVoiceReady: (ready) => set({ voiceReady: ready }),
   setConnected: (c) => set({ connected: c }),
   clearEvents: () => set({ events: [] }),
   setActiveSection: (s) => set({ activeSection: s }),

@@ -746,3 +746,59 @@ async def test_extended_silence_window_resets_at_next_speech_start() -> None:
         "the extended window leaked into the next utterance — a short command "
         "after a delegation stayed sluggish"
     )
+
+
+# --------------------------------------------------------------------------- #
+# User-tunable "think buffer" (2026-06-16): a Settings slider sets the BASE
+# silence window 0.5–5 s, live. ``set_silence_window_ms`` updates the silence
+# frame count AND grows the max-utterance cap so a long pause is never beheaded
+# by the safety net, and it must take effect mid-stream (no pipeline rebuild).
+# --------------------------------------------------------------------------- #
+
+
+def test_set_silence_window_ms_updates_frames_and_keeps_8s_cap() -> None:
+    """A small window updates the silence-frame count and keeps the 8 s cap."""
+    vad = SileroEndpointer(silence_ms=1500)
+    vad.set_silence_window_ms(2500)
+    assert vad._silence_frames == 2500 // 32  # 78
+    assert vad._max_samples == 8 * 16000  # ceil(2.5)+5=8 → max(8,8)=8
+
+
+def test_set_silence_window_ms_grows_cap_for_large_window() -> None:
+    """A 5 s window grows the hard cap to 10 s so a long pause is never beheaded."""
+    vad = SileroEndpointer(silence_ms=1500)
+    vad.set_silence_window_ms(5000)
+    assert vad._silence_frames == 5000 // 32  # 156
+    assert vad._max_samples == 10 * 16000  # ceil(5)+5=10
+
+
+def test_set_silence_window_ms_clamps_out_of_range() -> None:
+    vad = SileroEndpointer(silence_ms=1500)
+    vad.set_silence_window_ms(50)       # below min
+    assert vad._silence_frames == 500 // 32
+    vad.set_silence_window_ms(99999)    # above max
+    assert vad._silence_frames == 5000 // 32
+
+
+@pytest.mark.asyncio
+async def test_live_widened_window_defers_endpoint_mid_stream() -> None:
+    """Widening the window mid-utterance must defer an endpoint the old (narrow)
+    window would have fired — proving the change is live, not boot-only."""
+    # base 96 ms → 3 silent frames to endpoint; widen to 640 ms → 20 frames.
+    vad = SileroEndpointer(silence_ms=96, min_speech_ms=96)
+    probs = [0.9] * 5 + [0.0] * 8  # 8 silent frames: >3 base, <20 widened
+    _stub_vad(vad, probs)
+    frames = [_pcm_frame(0.05)] * 5 + [_pcm_frame(0.0)] * 8
+
+    out: list[bytes] = []
+    async for utterance in vad.utterances(
+        _chunks_with_action(
+            frames, at_index=4, action=lambda: vad.set_silence_window_ms(640)
+        )
+    ):
+        out.append(utterance)
+
+    assert out == [], (
+        "8 silent frames ended the turn despite the window being widened live to "
+        "20 frames — the setter did not take effect mid-stream"
+    )

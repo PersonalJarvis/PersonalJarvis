@@ -9,6 +9,8 @@ import {
   FileText,
   ChevronRight,
   ChevronDown,
+  Download,
+  AppWindow,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ViewHeader } from "@/views/ChatsView";
@@ -22,6 +24,11 @@ import {
   useArtifactsForOutput,
   useArtifactFile,
   useCancelMission,
+  useOutputsCapabilities,
+  artifactDownloadUrl,
+  artifactOpenUrl,
+  revealArtifact,
+  openArtifactNative,
   type OutputSummary,
   type ArtifactSummary,
 } from "@/hooks/useOutputs";
@@ -460,6 +467,8 @@ function isPlumbingArtifact(path: string): boolean {
 
 function ArtifactsSection({ slug }: { slug: string }) {
   const q = useArtifactsForOutput(slug);
+  const caps = useOutputsCapabilities();
+  const nativeActions = caps.data?.native_file_actions ?? false;
   const allFiles = q.data?.files ?? [];
   // Show genuine deliverables + the captured diff; hide stream/stderr/mcp noise.
   const files = allFiles.filter((f) => !isPlumbingArtifact(f.path));
@@ -494,7 +503,12 @@ function ArtifactsSection({ slug }: { slug: string }) {
       ) : (
         <ul className="flex flex-col gap-1">
           {files.map((f) => (
-            <ArtifactRow key={f.path} slug={slug} file={f} />
+            <ArtifactRow
+              key={f.path}
+              slug={slug}
+              file={f}
+              nativeActions={nativeActions}
+            />
           ))}
         </ul>
       )}
@@ -505,12 +519,16 @@ function ArtifactsSection({ slug }: { slug: string }) {
 function ArtifactRow({
   slug,
   file,
+  nativeActions,
 }: {
   slug: string;
   file: ArtifactSummary;
+  nativeActions: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const full = useArtifactFile(slug, expanded ? file.path : null);
+  const fileName = file.path.split("/").pop() ?? file.path;
+  const openUrl = artifactOpenUrl(slug, file.path);
 
   const sizeLabel =
     file.size < 1024
@@ -525,23 +543,70 @@ function ArtifactRow({
 
   return (
     <li className="rounded-lg border border-border/60 bg-background/40">
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-secondary/30"
-      >
-        {expanded ? (
-          <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
-        ) : (
-          <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
-        )}
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
-          {file.path}
-        </span>
+      <div className="flex w-full items-center gap-1 px-3 py-2">
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left hover:bg-secondary/30"
+        >
+          {expanded ? (
+            <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+          )}
+          <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
+            {file.path}
+          </span>
+        </button>
         <span className="shrink-0 text-[10px] text-muted-foreground">
           {sizeLabel}
         </span>
-      </button>
+        <div className="flex shrink-0 items-center gap-0.5">
+          <a
+            href={artifactDownloadUrl(slug, file.path)}
+            download={fileName}
+            title="Download"
+            onClick={(e) => e.stopPropagation()}
+            className="rounded p-1 hover:bg-secondary/40"
+          >
+            <Download className="h-3.5 w-3.5 text-muted-foreground" />
+          </a>
+          {openUrl && (
+            <button
+              type="button"
+              title="Open in browser"
+              onClick={() => window.open(openUrl, "_blank", "noopener,noreferrer")}
+              className="rounded p-1 hover:bg-secondary/40"
+            >
+              <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
+            </button>
+          )}
+          {nativeActions && (
+            <>
+              <button
+                type="button"
+                title="Open with default app"
+                onClick={() =>
+                  void openArtifactNative(slug, file.path).catch(() => {})
+                }
+                className="rounded p-1 hover:bg-secondary/40"
+              >
+                <AppWindow className="h-3.5 w-3.5 text-muted-foreground" />
+              </button>
+              <button
+                type="button"
+                title="Reveal in folder"
+                onClick={() =>
+                  void revealArtifact(slug, file.path).catch(() => {})
+                }
+                className="rounded p-1 hover:bg-secondary/40"
+              >
+                <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
+              </button>
+            </>
+          )}
+        </div>
+      </div>
 
       {expanded && (
         <div className="border-t border-border/40 px-3 py-2">

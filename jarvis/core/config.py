@@ -1621,6 +1621,14 @@ class SpeechConfig(BaseModel):
 
     completeness: CompletenessConfig = Field(default_factory=CompletenessConfig)
 
+    # Voice endpoint silence window: how long the VAD waits in silence before
+    # treating an utterance as finished. User-tunable "think buffer" (desktop
+    # Settings → Voice slider). Range-clamped 500–5000 ms; default 1500 ms
+    # ("1.5s rule"). Read at SpeechPipeline construction and live-applied via the
+    # /api/settings/silence-window route. extra="allow" already on SpeechConfig
+    # keeps the self-mod pre-validate pipeline safe (AP-16).
+    vad_silence_ms: int = Field(default=1500, ge=500, le=5000)
+
 
 class MarketplaceConfig(BaseModel):
     """Plugin-marketplace connect settings (OAuth redirect mode).

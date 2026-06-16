@@ -89,7 +89,7 @@ def _make_pipeline(tts, player, brain) -> SpeechPipeline:
     pipeline._brain = brain  # type: ignore[assignment]
     pipeline._latency_tracker = None
 
-    async def _never_barge() -> bool:
+    async def _never_barge(**_kwargs) -> bool:
         await asyncio.sleep(3600)
         return False
 

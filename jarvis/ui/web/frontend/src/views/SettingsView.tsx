@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { OverlayTaskbarGroup } from "@/views/settings/OverlayTaskbarGroup";
 import { LanguagesGroup } from "@/views/settings/LanguagesGroup";
 import { AppSettingsGroup } from "@/views/settings/AppSettingsGroup";
+import { SilenceWindowGroup } from "@/views/settings/SilenceWindowGroup";
 import { JarvisApiGroup } from "@/views/settings/JarvisApiGroup";
 import { SystemPromptGroup } from "@/views/settings/SystemPromptGroup";
 import { useWakeWord, type WakeWordSaveResult } from "@/hooks/useWakeWord";
@@ -67,6 +68,7 @@ export function SettingsView() {
         <AssistantNamePanel />
         <SystemPromptGroup />
         <WakeWordPanel />
+        <SilenceWindowGroup />
         <KeybindsPanel />
 
         <ul className="mt-2 space-y-2">

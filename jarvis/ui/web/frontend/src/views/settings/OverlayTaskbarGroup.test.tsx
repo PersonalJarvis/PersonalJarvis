@@ -33,7 +33,10 @@ vi.mock("@/hooks/useMuteMusic", () => ({
   useMuteMusic: () => ({ enabled: false, loading: false, setEnabled: vi.fn() }),
 }));
 
-import { OverlayTaskbarGroup } from "@/views/settings/OverlayTaskbarGroup";
+import {
+  OverlayTaskbarGroup,
+  NonePreview,
+} from "@/views/settings/OverlayTaskbarGroup";
 
 afterEach(() => {
   cleanup();
@@ -68,5 +71,27 @@ describe("OverlayTaskbarGroup", () => {
     expect(
       screen.getByText("settings_view.overlay_style.options.none"),
     ).toBeDefined();
+  });
+
+  it("keeps the None-preview strike line inside its dashed box (no protruding stub)", () => {
+    // Render the preview in isolation so the only <line> is the diagonal
+    // strike (rendering the whole group also pulls in Lucide icon <line>s).
+    const { container } = render(<NonePreview />);
+    const lines = container.querySelectorAll("line");
+    expect(lines).toHaveLength(1);
+    const line = lines[0];
+    // The dashed pill box spans y=11..29. Both endpoints of the diagonal
+    // strike must stay within that vertical band, otherwise the line sticks
+    // out above and below the pill as an unclean stub (regression: was 31/9).
+    const y1 = Number(line.getAttribute("y1"));
+    const y2 = Number(line.getAttribute("y2"));
+    for (const y of [y1, y2]) {
+      expect(y).toBeGreaterThanOrEqual(11);
+      expect(y).toBeLessThanOrEqual(29);
+    }
+    // It must also stay symmetric about the box centre (50, 20) so it reads as
+    // a clean, centred strike rather than a lopsided slash.
+    expect((Number(line.getAttribute("x1")) + Number(line.getAttribute("x2"))) / 2).toBe(50);
+    expect((y1 + y2) / 2).toBe(20);
   });
 });
