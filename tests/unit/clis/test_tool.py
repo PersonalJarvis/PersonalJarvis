@@ -16,7 +16,12 @@ import pytest
 
 from jarvis.clis.auth import CliAuthManager
 from jarvis.clis.spec import AuthConfig, CliSpec, InstallMethods, RiskConfig
-from jarvis.clis.tool import MAX_STDERR_CHARS, MAX_STDOUT_CHARS, CliTool
+from jarvis.clis.tool import (
+    MAX_STDERR_CHARS,
+    MAX_STDOUT_CHARS,
+    CliTool,
+    _noninteractive_env_for,
+)
 from jarvis.clis.usage_log import UsageLog
 from jarvis.core.protocols import ExecutionContext
 
@@ -153,3 +158,61 @@ async def test_timeout_kills_and_logs_failure(tmp_path: Path) -> None:
     assert "Timeout" in (result.error or "")
     rows = usage.list_for("pytool", limit=10)
     assert len(rows) == 1
+
+
+# ---------------------------------------------------------------------------
+# Non-interactive execution (live repro 2026-06-17).
+#
+# `gcloud billing budgets list` emitted an interactive
+# "Would you like to enable and retry (y/N)?" prompt. Without prompt
+# suppression + a closed stdin a prompting CLI can hang on stdin until the 60s
+# timeout under pythonw.exe (no console). Two defenses: a per-CLI
+# non-interactive env (gcloud -> CLOUDSDK_CORE_DISABLE_PROMPTS=1) and
+# stdin=DEVNULL for every CLI.
+# ---------------------------------------------------------------------------
+
+
+def test_noninteractive_env_for_gcloud_disables_prompts() -> None:
+    env = _noninteractive_env_for("gcloud")
+    assert env.get("CLOUDSDK_CORE_DISABLE_PROMPTS") == "1"
+
+
+def test_noninteractive_env_for_unknown_binary_is_empty() -> None:
+    assert _noninteractive_env_for("python") == {}
+
+
+@pytest.mark.asyncio
+async def test_execute_injects_noninteractive_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Configure the policy table so the test binary gets a probe var, then
+    # prove execute() actually merges _noninteractive_env_for() into the child.
+    import jarvis.clis.tool as tool_mod
+
+    binary = Path(sys.executable).name
+    monkeypatch.setitem(
+        tool_mod._NONINTERACTIVE_ENV, binary, {"JARVIS_NONINTERACTIVE_PROBE": "1"}
+    )
+    tool, _ = _make_tool(tmp_path)
+    cmd = _script_command(
+        tmp_path,
+        "import os; print(os.environ.get('JARVIS_NONINTERACTIVE_PROBE', 'UNSET'))",
+    )
+    result = await tool.execute({"command": cmd}, _ctx())
+    assert result.success is True
+    assert "1" in result.output["stdout"]
+
+
+@pytest.mark.asyncio
+async def test_stdin_is_devnull_so_reading_stdin_gets_eof(tmp_path: Path) -> None:
+    # A command that reads stdin must get EOF immediately (DEVNULL), never block
+    # waiting for input that will never arrive.
+    tool, _ = _make_tool(tmp_path)
+    cmd = _script_command(
+        tmp_path,
+        "import sys; d = sys.stdin.read(); "
+        "print('STDIN_EOF' if d == '' else 'STDIN_DATA')",
+    )
+    result = await tool.execute({"command": cmd, "timeout_s": 5}, _ctx())
+    assert result.success is True
+    assert "STDIN_EOF" in result.output["stdout"]

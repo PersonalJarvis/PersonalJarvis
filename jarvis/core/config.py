@@ -569,6 +569,18 @@ class EvidenceDomainsConfig(BaseModel):
             "deployment", "deployments", "deploy-status",
             "build-status", "build status",
         ],
+        # Cloud cost / billing. Mapped to the connected gcloud CLI via
+        # capability_provider.connected_domain_tool_map (gcloud declares the
+        # "cloud" domain), so a billing question deterministically FORCES a
+        # real cli_gcloud call (or an honest refusal) instead of relying on the
+        # model's discretion (live 2026-06-17). Keywords are cloud/billing
+        # specific — NO bare "kosten"/"cost" so "was kostet X" never hijacks.
+        "cloud": [
+            "google cloud", "gcp", "gcloud", "cloud-cli", "cloud cli",
+            "google-kosten", "google kosten", "cloud-kosten", "cloud kosten",
+            "cloud-rechnung", "cloud rechnung", "cloud billing", "billing account",
+            "abrechnung", "abrechnungen", "guthaben", "billing", "budget",
+        ],
     })
 
 
@@ -2029,5 +2041,6 @@ except ModuleNotFoundError:
         circuit_breaker_threshold: int = 3
         circuit_breaker_cooldown_s: int = 60
         suppress_if_brain_faster_than_ms: int = 2000
+        ack_continuation_grace_ms: int = 1200
 
 JarvisConfig.model_rebuild()

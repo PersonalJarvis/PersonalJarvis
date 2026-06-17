@@ -136,3 +136,47 @@ async def test_harness_detail_reason_is_surfaced_over_exit_code(monkeypatch) -> 
     comp = _completion(bus)
     assert not re.search(r"\bexit\s*\d+\b", comp.text, re.IGNORECASE), comp.text
     assert "BridgeMind server has no news channel" in comp.text
+
+
+@pytest.mark.asyncio
+async def test_cu_failure_announcement_carries_technical_detail() -> None:
+    """The spoken text is humanized (no bare 'exit 5'), but the completion
+    announcement also carries an optional technical ``detail`` — the exit code
+    plus the raw harness reason — so the Transcription view can show it for
+    debugging without the user HEARING a cryptic number (user 2026-06-16)."""
+    import re
+
+    bus = _FakeBus()
+    output = {
+        "harness": "screenshot",
+        "exit_code": 5,
+        "stdout": "",
+        "stderr": "[cu] fail at step-4: 5 guard-blocked actions this mission",
+    }
+    mgr = _make_manager(_CUExecutor(success=False, output=output, error="exit 5"), bus)
+    await mgr._run_computer_use_background(
+        tool=object(), harness_name="screenshot", prompt="open discord",
+        timeout_s=180.0, user_text="open discord and check the news",
+        trace_id=uuid4(), lang="en",
+    )
+    comp = _completion(bus)
+    # Voice stays humanized — no bare exit code spoken.
+    assert not re.search(r"\bexit\s*\d+\b", comp.text, re.IGNORECASE), comp.text
+    # ...but the technical detail is preserved on the announcement for the log.
+    assert comp.detail is not None, "failure announcement carries no technical detail"
+    assert "exit 5" in comp.detail
+    assert "guard-blocked actions" in comp.detail
+
+
+@pytest.mark.asyncio
+async def test_cu_success_announcement_has_no_detail() -> None:
+    """A successful run has no failure diagnostic — ``detail`` stays None so the
+    transcript shows only the clean completion line."""
+    bus = _FakeBus()
+    mgr = _make_manager(_CUExecutor(success=True, output=""), bus)
+    await mgr._run_computer_use_background(
+        tool=object(), harness_name="screenshot", prompt="open chrome",
+        timeout_s=180.0, user_text="open chrome", trace_id=uuid4(), lang="en",
+    )
+    comp = _completion(bus)
+    assert getattr(comp, "detail", None) is None

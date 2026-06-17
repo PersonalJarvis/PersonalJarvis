@@ -24,8 +24,10 @@ from jarvis.tasks import (
 )
 
 
-def test_trigger_types_scope_exactly_three():
-    assert TRIGGER_TYPES == ("after_delay", "at_time", "on_event")
+def test_trigger_types_scope():
+    # Extended 2026-06-17: `every` added for recurring intervals (hourly/daily).
+    # `after_delay`/`at_time` stay one-shot; `on_event` stays event-driven.
+    assert TRIGGER_TYPES == ("after_delay", "at_time", "on_event", "every")
 
 
 def test_mandate_example_in_30s_hallo():

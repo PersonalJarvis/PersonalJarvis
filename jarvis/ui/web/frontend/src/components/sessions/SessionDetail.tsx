@@ -60,6 +60,11 @@ export function SessionDetail({ detail, loading, error }: Props) {
       if (e.kind !== "SpeechSpoken") continue;
       const text = String((e.payload as { text?: unknown })?.text ?? "");
       if (!text.trim()) continue;
+      const rawDetail = (e.payload as { detail?: unknown })?.detail;
+      const detail =
+        typeof rawDetail === "string" && rawDetail.trim()
+          ? rawDetail
+          : undefined;
       const line: VoiceSpokenLine = {
         turn_id: e.turn_id,
         ts_ms: e.ts_ms,
@@ -67,6 +72,7 @@ export function SessionDetail({ detail, loading, error }: Props) {
         spoken_kind: String(
           (e.payload as { spoken_kind?: unknown })?.spoken_kind ?? "other",
         ),
+        detail,
       };
       const arr = map.get(e.turn_id ?? "") ?? [];
       arr.push(line);

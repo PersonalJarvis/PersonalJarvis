@@ -69,3 +69,17 @@ def test_evidence_domains_have_at_least_one_cli():
         d for s in specs.values() for decl in s.capabilities for d in decl.domains
     }
     assert {"calendar", "email", "repos", "deployments"} <= covered
+
+
+def test_gcloud_examples_cover_billing_account_shape():
+    """Live repro 2026-06-17: the model guessed ``gcloud billing projects list``
+    with no ``--billing-account`` (exit 2) and a budgets API that isn't enabled,
+    because the catalog examples covered only storage/compute/run/projects. A
+    billing example pins the correct, account-scoped command shape so the model
+    stops improvising billing subcommands."""
+    spec = _seed_specs()["gcloud"]
+    examples = " ".join(spec.tool_schema_examples).lower()
+    assert "billing" in examples, "gcloud examples must demonstrate a billing command"
+    assert "--billing-account" in examples, (
+        "a billing example must show the required --billing-account flag"
+    )

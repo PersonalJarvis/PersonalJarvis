@@ -60,6 +60,10 @@ export interface VoiceSpokenLine {
   ts_ms: number;
   text: string;
   spoken_kind: SpokenKind;
+  // Optional technical diagnostic that was NOT spoken aloud — e.g. the exit
+  // code + harness reason behind a failed Computer-Use readback. The voice is
+  // humanized; this is shown in the transcript for debugging (2026-06-16).
+  detail?: string;
 }
 
 export interface VoiceEventRow {

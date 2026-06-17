@@ -1,5 +1,6 @@
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useBrainStatus } from "@/hooks/useBrainStatus";
+import { useVoiceStatus } from "@/hooks/useVoiceStatus";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopBar } from "@/components/layout/TopBar";
 import { MainView } from "@/components/layout/MainView";
@@ -11,6 +12,7 @@ import { WakeWordOnboardingGate } from "@/components/onboarding/WakeWordOnboardi
 export default function App() {
   useWebSocket();
   useBrainStatus();
+  useVoiceStatus();
 
   return (
     <div className="relative flex h-screen w-screen overflow-hidden bg-background text-foreground">

@@ -35,6 +35,48 @@ def test_umlaut_form_matches():
     assert v.kind == "require_tool"
 
 
+def test_cloud_billing_question_with_gcloud_requires_tool():
+    # Live 2026-06-17: "use the Google Cloud CLI ... my latest billing".
+    # The connected gcloud must be FORCED, first try, using the real default
+    # config keywords for the "cloud" domain.
+    from jarvis.core.config import EvidenceDomainsConfig
+
+    domains = EvidenceDomainsConfig().domains
+    for utterance in [
+        "Was sind meine aktuellsten Abrechnungen?",
+        "Wie viel Guthaben habe ich noch?",
+        "Zeig mir meine Google Cloud Kosten.",
+    ]:
+        v = check_evidence_domain(
+            utterance,
+            enabled=True,
+            domains=domains,
+            capability_registry=CapabilityRegistry(),
+            domain_tool_map={"cloud": "cli_gcloud"},
+            refusal_hint_fn=None,
+        )
+        assert v.kind == "require_tool", utterance
+        assert v.tool_name == "cli_gcloud", utterance
+        assert "NEVER invent" in v.directive
+
+
+def test_general_cost_question_does_not_force_gcloud():
+    # A generic price question must NOT hijack the connected gcloud (no bare
+    # "kosten"/"cost" keyword), else every "was kostet X" forces a billing call.
+    from jarvis.core.config import EvidenceDomainsConfig
+
+    domains = EvidenceDomainsConfig().domains
+    v = check_evidence_domain(
+        "Was kostet ein Tesla Model 3?",
+        enabled=True,
+        domains=domains,
+        capability_registry=CapabilityRegistry(),
+        domain_tool_map={"cloud": "cli_gcloud"},
+        refusal_hint_fn=None,
+    )
+    assert v.kind == "pass"
+
+
 # --- verdict: honest_refusal -------------------------------------------------
 
 
@@ -97,6 +139,16 @@ def test_domain_word_in_passing_passes():
 def test_definition_question_passes():
     assert _gate("Was ist ein Pull Request?").kind == "pass"
     assert _gate("What is an issue tracker?").kind == "pass"
+
+
+def test_definition_with_possessive_is_a_lookup_not_definition():
+    # "Was sind MEINE X" is a data lookup, not a definition — a possessive
+    # marker must defeat the definitional short-circuit, else lookups phrased
+    # as "was sind meine ..." silently pass (live 2026-06-17, billing query).
+    v = _gate("Was sind meine offenen Pull Requests?", tool_map={"repos": "cli_gh"})
+    assert v.kind == "require_tool"
+    # A true definition (no possessive) still passes untouched.
+    assert _gate("Was sind Pull Requests?").kind == "pass"
 
 
 def test_send_action_passes_to_existing_gates():

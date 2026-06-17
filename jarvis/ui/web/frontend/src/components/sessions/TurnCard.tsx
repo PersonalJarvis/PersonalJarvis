@@ -228,7 +228,19 @@ export function TurnCard({ turn, spoken = [] }: Props) {
                   >
                     {SPOKEN_KIND_LABEL[s.spoken_kind] ?? s.spoken_kind}
                   </Badge>
-                  <span className="min-w-0 flex-1 break-words">{s.text}</span>
+                  <div className="min-w-0 flex-1">
+                    <span className="break-words">{s.text}</span>
+                    {s.detail && (
+                      <div className="mt-1 flex items-start gap-1.5 font-mono text-[11px] text-muted-foreground">
+                        <span className="shrink-0 uppercase tracking-wide text-amber-400/80">
+                          detail
+                        </span>
+                        <span className="min-w-0 flex-1 break-words">
+                          {s.detail}
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -291,6 +303,7 @@ function formatTurnPlain(turn: VoiceTurnRow, spoken: VoiceSpokenLine[] = []): st
   for (const s of spoken) {
     const label = (SPOKEN_KIND_LABEL[s.spoken_kind] ?? s.spoken_kind).toUpperCase();
     lines.push(`[SPOKEN: ${label}] ${s.text}`);
+    if (s.detail) lines.push(`[DETAIL] ${s.detail}`);
   }
   return lines.join("\n");
 }

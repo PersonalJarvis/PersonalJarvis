@@ -70,4 +70,29 @@ describe("TurnCard spoken track", () => {
     render(<TurnCard turn={turn({ jarvis_text: "Es ist drei Uhr." })} spoken={[]} />);
     expect(screen.queryByText("Spoken output")).toBeNull();
   });
+
+  it("renders the technical detail line under a failure readback", () => {
+    // The voice is humanized, but the transcript surfaces the exit code + raw
+    // harness reason for debugging (user request 2026-06-16).
+    render(
+      <TurnCard
+        turn={turn()}
+        spoken={[
+          spokenLine({
+            spoken_kind: "completion",
+            text: "Das am Bildschirm hat nicht geklappt.",
+            detail: "exit 5 · 5 guard-blocked actions this mission",
+          }),
+        ]}
+      />,
+    );
+    expect(
+      screen.getByText("exit 5 · 5 guard-blocked actions this mission"),
+    ).toBeTruthy();
+  });
+
+  it("shows no detail line when a spoken phrase has no technical detail", () => {
+    render(<TurnCard turn={turn()} spoken={[spokenLine()]} />);
+    expect(screen.queryByText(/exit \d+/)).toBeNull();
+  });
 });

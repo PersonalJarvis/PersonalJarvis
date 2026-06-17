@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS tasks (
                         'pending','scheduled','running','completed',
                         'failed','cancelled','interrupted')),
     trigger_type    TEXT NOT NULL CHECK(trigger_type IN (
-                        'after_delay','at_time','on_event')),
+                        'after_delay','at_time','on_event','every')),
     due_at_ns       INTEGER,                      -- NULL fuer on_event
     event_selector  TEXT,                         -- nur fuer on_event (Event-Klasse)
     title           TEXT NOT NULL DEFAULT '',

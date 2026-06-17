@@ -30,6 +30,20 @@ DEFAULT_TIMEOUT_S = 60.0
 MAX_STDOUT_CHARS = 4000
 MAX_STDERR_CHARS = 2000
 
+# Per-CLI environment that forces non-interactive execution. A prompting CLI
+# (live repro 2026-06-17: ``gcloud billing budgets list`` emitted
+# "Would you like to enable and retry (y/N)?") would otherwise block on stdin
+# until the timeout under ``pythonw.exe`` (no console). Keyed by ``binary_name``;
+# combined with ``stdin=DEVNULL`` so a prompt fails fast with a real stderr.
+_NONINTERACTIVE_ENV: dict[str, dict[str, str]] = {
+    "gcloud": {"CLOUDSDK_CORE_DISABLE_PROMPTS": "1"},
+}
+
+
+def _noninteractive_env_for(binary_name: str) -> dict[str, str]:
+    """Return the non-interactive env additions for a CLI, or ``{}`` if none."""
+    return dict(_NONINTERACTIVE_ENV.get(binary_name, {}))
+
 
 class CliTool:
     def __init__(
@@ -108,6 +122,10 @@ class CliTool:
 
         env = os.environ.copy()
         env.update(self._auth.env_for(self._spec))
+        # Force non-interactive execution so a prompt (e.g. gcloud's
+        # "Would you like to enable and retry (y/N)?") fails fast with a real
+        # stderr instead of hanging on stdin (live repro 2026-06-17).
+        env.update(_noninteractive_env_for(self._spec.binary_name))
 
         started_ms = int(time.time() * 1000)
         row_id = self._usage.record_start(
@@ -122,6 +140,7 @@ class CliTool:
         try:
             proc = await asyncio.create_subprocess_exec(
                 *parts,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,

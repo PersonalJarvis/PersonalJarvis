@@ -348,11 +348,15 @@ class WebServer:
 
         # Voice boot-readiness mirror. WS events are one-shot, so a tab that
         # connects after warm-up finished would never see VoiceBootStatus.
-        # Persist the latest state here for GET /api/voice/status to read.
-        app.state.voice_ready = False
+        # Persist the latest state on this (long-lived) server instance for
+        # GET /api/voice/status to read — deliberately NOT on app.state, whose
+        # ASGI lifecycle could outrace the bus subscriber on shutdown.
+        self._voice_ready = False
 
         async def _track_voice_ready(event: VoiceBootStatus) -> None:
-            app.state.voice_ready = bool(event.ready)
+            # A bus subscriber must never raise (AP-18); setting a plain
+            # instance bool cannot fail.
+            self._voice_ready = bool(event.ready)
 
         self.bus.subscribe(VoiceBootStatus, _track_voice_ready)
 
@@ -644,14 +648,14 @@ class WebServer:
 
         @app.get("/api/voice/status")
         async def voice_status() -> dict[str, Any]:
-            """Liefert die aktuelle Voice-Boot-Bereitschaft.
+            """Return the current voice boot-readiness flag.
 
-            Frontend nutzt das beim Mount, um den "voice starting"-Badge
-            korrekt zu initialisieren — das ``VoiceBootStatus``-WS-Event ist
-            ein One-Shot, eine spät verbundene UI würde es verpassen. Der Wert
-            wird vom Bus-Subscriber in ``_build_app`` gepflegt.
+            The frontend reads this on mount to initialize the "voice starting"
+            badge correctly — the ``VoiceBootStatus`` WS event is one-shot, so a
+            late-connecting UI would miss it. The value is maintained by the bus
+            subscriber in ``_build_app`` on the server instance.
             """
-            return {"ready": bool(getattr(app.state, "voice_ready", False))}
+            return {"ready": bool(getattr(self, "_voice_ready", False))}
 
         @app.get("/api/openclaw/status")
         async def openclaw_status() -> dict[str, Any]:

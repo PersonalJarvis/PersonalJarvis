@@ -29,14 +29,16 @@ from .models import VoiceEventRow, VoiceSessionRow, VoiceTurnRow
 
 def _spoken_by_turn(
     events: Iterable[VoiceEventRow] | None,
-) -> dict[str, list[tuple[str, str]]]:
-    """Group SpeechSpoken raw events by turn_id into ``[(text, kind), …]``.
+) -> dict[str, list[tuple[str, str, str | None]]]:
+    """Group SpeechSpoken raw events by turn_id into ``[(text, kind, detail), …]``.
 
     These are the voiced phrases that are not the brain's normal reply
     (timeout / clarify / announcement / …). Ordered by event ``ts_ms`` so the
-    spoken track reads in the order the user heard it.
+    spoken track reads in the order the user heard it. ``detail`` is an optional
+    technical diagnostic (e.g. a failed Computer-Use exit code) that was NOT
+    spoken — surfaced only in the rich markdown export, never the clean plain one.
     """
-    grouped: dict[str, list[tuple[int, str, str]]] = {}
+    grouped: dict[str, list[tuple[int, str, str, str | None]]] = {}
     for e in events or []:
         if e.kind != "SpeechSpoken":
             continue
@@ -44,9 +46,14 @@ def _spoken_by_turn(
         if not text:
             continue
         kind = str(e.payload.get("spoken_kind", "other"))
-        grouped.setdefault(e.turn_id or "", []).append((e.ts_ms, text, kind))
+        raw_detail = e.payload.get("detail")
+        detail = str(raw_detail).strip() if raw_detail else None
+        grouped.setdefault(e.turn_id or "", []).append((e.ts_ms, text, kind, detail))
     return {
-        tid: [(text, kind) for _ts, text, kind in sorted(items)]
+        tid: [
+            (text, kind, detail)
+            for _ts, text, kind, detail in sorted(items, key=lambda it: it[0])
+        ]
         for tid, items in grouped.items()
     }
 
@@ -131,8 +138,12 @@ def format_session_markdown(
         if spoken:
             lines.append("**🗣 Also spoken:**")
             lines.append("")
-            for text, kind in spoken:
+            for text, kind, detail in spoken:
                 lines.append(f"- _({kind})_ {text}")
+                if detail:
+                    # Technical diagnostic that was NOT spoken (e.g. a failed
+                    # Computer-Use exit code) — kept for debugging.
+                    lines.append(f"  - _detail:_ `{detail}`")
             lines.append("")
 
         if t.latency_total_ms > 0 or t.think_ms > 0 or t.speak_ms > 0:
@@ -195,7 +206,9 @@ def format_session_plain(
             blocks.append(f"Du: {t.user_text}")
         if t.jarvis_text:
             blocks.append(f"Jarvis: {t.jarvis_text}")
-        for text, _kind in spoken_map.get(t.id, []):
+        for text, _kind, _detail in spoken_map.get(t.id, []):
+            # The clean transcript reads as dialogue — the technical ``detail``
+            # (exit codes, harness reasons) stays out to avoid AI-slop.
             blocks.append(f"Jarvis: {text}")
 
     if blocks:

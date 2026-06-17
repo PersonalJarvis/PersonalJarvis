@@ -49,13 +49,32 @@ class TriggerOnEvent(BaseModel):
     max_firings: int | None = Field(default=1, ge=1, le=1000)
 
 
+class TriggerEvery(BaseModel):
+    """Recurring interval — 'every N seconds' (hourly / daily / custom).
+
+    Added 2026-06-17 for the Tasks section's recurring-schedule requirement.
+    Deliberately interval-based, NOT a raw cron expression (keeps the
+    'kein Cron' contract from ADR-0003 while still covering hourly/daily).
+
+    - ``interval_seconds`` is the gap between runs (3600 = hourly,
+      86400 = daily). Capped at one year.
+    - ``start_at`` optionally anchors the first run to an absolute ISO-8601
+      timestamp (e.g. 'daily at 07:00'). When omitted, the first run is one
+      interval from scheduling time.
+    """
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    type: Literal["every"] = "every"
+    interval_seconds: float = Field(gt=0, le=366 * 24 * 3600)   # max 1 year
+    start_at: str | None = Field(default=None, min_length=10, max_length=40)
+
+
 Trigger = Annotated[
-    TriggerAfterDelay | TriggerAtTime | TriggerOnEvent,
+    TriggerAfterDelay | TriggerAtTime | TriggerOnEvent | TriggerEvery,
     Field(discriminator="type"),
 ]
 
 
-TRIGGER_TYPES: tuple[str, ...] = ("after_delay", "at_time", "on_event")
+TRIGGER_TYPES: tuple[str, ...] = ("after_delay", "at_time", "on_event", "every")
 
 
 # ---------------------------------------------------------------------
@@ -86,10 +105,45 @@ class ToolCallAction(BaseModel):
     args: dict[str, Any] = Field(default_factory=dict)
 
 
+# ---------------------------------------------------------------------
+# Plugin grants — per-task pre-authorization for unattended runs
+# ---------------------------------------------------------------------
+
+# Permission scope a task grants an enabled plugin. Maps onto the risk-tier
+# system: `read` keeps the agent to safe/monitor calls; `write`/`full`
+# pre-authorize `ask`-tier actions (send mail, post tweet) so an unattended
+# scheduled run does not block on a human confirmation.
+PluginScope = Literal["read", "write", "full"]
+PLUGIN_SCOPES: tuple[str, ...] = ("read", "write", "full")
+
+
+class PluginGrant(BaseModel):
+    """One enabled plugin plus the permission scope the user toggled for it."""
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    plugin_id: str = Field(min_length=1, max_length=64)
+    scope: PluginScope = "read"
+
+
+class AgentAction(BaseModel):
+    """An agentic brain turn — the task runs ``prompt`` and the brain decides
+    how to combine the enabled plugins to reach the goal (Claude-style
+    scheduled task). The toggled plugins become the turn's tool allowlist;
+    each grant's ``scope`` gates what the unattended run may do.
+    """
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    kind: Literal["agent"] = "agent"
+    prompt: str = Field(min_length=1, max_length=16_384)
+    plugin_grants: tuple[PluginGrant, ...] = Field(default_factory=tuple)
+    model_tier: Literal["fast", "deep", "auto"] = "auto"
+
+
 TaskAction = Annotated[
-    HarnessDispatchAction | SpeakAction | ToolCallAction,
+    HarnessDispatchAction | SpeakAction | ToolCallAction | AgentAction,
     Field(discriminator="kind"),
 ]
+
+
+ACTION_KINDS: tuple[str, ...] = ("harness_dispatch", "speak", "tool_call", "agent")
 
 
 # ---------------------------------------------------------------------

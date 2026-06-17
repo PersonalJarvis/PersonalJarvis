@@ -10,6 +10,8 @@ import {
   Clock,
   Zap,
   CalendarClock,
+  Repeat,
+  Plus,
 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -17,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
+import { TaskCreateDialog } from "./tasks/TaskCreateDialog";
 
 type TaskState =
   | "pending"
@@ -27,7 +30,7 @@ type TaskState =
   | "cancelled"
   | "interrupted";
 
-type TriggerType = "after_delay" | "at_time" | "on_event";
+type TriggerType = "after_delay" | "at_time" | "on_event" | "every";
 
 interface TaskSummary {
   id: string;
@@ -111,6 +114,7 @@ const TRIGGER_ICON: Record<TriggerType, typeof Clock> = {
   after_delay: Clock,
   at_time: CalendarClock,
   on_event: Zap,
+  every: Repeat,
 };
 
 function makeTriggerLabels(t: (k: string) => string): Record<TriggerType, string> {
@@ -118,6 +122,7 @@ function makeTriggerLabels(t: (k: string) => string): Record<TriggerType, string
     after_delay: t("tasks_view.trigger_label.after_delay"),
     at_time: t("tasks_view.trigger_label.at_time"),
     on_event: t("tasks_view.trigger_label.on_event"),
+    every: t("tasks_view.trigger_label.every"),
   };
 }
 
@@ -135,6 +140,7 @@ export function TasksView() {
   const STATE_FILTERS = makeStateFilters(t);
   const [stateFilter, setStateFilter] = useState<string>("all");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [showCreate, setShowCreate] = useState(false);
   const qc = useQueryClient();
 
   const effectiveFilter = stateFilter === "all" ? undefined : stateFilter;
@@ -162,18 +168,25 @@ export function TasksView() {
         title={t("tasks_view.title")}
         subtitle={t("tasks_view.subtitle")}
         right={
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => refetch()}
-            disabled={isRefetching}
-          >
-            <RefreshCw
-              className={isRefetching ? "h-4 w-4 animate-spin" : "h-4 w-4"}
-            />
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => refetch()}
+              disabled={isRefetching}
+            >
+              <RefreshCw
+                className={isRefetching ? "h-4 w-4 animate-spin" : "h-4 w-4"}
+              />
+            </Button>
+            <Button size="sm" onClick={() => setShowCreate(true)}>
+              <Plus className="mr-1 h-4 w-4" />
+              {t("tasks_view.create_button")}
+            </Button>
+          </div>
         }
       />
+      {showCreate && <TaskCreateDialog onClose={() => setShowCreate(false)} />}
 
       <div className="flex items-center gap-2 border-b border-border px-6 py-3">
         {STATE_FILTERS.map((f) => (
