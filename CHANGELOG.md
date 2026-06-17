@@ -7,28 +7,22 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
-## [v0.9.0] — 2026-06-17
-
-### Added
-
-- **Recurring / scheduled tasks** — a cron-style task schema + runner so tasks can fire on a schedule or repeat, not only on demand.
-- **Voice boot fast-start** — a two-phase warm-up that brings the listening path up first and surfaces a "voice starting" readiness indicator in the UI before the background pre-render finishes.
-- **Non-spoken Computer-Use failure detail in the Transcription view** — a failed action speaks a humanized sentence ("That didn't work on screen…"), while the transcript additionally carries the technical reason (`exit N · <harness reason>`) for debugging, never voiced.
-- **Drag-drop a mission / output card into the in-app dock** to recap it into the conversation context.
-- **Application identity** — a proper "Personal Jarvis" taskbar and Start-menu name + icon instead of "Python".
-
-### Changed
-
-- **Computer-Use robustness** — a deterministic single-screenshot fast-path, planner navigation-vs-search discipline, `ctrl+v` combo splitting, `open_app` Start-menu plausibility, and literal-dictation typing.
-- **CLI tools** — honest failure readback (surface the stderr cause, never a bare "exit N") and a non-interactive execution environment.
-- **Voice turn-taking** — an adjustable silence window with a hard floor plus extra patience for long / delegation utterances.
+## [0.9.1] - 2026-06-17
 
 ### Fixed
 
-- **Web search** — pin the `ddgs` text backends + timeout so freshness queries no longer hang in auto-mode.
-- **Missions** — a force-spawn meta-leak and the drag-drop recap doom-loop that made spurious sub-agent missions fail.
+- Voice: the Pre-Thinking-Ack no longer speaks over the user mid-sentence. When
+  the user pauses mid-thought and then resumes, the ack is now dropped instead of
+  talking over the continuation (a new configurable continuation grace,
+  `[ack_brain].ack_continuation_grace_ms`). Every asynchronous announcement is
+  additionally gated on a symmetric "user holds the floor" check — preambles are
+  dropped and completion readbacks are deferred to the next turn-boundary, so
+  Jarvis never barges a user who is still talking (AD-OE5 / AD-OE6).
 
----
+### Changed
+
+- Internal fixes and refinements to the evidence gate, CLI result narration,
+  Computer-Use text input, the mission critic, and the tasks runner.
 
 ## [v1.0.0-board] — 2026-04-25
 

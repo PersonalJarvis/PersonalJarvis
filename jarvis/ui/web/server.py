@@ -1975,13 +1975,15 @@ class WebServer:
         Startup-Cleanup fuer ``running``-Tasks (App-Exit) aus und startet
         den Scheduler-Loop als Background-Task.
 
-        Runner laeuft hier ohne Harness/TTS/Tool-Wiring — fuer reine
-        ``after_delay``/``at_time``-Erinnerungen mit ``speak``- oder
-        ``harness_dispatch``-Action waeren das eigene Folge-Tasks. Die UI
-        wird trotzdem live (Liste + Cancel + Detail-Timeline), weil die
-        Routes nur Store + Scheduler anfassen.
+        The runner is wired with the brain so agentic (``agent``) tasks run a
+        tool-restricted turn unattended (read-only/monitor-tier plugins pass;
+        ask-tier still gates). ``speak``/``harness_dispatch`` actions still
+        have no TTS/harness here — those remain follow-up wiring. The UI is
+        live regardless (list + cancel + detail timeline) since the routes
+        only touch store + scheduler.
         """
         from jarvis.control.cancel import CancelToken
+        from jarvis.tasks.approval_bridge import TaskAutoApprover
         from jarvis.tasks.runner import TaskRunner
         from jarvis.tasks.scheduler import TaskScheduler
         from jarvis.tasks.store import TaskStore
@@ -1999,7 +2001,22 @@ class WebServer:
         if recovered:
             logger.info("TaskStack: {} interrupted Tasks vom Vorlauf bereinigt", recovered)
 
-        runner = TaskRunner(store=store, bus=self.bus)
+        # Wire the brain so agentic (`agent`) tasks can run a tool-restricted
+        # turn unattended. app.state.brain is set before server.start() (see
+        # launcher.py); a headless Mock-Brain without run_task falls back to
+        # None → agent tasks fail cleanly instead of crashing.
+        brain = getattr(self.app.state, "brain", None)
+        agent_brain = brain if (brain is not None and hasattr(brain, "run_task")) else None
+        # Unattended pre-authorization: agent tasks whose plugins were toggled
+        # write/full auto-approve those ask-tier calls for their own turn.
+        auto_approver = TaskAutoApprover(self.bus)
+
+        runner = TaskRunner(
+            store=store,
+            bus=self.bus,
+            agent_brain=agent_brain,
+            auto_approver=auto_approver,
+        )
         scheduler = TaskScheduler(store=store, bus=self.bus, runner=runner)
         scheduler.bind_bus()
         await scheduler.hydrate()

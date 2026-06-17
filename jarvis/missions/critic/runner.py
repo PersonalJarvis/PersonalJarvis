@@ -561,7 +561,7 @@ class CriticRunner:
                         "the deliverable."
                     ),
                     summary_de=(
-                        "Frage beantwortet; die Antwort selbst ist das Ergebnis."
+                        "Frage beantwortet; die Antwort selbst ist das Ergebnis."  # i18n-allow: summary_de localization field
                     ),
                     confidence=1.0,
                     suggested_next_action="accept",
@@ -601,7 +601,7 @@ class CriticRunner:
                         "the deliverable."
                     ),
                     summary_de=(
-                        "Frage beantwortet; die Antwort selbst ist das Ergebnis."
+                        "Frage beantwortet; die Antwort selbst ist das Ergebnis."  # i18n-allow: summary_de localization field
                     ),
                     confidence=1.0,
                     suggested_next_action="accept",

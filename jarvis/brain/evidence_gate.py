@@ -111,7 +111,7 @@ def check_evidence_domain(
     if not t:
         return _PASS
     normalised = _normalize(t)
-    if _DEFINITION_RE.search(normalised):
+    if _DEFINITION_RE.search(normalised) and not _OWNERSHIP_RE.search(normalised):
         return _PASS
     if not _LOOKUP_SHAPE_RE.search(normalised):
         return _PASS

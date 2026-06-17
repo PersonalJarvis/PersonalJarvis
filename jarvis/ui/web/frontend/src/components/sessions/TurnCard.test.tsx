@@ -80,7 +80,7 @@ describe("TurnCard spoken track", () => {
         spoken={[
           spokenLine({
             spoken_kind: "completion",
-            text: "Das am Bildschirm hat nicht geklappt.",
+            text: "Das am Bildschirm hat nicht geklappt.", // i18n-allow: German voice fixture
             detail: "exit 5 · 5 guard-blocked actions this mission",
           }),
         ]}

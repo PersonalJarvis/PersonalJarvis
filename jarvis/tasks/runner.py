@@ -30,10 +30,13 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Protocol
+from uuid import UUID, uuid4
 
 from jarvis.core.bus import EventBus
 from jarvis.core.events import (
+    AnnouncementRequested,
     TaskCompleted,
     TaskFailed,
     TaskStarted,
@@ -77,8 +80,19 @@ class _AgentBrainLike(Protocol):
     for honouring each grant's scope when pre-authorizing ask-tier actions.
     """
     async def run_task(
-        self, *, prompt: str, allowed_tools: tuple[str, ...], model_tier: str
+        self,
+        *,
+        prompt: str,
+        allowed_tools: tuple[str, ...],
+        model_tier: str,
+        trace_id: UUID | None = None,
     ) -> Any: ...
+
+
+class _AutoApproverLike(Protocol):
+    """Pre-authorizes ask-tier tools for a task's granted plugins (Option B)."""
+    def arm(self, trace_id: UUID, plugin_ids: Iterable[str], *, approved_by: str) -> None: ...
+    def disarm(self, trace_id: UUID) -> None: ...
 
 
 # ----------------------------------------------------------------------
@@ -104,6 +118,7 @@ class TaskRunner:
         tool_executor: _ToolExecutorLike | None = None,
         tool_registry: _ToolRegistryLike | Any = None,
         agent_brain: _AgentBrainLike | None = None,
+        auto_approver: _AutoApproverLike | None = None,
     ) -> None:
         self._store = store
         self._bus = bus
@@ -112,6 +127,7 @@ class TaskRunner:
         self._executor = tool_executor
         self._tools = tool_registry
         self._brain = agent_brain
+        self._approver = auto_approver
 
     # ------------------------------------------------------------------
 
@@ -326,6 +342,12 @@ class TaskRunner:
                 "Agent-Brain nicht konfiguriert — agent-Action kann nicht laufen"
             )
         allowed_tools = tuple(g.plugin_id for g in action.plugin_grants)
+        # Plugins the user granted write/full are pre-authorized for this
+        # unattended run (ask-tier actions auto-approve); read stays gated.
+        auto_plugins = tuple(
+            g.plugin_id for g in action.plugin_grants if g.scope in ("write", "full")
+        )
+        trace_id = uuid4()
         seq = await self._store.append_step(
             task_id, "action",
             {
@@ -334,6 +356,7 @@ class TaskRunner:
                 "tools": list(allowed_tools),
                 "grants": [{"plugin_id": g.plugin_id, "scope": g.scope}
                            for g in action.plugin_grants],
+                "preauthorized": list(auto_plugins),
                 "model_tier": action.model_tier,
             },
         )
@@ -343,19 +366,41 @@ class TaskRunner:
         )
         self._check_cancel(cancel_token)
 
-        result = await self._brain.run_task(
-            prompt=action.prompt,
-            allowed_tools=allowed_tools,
-            model_tier=action.model_tier,
-        )
+        if self._approver is not None:
+            self._approver.arm(
+                trace_id, auto_plugins, approved_by=f"scheduled-task:{task_id}"
+            )
+        try:
+            result = await self._brain.run_task(
+                prompt=action.prompt,
+                allowed_tools=allowed_tools,
+                model_tier=action.model_tier,
+                trace_id=trace_id,
+            )
+        finally:
+            if self._approver is not None:
+                self._approver.disarm(trace_id)
+        text = str(result).strip()
         seq = await self._store.append_step(
             task_id, "log",
-            {"event": "agent_result", "text": str(result)[:2000]},
+            {"event": "agent_result", "text": text[:2000]},
         )
         await self._bus.publish(
             TaskStepRecorded(task_id=task_id, seq=seq, kind="log",
                              source_layer="tasks.runner")
         )
+        # Delivery: speak the result at the next VAD turn-boundary. The TTS
+        # pipeline scrubs it; on a muted/headless runtime this is a logged
+        # no-op (cloud-first). The result also stays visible as the step above
+        # in the task's detail timeline.
+        if text:
+            await self._bus.publish(
+                AnnouncementRequested(
+                    text=text,
+                    kind="completion",
+                    source_layer="tasks.runner",
+                )
+            )
 
     async def _run_tool_call(
         self,
