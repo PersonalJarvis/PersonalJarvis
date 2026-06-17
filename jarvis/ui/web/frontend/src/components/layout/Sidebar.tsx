@@ -109,13 +109,23 @@ export function Sidebar() {
   const transcription = useEventStore((s) => s.transcription);
   const transcriptionFinal = useEventStore((s) => s.transcriptionFinal);
   const connected = useEventStore((s) => s.connected);
+  const voiceReady = useEventStore((s) => s.voiceReady);
   const brainProvider = useEventStore((s) => s.brainProvider);
   const agentsCount = useEventStore((s) =>
     s.events.filter((e) => e.name === "AgentStateChange").length > 0 ? undefined : 0,
   );
 
+  // The window connects in ~1s but the voice feature warms up ~20s in the
+  // background. During that gap show a "Voice starting…" spinner instead of the
+  // normal idle "Ready" dot (which would falsely imply the mic already works).
+  // Disconnected outranks warmup — "Offline" is the honest state with no socket.
+  const voiceWarming = connected && !voiceReady;
   const vs = VOICE_STATE_STYLE[voiceState] ?? VOICE_STATE_STYLE.idle;
-  const voiceLabel = connected ? t(`voice_state.${voiceState}`) : t("voice_state.offline");
+  const voiceLabel = !connected
+    ? t("voice_state.offline")
+    : voiceWarming
+      ? t("voice_state.starting")
+      : t(`voice_state.${voiceState}`);
 
   const providerLabel = useMemo(() => prettyProviderName(brainProvider), [brainProvider]);
 
@@ -138,14 +148,22 @@ export function Sidebar() {
               {voiceLabel}
             </span>
           </div>
-          <span
-            className={cn(
-              "h-2 w-2 rounded-full",
-              vs.dot,
-              vs.pulse && "animate-jarvis-pulse",
-            )}
-            aria-hidden
-          />
+          {voiceWarming ? (
+            <Loader2
+              className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground"
+              data-testid="voice-starting-spinner"
+              aria-hidden
+            />
+          ) : (
+            <span
+              className={cn(
+                "h-2 w-2 rounded-full",
+                vs.dot,
+                vs.pulse && "animate-jarvis-pulse",
+              )}
+              aria-hidden
+            />
+          )}
         </div>
         <div className="mt-3 min-h-[20px] rounded-md bg-background/40 px-2 py-1.5 text-xs text-muted-foreground">
           {transcription ? (

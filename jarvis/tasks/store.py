@@ -24,6 +24,31 @@ from .schema import TaskSpec, TaskState
 
 SCHEMA_FILE = Path(__file__).parent / "schema.sql"
 
+# Rebuild target for the legacy trigger_type-CHECK migration. Mirrors the
+# `tasks` table in schema.sql but as `tasks_new` and with `every` in the
+# CHECK. Kept here (not in schema.sql) because it only runs during migration.
+_TASKS_REBUILD_SQL = """
+CREATE TABLE tasks_new (
+    id              TEXT PRIMARY KEY,
+    trace_id        TEXT NOT NULL,
+    spec_json       TEXT NOT NULL,
+    state           TEXT NOT NULL CHECK(state IN (
+                        'pending','scheduled','running','completed',
+                        'failed','cancelled','interrupted')),
+    trigger_type    TEXT NOT NULL CHECK(trigger_type IN (
+                        'after_delay','at_time','on_event','every')),
+    due_at_ns       INTEGER,
+    event_selector  TEXT,
+    title           TEXT NOT NULL DEFAULT '',
+    created_at_ns   INTEGER NOT NULL,
+    started_at_ns   INTEGER,
+    finished_at_ns  INTEGER,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_error      TEXT,
+    result_json     TEXT
+)
+"""
+
 
 class TaskStore:
     """CRUD-Store fuer Tasks + Steps auf der gemeinsamen Memory-DB.
@@ -58,6 +83,10 @@ class TaskStore:
         await self._conn.execute("PRAGMA foreign_keys = ON")
         schema = SCHEMA_FILE.read_text(encoding="utf-8")
         await self._conn.executescript(schema)
+        # Migrate legacy DBs whose trigger_type CHECK predates `every`
+        # (added 2026-06-17). CREATE TABLE IF NOT EXISTS never alters an
+        # existing table, so this explicit migration is required.
+        await self._migrate_trigger_type_check()
 
     async def close(self) -> None:
         if self._conn is not None:
@@ -77,6 +106,63 @@ class TaskStore:
                 "TaskStore nicht initialisiert — rufe init() oder nutze 'async with'."
             )
         return self._conn
+
+    async def _migrate_trigger_type_check(self) -> None:
+        """Rebuild ``tasks`` if its trigger_type CHECK predates ``every``.
+
+        SQLite cannot ALTER a CHECK constraint, so we do the standard
+        create-copy-drop-rename dance. Guarded to run at most once: it is a
+        no-op once the live CHECK already mentions ``'every'`` (or has no
+        CHECK at all).
+        """
+        conn = self._require_conn()
+        cur = await conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'"
+        )
+        row = await cur.fetchone()
+        await cur.close()
+        if row is None:
+            return
+        table_sql = row["sql"] or ""
+        if "trigger_type" not in table_sql or "CHECK" not in table_sql:
+            return  # loose schema — nothing to migrate
+        if "'every'" in table_sql:
+            return  # fresh schema or already migrated
+
+        await conn.execute("PRAGMA foreign_keys = OFF")
+        try:
+            await conn.execute("BEGIN")
+            await conn.execute(_TASKS_REBUILD_SQL)
+            await conn.execute(
+                "INSERT INTO tasks_new SELECT id, trace_id, spec_json, state, "
+                "trigger_type, due_at_ns, event_selector, title, created_at_ns, "
+                "started_at_ns, finished_at_ns, attempts, last_error, result_json "
+                "FROM tasks"
+            )
+            await conn.execute("DROP TABLE tasks")
+            await conn.execute("ALTER TABLE tasks_new RENAME TO tasks")
+            await conn.execute("COMMIT")
+        except Exception:
+            await conn.execute("ROLLBACK")
+            raise
+        finally:
+            await conn.execute("PRAGMA foreign_keys = ON")
+
+        # Indexes were dropped with the old table — recreate them.
+        await conn.executescript(
+            "CREATE INDEX IF NOT EXISTS idx_tasks_state_due ON tasks(state, due_at_ns);"
+            "CREATE INDEX IF NOT EXISTS idx_tasks_trace ON tasks(trace_id);"
+            "CREATE INDEX IF NOT EXISTS idx_tasks_event_sel ON tasks(event_selector);"
+        )
+
+    async def set_next_due(self, task_id: str, due_at_ns: int) -> None:
+        """Update only the ``due_at_ns`` column — used by the scheduler to
+        re-arm a recurring (``every``) task for its next interval.
+        """
+        conn = self._require_conn()
+        await conn.execute(
+            "UPDATE tasks SET due_at_ns = ? WHERE id = ?", (due_at_ns, task_id)
+        )
 
     # ------------------------------------------------------------------
     # Hilfen
@@ -107,6 +193,20 @@ class TaskStore:
             return "at_time", due, None
         if trig.type == "on_event":
             return "on_event", None, trig.event_name
+        if trig.type == "every":
+            # Recurring: anchor to start_at if given, else now + interval.
+            if trig.start_at:
+                from datetime import datetime
+                try:
+                    dt = datetime.fromisoformat(trig.start_at.replace("Z", "+00:00"))
+                    if dt.tzinfo is None:
+                        dt = dt.astimezone()
+                    due = int(dt.timestamp() * 1e9)
+                except ValueError:
+                    due = time.time_ns() + int(trig.interval_seconds * 1e9)
+            else:
+                due = time.time_ns() + int(trig.interval_seconds * 1e9)
+            return "every", due, None
         raise ValueError(f"Unbekannter Trigger-Typ: {trig.type}")  # pragma: no cover
 
     # ------------------------------------------------------------------

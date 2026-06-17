@@ -75,7 +75,9 @@
         "gcloud storage ls gs://my-bucket",
         "gcloud compute instances list",
         "gcloud projects describe my-project",
-        "gcloud run services list --region=europe-west1"
+        "gcloud run services list --region=europe-west1",
+        "gcloud billing accounts list",
+        "gcloud billing projects list --billing-account=ACCOUNT_ID"
       ],
       "icon": "cloud",
       "category": "cloud",

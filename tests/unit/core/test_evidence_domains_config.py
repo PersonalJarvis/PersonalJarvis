@@ -2,12 +2,29 @@
 from jarvis.core.config import BrainConfig, EvidenceDomainsConfig
 
 
-def test_defaults_ship_five_domains_enabled():
+def test_defaults_ship_six_domains_enabled():
     cfg = EvidenceDomainsConfig()
     assert cfg.enabled is True
-    assert set(cfg.domains) == {"calendar", "email", "tasks", "repos", "deployments"}
+    assert set(cfg.domains) == {
+        "calendar", "email", "tasks", "repos", "deployments", "cloud",
+    }
     assert "kalender" in cfg.domains["calendar"]
     assert "inbox" in cfg.domains["email"]
+
+
+def test_defaults_include_cloud_billing_domain():
+    # The user wants a billing/cost question to deterministically drive the
+    # connected gcloud CLI (live 2026-06-17). The gate maps the "cloud" domain
+    # to cli_gcloud; the config must carry the billing keywords that match.
+    cfg = EvidenceDomainsConfig()
+    kws = cfg.domains["cloud"]
+    assert "abrechnung" in kws and "abrechnungen" in kws
+    assert "billing" in kws
+    assert "guthaben" in kws
+    assert "google cloud" in kws
+    # Must NOT include a bare generic cost word that would hijack "was kostet X".
+    assert "kosten" not in kws
+    assert "cost" not in kws
 
 
 def test_brain_config_carries_evidence_domains():

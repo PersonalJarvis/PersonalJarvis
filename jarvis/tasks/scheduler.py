@@ -271,6 +271,14 @@ class TaskScheduler:
                    if stored_due_at_ns is not None
                    else parse_iso_timestamp_to_ns(trig.iso_timestamp))
             heapq.heappush(self._heap, (due, task_id))
+        elif trig.type == "every":
+            if stored_due_at_ns is not None:
+                due = stored_due_at_ns
+            elif trig.start_at:
+                due = parse_iso_timestamp_to_ns(trig.start_at)
+            else:
+                due = time.time_ns() + int(trig.interval_seconds * 1e9)
+            heapq.heappush(self._heap, (due, task_id))
         elif trig.type == "on_event":
             self._on_event_index.setdefault(trig.event_name, set()).add(task_id)
             self._firings_left[task_id] = trig.max_firings   # None = unbegrenzt
@@ -285,6 +293,13 @@ class TaskScheduler:
                 return parse_iso_timestamp_to_ns(trig.iso_timestamp)
             except ValueError:
                 return None
+        if trig.type == "every":
+            if trig.start_at:
+                try:
+                    return parse_iso_timestamp_to_ns(trig.start_at)
+                except ValueError:
+                    return None
+            return time.time_ns() + int(trig.interval_seconds * 1e9)
         return None
 
     # ------------------------------------------------------------------
@@ -309,11 +324,7 @@ class TaskScheduler:
             if cancel_token is not None and cancel_token.is_cancelled():
                 return
             now_ns = time.time_ns()
-            # Alle faelligen Tasks poppen + dispatchen
-            while self._heap and self._heap[0][0] <= now_ns:
-                _due, tid = heapq.heappop(self._heap)
-                self._known.discard(tid)
-                await self._dispatch_runner(tid)
+            await self._drain_due_tasks(now_ns)
 
             # Naechstes Wake-up: entweder next-due oder unendlich
             if self._heap:
@@ -328,6 +339,31 @@ class TaskScheduler:
             except TimeoutError:
                 pass
             self._wakeup.clear()
+
+    async def _drain_due_tasks(self, now_ns: int) -> None:
+        """Pop + dispatch every task whose due time has passed.
+
+        Recurring (``every``) tasks are re-armed for their next interval
+        right after dispatch; one-shot triggers simply leave the heap.
+        Dispatch is fire-and-forget (``create_task``) so a slow task never
+        blocks the scheduler loop.
+        """
+        while self._heap and self._heap[0][0] <= now_ns:
+            _due, tid = heapq.heappop(self._heap)
+            self._known.discard(tid)
+            spec = await self._store.get_spec(tid)
+            await self._dispatch_runner(tid)
+            if spec is not None and spec.trigger.type == "every":
+                await self._rearm_every(tid, spec, now_ns)
+
+    async def _rearm_every(self, task_id: str, spec: TaskSpec, now_ns: int) -> None:
+        """Re-insert a recurring task at ``now + interval`` and persist the
+        new due time so a restart picks the schedule back up.
+        """
+        next_due = now_ns + int(spec.trigger.interval_seconds * 1e9)
+        heapq.heappush(self._heap, (next_due, task_id))
+        self._known.add(task_id)
+        await self._store.set_next_due(task_id, next_due)
 
     async def _dispatch_runner(self, task_id: str) -> None:
         if self._runner is None:

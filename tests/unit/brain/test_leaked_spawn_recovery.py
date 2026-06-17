@@ -225,3 +225,128 @@ async def test_recover_leaked_search_web_empty_results_is_spoken_fallback() -> N
     assert not any(frag in out.lower() for frag in _FAILURE_FRAGMENTS)
     assert not _looks_like_tool_use_leak(out)
     assert out.strip()  # a real spoken sentence, never silence
+
+
+# ---------------------------------------------------------------------------
+# Leaked CLI-tool (cli_<name>) recovery (live repro 2026-06-17).
+#
+# Voice "use the Google Cloud CLI and tell me about my pricing / remaining
+# budget" ran cli_gcloud for real (gcloud billing accounts list -> ok,
+# gcloud projects list -> ok) but Gemini leaked the final cli_gcloud call as
+# TEXT. The recovery executed it, but ``_render_recovered_tool_output`` had no
+# branch for a CLI ToolResult ({exit_code, stdout, stderr, duration_ms}) and
+# returned "" -> the user heard "Dazu habe ich nichts gefunden" although real
+# project data came back on stdout. A failed CLI call must speak the stderr
+# cause, never a bare "exit N" and never "nothing found".
+# ---------------------------------------------------------------------------
+
+
+_CLI_STDOUT = (
+    "PROJECT_ID            NAME              PROJECT_NUMBER\n"
+    "n8n-wf-demo-611441    n8n wf demo       512334455667\n"
+)
+_GCLOUD_BUDGET_STDERR = (
+    "API [billingbudgets.googleapis.com] not enabled on project "
+    "[n8n-wf-demo-611441].\n"
+    "Would you like to enable and retry (this will take a few minutes)? "
+    "(y/N)?  \n"
+    "ERROR: (gcloud.billing.budgets.list) does not have permission to access "
+    "billingAccounts instance [015E1A-ACBF75-9EBEBB] (or it may not exist): "
+    "Cloud Billing Budget API has not been used in project n8n-wf-demo-611441 "
+    "before or it is disabled.\n"
+)
+# A non-zero CLI exit must never be narrated as one of these.
+_DISHONEST_CLI_FRAGMENTS = ("nichts gefunden", "couldn't find anything")
+
+
+def _manager_with_failing_tool(
+    captured: dict, *, name: str, output: object, error: str
+) -> BrainManager:
+    cfg = JarvisConfig()
+    cfg.brain.primary = "fake"
+
+    class _FailingExecutor:
+        async def execute(self, tool, args, *, user_utterance, trace_id):  # type: ignore[no-untyped-def]
+            captured["args"] = args
+            return SimpleNamespace(success=False, output=output, error=error)
+
+    fake_tool = SimpleNamespace(name=name)
+    return BrainManager(
+        config=cfg,
+        bus=EventBus(),
+        tools={name: fake_tool},
+        tool_executor=_FailingExecutor(),
+    )
+
+
+def test_render_recovered_cli_stdout_is_surfaced_on_success() -> None:
+    # A successful CLI ToolResult dict must surface its stdout, not dead-end
+    # in "" (which made the caller speak "Dazu habe ich nichts gefunden").
+    rendered = _render_recovered_tool_output(
+        {"exit_code": 0, "stdout": _CLI_STDOUT, "stderr": "", "duration_ms": 12}
+    )
+    assert "n8n-wf-demo-611441" in rendered
+    assert not _looks_like_tool_use_leak(rendered)
+
+
+def test_render_recovered_cli_empty_stdout_stays_empty() -> None:
+    # exit 0 but nothing on stdout -> genuinely empty; the caller supplies the
+    # localized 'nothing found' sentence. Never a "{...}" repr.
+    rendered = _render_recovered_tool_output(
+        {"exit_code": 0, "stdout": "   ", "stderr": "", "duration_ms": 5}
+    )
+    assert rendered == ""
+
+
+@pytest.mark.asyncio
+async def test_recover_leaked_cli_success_speaks_stdout_not_nothing_found() -> None:
+    captured: dict = {}
+    mgr = _manager_with_fake_tool(
+        captured,
+        name="cli_gcloud",
+        output={"exit_code": 0, "stdout": _CLI_STDOUT, "stderr": "", "duration_ms": 12},
+    )
+    leaked = (
+        '{"type":"tool_use","name":"cli_gcloud",'
+        '"input":{"command":"gcloud projects list"}}'
+    )
+    out = await mgr._recover_leaked_tool(
+        leaked, user_text="nutze die Google Cloud CLI", trace_id=uuid4(),
+    )
+    assert out is not None
+    assert "n8n-wf-demo-611441" in out
+    assert not any(frag in out.lower() for frag in _DISHONEST_CLI_FRAGMENTS)
+    assert not _looks_like_tool_use_leak(out)
+
+
+@pytest.mark.asyncio
+async def test_recover_leaked_cli_failure_speaks_stderr_cause_not_bare_exit() -> None:
+    captured: dict = {}
+    mgr = _manager_with_failing_tool(
+        captured,
+        name="cli_gcloud",
+        output={
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": _GCLOUD_BUDGET_STDERR,
+            "duration_ms": 1492,
+        },
+        error="exit 1",
+    )
+    leaked = (
+        '{"type":"tool_use","name":"cli_gcloud","input":'
+        '{"command":"gcloud billing budgets list --billing-account=015E1A"}}'
+    )
+    out = await mgr._recover_leaked_tool(
+        leaked, user_text="wie viel Geld habe ich noch", trace_id=uuid4(),
+    )
+    assert out is not None
+    # Honest cause from stderr is surfaced (the API-disabled / permission line).
+    assert "permission" in out.lower() or "billing budget api" in out.lower()
+    # Never the bare exit-code token, never "nothing found".
+    assert out.strip().lower() != "exit 1"
+    assert "exit 1" not in out.lower()
+    assert not any(frag in out.lower() for frag in _DISHONEST_CLI_FRAGMENTS)
+    # The interactive (y/N)? prompt noise must not leak into the spoken answer.
+    assert "(y/n)" not in out.lower()
+    assert not _looks_like_tool_use_leak(out)

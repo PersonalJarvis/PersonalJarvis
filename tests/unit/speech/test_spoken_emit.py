@@ -175,6 +175,70 @@ async def test_speak_default_reply_does_not_emit_spoken() -> None:
 
 
 @pytest.mark.asyncio
+async def test_emit_spoken_carries_optional_detail() -> None:
+    # A failed Computer-Use readback speaks a HUMANIZED sentence (no cryptic
+    # "exit 5"), but the transcript should ALSO carry the technical reason —
+    # the exit code + raw harness detail — for debugging. It rides the optional
+    # `detail` field and is NEVER spoken (user request 2026-06-16).
+    bus = EventBus()
+    captured = await _capture(bus)
+    pipe = _bare_pipe(bus)
+
+    pipe._emit_spoken(
+        "That didn't work on screen.",
+        "en",
+        "completion",
+        detail="exit 5 · 5 guard-blocked actions this mission",
+    )
+    await asyncio.sleep(0.05)
+
+    assert len(captured) == 1, captured
+    assert captured[0].text == "That didn't work on screen."
+    assert captured[0].detail == "exit 5 · 5 guard-blocked actions this mission"
+
+
+@pytest.mark.asyncio
+async def test_emit_spoken_detail_defaults_to_none() -> None:
+    # The common case — a plain canned phrase — carries no technical detail.
+    bus = EventBus()
+    captured = await _capture(bus)
+    pipe = _bare_pipe(bus)
+
+    pipe._emit_spoken("That took too long.", "de", "timeout")
+    await asyncio.sleep(0.05)
+
+    assert len(captured) == 1
+    assert captured[0].detail is None
+
+
+@pytest.mark.asyncio
+async def test_on_announcement_forwards_detail_to_spoken() -> None:
+    # A CU failure rides AnnouncementRequested(kind="completion") carrying the
+    # optional technical `detail`; it must reach the recorded SpeechSpoken so
+    # the transcript shows the exit code while the voice stays humanized.
+    from jarvis.core.events import AnnouncementRequested
+
+    bus = EventBus()
+    captured = await _capture(bus)
+    pipeline = _make_speak_pipeline(bus)
+
+    await pipeline._on_announcement(
+        AnnouncementRequested(
+            source_layer="brain.manager",
+            text="That didn't work on screen.",
+            language="en",
+            kind="completion",
+            detail="exit 5 · the BridgeMind server has no news channel",
+        )
+    )
+    await asyncio.sleep(0.05)
+
+    assert len(captured) == 1, captured
+    assert captured[0].spoken_kind == "completion"
+    assert captured[0].detail == "exit 5 · the BridgeMind server has no news channel"
+
+
+@pytest.mark.asyncio
 async def test_on_announcement_emits_spoken_with_mapped_kind() -> None:
     # Announcements (skill output, mission completion, spawn ack, progress
     # nudge, flash preamble) reach TTS through _on_announcement, not _speak —

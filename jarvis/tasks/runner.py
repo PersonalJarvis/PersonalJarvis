@@ -69,6 +69,18 @@ class _ToolExecutorLike(Protocol):
     async def execute(self, tool: Any, args: dict[str, Any], **kwargs: Any) -> Any: ...
 
 
+class _AgentBrainLike(Protocol):
+    """Runs a single agentic brain turn for an ``agent`` task.
+
+    ``allowed_tools`` is the per-task tool allowlist (the toggled plugins);
+    the implementation is responsible for restricting the turn to those and
+    for honouring each grant's scope when pre-authorizing ask-tier actions.
+    """
+    async def run_task(
+        self, *, prompt: str, allowed_tools: tuple[str, ...], model_tier: str
+    ) -> Any: ...
+
+
 # ----------------------------------------------------------------------
 # Runner
 # ----------------------------------------------------------------------
@@ -91,6 +103,7 @@ class TaskRunner:
         tts: _TTSLike | None = None,
         tool_executor: _ToolExecutorLike | None = None,
         tool_registry: _ToolRegistryLike | Any = None,
+        agent_brain: _AgentBrainLike | None = None,
     ) -> None:
         self._store = store
         self._bus = bus
@@ -98,6 +111,7 @@ class TaskRunner:
         self._tts = tts
         self._executor = tool_executor
         self._tools = tool_registry
+        self._brain = agent_brain
 
     # ------------------------------------------------------------------
 
@@ -147,8 +161,13 @@ class TaskRunner:
             return
 
         duration_ms = int((time.perf_counter() - start) * 1000)
+        # Recurring (`every`) tasks return to `scheduled` so they survive a
+        # restart and keep firing; the scheduler re-arms the next due time.
+        # One-shot triggers terminate as `completed`.
+        is_recurring = getattr(spec.trigger, "type", None) == "every"
+        final_state = "scheduled" if is_recurring else "completed"
         await self._store.update_state(
-            task_id, "completed",
+            task_id, final_state,
             result={"duration_ms": duration_ms},
         )
         await self._bus.publish(
@@ -179,6 +198,8 @@ class TaskRunner:
             await self._run_speak(task_id, action, cancel_token)
         elif action.kind == "tool_call":
             await self._run_tool_call(task_id, action, cancel_token)
+        elif action.kind == "agent":
+            await self._run_agent(task_id, action, cancel_token)
         else:  # pragma: no cover — schema laesst nichts anderes zu
             raise RuntimeError(f"Unbekannter Action-Kind: {action.kind}")
 
@@ -284,6 +305,52 @@ class TaskRunner:
         seq = await self._store.append_step(
             task_id, "log",
             {"event": "tts_done", "chunks": chunk_count},
+        )
+        await self._bus.publish(
+            TaskStepRecorded(task_id=task_id, seq=seq, kind="log",
+                             source_layer="tasks.runner")
+        )
+
+    async def _run_agent(
+        self,
+        task_id: str,
+        action: Any,
+        cancel_token: CancelToken | None,
+    ) -> None:
+        """Run an agentic brain turn: the prompt is executed with the toggled
+        plugins as the tool allowlist. Each grant's scope is forwarded so the
+        brain can pre-authorize unattended ask-tier actions.
+        """
+        if self._brain is None:
+            raise RuntimeError(
+                "Agent-Brain nicht konfiguriert — agent-Action kann nicht laufen"
+            )
+        allowed_tools = tuple(g.plugin_id for g in action.plugin_grants)
+        seq = await self._store.append_step(
+            task_id, "action",
+            {
+                "kind": "agent",
+                "prompt": action.prompt[:200],
+                "tools": list(allowed_tools),
+                "grants": [{"plugin_id": g.plugin_id, "scope": g.scope}
+                           for g in action.plugin_grants],
+                "model_tier": action.model_tier,
+            },
+        )
+        await self._bus.publish(
+            TaskStepRecorded(task_id=task_id, seq=seq, kind="action",
+                             source_layer="tasks.runner")
+        )
+        self._check_cancel(cancel_token)
+
+        result = await self._brain.run_task(
+            prompt=action.prompt,
+            allowed_tools=allowed_tools,
+            model_tier=action.model_tier,
+        )
+        seq = await self._store.append_step(
+            task_id, "log",
+            {"event": "agent_result", "text": str(result)[:2000]},
         )
         await self._bus.publish(
             TaskStepRecorded(task_id=task_id, seq=seq, kind="log",

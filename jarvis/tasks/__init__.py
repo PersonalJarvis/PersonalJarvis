@@ -13,9 +13,14 @@ from __future__ import annotations
 from .runner import TaskRunner
 from .scheduler import TaskScheduler
 from .schema import (
+    ACTION_KINDS,
+    PLUGIN_SCOPES,
     TASK_STATES,
     TRIGGER_TYPES,
+    AgentAction,
     HarnessDispatchAction,
+    PluginGrant,
+    PluginScope,
     RetryPolicy,
     SpeakAction,
     TaskAction,
@@ -25,6 +30,7 @@ from .schema import (
     Trigger,
     TriggerAfterDelay,
     TriggerAtTime,
+    TriggerEvery,
     TriggerOnEvent,
 )
 from .store import TaskStore
@@ -36,14 +42,20 @@ __all__ = [
     "HarnessDispatchAction",
     "SpeakAction",
     "ToolCallAction",
+    "AgentAction",
+    "PluginGrant",
+    "PluginScope",
     "TriggerAfterDelay",
     "TriggerAtTime",
     "TriggerOnEvent",
+    "TriggerEvery",
     "Trigger",
     "RetryPolicy",
     "TaskState",
     "TRIGGER_TYPES",
     "TASK_STATES",
+    "ACTION_KINDS",
+    "PLUGIN_SCOPES",
     # Implementation
     "TaskStore",
     "TaskScheduler",

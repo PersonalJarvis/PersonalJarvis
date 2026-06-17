@@ -7,34 +7,26 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
-## [v0.8.0] — 2026-06-16
+## [v0.9.0] — 2026-06-17
 
 ### Added
 
-- **Adjustable thinking-pause slider** (Settings → Voice). Tune the voice
-  endpoint silence window — how long Jarvis waits in silence before it treats an
-  utterance as finished — anywhere from 0.5 s to 5.0 s (default 1.5 s), with a
-  live readout and a reset-to-default control. The value is persisted to
-  `jarvis.toml` (`[speech].vad_silence_ms`) and applied **live** to the running
-  voice pipeline with no restart. The max-utterance safety cap grows with the
-  window so a long, deliberate pause is never cut short. New route
-  `GET/PUT /api/settings/silence-window`; `SileroEndpointer.set_silence_window_ms`.
-- Cross-platform `jarvis/platform/open_path.py` helper for opening files/paths
-  in the OS default handler.
-- Artifact view (`jarvis/ui/web/artifact_view.py`) for inspecting generated
-  worker outputs from the Outputs view.
+- **Recurring / scheduled tasks** — a cron-style task schema + runner so tasks can fire on a schedule or repeat, not only on demand.
+- **Voice boot fast-start** — a two-phase warm-up that brings the listening path up first and surfaces a "voice starting" readiness indicator in the UI before the background pre-render finishes.
+- **Non-spoken Computer-Use failure detail in the Transcription view** — a failed action speaks a humanized sentence ("That didn't work on screen…"), while the transcript additionally carries the technical reason (`exit N · <harness reason>`) for debugging, never voiced.
+- **Drag-drop a mission / output card into the in-app dock** to recap it into the conversation context.
+- **Application identity** — a proper "Personal Jarvis" taskbar and Start-menu name + icon instead of "Python".
 
 ### Changed
 
-- Voice endpointing: a probe-driven endpoint can no longer end a turn before the
-  configured silence floor is reached, so every utterance keeps its full
-  think-buffer (the slider above makes that floor user-adjustable).
-- JarvisDock and Outputs/Sidebar polish; bilingual (en/de/es) UI strings updated.
+- **Computer-Use robustness** — a deterministic single-screenshot fast-path, planner navigation-vs-search discipline, `ctrl+v` combo splitting, `open_app` Start-menu plausibility, and literal-dictation typing.
+- **CLI tools** — honest failure readback (surface the stderr cause, never a bare "exit N") and a non-interactive execution environment.
+- **Voice turn-taking** — an adjustable silence window with a hard floor plus extra patience for long / delegation utterances.
 
 ### Fixed
 
-- Various voice-pipeline and Computer-Use robustness fixes (continuation
-  recombine, hangup-during-TTS, latency phase marks).
+- **Web search** — pin the `ddgs` text backends + timeout so freshness queries no longer hang in auto-mode.
+- **Missions** — a force-spawn meta-leak and the drag-drop recap doom-loop that made spurious sub-agent missions fail.
 
 ---
 

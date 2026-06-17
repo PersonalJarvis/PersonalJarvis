@@ -684,6 +684,11 @@ def _payload_for(event: Event) -> dict[str, Any]:
         # …). ``text`` + ``language`` are already whitelisted above, so a
         # persisted SpeechSpoken row carries {text, language, spoken_kind}.
         "spoken_kind",
+        # SpeechSpoken: optional technical diagnostic NOT spoken aloud (e.g. a
+        # failed Computer-Use exit code + harness reason). Only LatencySpan /
+        # VoiceBootStatus also carry a ``detail`` attribute and neither is a
+        # recorded kind, so this whitelist entry captures only SpeechSpoken.
+        "detail",
         "new_state",
         "previous",
         "session_id",

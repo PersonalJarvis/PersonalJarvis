@@ -39,6 +39,13 @@ _DEFINITION_RE = re.compile(
     r"what is a|what is an|what are|what does|explain|erklaer)\b"
 )
 
+# A possessive/ownership marker turns a "was sind …" phrasing into a personal
+# data lookup ("Was sind meine Abrechnungen?"), not a definition — it must
+# defeat the definitional short-circuit above (live 2026-06-17 billing query).
+_OWNERSHIP_RE = re.compile(
+    r"\b(mein|meine|meinem|meinen|meines|my|our|unser|unsere|unserem|unseren)\b"
+)
+
 
 @dataclass(frozen=True)
 class EvidenceVerdict:
@@ -58,6 +65,7 @@ _REFUSAL_DE: dict[str, str] = {
     "tasks": "Ich habe aktuell keinen Zugriff auf deine Aufgaben.",  # i18n-allow
     "repos": "Ich habe aktuell keinen Zugriff auf deine Repositories.",  # i18n-allow
     "deployments": "Ich habe aktuell keinen Zugriff auf deine Deployments.",  # i18n-allow
+    "cloud": "Ich habe aktuell keinen Zugriff auf deine Cloud-Abrechnung.",  # i18n-allow
 }
 _REFUSAL_DE_FALLBACK = "Dafuer habe ich aktuell keinen Datenzugriff."  # i18n-allow
 
@@ -67,6 +75,7 @@ _REFUSAL_EN: dict[str, str] = {
     "tasks": "I have no access to your tasks right now.",
     "repos": "I have no access to your repositories right now.",
     "deployments": "I have no access to your deployments right now.",
+    "cloud": "I have no access to your cloud billing right now.",
 }
 _REFUSAL_EN_FALLBACK = "I have no data access for that right now."
 

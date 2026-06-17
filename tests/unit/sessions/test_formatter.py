@@ -16,13 +16,22 @@ from jarvis.sessions.formatter import (
 from jarvis.sessions.models import VoiceEventRow, VoiceSessionRow, VoiceTurnRow
 
 
-def _spoken(turn_id: str, text: str, kind: str, ts_ms: int = 1_717_780_001_000) -> VoiceEventRow:
+def _spoken(
+    turn_id: str,
+    text: str,
+    kind: str,
+    ts_ms: int = 1_717_780_001_000,
+    detail: str | None = None,
+) -> VoiceEventRow:
+    payload: dict[str, object] = {"text": text, "language": "de", "spoken_kind": kind}
+    if detail is not None:
+        payload["detail"] = detail
     return VoiceEventRow(
         session_id="sess-1",
         turn_id=turn_id,
         ts_ms=ts_ms,
         kind="SpeechSpoken",
-        payload={"text": text, "language": "de", "spoken_kind": kind},
+        payload=payload,
     )
 
 # Emojis the markdown renderer uses as visual anchors — none may leak into
@@ -187,6 +196,43 @@ def test_markdown_includes_the_spoken_track_with_kind_label() -> None:
     out = format_session_markdown(_session(), turns, spoken)
     assert "Das hat zu lange gedauert." in out
     assert "timeout" in out  # the kind is surfaced as a tag
+
+
+def test_markdown_shows_technical_detail_under_a_readback() -> None:
+    # A failed Computer-Use readback speaks a humanized sentence, but the rich
+    # markdown export must also surface the technical reason (exit code + raw
+    # harness detail) for debugging (user request 2026-06-16).
+    turns = [_turn(0, "open discord and check the news", "")]
+    spoken = [
+        _spoken(
+            "turn-0",
+            "Das am Bildschirm hat nicht geklappt.",
+            "completion",
+            detail="exit 5 · 5 guard-blocked actions this mission",
+        )
+    ]
+    out = format_session_markdown(_session(), turns, spoken)
+    assert "Das am Bildschirm hat nicht geklappt." in out
+    assert "exit 5" in out
+    assert "guard-blocked actions" in out
+
+
+def test_plain_omits_technical_detail_to_stay_clean() -> None:
+    # The clean dialogue transcript must NOT leak the cryptic exit code — that
+    # is exactly the AI-slop the plain renderer exists to avoid.
+    turns = [_turn(0, "open discord", "")]
+    spoken = [
+        _spoken(
+            "turn-0",
+            "Das am Bildschirm hat nicht geklappt.",
+            "completion",
+            detail="exit 5 · 5 guard-blocked actions this mission",
+        )
+    ]
+    out = format_session_plain(_session(), turns, spoken)
+    assert "Das am Bildschirm hat nicht geklappt." in out
+    assert "exit 5" not in out
+    assert "guard-blocked" not in out
 
 
 def test_plain_includes_spoken_phrases_as_clean_dialogue() -> None:

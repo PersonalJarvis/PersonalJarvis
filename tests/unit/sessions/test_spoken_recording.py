@@ -77,6 +77,58 @@ async def test_spoken_phrase_is_persisted_into_the_session_log(tmp_path) -> None
 
 
 @pytest.mark.asyncio
+async def test_spoken_detail_is_persisted_into_the_session_log(tmp_path) -> None:
+    """The optional technical ``detail`` (exit code + harness reason) on a
+    failed Computer-Use readback must survive into the persisted voice_events
+    payload, so the Transcription view can show it under the spoken line while
+    the voice itself stays humanized (user request 2026-06-16)."""
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    try:
+        bus = EventBus()
+        SessionRecorder(store).attach(bus)
+
+        await bus.publish(
+            VoiceSessionStarted(
+                source_layer="speech.pipeline",
+                session_id="sess-detail",
+                wake_keyword="hey_jarvis",
+                language="en",
+            )
+        )
+        await bus.publish(ListeningStarted(source_layer="speech"))
+        await bus.publish(
+            SpeechSpoken(
+                source_layer="speech.pipeline",
+                text="That didn't work on screen.",
+                language="en",
+                spoken_kind="completion",
+                detail="exit 5 · 5 guard-blocked actions this mission",
+            )
+        )
+        await bus.publish(
+            VoiceSessionEnded(
+                source_layer="speech.pipeline",
+                session_id="sess-detail",
+                hangup_reason="voice_pattern",
+            )
+        )
+
+        spoken = [
+            e for e in store.get_events("sess-detail") if e.kind == "SpeechSpoken"
+        ]
+        assert spoken, "the voiced phrase was not recorded in the session log"
+        assert (
+            spoken[0].payload.get("detail")
+            == "exit 5 · 5 guard-blocked actions this mission"
+        )
+        # The spoken text is unchanged — detail is a SEPARATE diagnostic field.
+        assert spoken[0].payload.get("text") == "That didn't work on screen."
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
 async def test_spoken_phrase_outside_any_session_is_ignored(tmp_path) -> None:
     """A SpeechSpoken with no active voice session has nowhere to attach — the
     recorder simply drops it (the transcript log is session-scoped)."""

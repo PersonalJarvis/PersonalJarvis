@@ -127,6 +127,20 @@ class AckBrainConfig(BaseModel):
     # when the provider has no run_stream / the stream errors. The suppress gate
     # is re-evaluated at first-sentence-ready instead of polling after the text.
     streaming: bool = Field(default=True)
+    # 2026-06-17: continuation grace (AD-OE5). Live incident 2026-06-17 12:42:
+    # the user paused mid-thought after a grammatically complete question; the
+    # VAD endpointed, the brain entered PROCESSING, and the streaming ack spoke
+    # ~795 ms BEFORE the VAD detected the user's continuation — it talked over
+    # the user. The streaming ack speaks its first sentence the instant it is
+    # ready (no settle window), so a pure turn-state gate cannot catch a
+    # continuation that has not yet crossed the VAD threshold. Before the FIRST
+    # audible ack sentence, the pipeline polls the turn-state for this long; if
+    # the turn leaves PROCESSING during the grace (user resumed → continuation
+    # interrupt, or the brain already answered), the ack is dropped. Reconstructed
+    # gap from the incident logs was ~795 ms, so the default leaves margin; the
+    # ack is only ever heard on slow brain turns, where a sub-1.5 s delay is
+    # invisible. Set to 0 to restore the speak-immediately behaviour.
+    ack_continuation_grace_ms: int = Field(default=1200, ge=0, le=5000)
     # 2026-06-10: LLM-composed spawn announcements. When True, the
     # spawn_worker tool phrases its spoken dispatch confirmation via the
     # flash provider (dedicated delegation persona) instead of a canned

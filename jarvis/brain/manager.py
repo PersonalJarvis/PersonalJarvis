@@ -570,6 +570,63 @@ def _looks_like_tool_use_leak(text: str) -> bool:
     return s.startswith("[") or s.startswith("{")
 
 
+_CLI_TOOL_PREFIX = "cli_"
+# Lines a CLI prints when it wants interactive confirmation — never spoken.
+_CLI_PROMPT_NOISE_RE = re.compile(
+    r"\(y/n\)|\[y/n\]|would you like to|do you want to continue|press any key",
+    re.IGNORECASE,
+)
+
+
+def _extract_cli_error_line(stderr: str) -> str:
+    """Pick the most informative, speakable line out of a CLI's stderr.
+
+    Prefers an ``ERROR:``-prefixed line (the actionable cause), strips the
+    ``ERROR: (gcloud.x.y)`` command-path prefix, and skips interactive-prompt
+    noise such as ``Would you like to enable and retry (y/N)?``. Returns ``""``
+    when nothing speakable remains. Pure string work — no LLM (AP-11).
+    """
+    lines = [ln.strip() for ln in (stderr or "").splitlines() if ln.strip()]
+    speakable = [ln for ln in lines if not _CLI_PROMPT_NOISE_RE.search(ln)]
+    error_lines = [ln for ln in speakable if ln.upper().startswith("ERROR")]
+    chosen = (error_lines or speakable or [""])[0]
+    # Drop a leading "ERROR: (gcloud.billing.budgets.list) " command-path prefix.
+    chosen = re.sub(r"^ERROR:\s*(\([^)]*\)\s*)?", "", chosen, flags=re.IGNORECASE)
+    return chosen.strip()[:200]
+
+
+def _cli_failure_reason(output: Any, error: str | None, *, german: bool) -> str:
+    """Honest spoken readback for a FAILED ``cli_<name>`` call.
+
+    The user must never hear a bare ``exit 1`` (the CLI tool's ``error`` field)
+    nor "Dazu habe ich nichts gefunden". Surface the stderr cause if present,
+    else name the exit code. Static, no LLM (AP-11); mirrors
+    :func:`jarvis.voice.action_phrases.cu_failure_readback` (live repro
+    2026-06-17, ``gcloud billing budgets list`` → exit 1 narrated as "nothing
+    found").
+    """
+    stderr = ""
+    exit_code: int | None = None
+    if isinstance(output, dict):
+        stderr = str(output.get("stderr") or "")
+        ec = output.get("exit_code")
+        if isinstance(ec, int):
+            exit_code = ec
+    cause = _extract_cli_error_line(stderr)
+    if cause:
+        de = f"Der Befehl ist fehlgeschlagen: {cause}"  # i18n-allow: German TTS
+        return de if german else f"The command failed: {cause}"
+    if exit_code is None and error:
+        m = re.search(r"exit\s+(-?\d+)", error)
+        if m:
+            exit_code = int(m.group(1))
+    if exit_code is not None:
+        de = f"Der Befehl ist mit Fehlercode {exit_code} fehlgeschlagen."  # i18n-allow: German TTS
+        return de if german else f"The command failed with exit code {exit_code}."
+    de = "Der Befehl ist fehlgeschlagen."  # i18n-allow: German TTS
+    return de if german else "The command failed."
+
+
 def _render_recovered_tool_output(output: Any) -> str:
     """Speakable plain-text rendering of a recovered tool's output.
 
@@ -610,6 +667,14 @@ def _render_recovered_tool_output(output: Any) -> str:
                     parts.append(snippet or title)
             joined = " ".join(p for p in parts if p).strip()
             return joined[:600]
+        # CLI tools (cli_<name>) return {exit_code, stdout, stderr, duration_ms}.
+        # This renderer is reached only after the caller verified success, so a
+        # non-empty stdout IS the answer — surface it instead of dead-ending in
+        # "" (which made the caller speak "Dazu habe ich nichts gefunden" even
+        # though gcloud returned real project data; live repro 2026-06-17).
+        if "exit_code" in output and ("stdout" in output or "stderr" in output):
+            stdout = str(output.get("stdout") or "").strip()
+            return stdout[:600] if stdout else ""
         # Other structured tools: surface the first human-readable text field,
         # never the dict repr.
         for key in ("text", "answer", "summary", "message", "content", "result"):
@@ -2958,6 +3023,28 @@ class BrainManager:
         detail = stderr or stdout or None
         return exit_code, detail
 
+    @staticmethod
+    def _cu_failure_diagnostic(
+        *, error: str | None, exit_code: int | None, detail: str | None
+    ) -> str | None:
+        """Compose the technical failure note for the TRANSCRIPT (never spoken).
+
+        The voice readback is humanized via ``cu_failure_readback`` ("…didn't
+        work on screen") — but the raw signal (the exit code plus the harness
+        reason) is still valuable for debugging, so it is carried alongside on
+        ``AnnouncementRequested.detail`` -> ``SpeechSpoken.detail`` and shown in
+        the Transcription view (user request 2026-06-16). Returns None when
+        there is nothing diagnostic to record (e.g. a successful run). Capped so
+        the persisted payload stays small.
+        """
+        base = (error or "").strip() or (
+            f"exit {exit_code}" if exit_code is not None else ""
+        )
+        reason = (detail or "").strip()
+        note = f"{base} · {reason}" if base and reason else (base or reason)
+        note = note.strip()
+        return note[:300] if note else None
+
     async def _run_computer_use_background(
         self,
         *,
@@ -2984,6 +3071,9 @@ class BrainManager:
         2026-06-15: an English CU turn ended with the German "Erledigt.").
         """
         text: str
+        # Technical failure note for the transcript (never spoken). Stays None
+        # on success; the failure branch fills it with the exit code + reason.
+        diag: str | None = None
         try:
             result = await asyncio.wait_for(
                 self._tool_executor.execute(
@@ -3008,6 +3098,9 @@ class BrainManager:
                 text = cu_failure_readback(
                     lang, error=err, exit_code=exit_code, detail=detail,
                 )
+                diag = self._cu_failure_diagnostic(
+                    error=err, exit_code=exit_code, detail=detail,
+                )
         except TimeoutError:
             text = action_phrase("cu_timeout", lang, secs=f"{timeout_s:.0f}")
             try:
@@ -3031,6 +3124,7 @@ class BrainManager:
                 priority="normal",
                 language=lang,
                 kind="completion",
+                detail=diag,
             ))
         except Exception:  # noqa: BLE001
             log.debug("CU-background completion announce failed", exc_info=True)
@@ -3290,6 +3384,13 @@ class BrainManager:
             tool, inp, user_utterance=user_text, trace_id=trace_id,
         )
         if not result.success:
+            # A failed cli_<name> call carries the real cause in stderr; speak
+            # it instead of the bare "exit N" error token (live repro
+            # 2026-06-17, gcloud billing budgets list -> exit 1).
+            if name.startswith(_CLI_TOOL_PREFIX):
+                return _cli_failure_reason(
+                    result.output, result.error, german=_looks_german(user_text),
+                )
             return result.error or (
                 f"Die Aktion '{name}' konnte nicht ausgefuehrt werden."
             )

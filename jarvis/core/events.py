@@ -237,6 +237,12 @@ class SpeechSpoken(Event):
     text: str = ""
     language: str = "de"
     spoken_kind: str = "other"
+    # Optional technical diagnostic that was NOT spoken aloud — e.g. the raw
+    # exit code + harness reason behind a failed Computer-Use action. The voice
+    # readback is humanized ("…didn't work on screen"), but the Transcription
+    # view surfaces this for debugging (user request 2026-06-16). None for the
+    # common case: a plain canned phrase has no diagnostic.
+    detail: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -402,6 +408,11 @@ class AnnouncementRequested(Event):
     # from the Computer-Use loop ("Schritt 2 von 5 erledigt.") — spoken like
     # "info" but droppable when stale.
     kind: Literal["preamble", "completion", "info", "progress"] | None = None  # noqa: UP037
+    # Optional technical diagnostic forwarded to the transcript's spoken track
+    # (never spoken). A failed Computer-Use readback rides kind="completion"
+    # with detail="exit 5 · <harness reason>" so the log shows the exit code
+    # while the voice stays humanized. Mirrors ``SpeechSpoken.detail``.
+    detail: str | None = None
 
 
 # Voice mute (user-facing toggle, e.g. mascot double-click)

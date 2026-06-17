@@ -53,6 +53,7 @@ from jarvis.core.events import (
     TranscriptFinal,
     TranscriptionUpdate,
     UtteranceCaptured,
+    VoiceBootStatus,
     VoiceMuteChanged,
     VoiceMuteToggleRequested,
     VoiceSessionEnded,
@@ -1277,6 +1278,10 @@ class SpeechPipeline:
         self._trigger_matcher: TriggerMatcher | None = None
         self._cron_task: asyncio.Task | None = None
         self._cron_stop: asyncio.Event = asyncio.Event()
+        # Phase-B warm-up (confirmation-audio pre-render) runs off the critical
+        # path so voice can declare ready early. Kept on the instance so tests
+        # (and a graceful shutdown) can await it.
+        self._warmup_background_task: asyncio.Task | None = None
 
         # ContinuationBuffer (Spec docs/superpowers/specs/
         # 2026-05-25-incomplete-prompt-completion-design.md): coalesces a
@@ -2208,10 +2213,14 @@ class SpeechPipeline:
             return
         # Document the announcement in the session log — it is voiced through
         # this bypass path, not _speak, so it would otherwise be invisible.
+        # ``detail`` carries an optional technical diagnostic (e.g. a failed
+        # Computer-Use exit code + harness reason) that is NOT spoken but is
+        # surfaced in the transcript for debugging.
         self._emit_spoken(
             scrubbed.cleaned,
             event.language,
             _announcement_spoken_kind(getattr(event, "kind", None)),
+            getattr(event, "detail", None),
         )
         try:
             lang_code = None
@@ -2690,47 +2699,154 @@ class SpeechPipeline:
                     except Exception as exc:  # noqa: BLE001
                         log.debug("VisionContextProvider.stop() swallow: %s", exc)
                 self._cron_task = None
+                # Phase-B confirmation-audio render is fire-and-forget; cancel it
+                # here so it is never orphaned past pipeline shutdown.
+                await self._cancel_warmup_background()
+
+    async def _emit_boot_status(self, *, ready: bool, detail: str = "") -> None:
+        """Publish a VoiceBootStatus on the bus (guarded — never breaks boot).
+
+        ``ready=False`` is emitted at the very start of warm-up; ``ready=True``
+        the moment the critical listening path (Phase A) is live, *before* the
+        background confirmation-audio render finishes.
+        """
+        if self._bus is None:
+            return
+        try:
+            await self._bus.publish(VoiceBootStatus(ready=ready, detail=detail))
+        except Exception as exc:  # noqa: BLE001 — status signal never breaks boot
+            log.warning("VoiceBootStatus(ready=%s) publish failed: %s", ready, exc)
+
+    async def _cancel_warmup_background(self) -> None:
+        """Cancel + await the Phase-B confirmation-audio task on shutdown.
+
+        Phase B (ACK + task-ack pre-render) runs fire-and-forget off the
+        critical path. When ``run()`` is cancelled (the normal desktop-shutdown
+        path) it must be cancelled and awaited, otherwise it is orphaned: under
+        ``pythonw.exe`` there is no stderr to surface the "Task exception was
+        never retrieved" warning, and a late TTS render could write stale PCM
+        into ``_ack_pcm`` / ``_task_ack_pcm`` after a live TTS-provider switch
+        already cleared them. Guarded so shutdown never raises.
+        """
+        task = self._warmup_background_task
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001 — shutdown swallow
+            pass
+        self._warmup_background_task = None
 
     async def _warmup(self) -> None:
         log.info("Warm-up: Whisper / Silero / Wake-Word / TTS …")
-        # Settle the audio device table BEFORE any stream opens — a too-early
-        # autostart otherwise pins a partial PortAudio enumeration for the
-        # whole process and the wake chime / TTS evaporate (BUG-014 class,
-        # 2026-05-25). Runs first so the mic + speaker resolve correctly.
-        await self._stabilize_audio_devices()
-        # Lightweight path has no local Whisper to pre-load.
-        if self._stt is not None:
-            self._stt._ensure_model()
-        self._vad._ensure_model()
-        if self._openwakeword_enabled:
-            await self._wake.start()
-        self._tts._ensure_client()
-        # ACK pre-rendern — bei leerer Phrase skippen (User-Wunsch: keine
-        # gesprochene Wake-Reaktion, nur der Chime). Gemini-TTS mit "" wuerde
-        # sowieso einen API-Fehler werfen.
-        if self._ack_phrase:
-            try:
-                log.info("Pre-rendere ACK-Phrase '%s' …", self._ack_phrase)
-                chunks: list[AudioChunk] = []
-                async for c in self._tts.synthesize(self._ack_phrase):
-                    chunks.append(c)
-                self._ack_pcm = b"".join(c.pcm for c in chunks)
-                log.info("ACK-Phrase gecached (%d KB).", len(self._ack_pcm) // 1024)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("ACK pre-render fehlgeschlagen (%s) — nur Chime als Feedback.", exc)
-                self._ack_pcm = b""
-        else:
-            log.info("ACK-Phrase deaktiviert — nur Chime beim Wake.")
-            self._ack_pcm = b""
-        # Task-Ack-Phrasen pre-rendern (JARVIS-Stil: "Sofort.", "Right away." …).
-        # Werden später bei langsamen Brain-Calls (>1.5s) parallel zur Rechenzeit
-        # abgespielt, damit der User hörbares Feedback bekommt ohne Latenz-Aufschlag.
-        await self._prerender_task_acks()
-        log.info("Warm-up fertig.")
+        await self._emit_boot_status(ready=False, detail="warmup_start")
+
+        # --- Phase A: the critical listening path -------------------------
+        # Audio-device stabilization, VAD + OpenWakeWord loads and the TTS
+        # client init are mutually independent (each touches only its own
+        # object), so they run concurrently instead of one-after-another. When
+        # this finishes, voice is genuinely ready to hear "Hey Jarvis".
+        phase_a_start = time.monotonic()
+        await self._warmup_phase_a()
+        phase_a_ms = (time.monotonic() - phase_a_start) * 1000.0
+        log.info("Warm-up Phase A (critical listening path) done in %.0f ms.", phase_a_ms)
+        await self._emit_boot_status(ready=True, detail="phase_a_done")
+
         # Audible "ready" cue: tells the user exactly when listening starts
         # after a (cold) boot, closing the warm-up race where "Hey Jarvis"
-        # said too early silently does nothing.
+        # said too early silently does nothing. Until the ACK phrase is cached
+        # by Phase B, this chime is the wake feedback (see _on_wake / _ack_pcm).
         await self._play_ready_cue()
+
+        # --- Phase B: confirmation audio, off the critical path -----------
+        # Pre-rendering the ACK + ~20 task-ack phrases used to dominate warm-up
+        # (~20 sequential TTS round-trips). Fire it as a background task so it
+        # never delays the ready signal; if the wake word fires before the ACK
+        # is cached, the chime above plays instead.
+        self._warmup_background_task = asyncio.create_task(
+            self._warmup_phase_b(), name="warmup-confirmation-audio"
+        )
+        log.info("Warm-up Phase A complete — confirmation audio rendering in background.")
+
+    async def _warmup_phase_a(self) -> None:
+        """Run the critical, mutually-independent loaders concurrently.
+
+        Audio-device stabilization is a BUG-014 guard (settle the PortAudio
+        table before any stream opens); its logic is unchanged, only run inside
+        the concurrent group. The synchronous model/client loaders are pushed
+        to worker threads so the gather is genuinely parallel — each touches
+        only its own idempotent ``_ensure_*`` state, so there is no shared-state
+        race between the tasks.
+        """
+        async def _load_vad() -> None:
+            await asyncio.to_thread(self._vad._ensure_model)
+
+        async def _load_stt() -> None:
+            # Lightweight path has no local Whisper to pre-load.
+            if self._stt is not None:
+                await asyncio.to_thread(self._stt._ensure_model)
+
+        async def _start_wake() -> None:
+            if self._openwakeword_enabled:
+                await self._wake.start()
+
+        async def _init_tts() -> None:
+            await asyncio.to_thread(self._tts._ensure_client)
+
+        # return_exceptions=True: one slow/failing loader must not abort the
+        # others. Each coroutine already isolates its own failure where a soft
+        # failure is tolerable; here we additionally log any hard exception
+        # without breaking the remaining critical path.
+        results = await asyncio.gather(
+            self._stabilize_audio_devices(),
+            _load_vad(),
+            _load_stt(),
+            _start_wake(),
+            _init_tts(),
+            return_exceptions=True,
+        )
+        for name, res in zip(
+            ("audio-stabilize", "vad-load", "stt-load", "wake-start", "tts-init"),
+            results,
+            strict=True,
+        ):
+            if isinstance(res, Exception):
+                log.warning("Warm-up Phase A task '%s' failed: %s", name, res)
+
+    async def _warmup_phase_b(self) -> None:
+        """Background pre-render of confirmation audio (never blocks ready).
+
+        Order matters: the wake ACK "Ja?" is rendered first (highest priority —
+        it is the immediate wake feedback), then the task-ack phrases are
+        rendered concurrently. Fully guarded; any failure degrades to the chime.
+        """
+        bg_start = time.monotonic()
+        await self._prerender_ack_phrase()
+        await self._prerender_task_acks()
+        bg_ms = (time.monotonic() - bg_start) * 1000.0
+        log.info("Warm-up Phase B (confirmation audio) done in %.0f ms.", bg_ms)
+
+    async def _prerender_ack_phrase(self) -> None:
+        """Cache the wake-ACK phrase ("Ja?") PCM, or fall back to the chime."""
+        # Skip the ACK pre-render when the phrase is empty (user preference: no
+        # spoken wake reaction, chime only). Gemini-TTS would raise an API error
+        # on "" anyway.
+        if not self._ack_phrase:
+            log.info("ACK phrase disabled — chime only on wake.")
+            self._ack_pcm = b""
+            return
+        try:
+            log.info("Pre-rendering ACK phrase '%s' …", self._ack_phrase)
+            chunks: list[AudioChunk] = []
+            async for c in self._tts.synthesize(self._ack_phrase):
+                chunks.append(c)
+            self._ack_pcm = b"".join(c.pcm for c in chunks)
+            log.info("ACK phrase cached (%d KB).", len(self._ack_pcm) // 1024)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ACK pre-render failed (%s) — chime only as feedback.", exc)
+            self._ack_pcm = b""
 
     async def _stabilize_audio_devices(self) -> None:
         """Wait for the audio device enumeration to settle, then re-resolve the
@@ -2766,8 +2882,17 @@ class SpeechPipeline:
         lang_map = {"de": "de-DE", "en": "en-US"}
         phrases = iter_all_start_ack()
         log.info("Pre-rendere %d Task-Ack-Phrasen …", len(phrases))
-        ok = 0
-        for lang, phrase in phrases:
+
+        async def _render_one(lang: str, phrase: str) -> bool:
+            """Render + cache one phrase. Returns True on a non-empty cache.
+
+            Each call writes a distinct ``(lang, phrase)`` key into the shared
+            dict; the write sits between two awaits, so the cooperative
+            event-loop scheduler never preempts it (these are asyncio tasks on
+            one loop, not OS threads) — concurrent writes are safe without a
+            lock. A single failure degrades to no cache entry → chime fallback,
+            never raises.
+            """
             try:
                 chunks: list[AudioChunk] = []
                 try:
@@ -2779,9 +2904,16 @@ class SpeechPipeline:
                 pcm = b"".join(c.pcm for c in chunks)
                 if pcm:
                     self._task_ack_pcm[(lang, phrase)] = pcm
-                    ok += 1
+                    return True
             except Exception as exc:  # noqa: BLE001
                 log.warning("Task-Ack pre-render '%s' (%s) fehlgeschlagen: %s", phrase, lang, exc)
+            return False
+
+        # Render all phrases concurrently — the dominant warm-up cost was these
+        # ~20 sequential TTS round-trips. _render_one never raises, so a plain
+        # gather is enough (no return_exceptions needed).
+        results = await asyncio.gather(*(_render_one(lang, phrase) for lang, phrase in phrases))
+        ok = sum(1 for r in results if r)
         log.info("Task-Ack-Cache: %d/%d Phrasen bereit.", ok, len(phrases))
 
     # ------------------------------------------------------------------
@@ -5939,7 +6071,13 @@ class SpeechPipeline:
                 self._abort_playback_device()
                 return set()
 
-    def _emit_spoken(self, text: str, language: str | None, kind: str) -> None:
+    def _emit_spoken(
+        self,
+        text: str,
+        language: str | None,
+        kind: str,
+        detail: str | None = None,
+    ) -> None:
         """Announce a VOICED phrase on the bus as a ``SpeechSpoken`` event.
 
         The Transcription log was previously blind to everything Jarvis speaks
@@ -5965,6 +6103,7 @@ class SpeechPipeline:
                 text=text,
                 language=(language or "de"),
                 spoken_kind=kind,
+                detail=(detail or None),
             )
             asyncio.create_task(bus.publish(event))  # noqa: RUF006 — fire-and-forget
         except Exception:  # noqa: BLE001 — telemetry must never break the turn
