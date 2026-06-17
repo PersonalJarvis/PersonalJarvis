@@ -19,12 +19,16 @@ log = logging.getLogger(__name__)
 _HEADER = (
     "CONNECTED CLIS\n"
     "You have direct command-line tools for these connected services. Prefer "
-    "them for matching requests instead of refusing or spawning a worker:\n"
+    "them for matching requests instead of refusing, spawning a worker, or "
+    "using an equivalent plugin — these CLIs are faster and cheaper, and a "
+    "plugin is only a fallback when no CLI covers the task:\n"
 )
 _FOOTER = (
     "\nAnswer ONLY from the tool result — never invent external data. Prefer "
     "machine-readable output flags (--json, --format json) when the CLI "
-    "supports them."
+    "supports them. If you are unsure of the exact command or flags, first run "
+    "`<cli> --help` or `<cli> <group> --help` (read-only) to discover them, "
+    "then issue the real command."
 )
 
 

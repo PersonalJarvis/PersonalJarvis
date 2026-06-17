@@ -7,22 +7,32 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
-## [0.9.1] - 2026-06-17
+## [0.10.0] — 2026-06-17
 
-### Fixed
+### Added
 
-- Voice: the Pre-Thinking-Ack no longer speaks over the user mid-sentence. When
-  the user pauses mid-thought and then resumes, the ack is now dropped instead of
-  talking over the continuation (a new configurable continuation grace,
-  `[ack_brain].ack_continuation_grace_ms`). Every asynchronous announcement is
-  additionally gated on a symmetric "user holds the floor" check — preambles are
-  dropped and completion readbacks are deferred to the next turn-boundary, so
-  Jarvis never barges a user who is still talking (AD-OE5 / AD-OE6).
+- Scheduled Tasks — recurring `every` trigger (hourly / daily anchored to a
+  time / custom interval), alongside the existing one-shot and event triggers.
+- Agentic tasks: a task runs a prompt as an isolated brain turn restricted to a
+  per-task tool allowlist (the toggled plugins) — Claude-style scheduled tasks.
+- Per-plugin permission scopes (`read` / `write` / `full`) for unattended runs.
+  `write`/`full` pre-authorize ask-tier actions for that task's own turn while
+  preserving the full `ActionProposed → ActionApproved → ActionExecuted` audit
+  trail; read-only plugins pass unattended and ungranted tools still gate.
+- Task create form in the Tasks view: schedule picker (once / recurring),
+  plugin toggles with permission scope, prompt + model tier, and a warning when
+  a plugin is elevated to write/full.
+- `BrainManager.run_task()` for isolated, tool-restricted turns (no voice
+  history pollution); `TaskAutoApprover` bus bridge for per-turn approval.
 
 ### Changed
 
-- Internal fixes and refinements to the evidence gate, CLI result narration,
-  Computer-Use text input, the mission critic, and the tasks runner.
+- The Tasks scheduler re-arms recurring tasks after each run and persists the
+  next due time across restarts; the runner returns recurring tasks to
+  `scheduled` instead of completing them.
+- Task store migrates the legacy `trigger_type` CHECK constraint to add `every`.
+
+---
 
 ## [v1.0.0-board] — 2026-04-25
 

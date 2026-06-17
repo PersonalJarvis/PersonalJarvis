@@ -10,11 +10,12 @@ must never propagate into the caller (registry lifecycle or voice path).
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from jarvis.clis.spec import CliSpec
 from jarvis.clis.tool import TOOL_NAME_PREFIX
-from jarvis.core.capabilities import Capability
+from jarvis.core.capabilities import Capability, _normalize
 
 log = logging.getLogger(__name__)
 
@@ -104,6 +105,104 @@ def connected_domain_tool_map(cli_registry: Any) -> dict[str, str]:
     except Exception:  # noqa: BLE001
         log.debug("cli domain map failed", exc_info=True)
     return out
+
+
+# Ambiguous bare nouns that appear in CLI capability objects but would hijack
+# unrelated questions ("was kostet ein Tesla?") if used as forcing keywords.
+# Applied ONLY to derived objects — curated config keywords are never filtered.
+_KEYWORD_DENYLIST: frozenset[str] = frozenset(
+    {"kosten", "cost", "costs", "preis", "preise", "price", "geld", "money"}
+)
+
+
+def connected_domain_keyword_map(cli_registry: Any) -> dict[str, list[str]]:
+    """Map evidence domain -> trigger keywords, derived from usable CLIs' objects.
+
+    Unions each usable CLI capability's ``objects`` per declared ``domain`` so a
+    connected CLI becomes implicitly triggerable from its own catalog vocabulary
+    with no hand-maintained config. Ambiguous bare cost/price nouns are dropped
+    (``_KEYWORD_DENYLIST``). Defensive: any fault returns ``{}`` (the gate then
+    runs on the config keyword list exactly as before).
+    """
+    out: dict[str, list[str]] = {}
+    try:
+        active = {t.name for t in cli_registry.active_tools()}
+        for spec in cli_registry.catalog().all().values():
+            if f"{TOOL_NAME_PREFIX}{spec.name}" not in active:
+                continue
+            for decl in spec.capabilities:
+                for domain in decl.domains:
+                    bucket = out.setdefault(domain, [])
+                    for obj in decl.objects:
+                        kw = _normalize(obj)
+                        if kw and kw not in _KEYWORD_DENYLIST and kw not in bucket:
+                            bucket.append(kw)
+    except Exception:  # noqa: BLE001 — derivation must never break the gate
+        log.debug("cli domain keyword map failed", exc_info=True)
+        return {}
+    return out
+
+
+def merged_evidence_domains(
+    cli_registry: Any, config_domains: Mapping[str, Sequence[str]]
+) -> dict[str, list[str]]:
+    """Domain -> keywords, deriving from connected CLIs and overlaying config.
+
+    Config keywords are always included (curated override); derived CLI-object
+    keywords augment them. Config-only domains (no backing CLI) are preserved.
+    Defensive: on any fault returns ``dict(config_domains)`` unchanged.
+    """
+    try:
+        derived = connected_domain_keyword_map(cli_registry)
+        out: dict[str, list[str]] = {d: list(kws) for d, kws in derived.items()}
+        for domain, kws in config_domains.items():
+            bucket = out.setdefault(domain, [])
+            for kw in kws:
+                if kw not in bucket:
+                    bucket.append(kw)
+        return out
+    except Exception:  # noqa: BLE001
+        log.debug("merged evidence domains failed", exc_info=True)
+        return {d: list(kws) for d, kws in config_domains.items()}
+
+
+# A marketplace plugin (or native REST tool) and a CLI for the SAME service.
+# When the CLI is connected, its plugin counterpart is hidden so the CLI is the
+# only choice (req 4: CLI > plugin; plugin is a fallback only). Key = plugin id
+# / native tool name; value = CLI name. Guarded against drift by a parity test
+# (tests/unit/clis/test_plugin_cli_overlap_parity.py).
+PLUGIN_CLI_OVERLAP: dict[str, str] = {
+    "github": "gh",
+    "vercel": "vercel",
+    "supabase": "supabase",
+    "stripe": "stripe",
+    "gmail": "gam",
+}
+
+
+def suppress_plugin_tools_covered_by_cli(tools: dict[str, Any]) -> dict[str, Any]:
+    """Drop plugin/native tools whose CLI counterpart is connected this turn.
+
+    For each overlap entry whose ``cli_<name>`` is present in ``tools``, removes
+    the namespaced ``<plugin_id>/*`` tools and the exact native ``<plugin_id>``
+    tool. Defensive: returns ``tools`` unchanged on any fault.
+    """
+    try:
+        present_clis = {n for n in tools if n.startswith(TOOL_NAME_PREFIX)}
+        drop: set[str] = set()
+        for plugin_id, cli_name in PLUGIN_CLI_OVERLAP.items():
+            if f"{TOOL_NAME_PREFIX}{cli_name}" not in present_clis:
+                continue
+            prefix = f"{plugin_id}/"
+            for name in tools:
+                if name == plugin_id or name.startswith(prefix):
+                    drop.add(name)
+        if not drop:
+            return tools
+        return {n: t for n, t in tools.items() if n not in drop}
+    except Exception:  # noqa: BLE001 — suppression must never blind the brain
+        log.debug("plugin suppression failed; using full tool set", exc_info=True)
+        return tools
 
 
 def refusal_hint(domain: str, cli_registry: Any, lang: str) -> str:

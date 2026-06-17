@@ -271,6 +271,7 @@
       "scope_read": "Read",
       "scope_write": "Write",
       "scope_full": "Full",
+      "unattended_hint": "Write/Full plugins run unattended — this task may send or post without asking you first.",
       "model_label": "Model",
       "tier_fast": "Fast",
       "tier_auto": "Auto",
