@@ -21,9 +21,9 @@ log = logging.getLogger(__name__)
 
 
 def _send_text_windows(text: str, delay_s: float) -> None:
-    """Send Unicode text to the active Windows window via SendInput."""
+    """Sendet Unicode-Text an das aktive Windows-Fenster via SendInput."""
     if os.name != "nt":
-        raise RuntimeError("Native Unicode input is only available on Windows")
+        raise RuntimeError("Native Text-Eingabe ohne pyautogui ist nur auf Windows verfuegbar")
 
     import ctypes
     from ctypes import wintypes
@@ -48,10 +48,7 @@ def _send_text_windows(text: str, delay_s: float) -> None:
     class INPUT(ctypes.Structure):
         _fields_ = (("type", wintypes.DWORD), ("union", INPUT_UNION))
 
-    # use_last_error=True so ctypes.get_last_error() returns the real
-    # GetLastError value (ctypes.windll leaves it at 0 -> bogus [WinError 0]).
-    user32 = ctypes.WinDLL("user32", use_last_error=True)
-    send_input = user32.SendInput
+    send_input = ctypes.windll.user32.SendInput
     send_input.argtypes = (wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int)
     send_input.restype = wintypes.UINT
 

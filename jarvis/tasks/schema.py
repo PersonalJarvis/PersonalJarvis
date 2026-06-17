@@ -54,7 +54,7 @@ class TriggerEvery(BaseModel):
 
     Added 2026-06-17 for the Tasks section's recurring-schedule requirement.
     Deliberately interval-based, NOT a raw cron expression (keeps the
-    'kein Cron' contract from ADR-0003 while still covering hourly/daily).
+    'no cron' contract from ADR-0003 while still covering hourly/daily).
 
     - ``interval_seconds`` is the gap between runs (3600 = hourly,
       86400 = daily). Capped at one year.

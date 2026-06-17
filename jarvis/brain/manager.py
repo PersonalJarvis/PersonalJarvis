@@ -4760,6 +4760,52 @@ class BrainManager:
         brain = self._get_brain(self._active_name, self._fast_model(self._active_name))
         return self._build_dispatcher(brain)
 
+    def _select_task_tools(self, allowed_tools: tuple[str, ...]) -> dict[str, Tool]:
+        """Filter the live tool set down to a per-task allowlist.
+
+        Unknown grants (e.g. a plugin that isn't connected) are silently
+        skipped — the task runs with whatever of its allowlist is live.
+        """
+        allow = set(allowed_tools)
+        return {name: tool for name, tool in self._tools.items() if name in allow}
+
+    async def run_task(
+        self,
+        *,
+        prompt: str,
+        allowed_tools: tuple[str, ...] = (),
+        model_tier: str = "auto",
+        trace_id: UUID | None = None,
+    ) -> str:
+        """Run one isolated agentic turn for a scheduled task.
+
+        The turn sees ONLY the allowlisted tools and runs with an EMPTY
+        history, so it never pollutes the live voice session's ``_history``
+        or sticky model level (a scheduled task fires off the chat path).
+        Tool calls still flow through the shared ``ToolExecutor`` — so
+        read-only (monitor-tier) plugins pass unattended while ask-tier
+        actions still hit the approval gate (which, with no human present,
+        means they block until the unattended-approval wave wires Option B).
+
+        Returns the final assistant text.
+        """
+        name = self._active_name
+        if model_tier == "deep":
+            model = self._deep_model(name) or self._fast_model(name)
+            intent = "deep"
+        else:
+            # "fast" and "auto" both resolve to the fast model — the cheapest
+            # correct default for an unattended background turn.
+            model = self._fast_model(name)
+            intent = "fast"
+        brain = self._get_brain(name, model)
+        tools = self._select_task_tools(allowed_tools)
+        dispatcher = self._build_dispatcher(brain, tools_override=tools)
+        agg = await dispatcher.dispatch(
+            prompt, history=[], intent_level=intent, trace_id=trace_id,
+        )
+        return agg.text or ""
+
     def snapshot(self) -> dict[str, Any]:
         return {
             "active_provider": self._active_name,

@@ -162,7 +162,7 @@ def _should_hold_complete_delegation_for_grace(text: str | None) -> bool:
 
 # Minimum word count of the live partial past which we treat the utterance as a
 # long dictation (not a short command) and grant it the wider silence window. A
-# short command ("öffne Chrome", "auflegen") never reaches it → stays snappy.
+# short command (e.g. "open Chrome", "hang up") never reaches it → stays snappy.
 _LONG_COMPOSITION_MIN_WORDS = 12
 
 
@@ -170,7 +170,7 @@ def _looks_like_long_composition(partial: str | None) -> bool:
     """True when the live partial shows an ongoing LONG dictation that deserves a
     wider silence window — vocabulary-independent, so ANY long prompt (not only
     delegations) gets room to pause and think mid-composition. A short command
-    ("öffne Chrome", "auflegen") stays well under the threshold → stays snappy.
+    (e.g. "open Chrome", "hang up") stays well under the threshold → stays snappy.
 
     Deliberately a word-count signal only: ``completion.is_incomplete`` is too
     conservative on live partials (it flags a trailing comma/ellipsis but not a
@@ -417,6 +417,19 @@ class TurnTakingState(enum.Enum):
     # docs/superpowers/specs/2026-05-25-incomplete-prompt-completion-design.md.
     WAITING_FOR_COMPLETION = "WAITING_FOR_COMPLETION"
     JARVIS_SPEAKING = "JARVIS_SPEAKING"
+
+
+# Turn-states in which the user holds the floor: the mic is open and they are
+# speaking or their words are still being finalised. While in any of these, an
+# asynchronous non-interrupt announcement (ack preamble, mission/background
+# readback, workflow completion) must NOT barge — AD-OE5 "speak ONLY at the next
+# turn-boundary". A preamble is then dropped (ephemeral); a completion is
+# deferred and flushed when the floor clears (AD-OE6 zero-silent-drop).
+_USER_HOLDS_FLOOR_STATES: frozenset[TurnTakingState] = frozenset({
+    TurnTakingState.USER_SPEAKING,
+    TurnTakingState.WAITING_FOR_FINAL_TRANSCRIPT,
+    TurnTakingState.WAITING_FOR_COMPLETION,
+})
 
 
 # Hang-up patterns + the END_CALL sentinel live in jarvis/speech/hangup.py
@@ -1178,6 +1191,12 @@ class SpeechPipeline:
         # docs/plans/voice-phrase-mismatch-2026-05-26/README.md and the
         # ``suppress_preamble_after_interrupt_ms`` knob on AckBrainConfig.
         self._last_interrupt_announcement_ts: float | None = None
+        # AD-OE5/OE6: completion-class announcements that arrive while the user
+        # holds the floor are parked here and flushed at the next turn-boundary
+        # (when the turn-state returns to LISTENING/IDLE) instead of barging
+        # mid-utterance. Preambles are dropped, not parked — they are stale by
+        # the time the user finishes. See ``_on_announcement`` + ``_set_turn_state``.
+        self._deferred_announcements: list[AnnouncementRequested] = []
         # Pre-rendered ACK ("Ja?") als PCM-Bytes — beim Warm-up gefüllt
         self._ack_pcm: bytes = b""
         # Pre-rendered Task-Ack-Phrasen ("Sofort.", "Right away." …) als PCM-Cache.
@@ -1514,6 +1533,21 @@ class SpeechPipeline:
             log.info("turn-state: %s -> %s", previous.value, new_state.value)
         self._turn_state = new_state
         await self._transition(self._supervisor_state_for_turn(new_state))
+        # Turn-boundary: the floor has cleared → flush any announcements that
+        # were deferred while the user was speaking (AD-OE6 zero-silent-drop).
+        # Replayed through ``_on_announcement`` so they re-run every guard
+        # (hangup, mute, the now-passing floor check). Scheduled, not awaited,
+        # so a deferred readback's playback never blocks the state machine.
+        if (
+            new_state in (TurnTakingState.LISTENING, TurnTakingState.IDLE)
+            and getattr(self, "_deferred_announcements", None)
+        ):
+            pending = self._deferred_announcements
+            self._deferred_announcements = []
+            for event in pending:
+                asyncio.create_task(
+                    self._on_announcement(event), name="deferred-announcement"
+                )
 
     @staticmethod
     def _supervisor_state_for_turn(state: TurnTakingState) -> str:
@@ -2184,6 +2218,29 @@ class SpeechPipeline:
                         quiet_ms, elapsed * 1000.0, event.text[:80],
                     )
                     return
+        # Symmetric turn-boundary guard (AD-OE5). Jarvis already has barge-in
+        # (the user interrupts Jarvis via priority="interrupt" below); this is
+        # the missing reverse — Jarvis must not start speaking while the USER
+        # holds the floor. Only non-interrupt announcements are gated; an
+        # interrupt is a deliberate barge and still punches through.
+        if event.priority != "interrupt" and (
+            getattr(self, "_turn_state", TurnTakingState.IDLE)
+            in _USER_HOLDS_FLOOR_STATES
+        ):
+            if is_preamble:
+                log.info(
+                    "Announcement dropped — user holds the floor (preamble): %r",
+                    event.text[:80],
+                )
+                return
+            # Completion/readback owes the user information → park it and flush
+            # at the next turn-boundary (AD-OE6 zero-silent-drop).
+            self._deferred_announcements.append(event)
+            log.info(
+                "Announcement deferred — user holds the floor: %r",
+                event.text[:80],
+            )
+            return
         if event.priority == "interrupt":
             # Arm the quiet window BEFORE TTS so a synchronous publish of a
             # preamble immediately afterwards sees the up-to-date timestamp.
@@ -2236,6 +2293,25 @@ class SpeechPipeline:
         except Exception as exc:  # noqa: BLE001
             log.warning("Announcement-Speak fehlgeschlagen: %s", exc)
 
+    async def _await_ack_turn_commit(self, grace_ms: int) -> bool:
+        """Poll the turn-state for up to ``grace_ms``; True only if it stays
+        PROCESSING throughout — the continuation grace from AD-OE5.
+
+        The Pre-Thinking-Ack is ready a few hundred ms after the VAD endpoint,
+        often before the VAD has registered that the user merely paused and kept
+        talking. Returning False the instant the turn leaves PROCESSING (the
+        continuation interrupt flips it to LISTENING/USER_SPEAKING, or the brain
+        answered → JARVIS_SPEAKING) lets the caller drop the ack before it can
+        speak over the user.
+        """
+        step_s = 0.05
+        steps = max(1, int(grace_ms / 1000.0 / step_s))
+        for _ in range(steps):
+            if self._turn_state is not TurnTakingState.PROCESSING:
+                return False
+            await asyncio.sleep(step_s)
+        return self._turn_state is TurnTakingState.PROCESSING
+
     async def _spawn_flash_brain_ack(self, utterance: str, language: str) -> None:
         """Run the Pre-Thinking-Ack Flash-Brain and publish its output —
         but only when the main brain is still thinking by then.
@@ -2266,19 +2342,36 @@ class SpeechPipeline:
         run_stream = getattr(self._ack_brain, "run_stream", None)
         if getattr(ack_cfg, "streaming", False) and run_stream is not None:
             spoke = False
+            grace_ms = int(getattr(ack_cfg, "ack_continuation_grace_ms", 1200))
             try:
                 async for sentence in run_stream(utterance, language=language):
                     if not sentence:
                         continue
-                    # Gate: brain already speaking/done -> ack is redundant, stop.
-                    if self._turn_state in (
-                        TurnTakingState.JARVIS_SPEAKING,
-                        TurnTakingState.LISTENING,
-                        TurnTakingState.IDLE,
-                    ):
+                    # Continuation grace (AD-OE5). The streaming ack is ready
+                    # ~700 ms after the VAD endpoint — often BEFORE the VAD has
+                    # registered that the user merely paused and is still
+                    # talking (live incident 2026-06-17 12:42: the ack spoke
+                    # ~795 ms before the continuation was detected). Before the
+                    # FIRST audible sentence, poll until the turn leaves
+                    # PROCESSING (user resumed → continuation interrupt, or the
+                    # brain already answered) — drop the ack then — or the grace
+                    # elapses with the turn still committed.
+                    if not spoke and grace_ms > 0:
+                        if not await self._await_ack_turn_commit(grace_ms):
+                            log.info(
+                                "Flash-Brain ack suppressed — turn left PROCESSING "
+                                "during continuation grace (state=%s)",
+                                self._turn_state.name,
+                            )
+                            return
+                    # Gate: the ack ("I'm about to think about this") is only
+                    # valid while the turn is STILL thinking about the committed
+                    # utterance. Any other state — brain already speaking/done,
+                    # or the user (re)speaking — drops it.
+                    if self._turn_state is not TurnTakingState.PROCESSING:
                         log.info(
-                            "Flash-Brain ack suppressed — brain already speaking "
-                            "(state=%s)",
+                            "Flash-Brain ack suppressed — turn no longer "
+                            "PROCESSING (state=%s)",
                             self._turn_state.name,
                         )
                         return
@@ -2329,14 +2422,14 @@ class SpeechPipeline:
             poll_steps = max(1, int(suppress_ms / 1000.0 / poll_step_s))
             for _ in range(poll_steps):
                 await asyncio.sleep(poll_step_s)
-                if self._turn_state in (
-                    TurnTakingState.JARVIS_SPEAKING,
-                    TurnTakingState.LISTENING,
-                    TurnTakingState.IDLE,
-                ):
+                # Drop the ack the instant the turn leaves PROCESSING — the
+                # brain answered (JARVIS_SPEAKING) OR the user resumed
+                # (USER_SPEAKING / LISTENING). The latter is the AD-OE5
+                # continuation guard the streaming path enforces via the grace.
+                if self._turn_state is not TurnTakingState.PROCESSING:
                     log.info(
-                        "Flash-Brain ack suppressed — brain answered "
-                        "faster than %d ms (state=%s)",
+                        "Flash-Brain ack suppressed — turn no longer PROCESSING "
+                        "within %d ms (state=%s)",
                         suppress_ms,
                         self._turn_state.name,
                     )
@@ -2421,6 +2514,27 @@ class SpeechPipeline:
             "OpenClaw background fertig (success=%s, dauer=%.1fs) — Ansage: %r",
             event.success, event.duration_s, cleaned,
         )
+        # AD-OE5: this path plays straight to the player, bypassing
+        # ``_on_announcement``. If the user holds the floor, park the readback
+        # as a completion announcement and let the turn-boundary flush replay it
+        # through the choke point (which then emits it to the session log + plays
+        # it). Returning here means it is neither logged-as-spoken nor played
+        # until the floor clears — no barge, no double-emit.
+        if getattr(self, "_turn_state", TurnTakingState.IDLE) in _USER_HOLDS_FLOOR_STATES:
+            self._deferred_announcements.append(
+                AnnouncementRequested(
+                    source_layer="harness.openclaw.background",
+                    text=cleaned,
+                    language="de",
+                    priority="normal",
+                    kind="completion",
+                )
+            )
+            log.info(
+                "Background completion deferred — user holds the floor: %r",
+                cleaned[:80],
+            )
+            return
         # Document the completion readback in the session log — it is voiced
         # through this background path, not _speak, so it would otherwise be
         # invisible in the Transcription view.

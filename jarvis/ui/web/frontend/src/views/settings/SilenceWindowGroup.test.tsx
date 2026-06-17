@@ -60,7 +60,7 @@ describe("SilenceWindowGroup", () => {
     });
     render(<SilenceWindowGroup />);
     await screen.findByRole("slider");
-    fireEvent.click(screen.getByRole("button", { name: /reset|zurück|restablecer/i }));
+    fireEvent.click(screen.getByRole("button", { name: /reset|zurück|restablecer/i })); // i18n-allow: multilingual button-name regex
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({ ms: 1500 });
   });

@@ -15,7 +15,6 @@ from jarvis.plugins.tool import type_text as tt
 from jarvis.plugins.tool.type_text import TypeTextTool
 
 
-# Minimal stand-in: execute() reads nothing from ctx beyond user_utterance.
 class _Ctx:
     user_utterance = "type hello"
 
@@ -64,6 +63,6 @@ async def test_windows_falls_back_to_pyautogui_when_native_fails(monkeypatch):
     assert calls["pyautogui_text"] == "abc"
 
 
-async def test_empty_text_is_rejected() -> None:
+async def test_empty_text_is_rejected(monkeypatch):
     res = await TypeTextTool().execute({"text": ""}, _Ctx())
     assert res.success is False

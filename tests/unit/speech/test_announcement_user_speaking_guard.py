@@ -1,0 +1,199 @@
+"""Async announcements must not barge a user who is holding the floor.
+
+Structural backstop for AD-OE5 ("speak ONLY at the next turn-boundary, never
+interrupt mid-utterance"). Every asynchronous TTS surface funnels through
+``_on_announcement``: the Pre-Thinking-Ack, mission-completion readbacks, the
+Computer-Use failure readback, workflow completions. None of them checked the
+turn-state before playing, so any of them could speak straight over a user who
+was still talking (``_turn_state == USER_SPEAKING``).
+
+Contract pinned here:
+  * A ``priority != "interrupt"`` PREAMBLE that arrives while the user holds the
+    floor is dropped — it is ephemeral ("I'm about to think about this") and
+    stale by the time the user finishes.
+  * A COMPLETION/readback that arrives while the user holds the floor is
+    deferred and flushed at the next turn-boundary (AD-OE6 zero-silent-drop) —
+    the user still needs that answer.
+  * A ``priority == "interrupt"`` announcement still punches through (the
+    deliberate barge — e.g. a MissionFailed terminal readback).
+  * Nothing changes when the user is NOT speaking (idle/processing).
+"""
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
+
+import pytest
+
+from jarvis.core.bus import EventBus
+from jarvis.core.events import AnnouncementRequested
+from jarvis.core.protocols import AudioChunk
+from jarvis.speech.pipeline import SpeechPipeline, TurnTakingState
+
+
+@dataclass
+class FakeTTS:
+    calls: list[tuple[str, str | None]] = field(default_factory=list)
+    name: str = "fake-tts"
+    supports_streaming: bool = True
+
+    async def synthesize(
+        self,
+        text: str,
+        voice: str | None = None,
+        language_code: str | None = None,
+    ) -> AsyncIterator[AudioChunk]:
+        self.calls.append((text, language_code))
+        if False:  # pragma: no cover
+            yield  # type: ignore[unreachable]
+
+
+@dataclass
+class FakePlayer:
+    stop_calls: int = 0
+    plays: int = 0
+
+    async def play_chunks(self, chunks: AsyncIterator[AudioChunk]) -> None:
+        self.plays += 1
+        async for _ in chunks:
+            pass
+
+    def stop(self) -> None:
+        self.stop_calls += 1
+
+
+def _make_pipeline(tts: FakeTTS, bus: EventBus, player: FakePlayer) -> SpeechPipeline:
+    pipeline = SpeechPipeline(tts=tts, bus=bus, enable_whisper_wake=False)
+    pipeline._player = player  # type: ignore[assignment]
+    return pipeline
+
+
+async def _flush_deferred() -> None:
+    tasks = [
+        t
+        for t in asyncio.all_tasks()
+        if t.get_name() == "deferred-announcement" and not t.done()
+    ]
+    if tasks:
+        await asyncio.gather(*tasks)
+
+
+@pytest.mark.asyncio
+async def test_preamble_while_user_speaking_is_dropped() -> None:
+    bus = EventBus()
+    tts = FakeTTS()
+    player = FakePlayer()
+    pipeline = _make_pipeline(tts, bus, player)
+    pipeline._turn_state = TurnTakingState.USER_SPEAKING  # type: ignore[attr-defined]
+
+    await bus.publish(
+        AnnouncementRequested(
+            text="Ich rufe die Konfigurationsparameter auf.",
+            language="de",
+            priority="normal",
+            kind="preamble",
+        )
+    )
+
+    assert tts.calls == [], "a preamble spoke over a user who was still talking"
+    assert player.plays == 0
+
+
+@pytest.mark.asyncio
+async def test_completion_while_user_speaking_is_deferred_then_flushed() -> None:
+    bus = EventBus()
+    tts = FakeTTS()
+    player = FakePlayer()
+    pipeline = _make_pipeline(tts, bus, player)
+    pipeline._turn_state = TurnTakingState.USER_SPEAKING  # type: ignore[attr-defined]
+
+    await bus.publish(
+        AnnouncementRequested(
+            text="Fertig. Das Ergebnis liegt bereit.",
+            language="de",
+            priority="normal",
+            kind="completion",
+        )
+    )
+
+    # Held back while the user holds the floor — not spoken yet.
+    assert player.plays == 0, "a completion barged the user instead of deferring"
+
+    # Turn-boundary: the user stopped → the deferred readback is flushed.
+    await pipeline._set_turn_state(TurnTakingState.LISTENING)
+    await _flush_deferred()
+
+    assert tts.calls == [("Fertig. Das Ergebnis liegt bereit.", "de-DE")]
+    assert player.plays == 1
+
+
+@pytest.mark.asyncio
+async def test_interrupt_priority_punches_through_user_speaking() -> None:
+    bus = EventBus()
+    tts = FakeTTS()
+    player = FakePlayer()
+    pipeline = _make_pipeline(tts, bus, player)
+    pipeline._turn_state = TurnTakingState.USER_SPEAKING  # type: ignore[attr-defined]
+
+    await bus.publish(
+        AnnouncementRequested(
+            text="Die Mission ist fehlgeschlagen.",
+            language="de",
+            priority="interrupt",
+        )
+    )
+
+    assert tts.calls == [("Die Mission ist fehlgeschlagen.", "de-DE")]
+    assert player.plays == 1
+
+
+@pytest.mark.asyncio
+async def test_background_completion_while_user_speaking_is_deferred() -> None:
+    """The direct OpenClaw-background readback path (which bypasses
+    ``_on_announcement`` and plays straight to the player) must also respect the
+    floor: defer while the user speaks, flush at the boundary."""
+    from jarvis.core.events import OpenClawBackgroundCompleted
+
+    bus = EventBus()
+    tts = FakeTTS()
+    player = FakePlayer()
+    pipeline = _make_pipeline(tts, bus, player)
+    pipeline._turn_state = TurnTakingState.USER_SPEAKING  # type: ignore[attr-defined]
+
+    await bus.publish(
+        OpenClawBackgroundCompleted(
+            success=True, summary="Der Bericht liegt bereit.", duration_s=42.0
+        )
+    )
+
+    assert player.plays == 0, "a background completion barged the user mid-utterance"
+
+    await pipeline._set_turn_state(TurnTakingState.LISTENING)
+    await _flush_deferred()
+
+    assert player.plays == 1
+    assert tts.calls and "Fertig" in tts.calls[0][0]
+
+
+@pytest.mark.asyncio
+async def test_announcement_while_idle_is_unaffected() -> None:
+    """Regression guard: the guard only arms while the user holds the floor."""
+    bus = EventBus()
+    tts = FakeTTS()
+    player = FakePlayer()
+    # The bus keeps the pipeline alive via its _on_announcement subscription.
+    _make_pipeline(tts, bus, player)
+    # Default turn-state is IDLE — the user is not speaking.
+
+    await bus.publish(
+        AnnouncementRequested(
+            text="Ich schaue kurz nach.",
+            language="de",
+            priority="normal",
+            kind="preamble",
+        )
+    )
+
+    assert tts.calls == [("Ich schaue kurz nach.", "de-DE")]
+    assert player.plays == 1

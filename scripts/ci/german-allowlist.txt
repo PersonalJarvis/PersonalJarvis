@@ -25,6 +25,7 @@ scripts/find_german_strings.py
 scripts/rewrite_locales.py
 scripts/ci/_german_detect.py
 scripts/ci/check_no_new_german.py
+scripts/ci/german-allowlist.txt
 
 # --- The gate's own tests (German fixture strings are required to test it) ---
 tests/unit/ci/test_check_no_new_german.py
@@ -151,3 +152,39 @@ docs/superpowers/specs/2026-06-15-rerun-missions-continue-restart-design.md
 # --- Computer-use fail-gate design spec: quotes the German harness log traces
 #     and voice phrases it analyses — the German is faithful captured evidence ---
 docs/superpowers/specs/2026-06-15-cu-fail-gate-completion-enforcement-design.md
+
+# --- open_app voice tool: a bilingual Voice tool like navigate.py. Its German
+#     strings are load-bearing — the "Gestartet:" success output is recognized by
+#     the per-turn DE/EN/ES ack localizer (test_local_action_ack_language.py) and
+#     the plausibility-gate markers ("Misshearing"/"nicht gefunden") are matched
+#     by its own tests. Same rationale as navigate.py / contact_lookup.py. ---
+jarvis/plugins/tool/open_app.py
+tests/unit/plugins/tool/test_open_app_plausibility.py
+
+# --- Spawn-worker meta-strip: the leading-connector regex MUST contain German
+#     relative pronouns (der/die/das/dass) to strip them from German voice
+#     prompts — matching data, not an artifact (same rationale as router.py) ---
+jarvis/plugins/tool/spawn_worker.py
+tests/unit/plugins/tool/test_spawn_worker_mission_prompt.py
+
+# --- Voice turn-taking / endpoint tests: German dictation + command fixtures are
+#     the content under test (bilingual VAD / silence-window behaviour) ---
+tests/unit/harness/test_cu_screenshot_fastpath.py
+tests/unit/speech/test_long_composition_patience.py
+tests/unit/speech/test_pipeline_completion.py
+tests/unit/speech/test_thinking_pause_patience.py
+tests/unit/speech/test_continuation_recombine.py
+
+# --- Ack-continuation-grace + announcement floor-guard tests: the German ack
+#     preamble / completion / interrupt voice fixtures are the content under
+#     test (AD-OE5 "never speak over the user mid-utterance") ---
+tests/unit/speech/test_ack_continuation_grace.py
+tests/unit/speech/test_announcement_user_speaking_guard.py
+
+# --- Forensic / design docs that quote the German voice phrases, harness logs
+#     and localized i18n key tables they analyse (same rationale as the
+#     cu-fail-gate + rerun-missions specs above) ---
+docs/superpowers/plans/2026-06-16-adjustable-silence-window-slider.md
+docs/superpowers/plans/2026-06-16-subagent-recap-doomloop-fix.md
+docs/superpowers/specs/2026-06-16-cu-modal-awareness-design.md
+docs/superpowers/specs/2026-06-16-voice-continuation-recombine-while-thinking-design.md

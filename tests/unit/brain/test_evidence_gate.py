@@ -145,7 +145,7 @@ def test_definition_with_possessive_is_a_lookup_not_definition():
     # "Was sind MEINE X" is a data lookup, not a definition — a possessive
     # marker must defeat the definitional short-circuit, else lookups phrased
     # as "was sind meine ..." silently pass (live 2026-06-17, billing query).
-    v = _gate("Was sind meine offenen Pull Requests?", tool_map={"repos": "cli_gh"})
+    v = _gate("Was sind meine offenen Issues?", tool_map={"repos": "cli_gh"})
     assert v.kind == "require_tool"
     # A true definition (no possessive) still passes untouched.
     assert _gate("Was sind Pull Requests?").kind == "pass"
