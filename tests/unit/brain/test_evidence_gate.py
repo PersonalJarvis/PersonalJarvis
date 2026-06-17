@@ -60,6 +60,23 @@ def test_cloud_billing_question_with_gcloud_requires_tool():
         assert "NEVER invent" in v.directive
 
 
+def test_derived_payments_keyword_forces_cli_stripe():
+    # Simulates the merged domains a connected stripe would produce. The
+    # utterance carries a lookup-shape token ("zeig") + a payments keyword
+    # ("stripe") so the gate matches the payments domain.
+    domains = {"payments": ["stripe", "umsatz", "invoice"]}
+    v = check_evidence_domain(
+        "Zeig mir meinen aktuellen Stripe-Umsatz",
+        enabled=True,
+        domains=domains,
+        capability_registry=CapabilityRegistry(),
+        domain_tool_map={"payments": "cli_stripe"},
+        refusal_hint_fn=None,
+    )
+    assert v.kind == "require_tool"
+    assert v.tool_name == "cli_stripe"
+
+
 def test_general_cost_question_does_not_force_gcloud():
     # A generic price question must NOT hijack the connected gcloud (no bare
     # "kosten"/"cost" keyword), else every "was kostet X" forces a billing call.
@@ -111,7 +128,9 @@ def test_refusal_survives_broken_hint_fn():
 # --- verdict: pass (preference order, AD-CLI6) -------------------------------
 
 
-def test_non_cli_capability_wins_and_passes():
+def test_cli_capability_wins_over_plugin():
+    # CLI-first (req 4): a connected CLI for the domain is forced even when a
+    # plugin/skill also covers it. Inverts the old AD-CLI6 plugin preference.
     reg = CapabilityRegistry()
     reg.register(Capability(
         id="skill.paired.gmail", source="skill",
@@ -120,6 +139,21 @@ def test_non_cli_capability_wins_and_passes():
         requires_evidence=True,
     ))
     v = _gate("Hab ich neue Mails?", registry=reg, tool_map={"email": "cli_gam"})
+    assert v.kind == "require_tool"
+    assert v.tool_name == "cli_gam"
+
+
+def test_plugin_is_fallback_when_no_cli_covers_domain():
+    # No CLI for the domain (empty tool_map) -> the non-CLI capability owns the
+    # turn and the gate PASSes (plugin/skill handles it).
+    reg = CapabilityRegistry()
+    reg.register(Capability(
+        id="skill.paired.gmail", source="skill",
+        verbs=("lies",), objects=("mail", "inbox", "postfach"),
+        description="Paired Gmail skill.", risk_tier="ask",
+        requires_evidence=True,
+    ))
+    v = _gate("Hab ich neue Mails?", registry=reg, tool_map={})
     assert v.kind == "pass"
 
 

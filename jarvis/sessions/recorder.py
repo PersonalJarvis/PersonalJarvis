@@ -91,6 +91,16 @@ _RAW_EVENT_KINDS: frozenset[str] = frozenset(
         # Transcription view only shows the conversational reply and silently
         # drops everything else the user actually heard (2026-06-15).
         "SpeechSpoken",
+        # Run Inspector forensic events (2026-06-17). The recorder is a read-only
+        # wildcard subscriber, so persisting these adds no hot-path cost; they
+        # power the latency waterfall, decision path, and error panel. _payload_for
+        # already pulls fields by hasattr, so no new imports are needed here.
+        "IntentClassified",
+        "ActionProposed",
+        "ActionApproved",
+        "ActionDenied",
+        "ErrorOccurred",
+        "LatencySpan",
     }
 )
 
@@ -685,9 +695,10 @@ def _payload_for(event: Event) -> dict[str, Any]:
         # persisted SpeechSpoken row carries {text, language, spoken_kind}.
         "spoken_kind",
         # SpeechSpoken: optional technical diagnostic NOT spoken aloud (e.g. a
-        # failed Computer-Use exit code + harness reason). Only LatencySpan /
-        # VoiceBootStatus also carry a ``detail`` attribute and neither is a
-        # recorded kind, so this whitelist entry captures only SpeechSpoken.
+        # failed Computer-Use exit code + harness reason). LatencySpan also
+        # carries a ``detail`` attribute and IS a recorded kind since the Run
+        # Inspector change (2026-06-17), so its detail rides along too — that is
+        # harmless and occasionally useful context for the latency waterfall.
         "detail",
         "new_state",
         "previous",
@@ -705,6 +716,16 @@ def _payload_for(event: Event) -> dict[str, Any]:
         "latency_total_ms",
         "tool_calls",
         "cache_hit",
+        # Run Inspector: decision-path + latency + error fields (2026-06-17).
+        "intent",        # IntentClassified.intent
+        "risk_tier",     # IntentClassified / ActionProposed
+        "approved_by",   # ActionApproved
+        "reason",        # ActionDenied
+        "phase",         # LatencySpan
+        "layer",         # ErrorOccurred
+        "error_type",    # ErrorOccurred
+        "message",       # ErrorOccurred
+        "recoverable",   # ErrorOccurred (bool — _payload_for skips None, keeps False)
     }
     payload: dict[str, Any] = {}
     for k in fields_whitelist:

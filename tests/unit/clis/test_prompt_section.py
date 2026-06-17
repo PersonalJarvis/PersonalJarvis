@@ -39,3 +39,19 @@ def test_defensive_on_broken_registry():
             raise RuntimeError("boom")
 
     assert render_connected_clis_section(_Broken()) == ""
+
+
+def test_section_prefers_cli_over_plugin():
+    from jarvis.clis.prompt_section import render_connected_clis_section
+
+    fake = FakeCliRegistry({"gh": make_spec("gh")}, active=[FakeTool("cli_gh")])
+    out = render_connected_clis_section(fake)
+    assert "plugin" in out.lower()  # explicit CLI-over-plugin wording
+
+
+def test_section_tells_model_to_self_discover_with_help():
+    from jarvis.clis.prompt_section import render_connected_clis_section
+
+    fake = FakeCliRegistry({"gh": make_spec("gh")}, active=[FakeTool("cli_gh")])
+    out = render_connected_clis_section(fake)
+    assert "--help" in out

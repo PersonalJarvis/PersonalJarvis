@@ -58,6 +58,15 @@ class EventBus:
         """Register a handler that receives EVERY event — e.g. flight recorder or metrics."""
         self._wildcard_subscribers.append(handler)
 
+    def unsubscribe_all(self, handler: Handler) -> None:
+        """Remove a wildcard handler registered via subscribe_all (no-op if absent).
+
+        Symmetric to subscribe_all — short-lived wildcard observers (e.g. a
+        WebSocket that lives only while a view is open) must be able to detach,
+        or _wildcard_subscribers grows a dead handler per connect/disconnect."""
+        if handler in self._wildcard_subscribers:
+            self._wildcard_subscribers.remove(handler)
+
     def unsubscribe(self, event_type: type[E], handler: Callable[[E], Awaitable[None]]) -> None:
         handlers = self._subscribers.get(event_type)
         if handlers and handler in handlers:  # type: ignore[operator]

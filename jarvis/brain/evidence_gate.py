@@ -124,20 +124,10 @@ def check_evidence_domain(
     if not matched_domain:
         return _PASS
 
-    # AD-CLI6 preference: any non-CLI capability covering the domain wins —
-    # the existing machinery (paired skill, router tool, MCP) owns the turn.
-    domain_keywords = [_normalize(k) for k in domains[matched_domain]]
-    try:
-        caps = capability_registry.all() if capability_registry is not None else ()
-    except Exception:  # noqa: BLE001 — registry fault degrades to PASS
-        return _PASS
-    for cap in caps:
-        if getattr(cap, "source", "") == "cli":
-            continue
-        objs = {_normalize(o) for o in getattr(cap, "objects", ())}
-        if matched_domain in objs or objs.intersection(domain_keywords):
-            return _PASS
-
+    # CLI-first preference (req 4, supersedes AD-CLI6): a connected CLI for the
+    # domain ALWAYS wins over a plugin/skill — a CLI runs a local subprocess and
+    # is cheaper than a plugin's MCP/HTTP/API round-trip. Plugins are fallback
+    # only, so we mandate the CLI before considering any non-CLI capability.
     tool_name = domain_tool_map.get(matched_domain, "")
     if tool_name:
         directive = (
@@ -153,6 +143,20 @@ def check_evidence_domain(
             tool_name=tool_name,
             directive=directive,
         )
+
+    # No CLI covers the domain: a non-CLI capability (paired skill / MCP plugin)
+    # owns the turn — let the existing machinery handle it (the fallback).
+    domain_keywords = [_normalize(k) for k in domains[matched_domain]]
+    try:
+        caps = capability_registry.all() if capability_registry is not None else ()
+    except Exception:  # noqa: BLE001 — registry fault degrades to PASS
+        return _PASS
+    for cap in caps:
+        if getattr(cap, "source", "") == "cli":
+            continue
+        objs = {_normalize(o) for o in getattr(cap, "objects", ())}
+        if matched_domain in objs or objs.intersection(domain_keywords):
+            return _PASS
 
     lang = _detect_lang(t)
     base = (

@@ -271,6 +271,7 @@
       "scope_read": "Lectura",
       "scope_write": "Escritura",
       "scope_full": "Total",
+      "unattended_hint": "Los plugins de escritura/total se ejecutan sin supervisión — esta tarea puede enviar o publicar sin preguntarte.",
       "model_label": "Modelo",
       "tier_fast": "Rápido",
       "tier_auto": "Auto",

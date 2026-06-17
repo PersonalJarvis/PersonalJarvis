@@ -2094,6 +2094,7 @@ class BrainManager:
                 return EvidenceVerdict(kind="pass")
             from jarvis.clis.capability_provider import (
                 connected_domain_tool_map,
+                merged_evidence_domains,
                 refusal_hint,
             )
             from jarvis.clis.shared import get_active_registry
@@ -2112,7 +2113,9 @@ class BrainManager:
             return check_evidence_domain(
                 user_text,
                 enabled=cfg.enabled,
-                domains=cfg.domains,
+                domains=merged_evidence_domains(cli_reg, cfg.domains)
+                if cli_reg is not None
+                else cfg.domains,
                 capability_registry=get_registry(),
                 domain_tool_map=domain_map,
                 refusal_hint_fn=_hint,
@@ -2507,6 +2510,26 @@ class BrainManager:
             return {name: t for name, t in tools.items() if t.name in kept_names}
         except Exception:  # noqa: BLE001
             log.debug("plugin relevance gate failed; using full tool set", exc_info=True)
+            return tools
+
+    def _suppress_plugins_covered_by_cli(
+        self, tools: dict[str, "Tool"]
+    ) -> dict[str, "Tool"]:
+        """Hide plugin/native tools whose CLI counterpart is connected (req 4).
+
+        A CLI runs a local subprocess and is cheaper than a plugin's MCP/API
+        hop, so when a CLI for a service is active its plugin is removed from the
+        turn's tool surface (fallback only). Defensive: returns the tools
+        unchanged on any fault (never blind the brain on the voice path).
+        """
+        try:
+            from jarvis.clis.capability_provider import (
+                suppress_plugin_tools_covered_by_cli,
+            )
+
+            return suppress_plugin_tools_covered_by_cli(tools)
+        except Exception:  # noqa: BLE001
+            log.debug("plugin-CLI suppression failed; full tool set", exc_info=True)
             return tools
 
     def _plugin_usage_cards_block(self, tools: dict[str, "Tool"]) -> str:
@@ -3984,11 +4007,12 @@ class BrainManager:
 
             _turn_tools = (
                 self._smalltalk_tool_override() if is_smalltalk_turn
-                # Non-smalltalk turn: pass the full set minus plugin tools
-                # that are irrelevant to this utterance (progressive
-                # disclosure — keeps the surface small once 3+ plugins are
-                # connected). None would mean "use self._tools verbatim".
-                else self._apply_plugin_relevance(user_text, self._tools)
+                # Non-smalltalk turn: drop plugin tools irrelevant to this
+                # utterance (progressive disclosure), then hide any plugin whose
+                # CLI counterpart is connected (req 4: CLI > plugin fallback).
+                else self._suppress_plugins_covered_by_cli(
+                    self._apply_plugin_relevance(user_text, self._tools)
+                )
             )
             # AI Pointer: on a deictic pointer turn the cursor crop is already the
             # only attached image, so drop the redundant ``inspect-pointer`` PULL

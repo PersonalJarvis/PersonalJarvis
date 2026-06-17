@@ -271,6 +271,7 @@
       "scope_read": "Lesen",
       "scope_write": "Schreiben",
       "scope_full": "Vollzugriff",
+      "unattended_hint": "Schreiben/Vollzugriff laufen unbeaufsichtigt — diese Aufgabe kann ohne Nachfrage senden oder posten.",
       "model_label": "Modell",
       "tier_fast": "Schnell",
       "tier_auto": "Auto",

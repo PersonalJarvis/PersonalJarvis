@@ -163,6 +163,24 @@ class UsageLog:
             rows = cur.execute(sql, params).fetchall()
         return [_row_from_tuple(r) for r in rows]
 
+    def list_for_trace(self, trace_id: str, *, limit: int = 200) -> list[UsageRow]:
+        """All CLI invocations tagged with one trace_id, oldest first.
+
+        Run Inspector joins a voice turn's trace_id to its tool calls. Returns
+        an empty list for a falsy trace_id (turns without a captured trace)."""
+        if not trace_id:
+            return []
+        sql = (
+            "SELECT id, trace_id, cli_name, full_command, args_preview, "
+            "       exit_code, stdout_len, stderr_len, stderr_preview, "
+            "       duration_ms, caller, started_at, finished_at, cwd "
+            "FROM cli_invocations WHERE trace_id = ? "
+            "ORDER BY started_at ASC LIMIT ?"
+        )
+        with self._read_cursor() as cur:
+            rows = cur.execute(sql, (trace_id, limit)).fetchall()
+        return [_row_from_tuple(r) for r in rows]
+
     def count_for(self, cli_name: str, *, since_ms: int | None = None) -> int:
         if since_ms is None:
             sql = "SELECT COUNT(*) FROM cli_invocations WHERE cli_name = ?"
