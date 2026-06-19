@@ -279,3 +279,20 @@ tests/unit/brain/test_provider_test.py
 #     docs/phantom-worker-aborted-deep-dive + docs/plans/mission-reliability
 #     entries above ---
 docs/plans/cross-platform-mac-linux/*
+
+# --- Session-close backup snapshot (2026-06-19): in-flight parallel-session work
+#     whose German is either voice/runtime fixtures under test, German voice-intent
+#     matching data (capability_provider, same rationale as navigation_intent.py),
+#     localized deliverable/readback strings, or forensic/plan docs quoting German
+#     utterances. Whole-file scope for the contested shared tree; narrow later. ---
+docs/prompts/*
+docs/superpowers/plans/2026-06-17-jarvisctl-control-cli.md
+docs/superpowers/plans/2026-06-17-run-inspector-debug-section.md
+docs/superpowers/plans/2026-06-18-voice-turn-split-and-cu-ack-leak.md
+jarvis/clis/capability_provider.py
+jarvis/missions/kontrollierer/deliverable.py
+jarvis/ui/web/frontend/src/components/sessions/TurnCard.test.tsx
+tests/unit/clis/test_capability_provider.py
+tests/unit/sessions/test_recorder_posthangup_readback.py
+tests/unit/speech/test_subagent_readback.py
+tests/unit/ui/test_tray.py

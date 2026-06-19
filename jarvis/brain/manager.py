@@ -618,9 +618,12 @@ _SPAWN_DECLINE_RE = re.compile(
     + r"|\b(?:sprich|red|rede|antwort|antworte|sag)\w*\b[^.?!]{0,15}\bdirekt\b"
     # negated spawn / subagent / worker (EN)
     + r"|\b(?:no|without|don'?t|do\s+not|dont|never|not)\b[^.?!]{0,22}" + _SPAWN_TOKEN
-    # talk-to-me-directly (EN)
+    # talk-to-me-directly (EN). NB: a bare "just talk/tell me" arm was
+    # deliberately removed (review MAJOR-1) — without a directness/spawn token
+    # it false-matched a compound command ("Just tell me, spawn a subagent to
+    # analyse the logs"), swallowing a genuine spawn request. The directness
+    # intent is already carried by the \bdirectly\b / \bdirekt mit mir\b arms.
     + r"|\b(?:talk|answer|respond|speak)\b[^.?!]{0,12}\bdirectly\b"
-    + r"|\bjust\s+(?:talk|answer|tell|speak)\s+(?:to\s+)?me\b"
     # negated spawn / subagent + talk-directly (ES)
     + r"|\bno\b[^.?!]{0,22}" + _SPAWN_TOKEN
     + r"|\bh[áa]bla(?:me)?\b[^.?!]{0,15}\bdirectamente\b"
@@ -653,7 +656,9 @@ def _is_spawn_decline(user_text: str) -> bool:
 # force-spawn. High precision: a help/teach framing AND a cognitive/
 # conversational object verb must BOTH be present, so "Hilf mir, eine E-Mail zu
 # schreiben und zu senden" (concrete artifact) does NOT match and stays
-# spawnable. Pure regex (AP-11), DE/EN, umlaut + ASCII variants.
+# spawnable. Pure regex (AP-11), DE/EN/ES, umlaut + ASCII variants (the runtime
+# output-language doctrine mandates all three locales; the sibling guards cover
+# es too).
 _CONVERSATIONAL_COACHING_RE = re.compile(
     r"(?:"
     # DE: help / teach / show-me-how framing ...
@@ -668,6 +673,10 @@ _CONVERSATIONAL_COACHING_RE = re.compile(
     r"|\b(?:help|teach|show)\s+me\b[^.?!]{0,50}"
     r"\b(?:ask|think|phrase|formulate|understand|decide|reflect|communicate|"
     r"express|reason|articulate|listen|converse)\b"
+    # ES: ayúdame / enséñame / muéstrame cómo ... + a cognitive skill object
+    r"|\b(?:ay[úu]dame|ens[eé][ñn]ame|mu[ée]strame\s+c[óo]mo)\b[^.?!]{0,50}"
+    r"\b(?:pregunt\w*|pensar|formular|decidir|comunicar|reflexionar|"
+    r"expresar|razonar|escuchar|hablar|conversar)\b"
     r")",
     re.IGNORECASE,
 )
@@ -3009,13 +3018,27 @@ class BrainManager:
         ``spawn_sub_jarvis`` tool lookup. The Sub-Jarvis tier was replaced by
         the OpenClaw bridge — see docs/openclaw-bridge.md §11.
 
-        Order:
-          0. Conversational source (drag-dropped mission recap) → never spawn.
-          1. Empty text or no spawn_worker tool → False.
-          2. Smalltalk allowlist wins → False (even on verb hit).
-          3. Action verb (``spawn_verbs``) → True.
-          4. External system marker (``external_system_markers``) → True.
-          5. Otherwise → False.
+        Order (the real evaluation sequence — keep this in sync with the body):
+          0. Conversational source (drag-dropped mission recap) → False.
+          1. Fatal preconditions, in order → False: empty text; no
+             spawn_worker tool/executor; Whisper-FP sentinel; < 6 chars; no
+             viable heavy-worker provider. These run FIRST — a spawn is then
+             impossible or the transcript is noise.
+          2. Explicit spawn DECLINE (``_is_spawn_decline``) → False. **MUST
+             precede step 3** — the user negated the very trigger word the hoist
+             matches; checking it after the hoist would force-spawn the OPPOSITE
+             of "don't spawn a subagent" (live bug 2026-06-19, Turn 2).
+          3. Explicit heavy-work trigger (``force_spawn_phrases``) → True. The
+             user named the vehicle (AD-S9 / 2026-06-15 mandate); wins over
+             every AMBIGUOUS-spawn disambiguation guard below.
+          4. Disambiguation stand-downs → False: instructional question;
+             opinion/advice question; conversational coaching
+             (``_is_conversational_coaching``); pointer; navigation; smalltalk;
+             open-app; installed skill; connected-CLI capability; PC control.
+          5. Strict mode (default): heavy research → artifact gate; else
+             generic sub-agent work (``has_action_intent`` & no capability) →
+             True. Permissive mode: action verb / external marker → True.
+          6. Otherwise → False.
         """
         # A drag-dropped mission recap is a CONVERSATION about a FINISHED job,
         # never new work — answer it inline regardless of what the quoted card

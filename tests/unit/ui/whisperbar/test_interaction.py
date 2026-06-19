@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from jarvis.ui.whisperbar import interaction as I
+from jarvis.ui.whisperbar import renderer as R
 
 
 def test_is_drag_threshold():
@@ -15,25 +16,63 @@ def test_classify_release():
     assert I.classify_release(moved=True) == "drag"
 
 
-def test_click_action_talk_when_idle_hangup_when_active():
-    assert I.click_action("idle") == "talk"
-    assert I.click_action("listen") == "hangup"
-    assert I.click_action("think") == "hangup"
-    assert I.click_action("speak") == "hangup"
-    assert I.click_action("bogus") == "talk"  # unknown → safe default (talk)
-
-
-def test_resolve_click_zones():
+def test_resolve_click_idle_and_dictate_zones():
     W = 100
-    # right third → the square → dictate (toggle), regardless of state
+    # right zone → the square → dictate (non-destructive), regardless of state
     assert I.resolve_click(90, W, "idle") == "dictate"
     assert I.resolve_click(90, W, "listen") == "dictate"
-    # left third → the X → hangup ONLY while a session is active
-    assert I.resolve_click(10, W, "listen") == "hangup"
+    # idle → a click anywhere starts a normal session
     assert I.resolve_click(10, W, "idle") == "talk"  # idle left → start normal session
-    # middle → start a normal session when idle, nothing when active
     assert I.resolve_click(50, W, "idle") == "talk"
+    # active middle (no control there) → nothing
     assert I.resolve_click(50, W, "speak") == "none"
+
+
+def test_active_bar_body_click_does_not_hang_up():
+    """REGRESSION — the silent-hangup trap (live bug 2026-06-19).
+
+    A low-intent click on the BODY of an active bar — where the user sees only
+    the equalizer / orbital-core and NO close-X (the X is drawn only on hover,
+    renderer.py) — must NOT end the session. The old code treated the whole
+    left 40% of the bar as the hang-up X, so any such click silently hung up
+    ("Jarvis legt von selbst auf, ich hab nichts von Auflegen gesagt").
+    """
+    W, PW = 100, 100
+    # Left-of-centre body, past the X glyph (centre ≈ cx - 0.42*pw = 8) → none,
+    # even with the controls shown and across every active state.
+    assert I.resolve_click(35, W, "speak", hovered=True, pill_w=PW) == "none"
+    assert I.resolve_click(35, W, "listen", hovered=True, pill_w=PW) == "none"
+    assert I.resolve_click(35, W, "think", hovered=True, pill_w=PW) == "none"
+
+
+def test_hangup_requires_visible_close_x():
+    """A hang-up fires only when the close-X is actually shown (hovered) AND the
+    click lands on the X glyph — so behaviour matches the visible affordance."""
+    W, PW = 100, 100
+    # X glyph centre ≈ cx - 0.42*pw = 8 for these dimensions.
+    # On the X, controls visible → hang up (the deliberate gesture still works).
+    assert I.resolve_click(8, W, "speak", hovered=True, pill_w=PW) == "hangup"
+    # Same spot, but the controls are NOT shown (not hovered) → no hang up.
+    assert I.resolve_click(8, W, "speak", hovered=False, pill_w=PW) == "none"
+    # Hovered, but the click is far from the X (centre of the bar) → no hang up.
+    assert I.resolve_click(50, W, "speak", hovered=True, pill_w=PW) == "none"
+
+
+def test_hangup_hitbox_at_real_bar_geometry():
+    """Anchor the contract to the ACTUAL deployed pill, not just W=PW=100.
+
+    At the real dims the close-X glyph sits at WIN_W/2 - 0.42*ACTIVE_W, the
+    equalizer bars start ~24px in, and the bar window is only ~107px wide — so a
+    centre click (over the bars) must NOT hang up while a click on the X does.
+    """
+    W, PW = R.WIN_W, R.ACTIVE_W
+    x_glyph = round(W / 2.0 - 0.42 * PW)  # mirror renderer._draw_close_x centre
+    # Deliberate click on the visible X glyph, controls shown → hang up.
+    assert I.resolve_click(x_glyph, W, "speak", hovered=True, pill_w=PW) == "hangup"
+    # The bar's centre (where the live equalizer is drawn) → never a hang up.
+    assert I.resolve_click(round(W / 2.0), W, "speak", hovered=True, pill_w=PW) == "none"
+    # Controls not shown → even the X spot is inert.
+    assert I.resolve_click(x_glyph, W, "speak", hovered=False, pill_w=PW) == "none"
 
 
 def test_default_bottom_center_placement():

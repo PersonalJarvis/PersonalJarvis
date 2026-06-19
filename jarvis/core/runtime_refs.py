@@ -25,12 +25,22 @@ these are write-once-at-bootstrap / read-many. No lock needed.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any
+
+from loguru import logger
 
 # Each ref is a 1-element list so the setter can rebind without ``global``.
 _BRAIN_MANAGER: list[Any] = []
 _SPEECH_PIPELINE: list[Any] = []
 _MCP_REGISTRY: list[Any] = []
+
+# The currently-running CHAT brain turn, as ``(task, loop)``. Registered by the
+# chat dispatcher (``desktop_app._on_user_message``) for the lifetime of one
+# ``await generate(...)`` and cancelled edge-triggered by the voice-hangup
+# chokepoint so the bar's X stops a chat turn too — not just a voice turn (live
+# bug 2026-06-19: ~27 ignored X presses while a chat turn kept thinking).
+_ACTIVE_CHAT_TURN: list[Any] = []
 
 
 def _set(ref: list[Any], value: Any) -> None:
@@ -70,8 +80,59 @@ def get_mcp_registry() -> Any | None:
     return _MCP_REGISTRY[0] if _MCP_REGISTRY else None
 
 
+def set_active_chat_turn(task: asyncio.Task[Any], loop: asyncio.AbstractEventLoop) -> None:
+    """Arm the bar's X for THIS chat turn.
+
+    Called by the chat dispatcher right before it awaits ``brain.generate(...)``.
+    The owning ``loop`` is stored alongside the task so the cancel can be
+    scheduled thread-safely — ``request_hangup`` runs on the Tk overlay thread,
+    not the asyncio loop.
+    """
+    if _ACTIVE_CHAT_TURN:
+        _ACTIVE_CHAT_TURN[0] = (task, loop)
+    else:
+        _ACTIVE_CHAT_TURN.append((task, loop))
+
+
+def clear_active_chat_turn(task: asyncio.Task[Any]) -> None:
+    """Disarm the X once the turn is done — but only for THIS task.
+
+    A late ``finally`` from a finished turn must never retract the registration
+    of the turn that is running now, or it would silently disarm the X.
+    """
+    if _ACTIVE_CHAT_TURN and _ACTIVE_CHAT_TURN[0][0] is task:
+        _ACTIVE_CHAT_TURN.clear()
+
+
+def cancel_active_chat_turn() -> bool:
+    """Cancel the in-flight chat turn, if any. The single chat-abort chokepoint.
+
+    Returns ``True`` when a turn was armed (a cancel was scheduled), ``False``
+    when nothing was running. Edge-triggered — it fires exactly when the X is
+    pressed — so there is no stale-``Event`` problem: an idle chat path is a
+    clean no-op. The cancel is marshalled onto the task's owning loop via
+    ``call_soon_threadsafe`` because the caller may be on the Tk thread; a dead
+    loop is swallowed (the turn is gone anyway). Cancelling also disarms, so a
+    second X press is a no-op.
+    """
+    if not _ACTIVE_CHAT_TURN:
+        return False
+    task, loop = _ACTIVE_CHAT_TURN[0]
+    _ACTIVE_CHAT_TURN.clear()
+    if task.done():
+        return False
+    try:
+        loop.call_soon_threadsafe(task.cancel)
+    except RuntimeError:
+        # Loop already closed / not running — the turn cannot still be alive.
+        logger.debug("cancel_active_chat_turn: owning loop is gone (non-fatal)")
+        return False
+    return True
+
+
 def _reset_for_tests() -> None:
     """Clear all refs. Test-only helper (fixtures call this in teardown)."""
     _BRAIN_MANAGER.clear()
     _SPEECH_PIPELINE.clear()
     _MCP_REGISTRY.clear()
+    _ACTIVE_CHAT_TURN.clear()

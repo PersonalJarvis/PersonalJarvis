@@ -167,6 +167,54 @@ async def test_safe_tier_is_not_deferred_even_with_voice_confirm() -> None:
     assert result.error != VOICE_CONFIRM_SENTINEL
 
 
+@pytest.mark.asyncio
+async def test_gmail_read_is_not_deferred_for_voice_confirm() -> None:
+    """Repro 2026-06-19 (session dc533e39): a read-only gmail call (the
+    morning-routine "check unread mail" step) must NOT trigger the send
+    confirmation on a voice turn. Before the per-action risk fix the whole
+    gmail tool was ask-tier, so "Was habe ich heute auf dem Plan?" produced
+    "Soll ich die E-Mail wirklich senden?"."""
+    import httpx
+
+    from jarvis.plugins.tool.gmail_rest import GmailRestTool
+
+    executor, approval, _bus = _executor()
+    tool = GmailRestTool(
+        access_token_provider=lambda: "at_x",
+        transport=httpx.MockTransport(
+            lambda req: httpx.Response(200, json={"messages": []})
+        ),
+    )
+    result = await executor.execute(
+        tool,
+        args={"action": "list_messages"},
+        config_snapshot={"voice_confirm": True},
+        trace_id=uuid4(),
+    )
+    # A read runs straight through — never deferred, never blocked.
+    assert result.error != VOICE_CONFIRM_SENTINEL
+    assert result.success is True
+    assert approval.wait_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_gmail_send_still_defers_for_voice_confirm() -> None:
+    """Sending stays consequential: it must still confirm before sending."""
+    from jarvis.plugins.tool.gmail_rest import GmailRestTool
+
+    executor, approval, _bus = _executor()
+    tool = GmailRestTool(access_token_provider=lambda: "at_x")
+    result = await executor.execute(
+        tool,
+        args={"action": "send_message", "to": "a@b.com", "body": "hi"},
+        config_snapshot={"voice_confirm": True},
+        trace_id=uuid4(),
+    )
+    assert result.error == VOICE_CONFIRM_SENTINEL
+    assert result.output["tool_name"] == "gmail"
+    assert approval.wait_calls == 0  # deferred for two-turn confirm, not blocked
+
+
 async def _drain(bus: EventBus) -> None:
     import asyncio
     await asyncio.sleep(0)

@@ -187,6 +187,13 @@ interface EventStore {
   // renders as the collapsible "Thought for Xs" disclosure above the reply.
   thinkingTraces: Record<string, ThinkingTraceSnapshot>;
   brainProvider: string;
+  // How the assistant refers to itself (resolved name: explicit [persona].name,
+  // else derived from the wake phrase, else the neutral default). Seeded once at
+  // app start by useAssistantNameSeed and refreshed on a Settings rename, so the
+  // header wordmark + every assistant byline follow the configured identity
+  // instead of a hardcoded "Jarvis". Defaults to "Jarvis" only for the sub-tick
+  // before the local seed fetch resolves (zero-regression first paint).
+  assistantName: string;
   // Chat mic-dictation (transcribe-only). ``dictating`` is true while the mic
   // session runs; ``dictationText`` is the live interim tail (overwritten by
   // each partial). A final transcript bumps ``dictationCommitSeq`` and carries
@@ -225,6 +232,7 @@ interface EventStore {
   /** Turn ended with an assistant reply: snapshot the trace onto that message. */
   finishThinking: (messageId: string) => void;
   setBrainProvider: (p: string) => void;
+  setAssistantName: (name: string) => void;
   setDictating: (b: boolean) => void;
   setDictationInterim: (text: string) => void;
   commitDictation: (text: string) => void;
@@ -258,6 +266,7 @@ export const useEventStore = create<EventStore>((set, get) => ({
   thinkingStartedTs: null,
   thinkingTraces: {},
   brainProvider: "unknown",
+  assistantName: "Jarvis",
   dictating: false,
   dictationText: "",
   dictationCommitSeq: 0,
@@ -380,6 +389,8 @@ export const useEventStore = create<EventStore>((set, get) => ({
   },
 
   setBrainProvider: (p) => set({ brainProvider: p }),
+
+  setAssistantName: (name) => set({ assistantName: name }),
 
   setDictating: (b) =>
     set(b ? { dictating: true, dictationText: "" } : { dictating: false }),

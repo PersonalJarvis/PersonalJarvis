@@ -28,33 +28,64 @@ def classify_release(*, moved: bool) -> str:
     return "drag" if moved else "click"
 
 
-def click_action(mode: str) -> str:
-    """What a quick click should do, given the bar's current state.
+# NOTE: there is intentionally no coarse `click_action(mode)` helper. A bar
+# click is resolved ONLY through `resolve_click`, which gates the destructive
+# hang-up on the close-X hit-box. A "any active click = hangup" shortcut was
+# exactly the silent-hangup bug (2026-06-19) and must not be re-introduced.
 
-    While a session is active (listen / think / speak) a click HANGS UP; from
-    the idle/standby state it starts a session (TALK). Unknown states default
-    to "talk" (safe — never hangs up something that isn't running).
-    """
-    return "hangup" if mode in ("listen", "think", "speak") else "talk"
+# Minimum tap radius (px) around the close-X glyph, so the hit-box stays
+# fingertip-tappable even when the pill is tiny. The effective radius also
+# scales with the pill width (``_CLOSE_X_HIT_FRAC``) so it tracks the glyph the
+# renderer actually draws (``renderer._draw_close_x`` at ``cx - 0.42*pw``).
+_CLOSE_X_HIT_PX: float = 10.0
+_CLOSE_X_HIT_FRAC: float = 0.14
+_CLOSE_X_CENTRE_FRAC: float = 0.42  # X centre offset from pill centre (mirror of renderer)
 
 
-def resolve_click(x: float, width: int, mode: str) -> str:
+def resolve_click(
+    x: float,
+    width: int,
+    mode: str,
+    *,
+    hovered: bool = False,
+    pill_w: float | None = None,
+) -> str:
     """Resolve a click on the bar into an action by its horizontal zone + state.
 
-    The bar is split into thirds: the LEFT third is the X (hang up — only while
-    a session is live), the RIGHT third is the square (toggle endpoint-free
-    dictation: start / submit), the MIDDLE starts a normal session when idle.
     Returns one of ``"hangup"`` / ``"dictate"`` / ``"talk"`` / ``"none"``.
+
+    The RIGHT zone is the square (toggle endpoint-free dictation — non-
+    destructive, so it keeps a generous zone). When IDLE, a click anywhere
+    starts a normal session.
+
+    The hang-up X is different: it ENDS the session, so its hit-box is
+    deliberately narrow and must match what the user can see. The renderer draws
+    the close-X ONLY while the bar is ``hovered`` (and as a small glyph at
+    ``cx - 0.42*pw``), so a hang-up fires ONLY when (a) the controls are shown
+    (``hovered``) AND (b) the click lands on the X glyph itself. A low-intent
+    click on the active bar's body — where no X is visible — returns ``"none"``
+    instead of silently hanging up. This closes the "Jarvis hangs up by itself"
+    trap (live bug 2026-06-19): the old code hung up on ANY click in the left
+    40% of the bar, decoupled from the visible affordance.
     """
     frac = x / max(1, width)
     active = mode in ("listen", "think", "speak")
-    if frac >= 0.60:            # right zone → the square (always available)
+    if frac >= 0.60:            # right zone → the square (non-destructive)
         return "dictate"
-    if frac < 0.40 and active:  # left zone → the X (only closes a live session)
-        return "hangup"
     if not active:             # idle middle/left → start a normal session
         return "talk"
-    return "none"              # active middle → nothing
+    # Active session: the ONLY destructive bar action is the close-X hang-up,
+    # which must be a deliberate click ON the visible X glyph.
+    if hovered:
+        # In production `pill_w` is always the active pill width (ACTIVE_W); the
+        # caller only passes None for idle mode, which returns above before this
+        # branch. The `width` fallback is just a sane default for direct callers.
+        pw = float(pill_w) if pill_w is not None else float(width)
+        x_glyph = width / 2.0 - _CLOSE_X_CENTRE_FRAC * pw  # mirror renderer._draw_close_x
+        hit = max(_CLOSE_X_HIT_PX, _CLOSE_X_HIT_FRAC * pw)
+        if abs(x - x_glyph) <= hit:
+            return "hangup"
+    return "none"              # active body / no visible X → nothing
 
 
 def default_bottom_center(

@@ -13,12 +13,21 @@ Matching läuft per `fnmatch`-Glob gegen `"<tool_name> <serialized_args>"`.
 from __future__ import annotations
 
 import fnmatch
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, get_args
 
 from jarvis.core.config import SafetyConfig
 from jarvis.core.protocols import RiskTier, Tool
+
+log = logging.getLogger(__name__)
+
+#: Valid RiskTier vocabulary, derived from the Literal (drift-proof) so a hook
+#: return value or a misconfigured static tier is validated before it reaches
+#: the always_block / always_confirm membership checks. An unvalidated string
+#: would miss both checks and behave as the most permissive option silently.
+_VALID_TIERS: frozenset[str] = frozenset(get_args(RiskTier))
 
 # Callable that returns (whitelist_patterns, blacklist_patterns). Wird bei jedem
 # evaluate() aufgerufen — billig halten. Aktueller Nutzer: CliToolRegistry
@@ -115,8 +124,36 @@ class RiskTierEvaluator:
                     command_string=cmd,
                 )
 
-        # 3. Tool-Default (fallback auf Config-Default)
-        tier: RiskTier = tool.risk_tier or self._safety.default_tier
+        # 3. Tool default (fallback to the config default), refined by an
+        # optional per-action hook. A tool with mixed actions (e.g. gmail: list/get
+        # read, send consequential) may expose ``risk_tier_for_args`` so a read
+        # call is not forced through the same ask-confirm as a send (forensic
+        # 2026-06-19, session dc533e39). The hook refines ONLY the tool default
+        # — blacklist and whitelist (above) keep priority. Every value (static
+        # or hook) is validated against the RiskTier vocabulary: an invalid
+        # string must never flow into the always_block / always_confirm
+        # membership checks (it would silently act as the most permissive
+        # option). A broken hook must never crash the gate.
+        raw_tier = getattr(tool, "risk_tier", None)
+        tier: RiskTier = raw_tier if raw_tier in _VALID_TIERS else self._safety.default_tier
+        hook = getattr(tool, "risk_tier_for_args", None)
+        if callable(hook):
+            try:
+                dynamic = hook(args)
+            except Exception as exc:  # noqa: BLE001 — a broken hook must not break the gate
+                log.warning(
+                    "risk_tier_for_args on %r raised %r — falling back to static tier %r",
+                    tool.name, exc, tier,
+                )
+                dynamic = None
+            if dynamic in _VALID_TIERS:
+                tier = dynamic
+            elif dynamic is not None:
+                log.warning(
+                    "risk_tier_for_args on %r returned unknown tier %r — "
+                    "falling back to static tier %r",
+                    tool.name, dynamic, tier,
+                )
 
         # block-Tier wird direkt gebounced
         if tier in self._safety.always_block_tiers:
