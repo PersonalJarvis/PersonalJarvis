@@ -21,7 +21,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Awaitable
 
 # Windows-UTF8-Fix (analog zu jarvis.__main__)
 if sys.platform == "win32":
@@ -351,6 +351,52 @@ def _is_brain_diagnostic(text: str) -> bool:
         or "api-key" in t
         or ("provider" in t and ("unerreichbar" in t or "nicht verfuegbar" in t))
     )
+
+
+# Returned by ``_await_cancellable_chat_turn`` when the bar's X aborted the turn.
+# A sentinel (not a raised ``CancelledError``) so the dispatcher can absorb the
+# X-press while a genuine outer/shutdown cancellation still propagates untouched.
+_CHAT_TURN_ABORTED = object()
+
+
+async def _await_cancellable_chat_turn(
+    coro: Awaitable[Any], loop: asyncio.AbstractEventLoop
+) -> Any:
+    """Run a chat brain turn as a task the bar's X can abort.
+
+    The voice path already honours the X via the speech pipeline's hangup
+    waiter; a chat turn runs on a separate dispatcher, so it must arm the same
+    chokepoint itself. The turn is registered with ``runtime_refs`` for the
+    duration of the ``await`` and disarmed in ``finally`` (live bug 2026-06-19:
+    ~27 ignored X presses while a chat turn kept thinking).
+
+    Two cancellations are told apart precisely (code-review 2026-06-19). Note
+    that ``task.cancelled()`` is NOT a usable discriminator: cancelling the outer
+    task also cancels the inner one it awaits (asyncio cancels the ``_fut_waiter``),
+    so the inner task ends cancelled in BOTH cases. The reliable signal is whether
+    *this* coroutine's own task carries a pending cancellation:
+
+    * the X cancels only the INNER ``task`` (via ``cancel_active_chat_turn`` →
+      ``call_soon_threadsafe(task.cancel)``); our own task is untouched
+      (``current_task().cancelling() == 0``) → we return ``_CHAT_TURN_ABORTED``
+      so the caller drops to IDLE; and
+    * an OUTER cancellation (shutdown / bus-gather teardown) cancels *our* task
+      (``cancelling() > 0``) → we re-raise, honouring Python's cooperative
+      -cancellation contract (the inner task is already cancelled with us).
+    """
+    from jarvis.core import runtime_refs
+
+    task = asyncio.create_task(coro)
+    runtime_refs.set_active_chat_turn(task, loop)
+    try:
+        return await task
+    except asyncio.CancelledError:
+        current = asyncio.current_task()
+        if current is not None and current.cancelling() > 0:
+            raise  # our own task is being torn down — propagate
+        return _CHAT_TURN_ABORTED  # only the inner turn was cancelled — the X
+    finally:
+        runtime_refs.clear_active_chat_turn(task)
 
 
 # ---------------------------------------------------------------------------
@@ -755,21 +801,31 @@ class DesktopApp:
                 )
                 return
 
+            loop = asyncio.get_running_loop()
             try:
                 await supervisor.set_state("THINKING")
                 generate = getattr(brain, "generate", None)
+                # Both brain shapes run as an X-abortable task so the bar's X
+                # (request_hangup → cancel_active_chat_turn) stops a chat turn
+                # too, not just a voice turn (bug 2026-06-19: the X was ignored
+                # on the chat path).
                 if callable(generate):
                     # source_layer lets the router exempt a drag-dropped mission
                     # recap (ui.web.ws.mission_inject) from force-spawn — a recap
                     # is discussed inline, never re-dispatched (doom-loop fix
                     # 2026-06-16). Other callers default to None (normal routing).
-                    reply = await generate(
-                        evt.text,
-                        trace_id=evt.trace_id,
-                        source_layer=evt.source_layer,
+                    reply = await _await_cancellable_chat_turn(
+                        generate(
+                            evt.text,
+                            trace_id=evt.trace_id,
+                            source_layer=evt.source_layer,
+                        ),
+                        loop,
                     )
                 else:
-                    reply = await brain(evt.text)
+                    reply = await _await_cancellable_chat_turn(
+                        brain(evt.text), loop
+                    )
             except Exception as exc:  # noqa: BLE001
                 detail = f"{type(exc).__name__}: {exc}"
                 message = f"Brain error: {detail}"
@@ -796,6 +852,13 @@ class DesktopApp:
                     role="system",
                     text=message,
                 )
+                await supervisor.set_state("IDLE")
+                return
+
+            if reply is _CHAT_TURN_ABORTED:
+                # The user pressed the bar's X mid-think — honour it and drop
+                # back to IDLE instead of speaking a half-finished turn.
+                logger.info("Chat turn aborted by the bar's X — back to IDLE.")
                 await supervisor.set_state("IDLE")
                 return
 

@@ -372,12 +372,19 @@ class WhisperBarOverlay:
     # Drag (reposition) + click (start a voice session)                 #
     # ------------------------------------------------------------------ #
     def _on_press(self, event: Any) -> None:
+        # A press on the canvas means the pointer IS over the bar, so the close-X
+        # controls are (and visually become) available even if <Enter> was missed
+        # — e.g. the bar deiconified under a stationary cursor. resolve_click then
+        # still gates the hang-up on the X-glyph hit-box, so this only makes a
+        # DELIBERATE X-click reliable; it never widens the accidental-hangup zone.
+        self._hovered = True
         self._drag = {
             "sx": event.x_root,
             "sy": event.y_root,
             "ox": event.x_root - self._x,
             "oy": event.y_root - self._y,
             "cx": event.x,  # canvas-relative x → which control zone was clicked
+            "hovered": True,  # press-time hover (the pointer IS on the bar now)
             "moved": False,
         }
 
@@ -403,7 +410,10 @@ class WhisperBarOverlay:
         if d is None:
             return
         if interaction.classify_release(moved=bool(d["moved"])) == "click":
-            self._on_click(d.get("cx", renderer.WIN_W / 2))
+            # Use the PRESS-time hover (consistent with the press-time cx): a
+            # deliberate click that started on the bar registers even if a stray
+            # <Leave> flickered _hovered before release.
+            self._on_click(d.get("cx", renderer.WIN_W / 2), hovered=bool(d.get("hovered")))
             return
         try:
             sw = int(self._root.winfo_screenwidth())
@@ -437,7 +447,7 @@ class WhisperBarOverlay:
         except Exception:  # noqa: BLE001
             log.debug("whisperbar show-window callback failed", exc_info=True)
 
-    def _on_click(self, click_x: float | None = None) -> None:
+    def _on_click(self, click_x: float | None = None, *, hovered: bool = False) -> None:
         # Zone-routed: LEFT X → hang up (active only), RIGHT square → toggle
         # endpoint-free dictation, MIDDLE (idle) → start a normal session. All
         # entries are thread-safe from the Tk thread.
@@ -449,7 +459,16 @@ class WhisperBarOverlay:
             pipeline = get_speech_pipeline()
             if pipeline is None:
                 return
-            action = interaction.resolve_click(click_x, renderer.WIN_W, self._mode)
+            # Hang-up must be a deliberate click on the VISIBLE close-X glyph
+            # (the X is only drawn while hovered), never the wide left dead-zone
+            # — see interaction.resolve_click + the silent-hangup forensic. The
+            # active pill is ACTIVE_W, so the X glyph sits at WIN_W/2-0.42*pw.
+            active = self._mode in ("listen", "think", "speak")
+            pill_w = renderer.ACTIVE_W if active else None
+            action = interaction.resolve_click(
+                click_x, renderer.WIN_W, self._mode,
+                hovered=hovered, pill_w=pill_w,
+            )
             if action == "dictate":
                 toggle = getattr(pipeline, "request_ptt_toggle", None)
                 if callable(toggle):
