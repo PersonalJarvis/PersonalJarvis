@@ -1,0 +1,14 @@
+tests/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+.git/
+.env
+*.db
+*.sqlite
+docker-compose.yml
+README.md

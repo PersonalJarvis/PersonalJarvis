@@ -1,0 +1,645 @@
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700;800&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Jarvis — Schwarz/Gelb Theme (matte, signal-yellow) */
+    --background: 0 0% 4%;              /* #0A0A0A matte-black */
+    --foreground: 0 0% 96%;              /* #F4F4F5 */
+    --card: 0 0% 6%;                     /* #0F0F0F */
+    --card-foreground: 0 0% 96%;
+    --popover: 0 0% 6%;
+    --popover-foreground: 0 0% 96%;
+    --primary: 50 100% 52%;              /* #FFD60A signal-yellow */
+    --primary-foreground: 0 0% 4%;       /* schwarz auf gelb */
+    --secondary: 0 0% 10%;               /* #1A1A1A */
+    --secondary-foreground: 0 0% 96%;
+    --muted: 0 0% 10%;
+    --muted-foreground: 0 0% 56%;        /* #8F8F8F */
+    --accent: 50 100% 52%;
+    --accent-foreground: 0 0% 4%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 96%;
+    --border: 0 0% 14%;                  /* #242424 */
+    --input: 0 0% 10%;
+    --ring: 50 100% 52%;
+    --radius: 0.75rem;
+
+    /* Jarvis-spezifische Custom-Tokens */
+    --jarvis-yellow: 255 214 10;         /* #FFD60A für rgba() */
+    --jarvis-yellow-dim: 230 190 40;     /* gedimmtes gelb */
+    --jarvis-grid: 0 0% 12%;
+  }
+
+  .dark {
+    /* Dark is default — diese Klasse ist nur für explizite dark-switches.
+       Wir halten das gleiche Schema, dark = default = Jarvis. */
+    --background: 0 0% 4%;
+    --foreground: 0 0% 96%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    @apply bg-background;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    overflow-x: hidden;
+  }
+
+  .font-display {
+    font-family: "Space Grotesk", "Inter", ui-sans-serif, system-ui, sans-serif;
+    font-feature-settings: "ss01", "ss02";
+    letter-spacing: -0.02em;
+  }
+
+  .font-mono {
+    font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+}
+
+@layer components {
+  /* Subtiles Grid-Pattern im Hintergrund — gibt Dashboard-Gefühl ohne abzulenken */
+  .jarvis-grid {
+    background-image:
+      linear-gradient(rgba(255, 214, 10, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 214, 10, 0.04) 1px, transparent 1px);
+    background-size: 64px 64px;
+    mask-image: radial-gradient(ellipse at center, black 30%, transparent 70%);
+  }
+
+  /* Gelber Spot-Glow — wird als absolute-positioned Element verwendet */
+  .jarvis-glow {
+    background: radial-gradient(
+      circle at center,
+      rgba(255, 214, 10, 0.22) 0%,
+      rgba(255, 214, 10, 0.08) 30%,
+      transparent 70%
+    );
+    filter: blur(60px);
+  }
+
+  /* Button-Base — für CTAs */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-6 py-3 font-medium
+           bg-primary text-primary-foreground
+           transition-all duration-200
+           hover:bg-primary/90 hover:shadow-[0_0_32px_rgba(255,214,10,0.35)]
+           active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-6 py-3 font-medium
+           text-foreground border border-border
+           transition-all duration-200
+           hover:bg-secondary hover:border-primary/40
+           active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-2 rounded-full border border-border bg-secondary/60
+           px-3 py-1 text-xs font-medium text-muted-foreground backdrop-blur;
+  }
+
+  .chip-yellow {
+    @apply inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10
+           px-3 py-1 text-xs font-semibold text-primary;
+  }
+
+  .card-outline {
+    @apply rounded-2xl border border-border bg-card/60 backdrop-blur
+           transition-colors duration-300
+           hover:border-primary/40;
+  }
+}
+
+@layer utilities {
+  /* Staggered reveal on view mount — one orchestrated page-load moment.
+     Pair with an inline `animationDelay` for the stagger cadence. */
+  @keyframes profile-rise {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .profile-rise {
+    animation: profile-rise 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .profile-rise {
+      animation: none;
+    }
+  }
+
+  /* Pulse-Animation für State-Badges */
+  @keyframes jarvis-pulse {
+    0%, 100% {
+      opacity: 1;
+      box-shadow: 0 0 0 0 rgba(255, 214, 10, 0.4);
+    }
+    50% {
+      opacity: 0.85;
+      box-shadow: 0 0 0 8px rgba(255, 214, 10, 0);
+    }
+  }
+  .animate-jarvis-pulse {
+    animation: jarvis-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  /* ===========================================================
+     Reasoning-trace (chat thinking indicator)
+     A gold light band sweeps through the label text; the core orb
+     pulses with two expanding rings; the card glow breathes.
+     =========================================================== */
+  @keyframes thinking-shimmer {
+    0% { background-position: 200% 50%; }
+    100% { background-position: -200% 50%; }
+  }
+  .thinking-shimmer {
+    background: linear-gradient(
+      90deg,
+      hsl(var(--muted-foreground)) 0%,
+      hsl(var(--muted-foreground)) 38%,
+      #ffe552 50%,
+      hsl(var(--muted-foreground)) 62%,
+      hsl(var(--muted-foreground)) 100%
+    );
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: thinking-shimmer 2.4s linear infinite;
+  }
+  @keyframes thinking-ring {
+    0% { transform: scale(0.6); opacity: 0.8; }
+    100% { transform: scale(2.4); opacity: 0; }
+  }
+  .thinking-ring {
+    animation: thinking-ring 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+  }
+  .thinking-core {
+    box-shadow: 0 0 12px 2px rgba(255, 214, 10, 0.45);
+  }
+  @keyframes thinking-breathe {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 1; }
+  }
+  .thinking-breathe {
+    animation: thinking-breathe 3.4s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .thinking-shimmer {
+      animation: none;
+      background: none;
+      color: hsl(var(--muted-foreground));
+    }
+    .thinking-ring,
+    .thinking-breathe {
+      animation: none;
+    }
+  }
+
+  /* Weiche Float-Animation fürs Hero-Orb */
+  @keyframes jarvis-float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-14px); }
+  }
+  .animate-jarvis-float {
+    animation: jarvis-float 6s ease-in-out infinite;
+  }
+
+  /* Langsamer Spin für subtile Rotationen */
+  @keyframes jarvis-spin-slow {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  .animate-jarvis-spin-slow {
+    animation: jarvis-spin-slow 40s linear infinite;
+  }
+
+  /* Text-Gradient für Hero */
+  .text-gradient-yellow {
+    background: linear-gradient(135deg, #FFE552 0%, #FFD60A 50%, #B8960A 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Custom Scrollbar — passend zum Theme */
+  .scrollbar-jarvis::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-jarvis::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-jarvis::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 3px;
+  }
+  .scrollbar-jarvis::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground));
+  }
+
+  /* ===========================================================
+     Gigi-Maskottchen-Animationen
+     Idle = kontinuierliches Floating + Mikro-Atmung auf SVG-Root.
+     Aktionen werden durch .gigi-<action>-Klassen getriggert —
+     die jeweilige Klasse lebt nur für die Dauer der Animation.
+     =========================================================== */
+
+  .gigi-container {
+    position: relative;
+    display: inline-block;
+    font-size: 0; /* kein baseline-gap unter dem SVG */
+  }
+  .gigi-root {
+    display: block;
+    width: 100%;
+    height: 100%;
+    transform-origin: 50% 50%;
+    will-change: transform;
+    animation: gigi-float 5.4s ease-in-out infinite;
+  }
+  .gigi-svg {
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    display: block;
+    animation: gigi-breath 3.8s ease-in-out infinite;
+    transform-origin: 50% 50%;
+  }
+
+  /* Auto-Blink (alle ~7s ein natuerliches Blinzeln — parallel zu Random-Actions) */
+  .gigi-root .gigi-eyes {
+    transform-box: fill-box;
+    transform-origin: 50% 50%;
+    animation: gigi-auto-blink 7s ease-in-out infinite;
+  }
+  @keyframes gigi-auto-blink {
+    0%, 92%, 95%, 100% { transform: scaleY(1); }
+    93.5%              { transform: scaleY(0.08); }
+  }
+
+  /* Pupillen-Drift: subtile Augenbewegung während Idle */
+  .gigi-root .gigi-pupils {
+    animation: gigi-pupil-drift 11s ease-in-out infinite;
+    transform-origin: 50% 50%;
+  }
+  @keyframes gigi-pupil-drift {
+    0%, 100% { transform: translate(0, 0); }
+    18%      { transform: translate(-1.2px, 0); }
+    42%      { transform: translate(0.8px, 0.4px); }
+    68%      { transform: translate(1.2px, -0.3px); }
+    85%      { transform: translate(-0.6px, 0.2px); }
+  }
+
+  /* Mund: subtile "Atmung" */
+  .gigi-root .gigi-mouth {
+    transform-box: fill-box;
+    transform-origin: 50% 50%;
+    animation: gigi-mouth-idle 5.8s ease-in-out infinite;
+  }
+  @keyframes gigi-mouth-idle {
+    0%, 100% { transform: scale(1, 1); }
+    50%      { transform: scale(0.94, 1.06); }
+  }
+
+  @keyframes gigi-float {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-3px); }
+  }
+  @keyframes gigi-breath {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.025); }
+  }
+
+  /* --- Action: Blink (Augen schließen kurz) --- */
+  .gigi-blink .gigi-eyes,
+  .gigi-blink .gigi-pupils,
+  .gigi-blink .gigi-sparkle {
+    animation: gigi-blink 0.3s ease-in-out;
+    transform-origin: 50% 108px;
+  }
+  @keyframes gigi-blink {
+    0%, 100% { transform: scaleY(1); }
+    45%, 60% { transform: scaleY(0.08); }
+  }
+
+  /* --- Action: Wave (linker Arm winkt) ---
+     Transform-origin wird auf die Schulter gelegt (fill-box Top-Right,
+     weil die Arm-Path-Bbox rechts-oben die Anbindung zur Body-Seite ist).
+     Wichtig: origin/box unconditional auf den Arm setzen — nicht nur bei
+     .gigi-wave — sonst laeuft Animation mit Default-Origin (0,0). */
+  .gigi-root .gigi-arm-left {
+    transform-box: fill-box;
+    transform-origin: 100% 0%;
+  }
+  .gigi-root .gigi-arm-right {
+    transform-box: fill-box;
+    transform-origin: 0% 0%;
+  }
+  .gigi-wave .gigi-arm-left {
+    animation: gigi-wave 1.8s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  @keyframes gigi-wave {
+    0%   { transform: rotate(0deg); }
+    12%  { transform: rotate(-95deg); }    /* Arm hoch */
+    22%  { transform: rotate(-75deg); }    /* Wink 1 */
+    32%  { transform: rotate(-110deg); }
+    42%  { transform: rotate(-75deg); }    /* Wink 2 */
+    52%  { transform: rotate(-110deg); }
+    62%  { transform: rotate(-75deg); }    /* Wink 3 */
+    72%  { transform: rotate(-110deg); }
+    82%  { transform: rotate(-90deg); }    /* Winken aus */
+    100% { transform: rotate(0deg); }      /* zurück nach unten */
+  }
+
+  /* --- Action: Spin (ganze Figur dreht sich) --- */
+  .gigi-spin .gigi-svg {
+    animation: gigi-spin 0.85s cubic-bezier(0.65, 0, 0.35, 1);
+  }
+  @keyframes gigi-spin {
+    0%   { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+
+  /* --- Action: Jump (hochhüpfen) --- */
+  .gigi-jump .gigi-svg {
+    animation: gigi-jump 0.65s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  @keyframes gigi-jump {
+    0%, 100% { transform: translateY(0) scale(1, 1); }
+    20%      { transform: translateY(2px) scale(1.08, 0.92); }
+    55%      { transform: translateY(-14px) scale(0.95, 1.05); }
+    80%      { transform: translateY(1px) scale(1.05, 0.95); }
+  }
+
+  /* --- Action: Shake (Kopf-Schütteln) --- */
+  .gigi-shake .gigi-svg {
+    animation: gigi-shake 0.55s ease-in-out;
+  }
+  @keyframes gigi-shake {
+    0%, 100% { transform: translateX(0) rotate(0deg); }
+    15%      { transform: translateX(-4px) rotate(-3deg); }
+    35%      { transform: translateX(4px) rotate(3deg); }
+    55%      { transform: translateX(-3px) rotate(-2deg); }
+    75%      { transform: translateX(3px) rotate(2deg); }
+  }
+
+  /* --- Action: Look-Left / Look-Right (Pupillen schauen) --- */
+  .gigi-look-left .gigi-pupils {
+    animation: gigi-look-left 0.85s ease-in-out;
+  }
+  .gigi-look-right .gigi-pupils {
+    animation: gigi-look-right 0.85s ease-in-out;
+  }
+  @keyframes gigi-look-left {
+    0%, 100% { transform: translateX(0); }
+    30%, 70% { transform: translateX(-4px); }
+  }
+  @keyframes gigi-look-right {
+    0%, 100% { transform: translateX(0); }
+    30%, 70% { transform: translateX(4px); }
+  }
+
+  /* --- Action: Glitch (kurzer digitaler Störer) --- */
+  .gigi-glitch .gigi-svg {
+    animation: gigi-glitch 0.42s steps(2, end);
+  }
+  .gigi-glitch .gigi-glitch-left,
+  .gigi-glitch .gigi-glitch-right {
+    animation: gigi-glitch-pixels 0.42s steps(4, end);
+  }
+  @keyframes gigi-glitch {
+    0%   { transform: translate(0, 0) skewX(0); filter: none; }
+    20%  { transform: translate(-3px, 1px) skewX(-4deg); filter: hue-rotate(-20deg); }
+    40%  { transform: translate(3px, -1px) skewX(4deg); }
+    60%  { transform: translate(-2px, 0) skewX(-2deg); filter: hue-rotate(20deg); }
+    80%  { transform: translate(2px, 1px) skewX(2deg); }
+    100% { transform: translate(0, 0) skewX(0); filter: none; }
+  }
+  @keyframes gigi-glitch-pixels {
+    0%, 100% { opacity: 1; transform: translateX(0); }
+    25%      { opacity: 0.3; transform: translateX(-4px); }
+    75%      { opacity: 0.8; transform: translateX(4px); }
+  }
+
+  /* --- Voice-State-Reaktionen --- */
+  .gigi-voice-listening .gigi-eyes {
+    animation: gigi-ear-prick 1.2s ease-in-out infinite;
+  }
+  @keyframes gigi-ear-prick {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.08); }
+  }
+
+  .gigi-voice-thinking .gigi-svg {
+    animation: gigi-breath 3.8s ease-in-out infinite, gigi-thinking-tilt 2.4s ease-in-out infinite;
+  }
+  @keyframes gigi-thinking-tilt {
+    0%, 100% { transform: rotate(0deg); }
+    50%      { transform: rotate(-6deg); }
+  }
+
+  .gigi-voice-speaking .gigi-mouth {
+    animation: gigi-speak 0.35s ease-in-out infinite alternate;
+    transform-origin: 50% 146px;
+  }
+  @keyframes gigi-speak {
+    0%   { transform: scaleY(0.7); }
+    100% { transform: scaleY(1.25); }
+  }
+
+  .gigi-voice-error .gigi-svg {
+    animation: gigi-shake 0.5s ease-in-out infinite;
+    filter: hue-rotate(-40deg) saturate(1.4);
+  }
+
+  /* --- Kommentar-Bubble --- */
+  .gigi-bubble {
+    position: absolute;
+    top: 50%;
+    left: calc(100% + 10px);
+    transform: translateY(-50%);
+    width: max-content;
+    max-width: 220px;
+    padding: 6px 11px;
+    border-radius: 10px;
+    background: hsl(var(--card));
+    border: 1px solid rgba(255, 214, 10, 0.45);
+    box-shadow: 0 0 18px rgba(255, 214, 10, 0.18), 0 4px 14px rgba(0, 0, 0, 0.45);
+    font-size: 11.5px;
+    line-height: 1.35;
+    color: hsl(var(--foreground));
+    font-weight: 500;
+    z-index: 50;
+    pointer-events: none;
+    white-space: normal;
+    transform-origin: 0% 50%;
+    animation: gigi-bubble-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .gigi-bubble::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: 100%;
+    transform: translateY(-50%);
+    border: 6px solid transparent;
+    border-right-color: rgba(255, 214, 10, 0.45);
+  }
+  .gigi-bubble::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: calc(100% - 1px);
+    transform: translateY(-50%);
+    border: 5px solid transparent;
+    border-right-color: hsl(var(--card));
+  }
+  .gigi-bubble-text {
+    display: inline-block;
+  }
+  .gigi-bubble-listening {
+    left: auto;
+    right: calc(100% + 10px);
+    width: min(300px, calc(100vw - 32px));
+    max-width: min(300px, calc(100vw - 32px));
+    min-height: 86px;
+    max-height: 86px;
+    padding: 8px 12px;
+    display: flex;
+    align-items: flex-end;
+    border-color: rgba(255, 214, 10, 0.72);
+    box-shadow:
+      0 0 24px rgba(255, 214, 10, 0.22),
+      0 8px 22px rgba(0, 0, 0, 0.55);
+    font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 13px;
+    line-height: 1.35;
+    overflow: hidden;
+    white-space: normal;
+    transform-origin: 100% 50%;
+  }
+  .gigi-bubble-listening::before {
+    right: auto;
+    left: 100%;
+    border-right-color: transparent;
+    border-left-color: rgba(255, 214, 10, 0.72);
+  }
+  .gigi-bubble-listening::after {
+    right: auto;
+    left: calc(100% - 1px);
+    border-right-color: transparent;
+    border-left-color: hsl(var(--card));
+  }
+  .gigi-bubble-text-listening {
+    display: block;
+    flex: 0 0 auto;
+    width: 100%;
+    overflow-wrap: anywhere;
+    word-break: normal;
+    white-space: pre-wrap;
+  }
+  @keyframes gigi-bubble-pop {
+    0%   { opacity: 0; transform: translateY(-50%) scale(0.55); }
+    100% { opacity: 1; transform: translateY(-50%) scale(1); }
+  }
+
+  /* Reduced-Motion-Friendly: alle Animationen aus */
+  @media (prefers-reduced-motion: reduce) {
+    .gigi-container,
+    .gigi-container *,
+    .gigi-root,
+    .gigi-root *,
+    .gigi-svg,
+    .gigi-svg *,
+    .gigi-bubble {
+      animation: none !important;
+    }
+  }
+}
+
+@layer components {
+  /* Full-window "toss it to Jarvis" catch layer, mounted only while a mission
+     card is being dragged. A soft vignette pulls the eye toward the dock in the
+     bottom-right; `cursor: copy` (plus the dock's preventDefault) means the OS
+     never shows the no-drop sign during the long travel to the dock. */
+  .jarvis-dock-catch {
+    cursor: copy;
+    background: radial-gradient(
+      460px circle at calc(100% - 3rem) calc(100% - 3rem),
+      rgba(255, 214, 10, 0.1),
+      rgba(255, 214, 10, 0.03) 42%,
+      transparent 72%
+    );
+    animation: dock-catch-in 180ms ease-out;
+  }
+
+  @keyframes dock-catch-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  /* Expanding ring on a successful "absorb". */
+  @keyframes dock-ripple {
+    from {
+      transform: scale(1);
+      opacity: 0.7;
+    }
+    to {
+      transform: scale(2.1);
+      opacity: 0;
+    }
+  }
+
+  /* Gentle glow pulse while the dock is bloomed and waiting for a drop. */
+  @keyframes dock-breathe {
+    0%,
+    100% {
+      box-shadow: 0 0 26px rgba(255, 214, 10, 0.22);
+    }
+    50% {
+      box-shadow: 0 0 42px rgba(255, 214, 10, 0.45);
+    }
+  }
+
+  /* A small, springy bounce of the dock contents the moment a card lands. */
+  @keyframes dock-pop {
+    0% {
+      transform: scale(0.7);
+    }
+    60% {
+      transform: scale(1.18);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .jarvis-dock-catch {
+      animation: none;
+    }
+  }
+}

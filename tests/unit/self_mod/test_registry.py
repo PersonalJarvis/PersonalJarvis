@@ -1,0 +1,345 @@
+"""Tests für SelfModRegistry (Phase 7.1).
+
+Plan-Akzeptanzkriterien §7.1:
+- Unit-Tests für Registry (List, Lookup, Reject `security.*`)
+- Public API: `is_mutable(path)`, `get_spec(path)`, `list_all()`
+- Keine Datei-IO auf `jarvis.toml` in dieser Phase
+"""
+from __future__ import annotations
+
+import pytest
+from pydantic import BaseModel, ValidationError
+
+import jarvis.core.config as cfg_module
+from jarvis.core.self_mod import (
+    FORBIDDEN_PATTERNS,
+    AllowlistViolationError,
+    MutableSpec,
+    SecretAccessError,
+    SelfModRegistry,
+)
+
+# Plan-§7.1 table + voice-tunable computer_use.step_budget (the field the
+# screenshot loop actually reads; the legacy max_steps field was a no-op) +
+# the language keys added 2026-06-08 for the Jarvis Control API. The canonical
+# reply-language path is ``brain.reply_language`` (SAFE); ``profile.language``
+# is kept (legacy, no runtime effect) so old configs/flows keep validating.
+# 12 paths in the current allowlist.
+EXPECTED_PATHS = {
+    "tts.provider",
+    "tts.voice_de",
+    "tts.voice_en",
+    "tts.speed",
+    "stt.provider",
+    "brain.primary",
+    "brain.reply_language",
+    "stt.language",
+    "tts.language_code",
+    "ui.theme",
+    "ui.language",
+    "profile.language",
+    "computer_use.step_budget",
+}
+
+SAFE_TIER_PATHS = {"tts.speed", "ui.theme", "brain.reply_language", "ui.language"}
+RESTART_REQUIRED_PATHS = {
+    "stt.provider",
+    "brain.primary",
+    "stt.language",
+    "tts.language_code",
+}
+
+
+# --- list_all + ALLOWED ---
+
+
+class TestListAll:
+    def test_returns_thirteen_specs(self) -> None:
+        # 9 historical paths + brain.reply_language/stt.language/tts.language_code
+        # + ui.language (interface language, live-synced to the frontend).
+        assert len(SelfModRegistry.list_all()) == 13
+
+    def test_returns_expected_paths(self) -> None:
+        paths = {spec.path for spec in SelfModRegistry.list_all()}
+        assert paths == EXPECTED_PATHS
+
+    def test_returns_independent_list_each_call(self) -> None:
+        a = SelfModRegistry.list_all()
+        b = SelfModRegistry.list_all()
+        assert a is not b
+        assert a == b
+
+    def test_no_duplicate_paths(self) -> None:
+        paths = [spec.path for spec in SelfModRegistry.list_all()]
+        assert len(paths) == len(set(paths))
+
+
+# --- is_mutable ---
+
+
+class TestIsMutable:
+    @pytest.mark.parametrize("path", sorted(EXPECTED_PATHS))
+    def test_returns_true_for_allowed_path(self, path: str) -> None:
+        assert SelfModRegistry.is_mutable(path) is True
+
+    def test_returns_false_for_unknown_path(self) -> None:
+        assert SelfModRegistry.is_mutable("brain.unknown_field") is False
+
+    def test_returns_false_for_empty_string(self) -> None:
+        assert SelfModRegistry.is_mutable("") is False
+
+    def test_returns_false_for_random_path(self) -> None:
+        assert SelfModRegistry.is_mutable("totally.made.up.path") is False
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            # Plan-§AC §7.1: Reject security.*
+            "security.admin_password_hash",
+            "security.foo",
+            # Plan-§AP-9 erweitert auf weitere geschützte Sektionen
+            "mcp_server.transport",
+            "mcp_server.auth_token_env",
+            # Risk-tier whitelist/blacklist — added 2026-06-08 for the Control API
+            "safety.whitelist",
+            "safety.blacklist.commands",
+            "harness.default_timeout_s",
+            # Suffix-Patterns für Secrets
+            "anthropic_api_key",
+            "openai_token",
+            "deepgram_secret",
+            "user_password",
+            "admin_password_hash",
+            "spotify_credential",
+        ],
+    )
+    def test_returns_false_for_forbidden_path(self, path: str) -> None:
+        assert SelfModRegistry.is_mutable(path) is False
+
+
+# --- get_spec ---
+
+
+class TestGetSpec:
+    def test_known_path_returns_spec(self) -> None:
+        spec = SelfModRegistry.get_spec("tts.provider")
+        assert spec is not None
+        assert spec.path == "tts.provider"
+        assert spec.pydantic_model_name == "TTSConfig"
+        assert spec.field_name == "provider"
+        assert spec.risk_tier == "ask"
+        assert spec.needs_restart is False
+        assert spec.description != ""
+
+    def test_unknown_path_returns_none(self) -> None:
+        assert SelfModRegistry.get_spec("brain.foo") is None
+
+    def test_forbidden_path_returns_none(self) -> None:
+        assert SelfModRegistry.get_spec("security.admin_password_hash") is None
+
+    def test_safe_tier_paths_match_plan(self) -> None:
+        """Plan-§AD-10 Bypass-Whitelist: tts.speed und ui.theme sind SAFE."""
+        for path in SAFE_TIER_PATHS:
+            spec = SelfModRegistry.get_spec(path)
+            assert spec is not None
+            assert spec.risk_tier == "safe", (
+                f"{path} sollte risk_tier='safe' haben"
+            )
+
+    def test_ask_tier_paths_match_plan(self) -> None:
+        for path in EXPECTED_PATHS - SAFE_TIER_PATHS:
+            spec = SelfModRegistry.get_spec(path)
+            assert spec is not None
+            assert spec.risk_tier == "ask", (
+                f"{path} sollte risk_tier='ask' haben"
+            )
+
+    def test_restart_flags_match_plan(self) -> None:
+        """Plan-§7.1-Tabelle: stt.provider und brain.primary brauchen Restart."""
+        for spec in SelfModRegistry.list_all():
+            expected = spec.path in RESTART_REQUIRED_PATHS
+            assert spec.needs_restart is expected, (
+                f"needs_restart-Flag von {spec.path} weicht vom Plan ab"
+            )
+
+
+# --- require_spec ---
+
+
+class TestRequireSpec:
+    def test_known_path_returns_spec(self) -> None:
+        spec = SelfModRegistry.require_spec("brain.primary")
+        assert spec.path == "brain.primary"
+
+    def test_unknown_path_raises_allowlist_violation(self) -> None:
+        with pytest.raises(AllowlistViolationError):
+            SelfModRegistry.require_spec("brain.foo")
+
+    def test_forbidden_path_raises_secret_access(self) -> None:
+        with pytest.raises(SecretAccessError):
+            SelfModRegistry.require_spec("security.admin_password_hash")
+
+    def test_secret_takes_precedence_over_unknown(self) -> None:
+        """Ein Pfad, der sowohl forbidden als auch nicht in ALLOWED ist,
+        muss SecretAccessError werfen — nicht AllowlistViolationError."""
+        with pytest.raises(SecretAccessError):
+            SelfModRegistry.require_spec("foo_api_key")
+
+
+# --- Defense-in-Depth: Allowlist und Forbidden disjunkt ---
+
+
+class TestForbiddenPatterns:
+    def test_no_allowed_path_matches_forbidden_patterns(self) -> None:
+        for spec in SelfModRegistry.list_all():
+            assert not SelfModRegistry.is_forbidden(spec.path), (
+                f"Allowlist-Pfad '{spec.path}' überlappt mit FORBIDDEN_PATTERNS"
+            )
+
+    def test_forbidden_patterns_non_empty(self) -> None:
+        assert len(FORBIDDEN_PATTERNS) >= 4
+
+    def test_security_wildcard_present(self) -> None:
+        assert "security.*" in FORBIDDEN_PATTERNS
+
+    def test_secret_suffix_patterns_present(self) -> None:
+        for pattern in ("*_api_key", "*_token", "*_secret", "*_password"):
+            assert pattern in FORBIDDEN_PATTERNS, (
+                f"Plan-§AP-9 verlangt Pattern {pattern}"
+            )
+
+
+# --- AP-11: kein dynamisches register() ---
+
+
+class TestNoDynamicRegistration:
+    def test_registry_has_no_register_method(self) -> None:
+        """AP-11: Allowlist darf nicht zur Laufzeit erweiterbar sein."""
+        for forbidden in ("register", "add", "register_path", "append"):
+            assert not hasattr(SelfModRegistry, forbidden), (
+                f"AP-11-Verletzung: SelfModRegistry hat unerwartete Methode "
+                f"'{forbidden}', die dynamische Allowlist-Erweiterung erlauben "
+                f"würde."
+            )
+
+    def test_mutable_spec_is_frozen(self) -> None:
+        """Wenn ein Spec mutabel wäre, könnte ein Tool den risk_tier
+        eines Pfads umstellen (`ask → safe`) und Confirmation umgehen.
+        """
+        spec = SelfModRegistry.list_all()[0]
+        with pytest.raises(ValidationError):
+            spec.path = "hacked"  # type: ignore[misc]
+
+
+# --- MutableSpec-Validation ---
+
+
+class TestMutableSpecValidation:
+    def test_invalid_risk_tier_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            MutableSpec(
+                path="x.y",
+                pydantic_model_name="X",
+                field_name="y",
+                risk_tier="block",  # type: ignore[arg-type]
+                description="x",
+            )
+
+    def test_empty_path_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            MutableSpec(
+                path="",
+                pydantic_model_name="X",
+                field_name="y",
+                description="x",
+            )
+
+    def test_extra_fields_rejected(self) -> None:
+        """`MutableSpec` ist `extra='forbid'`."""
+        with pytest.raises(ValidationError):
+            MutableSpec(
+                path="x.y",
+                pydantic_model_name="X",
+                field_name="y",
+                description="x",
+                unexpected_field="boom",  # type: ignore[call-arg]
+            )
+
+
+# --- Plan-AC: keine Datei-IO auf jarvis.toml ---
+
+
+class TestNoConfigFileIO:
+    def test_registry_works_without_jarvis_toml(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Plan-AC §7.1: Registry darf in dieser Phase keine Datei lesen.
+
+        Beweis: Im leeren CWD ohne `jarvis.toml` arbeitet die Registry
+        weiterhin korrekt, weil sie ausschließlich aus der ClassVar liest.
+        """
+        monkeypatch.chdir(tmp_path)
+        assert not (tmp_path / "jarvis.toml").exists()
+
+        # Alle drei Public-API-Aufrufe müssen funktionieren.
+        assert len(SelfModRegistry.list_all()) == 13
+        assert SelfModRegistry.is_mutable("tts.provider") is True
+        assert SelfModRegistry.is_mutable("security.admin_password_hash") is False
+        spec = SelfModRegistry.get_spec("brain.primary")
+        assert spec is not None and spec.field_name == "primary"
+
+
+# --- Allowlist <-> Pydantic field parity (anti-drift guard) ---
+
+
+class TestAllowlistFieldParity:
+    """Every allowlist entry must point at a real Pydantic field.
+
+    Self-mod resolves ``pydantic_model_name`` via ``getattr(jarvis.core.config,
+    name)`` and writes ``field_name``. A typo in either (e.g. ``reply_lang``
+    instead of ``reply_language``) makes pre-validate fail at runtime for a
+    write the user explicitly asked for. This guard catches the drift at test
+    time across ALL specs, not just the new language keys.
+    """
+
+    @pytest.mark.parametrize("spec", SelfModRegistry.list_all(), ids=lambda s: s.path)
+    def test_model_and_field_exist(self, spec: MutableSpec) -> None:
+        model = getattr(cfg_module, spec.pydantic_model_name, None)
+        assert model is not None, (
+            f"{spec.path}: pydantic_model_name '{spec.pydantic_model_name}' "
+            "does not exist in jarvis.core.config"
+        )
+        assert isinstance(model, type) and issubclass(model, BaseModel), (
+            f"{spec.path}: '{spec.pydantic_model_name}' is not a Pydantic model"
+        )
+        # A declared field is the strict case. A model with extra="allow"
+        # legitimately stores undeclared keys (e.g. ui.theme on UIConfig), so
+        # the write still survives pre-validate. Only an undeclared field on an
+        # extra="forbid" model would break a mutation the user asked for — that
+        # is the drift this guard must catch.
+        declared = spec.field_name in model.model_fields
+        allows_extra = model.model_config.get("extra") == "allow"
+        assert declared or allows_extra, (
+            f"{spec.path}: field '{spec.field_name}' is not declared on "
+            f"{spec.pydantic_model_name} and the model forbids extras "
+            "(allowlist <-> config drift; pre-validate would reject this write)"
+        )
+
+
+# --- Language keys (Jarvis Control API, 2026-06-08) ---
+
+
+class TestLanguageKeys:
+    def test_reply_language_is_canonical_safe_no_restart(self) -> None:
+        """The headline ``brain.reply_language`` auto-applies (SAFE) and is
+        hot-reloaded (no restart) — that is what makes "switch to English" work
+        end-to-end via set_config_value."""
+        spec = SelfModRegistry.require_spec("brain.reply_language")
+        assert spec.pydantic_model_name == "BrainConfig"
+        assert spec.field_name == "reply_language"
+        assert spec.risk_tier == "safe"
+        assert spec.needs_restart is False
+
+    def test_stt_and_tts_language_are_mutable(self) -> None:
+        assert SelfModRegistry.is_mutable("stt.language") is True
+        assert SelfModRegistry.is_mutable("tts.language_code") is True

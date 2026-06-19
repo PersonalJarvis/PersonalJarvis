@@ -1,0 +1,165 @@
+"""Per-user Jarvis Control API key — generation, cross-platform storage, rotation.
+
+Open-source contract: every install owns a unique key (no shared secret baked
+into the package). The key authenticates the local Control API (``/api/control/*``)
+so other LOCAL agents (Codex CLI, Claude Code, a test harness) can drive Jarvis —
+read settings, switch providers, change language — without Computer-Use.
+
+Storage is the OS keyring when available (Windows Credential Manager / macOS
+Keychain / Linux Secret Service) under the existing ``KEYRING_SERVICE``. On a
+headless Linux VPS without a Secret Service daemon ``cfg.set_secret`` silently
+returns ``False`` — so a ``0600`` file fallback (under the data dir) is
+mandatory; the key must never be lost on restart. Read order: keyring -> file
+-> ``JARVIS_CONTROL_API_KEY`` env seed.
+
+Security: the key is NEVER exported into ``os.environ`` during normal operation
+(a spawned worker would inherit it and leak it via ``/proc/<pid>/environ`` on
+Linux). It is read on demand inside the auth dependency. Logs/UI lists show only
+the masked form (``jctl_…last4``); the clear value crosses the wire solely on the
+dedicated key-reveal endpoint.
+"""
+from __future__ import annotations
+
+import os
+import secrets
+import stat
+from pathlib import Path
+
+from jarvis.core import config as cfg
+
+KEY_PREFIX = "jctl_"
+KEYRING_SLOT = "jarvis_control_api_key"
+ENV_VAR = "JARVIS_CONTROL_API_KEY"
+_FILE_NAME = ".control_api_key"
+_TOKEN_BYTES = 32  # 256-bit
+
+
+def generate_control_key() -> str:
+    """A fresh 256-bit URL-safe key with a greppable ``jctl_`` prefix."""
+    return f"{KEY_PREFIX}{secrets.token_urlsafe(_TOKEN_BYTES)}"
+
+
+def mask_control_key(key: str | None) -> str:
+    """``jctl_…last4`` for logs / UI lists. Empty string for a missing key."""
+    if not key:
+        return ""
+    tail = key[-4:] if len(key) >= 4 else key
+    return f"{KEY_PREFIX}…{tail}"
+
+
+def control_key_file() -> Path:
+    """Path of the ``0600`` fallback file.
+
+    ``JARVIS_DATA_DIR`` wins; otherwise the data dir sits next to the resolved
+    config (``resolve_config_path().parent / "data"``) so it co-locates with the
+    rest of Jarvis's runtime state on both desktop and a VPS.
+    """
+    base = os.environ.get("JARVIS_DATA_DIR")
+    if base and base.strip():
+        data_dir = Path(base.strip())
+    else:
+        data_dir = cfg.resolve_config_path().parent / "data"
+    return data_dir / _FILE_NAME
+
+
+def _read_file_key() -> str | None:
+    try:
+        path = control_key_file()
+        if path.is_file():
+            value = path.read_text(encoding="utf-8").strip()
+            return value or None
+    except OSError:
+        pass
+    return None
+
+
+def _write_file_key(key: str) -> bool:
+    try:
+        path = control_key_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(key, encoding="utf-8")
+        if os.name == "posix":
+            try:
+                os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)  # 0600
+            except OSError:
+                pass
+        return True
+    except OSError:
+        return False
+
+
+def _env_key() -> str | None:
+    value = os.environ.get(ENV_VAR)
+    return value.strip() if value and value.strip() else None
+
+
+def _store(key: str) -> None:
+    """Persist ``key``. Keyring is authoritative; the file is the headless
+    fallback. CHECK the keyring return — it lies (returns False) on a VPS.
+
+    If the keyring succeeds but a stale file copy exists (from an earlier
+    headless boot), keep it in sync so the old key cannot resurrect on reboot.
+    """
+    keyring_ok = cfg.set_secret(KEYRING_SLOT, key)
+    if not keyring_ok:
+        _write_file_key(key)
+    elif control_key_file().exists():
+        _write_file_key(key)
+
+
+def get_control_key() -> str | None:
+    """The active key. Order: keyring -> 0600 file -> env seed."""
+    value = cfg.get_secret(KEYRING_SLOT)  # keyring only (no env fallback here)
+    if value:
+        return value
+    value = _read_file_key()
+    if value:
+        return value
+    return _env_key()
+
+
+def ensure_control_key() -> str:
+    """Return the existing key, or generate + persist one. Idempotent.
+
+    Call ONCE before the FastAPI app is created so the key exists by the time an
+    agent hits ``/api/control/*``. Never silently regenerates an existing key —
+    that would lock out every agent that cached it (and an operator-supplied env
+    seed is respected, not overwritten).
+    """
+    existing = get_control_key()
+    if existing:
+        return existing
+    key = generate_control_key()
+    _store(key)
+    return key
+
+
+def rotate_control_key() -> str:
+    """Generate a NEW key, overwrite the old one everywhere, return it.
+
+    The single-key model means writing the new value invalidates the old (no
+    separate revocation list). The file copy is overwritten too so a stale file
+    cannot resurrect the previous key on the next boot.
+    """
+    key = generate_control_key()
+    keyring_ok = cfg.set_secret(KEYRING_SLOT, key)
+    file_ok = _write_file_key(key)
+    if not keyring_ok and not file_ok:
+        # Neither store accepted the new key. Returning it would lock out the
+        # caller: the NEXT get_control_key() reads the OLD key, so verify() of
+        # the just-returned key fails. Fail loudly instead — the old key stays.
+        raise RuntimeError(
+            "Control key rotation failed: neither the OS keyring nor the file "
+            "fallback accepted the new key. The previous key remains active."
+        )
+    return key
+
+
+def verify_control_key(presented: str | None) -> bool:
+    """Constant-time comparison of a presented key against the stored one."""
+    if not presented:
+        return False
+    stored = get_control_key()
+    if not stored:
+        return False
+    return secrets.compare_digest(presented, stored)

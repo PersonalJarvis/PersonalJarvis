@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>BUG-019 — OpenClaw-Spawn Failure Report</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+         max-width: 880px; margin: 2rem auto; padding: 0 1rem;
+         color: #1e293b; line-height: 1.55; }
+  h1 { border-bottom: 2px solid #0f172a; padding-bottom: 0.4rem; }
+  h2 { color: #0f172a; margin-top: 2rem; }
+  h3 { color: #334155; margin-top: 1.3rem; }
+  code, pre { font-family: "JetBrains Mono", Consolas, monospace; }
+  code { background: #f1f5f9; padding: 1px 5px; border-radius: 3px; font-size: 0.92em; }
+  pre { background: #0f172a; color: #e2e8f0; padding: 0.9rem 1.1rem;
+        border-radius: 6px; overflow-x: auto; font-size: 0.85em; line-height: 1.45; }
+  .tldr { background: #fef3c7; border-left: 4px solid #f59e0b;
+          padding: 0.8rem 1rem; border-radius: 0 4px 4px 0; margin: 1rem 0; }
+  .ok   { background: #dcfce7; border-left: 4px solid #16a34a;
+          padding: 0.8rem 1rem; border-radius: 0 4px 4px 0; margin: 1rem 0; }
+  .bad  { background: #fee2e2; border-left: 4px solid #dc2626;
+          padding: 0.8rem 1rem; border-radius: 0 4px 4px 0; margin: 1rem 0; }
+  .note { background: #e0e7ff; border-left: 4px solid #6366f1;
+          padding: 0.8rem 1rem; border-radius: 0 4px 4px 0; margin: 1rem 0; }
+  table { border-collapse: collapse; width: 100%; margin: 0.7rem 0; font-size: 0.92em; }
+  th, td { text-align: left; padding: 0.5rem 0.7rem; border-bottom: 1px solid #e2e8f0; }
+  th { background: #f8fafc; }
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 10px;
+           font-size: 0.78em; font-weight: 600; }
+  .badge-fix { background: #dcfce7; color: #166534; }
+  .badge-bug { background: #fee2e2; color: #991b1b; }
+  .badge-feat { background: #dbeafe; color: #1e40af; }
+  .badge-ext { background: #fef3c7; color: #92400e; }
+  footer { color: #64748b; font-size: 0.85em; margin-top: 3rem;
+           border-top: 1px solid #e2e8f0; padding-top: 1rem; }
+</style>
+</head>
+<body>
+
+<h1>BUG-019 — OpenClaw-Spawn schlägt immer fehl</h1>
+
+<div class="tldr">
+  <strong>TL;DR — zwei Schichten.</strong>
+  <strong>Schicht 1 (Code, FIXED)</strong>: Der Critic-Subprocess startete
+  gar nicht — <code>WinError 2</code>, weil <code>argv[0]</code> als nackter
+  String <code>"gemini"</code> übergeben wurde und Windows
+  <code>CreateProcess</code> kein <code>PATHEXT</code> auswertet.
+  <strong>Schicht 2 (Konto, USER-AKTION)</strong>: Auch mit funktionierendem
+  Subprocess gibt Gemini HTTP 429 <em>„capacity exhausted"</em> zurück — die
+  Google-AI-Studio-Quota auf deinem Konto reicht nicht für den
+  3-Iteration-Critic-Loop (≈ 3–6 Calls pro Mission innerhalb 30 s).
+</div>
+
+<h2>Schicht 1: Code-Bug (gefixt)</h2>
+
+<h3>Symptom</h3>
+<ul>
+  <li><code>CriticRunner: subprocess returncode=1, stderr=''</code></li>
+  <li><code>critic failed: Critic lieferte zweimal keinen schema-validen JSON-Output</code></li>
+  <li>Nach 3 Iterationen <code>MissionFailed reason='critic_loop_exhausted'</code> → Voice sagt <em>„Die OpenClaw-Mission ist fehlgeschlagen."</em></li>
+</ul>
+
+<h3>Wurzelursache</h3>
+<p><code>build_critic_cmd()</code> baute argv mit <code>"gemini"</code>
+als argv[0]:</p>
+<pre>cmd = [
+    "gemini",                # &lt;-- nur Name, keine Extension, kein Pfad
+    "--prompt", ...,
+    "--model",  "gemini-3-flash-preview",
+    ...
+]
+proc = await asyncio.create_subprocess_exec(*cmd, ...)</pre>
+
+<p>Auf Windows liegt das Binary als
+<code>%APPDATA%\Roaming\npm\gemini.cmd</code>. PowerShell findet's via
+<code>PATHEXT</code>, <code>CreateProcess</code> (Python's
+<code>create_subprocess_exec</code>) macht das <strong>nicht</strong> und
+wirft:</p>
+<pre>FileNotFoundError: [WinError 2] Das System kann die
+                   angegebene Datei nicht finden</pre>
+
+<p>Diese Exception ging durch <code>_invoke_once()</code> hoch und wurde
+als generisches Subprocess-Fehler-Pattern geloggt — die echte Ursache war
+unsichtbar. Der Worker-Side hatte den Bug schon erkannt
+(<code>_resolve_gemini_binary()</code> im <code>GeminiWorker</code>), das
+Pendant beim Critic-Switch in Commit <code>3f7985a2</code> war
+übersehen.</p>
+
+<h3>Fix</h3>
+<p>Neuer Helper <code>_resolve_cli_binary(name, fallback_exts)</code> in
+<code>jarvis/missions/critic/runner.py</code>:</p>
+<pre>def _resolve_cli_binary(name, fallback_exts=()):
+    import shutil
+    found = shutil.which(name)
+    if found:
+        return found
+    for ext in fallback_exts:
+        found = shutil.which(name + ext)
+        if found:
+            return found
+    return name        # last resort: bare name; let CreateProcess raise loud</pre>
+
+<p>Beide Code-Pfade (Claude und Gemini) routen argv[0] durch den Helper.
+Zusätzlich <code>DEFAULT_TIMEOUT_SECONDS</code> von <strong>120 s → 240 s</strong>
+hochgesetzt (Gemini-Cold-Start braucht Context-Cache-Create).</p>
+
+<div class="ok">
+<strong>Verifikation Schicht 1.</strong><br>
+Manueller Subprocess-Repro mit aufgelöstem Pfad:
+<code>EXIT=0</code>, <code>STDOUT_LEN=1236</code>,
+<code>response="{\"v\":\"ok\"}"</code>.<br>
+Resolved argv[0]:
+<code>C:\Users\Administrator\AppData\Roaming\npm\gemini.CMD</code>.<br>
+Tests: <strong>166 / 166 grün</strong> (Critic + Injection + Agents).
+</div>
+
+<h2>Schicht 2: Quota auf deinem Gemini-Konto</h2>
+
+<h3>Was die Logs zeigen</h3>
+<p>Nach Schicht-1-Fix hat der Critic-Subprocess wirklich gestartet — und
+nach 281 s mit folgendem Stderr abgebrochen:</p>
+<pre>cause: {
+  code: 429,
+  message: 'You have exhausted your capacity on this model.',
+  details: [[Object], [Object]]
+},
+retryDelayMs: 10000</pre>
+
+<p>Gemini-CLI macht intern Exponential-Backoff (10 s → 20 s → 35 s → 35 s),
+nach 4 Retries gibt sie auf. Wirft den Job zurück an unsere
+<code>CriticRunner</code> — die kommt erstmals in den Timeout-Fall, dann
+Iter-1 neu spawnen → noch eine Critic-Call → wieder 429.</p>
+
+<h3>Warum das passiert</h3>
+<p>Google-AI-Studio Free-Tier hat strikte Per-Minute-Limits auf
+<code>gemini-3-flash-preview</code> (üblich: ~5–10 req/min). Phase-6 Critic-Loop
+ist designed für High-Quota-Anbieter:</p>
+<table>
+<tr><th>Iter</th><th>Worker-Call</th><th>Critic-Call 1</th><th>Critic-Call 2 (reframe)</th></tr>
+<tr><td>0</td><td>Gemini</td><td>Gemini</td><td>(nur bei JSON-Error)</td></tr>
+<tr><td>1</td><td>Gemini</td><td>Gemini</td><td>(nur bei JSON-Error)</td></tr>
+<tr><td>2</td><td>Gemini</td><td>Gemini</td><td>(nur bei JSON-Error)</td></tr>
+</table>
+<p>Worst-Case <strong>9 Gemini-Calls in &lt; 60 s</strong> aus einem einzigen
+Mission-Spawn. Free-Tier killt das nach Call 5–6.</p>
+
+<h3>Was du tun kannst (User-Aktion)</h3>
+<ul>
+  <li><strong>Empfehlung</strong>: Billing auf
+      <a href="https://aistudio.google.com/app/apikey">aistudio.google.com</a>
+      aktivieren. Pay-as-you-go Flash kostet ~$0.075 / 1M Input-Tokens —
+      eine Hello-World-Mission liegt bei ~$0.001. Damit verschwindet die
+      Per-Minute-Quota komplett.</li>
+  <li><strong>Alternative ohne Geld</strong>: ich kann den Critic-Loop
+      auf der Gemini-Side aggressiver beschränken (z. B. nur 1 Call pro
+      Iteration, kein adversarial-reframe-Retry). Halbiert die
+      Quota-Last, könnte mit Free-Tier knapp reichen — kostet aber etwas
+      Anti-Sycophancy-Schutz.</li>
+</ul>
+
+<h2>Was sich an Files geändert hat</h2>
+<table>
+<tr><th>Datei</th><th>Was</th><th>Lines</th></tr>
+<tr><td><code>jarvis/missions/critic/runner.py</code></td>
+    <td><span class="badge badge-fix">FIX</span> <code>_resolve_cli_binary()</code> + 240s Timeout</td>
+    <td>+45 / −3</td></tr>
+<tr><td><code>tests/missions/critic/test_runner_dryrun.py</code></td>
+    <td><span class="badge badge-feat">TEST</span> 2 Resolver-Tests + Timeout-Pinning</td>
+    <td>+46 / −0</td></tr>
+</table>
+
+<h2>Was NICHT kaputt gegangen ist</h2>
+<ul>
+  <li>Claude-Pfad (<code>_brain_primary() == "claude-api"</code>): voller
+      Backward-Compat, alle alten Tests grün.</li>
+  <li>Worker (GeminiWorker / OpenClawWorker): unverändert.</li>
+  <li>Voice / STT / TTS / Wake-Word: keine Audio-Layer-Änderung.</li>
+  <li>Frontend / Outputs-View / Agents-Board: keine UI-Änderung.</li>
+  <li>Injection-Scanner, Safety-Path, Worktree-Cleanup: alles unverändert.</li>
+</ul>
+
+<div class="note">
+<strong>Empfehlung.</strong> Schicht 1 ist als Commit <code>4c5215f2</code>
+auf <code>main</code> gemerged. Für Schicht 2 entscheidest du: Gemini-Billing
+aktivieren (clean, deckt alle Phase-6-Anforderungen ab) oder ich strippe den
+adversarial-reframe-Retry auf der Gemini-Side (cheaper, weniger Schutz).
+</div>
+
+<footer>
+  Branch: <code>main</code> ·
+  Commit: <code>4c5215f2</code> ·
+  Date: 2026-05-12 ·
+  Related: BUG-014 (WDM-KS), BUG-018 (Critic max-turns), BUG-019 (PATHEXT + Quota).
+</footer>
+
+</body>
+</html>

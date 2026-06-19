@@ -1,0 +1,45 @@
+import { useWebSocket } from "@/hooks/useWebSocket";
+import { useBrainStatus } from "@/hooks/useBrainStatus";
+import { useVoiceStatus } from "@/hooks/useVoiceStatus";
+import { Sidebar } from "@/components/layout/Sidebar";
+import { TopBar } from "@/components/layout/TopBar";
+import { MainView } from "@/components/layout/MainView";
+import { ToastLayer } from "@/components/ToastLayer";
+import { JarvisDock } from "@/components/JarvisDock";
+import { CliConnectPoller } from "@/components/CliConnectPoller";
+import { OnboardingGate } from "@/components/onboarding/OnboardingGate";
+
+export default function App() {
+  useWebSocket();
+  useBrainStatus();
+  useVoiceStatus();
+
+  return (
+    <div className="relative flex h-screen w-screen overflow-hidden bg-background text-foreground">
+      <div className="pointer-events-none fixed inset-0 jarvis-grid opacity-40" aria-hidden />
+      <div
+        className="pointer-events-none fixed right-[-10%] top-[-20%] h-[600px] w-[600px] jarvis-glow"
+        aria-hidden
+      />
+
+      <Sidebar />
+
+      <main className="relative z-10 flex min-w-0 flex-1 flex-col">
+        <TopBar />
+        <div className="min-h-0 flex-1">
+          <MainView />
+        </div>
+      </main>
+
+      <ToastLayer />
+      {/* Always-present "Jarvis presence" drop dock — drag a mission/output
+          card here to pull it into the live conversation context. */}
+      <JarvisDock />
+      {/* Hintergrund-Polling fuer CLI-OAuth-Logins — pollt /check alle 3s
+          solange ein cliConnectCoach im Store gesetzt ist. */}
+      <CliConnectPoller />
+      {/* Blocking onboarding gate — overlays everything until first-run setup is complete. */}
+      <OnboardingGate />
+    </div>
+  );
+}

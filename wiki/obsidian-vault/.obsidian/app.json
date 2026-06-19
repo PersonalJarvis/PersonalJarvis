@@ -1,0 +1,15 @@
+{
+  "showInlineTitle": true,
+  "attachmentFolderPath": "90-attachments",
+  "alwaysUpdateLinks": true,
+  "newLinkFormat": "shortest",
+  "useMarkdownLinks": false,
+  "promptDelete": true,
+  "foldHeading": true,
+  "foldIndent": true,
+  "showLineNumber": false,
+  "defaultViewMode": "preview",
+  "livePreview": true,
+  "readableLineLength": true,
+  "strictLineBreaks": false
+}

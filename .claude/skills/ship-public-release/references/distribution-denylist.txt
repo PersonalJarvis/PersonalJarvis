@@ -1,0 +1,75 @@
+# Distribution denylist — paths that must NEVER ship to the public repo.
+#
+# This is a CURATED DENYLIST, not a working-vs-dist diff. New feature code is
+# never listed here, so it ships automatically; only personal / secret /
+# internal-process artifacts are withheld. Each line is a gitignore-ish glob
+# matched against the posix, repo-relative path of every git-TRACKED file.
+# Globs: `**` = any depth, `*` = within a path segment, `?` = one char.
+# Lines starting with `#` and blank lines are ignored.
+#
+# Decision record: the maintainer chose (2026-05-31) to keep withholding all
+# internal dev docs (OpenClaw-style clean public repo) and the encrypted
+# release-signing keys (forks generate their own). Confirmed in the skill plan.
+#
+# WHY a denylist and not the file diff: the working↔dist diff conflates two
+# different things — deliberately-withheld files AND files merely newer than the
+# last release. Baking the diff into "always exclude" would freeze out real
+# features (e.g. jarvis/state/*, jarvis/plugins/tts/fallback_tts.py). So those
+# are intentionally ABSENT from this list and ship normally.
+
+# --- This skill itself (CRITICAL self-reference guard) ----------------------
+# Its references/ carry the maintainer's name + emails as scrub *patterns*;
+# shipping them would leak exactly what they exist to remove.
+.claude/skills/ship-public-release/**
+
+# --- .mailmap: full-depersonalization decision (2026-06-01) ------------------
+# The dist repo's history is already 100% noreply-authored (no real-email
+# commits exist there), so .mailmap maps nothing and is NOT load-bearing in the
+# distribution — it only ships the maintainer's two private emails + full name
+# as file data. Per the maintainer's "full depersonalization" choice for the
+# v0.1.0 release, drop it from the snapshot entirely (cleanest cut: removes both
+# real emails and the full name with zero scrub artifacts). reconcile deletes it
+# from the dist tree.
+.mailmap
+
+# --- Encrypted release-signing keys (maintainer identity) -------------------
+install/keys/*.key.enc
+
+# --- Wave-2 demo passphrase carriers (2026-06-17) ---------------------------
+# The encrypted key above is withheld, but the passphrase that decrypts it is
+# committed in plain text in install/TRUST_ROOT.md (§3.3) and in these two
+# ceremony docs (the `WAVE2_CEREMONY_PASSPHRASE=...` / `-pass "pass:..."`
+# lines). Withhold the passphrase too so a public release never ships either
+# half of the offline-ceremony key. (Private repo keeps both — Foundation-demo
+# posture, rotation deferred to the documented v0.5.0 cut.)
+install/TRUST_ROOT.md
+docs/supply-chain/wave2-key-ceremony.md
+docs/supply-chain/wave4-distribution.md
+
+# --- Internal scratch scripts (underscore-prefixed convention) --------------
+scripts/_*.py
+
+# --- Internal dev-process docs: whole subtrees ------------------------------
+docs/superpowers/**
+docs/plans/**
+docs/phase-b1-wiki-curator/**
+docs/diagnostics/**
+
+# --- Internal dev-process docs: individual files ----------------------------
+docs/BUGS.md
+docs/adr/0009-self-healing-worker-critic.md
+docs/agents-self-verification.md
+docs/deepgram-stt-research-2026-05-20.md
+docs/openclaw-bridge.md
+docs/openclaw-spawn-failure-analysis-2026-05-18.md
+docs/persona-audit-report.md
+docs/persona-refactor-results.md
+docs/persona-research.md
+docs/phase1c-test-results.md
+docs/phase2-integration-test-results.md
+docs/phase6-handoff-2026-04-26.md
+docs/phase6-test-report.md
+docs/spike-results-openclaw.md
+docs/voice-acceptance-brief.md
+docs/bug-019-spawn-failure-report.html
+docs/jarvis-board/PHASE_A_DONE.md

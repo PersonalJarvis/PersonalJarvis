@@ -1,0 +1,2128 @@
+{
+  "schema_version": "1",
+  "updated": "2026-04-23",
+  "note": "Curated seed catalog for the CLI integration. 21 entries across 7 categories (cloud/paas/baas/git/payments/container/workspace). All risk-tier defaults follow business impact: payments/prod-cluster -> ask, everything else -> monitor + blacklist.",
+  "entries": [
+    {
+      "name": "gcloud",
+      "display_name": "Google Cloud CLI",
+      "description": "Google Cloud Platform CLI for Compute, Storage, IAM, GKE, Cloud Run.",
+      "homepage": "https://cloud.google.com/sdk",
+      "binary_name": "gcloud",
+      "check_command": [
+        "gcloud",
+        "--version"
+      ],
+      "version_parse_regex": "Google Cloud SDK (\\S+)",
+      "install": {
+        "winget_id": "Google.CloudSDK",
+        "scoop_package": "gcloud",
+        "npm_package": null,
+        "pip_package": null,
+        "cargo_package": null,
+        "script_url": null,
+        "manual_url": "https://cloud.google.com/sdk/docs/install",
+        "recommended": "winget"
+      },
+      "auth": {
+        "type": "oauth_cli",
+        "login_command": [
+          "gcloud",
+          "auth",
+          "login"
+        ],
+        "logout_command": [
+          "gcloud",
+          "auth",
+          "revoke",
+          "--all"
+        ],
+        "status_command": [
+          "gcloud",
+          "auth",
+          "list",
+          "--format=json"
+        ],
+        "status_parse": "json_accounts",
+        "secret_keys": [],
+        "env_vars": []
+      },
+      "risk": {
+        "default_tier": "monitor",
+        "blacklist_patterns": [
+          "gcloud * delete *",
+          "gcloud projects delete *",
+          "gcloud compute instances delete *",
+          "gcloud iam service-accounts delete *",
+          "gcloud sql instances delete *",
+          "gcloud storage rm *"
+        ],
+        "whitelist_patterns": [
+          "gcloud * list",
+          "gcloud * list *",
+          "gcloud * describe *",
+          "gcloud auth *",
+          "gcloud config *",
+          "gcloud projects list*",
+          "gcloud * list*",
+          "gcloud * describe*",
+          "gcloud config list*",
+          "gcloud auth list*",
+          "gcloud --version*"
+        ]
+      },
+      "tool_schema_examples": [
+        "gcloud storage ls gs://my-bucket",
+        "gcloud compute instances list",
+        "gcloud projects describe my-project",
+        "gcloud run services list --region=europe-west1",
+        "gcloud billing accounts list",
+        "gcloud billing projects list --billing-account=ACCOUNT_ID"
+      ],
+      "icon": "cloud",
+      "category": "cloud",
+      "capabilities": [
+        {
+          "domains": [
+            "cloud",
+            "deployments"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "checke",
+            "describe",
+            "deploy",
+            "guck",
+            "gucke",
+            "gucken",
+            "schau",
+            "schaue",
+            "look",
+            "pruef",
+            "pruefe"
+          ],
+          "objects": [
+            "gcp",
+            "google cloud",
+            "google cli",
+            "google-cli",
+            "gcloud",
+            "compute",
+            "cloud run",
+            "instanz",
+            "instanzen",
+            "instances",
+            "bucket",
+            "buckets",
+            "kosten",
+            "cost",
+            "costs",
+            "billing",
+            "rechnung",
+            "ausgaben",
+            "budget",
+            "budgets",
+            "google-kosten",
+            "google kosten",
+            "cloud-kosten",
+            "projekt",
+            "projekte",
+            "project",
+            "projects",
+            "google-projekte",
+            "apis",
+            "dienste",
+            "services"
+          ],
+          "description": "Google Cloud: list/describe projects, compute instances, Cloud Run services, storage, billing accounts and budgets (cost overview)."
+        }
+      ]
+    },
+    {
+      "name": "az",
+      "display_name": "Azure CLI",
+      "description": "Microsoft Azure CLI — Resources, VMs, AKS, Functions.",
+      "homepage": "https://learn.microsoft.com/cli/azure",
+      "binary_name": "az",
+      "check_command": [
+        "az",
+        "version",
+        "--output",
+        "json"
+      ],
+      "version_parse_regex": "\"azure-cli\":\\s*\"(\\S+?)\"",
+      "install": {
+        "winget_id": "Microsoft.AzureCLI",
+        "scoop_package": "azure-cli",
+        "npm_package": null,
+        "pip_package": "azure-cli",
+        "cargo_package": null,
+        "script_url": null,
+        "manual_url": "https://learn.microsoft.com/cli/azure/install-azure-cli-windows",
+        "recommended": "winget"
+      },
+      "auth": {
+        "type": "oauth_cli",
+        "login_command": [
+          "az",
+          "login"
+        ],
+        "logout_command": [
+          "az",
+          "logout"
+        ],
+        "status_command": [
+          "az",
+          "account",
+          "show",
+          "--output",
+          "json"
+        ],
+        "status_parse": "json_object_exists",
+        "secret_keys": [],
+        "env_vars": []
+      },
+      "risk": {
+        "default_tier": "monitor",
+        "blacklist_patterns": [
+          "az * delete *",
+          "az group delete *",
+          "az vm delete *",
+          "az aks delete *",
+          "az storage account delete *",
+          "az * delete*"
+        ],
+        "whitelist_patterns": [
+          "az * list",
+          "az * show *",
+          "az account *",
+          "az config *",
+          "az * list*",
+          "az * show*",
+          "az account show*"
+        ]
+      },
+      "tool_schema_examples": [
+        "az group list",
+        "az vm list --output table",
+        "az aks get-credentials --resource-group rg --name cluster"
+      ],
+      "icon": "cloud",
+      "category": "cloud",
+      "capabilities": [
+        {
+          "domains": [
+            "cloud"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check"
+          ],
+          "objects": [
+            "azure",
+            "az",
+            "resource group",
+            "vm",
+            "vms"
+          ],
+          "description": "Azure: list/show resource groups, VMs, services."
+        }
+      ]
+    },
+    {
+      "name": "aws",
+      "display_name": "AWS CLI v2",
+      "description": "Amazon Web Services CLI — S3, EC2, Lambda, IAM, and more.",
+      "homepage": "https://aws.amazon.com/cli",
+      "binary_name": "aws",
+      "check_command": [
+        "aws",
+        "--version"
+      ],
+      "version_parse_regex": "aws-cli/(\\S+)",
+      "install": {
+        "winget_id": "Amazon.AWSCLI",
+        "scoop_package": "aws",
+        "npm_package": null,
+        "pip_package": "awscli",
+        "cargo_package": null,
+        "script_url": null,
+        "manual_url": "https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2-windows.html",
+        "recommended": "winget"
+      },
+      "auth": {
+        "type": "api_key",
+        "login_command": [
+          "aws",
+          "configure"
+        ],
+        "logout_command": null,
+        "status_command": [
+          "aws",
+          "sts",
+          "get-caller-identity",
+          "--output",
+          "json"
+        ],
+        "status_parse": "json_object_exists",
+        "secret_keys": [
+          "aws_access_key_id",
+          "aws_secret_access_key"
+        ],
+        "env_vars": [
+          "AWS_ACCESS_KEY_ID",
+          "AWS_SECRET_ACCESS_KEY"
+        ]
+      },
+      "risk": {
+        "default_tier": "monitor",
+        "blacklist_patterns": [
+          "aws * delete-*",
+          "aws s3 rm * --recursive*",
+          "aws s3 rb *",
+          "aws iam delete-*",
+          "aws ec2 terminate-instances *",
+          "aws * delete*",
+          "aws * terminate-instances*"
+        ],
+        "whitelist_patterns": [
+          "aws * list-*",
+          "aws * describe-*",
+          "aws * get-*",
+          "aws s3 ls*",
+          "aws sts get-caller-identity*",
+          "aws * list*",
+          "aws * describe*"
+        ]
+      },
+      "tool_schema_examples": [
+        "aws s3 ls",
+        "aws ec2 describe-instances --region eu-central-1",
+        "aws lambda list-functions"
+      ],
+      "icon": "cloud",
+      "category": "cloud",
+      "capabilities": [
+        {
+          "domains": [
+            "cloud"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "describe"
+          ],
+          "objects": [
+            "aws",
+            "s3",
+            "ec2",
+            "lambda",
+            "bucket",
+            "buckets"
+          ],
+          "description": "AWS: list/describe S3, EC2, Lambda resources."
+        }
+      ]
+    },
+    {
+      "name": "wrangler",
+      "display_name": "Cloudflare Wrangler",
+      "description": "Cloudflare Workers, Pages, R2, D1 CLI.",
+      "homepage": "https://developers.cloudflare.com/workers/wrangler",
+      "binary_name": "wrangler",
+      "check_command": [
+        "wrangler",
+        "--version"
+      ],
+      "version_parse_regex": "(\\d+\\.\\d+\\.\\d+)",
+      "install": {
+        "winget_id": null,
+        "scoop_package": null,
+        "npm_package": "wrangler",
+        "pip_package": null,
+        "cargo_package": null,
+        "script_url": null,
+        "manual_url": "https://developers.cloudflare.com/workers/wrangler/install-and-update",
+        "recommended": "npm"
+      },
+      "auth": {
+        "type": "oauth_cli",
+        "login_command": [
+          "wrangler",
+          "login"
+        ],
+        "logout_command": [
+          "wrangler",
+          "logout"
+        ],
+        "status_command": [
+          "wrangler",
+          "whoami"
+        ],
+        "status_parse": "text_contains_email",
+        "secret_keys": [
+          "cloudflare_api_token"
+        ],
+        "env_vars": [
+          "CLOUDFLARE_API_TOKEN"
+        ]
+      },
+      "risk": {
+        "default_tier": "monitor",
+        "blacklist_patterns": [
+          "wrangler delete *",
+          "wrangler r2 bucket delete *",
+          "wrangler d1 delete *",
+          "wrangler delete*",
+          "wrangler kv:key delete*"
+        ],
+        "whitelist_patterns": [
+          "wrangler whoami*",
+          "wrangler * list*",
+          "wrangler tail*",
+          "wrangler deployments list*",
+          "wrangler pages project list*"
+        ]
+      },
+      "tool_schema_examples": [
+        "wrangler deploy",
+        "wrangler tail --format=json",
+        "wrangler r2 bucket list"
+      ],
+      "icon": "cloud",
+      "category": "cloud",
+      "capabilities": [
+        {
+          "domains": [
+            "deployments",
+            "cloud"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "deploy"
+          ],
+          "objects": [
+            "cloudflare",
+            "wrangler",
+            "worker",
+            "workers",
+            "pages"
+          ],
+          "description": "Cloudflare: list Workers and Pages projects, tail logs, deploy."
+        }
+      ]
+    },
+    {
+      "name": "vercel",
+      "display_name": "Vercel CLI",
+      "description": "Vercel deployments, projects, env variables.",
+      "homepage": "https://vercel.com/cli",
+      "binary_name": "vercel",
+      "check_command": [
+        "vercel",
+        "--version"
+      ],
+      "version_parse_regex": "Vercel CLI (\\S+)",
+      "install": {
+        "winget_id": null,
+        "scoop_package": null,
+        "npm_package": "vercel",
+        "pip_package": null,
+        "cargo_package": null,
+        "script_url": null,
+        "manual_url": "https://vercel.com/docs/cli",
+        "recommended": "npm"
+      },
+      "auth": {
+        "type": "oauth_cli",
+        "login_command": [
+          "vercel",
+          "login"
+        ],
+        "logout_command": [
+          "vercel",
+          "logout"
+        ],
+        "status_command": [
+          "vercel",
+          "whoami"
+        ],
+        "status_parse": "text_contains_username",
+        "secret_keys": [
+          "vercel_token"
+        ],
+        "env_vars": [
+          "VERCEL_TOKEN"
+        ]
+      },
+      "risk": {
+        "default_tier": "monitor",
+        "blacklist_patterns": [
+          "vercel remove *",
+          "vercel rm *",
+          "vercel project rm *",
+          "vercel domains rm *",
+          "vercel env rm *"
+        ],
+        "whitelist_patterns": [
+          "vercel whoami*",
+          "vercel ls*",
+          "vercel list*",
+          "vercel inspect*",
+          "vercel project ls*",
+          "vercel logs*"
+        ]
+      },
+      "tool_schema_examples": [
+        "vercel ls",
+        "vercel inspect my-app",
+        "vercel env ls"
+      ],
+      "icon": "cloud",
+      "category": "paas",
+      "capabilities": [
+        {
+          "domains": [
+            "deployments"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "deploy",
+            "deploye"
+          ],
+          "objects": [
+            "deployment",
+            "deployments",
+            "vercel",
+            "build",
+            "builds",
+            "preview",
+            "projekt",
+            "projekte",
+            "project",
+            "projects"
+          ],
+          "description": "Vercel: list deployments and projects, inspect builds, read logs, deploy."
+        }
+      ]
+    },
+    {
+      "name": "netlify",
+      "display_name": "Netlify CLI",
+      "description": "Netlify Sites, Deployments, Functions, Env.",
+      "homepage": "https://docs.netlify.com/cli/get-started/",
+      "binary_name": "netlify",
+      "check_command": [
+        "netlify",
+        "--version"
+      ],
+      "version_parse_regex": "netlify-cli/(\\S+)",
+      "install": {
+        "winget_id": null,
+        "scoop_package": null,
+        "npm_package": "netlify-cli",
+        "pip_package": null,
+        "cargo_package": null,
+        "script_url": null,
+        "manual_url": "https://docs.netlify.com/cli/get-started/",
+        "recommended": "npm"
+      },
+      "auth": {
+        "type": "oauth_cli",
+        "login_command": [
+          "netlify",
+          "login"
+        ],
+        "logout_command": [
+          "netlify",
+          "logout"
+        ],
+        "status_command": [
+          "netlify",
+          "status",
+          "--json"
+        ],
+        "status_parse": "json_object_exists",
+        "secret_keys": [
+          "netlify_auth_token"
+        ],
+        "env_vars": [
+          "NETLIFY_AUTH_TOKEN"
+        ]
+      },
+      "risk": {
+        "default_tier": "monitor",
+        "blacklist_patterns": [
+          "netlify sites:delete *",
+          "netlify env:unset *",
+          "netlify sites:delete*"
+        ],
+        "whitelist_patterns": [
+          "netlify status*",
+          "netlify sites:list*",
+          "netlify env:list*",
+          "netlify api listSiteDeploys*"
+        ]
+      },
+      "tool_schema_examples": [
+        "netlify status --json",
+        "netlify sites:list",
+        "netlify deploy --prod"
+      ],
+      "icon": "cloud",
+      "category": "paas",
+      "capabilities": [
+        {
+          "domains": [
+            "deployments"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "deploy"
+          ],
+          "objects": [
+            "netlify",
+            "deployment",
+            "deployments",
+            "site",
+            "sites"
+          ],
+          "description": "Netlify: list sites and deploys, read status."
+        }
+      ]
+    },
+    {
+      "name": "heroku",
+      "display_name": "Heroku CLI",
+      "description": "Heroku Apps, Dynos, Addons, Releases.",
+      "homepage": "https://devcenter.heroku.com/articles/heroku-cli",
+      "binary_name": "heroku",
+      "check_command": [
+        "heroku",
+        "--version"
+      ],
+      "version_parse_regex": "heroku/(\\S+)",
+      "install": {
+        "winget_id": "Heroku.HerokuCLI",
+        "scoop_package": null,
+        "npm_package": "heroku",
+        "pip_package": null,
+        "cargo_package": null,
+        "script_url": null,
+        "manual_url": "https://devcenter.heroku.com/articles/heroku-cli",
+        "recommended": "winget"
+      },
+      "auth": {
+        "type": "oauth_cli",
+        "login_command": [
+          "heroku",
+          "login"
+        ],
+        "logout_command": [
+          "heroku",
+          "logout"
+        ],
+        "status_command": [
+          "heroku",
+          "auth:whoami"
+        ],
+        "status_parse": "text_contains_email",
+        "secret_keys": [
+          "heroku_api_key"
+        ],
+        "env_vars": [
+          "HEROKU_API_KEY"
+        ]
+      },
+      "risk": {
+        "default_tier": "monitor",
+        "blacklist_patterns": [
+          "heroku apps:destroy *",
+          "heroku addons:destroy *",
+          "heroku pg:reset *",
+          "heroku apps:destroy*",
+          "heroku addons:destroy*"
+        ],
+        "whitelist_patterns": [
+          "heroku apps*",
+          "heroku logs*",
+          "heroku config*",
+          "heroku ps*",
+          "heroku releases*"
+        ]
+      },
+      "tool_schema_examples": [
+        "heroku apps",
+        "heroku logs --tail --app myapp",
+        "heroku ps --app myapp"
+      ],
+      "icon": "cloud",
+      "category": "paas",
+      "capabilities": [
+        {
+          "domains": [
+            "deployments"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check"
+          ],
+          "objects": [
+            "heroku",
+            "app",
+            "apps",
+            "dyno",
+            "dynos"
+          ],
+          "description": "Heroku: list apps, dynos, releases; read logs."
+        }
+      ]
+    },
+    {
+      "name": "railway",
+      "display_name": "Railway CLI",
+      "description": "Railway Projects, Services, Deployments.",
+      "homepage": "https://docs.railway.app/develop/cli",
+      "binary_name": "railway",
+      "check_command": [
+        "railway",
+        "--version"
+      ],
+      "version_parse_regex": "railway (\\S+)",
+      "install": {
+        "winget_id": null,
+        "scoop_package": "railway",
+        "npm_package": "@railway/cli",
+        "pip_package": null,
+        "cargo_package": null,
+        "script_url": null,
+        "manual_url": "https://docs.railway.app/develop/cli",
+        "recommended": "npm"
+      },
+      "auth": {
+        "type": "oauth_cli",
+        "login_command": [
+          "railway",
+          "login"
+        ],
+        "logout_command": [
+          "railway",
+          "logout"
+        ],
+        "status_command": [
+          "railway",
+          "whoami"
+        ],
+        "status_parse": "text_contains_email",
+        "secret_keys": [
+          "railway_token"
+        ],
+        "env_vars": [
+          "RAILWAY_TOKEN"
+        ]
+      },
+      "risk": {
+        "default_tier": "monitor",
+        "blacklist_patterns": [
+          "railway down *",
+          "railway delete *",
+          "railway delete*"
+        ],
+        "whitelist_patterns": [
+          "railway whoami*",
+          "railway status*",
+          "railway list*",
+          "railway logs*"
+        ]
+      },
+      "tool_schema_examples": [
+        "railway status",
+        "railway logs",
+        "railway variables"
+      ],
+      "icon": "cloud",
+      "category": "paas",
+      "capabilities": [
+        {
+          "domains": [
+            "deployments"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "deploy"
+          ],
+          "objects": [
+            "railway",
+            "deployment",
+            "deployments",
+            "service",
+            "services"
+          ],
+          "description": "Railway: list projects/services, read status and logs."
+        }
+      ]
+    },
+    {
+      "name": "flyctl",
+      "display_name": "Fly.io CLI",
+      "description": "Fly.io Apps, Machines, Volumes, Secrets.",
+      "homepage": "https://fly.io/docs/flyctl",
+      "binary_name": "flyctl",
+      "check_command": [
+        "flyctl",
+        "version"
+      ],
+      "version_parse_regex": "flyctl v(\\S+)",
+      "install": {
+        "winget_id": null,
+        "scoop_package": "flyctl",
+        "npm_package": null,
+        "pip_package": null,
+        "cargo_package": null,
+        "script_url": "https://fly.io/install.ps1",
+        "manual_url": "https://fly.io/docs/hands-on/install-flyctl/",
+        "recommended": "scoop"
+      },
+      "auth": {
+        "type": "oauth_cli",
+        "login_command": [
+          "flyctl",
+          "auth",
+          "login"
+        ],
+        "logout_command": [
+          "flyctl",
+          "auth",
+          "logout"
+        ],
+        "status_command": [
+          "flyctl",
+          "auth",
+          "whoami"
+        ],
+        "status_parse": "text_contains_email",
+        "secret_keys": [
+          "fly_api_token"
+        ],
+        "env_vars": [
+          "FLY_API_TOKEN"
+        ]
+      },
+      "risk": {
+        "default_tier": "monitor",
+        "blacklist_patterns": [
+          "flyctl apps destroy *",
+          "flyctl volumes destroy *",
+          "flyctl machine destroy *",
+          "flyctl apps destroy*",
+          "flyctl machine destroy*"
+        ],
+        "whitelist_patterns": [
+          "flyctl status*",
+          "flyctl apps list*",
+          "flyctl logs*",
+          "flyctl auth whoami*",
+          "flyctl machine list*"
+        ]
+      },
+      "tool_schema_examples": [
+        "flyctl apps list",
+        "flyctl status --app myapp",
+        "flyctl logs --app myapp"
+      ],
+      "icon": "cloud",
+      "category": "paas",
+      "capabilities": [
+        {
+          "domains": [
+            "deployments"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "deploy"
+          ],
+          "objects": [
+            "fly",
+            "fly.io",
+            "flyctl",
+            "app",
+            "apps",
+            "machine",
+            "machines"
+          ],
+          "description": "Fly.io: list apps and machines, read status and logs."
+        }
+      ]
+    },
+    {
+      "name": "render",
+      "display_name": "Render CLI",
+      "description": "Render.com Services, Deploys, Logs.",
+      "homepage": "https://render.com/docs/cli",
+      "binary_name": "render",
+      "check_command": [
+        "render",
+        "--version"
+      ],
+      "version_parse_regex": "(\\d+\\.\\d+\\.\\d+)",
+      "install": {
+        "winget_id": null,
+        "scoop_package": null,
+        "npm_package": null,
+        "pip_package": null,
+        "cargo_package": null,
+        "script_url": "https://render.com/install.ps1",
+        "manual_url": "https://render.com/docs/cli"
+      },
+      "auth": {
+        "type": "api_key",
+        "login_command": [
+          "render",
+          "login"
+        ],
+        "logout_command": null,
+        "status_command": [
+          "render",
+          "whoami"
+        ],
+        "status_parse": "text_contains_email",
+        "secret_keys": [
+          "render_api_key"
+        ],
+        "env_vars": [
+          "RENDER_API_KEY"
+        ]
+      },
+      "risk": {
+        "default_tier": "monitor",
+        "blacklist_patterns": [
+          "render services delete *",
+          "render services delete*"
+        ],
+        "whitelist_patterns": [
+          "render services list*",
+          "render logs*",
+          "render whoami*",
+          "render services*",
+          "render deploys list*"
+        ]
+      },
+      "tool_schema_examples": [
+        "render services list",
+        "render logs srv-xxxxx"
+      ],
+      "icon": "cloud",
+      "category": "paas",
+      "capabilities": [
+        {
+          "domains": [
+            "deployments"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check"
+          ],
+          "objects": [
+            "render",
+            "service",
+            "services",
+            "deployment",
+            "deployments"
+          ],
+          "description": "Render: list services and deploys, read status."
+        }
+      ]
+    },
+    {
+      "name": "supabase",
+      "display_name": "Supabase CLI",
+      "description": "Supabase Projects, DB, Edge Functions, Migrations.",
+      "homepage": "https://supabase.com/docs/guides/cli",
+      "binary_name": "supabase",
+      "check_command": [
+        "supabase",
+        "--version"
+      ],
+      "version_parse_regex": "(\\d+\\.\\d+\\.\\d+)",
+      "install": {
+        "scoop_package": "supabase",
+        "npm_package": null,
+        "pip_package": null,
+        "cargo_package": null,
+        "script_url": null,
+        "manual_url": "https://supabase.com/docs/guides/cli/getting-started",
+        "recommended": "scoop"
+      },
+      "auth": {
+        "type": "oauth_cli",
+        "login_command": [
+          "supabase",
+          "login"
+        ],
+        "logout_command": [
+          "supabase",
+          "logout"
+        ],
+        "status_command": [
+          "supabase",
+          "projects",
+          "list",
+          "--output",
+          "json"
+        ],
+        "status_parse": "json_array_nonempty_or_error",
+        "secret_keys": [
+          "supabase_access_token"
+        ],
+        "env_vars": [
+          "SUPABASE_ACCESS_TOKEN"
+        ]
+      },
+      "risk": {
+        "default_tier": "monitor",
+        "blacklist_patterns": [
+          "supabase projects delete *",
+          "supabase db reset*",
+          "supabase migration repair*",
+          "supabase projects delete*"
+        ],
+        "whitelist_patterns": [
+          "supabase projects list*",
+          "supabase status*",
+          "supabase functions list*",
+          "supabase migration list*",
+          "supabase --version*"
+        ]
+      },
+      "tool_schema_examples": [
+        "supabase projects list",
+        "supabase functions list --project-ref abc",
+        "supabase db diff"
+      ],
+      "icon": "database",
+      "category": "baas",
+      "capabilities": [
+        {
+          "domains": [
+            "database"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check"
+          ],
+          "objects": [
+            "supabase",
+            "datenbank",
+            "database",
+            "tabelle",
+            "tabellen",
+            "tables",
+            "migration",
+            "migrations"
+          ],
+          "description": "Supabase: list projects, migrations, database status."
+        }
+      ]
+    },
+    {
+      "name": "firebase",
+      "display_name": "Firebase CLI",
+      "description": "Firebase Projects, Hosting, Functions, Firestore.",
+      "homepage": "https://firebase.google.com/docs/cli",
+      "binary_name": "firebase",
+      "check_command": [
+        "firebase",
+        "--version"
+      ],
+      "version_parse_regex": "(\\d+\\.\\d+\\.\\d+)",
+      "install": {
+        "winget_id": null,
+        "scoop_package": null,
+        "npm_package": "firebase-tools",
+        "pip_package": null,
+        "cargo_package": null,
+        "script_url": null,
+        "manual_url": "https://firebase.google.com/docs/cli",
+        "recommended": "npm"
+      },
+      "auth": {
+        "type": "oauth_cli",
+        "login_command": [
+          "firebase",
+          "login"
+        ],
+        "logout_command": [
+          "firebase",
+          "logout"
+        ],
+        "status_command": [
+          "firebase",
+          "login:list"
+        ],
+        "status_parse": "text_contains_email",
+        "secret_keys": [
+          "firebase_token"
+        ],
+        "env_vars": [
+          "FIREBASE_TOKEN"
+        ]
+      },
+      "risk": {
+        "default_tier": "monitor",
+        "blacklist_patterns": [
+          "firebase projects:delete *",
+          "firebase firestore:delete *",
+          "firebase hosting:disable*"
+        ],
+        "whitelist_patterns": [
+          "firebase projects:list*",
+          "firebase login:list*",
+          "firebase apps:list*",
+          "firebase hosting:sites:list*"
+        ]
+      },
+      "tool_schema_examples": [
+        "firebase projects:list",
+        "firebase apps:list --project myproj"
+      ],
+      "icon": "database",
+      "category": "baas",
+      "capabilities": [
+        {
+          "domains": [
+            "deployments"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "deploy"
+          ],
+          "objects": [
+            "firebase",
+            "hosting",
+            "functions",
+            "projekt",
+            "projekte",
+            "project",
+            "projects"
+          ],
+          "description": "Firebase: list projects, apps, hosting sites; deploy."
+        }
+      ]
+    },
+    {
+      "name": "pscale",
+      "display_name": "PlanetScale CLI",
+      "description": "PlanetScale MySQL-Branches, Deploy-Requests.",
+      "homepage": "https://planetscale.com/docs/reference/planetscale-cli",
+      "binary_name": "pscale",
+      "check_command": [
+        "pscale",
+        "--version"
+      ],
+      "version_parse_regex": "pscale version (\\S+)",
+      "install": {
+        "winget_id": "PlanetScale.CLI",
+        "scoop_package": "pscale",
+        "npm_package": null,
+        "pip_package": null,
+        "cargo_package": null,
+        "script_url": null,
+        "manual_url": "https://github.com/planetscale/cli#installation",
+        "recommended": "winget"
+      },
+      "auth": {
+        "type": "oauth_cli",
+        "login_command": [
+          "pscale",
+          "auth",
+          "login"
+        ],
+        "logout_command": [
+          "pscale",
+          "auth",
+          "logout"
+        ],
+        "status_command": [
+          "pscale",
+          "org",
+          "list",
+          "--format=json"
+        ],
+        "status_parse": "json_array_nonempty",
+        "secret_keys": [
+          "pscale_service_token"
+        ],
+        "env_vars": [
+          "PLANETSCALE_SERVICE_TOKEN"
+        ]
+      },
+      "risk": {
+        "default_tier": "monitor",
+        "blacklist_patterns": [
+          "pscale database delete *",
+          "pscale branch delete *",
+          "pscale deploy-request cancel*",
+          "pscale database delete*",
+          "pscale branch delete*"
+        ],
+        "whitelist_patterns": [
+          "pscale database list*",
+          "pscale branch list*",
+          "pscale deploy-request list*",
+          "pscale org list*"
+        ]
+      },
+      "tool_schema_examples": [
+        "pscale database list",
+        "pscale branch list my-db"
+      ],
+      "icon": "database",
+      "category": "baas",
+      "capabilities": [
+        {
+          "domains": [
+            "database"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check"
+          ],
+          "objects": [
+            "planetscale",
+            "pscale",
+            "datenbank",
+            "database",
+            "branch",
+            "branches"
+          ],
+          "description": "PlanetScale: list databases, branches, deploy requests."
+        }
+      ]
+    },
+    {
+      "name": "neonctl",
+      "display_name": "Neon CLI",
+      "description": "Neon Serverless Postgres — Projects, Branches, Roles.",
+      "homepage": "https://neon.tech/docs/reference/neon-cli",
+      "binary_name": "neonctl",
+      "check_command": [
+        "neonctl",
+        "--version"
+      ],
+      "version_parse_regex": "(\\d+\\.\\d+\\.\\d+)",
+      "install": {
+        "winget_id": null,
+        "scoop_package": null,
+        "npm_package": "neonctl",
+        "pip_package": null,
+        "cargo_package": null,
+        "script_url": null,
+        "manual_url": "https://neon.tech/docs/reference/cli-install",
+        "recommended": "npm"
+      },
+      "auth": {
+        "type": "oauth_cli",
+        "login_command": [
+          "neonctl",
+          "auth"
+        ],
+        "logout_command": null,
+        "status_command": [
+          "neonctl",
+          "me",
+          "--output",
+          "json"
+        ],
+        "status_parse": "json_object_exists",
+        "secret_keys": [
+          "neon_api_key"
+        ],
+        "env_vars": [
+          "NEON_API_KEY"
+        ]
+      },
+      "risk": {
+        "default_tier": "monitor",
+        "blacklist_patterns": [
+          "neonctl projects delete *",
+          "neonctl branches delete *",
+          "neonctl projects delete*",
+          "neonctl branches delete*"
+        ],
+        "whitelist_patterns": [
+          "neonctl projects list*",
+          "neonctl branches list*",
+          "neonctl me*"
+        ]
+      },
+      "tool_schema_examples": [
+        "neonctl projects list",
+        "neonctl branches list --project-id abc"
+      ],
+      "icon": "database",
+      "category": "baas",
+      "capabilities": [
+        {
+          "domains": [
+            "database"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check"
+          ],
+          "objects": [
+            "neon",
+            "datenbank",
+            "database",
+            "branch",
+            "branches",
+            "projekt",
+            "project",
+            "projects"
+          ],
+          "description": "Neon: list projects, branches, databases."
+        }
+      ]
+    },
+    {
+      "name": "gh",
+      "display_name": "GitHub CLI",
+      "description": "GitHub Repos, PRs, Issues, Actions, Releases.",
+      "homepage": "https://cli.github.com",
+      "binary_name": "gh",
+      "check_command": [
+        "gh",
+        "--version"
+      ],
+      "version_parse_regex": "gh version (\\S+)",
+      "install": {
+        "winget_id": "GitHub.cli",
+        "scoop_package": "gh",
+        "npm_package": null,
+        "pip_package": null,
+        "cargo_package": null,
+        "script_url": null,
+        "manual_url": "https://cli.github.com/manual/installation",
+        "recommended": "winget"
+      },
+      "auth": {
+        "type": "oauth_cli",
+        "login_command": [
+          "gh",
+          "auth",
+          "login"
+        ],
+        "logout_command": [
+          "gh",
+          "auth",
+          "logout"
+        ],
+        "status_command": [
+          "gh",
+          "auth",
+          "status"
+        ],
+        "status_parse": "text_contains_logged_in",
+        "secret_keys": [
+          "github_token"
+        ],
+        "env_vars": [
+          "GH_TOKEN"
+        ]
+      },
+      "risk": {
+        "default_tier": "monitor",
+        "blacklist_patterns": [
+          "gh repo delete *",
+          "gh release delete *",
+          "gh secret delete *",
+          "gh secret set *"
+        ],
+        "whitelist_patterns": [
+          "gh auth status*",
+          "gh repo view*",
+          "gh pr list*",
+          "gh issue list*",
+          "gh run list*",
+          "gh pr view*",
+          "gh pr status*",
+          "gh issue view*",
+          "gh repo list*",
+          "gh run view*",
+          "gh release list*",
+          "gh --version*"
+        ]
+      },
+      "tool_schema_examples": [
+        "gh pr list --state open",
+        "gh issue view 123",
+        "gh run list --limit 5"
+      ],
+      "icon": "github",
+      "category": "git",
+      "capabilities": [
+        {
+          "domains": [
+            "repos"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "lies",
+            "read",
+            "erstell",
+            "erstelle",
+            "create",
+            "merge"
+          ],
+          "objects": [
+            "pull request",
+            "pull requests",
+            "pr",
+            "prs",
+            "issue",
+            "issues",
+            "repo",
+            "repos",
+            "repository",
+            "github",
+            "release",
+            "releases",
+            "workflow",
+            "actions"
+          ],
+          "description": "GitHub: list/read/create repos, pull requests, issues, releases, workflow runs."
+        }
+      ]
+    },
+    {
+      "name": "glab",
+      "display_name": "GitLab CLI",
+      "description": "GitLab Repos, MRs, Issues, CI/CD, Snippets.",
+      "homepage": "https://gitlab.com/gitlab-org/cli",
+      "binary_name": "glab",
+      "check_command": [
+        "glab",
+        "--version"
+      ],
+      "version_parse_regex": "glab version (\\S+)",
+      "install": {
+        "winget_id": null,
+        "scoop_package": "glab",
+        "npm_package": null,
+        "pip_package": null,
+        "cargo_package": null,
+        "script_url": null,
+        "manual_url": "https://gitlab.com/gitlab-org/cli#installation",
+        "recommended": "scoop"
+      },
+      "auth": {
+        "type": "oauth_cli",
+        "login_command": [
+          "glab",
+          "auth",
+          "login"
+        ],
+        "logout_command": [
+          "glab",
+          "auth",
+          "logout"
+        ],
+        "status_command": [
+          "glab",
+          "auth",
+          "status"
+        ],
+        "status_parse": "text_contains_logged_in",
+        "secret_keys": [
+          "gitlab_token"
+        ],
+        "env_vars": [
+          "GITLAB_TOKEN"
+        ]
+      },
+      "risk": {
+        "default_tier": "monitor",
+        "blacklist_patterns": [
+          "glab repo delete *",
+          "glab issue delete *",
+          "glab mr close *",
+          "glab repo delete*"
+        ],
+        "whitelist_patterns": [
+          "glab auth status*",
+          "glab mr list*",
+          "glab issue list*",
+          "glab repo view*",
+          "glab pipeline list*"
+        ]
+      },
+      "tool_schema_examples": [
+        "glab mr list",
+        "glab issue list --state opened"
+      ],
+      "icon": "github",
+      "category": "git",
+      "capabilities": [
+        {
+          "domains": [
+            "repos"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "lies",
+            "read",
+            "create",
+            "erstell",
+            "erstelle"
+          ],
+          "objects": [
+            "gitlab",
+            "merge request",
+            "merge requests",
+            "mr",
+            "mrs",
+            "issue",
+            "issues",
+            "repo",
+            "repos",
+            "pipeline",
+            "pipelines"
+          ],
+          "description": "GitLab: list/read merge requests, issues, pipelines."
+        }
+      ]
+    },
+    {
+      "name": "stripe",
+      "display_name": "Stripe CLI",
+      "description": "Stripe Webhooks, Events, Products, Subscriptions.",
+      "homepage": "https://docs.stripe.com/stripe-cli",
+      "binary_name": "stripe",
+      "check_command": [
+        "stripe",
+        "--version"
+      ],
+      "version_parse_regex": "stripe version (\\S+)",
+      "install": {
+        "winget_id": "Stripe.StripeCLI",
+        "scoop_package": "stripe",
+        "npm_package": null,
+        "pip_package": null,
+        "cargo_package": null,
+        "script_url": null,
+        "manual_url": "https://docs.stripe.com/stripe-cli#install",
+        "recommended": "winget"
+      },
+      "auth": {
+        "type": "oauth_cli",
+        "login_command": [
+          "stripe",
+          "login"
+        ],
+        "logout_command": [
+          "stripe",
+          "logout"
+        ],
+        "status_command": [
+          "stripe",
+          "config",
+          "--list"
+        ],
+        "status_parse": "text_contains_key",
+        "secret_keys": [
+          "stripe_api_key"
+        ],
+        "env_vars": [
+          "STRIPE_API_KEY"
+        ]
+      },
+      "risk": {
+        "default_tier": "ask",
+        "blacklist_patterns": [
+          "stripe charges * --live*",
+          "stripe subscriptions cancel *",
+          "stripe * delete *",
+          "stripe customers delete *",
+          "stripe * delete*",
+          "stripe refunds create*"
+        ],
+        "whitelist_patterns": [
+          "stripe listen*",
+          "stripe logs tail*",
+          "stripe events list*",
+          "stripe products list*",
+          "stripe customers list*",
+          "stripe charges list*",
+          "stripe invoices list*",
+          "stripe balance retrieve*"
+        ]
+      },
+      "tool_schema_examples": [
+        "stripe listen --forward-to localhost:3000/webhook",
+        "stripe events list --limit 10"
+      ],
+      "icon": "credit-card",
+      "category": "payments",
+      "capabilities": [
+        {
+          "domains": [
+            "payments"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check"
+          ],
+          "objects": [
+            "stripe",
+            "zahlung",
+            "zahlungen",
+            "payment",
+            "payments",
+            "kunde",
+            "kunden",
+            "customer",
+            "customers",
+            "invoice",
+            "invoices",
+            "umsatz"
+          ],
+          "description": "Stripe: list customers, charges, invoices, products; read balance."
+        }
+      ]
+    },
+    {
+      "name": "twilio",
+      "display_name": "Twilio CLI",
+      "description": "Twilio Numbers, Messages, Voice, Verify, Flex.",
+      "homepage": "https://www.twilio.com/docs/twilio-cli",
+      "binary_name": "twilio",
+      "check_command": [
+        "twilio",
+        "--version"
+      ],
+      "version_parse_regex": "twilio-cli/(\\S+)",
+      "install": {
+        "winget_id": "Twilio.TwilioCLI",
+        "scoop_package": null,
+        "npm_package": "twilio-cli",
+        "pip_package": null,
+        "cargo_package": null,
+        "script_url": null,
+        "manual_url": "https://www.twilio.com/docs/twilio-cli/getting-started/install"
+      },
+      "auth": {
+        "type": "api_key",
+        "login_command": [
+          "twilio",
+          "login"
+        ],
+        "logout_command": [
+          "twilio",
+          "profiles:remove"
+        ],
+        "status_command": [
+          "twilio",
+          "profiles:list",
+          "-o",
+          "json"
+        ],
+        "status_parse": "json_array_nonempty",
+        "secret_keys": [
+          "twilio_account_sid",
+          "twilio_auth_token"
+        ],
+        "env_vars": [
+          "TWILIO_ACCOUNT_SID",
+          "TWILIO_AUTH_TOKEN"
+        ]
+      },
+      "risk": {
+        "default_tier": "ask",
+        "blacklist_patterns": [
+          "twilio api:core:messages:create *",
+          "twilio * delete *",
+          "twilio api:core:*:remove*"
+        ],
+        "whitelist_patterns": [
+          "twilio profiles*",
+          "twilio api:core:messages:list*",
+          "twilio phone-numbers:list*",
+          "twilio api:core:calls:list*"
+        ]
+      },
+      "tool_schema_examples": [
+        "twilio phone-numbers:list",
+        "twilio api:core:messages:list --limit 10"
+      ],
+      "icon": "credit-card",
+      "category": "payments",
+      "capabilities": [
+        {
+          "domains": [
+            "messaging"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check"
+          ],
+          "objects": [
+            "twilio",
+            "sms",
+            "nachricht",
+            "nachrichten",
+            "message",
+            "messages",
+            "anruf",
+            "anrufe",
+            "call",
+            "calls"
+          ],
+          "description": "Twilio: list messages, calls, phone numbers."
+        }
+      ]
+    },
+    {
+      "name": "docker",
+      "display_name": "Docker CLI",
+      "description": "Docker Container, Images, Volumes, Networks.",
+      "homepage": "https://docs.docker.com/engine/reference/commandline/cli/",
+      "binary_name": "docker",
+      "check_command": [
+        "docker",
+        "version",
+        "--format",
+        "{{.Client.Version}}"
+      ],
+      "version_parse_regex": "(\\S+)",
+      "install": {
+        "winget_id": "Docker.DockerDesktop",
+        "scoop_package": null,
+        "npm_package": null,
+        "pip_package": null,
+        "cargo_package": null,
+        "script_url": null,
+        "manual_url": "https://docs.docker.com/desktop/install/windows-install/",
+        "recommended": "winget"
+      },
+      "auth": {
+        "type": "oauth_cli",
+        "login_command": [
+          "docker",
+          "login"
+        ],
+        "logout_command": [
+          "docker",
+          "logout"
+        ],
+        "status_command": [
+          "docker",
+          "info",
+          "--format",
+          "{{json .}}"
+        ],
+        "status_parse": "json_object_exists",
+        "secret_keys": [],
+        "env_vars": []
+      },
+      "risk": {
+        "default_tier": "monitor",
+        "blacklist_patterns": [
+          "docker rm *",
+          "docker rmi *",
+          "docker volume rm *",
+          "docker system prune*",
+          "docker container prune*",
+          "docker network rm *"
+        ],
+        "whitelist_patterns": [
+          "docker ps*",
+          "docker images*",
+          "docker logs*",
+          "docker info*",
+          "docker inspect *",
+          "docker inspect*",
+          "docker version*"
+        ]
+      },
+      "tool_schema_examples": [
+        "docker ps -a",
+        "docker logs my-container --tail 50",
+        "docker images"
+      ],
+      "icon": "container",
+      "category": "container",
+      "capabilities": [
+        {
+          "domains": [
+            "containers"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "starte",
+            "start",
+            "stoppe",
+            "stop"
+          ],
+          "objects": [
+            "docker",
+            "container",
+            "containers",
+            "image",
+            "images",
+            "volume",
+            "volumes"
+          ],
+          "description": "Docker: list/inspect containers, images, volumes; read logs."
+        }
+      ]
+    },
+    {
+      "name": "kubectl",
+      "display_name": "Kubernetes CLI",
+      "description": "Kubernetes Cluster-Management: Pods, Deployments, Services.",
+      "homepage": "https://kubernetes.io/docs/reference/kubectl/",
+      "binary_name": "kubectl",
+      "check_command": [
+        "kubectl",
+        "version",
+        "--client",
+        "--output",
+        "json"
+      ],
+      "version_parse_regex": "\"gitVersion\":\\s*\"(\\S+?)\"",
+      "install": {
+        "winget_id": "Kubernetes.kubectl",
+        "scoop_package": "kubectl",
+        "npm_package": null,
+        "pip_package": null,
+        "cargo_package": null,
+        "script_url": null,
+        "manual_url": "https://kubernetes.io/docs/tasks/tools/install-kubectl-windows/",
+        "recommended": "winget"
+      },
+      "auth": {
+        "type": "config_file",
+        "login_command": null,
+        "logout_command": null,
+        "status_command": [
+          "kubectl",
+          "config",
+          "current-context"
+        ],
+        "status_parse": "text_nonempty",
+        "secret_keys": [],
+        "env_vars": [
+          "KUBECONFIG"
+        ]
+      },
+      "risk": {
+        "default_tier": "ask",
+        "blacklist_patterns": [
+          "kubectl delete *",
+          "kubectl drain *",
+          "kubectl cordon *",
+          "kubectl replace --force*",
+          "kubectl * --all-namespaces* delete*"
+        ],
+        "whitelist_patterns": [
+          "kubectl get *",
+          "kubectl describe *",
+          "kubectl logs *",
+          "kubectl config get-*",
+          "kubectl config current-context*",
+          "kubectl top *",
+          "kubectl version*"
+        ]
+      },
+      "tool_schema_examples": [
+        "kubectl get pods -A",
+        "kubectl describe deployment my-app",
+        "kubectl logs my-pod --tail=100"
+      ],
+      "icon": "container",
+      "category": "container",
+      "capabilities": [
+        {
+          "domains": [
+            "kubernetes"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "list",
+            "show",
+            "check",
+            "describe"
+          ],
+          "objects": [
+            "kubernetes",
+            "k8s",
+            "pod",
+            "pods",
+            "cluster",
+            "namespace",
+            "namespaces",
+            "node",
+            "nodes"
+          ],
+          "description": "Kubernetes: get/describe pods, deployments, services; read logs."
+        }
+      ]
+    },
+    {
+      "name": "gam",
+      "display_name": "Google Workspace CLI (GAM)",
+      "description": "Google Workspace CLI: Calendar events, Gmail messages, Drive, Users.",
+      "homepage": "https://github.com/GAM-team/GAM",
+      "binary_name": "gam",
+      "check_command": [
+        "gam",
+        "version"
+      ],
+      "version_parse_regex": "GAM (\\S+)",
+      "install": {
+        "winget_id": null,
+        "scoop_package": null,
+        "npm_package": null,
+        "pip_package": null,
+        "cargo_package": null,
+        "script_url": null,
+        "manual_url": "https://github.com/GAM-team/GAM/wiki",
+        "recommended": null
+      },
+      "auth": {
+        "type": "oauth_cli",
+        "login_command": [
+          "gam",
+          "oauth",
+          "create"
+        ],
+        "logout_command": [
+          "gam",
+          "oauth",
+          "delete"
+        ],
+        "status_command": [
+          "gam",
+          "oauth",
+          "info"
+        ],
+        "status_parse": "text_contains_email",
+        "secret_keys": [],
+        "env_vars": []
+      },
+      "risk": {
+        "default_tier": "monitor",
+        "blacklist_patterns": [
+          "gam * delete *",
+          "gam * remove *",
+          "gam update user * password *"
+        ],
+        "whitelist_patterns": [
+          "gam calendar * print *",
+          "gam calendar * show *",
+          "gam user * print *",
+          "gam user * show *",
+          "gam oauth info*",
+          "gam version*"
+        ]
+      },
+      "tool_schema_examples": [
+        "gam calendar <primary-email> printevents after today before tomorrow",
+        "gam user <primary-email> print messages query \"is:unread\" maxmessages 10"
+      ],
+      "icon": "google",
+      "category": "workspace",
+      "capabilities": [
+        {
+          "domains": [
+            "calendar"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "lies",
+            "check",
+            "list",
+            "show",
+            "read"
+          ],
+          "objects": [
+            "kalender",
+            "termin",
+            "termine",
+            "calendar",
+            "appointment",
+            "appointments"
+          ],
+          "description": "Google Workspace Calendar: list and read events."
+        },
+        {
+          "domains": [
+            "email"
+          ],
+          "verbs": [
+            "zeig",
+            "zeige",
+            "lies",
+            "check",
+            "list",
+            "show",
+            "read"
+          ],
+          "objects": [
+            "mail",
+            "mails",
+            "email",
+            "gmail",
+            "posteingang",
+            "inbox",
+            "postfach"
+          ],
+          "description": "Google Workspace Gmail: list and read messages."
+        }
+      ]
+    },
+    {
+      "name": "jarvisctl",
+      "display_name": "Jarvis Control CLI",
+      "description": "Control this Personal Jarvis instance: list/create/cancel tasks, read or switch settings, restart the app, and reach any API endpoint.",
+      "homepage": "https://github.com/PersonalJarvis/PersonalJarvis",
+      "binary_name": "jarvisctl",
+      "check_command": [
+        "jarvisctl",
+        "version"
+      ],
+      "version_parse_regex": "Personal Jarvis (\\S+)",
+      "install": {
+        "winget_id": null,
+        "scoop_package": null,
+        "npm_package": null,
+        "pip_package": null,
+        "cargo_package": null,
+        "script_url": null,
+        "manual_url": "https://github.com/PersonalJarvis/PersonalJarvis",
+        "recommended": "manual"
+      },
+      "auth": {
+        "type": "none"
+      },
+      "risk": {
+        "default_tier": "monitor",
+        "blacklist_patterns": [
+          "jarvisctl * delete *",
+          "jarvisctl auth *",
+          "jarvisctl api * secrets*",
+          "jarvisctl api * keys*"
+        ],
+        "whitelist_patterns": [
+          "jarvisctl tasks list*",
+          "jarvisctl tasks get*",
+          "jarvisctl system status*",
+          "jarvisctl version*"
+        ]
+      },
+      "tool_schema_examples": [
+        "jarvisctl tasks list --state scheduled",
+        "jarvisctl system restart",
+        "jarvisctl --json tasks get <id>"
+      ],
+      "icon": "terminal",
+      "category": "self",
+      "capabilities": [
+        {
+          "domains": [
+            "jarvis-control",
+            "self-management"
+          ],
+          "verbs": [
+            "list",
+            "show",
+            "create",
+            "cancel",
+            "restart",
+            "control",
+            "manage",
+            "inspect"
+          ],
+          "objects": [
+            "task",
+            "tasks",
+            "settings",
+            "the app",
+            "yourself",
+            "jarvis"
+          ],
+          "description": "Self-control: inspect and manage Jarvis's own tasks, settings, and lifecycle from the terminal."
+        }
+      ]
+    }
+  ]
+}

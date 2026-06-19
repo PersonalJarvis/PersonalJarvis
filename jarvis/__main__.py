@@ -1,0 +1,360 @@
+"""Jarvis entry point.
+
+Usage:
+    python -m jarvis                # Starts the wizard (first run) or tray app
+    python -m jarvis --wizard       # Re-run the setup wizard
+    python -m jarvis --check        # Show hardware analysis only
+    python -m jarvis --plugins      # List the plugin registry
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import signal
+import sys
+from typing import NoReturn
+
+# Windows Terminal defaults to cp1252 — which breaks Unicode (box-drawing,
+# emojis, ✓/✗). Force utf-8 before printing anything.
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+    except (AttributeError, OSError):
+        pass
+
+from jarvis import __version__
+from jarvis.core import config as cfg
+from jarvis.core import registry
+from jarvis.hardware import detection
+from jarvis.ui.tray import JarvisState, JarvisTray, TrayCommand
+
+
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="jarvis",
+        description="Personal Jarvis — voice-gesteuerter Meta-Orchestrator.",
+    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument("--wizard", action="store_true", help="Setup-Wizard neu starten.")
+    parser.add_argument("--check", action="store_true", help="Nur Hardware-Analyse zeigen.")
+    parser.add_argument("--plugins", action="store_true", help="Plugin-Registry auflisten.")
+    parser.add_argument("--debug", action="store_true", help="Debug-Logging + Console-Attach.")
+    # Phase 5:
+    parser.add_argument("--phase5-doctor", action="store_true", dest="phase5_doctor",
+                        help="Prueft Phase-5-Voraussetzungen (Admin-Helper, "
+                             "Vision-Deps, Kill-Hotkey, Cost-Config).")
+    parser.add_argument("--install-admin-helper", action="store_true",
+                        dest="install_admin_helper",
+                        help="Generiert HMAC-Secret + registriert Admin-Helper-Shortcut.")
+    parser.add_argument("--orb-doctor", action="store_true", dest="orb_doctor",
+                        help="Dry-run-Diagnose: wo würde der Orb spawnen? "
+                             "Liest jarvis.toml + EnumDisplayMonitors, ohne ein "
+                             "Tk-Fenster zu öffnen (BUG-027 / ADR-0016).")
+    parser.add_argument(
+        "--reset-onboarding",
+        action="store_true",
+        dest="reset_onboarding",
+        help="Clear onboarding markers so the first-run guide shows again.",
+    )
+    return parser.parse_args(argv)
+
+
+def _cmd_check() -> int:
+    return detection.main()
+
+
+def _cmd_plugins() -> int:
+    print(registry.describe())
+    return 0
+
+
+def _cmd_wizard() -> int:
+    from jarvis.setup import wizard
+
+    return wizard.run()
+
+
+def _cmd_phase5_doctor() -> int:
+    """Status check for all Phase-5 features. Shows what is enabled,
+    what is missing, and what is running on defaults. No config changes.
+    """
+    import importlib.metadata as _md
+
+    config = cfg.load_config()
+    lines: list[str] = []
+    lines.append(f"Jarvis {__version__} — Phase-5-Doctor")
+    lines.append("=" * 60)
+
+    # Entry-points
+    try:
+        # Computer-use harness name sourced from the local action gate
+        # (single home for the literal).
+        from jarvis.brain.local_action_gate import HARNESS_NAME
+        eps = list(_md.entry_points(group="jarvis.harness"))
+        have_cu = any(ep.name == HARNESS_NAME for ep in eps)
+        lines.append(f"[{'OK' if have_cu else 'FAIL'}] Harness-Plugin "
+                      f"{HARNESS_NAME!r} im Entry-Points-Index: {have_cu}")
+    except Exception as exc:  # noqa: BLE001
+        lines.append(f"[FAIL] Harness-Entry-Points nicht lesbar: {exc}")
+
+    try:
+        eps = list(_md.entry_points(group="jarvis.tool"))
+        have_admin = any(ep.name == "dispatch-to-admin" for ep in eps)
+        lines.append(f"[{'OK' if have_admin else 'FAIL'}] Tool-Plugin "
+                      f"'dispatch-to-admin' im Entry-Points-Index: {have_admin}")
+    except Exception as exc:  # noqa: BLE001
+        lines.append(f"[FAIL] Tool-Entry-Points nicht lesbar: {exc}")
+
+    # Config-Sections
+    raw = cfg._RAW_CONFIG if hasattr(cfg, "_RAW_CONFIG") else {}
+    phase5_sections = [
+        "vision", "computer_use", "admin_helper", "task_queue",
+        "kill_switch", "cost",
+    ]
+    for section in phase5_sections:
+        sect = raw.get(section, {}) if isinstance(raw, dict) else {}
+        enabled = sect.get("enabled", False) if isinstance(sect, dict) else False
+        lines.append(f"[{'ON ' if enabled else 'OFF'}] jarvis.toml:[{section}] "
+                      f"enabled={enabled}")
+
+    # Admin-HMAC
+    try:
+        secret = cfg.get_secret("jarvis_admin_hmac", "JARVIS_ADMIN_HMAC")
+        lines.append(f"[{'OK' if secret else 'MISS'}] HMAC-Secret "
+                      f"im Credential-Manager: {'vorhanden' if secret else 'fehlt'}")
+    except Exception as exc:  # noqa: BLE001
+        lines.append(f"[FAIL] HMAC-Secret-Pruefung: {exc}")
+
+    # Vision-Deps
+    try:
+        import mss  # noqa: F401
+        lines.append("[OK ] mss (Screenshot) importierbar")
+    except Exception:  # noqa: BLE001
+        lines.append("[FAIL] mss (Screenshot) nicht importierbar")
+    try:
+        import pywinauto  # noqa: F401
+        lines.append("[OK ] pywinauto (UIA-Tree) importierbar")
+    except Exception:  # noqa: BLE001
+        lines.append("[FAIL] pywinauto (UIA-Tree) nicht importierbar")
+
+    _ = config  # suppress unused
+    print("\n".join(lines))
+    return 0
+
+
+def _cmd_orb_doctor() -> int:
+    """Dry-run diagnostic for orb placement (BUG-027 / ADR-0016).
+
+    Reads the persisted orb position from jarvis.toml, enumerates current
+    monitors via Win32 ``EnumDisplayMonitors``, and computes where the
+    orb WOULD spawn under the current ``require_primary`` policy — all
+    without opening a Tk window. Useful when the user reports "orb is
+    gone" and you need to know whether the persisted pin is the cause
+    before restarting Jarvis.
+    """
+    from pathlib import Path
+
+    from ui.orb.drag_persistence import (
+        load_allow_secondary_monitor_pin,
+        load_position_from_toml,
+        resolve_placement,
+        screens_from_tk,
+    )
+
+    toml_path = Path(cfg.DEFAULT_CONFIG_FILE)
+    lines: list[str] = []
+    lines.append(f"Jarvis {__version__} — Orb-Doctor")
+    lines.append("=" * 60)
+    lines.append(f"Config: {toml_path}")
+    lines.append("")
+
+    persisted = load_position_from_toml(toml_path)
+    if persisted is None:
+        lines.append("Persisted pin: NONE (jarvis.toml missing)")
+    elif not persisted.monitor:
+        lines.append("Persisted pin: NONE (default anchor on next boot)")
+    else:
+        lines.append(
+            f"Persisted pin: monitor={persisted.monitor!r} "
+            f"x_relative={persisted.x_relative} "
+            f"y_relative={persisted.y_relative}"
+        )
+    allow_secondary = load_allow_secondary_monitor_pin(toml_path)
+    lines.append(f"allow_secondary_monitor_pin = {allow_secondary}")
+    lines.append("")
+
+    screens = screens_from_tk(None)
+    if not screens:
+        lines.append("[FAIL] EnumDisplayMonitors returned no screens.")
+    else:
+        lines.append(f"Monitors ({len(screens)}):")
+        for s in screens:
+            sx, sy, sw, sh = s.geometry
+            tag = "PRIMARY" if s.is_primary else "secondary"
+            lines.append(
+                f"  - {s.name} [{tag}] x={sx} y={sy} w={sw} h={sh}"
+            )
+    lines.append("")
+
+    if screens:
+        placement = resolve_placement(
+            persisted,
+            screens,
+            mascot_size_px=108,
+            require_primary=not allow_secondary,
+        )
+        # Determine if the resolved monitor is primary.
+        resolved_screen = next(
+            (s for s in screens if s.name == placement.monitor), None
+        )
+        on_primary = bool(resolved_screen and resolved_screen.is_primary)
+        lines.append(
+            f"Resolved spawn: abs_x={placement.abs_x} abs_y={placement.abs_y} "
+            f"monitor={placement.monitor!r} recovered={placement.recovered}"
+        )
+        lines.append(f"On primary monitor: {'YES' if on_primary else 'NO'}")
+        if placement.recovered and persisted is not None and persisted.monitor:
+            lines.append("")
+            lines.append(
+                "Note: the persisted pin would be DROPPED on next boot "
+                "(BUG-027 defense). To honour a pin on a secondary monitor "
+                "set `[overlay.mascot] allow_secondary_monitor_pin = true` "
+                "in jarvis.toml."
+            )
+        elif not on_primary:
+            lines.append("")
+            lines.append(
+                "Warning: orb will spawn on a non-primary monitor. Say "
+                "'Orb zurück' or use the right-click menu to reset."
+            )
+
+    print("\n".join(lines))
+    return 0
+
+
+_ONBOARDING_STATE_PATH = None  # tests override; None => state.py default
+
+
+def _cmd_reset_onboarding() -> int:
+    from jarvis.setup import state as onb_state
+
+    removed = onb_state.reset_onboarding(_ONBOARDING_STATE_PATH)
+    marker = cfg.DATA_DIR / ".setup-complete"
+    if marker.exists():
+        try:
+            marker.unlink()
+        except OSError as exc:
+            print(f"Could not remove {marker}: {exc}")
+    print(f"Onboarding reset. Cleared keys: {removed or 'none'}; removed .setup-complete.")
+    print("Next launch will show the setup guide.")
+    return 0
+
+
+def _cmd_install_admin_helper() -> int:
+    """Generates the HMAC shared secret (if missing) in the Credential Manager."""
+    try:
+        from jarvis.admin.launcher import ensure_admin_secret
+    except ImportError as exc:
+        print(f"Admin-Helper-Launcher nicht importierbar: {exc}", file=sys.stderr)
+        return 1
+    try:
+        secret = ensure_admin_secret()
+    except Exception as exc:  # noqa: BLE001
+        print(f"Admin-HMAC-Generation fehlgeschlagen: {exc}", file=sys.stderr)
+        return 2
+    print(f"Admin-HMAC-Secret bereit (Laenge: {len(secret)} Bytes).")
+    print("Der Helper wird beim naechsten Admin-Op via UAC-Prompt gestartet.")
+    return 0
+
+
+async def _run_tray_app(debug: bool = False) -> int:
+    """Tray app event loop."""
+    config = cfg.load_config()
+    print(f"Jarvis {__version__} gestartet (Profile: {config.profile.name}).")
+    if debug:
+        print(f"Config-Datei: {cfg.DEFAULT_CONFIG_FILE}")
+        print(f"Brain primary: {config.brain.primary}")
+        print(f"STT: {config.stt.provider} / {config.stt.model}")
+        print(f"TTS: {config.tts.provider}")
+
+    tray = JarvisTray()
+    tray.start()
+    tray.set_state(JarvisState.IDLE)
+
+    command_queue = await tray.command_stream()
+    stop_event = asyncio.Event()
+
+    # Cleanly intercept SIGINT / Ctrl+C
+    def _stop_handler(*_: object) -> None:
+        stop_event.set()
+
+    try:
+        signal.signal(signal.SIGINT, _stop_handler)
+        signal.signal(signal.SIGTERM, _stop_handler)
+    except (ValueError, AttributeError):
+        # Windows + subprocess contexts sometimes do not allow signal registration
+        pass
+
+    print("Tray-Icon läuft. Rechtsklick für Menu. Beenden mit Strg+C oder Tray → Beenden.")
+
+    async def _command_handler() -> None:
+        while not stop_event.is_set():
+            try:
+                cmd: TrayCommand = await asyncio.wait_for(command_queue.get(), timeout=0.5)
+            except TimeoutError:
+                continue
+            if cmd.action == "quit":
+                stop_event.set()
+                return
+            if cmd.action == "pause":
+                tray.set_state(JarvisState.PAUSED)
+            elif cmd.action == "resume":
+                tray.set_state(JarvisState.IDLE)
+            elif cmd.action == "reload_config":
+                try:
+                    cfg.load_config()
+                    print("Config neu geladen.")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"Config-Reload fehlgeschlagen: {exc}")
+                    tray.set_error(str(exc))
+
+    handler_task = asyncio.create_task(_command_handler())
+    try:
+        await stop_event.wait()
+    finally:
+        handler_task.cancel()
+        tray.stop()
+    print("Jarvis beendet.")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv if argv is not None else sys.argv[1:])
+
+    if args.check:
+        return _cmd_check()
+    if args.plugins:
+        return _cmd_plugins()
+    if args.phase5_doctor:
+        return _cmd_phase5_doctor()
+    if args.orb_doctor:
+        return _cmd_orb_doctor()
+    if args.install_admin_helper:
+        return _cmd_install_admin_helper()
+    if args.reset_onboarding:
+        return _cmd_reset_onboarding()
+    if args.wizard or cfg.is_first_run():
+        rc = _cmd_wizard()
+        if rc != 0 or args.wizard:
+            return rc
+        # after setup completion: start the tray app
+    return asyncio.run(_run_tray_app(debug=args.debug))
+
+
+def _entrypoint() -> NoReturn:
+    raise SystemExit(main())
+
+
+if __name__ == "__main__":
+    _entrypoint()

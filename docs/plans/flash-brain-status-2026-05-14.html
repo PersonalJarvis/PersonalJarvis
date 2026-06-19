@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Flash-Brain — Status Report (2026-05-14)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  :root{
+    --bg:#0b0f1a; --panel:#121826; --panel2:#1a2233;
+    --ink:#e8ecf5; --ink-soft:#9aa3b8; --ink-dim:#6c768c;
+    --line:#2a3550;
+    --cyan:#5ee9ff; --magenta:#ff6ad5; --amber:#ffd166;
+    --green:#7be495; --red:#ff7a7a; --violet:#b48cff;
+    --shadow:0 10px 30px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+    font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  code{font-family:ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+    color:var(--cyan);background:rgba(94,233,255,.07);padding:1px 5px;
+    border-radius:4px;font-size:12.5px}
+  a{color:var(--cyan);text-decoration:none}
+
+  main{padding:28px 32px 80px;max-width:1100px;margin:0 auto}
+
+  header.hero{
+    background:linear-gradient(135deg,#15192c 0%,#0e1424 60%,#0b0f1a 100%);
+    border:1px solid var(--line);border-radius:18px;padding:24px 28px;
+    box-shadow:var(--shadow);position:relative;overflow:hidden;margin-bottom:24px
+  }
+  header.hero::before{content:"";position:absolute;left:-160px;top:-160px;width:480px;height:480px;
+    background:radial-gradient(circle at center,rgba(255,106,213,.16),transparent 60%);pointer-events:none}
+  header.hero::after{content:"";position:absolute;right:-160px;bottom:-200px;width:480px;height:480px;
+    background:radial-gradient(circle at center,rgba(94,233,255,.16),transparent 60%);pointer-events:none}
+  .eyebrow{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-soft)}
+  h1{margin:6px 0 4px;font-size:26px}
+  h1 .accent{background:linear-gradient(90deg,var(--cyan),var(--magenta));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .subtitle{color:var(--ink-soft);max-width:780px;font-size:13.5px}
+  .meta{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap}
+  .chip{font-size:11px;background:rgba(255,255,255,.04);border:1px solid var(--line);padding:4px 10px;border-radius:999px;color:var(--ink)}
+  .chip.cyan{border-color:rgba(94,233,255,.45);color:var(--cyan)}
+  .chip.green{border-color:rgba(123,228,149,.45);color:var(--green)}
+  .chip.amber{border-color:rgba(255,209,102,.45);color:var(--amber)}
+
+  /* BIG STATS banner */
+  .big-stats{
+    display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px
+  }
+  @media (max-width:720px){.big-stats{grid-template-columns:1fr 1fr}}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;
+    box-shadow:var(--shadow);position:relative;overflow:hidden}
+  .stat .num{font-size:28px;font-weight:700;line-height:1}
+  .stat .num.cyan{color:var(--cyan)}
+  .stat .num.mag{color:var(--magenta)}
+  .stat .num.amber{color:var(--amber)}
+  .stat .num.green{color:var(--green)}
+  .stat .lbl{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft);margin-top:6px}
+  .stat .sub{font-size:11.5px;color:var(--ink-dim);margin-top:4px}
+
+  section{margin-bottom:32px}
+  section h2{font-size:17px;margin:0 0 12px;display:flex;align-items:center;gap:10px}
+  section h2 .num{display:inline-flex;width:26px;height:26px;align-items:center;justify-content:center;border-radius:7px;background:linear-gradient(135deg,var(--cyan),var(--magenta));color:#0b0f1a;font-weight:700;font-size:12px}
+  section h2 .tag{margin-left:auto;font-size:10px;padding:3px 9px;border-radius:999px;border:1px solid var(--line);color:var(--ink-soft);letter-spacing:.14em;text-transform:uppercase}
+  section h2 .tag.live{border-color:rgba(123,228,149,.5);color:var(--green)}
+  section h2 .tag.fix{border-color:rgba(255,122,122,.55);color:var(--red)}
+
+  /* live-bug card */
+  .bug-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    border-left:3px solid var(--red);padding:16px 18px;box-shadow:var(--shadow)}
+  .bug-card .bid{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--red)}
+  .bug-card h3{margin:4px 0 8px;font-size:15px}
+  .bug-card ul{margin:8px 0 0;padding-left:18px;color:var(--ink-soft);font-size:13px;line-height:1.6}
+  .bug-card ul li{margin-bottom:6px}
+  .bug-card ul li b{color:var(--ink)}
+  .bug-card code{font-size:11.5px}
+
+  /* phase grid */
+  .phase-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  @media (max-width:880px){.phase-grid{grid-template-columns:1fr 1fr}}
+  @media (max-width:560px){.phase-grid{grid-template-columns:1fr}}
+  .phase{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .phase .pid{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft)}
+  .phase .pname{font-size:14px;font-weight:600;margin:2px 0 8px}
+  .phase .pstate{display:inline-block;font-size:10px;padding:2px 8px;border-radius:999px;
+    border:1px solid var(--line);letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft)}
+  .phase .pstate.live{border-color:rgba(123,228,149,.5);color:var(--green)}
+  .phase .pstate.fix{border-color:rgba(255,209,102,.55);color:var(--amber)}
+  .phase .pdesc{font-size:12.5px;color:var(--ink-soft);margin-top:8px;line-height:1.5}
+
+  footer{margin-top:42px;color:var(--ink-soft);font-size:11px;text-align:center;padding:20px 0;border-top:1px solid var(--line)}
+</style>
+</head>
+<body>
+
+<main>
+
+  <header class="hero">
+    <div class="eyebrow">Personal Jarvis · Flash-Brain · 2026-05-14</div>
+    <h1>Status Report — <span class="accent">Pre-Thinking Acknowledgment</span></h1>
+    <p class="subtitle">Snapshot of the Flash-Brain feature after the 2026-05-13 live-bug pass. P0 through P3 land on <code>main</code>; P3.5 (suppress-if-fast) and P3.6 (BUG-017 cascade guard) live since the same day. P4 (UI bubble) and P5 (test suite) are in flight in parallel worktrees; P6 (deploy flip) is verified live.</p>
+    <div class="meta">
+      <span class="chip green">P0 + P1 + P2 + P3 + P3.5 + P3.6 live on main</span>
+      <span class="chip cyan">P6 live-verified</span>
+      <span class="chip amber">P4 + P5 in parallel worktrees</span>
+    </div>
+  </header>
+
+  <!-- ============ BIG STATS ============ -->
+  <section>
+    <div class="big-stats">
+      <div class="stat">
+        <div class="num cyan">7</div>
+        <div class="lbl">Phases shipped</div>
+        <div class="sub">P0 – P3 + P3.5 + P3.6 + P6 on <code>main</code></div>
+      </div>
+      <div class="stat">
+        <div class="num mag">~2.7 s</div>
+        <div class="lbl">Ack on slow paths</div>
+        <div class="sub">2.0 s suppress window + TTS lead-in</div>
+      </div>
+      <div class="stat">
+        <div class="num amber">~0.0 s</div>
+        <div class="lbl">Ack on fast paths</div>
+        <div class="sub">Dropped silently — suppress-if-fast gate</div>
+      </div>
+      <div class="stat">
+        <div class="num green">1</div>
+        <div class="lbl">Live bug squashed</div>
+        <div class="sub">BUG-019 — force-spawn cascade</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ NEW: LIVE BUG CARD ============ -->
+  <section id="live-bug">
+    <h2><span class="num">!</span>Live bug squashed (2026-05-13) <span class="tag fix">BUG-019</span></h2>
+    <div class="bug-card">
+      <div class="bid">BUG-019 · BUG-017 cascade</div>
+      <h3>Force-spawn-openclaw hangs when <code>brain.primary</code> is non-Claude/non-Gemini</h3>
+      <ul>
+        <li><b>Symptom.</b> User says <code>"such mir Flüge nach München"</code>. Flash-Brain ack plays correctly, then Jarvis stays silent — no main answer. User words: <em>"er hört nur noch zu, denkt nicht mehr"</em>. Repeats on every action-verb utterance.</li>
+        <li><b>Fix.</b> <code>jarvis/brain/manager.py::_should_force_openclaw</code> now returns <code>False</code> when <code>brain.primary</code> is not <code>"claude-api"</code> or <code>"gemini"</code>. Router-Brain handles the request inline via the normal tool-use loop instead of fire-and-forgetting into a dead <code>GeminiWorker</code> that hits the BUG-017 403. Ships in commit <code>4fd8932b</code>.</li>
+        <li><b>Cross-ref.</b> Root cause BUG-017 (Gemini account 403). Complementary TTS-pipe fix in commit <code>8b0d7427</code> keeps the Flash-Brain ack audible on the inline path. Both gates documented in ADR-0014 and full lessons in <code>docs/BUGS.md#BUG-019</code>.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============ PHASE GRID ============ -->
+  <section id="phases">
+    <h2><span class="num">Σ</span>Phase grid <span class="tag live">live on main</span></h2>
+    <div class="phase-grid">
+
+      <div class="phase">
+        <div class="pid">P0 · Foundation</div>
+        <div class="pname">Config + Events + Telemetry</div>
+        <span class="pstate live">Live</span>
+        <div class="pdesc"><code>AckBrainConfig</code> Pydantic model, <code>AnnouncementRequested</code> event extension, telemetry counter names. Backwards-compatible with <code>jarvis/missions/voice/announcer.py</code>.</div>
+      </div>
+
+      <div class="phase">
+        <div class="pid">P1 · Providers</div>
+        <div class="pname">Flash-Brain provider plugins</div>
+        <span class="pstate live">Live</span>
+        <div class="pdesc">Provider-pluggable Flash-Brain — small low-latency model per provider, picked independently of Router-Brain primary. Same streaming contract as the rest of Jarvis.</div>
+      </div>
+
+      <div class="phase">
+        <div class="pid">P2 · Generator</div>
+        <div class="pname">Ack generator + persona prompts v2</div>
+        <span class="pstate live">Live</span>
+        <div class="pdesc">Rules + negative-example prompts only (no positive few-shots). Explicit "stay silent" branch for smalltalk and quick factual questions. Cross-checked against the §1 driver counter-example.</div>
+      </div>
+
+      <div class="phase">
+        <div class="pid">P3 · Wiring</div>
+        <div class="pname">Pipeline integration</div>
+        <span class="pstate live">Live</span>
+        <div class="pdesc">Flash-Brain runs in parallel with Router-Brain on every utterance. Output filter and bilingual handling preserved. No regressions in the 40-pattern voice schwarzliste.</div>
+      </div>
+
+      <div class="phase">
+        <div class="pid">P3.5 · Gate 1</div>
+        <div class="pname">Suppress-if-fast window</div>
+        <span class="pstate fix">Live (UX)</span>
+        <div class="pdesc"><code>[ack_brain].suppress_if_brain_faster_than_ms = 2000</code>. Pipeline polls turn state every 100 ms after ack generation; drops ack silently if the main brain reaches <code>JARVIS_SPEAKING</code> or <code>LISTENING</code>. Removes the "double-tap" feel on fast paths.</div>
+      </div>
+
+      <div class="phase">
+        <div class="pid">P3.6 · Gate 2</div>
+        <div class="pname">BUG-017 cascade guard</div>
+        <span class="pstate fix">Live (fix)</span>
+        <div class="pdesc">Force-spawn-openclaw skipped when <code>brain.primary</code> is not in <code>{"claude-api","gemini"}</code>. Router-Brain answers inline. Temporary guard until BUG-017 is upstream-fixed or a non-Gemini worker exists. See ADR-0014.</div>
+      </div>
+
+      <div class="phase">
+        <div class="pid">P6 · Deploy</div>
+        <div class="pname">Flag flip + live verification</div>
+        <span class="pstate live">Live-verified</span>
+        <div class="pdesc"><code>jarvis.toml</code> flip lands on <code>main</code>. Five live voice runs on 2026-05-13 (smalltalk, action-verb, factual, multi-step, external-system) all behave per spec after the P3.5 + P3.6 gates ship.</div>
+      </div>
+
+      <div class="phase">
+        <div class="pid">P4 · UI bubble</div>
+        <div class="pname">In flight (parallel worktree)</div>
+        <span class="pstate">In flight</span>
+        <div class="pdesc">React chat bubble visualises the pre-ack. Owned by a separate agent in <code>flash-brain-p4-ui</code>. Not in scope for this status pass.</div>
+      </div>
+
+      <div class="phase">
+        <div class="pid">P5 · Tests</div>
+        <div class="pname">In flight (parallel worktree)</div>
+        <span class="pstate">In flight</span>
+        <div class="pdesc">Contract + integration tests for the Flash-Brain pipeline. Owned by a separate agent in <code>flash-brain-p5-tests</code>. Not in scope for this status pass.</div>
+      </div>
+
+    </div>
+  </section>
+
+  <footer>
+    Personal Jarvis · Flash-Brain status · 2026-05-14 · cross-refs: ADR-0014 · BUG-019 · BUG-017 · commits <code>4fd8932b</code> + <code>68cac890</code> + <code>8b0d7427</code>
+  </footer>
+
+</main>
+
+</body>
+</html>

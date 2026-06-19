@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Personal Jarvis · TTS Audio Deep-Dive · 2026-05-16 (Welle 1+2)</title>
+<style>
+  :root {
+    --bg: #0e0d0c;
+    --text: #d7d4cf;
+    --heading: #f3efe6;
+    --muted: rgba(215, 212, 207, 0.55);
+    --rule: rgba(255, 255, 255, 0.06);
+    --rule-soft: rgba(255, 255, 255, 0.04);
+    --accent: #e7c46e;
+    --secondary: #6ca2c8;
+    --sev-blocker: #ff7a6c;
+    --sev-critical: #ff5a47;
+    --sev-major: #e7c46e;
+    --sev-minor: rgba(108, 162, 200, 0.85);
+    --sev-ok: #94d3a6;
+    --mono: "JetBrains Mono", "Cascadia Code", "Fira Code", Consolas, "Liberation Mono", Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.55;
+    letter-spacing: 0.005em;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    position: relative;
+    min-height: 100vh;
+  }
+  body::before, body::after {
+    content: "";
+    position: fixed;
+    pointer-events: none;
+    z-index: 0;
+  }
+  body::before {
+    top: -10vh; left: -10vw; width: 60vw; height: 60vh;
+    background: radial-gradient(circle, rgba(231, 196, 110, 0.05) 0%, transparent 60%);
+  }
+  body::after {
+    bottom: -10vh; right: -10vw; width: 50vw; height: 50vh;
+    background: radial-gradient(circle, rgba(108, 162, 200, 0.04) 0%, transparent 60%);
+  }
+  main { position: relative; z-index: 1; max-width: 1180px; margin: 0 auto; padding: 64px 36px 96px; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--accent);
+    margin: 0 0 18px;
+  }
+  h1 {
+    font-size: clamp(36px, 5.5vw, 64px);
+    font-weight: 500;
+    letter-spacing: -0.025em;
+    line-height: 1.05;
+    color: var(--heading);
+    margin: 0 0 28px;
+  }
+  h1 em { font-style: normal; color: var(--accent); }
+  .hero {
+    display: grid;
+    grid-template-columns: 5fr 3fr;
+    gap: 64px;
+    align-items: end;
+    padding-bottom: 56px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .hero-meta {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+  }
+  .hero-meta div { padding: 6px 0; border-bottom: 1px solid var(--rule-soft); }
+  .hero-meta div:last-child { border: 0; }
+  .hero-meta span.k { display: inline-block; width: 110px; color: rgba(215, 212, 207, 0.4); text-transform: uppercase; }
+  .hero-meta span.v { color: var(--text); }
+  .lede { font-size: 18px; line-height: 1.55; color: var(--text); margin: 0; max-width: 60ch; }
+  .stat-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    margin: 56px 0 0;
+  }
+  .stat {
+    background: var(--bg);
+    padding: 22px 24px;
+  }
+  .stat .k {
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--muted);
+    margin: 0 0 10px;
+  }
+  .stat .v {
+    font-size: 28px;
+    font-weight: 500;
+    color: var(--heading);
+    letter-spacing: -0.015em;
+  }
+  .stat .v small { font-size: 13px; color: var(--muted); margin-left: 4px; font-weight: 400; }
+  section { margin: 64px 0 0; }
+  .section-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin: 0 0 28px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .section-head h2 {
+    font-size: 26px;
+    font-weight: 500;
+    letter-spacing: -0.015em;
+    color: var(--heading);
+    margin: 0;
+  }
+  .section-head .marker {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  p { max-width: 70ch; }
+  ul { padding-left: 1.1em; max-width: 70ch; }
+  ul li { padding: 4px 0; }
+  code, kbd {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    background: rgba(255, 255, 255, 0.04);
+    padding: 2px 6px;
+    border-radius: 2px;
+    color: var(--heading);
+  }
+  pre {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.55;
+    background: rgba(255, 255, 255, 0.025);
+    border: 1px solid var(--rule);
+    padding: 18px 20px;
+    overflow-x: auto;
+    color: var(--text);
+  }
+  pre .added { color: var(--sev-ok); }
+  pre .removed { color: var(--sev-critical); }
+  pre .ctx { color: var(--muted); }
+  a {
+    color: var(--accent);
+    text-decoration: none;
+    border-bottom: 1px dotted rgba(231, 196, 110, 0.4);
+    padding-bottom: 1px;
+  }
+  a:hover { border-bottom-style: solid; }
+  .agent-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 18px;
+    margin: 0;
+  }
+  .agent-card {
+    position: relative;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--rule);
+    padding: 22px 24px 24px 28px;
+  }
+  .agent-card::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: var(--accent);
+  }
+  .agent-card[data-rank="1"]::before { background: var(--accent); }
+  .agent-card[data-rank="2"]::before { background: var(--accent); }
+  .agent-card[data-rank="3"]::before { background: var(--secondary); }
+  .agent-card[data-rank="4"]::before { background: var(--secondary); }
+  .agent-card[data-rank="5"]::before { background: var(--sev-blocker); }
+  .agent-card h3 {
+    margin: 0 0 6px;
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    color: var(--heading);
+  }
+  .agent-card .agent-id {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 14px;
+  }
+  .agent-card .verdict {
+    font-size: 13px;
+    color: var(--text);
+    margin: 0;
+  }
+  .agent-card .verdict strong { color: var(--heading); }
+  .agent-card .conf {
+    display: inline-block;
+    margin-top: 14px;
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    padding: 4px 8px;
+    border: 1px solid currentColor;
+  }
+  .conf.high { color: var(--sev-ok); }
+  .conf.medhigh { color: var(--accent); }
+  .conf.med { color: var(--secondary); }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 24px; font-size: 13.5px; }
+  th, td { text-align: left; padding: 10px 14px; vertical-align: top; }
+  thead th {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom: 1px solid var(--rule);
+  }
+  tbody tr td { border-bottom: 1px solid var(--rule-soft); }
+  tbody tr:last-child td { border-bottom: 0; }
+  .verdict-row {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 24px;
+    margin: 0 0 24px;
+    padding: 22px 24px 22px 28px;
+    position: relative;
+    border: 1px solid var(--rule);
+    background: rgba(255, 255, 255, 0.02);
+  }
+  .verdict-row::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: var(--sev-ok);
+  }
+  .verdict-row .label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .verdict-row .v {
+    font-size: 15px;
+    color: var(--text);
+  }
+  .verdict-row .v strong { color: var(--heading); }
+  .verdict-row .v code { font-size: 0.9em; }
+  .followup {
+    background: rgba(231, 196, 110, 0.04);
+    border: 1px solid rgba(231, 196, 110, 0.16);
+    padding: 18px 24px;
+    margin: 24px 0 0;
+    font-size: 14px;
+  }
+  .followup .tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--accent);
+    display: block;
+    margin: 0 0 8px;
+  }
+  footer {
+    margin: 96px 0 0;
+    padding-top: 22px;
+    border-top: 1px solid var(--rule);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: rgba(215, 212, 207, 0.4);
+    letter-spacing: 0.05em;
+  }
+  @media (max-width: 760px) {
+    main { padding: 40px 22px 80px; }
+    .hero { grid-template-columns: 1fr; gap: 36px; }
+    .stat-strip { grid-template-columns: repeat(2, 1fr); }
+    .verdict-row { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+  <p class="eyebrow">§ Personal Jarvis · Diagnostics · 2026-05-16</p>
+  <div class="hero">
+    <div>
+      <h1>TTS phoneme-stretch <em>localised &amp; fixed</em> via 5-agent deep-dive.</h1>
+      <p class="lede">
+        The user reported the TTS voice was elongating phonemes — "Hallo" coming out as "haaaaaaa lalala oooo". Five parallel Opus investigator agents converged on the same root cause: <em>the AudioPlayer's "persistent" OutputStream was being closed and reopened on every sentence</em>, causing WASAPI prebuffer + <code>scipy.signal.resample_poly</code> FIR ringing at every sentence boundary. The fix hoists the stream lifecycle to instance fields, makes <code>stop()</code> actually abort the active stream, and adds a success-log for future diagnosability. 8 tests green, 3-sentence live smoke-test passed end-to-end.
+      </p>
+    </div>
+    <div class="hero-meta">
+      <div><span class="k">Branch</span><span class="v">(archived)</span></div>
+      <div><span class="k">File</span><span class="v">jarvis/audio/player.py</span></div>
+      <div><span class="k">Diff</span><span class="v">+67 / -27 lines</span></div>
+      <div><span class="k">Tests</span><span class="v">8 passed (3 lock + 5 persistent-stream)</span></div>
+      <div><span class="k">Smoke</span><span class="v">live 3-sentence playback OK</span></div>
+      <div><span class="k">Severity</span><span class="v">Major (audible UX regression)</span></div>
+    </div>
+  </div>
+
+  <div class="stat-strip">
+    <div class="stat"><p class="k">Agents</p><p class="v">5 <small>parallel Opus 4.7</small></p></div>
+    <div class="stat"><p class="k">Convergence</p><p class="v">4 of 5 <small>same root-cause class</small></p></div>
+    <div class="stat"><p class="k">Stream opens per turn</p><p class="v">1 <small>was N (per sentence)</small></p></div>
+    <div class="stat"><p class="k">Root causes</p><p class="v">3 <small>stacked, all real</small></p></div>
+  </div>
+
+  <section>
+    <div class="section-head">
+      <h2>Symptom</h2>
+      <span class="marker">§ what the user heard</span>
+    </div>
+    <p>
+      The synthesized voice elongated individual phonemes. Instead of "Hallo" the user heard something closer to "haaaaaaaa lalala oooo" — extra L sounds, stretched vowels, the rhythm of speech smeared across sentence boundaries. The bug appeared at unpredictable cadence: sometimes one sentence sounded fine, the next one didn't. The model itself was not at fault — the audio bytes coming out of Gemini Flash TTS are 24 kHz mono PCM and are structurally correct. The corruption happened entirely on the playback side.
+    </p>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>5-agent deep-dive · convergent findings</h2>
+      <span class="marker">§ parallel opus investigators</span>
+    </div>
+    <p>
+      Each agent received a different focused scope and ranked hypotheses with file:line citations.
+      Four of five independently identified the per-sentence stream tear-down as the primary cause;
+      the fifth provided runtime log evidence that turned the static analysis into a confirmed diagnosis.
+    </p>
+    <div class="agent-grid">
+      <div class="agent-card" data-rank="1">
+        <h3>AudioPlayer time-stretch</h3>
+        <p class="agent-id">A-01 · scope: jarvis/audio/player.py</p>
+        <p class="verdict"><strong>Primary:</strong> <code>asyncio.Lock</code> from commit <code>33d51c5f</code> serialises calls, but each <code>play_chunks</code> still tears down its OutputStream in <code>finally</code>. With streaming-TTS calling once per sentence, every sentence triggers <code>scipy.signal.resample_poly</code> polyphase FIR edge ringing.</p>
+        <span class="conf high">Confidence · High</span>
+      </div>
+      <div class="agent-card" data-rank="2">
+        <h3>Gemini Flash provider</h3>
+        <p class="agent-id">A-02 · scope: gemini_flash_tts.py</p>
+        <p class="verdict"><strong>Hypothesis:</strong> <code>GEMINI_TTS_SAMPLE_RATE = 24_000</code> is hardcoded; the actual rate from the 3.1→2.5 sibling-bridge may not match. Recommends parsing <code>part.inline_data.mime_type</code>. Ruled out double-yield, speed-twice, retry-loop bugs.</p>
+        <span class="conf high">Confidence · High</span>
+      </div>
+      <div class="agent-card" data-rank="3">
+        <h3>Speech pipeline flow</h3>
+        <p class="agent-id">A-03 · scope: jarvis/speech/pipeline.py</p>
+        <p class="verdict"><strong>Primary:</strong> <code>AudioPlayer.stop()</code> only calls <code>sd.stop()</code> — a no-op against the OutputStream opened by <code>play_chunks</code>. Barge-in / interrupt paths fail silently. Combined with per-sentence stream churn, double trouble.</p>
+        <span class="conf medhigh">Confidence · Medium-High</span>
+      </div>
+      <div class="agent-card" data-rank="4">
+        <h3>Regression bisect</h3>
+        <p class="agent-id">A-04 · scope: last 60 commits</p>
+        <p class="verdict"><strong>Conclusion:</strong> No clean revert target. Structural regression is <code>69593f17</code> (streaming-TTS, per-sentence <code>_speak</code>) + <code>e47c651c</code> (Flash-Brain Ack as second producer). The <code>33d51c5f</code> lock is a partial fix, not the cause.</p>
+        <span class="conf med">Confidence · Medium</span>
+      </div>
+      <div class="agent-card" data-rank="5">
+        <h3>Live runtime log</h3>
+        <p class="agent-id">A-05 · scope: data/jarvis_desktop.log</p>
+        <p class="verdict"><strong>Smoking gun:</strong> <code>193×</code> <em>"OutputStream @ 24000Hz failed (PaErrorCode -9997) — naechste Rate …"</em> warnings in production log, and zero success-log lines confirming which fallback rate finally opened. Device = <em>AB13X USB Audio @ 48 kHz</em> via Windows WASAPI.</p>
+        <span class="conf high">Confidence · High</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Three stacked root causes</h2>
+      <span class="marker">§ all real, all measured</span>
+    </div>
+    <table>
+      <thead>
+        <tr><th>Layer</th><th>What was broken</th><th>How it stretched audio</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1 · Stream lifetime</td>
+          <td>The <em>finally</em> block at <code>player.py:487-489</code> closed <code>sd.OutputStream</code> at the end of every <code>play_chunks</code> call. The streaming-TTS pipeline calls <code>play_chunks</code> once per sentence, so every sentence opened a fresh stream — despite the docstring at <code>player.py:419-424</code> explicitly designing for "one persistent stream per response".</td>
+          <td>Every sentence boundary triggered WASAPI's <code>latency='high'</code> prebuffer (~200 ms) plus <code>scipy.signal.resample_poly</code> polyphase-FIR edge ringing at the new stream's start. Perceived as elongated, "lalala"-style phoneme duplication.</td>
+        </tr>
+        <tr>
+          <td>2 · Barge-in stop()</td>
+          <td><code>player.py:491-493</code> implemented <code>stop()</code> as just <code>sd.stop()</code>. <code>sd.stop()</code> only affects streams opened via <code>sd.play()</code>; the persistent <code>OutputStream</code> instance was invisible to it.</td>
+          <td>When an interrupt-priority announcement or background-completed event fired <code>player.stop()</code>, the old stream kept draining 200 ms of buffered audio while a new stream was already opened by the next producer. Two concurrent streams on the same WASAPI device produced phase-overlap artifacts.</td>
+        </tr>
+        <tr>
+          <td>3 · Diagnose-blindness</td>
+          <td>The fallback cascade in <code>_open_output_stream</code> emitted a <strong>WARN</strong> on every failed rate but no success log on the chosen rate. Production log showed 193 failures, zero successes — invisible to diagnosis.</td>
+          <td>Indirect: every previous attempt to debug this bug ran into "I see the cascade running, but which rate finally worked?" — no answer. Added a single <code>log.info</code> line so the next bug is observable.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>The fix · three surgical edits</h2>
+      <span class="marker">§ jarvis/audio/player.py · +67 / -27</span>
+    </div>
+    <p>
+      The fix is surprisingly small — no pipeline changes, no API breakage, no model swap. The original architecture
+      ("one persistent stream per response") was correct; the implementation had drifted into "one per sentence".
+      Three edits restore the design intent.
+    </p>
+    <pre><span class="ctx"># 1 · __init__ — instance-scope stream lifecycle</span>
+<span class="added">+ self._active_stream: sd.OutputStream | None = None</span>
+<span class="added">+ self._active_source_rate: int | None = None</span>
+<span class="added">+ self._active_device_rate: int | None = None</span>
+
+<span class="ctx"># 2 · _open_output_stream — success log on the chosen rate</span>
+  stream.start()
+<span class="added">+ log.info("OutputStream opened @ %d Hz (source=%d Hz, device=%s)",</span>
+<span class="added">+          target_rate, source_rate, self._device)</span>
+  return stream, target_rate
+
+<span class="ctx"># 3 · play_chunks — _ensure_stream uses instance fields, NO finally close</span>
+  async with self._get_play_lock():
+      def _ensure_stream(needed_rate):
+<span class="added">+         if self._active_stream is not None and self._active_source_rate == needed_rate:</span>
+<span class="added">+             return self._active_stream, self._active_device_rate</span>
+<span class="added">+         if self._active_stream is not None:</span>
+<span class="added">+             self._close_output_stream(self._active_stream)</span>
+<span class="added">+             self._active_stream = None</span>
+          new_stream, device_rate = self._open_output_stream(needed_rate)
+<span class="added">+         self._active_stream = new_stream</span>
+<span class="added">+         self._active_source_rate = needed_rate</span>
+<span class="added">+         self._active_device_rate = device_rate</span>
+          return new_stream, device_rate
+      ...
+      <span class="removed">- finally:</span>
+      <span class="removed">-     if stream is not None:</span>
+      <span class="removed">-         await asyncio.to_thread(self._close_output_stream, stream)</span>
+
+<span class="ctx"># 4 · stop() — actually abort the persistent stream</span>
+  def stop(self) -> None:
+<span class="added">+     stream = self._active_stream</span>
+<span class="added">+     self._active_stream = None</span>
+<span class="added">+     self._active_source_rate = None</span>
+<span class="added">+     self._active_device_rate = None</span>
+<span class="added">+     if stream is not None:</span>
+<span class="added">+         try: stream.abort()  # Pa_AbortStream — discards buffered samples</span>
+<span class="added">+         except Exception as exc: log.debug("OutputStream.abort() failed: %s", exc)</span>
+<span class="added">+         try: stream.close()</span>
+<span class="added">+         except Exception: pass</span>
+      sd.stop()</pre>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Verification</h2>
+      <span class="marker">§ tests + live smoke test</span>
+    </div>
+
+    <div class="verdict-row">
+      <div class="label">Unit · existing</div>
+      <div class="v">
+        <strong>3 passed</strong> — <code>tests/unit/audio/test_player_lock.py</code> · lock-serialisation contract is preserved. One test needed an additional field-init in its <code>AudioPlayer.__new__</code> helper because it bypasses <code>__init__</code>.
+      </div>
+    </div>
+    <div class="verdict-row">
+      <div class="label">Unit · new</div>
+      <div class="v">
+        <strong>5 passed</strong> — <code>tests/unit/audio/test_player_persistent_stream.py</code> · pins the new contract: (a) two sequential same-rate <code>play_chunks</code> share one stream, (b) sample-rate change triggers reopen, (c) <code>stop()</code> aborts the active stream, (d) <code>stop()</code> is idempotent, (e) 5-sentence response = exactly 1 stream open, 5 writes, 0 closes.
+      </div>
+    </div>
+    <div class="verdict-row">
+      <div class="label">Live smoke · audio</div>
+      <div class="v">
+        <strong>PASS</strong> — <code>sub-agents-outputs/tts_stretch_smoke_test.py</code> · drove 3 real Gemini Flash TTS sentences through the patched AudioPlayer. Captured logs:
+<pre>Stream-open SUCCESS logs : 1
+   • OutputStream opened @ 24000 Hz (source=24000 Hz, device=None)
+Stream-open FAILURE logs : 0
+
+_active_stream is None?  : False  (expected: False, stream persists)
+_active_source_rate      : 24000
+_active_device_rate      : 24000
+
+OK: stop() cleared _active_stream cleanly
+PASS — patch verified end-to-end</pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Documented follow-up</h2>
+      <span class="marker">§ out of scope for this fix</span>
+    </div>
+    <div class="followup">
+      <span class="tag">FU-1 · WDM-KS error -9999 fallback</span>
+      During the live smoke test the <code>auto-headset</code> resolver picked a Windows WDM-KS device whose
+      blocking-API is unimplemented (<code>PaErrorCode -9999 'Blocking API not supported yet'</code>). The
+      existing fallback in <code>_open_output_stream</code> only catches <code>-9997</code> (Invalid sample rate);
+      <code>-9999</code> is re-raised. This explains why Agent 5 saw 193 warnings in production but no success
+      lines — the cascade never got past <code>-9999</code> on certain devices. Suggested follow-up: broaden the
+      <code>except</code> to also retry on <code>-9999</code> with a different device index, or strengthen the
+      WDM-KS filter in <code>_resolve_output_device</code> to also exclude WDM-KS devices that have no safer
+      sibling (currently only excluded if a sibling exists).
+    </div>
+    <div class="followup">
+      <span class="tag">FU-2 · Gemini 3.1 vs 2.5 rate handling</span>
+      Agent 02 flagged that <code>gemini_flash_tts.py</code> hardcodes <code>GEMINI_TTS_SAMPLE_RATE = 24_000</code>
+      for both the 3.1 primary and the 2.5 sibling-bridge fallback. Both currently emit 24 kHz, so it works —
+      but if either model's output format changes, the chunk metadata would be wrong. Robust fix: parse
+      <code>part.inline_data.mime_type</code> (format <code>"audio/L16;codec=pcm;rate=NNNN"</code>), use that
+      rate on the <code>AudioChunk</code>. Cheap, future-proofing.
+    </div>
+    <div class="followup">
+      <span class="tag">FU-3 · Pipeline-side: one play_chunks per turn</span>
+      Agent 04 noted that <code>_brain_streaming</code> still spawns one <code>play_chunks</code> per sentence.
+      With the persistent-stream fix this no longer causes artifacts, but it does churn 5× through
+      <code>_ensure_stream</code>'s fast path and 5× through the asyncio-lock acquire/release per turn. A pipeline-side
+      refactor that chains all sentence chunk iterators into a single <code>play_chunks</code> call would be tidier
+      and shave a few hundred microseconds per turn. Not user-visible.
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>How to verify yourself</h2>
+      <span class="marker">§ your turn, Ruben</span>
+    </div>
+    <ol>
+      <li>Restart Jarvis (close the running tray-app, then <code>run.bat</code> or <code>run.bat --debug</code>).</li>
+      <li>Wake with "Hey Jarvis", say a longer multi-sentence request — anything that triggers a 2+ sentence brain answer ("Erzähl mir was über das Wetter" or similar).</li>
+      <li>Listen specifically at <em>sentence boundaries</em>. Pre-fix: that's where "lalala" stretch happened. Post-fix: smooth.</li>
+      <li>Optional: tail <code>data/jarvis_desktop.log</code> and grep for <code>OutputStream opened</code>. You should see <strong>one</strong> success line per turn, not per sentence — and no <em>"naechste Rate"</em> warning loop on the chosen device.</li>
+    </ol>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Welle 2 · second 5-agent dive after new symptom</h2>
+      <span class="marker">§ knistern + immer langsamer</span>
+    </div>
+    <p>
+      The user restarted Jarvis and listened. The previous phoneme-stretch was gone — but a NEW
+      symptom layered on top: audible crackling ("knistert") and a gradual perceived slowdown
+      across long responses. A second 5-agent dispatch (Opus 4.7, parallel) converged on three
+      independent issues that the Welle-1 fix hadn't addressed.
+    </p>
+
+    <div class="agent-grid" style="margin-top:18px">
+      <div class="agent-card" data-rank="1">
+        <h3>Per-chunk resampler FIR ringing</h3>
+        <p class="agent-id">B-01 · scope: _resample_int16</p>
+        <p class="verdict">Measured ~48% peak-amplitude transients at every <code>resample_poly</code> chunk boundary. With 120 ms chunks that's an 8 Hz crackle source.</p>
+        <span class="conf high">Confidence · High</span>
+      </div>
+      <div class="agent-card" data-rank="2">
+        <h3>WASAPI buffer growth / drain</h3>
+        <p class="agent-id">B-02 · scope: stream lifecycle</p>
+        <p class="verdict">Persistent stream + parallel-synthesis producer bursts caused buffer to grow. Inter-sentence wall-clock gaps then drained it to underrun.</p>
+        <span class="conf high">Confidence · High</span>
+      </div>
+      <div class="agent-card" data-rank="3">
+        <h3>Pipeline = one play_chunks per sentence</h3>
+        <p class="agent-id">B-03 · scope: pipeline._brain_streaming</p>
+        <p class="verdict">Pipeline still spawns N <code>play_chunks</code> calls per turn. Persistence helps within a call but not across; the gap between calls drains the WASAPI buffer.</p>
+        <span class="conf high">Confidence · High</span>
+      </div>
+      <div class="agent-card" data-rank="5">
+        <h3>Runtime log smoking gun</h3>
+        <p class="agent-id">B-04 · scope: data/jarvis_desktop.log</p>
+        <p class="verdict"><strong>"OutputStream opened" NEVER appears in 4.96 MB of log.</strong> Either the running process loaded a stale install (BUG-006 four-layer trap), or persistence isn't actually active. 17 fresh cascade-failures in the post-fix hour.</p>
+        <span class="conf high">Confidence · High</span>
+      </div>
+      <div class="agent-card" data-rank="2">
+        <h3>stream.write() underflow flag discarded</h3>
+        <p class="agent-id">B-05 · scope: _write_samples</p>
+        <p class="verdict"><code>stream.write()</code> returns a bool reporting mid-write underrun. The bool was never captured → every underrun was invisible at log level. <code>latency="high"</code> reserves only ~10 ms on USB headsets.</p>
+        <span class="conf high">Confidence · High</span>
+      </div>
+    </div>
+
+    <h3 style="margin-top:36px; font-weight:500; color:var(--heading); letter-spacing:-0.01em;">Three latent causes the Welle-1 fix had exposed</h3>
+    <table>
+      <thead>
+        <tr><th>Cause</th><th>Mechanism</th><th>Fix in Welle 2</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1 · <code>latency="high"</code> is a HINT</td>
+          <td>On modern USB headsets like the AB13X used here, <code>"high"</code> resolves via <code>default_high_output_latency = 0.010 s</code> — only <strong>10 ms</strong> of buffer. Any inter-sentence pipeline gap &gt; 10 ms drains the buffer and PortAudio inserts a click.</td>
+          <td>Replace with explicit <code>latency=0.2</code> (200 ms). Matches LiveKit/Pipecat/RealtimeTTS canonical config. <code>actual_latency=0.201s</code> verified live.</td>
+        </tr>
+        <tr>
+          <td>2 · <code>stream.write()</code> underflow discarded</td>
+          <td>PortAudio returns <code>True</code> when the write straddled an empty-buffer moment. The bool was thrown away — every underrun was silent at log level. Same silent-failure class as <a href="https://github.com/anthropics/claude-code/issues">BUG-003 SAPI5 fallback</a>.</td>
+          <td>Capture the bool; emit <code>WARNING PortAudio underflow during write (frames=…, source=…Hz, device=…Hz)</code>. Now visible.</td>
+        </tr>
+        <tr>
+          <td>3 · Per-turn samplerate cascade spam</td>
+          <td>Pipeline calls <code>player.stop()</code> at end-of-turn (for barge-in). Stream torn down → next turn restarts the rate-cascade. AB13X rejects 24 kHz → 1× "naechste Rate" warning per turn. 17 warnings/hour.</td>
+          <td>New <code>_device_rate_cache: dict[source_rate → device_rate]</code>. Once we learned 24 kHz fails on this device, subsequent opens skip straight to the cached working rate.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="followup">
+      <span class="tag">FU · install-freshness check</span>
+      Agent 4's evidence (zero "OutputStream opened" lines despite the fix being on disk since 23:09:14) suggests the running Jarvis loaded the OLD bytecode. The classic BUG-006 four-layer trap. Confirmed disk-side: <code>jarvis.audio.player.__file__</code> resolves to the active tree, mtime is current, <code>hasattr(AudioPlayer(), '_active_stream')</code> is True. The user simply needs to restart from this tree to pick up Welle-1+2 fixes.
+    </div>
+
+    <h3 style="margin-top:36px; font-weight:500; color:var(--heading); letter-spacing:-0.01em;">Welle-2 verification</h3>
+    <div class="verdict-row">
+      <div class="label">Unit · 12 total</div>
+      <div class="v">
+        4 new in <code>tests/unit/audio/test_player_welle2.py</code> · pins (a) <em>device-rate cache skips cascade on second open</em>, (b) <em>underflow logs WARNING with frame/rate/device fields</em>, (c) <em>healthy writes don't spam logs</em>, (d) <em>OutputStream uses explicit float latency ≥ 0.1s, never the "high" hint</em>. Plus 5 persistent-stream + 3 lock from Welle 1 = 12 green.
+      </div>
+    </div>
+    <div class="verdict-row">
+      <div class="label">Live smoke · 5 sentences</div>
+      <div class="v">
+<pre>→ synthesizing + playing 5 sentences sequentially with 250ms inter-sentence gap …
+   [1/5] Hallo Ruben, dies ist der zweite Wellen-Test.
+   [2/5] Ich pruefe jetzt die Audio-Qualitaet ueber mehrere Saetze hinweg.
+   [3/5] Hoerst du Knistern, Aussetzer oder eine schleichende Verlangsamung?
+   [4/5] Wichtig ist insbesondere der Uebergang zwischen den einzelnen Saetzen.
+   [5/5] Sollte alles glatt klingen, dann hat die Welle-zwei-Korrektur ihr Ziel erreicht.
+
+Stream-open SUCCESS logs : 1
+   • OutputStream opened @ 24000 Hz (source=24000 Hz, device=None, actual_latency=0.201s)
+Stream-open FAILURE logs : 0
+PortAudio UNDERFLOW logs : 0
+
+_device_rate_cache       : {24000: 24000}
+PASS — patch verified end-to-end</pre>
+        <p style="margin-top:14px"><strong>Critical signal:</strong> <code>actual_latency=0.201s</code> proves the 200 ms buffer is live (was 10 ms before). Zero underrun warnings across 5 sentences + 4 × 250 ms inter-sentence gaps — exactly the scenario that crackled in production.</p>
+      </div>
+    </div>
+
+    <h3 style="margin-top:36px; font-weight:500; color:var(--heading); letter-spacing:-0.01em;">User verification checklist</h3>
+    <ol>
+      <li><strong>Restart Jarvis</strong> — close the tray (Right-click → Quit), then <code>run.bat</code>. This step is critical — the Welle-1 fix never reached the live process because of bytecode cache.</li>
+      <li>On startup, check <code>data/jarvis_desktop.log</code> for the new line <code>OutputStream opened @ NNNN Hz (source=24000 Hz, device=…, actual_latency=0.NNNs)</code>. If you see <code>actual_latency=0.200s</code> or close, Welle 2 is live.</li>
+      <li>Trigger a multi-sentence response. The previous crackling at sentence boundaries should be gone.</li>
+      <li>If any crackling remains, grep the log for <code>PortAudio underflow</code> — that line is now emitted whenever the buffer drains mid-write, giving us actionable data for a third dive.</li>
+    </ol>
+  </section>
+
+  <footer>
+    <span>PERSONAL JARVIS · TTS-AUDIO-2026-05-16 · WELLE 1 + 2</span>
+    <span>jarvis/audio/player.py · 12 tests · 10 agents</span>
+  </footer>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,104 @@
+/* mascot.css — Plan §13.
+ *
+ * Body + Window sind transparent, Mascot fuellt das volle 160x160
+ * Window. Rive-Canvas oder PNG-Fallback wird als 100%-Surface
+ * eingespannt; CSS animiert nur einen leichten idle-Pulse fuer den
+ * Fall dass weder Rive noch State-Animation greift.
+ */
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100vw;
+  height: 100vh;
+  background: transparent;
+  overflow: hidden;
+  /* Plan §17: contain: strict am Mascot-Root. */
+  contain: strict;
+  /* Mascot ist drag/right-click-empfindlich — pointer-events default. */
+}
+
+.mascot-host {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Subtle idle-Pulse via opacity. Plan §13.1 sagt "gentle, not eye-
+   * catching". Transform-only animation = compositor-thread. */
+  animation: mascot-idle-pulse 8s ease-in-out infinite;
+}
+
+#mascot-canvas,
+#mascot-fallback {
+  width: 100%;
+  height: 100%;
+  /* Pixel-art bzw. PNG soll knack-scharf bleiben wenn der User
+   * eine andere Mascot-Groesse waehlt. */
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  user-select: none;
+  -webkit-user-drag: none;
+  pointer-events: none; /* Drag faengt das Qt-Window selbst */
+}
+
+#mascot-canvas[hidden],
+#mascot-fallback[hidden] {
+  display: none;
+}
+
+@keyframes mascot-idle-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.92;
+  }
+  50% {
+    transform: scale(1.02);
+    opacity: 1;
+  }
+}
+
+/* State-driven Tweaks — Plan §13.2 mappt OverlayState auf Rive-Inputs;
+ * im Fallback machen wir einen statischen Tint via CSS-Filter so dass
+ * der User zumindest die State-Aenderung subtil sieht. */
+:root[data-state="error"] .mascot-host {
+  animation:
+    mascot-idle-pulse 8s ease-in-out infinite,
+    mascot-error-flash 0.6s linear 1;
+}
+:root[data-state="thinking"] .mascot-host {
+  animation: mascot-idle-pulse 4s ease-in-out infinite;
+}
+:root[data-state="speaking"] .mascot-host {
+  animation: mascot-speaking 0.4s ease-in-out infinite;
+}
+
+@keyframes mascot-error-flash {
+  0%,
+  100% {
+    filter: none;
+  }
+  50% {
+    filter: hue-rotate(-30deg) saturate(2);
+  }
+}
+
+@keyframes mascot-speaking {
+  0%,
+  100% {
+    transform: scale(1.0);
+  }
+  50% {
+    transform: scale(1.04);
+  }
+}
+
+/* prefers-reduced-motion: Mascot-Animationen pausieren, statisch. */
+@media (prefers-reduced-motion: reduce) {
+  .mascot-host,
+  .mascot-host * {
+    animation: none !important;
+  }
+}

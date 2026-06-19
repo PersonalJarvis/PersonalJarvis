@@ -1,0 +1,10 @@
+# Paths exempt from the PII scrub (one gitignore-ish glob per line).
+#
+# .mailmap MUST contain the maintainer's real emails as the left-hand mapping
+# keys — that is how git rewrites them to the GitHub noreply form in the web UI
+# and API (spam-scraping defence). The file documents this trade-off in its own
+# header, and the public repo already ships it by deliberate decision. Scrubbing
+# it would BREAK the protection it provides, so it is exempt from substitution.
+# During `scan` its email/name matches are downgraded to warnings (surfaced in
+# the review) instead of blocking the ship.
+.mailmap

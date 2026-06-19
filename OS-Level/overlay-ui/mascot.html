@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src qrc:; worker-src blob:;" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mascot</title>
+    <!-- qwebchannel.js wird von bridge.ts lazy geladen. -->
+  </head>
+  <body>
+    <!-- Rive-Canvas wird per Default gerendert, fail-over auf <img>
+         (PNG-Fallback) wenn Rive-Asset nicht laed. Plan §13 + AD-16. -->
+    <div class="mascot-host" role="img" aria-label="Jarvis status indicator">
+      <canvas id="mascot-canvas" width="320" height="320" hidden></canvas>
+      <img id="mascot-fallback" alt="" src="" hidden />
+    </div>
+    <script type="module" src="./src/mascot/main.ts"></script>
+  </body>
+</html>

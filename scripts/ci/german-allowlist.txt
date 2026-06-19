@@ -1,0 +1,298 @@
+# Path allowlist for the CI "no new German" gate (scripts/ci/check_no_new_german.py).
+#
+# Files matching these fnmatch globs are EXEMPT from the German-text check. "*"
+# matches across "/" (fnmatch semantics), so "dir/*" covers a whole subtree.
+# Keep this list tight: it is the documented set of places German is allowed.
+# One pattern per line; "#" starts a comment; blank lines ignored.
+
+# --- Deliberately German persona / soul prompts (load-bearing, not translated) ---
+jarvis/brain/JARVIS_PERSONA.md
+jarvis/brain/ack_brain/persona_prompt.py
+jarvis/brain/ack_brain/spawn_announcement.py
+jarvis/brain/persona_loader.py
+jarvis/brain/router.py
+jarvis/memory/soul.py
+jarvis/speech/persona.py
+
+# --- Spawn-announcement tests: German voice fixtures + pool phrases are the
+#     content under test (bilingual DE+EN voice product) ---
+tests/unit/brain/test_spawn_announcement.py
+tests/unit/plugins/tool/test_spawn_worker_ack.py
+
+# --- Smalltalk-head/action-tail guard: the verbatim German voice utterances
+#     (the live Bill-Gates turn) ARE the regression fixtures under test ---
+tests/unit/brain/test_smalltalk_action_tail.py
+
+# --- The translation tooling itself (necessarily contains German word lists) ---
+scripts/bulk_translate*.py
+scripts/find_german_strings.py
+scripts/rewrite_locales.py
+scripts/ci/_german_detect.py
+scripts/ci/check_no_new_german.py
+scripts/ci/german-allowlist.txt
+
+# --- The gate's own tests (German fixture strings are required to test it) ---
+tests/unit/ci/test_check_no_new_german.py
+
+# --- i18n / locale source files (German IS the point here) ---
+*/i18n/*
+*/locales/*
+*.de.json
+*.de.ts
+
+# --- Built-in skill manifests: voice triggers and quoted example phrases are
+#     bilingual by design (DE+EN voice product) — the German there is content,
+#     not an untranslated artifact. ---
+jarvis/skills/builtin/*/SKILL.md
+
+# --- Historical session logs (internal memory, not an outward-facing artifact) ---
+wiki/obsidian-vault/*
+# --- German speech-recognition intent data (bilingual assistant; the German
+#     phrases ARE the recognizer's input vocabulary, not outward-facing text) ---
+jarvis/pointer/*
+jarvis/brain/navigation_intent.py
+jarvis/brain/local_action_gate.py
+jarvis/plugins/tool/navigate.py
+jarvis/plugins/tool/inspect_pointer.py
+jarvis/plugins/tool/contact_lookup.py
+
+# --- Tests for the above: German fixture utterances are required to exercise
+#     the bilingual recognizers (same rationale as the gate's own tests) ---
+tests/unit/pointer/*
+tests/unit/brain/test_manager_pointer.py
+tests/unit/brain/test_navigation_intent.py
+tests/unit/brain/test_response_max_tokens_cap.py
+tests/unit/brain/test_routing.py
+tests/unit/plugins/tool/test_navigate.py
+tests/unit/channels/test_discord_channel.py
+tests/unit/contacts/test_store.py
+tests/unit/speech/test_brain_stall_guard.py
+tests/unit/telephony/test_outbound.py
+scripts/pointer_smoke.py
+scripts/probe_telephony_e2e.py
+
+# --- Design docs that document the German speech recognition (quoted DE
+#     example utterances are necessary to specify the recognizer) ---
+docs/adr/0011-router-pure-dispatcher.md
+docs/plans/ai-pointer/DESIGN.md
+docs/superpowers/plans/2026-06-02-configurable-keybinds.md
+docs/superpowers/specs/2026-06-02-configurable-keybinds-design.md
+
+# --- Skill that needs bilingual trigger phrases in its description so a
+#     German-speaking user can invoke it (trigger-matching data, like i18n) ---
+.claude/skills/ship-public-release/SKILL.md
+
+# Implementation plan for plugin<->skill pairing (2026-06-07): an internal
+# reference doc that quotes illustrative German voice-input test utterances
+# (intentional — they demonstrate the German speech path the tests exercise).
+docs/superpowers/plans/2026-06-07-plugin-skill-pairing-reachability.md
+
+# --- Forensic voice-bug deep-dive: an internal diagnosis doc that necessarily
+#     quotes the German voice phrases, log lines and user utterance it analyses ---
+docs/phantom-worker-aborted-deep-dive/*
+
+# --- Bilingual skill trigger matcher: the German filler/politeness words ARE
+#     the recognizer's input vocabulary (same rationale as navigate.py) ---
+jarvis/skills/trigger_matcher.py
+tests/unit/skills/test_trigger_matcher.py
+
+# --- Internal design/plan docs that quote German voice phrases to specify the
+#     bilingual speech path (same rationale as the keybinds design docs) ---
+docs/plans/mission-reliability/*
+docs/superpowers/specs/2026-06-07-languages-into-settings-design.md
+docs/superpowers/specs/2026-06-07-move-taskbar-into-settings-design.md
+
+# --- Voice-session transcript renderer: emits LOCALIZED session content
+#     ("Du:" / "Jarvis:" speaker labels, German header) that a user copies in
+#     their own conversation language — runtime output, not product UI. Its test
+#     necessarily quotes German voice utterances + umlauts to prove the render. ---
+jarvis/sessions/formatter.py
+tests/unit/sessions/test_formatter.py
+
+# --- Forensic voice-bug deep-dive: an internal diagnosis doc that necessarily
+#     quotes the German voice phrases, log lines and user utterance it analyses ---
+docs/phantom-worker-aborted-deep-dive/*
+
+# --- Manual voice-QA scripts: the test utterances a human speaks to Jarvis are
+#     bilingual (DE+EN) by design — the German phrases are the content under
+#     test, not an untranslated artifact ---
+docs/qa/*
+
+# --- The local-action gate's own tests: the gate classifies German voice
+#     utterances, so its regression fixtures (open-app, computer-use, sub-agent
+#     research misroute) are necessarily German — content under test, not an
+#     untranslated artifact ---
+tests/unit/brain/test_local_action_gate.py
+
+# --- DIRECT-path acknowledgement language test: proves the German open_app
+#     launch ack is localized for English/Spanish turns and preserved for German
+#     turns — the German fixtures are the content under test ---
+tests/unit/brain/test_local_action_ack_language.py
+
+# --- Computer-use / local-action readback localization tests: prove the
+#     German fast-path status phrases are localized per turn. The German
+#     utterances and phrase fixtures are the content under test ---
+tests/unit/brain/test_cu_readback_language.py
+tests/unit/voice/test_action_phrases.py
+
+# --- Voice-intent detection regexes: these classifiers MUST contain German
+#     tokens to match German voice utterances (same rationale as router.py).
+#     The German is matching data, not an untranslated artifact ---
+jarvis/brain/local_action_gate.py
+jarvis/missions/stream_evidence.py
+
+# --- Screen-narration guard test: the German voice fixtures and the assertions
+#     on the German persona/system-prompt content are the behaviour under test ---
+tests/unit/brain/test_screen_narration_guard.py
+
+# --- Completion-ellipsis test: German "trailed-off" voice fixtures are the
+#     turn-completion content under test ---
+tests/unit/speech/test_completion_ellipsis.py
+
+# --- Re-run mission design spec: the i18n key table documents the localized
+#     (DE/EN/ES) UI strings — the German column is reference data ---
+docs/superpowers/specs/2026-06-15-rerun-missions-continue-restart-design.md
+
+# --- Computer-use fail-gate design spec: quotes the German harness log traces
+#     and voice phrases it analyses — the German is faithful captured evidence ---
+docs/superpowers/specs/2026-06-15-cu-fail-gate-completion-enforcement-design.md
+
+# --- open_app voice tool: a bilingual Voice tool like navigate.py. Its German
+#     strings are load-bearing — the "Gestartet:" success output is recognized by
+#     the per-turn DE/EN/ES ack localizer (test_local_action_ack_language.py) and
+#     the plausibility-gate markers ("Misshearing"/"nicht gefunden") are matched
+#     by its own tests. Same rationale as navigate.py / contact_lookup.py. ---
+jarvis/plugins/tool/open_app.py
+tests/unit/plugins/tool/test_open_app_plausibility.py
+
+# --- Spawn-worker meta-strip: the leading-connector regex MUST contain German
+#     relative pronouns (der/die/das/dass) to strip them from German voice
+#     prompts — matching data, not an artifact (same rationale as router.py) ---
+jarvis/plugins/tool/spawn_worker.py
+tests/unit/plugins/tool/test_spawn_worker_mission_prompt.py
+
+# --- Voice turn-taking / endpoint tests: German dictation + command fixtures are
+#     the content under test (bilingual VAD / silence-window behaviour) ---
+tests/unit/harness/test_cu_screenshot_fastpath.py
+tests/unit/speech/test_long_composition_patience.py
+tests/unit/speech/test_pipeline_completion.py
+tests/unit/speech/test_thinking_pause_patience.py
+tests/unit/speech/test_continuation_recombine.py
+
+# --- Ack-continuation-grace + announcement floor-guard tests: the German ack
+#     preamble / completion / interrupt voice fixtures are the content under
+#     test (AD-OE5 "never speak over the user mid-utterance") ---
+tests/unit/speech/test_ack_continuation_grace.py
+tests/unit/speech/test_announcement_user_speaking_guard.py
+
+# --- Forensic / design docs that quote the German voice phrases, harness logs
+#     and localized i18n key tables they analyse (same rationale as the
+#     cu-fail-gate + rerun-missions specs above) ---
+docs/superpowers/plans/2026-06-16-adjustable-silence-window-slider.md
+docs/superpowers/plans/2026-06-16-subagent-recap-doomloop-fix.md
+docs/superpowers/specs/2026-06-16-cu-modal-awareness-design.md
+docs/superpowers/specs/2026-06-16-voice-continuation-recombine-while-thinking-design.md
+
+# --- Run-inspector + CU-idle + ack-failover + CLI-routing tests: the German TTS
+#     phrases ("Das hat leider nicht geklappt.", "Das am Bildschirm hat nicht
+#     geklappt.", "Ich öffne den Browser.", "öffne X", "läuft"), the German
+#     CU error string ("Anwendung 'settings' nicht gefunden") and the German
+#     dictation prompt ("Bau mir eine Landingpage …") are the spoken-output /
+#     forensic / routing fixtures under test (transcript reconstruction, idle-
+#     window re-arm after an out-of-band failure readback, ack-failover, CLI
+#     intent routing), same rationale as the voice turn-taking block above ---
+tests/unit/runs/test_transcript.py
+tests/unit/runs/test_loader_outcome.py
+tests/unit/runs/test_loader_transcript.py
+tests/unit/runs/test_outcome_activity.py
+tests/unit/runs/test_tools_outcome.py
+tests/unit/speech/test_idle_keeps_session_during_cu.py
+tests/unit/brain/test_ack_brain/test_run_stream.py
+tests/unit/brain/test_cli_capability_routing.py
+jarvis/ui/web/frontend/src/components/runs/__tests__/toolTable.test.tsx
+
+# --- Voice-confirm + scheduled-tasks + runtime-es landing (2026-06-18..19):
+#     German fixtures are the content under test for the bilingual confirm flow,
+#     evidence-gate domains, the turn-language resolver, the continuation buffer
+#     and the Spanish path (same rationale as the voice turn-taking block) ---
+tests/unit/awareness/test_awareness_recall_tool.py
+tests/unit/brain/test_evidence_gate.py
+tests/unit/brain/test_evidence_gate_wiring.py
+tests/unit/brain/test_refresh_tools_di.py
+tests/unit/brain/test_voice_confirm_flow.py
+tests/unit/core/test_evidence_domains_config.py
+tests/unit/core/test_turn_language.py
+tests/unit/speech/test_continuation_buffer.py
+tests/unit/speech/test_output_language_pin.py
+tests/unit/voice/test_echo_confirmation_es.py
+
+# --- Voice tool-confirmation phrase table: the "de" entries are the SPOKEN
+#     German confirmation prompts (de/en/es runtime output, same rationale as
+#     jarvis/voice/action_phrases.py) ---
+jarvis/voice/tool_confirmation.py
+
+# --- awareness-recall tool: forensic comments quote the German runtime phrase
+#     ("der lokale Verlaufsspeicher ist nicht verfügbar") the DI fix addresses ---
+jarvis/plugins/tool/awareness_recall.py
+
+# --- manager.py + config.py: forensic comments quote the same German runtime
+#     phrase, and config.py carries the evidence-domain voice-intent keyword
+#     vocabulary ("was hatte ich auf", "geoeffnete fenster") — German matching
+#     data, same rationale as navigation_intent.py / local_action_gate.py above.
+#     (Whole-file scope mirrors the existing core-file entries; a future pass can
+#     narrow to inline i18n-allow markers when the tree is not contested.) ---
+jarvis/brain/manager.py
+jarvis/core/config.py
+
+# --- CU informational/read-goal classifier tests: the German voice utterances
+#     ("öffne discord und sag mir was abgeht", "zeig mir die neuesten
+#     nachrichten", the dictation counter-example "sag ihm dass ...") are the
+#     content under test for _goal_needs_reading's bilingual DE+EN matching
+#     (same rationale as the voice turn-taking + local-action-gate test blocks) ---
+tests/unit/harness/test_cu_read_informational_goal.py
+
+# --- Continuation-drain + spoken-heartbeat + provider-connectivity-test
+#     (2026-06-19): the voice-pipeline source files carry forensic comments that
+#     quote the canonical German bug phrase ("Jarvis hört für immer zu") and the
+#     German tag-question utterances under classification ("…, oder?"); the
+#     provider-test classifier carries German error-substring matching data
+#     ("kein … gefunden") and a German headless-mode HTTP detail. Same rationale
+#     as the jarvis/brain/manager.py + jarvis/core/config.py entries above:
+#     whole-file scope mirrors those core-file entries for the (currently
+#     contested) shared tree; a future pass can narrow to inline i18n-allow
+#     markers / English rewrites when the tree is not being edited in parallel.
+#     The test files are German voice fixtures (content under test). ---
+jarvis/speech/pipeline.py
+jarvis/speech/completion.py
+jarvis/speech/continuation_buffer.py
+jarvis/brain/provider_test.py
+jarvis/ui/web/provider_routes.py
+tests/unit/speech/test_continuation_drain.py
+tests/unit/speech/test_completion_detection.py
+tests/unit/speech/test_spawn_watchdog.py
+tests/unit/brain/test_provider_test.py
+
+# --- Cross-platform readiness deep-dive + fix-tracker: an internal forensic
+#     audit doc that necessarily quotes the German runtime error strings it
+#     analyses ("nur auf Windows verfuegbar", "Kein Mikrofon-Device verfuegbar",
+#     tray "Öffnen") — captured evidence, same rationale as the
+#     docs/phantom-worker-aborted-deep-dive + docs/plans/mission-reliability
+#     entries above ---
+docs/plans/cross-platform-mac-linux/*
+
+# --- Session-close backup snapshot (2026-06-19): in-flight parallel-session work
+#     whose German is either voice/runtime fixtures under test, German voice-intent
+#     matching data (capability_provider, same rationale as navigation_intent.py),
+#     localized deliverable/readback strings, or forensic/plan docs quoting German
+#     utterances. Whole-file scope for the contested shared tree; narrow later. ---
+docs/prompts/*
+docs/superpowers/plans/2026-06-17-jarvisctl-control-cli.md
+docs/superpowers/plans/2026-06-17-run-inspector-debug-section.md
+docs/superpowers/plans/2026-06-18-voice-turn-split-and-cu-ack-leak.md
+jarvis/clis/capability_provider.py
+jarvis/missions/kontrollierer/deliverable.py
+jarvis/ui/web/frontend/src/components/sessions/TurnCard.test.tsx
+tests/unit/clis/test_capability_provider.py
+tests/unit/sessions/test_recorder_posthangup_readback.py
+tests/unit/speech/test_subagent_readback.py
+tests/unit/ui/test_tray.py

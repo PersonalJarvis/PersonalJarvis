@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "overlay"
+version = "0.1.0"
+description = "OS-Level Edge-Glow Overlay für Personal Jarvis (Phase 9)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "Ruben Lütke" }]
+dependencies = [
+    "PySide6>=6.7",
+    "websockets>=12",
+    "pydantic>=2",
+    "psutil>=5.9",
+    "pywin32>=306; sys_platform == 'win32'",
+    "python-ulid>=2.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+overlay = "overlay.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["overlay*"]
+
+[tool.setuptools.package-data]
+overlay = ["py.typed"]

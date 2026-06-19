@@ -1,0 +1,33 @@
+# Wave 3 supply-chain reproducibility — line-ending policy.
+#
+# The five install/* artifacts under signature MUST have byte-identical
+# SHA-256 hashes across ubuntu-latest / macos-latest / windows-latest
+# runners (see docs/supply-chain/wave3-reproducibility-protocol.md §3).
+# Without an explicit eol policy, Git's `core.autocrlf=true` on Windows
+# would convert LF -> CRLF on checkout and silently break the
+# cross-runner hash assertion (.github/workflows/cross-runner-hash.yml).
+#
+# Pin all signed artifacts to LF unconditionally on every platform.
+
+install/install.sh           text eol=lf
+install/install.ps1          text eol=lf
+install/installer.py         text eol=lf
+install/install-verify.sh    text eol=lf
+install/install-verify.ps1   text eol=lf
+# Wave 6: the hash-pinned dependency lockfile + its source `requirements.in`
+# are signed alongside the install scripts. Same LF-pinning discipline so
+# the cross-runner hash assertion (cross-runner-hash.yml) does not break
+# on Windows. `verify-wave6.sh` is the goal-terminal proof script.
+requirements.txt             text eol=lf
+requirements.in              text eol=lf
+verify-wave6.sh              text eol=lf
+
+# The supply-chain documentation, workflows, and in-toto layout are
+# also pinned to LF so any future inclusion in the signed-artifact
+# set does not require revisiting this file.
+docs/supply-chain/*.md       text eol=lf
+.github/workflows/*.yml      text eol=lf
+.github/workflows/*.yml.tmpl text eol=lf
+install/in-toto/*.json       text eol=lf
+install/keys/*.pub           text eol=lf
+install/tuf/*.json           text eol=lf

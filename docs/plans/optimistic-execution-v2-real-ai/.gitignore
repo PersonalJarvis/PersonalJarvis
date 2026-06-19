@@ -1,0 +1,7 @@
+# Local working config — never commit (.env.example is the committed template).
+.env
+# Python / tooling caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
