@@ -18,9 +18,11 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 import pytest
 
+from jarvis.brain.ack_brain.spawn_announcement import STILL_RUNNING_PHRASES
 from jarvis.core.bus import EventBus
 from jarvis.core.events import (
     AnnouncementRequested,
@@ -30,6 +32,17 @@ from jarvis.core.events import (
 )
 from jarvis.core.protocols import AudioChunk
 from jarvis.speech.pipeline import SpeechPipeline
+
+# Every "still on it" heartbeat phrase across de/en/es — the watchdog now picks
+# a varied, language-resolved reassurance instead of the old fixed
+# "Bin noch dran." A test recognises a heartbeat by membership in this set.
+_ALL_HEARTBEATS: frozenset[str] = frozenset(
+    p for pool in STILL_RUNNING_PHRASES.values() for p in pool
+)
+
+
+def _heartbeats(events: list[AnnouncementRequested]) -> list[AnnouncementRequested]:
+    return [e for e in events if e.text in _ALL_HEARTBEATS]
 
 
 @dataclass
@@ -61,13 +74,16 @@ class FakePlayer:
 
 
 def _pipeline(bus: EventBus, *, watchdog_delay_s: float) -> SpeechPipeline:
-    """Build a SpeechPipeline with the watchdog delay overridden so the
-    tests don't have to wait 90 real seconds. ``enable_whisper_wake``
-    keeps the heavy Whisper bootstrap out of the test path."""
+    """Build a SpeechPipeline with the heartbeat first-delay overridden so the
+    tests don't have to wait 30 real seconds. ``enable_whisper_wake`` keeps the
+    heavy Whisper bootstrap out of the test path. ``_heartbeat_max_count`` is
+    pinned to 1 here so the legacy "one discrete phrase per watchdog" contract
+    these tests encode still holds; the multi-beat cadence has its own tests."""
     tts = FakeTTS()
     pipe = SpeechPipeline(tts=tts, bus=bus, enable_whisper_wake=False)
     pipe._player = FakePlayer()  # type: ignore[assignment]
     pipe._spawn_watchdog_delay_s = watchdog_delay_s
+    pipe._heartbeat_max_count = 1
     return pipe
 
 
@@ -76,7 +92,7 @@ async def test_completion_within_window_cancels_watchdog() -> None:
     """Happy path: mission completes quickly -> watchdog cancelled ->
     no progress phrase emitted."""
     bus = EventBus()
-    pipe = _pipeline(bus, watchdog_delay_s=10.0)
+    _pipeline(bus, watchdog_delay_s=10.0)  # built for its subscribe side effect
 
     announcements: list[AnnouncementRequested] = []
     bus.subscribe(AnnouncementRequested, lambda ev: announcements.append(ev))
@@ -87,7 +103,7 @@ async def test_completion_within_window_cancels_watchdog() -> None:
     await bus.publish(OpenClawBackgroundCompleted(success=True, summary="ok"))
     await asyncio.sleep(0.05)
 
-    progress = [a for a in announcements if a.text == "Bin noch dran."]
+    progress = _heartbeats(announcements)
     assert progress == [], (
         "watchdog must NOT fire when completion arrives within the window"
     )
@@ -99,7 +115,7 @@ async def test_no_completion_triggers_watchdog_phrase() -> None:
     -> one discrete 'Bin noch dran.' announcement reaches the bus."""
     bus = EventBus()
     # Tiny delay -- 50 ms is plenty for the asyncio.sleep to expire.
-    pipe = _pipeline(bus, watchdog_delay_s=0.05)
+    _pipeline(bus, watchdog_delay_s=0.05)  # built for its subscribe side effect
 
     announcements: list[AnnouncementRequested] = []
     bus.subscribe(AnnouncementRequested, lambda ev: announcements.append(ev))
@@ -108,11 +124,11 @@ async def test_no_completion_triggers_watchdog_phrase() -> None:
     # Wait long enough for the watchdog timer to fire.
     await asyncio.sleep(0.3)
 
-    progress = [a for a in announcements if a.text == "Bin noch dran."]
+    progress = _heartbeats(announcements)
     assert len(progress) == 1, (
         f"watchdog must emit exactly one progress phrase, got {progress!r}"
     )
-    assert progress[0].language == "de"
+    assert progress[0].language in {"de", "en", "es"}
     assert progress[0].priority == "normal"
 
 
@@ -135,7 +151,7 @@ async def test_watchdog_respects_mute() -> None:
     await bus.publish(OpenClawAnnouncement(action="bauen", target="x"))
     await asyncio.sleep(0.3)
 
-    progress = [a for a in announcements if a.text == "Bin noch dran."]
+    progress = _heartbeats(announcements)
     assert progress == [], (
         "watchdog must be muted along with the rest of voice output"
     )
@@ -161,7 +177,7 @@ async def test_multiple_spawns_each_get_a_watchdog() -> None:
     await bus.publish(OpenClawBackgroundCompleted(success=True, summary="A done"))
     await asyncio.sleep(0.3)
 
-    progress = [a for a in announcements if a.text == "Bin noch dran."]
+    progress = _heartbeats(announcements)
     assert len(progress) == 1, (
         "FIFO cancel must spare the newer watchdog, which then fires"
     )
@@ -291,3 +307,87 @@ async def test_finish_after_response_hangs_up_once_watchdog_has_fired() -> None:
         "with the watchdog fired and no live mission, single-turn mode must "
         "hang up again instead of listening forever"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Heartbeat rework (2026-06-19): varied, language-resolved, bounded recurring  #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_repeats_and_varies_until_capped() -> None:
+    """A long mission gets several reassurances, not 90 s of silence then one
+    phrase. The beats are bounded by ``_heartbeat_max_count`` and never repeat
+    back-to-back (a dead, looping phrase would feel as broken as silence)."""
+    bus = EventBus()
+    pipe = _pipeline(bus, watchdog_delay_s=0.03)
+    pipe._heartbeat_max_count = 3
+    pipe._heartbeat_interval_s = 0.03
+
+    announcements: list[AnnouncementRequested] = []
+    bus.subscribe(AnnouncementRequested, lambda ev: announcements.append(ev))
+
+    await bus.publish(OpenClawAnnouncement(action="eine grosse Analyse", target=""))
+    await asyncio.sleep(0.3)
+
+    beats = _heartbeats(announcements)
+    assert len(beats) == 3, f"expected exactly the capped 3 beats, got {beats!r}"
+    texts = [b.text for b in beats]
+    for a, b in zip(texts, texts[1:], strict=False):
+        assert a != b, f"heartbeat repeated back-to-back: {a!r}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lang", ["de", "en", "es"])
+async def test_heartbeat_follows_conversation_language(lang: str) -> None:
+    """The heartbeat is spoken in the conversation language (here via a
+    reply_language pin), never hard-coded German — Runtime Output Language
+    doctrine (de/en/es)."""
+    bus = EventBus()
+    pipe = _pipeline(bus, watchdog_delay_s=0.03)
+    pipe._brain = SimpleNamespace(  # type: ignore[assignment]
+        reply_language=lang, conversation_language=lang
+    )
+
+    announcements: list[AnnouncementRequested] = []
+    bus.subscribe(AnnouncementRequested, lambda ev: announcements.append(ev))
+
+    await bus.publish(OpenClawAnnouncement(action="x", target="y"))
+    await asyncio.sleep(0.2)
+
+    beats = _heartbeats(announcements)
+    assert len(beats) == 1
+    assert beats[0].language == lang
+    assert beats[0].text in STILL_RUNNING_PHRASES[lang]
+
+
+@pytest.mark.asyncio
+async def test_completion_readback_cancels_pending_heartbeat() -> None:
+    """When the mission delivers its answer (a ``kind="completion"`` readback),
+    any pending 'still on it' heartbeat must be cancelled — Jarvis must not
+    reassure AFTER the result has already been spoken."""
+    bus = EventBus()
+    pipe = _pipeline(bus, watchdog_delay_s=0.3)  # first beat not due yet
+
+    announcements: list[AnnouncementRequested] = []
+    bus.subscribe(AnnouncementRequested, lambda ev: announcements.append(ev))
+
+    await bus.publish(OpenClawAnnouncement(action="bauen", target="x"))
+    await asyncio.sleep(0.02)
+    assert len(pipe._spawn_watchdog_tasks) == 1
+
+    # The mission's answer is read back before the first heartbeat is due.
+    await bus.publish(
+        AnnouncementRequested(
+            text="Fertig. Hier ist das Ergebnis.",
+            language="de",
+            priority="normal",
+            kind="completion",
+        )
+    )
+    await asyncio.sleep(0.4)
+
+    assert _heartbeats(announcements) == [], (
+        "a heartbeat fired after the completion readback cancelled it"
+    )
+    assert pipe._spawn_watchdog_tasks == [], "cancelled heartbeat must self-remove"

@@ -67,6 +67,7 @@ log = logging.getLogger(__name__)
 __all__ = [
     "SPAWN_PERSONA_DE",
     "SPAWN_PERSONA_EN",
+    "STILL_RUNNING_PHRASES",
     "SpawnAnnouncementComposer",
     "get_spawn_persona",
 ]
@@ -93,9 +94,14 @@ DEINE AUFGABE — genau EINE kurze gesprochene Ansage (1-2 Sätze,
 zusammen maximal 20 Wörter), die:
 1. das KONKRETE Thema der Anfrage nennt (App, Datenobjekt, Ort,
    Person — z.B. "dein Gmail", "der Kalender", "die Flüge"),
-2. natürlich vermittelt, dass die Sache jetzt nebenher läuft und
-   einen Moment dauern kann,
+2. natürlich vermittelt, dass das eine GRÖSSERE Sache ist, jetzt im
+   Hintergrund läuft und deshalb einen Moment dauert,
 3. frisch für genau diese Anfrage formuliert ist.
+
+TON: warm und zugewandt, wie ein hilfsbereiter Mensch im Gespräch —
+nicht wie eine Statusmeldung. Du darfst die Mühe ruhig andeuten ("da
+schaue ich gründlich drauf", "das ist ein grösseres Stück Arbeit"),
+aber jammere nicht und entschuldige dich nicht.
 
 OBERSTE REGEL — keine memorierte Standardphrase:
 Jede Formulierung, die auf jede beliebige andere Anfrage genauso
@@ -127,9 +133,13 @@ YOUR JOB — exactly ONE short spoken announcement (1-2 sentences,
 20 words max in total) that:
 1. names the CONCRETE topic of the request (app, data object, place,
    person — e.g. "your Gmail", "the calendar", "the flights"),
-2. naturally conveys that this now runs on the side and may take a
-   moment,
+2. naturally conveys that this is a BIGGER task, now runs in the
+   background and therefore takes a moment,
 3. is phrased freshly for this exact request.
+
+TONE: warm and human, like a helpful person in conversation — not a
+status line. You may hint at the effort ("I'll take a proper look at
+this", "this is a meatier one"), but never whine or apologise.
 
 TOP RULE — no memorised stock phrase:
 Any wording that would fit any other request equally well is wrong.
@@ -154,6 +164,15 @@ interpreted task — use it as the topic source.
 Output: ONLY the announcement, nothing else."""
 
 
+# Languages with a native flash-LLM spawn persona. An ``es`` turn has no
+# persona (the locked 2026-05-11 preamble spec is not touched), so it skips the
+# LLM round-trip and uses the curated ``es`` fallback pool directly — a
+# DE/EN-persona LLM call would only produce text that the language-match
+# validation rejects, wasting one timeout. Bringing a SPAWN_PERSONA_ES online is
+# a tracked follow-up; Spanish is already fully covered deterministically here.
+_PERSONA_LANGS: frozenset[str] = frozenset({"de", "en"})
+
+
 def get_spawn_persona(language: str) -> str:
     """Return the spawn persona prompt for ``language`` ('de'/'en')."""
     return SPAWN_PERSONA_EN if language == "en" else SPAWN_PERSONA_DE
@@ -169,24 +188,34 @@ def get_spawn_persona(language: str) -> str:
 
 _FALLBACK_SPAWN: dict[str, tuple[str, ...]] = {
     "de": (
-        "Mach ich, ich gebe das gleich an meinen Helfer weiter.",
-        "Alles klar, das läuft jetzt nebenher. Ich sage dir gleich Bescheid.",
-        "Okay, ich lasse das im Hintergrund erledigen.",
-        "Ist unterwegs. Das Ergebnis sage ich dir gleich an.",
-        "Übernehme ich. Ich melde mich, sobald etwas vorliegt.",
-        "Geht klar, ich arbeite das nebenbei für dich ab.",
-        "Schon unterwegs, das kann einen Moment dauern.",
-        "Hab ich auf dem Tisch. Dauert einen kleinen Moment.",
+        "Mach ich. Grössere Sache, die nehme ich mir im Hintergrund vor und melde mich.",
+        "Alles klar, das schaue ich mir in Ruhe an. Läuft jetzt nebenher, dauert einen Moment.",
+        "Okay, da gehe ich gründlich ran. Ich lasse es im Hintergrund laufen und sage Bescheid.",
+        "Übernehme ich. Das braucht etwas, ich kümmere mich nebenher und melde mich gleich.",
+        "Geht klar. Das ist ein grösseres Stück Arbeit, ich nehme es mir im Hintergrund vor.",
+        "Schon dabei. Das dauert einen Moment, ich will dir was Vernünftiges liefern.",
+        "Hab ich. Das ist etwas umfangreicher, ich melde mich, sobald ich was Belastbares habe.",
+        "Bin dran. Gib mir einen Moment, da steckt etwas mehr dahinter.",
     ),
     "en": (
-        "On it. I'll run this in the background and report back.",
-        "Got it, that's running now. I'll let you know shortly.",
-        "Okay, I'm handing this over. Results in a moment.",
-        "Working on it. This may take a little moment.",
-        "That's underway. I'll report back with what I find.",
-        "Picked it up. Give me a moment and I'll get back to you.",
-        "Consider it started. I'll circle back with the result.",
-        "I'm putting a second pair of hands on this right now.",
+        "On it. This is a bigger one, so I'll work it in the background and report back.",
+        "Got it. I'll take a proper look at this; it runs on the side and may take a moment.",
+        "Okay, this needs some real digging. I'll handle it in the background and let you know.",
+        "I'm taking this on. It's a meatier task, so give me a moment and I'll come back to you.",
+        "Consider it picked up. A bit more involved, this one. I'll work it on the side for you.",
+        "Sure. This one takes a little time. I'd rather get it right, so I'm digging in now.",
+        "I'm on it. Slightly bigger job; I'll report back as soon as I have something solid.",
+        "Working on it now. There's a bit more to this, so it'll take a short moment.",
+    ),
+    "es": (
+        "Voy con ello. Es algo más grande, así que lo trabajo en segundo plano y te aviso.",
+        "Entendido. Le echo un buen vistazo; corre en segundo plano y puede tardar un momento.",
+        "Vale, esto necesita mirarse a fondo. Lo dejo en segundo plano y te digo algo.",
+        "Me encargo. Es una tarea con algo más de chicha, dame un momento y vuelvo contigo.",
+        "Lo cojo. Esto lleva algo más de trabajo, lo voy haciendo en segundo plano.",
+        "Claro. Esto necesita un poco de tiempo; prefiero hacerlo bien y me meto a fondo.",
+        "Estoy en ello. Es un poco más grande; te aviso en cuanto tenga algo sólido.",
+        "Trabajando en ello. Hay algo más detrás, así que tardará un momentito.",
     ),
 }
 
@@ -202,6 +231,48 @@ _FALLBACK_ALREADY_RUNNING: dict[str, tuple[str, ...]] = {
         "That job is already going, one moment.",
         "Still working on that one, almost there.",
         "Patience, that one is already in progress.",
+    ),
+    "es": (
+        "Ya estoy con eso, sigue en marcha.",
+        "Eso ya está en marcha, un momento.",
+        "Sigo con ello, casi lo tengo.",
+        "Paciencia, eso ya está en proceso.",
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat pool (consumed by the speech pipeline's spawn watchdog)
+# ---------------------------------------------------------------------------
+# Varied, warm "still on the bigger task" reassurances spoken at a turn
+# boundary while a background mission is still running — replacing the old
+# one-shot German-only "Bin noch dran." (see SpeechPipeline._spawn_watchdog_body).
+# Lives here (an allowlisted runtime-voice module) so the German/Spanish strings
+# stay out of the non-allowlisted pipeline; the pipeline imports this dict and
+# resolves the language through its single output-language resolver. TTS-clean
+# (the announcement path does not scrub) and never a completion claim — the
+# mission is still in flight.
+STILL_RUNNING_PHRASES: dict[str, tuple[str, ...]] = {
+    "de": (
+        "Ich bin noch an der grösseren Sache dran. Gleich habe ich etwas Belastbares für dich.",
+        "Das braucht noch einen Moment, ich kümmere mich im Hintergrund weiter darum.",
+        "Bin noch dabei. Das ist nichts für zwischendurch, ich melde mich gleich.",
+        "Läuft noch. Ich will dir lieber etwas Vernünftiges liefern als etwas Halbgares.",
+        "Noch ein kleines Stück, dann habe ich das für dich zusammen.",
+    ),
+    "en": (
+        "Still on the bigger task. I'll have something solid for you in a moment.",
+        "This one needs a little longer; I'm staying on it in the background.",
+        "Not done yet. I'd rather give you something proper than something half-baked.",
+        "Still working through it. I'll come back to you shortly.",
+        "Almost there, just pulling the pieces together for you.",
+    ),
+    "es": (
+        "Sigo con el tema más grande. En un momento tendré algo sólido para ti.",
+        "Esto necesita un poco más; sigo con ello en segundo plano.",
+        "Aún no he terminado: prefiero darte algo en condiciones que algo a medias.",
+        "Todavía trabajando en ello. Vuelvo contigo enseguida.",
+        "Ya casi; estoy juntando las piezas para ti.",
     ),
 }
 
@@ -236,17 +307,24 @@ _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 def _resolve_language(explicit: str | None, utterance: str) -> str:
     """Resolve the announcement language: explicit hint > utterance heuristic.
 
-    Mirrors the ack-brain convention: only 'de' and 'en' are supported;
-    unknown detection defaults to German (primary chat language).
+    Supports 'de', 'en' and 'es' (Runtime Output Language doctrine — every
+    spoken phrase table covers all three). An explicit hint wins (the
+    ``brain.reply_language`` pin / STT tag reaches here as ``language``);
+    otherwise the utterance heuristic decides, defaulting to German (the
+    primary chat language) when detection is inconclusive. Only 'de'/'en' have
+    a native LLM persona (see ``_PERSONA_LANGS``); 'es' is served from the
+    curated fallback pool.
     """
     if explicit:
         low = str(explicit).strip().lower()
         if low.startswith("en"):
             return "en"
+        if low.startswith("es"):
+            return "es"
         if low.startswith("de"):
             return "de"
     detected = _detect_language(utterance or "")
-    return detected if detected in ("de", "en") else "de"
+    return detected if detected in ("de", "en", "es") else "de"
 
 
 def _trim_to_sentences(text: str, max_words: int) -> str | None:
@@ -329,10 +407,15 @@ class SpawnAnnouncementComposer:
             _emit_counter("spawn_ack_candidate_used_total")
             return validated
 
-        composed = await self._compose_via_llm(utterance, lang, action, target)
-        if composed:
-            _emit_counter("spawn_ack_llm_used_total")
-            return composed
+        # The flash-LLM path only runs for a language with a native persona
+        # (de/en). An ``es`` turn goes straight to the curated pool — a
+        # DE/EN-persona call would only yield text the language-match check
+        # rejects, costing one wasted timeout.
+        if lang in _PERSONA_LANGS:
+            composed = await self._compose_via_llm(utterance, lang, action, target)
+            if composed:
+                _emit_counter("spawn_ack_llm_used_total")
+                return composed
 
         _emit_counter("spawn_ack_fallback_total")
         return self._pick_fallback(_FALLBACK_SPAWN[lang])

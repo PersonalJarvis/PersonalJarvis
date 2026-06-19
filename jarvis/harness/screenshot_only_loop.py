@@ -1078,6 +1078,62 @@ def _goal_needs_plan(goal: str) -> bool:
     return _goal_needs_search(goal) or bool(_MULTI_STEP_GOAL_RE.search(goal or ""))
 
 
+# Informational / READ goals (live bug 2026-06-19): "open Discord and tell me
+# what's in the BridgeMind channel" is NOT satisfied by opening the app -- the
+# loop must scroll to the newest content and REPORT it. The two halves below
+# cover (1) explicit "report it to me" verbs in DE+EN and (2) a "newest/latest
+# <content-noun>" phrase. German dictation ("sag IHM/IHR ...") is excluded by
+# anchoring the verb to "mir"; "tell me" (not "tell <someone>") guards the EN
+# side, so a "write X and tell HER ..." goal is not misread as a read.
+_READ_GOAL_RE = re.compile(
+    r"(?:"
+    # -- DE: report-it-to-me verbs --
+    r"sag(?:e|st)?\s+mir\b"                                # i18n-allow
+    r"|sag\s+mal\b"                                        # i18n-allow
+    r"|erz(?:ae|ä)hl(?:e|st)?\s+mir\b"                     # i18n-allow
+    r"|lies\s+(?:mir|die|den|das|alle|mal)\b"              # i18n-allow
+    r"|\blies\b[^.?!]*\bvor\b"                             # i18n-allow
+    r"|zeig(?:e|st)?\s+mir\b"                              # i18n-allow
+    r"|was\s+steht\b"                                      # i18n-allow
+    r"|was\s+geht\s+(?:ab|gerade|so|denn|hier|da|los)\b"   # i18n-allow (not bare "was geht?")
+    r"|was\s+ist\s+(?:los|neu)\b"                          # i18n-allow
+    r"|was\s+gibt'?s?\s+neues\b|was\s+gibt\s+es\s+neues\b"  # i18n-allow
+    r"|welche\s+(?:nachricht|mail|email|post|meldung|beitr)\w*"  # i18n-allow
+    r"|fass\w*\b[^.?!]*\bzusammen\b|zusammenfass\w*"       # i18n-allow
+    r"|wor(?:ue|ü)ber\b"                                   # i18n-allow
+    # -- EN: report-it-to-me verbs --
+    r"|tell\s+me\b"
+    r"|show\s+me\s+what\b"
+    r"|read\s+(?:me|the|my|out|aloud)\b"
+    r"|what'?s\s+(?:going\s+on|happening|new|up|in)\b"
+    r"|what\s+is\s+(?:going\s+on|happening|new)\b"
+    r"|what\s+(?:are|were)\s+the\s+(?:latest|newest|recent|last)\b"
+    r"|summari[sz]e\b|catch\s+me\s+up\b"
+    r"|check\s+what'?s\b|let\s+me\s+know\s+what\b"
+    r"|give\s+me\s+(?:the|a|an)\s+(?:rundown|summary|update|overview|gist)\b"
+    # -- newest/latest <content-noun> (DE+EN) --
+    r"|(?:neuest|letzt|aktuell)\w*\s+"                     # i18n-allow
+    r"(?:nachricht|meldung|post|beitr|mail|news)\w*"       # i18n-allow
+    r"|(?:newest|latest|recent|last|most\s+recent)\s+"
+    r"(?:news|posts?|messages?|updates?|announcements?|tweets?)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _goal_needs_reading(goal: str) -> bool:
+    """True for an INFORMATIONAL goal that asks Jarvis to REPORT on-screen
+    content (chat messages, posts, a feed) rather than just act on the UI.
+
+    Such a goal is NOT satisfied by opening the app: the loop must scroll the
+    newest content into view and the verifier must see that content in the
+    proof. Live bug 2026-06-19: "open my Discord and tell me what's going on in
+    the BridgeMind channels" reported done on a bare-open window, having never
+    scrolled or read a single message. A pure action goal ("open Discord",
+    "play a song", "click send") is not a read goal."""
+    return bool(_READ_GOAL_RE.search(goal or ""))
+
+
 # Anti-shortcut block for music/search goals (BUG-CU-WRONG-SONG). Shared by
 # the plan-path prompt AND the VERIFY-FIRST fallback prompt so a failed
 # planner can never silently drop the discipline (review finding 2026-06-09).
@@ -1151,6 +1207,51 @@ _GENERIC_VERIFIER_SYSTEM_PROMPT = (
     "* Quote the concrete proof element (window, title, page content) in "
     "'proof'."
 )
+
+
+# Stricter judge for INFORMATIONAL / READ goals (live bug 2026-06-19). "Open
+# Discord and tell me what's in the channel" is NOT satisfied by an open window:
+# the loop must have scrolled the actual content into view, and the proof must
+# QUOTE that content -- it is the answer the readback layer speaks. A bare-open
+# or empty/unread view returns done:false, which drives the loop to scroll+read.
+_READ_VERIFIER_SYSTEM_PROMPT = (
+    "You are a STRICT completion judge for a desktop READING task. The user "
+    "asked Jarvis to open something and REPORT what is in it -- the messages in "
+    "a chat/channel, the posts in a feed, the text on a page. Look at the "
+    "screenshot and decide whether the ACTUAL CONTENT the user asked to read is "
+    "visible RIGHT NOW. Output exactly ONE JSON object, no prose, no code "
+    "fences: {\"done\": true|false, \"proof\": \"<the concrete on-screen content "
+    "you read -- quote the newest messages/posts/text and their gist>\"}\n"
+    "Rules:\n"
+    "* done:true ONLY if real CONTENT is visible AND you quote it in 'proof'. "
+    "The 'proof' MUST carry that content, because it is the answer spoken back "
+    "to the user -- describe the newest messages/posts concretely.\n"
+    "* An app or window merely being OPEN is NOT enough. An empty channel, a "
+    "loading spinner, a bare server/channel list with no message area, or a "
+    "view scrolled away from the newest messages is NOT enough -> done:false.\n"
+    "* When done:false, say briefly in 'proof' what is missing (e.g. 'only the "
+    "channel list is open, no messages visible') so the agent can scroll to it.\n"
+    "* Never guess. If you cannot actually read content relevant to the goal, "
+    "answer false.\n"
+)
+
+# Read-goal discipline (live bug 2026-06-19): appended to the executor system
+# prompt for an informational goal so the model SCROLLS to the newest content
+# and never declares done on a bare-open app. Sibling of _SEARCH_DISCIPLINE_BLOCK.
+_READ_DISCIPLINE_BLOCK = (
+    "\n\nREADING DISCIPLINE (critical): this is an INFORMATIONAL goal -- the "
+    "user wants you to REPORT what is on screen, not merely open the app. "
+    "Opening the app or selecting a channel is NOT done. You MUST bring the "
+    "actual content into view first: in a chat, feed, or channel, SCROLL DOWN "
+    "to the NEWEST messages at the BOTTOM (a 'scroll' action, direction down) "
+    "and let them render. Only emit {\"action\": \"done\"} once the latest "
+    "messages/posts/text are actually visible and readable -- never while only "
+    "the app window, an empty view, or a channel list is showing."
+)
+
+#: Read goals carry their verifier observation (the message content) into stdout
+#: for the spoken readback, so they are NOT clipped to the action-path 80 chars.
+_READ_PROOF_MAX: int = 600
 
 
 # Feasibility judge for the ``fail`` action (completion-enforcement, 2026-06-15).
@@ -1359,7 +1460,7 @@ async def _verify_goal_done(
     # corroboration. A non-matching title falls through to the judge — this
     # branch can only ever SKIP cost, never reject.
     app_token = _open_goal_app_token(user_goal)
-    if app_token:
+    if app_token and not _goal_needs_reading(user_goal):
         wt = str(getattr(observation, "window_title", "") or "").lower()
         if wt and app_token in wt:
             log.info(
@@ -1391,6 +1492,32 @@ async def _verify_goal_done(
             log.debug("[cu] compute-verifier failed (non-fatal): %s", exc)
             return (False, "")
         return _parse_verdict(raw)
+
+    # Informational / READ goals get a STRICTER content judge: a bare-open app
+    # is not done, the proof must quote the on-screen content, and the proof is
+    # carried out at a larger cap so a quoted message summary survives for the
+    # spoken readback (live bug 2026-06-19: a Discord read reported done on an
+    # open window, content never read). Checked before the generic judge.
+    if _goal_needs_reading(user_goal):
+        try:
+            raw = await asyncio.wait_for(
+                _call_brain(
+                    ctx,
+                    observation=observation,
+                    user_goal=user_goal,
+                    history_text="",
+                    system_prompt=_READ_VERIFIER_SYSTEM_PROMPT,
+                    user_message=(
+                        f"GOAL: {user_goal}\n\n"
+                        "Judge the screenshot per the rules. JSON object only."
+                    ),
+                ),
+                timeout=_think_timeout_s(ctx),
+            )
+        except (TimeoutError, Exception) as exc:  # noqa: BLE001
+            log.debug("[cu] read verifier failed (non-fatal): %s", exc)
+            return (False, "")
+        return _parse_verdict(raw, max_len=_READ_PROOF_MAX)
 
     # Non-media goals (open/navigate/click/...) get the generic SINGLE-frame
     # judge -- no motion gap needed; the proof is a static screen state
@@ -1459,11 +1586,14 @@ async def _verify_goal_done(
 
 def _parse_verdict(
     raw: str, *, bool_key: str = "done", text_key: str = "proof",
+    max_len: int = 160,
 ) -> tuple[bool, str]:
     """Parse a strict-judge JSON {<bool_key>:bool,<text_key>:str} (fence-tolerant).
 
     Defaults parse the completion-judge shape {"done":bool,"proof":str}; the
-    fail-gate reuses it with bool_key="give_up", text_key="reason". Returns
+    fail-gate reuses it with bool_key="give_up", text_key="reason". ``max_len``
+    caps the proof/reason text (default 160 for a terse action proof; the READ
+    verifier passes a larger cap so a quoted message summary survives). Returns
     (False, "") on any malformed input -- verification never blocks (and a
     fail-judge that returns False means KEEP WORKING, never a free quit)."""
     import json as _json  # noqa: PLC0415
@@ -1479,7 +1609,7 @@ def _parse_verdict(
     except Exception:  # noqa: BLE001
         return (False, "")
     flag = bool(verdict.get(bool_key) is True)
-    text = str(verdict.get(text_key, ""))[:160]
+    text = str(verdict.get(text_key, ""))[:max_len]
     return (flag, text)
 
 
@@ -2683,9 +2813,16 @@ async def _run_screenshot_loop(
                     ctx, observation=observation, user_goal=task_prompt,
                 )
                 if done:
+                    # Read goals carry the full observation out for the readback
+                    # (a read+submit goal reaches this early-termination path too),
+                    # mirroring the main done-gate cap.
+                    proof_cap = (
+                        _READ_PROOF_MAX if _goal_needs_reading(task_prompt) else 80
+                    )
                     log.info("[cu] verifier: goal achieved (proof=%r) -> done", proof[:80])
                     yield _final(
-                        stdout=f"[cu] done (verified: {proof[:80]})\n", exit_code=0,
+                        stdout=f"[cu] done (verified: {proof[:proof_cap]})\n",
+                        exit_code=0,
                     )
                     return
                 log.info("[cu] verifier: not done yet (proof=%r)", proof[:80])
@@ -2773,6 +2910,14 @@ async def _run_screenshot_loop(
             ctx, observation, task_prompt, history, step_idx
         )
         if batch is None:
+            # Informational goals carry the READING discipline (scroll to the
+            # newest content, never done on a bare-open app) in the executor
+            # system prompt so the model scrolls proactively (live 2026-06-19).
+            think_system_prompt = (
+                _SYSTEM_PROMPT + _READ_DISCIPLINE_BLOCK
+                if _goal_needs_reading(task_prompt)
+                else None
+            )
             try:
                 raw = await asyncio.wait_for(
                     _call_brain(
@@ -2780,6 +2925,7 @@ async def _run_screenshot_loop(
                         observation=observation,
                         user_goal=task_prompt,
                         history_text="\n".join(history[-12:]),
+                        system_prompt=think_system_prompt,
                         user_message=plan_user_message,
                     ),
                     timeout=_think_timeout_s(ctx),
@@ -3015,7 +3161,8 @@ async def _run_screenshot_loop(
                 # Chrome window, not a typed search query). Disabled only via
                 # config; compute goals stay verified regardless (their old
                 # always-on behaviour).
-                if verify_done_enabled or _goal_needs_result(task_prompt):
+                if (verify_done_enabled or _goal_needs_result(task_prompt)
+                        or _goal_needs_reading(task_prompt)):
                     # If this batch already executed a state-changing action
                     # (e.g. [open_app, done]), the step screenshot predates
                     # that action -- re-observe so the judge sees the CURRENT
@@ -3061,6 +3208,16 @@ async def _run_screenshot_loop(
                                 "the calculation using click_element on the named "
                                 "digit/operator keys, then press 'Gleich'."
                             )
+                        elif _goal_needs_reading(task_prompt):
+                            history.append(
+                                f"NOT DONE: you have not read the content yet "
+                                f"({proof[:160] or 'no content visible'}). This is "
+                                "a READ task -- SCROLL DOWN to the NEWEST messages "
+                                "at the bottom of the chat/feed and let them "
+                                "render, then report what they say. Do NOT emit "
+                                "done while only the open app, an empty view, or a "
+                                "channel list is showing."
+                            )
                         else:
                             history.append(
                                 f"DONE REJECTED: the screenshot does not prove "
@@ -3069,9 +3226,15 @@ async def _run_screenshot_loop(
                                 "that visibly advances the goal."
                             )
                         break  # re-plan from a fresh screenshot
+                    # Read goals carry the verifier's observation (the message
+                    # content) out at a larger cap so the readback can speak it;
+                    # action goals keep the terse 80-char proof.
+                    proof_cap = (
+                        _READ_PROOF_MAX if _goal_needs_reading(task_prompt) else 80
+                    )
                     log.info("[cu] %s done verified: %s", tag, proof[:80])
                     yield _final(
-                        stdout=f"[cu] done at {tag} (verified: {proof[:80]})\n",
+                        stdout=f"[cu] done at {tag} (verified: {proof[:proof_cap]})\n",
                         exit_code=0,
                     )
                     return

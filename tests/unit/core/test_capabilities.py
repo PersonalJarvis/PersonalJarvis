@@ -215,17 +215,20 @@ class TestRegistryHasActionIntent:
         assert self.reg.has_action_intent("Öffne Chrome") is True
 
     def test_filler_particle_halt_is_not_an_action(self) -> None:
-        # The German discourse particle "halt" ("ist halt so", "ich hab das halt
-        # gemacht") is NOT a command — it must not collide with the stop-verb
-        # stem in the universal catalogue. Live bug 2026-06-19: the filler "halt"
-        # tripped has_action_intent and force-spawned a worker on a pure chat
-        # turn (the San-Francisco emigration session).
-        assert self.reg.has_action_intent("Das ist halt so.") is False
+        # The German discourse particle "halt" (a filler word, roughly
+        # "just"/"simply") is NOT a command — it must not collide with the
+        # stop-verb stem in the universal catalogue. Live bug 2026-06-19: the
+        # filler tripped has_action_intent and force-spawned a worker on a pure
+        # chat turn (the San-Francisco emigration session). The fixtures below
+        # are intentionally German (the content under test).
+        assert self.reg.has_action_intent("Das ist halt so.") is False  # i18n-allow
         assert (
-            self.reg.has_action_intent("Ich hab mir das halt echt überlegt.")
+            self.reg.has_action_intent("Ich hab mir das halt echt überlegt.")  # i18n-allow
             is False
         )
-        assert self.reg.has_action_intent("Na ja, ist halt kompliziert.") is False
+        assert (
+            self.reg.has_action_intent("Na ja, ist halt kompliziert.") is False  # i18n-allow
+        )
 
     def test_genuine_stop_commands_still_action(self) -> None:
         # The fix must NOT lose real stop/pause commands — they stay actions via

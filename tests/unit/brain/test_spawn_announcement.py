@@ -27,6 +27,7 @@ from jarvis.brain.ack_brain.spawn_announcement import (
     _FALLBACK_SPAWN,
     SPAWN_PERSONA_DE,
     SPAWN_PERSONA_EN,
+    STILL_RUNNING_PHRASES,
     SpawnAnnouncementComposer,
 )
 
@@ -137,8 +138,28 @@ async def test_already_running_kind_uses_its_own_pool() -> None:
         language="en",
         kind="already_running",
     )
+    out_es = await composer.compose(
+        utterance="Revisa mi correo, por favor.",
+        language="es",
+        kind="already_running",
+    )
     assert out_de in _FALLBACK_ALREADY_RUNNING["de"]
     assert out_en in _FALLBACK_ALREADY_RUNNING["en"]
+    assert out_es in _FALLBACK_ALREADY_RUNNING["es"]
+
+
+@pytest.mark.asyncio
+async def test_spanish_turn_uses_pool_and_skips_llm() -> None:
+    """An 'es' turn has no native persona — it must serve the curated Spanish
+    pool directly and never spend an LLM round-trip that would only reject."""
+    provider = _FakeProvider(reply="LLM must not run for an es turn.")
+    composer = _composer(provider)
+    out = await composer.compose(
+        utterance="Por favor, revisa mi correo en busca de facturas.",
+        language="es",
+    )
+    assert out in _FALLBACK_SPAWN["es"]
+    assert provider.calls == [], "es turn must skip the de/en-persona LLM path"
 
 
 def test_pool_phrases_pass_own_validation_and_ban_old_template() -> None:
@@ -162,12 +183,58 @@ def test_pool_phrases_pass_own_validation_and_ban_old_template() -> None:
 
 
 def test_pools_have_enough_distinct_variants() -> None:
-    for pool in (_FALLBACK_SPAWN["de"], _FALLBACK_SPAWN["en"]):
+    for lang in ("de", "en", "es"):
+        pool = _FALLBACK_SPAWN[lang]
         assert len(pool) >= 6
         assert len(set(pool)) == len(pool)
-    for pool in (_FALLBACK_ALREADY_RUNNING["de"], _FALLBACK_ALREADY_RUNNING["en"]):
+    for lang in ("de", "en", "es"):
+        pool = _FALLBACK_ALREADY_RUNNING[lang]
         assert len(pool) >= 3
         assert len(set(pool)) == len(pool)
+
+
+# Effort/time cues, per language, that prove the spawn pool conveys "this is a
+# bigger task that takes a moment" (the 2026-06-19 sharpening) rather than a
+# flat "on it". Each pool phrase must carry at least one cue.
+_SUBSTANCE_CUES: dict[str, tuple[str, ...]] = {
+    "de": (
+        "grösser", "moment", "stück arbeit", "umfangreich", "gründlich",
+        "mehr dahinter", "in ruhe", "braucht etwas",
+    ),
+    "en": (
+        "bigger", "moment", "meatier", "more involved", "little time",
+        "digging", "a bit more", "short", "solid",
+    ),
+    "es": (
+        "más grande", "momento", "chicha", "más de trabajo", "poco de tiempo",
+        "a fondo", "algo más", "momentito", "buen vistazo", "sólido",
+    ),
+}
+
+
+def test_spawn_pools_convey_substance() -> None:
+    """Every spawn-pool phrase signals a bigger task / that it takes time."""
+    for lang, cues in _SUBSTANCE_CUES.items():
+        for phrase in _FALLBACK_SPAWN[lang]:
+            low = phrase.lower()
+            assert any(cue in low for cue in cues), (
+                f"spawn phrase lacks a 'bigger task / takes time' cue "
+                f"({lang}): {phrase!r}"
+            )
+
+
+def test_still_running_phrases_cover_all_languages() -> None:
+    """The heartbeat pool covers de/en/es with several distinct variants and
+    never claims completion (the mission is still in flight)."""
+    assert set(STILL_RUNNING_PHRASES) == {"de", "en", "es"}
+    for lang, pool in STILL_RUNNING_PHRASES.items():
+        assert len(pool) >= 4, f"too few heartbeat variants for {lang}"
+        assert len(set(pool)) == len(pool)
+        for phrase in pool:
+            low = phrase.lower()
+            assert not low.startswith(("erledigt", "fertig", "done", "listo")), (
+                f"heartbeat must not open with a completion claim: {phrase!r}"
+            )
 
 
 # --------------------------------------------------------------------------- #
