@@ -254,7 +254,7 @@ def test_summarize_answers_truncates_on_sentence_boundary_not_mid_word() -> None
     hard ``[:cap-1]`` cut produced "…eine schlechtere Auswander…" — the TTS
     spoke a fragment and stopped mid-word, which the user heard as Jarvis
     "hanging up mid-sentence"."""
-    text = ("Auswanderung ist eine grosse Entscheidung. " * 40).strip()
+    text = ("Emigrating abroad is a serious decision. " * 40).strip()
     assert len(text) > 600
     out = summarize_answers([text], cap=600)
 
@@ -270,13 +270,13 @@ def test_summarize_answers_truncates_on_sentence_boundary_not_mid_word() -> None
 def test_summarize_answers_word_boundary_without_punctuation() -> None:
     """Even when the overflowing text has no sentence punctuation in range, the
     cut falls back to the last word boundary — never a partial token."""
-    text = "wort " * 200  # 1000 chars, no sentence enders
+    text = "relocation " * 100  # 1100 chars, no sentence enders; cap lands mid-word
     out = summarize_answers([text], cap=600)
 
     assert len(out) <= 600
     assert out.endswith("…")
     core = out[:-1].rstrip()
-    assert set(core.split()) == {"wort"}
+    assert set(core.split()) == {"relocation"}
 
 
 # --- is_informational_request + conversational (no-tool) answer ------------

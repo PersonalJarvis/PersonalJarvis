@@ -214,6 +214,27 @@ class TestRegistryHasActionIntent:
         # "Öffne" normalises to "oeffne" → match
         assert self.reg.has_action_intent("Öffne Chrome") is True
 
+    def test_filler_particle_halt_is_not_an_action(self) -> None:
+        # The German discourse particle "halt" ("ist halt so", "ich hab das halt
+        # gemacht") is NOT a command — it must not collide with the stop-verb
+        # stem in the universal catalogue. Live bug 2026-06-19: the filler "halt"
+        # tripped has_action_intent and force-spawned a worker on a pure chat
+        # turn (the San-Francisco emigration session).
+        assert self.reg.has_action_intent("Das ist halt so.") is False
+        assert (
+            self.reg.has_action_intent("Ich hab mir das halt echt überlegt.")
+            is False
+        )
+        assert self.reg.has_action_intent("Na ja, ist halt kompliziert.") is False
+
+    def test_genuine_stop_commands_still_action(self) -> None:
+        # The fix must NOT lose real stop/pause commands — they stay actions via
+        # the unambiguous "stop"/"stoppe" stems (which also cover German
+        # "stopp"/"stoppen").
+        assert self.reg.has_action_intent("Stopp die Musik.") is True
+        assert self.reg.has_action_intent("Stoppe das Video.") is True
+        assert self.reg.has_action_intent("Stop the music.") is True
+
 
 class TestRegistryRenderForPrompt:
     def setup_method(self) -> None:

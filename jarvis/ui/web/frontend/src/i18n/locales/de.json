@@ -1125,6 +1125,62 @@
     "install_no_binary": "{0}: Install lief durch (exit 0) aber Binary wurde nicht gefunden. PATH evtl. nicht aktualisiert.",
     "install_failed": "{0}: Install fehlgeschlagen (exit {1}). Versuch eine andere Methode."
   },
+  "onboarding": {
+    "nav": { "next": "Weiter", "back": "Zurück", "skip": "Überspringen" },
+    "welcome": {
+      "title": "Willkommen bei Personal Jarvis",
+      "subtitle": "Dein lokaler, privater Sprachassistent. Lass uns alles einrichten.",
+      "cta": "Los geht's",
+      "skip_setup": "Einrichtung vorerst überspringen"
+    },
+    "terms": {
+      "title": "Nutzungsbedingungen & Haftungsausschluss",
+      "intro": "Bitte lies und akzeptiere sie, bevor du fortfährst.",
+      "accept_label": "Ich habe die Nutzungsbedingungen & den Haftungsausschluss gelesen und akzeptiere sie.",
+      "continue": "Akzeptieren & weiter"
+    },
+    "language": {
+      "title": "Wähle deine Sprache",
+      "ui_label": "Oberflächensprache",
+      "reply_label": "Antwortsprache"
+    },
+    "wake_word": {
+      "title": "Wähle dein Aktivierungswort",
+      "body": "Wähle das Wort, das Jarvis aufweckt. \"Hey\" bleibt fest — den Rest bestimmst du.",
+      "prefix": "Hey",
+      "input_label": "Dein Aktivierungswort",
+      "placeholder": "z. B. Nova",
+      "notice": "Wähle dein eigenes Aktivierungswort. Achte darauf, keine fremde Marke zu verwenden. Du bist für deine Wahl verantwortlich.",
+      "references_title": "Wo du geschützte Namen prüfen kannst",
+      "references_caveat": "Diese Referenzen dienen nur zur Information und können unvollständig oder veraltet sein — sie ersetzen nicht deine eigene Prüfung.",
+      "ack_label": "Ich habe die Informationen zu geschützten Namen gesichtet und akzeptiere, dass ich allein für das gewählte Aktivierungswort verantwortlich bin.",
+      "cta": "Aktivierungswort speichern",
+      "saving": "Speichern…"
+    },
+    "api_keys": {
+      "title": "Verbinde deine KI-Dienste (optional)",
+      "body": "Füge API-Schlüssel hinzu, um Cloud-Anbieter freizuschalten. Du kannst das überspringen und sie später in den Einstellungen ergänzen.",
+      "works_now": "Du kannst sofort loschatten — Schlüssel ergänzen nur Cloud-Stimmen und -Anbieter.",
+      "skip": "Überspringen — ich ergänze sie später"
+    },
+    "mic_test": {
+      "title": "Mikrofon-Check",
+      "body": "Stellen wir sicher, dass Jarvis dich hören kann.",
+      "no_mic": "Kein Mikrofon erkannt. Du kannst trotzdem per Text oder über einen Kanal wie Telegram mit Jarvis sprechen.",
+      "skip": "Mikrofon-Check überspringen"
+    },
+    "persona": {
+      "title": "Mach es zu deinem (optional)",
+      "name_label": "Wie soll sich der Assistent nennen?",
+      "skip": "Personalisierung überspringen"
+    },
+    "finish": {
+      "title": "Alles bereit!",
+      "body": "Jarvis ist startklar. Sag dein Aktivierungswort oder tippe einen Befehl, um zu beginnen.",
+      "skipped_title": "Du hast übersprungen — jederzeit in den Einstellungen nachholbar:",
+      "start_cta": "Jarvis verwenden"
+    }
+  },
   "languages_view": {
     "title": "Sprachen",
     "subtitle": "Wähle die Oberflächen-Sprache und in welcher Sprache Jarvis antwortet.",

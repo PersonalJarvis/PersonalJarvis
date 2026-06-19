@@ -51,6 +51,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
                         help="Dry-run-Diagnose: wo würde der Orb spawnen? "
                              "Liest jarvis.toml + EnumDisplayMonitors, ohne ein "
                              "Tk-Fenster zu öffnen (BUG-027 / ADR-0016).")
+    parser.add_argument(
+        "--reset-onboarding",
+        action="store_true",
+        dest="reset_onboarding",
+        help="Clear onboarding markers so the first-run guide shows again.",
+    )
     return parser.parse_args(argv)
 
 
@@ -227,6 +233,24 @@ def _cmd_orb_doctor() -> int:
     return 0
 
 
+_ONBOARDING_STATE_PATH = None  # tests override; None => state.py default
+
+
+def _cmd_reset_onboarding() -> int:
+    from jarvis.setup import state as onb_state
+
+    removed = onb_state.reset_onboarding(_ONBOARDING_STATE_PATH)
+    marker = cfg.DATA_DIR / ".setup-complete"
+    if marker.exists():
+        try:
+            marker.unlink()
+        except OSError as exc:
+            print(f"Could not remove {marker}: {exc}")
+    print(f"Onboarding reset. Cleared keys: {removed or 'none'}; removed .setup-complete.")
+    print("Next launch will show the setup guide.")
+    return 0
+
+
 def _cmd_install_admin_helper() -> int:
     """Generates the HMAC shared secret (if missing) in the Credential Manager."""
     try:
@@ -318,6 +342,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_orb_doctor()
     if args.install_admin_helper:
         return _cmd_install_admin_helper()
+    if args.reset_onboarding:
+        return _cmd_reset_onboarding()
     if args.wizard or cfg.is_first_run():
         rc = _cmd_wizard()
         if rc != 0 or args.wizard:

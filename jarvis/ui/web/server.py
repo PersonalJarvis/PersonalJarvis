@@ -242,6 +242,7 @@ class WebServer:
         from .sessions_routes import router as sessions_router
         from .settings_routes import router as settings_router
         from .setup_routes import router as setup_router
+        from .onboarding_routes import router as onboarding_router
         from .skills_routes import router as skills_router
         from .socials_routes import router as socials_router
         from .sub_agents_routes import router as sub_agents_router
@@ -317,6 +318,8 @@ class WebServer:
         app.include_router(missions_pty_router)
         # Phase B9 — Obsidian Setup Wizard (detect install + register vault).
         app.include_router(setup_router)
+        # First-time onboarding guide (/api/onboarding/*).
+        app.include_router(onboarding_router)
         # Phase B3 — Wiki view (read-only REST API over the Obsidian vault).
         app.include_router(wiki_router)
         # Phase B3 — Desktop wiki view live-reload WS endpoint.

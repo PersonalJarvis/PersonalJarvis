@@ -7,38 +7,24 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
-## [0.11.0] — 2026-06-19
+## [0.12.0] — 2026-06-19
 
 ### Added
-
-- `jarvis/cli_ctl/` — **jarvisctl**, a control CLI for the running app (auth,
-  system, and tasks commands, plus dynamic OpenAPI-driven subcommands). See
-  `docs/jarvisctl.md`.
-- **Run Inspector** — a new desktop view (`RunInspectorView`) with a per-turn
-  transcript, latency waterfall, decision path, tool table, and metrics panels.
-- **Voice two-turn confirmation** — consequential (ask-tier) tools on the voice
-  path now ask for a spoken "yes" and execute on the next turn instead of
-  blocking on a UI approval the voice user cannot give
-  (`jarvis/voice/tool_confirmation.py`).
-- `jarvis/mcp/loader.py` — connected MCP-server tools are exposed to the
-  router / voice brain.
-- `cli-gcloud` guidance skill — routes Google Cloud actions through the headless
-  `gcloud` CLI instead of a Computer-Use browser login.
+- First-time onboarding guide: a guided first-run flow with new onboarding
+  routes, persisted onboarding state, a reset CLI, bilingual + Spanish i18n
+  parity, and a `docs/legal/TERMS.md`.
 
 ### Changed
+- Voice mission readback no longer truncates mid-word. A long spoken summary is
+  now cut on the last sentence or word boundary instead of a hard character
+  slice, so the voice never stops in the middle of a word.
+- Post-hangup completion readbacks are recorded in the session transcript. A
+  background mission whose result is voiced after the user hung up is now
+  attributed to the just-ended session instead of being dropped, so the
+  transcript reflects what the user actually heard.
+- Router and capability refinements bundled from the current working tree.
 
-- **Voice hang-up now works during the thinking phase.** A cancelled brain turn
-  can no longer wedge the voice session: the stall guard bounds every
-  post-cancel wait (an inline action that ignores cancellation is abandoned
-  after a short grace) and the thinking phase gained a hang-up waiter, so the
-  whisper-bar's X always aborts — even mid-think.
-- Additional voice-pipeline robustness: continuation recombine, mid-sentence
-  patience threshold, idle-window re-arm after out-of-band readbacks, and
-  runtime output-language (`es`) coverage across the spoken/written surfaces.
-
-### Removed
-
-- `docs/adr/ADR-021-web-search.md` (superseded ADR document).
+---
 
 ## [v1.0.0-board] — 2026-04-25
 

@@ -1125,6 +1125,62 @@
     "install_no_binary": "{0}: install completed (exit 0) but binary not found. PATH may not be refreshed.",
     "install_failed": "{0}: install failed (exit {1}). Try a different method."
   },
+  "onboarding": {
+    "nav": { "next": "Next", "back": "Back", "skip": "Skip" },
+    "welcome": {
+      "title": "Welcome to Personal Jarvis",
+      "subtitle": "Your local, private voice assistant. Let's get you set up.",
+      "cta": "Get started",
+      "skip_setup": "Skip setup for now"
+    },
+    "terms": {
+      "title": "Terms & Disclaimer",
+      "intro": "Please read and accept before continuing.",
+      "accept_label": "I have read and accept the Terms & Disclaimer.",
+      "continue": "Accept & continue"
+    },
+    "language": {
+      "title": "Choose your language",
+      "ui_label": "Interface language",
+      "reply_label": "Reply language"
+    },
+    "wake_word": {
+      "title": "Pick your wake word",
+      "body": "Choose the word that wakes Jarvis. \"Hey\" stays fixed — you pick the rest.",
+      "prefix": "Hey",
+      "input_label": "Your wake word",
+      "placeholder": "e.g. Nova",
+      "notice": "Choose your own activation word. Make sure it doesn't use someone else's trademark. You are responsible for your choice.",
+      "references_title": "Where to check protected names",
+      "references_caveat": "These references are informational and may be incomplete or out of date — they are not a substitute for your own check.",
+      "ack_label": "I have reviewed the information on protected names and accept that I am solely responsible for the activation word I choose.",
+      "cta": "Save wake word",
+      "saving": "Saving…"
+    },
+    "api_keys": {
+      "title": "Connect your AI services (optional)",
+      "body": "Add API keys to unlock cloud providers. You can skip this and add them later in Settings.",
+      "works_now": "You can start chatting right away — keys only add cloud voices and providers.",
+      "skip": "Skip — I'll add these later"
+    },
+    "mic_test": {
+      "title": "Microphone check",
+      "body": "Let's make sure Jarvis can hear you.",
+      "no_mic": "No microphone detected. You can still talk to Jarvis by text or through a channel like Telegram.",
+      "skip": "Skip microphone check"
+    },
+    "persona": {
+      "title": "Make it yours (optional)",
+      "name_label": "What should the assistant call itself?",
+      "skip": "Skip personalization"
+    },
+    "finish": {
+      "title": "You're all set!",
+      "body": "Jarvis is ready. Try saying your wake word, or type a command to begin.",
+      "skipped_title": "You skipped — set up anytime in Settings:",
+      "start_cta": "Start using Jarvis"
+    }
+  },
   "languages_view": {
     "title": "Languages",
     "subtitle": "Choose the UI language and the language Jarvis replies in.",

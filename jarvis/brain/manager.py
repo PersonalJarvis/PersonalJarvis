@@ -484,6 +484,41 @@ _GREETING_PREFIX_RE = re.compile(
 )
 
 
+# A clear ACTION / request signal inside an utterance that ALSO matched the
+# smalltalk allowlist. A continuation-recombine (or a polite preamble) can glue
+# an answered chit-chat turn onto a real command (a smalltalk greeting followed
+# by "open the oldest Bill-Gates post for me") or trail one ("open Chrome,
+# thanks"). The smalltalk allowlist then matches the conversational part and
+# (without this signal) the WHOLE turn is demoted to a tool-less smalltalk turn,
+# hiding computer_use / spawn_worker (live bug 2026-06-19 11:43, the Bill-Gates
+# turn: the deep brain answered a no-op "saved your note" reply and never opened
+# the browser). When this signal is present the turn is a COMMAND, not
+# chit-chat, so ``_is_smalltalk`` keeps the action tools visible. Pure regex, no
+# LLM (AP-11). Intentionally NARROW (high-signal tokens + explicit request
+# framing only) so a long but signal-less friendly remark carries no match and
+# stays smalltalk, preserving the anti-fake-spawn tool-hiding.
+_ACTION_REQUEST_RE = re.compile(
+    r"(?:"
+    # open / launch an app, file, page, browser
+    r"\b(?:oeffn\w*|öffn\w*|aufmach\w*|aufzumach\w*|start\w*|open\w*|launch\w*)\b|"  # i18n-allow
+    # research / analysis / search
+    r"\b(?:recherchier\w*|research\w*|analys\w*|analyz\w*|untersuch\w*|"  # i18n-allow
+    r"vergleich\w*|such\w*|search\w*|google\w*)\b|"  # i18n-allow
+    # explicit action verbs
+    r"\b(?:zeig\w*|lies|lese|liest|schreib\w*|install\w*|deinstallier\w*|"  # i18n-allow
+    r"deploy\w*|spawn\w*|delegier\w*)\b|"
+    # request framing (DE)
+    r"\bich\s+(?:möchte|will|brauche|hätte\s+gern)\b|"  # i18n-allow
+    r"\b(?:kannst|könntest|würdest)\s+du\b|"  # i18n-allow
+    r"\b(?:mach|zeig|gib|hol|such|lies|öffne|bau)\s+(?:mir|mal|uns)\b|"  # i18n-allow
+    # request framing (EN)
+    r"\b(?:can|could|would)\s+you\b|\bi\s+(?:want|need)\b|\bi'?d\s+like\b|"
+    r"\b(?:show|give|help)\s+me\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
 def _looks_like_pc_control(user_text: str) -> bool:
     """Detects local screen/PC control requests intended for the computer-use harness."""
     return bool(_PC_CONTROL_RE.search(user_text or ""))
@@ -492,6 +527,65 @@ def _looks_like_pc_control(user_text: str) -> bool:
 def _is_instructional_question(user_text: str) -> bool:
     """True for how-to / explanatory questions that should be answered directly."""
     return bool(_INSTRUCTIONAL_QUESTION_RE.search(user_text or ""))
+
+
+# Opinion / advice / recommendation / decision questions, and casual
+# question-openers ("ich hab da mal eine Frage"). These are CONVERSATION, not
+# work: the brain answers them inline — they must NEVER force-spawn a worker,
+# even when they contain an everyday word that collides with an action verb in
+# the universal catalogue ("Frage" -> "frag"/"frage", the filler particle
+# "halt" -> "halt"). Live bug 2026-06-19 (voice session 11:53, San-Francisco
+# emigration turn): "ich hab ne Frage ... was würdest du mir empfehlen?"
+# force-spawned because has_action_intent matched "Frage"/"halt", so
+# _is_generic_subagent_work classified a pure chat turn as generic sub-agent
+# work; the answer then returned out-of-band via the MissionAnnouncer and never
+# reached the session transcript. Precision over recall: matched only by clear
+# opinion/advice/decision phrasings, not by every question. DE/EN/ES, with
+# umlaut + ASCII variants (STT emits either). Pure regex (AP-11 safe).
+_OPINION_ADVICE_QUESTION_RE = re.compile(
+    r"(?:"
+    # advice / recommendation (DE)
+    r"was\s+(?:w[üu]rdest|wuerdest|w[üu]rde|wuerde)\s+du\b"
+    r"|was\s+(?:empfiehlst|r[äa]tst|raetst|schl[äa]gst|schlaegst)\s+du\b"
+    r"|(?:hast|h[äa]ttest|haettest)\s+du\s+(?:einen?\s+)?(?:tipp|rat|empfehlung|vorschlag)"
+    # opinion (DE)
+    r"|was\s+(?:h[äa]ltst|haeltst|meinst|denkst|sagst)\s+du\b"
+    r"|wie\s+(?:siehst|findest|beurteilst)\s+du\b"
+    r"|(?:deiner|aus\s+deiner)\s+(?:meinung|sicht)\b"
+    r"|was\s+ist\s+deine\s+(?:meinung|empfehlung|einsch[äa]tzung|einschaetzung)"
+    # decision help (DE)
+    r"|soll(?:te)?\s+ich\b[^?]*\boder\b"
+    r"|was\s+(?:ist|w[äa]re|waere)\s+(?:besser|kl[üu]ger|klueger|sinnvoller)\b"
+    # conversational question opener (DE)
+    r"|ich\s+(?:hab|habe|h[äa]tte|haette)\s+(?:da\s+)?(?:mal\s+)?(?:noch\s+)?(?:'?ne|eine)\s+frage"
+    r"|kann\s+ich\s+dich\s+(?:mal\s+)?(?:was|etwas)\s+fragen"
+    # advice / opinion (EN)
+    r"|what\s+(?:would|do)\s+you\s+(?:recommend|suggest|advise|think)\b"
+    r"|what\s+should\s+i\b"
+    r"|should\s+i\b[^?]*\bor\b"
+    r"|(?:what(?:'s|\s+is)\s+)?your\s+(?:opinion|advice|take|recommendation)\b"
+    r"|do\s+you\s+think\b"
+    r"|i\s+(?:have|'ve\s+got|got)\s+a\s+question\b"
+    r"|can\s+i\s+ask\s+you\b"
+    # advice / opinion (ES)
+    r"|qu[ée]\s+(?:me\s+)?(?:recomiendas|aconsejas|sugieres)\b"
+    r"|qu[ée]\s+(?:opinas|piensas|crees)\b"
+    r"|tengo\s+una\s+pregunta\b"
+    r"|deber[íi]a\s+"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _is_opinion_advice_question(user_text: str) -> bool:
+    """True for opinion / advice / recommendation / decision questions (and
+    casual question-openers) that must be answered inline, never force-spawned.
+
+    See ``_OPINION_ADVICE_QUESTION_RE`` for the full rationale (live bug
+    2026-06-19): a conversational turn must not be dispatched to a worker just
+    because an everyday word collides with an action verb.
+    """
+    return bool(_OPINION_ADVICE_QUESTION_RE.search(user_text or ""))
 
 
 def _balanced_json_objects(text: str) -> list[str]:
@@ -2354,6 +2448,16 @@ class BrainManager:
             and not smalltalk_re.search(stripped)   # the remainder isn't smalltalk too
         ):
             return False
+        # Smalltalk-head/tail guard (live bug 2026-06-19, the Bill-Gates turn):
+        # a continuation-recombine glued the answered "Was geht ab?" turn onto a
+        # real command ("… mach mir den ältesten Bill-Gates-Post auf"). The
+        # allowlist matched the chit-chat part, so the WHOLE turn was demoted to
+        # a tool-less smalltalk turn — computer_use/spawn hidden, the deep brain
+        # spoke the no-op "Notiert …" and never opened the browser. When the
+        # utterance ALSO carries a clear action/request signal it is a COMMAND,
+        # not chit-chat: keep the action tools visible. See _ACTION_REQUEST_RE.
+        if _ACTION_REQUEST_RE.search(t):
+            return False
         return True
 
     # Read-only tools that stay visible even on a smalltalk turn. The toolless
@@ -2887,6 +2991,19 @@ class BrainManager:
             return True
         verb_re, marker_re, _smalltalk_re = self._get_routing_patterns()
         if _is_instructional_question(t):
+            return False
+        # Opinion / advice / recommendation / decision questions, and casual
+        # question-openers, are CONVERSATION — the brain answers them inline,
+        # never a heavy-worker spawn. Guards the verb-collision false positive
+        # where an everyday word ("Frage" -> "frag", the filler "halt") trips
+        # has_action_intent and pushes a pure chat turn into
+        # _is_generic_subagent_work. Live bug 2026-06-19 (emigration turn). The
+        # explicit heavy-work trigger hoisted above still wins, so "spawn a
+        # subagent and tell me what you'd recommend" dispatches as asked.
+        if _is_opinion_advice_question(t):
+            log.info(
+                "force-spawn skipped: opinion/advice/conversational question — inline"
+            )
             return False
         # AI Pointer: a deictic "what is this?" is a Q&A about the element under
         # the cursor — answered inline from the pushed pointer context, NEVER a
