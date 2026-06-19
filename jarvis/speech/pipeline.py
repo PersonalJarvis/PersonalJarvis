@@ -20,8 +20,10 @@ import enum
 import hashlib
 import logging
 import os
+import random
 import re
 import time
+from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -1295,7 +1297,16 @@ class SpeechPipeline:
         # pipeline. The 90 s threshold is well past the typical short
         # mission (8-30 s) and avoids spamming the user every spawn.
         self._spawn_watchdog_tasks: list[asyncio.Task[None]] = []
-        self._spawn_watchdog_delay_s: float = 90.0
+        # First "still on it" heartbeat fires after this delay; 90 s of pure
+        # silence read as a crash (2026-06-19), so the first reassurance comes
+        # sooner. Then up to ``_heartbeat_max_count`` total, ``_heartbeat_interval_s``
+        # apart, while the mission is in flight — hard-bounded so it can never run
+        # forever (the in-flight hold equals the watchdog lifetime, see
+        # _live_spawn_watchdogs). Tests override these.
+        self._spawn_watchdog_delay_s: float = 30.0
+        self._heartbeat_interval_s: float = 60.0
+        self._heartbeat_max_count: int = 3
+        self._heartbeat_recent: deque[str] = deque(maxlen=2)
 
         # TTS-Announcement-Bridge (Phase 5 CL-13): Router/Tools emittieren
         # `AnnouncementRequested` wenn sie dem User eine Zwischenansage geben
@@ -2233,6 +2244,12 @@ class SpeechPipeline:
                 "Announcement nach Hangup unterdrückt: %r", event.text[:80]
             )
             return
+        # A completion readback IS the mission's answer — cancel any pending
+        # "still on it" heartbeats so a reassurance never lands AFTER the result
+        # (the success path does not publish OpenClawBackgroundCompleted, so the
+        # heartbeat is not otherwise drained on completion). 2026-06-19.
+        if is_completion:
+            self._cancel_spawn_heartbeats()
         log.info(
             "📢 Announcement: %r (prio=%s lang=%s)",
             event.text, event.priority, event.language,
@@ -2647,17 +2664,21 @@ class SpeechPipeline:
             "Spawn-ACK suppress't (User-Wunsch 2026-05-12) — action=%r target=%r",
             event.action, event.target,
         )
-        # CRIT-5 (User-Wahl 2026-05-17): schedule a long-mission watchdog
-        # so the user gets a single "Bin noch dran." after 90 s if the
-        # mission has not completed. _on_background_completed cancels
-        # this in the happy path.
+        # CRIT-5 (2026-05-17) + heartbeat rework (2026-06-19): schedule the
+        # background-mission heartbeat so the user hears a varied, language-
+        # resolved "still on it" reassurance while a long mission runs (first
+        # beat well before the old 90 s, then bounded). _on_background_completed
+        # cancels it on the crash path; a completion readback cancels it via
+        # _cancel_spawn_heartbeats in the happy path.
         self._schedule_spawn_watchdog()
         return
 
     def _schedule_spawn_watchdog(self) -> None:
-        """Start a 90 s timer that emits one discrete progress phrase if
-        the OpenClaw mission has not completed yet. FIFO-cancelled by
-        ``_on_background_completed``."""
+        """Start the background-mission heartbeat: a bounded series of varied,
+        language-resolved "still on it" reassurances while the mission has not
+        completed (see ``_spawn_watchdog_body``). FIFO-cancelled by
+        ``_on_background_completed``; also cancelled on a completion readback via
+        ``_cancel_spawn_heartbeats``."""
         loop = asyncio.get_running_loop()
         task = loop.create_task(
             self._spawn_watchdog_body(),
@@ -2709,48 +2730,90 @@ class SpeechPipeline:
         except Exception:  # noqa: BLE001 — probe must never break the session
             return False
 
+    def _pick_heartbeat_phrase(self) -> tuple[str, str]:
+        """Pick one varied "still on it" heartbeat phrase + its language.
+
+        Language flows through the single output-language resolver
+        (``_output_language``: ``brain.reply_language`` pin > sticky
+        conversation language > ``DEFAULT_LOCALE``) — never hard-coded "de", so
+        a German / English / Spanish conversation hears the heartbeat in its own
+        language. The phrase comes from the varied ``STILL_RUNNING_PHRASES`` pool
+        with a small no-repeat guard so consecutive beats differ. The pool lives
+        in the allowlisted spawn-announcement module (keeps the German/Spanish
+        runtime strings out of this file); a lazy import + neutral fallback keeps
+        the spoken path crash-proof.
+        """
+        lang = _phrase_lang(self._output_language(None, ""))
+        try:
+            from jarvis.brain.ack_brain.spawn_announcement import (  # noqa: PLC0415
+                STILL_RUNNING_PHRASES,
+            )
+
+            pool = STILL_RUNNING_PHRASES.get(lang) or STILL_RUNNING_PHRASES["en"]
+        except Exception:  # noqa: BLE001 — the heartbeat must never crash the loop
+            return ("Bin noch dran.", lang)
+        recent = getattr(self, "_heartbeat_recent", None)
+        choices = [p for p in pool if recent is None or p not in recent] or list(pool)
+        choice = random.choice(choices)  # noqa: S311 — phrase variety, not crypto
+        if recent is not None:
+            recent.append(choice)
+        return (choice, lang)
+
     async def _spawn_watchdog_body(self) -> None:
-        """Sleep ``_spawn_watchdog_delay_s`` then fire one progress phrase.
+        """Speak a bounded, varied, language-resolved "still on it" heartbeat
+        while a background mission runs.
 
-        Quietly exits on CancelledError (happy path: mission finished
-        before the timer fired). Respects the global voice mute --
-        muted users get no surprise speech.
+        Replaces the old one-shot, German-only "Bin noch dran." (2026-06-19):
+        the first beat fires after ``_spawn_watchdog_delay_s`` (90 s of silence
+        read as a crash), then up to ``_heartbeat_max_count`` total,
+        ``_heartbeat_interval_s`` apart, so the wait feels alive instead of dead.
+        Each beat is picked fresh (``_pick_heartbeat_phrase``) and emitted as a
+        ``priority="normal"`` ``AnnouncementRequested`` — which the AD-OE5 floor
+        guard in ``_on_announcement`` drops if the user holds the floor (never
+        speaks over the user). A muted session stays silent. ``CancelledError``
+        (mission finished / completion readback) exits quietly.
 
-        On EVERY terminal path (fired, muted-skip, bus-None, cancelled) the task
-        removes itself from ``_spawn_watchdog_tasks``. That list is the
-        "background mission in flight" signal read by ``_active_session``'s
-        idle-timeout override and by ``_finish_after_response``; a
-        done-but-still-listed task would hold the voice session open forever,
-        because the success path never publishes the
-        ``OpenClawBackgroundCompleted`` event that would otherwise drain it.
+        On EVERY terminal path the task removes itself from
+        ``_spawn_watchdog_tasks``. That list is the "background mission in flight"
+        signal read by ``_active_session``'s idle-timeout override and by
+        ``_finish_after_response``; a done-but-still-listed task would hold the
+        voice session open forever, because the success path never publishes the
+        ``OpenClawBackgroundCompleted`` event that would otherwise drain it. The
+        hard cap bounds the in-flight hold to the heartbeat lifetime.
         """
         try:
-            try:
-                await asyncio.sleep(self._spawn_watchdog_delay_s)
-            except asyncio.CancelledError:
-                return
-            if getattr(self, "_muted", False):
-                log.debug("Spawn-watchdog: muted, skipping progress phrase")
-                return
-            if self._bus is None:
-                return
-            log.info(
-                "Spawn-watchdog: mission >%.0fs ohne Completion — sage 'Bin noch dran.'",
-                self._spawn_watchdog_delay_s,
-            )
-            try:
-                await self._bus.publish(
-                    AnnouncementRequested(
-                        text="Bin noch dran.",
-                        language="de",
-                        priority="normal",
+            max_count = max(1, getattr(self, "_heartbeat_max_count", 3))
+            interval = getattr(self, "_heartbeat_interval_s", 60.0)
+            delay = self._spawn_watchdog_delay_s
+            for beat in range(1, max_count + 1):
+                try:
+                    await asyncio.sleep(delay)
+                except asyncio.CancelledError:
+                    return
+                delay = interval
+                if getattr(self, "_muted", False):
+                    log.debug("Spawn-heartbeat: muted, skipping beat %d", beat)
+                    continue
+                if self._bus is None:
+                    return
+                phrase, lang = self._pick_heartbeat_phrase()
+                log.info(
+                    "Spawn-heartbeat #%d (mission still running) — %r (%s)",
+                    beat, phrase, lang,
+                )
+                try:
+                    await self._bus.publish(
+                        AnnouncementRequested(
+                            text=phrase,
+                            language=lang,
+                            priority="normal",
+                        )
                     )
-                )
-            except Exception:  # noqa: BLE001
-                log.warning(
-                    "Spawn-watchdog: AnnouncementRequested publish failed",
-                    exc_info=True,
-                )
+                except Exception:  # noqa: BLE001
+                    log.warning(
+                        "Spawn-heartbeat: AnnouncementRequested publish failed",
+                        exc_info=True,
+                    )
         finally:
             # Self-remove on every exit. _on_background_completed may have
             # already popped this task (FIFO cancel) — remove() is then a
@@ -2760,6 +2823,23 @@ class SpeechPipeline:
                 self._spawn_watchdog_tasks.remove(me)
             except ValueError:
                 pass
+
+    def _cancel_spawn_heartbeats(self) -> None:
+        """Cancel every pending spawn heartbeat.
+
+        Called when a mission delivers its actual answer (a ``kind="completion"``
+        readback) so Jarvis never says "still on it" right AFTER the result. The
+        success path does not publish ``OpenClawBackgroundCompleted``, so the
+        heartbeat is otherwise only drained by its own cap; this is the precise
+        hook that silences it the moment the answer lands. Each cancelled task
+        still self-removes from ``_spawn_watchdog_tasks`` in its ``finally``.
+        """
+        tasks = getattr(self, "_spawn_watchdog_tasks", None)
+        if not tasks:
+            return
+        for task in list(tasks):
+            if not task.done():
+                task.cancel()
 
     # ------------------------------------------------------------------
     # Lifecycle

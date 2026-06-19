@@ -7,6 +7,24 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
+## [0.13.0] — 2026-06-19
+
+### Added
+- Onboarding flow UI: a guided first-run stepper shell with per-step screens
+  (welcome, language, wake word, persona/theme, API keys, mic test, terms,
+  finish) and a `useOnboarding` hook driving the flow.
+
+### Fixed
+- Voice routing no longer files a silent note instead of acting. When a smalltalk
+  or greeting phrase wraps a real command (e.g. an answered greeting recombined
+  onto "open the oldest Bill Gates post for me"), the turn is now treated as a
+  command: the action tools stay visible and the request is executed instead of
+  being acknowledged with a no-op "noted" reply.
+
+### Changed
+- Spawn-announcement, speech-pipeline, and capability refinements bundled from
+  the current working tree.
+
 ## [0.12.0] — 2026-06-19
 
 ### Added
