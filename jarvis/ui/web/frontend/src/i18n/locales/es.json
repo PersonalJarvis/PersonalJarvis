@@ -712,7 +712,7 @@
   },
   "apikeys_view": {
     "title": "Claves API y Proveedores",
-    "subtitle": "Las claves se guardan en el Administrador de Credenciales de Windows. Codex usa el login oficial de ChatGPT/Codex.",
+    "subtitle": "Codex usa el login oficial de ChatGPT/Codex.",
     "save": "Guardar",
     "saved": "Guardado",
     "missing": "Falta",
@@ -729,7 +729,22 @@
     "click_to_activate": "Clic para activar este proveedor",
     "needs_codex": "Primero conecta Codex o guarda la clave API",
     "needs_key": "Primero guarda la clave API, luego se puede activar",
-    "security_notice": "Las claves se guardan vía keyring en el Administrador de Credenciales de Windows. Jarvis las lee en tiempo de ejecución mediante get_secret() — nunca terminan en jarvis.toml. OpenAI Codex usa solo la CLI oficial de Codex para el login de ChatGPT; Jarvis nunca pide credenciales de ChatGPT."
+    "security_notice": ""
+  },
+  "apikeys_test": {
+    "button": "Probar",
+    "running": "Probando…",
+    "status_ok": "Funciona",
+    "status_not_configured": "Sin clave",
+    "status_bad_key": "Clave inválida",
+    "status_no_credits": "Sin créditos",
+    "status_rate_limited": "Límite de tasa",
+    "status_model_unavailable": "Modelo no disponible",
+    "status_unreachable": "Inaccesible",
+    "status_error": "Error de integración",
+    "integration_ok_note": "Se contactó al proveedor — solo la clave/cuenta/modelo es el bloqueo.",
+    "integration_bad_note": "No se pudo contactar al proveedor.",
+    "failed": "Prueba fallida"
   },
   "settings_view": {
     "silence_window": {
@@ -1132,6 +1147,12 @@
       "subtitle": "Tu asistente de voz local y privado. Vamos a configurarlo.",
       "cta": "Empezar",
       "skip_setup": "Omitir la configuración por ahora"
+    },
+    "intro": {
+      "scene_1": "Te presentamos a Jarvis, tu asistente de voz.",
+      "scene_2": "Solo habla. Jarvis escucha y actúa.",
+      "scene_3": "Sigue trabajando en segundo plano cuando tú no.",
+      "scene_4": "Y funciona en local: tus datos siguen siendo tuyos."
     },
     "terms": {
       "title": "Términos y descargo de responsabilidad",

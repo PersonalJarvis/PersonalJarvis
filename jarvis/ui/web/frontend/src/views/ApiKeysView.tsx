@@ -1,5 +1,5 @@
 ﻿import { useState } from "react";
-import { Brain, Check, Copy, KeyRound, LogIn, LogOut, Mic, Phone, Shield, Terminal, Volume2, Loader2, AlertCircle } from "lucide-react";
+import { Brain, Check, Copy, KeyRound, LogIn, LogOut, Mic, Phone, PlugZap, Terminal, Volume2, Loader2, AlertCircle, XCircle } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { SubagentSection } from "@/components/SubagentSection";
@@ -9,11 +9,14 @@ import { Button } from "@/components/ui/button";
 import {
   codexLogout,
   type ProviderDescriptor,
+  type ProviderTestResult,
+  type ProviderTestStatus,
   type ProviderTier,
   startCodexLogin,
   switchBrainProvider,
   switchSttProvider,
   switchTtsProvider,
+  testProvider,
   useProviders,
 } from "@/hooks/useProviders";
 import { useEventStore } from "@/store/events";
@@ -42,8 +45,6 @@ export function ApiKeysView() {
       />
 
       <div className="flex-1 overflow-y-auto scrollbar-jarvis p-6">
-        <SecurityNotice />
-
         {loading && (
           <div className="mt-6 flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" /> {t("apikeys_view.loading_providers")}
@@ -104,18 +105,6 @@ function TelephonySection() {
       </h3>
       <TelephonyPanel />
     </section>
-  );
-}
-
-function SecurityNotice() {
-  const t = useT();
-  return (
-    <div className="flex items-start gap-3 rounded-lg border border-primary/20 bg-primary/5 p-4">
-      <Shield className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-      <div className="text-xs leading-relaxed text-muted-foreground">
-        {t("apikeys_view.security_notice")}
-      </div>
-    </div>
   );
 }
 
@@ -306,6 +295,106 @@ function ProviderCard({
         onChanged={onChanged}
         onSavedActivate={handleSavedActivate}
       />
+
+      <ProviderTestControl providerId={descriptor.id} />
+    </div>
+  );
+}
+
+// Tone per status: green = works; amber = reached but key/account/model blocks
+// (integration is fine); red = couldn't reach / integration bug.
+const TEST_STATUS_TONE: Record<ProviderTestStatus, string> = {
+  ok: "border-emerald-500/30 bg-emerald-500/10 text-emerald-600",
+  not_configured: "border-border bg-muted text-muted-foreground",
+  bad_key: "border-amber-500/30 bg-amber-500/10 text-amber-600",
+  no_credits: "border-amber-500/30 bg-amber-500/10 text-amber-600",
+  rate_limited: "border-amber-500/30 bg-amber-500/10 text-amber-600",
+  model_unavailable: "border-amber-500/30 bg-amber-500/10 text-amber-600",
+  unreachable: "border-destructive/30 bg-destructive/10 text-destructive",
+  error: "border-destructive/30 bg-destructive/10 text-destructive",
+};
+
+/**
+ * "Test" button + honest result chip. Calls POST /api/providers/{id}/test which
+ * makes a REAL minimal call — distinguishing a working provider from an invalid
+ * key, an out-of-credits account, or an unreachable endpoint. This is the piece
+ * the API-Keys view was missing: the green "configured" badge only ever meant a
+ * key STRING was stored, never that the provider answers.
+ */
+function ProviderTestControl({ providerId }: { providerId: string }) {
+  const t = useT();
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<ProviderTestResult | null>(null);
+
+  async function run() {
+    setRunning(true);
+    setResult(null);
+    try {
+      setResult(await testProvider(providerId));
+    } catch (e) {
+      setResult({
+        provider: providerId,
+        status: "error",
+        detail: (e as Error).message,
+        latency_ms: 0,
+        integration_ok: false,
+      });
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  const tone = result ? TEST_STATUS_TONE[result.status] : "";
+  const note = result
+    ? (result.integration_ok
+        ? t("apikeys_test.integration_ok_note")
+        : t("apikeys_test.integration_bad_note"))
+    : "";
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 pt-0.5">
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={(e) => {
+          e.stopPropagation();
+          void run();
+        }}
+        disabled={running}
+        className="h-7 gap-1.5 text-xs"
+      >
+        {running ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <PlugZap className="h-3.5 w-3.5" />
+        )}
+        {running ? t("apikeys_test.running") : t("apikeys_test.button")}
+      </Button>
+
+      {result && (
+        <span
+          data-testid={`provider-test-result-${providerId}`}
+          className={cn(
+            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]",
+            tone,
+          )}
+          title={[note, result.detail, result.latency_ms ? `${Math.round(result.latency_ms)} ms` : ""]
+            .filter(Boolean)
+            .join("\n")}
+        >
+          {result.status === "ok" ? (
+            <Check className="h-3 w-3" />
+          ) : result.integration_ok ? (
+            <AlertCircle className="h-3 w-3" />
+          ) : (
+            <XCircle className="h-3 w-3" />
+          )}
+          {t(`apikeys_test.status_${result.status}`)}
+          {result.status === "ok" && result.latency_ms
+            ? ` · ${Math.round(result.latency_ms)} ms`
+            : ""}
+        </span>
+      )}
     </div>
   );
 }

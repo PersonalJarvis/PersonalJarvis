@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 
-import { TurnCard } from "./TurnCard";
+import { TurnCard, formatTurnPlain } from "./TurnCard";
 import type { VoiceSpokenLine, VoiceTurnRow } from "./types";
 
 afterEach(cleanup);
@@ -94,5 +94,57 @@ describe("TurnCard spoken track", () => {
   it("shows no detail line when a spoken phrase has no technical detail", () => {
     render(<TurnCard turn={turn()} spoken={[spokenLine()]} />);
     expect(screen.queryByText(/exit \d+/)).toBeNull();
+  });
+
+  it("renders a sub-agent readback with its own label and a distinct colour", () => {
+    const { container } = render(
+      <TurnCard
+        turn={turn()}
+        spoken={[
+          spokenLine({
+            spoken_kind: "subagent",
+            text: "Erledigt. Der Sub-Agent hat fünf Themen gefunden.", // i18n-allow: German voice fixture
+          }),
+        ]}
+      />,
+    );
+    // Attributed label, not the generic "Background result".
+    expect(screen.getByText("Jarvis Sub-Agent / Output")).toBeTruthy();
+    // The line block is tinted violet (agent) — visibly distinct from the sky
+    // tint used by every other spoken kind.
+    const line = container.querySelector('[data-spoken-kind="subagent"]');
+    expect(line).not.toBeNull();
+    expect(line?.className).toContain("violet");
+    expect(line?.className).not.toContain("sky-400");
+  });
+
+  it("keeps a generic completion readback on the sky-tinted track", () => {
+    const { container } = render(
+      <TurnCard
+        turn={turn()}
+        spoken={[spokenLine({ spoken_kind: "completion", text: "Fertig." })]}
+      />,
+    );
+    expect(screen.getByText("Background result")).toBeTruthy();
+    const line = container.querySelector('[data-spoken-kind="completion"]');
+    expect(line?.className).toContain("sky-400");
+    expect(line?.className).not.toContain("violet");
+  });
+
+  it("copies spoken preambles before the final Jarvis reply", () => {
+    const copied = formatTurnPlain(
+      turn({ ended_ms: 1_717_780_020_000, jarvis_text: "Final answer." }),
+      [
+        spokenLine({
+          ts_ms: 1_717_780_001_000,
+          spoken_kind: "preamble",
+          text: "Preamble first.",
+        }),
+      ],
+    );
+
+    expect(copied.indexOf("[SPOKEN: PREAMBLE] Preamble first.")).toBeLessThan(
+      copied.indexOf("[JARVIS] Final answer."),
+    );
   });
 });

@@ -267,3 +267,45 @@ def test_speech_resume_after_expiry_does_not_resurrect(
     result = buf.process("Was ist das Wetter", language="de")
     assert result == "Was ist das Wetter"
     assert not buf.has_pending()
+
+
+# --------------------------------------------------------------------------- #
+# Autonomous drain (AD-OE6 zero-silent-drop): flush_pending RETURNS the held    #
+# text so the pipeline can DISPATCH it to the brain instead of dropping it.     #
+# Live wedge 2026-06-19, session da25113a: "…morgen ist ja Montag, oder?" was   #
+# held as a trailing conjunction, no continuation arrived, and the fragment was #
+# silently discarded at idle-timeout — the brain was never called and Jarvis    #
+# "listened forever". The buffer itself has no timer; the pipeline arms a drain  #
+# timer (see test_continuation_drain.py) that calls flush_pending() on expiry.  #
+# --------------------------------------------------------------------------- #
+
+
+def test_flush_pending_returns_joined_and_clears() -> None:
+    """flush_pending() drains the held fragment(s) for an autonomous dispatch.
+
+    Unlike :meth:`discard` it RETURNS the joined text so the caller can send it
+    to the brain (AD-OE6) rather than dropping the user's words silently.
+    """
+    buf = ContinuationBuffer(timeout_s=8.0)
+    assert buf.process("Schreib eine Mail an Tom,", language="de") is None
+    assert buf.process("und schick sie auch an Lisa,", language="de") is None
+    assert buf.has_pending()
+    drained = buf.flush_pending()
+    assert drained is not None
+    assert "Tom" in drained and "Lisa" in drained, "must join ALL held fragments"
+    assert not buf.has_pending(), "buffer must be cleared after a drain"
+    assert buf.last_reason == ""
+
+
+def test_flush_pending_returns_none_when_empty() -> None:
+    """Draining an empty buffer is a harmless no-op returning None."""
+    buf = ContinuationBuffer(timeout_s=8.0)
+    assert buf.flush_pending() is None
+    assert not buf.has_pending()
+
+
+def test_timeout_s_property_exposes_configured_value() -> None:
+    """The pipeline arms its drain timer at the buffer's own discard deadline,
+    so the configured timeout must be readable."""
+    assert ContinuationBuffer(timeout_s=3.5).timeout_s == 3.5
+    assert ContinuationBuffer().timeout_s == 8.0

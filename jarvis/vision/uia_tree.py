@@ -244,6 +244,7 @@ class UIATreeSource:
                 bounds=n.bounds,
                 enabled=n.enabled,
                 parent_index=n.parent_index,
+                value=n.value,
             )
             for n in raw
         ]
@@ -309,6 +310,17 @@ def _flatten(
     except Exception:  # noqa: BLE001
         return
 
+    # L3 value-read: the current text inside an editable control (address bar,
+    # search box) via the UIA ValuePattern. Best-effort -- most controls have no
+    # ValuePattern -> "" (graceful; a value-read failure never skips the node).
+    value = ""
+    try:
+        iface = getattr(element, "iface_value", None)
+        if iface is not None:
+            value = str(getattr(iface, "CurrentValue", "") or "")
+    except Exception:  # noqa: BLE001
+        value = ""
+
     my_index = len(out)
     out.append(RawNode(
         role=role,
@@ -319,6 +331,7 @@ def _flatten(
         is_offscreen=offscreen,
         depth=depth,
         parent_index=parent_index,
+        value=value,
     ))
 
     if depth >= max_depth:

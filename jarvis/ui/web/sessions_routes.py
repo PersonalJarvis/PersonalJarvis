@@ -88,7 +88,9 @@ async def get_session_detail(session_id: str, request: Request) -> SessionDetail
 async def export_session(
     session_id: str,
     request: Request,
-    format: Literal["markdown", "plain", "json"] = Query(default="markdown"),
+    export_format: Literal["markdown", "plain", "json"] = Query(
+        default="markdown", alias="format"
+    ),
 ) -> Response:
     """Formatierte Session fuer Click-to-Copy.
 
@@ -112,10 +114,10 @@ async def export_session(
     # folds them into the dialogue, JSON ships the raw events.
     events = store.get_events(session_id)
 
-    if format == "markdown":
+    if export_format == "markdown":
         body = format_session_markdown(session, turns, events)
         return PlainTextResponse(content=body, media_type="text/markdown; charset=utf-8")
-    if format == "plain":
+    if export_format == "plain":
         body = format_session_plain(session, turns, events)
         return PlainTextResponse(content=body, media_type="text/plain; charset=utf-8")
     # JSON-Variant — wir geben den vollen Detail-Payload zurueck.
@@ -146,7 +148,9 @@ class SaveSessionResponse(BaseModel):
 async def save_session_to_downloads(
     session_id: str,
     request: Request,
-    format: Literal["markdown", "plain", "json"] = Query(default="markdown"),
+    export_format: Literal["markdown", "plain", "json"] = Query(
+        default="markdown", alias="format"
+    ),
 ) -> SaveSessionResponse:
     """Schreibt die Session als Datei in den Windows-Downloads-Ordner.
 
@@ -164,20 +168,20 @@ async def save_session_to_downloads(
     if session is None:
         raise HTTPException(status_code=404, detail="session-not-found")
     turns = store.get_turns(session_id)
+    events = store.get_events(session_id)
 
     # Format-Body rendern.
-    if format == "markdown":
-        body = format_session_markdown(session, turns)
-    elif format == "plain":
-        body = format_session_plain(session, turns)
+    if export_format == "markdown":
+        body = format_session_markdown(session, turns, events)
+    elif export_format == "plain":
+        body = format_session_plain(session, turns, events)
     else:
-        events = store.get_events(session_id)
         detail = SessionDetail(session=session, turns=turns, events=events)
         body = detail.model_dump_json(indent=2)
 
     # Filename aus Session-Metadaten + erstem User-Text bauen.
     first_user = next((t.user_text for t in turns if t.user_text), "")
-    filename = _build_filename(session, first_user, format)
+    filename = _build_filename(session, first_user, export_format)
 
     # Zielpfad: %USERPROFILE%\Downloads\.
     downloads = Path.home() / "Downloads"
@@ -190,7 +194,7 @@ async def save_session_to_downloads(
     target.write_text(body, encoding=encoding)
     log.info(
         "SessionSave: format=%s session=%s -> %s (%d bytes)",
-        format, session_id, target, len(body.encode("utf-8")),
+        export_format, session_id, target, len(body.encode("utf-8")),
     )
     return SaveSessionResponse(
         saved_path=str(target),
@@ -205,13 +209,13 @@ async def save_session_to_downloads(
 def _build_filename(
     session: VoiceSessionRow,
     first_user_text: str,
-    format: Literal["markdown", "plain", "json"],
+    export_format: Literal["markdown", "plain", "json"],
 ) -> str:
     """Erzeugt einen Filesystem-tauglichen Dateinamen.
 
     Pattern: ``voice-session-YYYY-MM-DD_HH-mm-{slug}.{ext}``.
     """
-    ext = "md" if format == "markdown" else ("txt" if format == "plain" else "json")
+    ext = "md" if export_format == "markdown" else ("txt" if export_format == "plain" else "json")
     dt = datetime.fromtimestamp(session.started_ms / 1000.0)
     stamp = dt.strftime("%Y-%m-%d_%H-%M")
     slug = _slugify(first_user_text) or session.id[:8]

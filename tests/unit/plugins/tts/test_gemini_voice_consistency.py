@@ -56,7 +56,7 @@ async def test_chunk_disabled_synthesizes_whole_text_once() -> None:
 
     seen: list[str] = []
 
-    async def fake_one(text: str, voice: str) -> bytes:
+    async def fake_one(text: str, voice: str, language_code: str | None = None) -> bytes:
         seen.append(text)
         return b"PCM"
 
@@ -76,7 +76,7 @@ async def test_chunk_enabled_still_splits_per_sentence() -> None:
 
     seen: list[str] = []
 
-    async def fake_one(text: str, voice: str) -> bytes:
+    async def fake_one(text: str, voice: str, language_code: str | None = None) -> bytes:
         seen.append(text)
         return b"PCM"
 

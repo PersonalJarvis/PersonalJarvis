@@ -712,7 +712,7 @@
   },
   "apikeys_view": {
     "title": "API-Keys & Provider",
-    "subtitle": "Keys liegen im Windows Credential Manager. Codex nutzt den offiziellen ChatGPT/Codex-Login.",
+    "subtitle": "Codex nutzt den offiziellen ChatGPT/Codex-Login.",
     "save": "Speichern",
     "saved": "Gespeichert",
     "missing": "Fehlt",
@@ -729,7 +729,22 @@
     "click_to_activate": "Klick aktiviert diesen Provider",
     "needs_codex": "Erst Codex verbinden oder API-Key speichern",
     "needs_key": "Erst API-Key speichern, dann aktivierbar",
-    "security_notice": "Keys werden über keyring im Windows Credential Manager abgelegt. Jarvis liest sie zur Laufzeit via get_secret() — sie landen niemals in jarvis.toml. OpenAI Codex nutzt für ChatGPT-Login ausschließlich die offizielle Codex CLI; Jarvis fragt keine ChatGPT-Credentials ab."
+    "security_notice": ""
+  },
+  "apikeys_test": {
+    "button": "Testen",
+    "running": "Teste…",
+    "status_ok": "Funktioniert",
+    "status_not_configured": "Kein Key gesetzt",
+    "status_bad_key": "Key ungültig",
+    "status_no_credits": "Keine Credits",
+    "status_rate_limited": "Rate-Limit",
+    "status_model_unavailable": "Modell nicht verfügbar",
+    "status_unreachable": "Nicht erreichbar",
+    "status_error": "Integrationsfehler",
+    "integration_ok_note": "Provider wurde erreicht — nur Key/Konto/Modell ist der Blocker.",
+    "integration_bad_note": "Provider konnte nicht erreicht werden.",
+    "failed": "Test fehlgeschlagen"
   },
   "settings_view": {
     "silence_window": {
@@ -1132,6 +1147,12 @@
       "subtitle": "Dein lokaler, privater Sprachassistent. Lass uns alles einrichten.",
       "cta": "Los geht's",
       "skip_setup": "Einrichtung vorerst überspringen"
+    },
+    "intro": {
+      "scene_1": "Das ist Jarvis — dein Sprachassistent.",
+      "scene_2": "Sprich einfach. Jarvis hört zu und handelt.",
+      "scene_3": "Er arbeitet im Hintergrund weiter, wenn du es nicht tust.",
+      "scene_4": "Und er läuft lokal — deine Daten bleiben deine."
     },
     "terms": {
       "title": "Nutzungsbedingungen & Haftungsausschluss",

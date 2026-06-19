@@ -258,6 +258,40 @@ def test_precision_too_short_does_not_fire(text: str) -> None:
     assert is_incomplete(text) is None
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        # German tag/closing questions: a trailing conjunction CLOSED by "?" is a
+        # COMPLETE question, not an open continuation. Live wedge 2026-06-19
+        # (session da25113a): "…morgen ist ja Montag, oder?" was classified as a
+        # trailing conjunction, held by the ContinuationBuffer, never dispatched,
+        # and discarded 30 s later at idle-timeout → "Jarvis hört für immer zu".
+        # The trailing "?" is the disambiguator the tokenizer would otherwise
+        # strip (so a BARE trailing "oder" stays a genuine open conjunction).
+        "Morgen ist ja Montag, oder?",
+        "Das machen wir so, oder?",
+        "Du kommst doch mit, und?",
+        # English closing tag with a conjunction tail
+        "We could take the bus, or?",
+    ],
+)
+def test_precision_tag_question_with_trailing_conjunction_does_not_fire(
+    text: str,
+) -> None:
+    assert is_incomplete(text) is None, (
+        f"a trailing conjunction closed by '?' is a complete tag question: {text!r}"
+    )
+
+
+def test_bare_trailing_conjunction_without_question_mark_still_fires() -> None:
+    # Scoping guard: the tag-question exemption is keyed ONLY on the trailing
+    # "?" — a bare trailing conjunction with no "?" remains a genuine open
+    # continuation and must still be held (the spawn-fragmentation fix it exists
+    # for, live regression 2026-05-26).
+    verdict = is_incomplete("Nimm den Bus oder", language="de")
+    assert verdict is not None and verdict.reason == REASON_CONJUNCTION
+
+
 @pytest.mark.parametrize("text", ["", "   ", None])
 def test_empty_input_does_not_fire(text: str | None) -> None:
     assert is_incomplete(text) is None  # type: ignore[arg-type]

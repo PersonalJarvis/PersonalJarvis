@@ -38,6 +38,7 @@ class RawNode:
     is_offscreen: bool = False
     depth: int = 0
     parent_index: int = -1
+    value: str = ""  # L3: current text of an editable control (address bar, ...)
     # Kinder-Indizes werden waehrend der Traversal im Tree-Builder verwaltet.
     children: list[int] = field(default_factory=list)
 

@@ -800,6 +800,19 @@ def _request_body(prompt: str) -> str:
     return prompt
 
 
+def clean_request_body(prompt: str) -> str:
+    """Public: the user's real request with the standing quality directive removed.
+
+    ``spawn_worker._build_mission_prompt`` prepends a fixed quality directive
+    (``f"{_QUALITY_DIRECTIVE}\\n\\n{body}"``). Consumers that want to show the
+    user's actual request — report titles/filenames, UI previews — must strip it
+    so they don't surface "Deliver a complete, polished, production-quality …"
+    instead of the real ask. Single source of truth shared with the critic
+    classifier (both route through ``_request_body``).
+    """
+    return _request_body(prompt or "")
+
+
 def is_informational_request(prompt: str) -> bool:
     """True when the request's deliverable is a spoken/written ANSWER, not a file.
 
@@ -1048,6 +1061,7 @@ def summarize_answers(answers: list[str], *, cap: int = 600) -> str:
 
 __all__ = [
     "StreamEvidence",
+    "clean_request_body",
     "extract_stream_evidence",
     "extract_verified_commands",
     "extract_verified_desktop_actions",

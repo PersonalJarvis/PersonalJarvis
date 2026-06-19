@@ -21,41 +21,88 @@ Copy-Paste-Konsum gedacht.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Iterable
+from collections.abc import Iterable
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from .models import VoiceEventRow, VoiceSessionRow, VoiceTurnRow
 
 
-def _spoken_by_turn(
-    events: Iterable[VoiceEventRow] | None,
-) -> dict[str, list[tuple[str, str, str | None]]]:
-    """Group SpeechSpoken raw events by turn_id into ``[(text, kind, detail), …]``.
+@dataclass(frozen=True)
+class _JarvisOutput:
+    ts_ms: int
+    seq: int
+    text: str
+    kind: str
+    detail: str | None = None
+    is_reply: bool = False
 
-    These are the voiced phrases that are not the brain's normal reply
-    (timeout / clarify / announcement / …). Ordered by event ``ts_ms`` so the
-    spoken track reads in the order the user heard it. ``detail`` is an optional
-    technical diagnostic (e.g. a failed Computer-Use exit code) that was NOT
-    spoken — surfaced only in the rich markdown export, never the clean plain one.
-    """
-    grouped: dict[str, list[tuple[int, str, str, str | None]]] = {}
+
+def _events_by_turn(events: Iterable[VoiceEventRow] | None) -> dict[str, list[VoiceEventRow]]:
+    grouped: dict[str, list[VoiceEventRow]] = {}
     for e in events or []:
-        if e.kind != "SpeechSpoken":
+        grouped.setdefault(e.turn_id or "", []).append(e)
+    return grouped
+
+
+def _jarvis_outputs_for_turn(
+    turn: VoiceTurnRow,
+    events: Iterable[VoiceEventRow] | None,
+) -> list[_JarvisOutput]:
+    """Return every Jarvis output for a turn in the order it was produced.
+
+    ``SpeechSpoken`` covers preambles, timeouts, readbacks and other voiced
+    non-reply phrases. ``ResponseGenerated`` covers the normal reply persisted
+    as ``VoiceTurnRow.jarvis_text``. Rendering both by timestamp prevents the
+    plain transcript from showing a preamble *after* the final answer.
+    """
+    items: list[_JarvisOutput] = []
+    saw_reply_event = False
+    fallback_seq = 1_000_000_000
+    for e in events or []:
+        if e.kind == "SpeechSpoken":
+            text = str(e.payload.get("text", "")).strip()
+            if not text:
+                continue
+            raw_detail = e.payload.get("detail")
+            detail = str(raw_detail).strip() if raw_detail else None
+            items.append(
+                _JarvisOutput(
+                    ts_ms=e.ts_ms,
+                    seq=e.seq or 0,
+                    text=text,
+                    kind=str(e.payload.get("spoken_kind", "other")),
+                    detail=detail,
+                )
+            )
             continue
-        text = str(e.payload.get("text", "")).strip()
-        if not text:
-            continue
-        kind = str(e.payload.get("spoken_kind", "other"))
-        raw_detail = e.payload.get("detail")
-        detail = str(raw_detail).strip() if raw_detail else None
-        grouped.setdefault(e.turn_id or "", []).append((e.ts_ms, text, kind, detail))
-    return {
-        tid: [
-            (text, kind, detail)
-            for _ts, text, kind, detail in sorted(items, key=lambda it: it[0])
-        ]
-        for tid, items in grouped.items()
-    }
+        if e.kind == "ResponseGenerated":
+            text = str(e.payload.get("text", "")).strip()
+            if not text:
+                continue
+            saw_reply_event = True
+            items.append(
+                _JarvisOutput(
+                    ts_ms=e.ts_ms,
+                    seq=e.seq or 0,
+                    text=text,
+                    kind="reply",
+                    is_reply=True,
+                )
+            )
+
+    if turn.jarvis_text and not saw_reply_event:
+        items.append(
+            _JarvisOutput(
+                ts_ms=turn.ended_ms or turn.started_ms,
+                seq=fallback_seq,
+                text=turn.jarvis_text,
+                kind="reply",
+                is_reply=True,
+            )
+        )
+
+    return sorted(items, key=lambda it: (it.ts_ms, it.seq))
 
 
 def format_session_markdown(
@@ -65,7 +112,7 @@ def format_session_markdown(
 ) -> str:
     """Markdown-Version fuer reichen Copy-Paste-Konsum."""
     turns_list = list(turns)
-    spoken_map = _spoken_by_turn(events)
+    events_map = _events_by_turn(events)
     lines: list[str] = []
 
     # --- Header ---
@@ -128,22 +175,20 @@ def format_session_markdown(
             lines.append(f"**🔧 Tools:** {tools_pretty}")
             lines.append("")
 
-        if t.jarvis_text:
+        outputs = _jarvis_outputs_for_turn(t, events_map.get(t.id, []))
+        if outputs:
             lines.append(f"**🔊 Jarvis sagte** _(de={t.jarvis_lang})_")
             lines.append("")
-            lines.append(f"> {t.jarvis_text}")
-            lines.append("")
-
-        spoken = spoken_map.get(t.id, [])
-        if spoken:
-            lines.append("**🗣 Also spoken:**")
-            lines.append("")
-            for text, kind, detail in spoken:
-                lines.append(f"- _({kind})_ {text}")
-                if detail:
+            for output in outputs:
+                if output.is_reply:
+                    lines.append(f"> {output.text}")
+                else:
+                    lines.append(f"> _({output.kind})_ {output.text}")
+                if output.detail:
                     # Technical diagnostic that was NOT spoken (e.g. a failed
                     # Computer-Use exit code) — kept for debugging.
-                    lines.append(f"  - _detail:_ `{detail}`")
+                    lines.append(f"> _detail:_ `{output.detail}`")
+                lines.append("")
             lines.append("")
 
         if t.latency_total_ms > 0 or t.think_ms > 0 or t.speak_ms > 0:
@@ -182,7 +227,7 @@ def format_session_plain(
     documents everything the user heard.
     """
     turns_list = list(turns)
-    spoken_map = _spoken_by_turn(events)
+    events_map = _events_by_turn(events)
     lines: list[str] = []
 
     # --- Schlanke Kopfzeile: "Voice-Session · 07.06.2026, 19:24 · 1 min 42 s"
@@ -204,12 +249,10 @@ def format_session_plain(
     for t in turns_list:
         if t.user_text:
             blocks.append(f"Du: {t.user_text}")
-        if t.jarvis_text:
-            blocks.append(f"Jarvis: {t.jarvis_text}")
-        for text, _kind, _detail in spoken_map.get(t.id, []):
+        for output in _jarvis_outputs_for_turn(t, events_map.get(t.id, [])):
             # The clean transcript reads as dialogue — the technical ``detail``
             # (exit codes, harness reasons) stays out to avoid AI-slop.
-            blocks.append(f"Jarvis: {text}")
+            blocks.append(f"Jarvis: {output.text}")
 
     if blocks:
         lines.append("\n\n".join(blocks))
@@ -222,7 +265,7 @@ def format_session_plain(
 
 def _local_dt(ts_ms: int) -> datetime:
     """Wall-clock-ms -> lokale ``datetime`` (eine Stelle fuer die TZ-Logik)."""
-    return datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc).astimezone()
+    return datetime.fromtimestamp(ts_ms / 1000.0, tz=UTC).astimezone()
 
 
 def _fmt_dt(ts_ms: int, *, time_only: bool = False) -> str:

@@ -1303,6 +1303,28 @@ class ComputerUseConfig(BaseModel):
     # no-progress guard in the loop still aborts dead-ends early.
     max_replans: int = Field(default=2, ge=0, le=40)
     per_step_timeout_s: float = Field(default=30.0, gt=0.0, le=300.0)
+    # L10 (CU speed): ceiling on a single CU model (think/plan/judge) call.
+    # Default keeps the legacy 10.0 (no behaviour change); lower it -- with the
+    # cu_bench harness as proof -- to bound tail latency. The configured
+    # per_step_timeout_s still applies when it is smaller.
+    think_timeout_cap_s: float = Field(default=10.0, gt=0.0, le=60.0)
+    # L7 (CU speed): per-screenshot byte budget sent to the model. Default keeps
+    # 300_000 (no change); lowering it -- with the cu_bench harness as proof --
+    # shrinks the vision payload for faster inference, at some grounding risk.
+    image_max_bytes: int = Field(default=300_000, ge=20_000, le=2_000_000)
+    # L8 (CU speed): multiplier on the loop's fixed settle waits (pre-type and
+    # post-click-verify pauses). Default keeps 1.0 (no change: every settle is
+    # byte-for-byte the legacy duration); lower it -- with the cu_bench harness
+    # as proof -- to trim dead time, at some risk of typing before a freshly
+    # focused input is listening (the CU leading-char-drop bug it guards).
+    settle_scale: float = Field(default=1.0, ge=0.0, le=2.0)
+    # L9 (CU speed): optional cheaper model id for trivial, unambiguous steps
+    # (a deterministic click_element whose name is a known control label).
+    # Default "" disables routing entirely -- today's behaviour, every step
+    # uses the normal model. Set a fast model id to opt in once a live gate
+    # wires the helper into the per-step model selection (see TODO L9 in
+    # screenshot_only_loop.py).
+    fast_step_model: str = Field(default="")
     verify_after_each_step: bool = True
     # Spoken per-step milestones ("Schritt N von M erledigt."). Default OFF
     # (2026-06-10): the milestone counter tracks successful actions, not
@@ -2032,6 +2054,40 @@ def delete_secret(key: str) -> bool:
 # ----------------------------------------------------------------------
 # First-run check
 # ----------------------------------------------------------------------
+
+def ensure_project_root_cwd() -> Path:
+    """Pin the process working directory to the project root. Returns the CWD.
+
+    Several persistence paths are resolved relative to ``os.getcwd()`` under the
+    historical assumption that the desktop app always launches from the repo
+    root — the onboarding state file (``data/setup_state.json``), the SQLite DBs
+    (chats / sessions / missions / friends / jarvis), the flight recorder, and
+    the self-mod / review audit logs. That assumption is false in practice: the
+    autostart Scheduled Task sets a WorkingDirectory, but a manual start or an
+    in-app restart inherits the user home (observed live CWD: ``C:\\Users\\<user>``).
+    The same install then read/wrote a *different* ``data/`` dir per start method
+    — re-showing the first-run setup guide on every restart and splitting the
+    user's Chats/Sessions/Missions across two folders.
+
+    Call this once, as early as possible in every process entry point (before
+    ``load_config`` and before the server touches any ``data/`` path). It is
+    idempotent and never raises: a chdir failure is logged and the process
+    continues with whatever CWD it had.
+    """
+    import logging
+
+    if Path.cwd() != PROJECT_ROOT:
+        try:
+            os.chdir(PROJECT_ROOT)
+            logging.getLogger(__name__).info(
+                "Pinned working directory to project root: %s", PROJECT_ROOT
+            )
+        except OSError as exc:
+            logging.getLogger(__name__).warning(
+                "Could not pin CWD to project root %s: %s", PROJECT_ROOT, exc
+            )
+    return Path.cwd()
+
 
 def is_first_run() -> bool:
     """Return True when the user has not yet completed the setup wizard."""

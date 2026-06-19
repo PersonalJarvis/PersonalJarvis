@@ -9,12 +9,17 @@ Kommunikation mit dem Event-Loop über einen thread-safe Queue.
 from __future__ import annotations
 
 import asyncio
+import logging
 import queue
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
+
+from jarvis.platform.probes import display_present
+
+log = logging.getLogger("jarvis.ui.tray")
 
 
 class JarvisState(str, Enum):
@@ -105,40 +110,59 @@ class JarvisTray:
             return _handler
 
         return Menu(
-            # default=True bindet die Action an Doppelklick auf das Tray-Icon
-            # — entspricht der User-Entscheidung "Doppelklick Tray → Fenster zurück".
-            MenuItem("Öffnen", _emit("open_ui"), default=True),
+            # default=True binds the action to a double-click on the tray icon
+            # ("double-click tray -> restore window").
+            MenuItem("Open", _emit("open_ui"), default=True),
             Menu.SEPARATOR,
             MenuItem(lambda _: f"Status: {self._state.value}", None, enabled=False),
             Menu.SEPARATOR,
-            MenuItem("Pausieren", _emit("pause"),
+            MenuItem("Pause", _emit("pause"),
                      checked=lambda _: self._state == JarvisState.PAUSED),
-            MenuItem("Fortsetzen", _emit("resume"),
+            MenuItem("Resume", _emit("resume"),
                      visible=lambda _: self._state == JarvisState.PAUSED),
-            MenuItem("Config neu laden", _emit("reload_config")),
+            MenuItem("Reload config", _emit("reload_config")),
             Menu.SEPARATOR,
-            # Phase 5: Notfall-Stop → KillRequested(source="tray"), bricht alle
-            # laufenden Computer-Use-Tasks und Harness-Dispatches ab (ADR-0004).
-            MenuItem("Notfall-Stop", _emit("kill")),
+            # Phase 5: Emergency stop -> KillRequested(source="tray"); aborts all
+            # running Computer-Use tasks and harness dispatches (ADR-0004).
+            MenuItem("Emergency stop", _emit("kill")),
             Menu.SEPARATOR,
-            MenuItem("Beenden", _emit("quit")),
+            MenuItem("Quit", _emit("quit")),
         )
 
     def _run(self) -> None:
-        # Lazy-Import um Startup-Kosten klein zu halten
+        # Lazy import to keep startup cheap.
         from pystray import Icon  # type: ignore[import-untyped]
 
-        icon_image = _make_icon(self._state)
-        self._icon = Icon(
-            "jarvis",
-            icon=icon_image,
-            title="Jarvis — idle",
-            menu=self._build_menu(),
-        )
-        self._icon.run()
+        try:
+            icon_image = _make_icon(self._state)
+            self._icon = Icon(
+                "jarvis",
+                icon=icon_image,
+                title="Jarvis — idle",
+                menu=self._build_menu(),
+            )
+            self._icon.run()
+        except Exception:  # noqa: BLE001 — a missing tray host must not die silently (AD-6)
+            log.warning(
+                "Tray icon could not start (no notification-area / AppIndicator "
+                "host?) — continuing without a tray.",
+                exc_info=True,
+            )
+            # The thread exits normally after this; a later start() can re-arm.
+            self._icon = None
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
+            return
+        if not display_present():
+            # Headless, or a Linux/Wayland session without an AppIndicator /
+            # notification-area host: pystray would spawn a daemon thread that
+            # dies on the first draw. Degrade to a logged no-op (AD-6) — Jarvis
+            # runs fine without a tray; use the desktop window or the web UI.
+            log.info(
+                "Tray not started: no graphical display / notification-area host "
+                "(headless or Wayland without an AppIndicator)."
+            )
             return
         self._thread = threading.Thread(target=self._run, name="jarvis-tray", daemon=True)
         self._thread.start()
@@ -168,7 +192,7 @@ class JarvisTray:
         self.set_state(JarvisState.ERROR)
         if self._icon is not None:
             try:
-                self._icon.title = f"Jarvis — Fehler: {message[:60]}"
+                self._icon.title = f"Jarvis — Error: {message[:60]}"
             except Exception:  # noqa: BLE001
                 pass
 

@@ -16,7 +16,11 @@ import time
 from pathlib import Path
 
 import numpy as np
-import sounddevice as sd
+
+try:
+    import sounddevice as sd
+except Exception:  # noqa: BLE001 — sounddevice/PortAudio (libportaudio2) absent (headless/slim)
+    sd = None  # type: ignore[assignment]
 
 # Kandidaten-Voices — männlich/tief/autoritativ laut Gemini-Voice-Docs
 JARVIS_CANDIDATES: tuple[str, ...] = (

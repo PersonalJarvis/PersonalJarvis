@@ -397,7 +397,8 @@ class TaskRunner:
             await self._bus.publish(
                 AnnouncementRequested(
                     text=text,
-                    kind="completion",
+                    # A scheduled/background task result is sub-agent output.
+                    kind="subagent",
                     source_layer="tasks.runner",
                 )
             )

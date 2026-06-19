@@ -182,6 +182,28 @@ def test_pool_phrases_pass_own_validation_and_ban_old_template() -> None:
             assert "vom User beschriebenen Workflow" not in phrase
 
 
+def test_es_pools_survive_voice_scrubbing() -> None:
+    """The Spanish pools are returned deterministically (never through
+    ``_validate`` — ``_detect_language`` only knows de/en/unknown), so guard the
+    real concern directly: every es phrase must survive ``scrub_for_voice``
+    intact (TTS-clean, not gutted to empty)."""
+    from jarvis.brain.output_filter import scrub_for_voice
+
+    es_pools = (
+        _FALLBACK_SPAWN["es"],
+        _FALLBACK_ALREADY_RUNNING["es"],
+        STILL_RUNNING_PHRASES["es"],
+    )
+    for pool in es_pools:
+        for phrase in pool:
+            cleaned = scrub_for_voice(
+                phrase, language="es", ack_mode=True
+            ).cleaned.strip()
+            assert sum(c.isalnum() for c in cleaned) >= 3, (
+                f"es phrase gutted by scrub_for_voice: {phrase!r} -> {cleaned!r}"
+            )
+
+
 def test_pools_have_enough_distinct_variants() -> None:
     for lang in ("de", "en", "es"):
         pool = _FALLBACK_SPAWN[lang]

@@ -126,6 +126,26 @@ def test_keyword_map_drops_ambiguous_cost_nouns():
     assert "kosten" not in out["cloud"] and "cost" not in out["cloud"]
 
 
+def test_keyword_map_drops_generic_german_news_nouns_for_messaging():
+    spec = replace(
+        make_spec("twilio", domains=("messaging",)),
+        capabilities=(
+            CliCapabilityDecl(
+                domains=("messaging",),
+                verbs=("zeig",),
+                objects=("twilio", "sms", "nachricht", "nachrichten", "message"),
+                description="messaging",
+            ),
+        ),
+    )
+    fake = FakeCliRegistry({"twilio": spec}, active=[FakeTool("cli_twilio")])
+    out = connected_domain_keyword_map(fake)
+    assert "twilio" in out["messaging"] and "sms" in out["messaging"]
+    assert "message" in out["messaging"]
+    assert "nachricht" not in out["messaging"]
+    assert "nachrichten" not in out["messaging"]
+
+
 def test_keyword_map_drops_self_referential_wake_word():
     # Live bug 2026-06-18 (session b34a4bba): the jarvisctl CLI declares the
     # object "jarvis" for the jarvis-control domain. Because "Jarvis" is the wake

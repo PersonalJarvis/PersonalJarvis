@@ -117,7 +117,7 @@ def connected_domain_tool_map(cli_registry: Any) -> dict[str, str]:
 # word can never be a domain-specific signal, so it is dropped here.
 _KEYWORD_DENYLIST: frozenset[str] = frozenset(
     {"kosten", "cost", "costs", "preis", "preise", "price", "geld", "money",
-     "jarvis"}
+     "jarvis", "nachricht", "nachrichten"}
 )
 
 

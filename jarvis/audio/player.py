@@ -15,13 +15,23 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import numpy as np
-import sounddevice as sd
+
+try:
+    import sounddevice as sd
+except Exception:  # noqa: BLE001 — sounddevice/PortAudio (libportaudio2) absent (headless/slim)
+    sd = None  # type: ignore[assignment]
 
 from jarvis.audio import level_tap
 from jarvis.core.events import AudioOutFirst
 from jarvis.core.protocols import AudioChunk
 
 log = logging.getLogger("jarvis.audio.player")
+
+# `except sd.PortAudioError` is a RUNTIME expression: when sd is None it would
+# evaluate None.PortAudioError and raise AttributeError, masking the real audio
+# error. Resolve the exception type once here so the except clause stays safe
+# even without sounddevice (H4 review).
+_PortAudioError: type[BaseException] = sd.PortAudioError if sd is not None else OSError
 
 TTS_SAMPLE_RATE = 24_000  # Gemini 3.1 Flash TTS output rate
 TTS_WRITE_BUFFER_MS = 120
@@ -473,7 +483,7 @@ class AudioPlayer:
                     target_rate, source_rate, self._device, stream.latency,
                 )
                 return stream, target_rate
-            except sd.PortAudioError as exc:
+            except _PortAudioError as exc:
                 last_exc = exc
                 if "-9997" not in str(exc) and "Invalid sample rate" not in str(exc):
                     raise

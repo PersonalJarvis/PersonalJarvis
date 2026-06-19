@@ -7,43 +7,6 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
-## [0.13.0] — 2026-06-19
-
-### Added
-- Onboarding flow UI: a guided first-run stepper shell with per-step screens
-  (welcome, language, wake word, persona/theme, API keys, mic test, terms,
-  finish) and a `useOnboarding` hook driving the flow.
-
-### Fixed
-- Voice routing no longer files a silent note instead of acting. When a smalltalk
-  or greeting phrase wraps a real command (e.g. an answered greeting recombined
-  onto "open the oldest Bill Gates post for me"), the turn is now treated as a
-  command: the action tools stay visible and the request is executed instead of
-  being acknowledged with a no-op "noted" reply.
-
-### Changed
-- Spawn-announcement, speech-pipeline, and capability refinements bundled from
-  the current working tree.
-
-## [0.12.0] — 2026-06-19
-
-### Added
-- First-time onboarding guide: a guided first-run flow with new onboarding
-  routes, persisted onboarding state, a reset CLI, bilingual + Spanish i18n
-  parity, and a `docs/legal/TERMS.md`.
-
-### Changed
-- Voice mission readback no longer truncates mid-word. A long spoken summary is
-  now cut on the last sentence or word boundary instead of a hard character
-  slice, so the voice never stops in the middle of a word.
-- Post-hangup completion readbacks are recorded in the session transcript. A
-  background mission whose result is voiced after the user hung up is now
-  attributed to the just-ended session instead of being dropped, so the
-  transcript reflects what the user actually heard.
-- Router and capability refinements bundled from the current working tree.
-
----
-
 ## [v1.0.0-board] — 2026-04-25
 
 First consolidated release of the **Jarvis Board**: Phase A through D.

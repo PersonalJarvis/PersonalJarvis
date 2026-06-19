@@ -243,3 +243,39 @@ jarvis/plugins/tool/awareness_recall.py
 #     narrow to inline i18n-allow markers when the tree is not contested.) ---
 jarvis/brain/manager.py
 jarvis/core/config.py
+
+# --- CU informational/read-goal classifier tests: the German voice utterances
+#     ("öffne discord und sag mir was abgeht", "zeig mir die neuesten
+#     nachrichten", the dictation counter-example "sag ihm dass ...") are the
+#     content under test for _goal_needs_reading's bilingual DE+EN matching
+#     (same rationale as the voice turn-taking + local-action-gate test blocks) ---
+tests/unit/harness/test_cu_read_informational_goal.py
+
+# --- Continuation-drain + spoken-heartbeat + provider-connectivity-test
+#     (2026-06-19): the voice-pipeline source files carry forensic comments that
+#     quote the canonical German bug phrase ("Jarvis hört für immer zu") and the
+#     German tag-question utterances under classification ("…, oder?"); the
+#     provider-test classifier carries German error-substring matching data
+#     ("kein … gefunden") and a German headless-mode HTTP detail. Same rationale
+#     as the jarvis/brain/manager.py + jarvis/core/config.py entries above:
+#     whole-file scope mirrors those core-file entries for the (currently
+#     contested) shared tree; a future pass can narrow to inline i18n-allow
+#     markers / English rewrites when the tree is not being edited in parallel.
+#     The test files are German voice fixtures (content under test). ---
+jarvis/speech/pipeline.py
+jarvis/speech/completion.py
+jarvis/speech/continuation_buffer.py
+jarvis/brain/provider_test.py
+jarvis/ui/web/provider_routes.py
+tests/unit/speech/test_continuation_drain.py
+tests/unit/speech/test_completion_detection.py
+tests/unit/speech/test_spawn_watchdog.py
+tests/unit/brain/test_provider_test.py
+
+# --- Cross-platform readiness deep-dive + fix-tracker: an internal forensic
+#     audit doc that necessarily quotes the German runtime error strings it
+#     analyses ("nur auf Windows verfuegbar", "Kein Mikrofon-Device verfuegbar",
+#     tray "Öffnen") — captured evidence, same rationale as the
+#     docs/phantom-worker-aborted-deep-dive + docs/plans/mission-reliability
+#     entries above ---
+docs/plans/cross-platform-mac-linux/*

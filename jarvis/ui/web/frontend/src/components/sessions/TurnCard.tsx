@@ -36,6 +36,7 @@ export const SPOKEN_KIND_LABEL: Record<string, string> = {
   stt_unavailable: "Couldn't hear you",
   privacy: "Privacy",
   completion: "Background result",
+  subagent: "Jarvis Sub-Agent / Output",
   action_done: "Action confirmed",
   backchannel: "Backchannel",
   announcement: "Announcement",
@@ -217,32 +218,47 @@ export function TurnCard({ turn, spoken = [] }: Props) {
               Spoken output
             </div>
             <div className="space-y-1">
-              {spoken.map((s, i) => (
-                <div
-                  key={`${s.ts_ms}-${i}`}
-                  className="flex items-start gap-2 rounded-md border border-sky-400/20 bg-sky-400/5 p-2 text-sm"
-                >
-                  <Badge
-                    variant="secondary"
-                    className="mt-0.5 shrink-0 text-[9px] uppercase tracking-wide"
+              {spoken.map((s, i) => {
+                // A spawned sub-agent / mission result gets its own colour so it
+                // reads distinctly from a generic background completion and from
+                // a normal reply: violet ("agent") vs. the sky tint of the rest.
+                const isSubagent = s.spoken_kind === "subagent";
+                return (
+                  <div
+                    key={`${s.ts_ms}-${i}`}
+                    data-spoken-kind={s.spoken_kind}
+                    className={
+                      isSubagent
+                        ? "flex items-start gap-2 rounded-md border border-violet-400/30 bg-violet-400/10 p-2 text-sm"
+                        : "flex items-start gap-2 rounded-md border border-sky-400/20 bg-sky-400/5 p-2 text-sm"
+                    }
                   >
-                    {SPOKEN_KIND_LABEL[s.spoken_kind] ?? s.spoken_kind}
-                  </Badge>
-                  <div className="min-w-0 flex-1">
-                    <span className="break-words">{s.text}</span>
-                    {s.detail && (
-                      <div className="mt-1 flex items-start gap-1.5 font-mono text-[11px] text-muted-foreground">
-                        <span className="shrink-0 uppercase tracking-wide text-amber-400/80">
-                          detail
-                        </span>
-                        <span className="min-w-0 flex-1 break-words">
-                          {s.detail}
-                        </span>
-                      </div>
-                    )}
+                    <Badge
+                      variant="secondary"
+                      className={
+                        isSubagent
+                          ? "mt-0.5 shrink-0 border-violet-400/40 text-[9px] uppercase tracking-wide text-violet-200"
+                          : "mt-0.5 shrink-0 text-[9px] uppercase tracking-wide"
+                      }
+                    >
+                      {SPOKEN_KIND_LABEL[s.spoken_kind] ?? s.spoken_kind}
+                    </Badge>
+                    <div className="min-w-0 flex-1">
+                      <span className="break-words">{s.text}</span>
+                      {s.detail && (
+                        <div className="mt-1 flex items-start gap-1.5 font-mono text-[11px] text-muted-foreground">
+                          <span className="shrink-0 uppercase tracking-wide text-amber-400/80">
+                            detail
+                          </span>
+                          <span className="min-w-0 flex-1 break-words">
+                            {s.detail}
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -278,7 +294,10 @@ function formatMs(ms: number): string {
   return `${(ms / 1000).toFixed(2)} s`;
 }
 
-function formatTurnPlain(turn: VoiceTurnRow, spoken: VoiceSpokenLine[] = []): string {
+export function formatTurnPlain(
+  turn: VoiceTurnRow,
+  spoken: VoiceSpokenLine[] = [],
+): string {
   const lines: string[] = [];
   lines.push(`--- Turn ${turn.idx + 1} ---`);
   if (turn.user_text) lines.push(`[USER]   ${turn.user_text}`);
@@ -299,11 +318,21 @@ function formatTurnPlain(turn: VoiceTurnRow, spoken: VoiceSpokenLine[] = []): st
   if (turn.tool_calls.length) {
     lines.push(`[TOOLS]  ${turn.tool_calls.join(", ")}`);
   }
-  if (turn.jarvis_text) lines.push(`[JARVIS] ${turn.jarvis_text}`);
+  const jarvisLines: Array<{ ts_ms: number; lines: string[] }> = [];
+  if (turn.jarvis_text) {
+    jarvisLines.push({
+      ts_ms: turn.ended_ms ?? Number.MAX_SAFE_INTEGER,
+      lines: [`[JARVIS] ${turn.jarvis_text}`],
+    });
+  }
   for (const s of spoken) {
     const label = (SPOKEN_KIND_LABEL[s.spoken_kind] ?? s.spoken_kind).toUpperCase();
-    lines.push(`[SPOKEN: ${label}] ${s.text}`);
-    if (s.detail) lines.push(`[DETAIL] ${s.detail}`);
+    const spokenLines = [`[SPOKEN: ${label}] ${s.text}`];
+    if (s.detail) spokenLines.push(`[DETAIL] ${s.detail}`);
+    jarvisLines.push({ ts_ms: s.ts_ms, lines: spokenLines });
   }
+  jarvisLines
+    .sort((a, b) => a.ts_ms - b.ts_ms)
+    .forEach((item) => lines.push(...item.lines));
   return lines.join("\n");
 }

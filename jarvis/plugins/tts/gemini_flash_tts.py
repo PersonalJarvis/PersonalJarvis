@@ -266,18 +266,35 @@ class GeminiFlashTTS:
         project = data.get("project_id")
         return project if isinstance(project, str) and project else None
 
-    def _build_config(self, voice: str) -> Any:
+    def _build_config(self, voice: str, language_code: str | None = None) -> Any:
         from google.genai import types
         # seed / temperature are passed through only when set, so an unset
         # config is byte-for-byte the pre-2026-05-24 request. They are valid
         # top-level GenerateContentConfig fields; if the preview audio model
         # ignores one it is a harmless no-op (never an API error).
+        #
+        # ``language_code`` pins the pronunciation language for THIS turn. The
+        # speech pipeline resolves it once (``resolve_output_language``) and
+        # passes the per-turn value down; ``SpeechConfig.language_code`` IS the
+        # SDK field the model reads (checked against google-genai 1.67.0 on
+        # 2026-06-19: a "de-DE" pin is accepted and audio is returned — the
+        # historical "not exposed in the AI-Studio speech_config" note was
+        # stale; re-confirm if the SDK or model major version changes). Without
+        # a pin Gemini Flash TTS — a generative multilingual model — picks the
+        # language PER WORD from the text, so a German sentence ending on an
+        # English loanword ("…Boss.") code-switches its tail into English (the
+        # 2026-06-19 voice forensic). ``None``/empty leaves it unpinned =
+        # auto-detect = the historical behaviour, so a path that omits it never
+        # regresses.
         return types.GenerateContentConfig(
             response_modalities=["AUDIO"],
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice)
                 ),
+                # ``or None``: an empty string (a misconfigured resolver) means
+                # "unset" just like None — both leave the model on auto-detect.
+                language_code=language_code or None,
             ),
             seed=self._seed,
             temperature=self._temperature,
@@ -294,10 +311,15 @@ class GeminiFlashTTS:
         """
         self._ensure_client()
         voice = voice or self._default_voice
-        # language_code ist aktuell nicht im Gemini-AI-Studio-API speech_config
-        # exponiert — die Voice entscheidet primär über die Aussprache. Wir
-        # behalten den Parameter trotzdem für zukünftige Vertex-Migration.
-        _ = language_code or self._language_code
+        # Per-turn pronunciation pin: the pipeline resolves this turn's language
+        # (resolve_output_language) and passes ``language_code`` here. It is
+        # threaded down to the GenerateContentConfig so the model stops
+        # auto-switching the sentence tail into English on an English loanword
+        # (2026-06-19 forensic). A ``None`` call-value stays unpinned = the
+        # historical auto-detect behaviour. The configured ``self._language_code``
+        # default is NOT used as a silent pin (that would let this layer derive
+        # the language on its own terms, against the Runtime-Output-Language
+        # doctrine); it survives only as the SAPI5 emergency-voice hint below.
         text = text.strip()
         if not text:
             return
@@ -329,7 +351,7 @@ class GeminiFlashTTS:
         # would replay its opening words (same policy as FallbackTTS).
         if self._streaming:
             streamed_any = False
-            stream_gen = self._synthesize_stream_one(sentences[0], voice)
+            stream_gen = self._synthesize_stream_one(sentences[0], voice, language_code)
             try:
                 async for piece in stream_gen:
                     if piece:
@@ -358,7 +380,7 @@ class GeminiFlashTTS:
         # synthetisiert wenn Satz 1 abgespielt ist — keine seriellen Netzwerk-
         # Waits mehr zwischen Saetzen (F6 im Fluss-Plan).
         tasks = [
-            asyncio.create_task(self._synthesize_one(s, voice))
+            asyncio.create_task(self._synthesize_one(s, voice, language_code))
             for s in sentences
         ]
         for i, task in enumerate(tasks):
@@ -389,6 +411,15 @@ class GeminiFlashTTS:
                 "Gemini-TTS leer fuer Satz %d/%d — SAPI5-Notbremse aktiv (Config-Opt-in).",
                 i + 1, len(tasks),
             )
+            # SAPI5 deliberately DOES fall back to ``self._language_code`` here
+            # (unlike the Gemini path above, which never does). The Windows
+            # SAPI5 voice catalogue has no auto-detect — it must be handed an
+            # explicit language to pick the right installed voice (German vs
+            # English), so a bare ``None`` would have nothing to select on. The
+            # configured instance default is the operator's intended
+            # emergency-voice hint, NOT a per-turn pronunciation pin — it only
+            # ever reaches the rarely-used, config-opt-in SAPI5 notbremse, never
+            # the live Gemini request. This asymmetry is intentional.
             fallback_pcm = await asyncio.to_thread(
                 _sapi5_synthesize, sentences[i], language_code or self._language_code
             )
@@ -400,7 +431,9 @@ class GeminiFlashTTS:
                     channels=1,
                 )
 
-    async def _synthesize_one(self, text: str, voice: str) -> bytes:
+    async def _synthesize_one(
+        self, text: str, voice: str, language_code: str | None = None
+    ) -> bytes:
         """Ein einzelner TTS-Call — in Thread-Pool weil google-genai sync ist.
 
         Faengt API-Errors (429 / Netzwerk / Safety) ab und returnt b"".
@@ -426,7 +459,7 @@ class GeminiFlashTTS:
         if not primary_blocked:
             try:
                 return await asyncio.to_thread(
-                    self._synthesize_sync, text, voice, self._model_name
+                    self._synthesize_sync, text, voice, self._model_name, language_code
                 )
             except Exception as exc:  # noqa: BLE001
                 msg = str(exc)
@@ -459,7 +492,7 @@ class GeminiFlashTTS:
 
         try:
             pcm = await asyncio.to_thread(
-                self._synthesize_sync, text, voice, self._sibling_bridge_model
+                self._synthesize_sync, text, voice, self._sibling_bridge_model, language_code
             )
         except Exception as exc:  # noqa: BLE001
             msg = str(exc)
@@ -488,7 +521,7 @@ class GeminiFlashTTS:
         return pcm
 
     async def _synthesize_stream_one(
-        self, text: str, voice: str
+        self, text: str, voice: str, language_code: str | None = None
     ) -> AsyncIterator[bytes]:
         """True-streaming synthesis of ONE sentence — yields raw PCM pieces.
 
@@ -516,7 +549,7 @@ class GeminiFlashTTS:
             stream = await self._client.aio.models.generate_content_stream(
                 model=self._model_name,
                 contents=text,
-                config=self._build_config(voice),
+                config=self._build_config(voice, language_code),
             )
             async for chunk in stream:
                 for cand in chunk.candidates or []:
@@ -559,7 +592,10 @@ class GeminiFlashTTS:
                 with contextlib.suppress(Exception):
                     await aclose()
 
-    def _synthesize_sync(self, text: str, voice: str, model: str | None = None) -> bytes:
+    def _synthesize_sync(
+        self, text: str, voice: str, model: str | None = None,
+        language_code: str | None = None,
+    ) -> bytes:
         import logging
         log = logging.getLogger("jarvis.tts")
         assert self._client is not None
@@ -567,7 +603,7 @@ class GeminiFlashTTS:
         resp = self._client.models.generate_content(
             model=target_model,
             contents=text,
-            config=self._build_config(voice),
+            config=self._build_config(voice, language_code),
         )
         # Robust gegen leere Antworten (Safety-Filter, Rate-Limit, etc.)
         if not resp.candidates:

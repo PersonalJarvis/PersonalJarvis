@@ -34,6 +34,16 @@ class FakeAtspiStateSet:
         return str(state) in self._states
 
 
+class _FakeAtspiText:
+    """A canned AT-SPI Text interface; ``getText`` returns the field's content."""
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def getText(self, start: int, end: int) -> str:  # noqa: N802 — AT-SPI surface
+        return self._text
+
+
 class FakeAtspiAccessible:
     """A canned AT-SPI ``Accessible`` node."""
 
@@ -46,6 +56,7 @@ class FakeAtspiAccessible:
         states: set[str] | None = None,
         pid: int = 4242,
         children: list[FakeAtspiAccessible] | None = None,
+        text: str | None = None,
     ) -> None:
         self.role_token = role_token
         self.name = name
@@ -53,6 +64,11 @@ class FakeAtspiAccessible:
         self._states = FakeAtspiStateSet(states)
         self._pid = pid
         self._children = children or []
+        # Editable accessibles expose the Text interface; non-editable ones
+        # (buttons, labels) do NOT, so the value-read must be optional. Only set
+        # ``queryText`` when text was provided, mirroring the real AT-SPI surface.
+        if text is not None:
+            self.queryText = lambda: _FakeAtspiText(text)  # noqa: N803
 
     @property
     def childCount(self) -> int:  # noqa: N802 — mirrors the AT-SPI surface

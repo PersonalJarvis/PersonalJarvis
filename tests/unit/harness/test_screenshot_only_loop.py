@@ -18,12 +18,12 @@ import pytest
 from jarvis.harness.screenshot_only_loop import (
     _VALID_ACTIONS,
     CULoopError,
+    _capture_monitor_geometry,
     _execute_action,
     _parse_action,
     _parse_actions,
     _resolve_click_pixel,
 )
-
 
 # ---------------------------------------------------------------------------
 # _resolve_click_pixel — 0-1000 normalized -> absolute screen pixel
@@ -65,6 +65,67 @@ def test_resolve_click_pixel_clamps_overshoot() -> None:
     abs_x, abs_y = _resolve_click_pixel({"x": 1200, "y": -5}, (0, 0, 1000, 1000))
     assert abs_x == 1000   # clamped to 1000 -> 1000/1000*1000
     assert abs_y == 0      # clamped to 0
+
+
+# ---------------------------------------------------------------------------
+# _capture_monitor_geometry — cross-platform monitor geometry (B1,
+# DEEP-DIVE-AUDIT-2026-06-19). On Windows it uses win32 (untouched, AD-7).
+# On macOS/Linux the win32 import fails; it must fall back to the SAME mss
+# monitor geometry the screenshot capture uses, so _resolve_click_pixel can
+# scale the model's 0-1000 coords to real pixels. The pre-fix code returned
+# (0,0,0,0) on every non-Windows host, so every pixel-click landed in the
+# top-left 1000x1000 px square. These force the non-Windows path on this
+# Windows host by making the win32 import raise.
+# ---------------------------------------------------------------------------
+
+
+class _FakeSct:
+    """Minimal mss context-manager stand-in: one virtual bbox + one physical
+    1920x1080 monitor at the origin."""
+
+    monitors = [
+        {"left": 0, "top": 0, "width": 1920, "height": 1080},
+        {"left": 0, "top": 0, "width": 1920, "height": 1080, "is_primary": True},
+    ]
+
+    def __enter__(self) -> _FakeSct:
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+
+def test_capture_monitor_geometry_mss_fallback_off_windows(monkeypatch) -> None:
+    import sys
+    import types
+
+    # Force the non-Windows path: make the win32 import inside
+    # _capture_monitor_geometry raise (None in sys.modules -> ImportError).
+    for mod in ("win32api", "win32con", "win32gui"):
+        monkeypatch.setitem(sys.modules, mod, None)
+
+    # Fake mss so the fallback reads a known monitor without a real display.
+    monkeypatch.setitem(sys.modules, "mss", types.SimpleNamespace(mss=lambda: _FakeSct()))
+    # Pin the selector to the physical monitor (avoid the Windows ctypes path
+    # the real selector would take while this test runs on a Windows host).
+    monkeypatch.setattr(
+        "jarvis.vision.screenshot.select_capture_monitor",
+        lambda monitors, **kw: monitors[1],
+    )
+
+    # Pre-fix: (0,0,0,0). Post-fix: the real mss geometry.
+    assert _capture_monitor_geometry() == (0, 0, 1920, 1080)
+
+
+def test_capture_monitor_geometry_headless_returns_zero(monkeypatch) -> None:
+    # Genuinely headless (win32 absent AND mss/display absent): the geometry
+    # is unknown and _resolve_click_pixel keeps its safe pass-through path.
+    import sys
+
+    for mod in ("win32api", "win32con", "win32gui", "mss"):
+        monkeypatch.setitem(sys.modules, mod, None)
+
+    assert _capture_monitor_geometry() == (0, 0, 0, 0)
 
 
 # ---------------------------------------------------------------------------

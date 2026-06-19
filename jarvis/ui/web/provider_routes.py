@@ -16,16 +16,19 @@ Wird vom WebServer in `_build_app()` eingehängt:
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Literal, get_args
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from jarvis.brain import provider_test as _provider_test
 from jarvis.codex_auth import CodexAuthService
 from jarvis.core import config as cfg_mod
 from jarvis.core.events import SecretConfigured
 from jarvis.missions.worker_runtime.provider_map import (
     CODEX_SUBAGENT_CANONICAL as _CODEX_SUBAGENT_CANONICAL,
+)
+from jarvis.missions.worker_runtime.provider_map import (
     CODEX_SUBAGENT_SLUGS as _CODEX_SUBAGENT_SLUGS,
 )
 from jarvis.setup.wizard import SECRETS as WIZARD_SECRETS
@@ -72,6 +75,37 @@ class SwitchBody(BaseModel):
 
 class CodexBinaryPathBody(BaseModel):
     binary_path: str = Field(default="", max_length=1024)
+
+
+# Provider connectivity-test outcome. ``ProviderTestStatusLiteral`` MUST mirror
+# the single source of truth in ``jarvis.brain.provider_test`` — the runtime
+# assert below is the five-layer anti-drift guard (BUG-008 class), and the TS
+# union in ``useProviders.ts`` is the UI mirror.
+ProviderTestStatusLiteral = Literal[
+    "ok",
+    "not_configured",
+    "bad_key",
+    "no_credits",
+    "rate_limited",
+    "model_unavailable",
+    "unreachable",
+    "error",
+]
+assert set(get_args(ProviderTestStatusLiteral)) == set(
+    _provider_test.PROVIDER_TEST_STATUSES
+), "provider-test status vocabulary drift (Pydantic Literal vs SSOT)"
+
+
+class ProviderTestResponse(BaseModel):
+    provider: str
+    status: ProviderTestStatusLiteral
+    detail: str = ""
+    latency_ms: float = 0.0
+    # True when the provider was reached and answered at the protocol level —
+    # i.e. the integration code is sound and only the credential/account/model
+    # is the blocker (ok / bad_key / no_credits / rate_limited / model_unavailable
+    # / not_configured). False only for ``unreachable`` / ``error``.
+    integration_ok: bool = True
 
 
 # ----------------------------------------------------------------------
@@ -323,6 +357,39 @@ async def list_providers(request: Request) -> dict[str, Any]:
         for spec in PROVIDERS
     ]
     return {"providers": providers}
+
+
+@router.post("/providers/{provider_id}/test")
+async def test_provider_connection(
+    provider_id: str, request: Request
+) -> ProviderTestResponse:
+    """Run a REAL minimal call against ``provider_id`` and report the honest
+    outcome.
+
+    Unlike the ``configured`` flag in ``GET /providers`` (a credential-PRESENCE
+    check), this actually reaches the provider: it distinguishes a working
+    provider (``ok``) from an invalid key (``bad_key``), an out-of-credits
+    account (``no_credits``), a missing key (``not_configured``), an
+    unreachable endpoint (``unreachable``) or an integration bug (``error``).
+    """
+    spec = get_spec(provider_id)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Unbekannter Provider: {provider_id}")
+
+    cfg = _resolve_cfg(request)
+    if cfg is None:
+        raise HTTPException(
+            status_code=503, detail="Konfiguration nicht verfügbar (Headless-Mode?)"
+        )
+
+    result = await _provider_test.run_provider_test(spec, cfg)
+    return ProviderTestResponse(
+        provider=result.provider,
+        status=result.status,
+        detail=result.detail,
+        latency_ms=round(result.latency_ms, 1),
+        integration_ok=result.status in _provider_test.INTEGRATION_OK_STATUSES,
+    )
 
 
 @router.get("/codex/status")

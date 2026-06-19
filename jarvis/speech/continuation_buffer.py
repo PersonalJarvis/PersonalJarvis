@@ -17,13 +17,19 @@ Design contract:
   buffer flushes anyway. No infinite buffering, no live-locks.
 * **Wall-clock timeout**: a stale buffer (no continuation within
   ``timeout_s``) is dropped on the NEXT ``process()`` call so it can't pollute
-  an unrelated future turn.
+  an unrelated future turn. Because that drop is *lazy* (it needs a next
+  ``process()``), the pipeline also arms an autonomous drain timer that calls
+  :meth:`flush_pending` on expiry and DISPATCHES the held fragment to the brain
+  — so a held fragment whose continuation never comes is answered, not silently
+  dropped at the session idle-timeout (live "Jarvis hört für immer zu" wedge
+  2026-06-19, session da25113a).
 * **Fail-open** (AD-OE6 zero-silent-drop): any exception from the classifier
   is caught and the utterance is dispatched as-is. The buffer never silently
   swallows the user.
 
-Pipeline wiring lives in ``jarvis.speech.pipeline._handle_utterance``; this
-module exposes only ``process(text, language)`` and ``discard()``.
+Pipeline wiring lives in ``jarvis.speech.pipeline._handle_utterance`` (+ the
+``_arm_continuation_drain`` timer); this module exposes ``process(text,
+language)``, ``discard()`` and ``flush_pending()``.
 """
 from __future__ import annotations
 
@@ -71,6 +77,16 @@ class ContinuationBuffer:
         return bool(self._fragments)
 
     @property
+    def timeout_s(self) -> float:
+        """The stale-fragment timeout in seconds (read-only).
+
+        Exposed so the pipeline can arm an autonomous drain timer that matches
+        the buffer's own discard deadline — the buffer itself has no timer, it
+        only drops a stale fragment lazily on the next ``process()`` call.
+        """
+        return self._timeout_s
+
+    @property
     def last_reason(self) -> str:
         """Reason the currently-held fragment was buffered (``""`` if none).
 
@@ -90,6 +106,28 @@ class ContinuationBuffer:
         self._fragments.clear()
         self._deadline = None
         self._last_reason = ""
+
+    def flush_pending(self) -> str | None:
+        """Drain the held fragment(s) and clear, for an autonomous dispatch.
+
+        Like :meth:`discard` it empties the buffer, but it RETURNS the joined
+        text so the caller can DISPATCH it to the brain instead of dropping the
+        user's words silently. This is the zero-silent-drop (AD-OE6) escape
+        hatch for a fragment that was held as "incomplete" but never got a
+        continuation: rather than letting it rot until the session idle-timeout
+        silently discards it (live "Jarvis hört für immer zu" wedge 2026-06-19,
+        session da25113a — "…morgen ist ja Montag, oder?" was held as a trailing
+        conjunction and dropped 30 s later, never answered), the pipeline drains
+        it to the brain after the grace window so the user always gets an answer
+        attempt. Returns ``None`` when nothing is buffered.
+        """
+        if not self._fragments:
+            return None
+        joined = " ".join(self._fragments)
+        self._fragments.clear()
+        self._deadline = None
+        self._last_reason = ""
+        return joined
 
     def note_speech_resumed(self) -> None:
         """Re-arm the discard countdown when the user starts speaking again.

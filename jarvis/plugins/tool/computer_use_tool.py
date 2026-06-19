@@ -197,6 +197,7 @@ class ComputerUseTool:
         # German turn to English).
         lang = _ctx_output_language(ctx)
         text: str
+        detail: str | None = None
         try:
             result = await self._dispatch.execute(
                 {
@@ -230,7 +231,13 @@ class ComputerUseTool:
                 text=text,
                 priority="normal",
                 language=lang,
-                kind="completion",
+                # A background Computer-Use mission reporting its outcome is a
+                # spawned sub-agent result → the attributed readback track, same
+                # as the manager-initiated CU-background path. The exit-code /
+                # harness reason rides ``detail`` (shown in the transcript, never
+                # spoken) so a failure is debuggable.
+                kind="subagent",
+                detail=detail,
             ))
         except Exception:  # noqa: BLE001
             log.debug("computer_use completion announce failed", exc_info=True)

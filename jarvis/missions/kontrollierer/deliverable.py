@@ -31,14 +31,46 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
+import unicodedata
 from pathlib import Path
 from typing import Final
+
+from ..stream_evidence import clean_request_body
 
 logger = logging.getLogger(__name__)
 
 #: Inline-list cap. Beyond this the spoken sentence becomes unreadable.
 _MAX_NAMED_FILES: Final[int] = 3
+
+#: A worker answer shorter than this is an acknowledgement ("ok", "done"), not a
+#: report — materialising it would clutter the Outputs view with noise.
+_MIN_REPORT_CHARS: Final[int] = 40
+
+#: Synthetic per-task dir used only when the archive left no ``tasks/<id>/`` dir
+#: at all (Edit-only mission, odd code path) — keeps the report inside the
+#: canonical ``tasks/<id>/artifacts/files/`` deliverable subtree the Outputs view
+#: lists, so a report is never orphaned outside the allowlisted layout.
+_REPORT_TASK_DIRNAME: Final[str] = "answer"
+
+#: Stable filename when the prompt slugifies to nothing (symbols-only request).
+_DEFAULT_REPORT_STEM: Final[str] = "report"
+
+#: Max length of the slugified filename stem (kept well under the 200-char
+#: worktree path cap so deep archive paths never overflow on Windows).
+_MAX_SLUG_LEN: Final[int] = 48
+
+#: Transliteration for the handful of non-ASCII letters that survive NFKD
+#: decomposition (ß has no combining form; the umlauts decompose to a+¨ which we
+#: want rendered as the German digraph, not a bare vowel). The uppercase forms
+#: intentionally map to lowercase digraphs because the slug is lowercased in full
+#: by the trailing ``.lower()`` in ``_slugify_filename`` anyway.
+_TRANSLIT: Final[dict[str, str]] = {
+    "ä": "ae", "ö": "oe", "ü": "ue",
+    "Ä": "ae", "Ö": "oe", "Ü": "ue",
+    "ß": "ss",
+}
 
 #: Folder name the mission deliverables are mirrored into so a non-coder can
 #: actually find them. Lives under the user's Downloads on Windows (the place
@@ -91,6 +123,156 @@ def build_deliverable_summary(mission_dir: Path) -> str:
         joined = ", ".join(names)
         return f"Fertig. {count} Dateien gespeichert: {joined}."
     return f"Fertig. {count} Dateien gespeichert."
+
+
+def _existing_deliverable_files(mission_dir: Path) -> list[Path]:
+    """Every genuine deliverable file the archive already wrote for the mission.
+
+    Mirrors the Outputs view's allowlist (``tasks/<id>/artifacts/files/**``) so
+    the "does a real deliverable already exist?" check uses the exact same
+    definition of "output" the user sees.
+    """
+    out: list[Path] = []
+    tasks_root = mission_dir / "tasks"
+    if not tasks_root.is_dir():
+        return out
+    try:
+        for task_dir in sorted(tasks_root.iterdir()):
+            files_dir = task_dir / "artifacts" / "files"
+            if not files_dir.is_dir():
+                continue
+            out.extend(p for p in files_dir.rglob("*") if p.is_file())
+    except OSError:
+        return out
+    return out
+
+
+def _slugify_filename(text: str) -> str:
+    """Lowercase ASCII-hyphen slug for a report filename, or the default stem.
+
+    German umlauts/ß are transliterated (ä→ae, ß→ss) before NFKD strips any
+    remaining accents, so the filename stays portable across filesystems and the
+    download/`Content-Disposition` header never carries raw non-ASCII bytes.
+    """
+    text = "".join(_TRANSLIT.get(ch, ch) for ch in (text or ""))
+    text = unicodedata.normalize("NFKD", text)
+    text = text.encode("ascii", "ignore").decode("ascii")
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", text).strip("-").lower()
+    if len(slug) > _MAX_SLUG_LEN:
+        slug = slug[:_MAX_SLUG_LEN].rstrip("-")
+    return slug or _DEFAULT_REPORT_STEM
+
+
+def _report_title(prompt: str) -> str:
+    """First non-empty line of the request, condensed into a one-line H1 title."""
+    for line in (prompt or "").splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped[:120]
+    return "Result"
+
+
+def materialize_answer_document(
+    mission_dir: Path,
+    *,
+    answers: list[str],
+    prompt: str,
+    expected_output: str | None = None,
+) -> Path | None:
+    """Persist the worker's text answer as a Markdown report — but only when the
+    mission produced NO genuine file deliverable.
+
+    The "always a document" guarantee: a code/file task already wrote its
+    artifact (HTML, ``.py``, …) and is shown in Outputs untouched — we never
+    duplicate it. A pure research / Q&A task delivers its answer as text and
+    would otherwise leave ``artifacts/files/`` empty (live forensic 2026-06-19:
+    the same "relocate to SF" question produced a report once and an empty
+    Outputs card the next time, depending on whether the worker happened to write
+    a file). This writes that text answer into the canonical deliverable subtree
+
+        <mission_dir>/tasks/<task_id>/artifacts/files/<slug>.md
+
+    so it is listed, viewable, downloadable, and mirrored to the user's
+    Jarvis-Outputs folder by :func:`deliver_to_user_folder` like any other
+    deliverable.
+
+    Args:
+        mission_dir: ``<isolation_root>/mission_<id[:13]>/``.
+        answers: the worker's per-task text answers (``readonly_answer`` output).
+        prompt: the user's request — its first line becomes the report title and
+            (slugified) its filename.
+        expected_output: the planner's expected-output hint, appended as context
+            when present.
+
+    Returns:
+        The written report path, or ``None`` when nothing was written: a real
+        file deliverable already exists, the mission produced no substantive
+        answer, or the mission dir is missing. Best-effort — never raises; a
+        write failure returns ``None`` so it can never flip an APPROVED mission.
+
+    Idempotent: a second call sees the report it just wrote as an existing
+    deliverable and returns ``None``, so an approve re-run never duplicates it.
+    """
+    try:
+        if not mission_dir.is_dir():
+            return None
+        # A genuine file deliverable already satisfies "show me a document".
+        if _existing_deliverable_files(mission_dir):
+            return None
+
+        body = "\n\n".join(a.strip() for a in answers if a and a.strip()).strip()
+        if len(body) < _MIN_REPORT_CHARS:
+            return None
+
+        # Land the report inside the archive's existing task dir when there is
+        # one (so it sits next to that task's diff), else a synthetic task dir.
+        # Either way the path stays in the allowlisted deliverable subtree.
+        tasks_root = mission_dir / "tasks"
+        try:
+            existing_task_dirs = (
+                sorted(p for p in tasks_root.iterdir() if p.is_dir())
+                if tasks_root.is_dir()
+                else []
+            )
+        except OSError:
+            # A directory vanishing mid-enumeration must not swallow a valid
+            # answer into a silent None — fall through to the synthetic task dir
+            # so the report is still written. (Distinct from the outer handler,
+            # which is the last-resort write-failure guard.)
+            logger.debug(
+                "materialize: could not enumerate %s, using synthetic dir",
+                tasks_root,
+            )
+            existing_task_dirs = []
+        task_dir = (
+            existing_task_dirs[0]
+            if existing_task_dirs
+            else tasks_root / _REPORT_TASK_DIRNAME
+        )
+        files_dir = task_dir / "artifacts" / "files"
+        files_dir.mkdir(parents=True, exist_ok=True)
+
+        # Strip spawn_worker's standing quality-directive preamble so the title
+        # and filename reflect the user's REAL request, not "Deliver a complete,
+        # polished, production-quality …" (the preamble is the prompt's first
+        # line otherwise).
+        clean_prompt = clean_request_body(prompt)
+        # The title comes from the user's prompt (may be German — user content).
+        # The scaffold labels ("Requested:") are intentionally English per the
+        # Output Language Policy (every generated artifact is English).
+        title = _report_title(clean_prompt)
+        sections = [f"# {title}", "", body]
+        if expected_output and expected_output.strip():
+            sections += ["", "---", "", f"_Requested: {expected_output.strip()}_"]
+        report = "\n".join(sections).rstrip() + "\n"
+
+        dst = files_dir / f"{_slugify_filename(clean_prompt)}.md"
+        dst.write_text(report, encoding="utf-8")
+        logger.info("materialised answer report: %s", dst)
+        return dst
+    except OSError as exc:
+        logger.warning("materialize_answer_document failed in %s: %s", mission_dir, exc)
+        return None
 
 
 def resolve_deliverables_dir(override: str | None = None) -> Path:
@@ -247,5 +429,6 @@ __all__ = [
     "build_deliverable_summary",
     "build_delivered_summary",
     "deliver_to_user_folder",
+    "materialize_answer_document",
     "resolve_deliverables_dir",
 ]

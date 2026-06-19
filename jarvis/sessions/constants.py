@@ -104,6 +104,12 @@ SPOKEN_KIND_PRIVACY: Final[str] = "privacy"
 SPOKEN_KIND_COMPLETION: Final[str] = "completion"
 """A background mission / OpenClaw result read back after it finished."""
 
+SPOKEN_KIND_SUBAGENT: Final[str] = "subagent"
+"""A spawned sub-agent / mission / worker result read back to the user. The
+attributed sibling of ``completion`` — same punch-through + afterglow handling,
+but rendered as its own 'Jarvis Sub-Agent / Output' track so it reads distinctly
+from a generic background completion or a normal inline reply."""
+
 SPOKEN_KIND_ACTION_DONE: Final[str] = "action_done"
 """A short 'done' confirmation after a wordless desktop action succeeded."""
 
@@ -129,6 +135,7 @@ SPOKEN_KINDS: Final[tuple[str, ...]] = (
     SPOKEN_KIND_STT_UNAVAILABLE,
     SPOKEN_KIND_PRIVACY,
     SPOKEN_KIND_COMPLETION,
+    SPOKEN_KIND_SUBAGENT,
     SPOKEN_KIND_ACTION_DONE,
     SPOKEN_KIND_BACKCHANNEL,
     SPOKEN_KIND_ANNOUNCEMENT,
@@ -157,6 +164,7 @@ __all__ = [
     "SPOKEN_KIND_PRIVACY",
     "SPOKEN_KIND_PROGRESS",
     "SPOKEN_KIND_STT_UNAVAILABLE",
+    "SPOKEN_KIND_SUBAGENT",
     "SPOKEN_KIND_TIMEOUT",
     "SPOKEN_KIND_UNAVAILABLE",
     "SPOKEN_KINDS",

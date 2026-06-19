@@ -56,6 +56,7 @@ from jarvis.brain.ack_brain.generator import (
     _emit_counter,
 )
 from jarvis.brain.output_filter import scrub_for_voice
+from jarvis.core.turn_language import DEFAULT_LOCALE
 
 if TYPE_CHECKING:
     from jarvis.brain.ack_brain.circuit_breaker import CircuitBreaker
@@ -249,9 +250,10 @@ _FALLBACK_ALREADY_RUNNING: dict[str, tuple[str, ...]] = {
 # one-shot German-only "Bin noch dran." (see SpeechPipeline._spawn_watchdog_body).
 # Lives here (an allowlisted runtime-voice module) so the German/Spanish strings
 # stay out of the non-allowlisted pipeline; the pipeline imports this dict and
-# resolves the language through its single output-language resolver. TTS-clean
-# (the announcement path does not scrub) and never a completion claim — the
-# mission is still in flight.
+# resolves the language through its single output-language resolver. The
+# ``_on_announcement`` path DOES run ``scrub_for_voice`` on every announcement;
+# these phrases are written to pass through it cleanly (no markdown, no jargon)
+# and never claim completion — the mission is still in flight.
 STILL_RUNNING_PHRASES: dict[str, tuple[str, ...]] = {
     "de": (
         "Ich bin noch an der grösseren Sache dran. Gleich habe ich etwas Belastbares für dich.",
@@ -309,10 +311,11 @@ def _resolve_language(explicit: str | None, utterance: str) -> str:
 
     Supports 'de', 'en' and 'es' (Runtime Output Language doctrine — every
     spoken phrase table covers all three). An explicit hint wins (the
-    ``brain.reply_language`` pin / STT tag reaches here as ``language``);
-    otherwise the utterance heuristic decides, defaulting to German (the
-    primary chat language) when detection is inconclusive. Only 'de'/'en' have
-    a native LLM persona (see ``_PERSONA_LANGS``); 'es' is served from the
+    ``brain.reply_language`` pin / STT tag reaches here as ``language`` — the
+    live source on the voice path); otherwise the utterance heuristic decides,
+    and an inconclusive detection falls back to the shared ``DEFAULT_LOCALE``
+    (honesty-over-guessing, never a per-layer hardcoded default). Only 'de'/'en'
+    have a native LLM persona (see ``_PERSONA_LANGS``); 'es' is served from the
     curated fallback pool.
     """
     if explicit:
@@ -324,7 +327,7 @@ def _resolve_language(explicit: str | None, utterance: str) -> str:
         if low.startswith("de"):
             return "de"
     detected = _detect_language(utterance or "")
-    return detected if detected in ("de", "en", "es") else "de"
+    return detected if detected in ("de", "en", "es") else DEFAULT_LOCALE
 
 
 def _trim_to_sentences(text: str, max_words: int) -> str | None:
