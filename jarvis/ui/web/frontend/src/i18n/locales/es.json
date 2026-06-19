@@ -11,7 +11,9 @@
     "restart_confirm": "¿Confirmar reinicio?",
     "restart_hint": "Reiniciar Jarvis",
     "restarting": "Reiniciando Jarvis…",
-    "restart_failed": "Error al reiniciar"
+    "restart_failed": "Error al reiniciar",
+    "restart_force": "¿Reiniciar de todos modos?",
+    "restart_missions_running": "misión(es) en curso — haz clic de nuevo para reiniciar igualmente"
   },
   "nav": {
     "chats": "Chats",
@@ -23,6 +25,7 @@
     "mcps": "MCPs",
     "tasks": "Tareas",
     "sessions": "Transcripción",
+    "run_inspector": "Run Inspector",
     "clis": "CLIs",
     "cli_test_hub": "CLI Test Hub",
     "clis_hub": "CLIs & CLI Test Hub",
@@ -34,7 +37,6 @@
     "apikeys": "Claves API",
     "settings": "Ajustes",
     "telephony": "Telefonía",
-    "debug": "Depuración",
     "outputs": "Salidas",
     "socials": "Redes",
     "taskbar": "Barra",
@@ -309,6 +311,26 @@
     "selected": "seleccionadas",
     "bulk_delete_title": "¿Eliminar habilidades?",
     "bulk_delete_body": "Estas habilidades se eliminarán permanentemente:"
+  },
+  "run_inspector": {
+    "title": "Run Inspector",
+    "subtitle": "Análisis por run: transcripción completa, cronología, latencia, decisiones, herramientas, errores.",
+    "empty": "Selecciona un run para analizar.",
+    "unavailable": "El grabador de runs está desactivado.",
+    "export_raw": "Exportar bruto (JSON)",
+    "full_transcript": "Conversación completa",
+    "deep_dive": "Métricas y análisis",
+    "triggered": "Activado",
+    "what_happened": "Qué pasó",
+    "forensics": "Análisis forense",
+    "panel": {
+      "transcript": "Transcripción",
+      "timeline": "Cronología",
+      "latency": "Latencia",
+      "decision": "Ruta de decisión",
+      "tools": "Herramientas",
+      "errors": "Errores"
+    }
   },
   "sessions_view": {
     "title": "Transcripción",
@@ -974,10 +996,6 @@
     "step5_body": "De vuelta en la página de Claves API, introduce el Account SID, el Auth Token y el número, activa la telefonía y ejecuta \"Probar conexión\" y \"Autoprueba de voz\".",
     "public_url": "URL base pública",
     "webhook": "URL del webhook"
-  },
-  "debug_view": {
-    "title": "Depuración",
-    "subtitle": "Flujo de eventos en vivo del orquestador."
   },
   "previews_view": {
     "title": "Vistas previas",

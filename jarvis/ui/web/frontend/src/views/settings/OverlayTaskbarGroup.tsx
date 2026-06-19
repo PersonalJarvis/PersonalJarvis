@@ -157,17 +157,38 @@ function OverlayStylePanel() {
   const [saving, setSaving] = useState(false);
   const [needsRestart, setNeedsRestart] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  // Armed after the backend refuses the restart (HTTP 409) because missions are
+  // running; the next click resends with ``force=true``.
+  const [forceArmed, setForceArmed] = useState(false);
 
   useEffect(() => {
     if (config) setStyle(config.style);
   }, [config]);
 
   // The window goes away on success, so we never clear ``restarting`` there.
-  async function onRestartNow() {
+  async function onRestartNow(force: boolean) {
     if (restarting) return;
     setRestarting(true);
     try {
-      const res = await fetch("/api/settings/restart-app", { method: "POST" });
+      const url = force
+        ? "/api/settings/restart-app?force=true"
+        : "/api/settings/restart-app";
+      const res = await fetch(url, { method: "POST" });
+      if (res.status === 409) {
+        // Live missions would be killed — surface the count and arm a force
+        // restart instead of killing them silently.
+        let count = 0;
+        try {
+          const body = await res.json();
+          count = body?.detail?.missions?.length ?? 0;
+        } catch {
+          /* malformed body — still arm the override */
+        }
+        setRestarting(false);
+        setForceArmed(true);
+        pushToast("warning", `${count} ${t("topbar.restart_missions_running")}`);
+        return;
+      }
       if (!res.ok) throw new Error(`restart-failed:${res.status}`);
       pushToast("info", t("taskbar_view.restarting"));
     } catch (e) {
@@ -248,13 +269,15 @@ function OverlayStylePanel() {
               </p>
               <button
                 type="button"
-                onClick={onRestartNow}
+                onClick={() => onRestartNow(forceArmed)}
                 disabled={restarting}
                 className="rounded-md border border-primary/50 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-60"
               >
                 {restarting
                   ? t("taskbar_view.restarting")
-                  : t("taskbar_view.restart_now")}
+                  : forceArmed
+                    ? t("topbar.restart_force")
+                    : t("taskbar_view.restart_now")}
               </button>
             </div>
           )}

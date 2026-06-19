@@ -188,3 +188,54 @@ docs/superpowers/plans/2026-06-16-adjustable-silence-window-slider.md
 docs/superpowers/plans/2026-06-16-subagent-recap-doomloop-fix.md
 docs/superpowers/specs/2026-06-16-cu-modal-awareness-design.md
 docs/superpowers/specs/2026-06-16-voice-continuation-recombine-while-thinking-design.md
+
+# --- Run-inspector + CU-idle + ack-failover + CLI-routing tests: the German TTS
+#     phrases ("Das hat leider nicht geklappt.", "Das am Bildschirm hat nicht
+#     geklappt.", "Ich öffne den Browser.", "öffne X", "läuft"), the German
+#     CU error string ("Anwendung 'settings' nicht gefunden") and the German
+#     dictation prompt ("Bau mir eine Landingpage …") are the spoken-output /
+#     forensic / routing fixtures under test (transcript reconstruction, idle-
+#     window re-arm after an out-of-band failure readback, ack-failover, CLI
+#     intent routing), same rationale as the voice turn-taking block above ---
+tests/unit/runs/test_transcript.py
+tests/unit/runs/test_loader_outcome.py
+tests/unit/runs/test_loader_transcript.py
+tests/unit/runs/test_outcome_activity.py
+tests/unit/runs/test_tools_outcome.py
+tests/unit/speech/test_idle_keeps_session_during_cu.py
+tests/unit/brain/test_ack_brain/test_run_stream.py
+tests/unit/brain/test_cli_capability_routing.py
+jarvis/ui/web/frontend/src/components/runs/__tests__/toolTable.test.tsx
+
+# --- Voice-confirm + scheduled-tasks + runtime-es landing (2026-06-18..19):
+#     German fixtures are the content under test for the bilingual confirm flow,
+#     evidence-gate domains, the turn-language resolver, the continuation buffer
+#     and the Spanish path (same rationale as the voice turn-taking block) ---
+tests/unit/awareness/test_awareness_recall_tool.py
+tests/unit/brain/test_evidence_gate.py
+tests/unit/brain/test_evidence_gate_wiring.py
+tests/unit/brain/test_refresh_tools_di.py
+tests/unit/brain/test_voice_confirm_flow.py
+tests/unit/core/test_evidence_domains_config.py
+tests/unit/core/test_turn_language.py
+tests/unit/speech/test_continuation_buffer.py
+tests/unit/speech/test_output_language_pin.py
+tests/unit/voice/test_echo_confirmation_es.py
+
+# --- Voice tool-confirmation phrase table: the "de" entries are the SPOKEN
+#     German confirmation prompts (de/en/es runtime output, same rationale as
+#     jarvis/voice/action_phrases.py) ---
+jarvis/voice/tool_confirmation.py
+
+# --- awareness-recall tool: forensic comments quote the German runtime phrase
+#     ("der lokale Verlaufsspeicher ist nicht verfügbar") the DI fix addresses ---
+jarvis/plugins/tool/awareness_recall.py
+
+# --- manager.py + config.py: forensic comments quote the same German runtime
+#     phrase, and config.py carries the evidence-domain voice-intent keyword
+#     vocabulary ("was hatte ich auf", "geoeffnete fenster") — German matching
+#     data, same rationale as navigation_intent.py / local_action_gate.py above.
+#     (Whole-file scope mirrors the existing core-file entries; a future pass can
+#     narrow to inline i18n-allow markers when the tree is not contested.) ---
+jarvis/brain/manager.py
+jarvis/core/config.py

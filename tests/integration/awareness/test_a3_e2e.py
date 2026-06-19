@@ -85,7 +85,14 @@ async def test_end_to_end_search_finds_recent_writes_filtering_old_ones(
 
 
 @pytest.mark.asyncio
-async def test_end_to_end_no_match_yields_clear_message(store: RecallStore) -> None:
+async def test_end_to_end_no_keyword_match_falls_back_to_recency(store: RecallStore) -> None:
+    """Keyword miss with an in-window episode → recency fallback, not a bare empty.
+
+    The store holds an episode the keyword does not match. A recency question
+    ("what did I have open?") must still get the real activity, clearly
+    labelled as a reachable-store recency fallback — never a bare "nothing"
+    that a brain can mis-narrate as a store outage (2026-06-18 confabulation).
+    """
     now_ns = time.time_ns()
     minute_ns = 60 * 1_000_000_000
     await store.record_episode(
@@ -102,4 +109,23 @@ async def test_end_to_end_no_match_yields_clear_message(store: RecallStore) -> N
         ctx=None,
     )
     assert result.success is True
-    assert "no episodes" in result.output.lower()
+    # The in-window episode is surfaced as recent activity, not dropped.
+    assert "msedge.exe" in result.output
+    # ...and the output LEADS positively with the data (never a leading
+    # negation a skimming model reads as "unavailable").
+    first_line = result.output.splitlines()[0].lower()
+    assert not first_line.startswith("no ")
+    assert "activity" in first_line or "history" in first_line
+
+
+@pytest.mark.asyncio
+async def test_end_to_end_empty_window_affirms_store_reachable(store: RecallStore) -> None:
+    """No episodes at all in the window → honest "no episodes", store reachable."""
+    tool = AwarenessRecallTool(recall_store=store)
+    result = await tool.execute(
+        {"query": "completely-unrelated-term", "since_minutes": 60},
+        ctx=None,
+    )
+    assert result.success is True
+    assert "no activity" in result.output.lower()
+    assert "reachable" in result.output.lower()

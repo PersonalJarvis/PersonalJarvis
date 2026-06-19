@@ -59,7 +59,9 @@ class RunLoader:
                 turn_count=s.turn_count,
                 total_cost_usd=s.total_cost_usd,
                 error_count=error_count,
+                outcome=analyzer.outcome_from_events(events),
                 slo_status=worst,
+                feature_tags=analyzer.feature_tags_from_events(events),
                 preview=s.preview,
             ))
         return items
@@ -82,7 +84,14 @@ class RunLoader:
         analytics = analyzer.build_analytics(
             run_turns, started_ms=session.started_ms, ended_ms=session.ended_ms
         )
-        return Run(session=session, turns=run_turns, missions=missions, analytics=analytics)
+        return Run(
+            session=session,
+            outcome=analyzer.build_outcome(run_turns),
+            turns=run_turns,
+            missions=missions,
+            activity=analyzer.build_activity(run_turns),
+            analytics=analytics,
+        )
 
     def _build_turn(self, tr: VoiceTurnRow, events: list[VoiceEventRow]) -> RunTurn:
         cli_tools = []
@@ -97,7 +106,7 @@ class RunLoader:
             except Exception as exc:  # noqa: BLE001 — usage log is best-effort
                 log.debug("usage join failed for turn %s: %s", tr.id, exc)
         tools = analyzer.merge_action_tools(events, cli_tools)
-        return RunTurn(
+        turn = RunTurn(
             idx=tr.idx,
             trace_id=tr.id,
             user_text=tr.user_text,
@@ -110,6 +119,7 @@ class RunLoader:
             cost_usd=tr.cost_usd,
             think_ms=tr.think_ms,
             speak_ms=tr.speak_ms,
+            transcript=analyzer.build_transcript(events, turn_started_ms=tr.started_ms),
             timeline=analyzer.build_timeline(events, turn_started_ms=tr.started_ms),
             latency=analyzer.build_latency(events),
             decision_path=analyzer.build_decision_path(events),
@@ -117,6 +127,9 @@ class RunLoader:
             errors=analyzer.build_errors(events),
             extras=analyzer.build_extras(events, tokens_in=tr.tokens_in),
         )
+        turn.outcome = analyzer.turn_outcome(turn)
+        turn.activity = analyzer.build_activity([turn])
+        return turn
 
     def _safe_missions(self, session_id: str) -> list[MissionRef]:
         if self._missions is None:

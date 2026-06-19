@@ -76,6 +76,25 @@ class ContinuationWindow:
         if self.is_armed:
             self._deadline_ns = self._clock() + self._grace_ns
 
+    def note_speech_resumed(self) -> None:
+        """The user started speaking again — freeze the grace countdown.
+
+        The grace started at turn end (``mark_idle``) measures THINKING silence.
+        Once the user is actually forming the follow-up, the clock must not keep
+        running against them: a slow-to-finalize continuation would otherwise
+        miss ``try_recombine`` even though it began well inside the grace (live
+        bug 2026-06-18, session 71f2d2de: ~3 s to formulate the next fragment >
+        the 2.5 s grace, so it became a fresh turn). Re-enters the 'in flight'
+        state (deadline cleared) — but ONLY while still armed and not already
+        expired, so a genuinely late resume cannot resurrect a dead window.
+        Fail-open / idempotent.
+        """
+        if not self.is_armed:
+            return
+        if self._deadline_ns is not None and self._clock() > self._deadline_ns:
+            return
+        self._deadline_ns = None
+
     def try_recombine(self, new_text: str) -> str | None:
         """Return ``prior + new`` if a continuation is live, else ``None``.
 

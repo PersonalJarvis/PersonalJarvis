@@ -51,7 +51,13 @@ from jarvis.core.protocols import (
     ImageBlock,
     Tool,
 )
-from jarvis.core.turn_language import detect_text_language, resolve_turn_language
+from jarvis.core.turn_language import (
+    DEFAULT_LOCALE,
+    detect_text_language,
+    is_substantive_turn,
+    resolve_output_language,
+    resolve_turn_language,
+)
 from jarvis.voice.action_phrases import action_phrase, cu_failure_readback
 from jarvis.memory import CoreMemory, PersonStore, RecallStore, Soul, UserProfile
 from jarvis.memory.curator import Curator
@@ -290,6 +296,25 @@ _NEVER_MATCH_RE: re.Pattern[str] = re.compile(r"(?!.*)", re.IGNORECASE)
 # Keep in sync with ``jarvis.ui.web.mission_inject.MISSION_INJECT_SOURCE_LAYER``
 # (parity test in tests/unit/brain/test_routing.py).
 _NON_SPAWN_SOURCE_LAYERS: frozenset[str] = frozenset({"ui.web.ws.mission_inject"})
+
+
+# Two-turn voice/chat confirmation for a consequential ``ask``-tier tool. Turn N
+# defers the action (the executor returns ``VOICE_CONFIRM_SENTINEL``) and speaks a
+# question; this holds what turn N+1 needs to resolve the user's "ja"/"nein".
+# Bounded re-asks avoid a soft-lock on a persistently ambiguous answer.
+_MAX_CONFIRM_REASKS = 2
+
+
+class _PendingVoiceConfirm:
+    """A deferred consequential action awaiting the user's next yes/no."""
+
+    __slots__ = ("trace_id", "lang", "tool_name", "reasks")
+
+    def __init__(self, trace_id: UUID, lang: str, tool_name: str, reasks: int = 0) -> None:
+        self.trace_id = trace_id
+        self.lang = lang
+        self.tool_name = tool_name
+        self.reasks = reasks
 
 
 # Option A (2026-06-15): a heavy-research request whose deliverable is an ANSWER
@@ -627,6 +652,57 @@ def _cli_failure_reason(output: Any, error: str | None, *, german: bool) -> str:
     return de if german else "The command failed."
 
 
+def _evidence_answer_is_unverified(
+    required_tool: str, executed: "set[str]", response_text: str, *, suppressed: bool
+) -> bool:
+    """True when a mandated-tool turn produced an answer WITHOUT calling the tool.
+
+    The evidence gate's ``require_tool`` directive tells the model to answer ONLY
+    from the tool's result. If the model returns a non-empty answer but the
+    mandated tool never ran (``executed_tool_names``), that answer is necessarily
+    unverified — at worst a confabulation (live repro 2026-06-17, session
+    296abc82: the model invented "the gcloud tool blocked execution because it
+    classified the request as an explanatory question"). Empty answers and
+    fire-and-forget ``suppress_response`` turns are handled elsewhere, so they
+    are excluded here.
+    """
+    if not required_tool or suppressed:
+        return False
+    if required_tool in (executed or set()):
+        return False
+    return bool((response_text or "").strip())
+
+
+_EVIDENCE_UNFULFILLED_PHRASES: dict[str, str] = {
+    "de": (
+        "Ich konnte das gerade nicht abrufen — der Zugriff über das passende "  # i18n-allow: German TTS
+        "Werkzeug ist nicht durchgelaufen. Sag noch mal Bescheid, dann "  # i18n-allow: German TTS
+        "versuche ich es erneut."  # i18n-allow: German TTS
+    ),
+    "en": (
+        "I couldn't retrieve that just now — the tool call didn't go through. "
+        "Say the word and I'll try again."
+    ),
+    "es": (
+        "No pude obtener eso ahora mismo — la llamada a la herramienta no se "
+        "completó. Avísame y lo intento de nuevo."
+    ),
+}
+
+
+def _evidence_unfulfilled_answer(*, lang: str) -> str:
+    """Honest spoken fallback for a mandated-tool turn whose tool never ran.
+
+    Static, no LLM (AP-11). Never claims the tool "blocked" or invents a reason.
+    Localized for every supported language (de/en/es); an unrecognised code
+    degrades to the default locale so the spoken turn never crashes (Runtime
+    Output Language doctrine).
+    """
+    return _EVIDENCE_UNFULFILLED_PHRASES.get(
+        lang, _EVIDENCE_UNFULFILLED_PHRASES[DEFAULT_LOCALE]
+    )
+
+
 def _render_recovered_tool_output(output: Any) -> str:
     """Speakable plain-text rendering of a recovered tool's output.
 
@@ -837,6 +913,14 @@ class BrainManager:
         self._tools = tools or {}
         self._local_action_tools = dict(local_action_tools or {})
         self._tool_executor = tool_executor
+        # Two-turn voice/chat confirmation (forensic 2026-06-18): an ask-tier tool
+        # on a conversational turn is deferred + spoken-confirmed instead of
+        # blocking on a UI approval no voice user can give. Enabled by config,
+        # opted into per-turn only by conversational callers (``allow_voice_confirm``).
+        self._voice_confirm_enabled: bool = bool(
+            getattr(getattr(config, "brain", None), "voice_confirm", True)
+        )
+        self._pending_voice_confirm: _PendingVoiceConfirm | None = None
         self._system_prompt_extra = system_prompt_extra
         self._user_profile = user_profile
         self._soul = soul
@@ -869,6 +953,12 @@ class BrainManager:
         # in auto mode to hard-pin the turn's language so a tool-synthesis turn
         # cannot drift back to German (live bug 2026-06-14).
         self._turn_detected_lang: str = ""
+        # Sticky conversation language (de/en/es, "" until established). Updated
+        # only on a SUBSTANTIVE turn so a thin interjection ("Now", "Stop") never
+        # flips an established conversation; consumed by _update_turn_language and
+        # exposed to the speech pipeline / deterministic tool readbacks so the
+        # whole turn stays in one language (natural-flow forensic 2026-06-18).
+        self._conversation_language: str = ""
         # AD-OE6 zero-silent-drop signal. True for exactly one turn after the
         # whole provider fallback chain failed (no key / depleted credits /
         # rate-limited everywhere). The voice pipeline reads this to decide
@@ -1253,6 +1343,40 @@ class BrainManager:
         """The active reply-language pin: ``auto`` | ``de`` | ``en`` | ``es``."""
         return self._reply_language
 
+    @property
+    def conversation_language(self) -> str:
+        """The sticky language of the conversation so far (de/en/es, or "").
+
+        Read by the speech pipeline and threaded into deterministic tool
+        readbacks so a thin interjection ("Now") stays in the running
+        conversation's language instead of flipping the whole turn (forensic
+        2026-06-18). Empty until a substantive turn establishes it; an explicit
+        ``reply_language`` pin overrides it everywhere anyway.
+        """
+        return self._conversation_language
+
+    def _update_turn_language(self, user_text: str) -> None:
+        """Resolve this turn's language and maintain the sticky conversation
+        language, applied at the top of ``generate()``.
+
+        Stickiness: a thin interjection ("Now", "Stop") inherits the running
+        ``conversation_language`` rather than flipping it; only a substantive
+        turn with a clear signal (re)defines the conversation. An explicit pin
+        leaves ``_turn_detected_lang`` empty so ``_reply_language_directive``
+        uses the pin; genuinely ambiguous text stays ``"unknown"`` so the
+        directive keeps its soft "mirror the user" form.
+        """
+        if self._reply_language in _REPLY_LANG_NAMES:
+            self._turn_detected_lang = ""
+            return
+        if self._conversation_language and not is_substantive_turn(user_text):
+            self._turn_detected_lang = self._conversation_language
+            return
+        detected = detect_text_language(user_text)
+        self._turn_detected_lang = detected
+        if detected in _REPLY_LANG_NAMES:
+            self._conversation_language = detected
+
     def set_reply_language(self, lang: str) -> None:
         """Live-switch the reply-language pin (desktop "Languages" view).
 
@@ -1275,7 +1399,15 @@ class BrainManager:
         spoken (live complaint 2026-06-01: the grok/Anthropic billing message
         was read aloud while Gemini was the active provider).
         """
-        phrase = _provider_down_phrase(self._reply_language, self._provider_down_idx)
+        # An explicit pin wins; in auto mode speak THIS turn's detected language
+        # (set at the top of generate()) so an English/Spanish "auto" user does
+        # not hear a German apology on a total failure (Runtime Output Language).
+        # An undetected/ambiguous turn keeps the German default of
+        # _provider_down_phrase.
+        lang = self._reply_language
+        if lang not in _REPLY_LANG_NAMES:
+            lang = getattr(self, "_turn_detected_lang", "") or lang
+        phrase = _provider_down_phrase(lang, self._provider_down_idx)
         self._provider_down_idx += 1
         return phrase
 
@@ -2101,9 +2233,19 @@ class BrainManager:
             from jarvis.core.capabilities import get_registry
 
             cli_reg = get_active_registry()
-            domain_map = (
+            domain_map = dict(
                 connected_domain_tool_map(cli_reg) if cli_reg is not None else {}
             )
+            # The "activity" (screen / window-history) domain is served by the
+            # always-on internal awareness-recall tool, not a connected CLI, so
+            # wire it into the domain→tool map here. Without a mandated tool the
+            # fast brain confabulates "der lokale Verlaufsspeicher ist nicht
+            # verfügbar" without ever calling awareness-recall (live 2026-06-18,
+            # proven from the log). Guarded on the tool actually being
+            # registered so a deployment without awareness degrades to the
+            # gate's honest refusal, never a mandate for a missing tool.
+            if "awareness-recall" in (getattr(self, "_tools", None) or {}):
+                domain_map.setdefault("activity", "awareness-recall")
 
             def _hint(domain: str, lang: str) -> str:
                 if cli_reg is None:
@@ -2123,6 +2265,48 @@ class BrainManager:
         except Exception:  # noqa: BLE001
             log.debug("evidence gate degraded to PASS", exc_info=True)
             return EvidenceVerdict(kind="pass")
+
+    async def _prefetch_activity_block(
+        self, tool_name: str, user_text: str, *, trace_id: Any = None,
+    ) -> str:
+        """Deterministically run the safe, read-only awareness-recall tool.
+
+        The evidence gate's ``activity`` domain mandates ``awareness-recall``,
+        but the fast brain does not reliably call a soft-mandated tool (live
+        2026-06-18). Rather than depend on the model, the manager runs the tool
+        itself and injects the rendered timeline as answer-context. Goes through
+        the ``ToolExecutor`` (never a direct ``Tool.execute`` — AP-3) so the
+        risk-tier/audit path is honoured. Returns the rendered output, or ``""``
+        when the tool is missing / errors / yields nothing (the caller then
+        keeps the soft mandate so the honest fallback fires, never a
+        confabulation).
+        """
+        tool = (self._tools or {}).get(tool_name)
+        if tool is None or self._tool_executor is None:
+            log.warning(
+                "activity pre-fetch skipped: tool=%r present=%s executor=%s",
+                tool_name, tool is not None, self._tool_executor is not None,
+            )
+            return ""
+        try:
+            res = await self._tool_executor.execute(
+                tool,
+                {"query": user_text, "since_minutes": 1440},
+                user_utterance=user_text,
+                trace_id=trace_id,
+            )
+        except Exception:  # noqa: BLE001 — pre-fetch is best-effort, never fatal
+            log.warning("activity pre-fetch raised", exc_info=True)
+            return ""
+        ok = bool(getattr(res, "success", False))
+        out = str(getattr(res, "output", "") or "").strip()
+        log.info(
+            "activity pre-fetch result: success=%s out_len=%d err=%r",
+            ok, len(out), getattr(res, "error", None),
+        )
+        if ok:
+            return out
+        return ""
 
     def _is_smalltalk(self, user_text: str) -> bool:
         """Pure smalltalk allowlist check — independent of spawn-verb logic.
@@ -2755,6 +2939,23 @@ class BrainManager:
         if self._skill_turn_match is not None or self._match_skill_for_turn(t) is not None:
             log.info("force-spawn skipped: utterance matches an installed skill")
             return False
+        # A connected CLI's capability already covers this intent → prefer its
+        # cli_<name> tool, never a Computer-Use spawn (the CLI does it headless,
+        # no browser login). Mirrors the skill guard above for the CLI surface
+        # that capability_provider.sync_registry registers on connect. The
+        # explicit heavy-work trigger (hoisted to the top of this method) still
+        # wins, so the user can force a worker with "spawn"/"deep dive".
+        try:
+            from jarvis.core.capabilities import get_registry  # noqa: PLC0415
+
+            _cap = get_registry().resolve_intent(t)
+            if _cap is not None and _cap.source == "cli":
+                log.info(
+                    "force-spawn skipped: connected CLI %s covers the intent", _cap.id
+                )
+                return False
+        except Exception:  # noqa: BLE001 — capability lookup must never break routing
+            pass
         if "dispatch_to_harness" in self._tools and _looks_like_pc_control(t):
             return False
         # User-Mandate 2026-05-14: strict-mode is the default. The router
@@ -3182,6 +3383,97 @@ class BrainManager:
             except RuntimeError:
                 log.debug("Curator-Task nicht scheduled (kein Event-Loop)")
 
+    def _arm_voice_confirm(self, descriptor: dict[str, Any], user_text: str) -> None:
+        """Turn N: record a deferred consequential action awaiting yes/no.
+
+        ``descriptor`` is the tool-use loop's ``voice_confirm`` payload
+        (``{"trace_id": str, "tool_name": str}``). The language is resolved once
+        here (the turn's output language) and reused for both the classifier and
+        the outcome phrasing on turn N+1.
+        """
+        trace_raw = descriptor.get("trace_id")
+        try:
+            tid = UUID(str(trace_raw))
+        except (ValueError, TypeError):
+            log.warning("voice-confirm: bad trace_id %r — not arming", trace_raw)
+            return
+        lang = resolve_output_language(
+            self._reply_language, "unknown", user_text,
+            default=DEFAULT_LOCALE, conversation_language=self._conversation_language,
+        )
+        self._pending_voice_confirm = _PendingVoiceConfirm(
+            trace_id=tid, lang=lang, tool_name=str(descriptor.get("tool_name", "")),
+        )
+        log.info(
+            "voice-confirm armed: tool=%s trace=%s lang=%s",
+            self._pending_voice_confirm.tool_name, tid, lang,
+        )
+
+    async def _resume_voice_confirm(self, user_text: str) -> str | None:
+        """Turn N+1: classify the user's yes/no and resolve the pending action.
+
+        Returns the spoken OUTCOME when the turn is consumed by the confirmation;
+        returns ``None`` when the pending action is dropped and the utterance must
+        be processed as a normal turn (the user said something unrelated — they
+        moved on, so the consequential action is abandoned, never executed).
+        """
+        pending = self._pending_voice_confirm
+        if pending is None:
+            return None
+        # Lazy import: a top-level import of these would close a circular chain
+        # (jarvis.voice.echo_confirmation → jarvis.core.self_mod → writer →
+        # jarvis.brain → manager → echo_confirmation, half-initialized).
+        from jarvis.voice.echo_confirmation import classify_response
+        from jarvis.voice.tool_confirmation import format_confirm_outcome
+
+        verdict = classify_response(user_text, language=pending.lang)
+
+        if verdict == "confirm":
+            self._pending_voice_confirm = None
+            try:
+                result = await self._tool_executor.execute_confirmed(
+                    pending.trace_id, user_utterance=user_text,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("voice-confirm execute failed: %s", exc)
+                return format_confirm_outcome(
+                    "failed", pending.tool_name, language=pending.lang
+                )
+            kind = "done" if getattr(result, "success", False) else "failed"
+            return format_confirm_outcome(kind, pending.tool_name, language=pending.lang)
+
+        if verdict == "veto":
+            self._pending_voice_confirm = None
+            await self._cancel_pending_confirm(pending.trace_id)
+            return format_confirm_outcome(
+                "vetoed", pending.tool_name, language=pending.lang
+            )
+
+        if verdict == "ambiguous":
+            pending.reasks += 1
+            if pending.reasks > _MAX_CONFIRM_REASKS:
+                self._pending_voice_confirm = None
+                await self._cancel_pending_confirm(pending.trace_id)
+                return format_confirm_outcome(
+                    "timeout", pending.tool_name, language=pending.lang
+                )
+            return format_confirm_outcome(
+                "unclear", pending.tool_name, language=pending.lang
+            )
+
+        # unknown: the user moved on. Drop the pending action (safe — never
+        # executed) and let this utterance run as a normal turn.
+        self._pending_voice_confirm = None
+        await self._cancel_pending_confirm(pending.trace_id)
+        return None
+
+    async def _cancel_pending_confirm(self, trace_id: UUID) -> None:
+        """Best-effort cancel of a deferred action — never breaks the turn."""
+        try:
+            await self._tool_executor.cancel_pending(trace_id)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("voice-confirm cancel failed: %s", exc)
+
     def _spawn_ack_language(self, user_text: str) -> str:
         """Resolve the language for the spoken spawn acknowledgement.
 
@@ -3573,6 +3865,7 @@ class BrainManager:
         text_consumer: "Callable[[str], None] | None" = None,
         on_progress: Callable[[], None] | None = None,
         source_layer: str | None = None,
+        allow_voice_confirm: bool = False,
     ) -> str:
         # 1. Intercept meta-commands (cancel, switch, depth override).
         # User request 2026-04-25: no standardised confirmation phrases
@@ -3588,16 +3881,28 @@ class BrainManager:
         self._last_turn_executed_action_tool = False
         turn_trace_id = trace_id or uuid4()
 
-        # auto mode: detect this turn's language so _reply_language_directive()
+        # auto mode: resolve this turn's language so _reply_language_directive()
         # hard-pins it (a soft "mirror" drifts to German on tool-synthesis
         # turns — live bug 2026-06-14: an English weather turn answered in
-        # German). Ambiguous text detects as "unknown" -> soft mirror. Skipped
-        # when an explicit reply_language pin is active.
-        self._turn_detected_lang = (
-            detect_text_language(user_text)
-            if self._reply_language not in _REPLY_LANG_NAMES
-            else ""
-        )
+        # German). Conversation stickiness: a thin interjection ("Now") inherits
+        # the running conversation language instead of flipping it (forensic
+        # 2026-06-18); ambiguous text stays "unknown" -> soft mirror; an explicit
+        # reply_language pin leaves it empty -> the directive uses the pin.
+        self._update_turn_language(user_text)
+
+        # Two-turn voice/chat confirmation resume (turn N+1). MUST run before the
+        # cancel-intent intercept: a "nein"/"stop" answer to a pending
+        # confirmation is a VETO of that one action, not a global cancel-all.
+        # Returns the spoken outcome (turn consumed) or None (user moved on →
+        # the pending action is dropped and this utterance runs as a normal turn).
+        if self._pending_voice_confirm is not None:
+            resumed = await self._resume_voice_confirm(user_text)
+            if resumed is not None:
+                await self._record_response_side_effects(
+                    user_text=user_text, response_text=resumed,
+                    use_history=use_history, trace_id=turn_trace_id,
+                )
+                return resumed
 
         if self._detect_cancel_intent(user_text):
             self._cancel_all_background_tasks()
@@ -3805,8 +4110,34 @@ class BrainManager:
                 "Evidence gate: domain=%s requires tool %s this turn",
                 verdict.domain, verdict.tool_name,
             )
-            self._evidence_directive = verdict.directive
-            self._evidence_required_tool = verdict.tool_name
+            injected = False
+            if verdict.domain == "activity":
+                # The fast brain will NOT reliably honor a soft tool directive
+                # (live 2026-06-18: awareness-recall was mandated yet never
+                # called — executed=[] in the log — and the model confabulated
+                # "der lokale Verlaufsspeicher ist nicht verfügbar"). The tool
+                # is internal, read-only and safe, so run it deterministically
+                # HERE (via the ToolExecutor) and inject its result as concrete
+                # answer-context. The brain then answers from real data with no
+                # dependency on its tool-calling discretion; the honest-fallback
+                # guard is intentionally left disarmed because the data is
+                # already in hand.
+                block = await self._prefetch_activity_block(
+                    verdict.tool_name, user_text, trace_id=turn_trace_id,
+                )
+                if block:
+                    self._evidence_directive = (
+                        "The user is asking what they had open / were doing on "
+                        "their computer. Their ACTUAL recent on-device activity "
+                        "is below — answer the question from THIS data, "
+                        "naturally and concisely. The awareness store IS "
+                        "available; never claim it is unavailable.\n\n" + block
+                    )
+                    self._evidence_required_tool = ""
+                    injected = True
+            if not injected:
+                self._evidence_directive = verdict.directive
+                self._evidence_required_tool = verdict.tool_name
 
         # Phase 5 / ADR-0006: pre-call budget gate. Block rather than request
         # when cooldown is active or the task/daily budget is exhausted.
@@ -3868,6 +4199,7 @@ class BrainManager:
         response_text = ""
         used_provider: str | None = None
         used_model: str | None = None
+        _turn_executed: set[str] = set()  # tools that REALLY ran this turn
         # AI Pointer (deictic push): launch the cursor-element resolution BEFORE
         # the vision-image await so it overlaps with it instead of running serially
         # after (AP-9: keep the deictic turn off the serial hot path). The task does
@@ -4050,10 +4382,13 @@ class BrainManager:
                     history=history,
                     trace_id=trace_id,
                     intent_level=decision.level,
+                    evidence_required_tool=self._evidence_required_tool,
                     text_consumer=text_consumer,
                     on_progress=on_progress,
                     turn_context=turn_context,
                     reply_language=self._reply_language,
+                    conversation_language=self._conversation_language,
+                    voice_confirm=(allow_voice_confirm and self._voice_confirm_enabled),
                 )
                 # Post-call cost hook: aggregated usage → meter.
                 # The meter cancels on overrun via CancelToken (see ADR-0006);
@@ -4120,6 +4455,10 @@ class BrainManager:
                 self._last_turn_executed_action_tool = bool(
                     set(executed) & _DESKTOP_ACTION_TOOL_NAMES
                 )
+                # Remember the tools that REALLY ran so the post-recovery
+                # evidence-gate enforcement (below) can tell whether a mandated
+                # tool was actually called this turn.
+                _turn_executed = set(executed)
                 used_provider, used_model = prov_name, model
 
                 # Bug C Fix (2026-04-29) — BrainTurnStarted/Completed publishen
@@ -4230,11 +4569,53 @@ class BrainManager:
         # leak and execute the spawn through the normal tool path so the
         # heavy-work delegation is robust against provider function-calling
         # flakiness.
+        # Two-turn voice/chat confirmation (turn N): the tool-use loop deferred a
+        # consequential tool and produced a confirmation QUESTION as its text.
+        # Arm the pending state and return the question directly — the leaked-tool
+        # recovery + evidence gate below do not apply to a deferral (no tool ran,
+        # nothing to recover; the answer is a question, not an unverified claim).
+        if (
+            getattr(agg, "finish_reason", "") == "voice_confirm_pending"
+            and getattr(agg, "voice_confirm", None)
+        ):
+            self._arm_voice_confirm(agg.voice_confirm, user_text)
+            await self._record_response_side_effects(
+                user_text=user_text, response_text=agg.text,
+                use_history=use_history, trace_id=trace_uuid,
+            )
+            return agg.text
+
         recovered = await self._recover_leaked_tool(
             response_text, user_text=user_text, trace_id=trace_uuid,
         )
         if recovered is not None:
             response_text = recovered
+
+        # Evidence-gate enforcement (live repro 2026-06-17, session 296abc82):
+        # the gate MANDATED a tool this turn, but neither the normal tool loop
+        # nor the leaked-tool recovery above actually ran it — so the model's
+        # answer is unverified, at worst a confabulation ("the gcloud tool
+        # blocked execution because it classified the request as an explanatory
+        # question"). Replace it with an honest non-data fallback; never speak an
+        # answer a mandated read tool was supposed to ground. Runs AFTER recovery
+        # so a leaked-but-recovered mandated tool (real data) is not pre-empted.
+        if recovered is None and _evidence_answer_is_unverified(
+            self._evidence_required_tool,
+            _turn_executed,
+            response_text,
+            suppressed=self._last_turn_suppressed,
+        ):
+            log.warning(
+                "Evidence gate mandated %s but it never ran (executed=%s) — "
+                "replacing the unverified answer with an honest fallback.",
+                self._evidence_required_tool,
+                sorted(_turn_executed),
+            )
+            response_text = _evidence_unfulfilled_answer(
+                lang=resolve_output_language(
+                    self._reply_language, "unknown", user_text, default="de"
+                )
+            )
 
         # 4. History + Events
         if use_history:
@@ -4382,6 +4763,7 @@ class BrainManager:
         use_history: bool = True,
         trace_id: UUID | None = None,
         on_progress: Callable[[], None] | None = None,
+        allow_voice_confirm: bool = False,
     ) -> AsyncIterator[str]:
         """Latency sprint 1: streaming variant of ``generate``.
 
@@ -4426,6 +4808,7 @@ class BrainManager:
                     trace_id=trace_id,
                     text_consumer=_consumer,
                     on_progress=on_progress,
+                    allow_voice_confirm=allow_voice_confirm,
                 )
             finally:
                 # Sentinel signals "brain is done (or crashed)".
@@ -4629,7 +5012,11 @@ class BrainManager:
             # Lazy import: the factory may pull in heavy modules depending on
             # config (vision, harness). The import happens only on refresh,
             # not during BrainManager setup.
-            from jarvis.brain.factory import _load_local_action_tools, _load_tools_for_tier
+            from jarvis.brain.factory import (
+                _load_local_action_tools,
+                _load_tools_for_tier,
+                _resolve_mission_manager,
+            )
             from jarvis.harness.manager import HarnessManager
             from jarvis.safety import (
                 ApprovalWorkflow,
@@ -4658,6 +5045,16 @@ class BrainManager:
 
             harness_manager = HarnessManager(bus=self._bus)
 
+            # ROOT CAUSE of the "der lokale Verlaufsspeicher ist nicht verfügbar"
+            # voice bug (live 2026-06-18): this rebuild — triggered by EVERY
+            # CLI/MCP connect at boot ("Tool-Registry refreshed: 29 -> 107") —
+            # used to drop the four shared DI references the boot path passes, so
+            # the rebuilt awareness-recall got recall_store=None (and
+            # awareness-snapshot/contact/spawn_worker lost their managers too).
+            # awareness-recall then returned "awareness recall store unavailable"
+            # FOREVER after the first CLI connected, and the brain faithfully
+            # relayed that — it was a genuine outage, never a confabulation. The
+            # boot DI MUST be mirrored here so a refresh preserves it.
             new_tools = _load_tools_for_tier(
                 tier,
                 bus=self._bus,
@@ -4666,6 +5063,10 @@ class BrainManager:
                 user_profile=self._user_profile,
                 people=self._people,
                 config=self._config,
+                mission_manager=_resolve_mission_manager(),
+                awareness_manager=self._awareness_manager,
+                recall_store=self._recall,
+                contacts=self._contacts,
             )
             new_local_action_tools = _load_local_action_tools(
                 bus=self._bus,

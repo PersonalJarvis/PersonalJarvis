@@ -140,26 +140,16 @@ on a real macOS box and a real Linux desktop to convert each row to a dated
 
 ## 1. Quick install & first-run
 
-**One-liner (live since 2026-05-26):**
+> **Signed one-liner installer — coming in a follow-up release.** A
+> `curl … | bash` / `irm … | iex` one-liner with Sigstore/SLSA signature
+> verification is being finished; until its signing pipeline is wired to this
+> repository it is intentionally not advertised here. Install manually with the
+> steps below — it works on Linux, macOS, and Windows.
 
-```powershell
-# Windows (PowerShell)
-irm https://raw.githubusercontent.com/personal-jarvis/personal-jarvis/main/install/install.ps1 | iex
-```
-
-```bash
-# macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/personal-jarvis/personal-jarvis/main/install/install.sh | bash
-```
-
-The installer clones into `~/.personal-jarvis`, builds a Python venv, installs deps, runs the 7-step wizard (API keys → mic → hotkey → mascot → profile), and launches the Desktop App. Re-running the same one-liner detects the existing checkout and updates instead of re-cloning. Optional flags: `--no-launch`, `--no-wizard`, `--headless` (VPS mode, no GUI deps), `--with-voice-local` (pulls faster-whisper + Silero + openWakeWord, ~1.5 GB). See [`install/README.md`](install/README.md) for the full surface.
-
-> **Status:** live since 2026-05-26 — both URLs above respond `HTTP 200` for anonymous users worldwide (verified). Spec: [`docs/superpowers/specs/2026-05-26-quick-install-one-liner-design.md`](docs/superpowers/specs/2026-05-26-quick-install-one-liner-design.md).
-
-**Manual install (advanced / always works):**
+**Manual install (works everywhere):**
 
 ```bash
-git clone https://github.com/personal-jarvis/personal-jarvis ~/.personal-jarvis
+git clone https://github.com/PersonalJarvis/PersonalJarvis ~/.personal-jarvis
 cd ~/.personal-jarvis
 python -m venv .venv
 source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1

@@ -138,3 +138,28 @@ def test_disabled_keeps_utterances_independent():
     assert t2 == "Griechenland"   # NOT merged
     assert c2 is False
     assert not win.is_armed       # window never armed when disabled
+
+
+def test_on_vad_speech_start_freezes_the_continuation_buffer():
+    """The pre-dispatch ContinuationBuffer must get the SAME speech-resume freeze
+    as the in-flight ContinuationWindow. Live bug 2026-06-18 (session 241a1984):
+    only the window was frozen on speech-start, so a slow-to-finalize fragment
+    held by the buffer expired against its 8 s deadline and the turn split into
+    an empty Turn 0. _on_vad_speech_start must call note_speech_resumed() on the
+    buffer too."""
+
+    class _RecordingBuffer:
+        def __init__(self) -> None:
+            self.resumed = 0
+
+        def note_speech_resumed(self) -> None:
+            self.resumed += 1
+
+    p = SpeechPipeline.__new__(SpeechPipeline)
+    buf = _RecordingBuffer()
+    p._continuation_buffer = buf
+    # No running loop here: _schedule_turn_state catches the RuntimeError and
+    # returns, and _continuation_window is absent (getattr → None), so the call
+    # exercises ONLY the buffer-freeze path.
+    p._on_vad_speech_start()
+    assert buf.resumed == 1

@@ -72,3 +72,44 @@ def test_clear_disarms():
 def test_recombine_when_unarmed_returns_none():
     w = ContinuationWindow(grace_ms=2500, max_chain=3, clock=FakeClock())
     assert w.try_recombine("anything") is None
+
+
+# ---------------------------------------------------------------------------
+# note_speech_resumed — freeze the grace countdown when the user starts talking
+# (live bug 2026-06-18, session 71f2d2de: ~3 s to formulate next fragment >
+# 2.5 s grace -> became a fresh turn instead of being recombined).
+# ---------------------------------------------------------------------------
+
+
+def test_speech_resume_within_grace_freezes_deadline():
+    """Grace ticking during THINKING silence stops as soon as user starts speaking."""
+    clk = FakeClock()
+    w = ContinuationWindow(grace_ms=2500, max_chain=3, clock=clk)
+    w.note_dispatch("erster teil", continued=False)
+    w.mark_idle()                       # deadline = t0 + 2500 ms
+    clk.advance_ms(1000)               # 1 s elapsed — still within grace
+    w.note_speech_resumed()            # user started speaking -> freeze deadline
+    clk.advance_ms(4000)               # 4 more seconds pass (past original deadline)
+    # Window must still recombine: freeze kept it alive
+    assert w.try_recombine("zweiter teil") == "erster teil zweiter teil"
+
+
+def test_speech_resume_after_grace_does_not_revive():
+    """A resume AFTER the deadline has already passed must NOT resurrect the window."""
+    clk = FakeClock()
+    w = ContinuationWindow(grace_ms=2500, max_chain=3, clock=clk)
+    w.note_dispatch("erster teil", continued=False)
+    w.mark_idle()
+    clk.advance_ms(3000)               # grace already expired
+    w.note_speech_resumed()            # too late — must be a no-op
+    assert w.try_recombine("zweiter teil") is None
+
+
+def test_speech_resume_while_in_flight_is_harmless_noop():
+    """Calling note_speech_resumed before any mark_idle must not crash or block recombine."""
+    clk = FakeClock()
+    w = ContinuationWindow(grace_ms=2500, max_chain=3, clock=clk)
+    w.note_dispatch("erster teil", continued=False)
+    # No mark_idle call — window is still in flight (deadline None)
+    w.note_speech_resumed()            # should be a pure no-op
+    assert w.try_recombine("zweiter teil") == "erster teil zweiter teil"

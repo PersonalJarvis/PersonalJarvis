@@ -2049,6 +2049,80 @@
           "description": "Google Workspace Gmail: list and read messages."
         }
       ]
+    },
+    {
+      "name": "jarvisctl",
+      "display_name": "Jarvis Control CLI",
+      "description": "Control this Personal Jarvis instance: list/create/cancel tasks, read or switch settings, restart the app, and reach any API endpoint.",
+      "homepage": "https://github.com/PersonalJarvis/PersonalJarvis",
+      "binary_name": "jarvisctl",
+      "check_command": [
+        "jarvisctl",
+        "version"
+      ],
+      "version_parse_regex": "Personal Jarvis (\\S+)",
+      "install": {
+        "winget_id": null,
+        "scoop_package": null,
+        "npm_package": null,
+        "pip_package": null,
+        "cargo_package": null,
+        "script_url": null,
+        "manual_url": "https://github.com/PersonalJarvis/PersonalJarvis",
+        "recommended": "manual"
+      },
+      "auth": {
+        "type": "none"
+      },
+      "risk": {
+        "default_tier": "monitor",
+        "blacklist_patterns": [
+          "jarvisctl * delete *",
+          "jarvisctl auth *",
+          "jarvisctl api * secrets*",
+          "jarvisctl api * keys*"
+        ],
+        "whitelist_patterns": [
+          "jarvisctl tasks list*",
+          "jarvisctl tasks get*",
+          "jarvisctl system status*",
+          "jarvisctl version*"
+        ]
+      },
+      "tool_schema_examples": [
+        "jarvisctl tasks list --state scheduled",
+        "jarvisctl system restart",
+        "jarvisctl --json tasks get <id>"
+      ],
+      "icon": "terminal",
+      "category": "self",
+      "capabilities": [
+        {
+          "domains": [
+            "jarvis-control",
+            "self-management"
+          ],
+          "verbs": [
+            "list",
+            "show",
+            "create",
+            "cancel",
+            "restart",
+            "control",
+            "manage",
+            "inspect"
+          ],
+          "objects": [
+            "task",
+            "tasks",
+            "settings",
+            "the app",
+            "yourself",
+            "jarvis"
+          ],
+          "description": "Self-control: inspect and manage Jarvis's own tasks, settings, and lifecycle from the terminal."
+        }
+      ]
     }
   ]
 }

@@ -293,7 +293,6 @@ const SECTION_COMMENTS: Partial<Record<SectionId, string[]>> = {
   languages: ["ich spreche DE und EN.", "Sprachwechsel? Einfach sagen."],
   apikeys: ["pass auf die Keys auf.", "nicht in Git committen!"],
   settings: ["was stört dich?", "tweaken wir was?"],
-  debug: ["uuuh, Debug-View.", "schau mal in die Events rein."],
 };
 
 const VOICE_COMMENTS: Partial<Record<VoiceState, string[]>> = {

@@ -95,6 +95,7 @@ def test_expected_builtin_count() -> None:
         "memory-save",
         "skill-creator",
         "control-api",
+        "cli-gcloud",
     }
     assert base.issubset(set(BUILTIN_SKILL_NAMES)), (
         f"missing base skill(s): {base - set(BUILTIN_SKILL_NAMES)}"
@@ -117,6 +118,25 @@ def test_control_api_specifics() -> None:
     assert skill.state == SkillLifecycleState.VALIDATED
     assert fm.category == "meta"
     assert fm.triggers == []
+
+
+def test_cli_gcloud_specifics() -> None:
+    """The gcloud guidance skill teaches the brain to drive Google Cloud via the
+    cli_gcloud tool instead of the browser console. Like control-api it is
+    category=meta with NO voice triggers — a trigger would make the router pick
+    run_skill (a markdown body) over the cli_gcloud tool. Gated to gcloud being
+    connected via requires_tools; guidance-only (no paired capability, so no
+    vocab duplication with the CLI catalog).
+    """
+    skill = parse_skill(builtin_skill_path("cli-gcloud"))
+    fm = skill.frontmatter
+    assert fm is not None
+    assert skill.state == SkillLifecycleState.VALIDATED
+    assert fm.category == "meta"
+    assert fm.triggers == []
+    assert fm.requires_tools == ["cli_gcloud"]
+    assert fm.intent_verbs == []
+    assert fm.intent_objects == []
 
 
 def test_morning_routine_specifics() -> None:

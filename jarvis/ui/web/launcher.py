@@ -310,7 +310,7 @@ async def _run_headless(cfg) -> int:
     from jarvis.overlay.integration import start_overlay, stop_overlay
     await start_overlay(bus=server.bus)
 
-    # Auto-Start aller enabled MCP-Server als fire-and-forget Task
+    # Auto-start all enabled MCP servers as a fire-and-forget task
     async def _autostart_mcps() -> None:
         enabled = mcp_state.get_enabled_names()
         if not enabled:
@@ -322,13 +322,29 @@ async def _run_headless(cfg) -> int:
         try:
             from jarvis.mcp.adapter import register_mcp_tools_in_registry
 
-            await register_mcp_tools_in_registry(
+            adapters = await register_mcp_tools_in_registry(
                 mcp_registry,
                 tool_registry,
                 default_risk_tier=cfg.harness.default_risk_tier,
             )
         except Exception:  # noqa: BLE001
-            pass
+            return
+
+        # Notify the live brain so it picks up MCP tools without restart.
+        if adapters:
+            try:
+                from jarvis.core.events import BrainToolsChanged
+
+                event = BrainToolsChanged(
+                    source_layer="launcher._autostart_mcps",
+                    reason="mcp_autostart",
+                )
+                if asyncio.iscoroutinefunction(server.bus.publish):
+                    await server.bus.publish(event)
+                else:
+                    server.bus.publish(event)
+            except Exception:  # noqa: BLE001
+                pass
 
     asyncio.create_task(_autostart_mcps())
 

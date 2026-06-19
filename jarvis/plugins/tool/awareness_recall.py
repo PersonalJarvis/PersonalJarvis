@@ -17,9 +17,12 @@ new shape.
 """
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 # We import RecallStore only for type hints to keep the plugin importable
 # in environments where the recall store happens to be unavailable
@@ -121,9 +124,14 @@ class AwarenessRecallTool:
           it as "tool unavailable" rather than a hard failure.
         - empty query → ``success=True`` with a placeholder line so the
           brain still sees structured output, not a crash.
-        - no matches → ``success=True`` with a sentence stating there
-          were none, so the brain does not pretend to have remembered
-          something.
+        - keyword miss but episodes exist in the window → ``success=True``
+          with the most recent activity timeline (recency fallback), so a
+          recency question ("what did I have open today") is answered from
+          real data instead of a bare "nothing found" that a brain can
+          mis-narrate as the store being down (2026-06-18 confabulation).
+        - genuinely empty window → ``success=True`` with a sentence that
+          explicitly affirms the store is reachable, so the honest "empty"
+          cannot be escalated into a false "unavailable"/"error" claim.
         """
         if self._recall is None:
             return ToolResult(
@@ -143,25 +151,80 @@ class AwarenessRecallTool:
 
         since_ns = time.time_ns() - since_minutes * _MINUTES_IN_NS
 
-        rows = await self._recall.search_episodes(
-            query=query,
-            limit=k,
-            since_ns=since_ns,
-        )
+        hours = since_minutes / 60
 
-        if not rows:
-            hours = since_minutes / 60
+        # Query the store. A genuine DB failure must surface HONESTLY (so the
+        # brain can say "search is down") and be logged — it must never be
+        # invisible. Previously this path had no logging at all, so when the
+        # live deep/fast brain claimed "der lokale Verlaufsspeicher ist nicht
+        # verfügbar" there was no way to tell whether the store had actually
+        # failed or the brain had confabulated an outage over a healthy result
+        # (2026-06-18). The log line below records the real branch + output so
+        # that question is answerable from the log alone.
+        try:
+            rows = await self._recall.search_episodes(
+                query=query,
+                limit=k,
+                since_ns=since_ns,
+            )
+            recent = rows or await self._recall.recent_episodes(
+                limit=k, since_ns=since_ns,
+            )
+        except Exception as exc:  # noqa: BLE001 — surface, never confabulate
+            log.warning(
+                "awareness-recall query failed for %r (since=%dmin): %s",
+                query, since_minutes, exc, exc_info=True,
+            )
             return ToolResult(
-                success=True,
-                output=(
-                    f"No episodes matched '{query}' in the last "
-                    f"{hours:.1f}h."
-                ),
+                success=False,
+                output="",
+                error=f"awareness recall query failed: {exc}",
             )
 
-        lines = [_format_episode(r) for r in rows]
-        header = (
-            f"Found {len(rows)} episode(s) matching '{query}' in the last "
-            f"{since_minutes / 60:.1f}h:"
+        if rows:
+            lines = [_format_episode(r) for r in rows]
+            out = (
+                f"Found {len(rows)} episode(s) matching '{query}' in the last "
+                f"{hours:.1f}h:\n" + "\n".join(lines)
+            )
+            log.info("awareness-recall %r: keyword hit, %d row(s)", query, len(rows))
+            return ToolResult(success=True, output=out)
+
+        # No keyword match. A question like "what did I have open today?" is a
+        # *recency* query, not a keyword query, and episode summaries are often
+        # sparse (empty when the Verdichter could not characterise a window).
+        # Hand the brain the user's actual recent activity timeline — it
+        # directly answers a recency question. Lead with the DATA, positively:
+        # an earlier version led with "No episode summary matched '<query>' …"
+        # and the live deep/fast brain latched onto that negative opener and
+        # reported the (healthy, fully-populated) store as "nicht verfügbar"
+        # (2026-06-18). The keyword caveat is now a trailing parenthetical so a
+        # skimming model reads "recent activity from the store" first, never a
+        # leading negation.
+        if recent:
+            lines = [_format_episode(r) for r in recent]
+            out = (
+                f"Recent activity from the awareness store (last {hours:.1f}h, "
+                f"newest first) — this IS your window/app history:\n"
+                + "\n".join(lines)
+                + f"\n(No episode summary text contained '{query}'; the list "
+                f"above is the recency timeline.)"
+            )
+            log.info(
+                "awareness-recall %r: recency fallback, %d row(s)",
+                query, len(recent),
+            )
+            return ToolResult(success=True, output=out)
+
+        # Genuinely nothing logged in the window. State explicitly that the
+        # store *is* reachable and was searched, so this honest "empty" cannot
+        # be escalated into a false "unavailable"/"error" claim downstream.
+        log.info("awareness-recall %r: empty window (store reachable)", query)
+        return ToolResult(
+            success=True,
+            output=(
+                f"The awareness store was searched successfully and is "
+                f"reachable, but it has no activity recorded in the last "
+                f"{hours:.1f}h."
+            ),
         )
-        return ToolResult(success=True, output=header + "\n" + "\n".join(lines))

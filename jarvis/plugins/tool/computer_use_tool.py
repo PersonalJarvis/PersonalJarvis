@@ -35,10 +35,29 @@ from jarvis.plugins.tool.dispatch_to_harness import DispatchToHarnessTool
 from jarvis.voice.action_phrases import (
     action_phrase,
     cu_failure_readback,
+    cu_success_readback,
     resolve_phrase_language,
 )
 
 log = logging.getLogger(__name__)
+
+
+def _ctx_output_language(ctx: ExecutionContext) -> str:
+    """Language for a deterministic CU readback (de/en/es).
+
+    Prefers the turn's resolved output language stamped into ``ctx.config`` by
+    the tool-use loop — that single value already honors the ``brain.reply_language``
+    pin AND conversation stickiness, so a one-word English "Now" in a German
+    conversation reads back German (forensic 2026-06-18). Falls back to detecting
+    the user's own words only when no stamp is present (tests / minimal wiring),
+    which is the historical behavior.
+    """
+    config = getattr(ctx, "config", None)
+    stamped = config.get("output_language") if isinstance(config, dict) else None
+    if stamped:
+        return str(stamped)
+    return resolve_phrase_language(None, ctx.user_utterance)
+
 
 #: Default ceiling for a single computer-use run, in seconds. A multi-step GUI
 #: loop (open app → screenshot → click/type → verify) needs a generous budget;
@@ -76,6 +95,13 @@ class ComputerUseTool:
 
     name: str = "computer_use"
     risk_tier: str = "monitor"
+    # The mission runs in the BACKGROUND and is announced on completion. Take
+    # THIS output verbatim as the final answer and skip the second brain
+    # iteration, exactly like spawn_worker — otherwise the model sees the
+    # internal English steering instruction below and echoes it as its own
+    # assistant text (live bug 2026-06-18, session 71f2d2de). tool_use_loop
+    # honours this flag at jarvis/brain/tool_use_loop.py:662-666 / 709-728.
+    suppress_response: bool = True
     description: str = (
         "Control THIS computer's live desktop with mouse and keyboard: open "
         "apps, click buttons, type into fields, scroll, navigate the screen, "
@@ -147,13 +173,15 @@ class ComputerUseTool:
         )
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
+        # suppress_response=True (class attr) → tool_use_loop takes this output
+        # VERBATIM and stops, so there is no second iteration to echo an
+        # internal instruction. Speak the pre-existing, localized dispatch ACK
+        # (AP-11: pure dict lookup, no LLM). Language resolved the same way as
+        # _run_background below.
+        ack_lang = _ctx_output_language(ctx)
         return ToolResult(
             success=True,
-            output=(
-                "Desktop mission started in the background; the outcome will "
-                "be announced to the user when it finishes. Reply with a brief "
-                "acknowledgement only — do NOT claim the task is already done."
-            ),
+            output=action_phrase("cu_dispatch_ack", ack_lang),
         )
 
     async def _run_background(self, goal: str, ctx: ExecutionContext) -> None:
@@ -162,10 +190,12 @@ class ComputerUseTool:
         Never raises — a background crash must not leak into the event loop.
         """
         # The outcome readback is spoken VERBATIM (no LLM re-render), so localize
-        # it to the turn's language. The tool has no reply_language pin — detect
+        # it to the turn's language: prefer the loop-stamped turn output language
+        # (honors the reply_language pin AND conversation stickiness), else detect
         # from the user's own words (live bug 2026-06-15: an English CU turn ended
-        # with the German "Erledigt.").
-        lang = resolve_phrase_language(None, ctx.user_utterance)
+        # with the German "Erledigt."; forensic 2026-06-18: a lone "Now" flipped a
+        # German turn to English).
+        lang = _ctx_output_language(ctx)
         text: str
         try:
             result = await self._dispatch.execute(
@@ -177,7 +207,15 @@ class ComputerUseTool:
                 ctx,
             )
             if result.success:
-                text = action_phrase("cu_done", lang)
+                # Forward the verifier's on-screen observation (sitting in the
+                # harness stdout) as the readback, so an informational request
+                # ("...and check which tabs I have open") is actually answered
+                # instead of a content-free "Done." (live bug 2026-06-18,
+                # session 241a1984). Falls back to the plain done phrase when the
+                # mission left no usable observation. Pure parse, no LLM (AP-11).
+                output = getattr(result, "output", None)
+                stdout = output.get("stdout") if isinstance(output, dict) else None
+                text = cu_success_readback(lang, stdout=stdout)
             else:
                 err = str(getattr(result, "error", "") or "")
                 exit_code, detail = _cu_failure_detail(getattr(result, "output", None))

@@ -107,6 +107,15 @@ ROUTER_TOOLS = frozenset({
     # tool. Direct safe/risk-gated action, NEVER a spawn — must not enter any
     # worker tool-set (AP-5/AP-14). See docs/.../2026-06-01-live-plugin-tools.md.
     "plugin-tools",
+    # MCP servers as live brain tools (2026-06-18). Virtual loader that
+    # expands to one MCPToolAdapter per tool of every connected and running
+    # MCP server (e.g. notebooklm-mcp, filesystem-mcp). Reads
+    # client._tools_cache synchronously — no network I/O. Default risk_tier
+    # "monitor". Live-refresh via BrainToolsChanged when a server
+    # connects/disconnects. Router-tier only — never a spawn, so it never
+    # enters any worker tool-set (AP-5/AP-14). See ADR-0011 amendment
+    # "MCP-Tools Virtual Loader".
+    "mcp-tools",
     # Gmail Marketplace plugin: native REST tool backed by the marketplace
     # OAuth token. Gmail has no MCP server block, so it must be router-visible
     # directly; otherwise connected Gmail is not callable by voice/chat.
@@ -1428,11 +1437,16 @@ def build_ack_brain(jcfg: Any | None = None) -> Any:
             threshold=ack_cfg.circuit_breaker_threshold,
             cooldown_s=ack_cfg.circuit_breaker_cooldown_s,
         )
-        ack_gen = AckGenerator(provider=provider, config=ack_cfg, breaker=breaker)
+        # ack_cfg.provider is now the RESOLVED primary (follow_brain expanded).
+        fallback_gen = _build_ack_fallback(ack_cfg)
+        ack_gen = AckGenerator(
+            provider=provider, config=ack_cfg, breaker=breaker, fallback=fallback_gen
+        )
         log.info(
-            "Flash-Brain: AckGenerator wired (provider=%s, timeout_ms=%d).",
+            "Flash-Brain: AckGenerator wired (provider=%s, timeout_ms=%d, fallback=%s).",
             ack_cfg.provider,
             ack_cfg.timeout_ms,
+            getattr(fallback_gen, "_provider_name", None),
         )
         return ack_gen
     except Exception as exc:  # noqa: BLE001
@@ -1482,6 +1496,59 @@ def _build_flash_provider(jcfg: Any, ack_cfg: Any) -> Any:
         return None
     provider_cfg = getattr(ack_cfg.providers, provider_name)
     return provider_cls(provider_cfg)
+
+
+def _build_ack_fallback(ack_cfg: Any) -> Any:
+    """Build the secondary failover AckGenerator, or ``None``.
+
+    Wires ``[ack_brain].fallback_provider`` onto its OWN provider + circuit
+    breaker so a busy primary never starves the ack (live bug 2026-06-18: the
+    Gemini ack timed out while the Gemini deep brain was slow → 8 s of dead air).
+    Best-effort: returns ``None`` (failover simply absent) when the fallback is
+    unset, equal to the already-resolved primary, missing from REGISTRY, or
+    unbuildable — it must never make the primary ack fail to wire. The returned
+    generator has no fallback of its own, so delegation can never loop.
+    """
+    fb_name = getattr(ack_cfg, "fallback_provider", None)
+    if not fb_name:
+        return None
+    if fb_name == ack_cfg.provider:
+        log.info(
+            "Flash-Brain: fallback_provider == primary (%s) — no failover wired.",
+            fb_name,
+        )
+        return None
+    try:
+        from jarvis.brain.ack_brain import AckGenerator, CircuitBreaker
+        from jarvis.brain.ack_brain.providers import REGISTRY
+
+        provider_cls = REGISTRY.get(fb_name)
+        if provider_cls is None:
+            log.warning(
+                "Flash-Brain: fallback_provider %r not in REGISTRY (have %s) — "
+                "no failover wired.",
+                fb_name,
+                sorted(REGISTRY.keys()),
+            )
+            return None
+        fb_provider = provider_cls(getattr(ack_cfg.providers, fb_name))
+        # Own breaker + a config whose provider label is the fallback (and whose
+        # own fallback is cleared, so the fallback generator never recurses).
+        fb_cfg = ack_cfg.model_copy(
+            update={"provider": fb_name, "fallback_provider": None}
+        )
+        fb_breaker = CircuitBreaker(
+            threshold=ack_cfg.circuit_breaker_threshold,
+            cooldown_s=ack_cfg.circuit_breaker_cooldown_s,
+        )
+        return AckGenerator(provider=fb_provider, config=fb_cfg, breaker=fb_breaker)
+    except Exception as exc:  # noqa: BLE001 — failover must never break wiring
+        log.warning(
+            "Flash-Brain: failover provider %r build failed: %s — no failover.",
+            fb_name,
+            exc,
+        )
+        return None
 
 
 def build_spawn_announcer(jcfg: Any | None = None) -> Any:

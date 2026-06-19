@@ -696,6 +696,81 @@ def test_plugin_tools_is_router_only_not_a_spawn():
     assert not hasattr(factory_mod, "SUB_TOOLS")
 
 
+def test_mcp_tools_in_router_tools() -> None:
+    """``mcp-tools`` must live in ROUTER_TOOLS (2026-06-18).
+
+    The router can call any tool exposed by a connected MCP server (e.g.
+    notebooklm-mcp) only when ``mcp-tools`` is in the frozenset — the
+    loader filters entry-points against ROUTER_TOOLS. It is a virtual loader
+    (MCPToolAdapter per MCP tool), default risk_tier ``monitor``, a direct
+    safe/risk-gated action, **never a spawn**, so it never enters a worker
+    tool-set (AP-5/AP-14). See ADR-0011 amendment "MCP-Tools Virtual Loader".
+    """
+    from jarvis.brain.factory import ROUTER_TOOLS
+
+    assert "mcp-tools" in ROUTER_TOOLS
+
+
+def test_mcp_tools_is_router_only_not_a_spawn() -> None:
+    """mcp-tools is a direct safe-gated loader; it must never become a
+    spawn-style tool in a worker set (AP-5/AP-14, D9 recursion guard)."""
+    import jarvis.brain.factory as factory_mod
+    from jarvis.brain.factory import ROUTER_TOOLS
+
+    assert "mcp-tools" in ROUTER_TOOLS
+    # Welle 4 deleted the Sub-Jarvis tier; no worker tool-set may resurrect.
+    assert not hasattr(factory_mod, "SUB_TOOLS")
+
+
+def test_factory_wires_mcp_tool_into_router_set() -> None:
+    """End-to-end wiring: a connected MCP server's tool reaches the router schema.
+
+    With a live MCPRegistry exposing a running client, ``_load_tools_for_tier``
+    must expand the ``mcp-tools`` virtual loader so the slash-named MCP tool
+    (``notebooklm-mcp/notebook_list``) appears in the router tool dict. This is
+    the exact gap that made connected MCP servers uncallable on the voice path
+    (voice session 2026-06-18): the server ran with 32 tools but none reached the
+    brain. A missing entry-point, a missing ROUTER_TOOLS membership, or a broken
+    loader would silently drop the tool here.
+    """
+    from jarvis.core import capabilities, runtime_refs
+
+    class _FakeSpec:
+        name = "notebooklm-mcp"
+
+    class _FakeClient:
+        spec = _FakeSpec()
+        _tools_cache = [
+            {"name": "notebook_list", "description": "List notebooks", "inputSchema": {}},
+        ]
+
+    class _FakeRegistry:
+        def active_clients(self):
+            return {"notebooklm-mcp": _FakeClient()}
+
+    runtime_refs.set_mcp_registry(_FakeRegistry())
+    try:
+        from jarvis.brain.factory import _load_tools_for_tier
+
+        tools = _load_tools_for_tier(
+            "router",
+            bus=EventBus(),
+            executor=None,
+            harness_manager=None,
+            user_profile=None,
+            people=None,
+            config=JarvisConfig(),
+        )
+
+        assert "notebooklm-mcp/notebook_list" in tools
+        tool = tools["notebooklm-mcp/notebook_list"]
+        assert tool.name == "notebooklm-mcp/notebook_list"
+        assert tool.risk_tier == "monitor"
+    finally:
+        runtime_refs._reset_for_tests()
+        capabilities._reset_registry_for_tests()
+
+
 def test_router_prompt_mentions_plugin_inline_reads():
     from jarvis.brain.router import SYSTEM_PROMPT
 
@@ -1179,6 +1254,13 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # DuckDuckGo call, risk safe, never a spawn (AP-5/AP-14). See
             # ADR-0011 amendment "Inline web search".
             "search-web",
+            # MCP servers as live brain tools (2026-06-18): virtual loader that
+            # expands to one MCPToolAdapter per tool of every connected and
+            # running MCP server. Reads client._tools_cache synchronously —
+            # no network I/O. Default risk_tier "monitor". Router-tier only —
+            # never a spawn (AP-5/AP-14). See ADR-0011 amendment
+            # "MCP-Tools Virtual Loader".
+            "mcp-tools",
         }
     )
     assert ROUTER_TOOLS == expected, (

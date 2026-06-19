@@ -18,6 +18,7 @@ export type SectionId =
   | "mcps"
   | "tasks"
   | "sessions"
+  | "run_inspector"
   | "clis"
   | "cli-test-hub"
   | "board"
@@ -28,7 +29,6 @@ export type SectionId =
   | "settings"
   | "telephony"
   | "telephony-setup"
-  | "debug"
   | "outputs"
   | "socials"
   | "taskbar"
@@ -43,6 +43,7 @@ export const SECTION_IDS = [
   "mcps",
   "tasks",
   "sessions",
+  "run_inspector",
   "clis",
   "cli-test-hub",
   "board",
@@ -53,7 +54,6 @@ export const SECTION_IDS = [
   "settings",
   "telephony",
   "telephony-setup",
-  "debug",
   "outputs",
   "socials",
   "taskbar",
@@ -73,6 +73,7 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   mcps: "MCPs",
   tasks: "Aufgaben",
   sessions: "Transkription",
+  run_inspector: "Run Inspector",
   clis: "CLIs",
   "cli-test-hub": "CLI Test Hub",
   board: "Board",
@@ -83,7 +84,6 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   settings: "Einstellungen",
   telephony: "Telefonie",
   "telephony-setup": "Telefonie-Setup",
-  debug: "Debug",
   outputs: "Outputs",
   socials: "Socials",
   taskbar: "Taskbar",

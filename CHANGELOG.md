@@ -7,32 +7,38 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
-## [0.10.0] — 2026-06-17
+## [0.11.0] — 2026-06-19
 
 ### Added
 
-- Scheduled Tasks — recurring `every` trigger (hourly / daily anchored to a
-  time / custom interval), alongside the existing one-shot and event triggers.
-- Agentic tasks: a task runs a prompt as an isolated brain turn restricted to a
-  per-task tool allowlist (the toggled plugins) — Claude-style scheduled tasks.
-- Per-plugin permission scopes (`read` / `write` / `full`) for unattended runs.
-  `write`/`full` pre-authorize ask-tier actions for that task's own turn while
-  preserving the full `ActionProposed → ActionApproved → ActionExecuted` audit
-  trail; read-only plugins pass unattended and ungranted tools still gate.
-- Task create form in the Tasks view: schedule picker (once / recurring),
-  plugin toggles with permission scope, prompt + model tier, and a warning when
-  a plugin is elevated to write/full.
-- `BrainManager.run_task()` for isolated, tool-restricted turns (no voice
-  history pollution); `TaskAutoApprover` bus bridge for per-turn approval.
+- `jarvis/cli_ctl/` — **jarvisctl**, a control CLI for the running app (auth,
+  system, and tasks commands, plus dynamic OpenAPI-driven subcommands). See
+  `docs/jarvisctl.md`.
+- **Run Inspector** — a new desktop view (`RunInspectorView`) with a per-turn
+  transcript, latency waterfall, decision path, tool table, and metrics panels.
+- **Voice two-turn confirmation** — consequential (ask-tier) tools on the voice
+  path now ask for a spoken "yes" and execute on the next turn instead of
+  blocking on a UI approval the voice user cannot give
+  (`jarvis/voice/tool_confirmation.py`).
+- `jarvis/mcp/loader.py` — connected MCP-server tools are exposed to the
+  router / voice brain.
+- `cli-gcloud` guidance skill — routes Google Cloud actions through the headless
+  `gcloud` CLI instead of a Computer-Use browser login.
 
 ### Changed
 
-- The Tasks scheduler re-arms recurring tasks after each run and persists the
-  next due time across restarts; the runner returns recurring tasks to
-  `scheduled` instead of completing them.
-- Task store migrates the legacy `trigger_type` CHECK constraint to add `every`.
+- **Voice hang-up now works during the thinking phase.** A cancelled brain turn
+  can no longer wedge the voice session: the stall guard bounds every
+  post-cancel wait (an inline action that ignores cancellation is abandoned
+  after a short grace) and the thinking phase gained a hang-up waiter, so the
+  whisper-bar's X always aborts — even mid-think.
+- Additional voice-pipeline robustness: continuation recombine, mid-sentence
+  patience threshold, idle-window re-arm after out-of-band readbacks, and
+  runtime output-language (`es`) coverage across the spoken/written surfaces.
 
----
+### Removed
+
+- `docs/adr/ADR-021-web-search.md` (superseded ADR document).
 
 ## [v1.0.0-board] — 2026-04-25
 

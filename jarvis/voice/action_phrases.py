@@ -29,6 +29,17 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "Done.",
         "es": "Listo.",
     },
+    # Success WITH the verifier's on-screen observation forwarded (the SUCCESS
+    # sibling of cu_failed_reason). Lets an informational request actually be
+    # answered — "open the browser and check my tabs" reads back the observed
+    # tab instead of a content-free "Done." (live bug 2026-06-18, session
+    # 241a1984). ``{detail}`` is the verifier's own sentence (already in the
+    # turn's observed language, same as the failure-reason forwarding path).
+    "cu_done_detail": {
+        "de": "Erledigt — {detail}",  # i18n-allow
+        "en": "Done — {detail}",
+        "es": "Listo — {detail}",
+    },
     "cu_failed": {
         "de": "Das am Bildschirm hat nicht geklappt.",  # i18n-allow
         "en": "That didn't work on screen.",
@@ -229,4 +240,53 @@ def cu_failure_readback(
     return action_phrase(phrase_key, lang)
 
 
-__all__ = ["action_phrase", "cu_failure_readback", "resolve_phrase_language"]
+def _extract_cu_proof(stdout: str) -> str | None:
+    """Pull the verifier's observation out of the harness success ``stdout``.
+
+    The screenshot loop writes the proof as ``"[cu] done at <tag> (verified:
+    <proof>)"`` (or ``"[cu] done (verified: <proof>)"``). We scan for that line
+    and return everything inside ``(verified: ...)`` — taking up to the FINAL
+    ``)`` so an inner parenthesis in the proof itself ("Der Browser (Chrome)
+    ...") survives. Returns ``None`` when there is no verified-proof line (e.g.
+    ``"[cu] done at <tag>"`` with no observation), so the caller can fall back.
+    """
+    marker = "(verified:"
+    for line in (stdout or "").splitlines():
+        stripped = line.strip()
+        low = stripped.lower()
+        if "[cu] done" not in low or marker not in low:
+            continue
+        start = low.index(marker) + len(marker)
+        proof = stripped[start:].strip()
+        if proof.endswith(")"):
+            proof = proof[:-1].strip()
+        return proof or None
+    return None
+
+
+def cu_success_readback(lang: str, *, stdout: str | None) -> str:
+    """Compose the spoken/chat readback for a Computer-Use SUCCESS.
+
+    The SUCCESS sibling of :func:`cu_failure_readback`. When the harness
+    verified the goal and left a human observation in ``stdout`` (e.g. "the
+    browser is open showing tab 'X'"), FORWARD it so an informational request
+    is actually answered — the observation is the answer the user asked for. A
+    pure STATIC parse + lookup, no LLM call (AP-11); the text is scrubbed
+    downstream like every other spoken phrase.
+
+    Falls back to the plain localized ``cu_done`` phrase when the mission left
+    no usable observation (no ``(verified: ...)`` segment, or an empty/opaque
+    proof).
+    """
+    proof = _extract_cu_proof(stdout or "")
+    if proof and _looks_human(proof):
+        return action_phrase("cu_done_detail", lang, detail=proof)
+    return action_phrase("cu_done", lang)
+
+
+__all__ = [
+    "action_phrase",
+    "cu_failure_readback",
+    "cu_success_readback",
+    "resolve_phrase_language",
+]

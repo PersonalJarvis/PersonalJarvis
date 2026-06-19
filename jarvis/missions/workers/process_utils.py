@@ -48,6 +48,11 @@ async def create_worker_subprocess(
     """
     flags = worker_creationflags()
     kwargs.pop("creationflags", None)  # this helper owns the flags
+    if sys.platform != "win32":
+        # POSIX: spawn the worker as its own session/process-group leader so the
+        # per-mission job object can reap the whole tree via os.killpg on close
+        # (the Windows equivalent is the Job Object + CREATE_BREAKAWAY_FROM_JOB).
+        kwargs.setdefault("start_new_session", True)
     try:
         return await asyncio.create_subprocess_exec(
             *cmd, creationflags=flags, **kwargs

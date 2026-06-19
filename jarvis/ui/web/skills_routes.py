@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import importlib.util
 import re
 from dataclasses import replace
 from pathlib import Path
@@ -34,6 +35,21 @@ from jarvis.skills.loader import parse_skill
 from jarvis.skills.schema import RESOURCE_KINDS, Skill, SkillLifecycleState
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
+
+
+def _require_optional_module(module: str, feature: str) -> None:
+    """Answer a clean 501 when an optional feature module is absent from this build.
+
+    Some features (the AI Skill Creator, the link-health checker) live in modules
+    that are not shipped in every distribution. Rather than let the lazy import
+    raise an unhandled ``ModuleNotFoundError`` (a 500 that reads as a bug), probe
+    for the module first and surface an honest ``501 Not Implemented``.
+    """
+    if importlib.util.find_spec(module) is None:
+        raise HTTPException(
+            status_code=501,
+            detail=f"{feature} is not available in this build.",
+        )
 
 
 # ----------------------------------------------------------------------
@@ -327,6 +343,7 @@ async def create_skill_draft(
     request: Request,
 ) -> dict[str, Any]:
     """Erzeugt einen AI-Draft, ohne Dateien zu schreiben."""
+    _require_optional_module("jarvis.skills.creator_service", "Skill Creator")
     from jarvis.skills.creator_service import SkillCreatorInput, SkillCreatorService
 
     reg = _require_registry(request)
@@ -356,6 +373,7 @@ async def refine_skill_draft(
     request: Request,
 ) -> dict[str, Any]:
     """Ueberarbeitet einen AI-Draft anhand von Feedback/Rueckfragen."""
+    _require_optional_module("jarvis.skills.creator_service", "Skill Creator")
     from jarvis.skills.creator_service import SkillCreatorInput, SkillCreatorService
 
     reg = _require_registry(request)
@@ -387,6 +405,7 @@ async def validate_skill_draft(
     request: Request,
 ) -> dict[str, Any]:
     """Validiert einen Draft oder SKILL.md-Text, ohne zu persistieren."""
+    _require_optional_module("jarvis.skills.creator_service", "Skill Creator")
     from jarvis.skills.creator_service import render_skill_md, validate_skill_md
 
     content = body.skill_md if body.skill_md is not None else render_skill_md(body.draft)
@@ -404,6 +423,7 @@ async def commit_skill_draft(
     request: Request,
 ) -> dict[str, Any]:
     """Persistiert den bestaetigten AI-Draft als User-Skill."""
+    _require_optional_module("jarvis.skills.creator_service", "Skill Creator")
     from jarvis.skills.authoring import SkillAuthoringError
     from jarvis.skills.creator_service import SkillCreatorService
 
@@ -696,6 +716,7 @@ async def get_skill_link_health(name: str, request: Request) -> dict[str, Any]:
     wird er sofort zurueckgegeben — zugleich laeuft ein Refresh im Hintergrund.
     Das sorgt dafuer, dass die UI nie auf HEAD-Requests wartet.
     """
+    _require_optional_module("jarvis.skills.link_health", "Skill link-health check")
     from jarvis.skills.link_health import LinkHealthChecker
 
     reg = _require_registry(request)

@@ -40,7 +40,6 @@ KNOWN: frozenset[str] = frozenset(
         "settings",
         "telephony",
         "telephony-setup",
-        "debug",
         "outputs",
         "socials",
         "taskbar",

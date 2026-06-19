@@ -2,7 +2,7 @@
 title: "ADR-022: Web-search skill Phase 2 — grounding, citations, router wiring"
 slug: adr-022-web-search-phase-2
 diataxis: adr
-status: proposed
+status: draft
 date: 2026-05-27
 owner: sam
 phase: skills

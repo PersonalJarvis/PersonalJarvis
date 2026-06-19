@@ -29,6 +29,11 @@ TOOL_NAME_PREFIX = "cli_"
 DEFAULT_TIMEOUT_S = 60.0
 MAX_STDOUT_CHARS = 4000
 MAX_STDERR_CHARS = 2000
+# A `<cli> --help` invocation is the model's self-discovery channel (CLI-first
+# design). Help output is large (gcloud --help is ~18k chars) and the normal
+# 4000-char cap truncates BEFORE the command-group list, so the model can't
+# discover commands. Help calls get a larger cap.
+MAX_HELP_STDOUT_CHARS = 16000
 
 # Per-CLI environment that forces non-interactive execution. A prompting CLI
 # (live repro 2026-06-17: ``gcloud billing budgets list`` emitted
@@ -43,6 +48,18 @@ _NONINTERACTIVE_ENV: dict[str, dict[str, str]] = {
 def _noninteractive_env_for(binary_name: str) -> dict[str, str]:
     """Return the non-interactive env additions for a CLI, or ``{}`` if none."""
     return dict(_NONINTERACTIVE_ENV.get(binary_name, {}))
+
+
+def _is_help_command(parts: list[str]) -> bool:
+    """True if the invocation is a help/discovery call (``--help``/``-h``/``help``).
+
+    Help output is allowed a larger stdout cap so the model can self-discover
+    commands. ``help`` is only treated as help as a SUBCOMMAND (parts[1:]), never
+    as the binary itself.
+    """
+    if "--help" in parts or "-h" in parts:
+        return True
+    return len(parts) > 1 and "help" in parts[1:]
 
 
 class CliTool:
@@ -119,6 +136,9 @@ class CliTool:
         # (gcloud, npm, vercel, ...) are exec'able under shell=False on Windows.
         # The binary-guard above already pinned parts[0] to spec.binary_name.
         parts[0] = resolve_executable(parts[0])
+        stdout_cap = (
+            MAX_HELP_STDOUT_CHARS if _is_help_command(parts) else MAX_STDOUT_CHARS
+        )
 
         env = os.environ.copy()
         env.update(self._auth.env_for(self._spec))
@@ -194,7 +214,7 @@ class CliTool:
             success=success,
             output={
                 "exit_code": exit_code,
-                "stdout": stdout[:MAX_STDOUT_CHARS],
+                "stdout": stdout[:stdout_cap],
                 "stderr": stderr[:MAX_STDERR_CHARS],
                 "duration_ms": finished_ms - started_ms,
             },

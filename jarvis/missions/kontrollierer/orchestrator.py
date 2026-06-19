@@ -730,6 +730,21 @@ class Kontrollierer:
         task.cancel()
         return True
 
+    def running_mission_ids(self) -> list[str]:
+        """Ids of missions whose ``run_mission`` task is currently in flight.
+
+        Public, read-only accessor over the private tracking map so the restart
+        guard (POST /api/settings/restart-app) can refuse to silently kill live
+        missions. A done/cancelled task is excluded — the same liveness test
+        ``cancel_running_mission``/``cancel_all_running`` use — so a finished
+        mission never spuriously blocks a restart.
+        """
+        return [
+            mission_id
+            for mission_id, task in self._running_missions.items()
+            if task is not None and not task.done()
+        ]
+
     async def cancel_all_running(self, *, reason: str = "app_shutdown") -> list[str]:
         """Finalize + kill every in-flight mission (shutdown/restart path).
 

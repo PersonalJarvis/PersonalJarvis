@@ -10,9 +10,9 @@ import { ProfileView } from "@/views/ProfileView";
 import { WikiView } from "@/views/WikiView";
 import { ApiKeysView } from "@/views/ApiKeysView";
 import { SettingsView } from "@/views/SettingsView";
-import { DebugView } from "@/views/DebugView";
 import { ClisHubView } from "@/views/ClisHubView";
 import { OutputsView } from "@/views/OutputsView";
+import { RunInspectorView } from "@/views/RunInspectorView";
 import { SessionsView } from "@/views/SessionsView";
 import { SocialsView } from "@/views/socials/SocialsView";
 import { ContactsView } from "@/views/contacts/ContactsView";
@@ -61,6 +61,8 @@ function SwitchOnActiveSection({ active }: { active: string }) {
       return <TasksView />;
     case "sessions":
       return <SessionsView />;
+    case "run_inspector":
+      return <RunInspectorView />;
     case "board":
       return <BoardView />;
     case "profile":
@@ -88,8 +90,6 @@ function SwitchOnActiveSection({ active }: { active: string }) {
     case "taskbar":
     case "languages":
       return <SettingsView />;
-    case "debug":
-      return <DebugView />;
     case "outputs":
       return <OutputsView />;
     case "socials":

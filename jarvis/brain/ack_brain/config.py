@@ -96,6 +96,15 @@ class AckBrainConfig(BaseModel):
     # naturally tracks whatever main provider the user is on. Pin to
     # a concrete name (gemini/grok/openai/ollama) to override.
     provider: str = Field(default="follow_brain")
+    # Failover provider used ONLY when the primary ack provider is exhausted
+    # (timed out / errored / produced nothing). It runs on a SEPARATE
+    # provider/endpoint so a busy primary never starves both — the very
+    # condition the ack exists to bridge (live bug 2026-06-18: the Gemini ack
+    # timed out while the Gemini deep brain was slow → 8 s of dead air → user
+    # aborted). Realises the documented "Gemini primary, Grok fallback" design.
+    # None disables failover (legacy silent-on-failure). Ignored when equal to
+    # the resolved primary or missing from the provider REGISTRY.
+    fallback_provider: str | None = Field(default=None)
     timeout_ms: int = Field(default=1500, ge=100, le=10000)
     on_failure: Literal["silent"] = Field(default="silent")
     circuit_breaker_threshold: int = Field(default=3, ge=1, le=20)

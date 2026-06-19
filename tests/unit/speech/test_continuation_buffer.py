@@ -186,3 +186,84 @@ def test_max_chain_forces_flush() -> None:
     assert third is not None, "max-chain must force a flush, not buffer forever"
     assert "Erstens" in third and "drittens" in third
     assert not buf.has_pending()
+
+
+# --------------------------------------------------------------------------- #
+# Speech-resume re-arm: a continuation that BEGINS inside the window but is     #
+# slow to finalize must still coalesce (live bug 2026-06-18, session 241a1984).#
+# --------------------------------------------------------------------------- #
+
+
+def test_speech_resume_rearms_deadline_so_slow_continuation_still_joins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live bug 2026-06-18 (session 241a1984): "Kannst du bitte..." was buffered,
+    the user resumed speaking ~1 s later (deep inside the 8 s window) but the
+    continuation only FINALIZED 0.6 s past the deadline — so the lazy deadline
+    check dropped the held fragment and the turn split into an empty Turn 0.
+
+    note_speech_resumed() must re-arm the discard deadline from the moment the
+    user resumes, mirroring ContinuationWindow.note_speech_resumed, so a
+    slow-to-finalize continuation that began inside the window still joins.
+    """
+    clock = {"now": 1_000.0}
+    monkeypatch.setattr(
+        "jarvis.speech.continuation_buffer.time.monotonic",
+        lambda: clock["now"],
+    )
+    buf = ContinuationBuffer(timeout_s=8.0)
+    assert buf.process("Kannst du mir sagen, was genau...", language="de") is None
+    assert buf.has_pending()
+    # User resumes speaking 1 s in — deep inside the 8 s window.
+    clock["now"] += 1.0
+    buf.note_speech_resumed()
+    # The continuation takes 7.5 s to finalize: 8.5 s after the ORIGINAL buffer
+    # time (past the original 8 s deadline) but inside the re-armed window.
+    clock["now"] += 7.5
+    joined = buf.process("die Curie entdeckt hat", language="de")
+    assert joined is not None, (
+        "a continuation that BEGAN inside the window must still join after re-arm"
+    )
+    assert "Kannst du" in joined and "Curie" in joined
+    assert not buf.has_pending()
+
+
+def test_speech_resume_still_bounds_a_never_finalizing_continuation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-arming on resume must NOT make the buffer hold forever: if the resumed
+    speech never produces a finalized continuation, an unrelated later turn must
+    still drop the stale fragment (anti-pollution bound preserved)."""
+    clock = {"now": 1_000.0}
+    monkeypatch.setattr(
+        "jarvis.speech.continuation_buffer.time.monotonic",
+        lambda: clock["now"],
+    )
+    buf = ContinuationBuffer(timeout_s=8.0)
+    assert buf.process("Erinnere mich morgen daran, dass", language="de") is None
+    clock["now"] += 1.0
+    buf.note_speech_resumed()  # re-arm to 1001 + 8 = 1009
+    # No continuation finalizes; a totally unrelated complete turn 30 s later.
+    clock["now"] += 30.0
+    result = buf.process("Was steht heute im Kalender", language="de")
+    assert result == "Was steht heute im Kalender"
+    assert not buf.has_pending()
+
+
+def test_speech_resume_after_expiry_does_not_resurrect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A resume that arrives AFTER the deadline already passed is a no-op — it
+    must not revive a dead buffer (the late fragment is genuinely stale)."""
+    clock = {"now": 1_000.0}
+    monkeypatch.setattr(
+        "jarvis.speech.continuation_buffer.time.monotonic",
+        lambda: clock["now"],
+    )
+    buf = ContinuationBuffer(timeout_s=8.0)
+    assert buf.process("Schreib eine Mail an Tom,", language="de") is None
+    clock["now"] += 9.0  # past the 8 s deadline
+    buf.note_speech_resumed()  # too late — must not re-arm
+    result = buf.process("Was ist das Wetter", language="de")
+    assert result == "Was ist das Wetter"
+    assert not buf.has_pending()

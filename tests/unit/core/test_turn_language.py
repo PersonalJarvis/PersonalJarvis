@@ -18,8 +18,10 @@ from __future__ import annotations
 import pytest
 
 from jarvis.core.turn_language import (
+    DEFAULT_LOCALE,
     detect_text_language,
     normalize_language_tag,
+    resolve_output_language,
     resolve_turn_language,
 )
 
@@ -107,3 +109,108 @@ def test_codes_pass_through_on_ambiguous_text() -> None:
 def test_unknown_everything_falls_back_to_default() -> None:
     assert resolve_turn_language(None, "") == "en"
     assert resolve_turn_language("unknown", "Hmm", default="de") == "de"
+
+
+# ---------------------------------------------------------------------------
+# resolve_output_language: the SINGLE authoritative per-turn output language
+# every spoken/written layer must consume. Precedence: explicit reply-language
+# pin (de/en/es) > detected input language (text > STT tag) > default locale.
+# This is the contract enforced by the "Runtime Output Language" doctrine in
+# CLAUDE.md (2026-06-18 forensic: a German utterance mis-transcribed as English
+# made the whole chain go English because each layer re-derived language).
+# ---------------------------------------------------------------------------
+
+
+def test_default_locale_is_a_supported_code() -> None:
+    assert DEFAULT_LOCALE in ("de", "en", "es")
+
+
+def test_explicit_pin_wins_over_detected_input_language() -> None:
+    # The user selected German; STT mis-transcribed German speech as clean
+    # English text — the pin must override the detection (THE 2026-06-18 bug).
+    assert (
+        resolve_output_language("de", "english", "Mask it up.") == "de"
+    )
+
+
+def test_explicit_spanish_pin_wins() -> None:
+    assert resolve_output_language("es", "german", "Wie ist das Wetter?") == "es"
+
+
+def test_explicit_pin_is_case_and_whitespace_insensitive() -> None:
+    assert resolve_output_language("  EN ", "german", "Mach das Licht an") == "en"
+
+
+@pytest.mark.parametrize("pin", ["auto", "", None, "klingon"])
+def test_non_pin_falls_through_to_detection(pin: str | None) -> None:
+    # "auto"/empty/None/unknown are NOT a pin → mirror the detected input.
+    assert resolve_output_language(pin, "english", "Mach das Licht an") == "de"
+    assert resolve_output_language(pin, "german", "Turn on the lights") == "en"
+
+
+def test_auto_mode_ambiguous_text_uses_stt_tag_then_default() -> None:
+    # Ambiguous text, STT tag decides; no tag at all → DEFAULT_LOCALE.
+    assert resolve_output_language("auto", "german", "Spotify.") == "de"
+    assert resolve_output_language("auto", None, "") == DEFAULT_LOCALE
+
+
+def test_default_override_respected_in_auto_mode() -> None:
+    assert resolve_output_language(None, None, "", default="es") == "es"
+
+
+# ---------------------------------------------------------------------------
+# Conversation stickiness: a one/two-word interjection ("Now", "Stop", a lone
+# loanword) must NOT flip an established conversation's language — only a
+# substantive turn switches it. Natural-flow forensic 2026-06-18: a German voice
+# chat said a single English "Now" and the whole turn (ack + status + readback)
+# went English.
+# ---------------------------------------------------------------------------
+
+
+def test_thin_english_interjection_does_not_flip_german_conversation() -> None:
+    # THE bug: a one-word "Now." in a running German conversation.
+    assert resolve_output_language(
+        "auto", "english", "Now.", conversation_language="de"
+    ) == "de"
+
+
+def test_thin_two_word_interjection_inherits_conversation() -> None:
+    assert resolve_output_language(
+        "auto", None, "Stop now", conversation_language="de"
+    ) == "de"
+
+
+def test_substantive_turn_switches_conversation_language() -> None:
+    # A full sentence in the other language is a real switch, not an interjection.
+    assert resolve_output_language(
+        "auto", "german", "What is the weather like in Berlin tomorrow?",
+        conversation_language="de",
+    ) == "en"
+
+
+def test_german_sentence_with_english_loanword_stays_german() -> None:
+    # "Startup" is a content word, not a language signal — the German structure
+    # words win, so a German sentence peppered with an English noun stays German.
+    assert resolve_output_language(
+        "auto", None, "Mach mir bitte ein Startup-Konzept",
+        conversation_language="de",
+    ) == "de"
+
+
+def test_thin_turn_without_conversation_falls_back_to_detection() -> None:
+    # No conversation established yet → a thin turn is resolved normally.
+    assert resolve_output_language("auto", None, "Now.", conversation_language="") == "en"
+
+
+def test_pin_still_wins_over_conversation_stickiness() -> None:
+    assert resolve_output_language(
+        "en", None, "Mach das Licht an", conversation_language="de"
+    ) == "en"
+
+
+def test_conversation_language_used_as_default_for_ambiguous_substantive() -> None:
+    # A longer but signal-less turn (proper nouns) inherits the conversation
+    # rather than snapping to the global default.
+    assert resolve_output_language(
+        "auto", None, "Spotify Netflix Berlin", conversation_language="de"
+    ) == "de"

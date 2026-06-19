@@ -25,7 +25,9 @@ from jarvis.speech import pipeline as pipeline_mod
 from jarvis.speech.pipeline import (
     _ACTION_DONE_PHRASE,
     _BRAIN_TIMEOUT_PHRASE,
+    _BRAIN_UNAVAILABLE_PHRASE,
     _CLARIFY_QUESTION_PHRASE,
+    _STT_UNAVAILABLE_PHRASE,
     SpeechPipeline,
     TurnTakingState,
     _smalltalk_fallback_for_non_substantive,
@@ -89,16 +91,43 @@ def _make_pipe(
         ("english", "en"),
         ("en", "en"),
         ("en-US", "en"),
-        # Unknown / missing → English fallback (phrases exist only de/en).
-        ("spanish", "en"),
+        # Spanish is a first-class supported language (Runtime Output Language
+        # doctrine): names AND codes map to "es", not the English fallback.
+        ("spanish", "es"),
+        ("es", "es"),
+        ("es-ES", "es"),
+        # Unknown / missing → DEFAULT_LOCALE fallback.
         ("", "en"),
         (None, "en"),
+        ("klingon", "en"),
     ],
 )
 def test_phrase_lang_maps_names_and_codes(lang: str | None, expected: str) -> None:
     phrase_lang = getattr(pipeline_mod, "_phrase_lang", None)
     assert phrase_lang is not None, "_phrase_lang normalizer is missing"
     assert phrase_lang(lang) == expected
+
+
+def test_all_canned_phrase_tables_cover_de_en_es() -> None:
+    # "Works for every configured language": no spoken canned table may be
+    # de/en-only — an es speaker must never fall back to the wrong language.
+    for table in (
+        _BRAIN_UNAVAILABLE_PHRASE,
+        _STT_UNAVAILABLE_PHRASE,
+        _BRAIN_TIMEOUT_PHRASE,
+        _CLARIFY_QUESTION_PHRASE,
+        _ACTION_DONE_PHRASE,
+    ):
+        assert {"de", "en", "es"} <= set(table), table
+
+
+@pytest.mark.asyncio
+async def test_clarify_question_is_spanish_for_whisper_language_name() -> None:
+    # An es turn (Whisper name "spanish") must get the Spanish clarify phrase,
+    # not the English one — the same regression class as the German case.
+    pipe = _make_pipe(clarify_enabled=True)
+    await pipe._handle_silent_brain_turn("spanish")
+    assert pipe._spoken == [(_CLARIFY_QUESTION_PHRASE["es"], "es")], pipe._spoken
 
 
 # --------------------------------------------------------------------------- #

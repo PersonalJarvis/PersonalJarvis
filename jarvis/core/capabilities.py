@@ -297,3 +297,15 @@ def get_registry() -> CapabilityRegistry:
             if _registry_instance is None:
                 _registry_instance = CapabilityRegistry()
     return _registry_instance
+
+
+def _reset_registry_for_tests() -> None:
+    """Drop the singleton so the next get_registry() call creates a fresh one.
+
+    Test-only helper — call in teardown when a test constructs MCPToolAdapter
+    or other objects that register capabilities as a side effect, to prevent
+    cross-test contamination of the shared CapabilityRegistry.
+    """
+    global _registry_instance  # noqa: PLW0603
+    with _registry_lock:
+        _registry_instance = None

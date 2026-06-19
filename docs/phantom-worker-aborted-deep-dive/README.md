@@ -1,7 +1,8 @@
 ---
 title: "Deep-Dive: 'Der Worker ist abgebrochen' announced for a mission the user never knowingly spawned"
 date: 2026-06-07
-status: LAYER A FIXED (2026-06-07, TDD, tests green) — Layers B/C/D still open
+status: active
+progress: "LAYER A FIXED (2026-06-07, TDD, tests green) — Layers B/C/D still open"
 fix_commit: uncommitted working tree (restart required for live voice)
 scope: Voice failure announcement · Mission-Manager outcome aggregation · Computer-Use force-spawn
 investigators: 2 parallel sub-agents (runtime forensics + static code-trace) + main-thread verification

@@ -66,6 +66,7 @@ _REFUSAL_DE: dict[str, str] = {
     "repos": "Ich habe aktuell keinen Zugriff auf deine Repositories.",  # i18n-allow
     "deployments": "Ich habe aktuell keinen Zugriff auf deine Deployments.",  # i18n-allow
     "cloud": "Ich habe aktuell keinen Zugriff auf deine Cloud-Abrechnung.",  # i18n-allow
+    "activity": "Ich kann gerade nicht auf deinen Aktivitätsverlauf zugreifen.",  # i18n-allow
 }
 _REFUSAL_DE_FALLBACK = "Dafuer habe ich aktuell keinen Datenzugriff."  # i18n-allow
 
@@ -76,6 +77,7 @@ _REFUSAL_EN: dict[str, str] = {
     "repos": "I have no access to your repositories right now.",
     "deployments": "I have no access to your deployments right now.",
     "cloud": "I have no access to your cloud billing right now.",
+    "activity": "I can't access your activity history right now.",
 }
 _REFUSAL_EN_FALLBACK = "I have no data access for that right now."
 

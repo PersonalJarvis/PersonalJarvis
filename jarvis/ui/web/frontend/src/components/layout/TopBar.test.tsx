@@ -46,6 +46,44 @@ describe("TopBar restart button", () => {
     expect(opts?.method).toBe("POST");
   });
 
+  it("on 409 surfaces running missions and the next click forces the restart", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          detail: {
+            error: "missions_running",
+            missions: [{ id: "a", title: "research" }],
+          },
+        }),
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<TopBar />);
+    fireEvent.click(screen.getByRole("button", { name: /^restart$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /confirm restart/i }));
+
+    // The guard refused: the button now offers a force restart instead.
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /restart anyway/i }),
+      ).toBeTruthy();
+    });
+
+    // The first POST carried NO force flag (the mission was not killed).
+    expect(fetchMock.mock.calls[0][0]).not.toContain("force");
+
+    // Forcing it sends force=true.
+    fireEvent.click(screen.getByRole("button", { name: /restart anyway/i }));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+    expect(fetchMock.mock.calls[1][0]).toContain("force=true");
+  });
+
   it("surfaces a failed restart instead of leaving the button stuck", async () => {
     const fetchMock = vi
       .fn()

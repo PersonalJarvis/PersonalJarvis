@@ -2,7 +2,7 @@
 title: "ADR-021: Web-search skill — architecture and risk classification"
 slug: adr-021-web-search
 diataxis: adr
-status: accepted
+status: active
 date: 2026-05-27
 owner: sam
 phase: skills

@@ -49,6 +49,11 @@ BUILTIN_SKILL_NAMES: tuple[str, ...] = (
     # agent (Codex CLI, Claude Code) how to drive the Jarvis Control API to
     # change settings/providers/language. category=meta, no voice triggers.
     "control-api",
+    # cli-gcloud (2026-06-17): guidance skill teaching the brain to drive Google
+    # Cloud via the cli_gcloud tool instead of the browser console. category=meta,
+    # no voice triggers (a trigger would make the router pick run_skill over the
+    # cli_gcloud tool — see control-api). Gated by requires_tools=[cli_gcloud].
+    "cli-gcloud",
 ) + _PLUGIN_PAIRED_SKILLS
 
 

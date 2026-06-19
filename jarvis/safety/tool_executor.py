@@ -32,6 +32,16 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+# Sentinel returned (as ``ToolResult.error``) when a confirmation-requiring tool
+# is invoked on a CONVERSATIONAL turn (``config_snapshot["voice_confirm"]``).
+# Instead of blocking in ``ApprovalWorkflow.wait()`` for a UI approval no voice/
+# chat user can give (which is then beheaded by the 20 s no-first-frame ceiling →
+# the misleading "took too long" phrase, forensic 2026-06-18), the executor stashes
+# the action and returns this sentinel so the brain SPEAKS a confirmation question
+# and ends the turn. The next "ja" re-runs the action via ``execute_confirmed``.
+VOICE_CONFIRM_SENTINEL = "__voice_confirm_required__"
+
+
 # ``plausibility_context_fn`` returns (Transcript | None, wake_age_s | None).
 # Die Voice-Pipeline registriert einen Provider, der den letzten User-Turn-
 # Transcript und die Sekunden seit dem letzten Wake-Trigger liefert. Bei
@@ -58,6 +68,11 @@ class ToolExecutor:
         self._default_timeout_s = default_timeout_s
         self._plausibility_config = plausibility_config
         self._plausibility_context_fn = plausibility_context_fn
+        # Two-turn voice/chat confirmation: actions deferred by ``execute`` on a
+        # conversational turn, keyed by trace_id, awaiting an ``execute_confirmed``
+        # (user said "ja") or ``cancel_pending`` (user said "nein"). The tool +
+        # args live here OUT-OF-BAND — never in the serialized ToolResult.output.
+        self._pending_voice: dict[UUID, tuple[Tool, dict[str, Any]]] = {}
 
     def set_plausibility_context_fn(
         self, fn: PlausibilityContextFn | None,
@@ -150,6 +165,28 @@ class ToolExecutor:
             plaus is not None and plaus.require_confirmation
         )
         if needs_confirm:
+            # Two-turn confirmation on a conversational turn: do NOT block on the
+            # UI-approval future (no voice/chat user can resolve it within the
+            # turn's latency window). Stash the action and return the sentinel so
+            # the brain speaks a confirmation question; the user's next "ja" calls
+            # ``execute_confirmed`` (AD-OE: the talker never awaits heavy/blocking
+            # work on the turn). ``needs_confirm`` already excludes whitelist
+            # downgrades, so this fires only for genuinely consequential tools.
+            if bool((config_snapshot or {}).get("voice_confirm")):
+                self._pending_voice[tid] = (tool, dict(args))
+                log.info(
+                    "voice-confirm: deferring %s (tier=%s) for two-turn confirmation",
+                    tool.name, decision.tier,
+                )
+                return ToolResult(
+                    success=False,
+                    output={
+                        "tool_name": tool.name,
+                        "trace_id": str(tid),
+                        "risk_tier": decision.tier,
+                    },
+                    error=VOICE_CONFIRM_SENTINEL,
+                )
             approved, who_or_reason = await self._approval.wait(tid, self._default_timeout_s)
             if not approved:
                 await self._bus.publish(ActionDenied(
@@ -190,3 +227,78 @@ class ToolExecutor:
             error=result.error,
         ))
         return result
+
+    # ------------------------------------------------------------------
+    # Two-turn voice/chat confirmation resume (turn N+1)
+    # ------------------------------------------------------------------
+
+    def has_pending_voice_confirm(self, trace_id: UUID) -> bool:
+        """True while an action deferred for ``trace_id`` still awaits a yes/no."""
+        return trace_id in self._pending_voice
+
+    async def execute_confirmed(
+        self,
+        trace_id: UUID,
+        *,
+        user_utterance: str = "",
+        config_snapshot: dict[str, Any] | None = None,
+        memory_read: Any | None = None,
+    ) -> ToolResult:
+        """Run the action stashed by a prior voice-confirm deferral ("ja").
+
+        Single-use: the pending entry is popped first, so a repeated "ja" cannot
+        double-fire the side effect. ``approved_by="user"`` records that the human
+        authorized it. Publishes ``ActionExecuted`` for the audit trail, mirroring
+        the normal execute path.
+        """
+        pending = self._pending_voice.pop(trace_id, None)
+        if pending is None:
+            return ToolResult(
+                success=False,
+                output=None,
+                error="voice-confirm expired (no pending action for this turn)",
+            )
+        tool, args = pending
+        ctx = ExecutionContext(
+            trace_id=trace_id,
+            user_utterance=user_utterance,
+            config=config_snapshot or {},
+            memory_read=memory_read,
+            approved_by="user",
+        )
+        t_start = time.perf_counter()
+        try:
+            result = await tool.execute(args, ctx)
+        except Exception as exc:  # noqa: BLE001
+            duration_ms = int((time.perf_counter() - t_start) * 1000)
+            await self._bus.publish(ActionExecuted(
+                trace_id=trace_id,
+                tool_name=tool.name,
+                success=False,
+                duration_ms=duration_ms,
+                error=str(exc),
+            ))
+            return ToolResult(success=False, output=None, error=str(exc))
+        duration_ms = int((time.perf_counter() - t_start) * 1000)
+        await self._bus.publish(ActionExecuted(
+            trace_id=trace_id,
+            tool_name=tool.name,
+            success=result.success,
+            duration_ms=duration_ms,
+            error=result.error,
+        ))
+        return result
+
+    async def cancel_pending(self, trace_id: UUID) -> bool:
+        """Drop the action stashed for ``trace_id`` ("nein"). Returns whether one
+        existed. Publishes ``ActionDenied`` for the audit trail."""
+        pending = self._pending_voice.pop(trace_id, None)
+        if pending is None:
+            return False
+        tool, _args = pending
+        await self._bus.publish(ActionDenied(
+            trace_id=trace_id,
+            tool_name=tool.name,
+            reason="voice_vetoed",
+        ))
+        return True
