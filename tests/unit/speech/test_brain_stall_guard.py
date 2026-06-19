@@ -186,3 +186,141 @@ async def test_stall_guard_cancels_the_brain_task_on_timeout() -> None:
         await p._run_brain_with_stall_guard(runs_until_cancelled())
 
     assert cancelled.is_set()
+
+
+class _ActivePlayer:
+    """A player that is continuously writing audio sub-blocks.
+
+    Mirrors a live TTS playback: ``AudioPlayer._write_samples`` bumps
+    ``last_write_ns = time.monotonic_ns()`` after every ~60 ms sub-block, so a
+    read always reports "just wrote". Stands in for the real player on the bare
+    ``__new__`` pipeline.
+
+    Modelled as a read-only ``@property`` deliberately: the stall guard only
+    ever READS ``last_write_ns``. The real ``AudioPlayer.last_write_ns`` is a
+    plain int attribute that ``play_chunks`` also writes (resets to 0); this
+    stub never needs a setter because the guard does not write it. See
+    ``_IdlePlayer`` for the plain-attribute, frozen-value variant.
+    """
+
+    @property
+    def last_write_ns(self) -> int:
+        return time.monotonic_ns()
+
+
+class _IdlePlayer:
+    """A player whose last audio sub-block was written 'just now' and then stops.
+
+    Plain int attribute (exactly like the real ``AudioPlayer.last_write_ns``),
+    frozen at construction: it reports a fresh timestamp at guard start but
+    never advances, modelling 'playback just ended, no more frames'. After the
+    stall window elapses the value goes stale and the guards must re-engage.
+    """
+
+    def __init__(self) -> None:
+        self.last_write_ns = time.monotonic_ns()
+
+
+class _WedgedPlayer:
+    """A player whose output device wedged: ``last_write_ns`` is frozen in the
+    past and never advances (no audio sub-block has been written for a while)."""
+
+    def __init__(self, age_s: float) -> None:
+        self._frozen = time.monotonic_ns() - int(age_s * 1_000_000_000)
+
+    @property
+    def last_write_ns(self) -> int:
+        return self._frozen
+
+
+@pytest.mark.asyncio
+async def test_stall_guard_does_not_cut_off_active_tts_playback() -> None:
+    """THE FIX (2026-06-19): after the brain's LAST token, ``_brain_streaming``
+    stays inside ``_await_playback`` reading a long answer aloud, and nothing
+    bumps ``_brain_last_progress`` during that tail. Keying the stall purely on
+    brain-token progress guillotined the still-playing tail of a long answer
+    mid-sentence (live 'Wegzugsteuer' 16:27: last token ~37 s, playback ran to
+    ~64 s, abort exactly 30 s after the last token). While the player keeps
+    writing audio (``last_write_ns`` advances within the stall window) the turn
+    is working, not wedged — the no-progress stall must NOT fire."""
+    p = _make_pipeline(stall=0.3, ceiling=10.0, poll=0.05)
+    p._player = _ActivePlayer()
+
+    async def long_answer_read_aloud() -> tuple[str, bool]:
+        await asyncio.sleep(0.1)
+        p._mark_brain_progress()  # the brain's last token arrives early...
+        # ...then _brain_streaming sits in _await_playback reading the long
+        # answer aloud well past the stall window, with NO further brain
+        # progress. The player keeps writing the whole time.
+        await asyncio.sleep(0.8)
+        return ("Die lange Wegzugsteuer-Antwort.", False)
+
+    result = await p._run_brain_with_stall_guard(long_answer_read_aloud())
+
+    assert result == ("Die lange Wegzugsteuer-Antwort.", False)
+
+
+@pytest.mark.asyncio
+async def test_active_tts_playback_also_suspends_the_absolute_ceiling() -> None:
+    """A very long answer's playback can exceed even the absolute ceiling — in
+    the live Wegzugsteuer turn the no-progress stall and the 90 s ceiling came
+    due almost simultaneously. Active playback must suspend BOTH guards (exactly
+    as an active computer_use loop suspends the ceiling), otherwise fixing only
+    the no-progress stall would let the ceiling behead the tail one second
+    later."""
+    p = _make_pipeline(stall=5.0, ceiling=0.4, poll=0.05)
+    p._player = _ActivePlayer()
+
+    async def long_answer_read_aloud() -> tuple[str, bool]:
+        # 0.8 s total > the 0.4 s ceiling, but the player is writing throughout.
+        await asyncio.sleep(0.8)
+        return ("Eine sehr lange Antwort.", False)
+
+    result = await p._run_brain_with_stall_guard(long_answer_read_aloud())
+
+    assert result == ("Eine sehr lange Antwort.", False)
+
+
+@pytest.mark.asyncio
+async def test_stall_guard_still_aborts_when_playback_is_wedged() -> None:
+    """Boundary: suspending the stall for ACTIVE playback must not disable the
+    liveness guard. A wedged output device (``last_write_ns`` frozen) with no
+    brain progress must still abort after the stall window, so the voice session
+    can never freeze. The dedicated device-wedge watchdog in ``_await_playback``
+    owns the fast path; this is defense in depth."""
+    p = _make_pipeline(stall=0.3, ceiling=10.0, poll=0.05)
+    # Frozen twice the stall window in the past → never counts as active.
+    p._player = _WedgedPlayer(age_s=0.6)
+
+    async def wedged_after_one_token() -> tuple[str, bool]:
+        await asyncio.sleep(0.1)
+        p._mark_brain_progress()  # last brain token...
+        await asyncio.sleep(10.0)  # ...then the device wedges: no writes
+        return ("unreachable", False)
+
+    with pytest.raises(TimeoutError):
+        await p._run_brain_with_stall_guard(wedged_after_one_token())
+
+
+@pytest.mark.asyncio
+async def test_ceiling_re_engages_after_playback_ends() -> None:
+    """Symmetric to the suspension tests: playback suspending the ceiling is not
+    a permanent disable. Once playback ENDS (last_write_ns goes stale past the
+    stall window) the absolute ceiling must re-engage and abort a turn that then
+    refuses to return — otherwise an idle-after-playback hang could never die.
+
+    The brain keeps pinging progress so the no-progress ``stalled`` check never
+    fires; the ONLY guard that can stop this turn is the ceiling."""
+    p = _make_pipeline(stall=0.2, ceiling=0.5, poll=0.02)
+    p._player = _IdlePlayer()  # fresh at guard start, then frozen (playback ended)
+
+    async def progresses_but_never_returns() -> tuple[str, bool]:
+        # last_write_ns goes stale after stall=0.2 s; the ceiling must then fire
+        # at 0.5 s despite continuous brain progress.
+        for _ in range(100):
+            await asyncio.sleep(0.02)
+            p._mark_brain_progress()
+        return ("unreachable", False)
+
+    with pytest.raises(TimeoutError):
+        await p._run_brain_with_stall_guard(progresses_but_never_returns())

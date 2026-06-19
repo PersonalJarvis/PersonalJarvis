@@ -1,9 +1,8 @@
 """GeminiWorker — wrapt `gemini -p ... --yolo` als Phase-6-Worker-Subprocess.
 
-Driven by the Gemini CLI
-(<USER_HOME>\\AppData\\Roaming\\npm\\gemini.cmd, ships via
-`@google/gemini-cli`). Lets a mission honor the brain provider the user
-selected in the desktop app (`jarvis.toml [brain] primary = "gemini"`)
+Driven by the Gemini CLI (installed via `npm install -g @google/gemini-cli`,
+resolved from PATH at runtime). Lets a mission honor the brain provider the
+user selected in the desktop app (`jarvis.toml [brain] primary = "gemini"`)
 instead of always falling back to Claude.
 
 Cmd-Layout:
@@ -22,9 +21,10 @@ the diff-collector + Critic can take over. Yielding two synthetic
 (field shape mirrors `ClaudeSystemInit` + `ClaudeResult`).
 
 Spawn discipline:
-- `asyncio.create_subprocess_exec` (NO shell=True, NO PTY).
-- Win32 creationflags incl. CREATE_BREAKAWAY_FROM_JOB so the per-mission
-  Windows Job Object can assign the subprocess.
+- Routed through `create_worker_subprocess` (NO shell=True, NO PTY); that
+  helper owns the Win32 creationflags (incl. CREATE_BREAKAWAY_FROM_JOB so the
+  per-mission Job Object can assign the tree) AND sets start_new_session=True
+  on POSIX so the worker forms its own killable process group (H3).
 - `env=...` strikt aus `build_worker_env` (Whitelist-only); we expect
   GEMINI_API_KEY / GOOGLE_API_KEY to be injected by the caller.
 - `cwd=worktree` — Gemini CLI writes/reads files relative to cwd, so
@@ -43,7 +43,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any, AsyncIterator, Literal
 
-from .process_utils import worker_creationflags as _win32_creationflags
+from .process_utils import create_worker_subprocess
 from .stream_consumer import ClaudeResult, ClaudeSystemInit
 
 logger = logging.getLogger(__name__)
@@ -283,7 +283,6 @@ class GeminiWorker:
             extra_args=extra_args,
         )
 
-        creationflags = _win32_creationflags()
         session_id = resume_session_id or str(uuid.uuid4())
         self.last_session_id = session_id
 
@@ -311,11 +310,15 @@ class GeminiWorker:
             primary returns 429/QUOTA_EXHAUSTED without duplicating the
             Job-Object assignment + log-tee logic in two places.
             """
-            proc_local = await asyncio.create_subprocess_exec(
-                *spawn_cmd, cwd=str(worktree), env=env,
+            # Route through the shared helper so the worker is spawned into its
+            # own session/process-group on POSIX (start_new_session=True) and the
+            # per-mission Job Object owns the tree on Windows — never a raw
+            # create_subprocess_exec, which would leave the worker in the
+            # orchestrator's process group off Windows (H3).
+            proc_local = await create_worker_subprocess(
+                spawn_cmd, cwd=str(worktree), env=env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                creationflags=creationflags,
             )
             self.last_pid = proc_local.pid
             try:

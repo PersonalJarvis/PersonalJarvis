@@ -588,6 +588,103 @@ def _is_opinion_advice_question(user_text: str) -> bool:
     return bool(_OPINION_ADVICE_QUESTION_RE.search(user_text or ""))
 
 
+# A spawn / sub-agent / worker token in DE/EN/ES (declined forms included). Used
+# by both the decline guard below and nowhere else — kept local on purpose.
+_SPAWN_TOKEN = (
+    r"(?:sub-?agent\w*|subagent\w*|subagente\w*|worker\w*|trabajador\w*|"
+    r"spawn\w*|delegier\w*|delegate\w*|delega\w*)"
+)
+
+# Explicit spawn DECLINE: the user literally says "don't spawn a subagent" /
+# "no sub-agent" / "talk to me directly". The explicit heavy-work trigger hoist
+# in ``_should_force_spawn`` is NEGATION-BLIND — it substring-matches the
+# trigger word ("Subagent"/"spawn") and force-spawns, doing the exact OPPOSITE
+# of what the user asked. A decline must therefore HARD-stand-down BEFORE that
+# hoist. Live bug 2026-06-19 (voice session 18:41, Turn 2): "Nee, ich möchte,
+# dass du keinen Subagent dafür spawnst. Ich möchte, dass du direkt mit mir
+# sprichst." force-spawned (trigger match='Subagent'). Recall over precision: a
+# missed decline re-spawns against an explicit "no" (the user-hostile bug);
+# a rare over-match only hands the choice back to the brain, which still sees
+# spawn_worker and can spawn if it judges so. Pure regex (AP-11), DE/EN/ES,
+# umlaut + ASCII variants. Char-window (not word-count) so commas between the
+# negation and the token ("nicht, dass du das spawnst") still match.
+_SPAWN_DECLINE_RE = re.compile(
+    r"(?:"
+    # negated spawn / subagent / worker (DE): kein* / nicht / ohne / niemals
+    r"\bkein(?:e|en|er|es|s)?\b[^.?!]{0,20}" + _SPAWN_TOKEN
+    + r"|\b(?:nicht|ohne|niemals)\b[^.?!]{0,20}" + _SPAWN_TOKEN
+    # talk-to-me-directly (DE)
+    + r"|\bdirekt\s+mit\s+mir\b"
+    + r"|\b(?:sprich|red|rede|antwort|antworte|sag)\w*\b[^.?!]{0,15}\bdirekt\b"
+    # negated spawn / subagent / worker (EN)
+    + r"|\b(?:no|without|don'?t|do\s+not|dont|never|not)\b[^.?!]{0,22}" + _SPAWN_TOKEN
+    # talk-to-me-directly (EN)
+    + r"|\b(?:talk|answer|respond|speak)\b[^.?!]{0,12}\bdirectly\b"
+    + r"|\bjust\s+(?:talk|answer|tell|speak)\s+(?:to\s+)?me\b"
+    # negated spawn / subagent + talk-directly (ES)
+    + r"|\bno\b[^.?!]{0,22}" + _SPAWN_TOKEN
+    + r"|\bh[áa]bla(?:me)?\b[^.?!]{0,15}\bdirectamente\b"
+    + r")",
+    re.IGNORECASE,
+)
+
+
+def _is_spawn_decline(user_text: str) -> bool:
+    """True when the user explicitly declines a worker spawn — "don't spawn a
+    subagent", "no sub-agent", "talk to me directly". Must override the
+    negation-blind explicit-trigger hoist in ``_should_force_spawn``.
+
+    See ``_SPAWN_DECLINE_RE`` for the full rationale (live bug 2026-06-19,
+    Turn 2): an explicit decline that NAMES the vehicle ("Subagent"/"spawn")
+    must never be read as a spawn request.
+    """
+    return bool(_SPAWN_DECLINE_RE.search(user_text or ""))
+
+
+# Conversational coaching: "help me [get better at a soft / cognitive /
+# conversational skill]" — asking, thinking, phrasing, deciding, understanding,
+# expressing, communicating. This is CONVERSATION (Jarvis answers inline and
+# asks the user smart questions), never a heavy-worker spawn. It trips the
+# action-verb catalogue when the coaching OBJECT is itself a verb ("intelligent
+# zu fragen" -> "frag"/"frage"). Live bug 2026-06-19 (voice session 18:41,
+# Turn 1): "Hilf mir aber dabei, intelligent zu fragen. Für mich ist Fragen
+# einer der Schlüssel für Erfolg, verstehst du?" -> matched action verbs
+# ['frag','frage'] -> has_action_intent -> _is_generic_subagent_work ->
+# force-spawn. High precision: a help/teach framing AND a cognitive/
+# conversational object verb must BOTH be present, so "Hilf mir, eine E-Mail zu
+# schreiben und zu senden" (concrete artifact) does NOT match and stays
+# spawnable. Pure regex (AP-11), DE/EN, umlaut + ASCII variants.
+_CONVERSATIONAL_COACHING_RE = re.compile(
+    r"(?:"
+    # DE: help / teach / show-me-how framing ...
+    r"\b(?:hilf|hilfst|helfen|helf|bring\s+mir\s+bei|beibring\w*|lehr\w*|"
+    r"zeig\s+mir,?\s+wie)\b"
+    r"[^.?!]{0,50}"
+    # ... + a cognitive / conversational skill object
+    r"\b(?:frag\w*|denk\w*|nachdenk\w*|formulier\w*|verstehen|verstehe|"
+    r"entscheid\w*|reflektier\w*|aus(?:zu)?dr[üu]ck\w*|kommunizier\w*|"
+    r"argumentier\w*|[üu]berleg\w*|zuh[öo]r\w*|reden|sprechen)\b"
+    # EN: help / teach / show me ... + a cognitive skill object
+    r"|\b(?:help|teach|show)\s+me\b[^.?!]{0,50}"
+    r"\b(?:ask|think|phrase|formulate|understand|decide|reflect|communicate|"
+    r"express|reason|articulate|listen|converse)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _is_conversational_coaching(user_text: str) -> bool:
+    """True when the user asks for help getting better at a soft / cognitive /
+    conversational skill (asking, thinking, phrasing, deciding, understanding).
+    Answered inline, never force-spawned.
+
+    See ``_CONVERSATIONAL_COACHING_RE`` for the full rationale (live bug
+    2026-06-19, Turn 1): a coaching request must not be dispatched to a worker
+    just because its skill object collides with an action verb ("fragen").
+    """
+    return bool(_CONVERSATIONAL_COACHING_RE.search(user_text or ""))
+
+
 def _balanced_json_objects(text: str) -> list[str]:
     """Return every top-level balanced ``{...}`` substring of ``text``.
 
@@ -2973,6 +3070,16 @@ class BrainManager:
         # _heavy_worker_provider_viable.
         if not self._heavy_worker_provider_viable():
             return False
+        # Explicit spawn DECLINE wins over EVERYTHING below, including the
+        # negation-blind explicit-trigger hoist: when the user literally says
+        # "don't spawn a subagent" / "talk to me directly", the trigger word
+        # ("Subagent"/"spawn") they negated must NOT be read as a request. This
+        # is checked BEFORE the hoist precisely because the hoist substring-
+        # matches that same word and would force-spawn the opposite of the
+        # user's intent. Live bug 2026-06-19 (voice session 18:41, Turn 2).
+        if _is_spawn_decline(t):
+            log.info("force-spawn skipped: explicit spawn decline — answer inline")
+            return False
         # User mandate (2026-06-15, "when I say subagent it MUST spawn"): an
         # EXPLICIT heavy-work trigger ("subagent", "spawn", "openclaw",
         # "delegate", "deep dive", …) names the execution vehicle. That is an
@@ -3003,6 +3110,18 @@ class BrainManager:
         if _is_opinion_advice_question(t):
             log.info(
                 "force-spawn skipped: opinion/advice/conversational question — inline"
+            )
+            return False
+        # Conversational coaching ("hilf mir, intelligent zu fragen / klarer zu
+        # denken") is talk, not work — the brain answers inline and asks the
+        # user smart questions back. Guards the same verb-collision class as the
+        # opinion guard above: the coaching OBJECT is itself an action verb
+        # ("fragen" -> "frag"/"frage") that trips has_action_intent ->
+        # _is_generic_subagent_work. Live bug 2026-06-19 (voice session 18:41,
+        # Turn 1). The explicit heavy-work trigger hoisted above still wins.
+        if _is_conversational_coaching(t):
+            log.info(
+                "force-spawn skipped: conversational coaching request — inline"
             )
             return False
         # AI Pointer: a deictic "what is this?" is a Q&A about the element under
@@ -3300,7 +3419,7 @@ class BrainManager:
             # Now we launch the harness as a BACKGROUND task and return an
             # immediate ACK (AD-OE1); its outcome — success, failure, or timeout
             # — is spoken at the next turn boundary via an
-            # AnnouncementRequested(kind="completion") readback (AD-OE5/OE6, zero
+            # AnnouncementRequested(kind="subagent") readback (AD-OE5/OE6, zero
             # silent drops). Harness identity comes from the gate; fall back to
             # the canonical in-process harness name (routes to ComputerUseHarness,
             # never a claude-cli worker spawn).
@@ -3402,7 +3521,7 @@ class BrainManager:
         Launched fire-and-forget by ``_run_local_action_fast_path`` so the spoken
         turn ACKs immediately (AD-OE1) instead of blocking up to ~31 s on the
         harness. The outcome — success, failure, or timeout — is ALWAYS surfaced
-        as an ``AnnouncementRequested(kind="completion")`` readback
+        as an ``AnnouncementRequested(kind="subagent")`` readback
         (AD-OE5/OE6: zero silent drops). Never raises — a background-task crash
         must not leak into the event loop.
 
@@ -3464,7 +3583,9 @@ class BrainManager:
                 text=text,
                 priority="normal",
                 language=lang,
-                kind="completion",
+                # A background Computer-Use task reporting its outcome is a
+                # spawned sub-agent result → the attributed readback track.
+                kind="subagent",
                 detail=diag,
             ))
         except Exception:  # noqa: BLE001
@@ -4886,7 +5007,9 @@ class BrainManager:
 
         Yields each brain text chunk in real time. Tool-use loops run as
         usual; pre-tool-use text is also streamed (the persona prompt forbids
-        fillers, so this is uncritical).
+        fillers, so this is uncritical). Evidence-gated turns are buffered
+        until ``generate`` returns its authoritative final text, because the
+        post-call evidence enforcement may replace an unverified stream.
 
         ``on_progress`` (stall-timeout signal): forwarded to the tool-use loop,
         which pings it at every model-round + tool boundary. The speech pipeline
@@ -4935,6 +5058,7 @@ class BrainManager:
         accumulated = ""
         leaked = False
         yielded = False
+        evidence_buffered = False
         try:
             while True:
                 chunk = await queue.get()
@@ -4951,6 +5075,9 @@ class BrainManager:
                     leaked = True
                 if leaked:
                     continue
+                if getattr(self, "_evidence_required_tool", ""):
+                    evidence_buffered = True
+                    continue
                 yield chunk
                 yielded = True
             # Surface generate()'s authoritative final text whenever NOTHING was
@@ -4961,7 +5088,7 @@ class BrainManager:
             # silence on exactly those action turns — live repro 2026-05-25
             # "oeffne mir Chrome" returned empty while plain chat worked. The
             # old code only surfaced the final on the leaked-JSON path.
-            if leaked or not yielded:
+            if leaked or not yielded or evidence_buffered:
                 final = (holder.get("final") or "").strip()
                 if final and not _looks_like_tool_use_leak(final):
                     yield final

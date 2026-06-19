@@ -36,6 +36,16 @@ FORBIDDEN_MODULE_SCOPE = {
     "pywinauto",
     "winpty",
     "pywintypes",
+    # Audio / GPU / desktop packages: not Windows-only, but each loads a native
+    # library eagerly (sounddevice→PortAudio, torch→CUDA, mss/pyautogui→display)
+    # and must never be imported at module scope on the headless boot chain.
+    # They belong in a function body or a try/except guard (DEEP-DIVE-AUDIT M2).
+    "sounddevice",
+    "torch",
+    "mss",
+    "pyautogui",
+    "pynput",
+    "ptyprocess",
 }
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

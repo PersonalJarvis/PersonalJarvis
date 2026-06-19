@@ -24,8 +24,8 @@ from typing import Any, AsyncIterator, Literal
 
 from .process_utils import (
     contextlib_suppress,
+    create_worker_subprocess,
     drain_stderr as _drain_stderr,
-    worker_creationflags as _win32_creationflags,
 )
 from .stream_consumer import CodexStreamEvent, parse_codex_stream_json, read_ndjson_stream
 
@@ -106,7 +106,6 @@ class CodexWorker:
         log_dir.mkdir(parents=True, exist_ok=True)
         stream_log = log_dir / "stream.jsonl"
         stderr_log = log_dir / "stderr.log"
-        creationflags = _win32_creationflags()
 
         logger.info(
             "CodexWorker[%s] spawn: cwd=%s sandbox=%s",
@@ -115,13 +114,15 @@ class CodexWorker:
             sandbox,
         )
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
+        # Route through the shared helper for POSIX session/process-group
+        # containment (start_new_session) + Windows Job-Object ownership — never
+        # a raw create_subprocess_exec (H3). Mirrors ClaudeDirectWorker.
+        proc = await create_worker_subprocess(
+            cmd,
             cwd=str(worktree),
             env=env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            creationflags=creationflags,
         )
         self.last_pid = proc.pid
 

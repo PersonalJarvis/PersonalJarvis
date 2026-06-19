@@ -460,7 +460,19 @@ def _run_desktop(cfg, use_lock: bool) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
 
-    from jarvis.core.config import load_config, refresh_persisted_env_from_user_registry
+    from jarvis.core.config import (
+        ensure_project_root_cwd,
+        load_config,
+        refresh_persisted_env_from_user_registry,
+    )
+
+    # Pin the CWD to the project root BEFORE anything resolves a data/ path. The
+    # desktop app is not guaranteed to start from the repo root (autostart task
+    # sets a WorkingDirectory, but a manual start / restart-app inherits the user
+    # home), and several stores (setup_state.json, the SQLite DBs, flight recorder,
+    # audit logs) are CWD-relative — an unpinned CWD re-showed the first-run guide
+    # and split Chats/Sessions/Missions across two folders.
+    ensure_project_root_cwd()
 
     # Heal a stale inherited provider env BEFORE load_config: an ancestor process
     # (Explorer at login) can freeze an outdated JARVIS__*__PROVIDER value and

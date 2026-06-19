@@ -7,8 +7,7 @@ import { MainView } from "@/components/layout/MainView";
 import { ToastLayer } from "@/components/ToastLayer";
 import { JarvisDock } from "@/components/JarvisDock";
 import { CliConnectPoller } from "@/components/CliConnectPoller";
-import { WakeWordOnboardingGate } from "@/components/onboarding/WakeWordOnboardingGate";
-import { OnboardingPreview } from "@/components/onboarding/OnboardingPreview";
+import { OnboardingGate } from "@/components/onboarding/OnboardingGate";
 
 export default function App() {
   useWebSocket();
@@ -39,11 +38,8 @@ export default function App() {
       {/* Hintergrund-Polling fuer CLI-OAuth-Logins — pollt /check alle 3s
           solange ein cliConnectCoach im Store gesetzt ist. */}
       <CliConnectPoller />
-      {/* Blocking onboarding gate — overlays everything until wake word is set. */}
-      <WakeWordOnboardingGate />
-      {/* DEV-only first-time-setup walkthrough preview — renders only with
-          ?onboarding=force in the URL; invisible to normal users. */}
-      <OnboardingPreview />
+      {/* Blocking onboarding gate — overlays everything until first-run setup is complete. */}
+      <OnboardingGate />
     </div>
   );
 }

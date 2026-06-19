@@ -251,3 +251,46 @@ export async function saveSubagentModel(
   return body as PipelineSwitchResult;
 }
 
+// ── Provider connectivity test ──────────────────────────────────────────────
+// Mirrors PROVIDER_TEST_STATUSES in jarvis/brain/provider_test.py and the
+// ProviderTestStatusLiteral in provider_routes.py (anti-drift; a backend parity
+// test guards the Python↔Pydantic side, this union is the UI mirror).
+export type ProviderTestStatus =
+  | "ok"
+  | "not_configured"
+  | "bad_key"
+  | "no_credits"
+  | "rate_limited"
+  | "model_unavailable"
+  | "unreachable"
+  | "error";
+
+export interface ProviderTestResult {
+  provider: string;
+  status: ProviderTestStatus;
+  detail: string;
+  latency_ms: number;
+  /**
+   * True when the provider was reached and answered at the protocol level —
+   * the integration code is sound and only the credential/account/model is the
+   * blocker. False only for "unreachable" / "error".
+   */
+  integration_ok: boolean;
+}
+
+/**
+ * Runs a REAL minimal call against the provider (1-token brain completion, a
+ * tiny TTS synthesis, an STT transcription, or the Codex OAuth status) and
+ * reports the honest outcome — not just whether a key string is stored.
+ */
+export async function testProvider(providerId: string): Promise<ProviderTestResult> {
+  const res = await fetch(`/api/providers/${encodeURIComponent(providerId)}/test`, {
+    method: "POST",
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as ProviderTestResult;
+}
+

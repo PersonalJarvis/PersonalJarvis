@@ -87,6 +87,7 @@ from jarvis.sessions.constants import (
     SPOKEN_KIND_PRIVACY,
     SPOKEN_KIND_PROGRESS,
     SPOKEN_KIND_STT_UNAVAILABLE,
+    SPOKEN_KIND_SUBAGENT,
     SPOKEN_KIND_TIMEOUT,
     SPOKEN_KIND_UNAVAILABLE,
 )
@@ -217,15 +218,31 @@ def _should_extend_silence_for_composition(partial: str | None) -> bool:
 BrainCallback = Callable[[str], Awaitable[str]]
 
 
+# AnnouncementRequested.kind values that deliver an answer the user is owed — a
+# finished background mission / sub-agent / worker / OpenClaw result. These
+# punch through the hangup gate (AD-OE5/OE6 zero-silent-drop) and cancel any
+# pending "still on it" heartbeat. ``subagent`` is the attributed sibling of
+# ``completion``: same delivery semantics, but rendered as its own transcript
+# track ("Jarvis Sub-Agent / Output").
+_READBACK_KINDS: frozenset[str] = frozenset(
+    {SPOKEN_KIND_COMPLETION, SPOKEN_KIND_SUBAGENT}
+)
+
+
 def _announcement_spoken_kind(kind: str | None) -> str:
     """Map an ``AnnouncementRequested.kind`` to a ``SpeechSpoken.spoken_kind``.
 
-    AnnouncementRequested carries {``preamble``, ``completion``, ``info``,
-    ``progress``, ``None``}. The first three map 1:1 onto the spoken-track
-    vocabulary; ``info`` and the legacy ``None`` default (the MissionAnnouncer
-    and skill-output callers) fall back to the generic ``announcement`` tag.
+    AnnouncementRequested carries {``preamble``, ``completion``, ``subagent``,
+    ``info``, ``progress``, ``None``}. The first four map 1:1 onto the
+    spoken-track vocabulary; ``info`` and the legacy ``None`` default (skill-
+    output callers) fall back to the generic ``announcement`` tag.
     """
-    if kind in (SPOKEN_KIND_PREAMBLE, SPOKEN_KIND_COMPLETION, SPOKEN_KIND_PROGRESS):
+    if kind in (
+        SPOKEN_KIND_PREAMBLE,
+        SPOKEN_KIND_COMPLETION,
+        SPOKEN_KIND_SUBAGENT,
+        SPOKEN_KIND_PROGRESS,
+    ):
         return kind
     return SPOKEN_KIND_ANNOUNCEMENT
 
@@ -464,6 +481,21 @@ _USER_HOLDS_FLOOR_STATES: frozenset[TurnTakingState] = frozenset({
     TurnTakingState.USER_SPEAKING,
     TurnTakingState.WAITING_FOR_FINAL_TRANSCRIPT,
     TurnTakingState.WAITING_FOR_COMPLETION,
+})
+
+# Floor states for the continuation DRAIN (a strict subset of the announcement
+# floor set above). The drain must defer ONLY while the user is ACTIVELY
+# speaking the continuation (USER_SPEAKING) or it is still being transcribed
+# (WAITING_FOR_FINAL_TRANSCRIPT). It must NOT defer on WAITING_FOR_COMPLETION:
+# that is precisely the "a fragment is held and no continuation has arrived"
+# state the drain exists to resolve — deferring on it would let the held
+# fragment rot until the idle-timeout (the very "Jarvis hört für immer zu" wedge
+# this fix closes). Unlike the clarify question (which speaks TTS and must never
+# talk over a half-finalised turn), the drain only dispatches silently to the
+# brain, so acting in WAITING_FOR_COMPLETION is correct.
+_DRAIN_HOLDS_FLOOR: frozenset[TurnTakingState] = frozenset({
+    TurnTakingState.USER_SPEAKING,
+    TurnTakingState.WAITING_FOR_FINAL_TRANSCRIPT,
 })
 
 
@@ -1367,6 +1399,14 @@ class SpeechPipeline:
         # cut at the comma and the continuation triggered a SEPARATE
         # spawn_worker — producing multiple sub-agent missions for one task.
         self._continuation_buffer: ContinuationBuffer = ContinuationBuffer()
+        # Autonomous drain timer for a silently-held continuation fragment. The
+        # ContinuationBuffer has no timer of its own (it only drops a stale
+        # fragment lazily on the next process() call); when a held fragment gets
+        # neither a continuation nor a clarifying question, this timer dispatches
+        # it to the brain after the grace window so it is never silently dropped
+        # at the session idle-timeout (AD-OE6; "Jarvis hört für immer zu" wedge
+        # 2026-06-19, session da25113a). See _arm_continuation_drain.
+        self._continuation_drain_task: asyncio.Task[None] | None = None
         # Continuation recombine (2026-06-16): re-attach a fast-follow utterance
         # to the in-flight turn. See ContinuationWindow + _maybe_recombine_continuation.
         _voice_cfg = getattr(self._config, "voice", None)
@@ -2232,23 +2272,24 @@ class SpeechPipeline:
         # must not punch through. The gate clears at the start of the next
         # session in `_state_loop` (line ~1726).
         hangup = getattr(self, "_hangup_event", None)
-        # A kind="completion" readback is a FRESH turn delivering the answer the
-        # user asked for — an offloaded background mission that finished after
-        # "auflegen" — so it must punch through the hangup gate (AD-OE5/OE6
-        # zero-silent-drop). A stale preamble / untagged late announcement stays
-        # dropped. Live bug 2026-06-14: a heavy research mission's result was
-        # silently dropped because the user hung up 13 s after the optimistic ACK.
-        is_completion = getattr(event, "kind", None) == "completion"
-        if hangup is not None and hangup.is_set() and not is_completion:
+        # A readback (kind in _READBACK_KINDS — "completion" or "subagent") is a
+        # FRESH turn delivering the answer the user asked for — an offloaded
+        # background mission/sub-agent that finished after "auflegen" — so it must
+        # punch through the hangup gate (AD-OE5/OE6 zero-silent-drop). A stale
+        # preamble / untagged late announcement stays dropped. Live bug
+        # 2026-06-14: a heavy research mission's result was silently dropped
+        # because the user hung up 13 s after the optimistic ACK.
+        is_readback = getattr(event, "kind", None) in _READBACK_KINDS
+        if hangup is not None and hangup.is_set() and not is_readback:
             log.info(
                 "Announcement nach Hangup unterdrückt: %r", event.text[:80]
             )
             return
-        # A completion readback IS the mission's answer — cancel any pending
-        # "still on it" heartbeats so a reassurance never lands AFTER the result
-        # (the success path does not publish OpenClawBackgroundCompleted, so the
-        # heartbeat is not otherwise drained on completion). 2026-06-19.
-        if is_completion:
+        # A completion / sub-agent readback IS the mission's answer — cancel any
+        # pending "still on it" heartbeats so a reassurance never lands AFTER the
+        # result (the success path does not publish OpenClawBackgroundCompleted,
+        # so the heartbeat is not otherwise drained on completion). 2026-06-19.
+        if is_readback:
             self._cancel_spawn_heartbeats()
         log.info(
             "📢 Announcement: %r (prio=%s lang=%s)",
@@ -2305,9 +2346,16 @@ class SpeechPipeline:
             getattr(self, "_turn_state", TurnTakingState.IDLE)
             in _USER_HOLDS_FLOOR_STATES
         ):
-            if is_preamble:
+            # A preamble or a "still on it" heartbeat (kind="progress") is only
+            # meaningful in the moment — once the user holds the floor it is
+            # stale, so DROP it (never defer/replay it after the user finishes or
+            # after the mission answer; events.py: progress = "droppable when
+            # stale"). Completion/readback below owes the user information and is
+            # deferred instead.
+            if is_preamble or getattr(event, "kind", None) == "progress":
                 log.info(
-                    "Announcement dropped — user holds the floor (preamble): %r",
+                    "Announcement dropped — user holds the floor (%s): %r",
+                    getattr(event, "kind", None) or "normal",
                     event.text[:80],
                 )
                 return
@@ -2365,6 +2413,18 @@ class SpeechPipeline:
             _announcement_spoken_kind(getattr(event, "kind", None)),
             getattr(event, "detail", None),
         )
+        # A finished sub-agent / mission readback (completion / subagent) hands
+        # the floor BACK to the user — drive the UI/orb into SPEAKING for its
+        # duration so the mascot animates. The out-of-band announcement path
+        # bypasses the turn-state machine, which is why a readback used to play
+        # with no visual "Jarvis is talking" signal (2026-06-19). Only readbacks
+        # animate (a preamble / progress nudge keeps its prior visual), and the
+        # restore is DETERMINISTIC — IDLE once the user has hung up, else
+        # LISTENING (the mic is still open). Not capturing a prior state keeps
+        # this race-free against a concurrently-flushed deferred announcement.
+        animate = is_readback and self._supervisor is not None
+        if animate:
+            await self._transition("SPEAKING")
         try:
             lang_code = None
             if event.language:
@@ -2378,6 +2438,10 @@ class SpeechPipeline:
             await self._player.play_chunks(chunks)
         except Exception as exc:  # noqa: BLE001
             log.warning("Announcement-Speak fehlgeschlagen: %s", exc)
+        finally:
+            if animate:
+                hungup = hangup is not None and hangup.is_set()
+                await self._transition("IDLE" if hungup else "LISTENING")
 
     async def _await_ack_turn_commit(self, grace_ms: int) -> bool:
         """Poll the turn-state for up to ``grace_ms``; True only if it stays
@@ -2613,7 +2677,7 @@ class SpeechPipeline:
                     text=cleaned,
                     language="de",
                     priority="normal",
-                    kind="completion",
+                    kind="subagent",
                 )
             )
             log.info(
@@ -2621,15 +2685,29 @@ class SpeechPipeline:
                 cleaned[:80],
             )
             return
-        # Document the completion readback in the session log — it is voiced
+        # Document the sub-agent readback in the session log — it is voiced
         # through this background path, not _speak, so it would otherwise be
-        # invisible in the Transcription view.
-        self._emit_spoken(cleaned, "de", SPOKEN_KIND_COMPLETION)
+        # invisible in the Transcription view. Tagged ``subagent`` so it renders
+        # on the attributed "Jarvis Sub-Agent / Output" track.
+        self._emit_spoken(cleaned, "de", SPOKEN_KIND_SUBAGENT)
+        # Re-arm the readback grace exactly like ``_on_announcement`` (:2386): a
+        # background result delivered through THIS direct path also hands the
+        # floor back to the user, so ``_active_session`` must keep the mic open
+        # afterward instead of idle-hanging-up seconds later (2026-06-19).
+        self._last_announcement_spoken_monotonic = time.monotonic()
         # Laufendes Playback stoppen damit die Ansage prompt durchkommt.
         try:
             self._player.stop()
         except Exception as exc:  # noqa: BLE001
             log.warning("Player-Stop vor Background-Ansage fehlgeschlagen: %s", exc)
+        # Animate the mascot/orb for this readback too (same as _on_announcement);
+        # restore DETERMINISTICALLY afterward — IDLE if the user hung up, else
+        # LISTENING. No prior-state capture, so this never races a concurrently
+        # flushed deferred announcement.
+        animate = self._supervisor is not None
+        hangup = getattr(self, "_hangup_event", None)
+        if animate:
+            await self._transition("SPEAKING")
         try:
             try:
                 chunks = self._tts.synthesize(cleaned, language_code="de-DE")
@@ -2638,6 +2716,10 @@ class SpeechPipeline:
             await self._player.play_chunks(chunks)
         except Exception as exc:  # noqa: BLE001
             log.warning("Background-completed Voice-Ansage failed: %s", exc)
+        finally:
+            if animate:
+                hungup = hangup is not None and hangup.is_set()
+                await self._transition("IDLE" if hungup else "LISTENING")
 
     async def _on_spawn_announcement(self, event: OpenClawAnnouncement) -> None:
         """Spawn-ACK ist auf User-Wunsch (2026-05-12) deaktiviert.
@@ -2690,8 +2772,8 @@ class SpeechPipeline:
         """Drop finished spawn-watchdog tasks; return the still-live ones.
 
         A watchdog counts as a "background mission in flight" only while it is
-        still counting down toward its single progress phrase. Once it has fired
-        (or been cancelled) it is ``done()`` and must no longer hold the voice
+        still running its bounded heartbeat sequence. Once the sequence is
+        exhausted (or it is cancelled) it is ``done()`` and must no longer hold the voice
         session open — otherwise the idle-timeout override in ``_active_session``
         and the keep-listening branch in ``_finish_after_response`` would keep
         the session in LISTENING *forever* after a force-spawn. In production the
@@ -2717,8 +2799,8 @@ class SpeechPipeline:
         timeout fired 40 s into a running CU mission; the mission kept
         clicking invisibly for two more minutes and spoke its failure
         announcement into a dead session). Bounded on both legs: watchdogs
-        self-remove after their single phrase, and the CU token is cleared in
-        the harness ``finally`` with a hard mission deadline."""
+        self-remove after their bounded heartbeat sequence, and the CU token is
+        cleared in the harness ``finally`` with a hard mission deadline."""
         if self._live_spawn_watchdogs():
             return True
         try:
@@ -2751,7 +2833,7 @@ class SpeechPipeline:
 
             pool = STILL_RUNNING_PHRASES.get(lang) or STILL_RUNNING_PHRASES["en"]
         except Exception:  # noqa: BLE001 — the heartbeat must never crash the loop
-            return ("Bin noch dran.", lang)
+            return ("Still working on it.", lang)
         recent = getattr(self, "_heartbeat_recent", None)
         choices = [p for p in pool if recent is None or p not in recent] or list(pool)
         choice = random.choice(choices)  # noqa: S311 — phrase variety, not crypto
@@ -2807,6 +2889,11 @@ class SpeechPipeline:
                             text=phrase,
                             language=lang,
                             priority="normal",
+                            # "progress" = droppable when stale: if the user
+                            # holds the floor when this lands, _on_announcement
+                            # DROPS it (never defers/replays a stale "still on
+                            # it" after the user finishes or after the answer).
+                            kind="progress",
                         )
                     )
                 except Exception:  # noqa: BLE001
@@ -2827,8 +2914,9 @@ class SpeechPipeline:
     def _cancel_spawn_heartbeats(self) -> None:
         """Cancel every pending spawn heartbeat.
 
-        Called when a mission delivers its actual answer (a ``kind="completion"``
-        readback) so Jarvis never says "still on it" right AFTER the result. The
+        Called when a mission delivers its actual answer (a readback —
+        ``kind="completion"`` or ``kind="subagent"``) so Jarvis never says "still
+        on it" right AFTER the result. The
         success path does not publish ``OpenClawBackgroundCompleted``, so the
         heartbeat is otherwise only drained by its own cap; this is the precise
         hook that silences it the moment the answer lands. Each cancelled task
@@ -3342,6 +3430,7 @@ class SpeechPipeline:
         # cancel its clarifying-question timer so no question fires after hangup.
         try:
             self._cancel_clarify_question()
+            self._cancel_continuation_drain()
             self._continuation_buffer.discard()
             win = getattr(self, "_continuation_window", None)
             if win is not None:
@@ -3671,6 +3760,7 @@ class SpeechPipeline:
                 # fragment can never leak into the next session.
                 try:
                     self._cancel_clarify_question()
+                    self._cancel_continuation_drain()
                     self._continuation_buffer.discard()
                     win = getattr(self, "_continuation_window", None)
                     if win is not None:
@@ -4567,10 +4657,12 @@ class SpeechPipeline:
         # on any classifier exception we dispatch the utterance as-is so the
         # user is never silently swallowed (AD-OE6).
         #
-        # A fresh utterance arrived → cancel any pending clarifying-question
-        # timer from a previous incomplete fragment: the user kept the floor, so
-        # the question must not fire on top of them.
+        # A fresh utterance arrived → cancel any pending clarifying-question OR
+        # continuation-drain timer from a previous incomplete fragment: the user
+        # kept the floor, so neither must fire on top of them (and the drain must
+        # not double-dispatch alongside this turn's join).
         self._cancel_clarify_question()
+        self._cancel_continuation_drain()
         try:
             coalesced = self._continuation_buffer.process(text, language=lang)
         except Exception:  # noqa: BLE001 — fail-open by contract
@@ -4591,7 +4683,20 @@ class SpeechPipeline:
             # reason keeps the silent-hold default (2026-06-09 mandate).
             reason = getattr(self._continuation_buffer, "last_reason", "")
             force_clarify = reason == REASON_TRAILING_ELLIPSIS
-            self._arm_clarify_question(lang, force=force_clarify)
+            armed = self._arm_clarify_question(lang, force=force_clarify)
+            if not armed:
+                # No clarifying question was scheduled for this held fragment
+                # (the silent-hold default for a non-trail-off incomplete with
+                # the clarify feature off). The ContinuationBuffer has no timer
+                # of its own, so without an autonomous flush the fragment hangs
+                # in LISTENING until the session idle-timeout silently discards
+                # it — the brain never sees it ("Jarvis hört für immer zu" wedge
+                # 2026-06-19, session da25113a: the complete tag question
+                # "…Montag, oder?" was held as a trailing conjunction and dropped
+                # 30 s later, never answered). Arm a drain timer that DISPATCHES
+                # the held fragment to the brain after the grace window so the
+                # user always gets an answer attempt (AD-OE6 zero-silent-drop).
+                self._arm_continuation_drain(lang)
             await self._set_turn_state(TurnTakingState.WAITING_FOR_COMPLETION)
             return True
         if coalesced != text:
@@ -5073,7 +5178,7 @@ class SpeechPipeline:
 
     # --- Clarifying-question timer (Zwischenfrage; AD-OE6 for the hold) ----- #
 
-    def _arm_clarify_question(self, lang: str, *, force: bool = False) -> None:
+    def _arm_clarify_question(self, lang: str, *, force: bool = False) -> bool:
         """Arm the clarifying-question timer for a buffered incomplete fragment.
 
         The ``ContinuationBuffer`` holds an open-ended fragment with NO active
@@ -5093,6 +5198,12 @@ class SpeechPipeline:
         (``REASON_TRAILING_ELLIPSIS``). All other incomplete reasons keep the
         silent-hold default, so the 2026-06-09 "don't interrogate me" mandate is
         preserved everywhere except a genuine trail-off.
+
+        Returns ``True`` iff a clarifying-question timer was actually armed.
+        ``_handle_utterance`` reads this to decide whether the held fragment
+        still needs an autonomous drain timer (the silent-hold path returns
+        ``False`` → it does), so a held fragment that gets no question is never
+        left to hang until the idle-timeout (AD-OE6; "Jarvis hört für immer zu").
         """
         self._cancel_clarify_question()
         cfg = getattr(self._config, "voice", None)
@@ -5108,11 +5219,11 @@ class SpeechPipeline:
             # No voice config OR feature off → safe default: stay silent (do NOT
             # interrogate the user). Only an explicit ``force`` (trail-off) or an
             # explicitly-enabled flag arms the question.
-            return
+            return False
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            return
+            return False
         wait_ms = int(getattr(cfg, "clarify_after_ms", 2500)) if cfg else 2500
         delay_s = max(0.05, wait_ms / 1000.0)
         # Remember the force flag so a deferred re-arm (floor guard in
@@ -5124,6 +5235,7 @@ class SpeechPipeline:
             self._clarify_question_fire(delay_s, lang),
             name="clarify-question",
         )
+        return True
 
     def _cancel_clarify_question(self) -> None:
         task = getattr(self, "_clarify_timer_task", None)
@@ -5187,6 +5299,95 @@ class SpeechPipeline:
                 await self._set_turn_state(TurnTakingState.LISTENING)
             except Exception:  # noqa: BLE001
                 log.debug("Clarify-question state reset failed", exc_info=True)
+
+    # --- Continuation drain timer (autonomous flush; AD-OE6 zero-silent-drop) - #
+
+    def _arm_continuation_drain(self, lang: str) -> None:
+        """Arm an autonomous drain timer for a silently-held continuation fragment.
+
+        The ``ContinuationBuffer`` holds an open-ended fragment with NO timer of
+        its own — it only drops a stale buffer lazily on the next ``process()``
+        call. When the held fragment is NOT a trail-off (so no clarifying
+        question is armed) AND no further utterance ever arrives, the fragment
+        would hang in LISTENING until the session idle-timeout silently discards
+        it, with the brain never called. Live wedge 2026-06-19 (session
+        da25113a): the complete tag question "…morgen ist ja Montag, oder?" was
+        classified as a trailing conjunction, held, and dropped ~30 s later —
+        Jarvis "listened forever" and never answered.
+
+        On fire, :meth:`_continuation_drain_fire` DISPATCHES the held fragment to
+        the brain (not a clarifying question, not a silent drop) so the user
+        always gets an answer attempt (AD-OE6). Cancelled the moment the next
+        utterance arrives (``_handle_utterance``); deferred while the user holds
+        the floor so it never pre-empts a continuation in progress. Fail-open: a
+        missing event loop (sync teardown / tests) is a no-op. The drain delay
+        matches the buffer's own discard deadline (``timeout_s``).
+        """
+        self._cancel_continuation_drain()
+        buf = getattr(self, "_continuation_buffer", None)
+        if buf is None or not buf.has_pending():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        # buf is non-None here (checked above) and ``timeout_s`` is a guaranteed
+        # property — match the drain delay to the buffer's own discard deadline.
+        delay_s = max(0.05, float(buf.timeout_s))
+        self._continuation_drain_task = loop.create_task(
+            self._continuation_drain_fire(delay_s, lang),
+            name="continuation-drain",
+        )
+
+    def _cancel_continuation_drain(self) -> None:
+        task = getattr(self, "_continuation_drain_task", None)
+        if task is not None and not task.done():
+            task.cancel()
+        self._continuation_drain_task = None
+
+    async def _continuation_drain_fire(self, delay_s: float, lang: str) -> None:
+        """Per-hold timer: a fragment was held for a continuation that never came.
+
+        After the grace window, dispatch the held fragment to the brain instead
+        of leaving it to rot until the idle-timeout silently discards it
+        (AD-OE6). Floor guard: while the user is ACTIVELY speaking the
+        continuation (``_DRAIN_HOLDS_FLOOR`` — USER_SPEAKING /
+        WAITING_FOR_FINAL_TRANSCRIPT) DEFER and re-arm, so the drain never
+        pre-empts a continuation in progress. It deliberately does NOT defer on
+        WAITING_FOR_COMPLETION (the held-and-idle state the drain exists to
+        resolve), so it can never be starved into the very silent-hang it fixes.
+        Failures are swallowed — a fallback must never crash the turn.
+        """
+        try:
+            await asyncio.sleep(delay_s)
+        except asyncio.CancelledError:
+            return
+        self._continuation_drain_task = None
+        buf = getattr(self, "_continuation_buffer", None)
+        if buf is None or not buf.has_pending():
+            # Continuation already arrived / buffer drained — nothing to flush.
+            return
+        if getattr(self, "_turn_state", TurnTakingState.IDLE) in _DRAIN_HOLDS_FLOOR:
+            log.info(
+                "Continuation drain deferred — user is speaking the continuation "
+                "(state=%s); re-arming so it can coalesce.",
+                self._turn_state.name,
+            )
+            self._arm_continuation_drain(lang)
+            return
+        fragment = buf.flush_pending()
+        if not fragment:
+            return
+        log.info(
+            "⏳→📤 Continuation grace expired (%.1fs) without a follow-up — "
+            "dispatching held fragment to the brain: %r",
+            delay_s,
+            fragment[:80],
+        )
+        try:
+            await self._handle_flushed_pending_text(fragment, lang)
+        except Exception as exc:  # noqa: BLE001 — fallback must never crash the turn
+            log.exception("Continuation drain dispatch failed: %s", exc)
 
     async def _complete_or_buffer_context_legacy_orphan(
         self, text: str, lang: str = "de"
@@ -6132,7 +6333,32 @@ class SpeechPipeline:
                             pass
                     return task.result()
                 now = time.monotonic()
-                stalled = (now - self._brain_last_progress) >= stall_s
+                # Active TTS playback is itself a liveness signal. After the
+                # brain's LAST token, _brain_streaming stays inside
+                # _await_playback reading a long answer aloud — many seconds for
+                # a long reply — and NOTHING bumps _brain_last_progress during
+                # that tail. Keying the stall purely on brain-token progress
+                # therefore guillotined the still-playing tail of a long answer
+                # mid-sentence at exactly stall_s after the last token (live bug
+                # 2026-06-19 16:27 "Wegzugsteuer": last token ~37 s, playback ran
+                # to ~64 s, the abort fired 30 s after the last token). While the
+                # player keeps writing audio sub-blocks (AudioPlayer.last_write_ns
+                # advances within the stall window) the turn is working, not
+                # wedged — so playback suspends BOTH the no-progress stall and the
+                # absolute ceiling below, exactly as an active computer_use loop
+                # suspends the ceiling. A genuinely wedged device leaves
+                # last_write_ns frozen, so the liveness guard still fires (and the
+                # dedicated device-wedge watchdog in _await_playback owns the fast
+                # path). getattr-fallbacks keep this resilient on __new__-built
+                # test fixtures that never set _player.
+                player = getattr(self, "_player", None)
+                last_write_ns = getattr(player, "last_write_ns", 0) or 0
+                playback_active = last_write_ns > 0 and (
+                    time.monotonic_ns() - last_write_ns
+                ) < (stall_s * 1_000_000_000)
+                stalled = (not playback_active) and (
+                    now - self._brain_last_progress
+                ) >= stall_s
                 # Pre-first-token "still-thinking" heartbeat: while the brain has
                 # made NO progress yet (a token / tool round / CU step would have
                 # advanced _brain_last_progress past the initial guard mark), keep
@@ -6161,7 +6387,11 @@ class SpeechPipeline:
                 long_tool_active = (
                     now - getattr(self, "_long_tool_last_activity", 0.0)
                 ) < stall_s
-                ceiling_hit = (not long_tool_active) and (now - start) >= ceiling_s
+                ceiling_hit = (
+                    (not long_tool_active)
+                    and (not playback_active)
+                    and (now - start) >= ceiling_s
+                )
                 if stalled or ceiling_hit:
                     raise TimeoutError
         finally:

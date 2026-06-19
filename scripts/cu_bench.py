@@ -264,6 +264,24 @@ def _catalog() -> list[BenchTask]:
             oracle=None,  # exit-code-only
             cleanup_procs=_TERMINAL_PROCS,
         ),
+        BenchTask(
+            # L2 regression: a pre-filled address bar must be REPLACED, not
+            # appended to. Without clear-before-type the second URL merges with
+            # the first (google.comexample.com) and "Example Domain" never loads,
+            # so the oracle fails. With L2 the field is cleared first and the page
+            # renders cleanly. This is the URL-mixing case the suite lacked.
+            id="address_bar_replace",
+            prompt=(
+                "Open Chrome and go to wikipedia.org. Then REPLACE the URL in "
+                "the address bar with example.com and go there. Finish once the "
+                "page with the heading 'Example Domain' is shown -- the address "
+                "must be exactly example.com, not a merge of the two URLs."
+            ),
+            timeout_s=200,
+            oracle=_oracle_uia_contains("example domain"),
+            cleanup_procs=_CHROME_PROCS,
+            slo_s=20.0,
+        ),
     ]
 
 

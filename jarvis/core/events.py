@@ -407,9 +407,9 @@ class AnnouncementRequested(Event):
     # frontier-speed Wave 0) marks throttled mid-mission milestone updates
     # from the Computer-Use loop ("Schritt 2 von 5 erledigt.") — spoken like
     # "info" but droppable when stale.
-    kind: Literal["preamble", "completion", "info", "progress"] | None = None  # noqa: UP037
+    kind: Literal["preamble", "completion", "subagent", "info", "progress"] | None = None  # noqa: UP037
     # Optional technical diagnostic forwarded to the transcript's spoken track
-    # (never spoken). A failed Computer-Use readback rides kind="completion"
+    # (never spoken). A failed Computer-Use readback rides kind="subagent"
     # with detail="exit 5 · <harness reason>" so the log shows the exit code
     # while the voice stays humanized. Mirrors ``SpeechSpoken.detail``.
     detail: str | None = None

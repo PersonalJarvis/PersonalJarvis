@@ -391,3 +391,25 @@ async def test_completion_readback_cancels_pending_heartbeat() -> None:
         "a heartbeat fired after the completion readback cancelled it"
     )
     assert pipe._spawn_watchdog_tasks == [], "cancelled heartbeat must self-remove"
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_dropped_not_deferred_while_user_holds_floor() -> None:
+    """A heartbeat that lands while the user holds the floor is DROPPED — not
+    spoken, not deferred. kind="progress" is "droppable when stale", so a stale
+    'still on it' can never be parked and flushed after the user finishes
+    speaking or after the mission answer (AD-OE5 / completion-overlap)."""
+    from jarvis.speech.pipeline import TurnTakingState
+
+    bus = EventBus()
+    pipe = _pipeline(bus, watchdog_delay_s=0.03)
+    pipe._turn_state = TurnTakingState.USER_SPEAKING  # user holds the floor
+
+    await bus.publish(OpenClawAnnouncement(action="bauen", target="x"))
+    await asyncio.sleep(0.2)  # heartbeat fires into _on_announcement
+
+    assert pipe._player.plays == [], "heartbeat was spoken over the user"
+    assert pipe._deferred_announcements == [], (
+        "stale heartbeat was deferred — kind='progress' must be DROPPED so it "
+        "never replays after the user finishes or after the answer"
+    )

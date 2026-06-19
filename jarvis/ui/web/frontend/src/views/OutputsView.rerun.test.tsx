@@ -11,7 +11,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { OutputsView } from "@/views/OutputsView";
-import type { OutputSummary } from "@/hooks/useOutputs";
+import type { ArtifactSummary, OutputSummary } from "@/hooks/useOutputs";
 
 // ViewHeader pulls in ChatsView, which subscribes to a WS client; null keeps
 // that effect a deterministic no-op in jsdom (same pattern as ClisView.test).
@@ -24,17 +24,30 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function installFetchMock(sessions: OutputSummary[]) {
+function installFetchMock(
+  sessions: OutputSummary[],
+  artifacts: ArtifactSummary[] = [],
+) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes("/artifacts")) {
-      return { ok: true, status: 200, json: async () => ({ files: [] }) };
+      return { ok: true, status: 200, json: async () => ({ files: artifacts }) };
     }
     if (url.includes("/plan")) {
       return {
         ok: true,
         status: 200,
         json: async () => ({ plan: null, steps: [] }),
+      };
+    }
+    if (url.includes("/capabilities")) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          native_file_actions: true,
+          platform: "win32",
+        }),
       };
     }
     if (url.includes("/api/outputs")) {
@@ -110,5 +123,35 @@ describe("OutputsView rerun button gating", () => {
     );
     expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Restart" })).toBeNull();
+  });
+});
+
+describe("OutputsView artifact actions", () => {
+  it("does not render a direct download action for saved mission artifacts", async () => {
+    installFetchMock(
+      [session({ slug: "artifact-slug", status: "success", mission_id: "m-a" })],
+      [
+        {
+          path: "tasks/019edf/artifacts/files/report.md",
+          size: 34_700,
+          mtime: 1_750_000_000,
+          is_text: true,
+          preview: "# Report",
+        },
+      ],
+    );
+
+    renderView();
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("tasks/019edf/artifacts/files/report.md"),
+      ).toBeDefined(),
+    );
+
+    expect(screen.queryByTitle("Download")).toBeNull();
+    expect(screen.getByTitle("Open in browser")).toBeDefined();
+    expect(screen.getByTitle("Open with default app")).toBeDefined();
+    expect(screen.getByTitle("Reveal in folder")).toBeDefined();
   });
 });

@@ -184,6 +184,41 @@ def test_bootstrap_job_factory_reaps_on_posix(monkeypatch: pytest.MonkeyPatch) -
     assert type(job).__name__ == "_PosixProcessGroupJobObject"
 
 
+# --- Spawn discipline: every worker routes through the containment helper ----
+# The behavioural property (start_new_session on POSIX) is pinned above for
+# ``create_worker_subprocess`` itself. These pin that each worker ROUTES its
+# spawn through that helper instead of calling ``asyncio.create_subprocess_exec``
+# directly — a direct spawn skips start_new_session on POSIX, leaving the worker
+# in the orchestrator's process group so the killpg reaper could signal the
+# orchestrator itself (H3, DEEP-DIVE-AUDIT-2026-06-19). Source-level because
+# driving each worker's full async-generator spawn needs a live worktree + job
+# object + brain config; the helper's POSIX behaviour is already proven above.
+
+
+def _worker_source(module) -> str:
+    from pathlib import Path
+
+    return Path(module.__file__).read_text(encoding="utf-8")
+
+
+def test_gemini_worker_routes_spawn_through_containment_helper() -> None:
+    from jarvis.missions.workers import gemini_worker
+
+    src = _worker_source(gemini_worker)
+    assert "create_worker_subprocess(" in src
+    # The trailing "(" distinguishes a real call site from a docstring mention
+    # of `asyncio.create_subprocess_exec` (which has no immediate paren).
+    assert "asyncio.create_subprocess_exec(" not in src
+
+
+def test_codex_worker_routes_spawn_through_containment_helper() -> None:
+    from jarvis.missions.workers import codex_worker
+
+    src = _worker_source(codex_worker)
+    assert "create_worker_subprocess(" in src
+    assert "asyncio.create_subprocess_exec(" not in src
+
+
 def test_bootstrap_job_factory_uses_win32_impl_on_windows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

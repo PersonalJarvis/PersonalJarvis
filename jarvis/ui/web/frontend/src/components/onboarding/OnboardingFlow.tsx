@@ -36,10 +36,16 @@ const REGISTRY: Record<string, (p: StepProps) => JSX.Element> = {
 // the silent fallback div instead of a real step.
 export const STEP_KEYS = Object.keys(REGISTRY);
 
-export function OnboardingFlow({ onb }: { onb: ReturnType<typeof useOnboarding> }) {
+export function OnboardingFlow({
+  onb,
+  initialStep,
+}: {
+  onb: ReturnType<typeof useOnboarding>;
+  initialStep?: string;
+}) {
   const t = useT();
   const steps = onb.state?.steps ?? ["welcome", "finish"];
-  const initialIdx = Math.max(0, steps.indexOf(onb.state?.current_step ?? "welcome"));
+  const initialIdx = Math.max(0, steps.indexOf(initialStep ?? onb.state?.current_step ?? "welcome"));
   const [idx, setIdx] = useState(initialIdx);
   const [skipped, setSkipped] = useState<string[]>(onb.state?.skipped_steps ?? []);
 

@@ -11,8 +11,10 @@ dialog never auto-opens again. The user can still re-open it manually
 from the status pill.
 
 Scope of this module:
-  * One file on disk: ``data/setup_state.json`` (relative to CWD,
-    which equals the repo root at runtime).
+  * One file on disk: ``<repo-root>/data/setup_state.json``, anchored to
+    the installed package (NOT ``os.getcwd()`` — the runtime CWD is not a
+    reliable repo-root and a CWD-relative path re-showed the first-run guide
+    on every restart).
   * Pure functional API — no singletons, no background threads, no
     event-bus integration.
   * Atomic writes via the same tempfile + ``os.replace`` pattern used
@@ -43,18 +45,24 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_STATE_PATH = Path("data") / "setup_state.json"
+# Anchored to the repo root the package lives in — NOT os.getcwd(). The desktop
+# app does not reliably launch with the repo root as its CWD: the autostart
+# Scheduled Task sets a WorkingDirectory, but a manual start / restart-app
+# inherits the user home (observed live CWD: C:\Users\<user>). A CWD-relative
+# path made this one-shot "onboarding complete" flag resolve to a different file
+# per start method, so the flag written by one start was invisible to the next
+# and the first-run setup guide re-appeared on every restart. parents[2] mirrors
+# jarvis.core.config.PROJECT_ROOT (this file is jarvis/setup/state.py).
+_DEFAULT_STATE_PATH = Path(__file__).resolve().parents[2] / "data" / "setup_state.json"
 
 
 def state_path(override: Path | None = None) -> Path:
     """Resolve the state-file location.
 
     Returns ``override`` when supplied (used by unit tests with
-    ``tmp_path``), otherwise the package default
-    ``data/setup_state.json`` relative to the current working
-    directory. At runtime the CWD is always the repo root because the
-    Desktop App is launched from there; in tests the helper is fed
-    an explicit absolute path.
+    ``tmp_path``), otherwise the package default — an absolute path
+    anchored to the repo root the package lives in, so it is identical
+    regardless of the process working directory.
     """
     return override if override is not None else _DEFAULT_STATE_PATH
 

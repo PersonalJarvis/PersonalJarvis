@@ -165,7 +165,8 @@ _SYSTEM_PROMPT = (
     "  {\"action\": \"click_element\", \"name\": \"<UI element label>\"}\n"
     "  {\"action\": \"click\",         \"x\": <int>, \"y\": <int>, "
     "\"target\": \"<2-6 words: the element you aim at>\"}\n"
-    "  {\"action\": \"type\",          \"text\": \"<string>\"}\n"
+    "  {\"action\": \"type\",          \"text\": \"<string>\", "
+    "\"clear_first\": <true|false, optional>}\n"
     "  {\"action\": \"key\",           \"key\": \"<enter|tab|esc|...>\"}\n"
     "  {\"action\": \"scroll\",        \"direction\": \"<up|down|left|right>\", "
     "\"amount\": <int notches, default 3>}\n"
@@ -207,7 +208,11 @@ _SYSTEM_PROMPT = (
     "button\"): a zoomed verification pass uses it to re-locate the exact "
     "element and silently corrects your coordinates before clicking.\n"
     "* To type into a field: first focus it (click_element the field, or "
-    "click it), then ``type``. Never type blindly into an unfocused screen.\n"
+    "click it), then ``type``. Never type blindly into an unfocused screen. "
+    "If the field already holds text you must REPLACE (an address bar with a "
+    "URL, a search box with an old query), set \"clear_first\": true on the "
+    "type action -- it selects all and overwrites, so you never get a mixed "
+    "value like google.comgmail.com.\n"
     "* LITERAL DICTATION: when the goal tells you to type, say, write, or enter "
     "specific words (e.g. 'type hello hello hello', 'say X', 'write Y'), the "
     "``type`` action's text MUST be exactly those words -- copy them verbatim. "
@@ -230,7 +235,15 @@ _SYSTEM_PROMPT = (
     "settle.\n"
     "* Do NOT batch past an unrevealed UI: after ``open_app`` or any action "
     "that changes the screen, STOP the batch and let the next screenshot "
-    "show the result. When unsure, return a single action.\n\n"
+    "show the result. When unsure, return a single action.\n"
+    "* EXAMPLE BATCH -- a browser already shows a filled address bar; go to a "
+    "new site in ONE call (the bar, its current value, and Enter are all known "
+    "from the current screenshot, so no fresh screenshot is needed between):\n"
+    "      [{\"action\": \"type\", \"text\": \"example.com\", "
+    "\"clear_first\": true},\n"
+    "       {\"action\": \"key\", \"key\": \"enter\"}]\n"
+    "  That is 1 LLM call instead of 3. Default to batching whenever every "
+    "target is already visible -- it is the single biggest latency win.\n\n"
     "APP LAUNCH:\n"
     "* Use ``open_app`` for launch goals (\"open Spotify\", \"oeffne den "
     "Rechner\"). Common names: \"spotify\", \"calc\", \"notepad\", "
@@ -368,6 +381,10 @@ def _parse_action(raw: str) -> dict[str, Any]:
         if not isinstance(text, str):
             raise CULoopError("type action requires a string text field")
         obj["text"] = text
+        # Clear-before-type (L2 / URL-mixing fix): optional bool. When true the
+        # dispatcher selects all existing field content before typing so the new
+        # text REPLACES it instead of appending. Absent => today's append path.
+        obj["clear_first"] = bool(obj.get("clear_first", False))
     elif action == "key":
         # Keyboard key / combo press (e.g. Enter to submit a search, Ctrl+A).
         # Accept {"key": "enter"} (single) or {"keys": ["ctrl","a"]} (combo);
@@ -520,6 +537,10 @@ def _validate_action_dict(obj: Any) -> dict[str, Any]:
         if not isinstance(text, str):
             raise CULoopError("type action requires a string text field")
         obj["text"] = text
+        # Clear-before-type (L2 / URL-mixing fix): optional bool. When true the
+        # dispatcher selects all existing field content before typing so the new
+        # text REPLACES it instead of appending. Absent => today's append path.
+        obj["clear_first"] = bool(obj.get("clear_first", False))
     elif action == "key":
         # Keyboard key / combo press (e.g. Enter to submit a search, Ctrl+A).
         # Accept {"key": "enter"} (single) or {"keys": ["ctrl","a"]} (combo);
@@ -602,10 +623,54 @@ _THINK_TIMEOUT_CAP_S = 10.0
 
 
 def _think_timeout_s(ctx: ComputerUseContext) -> float:
-    """Model-call timeout: the configured per_step value, capped at the named
-    think ceiling (no more silent blanket cap over every phase)."""
+    """Model-call timeout: the configured per_step value, capped at the think
+    ceiling. The ceiling is ``ctx.think_timeout_cap_s`` when present (tunable
+    via the benchmark), else the legacy ``_THINK_TIMEOUT_CAP_S`` (10.0)."""
     cfg_v = float(getattr(ctx, "per_step_timeout_s", 30.0) or 30.0)
-    return max(0.001, min(cfg_v, _THINK_TIMEOUT_CAP_S))
+    cap = float(getattr(ctx, "think_timeout_cap_s", _THINK_TIMEOUT_CAP_S)
+                or _THINK_TIMEOUT_CAP_S)
+    return max(0.001, min(cfg_v, cap))
+
+
+def _scaled_settle(base: float, ctx: ComputerUseContext) -> float:
+    """Scale a fixed settle wait by ``ctx.settle_scale`` (L8 latency lever).
+
+    Default scale 1.0 (or a ctx without the knob) returns ``base`` unchanged,
+    so existing timing is byte-for-byte preserved. A lower scale trims dead
+    time between a focusing click/keystroke and the next action; the cu_bench
+    harness is the proof gate before lowering it in production.
+    """
+    return base * float(getattr(ctx, "settle_scale", 1.0))
+
+
+def _should_use_fast_step_model(
+    action_text: str, control_labels: list[str], fast_model: str
+) -> bool:
+    """Whether a step is trivial enough to route to a cheaper model (L9).
+
+    Returns True ONLY when:
+
+    * a non-empty ``fast_model`` is configured (empty disables routing —
+      the default and today's behaviour, a strict no-op), AND
+    * the model's chosen action is a deterministic ``click_element`` whose
+      target name (``action_text``) matches one of the known accessibility
+      control labels (``control_labels``).
+
+    A pixel click (no element name) or a name that is not a known label is
+    considered ambiguous and is never fast-routed — grounding stays on the
+    full model. Matching is case- and surrounding-whitespace-insensitive.
+
+    This is a pure predicate. It is intentionally NOT wired into the live
+    per-step model selection yet (that touches BrainManager provider routing
+    and is a reliability risk); see the ``TODO(L9 live-gated)`` marker at the
+    model-dispatch site.
+    """
+    if not fast_model:
+        return False
+    needle = action_text.strip().casefold()
+    if not needle:
+        return False
+    return any(needle == label.strip().casefold() for label in control_labels)
 
 
 def _internal_deadline_s(timeout_s: float) -> float:
@@ -742,17 +807,20 @@ def _capture_monitor_geometry() -> tuple[int, int, int, int]:
     origin and dimensions atomically consistent (no second GetForegroundWindow
     that could read a different monitor).
 
-    Returns (0, 0, 0, 0) on any failure or on non-Windows hosts. Callers must
-    treat width/height == 0 as "unknown" and fall back to passing the model
-    coordinates through unscaled (correct for headless/Linux: no GUI to click,
-    and no hard win32 dependency -- cloud-first doctrine).
+    On non-Windows hosts the win32 import fails and we fall back to mss monitor
+    geometry (B1, DEEP-DIVE-AUDIT-2026-06-19) so a real macOS/Linux DESKTOP
+    gets correctly-scaled clicks instead of the model's 0-1000 coords being
+    used as raw pixels (which confined every off-Windows click to the top-left
+    1000x1000 px square). Returns (0, 0, 0, 0) only on genuine failure or when
+    no display/mss is present (headless); callers treat width/height == 0 as
+    "unknown" and pass the model coordinates through unscaled.
     """
     try:
         import win32api  # noqa: PLC0415
         import win32con  # noqa: PLC0415
         import win32gui  # noqa: PLC0415
-    except Exception:  # noqa: BLE001
-        return (0, 0, 0, 0)
+    except Exception:  # noqa: BLE001 — non-Windows host: use the mss fallback
+        return _mss_monitor_geometry()
     try:
         hwnd = win32gui.GetForegroundWindow()
         if not hwnd:
@@ -762,6 +830,39 @@ def _capture_monitor_geometry() -> tuple[int, int, int, int]:
         left, top, right, bottom = info["Monitor"]
         return (int(left), int(top), int(right - left), int(bottom - top))
     except Exception:  # noqa: BLE001
+        return (0, 0, 0, 0)
+
+
+def _mss_monitor_geometry() -> tuple[int, int, int, int]:
+    """Non-Windows fallback for ``_capture_monitor_geometry`` (B1, 2026-06-19).
+
+    Reads the foreground/primary monitor geometry from mss -- the SAME source
+    the screenshot capture uses (``select_capture_monitor``) -- so
+    ``_resolve_click_pixel`` can scale the model's 0-1000 coords to real pixels
+    on a macOS/Linux DESKTOP. Returns (0, 0, 0, 0) when mss or a display is
+    absent (genuinely headless / cloud-first base install), which keeps the
+    caller's safe pass-through path.
+    """
+    try:
+        import mss  # noqa: PLC0415
+
+        from jarvis.vision.screenshot import select_capture_monitor  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 — desktop extras absent (cloud-first base)
+        return (0, 0, 0, 0)
+    try:
+        with mss.mss() as sct:
+            monitors = sct.monitors
+            if len(monitors) < 2:
+                return (0, 0, 0, 0)
+            target = select_capture_monitor(monitors, strategy="foreground")
+            return (
+                int(target["left"]),
+                int(target["top"]),
+                int(target["width"]),
+                int(target["height"]),
+            )
+    except Exception:  # noqa: BLE001 — mss/display errors are diverse
+        log.debug("[cu] mss monitor geometry fallback failed", exc_info=True)
         return (0, 0, 0, 0)
 
 
@@ -840,7 +941,9 @@ def _select_fast_model(manager: Any, provider: Any) -> str | None:
 _CU_IMAGE_MAX_BYTES = 300_000
 
 
-async def _load_observation_image(obs: Observation) -> ImageBlock | None:
+async def _load_observation_image(
+    obs: Observation, max_bytes: int = _CU_IMAGE_MAX_BYTES,
+) -> ImageBlock | None:
     """Read the observation's screenshot and cap it for the model payload.
 
     Returns ``None`` when the observation has no screenshot on disk. Raises
@@ -853,7 +956,7 @@ async def _load_observation_image(obs: Observation) -> ImageBlock | None:
     from jarvis.vision.image_budget import cap_image_b64  # noqa: PLC0415
 
     mime, image_b64 = await _read_observation_image_b64(obs)
-    mime, image_b64 = cap_image_b64(mime, image_b64, _CU_IMAGE_MAX_BYTES)
+    mime, image_b64 = cap_image_b64(mime, image_b64, max_bytes)
     return ImageBlock(mime=mime, data_b64=image_b64, source_hash=obs.screenshot_hash)
 
 async def _call_brain(
@@ -899,6 +1002,11 @@ async def _call_brain(
         return str(result)
 
     # Production: direct provider dispatch.
+    # TODO(L9 live-gated): when ``ctx.fast_step_model`` is set and the chosen
+    # action is a trivial click_element on a known control label (see
+    # ``_should_use_fast_step_model``), select that cheaper model here instead
+    # of the active provider. Not wired yet — it touches BrainManager provider
+    # routing and is a reliability risk; the knob + pure predicate ship first.
     manager = ctx.brain_manager
     if all(hasattr(manager, n) for n in ("_get_brain", "active_provider")):
         from jarvis.brain.streaming import aggregate  # noqa: PLC0415
@@ -927,7 +1035,10 @@ async def _call_brain(
                 if obs is None or not obs.screenshot_path:
                     continue
                 try:
-                    block = await _load_observation_image(obs)
+                    block = await _load_observation_image(
+                        obs,
+                        max_bytes=getattr(ctx, "image_max_bytes", _CU_IMAGE_MAX_BYTES),
+                    )
                     if block is None:
                         continue
                     images.append(block)
@@ -1469,6 +1580,37 @@ async def _verify_goal_done(
             )
             return (True, f"foreground window title proves '{app_token}' is open")
 
+    # L6 deterministic-done via field value: a navigation/value goal whose
+    # target text already sits in an editable field is proven without the LLM
+    # judge. Conservative + skip-only, exactly like the app-token branch above:
+    # it gates OUT media/submit goals (they need the motion verifier) and
+    # compute goals (they need the result judge), only fires on a clear textual
+    # field-value match (``_value_satisfies_goal``), and otherwise falls
+    # through — so it can SKIP the judge but never declare a done it isn't
+    # certain of (a false-positive done is a reliability regression).
+    if not _VERIFY_GOAL_RE.search(user_goal or "") and not _goal_needs_result(
+        user_goal
+    ):
+        # The step observation is screenshot-mode (empty nodes); editable field
+        # VALUES live only in the UIA tree, so enumerate it here. This runs only
+        # at goal-end (rare), so the extra enumeration is cheap. On any failure
+        # the match is skipped and the LLM judge below takes over (skip-only).
+        try:
+            ui_obs = await asyncio.wait_for(
+                _get_ui_tree_source().observe(), timeout=_UIA_TIMEOUT_S,
+            )
+            nodes = getattr(ui_obs, "nodes", ()) or ()
+        except Exception:  # noqa: BLE001
+            nodes = ()
+        matched = _matching_field_value(nodes, user_goal)
+        if matched:
+            log.info(
+                "[cu] done verified deterministically: field value %r matches "
+                "the goal %r — skipping the LLM judge",
+                matched[:60], (user_goal or "")[:60],
+            )
+            return (True, f"an editable field's value {matched!r} proves the goal")
+
     # Compute goals (calculator) are a SINGLE-frame check: the model reads the
     # result display and compares it to the arithmetic it computes itself. No
     # motion / two-frame gap needed (BUG-CU-RESULT).
@@ -1816,9 +1958,98 @@ def _get_ui_tree_source() -> Any:
     return _UI_TREE_SOURCE
 
 
-async def _foreground_clickable_labels(timeout_s: float, max_n: int = 28) -> list[str]:
+_EDITABLE_UIA_ROLES = frozenset({"Edit", "Document", "ComboBox"})
+
+
+def _field_values_hint(nodes: tuple) -> str:
+    """Model-facing hint (L3): editable controls that already HOLD text, so the
+    model can decide clear_first / done instead of typing blindly into a filled
+    field. Returns ``""`` when nothing has a value (additive: the hint only ever
+    appends). Values are truncated and ride only in the model message -- never a
+    log line or TTS (AP-2: a field can hold a typed secret)."""
+    lines: list[str] = []
+    for node in nodes or ():
+        if getattr(node, "role", "") not in _EDITABLE_UIA_ROLES:
+            continue
+        val = (getattr(node, "value", "") or "").strip()
+        if not val:
+            continue
+        nm = (getattr(node, "name", "") or "").strip()
+        lines.append(f'"{nm or "field"}" currently contains "{val[:120]}"')
+        if len(lines) >= 8:
+            break
+    if not lines:
+        return ""
+    return ("\n\nFIELD CONTENTS (a field already holding text -- to REPLACE it, "
+            "set clear_first on the type action):\n" + "\n".join(lines))
+
+
+def _matching_field_value(nodes: tuple, goal_text: str) -> str:
+    """The raw value of the first editable field whose normalized text proves
+    the goal (see :func:`_value_satisfies_goal`), or ``""`` when none does.
+
+    Returns the ORIGINAL (un-normalized) value so callers can quote it in a
+    proof/log line. Pure -- never raises."""
+    goal = _normalize_for_value_match(goal_text)
+    if not goal:
+        return ""
+    for node in nodes or ():
+        if getattr(node, "role", "") not in _EDITABLE_UIA_ROLES:
+            continue
+        raw = getattr(node, "value", "") or ""
+        val = _normalize_for_value_match(raw)
+        if len(val) < 3:
+            continue
+        # Exact equality always proves it. A SUBSTRING match (the field value
+        # appears inside the goal sentence) is only trusted when the value is
+        # specific enough to not be a coincidental generic word: URL-like (has a
+        # dot, e.g. "example.com") or reasonably long (>= 6 chars). A short
+        # generic token like "news" sitting in a search box must NOT confirm a
+        # "go to the news site" goal before the navigation actually happened
+        # (that would be a false-positive done -- a reliability regression).
+        if val == goal or (val in goal and ("." in val or len(val) >= 6)):
+            return str(raw).strip()
+    return ""
+
+
+def _value_satisfies_goal(nodes: tuple, goal_text: str) -> bool:
+    """CONSERVATIVE deterministic done-check (L6): True only when an editable
+    field's current text clearly proves the goal is met, so the loop can skip
+    an LLM done-judge for that one unambiguous case.
+
+    Fires only when some node with an editable role (``_EDITABLE_UIA_ROLES``:
+    Edit / Document / ComboBox) has a non-empty ``value`` that, normalized
+    (URL scheme + ``www.`` stripped, casefolded, whitespace-trimmed), is
+    contained in or equals the normalized goal target. A non-editable node
+    (Button, Text) never counts, and a value shorter than 3 chars is treated
+    as too ambiguous to confirm done on.
+
+    Returns False on ANY ambiguity. A false-positive "done" the loop never
+    verified is a reliability regression, so this errs hard toward False.
+    """
+    return bool(_matching_field_value(nodes, goal_text))
+
+
+def _normalize_for_value_match(text: str) -> str:
+    """Lowercase, trim, and strip a leading URL scheme + ``www.`` so a field
+    value like ``https://example.com`` matches a goal phrased ``go to
+    example.com``. Pure string hygiene -- never raises."""
+    s = (text or "").strip().casefold()
+    for scheme in ("https://", "http://"):
+        if s.startswith(scheme):
+            s = s[len(scheme):]
+            break
+    if s.startswith("www."):
+        s = s[len("www."):]
+    return s.strip("/").strip()
+
+
+async def _foreground_clickable_labels(
+    timeout_s: float, max_n: int = 28,
+) -> tuple[list[str], str]:
     """Enumerate the foreground window's clickable UIA control names so the
-    executor can click_element by an EXACT real name. Returns ``[]`` on any
+    executor can click_element by an EXACT real name, AND build the L3 field-
+    value hint from the SAME enumeration. Returns ``([], "")`` on any
     failure OR when the foreground exposes no usable labels (media players,
     games, canvases) -- that empty path self-gates the loop back to pixel
     clicks, so no app allowlist is needed. Never raises.
@@ -1831,7 +2062,7 @@ async def _foreground_clickable_labels(timeout_s: float, max_n: int = 28) -> lis
         obs = await asyncio.wait_for(_get_ui_tree_source().observe(), timeout=timeout_s)
     except (TimeoutError, Exception) as exc:  # noqa: BLE001
         log.debug("[cu] UI-tree label enumeration failed (non-fatal): %s", exc)
-        return []
+        return [], ""
     names: list[str] = []
     for node in getattr(obs, "nodes", ()) or ():
         if not getattr(node, "enabled", True):
@@ -1844,7 +2075,10 @@ async def _foreground_clickable_labels(timeout_s: float, max_n: int = 28) -> lis
             names.append(nm)
         if len(names) >= max_n:
             break
-    return names
+    # L3: build the field-value hint from the SAME enumeration -- obs.nodes carry
+    # the editable values here. The step _observe runs in screenshot-mode with
+    # EMPTY nodes, so this enumeration is the ONLY live source of field values.
+    return names, _field_values_hint(getattr(obs, "nodes", ()) or ())
 
 
 # ---------------------------------------------------------------------------
@@ -2197,7 +2431,7 @@ async def _click_with_refine(
         clicked.append((x, y))
         if not verify_enabled or pre is None or verify_bbox is None:
             return ok, last_msg
-        await asyncio.sleep(_CLICK_VERIFY_SETTLE_S)
+        await asyncio.sleep(_scaled_settle(_CLICK_VERIFY_SETTLE_S, ctx))
         post = await asyncio.to_thread(_grab_region_jpeg, verify_bbox)
         if post is None or post != pre:
             # Something near the click visibly reacted (or we cannot tell) —
@@ -2263,9 +2497,30 @@ async def _execute_action(
         tool = tools.get("type_text")
         if tool is None:
             return False, "type_text tool not wired"
+        # Clear-before-type (L2 / URL-mixing fix): when the model marks the
+        # field as one to REPLACE (address bars, search boxes), select-all
+        # first so the typed text overwrites the existing content instead of
+        # appending to it. Typing over a full selection replaces it -- no
+        # separate Delete needed. Additive: clear_first absent/False => the
+        # exact legacy path below runs unchanged.
+        if obj.get("clear_first"):
+            hotkey_tool = tools.get("hotkey")
+            if hotkey_tool is not None:
+                try:
+                    await asyncio.wait_for(
+                        executor.execute(
+                            hotkey_tool, {"keys": ["ctrl", "a"]},
+                            user_utterance="computer-use", trace_id=trace_id,
+                        ),
+                        timeout=_ACT_TIMEOUT_S,
+                    )
+                except TimeoutError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    return False, f"clear-before-type crash: {type(exc).__name__}: {exc}"
         # Let a freshly-focused input settle before typing (anti leading-char
         # drop on webview/Tauri terminals; CU typo bug 2026-06-15).
-        await asyncio.sleep(_PRE_TYPE_SETTLE_S)
+        await asyncio.sleep(_scaled_settle(_PRE_TYPE_SETTLE_S, ctx))
         try:
             res = await asyncio.wait_for(
                 executor.execute(
@@ -2672,7 +2927,11 @@ async def _run_screenshot_loop(
             return
         # Collect the enumeration result NOW so no task dangles on any of the
         # early-return paths below (_foreground_clickable_labels never raises).
-        control_labels = await labels_task
+        _enum = await labels_task
+        if isinstance(_enum, tuple):
+            control_labels, field_values_hint = _enum
+        else:  # tolerate a list-only mock (tests monkeypatch this enumeration)
+            control_labels, field_values_hint = _enum, ""
         await _profile_phase(
             ctx, phase="observe", step_idx=step_idx, t0=t_observe, acc=phase_ms,
         )
@@ -2730,6 +2989,12 @@ async def _run_screenshot_loop(
                 "names -- do NOT pixel-guess these): "
                 + ", ".join(f'"{n}"' for n in control_labels)
             )
+        # L3: append what editable fields already HOLD (address bar / search box)
+        # so the model can decide clear_first/done instead of typing blindly. The
+        # hint is built from the UIA label enumeration (the step _observe runs in
+        # screenshot-mode with EMPTY nodes -- that path can't carry values).
+        # Additive: appends only when a field actually has a value.
+        controls_hint += field_values_hint
 
         # Plan-first: generate the ordered plan once, after the first
         # screenshot, for every MULTI-STEP goal -- music/search goals (the

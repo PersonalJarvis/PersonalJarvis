@@ -39,6 +39,10 @@ class ComputerUseContext:
     kill_switch: KillSwitch | None = None
     step_budget: int = 100  # generous default; see ComputerUseConfig.step_budget
     per_step_timeout_s: float = 30.0
+    think_timeout_cap_s: float = 10.0  # L10: tunable model-call ceiling (sec)
+    image_max_bytes: int = 300_000  # L7: tunable per-screenshot byte budget
+    settle_scale: float = 1.0  # L8: multiplier on the loop's fixed settle waits
+    fast_step_model: str = ""  # L9: cheaper model id for trivial steps ("" = off)
     plan_model_override: str | None = None
     verify_after_each_step: bool = True
     max_replans: int = 2                    # from ADR-0008; configurable
@@ -162,6 +166,10 @@ def clear_cu_suppression() -> None:
 _RELOADABLE_FIELDS: tuple[str, ...] = (
     "step_budget",
     "per_step_timeout_s",
+    "think_timeout_cap_s",
+    "image_max_bytes",
+    "settle_scale",
+    "fast_step_model",
     "max_replans",
     "verify_after_each_step",
     "announce_progress",

@@ -201,7 +201,24 @@ def is_incomplete(text: str | None, language: str = "") -> IncompleteVerdict | N
     lang = _detect_language(tokens, language)
 
     if last in _CONJUNCTIONS:
-        return IncompleteVerdict(reason=REASON_CONJUNCTION, marker=last, language=lang)
+        # A trailing conjunction CLOSED by a question mark is a tag/closing
+        # question ("…, oder?" / "…, right?" / "…, und?") — semantically
+        # COMPLETE, not an open continuation. The tokenizer strips punctuation,
+        # so the raw trailing "?" is the only disambiguator: a BARE trailing
+        # "oder" (no "?") stays a genuine open conjunction ("Nimm den Bus oder"
+        # → "…oder die Bahn"). Without this exemption a complete tag question is
+        # held by the ContinuationBuffer and — if the user then says nothing —
+        # never reaches the brain (live "Jarvis hört für immer zu" wedge
+        # 2026-06-19, session da25113a: "…morgen ist ja Montag, oder?" buffered,
+        # never dispatched, discarded at the session idle-timeout).
+        # ``rstrip()`` (ASCII-whitespace only) is sufficient here: STT emits the
+        # bare "?" as the final glyph — it does not append trailing emoji or
+        # exotic whitespace after terminal punctuation — so the "?" is the last
+        # non-space character whenever the speaker closed with a tag question.
+        if not text.rstrip().endswith("?"):
+            return IncompleteVerdict(
+                reason=REASON_CONJUNCTION, marker=last, language=lang
+            )
 
     determiners = _EN_DETERMINERS if lang == "en" else _DE_DETERMINERS
     if last in determiners:

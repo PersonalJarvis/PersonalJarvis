@@ -24,7 +24,11 @@ import time
 from pathlib import Path
 
 import numpy as np
-import sounddevice as sd
+
+try:
+    import sounddevice as sd
+except Exception:  # noqa: BLE001 — sounddevice/PortAudio (libportaudio2) absent (headless/slim)
+    sd = None  # type: ignore[assignment]
 
 from jarvis.audio.capture import MicrophoneCapture, pcm_bytes_to_np
 from jarvis.audio.chime import CHIME_PCM, CHIME_SAMPLE_RATE

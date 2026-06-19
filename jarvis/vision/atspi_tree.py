@@ -284,6 +284,7 @@ class AtspiTreeSource:
                 bounds=n.bounds,
                 enabled=n.enabled,
                 parent_index=n.parent_index,
+                value=n.value,
             )
             for n in raw
         ]
@@ -491,6 +492,16 @@ def _atspi_flatten(
     except Exception:  # noqa: BLE001
         return
 
+    # L3 value-read: editable text via the AT-SPI Text interface. Optional --
+    # buttons/labels/containers have no Text iface -> "" (graceful; never raises).
+    value = ""
+    try:
+        query_text = getattr(element, "queryText", None)
+        if callable(query_text):
+            value = str(query_text().getText(0, -1) or "")
+    except Exception:  # noqa: BLE001
+        value = ""
+
     my_index = len(out)
     out.append(RawNode(
         role=role,
@@ -501,6 +512,7 @@ def _atspi_flatten(
         is_offscreen=False,
         depth=depth,
         parent_index=parent_index,
+        value=value,
     ))
 
     if depth >= max_depth:

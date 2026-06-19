@@ -43,6 +43,7 @@ export const KNOWN_SPOKEN_KINDS = [
   "stt_unavailable",
   "privacy",
   "completion",
+  "subagent",
   "action_done",
   "backchannel",
   "announcement",

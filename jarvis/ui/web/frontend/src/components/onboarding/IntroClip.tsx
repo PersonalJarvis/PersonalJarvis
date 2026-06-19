@@ -1,4 +1,4 @@
-import { MascotGigi } from "@/components/MascotGigi";
+import { IntroSequence } from "./IntroSequence";
 
 export function IntroClip({ src }: { src?: string }) {
   if (src && src.trim().length > 0) {
@@ -12,9 +12,5 @@ export function IntroClip({ src }: { src?: string }) {
       />
     );
   }
-  return (
-    <div className="flex aspect-video w-full items-center justify-center rounded-xl border border-border bg-gradient-to-br from-background to-card">
-      <MascotGigi size={120} reactToVoice={false} enableComments={false} />
-    </div>
-  );
+  return <IntroSequence />;
 }

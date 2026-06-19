@@ -98,7 +98,7 @@ async def test_synthesize_uses_primary_when_quota_open() -> None:
     tts = _new_tts()
     calls: list[str] = []
 
-    def fake_sync(text: str, voice: str, model: str | None = None) -> bytes:
+    def fake_sync(text: str, voice: str, model: str | None = None, language_code: str | None = None) -> bytes:
         calls.append(model or tts._model_name)
         return b"PRIMARY_OK"
 
@@ -116,7 +116,7 @@ async def test_synthesize_switches_to_sibling_on_429() -> None:
     tts = _new_tts()
     calls: list[str] = []
 
-    def fake_sync(text: str, voice: str, model: str | None = None) -> bytes:
+    def fake_sync(text: str, voice: str, model: str | None = None, language_code: str | None = None) -> bytes:
         calls.append(model)
         if model == "gemini-3.1-flash-tts-preview":
             raise RuntimeError(_GOOGLE_429_MESSAGE)
@@ -144,7 +144,7 @@ async def test_synthesize_skips_primary_when_cooldown_active() -> None:
 
     calls: list[str] = []
 
-    def fake_sync(text: str, voice: str, model: str | None = None) -> bytes:
+    def fake_sync(text: str, voice: str, model: str | None = None, language_code: str | None = None) -> bytes:
         calls.append(model)
         return b"SIBLING_OK"
 
@@ -163,7 +163,7 @@ async def test_synthesize_returns_silence_when_sibling_disabled() -> None:
     tts = _new_tts(sibling_bridge_model=None)
     calls: list[str] = []
 
-    def fake_sync(text: str, voice: str, model: str | None = None) -> bytes:
+    def fake_sync(text: str, voice: str, model: str | None = None, language_code: str | None = None) -> bytes:
         calls.append(model)
         raise RuntimeError(_GOOGLE_429_MESSAGE)
 
@@ -178,7 +178,7 @@ async def test_synthesize_returns_silence_when_both_quota_exhausted() -> None:
     """If even the sibling 429s, plugin returns b"" rather than looping."""
     tts = _new_tts()
 
-    def fake_sync(text: str, voice: str, model: str | None = None) -> bytes:
+    def fake_sync(text: str, voice: str, model: str | None = None, language_code: str | None = None) -> bytes:
         raise RuntimeError(_GOOGLE_429_MESSAGE)
 
     tts._synthesize_sync = fake_sync  # type: ignore[assignment]
@@ -198,7 +198,7 @@ async def test_non_quota_error_does_not_arm_cooldown() -> None:
     hour."""
     tts = _new_tts()
 
-    def fake_sync(text: str, voice: str, model: str | None = None) -> bytes:
+    def fake_sync(text: str, voice: str, model: str | None = None, language_code: str | None = None) -> bytes:
         raise RuntimeError("Connection reset by peer")
 
     tts._synthesize_sync = fake_sync  # type: ignore[assignment]

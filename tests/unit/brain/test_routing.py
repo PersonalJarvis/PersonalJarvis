@@ -1098,6 +1098,225 @@ def test_filler_particle_halt_does_not_force_spawn(utterance: str) -> None:
         reg._caps.update(snapshot)  # noqa: SLF001
 
 
+# ---------------------------------------------------------------------------
+# Explicit spawn DECLINE — the user literally says "don't spawn a subagent /
+# talk to me directly". The explicit-trigger hoist in _should_force_spawn is
+# negation-blind: it substring-matches the trigger word ("Subagent"/"spawn")
+# and force-spawns, doing the exact OPPOSITE of what the user asked. A decline
+# must be a HARD stand-down that overrides the hoist. Live bug 2026-06-19
+# (voice session 18:41, Turn 2): "Nee, ich möchte, dass du keinen Subagent
+# dafür spawnst. Ich möchte, dass du direkt mit mir sprichst." -> force-spawn
+# match='Subagent'.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # the real Turn-2 utterance
+        "Nee, ich möchte, dass du keinen Subagent dafür spawnst. "
+        "Ich möchte, dass du direkt mit mir sprichst.",
+        # negated subagent / spawn (DE)
+        "Spawn bitte keinen Subagenten.",
+        "Bitte keinen Sub-Agent dafür.",
+        "Ich will nicht, dass du das spawnst.",
+        "Mach das ohne Subagent.",
+        # talk-to-me-directly (DE)
+        "Sprich einfach direkt mit mir.",
+        "Antworte mir direkt.",
+        # EN
+        "Don't spawn a subagent.",
+        "No subagent please, just talk to me.",
+        "Talk to me directly.",
+        # ES
+        "No uses un subagente.",
+        "Háblame directamente.",
+    ],
+)
+def test_spawn_decline_predicate_recognises_declines(utterance: str) -> None:
+    """The predicate flags explicit 'do not spawn / talk to me directly' across
+    de/en/es so the negation-blind trigger hoist cannot override the user."""
+    from jarvis.brain.manager import _is_spawn_decline
+
+    assert _is_spawn_decline(utterance) is True, (
+        f"spawn decline {utterance!r} not recognised"
+    )
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # explicit spawn REQUESTS must NOT be read as declines
+        "Spawne einen Subagenten und sag mir, was du empfehlen würdest.",
+        "Starte einen Sub-Agent für die Recherche.",
+        "Spawn a subagent and tell me what you'd recommend.",
+        "Delegiere das an einen Worker.",
+        # compound: a directness preamble that STILL asks for a spawn in the
+        # same clause must NOT be swallowed (review MAJOR-1).
+        "Just tell me, spawn a subagent to analyse the logs.",
+        "Just answer me — delegate this to a worker.",
+        # plain commands with no spawn token at all
+        "Bau mir eine Landingpage.",
+        "öffne Chrome.",
+    ],
+)
+def test_spawn_decline_predicate_ignores_requests(utterance: str) -> None:
+    """A genuine spawn request (or a plain command) is NOT a decline — it must
+    still be allowed to spawn."""
+    from jarvis.brain.manager import _is_spawn_decline
+
+    assert _is_spawn_decline(utterance) is False, (
+        f"spawn request {utterance!r} wrongly matched the decline guard"
+    )
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Nee, ich möchte, dass du keinen Subagent dafür spawnst. "
+        "Ich möchte, dass du direkt mit mir sprichst.",
+        "Spawn bitte keinen Subagenten, antworte mir einfach direkt.",
+        "Don't spawn a subagent, just talk to me.",
+    ],
+)
+def test_spawn_decline_overrides_explicit_trigger_hoist(utterance: str) -> None:
+    """A turn that NAMES the vehicle ('Subagent'/'spawn') but NEGATES it must
+    NOT force-spawn — the decline guard overrides the explicit-trigger hoist.
+    Reproduces the live strict-mode path with a seeded registry."""
+    from jarvis.core.capabilities import get_registry
+    from jarvis.core.capabilities_seed import seed_registry
+
+    reg = get_registry()
+    snapshot = dict(reg._caps)  # noqa: SLF001 — test fixture state restore
+    seed_registry(reg)
+    try:
+        manager, _executor = _manager_with_spawn(force_spawn_mode="strict")
+        assert manager._should_force_spawn(utterance) is False, (
+            f"explicit spawn DECLINE {utterance!r} wrongly force-spawned a worker"
+        )
+    finally:
+        reg._caps.clear()  # noqa: SLF001
+        reg._caps.update(snapshot)  # noqa: SLF001
+
+
+def test_explicit_trigger_with_coaching_framing_still_spawns() -> None:
+    """The explicit-trigger hoist runs BEFORE the coaching guard, so a turn that
+    NAMES the vehicle ('Spawne einen Subagenten') AND carries a coaching framing
+    still force-spawns as asked — the user's explicit request wins. Pins the
+    ordering invariant (review MINOR-3)."""
+    from jarvis.brain.manager import _is_spawn_decline
+    from jarvis.core.capabilities import get_registry
+    from jarvis.core.capabilities_seed import seed_registry
+
+    utterance = "Spawne einen Subagenten, der mir hilft, besser zu fragen."
+    assert _is_spawn_decline(utterance) is False, (
+        "an explicit spawn request must not be read as a decline"
+    )
+    reg = get_registry()
+    snapshot = dict(reg._caps)  # noqa: SLF001 — test fixture state restore
+    seed_registry(reg)
+    try:
+        manager, _executor = _manager_with_spawn(force_spawn_mode="strict")
+        assert manager._should_force_spawn(utterance) is True, (
+            "explicit 'Spawne einen Subagenten ...' must still force-spawn even "
+            "with a coaching framing — the trigger hoist precedes the coaching guard"
+        )
+    finally:
+        reg._caps.clear()  # noqa: SLF001
+        reg._caps.update(snapshot)  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# Conversational coaching — "help me [get better at a soft / cognitive /
+# conversational skill]" is CONVERSATION, answered inline (Jarvis asks the
+# user smart questions), NEVER a heavy-worker spawn. It trips the action-verb
+# catalogue when the coaching object is itself a verb ("intelligent zu fragen"
+# -> "frag"/"frage"). Live bug 2026-06-19 (voice session 18:41, Turn 1):
+# "Hilf mir aber dabei, intelligent zu fragen. Für mich ist Fragen einer der
+# Schlüssel für Erfolg, verstehst du?" -> matched action verbs ['frag','frage']
+# -> has_action_intent -> _is_generic_subagent_work -> force-spawn.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # the real Turn-1 utterance (umlaut + ASCII STT variants)
+        "Hilf mir aber dabei, intelligent zu fragen. Für mich ist Fragen "
+        "einer der Schlüssel für Erfolg, verstehst du?",
+        "Hilf mir aber dabei, intelligent zu fragen. Fuer mich ist Fragen "
+        "einer der Schluessel fuer Erfolg, verstehst du?",
+        # other coaching phrasings (DE)
+        "Hilf mir, bessere Fragen zu stellen.",
+        "Hilf mir dabei, klarer zu denken.",
+        "Bring mir bei, mich besser auszudrücken.",
+        # EN
+        "Help me ask better questions.",
+        "Teach me to think more clearly.",
+        # ES (review MINOR-1: sibling guards cover es, this one must too)
+        "Ayúdame a formular mejores preguntas.",
+        "Enséñame a pensar con más claridad.",
+    ],
+)
+def test_conversational_coaching_predicate_recognises(utterance: str) -> None:
+    """The predicate flags 'help me get better at a conversational / cognitive
+    skill' coaching requests across de/en."""
+    from jarvis.brain.manager import _is_conversational_coaching
+
+    assert _is_conversational_coaching(utterance) is True, (
+        f"coaching request {utterance!r} not recognised"
+    )
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # genuine artifact / action work — NOT conversational coaching
+        "Hilf mir, eine E-Mail an Anna zu schreiben und zu senden.",
+        "Hilf mir, den Bug in der Pipeline zu fixen.",
+        "Bau mir eine Landingpage.",
+        "Help me build a landing page.",
+    ],
+)
+def test_conversational_coaching_predicate_ignores_real_work(utterance: str) -> None:
+    """A 'help me' request whose object is a concrete artifact / action is real
+    work — it must NOT match the coaching guard."""
+    from jarvis.brain.manager import _is_conversational_coaching
+
+    assert _is_conversational_coaching(utterance) is False, (
+        f"real-work request {utterance!r} wrongly matched the coaching guard"
+    )
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Hilf mir aber dabei, intelligent zu fragen. Für mich ist Fragen "
+        "einer der Schlüssel für Erfolg, verstehst du?",
+        "Hilf mir, bessere Fragen zu stellen.",
+        "Help me ask better questions.",
+    ],
+)
+def test_conversational_coaching_does_not_force_spawn(utterance: str) -> None:
+    """Conversational coaching is talk, not work — answered inline even when the
+    coaching object collides with an action verb ('fragen' -> 'frag'/'frage').
+    Reproduces the real strict-mode path with a seeded registry."""
+    from jarvis.core.capabilities import get_registry
+    from jarvis.core.capabilities_seed import seed_registry
+
+    reg = get_registry()
+    snapshot = dict(reg._caps)  # noqa: SLF001 — test fixture state restore
+    seed_registry(reg)
+    try:
+        manager, _executor = _manager_with_spawn(force_spawn_mode="strict")
+        assert manager._should_force_spawn(utterance) is False, (
+            f"coaching request {utterance!r} wrongly force-spawned a worker"
+        )
+    finally:
+        reg._caps.clear()  # noqa: SLF001
+        reg._caps.update(snapshot)  # noqa: SLF001
+
+
 @pytest.mark.asyncio
 async def test_local_direct_open_app_fast_path_uses_hidden_tool_once() -> None:
     """Greeting+action must execute open_app without vision or provider calls."""

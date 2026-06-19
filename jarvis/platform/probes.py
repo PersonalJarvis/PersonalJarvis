@@ -84,6 +84,32 @@ def ax_permission_granted() -> bool | None:
     return bool(os.environ.get("AT_SPI_BUS") or os.environ.get("DBUS_SESSION_BUS_ADDRESS"))
 
 
+def screen_recording_granted() -> bool | None:
+    """Tri-state: is screen capture (screenshot) permitted?
+
+    ``True`` granted (or no grant needed) · ``False`` explicitly denied · ``None``
+    unknown (macOS where pyobjc-Quartz is absent, so we cannot probe). Only macOS
+    gates screenshots behind a TCC "Screen Recording" grant; Windows and Linux
+    need no per-app grant — Wayland's capture restriction is a separate, non-TCC
+    concern handled at the capture site. Without the macOS grant ``mss`` returns
+    only the desktop wallpaper with no error, so Computer-Use would click blind;
+    callers detect-and-degrade with a clear message (AD-13), never hard-block.
+    """
+    if detect_platform() != "darwin":
+        return True
+    try:
+        from Quartz import (  # type: ignore[import-not-found]
+            CGPreflightScreenCaptureAccess,
+        )
+    except (ImportError, ModuleNotFoundError):
+        return None  # pyobjc-Quartz absent → unknown until installed.
+    try:
+        return bool(CGPreflightScreenCaptureAccess())
+    except Exception:  # pragma: no cover - native call guard
+        log.debug("CGPreflightScreenCaptureAccess() raised; treating as unknown.")
+        return None
+
+
 def has_ax_tree() -> bool:
     """Is a UI-element accessibility tree backend available for this OS?"""
     plat = detect_platform()
@@ -142,6 +168,7 @@ __all__ = [
     "is_wayland",
     "has_pty",
     "ax_permission_granted",
+    "screen_recording_granted",
     "has_ax_tree",
     "has_hotkey",
     "has_cursor",

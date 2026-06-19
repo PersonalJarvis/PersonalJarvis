@@ -243,9 +243,19 @@ class TTSProvider(Protocol):
     supports_streaming: bool
 
     async def synthesize(
-        self, text: str, voice: str | None = None
+        self, text: str, voice: str | None = None,
+        language_code: str | None = None,
     ) -> AsyncIterator[AudioChunk]:
-        """Synthesise audio, yielding chunks for streaming playback."""
+        """Synthesise audio, yielding chunks for streaming playback.
+
+        ``language_code`` (BCP-47, e.g. ``"de-DE"``) is the per-turn output
+        language the pipeline resolves once via ``resolve_output_language`` and
+        passes to every provider so a multilingual TTS model pins the
+        pronunciation language instead of guessing it per word (the 2026-06-19
+        "Juni, Boss" code-switch forensic). ``None`` means unpinned/auto-detect.
+        Every shipped provider (gemini-flash, grok-voice, cartesia, elevenlabs,
+        fallback) accepts it; the keyword is part of the structural contract.
+        """
         ...
 
     def list_voices(self, language: str | None = None) -> list[str]:
@@ -397,6 +407,7 @@ class UIANode:
     bounds: tuple[int, int, int, int] = (0, 0, 0, 0)  # x, y, w, h
     enabled: bool = True
     parent_index: int = -1           # Index in der flachen Nodes-Liste
+    value: str = ""                  # L3: current text of an editable control
 
 
 @dataclass(frozen=True, slots=True)

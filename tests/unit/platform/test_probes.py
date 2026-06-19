@@ -123,6 +123,49 @@ def test_ax_permission_linux_needs_bus(monkeypatch):
     assert probes.ax_permission_granted() is True
 
 
+# --- screen_recording_granted (tri-state, H1) ------------------------------
+
+
+def test_screen_recording_true_off_darwin(monkeypatch):
+    # Only macOS gates screenshots behind a TCC Screen-Recording grant; Windows
+    # and Linux need no per-app grant.
+    _force_platform(monkeypatch, "win32")
+    assert probes.screen_recording_granted() is True
+    _force_platform(monkeypatch, "linux")
+    assert probes.screen_recording_granted() is True
+
+
+def test_screen_recording_macos_reflects_preflight(monkeypatch):
+    import sys
+    import types
+
+    _force_platform(monkeypatch, "darwin")
+    # Replaces any already-cached Quartz module so the function-local
+    # `from Quartz import ...` re-resolves to this fake (matters on a real Mac
+    # with pyobjc installed, where the genuine module would otherwise win).
+    monkeypatch.setitem(
+        sys.modules,
+        "Quartz",
+        types.SimpleNamespace(CGPreflightScreenCaptureAccess=lambda: True),
+    )
+    assert probes.screen_recording_granted() is True
+    monkeypatch.setitem(
+        sys.modules,
+        "Quartz",
+        types.SimpleNamespace(CGPreflightScreenCaptureAccess=lambda: False),
+    )
+    assert probes.screen_recording_granted() is False
+
+
+def test_screen_recording_macos_unknown_without_quartz(monkeypatch):
+    import sys
+
+    _force_platform(monkeypatch, "darwin")
+    # pyobjc-Quartz absent → import raises → unknown (None), never a hard False.
+    monkeypatch.setitem(sys.modules, "Quartz", None)
+    assert probes.screen_recording_granted() is None
+
+
 # --- has_elevation ---------------------------------------------------------
 
 
@@ -165,3 +208,4 @@ def test_all_probes_run_without_raising_on_host():
     assert isinstance(probes.has_overlay(), bool)
     assert isinstance(probes.has_elevation(), bool)
     assert probes.ax_permission_granted() in (True, False, None)
+    assert probes.screen_recording_granted() in (True, False, None)

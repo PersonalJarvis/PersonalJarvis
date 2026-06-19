@@ -14,8 +14,12 @@ import time
 from collections.abc import AsyncIterator
 
 import numpy as np
-import sounddevice as sd
 from loguru import logger as _log
+
+try:
+    import sounddevice as sd
+except Exception:  # noqa: BLE001 — sounddevice/PortAudio (libportaudio2) absent (headless/slim)
+    sd = None  # type: ignore[assignment]
 
 from jarvis.core.protocols import AudioChunk
 

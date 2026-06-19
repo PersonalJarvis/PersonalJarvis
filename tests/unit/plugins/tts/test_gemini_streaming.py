@@ -102,7 +102,7 @@ async def test_streaming_falls_back_to_blocking_when_stream_fails_before_audio()
     tts = _new_streaming_tts(aio)
     blocking_calls: list[str] = []
 
-    async def fake_one(text: str, voice: str) -> bytes:
+    async def fake_one(text: str, voice: str, language_code: str | None = None) -> bytes:
         blocking_calls.append(text)
         return b"BLOCKING_PCM"
 
@@ -121,7 +121,7 @@ async def test_streaming_429_arms_quota_cooldown() -> None:
     aio = _FakeAioModels(raise_on_call=RuntimeError(_GOOGLE_429_MESSAGE))
     tts = _new_streaming_tts(aio)
 
-    async def fake_one(text: str, voice: str) -> bytes:
+    async def fake_one(text: str, voice: str, language_code: str | None = None) -> bytes:
         return b"SIBLING_PCM"
 
     tts._synthesize_one = fake_one  # type: ignore[assignment]
@@ -142,7 +142,7 @@ async def test_streaming_midstream_failure_keeps_partial_audio() -> None:
     tts = _new_streaming_tts(aio)
     blocking_calls: list[str] = []
 
-    async def fake_one(text: str, voice: str) -> bytes:
+    async def fake_one(text: str, voice: str, language_code: str | None = None) -> bytes:
         blocking_calls.append(text)
         return b"MUST_NOT_APPEAR"
 
@@ -160,7 +160,7 @@ async def test_streaming_disabled_default_keeps_legacy_single_chunk() -> None:
     tts = GeminiFlashTTS()
     tts._client = object()  # sentinel: _ensure_client returns early
 
-    async def fake_one(text: str, voice: str) -> bytes:
+    async def fake_one(text: str, voice: str, language_code: str | None = None) -> bytes:
         return b"FULL_SENTENCE"
 
     tts._synthesize_one = fake_one  # type: ignore[assignment]

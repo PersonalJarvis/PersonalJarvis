@@ -61,7 +61,7 @@ from jarvis.core.events import (
     WakeWordDetected,
 )
 
-from .constants import SPOKEN_KIND_COMPLETION
+from .constants import SPOKEN_KIND_COMPLETION, SPOKEN_KIND_SUBAGENT
 from .store import SessionStore
 
 log = logging.getLogger(__name__)
@@ -161,9 +161,10 @@ class SessionRecorder:
         # selbst eine turn_id beim ersten Turn-relevanten Event.
         self._auto_turn_counter: int = 0
         # (session_id, last_turn_id) of the most recently FINALIZED session.
-        # A background mission's completion readback can be voiced after the
-        # user hung up (the pipeline lets kind="completion" punch through the
-        # hangup gate — AD-OE6). The readback carries no session id, so we
+        # A background mission's readback can be voiced after the user hung up
+        # (the pipeline lets a readback kind — "completion" or "subagent" —
+        # punch through the hangup gate, AD-OE6). The readback carries no
+        # session id, so we
         # attach it to this just-ended session. Cleared when a new session
         # starts, so a late readback can never glue onto the wrong session.
         self._afterglow: tuple[str, str | None] | None = None
@@ -206,8 +207,8 @@ class SessionRecorder:
             return
 
         # Every other event is recorded only while a session is live — with
-        # ONE exception: a mission completion readback that arrives after the
-        # user hung up (kind="completion", which the pipeline deliberately lets
+        # ONE exception: a mission readback that arrives after the user hung up
+        # (a "completion"/"subagent" kind, which the pipeline deliberately lets
         # through the hangup gate, AD-OE6) must still be attributed to the
         # just-ended session; otherwise the user hears the answer but the
         # transcript stays empty (forensic 2026-06-19, session 514cddc0).
@@ -648,10 +649,11 @@ class SessionRecorder:
         )
 
     def _record_posthangup_readback(self, event: SpeechSpoken) -> None:
-        """Persist a completion readback voiced AFTER the session was closed.
+        """Persist a readback voiced AFTER the session was closed.
 
-        Only ``completion``-kind readbacks qualify — the terminal answer of an
-        offloaded mission. A progress nudge ("still working") arriving after
+        Both readback kinds qualify — a generic background ``completion`` and the
+        attributed ``subagent`` result — the terminal answer of an offloaded
+        mission/sub-agent. A progress nudge ("still working") arriving after
         hangup is suppressed by the pipeline and must not be attached here
         either. The row is appended to the just-ended session (the one that
         spawned the mission) and to its last turn, so ``formatter.py`` groups
@@ -659,7 +661,13 @@ class SessionRecorder:
         """
         if self._afterglow is None:
             return
-        if getattr(event, "spoken_kind", "") != SPOKEN_KIND_COMPLETION:
+        # Both readback kinds (generic background ``completion`` and the
+        # attributed ``subagent`` result) earn a late transcript row; a progress
+        # nudge does not.
+        if getattr(event, "spoken_kind", "") not in (
+            SPOKEN_KIND_COMPLETION,
+            SPOKEN_KIND_SUBAGENT,
+        ):
             return
         session_id, turn_id = self._afterglow
         self._store.append_event(

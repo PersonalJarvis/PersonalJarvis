@@ -38,6 +38,43 @@ logger = logging.getLogger(__name__)
 # Konstruktor ueberschrieben werden (z.B. fuer Tests).
 _DEFAULT_BLOB_DIR = Path("data") / "flight_recorder" / "blobs"
 
+# H1 (DEEP-DIVE-AUDIT-2026-06-19): on macOS, screen capture is gated behind a
+# TCC "Screen Recording" grant. Without it mss returns ONLY the desktop
+# wallpaper with no error, so Computer-Use would click blind. Surface a clear
+# onboarding message at the capture site instead of failing silently.
+_SCREEN_RECORDING_MSG = (
+    "macOS Screen Recording permission not granted — grant it in System "
+    "Settings > Privacy & Security > Screen Recording so Jarvis can see the "
+    "screen; without it screenshots capture only the desktop wallpaper and "
+    "Computer-Use would click blind."
+)
+_screen_recording_warned = False
+
+
+def warn_if_screen_recording_denied() -> bool:
+    """Log ``_SCREEN_RECORDING_MSG`` once per process if the macOS Screen
+    Recording grant is missing.
+
+    Returns ``True`` iff capture is expected to be blank (macOS + the grant is
+    explicitly denied). No-op returning ``False`` on Windows/Linux, when the
+    grant is present, or when it is unknown (``None`` — pyobjc absent): we never
+    nag on a state we cannot prove (AD-13 detect-and-degrade).
+
+    One-shot: once a denial has been seen the probe is not re-run, so the
+    TCC round-trip never happens at the CU frame rate (1-2 Hz) — subsequent
+    calls are a single boolean read.
+    """
+    global _screen_recording_warned
+    if _screen_recording_warned:  # already warned once → still denied; skip the per-frame TCC probe
+        return True
+    from jarvis.platform.probes import screen_recording_granted  # noqa: PLC0415
+
+    if screen_recording_granted() is False:
+        _screen_recording_warned = True
+        logger.warning(_SCREEN_RECORDING_MSG)
+        return True
+    return False
+
 
 # ---------------------------------------------------------------------------
 # DPI-Awareness — extrahiert nach jarvis/core/win32_dpi.py (Phase A1).
@@ -380,6 +417,11 @@ class ScreenshotSource:
         except ImportError:
             # mss not installed — ImportError already raised above, unreachable.
             ScreenShotError = Exception  # type: ignore[assignment,misc]
+
+        # H1: on macOS without the Screen-Recording grant the grab below returns
+        # only the wallpaper with no error — tell the user once instead of
+        # letting Computer-Use click blind.
+        warn_if_screen_recording_denied()
 
         monitor_id: str = "unknown"
         try:

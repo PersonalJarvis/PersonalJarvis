@@ -34,6 +34,20 @@ def _spoken(
         payload=payload,
     )
 
+
+def _response(
+    turn_id: str,
+    text: str,
+    ts_ms: int = 1_717_780_002_000,
+) -> VoiceEventRow:
+    return VoiceEventRow(
+        session_id="sess-1",
+        turn_id=turn_id,
+        ts_ms=ts_ms,
+        kind="ResponseGenerated",
+        payload={"text": text, "language": "de"},
+    )
+
 # Emojis the markdown renderer uses as visual anchors — none may leak into
 # the clean ``plain`` transcript.
 _EMOJI_ANCHORS = ["\U0001f3a4", "\U0001f9e0", "\U0001f50a", "⏱", "\U0001f527"]
@@ -242,6 +256,56 @@ def test_plain_includes_spoken_phrases_as_clean_dialogue() -> None:
     # The voiced phrase reads as part of the dialogue — no kind tag, no slop.
     assert "Jarvis: Das hat zu lange gedauert." in out
     assert "timeout" not in out  # plain export stays clean of meta-tags
+
+
+def test_plain_orders_preamble_before_final_response_by_timestamp() -> None:
+    turns = [_turn(0, "Was steht heute an?", "Ich konnte das gerade nicht abrufen.")]
+    events = [
+        _spoken(
+            "turn-0",
+            "Ich rufe deine heutigen Termine und die aktuellen Nachrichten ab.",
+            "preamble",
+            ts_ms=1_717_780_001_000,
+        ),
+        _response(
+            "turn-0",
+            "Ich konnte das gerade nicht abrufen.",
+            ts_ms=1_717_780_020_000,
+        ),
+    ]
+    out = format_session_plain(_session(), turns, events)
+    preamble_pos = out.index("Jarvis: Ich rufe deine heutigen Termine")
+    final_pos = out.index("Jarvis: Ich konnte das gerade nicht abrufen.")
+    assert preamble_pos < final_pos
+
+
+def test_plain_orders_late_readback_after_final_response() -> None:
+    turns = [_turn(0, "Starte die Recherche", "Ich kuemmere mich darum.")]
+    events = [
+        _response("turn-0", "Ich kuemmere mich darum.", ts_ms=1_717_780_002_000),
+        _spoken(
+            "turn-0",
+            "Die Recherche ist fertig.",
+            "completion",
+            ts_ms=1_717_780_030_000,
+        ),
+    ]
+    out = format_session_plain(_session(), turns, events)
+    final_pos = out.index("Jarvis: Ich kuemmere mich darum.")
+    readback_pos = out.index("Jarvis: Die Recherche ist fertig.")
+    assert final_pos < readback_pos
+
+
+def test_markdown_orders_spoken_and_final_response_by_timestamp() -> None:
+    turns = [_turn(0, "Was steht heute an?", "Ich konnte das gerade nicht abrufen.")]
+    events = [
+        _spoken("turn-0", "Ich rufe deine Termine ab.", "preamble", ts_ms=1000),
+        _response("turn-0", "Ich konnte das gerade nicht abrufen.", ts_ms=2000),
+    ]
+    out = format_session_markdown(_session(), turns, events)
+    assert out.index("Ich rufe deine Termine ab.") < out.index(
+        "Ich konnte das gerade nicht abrufen."
+    )
 
 
 def test_spoken_track_is_grouped_under_its_own_turn() -> None:

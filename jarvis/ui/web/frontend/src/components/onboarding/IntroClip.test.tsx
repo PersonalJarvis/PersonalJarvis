@@ -1,14 +1,14 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
-vi.mock("@/components/MascotGigi", () => ({ MascotGigi: () => <div data-testid="gigi" /> }));
+vi.mock("./IntroSequence", () => ({ IntroSequence: () => <div data-testid="intro-seq" /> }));
 import { IntroClip } from "./IntroClip";
 
 afterEach(cleanup);
 
-it("renders the Gigi fallback when no src", () => {
+it("renders the IntroSequence fallback when no src", () => {
   render(<IntroClip />);
-  expect(screen.getByTestId("gigi")).toBeDefined();
+  expect(screen.getByTestId("intro-seq")).toBeDefined();
 });
 
 it("renders a video element when src is given", () => {

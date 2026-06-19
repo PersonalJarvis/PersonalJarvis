@@ -66,8 +66,8 @@ vi.mock("@/views/settings/JarvisApiGroup", () => ({
 }));
 
 // Silence the onboarding gate so it doesn't interfere with SettingsView tests.
-vi.mock("@/components/onboarding/WakeWordOnboardingGate", () => ({
-  WakeWordOnboardingGate: () => null,
+vi.mock("@/components/onboarding/OnboardingGate", () => ({
+  OnboardingGate: () => null,
 }));
 
 import { SettingsView } from "@/views/SettingsView";

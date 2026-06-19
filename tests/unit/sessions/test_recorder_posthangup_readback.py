@@ -22,7 +22,11 @@ from jarvis.core.events import (
     VoiceSessionStarted,
 )
 from jarvis.core.protocols import Transcript
-from jarvis.sessions.constants import SPOKEN_KIND_COMPLETION, SPOKEN_KIND_PROGRESS
+from jarvis.sessions.constants import (
+    SPOKEN_KIND_COMPLETION,
+    SPOKEN_KIND_PROGRESS,
+    SPOKEN_KIND_SUBAGENT,
+)
 from jarvis.sessions.recorder import SessionRecorder
 from jarvis.sessions.store import SessionStore
 
@@ -79,6 +83,34 @@ async def test_completion_readback_after_hangup_is_recorded(tmp_path) -> None:
         assert spoken, "post-hangup completion readback was not recorded"
         assert spoken[0].payload.get("text", "").startswith("Hey. Lass mich")
         assert spoken[0].payload.get("spoken_kind") == SPOKEN_KIND_COMPLETION
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_subagent_readback_after_hangup_is_recorded(tmp_path) -> None:
+    """A ``subagent`` readback is the attributed sibling of ``completion`` — it
+    must also attach to the just-ended session, else the 'Jarvis Sub-Agent /
+    Output' track would be empty for a post-hangup mission result."""
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    try:
+        bus = EventBus()
+        SessionRecorder(store).attach(bus)
+        await _run_session_then_hangup(bus, "sub")
+
+        await bus.publish(
+            SpeechSpoken(
+                source_layer="speech.pipeline",
+                text="Erledigt. Hier ist, was der Sub-Agent gefunden hat …",
+                language="de",
+                spoken_kind=SPOKEN_KIND_SUBAGENT,
+            )
+        )
+
+        spoken = [e for e in store.get_events("sub") if e.kind == "SpeechSpoken"]
+        assert spoken, "post-hangup subagent readback was not recorded"
+        assert spoken[0].payload.get("spoken_kind") == SPOKEN_KIND_SUBAGENT
     finally:
         store.close()
 

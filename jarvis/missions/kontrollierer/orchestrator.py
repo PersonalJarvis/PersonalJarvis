@@ -71,6 +71,7 @@ from .deliverable import (
     build_deliverable_summary,
     build_delivered_summary,
     deliver_to_user_folder,
+    materialize_answer_document,
 )
 from ..safety import (
     extract_worker_authored_text,
@@ -903,7 +904,7 @@ class Kontrollierer:
             await self._fail_mission(mission_id, "task_error")
             return MissionState.FAILED
         if all(o == TaskOutcome.APPROVED for o in task_outcomes):
-            await self._approve_mission(mission_id, plan)
+            await self._approve_mission(mission_id, plan, prompt=view.prompt)
             return MissionState.APPROVED
 
         # Which task failed determines the failure reason.
@@ -2344,7 +2345,9 @@ class Kontrollierer:
                     to_state.value,
                 )
 
-    async def _approve_mission(self, mission_id: str, plan: MissionPlan) -> None:
+    async def _approve_mission(
+        self, mission_id: str, plan: MissionPlan, *, prompt: str = ""
+    ) -> None:
         await self._safe_transition(mission_id, MissionState.APPROVED, "all_tasks_approved")
         # Point `result_uri` at the real mission directory so the Outputs
         # view and any voice-readback consumer can resolve it to actual
@@ -2370,6 +2373,32 @@ class Kontrollierer:
         # generic phrase.
         answers = self._task_answers.pop(mission_id, [])
         answer_summary = summarize_answers(answers)
+        # "Always a document": a code/file task already wrote its artifact, but a
+        # pure research/Q&A task delivers its answer as TEXT and would leave the
+        # Outputs view empty (live forensic 2026-06-19: the same question yielded
+        # a report once and an empty card the next time, depending on whether the
+        # worker happened to write a file). When no genuine file deliverable
+        # exists, materialise the worker's answer as a Markdown report in the
+        # canonical deliverable subtree so EVERY successful mission shows a
+        # document — and so the mirror + summary below pick it up like any other
+        # deliverable. Best-effort: a write hiccup must never fail an APPROVED
+        # mission, so it is wrapped (the function itself also never raises).
+        try:
+            materialize_answer_document(
+                mission_dir,
+                answers=answers,
+                prompt=prompt,
+                expected_output=plan.expected_output,
+            )
+        except Exception:  # noqa: BLE001 — report materialisation is never fatal
+            # Defense-in-depth: the function already swallows its own OSError and
+            # returns None, so this outer catch is unreachable today — it guards
+            # against a future change to the function's error handling ever
+            # flipping an APPROVED mission to FAILED.
+            logger.warning(
+                "materialize_answer_document failed for %s", mission_id,
+                exc_info=True,
+            )
         # Mirror the archived deliverables into a user-visible folder
         # (~/Downloads/Jarvis-Outputs on Windows) so a non-coder can actually
         # find the file the worker created — instead of it living six levels

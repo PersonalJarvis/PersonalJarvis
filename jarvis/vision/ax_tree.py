@@ -304,6 +304,7 @@ class AXTreeSource:
                 bounds=n.bounds,
                 enabled=n.enabled,
                 parent_index=n.parent_index,
+                value=n.value,
             )
             for n in raw
         ]
@@ -447,6 +448,11 @@ def _ax_flatten(
 
         enabled_raw = _ax_copy_attr(element, _AX_ENABLED)
         enabled = True if enabled_raw is None else bool(enabled_raw)
+
+        # L3 value-read: AXValue is the current text of an editable control
+        # (search box, text field). Read separately from the name-fallback above
+        # so the loop can see what a field already holds.
+        value = str(_ax_copy_attr(element, _AX_VALUE) or "")
     except Exception:  # noqa: BLE001
         return
 
@@ -460,6 +466,7 @@ def _ax_flatten(
         is_offscreen=False,
         depth=depth,
         parent_index=parent_index,
+        value=value,
     ))
 
     if depth >= max_depth:

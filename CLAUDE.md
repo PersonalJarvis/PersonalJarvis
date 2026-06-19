@@ -4,19 +4,37 @@ Guidance for OpenClaw (claude.ai/code) and any sub-agent working in this reposit
 
 ---
 
-## ⚠️ THE GitHub repository (read BEFORE any push — recurring confusion, settled 2026-06-09)
+## ⚠️ THE GitHub repository — ONE public repo + mandatory privacy gate (BINDING, updated 2026-06-19)
 
-There are TWO GitHub repos and sessions keep mixing them up. This is the truth table — case-sensitive on the **second** path segment:
+**There is ONE project repo: the public flagship `https://github.com/PersonalJarvis/PersonalJarvis`** (PascalCase). EVERY maintainer "commit / push / save to GitHub / sichere den Stand" targets THIS repo and no other. <!-- i18n-allow: quoted German maintainer trigger phrase --> The lowercase `personal-jarvis` (git remote `origin`) is kept ONLY as a **silent local backup / safety net** — it is not "the project" and is never the deliverable. Never ask "which repo"; it is always the public flagship.
 
-| Repo | Role | Who writes to it |
-|---|---|---|
-| **`PersonalJarvis/PersonalJarvis`** (PascalCase) | **THE project.** The one public-facing flagship repo the maintainer means by ANY "get my work onto GitHub" request. This includes the plain git phrasings — **"commit to main", "commit this to main", "push", "push to main", "push this", "commit and push", "merge to main", "land it on main", "save to GitHub", "put it on GitHub"** — as well as "the GitHub repo", "veröffentliche", "push it", "sichere den Stand", "update GitHub". | **ONLY** the `ship-public-release` skill (depersonalized snapshot — never raw `git push`, never secrets/PII/`data/`/Vault). <!-- i18n-allow: quoted German maintainer trigger phrases --> |
-| `PersonalJarvis/personal-jarvis` (lowercase, remote `origin`) | Private **backstage**: raw dev history, branches, maintainer identity, day-to-day commits. | Dev sessions, as infrastructure. It is NOT "the project" the maintainer talks about. |
+### Nothing reaches the public repo raw — the fail-closed privacy gate (MANDATORY on EVERY push)
 
-**Binding rules:**
-1. **Any maintainer request to save / commit / push / publish / "put it on main" / "get it on GitHub" → the deliverable is an updated `PersonalJarvis/PersonalJarvis` via the `ship-public-release` skill.** A bare branch name ("main") or a bare git verb ("commit", "push", "merge") from the maintainer is **still** a publish-to-the-flagship request — do **NOT** quietly reduce it to a plain `git push origin` and call it done. Never ask "which repo". A raw-work push to `origin` (private) may happen *in addition* as a dev safety net, but it **never** fulfills the request by itself. (This exact misread — "commit this to main" treated as a private-repo push — happened on 2026-06-15; this row is the fix.)
-2. Never `git push` raw working state to `PersonalJarvis/PersonalJarvis`. That repo only ever receives the scrubbed release snapshot. **Enforced, not just documented:** the pre-push guard `scripts/ci/guard_no_raw_public_push.py` (wired into `.git/hooks/pre-push`) hard-blocks any raw push from the working repo to the public remote. Install it in a fresh clone with `python scripts/ci/install_git_hooks.py`.
-3. Full doctrine + history: [`CLOUD.md`](CLOUD.md) § "Canonical repositories" (points 1–5).
+The public repo only ever receives a **depersonalized snapshot**, never the raw working tree. Every push runs the full gate, in order, fail-closed (any uncertainty STOPS the push):
+
+1. **Tracked-files-only export** — `.gitignore` exclusions enforced for free: no `data/`, `.env`, `jarvis.toml`, Vault, keys.
+2. **Distribution denylist** — internal dev docs, scratch scripts, signing keys removed.
+3. **Deterministic PII scrub** — real name, personal paths, project ids masked.
+4. **🔍 Mandatory sub-agent privacy review (the maintainer's hard requirement, 2026-06-19)** — before any push, a dedicated sub-agent reads the ENTIRE staged snapshot and reports anything personal or sensitive the deterministic scanners might miss: API keys / tokens / secrets, credentials, personal data, private paths / emails, internal-only content. It may only ADD blocking findings; it can never clear what the deterministic gate blocks. A non-empty finding STOPS the push.
+5. **Deterministic secret/PII scan** — fail-closed, real-credential-length regexes.
+6. **Human review** — explicit maintainer go before any network write.
+
+This whole gate is the `ship-public-release` skill; the public push runs from a separate clean clone, so the working tree is never touched and raw state cannot leak.
+
+### Two volumes on the SAME gate
+
+- **Discreet (DEFAULT)** — "Push nach GitHub", "push", "commit and push", "sichere den Stand", "update GitHub". → Clean snapshot through the full gate above, committed to the public repo, with **no SemVer bump, no git tag, no GitHub Release, no announcement**. Just the current clean state, quietly updated. <!-- i18n-allow: quoted German maintainer trigger phrases -->
+- **Release (explicit only)** — "Neue Version shippen", "Mach ein Release", "Publish release", "veröffentliche eine neue Version". → the same gate **plus** a MAJOR/MINOR/PATCH bump + git tag + CHANGELOG entry. <!-- i18n-allow: quoted German maintainer trigger phrases -->
+
+When the volume is ambiguous, default to **discreet** (snapshot, no version bump).
+
+### Guardrails that stay in force
+
+- **Never `git push` raw working state to `PersonalJarvis/PersonalJarvis`.** The pre-push guard (`scripts/ci/guard_no_raw_public_push.py` + `scripts/ci/privacy_pre_push.py`, wired into `.githooks/pre-push`, `core.hooksPath=.githooks`) HARD-BLOCKS a raw push to the public repo. It protects you precisely *because* the legitimate snapshot pushes from a separate clone — the guard only ever catches an *accidental* raw push. Do not remove it.
+- The silent `origin` backup may receive raw dev commits as infrastructure, but that is never what "get my work onto GitHub" means — the deliverable is always the clean public snapshot.
+- **Skill routing:** any maintainer "push / commit / save to GitHub" in this repo is the `ship-public-release` skill (discreet mode by default). `save-to-github` and `github-version` share those trigger phrases but MUST NOT run here — they would push raw state to `origin` / cut a tag, bypassing the privacy gate. They are out of scope for this repo.
+
+Full mechanism: the `ship-public-release` skill (`.claude/skills/ship-public-release/SKILL.md`). Repo doctrine + history: [`CLOUD.md`](CLOUD.md) § "Canonical repositories".
 
 ---
 
@@ -209,7 +227,7 @@ When a vocabulary spans Python ↔ SQL ↔ Pydantic ↔ TypeScript ↔ UI label 
 ### Phase-6 isolation invariants
 
 - Every worker runs in a fresh `git worktree add -b agent/<task-slug>` under `<repo_parent>/sub-agents-outputs/` (≤200-char path cap). No writes to the user's working tree.
-- Every worker subprocess is wrapped in a Windows Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. No zombies on orchestrator crash.
+- Every worker subprocess is contained for kill-on-crash: Windows via a Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (kernel guarantee — no zombies even on a hard kill); macOS/Linux via a POSIX process-group reaper (`start_new_session` + `os.killpg`-on-close) that reaps the worker tree on a clean shutdown / cancel / timeout / exception but, being userspace, leaks on a hard `kill -9` of the orchestrator itself (Linux follow-up: `PR_SET_PDEATHSIG`; no macOS equivalent).
 - `MAX_CRITIC_LOOPS = 3` is hardcoded. Not parameterizable. Changing requires a new ADR via `/skill phase6-adr-update`.
 - Action/Observation invariant (ADR-0009): the LLM never authors its own Observation. Voice readback reads only Kontrollierer-signed `MissionApproved.summary_de`, never `correction_instruction` from the Critic-LLM.
 

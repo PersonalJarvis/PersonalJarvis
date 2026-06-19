@@ -9,7 +9,6 @@ import {
   FileText,
   ChevronRight,
   ChevronDown,
-  Download,
   AppWindow,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -25,7 +24,6 @@ import {
   useArtifactFile,
   useCancelMission,
   useOutputsCapabilities,
-  artifactDownloadUrl,
   artifactOpenUrl,
   revealArtifact,
   openArtifactNative,
@@ -527,7 +525,6 @@ function ArtifactRow({
 }) {
   const [expanded, setExpanded] = useState(false);
   const full = useArtifactFile(slug, expanded ? file.path : null);
-  const fileName = file.path.split("/").pop() ?? file.path;
   const openUrl = artifactOpenUrl(slug, file.path);
 
   const sizeLabel =
@@ -562,15 +559,6 @@ function ArtifactRow({
           {sizeLabel}
         </span>
         <div className="flex shrink-0 items-center gap-0.5">
-          <a
-            href={artifactDownloadUrl(slug, file.path)}
-            download={fileName}
-            title="Download"
-            onClick={(e) => e.stopPropagation()}
-            className="rounded p-1 hover:bg-secondary/40"
-          >
-            <Download className="h-3.5 w-3.5 text-muted-foreground" />
-          </a>
           {openUrl && (
             <button
               type="button"

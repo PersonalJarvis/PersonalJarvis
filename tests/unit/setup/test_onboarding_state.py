@@ -1,6 +1,32 @@
 from jarvis.setup import state as st
 
 
+def test_default_state_path_is_cwd_independent(monkeypatch, tmp_path):
+    """The default onboarding state path must not depend on os.getcwd().
+
+    Regression: the desktop app does NOT always launch with the repo root as its
+    CWD — the autostart Scheduled Task sets it, but a manual start / restart-app
+    inherits the user home (observed CWD: C:\\Users\\<user>). A CWD-relative
+    ``data/setup_state.json`` therefore resolved to a *different* file per start
+    method, so the "onboarding complete" flag written by one start was invisible
+    to the next, and the first-run setup guide re-appeared on every restart.
+    The path must resolve to the same absolute location regardless of CWD.
+    """
+    from_here = st.state_path().resolve()
+    monkeypatch.chdir(tmp_path)
+    from_elsewhere = st.state_path().resolve()
+
+    assert from_here == from_elsewhere, (
+        "onboarding state path must not depend on the current working directory"
+    )
+    assert from_here.is_absolute()
+    # It must live next to the rest of the app's persistent data (config.DATA_DIR),
+    # anchored to the installed package — not to wherever the process was started.
+    from jarvis.core import config
+
+    assert from_here == (config.DATA_DIR / "setup_state.json").resolve()
+
+
 def test_onboarding_roundtrip(tmp_path):
     p = tmp_path / "setup_state.json"
 
