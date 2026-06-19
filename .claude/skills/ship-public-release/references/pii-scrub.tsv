@@ -56,6 +56,12 @@ scrub	C--Users-Administrator-Desktop-Personal-Jarvis	<your-claude-project-dir>	p
 # --- cloud project identifier (regression guard; 0 current hits) ------------
 scrub	gen-lang-client-0108934957	<GCP_PROJECT_ID>	personal GCP project id
 
+# --- windows account SID (2026-06-19 privacy review) ------------------------
+# The maintainer's machine/account SID leaked via scripts/drift-guard-task.xml
+# (the -500 RID = builtin Administrator). Mask the unique machine-identifier
+# prefix; any RID suffix is preserved so the XML stays SID-shaped as a template.
+scrub	S-1-5-21-420352953-976713421-1014275510	S-1-5-21-0-0-0	windows account SID machine identifier (maintainer box)
+
 # --- private emails: never auto-edited (would break the .mailmap mechanism), --
 # --- but BLOCK if they appear in any non-exempt shipping file ----------------
 block-only	harald\.herz@gmx\.de		private email (must only live in .mailmap)

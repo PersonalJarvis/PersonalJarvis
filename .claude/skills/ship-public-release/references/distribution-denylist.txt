@@ -49,6 +49,17 @@ docs/supply-chain/wave4-distribution.md
 # --- Internal scratch scripts (underscore-prefixed convention) --------------
 scripts/_*.py
 
+# --- Personal operational state + scratch (2026-06-19 privacy review) -------
+# config-soll.json is the maintainer's PRIVATE drift-guard desired-state pin
+# (internal _reason changelog re: GCP/billing/model mandates) — a fork generates
+# its own. .tmp_research/ is scratch probing. Neither has downstream value.
+# drift-guard-task.xml is a generated Windows Task-Scheduler export carrying the
+# maintainer's Windows account SID (S-1-5-21-...-500) + local paths — a fork
+# regenerates it from the .ps1; it must never ship (2026-06-19 scan BLOCK).
+scripts/config-soll.json
+scripts/drift-guard-task.xml
+.tmp_research/**
+
 # --- Internal dev-process docs: whole subtrees ------------------------------
 docs/superpowers/**
 docs/plans/**
