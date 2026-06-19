@@ -1,19 +1,20 @@
-"""REST-API für MCP-Server-Management.
+"""REST API for MCP server management.
 
-Wird vom WebServer gemountet. Liest Bootstrap-Specs aus
-``jarvis.mcp.registry`` + User-State aus ``jarvis.mcp.state``.
+Mounted by the WebServer. Reads bootstrap specs from
+``jarvis.mcp.registry`` and user state from ``jarvis.mcp.state``.
 
 Endpoints:
-    GET  /api/mcps                       → Server-Liste mit Status + Tools
-    POST /api/mcps/{name}/enable         → enablen + sofort starten
-    POST /api/mcps/{name}/disable        → disablen + stoppen
-    POST /api/mcps/{name}/start          → manual start (ohne enable-Toggle)
-    POST /api/mcps/{name}/stop           → manual stop
-    POST /api/mcps/import-claude-desktop → mcpServers aus Claude-Desktop-Config
-    DELETE /api/mcps/{name}              → custom-Spec löschen (nur custom)
+    GET  /api/mcps                       -> list servers with status + tools
+    POST /api/mcps/{name}/enable         -> enable + immediately start
+    POST /api/mcps/{name}/disable        -> disable + stop
+    POST /api/mcps/{name}/start          -> manual start (without enable toggle)
+    POST /api/mcps/{name}/stop           -> manual stop
+    POST /api/mcps/import-claude-desktop -> import mcpServers from Claude Desktop config
+    DELETE /api/mcps/{name}              -> delete custom spec (custom only)
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -21,6 +22,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from jarvis.core.config import get_secret, set_secret
+from jarvis.core.events import BrainToolsChanged
 from jarvis.mcp import state as mcp_state
 from jarvis.mcp.registry import BOOTSTRAP_SERVERS, MCPRegistry, MCPServerSpec
 
@@ -96,11 +98,10 @@ async def _sync_tools_for_server(
     *,
     adding: bool,
 ) -> None:
-    """Hält die tool_registry in Sync mit dem MCP-Server-Zustand.
+    """Keep the tool_registry in sync with MCP server state.
 
-    ``adding=True`` nach Start: registriert alle Tools des Servers als Adapter.
-    ``adding=False`` nach Stop: entfernt alle Tools, die von dem Server stammen.
-    Der BrainDispatcher (falls aktiv) wird über ``set_tools`` aktualisiert.
+    ``adding=True`` after start: registers all tools of the server as adapters.
+    ``adding=False`` after stop: removes all tools that originated from that server.
     """
     tool_registry = _get_tool_registry(request)
     if tool_registry is None:
@@ -109,7 +110,7 @@ async def _sync_tools_for_server(
     prefix = f"{server_name}/"
 
     if not adding:
-        # Alle Einträge entfernen, die mit "<server>/" beginnen
+        # Remove all entries beginning with "<server>/"
         for key in list(tool_registry.keys()):
             if key.startswith(prefix):
                 tool_registry.pop(key, None)
@@ -121,7 +122,7 @@ async def _sync_tools_for_server(
             if client is None:
                 return
             risk_tier = "monitor"
-            # Risk-Tier aus Config wenn vorhanden
+            # Pick up risk tier from config when available
             cfg = getattr(request.app.state, "cfg", None)
             if cfg is not None and hasattr(cfg, "harness"):
                 risk_tier = getattr(cfg.harness, "default_risk_tier", "monitor")
@@ -130,15 +131,29 @@ async def _sync_tools_for_server(
                 adapter = MCPToolAdapter(client, mcp_tool, risk_tier=risk_tier)
                 tool_registry[adapter.name] = adapter
         except Exception as exc:  # noqa: BLE001
-            log.warning("Tool-Registry-Sync für %s fehlgeschlagen: %s", server_name, exc)
+            log.warning("Tool registry sync for %s failed: %s", server_name, exc)
 
-    # BrainDispatcher benachrichtigen
-    dispatcher = getattr(request.app.state, "brain_dispatcher", None)
-    if dispatcher is not None and hasattr(dispatcher, "set_tools"):
-        try:
-            dispatcher.set_tools(dict(tool_registry))
-        except Exception as exc:  # noqa: BLE001
-            log.warning("BrainDispatcher.set_tools fehlgeschlagen: %s", exc)
+
+async def _publish_brain_tools_changed(request: Request, reason: str) -> None:
+    """Publish a BrainToolsChanged event so the live brain reloads its tool set.
+
+    Mirrors the async/sync convention from ``plugin_registry.py`` exactly.
+    No-ops silently when ``app.state.bus`` is not yet set.
+    """
+    bus = getattr(request.app.state, "bus", None)
+    if bus is None:
+        return
+    event = BrainToolsChanged(
+        source_layer="mcp_routes",
+        reason=reason,
+    )
+    try:
+        if asyncio.iscoroutinefunction(bus.publish):
+            await bus.publish(event)
+        else:
+            bus.publish(event)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("BrainToolsChanged publish failed: %s", exc)
 
 
 # ----------------------------------------------------------------------
@@ -209,10 +224,11 @@ async def enable_mcp(name: str, request: Request) -> dict[str, Any]:
     if spec is None:
         raise HTTPException(404, f"MCP-Server '{name}' unbekannt.")
 
-    # Schon aktiv? Dann nur enabled=true schreiben, kein Restart.
+    # Already active? Just persist enabled=true, no restart needed.
     if name in registry.active_clients():
         mcp_state.enable(name)
         await _sync_tools_for_server(request, registry, name, adding=True)
+        await _publish_brain_tools_changed(request, f"mcp_enabled:{name}")
         return {"ok": True, "name": name, "enabled": True, "started": True}
 
     # Probe-Start: gestartet bleibt, wenn erfolgreich. Bei Fehler wird
@@ -233,9 +249,10 @@ async def enable_mcp(name: str, request: Request) -> dict[str, Any]:
             "error": error,
         }
 
-    # Erfolg → jetzt erst enabled=true persistieren + Tools registrieren
+    # Success -> persist enabled=true + register tools + notify brain
     mcp_state.enable(name)
     await _sync_tools_for_server(request, registry, name, adding=True)
+    await _publish_brain_tools_changed(request, f"mcp_enabled:{name}")
 
     return {"ok": True, "name": name, "enabled": True, "started": True}
 
@@ -257,8 +274,9 @@ async def disable_mcp(name: str, request: Request) -> dict[str, Any]:
         # Registry-Slot aufräumen
         registry._clients.pop(name, None)  # noqa: SLF001
 
-    # Tools des gestoppten Servers aus der Tool-Registry entfernen
+    # Remove the stopped server's tools from the tool registry + notify brain
     await _sync_tools_for_server(request, registry, name, adding=False)
+    await _publish_brain_tools_changed(request, f"mcp_disabled:{name}")
 
     return {"ok": True, "name": name, "enabled": False, "stopped": True}
 
@@ -281,6 +299,7 @@ async def start_mcp(name: str, request: Request) -> dict[str, Any]:
         raise HTTPException(500, f"Start fehlgeschlagen: {exc}") from exc
 
     await _sync_tools_for_server(request, registry, name, adding=True)
+    await _publish_brain_tools_changed(request, f"mcp_started:{name}")
 
     return {
         "ok": True,
@@ -306,6 +325,7 @@ async def stop_mcp(name: str, request: Request) -> dict[str, Any]:
     registry._clients.pop(name, None)  # noqa: SLF001
 
     await _sync_tools_for_server(request, registry, name, adding=False)
+    await _publish_brain_tools_changed(request, f"mcp_stopped:{name}")
 
     return {"ok": True, "name": name, "status": "stopped"}
 
@@ -464,10 +484,12 @@ async def update_raw_config(payload: dict[str, Any], request: Request) -> dict[s
 
     mcp_state.save_config(payload)
 
-    # Registry neu aus der gerade geschriebenen Datei laden
+    # Reload registry from the freshly written file
     registry = _get_registry(request)
     if registry is not None:
         registry.load_from_mcp_json()
+
+    await _publish_brain_tools_changed(request, "mcp_config_raw")
 
     return {"ok": True, "servers": len(servers)}
 

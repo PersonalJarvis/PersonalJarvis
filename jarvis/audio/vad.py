@@ -59,6 +59,8 @@ class SileroEndpointer:
         probe_min_active_ms: int = 1500,
         probe_tail_ms: int = 2000,
         tail_loud_window_ms: int = 320,
+        long_utterance_speech_ms: int = 2000,
+        long_utterance_silence_ms: int = 3000,
     ) -> None:
         self._threshold = speech_threshold
         self._silence_frames = max(1, silence_ms // 32)
@@ -101,6 +103,15 @@ class SileroEndpointer:
         # probe's loud/quiet discriminator is measured — see the probe block.
         self._tail_loud_window_frames = max(1, tail_loud_window_ms // 32)
         self._endpoint_requested = False
+        # Autonomous long-utterance patience (probe-independent). Once this much
+        # ACTIVE speech has accumulated in the current utterance, the user is
+        # clearly dictating a long request, not a short command — grant the wider
+        # silence window so a thinking pause is not cut. Fixes session 71f2d2de:
+        # the STT probe never surfaced a partial, so the probe-driven
+        # extend_silence_window never armed. Resets per utterance via the
+        # existing _extra_silence_frames=0 at speech start.
+        self._long_utterance_speech_frames = max(1, long_utterance_speech_ms // 32)
+        self._long_utterance_silence_ms = int(long_utterance_silence_ms)
 
     def request_endpoint(self) -> None:
         """External observer requests the current utterance ends now.
@@ -276,6 +287,13 @@ class SileroEndpointer:
                     total_frames += 1
                     if is_speech:
                         speech_frames += 1
+                        # Probe-independent patience: a long active-speech run is
+                        # a long dictation — widen the natural silence window so a
+                        # mid-sentence thinking pause is not cut. extend only grows
+                        # and is reset at the next speech start, so short commands
+                        # stay snappy.
+                        if speech_frames >= self._long_utterance_speech_frames:
+                            self.extend_silence_window(self._long_utterance_silence_ms)
                         peak_speech_rms = max(peak_speech_rms, rms)
                         if silent_run:
                             # A silence timer is running. Require *sustained*

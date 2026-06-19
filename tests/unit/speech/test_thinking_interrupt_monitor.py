@@ -211,3 +211,89 @@ async def test_real_streaming_monitor_stands_down_once_audio_plays():
     )
     assert barged is False
     assert "Erstens" in response and "Zweitens" in response
+
+
+# --- Wedge guards: the stall guard must NEVER block the voice session ------- #
+# Live bug 2026-06-19 (session 11:17): a continuation interrupt fired during a
+# turn whose brain stream was running an inline "open X" computer_use step. That
+# step only stops via its own cancel token (cancel_active_cu), NOT asyncio task
+# cancellation — so the interrupt branch's ``await task`` after ``task.cancel()``
+# blocked forever. ``_handle_utterance`` never returned, ``_active_session`` was
+# stuck before its ``while not _hangup_event.is_set()`` check, and ~40 X presses
+# (request_hangup) had nothing to interrupt — the user had to restart the app.
+
+
+@pytest.mark.asyncio
+async def test_interrupt_does_not_wedge_when_brain_ignores_cancel(monkeypatch):
+    """A brain turn blocked on an UNCANCELLABLE inline action must not wedge the
+    session: the stall guard abandons it after a bounded grace and returns
+    PROMPTLY, so the session unwinds (and a later hangup/X has a live loop to act
+    on). Asserted by elapsed time — the broad ``except`` around the old
+    ``await task`` swallowed wait_for's own cancellation, so a plain wait_for
+    'completes' at the timeout and hides the hang; only timing exposes it."""
+    p = _guard_pipeline()
+    p._brain_cancel_grace_s = 0.05
+    release = asyncio.Event()
+
+    async def fake_monitor(*, grace_s, respect_input_suppression=False):
+        return True
+
+    async def stubborn_brain():
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            # Simulate an inline computer_use step that ignores asyncio
+            # cancellation (it only stops via its own token). Without a bounded
+            # await this keeps ``await task`` blocked forever.
+            await release.wait()
+        return ("late", False)
+
+    monkeypatch.setattr(p, "_barge_monitor", fake_monitor)
+    monkeypatch.setattr(p, "_mark_brain_progress", lambda: None)
+
+    started = time.monotonic()
+    response, barged = await asyncio.wait_for(
+        p._run_brain_with_stall_guard(stubborn_brain(), interrupt_monitor=True),
+        timeout=5.0,
+    )
+    elapsed = time.monotonic() - started
+    assert response == ""
+    assert barged is True
+    assert elapsed < 1.0, f"stall guard wedged on an uncancellable brain ({elapsed:.2f}s)"
+    # Let the abandoned task drain cleanly so the loop closes without warnings.
+    release.set()
+    await asyncio.sleep(0.05)
+
+
+@pytest.mark.asyncio
+async def test_hangup_during_thinking_aborts_turn(monkeypatch):
+    """Pressing the bar's X (request_hangup → _hangup_event) while the brain is
+    still THINKING must abort the turn at once — the thinking phase honours the
+    hangup kill-switch like the TTS phase does. Before the fix the stall guard
+    only watched the brain + interrupt monitor, never ``_hangup_event``, so a
+    hangup mid-think had no effect until the brain finished on its own."""
+    p = _guard_pipeline()
+    p._hangup_event = asyncio.Event()
+
+    async def quiet_monitor(*, grace_s, respect_input_suppression=False):
+        await asyncio.sleep(3600)
+        return False
+
+    async def slow_brain():
+        await asyncio.sleep(3600)
+        return ("answer", False)
+
+    monkeypatch.setattr(p, "_barge_monitor", quiet_monitor)
+    monkeypatch.setattr(p, "_mark_brain_progress", lambda: None)
+
+    async def _press_x():
+        await asyncio.sleep(0.05)
+        p._hangup_event.set()
+
+    asyncio.create_task(_press_x())
+    response, barged = await asyncio.wait_for(
+        p._run_brain_with_stall_guard(slow_brain(), interrupt_monitor=True),
+        timeout=5.0,
+    )
+    assert response == ""
+    assert barged is True

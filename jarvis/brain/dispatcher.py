@@ -79,11 +79,14 @@ class BrainDispatcher:
         history: list[BrainMessage] | None = None,
         trace_id: UUID | None = None,
         intent_level: str | None = None,
+        evidence_required_tool: str = "",
         text_consumer: Callable[[str], None] | None = None,
         ack_emitter: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
         on_progress: Callable[[], None] | None = None,
         turn_context: str = "",
         reply_language: str = "auto",
+        conversation_language: str = "",
+        voice_confirm: bool = False,
     ) -> StreamingAggregate:
         """Execute a complete turn (including the tool-use loop if tools are configured).
 
@@ -131,10 +134,13 @@ class BrainDispatcher:
                 trace_id=tid,
                 user_utterance=user_text,
                 intent_level=intent_level,
+                evidence_required_tool=evidence_required_tool,
                 text_consumer=text_consumer,
                 ack_emitter=ack_emitter,
                 on_progress=on_progress,
                 reply_language=reply_language,
+                conversation_language=conversation_language,
+                voice_confirm=voice_confirm,
             )
 
         # Simple mode: no tool use, streaming only

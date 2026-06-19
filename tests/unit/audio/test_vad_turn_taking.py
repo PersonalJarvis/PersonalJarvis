@@ -802,3 +802,125 @@ async def test_live_widened_window_defers_endpoint_mid_stream() -> None:
         "8 silent frames ended the turn despite the window being widened live to "
         "20 frames — the setter did not take effect mid-stream"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Autonomous long-utterance patience (2026-06-18): the VAD must arm the wider
+# silence window by itself once enough ACTIVE speech has accumulated — without
+# relying on the STT probe surfacing a qualifying partial. This fixes session
+# 71f2d2de where a 2976 ms silence ended the turn because the 3000 ms patience
+# was never armed (the probe never surfaced a partial); had it been armed, 2976
+# < 3000 and the whole sentence would have stayed one turn.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_long_active_speech_arms_wider_silence_window_autonomously() -> None:
+    """Once ``long_utterance_speech_ms`` of active speech has accumulated, the
+    VAD must grant the wider silence window (``long_utterance_silence_ms``)
+    WITHOUT any STT-probe involvement, so a long dictation is not cut on a
+    short thinking pause.
+
+    Scenario (session 71f2d2de analogue):
+    - base silence_ms=320 (10 frames)
+    - long_utterance_speech_ms=2000 (62 frames (2000 // 32)), long_utterance_silence_ms=3000
+    - feed ~2.5 s of speech (79 frames, > 62) then 12 silent frames
+    - 12 > 10 (base) but 12 < 3000//32=93 (extended)
+    - Without the fix the turn ends (12 >= 10 base); with the fix it does NOT.
+    """
+    vad = SileroEndpointer(
+        silence_ms=320,            # base: 10 frames
+        min_speech_ms=64,
+        min_speech_rms=0.002,
+        long_utterance_speech_ms=2000,   # 62 frames (2000 // 32) to trigger
+        long_utterance_silence_ms=3000,  # extended window: 93 frames
+    )
+    # 79 speech frames (> 62 threshold) → grant fires; then 12 silence frames
+    # (> 10 base, but < 93 extended) → turn must NOT end.
+    probs = [0.9] * 79 + [0.0] * 12
+    _stub_vad(vad, probs)
+    frames = [_pcm_frame(0.05)] * 79 + [_pcm_frame(0.0)] * 12
+
+    utterances = await _collect(vad, frames)
+
+    assert utterances == [], (
+        "12 silent frames ended the long-dictation turn even though the autonomous "
+        "patience grant should have raised the window to 93 frames (3000 ms) — "
+        "session 71f2d2de recurrence: the STT probe never armed the window and the "
+        "snappy base cut the sentence mid-word"
+    )
+
+
+@pytest.mark.asyncio
+async def test_short_command_stays_snappy_no_autonomous_patience_grant() -> None:
+    """A short command (< ``long_utterance_speech_ms`` of active speech) must
+    NOT receive the wider patience grant — the snappy base silence window ends
+    the turn promptly so simple commands stay responsive.
+
+    Anti-confirmation-fatigue contract: short commands are NEVER made sluggish.
+    """
+    vad = SileroEndpointer(
+        silence_ms=320,            # base: 10 frames
+        min_speech_ms=64,
+        min_speech_rms=0.002,
+        long_utterance_speech_ms=2000,   # 62 frames (2000 // 32) to trigger
+        long_utterance_silence_ms=3000,  # would be 93 frames if triggered
+    )
+    # 28 speech frames (< 62 threshold) → grant must NOT fire; then 11 silence
+    # frames (> 10 base, < 93 extended) → turn MUST end at the base window.
+    probs = [0.9] * 28 + [0.0] * 11
+    _stub_vad(vad, probs)
+    frames = [_pcm_frame(0.05)] * 28 + [_pcm_frame(0.0)] * 11
+
+    utterances = await _collect(vad, frames)
+
+    assert len(utterances) == 1, (
+        "a short command (28 speech frames < 62-frame threshold) had its silence "
+        "window widened autonomously — short commands must stay snappy"
+    )
+    # Explicit non-widening guard: the effective window must equal the base
+    # window. Proving "one utterance" only shows non-widening indirectly; this
+    # assert pins the anti-confirmation-fatigue contract directly so a future
+    # refactor that breaks the speech-frame guard but still yields one utterance
+    # cannot pass silently.
+    assert vad._effective_silence_frames == vad._silence_frames, (
+        "the autonomous patience grant widened the window for a short command "
+        f"(_effective_silence_frames={vad._effective_silence_frames}, "
+        f"_silence_frames={vad._silence_frames})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_autonomous_patience_grant_resets_across_utterances() -> None:
+    """The autonomous patience grant must NOT leak into the next utterance.
+
+    After a long turn (which arms the wide window) ends, a new short command
+    must reset to the snappy base window — exactly like the probe-driven grant.
+    """
+    vad = SileroEndpointer(
+        silence_ms=320,            # base: 10 frames
+        min_speech_ms=64,
+        min_speech_rms=0.002,
+        long_utterance_speech_ms=2000,   # 62 frames (2000 // 32) to trigger
+        long_utterance_silence_ms=3000,  # extended: 93 frames
+    )
+    # Utterance 1: 79 speech frames (triggers grant) + 100 silence frames → ends
+    # (100 >= 93 extended). Utterance 2: 10 speech frames (< 62, no grant) + 11
+    # silence frames (> 10 base, < 93 extended) → must end at the base window,
+    # proving the grant was reset.
+    probs = [0.9] * 79 + [0.0] * 100 + [0.9] * 10 + [0.0] * 11
+    _stub_vad(vad, probs)
+    frames = (
+        [_pcm_frame(0.05)] * 79
+        + [_pcm_frame(0.0)] * 100
+        + [_pcm_frame(0.05)] * 10
+        + [_pcm_frame(0.0)] * 11
+    )
+
+    utterances = await _collect(vad, frames)
+
+    assert len(utterances) == 2, (
+        "the autonomous patience grant leaked into the second (short) utterance — "
+        f"got {len(utterances)} utterances; the second should have ended at the "
+        "10-frame base window, not the 93-frame extended window"
+    )

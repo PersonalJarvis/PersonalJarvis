@@ -12,7 +12,6 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import {
@@ -129,9 +128,12 @@ export function TaskCreateDialog({ onClose }: { onClose: () => void }) {
     queryKey: ["marketplace-plugins"],
     queryFn: fetchPlugins,
   });
-  const plugins = (pluginsData?.plugins ?? []).filter(
-    (p) => p.status === "connected" || p.live_callable,
-  );
+  // Only plugins the user has actually connected belong here. `live_callable` is a
+  // catalog property (the plugin ships an MCP transport or a native ROUTER_TOOLS
+  // tool) and is `true` even for unconnected plugins, so it must NOT widen this
+  // list — a scheduled task can only use a plugin whose auth is live ("connected"),
+  // never a `not_connected` or `needs_reauth` one.
+  const plugins = (pluginsData?.plugins ?? []).filter((p) => p.status === "connected");
 
   const draft: TaskDraft = useMemo(
     () => ({
@@ -208,8 +210,12 @@ export function TaskCreateDialog({ onClose }: { onClose: () => void }) {
           </Button>
         </div>
 
-        {/* Body */}
-        <ScrollArea className="flex-1">
+        {/* Body — a native overflow scroll container (the ConductorView pattern).
+            A Radix <ScrollArea> nests a `height:100%` viewport that never resolves
+            inside this `max-h-[90vh]` flex column, so Radix kept `overflow:hidden`
+            and clipped the lower plugins + the model picker. `min-h-0` lets this
+            flex child shrink below its content so it actually scrolls. */}
+        <div className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis">
           <div className="space-y-5 px-6 py-5">
             <Field label={t("tasks_view.create.name_label")}>
               <input
@@ -412,7 +418,7 @@ export function TaskCreateDialog({ onClose }: { onClose: () => void }) {
               />
             </div>
           </div>
-        </ScrollArea>
+        </div>
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 border-t border-border px-6 py-4">

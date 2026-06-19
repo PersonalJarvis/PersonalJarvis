@@ -339,7 +339,7 @@ class TaskRunner:
         """
         if self._brain is None:
             raise RuntimeError(
-                "Agent-Brain nicht konfiguriert — agent-Action kann nicht laufen"
+                "Agent brain not configured — agent action cannot run"
             )
         allowed_tools = tuple(g.plugin_id for g in action.plugin_grants)
         # Plugins the user granted write/full are pre-authorized for this

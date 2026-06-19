@@ -19,6 +19,31 @@ import uuid
 from collections.abc import AsyncIterator
 
 from jarvis.core.protocols import ExecutionContext, HarnessResult, HarnessTask
+from jarvis.plugins.tool.computer_use_tool import _ctx_output_language
+
+
+def _lang_ctx(user_utterance: str, config: dict) -> ExecutionContext:
+    return ExecutionContext(
+        trace_id=uuid.uuid4(),
+        user_utterance=user_utterance,
+        config=config,
+        memory_read=None,
+    )
+
+
+def test_ctx_output_language_prefers_loop_stamped_language() -> None:
+    # The tool-use loop stamps the turn's resolved output language (honors the
+    # reply_language pin AND conversation stickiness) into ctx.config. A one-word
+    # English "Now" in a German conversation must read back German, not English.
+    ctx = _lang_ctx("Now", {"output_language": "de"})
+    assert _ctx_output_language(ctx) == "de"
+
+
+def test_ctx_output_language_falls_back_to_detection_without_stamp() -> None:
+    # Tests / minimal wiring: no stamp → detect from the user's own words.
+    ctx = _lang_ctx("Mach das Licht an", {})  # i18n-allow: German voice fixture
+    assert _ctx_output_language(ctx) == "de"
+    assert _ctx_output_language(_lang_ctx("Turn on the lights please now", {})) == "en"
 
 
 class _FakeHarnessManager:
@@ -191,3 +216,200 @@ async def test_without_bus_keeps_synchronous_contract() -> None:
 
     assert result.success
     assert fake.dispatched == [("screenshot", "open a terminal")]
+
+
+# ---------------------------------------------------------------------------
+# suppress_response flag + localized ACK (fix for session 71f2d2de, 2026-06-18)
+#
+# Root cause: ComputerUseTool lacked suppress_response=True, so tool_use_loop
+# fed the internal English steering instruction into a second brain iteration
+# and Gemini echoed it verbatim as its own assistant bubble. The fix: set the
+# flag (tool_use_loop honours it at lines 662-666 / 709-728) and return the
+# pre-existing, localized cu_dispatch_ack phrase instead of the English string.
+# ---------------------------------------------------------------------------
+
+
+def test_suppress_response_flag_is_true() -> None:
+    """ComputerUseTool must carry suppress_response=True so tool_use_loop skips
+    the second brain iteration and takes the output verbatim."""
+    from jarvis.plugins.tool.computer_use_tool import ComputerUseTool
+
+    assert ComputerUseTool.suppress_response is True
+
+
+def _ctx_de() -> ExecutionContext:
+    return ExecutionContext(
+        trace_id=uuid.uuid4(),
+        user_utterance="öffne ein Terminal",  # i18n-allow: DE language-detection fixture
+        config={},
+        memory_read=None,
+    )
+
+
+def _ctx_en() -> ExecutionContext:
+    return ExecutionContext(
+        trace_id=uuid.uuid4(),
+        user_utterance="open a terminal",  # English utterance
+        config={},
+        memory_read=None,
+    )
+
+
+async def _drain_background(bus: _FakeBus, fake: _SlowHarnessManager) -> None:
+    """Release the slow fake and wait for its background mission to finish.
+
+    Mirrors the drain in test_with_bus_returns_immediate_ack_and_announces_
+    completion so the asyncio.Task spawned by execute() (kept alive by
+    tool._background_tasks) completes inside the test — no pending task survives
+    to trigger a "Task destroyed while pending" warning under a slower fake or
+    eager loop teardown.
+    """
+    from jarvis.core.events import AnnouncementRequested
+
+    await asyncio.wait_for(fake.started.wait(), timeout=2.0)
+    fake.release.set()
+    for _ in range(200):
+        if any(isinstance(e, AnnouncementRequested) for e in bus.events):
+            break
+        await asyncio.sleep(0.01)
+    assert any(isinstance(e, AnnouncementRequested) for e in bus.events)
+
+
+async def test_with_bus_ack_is_german_for_german_utterance() -> None:
+    """A German-language turn must yield the German cu_dispatch_ack phrase."""
+    from jarvis.plugins.tool.computer_use_tool import ComputerUseTool
+    from jarvis.voice.action_phrases import action_phrase
+
+    bus = _FakeBus()
+    fake = _SlowHarnessManager()
+    tool = ComputerUseTool(bus=bus, manager=fake)
+
+    result = await tool.execute({"goal": "Terminal öffnen"}, _ctx_de())  # i18n-allow: DE fixture
+
+    assert result.success
+    expected = action_phrase("cu_dispatch_ack", "de")
+    assert result.output == expected, f"Got: {result.output!r}"
+
+    # Drain the background mission so no pending task survives the test.
+    await _drain_background(bus, fake)
+
+
+async def test_with_bus_ack_is_english_for_english_utterance() -> None:
+    """An English-language turn must yield the English cu_dispatch_ack phrase."""
+    from jarvis.plugins.tool.computer_use_tool import ComputerUseTool
+    from jarvis.voice.action_phrases import action_phrase
+
+    bus = _FakeBus()
+    fake = _SlowHarnessManager()
+    tool = ComputerUseTool(bus=bus, manager=fake)
+
+    result = await tool.execute({"goal": "open a terminal"}, _ctx_en())
+
+    assert result.success
+    expected = action_phrase("cu_dispatch_ack", "en")
+    assert result.output == expected, f"Got: {result.output!r}"
+
+    # Drain the background mission so no pending task survives the test.
+    await _drain_background(bus, fake)
+
+
+async def test_with_bus_ack_contains_no_internal_english_instruction() -> None:
+    """The English internal steering strings must NEVER appear in tool output.
+
+    Before the fix, the output was the raw English instruction the model would
+    echo: 'Desktop mission started in the background ... Reply with a brief
+    acknowledgement only ...'. This string is an implementation detail — it must
+    not reach the user.
+    """
+    from jarvis.plugins.tool.computer_use_tool import ComputerUseTool
+
+    for goal, ctx in (
+        ("Terminal öffnen", _ctx_de()),  # i18n-allow: DE fixture
+        ("open a terminal", _ctx_en()),
+    ):
+        bus = _FakeBus()
+        fake = _SlowHarnessManager()
+        tool = ComputerUseTool(bus=bus, manager=fake)
+
+        result = await tool.execute({"goal": goal}, ctx)
+
+        assert result.output is not None
+        out = str(result.output)
+        assert "Reply with a brief acknowledgement" not in out, (
+            f"Internal steering instruction leaked into output: {out!r}"
+        )
+        assert "Desktop mission started in the background" not in out, (
+            f"Internal steering instruction leaked into output: {out!r}"
+        )
+
+        # Drain the background mission so no pending task survives the test.
+        await _drain_background(bus, fake)
+
+
+# ---------------------------------------------------------------------------
+# Success readback surfaces the verifier observation (fix for session 241a1984,
+# 2026-06-18). "open the browser and check which tabs I have open" → CU opened
+# Chrome, the verifier's observation ("...shows the active tab X") landed in
+# stdout, but _run_background discarded it and spoke only "Done." On success the
+# completion announcement must carry the observation so an informational request
+# is actually answered.
+# ---------------------------------------------------------------------------
+
+
+async def _collect_completion(bus: _FakeBus):
+    from jarvis.core.events import AnnouncementRequested
+
+    for _ in range(200):
+        if any(isinstance(e, AnnouncementRequested) for e in bus.events):
+            break
+        await asyncio.sleep(0.01)
+    completions = [
+        e
+        for e in bus.events
+        if isinstance(e, AnnouncementRequested) and e.kind == "completion"
+    ]
+    return completions
+
+
+async def test_success_readback_surfaces_verifier_observation() -> None:
+    from jarvis.plugins.tool.computer_use_tool import ComputerUseTool
+    from jarvis.voice.action_phrases import action_phrase
+
+    class _ProofManager(_FakeHarnessManager):
+        async def dispatch(self, name, task) -> AsyncIterator[HarnessResult]:
+            self.dispatched.append((name, task.prompt))
+            yield HarnessResult(
+                stdout="[cu] done at step 2.1 (verified: The browser is open showing tab 'Gmail')",
+                exit_code=0,
+                is_final=True,
+            )
+
+    bus = _FakeBus()
+    tool = ComputerUseTool(bus=bus, manager=_ProofManager())
+    result = await tool.execute({"goal": "open chrome and check my tabs"}, _ctx_en())
+    assert result.success  # immediate ACK
+
+    completions = await _collect_completion(bus)
+    assert len(completions) == 1
+    text = completions[0].text
+    assert "Gmail" in text, f"verifier observation must be spoken, got: {text!r}"
+    assert text != action_phrase("cu_done", "en"), "must not be the content-free Done phrase"
+
+
+async def test_success_readback_falls_back_to_done_without_proof() -> None:
+    from jarvis.plugins.tool.computer_use_tool import ComputerUseTool
+    from jarvis.voice.action_phrases import action_phrase
+
+    class _NoProofManager(_FakeHarnessManager):
+        async def dispatch(self, name, task) -> AsyncIterator[HarnessResult]:
+            self.dispatched.append((name, task.prompt))
+            yield HarnessResult(stdout="[cu] done at step 1", exit_code=0, is_final=True)
+
+    bus = _FakeBus()
+    tool = ComputerUseTool(bus=bus, manager=_NoProofManager())
+    result = await tool.execute({"goal": "open chrome"}, _ctx_en())
+    assert result.success
+
+    completions = await _collect_completion(bus)
+    assert len(completions) == 1
+    assert completions[0].text == action_phrase("cu_done", "en")

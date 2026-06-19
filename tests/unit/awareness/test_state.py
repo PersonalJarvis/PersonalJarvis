@@ -6,6 +6,7 @@ A0-Placeholder (leerer String); echte Rendering-Logik kommt in A1.
 from __future__ import annotations
 
 import dataclasses
+import time
 
 import pytest
 
@@ -102,3 +103,69 @@ def test_snapshot_for_prompt_a0_placeholder() -> None:
     state = AwarenessState()
     assert state.snapshot_for_prompt() == ""
     assert state.snapshot_for_prompt(max_chars=100) == ""
+
+
+# --- Freshness guard (anti-stale-context, 2026-06-17) ----------------------
+# Root cause of the "BridgeSpace und WhatsApp" overclaim: a current_frame that
+# had not updated for ~82 min was rendered verbatim as the present state. The
+# snapshot must never present an old frame as the live foreground.
+
+
+def test_snapshot_fresh_frame_rendered_as_current() -> None:
+    """A frame observed just now is presented as the CURRENTLY focused window."""
+    state = AwarenessState()
+    state.current_frame = FrameSnapshot(
+        timestamp_ns=time.time_ns(),
+        active_window_title="pipeline.py - Visual Studio Code",
+        active_process_name="Code.exe",
+        active_pid=4242,
+        is_capture_allowed=True,
+    )
+    snap = state.snapshot_for_prompt()
+    assert "Currently focused window" in snap
+    assert "pipeline.py - Visual Studio Code" in snap
+    assert "Code.exe" in snap
+    # A fresh frame must NOT carry the stale marker.
+    assert "stale" not in snap.lower()
+    assert "Last observed" not in snap
+
+
+def test_snapshot_old_frame_is_marked_stale_not_current() -> None:
+    """A frame from ~90 min ago must be flagged as stale, never as 'current'.
+
+    Regression guard for the 19:38 turn where an 82-min-old frame
+    ('WhatsApp'/'BridgeSpace') was narrated as 'aktuell ... aktiv'.
+    """
+    ninety_min_ns = int(90 * 60 * 1_000_000_000)
+    state = AwarenessState()
+    state.current_frame = FrameSnapshot(
+        timestamp_ns=time.time_ns() - ninety_min_ns,
+        active_window_title="WhatsApp",
+        active_process_name="WhatsApp.exe",
+        active_pid=777,
+        is_capture_allowed=True,
+    )
+    snap = state.snapshot_for_prompt()
+    # The window title is still surfaced (honest: this is the LAST thing seen)...
+    assert "WhatsApp" in snap
+    # ...but it must be explicitly marked stale and NOT presented as current.
+    assert "Last observed" in snap
+    assert "stale" in snap.lower()
+    assert "Currently focused window" not in snap
+
+
+def test_snapshot_includes_open_window_scope_disclaimer() -> None:
+    """The block must state it is focused-window history, not a full window list.
+
+    Stops the brain from overclaiming 'only X and Y are open on your PC'.
+    """
+    state = AwarenessState()
+    state.current_frame = FrameSnapshot(
+        timestamp_ns=time.time_ns(),
+        active_window_title="Editor",
+        active_process_name="Code.exe",
+        active_pid=1,
+        is_capture_allowed=True,
+    )
+    snap = state.snapshot_for_prompt()
+    assert "not a complete list" in snap.lower()

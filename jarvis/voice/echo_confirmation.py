@@ -99,6 +99,50 @@ _AMBIGUOUS_PATTERNS_EN: tuple[str, ...] = (
     r"\b(uh|uhm|hmm|hm)\b",
 )
 
+# Spanish (Runtime Output Language doctrine: the classifier must cover es too —
+# an es-pinned user could not confirm/veto by voice before this; "es" silently
+# used the German patterns). Veto keeps priority over confirm (safety bias,
+# Plan-§AP-12). NB: "para" is deliberately NOT a veto keyword — it is also the
+# common preposition ("para enviar" = "to send"), so it would cause false vetoes;
+# unambiguous stop words are used instead.
+_CONFIRM_PATTERNS_ES: tuple[str, ...] = (
+    r"\bs[íi]\b",
+    r"\bvale\b",
+    r"\bclaro\b",
+    r"\bhazlo\b",
+    r"\bhaz\b",
+    r"\bcorrecto\b",
+    r"\bde acuerdo\b",
+    r"\bacuerdo\b",
+    r"\badelante\b",
+    r"\bdale\b",
+    r"\bconfirm(o|ar|ado)?\b",
+    r"\bperfecto\b",
+    r"\bexacto\b",
+)
+
+_VETO_PATTERNS_ES: tuple[str, ...] = (
+    r"\bno\b",
+    r"\bcancela(r)?\b",
+    r"\babortar?\b",
+    r"\bdet(é|e)n(te)?\b",
+    r"\bd(é|e)jalo\b",
+    r"\bolv[ií]da(lo)?\b",
+    r"\balto\b",
+    r"\bbasta\b",
+    r"\bmal\b",
+    r"\bincorrecto\b",
+    r"\bnegativo\b",
+)
+
+_AMBIGUOUS_PATTERNS_ES: tuple[str, ...] = (
+    r"\bquiz[aá]s?\b",
+    r"\btal vez\b",
+    r"\bespera\b",
+    r"\bmomento\b",
+    r"\bni idea\b",
+)
+
 ResponseVerdict = Literal["confirm", "veto", "ambiguous", "unknown"]
 
 
@@ -119,6 +163,10 @@ def classify_response(transcript: str, *, language: str = "de") -> ResponseVerdi
         veto_pats = _VETO_PATTERNS_EN
         confirm_pats = _CONFIRM_PATTERNS_EN
         ambig_pats = _AMBIGUOUS_PATTERNS_EN
+    elif language == "es":
+        veto_pats = _VETO_PATTERNS_ES
+        confirm_pats = _CONFIRM_PATTERNS_ES
+        ambig_pats = _AMBIGUOUS_PATTERNS_ES
     else:
         veto_pats = _VETO_PATTERNS_DE
         confirm_pats = _CONFIRM_PATTERNS_DE

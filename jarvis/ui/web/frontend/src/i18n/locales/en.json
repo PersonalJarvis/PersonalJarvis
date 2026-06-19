@@ -11,7 +11,9 @@
     "restart_confirm": "Confirm restart?",
     "restart_hint": "Restart Jarvis",
     "restarting": "Restarting Jarvis…",
-    "restart_failed": "Restart failed"
+    "restart_failed": "Restart failed",
+    "restart_force": "Restart anyway?",
+    "restart_missions_running": "mission(s) still running — click again to restart anyway"
   },
   "nav": {
     "chats": "Chats",
@@ -23,6 +25,7 @@
     "mcps": "MCPs",
     "tasks": "Tasks",
     "sessions": "Transcription",
+    "run_inspector": "Run Inspector",
     "clis": "CLIs",
     "cli_test_hub": "CLI Test Hub",
     "clis_hub": "CLIs & CLI Test Hub",
@@ -34,7 +37,6 @@
     "apikeys": "API Keys",
     "settings": "Settings",
     "telephony": "Telephony",
-    "debug": "Debug",
     "outputs": "Outputs",
     "socials": "Socials",
     "taskbar": "Taskbar",
@@ -309,6 +311,26 @@
     "selected": "selected",
     "bulk_delete_title": "Delete skills?",
     "bulk_delete_body": "These skills will be permanently removed:"
+  },
+  "run_inspector": {
+    "title": "Run Inspector",
+    "subtitle": "Per-run forensics: full transcript, timeline, latency, decisions, tools, errors.",
+    "empty": "Select a run to inspect.",
+    "unavailable": "Run recorder is disabled.",
+    "export_raw": "Export raw (JSON)",
+    "full_transcript": "Full conversation",
+    "deep_dive": "Metrics & deep dive",
+    "triggered": "Triggered",
+    "what_happened": "What happened",
+    "forensics": "Forensics",
+    "panel": {
+      "transcript": "Transcript",
+      "timeline": "Timeline",
+      "latency": "Latency",
+      "decision": "Decision path",
+      "tools": "Tools",
+      "errors": "Errors"
+    }
   },
   "sessions_view": {
     "title": "Transcription",
@@ -974,10 +996,6 @@
     "step5_body": "Back on the API Keys page, enter the Account SID, Auth Token and phone number, enable telephony, then run \"Test connection\" and \"Self-test voice\".",
     "public_url": "Public base URL",
     "webhook": "Webhook URL"
-  },
-  "debug_view": {
-    "title": "Debug",
-    "subtitle": "Live event stream from the orchestrator."
   },
   "previews_view": {
     "title": "Previews",

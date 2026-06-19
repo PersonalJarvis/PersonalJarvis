@@ -113,7 +113,10 @@ async def test_no_episodes_returns_friendly_empty(store: RecallStore) -> None:
     tool = AwarenessRecallTool(recall_store=store)
     result = await tool.execute({"query": "pipeline"}, ctx=None)
     assert result.success is True
-    assert "no episodes" in result.output.lower()
+    # Empty window: honest AND explicitly reachable, so it cannot be
+    # mis-narrated as an outage (2026-06-18 confabulation).
+    assert "reachable" in result.output.lower()
+    assert "no activity" in result.output.lower()
 
 
 @pytest.mark.asyncio
@@ -136,6 +139,95 @@ async def test_match_includes_local_hhmm(store: RecallStore) -> None:
     # Look for HH:MM-shaped substring in the output.
     import re
     assert re.search(r"\b\d{2}:\d{2}\b", result.output) is not None
+
+
+# ---------------------------------------------------------------------------
+# Recency fallback (honesty: a reachable-but-no-keyword-match store must not
+# surface a bare empty result that a brain can mis-narrate as an outage)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_no_keyword_match_falls_back_to_recent_timeline(store: RecallStore) -> None:
+    """Keyword miss + episodes in window → return the recent activity timeline.
+
+    Regression for the 2026-06-18 "der Awareness-Speicher meldet einen Fehler
+    und ist nicht erreichbar" confabulation: the store was reachable and held
+    375 episodes, but the user's recency question ("what did I have open
+    today") produced keywords that did not match the sparse episode summaries.
+    The tool returned a bare "No episodes matched", and the deep brain
+    escalated that *empty* result into a false *unavailable* claim. The fix
+    makes the tool hand the brain the real activity timeline (which directly
+    answers a recency question) instead of an empty result.
+    """
+    # Episodes exist in the window but none contain the keyword 'kubernetes'.
+    await _seed(store, summary="", app="ShareX.exe", minutes_ago=20)
+    await _seed(
+        store, summary="Der Nutzer war in der Anwendung python",
+        app="python.exe", minutes_ago=40,
+    )
+    tool = AwarenessRecallTool(recall_store=store)
+    result = await tool.execute({"query": "kubernetes"}, ctx=None)
+    assert result.success is True
+    # The brain must receive the user's real activity, not a bare "nothing".
+    assert "python.exe" in result.output
+    assert "ShareX.exe" in result.output
+    # The output must LEAD positively with the data — never a leading
+    # negation ("No episode summary matched …") that a skimming model reads
+    # as "unavailable" (the regression that kept the bug alive after the
+    # first fix attempt). The keyword caveat is a trailing note only.
+    first_line = result.output.splitlines()[0].lower()
+    assert not first_line.startswith("no ")
+    assert "found" not in first_line
+    assert "activity" in first_line or "history" in first_line
+
+
+@pytest.mark.asyncio
+async def test_recency_fallback_honours_since_window(store: RecallStore) -> None:
+    """The recency fallback must not leak episodes older than the window."""
+    await _seed(store, summary="", app="old.exe", minutes_ago=180)
+    await _seed(store, summary="", app="fresh.exe", minutes_ago=10)
+    tool = AwarenessRecallTool(recall_store=store)
+    result = await tool.execute(
+        {"query": "nomatchkeyword", "since_minutes": 60}, ctx=None,
+    )
+    assert result.success is True
+    assert "fresh.exe" in result.output
+    assert "old.exe" not in result.output
+
+
+@pytest.mark.asyncio
+async def test_truly_empty_window_affirms_store_reachable(store: RecallStore) -> None:
+    """No episodes at all → empty message must affirm the store IS reachable.
+
+    A bare "nothing found" is what the deep brain mis-read as an outage, so
+    the genuinely-empty path states explicitly that the store works.
+    """
+    tool = AwarenessRecallTool(recall_store=store)
+    result = await tool.execute({"query": "anything"}, ctx=None)
+    assert result.success is True
+    assert "no activity" in result.output.lower()
+    assert "reachable" in result.output.lower()
+
+
+@pytest.mark.asyncio
+async def test_db_failure_surfaces_honestly_not_silently() -> None:
+    """A genuine store/DB error → success=False with an honest error.
+
+    It must NOT be swallowed into a success result the brain could narrate
+    however it likes — a real outage has to be distinguishable from "empty".
+    """
+    class _BoomStore:
+        async def search_episodes(self, **_kw):
+            raise RuntimeError("database is locked")
+
+        async def recent_episodes(self, **_kw):
+            raise RuntimeError("database is locked")
+
+    tool = AwarenessRecallTool(recall_store=_BoomStore())
+    result = await tool.execute({"query": "pipeline"}, ctx=None)
+    assert result.success is False
+    assert result.error is not None
+    assert "failed" in result.error.lower()
 
 
 # ---------------------------------------------------------------------------

@@ -15,9 +15,12 @@ irm https://raw.githubusercontent.com/personal-jarvis/personal-jarvis/main/insta
 curl -fsSL https://raw.githubusercontent.com/personal-jarvis/personal-jarvis/main/install/install.sh | bash
 ```
 
-> The one-liner only works once the repo is public. While the repo is
-> private the URLs return 404 and the manual install (see root README)
-> stays the canonical path.
+> **Not active for the first public release.** These URLs point at a
+> repository that stays private (they return 404 for anonymous users), and the
+> signed installer's Sigstore/SLSA identity is not yet wired to the public
+> flagship — so the one-liner is intentionally not advertised yet and is being
+> finished for a follow-up release. Until then the **manual git-clone install
+> (see the root README)** is the canonical, supported path.
 
 ## File layout
 

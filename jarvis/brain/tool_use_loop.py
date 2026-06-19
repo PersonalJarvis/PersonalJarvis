@@ -20,8 +20,8 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from jarvis.core.protocols import Brain, BrainMessage, BrainRequest, ImageBlock, Tool
-from jarvis.core.turn_language import resolve_turn_language
-from jarvis.safety.tool_executor import ToolExecutor
+from jarvis.core.turn_language import resolve_output_language, resolve_turn_language
+from jarvis.safety.tool_executor import VOICE_CONFIRM_SENTINEL, ToolExecutor
 
 from .iteration_budget import IterationBudget
 from .streaming import StreamingAggregate, aggregate, aggregate_with_consumer
@@ -222,6 +222,33 @@ def _is_action_tool(tool: Any) -> bool:
     return bool(getattr(tool, "is_action_tool", False))
 
 
+def _should_block_action_as_research(
+    tool: Any,
+    tool_name: str,
+    user_utterance: str,
+    intent_level: str | None,
+    evidence_required_tool: str = "",
+) -> bool:
+    """Research-intent sanity guard: block an action tool (CLI/MCP) when the
+    utterance is research-shaped — UNLESS the evidence gate already mandated
+    THIS exact tool for the turn.
+
+    The evidence mandate is the *more specific* rule (it named a concrete tool
+    for a concrete data lookup, e.g. ``cli_gcloud`` for "...meine Google-Cloud-
+    Kosten..."), so it wins over the *generic* research keyword guard. Without
+    this exception the two deterministic rules collide — the evidence gate
+    forces the tool while this guard forbids it — and the only reachable
+    outcome is the unverified-answer fallback (trace 5edf0245). The override is
+    scoped to the mandated tool only, so other action tools stay blocked under
+    a research intent.
+    """
+    if tool is None or not _is_action_tool(tool):
+        return False
+    if tool_name and tool_name == evidence_required_tool:
+        return False
+    return _is_research_intent(user_utterance, intent_level)
+
+
 def _is_side_effect_tool(tool: Any) -> bool:
     """True for tools that execute or mutate something locally or externally."""
     name = getattr(tool, "name", "")
@@ -326,10 +353,13 @@ class ToolUseLoop:
         trace_id: UUID | None = None,
         user_utterance: str = "",
         intent_level: str | None = None,
+        evidence_required_tool: str = "",
         text_consumer: Callable[[str], None] | None = None,
         ack_emitter: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
         on_progress: Callable[[], None] | None = None,
         reply_language: str = "auto",
+        conversation_language: str = "",
+        voice_confirm: bool = False,
     ) -> StreamingAggregate:
         """Executes the complete loop and returns the final aggregate.
 
@@ -580,10 +610,9 @@ class ToolUseLoop:
                             f"Tool erneut mit dem selben Wert zu rufen."
                         ),
                     }
-                elif (
-                    tool is not None
-                    and _is_action_tool(tool)
-                    and _is_research_intent(user_utterance, intent_level)
+                elif _should_block_action_as_research(
+                    tool, tool_name, user_utterance, intent_level,
+                    evidence_required_tool,
                 ):
                     # Intent sanity guard: the user used a research keyword but
                     # the LLM still wants to fire an action tool (CLI or MCP)
@@ -610,11 +639,59 @@ class ToolUseLoop:
                         ),
                     }
                 else:
+                    # Stamp the turn's resolved output language so deterministic
+                    # tool readbacks (computer_use "On it"/"Done") speak the
+                    # conversation's language instead of re-deriving it from the
+                    # bare utterance — a lone "Now" must not flip a German turn
+                    # to English (forensic 2026-06-18). One value, honoring the
+                    # pin AND conversation stickiness (Runtime Output Language).
+                    out_lang = resolve_output_language(
+                        reply_language, "unknown", user_utterance,
+                        conversation_language=conversation_language,
+                    )
                     result = await self._executor.execute(
                         tool, tool_args,
                         user_utterance=user_utterance,
+                        config_snapshot={
+                            "output_language": out_lang,
+                            "voice_confirm": voice_confirm,
+                        },
                         trace_id=tid,
                     )
+                    # Two-turn voice/chat confirmation: the executor deferred this
+                    # consequential tool instead of blocking. Speak a short
+                    # confirmation question and END the turn (no second brain
+                    # round) — the user's next "ja" resumes the stashed action via
+                    # the BrainManager. The pending descriptor rides out-of-band on
+                    # ``final_agg.voice_confirm`` (never serialized into history).
+                    if (
+                        result is not None
+                        and result.error == VOICE_CONFIRM_SENTINEL
+                        and isinstance(result.output, dict)
+                    ):
+                        # Lazy import: ``jarvis.voice`` couples to ``jarvis.core.
+                        # self_mod`` via its package __init__, so importing it at
+                        # this low-level module's load time creates an order-
+                        # dependent circular import. Import on first use instead.
+                        from jarvis.voice.tool_confirmation import (
+                            format_tool_confirmation,
+                        )
+                        question = format_tool_confirmation(
+                            result.output.get("tool_name", tool_name),
+                            language=out_lang,
+                        )
+                        final_agg.text = question
+                        final_agg.finish_reason = "voice_confirm_pending"
+                        final_agg.voice_confirm = {
+                            "trace_id": result.output.get("trace_id"),
+                            "tool_name": result.output.get("tool_name", tool_name),
+                        }
+                        if text_consumer is not None and question:
+                            try:
+                                text_consumer(question)
+                            except Exception:  # noqa: BLE001
+                                pass
+                        return final_agg
                     tool_result_payload = {
                         "success": result.success,
                         "output": result.output,

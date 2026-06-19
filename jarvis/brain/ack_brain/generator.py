@@ -243,6 +243,7 @@ class AckGenerator:
         provider: AbstractAckProvider,
         config: AckBrainConfig,
         breaker: CircuitBreaker,
+        fallback: "AckGenerator | None" = None,
     ) -> None:
         self._provider = provider
         self._config = config
@@ -251,6 +252,14 @@ class AckGenerator:
         # registry-key, not a human-readable label, but they coincide
         # by design ("gemini", "grok", "openai", "ollama").
         self._provider_name = config.provider
+        # Optional failover AckGenerator on a SEPARATE provider/breaker. Used
+        # only when THIS provider is exhausted (timed out / errored / produced
+        # nothing), so a busy primary never leaves the user in silence — the
+        # very condition the ack exists to bridge (live bug 2026-06-18: the
+        # Gemini ack timed out while the Gemini deep brain was slow → 8 s of
+        # dead air → user aborted). Wired by the factory to one level only
+        # (the fallback has no fallback of its own), so delegation can't loop.
+        self._fallback = fallback
 
     async def run(self, utterance: str, language: str = "de") -> str | None:
         """Generate one short acknowledgment sentence or return None.
@@ -455,8 +464,22 @@ class AckGenerator:
         if timed_out:
             _emit_counter("ack_timeout_total", provider=provider_label)
             await self._breaker.record_failure()
-            return
-        # No run_stream support / stream error / fast-empty -> proven path.
-        result = await self.run(utterance, language)
-        if result:
-            yield result
+        else:
+            # No run_stream support / stream error / fast-empty -> proven path
+            # on the SAME provider first (cheap, no double-wait).
+            result = await self.run(utterance, language)
+            if result:
+                yield result
+                return
+        # Primary exhausted with nothing spoken (timed out, errored, or both the
+        # stream and the proven run() produced nothing). Fail over to a SEPARATE
+        # provider so a busy primary never leaves the user in silence — the very
+        # condition the ack exists to bridge (live bug 2026-06-18: the Gemini ack
+        # timed out while the Gemini deep brain was slow → 8 s of dead air → user
+        # aborted). The fallback is isolated (different endpoint/key), so
+        # primary-side load does not starve it too. One level only (the fallback
+        # has no fallback), so this cannot recurse.
+        if self._fallback is not None:
+            _emit_counter("ack_failover_total", provider=provider_label)
+            async for out in self._fallback.run_stream(utterance, language):
+                yield out

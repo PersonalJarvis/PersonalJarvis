@@ -853,15 +853,59 @@ async def delete_system_prompt() -> dict[str, object]:
     return {"ok": True, "removed": removed, "restart_required": False, **_system_prompt_payload()}
 
 
+async def _running_mission_summaries(
+    manager: object, ids: list[str]
+) -> list[dict[str, str]]:
+    """``[{id, title}]`` for the given in-flight mission ids (title = prompt[:80]).
+
+    Best-effort: a missing manager or a per-mission lookup failure degrades to an
+    empty title rather than blocking the guard from reporting the id at all.
+    """
+    summaries: list[dict[str, str]] = []
+    get = getattr(manager, "mission", None)
+    for mid in ids:
+        title = ""
+        if callable(get):
+            try:
+                view = await get(mid)
+                title = (getattr(view, "prompt", "") or "").strip()[:80]
+            except Exception as exc:  # noqa: BLE001 — never block a restart on this
+                log.debug("restart guard: prompt lookup failed for %s: %s", mid, exc)
+        summaries.append({"id": mid, "title": title})
+    return summaries
+
+
 @router.post("/restart-app")
-async def restart_app(request: Request) -> dict[str, object]:
+async def restart_app(request: Request, force: bool = False) -> dict[str, object]:
     """Cleanly self-restart the desktop app.
 
     Delivers a pending overlay-style change (bar <-> mascot) that cannot be
     applied live (BUG-031) without the user closing + reopening by hand. The
     DesktopApp spawns a detached relauncher and quits ~0.8 s later, so this
     request returns 200 first. Returns 503 on a headless host (no window).
+
+    Mission guard: an app restart kills every in-flight mission (the process and
+    its worker Job-Objects die). That is the dominant cause of "aborted" missions
+    — a healthy-but-quiet worker looks like a hang, the app gets restarted, and
+    the run is lost (forensic: 102 crash_recovery / app_shutdown deaths, all
+    during active use, none correlated with system Standby). So unless the caller
+    passes ``force=true``, a restart while missions run is refused with HTTP 409
+    and the live mission list, letting the UI/CLI confirm before the kill. This
+    protects every restart source at once: TopBar, taskbar settings, the
+    ``jarvis-ctl restart`` CLI, and any parallel dev session hitting the endpoint.
     """
+    if not force:
+        kontrollierer = getattr(request.app.state, "kontrollierer", None)
+        list_running = getattr(kontrollierer, "running_mission_ids", None)
+        running = list(list_running()) if callable(list_running) else []
+        if running:
+            manager = getattr(request.app.state, "mission_manager", None)
+            missions = await _running_mission_summaries(manager, running)
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "missions_running", "missions": missions},
+            )
+
     desktop = getattr(request.app.state, "desktop_app", None)
     fn = getattr(desktop, "request_restart", None)
     if not callable(fn):

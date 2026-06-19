@@ -868,9 +868,8 @@ class DesktopApp:
 
         runtime_refs.set_mcp_registry(mcp_registry)
 
-        # tool_registry ist ein simples dict — `MCPToolAdapter` + native Tools
-        # werden hier zusammengeführt. Der BrainDispatcher (falls aktiv) liest
-        # daraus und reicht die Tools beim nächsten Call an den Brain durch.
+        # tool_registry is a plain dict — MCPToolAdapters and native tools are
+        # merged here. BrainManager refreshes its tool set on BrainToolsChanged.
         tool_registry: dict[str, Any] = {}
         server.app.state.tool_registry = tool_registry
 
@@ -883,12 +882,12 @@ class DesktopApp:
             try:
                 await mcp_registry.start_enabled(enabled)
             except Exception as exc:  # noqa: BLE001
-                _logger.opt(exception=exc).warning("MCP-Autostart fehlgeschlagen")
+                _logger.opt(exception=exc).warning("MCP autostart failed")
                 return
 
-            # MCP-Tools als Adapter in die Tool-Registry eintragen. Der
-            # Adapter wrappt jeden MCP-Tool strukturell zum Tool-Protocol,
-            # damit BrainDispatcher/ToolUseLoop sie uniform nutzen können.
+            # Register MCP tools as adapters in the tool registry.
+            # The adapter wraps each MCP tool to the Tool protocol so the
+            # BrainManager / ToolUseLoop can consume them uniformly.
             try:
                 from jarvis.mcp.adapter import register_mcp_tools_in_registry
 
@@ -898,22 +897,35 @@ class DesktopApp:
                     default_risk_tier=self.cfg.harness.default_risk_tier,
                 )
                 _logger.info(
-                    "{} MCP-Tools als Adapter registriert",
+                    "{} MCP tools registered as adapters",
                     len(adapters),
                 )
             except Exception as exc:  # noqa: BLE001
                 _logger.opt(exception=exc).warning(
-                    "MCP-Tool-Registrierung fehlgeschlagen",
+                    "MCP tool registration failed",
                 )
+                return
 
-            # BrainDispatcher — falls bereits aktiv — über neue Tools informieren.
-            dispatcher = getattr(server.app.state, "brain_dispatcher", None)
-            if dispatcher is not None and hasattr(dispatcher, "set_tools"):
+            # Notify the live brain so it picks up the new tools without restart.
+            if adapters:
                 try:
-                    dispatcher.set_tools(dict(tool_registry))
+                    from jarvis.core.events import BrainToolsChanged
+
+                    bus = getattr(server.app.state, "bus", None)
+                    if bus is not None:
+                        import asyncio as _asyncio
+
+                        event = BrainToolsChanged(
+                            source_layer="desktop_app._start_enabled_mcps",
+                            reason="mcp_autostart",
+                        )
+                        if _asyncio.iscoroutinefunction(bus.publish):
+                            await bus.publish(event)
+                        else:
+                            bus.publish(event)
                 except Exception as exc:  # noqa: BLE001
                     _logger.opt(exception=exc).warning(
-                        "BrainDispatcher.set_tools fehlgeschlagen",
+                        "BrainToolsChanged publish failed after MCP autostart",
                     )
 
         # Conductor (OSS-Tool im selben Monorepo) — eigene Store+Runner+

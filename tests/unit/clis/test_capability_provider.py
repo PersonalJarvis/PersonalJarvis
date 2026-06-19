@@ -126,6 +126,31 @@ def test_keyword_map_drops_ambiguous_cost_nouns():
     assert "kosten" not in out["cloud"] and "cost" not in out["cloud"]
 
 
+def test_keyword_map_drops_self_referential_wake_word():
+    # Live bug 2026-06-18 (session b34a4bba): the jarvisctl CLI declares the
+    # object "jarvis" for the jarvis-control domain. Because "Jarvis" is the wake
+    # word present in virtually EVERY transcript ("Hey Jarvis, …"), using it as a
+    # forcing keyword made the evidence gate mandate cli_jarvisctl on every
+    # utterance — e.g. the smalltalk turn "Hey Jarvis, was geht ab? Kannst du mir
+    # bitte mal". The wake word can never be a domain-specific signal, so it must
+    # be dropped from derived keywords (the real objects stay).
+    spec = replace(
+        make_spec("jarvisctl", domains=("jarvis-control",)),
+        capabilities=(
+            CliCapabilityDecl(
+                domains=("jarvis-control",),
+                verbs=("list", "show", "restart"),
+                objects=("task", "tasks", "settings", "yourself", "jarvis"),
+                description="control jarvis itself",
+            ),
+        ),
+    )
+    fake = FakeCliRegistry({"jarvisctl": spec}, active=[FakeTool("cli_jarvisctl")])
+    out = connected_domain_keyword_map(fake)
+    assert "settings" in out["jarvis-control"]  # genuine keyword kept
+    assert "jarvis" not in out["jarvis-control"]  # wake word dropped
+
+
 def test_keyword_map_defensive_against_broken_registry():
     class _Broken:
         def active_tools(self):

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-jarvis"
-version = "0.10.0"
+version = "0.11.0"
 description = "Voice-gesteuerter Meta-Orchestrator für Windows 11"
 requires-python = ">=3.11"
 readme = "README.md"
@@ -21,24 +21,24 @@ dependencies = [
     "structlog>=24.4",
     "loguru>=0.7",
     "keyring>=25.5",
-    "sounddevice>=0.5",
+    "sounddevice>=0.5",  # PortAudio binding; needs system libportaudio2 on Linux
     "numpy>=1.26,<2.2",
     "scipy>=1.14",
-    "silero-vad>=5.1",
-    "webrtcvad-wheels>=2.0",
-    "pvporcupine>=3.0",
-    "openwakeword>=0.6",
+    # Local VAD (silero-vad, which pulls torch), webrtcvad, and the wake-word
+    # engines (pvporcupine, openwakeword) live in the [local-voice] extra per the
+    # cloud-first doctrine (CLAUDE.md): the default VAD/STT/wake paths are cloud, so
+    # torch must never land in the base install on a 1 GB VPS. All are lazy-imported
+    # in their providers, so the base `import jarvis` stays clean without them.
     # Local STT removed 2026-05-18 — Groq Whisper API is the new default.
     "google-cloud-texttospeech>=2.21",
-    "elevenlabs>=1.5",
-    "chromadb>=0.5",
-    "sentence-transformers>=3.3",
+    "elevenlabs>=1.5",  # cloud TTS (pure-Python HTTP SDK) — safe in base
+    "chromadb>=0.5",  # vector store; ships its own onnxruntime MiniLM embedder
+    # sentence-transformers (another torch puller, no direct importer in jarvis/)
+    # lives in [local-voice]; chromadb's default embedder does not require it.
     # Desktop-only packages (global-hotkeys, pywinauto, pywin32, pystray,
-    # pywebview, pywinpty, win10toast-click) moved to the [desktop] extras
-    # group per the cloud-first doctrine (CLAUDE.md). The base install must
+    # pywebview, pywinpty, win10toast-click, pyautogui, mss) live in the [desktop]
+    # extras group per the cloud-first doctrine (CLAUDE.md). The base install must
     # boot on a headless Linux VPS without them.
-    "pyautogui>=0.9.54",
-    "mss>=10.0",
     "psutil>=6.1",
     "pillow>=11.0",
     "opentelemetry-api>=1.28",
@@ -51,6 +51,10 @@ dependencies = [
     "tenacity>=9.0",
     "mcp>=1.0",
     "rich>=13.9",
+    # jarvisctl control CLI (jarvis/cli_ctl/): Typer command surface + platformdirs
+    # for cross-platform per-user config/cache dirs. Pure-Python, VPS-safe.
+    "typer>=0.12",
+    "platformdirs>=4",
     # Desktop-App (Phase 1a) — cross-platform pieces stay in base.
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
@@ -77,6 +81,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    # Pull the runtime extras the test suite exercises. The local-voice + desktop
+    # packages were base dependencies until the cloud-first split (silero/torch,
+    # pyautogui, mss, …); tests still construct them, so the dev/CI environment
+    # keeps them via this self-reference while the base install stays lean.
+    "personal-jarvis[desktop,local-voice]",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "pytest-cov>=6.0",
@@ -130,6 +139,12 @@ desktop = [
     # [desktop-macos] extra (Wave 2); pyatspi is distro-packaged, never a pip dep.
     "pynput>=1.7",
     "ptyprocess>=0.7; sys_platform != 'win32'",
+    # Screen capture (mss) + desktop input automation (pyautogui) — all-platform
+    # desktop deps that need a display (useless on a headless VPS). Both are
+    # lazy-imported everywhere, so the base install degrades to a graceful English
+    # no-op when they are absent.
+    "pyautogui>=0.9.54",
+    "mss>=10.0",
 ]
 # macOS accessibility / overlay extras (Wave 2, AD-14). pyobjc frameworks back
 # the macOS AX-tree UI-element-click source (Wave 2.1) and are macOS-only, so
@@ -143,6 +158,20 @@ desktop-macos = [
     "pyobjc-framework-ApplicationServices>=10; sys_platform == 'darwin'",
     "pyobjc-framework-Accessibility>=10; sys_platform == 'darwin'",
 ]
+# Local (offline) voice + embedding engines. Heavyweight: silero-vad and
+# sentence-transformers each pull torch (a multi-hundred-MB wheel), and the
+# wake-word engines need audio + models — all useless on a headless VPS. Entirely
+# optional per the cloud-first doctrine (CLAUDE.md): the default VAD/STT/wake/
+# embedding paths are cloud-reachable, so the base install stays torch-free. Every
+# package here is lazy-imported in its provider, so the base `import jarvis` and
+# the headless server boot without them.
+local-voice = [
+    "silero-vad>=5.1",
+    "webrtcvad-wheels>=2.0",
+    "pvporcupine>=3.0",
+    "openwakeword>=0.6",
+    "sentence-transformers>=3.3",
+]
 
 [project.scripts]
 jarvis = "jarvis.__main__:main"
@@ -151,6 +180,9 @@ jarvis-ask = "jarvis.clis.jarvis_ask:main"
 jarvis-review-gc = "jarvis.cli.review_gc:main"
 # Phase 8.6 — Review-Pipeline-Eval-Harness (Plan §6.6).
 jarvis-review-eval = "jarvis.cli.review_eval:main"
+# jarvisctl — control CLI for a running Personal Jarvis instance.
+jarvisctl = "jarvis.cli_ctl.__main__:main"
+jctl = "jarvis.cli_ctl.__main__:main"
 
 # Plugin-Entry-Points — alle Slots sind schon jetzt deklariert.
 # Neue Plugins werden ohne Core-Änderung discovered.
@@ -264,6 +296,12 @@ dispatch-with-review = "jarvis.plugins.tool.dispatch_with_review:DispatchWithRev
 # same connected CLIs. See ADR-0011 amendment "CLI-Integration".
 cli-tools = "jarvis.clis.loader:CliToolLoader"
 plugin-tools = "jarvis.marketplace.plugin_loader:PluginToolLoader"
+# Router-tier only (in ROUTER_TOOLS); expands to one MCPToolAdapter per tool
+# of each connected and running MCP server. Reads client._tools_cache
+# synchronously — no network I/O, never a spawn (AP-5/AP-14). Live-refresh
+# via BrainToolsChanged when a server connects/disconnects. See ADR-0011
+# amendment "MCP-Tools Virtual Loader".
+mcp-tools = "jarvis.mcp.loader:McpToolLoader"
 # NOTE (2026-05-24): the former ``spawn-cli-worker`` entry point was REMOVED.
 # It pointed at jarvis.plugins.tool.spawn_cli_worker:SpawnCliWorkerTool, a file
 # that never existed (dead entry point). Single-step CLI work is now served

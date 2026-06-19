@@ -248,6 +248,37 @@ def test_summarize_answers_joins_and_caps() -> None:
     assert len(summarize_answers([long], cap=600)) <= 600
 
 
+def test_summarize_answers_truncates_on_sentence_boundary_not_mid_word() -> None:
+    """A spoken readback that overflows the cap must end on a complete word /
+    sentence, never mid-word. Live forensic 2026-06-19 (session 514cddc0): the
+    hard ``[:cap-1]`` cut produced "…eine schlechtere Auswander…" — the TTS
+    spoke a fragment and stopped mid-word, which the user heard as Jarvis
+    "hanging up mid-sentence"."""
+    text = ("Auswanderung ist eine grosse Entscheidung. " * 40).strip()
+    assert len(text) > 600
+    out = summarize_answers([text], cap=600)
+
+    assert len(out) <= 600
+    assert out.endswith("…")
+    core = out[:-1].rstrip()
+    # Only a suffix was removed — no word was sliced in half.
+    assert text.startswith(core)
+    after = text[len(core) : len(core) + 1]
+    assert after in ("", " ", "\n") or core[-1] in ".!?…"
+
+
+def test_summarize_answers_word_boundary_without_punctuation() -> None:
+    """Even when the overflowing text has no sentence punctuation in range, the
+    cut falls back to the last word boundary — never a partial token."""
+    text = "wort " * 200  # 1000 chars, no sentence enders
+    out = summarize_answers([text], cap=600)
+
+    assert len(out) <= 600
+    assert out.endswith("…")
+    core = out[:-1].rstrip()
+    assert set(core.split()) == {"wort"}
+
+
 # --- is_informational_request + conversational (no-tool) answer ------------
 #
 # Live mission 019ec638 (2026-06-14): "which city would you recommend for a

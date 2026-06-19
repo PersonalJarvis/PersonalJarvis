@@ -11,7 +11,9 @@
     "restart_confirm": "Wirklich neu starten?",
     "restart_hint": "Jarvis neu starten",
     "restarting": "Jarvis startet neu…",
-    "restart_failed": "Neustart fehlgeschlagen"
+    "restart_failed": "Neustart fehlgeschlagen",
+    "restart_force": "Trotzdem neu starten?",
+    "restart_missions_running": "Mission(en) laufen noch — nochmal klicken zum Erzwingen"
   },
   "nav": {
     "chats": "Chats",
@@ -23,6 +25,7 @@
     "mcps": "MCPs",
     "tasks": "Aufgaben",
     "sessions": "Transkription",
+    "run_inspector": "Run Inspector",
     "clis": "CLIs",
     "cli_test_hub": "CLI Test Hub",
     "clis_hub": "CLIs & CLI Test Hub",
@@ -34,7 +37,6 @@
     "apikeys": "API-Keys",
     "settings": "Einstellungen",
     "telephony": "Telefonie",
-    "debug": "Debug",
     "outputs": "Outputs",
     "socials": "Socials",
     "taskbar": "Taskbar",
@@ -309,6 +311,26 @@
     "selected": "ausgewählt",
     "bulk_delete_title": "Skills löschen?",
     "bulk_delete_body": "Diese Skills werden dauerhaft entfernt:"
+  },
+  "run_inspector": {
+    "title": "Run Inspector",
+    "subtitle": "Forensik pro Run: Volltranskript, Timeline, Latenz, Entscheidungen, Tools, Fehler.",
+    "empty": "Wähle einen Run zur Analyse.",
+    "unavailable": "Der Run-Recorder ist deaktiviert.",
+    "export_raw": "Roh-Export (JSON)",
+    "full_transcript": "Gesamter Gesprächsverlauf",
+    "deep_dive": "Metriken & Deep-Dive",
+    "triggered": "Ausgelöst",
+    "what_happened": "Was passiert ist",
+    "forensics": "Forensik",
+    "panel": {
+      "transcript": "Transkript",
+      "timeline": "Timeline",
+      "latency": "Latenz",
+      "decision": "Entscheidungspfad",
+      "tools": "Tools",
+      "errors": "Fehler"
+    }
   },
   "sessions_view": {
     "title": "Transkription",
@@ -974,10 +996,6 @@
     "step5_body": "Zurück auf der API-Keys-Seite Account-SID, Auth-Token und Nummer eintragen, Telefonie aktivieren und „Verbindung testen\" sowie „Stimme selbst testen\" ausführen.",
     "public_url": "Öffentliche Basis-URL",
     "webhook": "Webhook-URL"
-  },
-  "debug_view": {
-    "title": "Debug",
-    "subtitle": "Live event stream from the orchestrator."
   },
   "previews_view": {
     "title": "Previews",

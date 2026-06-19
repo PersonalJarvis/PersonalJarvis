@@ -30,10 +30,32 @@ from __future__ import annotations
 import re
 
 __all__ = [
+    "DEFAULT_LOCALE",
     "detect_text_language",
+    "is_substantive_turn",
     "normalize_language_tag",
+    "resolve_output_language",
     "resolve_turn_language",
 ]
+
+#: The fallback spoken/written language for a turn whose language cannot be
+#: detected AND no ``brain.reply_language`` pin is set. ONE shared constant so
+#: every output layer agrees on the auto-mode default instead of each hardcoding
+#: its own (the historical "pipeline defaults en, action phrases default de"
+#: split that let two layers diverge on the same ambiguous turn).
+DEFAULT_LOCALE = "en"
+
+#: The codes an explicit ``brain.reply_language`` pin may carry (``"auto"`` is
+#: deliberately absent — it means "no pin, mirror the input").
+_REPLY_PINS: frozenset[str] = frozenset({"de", "en", "es"})
+
+#: A turn with at most this many word tokens is a "thin" turn — a one- or
+#: two-word interjection ("Now", "Stop now", "jetzt", a lone loanword). A thin
+#: turn must NOT redefine an established conversation's language; it is spoken in
+#: the conversation language instead. Only a longer (substantive) turn may switch
+#: the conversation. Natural-flow forensic 2026-06-18: a single English "Now" in
+#: a German voice chat flipped the whole turn to English.
+_THIN_TURN_MAX_TOKENS = 2
 
 _TOKEN_RE = re.compile(r"\b[\w']+\b", re.UNICODE)
 
@@ -139,3 +161,60 @@ def resolve_turn_language(
     if code != "unknown":
         return code
     return default
+
+
+def is_substantive_turn(text: str) -> bool:
+    """True if *text* is long enough to (re)define the conversation language.
+
+    A one- or two-word interjection ("Now", "Stop now", "jetzt", a lone
+    loanword) is NOT substantive — it inherits the running conversation language
+    rather than switching it. Used by the conversation-stickiness logic so a
+    stray English word never flips an established German chat (forensic
+    2026-06-18).
+    """
+    return len(_TOKEN_RE.findall(text or "")) > _THIN_TURN_MAX_TOKENS
+
+
+def resolve_output_language(
+    reply_language: object,
+    stt_language: object,
+    text: str,
+    *,
+    default: str = DEFAULT_LOCALE,
+    conversation_language: object = "",
+) -> str:
+    """The SINGLE authoritative output language for one turn (de/en/es).
+
+    Every spoken or written layer — the deep-brain reply, the ack-brain
+    preamble, spawn announcements, every canned status / error / clarify /
+    timeout / provider-down phrase, the deterministic Computer-Use readbacks,
+    and the TTS voice pin — must resolve language through THIS function so no
+    layer can diverge from another (CLAUDE.md "Runtime Output Language";
+    2026-06-18 forensic).
+
+    Precedence, highest first:
+
+    1. an explicit ``brain.reply_language`` pin (``de``/``en``/``es``) — the
+       user-selected language wins over everything, including what STT heard;
+    2. else, in auto mode, conversation stickiness: a "thin" turn (a one- or
+       two-word interjection like "Now"/"Stop"/"jetzt", or a lone loanword) is
+       spoken in ``conversation_language`` — it must NOT flip an established
+       conversation. Only a substantive turn may switch the language;
+    3. else the detected input language of the turn (``resolve_turn_language``:
+       text heuristic first, STT tag breaks ties), an ambiguous substantive turn
+       inheriting ``conversation_language`` when one is set;
+    4. else the configured ``default`` locale (``DEFAULT_LOCALE``).
+
+    ``reply_language`` is tolerant: case/whitespace-insensitive, and any value
+    that is not a pin (``"auto"``, ``""``, ``None``, a typo) means "no pin —
+    mirror the input". ``conversation_language`` (de/en/es) is the language of
+    the conversation so far; pass ``""`` when none is established yet.
+    """
+    pin = str(reply_language or "").strip().lower()
+    if pin in _REPLY_PINS:
+        return pin
+    conv = str(conversation_language or "").strip().lower()
+    conv = conv if conv in _REPLY_PINS else ""
+    if conv and len(_TOKEN_RE.findall(text or "")) <= _THIN_TURN_MAX_TOKENS:
+        return conv
+    return resolve_turn_language(stt_language, text, default=(conv or default))

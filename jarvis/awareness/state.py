@@ -19,6 +19,16 @@ if TYPE_CHECKING:
     from jarvis.awareness.working_set import WorkingSet
 
 
+# Frames older than this are no longer presented as the *current* foreground
+# window — instead the snapshot marks them as a stale "last observed" reading.
+# Aligned with the 5-minute idle threshold (AwarenessWatchersConfig
+# .idle_threshold_minutes / IdleDetector default 300 s): once a window has not
+# changed for that long, asserting it is "currently active" is no longer
+# honest. Root cause of the 2026-06-17 "BridgeSpace und WhatsApp" overclaim was
+# an ~82-min-old current_frame rendered verbatim as the live state.
+_FRAME_MAX_AGE_S: float = 300.0
+
+
 @dataclass(frozen=True, slots=True)
 class FrameSnapshot:
     """A single L1 frame.
@@ -51,7 +61,9 @@ class AwarenessState:
     working_set: WorkingSet | None = field(default=None)
     is_idle: bool = False
 
-    def snapshot_for_prompt(self, max_chars: int = 600) -> str:
+    def snapshot_for_prompt(
+        self, max_chars: int = 600, max_age_s: float = _FRAME_MAX_AGE_S,
+    ) -> str:
         """Compact plain-text snapshot for system-prompt injection.
 
         A1: renders ``current_frame`` (title, process, PID) plus optional
@@ -59,21 +71,49 @@ class AwarenessState:
         the working set when more than 1 context is active (multiple
         drawers → user needs the comparison). Never raw JSON.
 
+        Freshness guard (2026-06-17): the foreground frame is only presented
+        as the *current* window when it is younger than ``max_age_s``.
+        An older frame is rendered as a clearly-flagged "last observed"
+        reading instead of being narrated as live — otherwise the brain
+        reports a stale window state as "currently active" (the root cause
+        of the "BridgeSpace und WhatsApp" overclaim). A one-line scope note
+        is always appended so the brain never presents this focus history as
+        a complete list of every open window/tab.
+
         When ``current_frame is None``: returns an empty string. Truncated
         to ``max_chars`` with a ``…`` suffix.
         """
         if self.current_frame is None:
             return ""
 
+        import time as _time  # local — no module-level import needed
+
         cur = self.current_frame
-        parts: list[str] = [
-            f"Aktiv: {cur.active_window_title} "
-            f"({cur.active_process_name}, pid={cur.active_pid})",
-        ]
+        age_s = max(0, (_time.time_ns() - cur.timestamp_ns) // 1_000_000_000)
+        descriptor = (
+            f"{cur.active_window_title} "
+            f"({cur.active_process_name}, pid={cur.active_pid})"
+        )
+
+        parts: list[str]
+        if age_s <= max_age_s:
+            parts = [f"Currently focused window: {descriptor}"]
+        else:
+            age_min = age_s // 60
+            parts = [
+                f"Last observed foreground window ~{age_min} min ago "
+                f"(possibly stale — no live screen view right now): {descriptor}"
+            ]
+
+        # Scope honesty: awareness only tracks the focused window + recently
+        # used apps, never an enumeration of all open windows. Stating this
+        # stops the brain from claiming "only X and Y are open on your PC".
+        parts.append(
+            "(Focused-window history only — NOT a complete list of "
+            "open windows/tabs.)"
+        )
 
         if self.is_idle and cur.idle_since_ns is not None:
-            import time as _time  # local — no module-level import needed
-
             idle_seconds = max(0, (_time.time_ns() - cur.idle_since_ns) // 1_000_000_000)
             idle_minutes = idle_seconds // 60
             parts.append(f"[Idle seit {idle_minutes}min]")

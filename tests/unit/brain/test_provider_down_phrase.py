@@ -12,7 +12,11 @@ from __future__ import annotations
 
 import pytest
 
-from jarvis.brain.manager import _PROVIDER_DOWN_PHRASES, _provider_down_phrase
+from jarvis.brain.manager import (
+    BrainManager,
+    _PROVIDER_DOWN_PHRASES,
+    _provider_down_phrase,
+)
 
 # The exact leak tokens emitted by _format_provider_chain_error — none may
 # survive into the spoken phrase.
@@ -51,3 +55,35 @@ class TestProviderDownPhrase:
         # Orthographic correctness — never ASCII-fold Spanish.
         joined = " ".join(_PROVIDER_DOWN_PHRASES["es"])
         assert any(c in joined for c in "áéíóúñ¿¡")
+
+
+class TestNextProviderDownPhraseAutoDetect:
+    """The METHOD ``_next_provider_down_phrase`` must speak the auto-detected
+    turn language, not always German, when no pin is set (Runtime Output
+    Language: an English/Spanish 'auto' user hears a total-failure apology in
+    their own language). A pin still wins.
+    """
+
+    @staticmethod
+    def _manager(reply_language: str, turn_lang: str) -> BrainManager:
+        m = BrainManager.__new__(BrainManager)
+        m._reply_language = reply_language
+        m._turn_detected_lang = turn_lang
+        m._provider_down_idx = 0
+        return m
+
+    def test_auto_mode_uses_detected_turn_language(self) -> None:
+        m = self._manager("auto", "en")
+        assert m._next_provider_down_phrase() == _PROVIDER_DOWN_PHRASES["en"][0]
+
+    def test_auto_mode_spanish_turn(self) -> None:
+        m = self._manager("auto", "es")
+        assert m._next_provider_down_phrase() == _PROVIDER_DOWN_PHRASES["es"][0]
+
+    def test_auto_mode_unknown_turn_keeps_german_default(self) -> None:
+        m = self._manager("auto", "")
+        assert m._next_provider_down_phrase() == _PROVIDER_DOWN_PHRASES["de"][0]
+
+    def test_pin_wins_over_detected_turn_language(self) -> None:
+        m = self._manager("de", "en")
+        assert m._next_provider_down_phrase() == _PROVIDER_DOWN_PHRASES["de"][0]

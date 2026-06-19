@@ -581,6 +581,31 @@ class EvidenceDomainsConfig(BaseModel):
             "cloud-rechnung", "cloud rechnung", "cloud billing", "billing account",
             "abrechnung", "abrechnungen", "guthaben", "billing", "budget",
         ],
+        # Local screen / window-activity history. Served by the always-on
+        # internal `awareness-recall` tool (wired into the domain→tool map in
+        # BrainManager._run_evidence_gate, NOT a connected CLI), so a question
+        # like "was hatte ich heute offen / was habe ich gemacht / which
+        # windows were open" deterministically FORCES an awareness-recall call
+        # instead of letting the (esp. fast-tier) model confabulate "der lokale
+        # Verlaufsspeicher ist nicht verfügbar" without ever calling the tool
+        # (live 2026-06-18, proven from the log: no tool execution line, yet the
+        # refusal was spoken). Keywords are PHRASE-specific to opened
+        # windows/apps/today's on-device activity — never a bare "offen"/"open"
+        # token, so "ist die Frage noch offen" can't hijack the domain.
+        "activity": [
+            "offen hatte", "offen gehabt", "heute offen", "was war offen",
+            "was hatte ich auf", "geoeffnet hatte", "geoeffnete fenster",
+            "geoeffneten fenster", "offene fenster", "offene programme",
+            "welche fenster", "welche programme", "welche anwendungen",
+            "welche apps", "geoeffnete anwendungen", "geoeffneten anwendungen",
+            "am rechner gemacht", "am rechner offen", "am pc gemacht",
+            "am computer gemacht", "heute gemacht", "heute am rechner",
+            "woran hab ich gearbeitet", "woran habe ich gearbeitet",
+            "what did i have open", "what was open", "what did i do today",
+            "what have i been working on", "what was i working on",
+            "which windows", "which apps", "windows were open",
+            "apps were open", "my activity today", "earlier today",
+        ],
     })
 
 
@@ -629,6 +654,13 @@ class BrainConfig(BaseModel):
         default_factory=EvidenceDomainsConfig,
     )
     healthcheck_on_start: bool = True
+    # Two-turn spoken confirmation (forensic 2026-06-18): on a conversational
+    # turn a consequential ``ask``-tier tool (e.g. gmail send) is deferred into a
+    # spoken "Soll ich das wirklich tun? Sag ja." instead of blocking on a UI
+    # approval no voice user can give (which the no-first-frame ceiling then
+    # beheads with a misleading "took too long" phrase). Set False to fall back to
+    # the UI-approval path.
+    voice_confirm: bool = True
 
 
 class WikiCuratorConfig(BaseModel):

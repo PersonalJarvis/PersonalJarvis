@@ -110,8 +110,14 @@ def connected_domain_tool_map(cli_registry: Any) -> dict[str, str]:
 # Ambiguous bare nouns that appear in CLI capability objects but would hijack
 # unrelated questions ("was kostet ein Tesla?") if used as forcing keywords.
 # Applied ONLY to derived objects — curated config keywords are never filtered.
+# "jarvis" is the WAKE WORD: it is present in virtually every transcript
+# ("Hey Jarvis, …"), so the jarvisctl CLI's self-referential "jarvis" object
+# would force cli_jarvisctl on EVERY utterance — including pure smalltalk like
+# "Hey Jarvis, was geht ab?" (live bug 2026-06-18, session b34a4bba). The wake
+# word can never be a domain-specific signal, so it is dropped here.
 _KEYWORD_DENYLIST: frozenset[str] = frozenset(
-    {"kosten", "cost", "costs", "preis", "preise", "price", "geld", "money"}
+    {"kosten", "cost", "costs", "preis", "preise", "price", "geld", "money",
+     "jarvis"}
 )
 
 

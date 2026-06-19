@@ -182,3 +182,11 @@ wiki/obsidian-vault/.obsidian/hotkeys.json
 
 # TypeScript incremental build cache — regenerated every build
 *.tsbuildinfo
+
+# Backstage runtime/scratch dirs: bridge attachments + tmp, swarm scratch, and
+# the ad-hoc `verify_*.py` probes that land here. Never part of a release.
+/.bridge/
+/.bridgespace/
+# Pre-release dist backups (a snapshot copy of jarvis/ui/web/dist taken before a
+# UI rework). The live build output is dist/, not these dated backup siblings.
+jarvis/ui/web/dist._predockpolish/

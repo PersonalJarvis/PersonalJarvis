@@ -17,6 +17,7 @@ import pytest
 from jarvis.clis.auth import CliAuthManager
 from jarvis.clis.spec import AuthConfig, CliSpec, InstallMethods, RiskConfig
 from jarvis.clis.tool import (
+    MAX_HELP_STDOUT_CHARS,
     MAX_STDERR_CHARS,
     MAX_STDOUT_CHARS,
     CliTool,
@@ -201,6 +202,34 @@ async def test_execute_injects_noninteractive_env(
     result = await tool.execute({"command": cmd}, _ctx())
     assert result.success is True
     assert "1" in result.output["stdout"]
+
+
+# ---------------------------------------------------------------------------
+# Help-aware stdout cap (self-documentation, 2026-06-17).
+#
+# `<cli> --help` is the model's self-discovery channel (CLI-first design). The
+# normal 4000-char cap truncates a large top-level help (gcloud --help is ~18k
+# chars) BEFORE its command-group list, so the model can't discover commands.
+# A help invocation gets a larger cap.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_help_command_gets_larger_stdout_cap(tmp_path: Path) -> None:
+    tool, _ = _make_tool(tmp_path)
+    cmd = _script_command(tmp_path, "print('h' * 10000)") + " --help"
+    result = await tool.execute({"command": cmd}, _ctx())
+    assert result.success is True
+    assert len(result.output["stdout"]) > MAX_STDOUT_CHARS
+    assert len(result.output["stdout"]) <= MAX_HELP_STDOUT_CHARS
+
+
+@pytest.mark.asyncio
+async def test_non_help_command_keeps_normal_cap(tmp_path: Path) -> None:
+    tool, _ = _make_tool(tmp_path)
+    cmd = _script_command(tmp_path, "print('h' * 10000)")
+    result = await tool.execute({"command": cmd}, _ctx())
+    assert len(result.output["stdout"]) <= MAX_STDOUT_CHARS
 
 
 @pytest.mark.asyncio

@@ -61,7 +61,11 @@ from jarvis.core.events import (
     WakeWordDetected,
 )
 from jarvis.core.protocols import AudioChunk, Transcript
-from jarvis.core.turn_language import resolve_turn_language
+from jarvis.core.turn_language import (
+    DEFAULT_LOCALE,
+    normalize_language_tag,
+    resolve_output_language,
+)
 from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
 from jarvis.plugins.tts.gemini_flash_tts import GEMINI_TTS_SAMPLE_RATE, GeminiFlashTTS
 from jarvis.plugins.wake.openwakeword_provider import OpenWakeWordProvider
@@ -129,6 +133,14 @@ _MAX_CARRY_PCM_BYTES = 16_000 * 2 * 60  # 16 kHz * int16 * 60 s ≈ 1.9 MB
 # there is no TTS playing, so speaker->mic echo is not a concern.
 _CONTINUATION_THINKING_GRACE_S: float = 0.3
 
+# How long to wait for a cancelled brain turn to unwind before ABANDONING it.
+# A brain stream blocked on an inline action that ignores asyncio cancellation
+# (a long ``computer_use`` step stops only via its own ``cancel_active_cu``
+# token) would otherwise never finish, and an unbounded ``await task`` would
+# freeze the whole voice session (live bug 2026-06-19). After this grace the
+# task is left to unwind on its own so control always returns to the loop.
+_BRAIN_CANCEL_GRACE_S: float = 2.0
+
 # Delegation-composition patience (live 2026-06-16). Forensic: "Could you please
 # start a sub-agent mission which gives me a complete, complete, complete" was
 # submitted on a mid-composition thinking pause — the turn ended at the normal
@@ -163,7 +175,13 @@ def _should_hold_complete_delegation_for_grace(text: str | None) -> bool:
 # Minimum word count of the live partial past which we treat the utterance as a
 # long dictation (not a short command) and grant it the wider silence window. A
 # short command (e.g. "open Chrome", "hang up") never reaches it → stays snappy.
-_LONG_COMPOSITION_MIN_WORDS = 12
+# Lowered 12 → 7 (live bug 2026-06-18, session b34a4bba): the 10-word question
+# "Hey Jarvis, was geht ab? Kannst du mir bitte mal …" fell just under the old
+# 12-word threshold, got only the base 1.5 s window, and was cut mid-sentence
+# when the user paused to think after "mal". 7 still keeps every ordinary 2–6
+# word command snappy (no extension) while giving mid-length, still-forming
+# questions room to pause. See tests/unit/speech/test_long_composition_patience.py.
+_LONG_COMPOSITION_MIN_WORDS = 7
 
 
 def _looks_like_long_composition(partial: str | None) -> bool:
@@ -230,6 +248,10 @@ _BRAIN_UNAVAILABLE_PHRASE: dict[str, str] = {
         "Sorry, Alex — I can't reach any of my language models right now. "
         "Please check whether your providers still have credit."
     ),
+    "es": (
+        "Lo siento, Alex — ahora mismo no puedo acceder a ninguno de mis "
+        "modelos de lenguaje. Comprueba si tus proveedores aún tienen crédito."
+    ),
 }
 
 # AD-OE6 zero-silent-drop fallback for the *final* utterance STT. A cloud STT
@@ -241,6 +263,7 @@ _BRAIN_UNAVAILABLE_PHRASE: dict[str, str] = {
 _STT_UNAVAILABLE_PHRASE: dict[str, str] = {
     "de": "Entschuldige, ich habe dich akustisch gerade nicht verstanden. Sag es bitte noch einmal.",
     "en": "Sorry, I didn't catch that just now. Could you say it again?",
+    "es": "Perdona, no te he entendido bien ahora mismo. ¿Puedes repetirlo, por favor?",
 }
 
 # AD-OE6 zero-silent-drop fallback for a brain TURN that times out. Live bug
@@ -251,6 +274,7 @@ _STT_UNAVAILABLE_PHRASE: dict[str, str] = {
 _BRAIN_TIMEOUT_PHRASE: dict[str, str] = {
     "de": "Das hat gerade zu lange gedauert. Sag es bitte noch einmal.",
     "en": "That took too long just now. Could you say it again?",
+    "es": "Eso ha tardado demasiado ahora mismo. ¿Puedes repetirlo, por favor?",
 }
 
 # AD-OE6 zero-silent-drop fallback for an ABANDONED incomplete utterance. When
@@ -264,6 +288,7 @@ _BRAIN_TIMEOUT_PHRASE: dict[str, str] = {
 _CLARIFY_QUESTION_PHRASE: dict[str, str] = {
     "de": "Wie meinst du das genau?",
     "en": "What do you mean exactly?",
+    "es": "¿Qué quieres decir exactamente?",
 }
 
 # AD-OE6 confirmation for a SUCCESSFUL wordless desktop-action turn. When the
@@ -279,26 +304,34 @@ _CLARIFY_QUESTION_PHRASE: dict[str, str] = {
 _ACTION_DONE_PHRASE: dict[str, str] = {
     "de": "Erledigt.",
     "en": "Done.",
+    "es": "Listo.",
 }
 
 
+_PHRASE_LANGS: frozenset[str] = frozenset({"de", "en", "es"})
+
+
 def _phrase_lang(lang: str | None) -> str:
-    """Normalize a detected-language tag to a canned-phrase key ("de"/"en").
+    """Normalize a detected-language tag to a canned-phrase key ("de"/"en"/"es").
 
     The utterance language reaches the phrase pickers in two shapes: full
     language NAMES from the STT transcript (``(transcript.language or
-    "en").lower()`` → ``"german"`` for Groq Whisper) and BCP-47-ish CODES
-    ("de", "de-DE") from config pins / announcements. The pickers used to test
+    "en").lower()`` → ``"german"``/``"spanish"`` for Groq Whisper) and
+    BCP-47-ish CODES ("de", "de-DE", "es-ES") from config pins / announcements.
+    Both collapse through the canonical ``normalize_language_tag`` so every
+    supported language (de/en/es) selects its own phrase set; anything
+    unrecognised falls back to ``DEFAULT_LOCALE``. The pickers used to test
     ``lang.startswith("de")`` only — ``"german"`` does not start with "de", so
     every canned AD-OE6 fallback (clarify question, action-done ack,
     brain-timeout, brain/STT-unavailable, smalltalk fallback) was spoken in
     ENGLISH to a German speaker, and the German variants were dead code (live
     bug 2026-06-09: "antwortet fast immer mit einer englischen
-    Standardphrase"). "deutsch" is covered by the prefix check; "german" needs
-    the explicit name match. Unknown/missing → "en" (phrases exist de/en only).
+    Standardphrase"); a Spanish speaker hit the same trap until this normalizer
+    learned ``es`` (Runtime Output Language doctrine). The canned tables now
+    carry all three languages.
     """
-    norm = (lang or "").strip().lower()
-    return "de" if norm.startswith("de") or norm == "german" else "en"
+    code = normalize_language_tag(lang)
+    return code if code in _PHRASE_LANGS else DEFAULT_LOCALE
 
 # Transient STT failures worth a retry: cloud rate-limit (429) and transient
 # gateway/server errors (5xx). Anything else (401 bad key, 400 bad audio) is a
@@ -1157,6 +1190,18 @@ class SpeechPipeline:
         self._output_device = output_device
         self._input_device = input_device
         self._idle_timeout_s = idle_timeout_s
+        # Monotonic timestamp of the last out-of-band announcement Jarvis
+        # actually SPOKE (mission/background readback, preamble) plus the grace
+        # window it grants. An async readback is delivered via ``_on_announcement``
+        # — OFF the ``_active_session`` idle loop — so unlike a normal inline
+        # answer it does not naturally reset the idle window. Without this the
+        # idle window that was armed mid-mission expires seconds after the
+        # readback and hangs up on a user who never asked to (live bug 2026-06-18
+        # 08:52: a Computer-Use failure readback at :02 was followed by an
+        # idle_timeout hangup at :18). The idle-expiry branch re-arms a fresh
+        # window while within this grace. Bounded — one full window's worth.
+        self._last_announcement_spoken_monotonic: float | None = None
+        self._post_readback_grace_s: float = idle_timeout_s
         self._post_tts_listen_suppression_s = post_tts_listen_suppression_s
         self._input_suppressed_until_ns: int = 0
         self._continue_listening_after_response = continue_listening_after_response
@@ -1575,6 +1620,22 @@ class SpeechPipeline:
     def _on_vad_speech_start(self) -> None:
         log.info("voice activity start")
         self._schedule_turn_state(TurnTakingState.USER_SPEAKING)
+        # A resumed utterance freezes the continuation grace so a slow follow-up
+        # still recombines with the just-finished turn (session 71f2d2de). The
+        # SAME freeze must reach the pre-dispatch ContinuationBuffer: a fragment
+        # held there ("Kannst du bitte...") whose continuation begins inside the
+        # window but finalizes just past the 8 s deadline would otherwise be
+        # dropped and split the turn (session 241a1984, 2026-06-18). Fail-open:
+        # continuation hygiene must never crash the turn.
+        try:
+            win = getattr(self, "_continuation_window", None)
+            if win is not None:
+                win.note_speech_resumed()
+            buf = getattr(self, "_continuation_buffer", None)
+            if buf is not None:
+                buf.note_speech_resumed()
+        except Exception:  # noqa: BLE001
+            log.debug("continuation note_speech_resumed failed (non-fatal)", exc_info=True)
 
     def _on_vad_silence_start(self) -> None:
         log.info("silence timer start")
@@ -2268,6 +2329,14 @@ class SpeechPipeline:
         if not scrubbed.cleaned.strip():
             log.info("Announcement nach Filter leer — schweige.")
             return
+        # We are now committed to actually speaking this announcement (past every
+        # suppression / defer / empty guard). Record it as voice activity so the
+        # idle-timeout branch in ``_active_session`` re-arms a fresh window: an
+        # out-of-band readback (mission completion/failure) hands the floor back
+        # to the user just like an inline answer, and must not be followed by an
+        # idle hangup seconds later (live bug 2026-06-18 08:52). Set BEFORE the
+        # TTS playback so the grace also covers the readback's own play time.
+        self._last_announcement_spoken_monotonic = time.monotonic()
         # Document the announcement in the session log — it is voiced through
         # this bypass path, not _speak, so it would otherwise be invisible.
         # ``detail`` carries an optional technical diagnostic (e.g. a failed
@@ -3584,6 +3653,8 @@ class SpeechPipeline:
         self._carry_pcm = bytearray()
         self._carry_started_monotonic = None
         self._last_endpoint_reason = None
+        # A fresh session never inherits a previous session's readback grace.
+        self._last_announcement_spoken_monotonic = None
         if self._ptt_mode:
             return await self._ptt_session()
         async with MicrophoneCapture(device=self._input_device) as mic:
@@ -3638,6 +3709,30 @@ class SpeechPipeline:
                             log.info(
                                 "Idle-Timeout reached but a background mission is "
                                 "in flight - keeping the voice session open."
+                            )
+                            continue
+                        # A background mission JUST spoke its readback out-of-band
+                        # (Computer-Use / OpenClaw completion or failure). That
+                        # readback handed the floor back to the user exactly like a
+                        # normal inline answer — but, delivered via ``_on_announcement``
+                        # OFF this loop, it did NOT reset the idle window, which may
+                        # have been armed mid-mission. Re-arm a fresh window so the
+                        # user can react instead of being hung up on seconds after
+                        # the result (live bug 2026-06-18 08:52: a CU failure
+                        # readback at :02 was followed by an idle_timeout hangup at
+                        # :18, ~10 s after the user heard the failure — no hangup
+                        # command was ever given). Bounded by ``_post_readback_grace_s``
+                        # (one full idle window's worth); then idle resumes normally.
+                        last_spoken = self._last_announcement_spoken_monotonic
+                        if (
+                            last_spoken is not None
+                            and (time.monotonic() - last_spoken)
+                            < self._post_readback_grace_s
+                        ):
+                            log.info(
+                                "Idle-Timeout reached shortly after a spoken "
+                                "readback - keeping the voice session open so the "
+                                "user can respond."
                             )
                             continue
                         log.info("⏲ Idle-Timeout — lege auf.")
@@ -4354,13 +4449,17 @@ class SpeechPipeline:
             await self._set_turn_state(TurnTakingState.LISTENING)
             return True
 
-        # Turn language: the transcribed TEXT decides, the STT tag only breaks
-        # ties (live bug 2026-06-10 23:12: ``[stt].language = "de"`` pins Groq
+        # Turn language for EVERY output layer this turn (ack preamble, canned
+        # phrases, TTS voice). An explicit ``brain.reply_language`` pin wins;
+        # otherwise the transcribed TEXT decides and the STT tag breaks ties
+        # (live bug 2026-06-10 23:12: ``[stt].language = "de"`` pins Groq
         # Whisper, which echoes the pin back — English speech was tagged
-        # ``language=german`` and TTS/ack/fallback phrases went German).
-        # Normalized to codes ("de"/"en"/"es") so the TTS voice-pin maps
-        # ({"de": "de-DE"}) stop missing on name-shaped tags ("german").
-        lang = resolve_turn_language(getattr(transcript, "language", None), text)
+        # ``language=german``). Honoring the pin HERE is what stops a German
+        # utterance mis-transcribed as English from dragging the whole chain
+        # into English (forensic 2026-06-18). Normalized to codes
+        # ("de"/"en"/"es") so the TTS voice-pin maps ({"de": "de-DE"}) stop
+        # missing on name-shaped tags ("german").
+        lang = self._output_language(getattr(transcript, "language", None), text)
         log.info("👤 User [%s]: %s", lang, text)
 
         # Continuation recombine: attach this utterance to a just-dispatched one
@@ -4936,6 +5035,11 @@ class SpeechPipeline:
             return
         wait_ms = int(getattr(cfg, "clarify_after_ms", 2500)) if cfg else 2500
         delay_s = max(0.05, wait_ms / 1000.0)
+        # Remember the force flag so a deferred re-arm (floor guard in
+        # ``_clarify_question_fire``) preserves the trail-off opt-in even when the
+        # global clarify flag is off — otherwise the re-arm would silently drop
+        # the question for exactly the REASON_TRAILING_ELLIPSIS case it exists for.
+        self._clarify_force = force
         self._clarify_timer_task = loop.create_task(
             self._clarify_question_fire(delay_s, lang),
             name="clarify-question",
@@ -4961,6 +5065,29 @@ class SpeechPipeline:
         buf = getattr(self, "_continuation_buffer", None)
         if buf is None or not buf.has_pending():
             # Continuation already arrived / buffer drained — nothing to ask.
+            return
+        # AD-OE5 floor guard (live incident 2026-06-17 14:47, session f6403ec0):
+        # the user trailed off on "...liegt sie im..." → the fragment was held
+        # (reason=trailing_ellipsis) and the clarify timer force-armed; 4 ms later
+        # the user RESUMED speaking the continuation. The fixed grace then fired
+        # 2.5 s INTO that continuation, spoke over the user, and discarded the held
+        # first half (so the continuation reached the brain alone → confused
+        # non-answer). The ``_cancel_clarify_question`` path only runs once the
+        # NEXT utterance FINALISES — too late for a continuation that takes longer
+        # than the grace to speak. While the user holds the floor (USER_SPEAKING /
+        # WAITING_FOR_FINAL_TRANSCRIPT / WAITING_FOR_COMPLETION), DEFER: keep the
+        # held fragment so the continuation coalesces on finalise, and re-arm so a
+        # genuine trail-off-into-silence is still asked once the floor clears
+        # (the "Jarvis listens forever" / AD-OE6 zero-silent-drop contract must
+        # not regress). Mirrors the Flash-Brain ack / announcement floor guard
+        # (``_USER_HOLDS_FLOOR_STATES``); never barge mid-utterance.
+        if getattr(self, "_turn_state", TurnTakingState.IDLE) in _USER_HOLDS_FLOOR_STATES:
+            log.info(
+                "Clarify question deferred — user holds the floor (state=%s); "
+                "re-arming so the continuation can coalesce.",
+                self._turn_state.name,
+            )
+            self._arm_clarify_question(lang, force=getattr(self, "_clarify_force", True))
             return
         # Clear the stale fragment so it cannot pollute the next turn, THEN ask.
         buf.discard()
@@ -5449,12 +5576,27 @@ class SpeechPipeline:
                 # fakes / providers without the kwarg fall back transparently.
                 if tracker is not None:
                     tracker.mark(LatencyPhase.BRAIN_REQUEST_SENT)
+                # ``allow_voice_confirm=True``: this is a conversational voice
+                # turn, so a consequential ask-tier tool is deferred into a spoken
+                # yes/no confirmation instead of blocking on a UI approval no voice
+                # user can give (forensic 2026-06-18). Graduated fallback: a brain
+                # that accepts ``on_progress`` but NOT ``allow_voice_confirm`` (older
+                # builds, test fakes) must still receive the stall-guard heartbeat —
+                # dropping straight to the bare call here loses ``on_progress`` and
+                # the no-first-frame ceiling would behead the working turn (BUG-032).
                 try:
                     stream = self._brain.generate_stream(
-                        text, on_progress=self._mark_brain_progress
+                        text,
+                        on_progress=self._mark_brain_progress,
+                        allow_voice_confirm=True,
                     )
                 except TypeError:
-                    stream = self._brain.generate_stream(text)
+                    try:
+                        stream = self._brain.generate_stream(
+                            text, on_progress=self._mark_brain_progress,
+                        )
+                    except TypeError:
+                        stream = self._brain.generate_stream(text)
                 async for chunk in stream:
                     if not chunk:
                         continue
@@ -5853,10 +5995,28 @@ class SpeechPipeline:
                 ),
                 name="thinking-interrupt-monitor",
             )
+        # Hangup waiter: the bar's X (request_hangup → _hangup_event) must abort a
+        # thinking turn at once — exactly as the TTS phase already does. Without
+        # this the wake loop only consults _hangup_event while LISTENING, so a
+        # hangup mid-think had no effect until the brain finished on its own
+        # (live bug 2026-06-19). getattr-fallback mirrors _brain_streaming: test
+        # fixtures build via __new__ and don't set _hangup_event; a fresh, never-
+        # set Event keeps the behaviour identical (the waiter simply never fires).
+        hangup_event = getattr(self, "_hangup_event", None) or asyncio.Event()
+        hangup_task = asyncio.create_task(
+            hangup_event.wait(), name="hangup-during-thinking"
+        )
         try:
             while True:
-                waiters = {task} if monitor_task is None else {task, monitor_task}
+                waiters = {task, hangup_task}
+                if monitor_task is not None:
+                    waiters.add(monitor_task)
                 done, _pending = await asyncio.wait(waiters, timeout=poll_s)
+                # Hard kill-switch: abort the thinking turn the instant the user
+                # hangs up. The brain task is cancelled (bounded) in the finally.
+                if hangup_task in done:
+                    log.info("📵 Hangup during thinking — aborting brain turn")
+                    return ("", True)
                 if monitor_task is not None:
                     if getattr(self, "_brain_first_frame_played", False):
                         # Playback started — _brain_streaming's own barge monitor
@@ -5873,18 +6033,15 @@ class SpeechPipeline:
                         and monitor_task.result()
                     ):
                         # User spoke during thinking → abort the half-formed
-                        # answer. Cancelling the brain skips its history commit,
-                        # so the truncated half never lands; the next utterance
-                        # recombines with this prompt.
+                        # answer. The brain task is cancelled in the ``finally``
+                        # (bounded — see _cancel_brain_task_bounded) so its
+                        # truncated half never commits to history AND an inline
+                        # action that ignores cancellation can never wedge the
+                        # session; the next utterance recombines with this prompt.
                         log.info(
                             "✋ Continuation interrupt — user spoke during thinking, "
                             "aborting brain turn"
                         )
-                        task.cancel()
-                        try:
-                            await task
-                        except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
-                            pass
                         return ("", True)
                 if task in done:
                     if monitor_task is not None:
@@ -5934,16 +6091,51 @@ class SpeechPipeline:
                     await monitor_task
                 except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
                     pass
-            if not task.done():
-                task.cancel()
+            if not hangup_task.done():
+                hangup_task.cancel()
                 try:
-                    await task
-                # CancelledError is the EXPECTED outcome here (we just cancelled
-                # the task because a TimeoutError is already propagating); it is
-                # intentionally swallowed rather than re-raised so the caller sees
-                # the TimeoutError, not the cancellation noise.
-                except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                    log.debug("stall-guard: brain task cleanup raised", exc_info=True)
+                    await hangup_task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                    pass
+            if not task.done():
+                # Bounded cancel: a cancellable brain unwinds at once (its
+                # truncated half never commits, and on a TimeoutError the caller
+                # still sees the TimeoutError, not cancellation noise); a brain
+                # blocked on an uncancellable inline action is ABANDONED after a
+                # short grace so the voice session can never freeze (2026-06-19).
+                await self._cancel_brain_task_bounded(task)
+
+    async def _cancel_brain_task_bounded(self, task: asyncio.Task) -> None:
+        """Cancel an in-flight brain turn and wait only a BOUNDED grace for it to
+        unwind, then abandon it.
+
+        A brain stream blocked on an inline action that ignores asyncio
+        cancellation — a long ``computer_use`` step stops only via its own
+        ``cancel_active_cu`` token, not task cancellation — would otherwise never
+        finish. An unbounded ``await task`` then freezes the whole voice session:
+        the wake loop stays inside ``_handle_utterance`` and never reaches its
+        ``while not _hangup_event.is_set()`` check, so the bar's X
+        (``request_hangup``) has nothing to interrupt (live bug 2026-06-19: a
+        continuation interrupt during an "open X" turn wedged the pipeline; ~40
+        ignored X presses, recovered only by an app restart).
+
+        After the grace the task is left running — it unwinds on its own once the
+        underlying action finishes or is stopped via ``cancel_active_cu`` (the
+        hangup path already calls that) — so control ALWAYS returns to the loop.
+        """
+        task.cancel()
+        grace = getattr(self, "_brain_cancel_grace_s", _BRAIN_CANCEL_GRACE_S)
+        done, _pending = await asyncio.wait({task}, timeout=grace)
+        if task not in done:
+            # Retrieve the eventual result/exception so a late finish does not
+            # log "exception was never retrieved"; the session has moved on.
+            task.add_done_callback(lambda t: t.cancelled() or t.exception())
+            log.warning(
+                "Brain turn ignored cancellation for %.1fs — abandoning it to "
+                "free the voice session (an uncancellable inline action is still "
+                "running; hang up to stop it).",
+                grace,
+            )
 
     async def _speak_brain_timeout(
         self, lang: str, *, site: str = "unspecified"
@@ -6222,6 +6414,34 @@ class SpeechPipeline:
             asyncio.create_task(bus.publish(event))  # noqa: RUF006 — fire-and-forget
         except Exception:  # noqa: BLE001 — telemetry must never break the turn
             log.debug("SpeechSpoken emit failed", exc_info=True)
+
+    def _output_language(self, stt_language: object, text: str) -> str:
+        """Resolve THIS turn's output language for EVERY spoken/written layer.
+
+        Honors the live ``brain.reply_language`` pin (the desktop Languages
+        view) so a user-selected language reaches the ack preamble, the canned
+        status / clarify / timeout phrases and the TTS voice — not only the
+        deep-brain reply (forensic 2026-06-18: a German utterance mis-heard as
+        English text drove the whole chain English because the pipeline
+        re-derived language from text/STT alone). ``auto``/unset mirrors the
+        detected input language. Single source for the whole pipeline, per
+        CLAUDE.md "Runtime Output Language". The live pin lives on the
+        BrainManager (hot-reloaded via ``set_reply_language``); the config is
+        only consulted when the brain callback does not expose the pin (tests /
+        mock brains).
+        """
+        brain = getattr(self, "_brain", None)
+        pin = getattr(brain, "reply_language", None)
+        if pin is None:
+            cfg = getattr(self, "_config", None)
+            pin = getattr(getattr(cfg, "brain", None), "reply_language", None)
+        # Conversation stickiness: a thin interjection ("Now") inherits the
+        # running conversation language instead of flipping ack/phrases/TTS
+        # (forensic 2026-06-18). The brain owns the sticky conversation language.
+        conv = getattr(brain, "conversation_language", "")
+        return resolve_output_language(
+            pin, stt_language, text, conversation_language=conv
+        )
 
     async def _speak(
         self, text: str, language: str | None = None, *, kind: str = "reply"

@@ -28,6 +28,11 @@ class StreamingAggregate:
     #: instead of a clarifying question after a wordless desktop action" net)
     #: must read this, never ``tool_calls`` (2026-06-09).
     executed_tool_names: set[str] = field(default_factory=set)
+    #: Set when a consequential tool was DEFERRED for two-turn voice/chat
+    #: confirmation (the executor returned ``VOICE_CONFIRM_SENTINEL``). Carries
+    #: ``{"trace_id": str, "tool_name": str}`` so the BrainManager can resume the
+    #: stashed action on the user's next "ja". ``None`` on every normal turn.
+    voice_confirm: dict[str, Any] | None = None
 
 
 async def aggregate(stream: AsyncIterator[BrainDelta]) -> StreamingAggregate:

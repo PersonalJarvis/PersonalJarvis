@@ -30,9 +30,37 @@ RUN_DECISION_KINDS: Final[tuple[str, ...]] = (
     DECISION_BRAIN, DECISION_MISSION, DECISION_FALLBACK,
 )
 
+# --- Run outcome (distinct from SLO latency) --------------------------
+# The functional result of a run, NOT its speed. A slow-but-answered run is a
+# success; only a genuine failure (unrecovered error, no answer, denied action)
+# is "failed". This is what the run-list status dot colors by — latency lives in
+# its own SLO chip so a slow run no longer reads as broken.
+OUTCOME_SUCCESS: Final[str] = "success"   # answered, no failures
+OUTCOME_PARTIAL: Final[str] = "partial"   # answered, but a tool/action hiccuped
+OUTCOME_FAILED: Final[str] = "failed"     # genuine failure / no answer
+
+RUN_OUTCOMES: Final[tuple[str, ...]] = (OUTCOME_SUCCESS, OUTCOME_PARTIAL, OUTCOME_FAILED)
+
+# --- Full-transcript line roles ---------------------------------------
+# The gap-less transcript (build_transcript) tags each line with who/what
+# produced it. Drives UI styling only; an unknown value degrades to a neutral
+# style, never an error.
+ROLE_USER: Final[str] = "user"        # the user's transcribed utterance
+ROLE_JARVIS: Final[str] = "jarvis"    # every phrase Jarvis voiced (reply + intermediate)
+ROLE_SYSTEM: Final[str] = "system"    # state/status + non-spoken diagnostics (exit codes)
+ROLE_TOOL: Final[str] = "tool"        # a tool / Computer-Use action outcome
+ROLE_ERROR: Final[str] = "error"      # an error / denial surfaced inline
+
+TRANSCRIPT_ROLES: Final[tuple[str, ...]] = (
+    ROLE_USER, ROLE_JARVIS, ROLE_SYSTEM, ROLE_TOOL, ROLE_ERROR,
+)
+
 __all__ = [
     "SLO_OK", "SLO_WARN", "SLO_BREACH", "SLO_STATUSES",
     "DECISION_TIER", "DECISION_ROUTE", "DECISION_RISK",
     "DECISION_BRAIN", "DECISION_MISSION", "DECISION_FALLBACK",
     "RUN_DECISION_KINDS",
+    "OUTCOME_SUCCESS", "OUTCOME_PARTIAL", "OUTCOME_FAILED", "RUN_OUTCOMES",
+    "ROLE_USER", "ROLE_JARVIS", "ROLE_SYSTEM", "ROLE_TOOL", "ROLE_ERROR",
+    "TRANSCRIPT_ROLES",
 ]

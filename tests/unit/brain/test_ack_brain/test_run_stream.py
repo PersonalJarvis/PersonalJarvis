@@ -65,6 +65,63 @@ async def test_run_stream_falls_back_to_run_without_streaming_support() -> None:
     assert prov.calls == 1  # the proven run() path was used
 
 
+class _TimingOutStream:
+    """Provider whose stream never produces a sentence within the timeout."""
+
+    async def run(self, u: str, lang: str, *, persona_prompt: str) -> str | None:
+        import asyncio
+
+        await asyncio.sleep(10)
+        return "too late"
+
+    async def run_stream(
+        self, u: str, lang: str, *, persona_prompt: str
+    ) -> AsyncIterator[str]:
+        import asyncio
+
+        await asyncio.sleep(10)
+        yield "too late"
+
+
+def _gen_with_fallback(
+    primary: object, fallback: AckGenerator, *, timeout_ms: int = 100
+) -> AckGenerator:
+    cfg = AckBrainConfig(timeout_ms=timeout_ms, suppress_if_brain_faster_than_ms=0)
+    breaker = CircuitBreaker(threshold=3, cooldown_s=60)
+    return AckGenerator(
+        provider=primary, config=cfg, breaker=breaker, fallback=fallback  # type: ignore[arg-type]
+    )
+
+
+async def test_run_stream_fails_over_to_fallback_when_primary_times_out() -> None:
+    # Live bug 2026-06-18 (session b34a4bba): the Gemini ack timed out (4 s)
+    # while the Gemini deep brain was slow, and with no failover the user heard
+    # 8 s of dead air and aborted. A SEPARATE fallback provider must speak
+    # instead — realises the documented "Gemini primary, Grok fallback" design.
+    fallback_gen = _gen(_StreamingFake(["Lass mich kurz nachschauen."]))
+    gen = _gen_with_fallback(_TimingOutStream(), fallback_gen, timeout_ms=100)
+
+    out = [s async for s in gen.run_stream("hallo", language="de")]
+
+    assert any("nachschauen" in s for s in out)
+
+
+async def test_run_stream_no_failover_when_primary_succeeds() -> None:
+    # The fallback must NOT be invoked when the primary already spoke (no
+    # double ack, no wasted second provider call).
+    fb_provider = _StreamingFake(["Lass mich kurz nachschauen."])
+    fallback_gen = _gen(fb_provider)
+    gen = _gen_with_fallback(
+        _StreamingFake(["Ich öffne den Browser."]), fallback_gen, timeout_ms=1500
+    )
+
+    out = [s async for s in gen.run_stream("hallo", language="de")]
+
+    assert any("Browser" in s for s in out)
+    assert not any("nachschauen" in s for s in out)  # fallback never invoked
+    assert not fb_provider.deltas == []  # sanity: fallback was configured
+
+
 async def test_run_stream_empty_stream_falls_back_to_run() -> None:
     class _EmptyStream:
         async def run(self, u: str, lang: str, *, persona_prompt: str) -> str | None:

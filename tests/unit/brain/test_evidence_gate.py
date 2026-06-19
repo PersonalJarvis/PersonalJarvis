@@ -94,6 +94,55 @@ def test_general_cost_question_does_not_force_gcloud():
     assert v.kind == "pass"
 
 
+# --- activity / window-history domain (2026-06-18 confabulation fix) ----------
+
+
+def test_activity_question_forces_awareness_recall():
+    """'Was hatte ich heute offen?' must FORCE awareness-recall.
+
+    Live 2026-06-18: the fast brain answered "der lokale Verlaufsspeicher ist
+    nicht verfügbar" WITHOUT ever calling awareness-recall (proven from the log:
+    no tool execution line). Mandating the always-on internal tool removes the
+    model's discretion to confabulate an outage.
+    """
+    from jarvis.core.config import EvidenceDomainsConfig
+
+    domains = EvidenceDomainsConfig().domains
+    for utterance in [
+        "Was hatte ich heute offen?",
+        "Fasse zusammen, was ich heute am Rechner offen hatte.",
+        "Welche Programme hatte ich heute offen?",
+        "What did I have open today?",
+    ]:
+        v = check_evidence_domain(
+            utterance,
+            enabled=True,
+            domains=domains,
+            capability_registry=CapabilityRegistry(),
+            domain_tool_map={"activity": "awareness-recall"},
+            refusal_hint_fn=None,
+        )
+        assert v.kind == "require_tool", utterance
+        assert v.tool_name == "awareness-recall", utterance
+        assert "NEVER invent" in v.directive
+
+
+def test_activity_hard_negative_bare_offen_does_not_trigger():
+    """A non-activity 'offen' (with a lookup shape) must NOT hijack the domain."""
+    from jarvis.core.config import EvidenceDomainsConfig
+
+    domains = EvidenceDomainsConfig().domains
+    v = check_evidence_domain(
+        "Was ist denn noch offen bei dem Projekt?",
+        enabled=True,
+        domains=domains,
+        capability_registry=CapabilityRegistry(),
+        domain_tool_map={"activity": "awareness-recall"},
+        refusal_hint_fn=None,
+    )
+    assert v.kind == "pass"
+
+
 # --- verdict: honest_refusal -------------------------------------------------
 
 

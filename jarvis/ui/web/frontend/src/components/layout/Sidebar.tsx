@@ -5,10 +5,10 @@ import {
   BookOpen,
   KeyRound,
   Settings,
-  Activity,
   UserCircle2,
   ListTodo,
   FolderOpen,
+  Gauge,
   Notebook,
   Sparkles,
   Mic,
@@ -61,6 +61,7 @@ const NAV_GROUPS: NavItem[][] = [
   [
     { id: "tasks", labelKey: "nav.tasks", icon: ListTodo },
     { id: "sessions", labelKey: "nav.sessions", icon: Mic },
+    { id: "run_inspector", labelKey: "nav.run_inspector", icon: Gauge },
     { id: "board", labelKey: "nav.board", icon: Sparkles },
     { id: "memory", labelKey: "nav.wiki", icon: Notebook },
     { id: "contacts", labelKey: "nav.contacts", icon: Contact },
@@ -86,7 +87,6 @@ const NAV_GROUPS: NavItem[][] = [
       icon: Settings,
       matchIds: ["settings", "taskbar", "languages"],
     },
-    { id: "debug", labelKey: "nav.debug", icon: Activity },
     { id: "outputs", labelKey: "nav.outputs", icon: FolderOpen },
   ],
   // 4) Social links — pinned to the bottom group.

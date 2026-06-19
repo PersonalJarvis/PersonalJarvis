@@ -114,3 +114,48 @@ class TestCuFailureReadback:
         out = cu_failure_readback("en", error="exit 5", exit_code=5, detail=detail)
         assert "BridgeMind has no news channel" in out
         assert not _EXIT_TOKEN_RE.search(out), out
+
+
+class TestCuSuccessReadback:
+    """The SUCCESS sibling of cu_failure_readback (live bug 2026-06-18, session
+    241a1984): "open the browser and check which tabs I have open" was answered
+    only with a content-free "Done." while the verifier's observation ("...shows
+    the active tab X") sat in the harness stdout and was discarded. On success we
+    must SPEAK that observation so an informational request is actually answered.
+    """
+
+    def test_surfaces_verified_observation(self) -> None:
+        from jarvis.voice.action_phrases import cu_success_readback
+
+        stdout = (
+            "[cu] Start: open chrome\n"
+            "[cu] step 1.1: open_app {name='chrome'}\n"
+            "[cu] done at step 2.1 (verified: The browser is open showing tab 'Gmail')\n"
+        )
+        out = cu_success_readback("en", stdout=stdout)
+        assert "Gmail" in out
+        assert "browser is open" in out
+
+    def test_extracts_proof_with_inner_parens(self) -> None:
+        # The proof itself can contain parentheses ("Der Browser (Chrome) ...");
+        # extraction must take everything up to the FINAL closing paren.
+        from jarvis.voice.action_phrases import cu_success_readback
+
+        stdout = "[cu] done at step 2.1 (verified: Der Browser (Chrome) ist offen, Tab 'X')\n"
+        out = cu_success_readback("de", stdout=stdout)
+        assert "Der Browser (Chrome) ist offen" in out
+        assert "Tab 'X'" in out
+
+    def test_falls_back_to_done_without_verified_proof(self) -> None:
+        from jarvis.voice.action_phrases import action_phrase, cu_success_readback
+
+        # done line without a "(verified: ...)" segment → the plain done phrase.
+        assert cu_success_readback("en", stdout="[cu] done at step 1\n") == action_phrase(
+            "cu_done", "en"
+        )
+        # empty stdout → fallback.
+        assert cu_success_readback("de", stdout="") == action_phrase("cu_done", "de")
+        # opaque / empty proof → fallback (es coverage).
+        assert cu_success_readback(
+            "es", stdout="[cu] done at step 2 (verified: )\n"
+        ) == action_phrase("cu_done", "es")

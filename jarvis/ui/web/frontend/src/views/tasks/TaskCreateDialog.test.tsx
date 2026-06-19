@@ -10,11 +10,14 @@ const PLUGINS = {
   plugins: [{ id: "gmail", name: "Gmail", status: "connected", live_callable: true }],
 };
 
-function installFetch(onPost?: (body: Record<string, unknown>) => void) {
+function installFetch(
+  onPost?: (body: Record<string, unknown>) => void,
+  pluginsResponse: unknown = PLUGINS,
+) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url === "/api/marketplace/plugins") {
-      return { ok: true, status: 200, json: async () => PLUGINS } as Response;
+      return { ok: true, status: 200, json: async () => pluginsResponse } as Response;
     }
     if (url === "/api/tasks" && init?.method === "POST") {
       onPost?.(JSON.parse(String(init.body)));
@@ -95,6 +98,48 @@ describe("TaskCreateDialog", () => {
     expect(screen.queryByText(/unattended/i)).toBeNull();
     fireEvent.click(screen.getByText("Write")); // elevate to write
     expect(screen.getByText(/unattended/i)).toBeTruthy();
+  });
+
+  it("renders the body as a native overflow scroll container so a long plugin list stays reachable", async () => {
+    // Regression guard for the non-scrolling dialog: a Radix ScrollArea nested a
+    // `height:100%` viewport inside a `max-h-[90vh]` flex column, where the height
+    // never resolved, so Radix kept `overflow:hidden` and the lower plugins + the
+    // model tier picker were clipped and unreachable. The fix is a native
+    // `overflow-y-auto` flex child (the ConductorView pattern), which is itself the
+    // scroll container and needs no resolved viewport height.
+    installFetch();
+    const { container } = renderDialog();
+    await screen.findByText("Gmail");
+    const scrollBody = container.querySelector(".overflow-y-auto");
+    expect(scrollBody).toBeTruthy();
+    // The scroll container must wrap the WHOLE form — from the name input at the top
+    // down to the model tier section at the very bottom (the part that was clipped).
+    expect(scrollBody!.querySelector("input")).toBeTruthy();
+    expect(scrollBody!.textContent).toContain("Fast");
+  });
+
+  it("only lists plugins the user has actually connected — not the whole catalog", async () => {
+    // `live_callable` is a CATALOG property (the plugin has an MCP transport or a
+    // native ROUTER_TOOLS tool), NOT a connection state — it is `true` even for
+    // plugins the user never connected. The dialog must offer only `status ===
+    // "connected"` plugins; offering not_connected / needs_reauth ones makes no
+    // sense (an unattended task can't use a plugin that isn't connected).
+    const MIXED = {
+      connected: 1,
+      total: 3,
+      plugins: [
+        { id: "github", name: "GitHub", status: "connected", live_callable: true },
+        { id: "vercel", name: "Vercel", status: "not_connected", live_callable: true },
+        { id: "gmail", name: "Gmail", status: "needs_reauth", live_callable: true },
+      ],
+    };
+    installFetch(undefined, MIXED);
+    renderDialog();
+    await screen.findByText("GitHub");
+    // exactly one toggle — the connected plugin; the catalog-callable-but-unconnected ones are excluded
+    expect(screen.getAllByRole("switch")).toHaveLength(1);
+    expect(screen.queryByText("Vercel")).toBeNull();
+    expect(screen.queryByText("Gmail")).toBeNull();
   });
 
   it("disables submit until name and prompt are filled", async () => {

@@ -127,6 +127,38 @@ async def test_tracking_cleared_after_normal_completion(
 
 
 @pytest.mark.asyncio
+async def test_running_mission_ids_lists_only_inflight_missions(
+    manager: MissionManager, tmp_path: Path
+) -> None:
+    """``running_mission_ids`` exposes exactly the in-flight runs, no zombies.
+
+    The restart guard (POST /api/settings/restart-app) reads this to refuse a
+    silent kill of live missions. It must report a mission only while its
+    ``run_mission`` task is actually pending: empty when idle, the id while the
+    worker runs, and empty again after the task finishes or is cancelled — so a
+    finished mission never spuriously blocks a restart.
+    """
+    decomposer = HangingDecomposer()
+    k = _make_hanging_kontrollierer(
+        manager=manager, tmp_path=tmp_path, decomposer=decomposer
+    )
+    # Idle: nothing in flight.
+    assert k.running_mission_ids() == []
+
+    mid = await manager.dispatch(prompt="hang forever")
+    task = asyncio.create_task(k.run_mission(mid))
+    await asyncio.wait_for(decomposer.entered.wait(), timeout=5.0)
+
+    # In flight: reported.
+    assert k.running_mission_ids() == [mid]
+
+    # After teardown: gone (no stale entry blocks a restart).
+    await k.cancel_all_running(reason="app_shutdown")
+    await asyncio.wait([task], timeout=5.0)
+    assert k.running_mission_ids() == []
+
+
+@pytest.mark.asyncio
 async def test_cancel_all_running_finalizes_inflight_missions(
     manager: MissionManager, tmp_path: Path
 ) -> None:

@@ -18,6 +18,7 @@ Pinned here:
 """
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 from uuid import uuid4
@@ -237,3 +238,162 @@ async def test_progress_announcements_opt_in() -> None:
                      if isinstance(e, AnnouncementRequested)]
     assert len(announcements) == 1
     assert "Schritt 1" in announcements[0].text
+
+
+# ---------------------------------------------------------------------------
+# Toggle-stop vs. dropdown navigation (live failure 2026-06-17)
+# ---------------------------------------------------------------------------
+
+
+def _click_sequence_handler(actions: list[dict[str, Any]]):
+    """Brain shim: serve a trivial plan, then walk an action sequence.
+
+    A suppressed (toggle-stopped) click still consumes one brain turn but
+    leaves no executor call, so the sequence index advances on every
+    non-planner turn regardless of whether the click executed.
+    """
+    seq = {"i": 0}
+
+    def handler(system: str, user: str) -> str:
+        if "desktop-automation planner" in system:
+            return '{"plan": []}'
+        i = seq["i"]
+        seq["i"] += 1
+        return json.dumps(actions[min(i, len(actions) - 1)])
+
+    return handler
+
+
+async def test_distinct_dropdown_rows_are_not_suppressed_as_toggle_thrash() -> None:
+    # Live failure 2026-06-17 (Energieoptionen mission): the model navigated a
+    # vertically stacked dropdown, clicking four DIFFERENT rows that share an x
+    # and sit a dropdown-row apart in y (711,378 / 405 / 341 / 365). The 4th —
+    # a brand-new target — was wrongly suppressed as a "toggle-thrash" because
+    # it fell within the coarse tolerance of two earlier, DIFFERENT rows. With
+    # no click executed the screen froze and the no-progress guard aborted with
+    # "3 identical screenshots". Distinct rows must each execute; only a genuine
+    # repeat of the SAME point is a toggle.
+    actions = [
+        {"action": "click", "x": 711, "y": 378, "target": "row A"},
+        {"action": "click", "x": 711, "y": 405, "target": "row B"},
+        {"action": "click", "x": 711, "y": 341, "target": "row C"},
+        {"action": "click", "x": 711, "y": 365, "target": "Nie"},
+        {"action": "done"},
+    ]
+    ctx = make_ctx(FakeBrain(_click_sequence_handler(actions)))
+
+    chunks = await run_loop(ctx, "change the screen timeout dropdown to never")
+
+    clicks = [args for (name, args) in ctx.tool_executor.calls if name == "click"]
+    assert len(clicks) == 4, (
+        f"all 4 distinct dropdown rows must execute, got {len(clicks)} "
+        "(the 4th was wrongly suppressed as a toggle-thrash)"
+    )
+    assert chunks[-1].exit_code == 0
+
+
+async def test_identical_point_repeat_is_still_suppressed_as_toggle() -> None:
+    # Regression guard for the fix above: a GENUINE toggle-thrash — the exact
+    # same point clicked over and over (a play/pause button that flips the icon
+    # so the no-progress hash guard never trips) — must still be stopped. The
+    # 1st and 2nd clicks execute; the 3rd identical click is suppressed.
+    actions = [
+        {"action": "click", "x": 500, "y": 500, "target": "play"},
+        {"action": "click", "x": 500, "y": 500, "target": "play"},
+        {"action": "click", "x": 500, "y": 500, "target": "play"},
+        {"action": "done"},
+    ]
+    ctx = make_ctx(FakeBrain(_click_sequence_handler(actions)))
+
+    await run_loop(ctx, "scroll the list down")
+
+    clicks = [args for (name, args) in ctx.tool_executor.calls if name == "click"]
+    assert len(clicks) == 2, (
+        f"the 3rd identical click must be suppressed as a toggle, got "
+        f"{len(clicks)} executed clicks"
+    )
+
+
+# ---------------------------------------------------------------------------
+# No-progress abort: honest cause attribution (live failure 2026-06-17)
+# ---------------------------------------------------------------------------
+
+
+class _SequencedVisionEngine:
+    """Vision engine with a scripted screenshot-hash sequence.
+
+    The first ``distinct`` frames carry unique hashes; every frame after that
+    is the same frozen hash, so the no-progress guard trips a few steps in
+    (after any earlier clicks had a chance to be guard-suppressed).
+    """
+
+    def __init__(self, distinct: int) -> None:
+        self.calls = 0
+        self.distinct = distinct
+
+    async def observe(self, *, mode: str = "auto", cancel_token: Any = None,
+                      window_title_filter: str | None = None) -> Observation:
+        idx = self.calls
+        self.calls += 1
+        h = f"frame-{idx}" if idx < self.distinct else "frozen"
+        return Observation(
+            trace_id=uuid4(),
+            timestamp_ns=time.time_ns(),
+            screenshot_path=None,
+            screenshot_hash=h,
+            nodes=(),
+            window_title="",
+            active_pid=0,
+            source="screenshot_only",
+            pruning_stats={},
+        )
+
+
+def make_ctx_with_engine(brain: FakeBrain, engine: Any) -> ComputerUseContext:
+    ctx = make_ctx(brain)
+    ctx.vision_engine = engine
+    return ctx
+
+
+async def test_no_progress_message_blames_guard_when_actions_were_suppressed() -> None:
+    # Live failure 2026-06-17: the screen froze because the toggle guard kept
+    # SUPPRESSING the model's clicks (nothing was executed), yet the abort
+    # message claimed "the click target is unreactive or off-screen" — a
+    # misdiagnosis. When guard-blocked actions preceded the freeze, the
+    # message must attribute the stall to the suppression, not to a dead target.
+    brain = FakeBrain(_click_sequence_handler(
+        [{"action": "click", "x": 500, "y": 500, "target": "play"}] * 8
+    ))
+    ctx = make_ctx_with_engine(brain, _SequencedVisionEngine(distinct=2))
+
+    chunks = await run_loop(ctx, "scroll the list down")
+
+    final = chunks[-1]
+    assert final.exit_code == loop_mod._FAIL_EXIT_CODE
+    assert "no progress" in final.stderr
+    assert "suppressed" in final.stderr, (
+        f"the abort must name the guard suppression, got: {final.stderr!r}"
+    )
+    assert "off-screen" not in final.stderr
+
+
+async def test_no_progress_message_blames_dead_target_when_nothing_suppressed() -> None:
+    # The honest counterpart: when NO action was guard-blocked and the screen
+    # is simply frozen (clicks land on dead space), the original "unreactive or
+    # off-screen" diagnosis is correct and must be preserved.
+    actions = [
+        {"action": "click", "x": 100, "y": 100, "target": "a"},
+        {"action": "click", "x": 900, "y": 900, "target": "b"},
+        {"action": "click", "x": 100, "y": 900, "target": "c"},
+        {"action": "click", "x": 900, "y": 100, "target": "d"},
+    ]
+    brain = FakeBrain(_click_sequence_handler(actions))
+    ctx = make_ctx_with_engine(brain, _SequencedVisionEngine(distinct=0))
+
+    chunks = await run_loop(ctx, "scroll the list down")
+
+    final = chunks[-1]
+    assert final.exit_code == loop_mod._FAIL_EXIT_CODE
+    assert "no progress" in final.stderr
+    assert "off-screen" in final.stderr
+    assert "suppressed" not in final.stderr

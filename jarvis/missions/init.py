@@ -57,6 +57,20 @@ TTSSpeakFn = Callable[[str, str], Awaitable[None]]
 BrainCallerFn = Callable[[str], Awaitable[str]]
 
 
+def _default_job_factory() -> Any:
+    """Per-mission process-containment job, selected by platform.
+
+    Delegates to the ``job_object`` factory so the OS dispatch lives in exactly
+    one place: a real Windows Job Object on win32, and a session/process-group
+    reaper (SIGTERM->SIGKILL on close) on macOS/Linux. The wiring used to
+    hard-code the pure no-op off-Windows, which leaked worker process trees on a
+    headless VPS (cross-platform audit C2).
+    """
+    from .isolation.job_object import WindowsJobObject
+
+    return WindowsJobObject()
+
+
 def _resolve_readback_mode(
     *, tts_speak_fn: object | None, speech_bus: object | None
 ) -> str:
@@ -528,18 +542,6 @@ async def bootstrap_missions(
         # All of those cases now fall back to the proven direct Opus worker.
         return ClaudeDirectWorker(mcp_servers=_assemble_worker_mcp_servers())
 
-    def _job_factory():
-        # Lazy import so Linux tests do not crash
-        import sys
-
-        from .isolation.job_object import (
-            AlwaysOpenJobObject,
-            WindowsJobObject,
-        )
-        if sys.platform == "win32":
-            return WindowsJobObject()
-        return AlwaysOpenJobObject()
-
     kontrollierer = Kontrollierer(
         manager=manager,
         decomposer=decomposer,
@@ -548,7 +550,7 @@ async def bootstrap_missions(
         env_builder=_env_builder,
         budget=budget,
         worker_factory=_worker_factory,
-        job_factory=_job_factory,
+        job_factory=_default_job_factory,
         isolation_root=isolation_root,
         max_workers=max_workers,
         safety_enabled=safety_enabled,

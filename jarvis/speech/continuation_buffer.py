@@ -91,6 +91,33 @@ class ContinuationBuffer:
         self._deadline = None
         self._last_reason = ""
 
+    def note_speech_resumed(self) -> None:
+        """Re-arm the discard countdown when the user starts speaking again.
+
+        The deadline set at buffer time measures THINKING silence; once the user
+        is actively forming the continuation, that clock must not keep running
+        against them — a slow-to-finalize continuation would otherwise miss the
+        window even though it BEGAN well inside it (live bug 2026-06-18, session
+        241a1984: "Kannst du bitte..." was held, the user resumed ~1 s later but
+        the continuation only FINALIZED 0.6 s past the 8 s deadline → the held
+        fragment was dropped and the turn split into an empty Turn 0). The
+        sibling :meth:`ContinuationWindow.note_speech_resumed` already does this
+        for the in-flight window; the pre-dispatch buffer needs the same freeze.
+
+        Re-arms to ``now + timeout_s`` (rather than clearing the deadline
+        outright) so the anti-pollution bound is preserved: a continuation that
+        never finalizes is still dropped before an unrelated later turn. Only
+        re-arms while a fragment is pending and the deadline has NOT already
+        passed — a genuinely late resume cannot resurrect a dead buffer.
+        Fail-open / idempotent; wired from ``pipeline._on_vad_speech_start``.
+        """
+        if not self._fragments:
+            return
+        now = time.monotonic()
+        if self._deadline is not None and now > self._deadline:
+            return
+        self._deadline = now + self._timeout_s
+
     # ------------------------------------------------------------------ #
     # Main API                                                           #
     # ------------------------------------------------------------------ #

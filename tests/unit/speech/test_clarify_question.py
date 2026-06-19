@@ -203,6 +203,89 @@ async def test_continuation_cancels_pending_clarifying_question() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Floor guard: the clarify question must never speak OVER a resuming user.     #
+#                                                                             #
+# Live incident 2026-06-17 14:47 (session f6403ec0): the user trailed off on  #
+# "...liegt sie im..." → the ContinuationBuffer held it (reason=trailing_      #
+# ellipsis) and force-armed the clarify timer. 4 ms later the user RESUMED     #
+# speaking the continuation ("im Lead zu Vergleich zu anderen"), but the       #
+# clarify timer fired 2.5 s into that continuation, spoke "Wie meinst du das   #
+# genau?" while turn-state was USER_SPEAKING, and DISCARDED the held first     #
+# half — so the continuation reached the brain alone and got a confused        #
+# non-answer. The cancel path only runs once the NEXT utterance FINALISES,     #
+# which is too late for a continuation that takes >grace to speak. The fix     #
+# mirrors the Flash-Brain ack / announcement AD-OE5 floor guard: defer while   #
+# the user holds the floor.                                                    #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_clarify_defers_while_user_holds_floor() -> None:
+    from jarvis.speech.completion import REASON_TRAILING_ELLIPSIS
+
+    pipe = _make_pipe(clarify_after_ms=60)
+    held = pipe._continuation_buffer.process(
+        "was genau liegt sie im...", language="de"
+    )
+    assert held is None
+    assert pipe._continuation_buffer.last_reason == REASON_TRAILING_ELLIPSIS
+
+    # The user has RESUMED speaking the continuation — they hold the floor.
+    pipe._turn_state = TurnTakingState.USER_SPEAKING
+
+    pipe._arm_clarify_question("de", force=True)
+    await asyncio.sleep(0.25)  # several grace windows elapse while user speaks
+
+    # Must NOT have spoken over the user and must NOT have discarded the held
+    # fragment (it has to survive so the continuation can coalesce on finalise).
+    assert pipe._spoken == [], pipe._spoken
+    assert TurnTakingState.JARVIS_SPEAKING not in pipe._state_history
+    assert pipe._continuation_buffer.has_pending() is True
+    # The timer was re-armed (deferred), not dropped.
+    assert pipe._clarify_timer_task is not None
+
+
+@pytest.mark.asyncio
+async def test_clarify_defers_while_waiting_for_completion() -> None:
+    # The held-fragment state itself (WAITING_FOR_COMPLETION) is a floor state:
+    # the words are still being finalised, so the question must not barge.
+    pipe = _make_pipe(clarify_after_ms=60)
+    pipe._continuation_buffer.process("was genau liegt sie im...", language="de")
+    pipe._turn_state = TurnTakingState.WAITING_FOR_COMPLETION
+
+    pipe._arm_clarify_question("de", force=True)
+    await asyncio.sleep(0.2)
+
+    assert pipe._spoken == [], pipe._spoken
+    assert pipe._continuation_buffer.has_pending() is True
+
+
+@pytest.mark.asyncio
+async def test_clarify_fires_after_floor_clears() -> None:
+    # Defense-in-depth: deferring while the floor is held must NOT drop the
+    # question forever. Once the user truly stops (floor clears) the re-armed
+    # timer asks the clarifying question — the AD-OE6 zero-silent-drop contract
+    # for a genuine trail-off-into-silence is preserved ("Jarvis listens
+    # forever" must not return).
+    pipe = _make_pipe(clarify_after_ms=60)
+    pipe._continuation_buffer.process("was genau liegt sie im...", language="de")
+    pipe._turn_state = TurnTakingState.USER_SPEAKING
+    pipe._arm_clarify_question("de", force=True)
+    await asyncio.sleep(0.2)  # deferred while the floor is held
+    assert pipe._spoken == []
+
+    # The user stopped without ever continuing → the floor clears.
+    pipe._turn_state = TurnTakingState.LISTENING
+    await asyncio.sleep(0.2)  # the re-armed timer now fires
+
+    assert len(pipe._spoken) == 1, pipe._spoken
+    text, lang = pipe._spoken[0]
+    assert text.strip().endswith("?")
+    assert lang == "de"
+    assert pipe._continuation_buffer.has_pending() is False
+
+
+# --------------------------------------------------------------------------- #
 # Beheaded turn (no-first-frame TTS ceiling): always audible, clarify-off     #
 # notwithstanding (AD-OE6)                                                     #
 # --------------------------------------------------------------------------- #

@@ -621,3 +621,63 @@ with NO automatic `claude-opus-*` fallback anywhere:
 planner default (`config.py plan_model`). Drift-guard source
 `scripts/config-soll.json` updated in the same change so the pin survives
 the 5-minute drift sweep (BUG-010 triple defense).
+
+## Amendment 2026-06-18 — MCP-Tools Virtual Loader (`mcp-tools`)
+
+**Status:** Amendment 2026-06-18
+
+### What changed
+
+`ROUTER_TOOLS` gains one entry: `mcp-tools`.
+
+`mcp-tools` is a **virtual loader** (`jarvis/mcp/loader.py:McpToolLoader`,
+`is_virtual_loader=True`). The `_load_tools_for_tier` expansion path
+(`factory.py`) recognises it and replaces the single entry with one
+`MCPToolAdapter` per tool of every **connected and running** MCP server
+(e.g. `notebooklm-mcp`, `filesystem-mcp`). Only running servers contribute
+tools, so the router's tool surface stays proportional to what is actually
+connected.
+
+### Why it was needed (the bug)
+
+Connected MCP servers (e.g. `notebooklm-mcp`, 32 tools) were invisible to
+the voice/router brain. Root cause: `_load_tools_for_tier` discovers tools
+via `jarvis.tool` entry-points filtered against `ROUTER_TOOLS`. Both
+`cli-tools` and `plugin-tools` are virtual loaders in that set — but there
+was no equivalent for MCP tools. The `MCPToolAdapter` objects created at
+server-connect time never entered the brain's tool dict.
+
+### Implementation
+
+- **`jarvis/mcp/loader.py`** — new `McpToolLoader`, structured exactly like
+  `PluginToolLoader` (mirror of `jarvis/marketplace/plugin_loader.py`).
+  Reads `client._tools_cache` **synchronously** (already populated during
+  `MCPClient.start()`) — no network I/O, no `await`, no server start.
+  Every failure path returns `[]` so a broken MCP server cannot crash the
+  factory.
+- **`pyproject.toml`** — `[project.entry-points."jarvis.tool"]` gains
+  `mcp-tools = "jarvis.mcp.loader:McpToolLoader"`.
+- **`jarvis/brain/factory.py`** — `"mcp-tools"` added to `ROUTER_TOOLS`.
+- **`jarvis/core/capabilities.py`** — `_reset_registry_for_tests()` helper
+  added (test-only) so the `MCPToolAdapter` side-effect of registering a
+  `Capability` in the global singleton does not leak across tests.
+
+| Tool | Phase | Rationale | Recursion guard? |
+|---|---|---|---|
+| `mcp-tools` | MCP connectivity | Each expanded `MCPToolAdapter` is a **direct, risk-gated action** (default `monitor`). It is the same virtual-loader model as `cli-tools` and `plugin-tools`. The router calls MCP tools inline rather than delegating to a 30-min worker spawn. | **n/a as a recursion vector** — an `MCPToolAdapter.execute()` calls the MCP server subprocess, it cannot spawn the supervisor. It is router-tier only and never enters any worker tool-set (AP-5/AP-14). |
+
+### Live-reload contract
+
+Connecting/disconnecting an MCP server publishes `BrainToolsChanged`, which
+the live `BrainManager.refresh_tools()` consumes to re-expand `mcp-tools`
+— no restart required (owned by WS2).
+
+### Regression guards
+
+- `tests/unit/mcp/test_loader.py` — 6 cases: expand returns adapters, null
+  registry → `[]`, raising `active_clients` → `[]`, multiple servers, empty
+  clients, loader attributes.
+- `tests/unit/brain/test_routing.py::test_mcp_tools_in_router_tools`
+- `tests/unit/brain/test_routing.py::test_mcp_tools_is_router_only_not_a_spawn`
+- `tests/unit/brain/test_routing.py::test_router_tools_is_pure_dispatcher_set`
+  (exact-match set updated to include `mcp-tools`)

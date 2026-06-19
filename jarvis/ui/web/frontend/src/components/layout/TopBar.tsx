@@ -33,6 +33,9 @@ export function TopBar() {
   const pushToast = useEventStore((s) => s.pushToast);
   const [confirming, setConfirming] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  // Set when the backend refused the restart (HTTP 409) because missions are
+  // running: the next click resends the POST with ``force=true``.
+  const [forceArmed, setForceArmed] = useState(false);
   const resetTimer = useRef<number | null>(null);
 
   const clearResetTimer = useCallback(() => {
@@ -45,11 +48,36 @@ export function TopBar() {
   // Drop a pending "disarm" timer if the bar is ever unmounted.
   useEffect(() => clearResetTimer, [clearResetTimer]);
 
-  async function doRestart() {
+  async function doRestart(force: boolean) {
     clearResetTimer();
     setRestarting(true);
     try {
-      const res = await fetch("/api/settings/restart-app", { method: "POST" });
+      const url = force
+        ? "/api/settings/restart-app?force=true"
+        : "/api/settings/restart-app";
+      const res = await fetch(url, { method: "POST" });
+      if (res.status === 409) {
+        // The mission guard refused: a restart would kill live missions. Don't
+        // kill them silently — surface the count and arm a force-restart so the
+        // next click is the user's explicit override.
+        let count = 0;
+        try {
+          const body = await res.json();
+          count = body?.detail?.missions?.length ?? 0;
+        } catch {
+          /* malformed body — still arm the override */
+        }
+        setRestarting(false);
+        setConfirming(false);
+        setForceArmed(true);
+        clearResetTimer();
+        resetTimer.current = window.setTimeout(() => {
+          setForceArmed(false);
+          resetTimer.current = null;
+        }, CONFIRM_TIMEOUT_MS);
+        pushToast("warning", `${count} ${t("topbar.restart_missions_running")}`);
+        return;
+      }
       if (!res.ok) throw new Error(`restart-failed:${res.status}`);
       // On success the window goes away — keep the spinning state; never clear
       // it, so the user doesn't see the button flip back before the app dies.
@@ -59,12 +87,18 @@ export function TopBar() {
       // user isn't left with a dead button.
       setRestarting(false);
       setConfirming(false);
+      setForceArmed(false);
       pushToast("error", t("topbar.restart_failed"));
     }
   }
 
   function onClick() {
     if (restarting) return;
+    if (forceArmed) {
+      // The guard already refused once; this click is the explicit override.
+      void doRestart(true);
+      return;
+    }
     if (!confirming) {
       // First click only arms the confirmation; auto-disarm after a few
       // seconds so a stray click never leaves a primed restart button behind.
@@ -76,14 +110,16 @@ export function TopBar() {
       }, CONFIRM_TIMEOUT_MS);
       return;
     }
-    void doRestart();
+    void doRestart(false);
   }
 
   const label = restarting
     ? t("topbar.restarting")
-    : confirming
-      ? t("topbar.restart_confirm")
-      : t("topbar.restart");
+    : forceArmed
+      ? t("topbar.restart_force")
+      : confirming
+        ? t("topbar.restart_confirm")
+        : t("topbar.restart");
 
   return (
     <div className="flex h-10 shrink-0 items-center justify-end border-b border-border bg-background/70 px-4 backdrop-blur-sm">
@@ -94,7 +130,7 @@ export function TopBar() {
         title={t("topbar.restart_hint")}
         className={cn(
           "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-default disabled:opacity-70",
-          confirming
+          confirming || forceArmed
             ? "border-amber-500/60 bg-amber-500/10 text-amber-500 hover:bg-amber-500/20"
             : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/50 hover:text-foreground",
         )}

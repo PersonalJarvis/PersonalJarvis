@@ -30,6 +30,17 @@ def test_long_partial_triggers_patience_regardless_of_vocabulary():
     assert _looks_like_long_composition(long) is True
 
 
+def test_mid_length_question_triggers_patience():
+    # Live bug 2026-06-18 (session b34a4bba): the user said
+    # "Hey Jarvis, was geht ab? Kannst du mir bitte mal …" and paused to think
+    # after "mal". The 10-word partial fell just under the old 12-word threshold,
+    # so it got only the base 1.5 s silence window and was cut mid-sentence. A
+    # mid-length, clearly-unfinished question must reach the patience extension.
+    mid = "Hey Jarvis, was geht ab? Kannst du mir bitte mal"
+    assert len(mid.split()) == 10
+    assert _looks_like_long_composition(mid) is True
+
+
 def test_empty_is_not_long_composition():
     assert _looks_like_long_composition("") is False
     assert _looks_like_long_composition(None) is False

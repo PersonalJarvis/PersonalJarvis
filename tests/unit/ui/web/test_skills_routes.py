@@ -218,6 +218,44 @@ def test_bulk_delete_prunes_prefs(skills_root: Path) -> None:
     assert "beta" not in overrides
 
 
+# --- optional-module route guards (Skill Creator / link-health) -------------
+# These features depend on optional modules (``jarvis.skills.creator_service``,
+# ``jarvis.skills.link_health``) that are not shipped in every build. When the
+# module is absent the route must answer a clean ``501 Not Implemented`` with an
+# honest message — never leak an unhandled ``ModuleNotFoundError`` as a 500. The
+# tests assert the absent-module behaviour that holds while those modules ship
+# separately; once a module is present its route is expected to work and these
+# guards become inert.
+
+
+def test_creator_draft_returns_clean_501_when_service_module_absent(
+    skills_root: Path,
+) -> None:
+    client, _reg = _client(skills_root)
+    res = client.post("/api/skills/creator/draft", json={"intent": "make a thing"})
+    assert res.status_code == 501, res.text
+    assert "not available" in res.json()["detail"].lower()
+
+
+def test_creator_validate_returns_clean_501_when_service_module_absent(
+    skills_root: Path,
+) -> None:
+    client, _reg = _client(skills_root)
+    res = client.post(
+        "/api/skills/creator/validate", json={"skill_md": "---\nname: x\n---\n"}
+    )
+    assert res.status_code == 501, res.text
+    assert "not available" in res.json()["detail"].lower()
+
+
+def test_link_health_returns_clean_501_when_module_absent(skills_root: Path) -> None:
+    _make_skill(skills_root, "alpha")
+    client, _reg = _client(skills_root)
+    res = client.get("/api/skills/alpha/link-health")
+    assert res.status_code == 501, res.text
+    assert "not available" in res.json()["detail"].lower()
+
+
 # ----------------------------------------------------------------------
 # reorder
 # ----------------------------------------------------------------------

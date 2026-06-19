@@ -2376,9 +2376,16 @@ async def _run_screenshot_loop(
     # play/pause toggle FLIPS the icon every click (screen changes), so it
     # slips past. These mission-scoped guards stop the thrash:
     #   * recent_click_targets: the last few NORMALIZED (0-1000) click points.
-    #     A 2nd click within _CLICK_TOL of a recent one is a toggle-thrash --
-    #     we do NOT execute it (parity-safe: leaves the system in the state
-    #     produced by click #1) and force one verification re-plan instead.
+    #     A repeat of the SAME point (within _CLICK_SAME_TOL) _CLICK_REPEAT_LIMIT
+    #     times is a toggle-thrash -- we do NOT execute it (parity-safe: leaves
+    #     the system in the state produced by click #1) and force one
+    #     verification re-plan instead. The tolerance is TIGHT on purpose: a
+    #     toggle re-hits the SAME control, whereas navigating a vertically
+    #     stacked dropdown clicks DIFFERENT rows that share an x and sit only a
+    #     row apart in y. A coarse tolerance conflated the two and suppressed a
+    #     brand-new row as a "thrash" (BUG-CU-DROPDOWN-THRASH, live 2026-06-17:
+    #     the Energieoptionen mission froze on row 365 because it fell within 25
+    #     of two earlier, DIFFERENT rows -> "3 identical screenshots" abort).
     #   * opened_apps: app (lowercased) -> number of times it was launched this
     #     mission. Each app is launched AT MOST _MAX_LAUNCHES_PER_APP times
     #     (default 1 -- "einer langt", user mandate 2026-05-29). Any further
@@ -2392,7 +2399,11 @@ async def _run_screenshot_loop(
     #     old 2-step cooldown re-allowed a relaunch every 3 steps and WAS the
     #     multiplier (BUG-CU-WINDOW-SPAM, supersedes the BUG-CU-REFOCUS
     #     relaunch-to-refocus heuristic, which traded spam for re-focus).
-    _CLICK_TOL = 25
+    # Tight: only a near-IDENTICAL re-click counts as a toggle. Adjacent
+    # dropdown rows sit >=~13 normalized units apart, so 8 keeps list
+    # navigation (distinct rows) from being mistaken for a same-point thrash
+    # while still absorbing the small jitter of a model re-aiming one control.
+    _CLICK_SAME_TOL = 8
     _CLICK_REPEAT_LIMIT = 2
     _MAX_LAUNCHES_PER_APP = 1
     recent_click_targets: _deque[tuple[int, int]] = _deque(maxlen=6)
@@ -2537,20 +2548,29 @@ async def _run_screenshot_loop(
         )
 
         # No-progress guard: if the last _STUCK_LIMIT screenshots are
-        # identical, Gemini's clicks are landing on empty space and
-        # nothing on screen reacts. Bail with a clear "stuck" failure
-        # instead of grinding through the rest of the budget.
+        # byte-identical, nothing on screen changed. Bail with a clear "stuck"
+        # failure instead of grinding through the rest of the budget.
+        # Cause attribution is data-driven (live 2026-06-17): if a guard had
+        # been SUPPRESSING the model's actions, the freeze is because nothing
+        # executed -- saying "off-screen" then misdiagnoses the abort. Only
+        # when no action was guard-blocked is the dead-target reading correct.
         if observation.screenshot_hash:
             recent_hashes.append(observation.screenshot_hash)
             if (
                 len(recent_hashes) == _STUCK_LIMIT
                 and len(set(recent_hashes)) == 1
             ):
+                cause = (
+                    "recent actions were suppressed by a guard "
+                    "(repeated click / relaunch), so nothing changed"
+                    if guard_hits > 0
+                    else "the click target is unreactive or off-screen"
+                )
                 yield _final(
                     stderr=(
                         f"[cu] no progress: {_STUCK_LIMIT} identical "
                         f"screenshots in a row at step {step_idx} -- "
-                        "the click target is unreactive or off-screen.\n"
+                        f"{cause}.\n"
                     ),
                     exit_code=_FAIL_EXIT_CODE,
                 )
@@ -2935,18 +2955,22 @@ async def _run_screenshot_loop(
                     # launch so recover-after-close still works.
                     expected_window_token = _app
 
-            # Repeated-click / toggle-thrash guard (BUG-CU-TOGGLE): a 2nd click
-            # within _CLICK_TOL of a recent click target is a toggle thrash
+            # Repeated-click / toggle-thrash guard (BUG-CU-TOGGLE): re-clicking
+            # the SAME point (within _CLICK_SAME_TOL) is a toggle thrash
             # (play/pause flips the icon every click, so the no-progress hash
             # guard never trips). Do NOT execute the repeat -- breaking BEFORE
             # _execute_action is parity-safe: the system stays in the state
             # produced by click #1 ("playing"). Force one verification re-plan.
+            # The match is on near-IDENTICAL points only: counting every nearby
+            # point conflated stepping through a stacked dropdown (distinct
+            # rows) with a same-spot thrash (BUG-CU-DROPDOWN-THRASH).
             if action == "click":
                 _tx = int(action_obj.get("x", -999))
                 _ty = int(action_obj.get("y", -999))
                 _near = sum(
                     1 for (px, py) in recent_click_targets
-                    if abs(px - _tx) <= _CLICK_TOL and abs(py - _ty) <= _CLICK_TOL
+                    if abs(px - _tx) <= _CLICK_SAME_TOL
+                    and abs(py - _ty) <= _CLICK_SAME_TOL
                 )
                 recent_click_targets.append((_tx, _ty))
                 if _near >= _CLICK_REPEAT_LIMIT:
