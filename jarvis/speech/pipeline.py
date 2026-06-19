@@ -3425,6 +3425,17 @@ class SpeechPipeline:
                 log.info("Voice-Hangup: active Computer-Use mission cancelled.")
         except Exception:  # noqa: BLE001 — hangup must never crash
             log.debug("CU cancel-on-hangup failed (non-fatal)", exc_info=True)
+        # The X must also stop a CHAT turn, not only a voice turn. A chat turn
+        # runs on a separate dispatcher (``desktop_app._on_user_message``) that
+        # never observes ``_hangup_event`` — so before this it kept thinking
+        # through every X press (live bug 2026-06-19: ~27 ignored presses). The
+        # cancel is edge-triggered and loop-safe (this may run on the Tk thread).
+        try:
+            from jarvis.core.runtime_refs import cancel_active_chat_turn
+            if cancel_active_chat_turn():
+                log.info("Voice-Hangup: active chat turn cancelled.")
+        except Exception:  # noqa: BLE001 — hangup must never crash
+            log.debug("chat-turn cancel-on-hangup failed (non-fatal)", exc_info=True)
         # Discard any pending continuation fragment so it can't leak into the
         # next voice session (the user has explicitly ended this one), and
         # cancel its clarifying-question timer so no question fires after hangup.
