@@ -49,6 +49,7 @@ from jarvis.core.events import (
     ResponseGenerated,
     OpenClawTaskCompleted,
     OpenClawTaskStarted,
+    SpeechSpoken,
     SystemStateChanged,
     ToolCallCompleted,
     ToolCallStarted,
@@ -60,6 +61,7 @@ from jarvis.core.events import (
     WakeWordDetected,
 )
 
+from .constants import SPOKEN_KIND_COMPLETION
 from .store import SessionStore
 
 log = logging.getLogger(__name__)
@@ -158,6 +160,13 @@ class SessionRecorder:
         # Fallback wenn Pipeline VoiceTurnStarted vergisst — wir vergeben
         # selbst eine turn_id beim ersten Turn-relevanten Event.
         self._auto_turn_counter: int = 0
+        # (session_id, last_turn_id) of the most recently FINALIZED session.
+        # A background mission's completion readback can be voiced after the
+        # user hung up (the pipeline lets kind="completion" punch through the
+        # hangup gate — AD-OE6). The readback carries no session id, so we
+        # attach it to this just-ended session. Cleared when a new session
+        # starts, so a late readback can never glue onto the wrong session.
+        self._afterglow: tuple[str, str | None] | None = None
 
     def attach(self, bus: EventBus) -> None:
         """Wildcard-Subscribe an den Bus."""
@@ -196,8 +205,15 @@ class SessionRecorder:
             self._on_session_ended(event)
             return
 
-        # Alle anderen Events nur wenn eine Session laeuft.
+        # Every other event is recorded only while a session is live — with
+        # ONE exception: a mission completion readback that arrives after the
+        # user hung up (kind="completion", which the pipeline deliberately lets
+        # through the hangup gate, AD-OE6) must still be attributed to the
+        # just-ended session; otherwise the user hears the answer but the
+        # transcript stays empty (forensic 2026-06-19, session 514cddc0).
         if self._state is None:
+            if isinstance(event, SpeechSpoken):
+                self._record_posthangup_readback(event)
             return
 
         if isinstance(event, VoiceTurnStarted):
@@ -255,6 +271,9 @@ class SessionRecorder:
             language=event.language or "de",
         )
         self._auto_turn_counter = 0
+        # A fresh session supersedes the previous one as the attach target for
+        # any late completion readback.
+        self._afterglow = None
         self._store.upsert_session(
             session_id=event.session_id,
             started_ms=ts_ms,
@@ -285,6 +304,12 @@ class SessionRecorder:
             event.hangup_reason,
             self._state.turn_count,
         )
+        last_turn_id = (
+            self._state.current_turn.turn_id
+            if self._state.current_turn is not None
+            else None
+        )
+        self._afterglow = (self._state.session_id, last_turn_id)
         self._state = None
 
     def _force_finalize_session(self, *, reason: str) -> None:
@@ -620,6 +645,29 @@ class SessionRecorder:
             ts_ms=ts_ms,
             kind=kind,
             payload=payload,
+        )
+
+    def _record_posthangup_readback(self, event: SpeechSpoken) -> None:
+        """Persist a completion readback voiced AFTER the session was closed.
+
+        Only ``completion``-kind readbacks qualify — the terminal answer of an
+        offloaded mission. A progress nudge ("still working") arriving after
+        hangup is suppressed by the pipeline and must not be attached here
+        either. The row is appended to the just-ended session (the one that
+        spawned the mission) and to its last turn, so ``formatter.py`` groups
+        it into the transcript exactly like an in-session announcement.
+        """
+        if self._afterglow is None:
+            return
+        if getattr(event, "spoken_kind", "") != SPOKEN_KIND_COMPLETION:
+            return
+        session_id, turn_id = self._afterglow
+        self._store.append_event(
+            session_id=session_id,
+            turn_id=turn_id,
+            ts_ms=event.timestamp_ns // 1_000_000,
+            kind="SpeechSpoken",
+            payload=_payload_for(event),
         )
 
 

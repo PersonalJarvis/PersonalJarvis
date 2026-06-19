@@ -972,6 +972,132 @@ def test_instructional_questions_do_not_force_spawn(utterance: str) -> None:
     assert not manager._should_force_spawn(utterance)
 
 
+# ---------------------------------------------------------------------------
+# Opinion / advice / recommendation / decision questions are CONVERSATION, not
+# work — they must be answered inline, NEVER force-spawned to a worker, even
+# when they contain an everyday word that collides with an action verb in the
+# universal catalogue. Live bug 2026-06-19 (voice session 11:53, San-Francisco
+# emigration turn): "Hey du, ich hab ne Frage ... was würdest du mir empfehlen?"
+# force-spawned a worker because has_action_intent matched the NOUN "Frage"
+# (-> verb "frag"/"frage") and the FILLER particle "halt" (-> verb "halt"), so
+# _is_generic_subagent_work classified a pure chat turn as generic sub-agent
+# work. The answer then returned out-of-band via the MissionAnnouncer (and never
+# reached the session transcript).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # the real bug utterance (abbreviated) — "Frage" + "möchte" + advice ask
+        "Hey du, ich hab ne Frage, ich möchte auswandern. Was würdest du mir empfehlen?",
+        # noun "Frage" collides with the action verb "frag"
+        "Ich hab da mal eine Frage: was hältst du davon?",
+        # filler particle "halt" collides with the action verb "halt"
+        "Ich hab mir das halt echt überlegt, was meinst du dazu?",
+    ],
+)
+def test_opinion_advice_questions_do_not_force_spawn(utterance: str) -> None:
+    """Opinion/advice questions are talk, not work — answered inline even when an
+    everyday word ('Frage' -> 'frag', filler 'halt') collides with an action
+    verb (live bug 2026-06-19, emigration turn). Reproduces the real strict-mode
+    path with a seeded registry, where has_action_intent fires and
+    _is_generic_subagent_work would otherwise force-spawn."""
+    from jarvis.core.capabilities import get_registry
+    from jarvis.core.capabilities_seed import seed_registry
+
+    reg = get_registry()
+    snapshot = dict(reg._caps)  # noqa: SLF001 — test fixture state restore
+    seed_registry(reg)
+    try:
+        manager, _executor = _manager_with_spawn(force_spawn_mode="strict")
+        assert manager._should_force_spawn(utterance) is False, (
+            f"opinion/advice question {utterance!r} wrongly force-spawned a worker"
+        )
+    finally:
+        reg._caps.clear()  # noqa: SLF001
+        reg._caps.update(snapshot)  # noqa: SLF001
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # advice / recommendation (DE)
+        "Was würdest du mir empfehlen?",
+        "Was rätst du mir?",
+        # opinion (DE)
+        "Was hältst du davon?",
+        "Wie siehst du das?",
+        "Was ist deine Meinung dazu?",
+        # decision help (DE)
+        "Soll ich nach San Francisco oder nach Melbourne ziehen?",
+        # conversational opener (DE)
+        "Ich hab da mal eine Frage.",
+        # advice / opinion (EN)
+        "What would you recommend?",
+        "Should I move to San Francisco or Melbourne?",
+        "I have a question.",
+        # advice / opinion (ES)
+        "¿Qué me recomiendas?",
+        "Tengo una pregunta.",
+    ],
+)
+def test_opinion_advice_predicate_recognises_questions(utterance: str) -> None:
+    """The predicate flags opinion/advice/decision questions across de/en/es."""
+    from jarvis.brain.manager import _is_opinion_advice_question
+
+    assert _is_opinion_advice_question(utterance) is True, (
+        f"opinion/advice question {utterance!r} not recognised"
+    )
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Bau mir eine Landingpage.",
+        "öffne Chrome.",
+        "Lies die Datei jarvis.toml.",
+        "Installier Notepad++.",
+        "Mach einen Screenshot.",
+    ],
+)
+def test_opinion_advice_predicate_ignores_commands(utterance: str) -> None:
+    """Genuine action commands are NOT opinion questions — they still spawn."""
+    from jarvis.brain.manager import _is_opinion_advice_question
+
+    assert _is_opinion_advice_question(utterance) is False, (
+        f"action command {utterance!r} wrongly matched the opinion-question guard"
+    )
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Ich hab mir das halt echt überlegt, weil das so kompliziert ist.",
+        "Das ist bei mir zuhause halt einfach immer so gewesen.",
+    ],
+)
+def test_filler_particle_halt_does_not_force_spawn(utterance: str) -> None:
+    """The German discourse particle 'halt' is a filler, not a stop command — a
+    pure statement carrying it (and no real action verb) must NOT force-spawn a
+    worker. Live bug 2026-06-19: 'halt' tripped has_action_intent ->
+    _is_generic_subagent_work in the strict-mode force-spawn gate."""
+    from jarvis.core.capabilities import get_registry
+    from jarvis.core.capabilities_seed import seed_registry
+
+    reg = get_registry()
+    snapshot = dict(reg._caps)  # noqa: SLF001 — test fixture state restore
+    seed_registry(reg)
+    try:
+        manager, _executor = _manager_with_spawn(force_spawn_mode="strict")
+        assert manager._should_force_spawn(utterance) is False, (
+            f"filler-only utterance {utterance!r} wrongly force-spawned a worker"
+        )
+    finally:
+        reg._caps.clear()  # noqa: SLF001
+        reg._caps.update(snapshot)  # noqa: SLF001
+
+
 @pytest.mark.asyncio
 async def test_local_direct_open_app_fast_path_uses_hidden_tool_once() -> None:
     """Greeting+action must execute open_app without vision or provider calls."""

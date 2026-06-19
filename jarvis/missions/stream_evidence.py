@@ -1013,12 +1013,37 @@ def capability_refusal_answer(
     return None
 
 
+_SENTENCE_ENDERS: str = ".!?…"
+
+
 def summarize_answers(answers: list[str], *, cap: int = 600) -> str:
-    """Join per-task answers into a single mission summary, capped."""
+    """Join per-task answers into a single mission summary, capped.
+
+    When the joined text overflows ``cap`` this is spoken back to the user via
+    TTS, so a hard ``[:cap-1]`` slice ended the readback mid-word — the voice
+    cut off inside a token and the user heard it as Jarvis "hanging up
+    mid-sentence" (live forensic 2026-06-19, session 514cddc0: a 2486-char
+    answer became "…eine schlechtere Auswander…"). Truncate on the last
+    sentence boundary in the back half of the budget instead; failing that, on
+    the last word boundary. The trailing ``…`` always fits inside ``cap``.
+    """
     joined = "\n".join(a.strip() for a in answers if a and a.strip())
-    if len(joined) > cap:
-        return joined[: cap - 1].rstrip() + "…"
-    return joined
+    if len(joined) <= cap:
+        return joined
+    # Reserve two chars for the " …" continuation marker so the result never
+    # exceeds ``cap``.
+    window = joined[: cap - 2]
+    sentence_end = max(
+        (i for i, ch in enumerate(window) if ch in _SENTENCE_ENDERS or ch == "\n"),
+        default=-1,
+    )
+    if sentence_end >= len(window) // 2:
+        head = window[: sentence_end + 1].rstrip()
+    else:
+        stripped = window.rstrip()
+        space = stripped.rfind(" ")
+        head = stripped[:space].rstrip() if space > 0 else stripped
+    return f"{head} …"
 
 
 __all__ = [

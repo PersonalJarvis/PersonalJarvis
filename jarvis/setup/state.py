@@ -144,9 +144,135 @@ def mark_obsidian_seen(path: Path | None = None) -> None:
                 logger.debug("mark_obsidian_seen: tempfile cleanup failed for %s", tempfile_path)
 
 
+# ---------------------------------------------------------------------------
+# Shared atomic merge-writer (same pattern as mark_obsidian_seen).
+# ---------------------------------------------------------------------------
+_ONBOARDING_KEYS = (
+    "onboarding_completed_at",
+    "onboarding_step",
+    "onboarding_skipped_steps",
+    "terms_accepted_at",
+    "terms_version",
+    "wake_word_acknowledged_at",
+)
+
+
+def _merge_state(updates: dict[str, Any], path: Path | None = None) -> None:
+    """Merge ``updates`` into the state file atomically. Never raises."""
+    target = state_path(path)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        logger.warning("_merge_state: cannot mkdir %s: %s", target.parent, exc)
+        return
+
+    state = load_setup_state(path)
+    state.update(updates)
+
+    tempfile_path: Path | None = None
+    try:
+        tempfile_path = target.with_suffix(target.suffix + f".tmp-{secrets.token_hex(4)}")
+        with open(tempfile_path, "w", encoding="utf-8", newline="") as fp:
+            json.dump(state, fp, indent=2, ensure_ascii=False)
+            fp.flush()
+            os.fsync(fp.fileno())
+        os.replace(tempfile_path, target)
+        tempfile_path = None
+    except OSError as exc:
+        logger.warning("_merge_state: write failed for %s: %s", target, exc)
+    finally:
+        if tempfile_path is not None and tempfile_path.exists():
+            try:
+                tempfile_path.unlink()
+            except OSError:
+                logger.debug("_merge_state: tempfile cleanup failed for %s", tempfile_path)
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+# ---------------------------------------------------------------------------
+# First-time onboarding flags.
+# ---------------------------------------------------------------------------
+def get_onboarding_state(path: Path | None = None) -> dict[str, Any]:
+    """Return a normalized onboarding view (missing keys default to None/[])."""
+    s = load_setup_state(path)
+    skipped = s.get("onboarding_skipped_steps")
+    return {
+        "completed_at": s.get("onboarding_completed_at") or None,
+        "current_step": s.get("onboarding_step") or None,
+        "skipped_steps": list(skipped) if isinstance(skipped, list) else [],
+        "terms_accepted_at": s.get("terms_accepted_at") or None,
+        "terms_version": s.get("terms_version") or None,
+        "wake_word_acknowledged_at": s.get("wake_word_acknowledged_at") or None,
+    }
+
+
+def is_onboarding_complete(path: Path | None = None) -> bool:
+    value = load_setup_state(path).get("onboarding_completed_at")
+    return isinstance(value, str) and bool(value)
+
+
+def set_onboarding_step(
+    step: str, skipped: list[str] | None = None, path: Path | None = None
+) -> None:
+    updates: dict[str, Any] = {"onboarding_step": step}
+    if skipped is not None:
+        updates["onboarding_skipped_steps"] = list(skipped)
+    _merge_state(updates, path)
+
+
+def accept_terms(version: str, path: Path | None = None) -> None:
+    _merge_state({"terms_accepted_at": _now_iso(), "terms_version": version}, path)
+
+
+def acknowledge_wake_word(path: Path | None = None) -> None:
+    _merge_state({"wake_word_acknowledged_at": _now_iso()}, path)
+
+
+def mark_onboarding_complete(path: Path | None = None) -> None:
+    _merge_state({"onboarding_completed_at": _now_iso()}, path)
+
+
+def reset_onboarding(path: Path | None = None) -> list[str]:
+    """Remove all onboarding keys from the state file. Returns the removed keys."""
+    s = load_setup_state(path)
+    removed = [k for k in _ONBOARDING_KEYS if k in s]
+    for k in removed:
+        s.pop(k, None)
+    target = state_path(path)
+    tempfile_path: Path | None = None
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tempfile_path = target.with_suffix(target.suffix + f".tmp-{secrets.token_hex(4)}")
+        with open(tempfile_path, "w", encoding="utf-8", newline="") as fp:
+            json.dump(s, fp, indent=2, ensure_ascii=False)
+            fp.flush()
+            os.fsync(fp.fileno())
+        os.replace(tempfile_path, target)
+        tempfile_path = None
+    except OSError as exc:
+        logger.warning("reset_onboarding: write failed for %s: %s", target, exc)
+    finally:
+        if tempfile_path is not None and tempfile_path.exists():
+            try:
+                tempfile_path.unlink()
+            except OSError:
+                logger.debug("reset_onboarding: tempfile cleanup failed for %s", tempfile_path)
+    return removed
+
+
 __all__ = [
     "state_path",
     "load_setup_state",
     "has_seen_obsidian_setup",
     "mark_obsidian_seen",
+    "get_onboarding_state",
+    "is_onboarding_complete",
+    "set_onboarding_step",
+    "accept_terms",
+    "acknowledge_wake_word",
+    "mark_onboarding_complete",
+    "reset_onboarding",
 ]

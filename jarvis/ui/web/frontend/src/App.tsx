@@ -8,6 +8,7 @@ import { ToastLayer } from "@/components/ToastLayer";
 import { JarvisDock } from "@/components/JarvisDock";
 import { CliConnectPoller } from "@/components/CliConnectPoller";
 import { WakeWordOnboardingGate } from "@/components/onboarding/WakeWordOnboardingGate";
+import { OnboardingPreview } from "@/components/onboarding/OnboardingPreview";
 
 export default function App() {
   useWebSocket();
@@ -40,6 +41,9 @@ export default function App() {
       <CliConnectPoller />
       {/* Blocking onboarding gate — overlays everything until wake word is set. */}
       <WakeWordOnboardingGate />
+      {/* DEV-only first-time-setup walkthrough preview — renders only with
+          ?onboarding=force in the URL; invisible to normal users. */}
+      <OnboardingPreview />
     </div>
   );
 }

@@ -1125,6 +1125,62 @@
     "install_no_binary": "{0}: instalación completada (exit 0) pero binario no encontrado. PATH puede no estar actualizado.",
     "install_failed": "{0}: instalación fallida (exit {1}). Prueba otro método."
   },
+  "onboarding": {
+    "nav": { "next": "Siguiente", "back": "Atrás", "skip": "Omitir" },
+    "welcome": {
+      "title": "Bienvenido a Personal Jarvis",
+      "subtitle": "Tu asistente de voz local y privado. Vamos a configurarlo.",
+      "cta": "Empezar",
+      "skip_setup": "Omitir la configuración por ahora"
+    },
+    "terms": {
+      "title": "Términos y descargo de responsabilidad",
+      "intro": "Léelos y acéptalos antes de continuar.",
+      "accept_label": "He leído y acepto los Términos y el descargo de responsabilidad.",
+      "continue": "Aceptar y continuar"
+    },
+    "language": {
+      "title": "Elige tu idioma",
+      "ui_label": "Idioma de la interfaz",
+      "reply_label": "Idioma de respuesta"
+    },
+    "wake_word": {
+      "title": "Elige tu palabra de activación",
+      "body": "Elige la palabra que despierta a Jarvis. \"Hey\" queda fija — tú eliges el resto.",
+      "prefix": "Hey",
+      "input_label": "Tu palabra de activación",
+      "placeholder": "p. ej. Nova",
+      "notice": "Elige tu propia palabra de activación. Asegúrate de no usar la marca de otra persona. Eres responsable de tu elección.",
+      "references_title": "Dónde comprobar nombres protegidos",
+      "references_caveat": "Estas referencias son informativas y pueden estar incompletas o desactualizadas; no sustituyen tu propia comprobación.",
+      "ack_label": "He revisado la información sobre nombres protegidos y acepto que soy el único responsable de la palabra de activación que elija.",
+      "cta": "Guardar palabra de activación",
+      "saving": "Guardando…"
+    },
+    "api_keys": {
+      "title": "Conecta tus servicios de IA (opcional)",
+      "body": "Añade claves de API para desbloquear proveedores en la nube. Puedes omitir esto y añadirlas más tarde en Ajustes.",
+      "works_now": "Puedes empezar a chatear de inmediato — las claves solo añaden voces y proveedores en la nube.",
+      "skip": "Omitir — las añadiré más tarde"
+    },
+    "mic_test": {
+      "title": "Comprobación del micrófono",
+      "body": "Asegurémonos de que Jarvis puede oírte.",
+      "no_mic": "No se detectó ningún micrófono. Aún puedes hablar con Jarvis por texto o a través de un canal como Telegram.",
+      "skip": "Omitir la comprobación del micrófono"
+    },
+    "persona": {
+      "title": "Hazlo tuyo (opcional)",
+      "name_label": "¿Cómo debería llamarse el asistente?",
+      "skip": "Omitir la personalización"
+    },
+    "finish": {
+      "title": "¡Todo listo!",
+      "body": "Jarvis está listo. Di tu palabra de activación o escribe un comando para empezar.",
+      "skipped_title": "Omitiste — configúralo cuando quieras en Ajustes:",
+      "start_cta": "Empezar a usar Jarvis"
+    }
+  },
   "languages_view": {
     "title": "Idiomas",
     "subtitle": "Elige el idioma de la interfaz y en qué idioma responde Jarvis.",

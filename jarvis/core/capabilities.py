@@ -82,7 +82,12 @@ _UNIVERSAL_ACTION_VERBS: frozenset[str] = frozenset({
     "buch", "buche", "bucht", "book", "reserviere", "reservier", "reserve",
     "ruf", "rufe", "ruft", "call",
     "post", "poste", "postet", "tweet", "tweete",
-    "anhalt", "anhalte", "halt", "halte", "stop", "stoppe",
+    # NB: bare "halt" is intentionally NOT listed — it is the German discourse
+    # particle ("ist halt so", "ich hab das halt gemacht"), not a command, and
+    # collided with the stop-verb stem to force-spawn pure chat turns (live bug
+    # 2026-06-19). Genuine stop/pause commands stay covered by
+    # "stop"/"stoppe" (also matches "stopp"/"stoppen") and "anhalt"/"anhalte".
+    "anhalt", "anhalte", "halte", "stop", "stoppe",
     "loesch", "loesche", "loescht", "delete", "remove",
     "speichere", "speicher", "speichert", "save",
     "frag", "frage", "fragt", "ask",

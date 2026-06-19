@@ -19,6 +19,10 @@ jarvis/speech/persona.py
 tests/unit/brain/test_spawn_announcement.py
 tests/unit/plugins/tool/test_spawn_worker_ack.py
 
+# --- Smalltalk-head/action-tail guard: the verbatim German voice utterances
+#     (the live Bill-Gates turn) ARE the regression fixtures under test ---
+tests/unit/brain/test_smalltalk_action_tail.py
+
 # --- The translation tooling itself (necessarily contains German word lists) ---
 scripts/bulk_translate*.py
 scripts/find_german_strings.py
