@@ -29,13 +29,13 @@ class OpenRouterBrain:
 
     def _ensure_client(self) -> Any:
         if self._client is None:
-            api_key = cfg.get_provider_secret("openrouter")
-            if not api_key:
+            ep = cfg.resolve_provider_endpoint("openrouter", vendor_default_base_url=BASE_URL)
+            if not ep.credential:
                 raise RuntimeError("Kein OpenRouter-API-Key gefunden (openrouter_api_key).")
             from openai import AsyncOpenAI
             self._client = AsyncOpenAI(
-                api_key=api_key,
-                base_url=BASE_URL,
+                api_key=ep.credential,
+                base_url=ep.base_url,
                 timeout=CLIENT_TIMEOUT,
                 default_headers={
                     "HTTP-Referer": "https://github.com/PersonalJarvis",

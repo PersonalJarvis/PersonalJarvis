@@ -2048,7 +2048,7 @@ def resolve_provider_endpoint(
     provider_id: str,
     *,
     vendor_default_base_url: str | None = None,
-    config: "JarvisConfig | None" = None,
+    config: JarvisConfig | None = None,
 ) -> ResolvedEndpoint:
     """Resolve the effective endpoint + credential for a provider.
 

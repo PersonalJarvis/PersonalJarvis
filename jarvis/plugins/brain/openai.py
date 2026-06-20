@@ -24,11 +24,14 @@ class OpenAIBrain:
 
     def _ensure_client(self) -> Any:
         if self._client is None:
-            api_key = cfg.get_provider_secret("openai")
-            if not api_key:
+            ep = cfg.resolve_provider_endpoint("openai")
+            if not ep.credential:
                 raise RuntimeError("Kein OpenAI-API-Key gefunden (openai_api_key / OPENAI_API_KEY).")
             from openai import AsyncOpenAI
-            self._client = AsyncOpenAI(api_key=api_key, timeout=CLIENT_TIMEOUT)
+            kwargs: dict[str, Any] = {"api_key": ep.credential, "timeout": CLIENT_TIMEOUT}
+            if ep.base_url:
+                kwargs["base_url"] = ep.base_url
+            self._client = AsyncOpenAI(**kwargs)
         return self._client
 
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
