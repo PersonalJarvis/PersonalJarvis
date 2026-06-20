@@ -3,6 +3,7 @@ import { ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { buildObsidianUrl } from "@/lib/obsidian";
 import { useEventStore } from "@/store/events";
+import { useT } from "@/i18n";
 
 /**
  * Per-page "In Obsidian öffnen" button.
@@ -34,6 +35,7 @@ export function ObsidianButton({
   size = "sm",
   label,
 }: ObsidianButtonProps): JSX.Element {
+  const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
 
   const handleClick = useCallback(() => {
@@ -49,7 +51,7 @@ export function ObsidianButton({
       // the toast immediately in that case.
       pushToast(
         "warning",
-        `Obsidian-Link konnte nicht ausgelöst werden: ${vaultRelPath || "Vault"}`,
+        `${t("obsidian_button.trigger_failed")}: ${vaultRelPath || "Vault"}`,
       );
       return;
     }
@@ -62,19 +64,19 @@ export function ObsidianButton({
       if (vaultRelPath) {
         pushToast(
           "info",
-          `An Obsidian übergeben: ${vaultRelPath} — falls Obsidian nicht startet, ist es nicht installiert.`,
+          `${t("obsidian_button.handed_over")}: ${vaultRelPath} ${t("obsidian_button.not_installed_hint")}`,
         );
       } else {
         pushToast(
           "info",
-          "Vault an Obsidian übergeben — falls Obsidian nicht startet, ist es nicht installiert.",
+          `${t("obsidian_button.vault_handed_over")} ${t("obsidian_button.not_installed_hint")}`,
         );
       }
     }, FALLBACK_TOAST_DELAY_MS);
   }, [pushToast, vaultRelPath]);
 
   const buttonLabel =
-    label ?? (vaultRelPath ? "In Obsidian öffnen" : "Vault in Obsidian öffnen");
+    label ?? (vaultRelPath ? t("obsidian_button.open_in_obsidian") : t("obsidian_button.open_vault_in_obsidian"));
 
   return (
     <Button

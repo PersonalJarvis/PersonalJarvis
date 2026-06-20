@@ -11,8 +11,8 @@
  *   POST /api/clis/test-run  (see useCliTestRun / the design spec)
  *   GET  /api/clis           (connected-CLI list, via useClisList)
  *
- * UI strings are German for consistency with the rest of the desktop app;
- * all code-level identifiers stay English per project policy.
+ * UI strings route through the in-house i18n system (English source, with de/es
+ * translations); all code-level identifiers stay English per project policy.
  */
 import { useMemo, useState } from "react";
 import {
@@ -32,6 +32,7 @@ import { ViewHeader } from "@/views/ChatsView";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
 import {
   useCliTestRun,
@@ -83,6 +84,7 @@ const RISK_STYLES: Record<RiskTier, RiskStyle> = {
 };
 
 function RiskBadge({ tier }: { tier: RiskTier | null }) {
+  const t = useT();
   if (!tier || !(tier in RISK_STYLES)) {
     return (
       <span
@@ -90,7 +92,7 @@ function RiskBadge({ tier }: { tier: RiskTier | null }) {
         data-risk="unknown"
         className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-0.5 text-[11px] font-semibold text-muted-foreground"
       >
-        kein Risk-Tier
+        {t("cli_test_hub_view.no_risk_tier")}
       </span>
     );
   }
@@ -116,6 +118,7 @@ function RiskBadge({ tier }: { tier: RiskTier | null }) {
 // ---------------------------------------------------------------------------
 
 export function CliTestHubView() {
+  const t = useT();
   const assistantName = useEventStore((s) => s.assistantName);
   const { data, isLoading: listLoading, error: listError } = useClisList();
   const testRun = useCliTestRun();
@@ -144,7 +147,7 @@ export function CliTestHubView() {
       <ViewHeader
         icon={<Wand2 className="h-4 w-4 text-primary" />}
         title="CLI Test Hub"
-        subtitle={`Sag ${assistantName} in natürlicher Sprache, was es mit deinen CLIs tun soll`}
+        subtitle={`${t("cli_test_hub_view.subtitle_tell")} ${assistantName} ${t("cli_test_hub_view.subtitle_rest")}`}
       />
 
       <ScrollArea className="flex-1">
@@ -194,6 +197,7 @@ function ConnectedClisPanel({
   isLoading: boolean;
   error: Error | null;
 }) {
+  const t = useT();
   const setActiveSection = useEventStore((s) => s.setActiveSection);
   const assistantName = useEventStore((s) => s.assistantName);
 
@@ -201,11 +205,11 @@ function ConnectedClisPanel({
     <section className="rounded-xl border border-border bg-card/40 p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
         <h3 className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
-          Verbundene CLIs
+          {t("cli_test_hub_view.connected_clis")}
         </h3>
         {clis.length > 0 && (
           <span className="rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
-            {clis.length} verfügbar
+            {clis.length} {t("cli_test_hub_view.available")}
           </span>
         )}
       </div>
@@ -213,7 +217,7 @@ function ConnectedClisPanel({
       {isLoading && (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          Lade verbundene CLIs…
+          {t("cli_test_hub_view.loading_connected")}
         </div>
       )}
 
@@ -222,7 +226,7 @@ function ConnectedClisPanel({
           data-testid="clis-load-error"
           className="rounded-md border border-destructive/40 border-l-[3px] border-l-destructive bg-destructive/10 p-3 text-xs text-destructive"
         >
-          CLI-Liste konnte nicht geladen werden: {error.message}
+          {t("cli_test_hub_view.list_load_failed")}: {error.message}
         </div>
       )}
 
@@ -233,12 +237,10 @@ function ConnectedClisPanel({
         >
           <div className="flex items-center gap-2 text-sm font-medium">
             <Terminal className="h-4 w-4 text-muted-foreground" />
-            Keine CLI verbunden
+            {t("cli_test_hub_view.no_cli_connected")}
           </div>
           <p className="text-xs leading-relaxed text-muted-foreground">
-            {assistantName} kann erst dann ein Tool aufrufen, wenn mindestens eine CLI
-            verbunden ist (z.B. gcloud, gh, docker). Verbinde eine CLI in der
-            CLIs-Sektion — sie erscheint dann hier automatisch.
+            {assistantName} {t("cli_test_hub_view.no_cli_help")}
           </p>
           <Button
             size="sm"
@@ -246,7 +248,7 @@ function ConnectedClisPanel({
             className="border border-primary/30 text-primary hover:bg-primary/10"
             onClick={() => setActiveSection("clis")}
           >
-            Zu den CLIs
+            {t("cli_test_hub_view.go_to_clis")}
             <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
           </Button>
         </div>
@@ -301,6 +303,7 @@ function PromptPanel({
   isPending: boolean;
   onRun: () => void;
 }) {
+  const t = useT();
   const assistantName = useEventStore((s) => s.assistantName);
   // Ctrl/Cmd+Enter submits — a textarea swallows plain Enter for multi-line.
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -314,7 +317,7 @@ function PromptPanel({
     <section className="rounded-xl border border-border bg-card/40 p-4">
       <label htmlFor="cli-test-instruction" className="block">
         <span className="mb-1.5 block text-[10px] uppercase tracking-wider text-muted-foreground/70">
-          Anweisung
+          {t("cli_test_hub_view.instruction_label")}
         </span>
         <textarea
           id="cli-test-instruction"
@@ -323,8 +326,8 @@ function PromptPanel({
           onKeyDown={handleKeyDown}
           disabled={isPending}
           rows={3}
-          aria-label={`Anweisung an ${assistantName}`}
-          placeholder={`Sag ${assistantName}, was es mit deinen CLIs tun soll…`}
+          aria-label={`${t("cli_test_hub_view.instruction_to")} ${assistantName}`}
+          placeholder={`${t("cli_test_hub_view.subtitle_tell")} ${assistantName}, ${t("cli_test_hub_view.placeholder_rest")}`}
           className="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm leading-relaxed focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60"
         />
       </label>
@@ -332,17 +335,17 @@ function PromptPanel({
       <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
         <label htmlFor="cli-test-hint" className="block">
           <span className="mb-1 block text-[10px] uppercase tracking-wider text-muted-foreground/70">
-            CLI-Hinweis (optional)
+            {t("cli_test_hub_view.cli_hint_label")}
           </span>
           <select
             id="cli-test-hint"
             value={cliHint}
             onChange={(e) => onCliHintChange(e.target.value)}
             disabled={isPending}
-            aria-label="CLI-Hinweis"
+            aria-label={t("cli_test_hub_view.cli_hint_aria")}
             className="min-w-[180px] rounded-md border border-input bg-background px-3 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60"
           >
-            <option value="">{assistantName} entscheiden lassen</option>
+            <option value="">{assistantName} {t("cli_test_hub_view.let_decide")}</option>
             {connectedClis.map((cli) => (
               <option key={cli.name} value={cli.name}>
                 {cli.name}
@@ -353,24 +356,24 @@ function PromptPanel({
 
         <div className="flex items-center gap-3">
           <span className="hidden text-[10px] text-muted-foreground/60 sm:inline">
-            Strg/Cmd + Enter
+            {t("cli_test_hub_view.ctrl_cmd_enter")}
           </span>
           <Button
             type="button"
             className="btn-primary"
             disabled={!canRun}
             onClick={onRun}
-            aria-label="Anweisung ausführen"
+            aria-label={t("cli_test_hub_view.run_instruction")}
           >
             {isPending ? (
               <>
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                <span className="ml-1.5">Läuft…</span>
+                <span className="ml-1.5">{t("cli_test_hub_view.running")}</span>
               </>
             ) : (
               <>
                 <Play className="h-3.5 w-3.5" />
-                <span className="ml-1.5">Ausführen</span>
+                <span className="ml-1.5">{t("cli_test_hub_view.run")}</span>
               </>
             )}
           </Button>
@@ -385,6 +388,7 @@ function PromptPanel({
 // ---------------------------------------------------------------------------
 
 function ResultSkeleton() {
+  const t = useT();
   const assistantName = useEventStore((s) => s.assistantName);
   return (
     <section
@@ -394,7 +398,7 @@ function ResultSkeleton() {
     >
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Loader2 className="h-4 w-4 animate-spin text-primary" />
-        {assistantName} wählt ein Tool und führt den Befehl aus…
+        {assistantName} {t("cli_test_hub_view.picking_tool")}
       </div>
       <div className="h-3 w-2/3 animate-jarvis-pulse rounded bg-muted-foreground/15" />
       <div className="h-3 w-1/2 animate-jarvis-pulse rounded bg-muted-foreground/15" />
@@ -408,18 +412,20 @@ function ResultSkeleton() {
 // ---------------------------------------------------------------------------
 
 function RequestErrorPanel({ error }: { error: Error }) {
+  const t = useT();
   return (
     <section
       data-testid="request-error"
       className="rounded-xl border border-destructive/40 border-l-[3px] border-l-destructive bg-destructive/10 p-5"
     >
       <h3 className="mb-1 text-sm font-semibold text-destructive">
-        Anfrage fehlgeschlagen
+        {t("cli_test_hub_view.request_failed")}
       </h3>
       <p className="break-words text-xs text-destructive/90">{error.message}</p>
       <p className="mt-2 text-[11px] text-muted-foreground">
-        Läuft der Backend-Server und ist der Endpunkt
-        <code className="mx-1 font-mono">/api/clis/test-run</code> verfügbar?
+        {t("cli_test_hub_view.backend_check_prefix")}
+        <code className="mx-1 font-mono">/api/clis/test-run</code>{" "}
+        {t("cli_test_hub_view.backend_check_suffix")}
       </p>
     </section>
   );
@@ -430,6 +436,7 @@ function RequestErrorPanel({ error }: { error: Error }) {
 // ---------------------------------------------------------------------------
 
 function ResultPanel({ result }: { result: TestRunResponse }) {
+  const t = useT();
   const assistantName = useEventStore((s) => s.assistantName);
   const failed = result.ok === false || Boolean(result.error);
   // Severity stroke for the whole panel: failures dominate, otherwise the
@@ -454,13 +461,13 @@ function ResultPanel({ result }: { result: TestRunResponse }) {
       <div>
         <div className="mb-1 flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground/70">
           <Wand2 className="h-3 w-3 text-primary" />
-          {assistantName} sagt
+          {assistantName} {t("cli_test_hub_view.says")}
         </div>
         <p
           data-testid="result-summary"
           className="font-display text-base leading-relaxed text-foreground"
         >
-          {result.summary || (failed ? "Der Befehl ist fehlgeschlagen." : "—")}
+          {result.summary || (failed ? t("cli_test_hub_view.command_failed") : "—")}
         </p>
       </div>
 
@@ -474,7 +481,7 @@ function ResultPanel({ result }: { result: TestRunResponse }) {
         <RiskBadge tier={result.risk_tier} />
         <ExitCodeBadge code={result.exit_code} />
         {typeof result.duration_ms === "number" && (
-          <MetaChip label="Dauer">
+          <MetaChip label={t("cli_test_hub_view.duration")}>
             <span data-testid="result-duration" className="tabular-nums">
               {result.duration_ms} ms
             </span>
@@ -486,7 +493,7 @@ function ResultPanel({ result }: { result: TestRunResponse }) {
       {result.command && (
         <div>
           <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground/70">
-            Befehl
+            {t("cli_test_hub_view.command_label")}
           </div>
           <pre
             data-testid="result-command"
@@ -529,7 +536,7 @@ function ResultPanel({ result }: { result: TestRunResponse }) {
       {hasSteps && (
         <div>
           <div className="mb-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/70">
-            Schritte ({result.steps.length})
+            {t("cli_test_hub_view.steps")} ({result.steps.length})
           </div>
           <ol data-testid="result-steps" className="space-y-1.5">
             {result.steps.map((step, idx) => (
@@ -560,8 +567,7 @@ function ResultPanel({ result }: { result: TestRunResponse }) {
       {!result.tool_called && !result.command && !result.error && (
         <div className="flex items-center gap-2 rounded-md border border-border border-l-[3px] border-l-primary/40 bg-background/40 px-3 py-2 text-xs text-muted-foreground">
           <ExternalLink className="h-3.5 w-3.5" />
-          {assistantName} hat kein passendes CLI-Tool gefunden. Formuliere die Anweisung
-          konkreter oder gib einen CLI-Hinweis an.
+          {assistantName} {t("cli_test_hub_view.no_tool_found")}
         </div>
       )}
     </section>

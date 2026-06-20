@@ -60,7 +60,7 @@ export function DocsSidebar({ selectedSlug, onSelect, onOpenSearch }: Props) {
       <div className="border-b border-border px-3 py-3">
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-sm font-semibold tracking-tight">
-            Dokumentation
+            {t("docs_sidebar.title")}
           </h2>
           <button
             type="button"
@@ -82,9 +82,9 @@ export function DocsSidebar({ selectedSlug, onSelect, onOpenSearch }: Props) {
         />
         <p className="mt-1 text-[11px] text-muted-foreground">
           {isLoading
-            ? "lade…"
+            ? t("common.loading")
             : error
-            ? "Fehler"
+            ? t("docs_sidebar.error")
             : `${totalCount} Doc${totalCount === 1 ? "" : "s"}`}
         </p>
       </div>
@@ -97,7 +97,7 @@ export function DocsSidebar({ selectedSlug, onSelect, onOpenSearch }: Props) {
             <div className="mb-2">
               <div className="flex w-full items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                 <Clock className="h-3 w-3" />
-                <span>Zuletzt geoeffnet</span>
+                <span>{t("docs.recent")}</span>
                 <span className="ml-auto text-[10px] font-normal text-muted-foreground/70">
                   {recent.length}
                 </span>

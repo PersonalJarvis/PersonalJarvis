@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import { useFriendsList, useUpdateFriend, type FriendItem } from "@/hooks/useFederation";
 import { cn } from "@/lib/utils";
+import { useT } from "@/i18n";
 
 const INTERVAL_PRESETS_S = [60, 120, 300, 900];
 
@@ -12,6 +13,7 @@ const INTERVAL_PRESETS_S = [60, 120, 300, 900];
  * ist 60..3600 s; wir bieten vier sinnvolle Presets statt freiem Input.
  */
 export function FriendsList() {
+  const t = useT();
   const friends = useFriendsList();
   const update = useUpdateFriend();
   const [pendingPubkey, setPendingPubkey] = useState<string | null>(null);
@@ -24,7 +26,7 @@ export function FriendsList() {
   if (friends.data.friends.length === 0) {
     return (
       <div className="rounded-md border border-dashed border-border/60 p-3 text-xs text-muted-foreground">
-        Noch keine Freunde. Klick „Pair" oben rechts um einen Link zu generieren.
+        {t("friends_list.empty")}
       </div>
     );
   }
@@ -53,6 +55,7 @@ function FriendRow({
   isPending: boolean;
   onUpdateInterval: (s: number) => void;
 }) {
+  const t = useT();
   return (
     <li className="rounded-md border border-border bg-background/40 p-3 text-xs">
       <div className="flex items-start gap-3">
@@ -66,16 +69,16 @@ function FriendRow({
               </code>
             </div>
             <div className="text-right text-[10px] text-muted-foreground">
-              <div>seit {new Date(item.paired_at).toLocaleDateString("de-DE")}</div>
+              <div>{`${t("friends_list.since")} ${new Date(item.paired_at).toLocaleDateString("de-DE")}`}</div>
               {item.last_pull_at && (
-                <div>letzter Pull {timeSince(item.last_pull_at)}</div>
+                <div>{`${t("friends_list.last_pull")} ${timeSince(item.last_pull_at)}`}</div>
               )}
             </div>
           </div>
 
           <div className="mt-2 flex items-center gap-2">
             <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              Pull alle
+              {t("friends_list.pull_every")}
             </span>
             <div className="flex gap-1">
               {INTERVAL_PRESETS_S.map((s) => (

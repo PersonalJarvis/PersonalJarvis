@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, AlertTriangle, Download, HelpCircle } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { useT } from "@/i18n";
 import type { ObsidianStatus as ObsidianStatusType } from "@/types/setup";
 
 interface Props {
@@ -59,13 +60,15 @@ const VISUAL_STYLE: Record<Visual, string> = {
     "border-[#8d94a8]/40 bg-[#8d94a8]/10 text-[#8d94a8] cursor-pointer hover:bg-[#8d94a8]/20",
 };
 
-const VISUAL_LABEL: Record<Visual, string> = {
-  loading: "Obsidian: …",
-  ok: "Obsidian: verbunden",
-  register: "Obsidian: nicht registriert",
-  install: "Obsidian: nicht installiert",
-  unclear: "Obsidian: Status unklar",
-};
+function visualLabels(t: (key: string) => string): Record<Visual, string> {
+  return {
+    loading: t("obsidian_status.loading"),
+    ok: t("obsidian_status.connected"),
+    register: t("obsidian_status.not_registered"),
+    install: t("obsidian_status.not_installed"),
+    unclear: t("obsidian_status.unclear"),
+  };
+}
 
 function VisualIcon({ visual }: { visual: Visual }): JSX.Element {
   if (visual === "ok") {
@@ -105,6 +108,7 @@ export function ObsidianStatus({
   fetchImpl,
   pollIntervalMs = DEFAULT_POLL_MS,
 }: Props): JSX.Element {
+  const t = useT();
   const [status, setStatus] = useState<ObsidianStatusType | null>(null);
   const [errored, setErrored] = useState(false);
   // Initial fetch must show LOADING — track whether at least one fetch
@@ -150,7 +154,7 @@ export function ObsidianStatus({
   }, [doFetch, pollIntervalMs]);
 
   const visual: Visual = resolvedOnce ? classify(status, errored) : "loading";
-  const label = VISUAL_LABEL[visual];
+  const label = visualLabels(t)[visual];
 
   const tooltip =
     visual === "ok" && status
@@ -158,10 +162,10 @@ export function ObsidianStatus({
         ? `${status.vault_path} · Obsidian ${status.version}`
         : status.vault_path
       : visual === "loading"
-        ? "Status wird geladen…"
+        ? t("obsidian_status.loading_tooltip")
         : status?.note
           ? status.note
-          : "Klick für Setup";
+          : t("obsidian_status.click_for_setup");
 
   const handleClick = useCallback(() => {
     if (visual === "loading" || visual === "ok") return;
@@ -175,10 +179,10 @@ export function ObsidianStatus({
       vault_registered: false,
       vault_path: "",
       recommended_action: "install_obsidian",
-      note: "Status konnte nicht geladen werden.",
+      note: t("obsidian_status.load_failed_note"),
     };
     onOpenSetup(payload);
-  }, [visual, status, errored, onOpenSetup]);
+  }, [visual, status, errored, onOpenSetup, t]);
 
   const interactive = visual !== "ok" && visual !== "loading";
 

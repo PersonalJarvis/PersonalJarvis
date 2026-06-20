@@ -53,6 +53,20 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
             kwargs["language"] = language
         if bias_prompt:
             kwargs["prompt"] = bias_prompt
+        # Team-proxy mode (2026-06-20 spec §4): route the cloud STT through the
+        # key proxy with the per-user token instead of the real vendor key. Only
+        # groq-api (the cloud STT exposing `endpoint` + `api_key` constructor
+        # args) is proxy-capable today; other providers fall through unchanged.
+        # Direct mode injects nothing, so the provider keeps its own endpoint +
+        # key resolution (behaviour unchanged).
+        if provider_name == "groq-api":
+            from jarvis.core import config as _cfg
+
+            ep = _cfg.resolve_provider_endpoint("groq-api")
+            if ep.via_proxy and ep.base_url:
+                kwargs["endpoint"] = ep.base_url.rstrip("/") + "/audio/transcriptions"
+                if ep.credential:
+                    kwargs["api_key"] = ep.credential
         try:
             instance = cls(**kwargs) if kwargs else cls()
             logger.info(

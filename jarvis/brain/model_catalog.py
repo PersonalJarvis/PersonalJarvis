@@ -77,6 +77,52 @@ class ModelInfo:
     label: str
 
 
+def _curated(pairs: list[tuple[str, str]]) -> list[ModelInfo]:
+    return [ModelInfo(id=i, label=lbl) for i, lbl in pairs]
+
+
+# Curated current model families per provider — the picker's fallback when the
+# live ``/v1/models`` catalog is unreachable (no/invalid key, network down). This
+# is what makes the dropdown useful for providers the user drives WITHOUT an API
+# key: Claude in particular runs via the Max subscription (OAuth), so its live
+# fetch always 401s — the user still expects to pick Fable / Opus / Sonnet /
+# Haiku. Keep these to the *current* frontier families (maintainer mandate: never
+# offer a years-old model); when a valid key exists the live catalog supersedes
+# this entirely, so a new release still shows up automatically there.
+CURATED_MODELS: dict[str, list[ModelInfo]] = {
+    "claude-api": _curated([
+        ("claude-fable-5", "Claude Fable 5"),
+        ("claude-opus-4-8", "Claude Opus 4.8"),
+        ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
+        ("claude-haiku-4-5-20251001", "Claude Haiku 4.5"),
+    ]),
+    "openai": _curated([
+        ("gpt-5.5", "GPT-5.5"),
+        ("gpt-5.5-pro", "GPT-5.5 Pro"),
+        ("gpt-5.5-mini", "GPT-5.5 Mini"),
+    ]),
+    "gemini": _curated([
+        ("gemini-3.1-pro-preview", "Gemini 3.1 Pro"),
+        ("gemini-3-pro", "Gemini 3 Pro"),
+        ("gemini-3-flash-preview", "Gemini 3 Flash"),
+        ("gemini-3.5-flash", "Gemini 3.5 Flash"),
+        ("gemini-flash-lite-latest", "Gemini Flash Lite"),
+    ]),
+    "grok": _curated([
+        ("grok-4.3", "Grok 4.3"),
+        ("grok-4.3-fast", "Grok 4.3 Fast"),
+    ]),
+    "openrouter": _curated([
+        ("anthropic/claude-opus-4.8", "Claude Opus 4.8"),
+        ("anthropic/claude-sonnet-4.6", "Claude Sonnet 4.6"),
+        ("anthropic/claude-haiku-4.5", "Claude Haiku 4.5"),
+        ("openai/gpt-5.5", "GPT-5.5"),
+        ("google/gemini-3-pro-preview", "Gemini 3 Pro"),
+        ("x-ai/grok-4.3", "Grok 4.3"),
+    ]),
+}
+
+
 @dataclass(frozen=True, slots=True)
 class CatalogResult:
     """The model list for one provider, with an honest provenance flag."""
@@ -328,11 +374,16 @@ class ModelCatalog:
     # -- static fallback ----------------------------------------------
 
     def _static_fallback(self, provider: str) -> list[ModelInfo]:
-        """The maintained frontier defaults for ``provider`` (router + deep).
+        """The curated current model family for ``provider``.
 
-        Only used when the live catalog is unreachable AND there is no cache —
-        so the picker still shows the known-good models rather than nothing.
+        Used when the live catalog is unreachable AND there is no cache — so the
+        picker still offers a full, useful selection (esp. Claude via Max, whose
+        live fetch always 401s). Falls back to the maintained tier defaults for
+        any provider not in :data:`CURATED_MODELS`.
         """
+        curated = CURATED_MODELS.get(provider)
+        if curated:
+            return list(curated)
         try:
             from jarvis.brain.manager import TIER_DEFAULTS_BY_PROVIDER
         except Exception:  # noqa: BLE001

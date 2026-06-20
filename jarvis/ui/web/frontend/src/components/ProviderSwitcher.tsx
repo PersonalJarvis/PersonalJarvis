@@ -55,7 +55,7 @@ export function ProviderSwitcher() {
         {brainProviders.map((p) => (
           <option key={p.id} value={p.id} disabled={!p.configured}>
             {p.label}
-            {!p.configured && " — kein Credential"}
+            {!p.configured && ` — ${t("provider_switcher.no_credential")}`}
           </option>
         ))}
       </select>
@@ -64,7 +64,7 @@ export function ProviderSwitcher() {
       </Button>
       {active && (
         <p className="text-xs text-muted-foreground">
-          Aktiv: <code className="font-mono">{active.id}</code>
+          {t("provider_switcher.active")}: <code className="font-mono">{active.id}</code>
         </p>
       )}
     </div>

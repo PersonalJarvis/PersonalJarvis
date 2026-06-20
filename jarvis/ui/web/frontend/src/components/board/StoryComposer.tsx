@@ -29,7 +29,7 @@ export function StoryComposer({ onClose }: StoryComposerProps) {
       >
         <header className="mb-3 flex items-center gap-3">
           <h3 className="font-display text-sm font-semibold flex-1">
-            Story schreiben
+            {t("story_composer.title")}
           </h3>
           <button type="button" onClick={onClose} aria-label={t("story_composer.close")}
                   className="text-muted-foreground hover:text-foreground">
@@ -41,13 +41,13 @@ export function StoryComposer({ onClose }: StoryComposerProps) {
           value={text}
           onChange={(e) => setText(e.target.value.slice(0, MAX_CHARS))}
           rows={4}
-          placeholder="Was hast du heute gemacht?"
+          placeholder={t("story_composer.placeholder")}
           className="w-full resize-none rounded-md border border-border bg-background/40 px-3 py-2 text-sm"
         />
         <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
-          <span>Verschwindet nach 24 Stunden.</span>
+          <span>{t("story_composer.expiry_hint")}</span>
           <span className={cn(remaining < 30 && "text-amber-400")}>
-            {remaining} Zeichen
+            {`${remaining} ${t("story_composer.characters")}`}
           </span>
         </div>
 
@@ -59,7 +59,7 @@ export function StoryComposer({ onClose }: StoryComposerProps) {
           <button
             onClick={onClose}
             className="rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
-          >Abbrechen</button>
+          >{t("common.cancel")}</button>
           <button
             type="button"
             disabled={create.isPending || text.trim().length === 0}
@@ -72,12 +72,12 @@ export function StoryComposer({ onClose }: StoryComposerProps) {
             className="inline-flex items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 disabled:opacity-50"
           >
             {create.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
-            Posten
+            {t("story_composer.post")}
           </button>
         </div>
         {create.isError && (
           <div className="mt-2 text-xs text-destructive">
-            Fehler: {(create.error as Error).message}
+            {`${t("story_composer.error_prefix")} ${(create.error as Error).message}`}
           </div>
         )}
       </div>
@@ -88,10 +88,11 @@ export function StoryComposer({ onClose }: StoryComposerProps) {
 export function VisibilityRadios({
   value, onChange,
 }: { value: Visibility; onChange: (v: Visibility) => void }) {
+  const t = useT();
   const opts: { v: Visibility; label: string; hint: string }[] = [
-    { v: "private", label: "Privat", hint: "Nur du" },
-    { v: "friends", label: "Freunde", hint: "Gepairte Friends" },
-    { v: "public",  label: "Oeffentlich", hint: "Jeder, der dein Backend kennt" },
+    { v: "private", label: t("story_composer.visibility_private"), hint: t("story_composer.visibility_private_hint") },
+    { v: "friends", label: t("story_composer.visibility_friends"), hint: t("story_composer.visibility_friends_hint") },
+    { v: "public",  label: t("story_composer.visibility_public"), hint: t("story_composer.visibility_public_hint") },
   ];
   return (
     <div className="grid grid-cols-3 gap-1.5">

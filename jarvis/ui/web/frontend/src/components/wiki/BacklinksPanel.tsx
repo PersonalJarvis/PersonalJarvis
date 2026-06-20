@@ -8,6 +8,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { FileText } from "lucide-react";
 
+import { useT } from "@/i18n";
 import { fetchWikiBacklinks } from "@/lib/wikiApi";
 
 interface BacklinksPanelProps {
@@ -16,6 +17,7 @@ interface BacklinksPanelProps {
 }
 
 export function BacklinksPanel({ slug, onSelect }: BacklinksPanelProps) {
+  const t = useT();
   const { data, isLoading, isError } = useQuery({
     queryKey: ["wiki", "backlinks", slug],
     queryFn: () => fetchWikiBacklinks(slug),
@@ -37,12 +39,12 @@ export function BacklinksPanel({ slug, onSelect }: BacklinksPanelProps) {
             role="alert"
             className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
           >
-            Konnte Backlinks nicht laden.
+            {t("backlinks_panel.load_error")}
           </div>
         )}
         {!isLoading && !isError && backlinks.length === 0 && (
           <p className="text-xs text-muted-foreground" data-testid="wiki-backlinks-empty">
-            Keine Backlinks.
+            {t("backlinks_panel.empty")}
           </p>
         )}
         {!isLoading && !isError &&

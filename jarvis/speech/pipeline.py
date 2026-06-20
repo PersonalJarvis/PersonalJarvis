@@ -291,9 +291,9 @@ _STT_UNAVAILABLE_PHRASE: dict[str, str] = {
 # pre-empted brain_timeout, so the turn just hung up with no feedback). Short,
 # bilingual, TTS-clean (``_speak`` does not scrub).
 _BRAIN_TIMEOUT_PHRASE: dict[str, str] = {
-    "de": "Das hat gerade zu lange gedauert. Sag es bitte noch einmal.",
-    "en": "That took too long just now. Could you say it again?",
-    "es": "Eso ha tardado demasiado ahora mismo. ¿Puedes repetirlo, por favor?",
+    "de": "Entschuldige, ich habe die Antwort nicht rechtzeitig fertigbekommen.",
+    "en": "Sorry, I couldn't finish the answer in time.",
+    "es": "Lo siento, no pude terminar la respuesta a tiempo.",
 }
 
 # AD-OE6 zero-silent-drop fallback for an ABANDONED incomplete utterance. When

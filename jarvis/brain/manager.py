@@ -1406,11 +1406,6 @@ class BrainManager:
             except Exception:  # noqa: BLE001
                 key_value = None
             if not key_value:
-                manager._dead_providers.add(provider_name)
-                # codex-as-BRAIN genuinely needs an OpenAI API key, so disabling
-                # it here is correct. But codex-as-SUBAGENT runs on the ChatGPT
-                # OAuth login (no API key), so the bare "deaktiviert" line read as
-                # "codex is unusable" when the sub-agent still works. Log honestly.
                 if provider_name == "codex":
                     oauth_ok = False
                     try:
@@ -1422,11 +1417,12 @@ class BrainManager:
                         oauth_ok = False
                     if oauth_ok:
                         log.info(
-                            "Pre-Boot-Key-Check: codex hat keinen OpenAI-API-Key -> "
-                            "als BRAIN-Provider deaktiviert, aber als Sub-Agent "
-                            "nutzbar (ChatGPT-OAuth-Login)."
+                            "Pre-Boot-Key-Check: codex hat keinen OpenAI-API-Key, "
+                            "aber ChatGPT-OAuth ist verbunden -> Provider 'codex' "
+                            "bleibt als Brain aktiv (CLI-Pfad)."
                         )
                         continue
+                manager._dead_providers.add(provider_name)
                 log.info(
                     "Pre-Boot-Key-Check: kein Key in %s -> Provider '%s' deaktiviert.",
                     provider_to_slots.get(provider_name, [provider_name]),

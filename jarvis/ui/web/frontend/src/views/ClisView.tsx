@@ -38,33 +38,42 @@ import {
   type CliStatus,
   type CliSummary,
 } from "@/hooks/useClis";
+import { translate, useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
 
-type StatusLabel = "verbunden" | "getrennt" | "nicht installiert" | "fehler" | "prüfe…";
-
-const STATUS_STYLES: Record<CliStatus, { label: StatusLabel; color: string; dotClass: string }> = {
+// Colour + dot styling per status (locale-independent). The human-readable
+// label is resolved separately through `statusLabel` so it can be translated.
+const STATUS_STYLES: Record<CliStatus, { labelKey: string; color: string; dotClass: string }> = {
   connected: {
-    label: "verbunden",
+    labelKey: "clis_view.status_connected",
     color: "text-primary",
     dotClass: "bg-primary shadow-[0_0_8px_rgba(255,214,10,0.6)]",
   },
   disconnected: {
-    label: "getrennt",
+    labelKey: "clis_view.status_disconnected",
     color: "text-muted-foreground",
     dotClass: "bg-muted-foreground/40",
   },
   not_installed: {
-    label: "nicht installiert",
+    labelKey: "clis_view.status_not_installed",
     color: "text-muted-foreground/70",
     dotClass: "bg-muted-foreground/20",
   },
-  error: { label: "fehler", color: "text-destructive", dotClass: "bg-destructive" },
+  error: {
+    labelKey: "clis_view.status_error",
+    color: "text-destructive",
+    dotClass: "bg-destructive",
+  },
   checking: {
-    label: "prüfe…",
+    labelKey: "clis_view.status_checking",
     color: "text-muted-foreground",
     dotClass: "bg-muted-foreground animate-jarvis-pulse",
   },
 };
+
+function statusLabel(status: CliStatus): string {
+  return translate(STATUS_STYLES[status].labelKey);
+}
 
 const ICONS_BY_CATEGORY: Record<string, React.ComponentType<{ className?: string }>> = {
   cloud: Cloud,
@@ -82,19 +91,28 @@ function iconForCli(cli: CliSummary) {
   return <Icon className="h-4 w-4 text-muted-foreground/80 shrink-0" />;
 }
 
+// Wrap a compact "5m"/"3h"/"2d" delta with the localized "ago" marker. The
+// unit letters are locale-neutral; only the surrounding word differs (de "vor X",
+// en "X ago", es "hace X"). Empty parts are dropped so word order stays correct.
+function ago(value: string): string {
+  const prefix = translate("clis_view.ago_prefix");
+  const suffix = translate("clis_view.ago_suffix");
+  return [prefix, value, suffix].filter(Boolean).join(" ");
+}
+
 function formatRelativeTime(ts: number | null): string {
   if (!ts) return "—";
   const diff = Math.max(0, Date.now() - ts);
   const mins = Math.floor(diff / 60_000);
-  if (mins < 1) return "gerade eben";
-  if (mins < 60) return `vor ${mins}m`;
+  if (mins < 1) return translate("clis_view.just_now");
+  if (mins < 60) return ago(`${mins}m`);
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `vor ${hrs}h`;
-  return `vor ${Math.floor(hrs / 24)}d`;
+  if (hrs < 24) return ago(`${hrs}h`);
+  return ago(`${Math.floor(hrs / 24)}d`);
 }
 
 function formatDateTime(ts: number): string {
-  return new Date(ts).toLocaleString("de-DE", {
+  return new Date(ts).toLocaleString(undefined, {
     day: "2-digit", month: "2-digit", year: "2-digit",
     hour: "2-digit", minute: "2-digit", second: "2-digit",
   });
@@ -103,6 +121,7 @@ function formatDateTime(ts: number): string {
 type FilterTab = "all" | "connected" | "installed" | "custom";
 
 export function ClisView() {
+  const t = useT();
   const assistantName = useEventStore((s) => s.assistantName);
   const { data, isLoading, error, refetch } = useClisList();
   const [filter, setFilter] = useState<FilterTab>("all");
@@ -129,8 +148,8 @@ export function ClisView() {
           title="CLIs"
           subtitle={
             data
-              ? `${data.connected} verbunden · ${data.installed} installiert · ${data.total} im Katalog`
-              : "Laden…"
+              ? `${data.connected} ${t("clis_view.subtitle_connected")} · ${data.installed} ${t("clis_view.subtitle_installed")} · ${data.total} ${t("clis_view.subtitle_in_catalog")}`
+              : t("common.loading")
           }
           right={
             <div className="flex items-center gap-1">
@@ -138,12 +157,12 @@ export function ClisView() {
                 size="sm"
                 variant="ghost"
                 onClick={() => setShowWizard(true)}
-                title="Custom CLI hinzufügen"
+                title={t("clis_view.add_custom_cli_title")}
               >
                 <Plus className="h-3.5 w-3.5" />
                 <span className="ml-1.5 text-xs">Add Custom</span>
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => refetch()} title="Neu laden">
+              <Button size="sm" variant="ghost" onClick={() => refetch()} title={t("clis_view.reload")}>
                 <RefreshCw className="h-3.5 w-3.5" />
               </Button>
             </div>
@@ -153,9 +172,9 @@ export function ClisView() {
         <div className="flex flex-wrap items-center gap-2 border-b border-border px-6 py-3">
           {(
             [
-              ["all", `Alle (${data?.total ?? 0})`],
-              ["connected", `Verbunden (${data?.connected ?? 0})`],
-              ["installed", `Installiert (${data?.installed ?? 0})`],
+              ["all", `${t("clis_view.filter_all")} (${data?.total ?? 0})`],
+              ["connected", `${t("clis_view.filter_connected")} (${data?.connected ?? 0})`],
+              ["installed", `${t("clis_view.filter_installed")} (${data?.installed ?? 0})`],
               [
                 "custom",
                 `Custom (${data?.clis.filter((c) => c.is_custom).length ?? 0})`,
@@ -179,7 +198,7 @@ export function ClisView() {
 
           {data && data.categories.length > 0 && (
             <div className="ml-auto flex items-center gap-1.5">
-              <span className="text-xs text-muted-foreground/70">Kategorie:</span>
+              <span className="text-xs text-muted-foreground/70">{t("clis_view.category_label")}</span>
               <button
                 type="button"
                 onClick={() => setCategoryFilter(null)}
@@ -190,7 +209,7 @@ export function ClisView() {
                     : "border-border text-muted-foreground hover:text-foreground",
                 )}
               >
-                alle
+                {t("clis_view.category_all")}
               </button>
               {data.categories.map((cat) => (
                 <button
@@ -215,7 +234,7 @@ export function ClisView() {
 
         <ScrollArea className="flex-1">
           <div className="p-6">
-            {isLoading && <div className="text-sm text-muted-foreground">Lade…</div>}
+            {isLoading && <div className="text-sm text-muted-foreground">{t("common.loading")}</div>}
 
             {error && (
               <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
@@ -230,9 +249,9 @@ export function ClisView() {
             {filtered.length > 0 && (
               <>
                 <p className="mb-4 max-w-2xl text-xs leading-relaxed text-muted-foreground">
-                  {assistantName} kann diese CLIs als Tools aufrufen. Nur{" "}
-                  <span className="text-primary">verbundene</span> CLIs erscheinen
-                  im Brain-Tool-Katalog.
+                  {assistantName} {t("clis_view.intro_can_call")}{" "}
+                  <span className="text-primary">{t("clis_view.intro_connected_word")}</span>{" "}
+                  {t("clis_view.intro_appear")}
                 </p>
                 <ul className="space-y-1.5">
                   {filtered.map((cli) => (
@@ -278,6 +297,7 @@ function CliRow({
   onSelect: () => void;
   onShowUsage: () => void;
 }) {
+  const t = useT();
   const style = STATUS_STYLES[cli.status];
   return (
     <li>
@@ -316,7 +336,7 @@ function CliRow({
           {cli.version ?? "—"}
         </span>
         <span className={cn("hidden w-24 text-right text-[11px] tabular-nums sm:inline", style.color)}>
-          {style.label}
+          {statusLabel(cli.status)}
         </span>
         {cli.usage_count_7d > 0 ? (
           <button
@@ -326,7 +346,7 @@ function CliRow({
               onShowUsage();
             }}
             className="hidden w-24 text-right text-[11px] text-muted-foreground/70 tabular-nums hover:text-primary md:inline"
-            title="Usage-History öffnen"
+            title={t("clis_view.open_usage_history")}
           >
             {cli.usage_count_7d}×/7d
           </button>
@@ -361,6 +381,7 @@ function DetailPanel({
   onClose: () => void;
   onShowUsage: () => void;
 }) {
+  const t = useT();
   const { data, isLoading, error } = useCliDetail(name);
   const check = useCheckCli();
   const disconnect = useDisconnectCli();
@@ -385,11 +406,11 @@ function DetailPanel({
           onClick={() =>
             check.mutate(name, {
               onError: (err) =>
-                pushToast("error", `Status-Check fehlgeschlagen: ${(err as Error).message}`),
+                pushToast("error", `${t("clis_view.status_check_failed")}: ${(err as Error).message}`),
             })
           }
-          title="Status neu prüfen"
-          aria-label="Status neu prüfen"
+          title={t("clis_view.recheck_status")}
+          aria-label={t("clis_view.recheck_status")}
           disabled={check.isPending}
         >
           <RefreshCw className={cn("h-3.5 w-3.5", check.isPending && "animate-spin")} />
@@ -397,8 +418,8 @@ function DetailPanel({
         <button
           type="button" onClick={onClose}
           className="ml-1 text-muted-foreground hover:text-foreground"
-          title="Schließen"
-          aria-label="Detail-Panel schließen"
+          title={t("common.close")}
+          aria-label={t("clis_view.close_detail_panel")}
         >
           ×
         </button>
@@ -406,7 +427,7 @@ function DetailPanel({
 
       <ScrollArea className="flex-1">
         <div className="space-y-4 p-5 text-xs">
-          {isLoading && <div className="text-muted-foreground">Lade Details…</div>}
+          {isLoading && <div className="text-muted-foreground">{t("clis_view.loading_details")}</div>}
           {error && (
             <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-destructive">
               {(error as Error).message}
@@ -422,7 +443,7 @@ function DetailPanel({
                     onClick={() => setInstallDialog(true)}
                   >
                     <Play className="h-3.5 w-3.5" />
-                    <span className="ml-1.5">Installieren</span>
+                    <span className="ml-1.5">{t("clis_view.install")}</span>
                   </Button>
                 )}
                 {data.installed && !data.connected && data.auth_mode === "oauth_cli" && (
@@ -440,7 +461,7 @@ function DetailPanel({
                     onClick={() => setApiKeyDialog(true)}
                   >
                     <LogIn className="h-3.5 w-3.5" />
-                    <span className="ml-1.5">API-Key setzen</span>
+                    <span className="ml-1.5">{t("clis_view.set_api_key")}</span>
                   </Button>
                 )}
                 {data.connected && data.auth_mode !== "none" && data.auth_mode !== "config_file" && (
@@ -451,19 +472,19 @@ function DetailPanel({
                       disconnect.mutate(name, {
                         onSuccess: (res) => {
                           if (res.ok) {
-                            pushToast("success", `${name} getrennt`);
+                            pushToast("success", `${name} ${t("clis_view.disconnected_suffix")}`);
                           } else {
-                            pushToast("error", res.error || "Trennen fehlgeschlagen");
+                            pushToast("error", res.error || t("clis_view.disconnect_failed"));
                           }
                         },
                         onError: (err) =>
-                          pushToast("error", `Trennen fehlgeschlagen: ${(err as Error).message}`),
+                          pushToast("error", `${t("clis_view.disconnect_failed")}: ${(err as Error).message}`),
                       })
                     }
                     disabled={disconnect.isPending}
                   >
                     <LogOut className="h-3.5 w-3.5" />
-                    <span className="ml-1.5">Trennen</span>
+                    <span className="ml-1.5">{t("clis_view.disconnect")}</span>
                   </Button>
                 )}
                 <Button size="sm" variant="ghost" onClick={onShowUsage}>
@@ -474,18 +495,22 @@ function DetailPanel({
                   <Button
                     size="sm"
                     variant="ghost"
-                    aria-label={`Custom-CLI ${name} entfernen`}
-                    title="Custom-CLI entfernen"
+                    aria-label={`${t("clis_view.remove_custom_cli_prefix")} ${name} ${t("clis_view.remove_custom_cli_suffix")}`}
+                    title={t("clis_view.remove_custom_cli")}
                     disabled={deleteCustom.isPending}
                     onClick={() => {
-                      if (window.confirm(`Custom-CLI "${name}" wirklich entfernen?`)) {
+                      if (
+                        window.confirm(
+                          `${t("clis_view.confirm_remove_custom_prefix")} "${name}" ${t("clis_view.confirm_remove_custom_suffix")}`,
+                        )
+                      ) {
                         deleteCustom.mutate(name, {
                           onSuccess: () => {
-                            pushToast("success", `${name} entfernt`);
+                            pushToast("success", `${name} ${t("clis_view.removed_suffix")}`);
                             onClose();
                           },
                           onError: (err) =>
-                            pushToast("error", `Fehler: ${(err as Error).message}`),
+                            pushToast("error", `${t("common.error")}: ${(err as Error).message}`),
                         });
                       }
                     }}
@@ -498,11 +523,11 @@ function DetailPanel({
 
               <Section title="Status">
                 <KeyVal k="Binary" v={data.binary_name} />
-                <KeyVal k="Pfad" v={data.binary_path ?? "nicht gefunden"} />
+                <KeyVal k={t("clis_view.kv_path")} v={data.binary_path ?? t("clis_view.not_found")} />
                 <KeyVal k="Version" v={data.version ?? "—"} />
                 <KeyVal k="Auth-Mode" v={data.auth_mode} />
-                <KeyVal k="Status" v={STATUS_STYLES[data.status].label} />
-                {data.error && <KeyVal k="Fehler" v={data.error} tone="error" />}
+                <KeyVal k="Status" v={statusLabel(data.status)} />
+                {data.error && <KeyVal k={t("common.error")} v={data.error} tone="error" />}
               </Section>
 
               <Section title="Commands">
@@ -513,12 +538,12 @@ function DetailPanel({
               </Section>
 
               {data.secret_keys.length > 0 && (
-                <Section title="Secrets (API-Key-Auth)">
+                <Section title={t("clis_view.section_secrets")}>
                   {data.secret_keys.map((sk) => (
                     <KeyVal
                       key={sk.name}
                       k={sk.env_var}
-                      v={data.secrets_set[sk.name] ? "●●●●● gesetzt" : "(nicht gesetzt)"}
+                      v={data.secrets_set[sk.name] ? `●●●●● ${t("clis_view.secret_set")}` : t("clis_view.secret_unset")}
                       tone={data.secrets_set[sk.name] ? "ok" : "muted"}
                     />
                   ))}
@@ -558,7 +583,7 @@ function DetailPanel({
               </Section>
 
               {data.tool_schema_examples.length > 0 && (
-                <Section title="Tool-Beispiele (für Brain)">
+                <Section title={t("clis_view.section_tool_examples")}>
                   <ul className="space-y-1">
                     {data.tool_schema_examples.map((e) => (
                       <li key={e} className="font-mono text-[10px] text-muted-foreground/90">
@@ -576,7 +601,7 @@ function DetailPanel({
                   rel="noopener noreferrer"
                   className="flex items-center gap-1 text-[11px] text-primary hover:underline"
                 >
-                  Dokumentation
+                  {t("clis_view.documentation")}
                   <ExternalLink className="h-3 w-3" />
                 </a>
               )}
@@ -619,6 +644,7 @@ function ConnectOAuthButton({
   // und setzt den Coach-State zurueck wenn der Login durch ist. Damit
   // erscheint der Toast "X ist verbunden" und die CLIs-Liste refreshed
   // automatisch, egal in welcher Sektion der User gerade ist.
+  const t = useT();
   const spawn = useSpawnExternalTerminal();
   const pushToast = useEventStore((s) => s.pushToast);
   const setCoach = useEventStore((s) => s.setCliConnectCoach);
@@ -643,10 +669,10 @@ function ConnectOAuthButton({
                 });
                 pushToast(
                   "info",
-                  `Terminal geoeffnet (${res.method}) — folge dem Browser-Login. Status wird automatisch geprueft.`,
+                  `${t("clis_view.terminal_opened")} (${res.method}) — ${t("clis_view.follow_browser_login")}`,
                 );
               } else {
-                pushToast("error", res.error || "Terminal-Spawn fehlgeschlagen");
+                pushToast("error", res.error || t("clis_view.terminal_spawn_failed"));
               }
             },
             onError: (err) => pushToast("error", (err as Error).message),
@@ -655,7 +681,7 @@ function ConnectOAuthButton({
       }
     >
       <LogIn className="h-3.5 w-3.5" />
-      <span className="ml-1.5">Browser-Login</span>
+      <span className="ml-1.5">{t("clis_view.browser_login")}</span>
     </Button>
   );
 }
@@ -671,6 +697,7 @@ function ApiKeyDialog({
   detail: CliDetail;
   onClose: () => void;
 }) {
+  const t = useT();
   const connect = useConnectCli();
   const pushToast = useEventStore((s) => s.pushToast);
   const [values, setValues] = useState<Record<string, string>>({});
@@ -682,11 +709,10 @@ function ApiKeyDialog({
         <div className="flex items-start justify-between gap-4 border-b border-border p-5">
           <div className="min-w-0 flex-1">
             <h3 className="font-display text-base font-semibold">
-              {detail.display_name} — API-Key setzen
+              {detail.display_name} — {t("clis_view.set_api_key")}
             </h3>
             <p className="mt-1 text-[11px] text-muted-foreground">
-              Keys werden im Windows Credential Manager gespeichert und beim
-              Aufruf als ENV-Variable injiziert.
+              {t("clis_view.api_key_help")}
             </p>
           </div>
           <button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground">
@@ -708,7 +734,7 @@ function ApiKeyDialog({
                 onChange={(e) => setValues((v) => ({ ...v, [sk.name]: e.target.value }))}
                 className="w-full rounded-md border border-input bg-background px-3 py-1.5 font-mono text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 placeholder={
-                  detail.secrets_set[sk.name] ? "●●●●● (bereits gesetzt — überschreiben)" : "API-Key eingeben"
+                  detail.secrets_set[sk.name] ? `●●●●● ${t("clis_view.api_key_already_set")}` : t("clis_view.api_key_enter")
                 }
               />
             </label>
@@ -723,7 +749,7 @@ function ApiKeyDialog({
 
         <div className="flex items-center justify-end gap-2 border-t border-border p-4">
           <Button type="button" variant="ghost" onClick={onClose} disabled={connect.isPending}>
-            Abbrechen
+            {t("common.cancel")}
           </Button>
           <Button
             type="button"
@@ -736,10 +762,10 @@ function ApiKeyDialog({
                 {
                   onSuccess: (res) => {
                     if (res.ok) {
-                      pushToast("success", `${detail.name} verbunden`);
+                      pushToast("success", `${detail.name} ${t("clis_view.connected_suffix")}`);
                       onClose();
                     } else {
-                      setError(res.error || "Validation fehlgeschlagen");
+                      setError(res.error || t("clis_view.validation_failed"));
                     }
                   },
                   onError: (err) => setError((err as Error).message),
@@ -747,7 +773,7 @@ function ApiKeyDialog({
               );
             }}
           >
-            {connect.isPending ? "Validiere…" : "Speichern & Validieren"}
+            {connect.isPending ? t("clis_view.validating") : t("clis_view.save_and_validate")}
           </Button>
         </div>
       </div>
@@ -771,6 +797,7 @@ function InstallDialog({
   // bleibt im Repo erhalten fuer headless/Voice-Pfade — UI-seitig haben
   // wir aber explizit das externe Terminal, weil der User sehen will
   // wie der Install in einer "echten" PowerShell laeuft.
+  const t = useT();
   const spawn = useSpawnExternalTerminal();
   const pushToast = useEventStore((s) => s.pushToast);
   const [selected, setSelected] = useState<string>(
@@ -784,11 +811,10 @@ function InstallDialog({
         <div className="flex items-start justify-between gap-4 border-b border-border p-5">
           <div className="min-w-0 flex-1">
             <h3 className="font-display text-base font-semibold">
-              {detail.display_name} installieren
+              {detail.display_name}{t("clis_view.install_lowercase")}
             </h3>
             <p className="mt-1 text-[11px] text-muted-foreground">
-              Oeffnet ein externes Windows Terminal mit dem Install-Command.
-              Der Status wird automatisch geprueft sobald das Terminal fertig ist.
+              {t("clis_view.install_help")}
             </p>
           </div>
           <button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground">
@@ -799,7 +825,7 @@ function InstallDialog({
         <div className="space-y-3 p-5">
           <div>
             <div className="mb-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/70">
-              Methode wählen
+              {t("clis_view.choose_method")}
             </div>
             <div className="space-y-1">
               {detail.install_methods.map((m) => (
@@ -823,7 +849,7 @@ function InstallDialog({
                   <span className="text-xs font-medium">{m.manager}</span>
                   {m.manager === detail.recommended_install && (
                     <span className="rounded-full border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[9px] text-primary">
-                      empfohlen
+                      {t("clis_view.recommended")}
                     </span>
                   )}
                 </label>
@@ -834,7 +860,7 @@ function InstallDialog({
           {selectedMethod && (
             <div>
               <div className="mb-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/70">
-                Befehl
+                {t("clis_view.command_label")}
               </div>
               <code className="block break-all rounded-md border border-border bg-background px-3 py-2 font-mono text-[10px]">
                 {selectedMethod.command}
@@ -845,7 +871,7 @@ function InstallDialog({
 
         <div className="flex items-center justify-end gap-2 border-t border-border p-4">
           <Button type="button" variant="ghost" onClick={onClose}>
-            Abbrechen
+            {t("common.cancel")}
           </Button>
           <Button
             type="button"
@@ -866,11 +892,11 @@ function InstallDialog({
                     if (res.ok) {
                       pushToast(
                         "info",
-                        `Externes Terminal geoeffnet (${res.method}) — Install laeuft. Status wird automatisch aktualisiert.`,
+                        `${t("clis_view.external_terminal_opened")} (${res.method}) — ${t("clis_view.install_running")}`,
                       );
                       onClose();
                     } else {
-                      pushToast("error", res.error || "Terminal-Spawn fehlgeschlagen");
+                      pushToast("error", res.error || t("clis_view.terminal_spawn_failed"));
                     }
                   },
                   onError: (err) => pushToast("error", (err as Error).message),
@@ -878,7 +904,7 @@ function InstallDialog({
               );
             }}
           >
-            {spawn.isPending ? "Spawne…" : selected === "manual" ? "Öffnen" : "Im Terminal installieren"}
+            {spawn.isPending ? t("clis_view.spawning") : selected === "manual" ? t("clis_view.open") : t("clis_view.install_in_terminal")}
           </Button>
         </div>
       </div>
@@ -891,6 +917,7 @@ function InstallDialog({
 // ---------------------------------------------------------------------------
 
 function CustomCliWizard({ onClose }: { onClose: () => void }) {
+  const t = useT();
   const register = useRegisterCustomCli();
   const pushToast = useEventStore((s) => s.pushToast);
   const [step, setStep] = useState(1);
@@ -949,7 +976,7 @@ function CustomCliWizard({ onClose }: { onClose: () => void }) {
     };
     register.mutate(payload, {
       onSuccess: () => {
-        pushToast("success", `${form.name} registriert`);
+        pushToast("success", `${form.name} ${t("clis_view.registered_suffix")}`);
         onClose();
       },
       onError: (err) => setError((err as Error).message),
@@ -962,13 +989,13 @@ function CustomCliWizard({ onClose }: { onClose: () => void }) {
         <div className="flex items-start justify-between gap-4 border-b border-border p-5">
           <div className="min-w-0 flex-1">
             <h3 className="font-display text-base font-semibold">
-              Custom CLI hinzufügen · Schritt {step}/4
+              {t("clis_view.add_custom_cli_title")} · {t("clis_view.step")} {step}/4
             </h3>
             <p className="mt-1 text-[11px] text-muted-foreground">
-              {step === 1 && "Identität der CLI"}
-              {step === 2 && "Check + Version"}
-              {step === 3 && "Auth-Konfiguration"}
-              {step === 4 && "Risk-Tier + Patterns"}
+              {step === 1 && t("clis_view.wizard_step1_identity")}
+              {step === 2 && t("clis_view.wizard_step2_check")}
+              {step === 3 && t("clis_view.wizard_step3_auth")}
+              {step === 4 && t("clis_view.wizard_step4_risk")}
             </p>
           </div>
           <button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground">
@@ -981,30 +1008,30 @@ function CustomCliWizard({ onClose }: { onClose: () => void }) {
             <>
               <TextField label="Name (id, lowercase)" val={form.name}
                 onChange={(v) => setForm({ ...form, name: v.toLowerCase() })}
-                placeholder="z.B. mytool" />
+                placeholder={t("clis_view.eg_mytool")} />
               <TextField label="Display-Name" val={form.display_name}
                 onChange={(v) => setForm({ ...form, display_name: v })}
-                placeholder="z.B. My Tool CLI" />
-              <TextField label="Binary-Name (was im PATH liegt)" val={form.binary_name}
+                placeholder={t("clis_view.eg_my_tool_cli")} />
+              <TextField label={t("clis_view.field_binary_name")} val={form.binary_name}
                 onChange={(v) => setForm({ ...form, binary_name: v })}
-                placeholder="z.B. mytool" />
-              <TextField label="Beschreibung" val={form.description}
+                placeholder={t("clis_view.eg_mytool")} />
+              <TextField label={t("clis_view.field_description")} val={form.description}
                 onChange={(v) => setForm({ ...form, description: v })}
-                placeholder="Was macht die CLI?" />
-              <TextField label="Kategorie" val={form.category}
+                placeholder={t("clis_view.what_does_cli_do")} />
+              <TextField label={t("clis_view.field_category")} val={form.category}
                 onChange={(v) => setForm({ ...form, category: v })}
                 placeholder="cloud / git / payments / other" />
-              <TextField label="Homepage-URL" val={form.homepage}
+              <TextField label={t("clis_view.field_homepage_url")} val={form.homepage}
                 onChange={(v) => setForm({ ...form, homepage: v })}
                 placeholder="https://..." />
             </>
           )}
           {step === 2 && (
             <>
-              <TextField label="Check-Command" val={form.check_command}
+              <TextField label={t("clis_view.field_check_command")} val={form.check_command}
                 onChange={(v) => setForm({ ...form, check_command: v })}
                 placeholder="mytool --version" mono />
-              <TextField label="Version-Regex (eine Capture-Group)" val={form.version_parse_regex}
+              <TextField label={t("clis_view.field_version_regex")} val={form.version_parse_regex}
                 onChange={(v) => setForm({ ...form, version_parse_regex: v })}
                 placeholder="v(\\S+)" mono />
             </>
@@ -1013,35 +1040,35 @@ function CustomCliWizard({ onClose }: { onClose: () => void }) {
             <>
               <label className="block">
                 <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground/70">
-                  Auth-Mode
+                  {t("clis_view.auth_mode_label")}
                 </div>
                 <select
                   value={form.auth_mode}
                   onChange={(e) => setForm({ ...form, auth_mode: e.target.value as typeof form.auth_mode })}
                   className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs"
                 >
-                  <option value="none">none (keine Auth)</option>
-                  <option value="oauth_cli">oauth_cli (CLI-eigener Login)</option>
-                  <option value="api_key">api_key (Keyring + ENV-Injection)</option>
-                  <option value="config_file">config_file (fremdverwaltet)</option>
+                  <option value="none">{t("clis_view.auth_none")}</option>
+                  <option value="oauth_cli">{t("clis_view.auth_oauth_cli")}</option>
+                  <option value="api_key">{t("clis_view.auth_api_key")}</option>
+                  <option value="config_file">{t("clis_view.auth_config_file")}</option>
                 </select>
               </label>
               {(form.auth_mode === "oauth_cli") && (
-                <TextField label="Login-Command" val={form.login_command}
+                <TextField label={t("clis_view.field_login_command")} val={form.login_command}
                   onChange={(v) => setForm({ ...form, login_command: v })}
                   placeholder="mytool login" mono />
               )}
               {form.auth_mode !== "none" && (
-                <TextField label="Status-Command" val={form.status_command}
+                <TextField label={t("clis_view.field_status_command")} val={form.status_command}
                   onChange={(v) => setForm({ ...form, status_command: v })}
                   placeholder="mytool whoami" mono />
               )}
               {form.auth_mode === "api_key" && (
                 <>
-                  <TextField label="Secret-Keys (comma-separated)" val={form.secret_keys}
+                  <TextField label={t("clis_view.field_secret_keys")} val={form.secret_keys}
                     onChange={(v) => setForm({ ...form, secret_keys: v })}
                     placeholder="mytool_api_key" mono />
-                  <TextField label="ENV-Vars (comma-separated, 1:1 Reihenfolge)" val={form.env_vars}
+                  <TextField label={t("clis_view.field_env_vars")} val={form.env_vars}
                     onChange={(v) => setForm({ ...form, env_vars: v })}
                     placeholder="MYTOOL_API_KEY" mono />
                 </>
@@ -1059,16 +1086,16 @@ function CustomCliWizard({ onClose }: { onClose: () => void }) {
                   onChange={(e) => setForm({ ...form, risk_tier: e.target.value as typeof form.risk_tier })}
                   className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs"
                 >
-                  <option value="safe">safe (läuft ohne Nachfrage)</option>
+                  <option value="safe">{t("clis_view.risk_safe")}</option>
                   <option value="monitor">monitor (execute + log)</option>
-                  <option value="ask">ask (Bestätigung pro Call)</option>
-                  <option value="block">block (komplett blockiert)</option>
+                  <option value="ask">{t("clis_view.risk_ask")}</option>
+                  <option value="block">{t("clis_view.risk_block")}</option>
                 </select>
               </label>
-              <TextArea label="Allow-Patterns (eins pro Zeile)" val={form.allow_patterns}
+              <TextArea label={t("clis_view.field_allow_patterns")} val={form.allow_patterns}
                 onChange={(v) => setForm({ ...form, allow_patterns: v })}
                 placeholder="mytool get *&#10;mytool list*" />
-              <TextArea label="Deny-Patterns (eins pro Zeile)" val={form.deny_patterns}
+              <TextArea label={t("clis_view.field_deny_patterns")} val={form.deny_patterns}
                 onChange={(v) => setForm({ ...form, deny_patterns: v })}
                 placeholder="mytool delete *&#10;mytool rm *" />
             </>
@@ -1083,12 +1110,12 @@ function CustomCliWizard({ onClose }: { onClose: () => void }) {
 
         <div className="flex items-center justify-between gap-2 border-t border-border p-4">
           <div className="text-[10px] text-muted-foreground">
-            {step < 4 ? "Schritte können übersprungen werden via 'Speichern'" : "Fertig!"}
+            {step < 4 ? t("clis_view.steps_skippable") : t("clis_view.done")}
           </div>
           <div className="flex items-center gap-2">
             {step > 1 && (
               <Button variant="ghost" onClick={() => setStep(step - 1)}>
-                Zurück
+                {t("common.back")}
               </Button>
             )}
             {step < 4 ? (
@@ -1097,11 +1124,11 @@ function CustomCliWizard({ onClose }: { onClose: () => void }) {
                 disabled={!canNext()}
                 onClick={() => setStep(step + 1)}
               >
-                Weiter
+                {t("clis_view.next")}
               </Button>
             ) : (
               <Button className="btn-primary" onClick={submit} disabled={register.isPending}>
-                {register.isPending ? "Speichert…" : "Speichern"}
+                {register.isPending ? t("common.saving") : t("common.save")}
               </Button>
             )}
           </div>
@@ -1160,6 +1187,7 @@ function TextArea({
 // ---------------------------------------------------------------------------
 
 function UsageDrawer({ name, onClose }: { name: string; onClose: () => void }) {
+  const t = useT();
   const [page, setPage] = useState(1);
   const [successOnly, setSuccessOnly] = useState(false);
   const [search, setSearch] = useState("");
@@ -1213,10 +1241,10 @@ function UsageDrawer({ name, onClose }: { name: string; onClose: () => void }) {
 
         <ScrollArea className="flex-1">
           <div className="p-5 text-xs">
-            {!usage && <div className="text-muted-foreground">Lade…</div>}
+            {!usage && <div className="text-muted-foreground">{t("common.loading")}</div>}
             {usage && usage.entries.length === 0 && (
               <div className="py-8 text-center text-muted-foreground">
-                Keine Einträge {search && `(suche: "${search}")`}
+                {t("clis_view.no_entries")} {search && `(${t("clis_view.search_word")}: "${search}")`}
               </div>
             )}
             {usage && usage.entries.length > 0 && (
@@ -1284,9 +1312,13 @@ function UsageDrawer({ name, onClose }: { name: string; onClose: () => void }) {
             variant="ghost" size="sm"
             disabled={clear.isPending}
             onClick={() => {
-              if (window.confirm(`Komplette History von "${name}" löschen?`)) {
+              if (
+                window.confirm(
+                  `${t("clis_view.confirm_clear_history_prefix")} "${name}" ${t("clis_view.confirm_clear_history_suffix")}`,
+                )
+              ) {
                 clear.mutate(name, {
-                  onSuccess: (res) => pushToast("success", `${res.deleted} Einträge gelöscht`),
+                  onSuccess: (res) => pushToast("success", `${res.deleted} ${t("clis_view.entries_deleted")}`),
                   onError: (err) => pushToast("error", (err as Error).message),
                 });
               }
@@ -1364,6 +1396,7 @@ function KeyVal({
 }
 
 function EmptyState({ hasAny, filter }: { hasAny: boolean; filter: FilterTab }) {
+  const t = useT();
   if (!hasAny) {
     return (
       <div className="flex flex-col items-center justify-center gap-5 py-16 text-center">
@@ -1372,17 +1405,17 @@ function EmptyState({ hasAny, filter }: { hasAny: boolean; filter: FilterTab }) 
         </div>
         <div className="max-w-lg space-y-3">
           <h3 className="font-display text-xl font-semibold tracking-tight">
-            Keine CLIs im Katalog
+            {t("clis_view.empty_no_clis")}
           </h3>
         </div>
       </div>
     );
   }
   const messages: Record<FilterTab, string> = {
-    all: "Kein CLI matched die Filter.",
-    connected: "Keine CLI ist gerade verbunden.",
-    installed: "Keine CLI ist installiert.",
-    custom: "Noch keine Custom-CLI registriert — klick 'Add Custom' oben rechts.",
+    all: t("clis_view.empty_all"),
+    connected: t("clis_view.empty_connected"),
+    installed: t("clis_view.empty_installed"),
+    custom: t("clis_view.empty_custom"),
   };
   return (
     <div className="py-12 text-center text-sm text-muted-foreground">

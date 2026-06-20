@@ -235,7 +235,7 @@ describe("ApiKeysView — Codex is a selectable brain (parity with Gemini)", () 
 
     await waitFor(() => expect(screen.getByText("OpenAI Codex")).toBeTruthy());
 
-    expect(screen.getByText("Mit ChatGPT verbinden")).toBeTruthy();
+    expect(screen.getByText("Connect with ChatGPT")).toBeTruthy();
     expect(screen.queryByTestId("codex-connected")).toBeNull();
     // Selector stays present for parity with the other brain providers.
     expect(screen.getByRole("radio")).toBeTruthy();

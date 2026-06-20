@@ -1662,21 +1662,6 @@ class OrbOverlay:
         """
         self._on_show_window = callback
 
-    def set_booting(self, active: bool) -> None:
-        """Show the "voice starting up" look on the mascot (active) or clear it.
-
-        Driven by OrbBusBridge from the same VoiceBootStatus signal as the bar.
-        While voice warms up the mascot appears in the thinking pose (reads as
-        "working"); once the wake word is armed it stops and hides. Reuses the
-        existing public surface methods, so it inherits their Tk-thread safety.
-        """
-        if active:
-            self.show("think")
-            self.play_animation("think")
-        else:
-            self.stop_animation("think")
-            self.hide()
-
     def _on_right_click(self, _event: tk.Event | None = None) -> None:
         """Right-click → raise the main desktop window via the injected
         callback. Replaces the old Reset/Mute context menu (spec 2026-06-02):

@@ -252,7 +252,13 @@ export interface MissionDetail {
 }
 
 export interface MissionStateBadgeMeta {
-  label: string;
+  /**
+   * i18n key for the human-readable badge label. The label is resolved at
+   * render time (via `translate()` in the consumer) so a UI-language switch
+   * updates it live — a module-level `translate()` here would freeze the label
+   * to the language active at first import.
+   */
+  labelKey: string;
   className: string;
   iconName:
     | "Loader2"
@@ -267,42 +273,42 @@ export interface MissionStateBadgeMeta {
 
 export const MISSION_STATE_BADGE: Record<MissionState, MissionStateBadgeMeta> = {
   PENDING: {
-    label: "wartet",
+    labelKey: "mission_state.pending",
     className: "border-border text-muted-foreground bg-background/40",
     iconName: "Clock",
   },
   RUNNING: {
-    label: "laeuft",
+    labelKey: "mission_state.running",
     className: "border-primary/40 bg-primary/15 text-primary",
     iconName: "Loader2",
   },
   CRITIQUING: {
-    label: "Critic prueft",
+    labelKey: "mission_state.critiquing",
     className: "border-sky-400/40 bg-sky-400/10 text-sky-300",
     iconName: "Search",
   },
   LOOPING: {
-    label: "Korrektur",
+    labelKey: "mission_state.looping",
     className: "border-amber-400/40 bg-amber-400/10 text-amber-300",
     iconName: "RotateCcw",
   },
   APPROVED: {
-    label: "fertig",
+    labelKey: "mission_state.approved",
     className: "border-emerald-400/40 bg-emerald-400/10 text-emerald-300",
     iconName: "CheckCircle2",
   },
   FAILED: {
-    label: "fehler",
+    labelKey: "mission_state.failed",
     className: "border-destructive/50 bg-destructive/15 text-destructive",
     iconName: "XCircle",
   },
   CANCELLED: {
-    label: "abgebrochen",
+    labelKey: "mission_state.cancelled",
     className: "border-border text-muted-foreground bg-background/40",
     iconName: "XCircle",
   },
   TIMED_OUT: {
-    label: "timeout",
+    labelKey: "mission_state.timed_out",
     className: "border-amber-500/40 bg-amber-500/10 text-amber-300",
     iconName: "Skull",
   },

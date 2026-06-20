@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Award, Lock, Sparkles } from "lucide-react";
 import { useAchievements, type AchievementItem } from "@/hooks/useBoard";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 /**
@@ -10,6 +11,7 @@ import { cn } from "@/lib/utils";
  * oeffentlichen Like-Counts); die Wand ist privat, nur der User sieht sie.
  */
 export function AchievementGrid() {
+  const t = useT();
   const qc = useQueryClient();
   const { data, isLoading } = useAchievements();
 
@@ -41,7 +43,7 @@ export function AchievementGrid() {
         <div className="flex-1 min-w-0">
           <h3 className="font-display text-sm font-semibold">Achievements</h3>
           <p className="text-xs text-muted-foreground">
-            {data.unlocked} von {data.total} freigeschaltet. Kein Leaderboard.
+            {`${data.unlocked} ${t("achievement_grid.unlocked_of")} ${data.total} ${t("achievement_grid.unlocked_count")}`}
           </p>
         </div>
       </header>

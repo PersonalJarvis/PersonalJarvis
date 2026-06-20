@@ -4,9 +4,9 @@ through the two-turn confirmation flow.
 Why this exists (forensic 2026-06-18, session 2995997b): an ``ask``-tier tool
 (gmail send) invoked on the voice path blocks in ``ApprovalWorkflow.wait()`` for a
 UI approval the voice user never gives. The 20 s no-first-frame ceiling then
-beheads the working turn and Jarvis speaks the misleading "Das hat gerade zu lange
-gedauert. Sag es bitte noch einmal." There is no voice/chat path to APPROVE a
-consequential action today (``jarvis/speech`` never publishes ``ActionApproved``).
+beheads the working turn and Jarvis speaks the brain-timeout fallback. There is
+no voice/chat path to APPROVE a consequential action today (``jarvis/speech``
+never publishes ``ActionApproved``).
 
 Instead of hanging, the brain now SPEAKS a short confirmation question on turn N
 and the user's next "ja"/"nein" (classified by ``echo_confirmation.classify_
