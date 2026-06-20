@@ -12,6 +12,8 @@ It now is.
 | 1 — backend core | `6284f2cd` + `2d7146a2` | `jarvis/browser_voice/{session,audio,__init__}.py` — `BrowserVoiceSession` ports `TelephonyCallSession` to browser audio: raw int16 PCM → 16 kHz resample → `EnergyEndpointer` → STT → brain → `scrub_for_voice` → TTS → binary frames back. Stdlib `audioop` only, **never** imports sounddevice. | `tests/unit/browser_voice/test_session.py` (9 tests), import-clean gate, ruff — all green |
 | 2 — route + wiring | `2d7146a2` | `jarvis/browser_voice/route.py` — `/ws/audio` WS (binary PCM + JSON control), AP-20 break discipline, shared STT/TTS + per-connection brain, test-factory seam. Mounted in `server.py` `_build_app`, gated by `[browser_voice].enabled` (default on). | `tests/unit/browser_voice/test_route.py` (4 tests), `/ws/audio` registered |
 | 3 — frontend | `c43bed42` | `src/hooks/useBrowserVoice.ts` (AudioWorklet capture → WS; Web Audio gapless playback; `tts_cancel` flush) + `src/views/BrowserVoiceView.tsx`. | `tsc --noEmit` clean on both files |
+| 3 — review fixes | `76331f9a` | BLOCKER + 3 HIGH + 3 MEDIUM from the frontend-hook review: generation-guarded start/stop (no leaked mic on a slow permission prompt), playback-flush race, AudioContext resume (else TTS silent in Chrome/Safari), etc. | `tsc` clean |
+| 4 — UI wiring | `b1d67b36` | `store/events.ts` (SectionId/SECTION_IDS/SECTION_LABELS) + `MainView.tsx` (view switch) + `Sidebar.tsx` (nav entry, Headphones icon, English label via `fallbackLabel`). | `tsc` 0 errors (whole project) + `npm run build` succeeds (view bundles) |
 
 The wire protocol on `/ws/audio`:
 
@@ -22,31 +24,40 @@ The wire protocol on `/ws/audio`:
   `audio_ready`, `transcript` (`text`, `is_final`), `tts_start` (`sample_rate`),
   `tts_end`, `tts_cancel` (flush on barge-in), `vad_silence`.
 
-## Open — needs the maintainer (two genuine, non-code blockers)
+## Status of the original open items
 
-### 1. Real-browser smoke test (parallel to the Mac/Linux hardware sign-off)
-The AudioWorklet, `getUserMedia`, and Web Audio playback **cannot** run in
-jsdom/Vitest — they need a real browser on a secure context (`localhost` or
-`https`; AudioWorklet refuses an insecure origin). To verify end-to-end: serve
-the app, open the (wired) Browser Voice view, grant the mic, speak, and confirm
-TTS plays back. Until then the frontend is *compile-verified, runtime-unverified*.
+### Sidebar/section wiring — DONE (`b1d67b36`)
+The view is reachable now. `store/events.ts` (SectionId), `MainView.tsx` (the view
+switch — the app uses MainView, not a switch in App.tsx), and `Sidebar.tsx` (the
+nav entry) were clean by the time the wiring landed and are committed. The sidebar
+shows a **Browser Voice** entry (Headphones icon); its English label renders via a
+new optional `fallbackLabel` on `NavItem` + `resolveNavLabel()`, which auto-localizes
+the moment the locale key below is added. Whole-project `tsc` is clean and
+`npm run build` succeeds with the view bundled.
 
-### 2. Sidebar/section wiring (deferred — contested files)
-`store/events.ts`, `App.tsx`, `Sidebar.tsx`, and `i18n/locales/*.json` were all
-being actively edited by parallel sessions when this landed; committing edits to
-them would risk sweeping that in-flight work (and `git add -p` hunk-isolation is
-unavailable in this runtime). Apply these **four small edits when those files are
-quiet**:
+### Localized labels — DEFERRED (contested locale files)
+The view + sidebar work in **English today** via the view's `tr()` fallbacks and the
+sidebar's `fallbackLabel`, with no locale-file edit. The de/es localized labels are
+the one remaining piece: the three `i18n/locales/{en,de,es}.json` files are still
+being edited by parallel sessions, so adding keys would sweep that work (`git add -p`
+hunk-isolation is unavailable here). Paste the `browser_voice` block below into each
+locale when they are quiet, plus a `nav.browser_voice` sidebar key:
 
-1. **`src/store/events.ts`** — add `"browser-voice"` to the `SectionId` union,
-   to `SECTION_IDS`, and a `SECTION_LABELS["browser-voice"]` entry.
-2. **`src/App.tsx`** (the view switch) — `import BrowserVoiceView from
-   "@/views/BrowserVoiceView";` and add `case "browser-voice": return
-   <BrowserVoiceView />;`.
-3. **`src/components/layout/Sidebar.tsx`** — add a nav entry for `"browser-voice"`
-   (a microphone icon, label key `browser_voice.title`).
-4. **`src/i18n/locales/{en,de,es}.json`** — add the `browser_voice` block
-   (`BrowserVoiceView` falls back to the English source until these land):
+```jsonc
+"nav": { "browser_voice": "Browser Voice" /* de: "Browser-Sprache", es: "Voz del navegador" */ }
+```
+
+### Real-browser smoke — needs a human at the mic (parallel to the HW sign-off)
+The frontend is **build-verified** (the view bundles; `tsc` clean), but AudioWorklet
++ getUserMedia + Web Audio playback only run in a real browser on a secure context
+(`localhost`/`https`). A full voice round-trip (speak → STT → TTS playback) needs a
+person at the microphone — not autonomously reachable. A live *visual* smoke was
+attempted via claude-in-chrome but the browser extension was offline at the time;
+re-attempt by opening the running app (`:47821`), hard-reloading, and clicking the
+Browser Voice sidebar entry.
+
+The `browser_voice` view-string block to paste into each locale
+(`BrowserVoiceView` falls back to the English source until these land):
 
 ```jsonc
 // en.json
