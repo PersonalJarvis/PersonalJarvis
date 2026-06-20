@@ -7,7 +7,11 @@ def test_meta_constants():
     assert m.ONBOARDING_STEPS[1] == "terms"
     assert m.ONBOARDING_STEPS[-1] == "finish"
     assert "wake-word" in m.ONBOARDING_STEPS
-    assert len(m.ONBOARDING_STEPS) == 8
+    # The "system-style" overlay-surface chooser sits right after persona-theme
+    # and right before the finish step.
+    assert m.ONBOARDING_STEPS.index("system-style") == m.ONBOARDING_STEPS.index("persona-theme") + 1
+    assert m.ONBOARDING_STEPS[-2] == "system-style"
+    assert len(m.ONBOARDING_STEPS) == 9
     assert len(m.WAKE_WORD_LEGAL_REFERENCES) >= 3
     for ref in m.WAKE_WORD_LEGAL_REFERENCES:
         assert ref["label"] and ref["url"].startswith("https://")

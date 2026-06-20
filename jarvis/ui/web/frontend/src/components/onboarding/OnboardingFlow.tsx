@@ -9,6 +9,7 @@ import { WakeWordStep } from "./steps/WakeWordStep";
 import { ApiKeysStep } from "./steps/ApiKeysStep";
 import { MicTestStep } from "./steps/MicTestStep";
 import { PersonaThemeStep } from "./steps/PersonaThemeStep";
+import { SystemStyleStep } from "./steps/SystemStyleStep";
 import { FinishStep } from "./steps/FinishStep";
 
 export interface StepProps {
@@ -28,6 +29,7 @@ const REGISTRY: Record<string, (p: StepProps) => JSX.Element> = {
   "api-keys": ApiKeysStep,
   "mic-test": MicTestStep,
   "persona-theme": PersonaThemeStep,
+  "system-style": SystemStyleStep,
   finish: FinishStep,
 };
 

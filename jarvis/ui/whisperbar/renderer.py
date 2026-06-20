@@ -89,7 +89,18 @@ _N_DOTS = 7  # dots in the standby row
 _DOT_R_FRAC = 0.16  # dot radius / pill height (small round dots, not chunky)
 _DOTS_SPAN_FRAC = 0.62  # dots span / pill width (matches the bars)
 
-MODES = ("idle", "listen", "speak", "think")
+# Boot ("voice starting up") loading look: a muted dot row with a single warm
+# gold band sweeping across it, looping. Reads as "still warming up" and is
+# DELIBERATELY not driven by audio — it is shown by the bridge from the moment
+# the bar appears until VoiceBootStatus(ready=True) arms the wake word, then it
+# reverts to the empty standby pill. Shares the standby footprint so the bar
+# never resizes when it flips from booting → ready.
+_BOOT_N_DOTS = 7  # matches the standby dot count → identical footprint
+_BOOT_DOTS_SPAN_FRAC = _DOTS_SPAN_FRAC  # same span as the standby dots
+_BOOT_SWEEP_HZ = 0.6  # one warm band sweep ≈ 1.7 s (calm, not strobing)
+_BOOT_BAND_FALLOFF = 3.5  # how tightly the warm band hugs one dot (higher = tighter)
+
+MODES = ("idle", "listen", "speak", "think", "boot")
 
 
 def pill_center_y(ph: float) -> float:
@@ -198,6 +209,11 @@ def visual_mode(
     """
     if coarse_mode == "idle":
         return "idle"
+    # Boot is a deterministic, audio-independent look driven by the bridge's
+    # VoiceBootStatus signal — a stray mic/TTS level must never flip it to the
+    # equalizer, so it short-circuits before the sound-driven logic below.
+    if coarse_mode == "boot":
+        return "boot"
     if playback_active or seconds_since_audible < hold_s:
         return "speak"
     if coarse_mode == "think":
@@ -434,6 +450,8 @@ class WhisperBarRenderer:
             if active_sess:
                 self._draw_close_x(d, x_left, cy, ph)
             self._draw_square(d, x_right, cy, ph)
+        elif mode == "boot":
+            self._draw_boot(img, t, cx, cy, pw, ph)
         elif mode == "think":
             self._draw_thinking(img, t, cx, cy, pw, ph)
         elif mode in ("listen", "speak"):
@@ -455,6 +473,36 @@ class WhisperBarRenderer:
         for x in evenly_spaced(cx, _DOTS_SPAN_FRAC * pw, _N_DOTS):
             px, py = x * ss, cy * ss
             ld.ellipse([px - r, py - r, px + r, py + r], fill=(*DOT_COLOR, 255))
+        small = layer.resize(img.size, Image.Resampling.LANCZOS)
+        img.paste(small, (0, 0), small)
+
+    def _draw_boot(
+        self, img: Image.Image, t: float, cx: float, cy: float, pw: float, ph: float
+    ) -> None:
+        """The "voice starting up" loading look: a muted standby dot row with a
+        single warm gold band sweeping left→right across it, looping.
+
+        Supersampled + LANCZOS-downscaled (same trick as the standby dots) so
+        the tiny dots render round, not crossed. Deterministic in ``t`` — the
+        band position is a pure function of time, so it is unit-testable.
+        """
+        ss = 4
+        r = max(1.5, ph * _DOT_R_FRAC) * ss
+        layer = Image.new("RGBA", (img.width * ss, img.height * ss), (0, 0, 0, 0))
+        ld = ImageDraw.Draw(layer)
+        xs = evenly_spaced(cx, _BOOT_DOTS_SPAN_FRAC * pw, _BOOT_N_DOTS)
+        n = max(1, len(xs) - 1)
+        # Warm band centre runs 0..1 across the row and wraps (continuous loop).
+        phase = (t * _BOOT_SWEEP_HZ) % 1.0
+        for i, x in enumerate(xs):
+            frac = i / n
+            dist = abs(frac - phase)
+            dist = min(dist, 1.0 - dist)  # circular → the band wraps round
+            glow = max(0.0, 1.0 - dist * _BOOT_BAND_FALLOFF)
+            color = _lerp_rgb(DOT_COLOR, self._accent, glow)
+            alpha = int(150 + 90 * glow)
+            px, py = x * ss, cy * ss
+            ld.ellipse([px - r, py - r, px + r, py + r], fill=(*color, alpha))
         small = layer.resize(img.size, Image.Resampling.LANCZOS)
         img.paste(small, (0, 0), small)
 

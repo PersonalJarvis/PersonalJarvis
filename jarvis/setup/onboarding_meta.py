@@ -23,6 +23,7 @@ ONBOARDING_STEPS: list[str] = [
     "api-keys",
     "mic-test",
     "persona-theme",
+    "system-style",
     "finish",
 ]
 

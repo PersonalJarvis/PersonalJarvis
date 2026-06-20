@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Monitor, Eye, Volume2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
-import { MascotGigi } from "@/components/MascotGigi";
 import { useOverlayStyle, type OverlayStyle } from "@/hooks/useOverlayStyle";
+import { StylePreview } from "@/components/overlay/OverlayStylePreviews";
 import { useBarPersistent } from "@/hooks/useBarPersistent";
 import { useMuteMusic } from "@/hooks/useMuteMusic";
 import { useEventStore } from "@/store/events";
@@ -285,65 +285,5 @@ function OverlayStylePanel() {
         </div>
       </div>
     </div>
-  );
-}
-
-/** Visual preview for each overlay style (mascot reuses the real Gigi SVG). */
-function StylePreview({ style }: { style: OverlayStyle }) {
-  if (style === "mascot") {
-    return <MascotGigi size={46} reactToVoice={false} enableComments={false} />;
-  }
-  if (style === "whisper_bar") return <BarPreview />;
-  return <NonePreview />;
-}
-
-function BarPreview() {
-  const heights = [6, 11, 15, 8, 14, 9, 7];
-  return (
-    <svg viewBox="0 0 100 40" className="w-20" aria-hidden="true">
-      <rect
-        x="6"
-        y="11"
-        width="88"
-        height="18"
-        rx="9"
-        fill="#0e0d0c"
-        stroke="#d7b669"
-        strokeWidth="1.6"
-      />
-      {heights.map((h, i) => (
-        <rect
-          key={i}
-          x={24 + i * 8}
-          y={20 - h / 2}
-          width="3"
-          height={h}
-          rx="1.5"
-          fill="#e7c46e"
-        />
-      ))}
-    </svg>
-  );
-}
-
-export function NonePreview() {
-  return (
-    <svg viewBox="0 0 100 40" className="w-20 opacity-50" aria-hidden="true">
-      <rect
-        x="6"
-        y="11"
-        width="88"
-        height="18"
-        rx="9"
-        fill="none"
-        stroke="#7c766b"
-        strokeWidth="1.6"
-        strokeDasharray="4 3"
-      />
-      {/* Diagonal "disabled" strike — kept inside the dashed box (y 11..29)
-          and symmetric about its centre (50, 20) so it never juts out as a
-          stub above/below the pill. */}
-      <line x1="25" y1="25" x2="75" y2="15" stroke="#7c766b" strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
   );
 }
