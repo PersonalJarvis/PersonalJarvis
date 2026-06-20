@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import sys
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -2027,6 +2028,46 @@ def get_secret_any(candidates: tuple[tuple[str, str | None], ...]) -> str | None
 def get_provider_secret(provider: str) -> str | None:
     """Return the API key for a Brain provider, including accepted aliases."""
     return get_secret_any(PROVIDER_SECRET_CANDIDATES.get(provider, ()))
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedEndpoint:
+    """Effective endpoint + credential for a provider on this turn.
+
+    ``via_proxy`` is always False in W1a; the team-proxy slice (W2) sets it True
+    when the team proxy is the resolved target. ``base_url=None`` means "use the
+    SDK's own default endpoint".
+    """
+
+    base_url: str | None
+    credential: str | None
+    via_proxy: bool
+
+
+def resolve_provider_endpoint(
+    provider_id: str,
+    *,
+    vendor_default_base_url: str | None = None,
+    config: "JarvisConfig | None" = None,
+) -> ResolvedEndpoint:
+    """Resolve the effective endpoint + credential for a provider.
+
+    W1a precedence: an explicit ``[brain.providers.<id>].base_url`` override if
+    set, else the caller's ``vendor_default_base_url``. The credential stays the
+    provider's own configured secret (``get_provider_secret``). The ``config``
+    argument exists for tests; production passes ``None`` → ``load_config()``.
+
+    This is purely additive: with no override configured, ``base_url`` equals the
+    vendor default (or ``None``) and behaviour is unchanged.
+    """
+    cfg_obj = config if config is not None else load_config()
+    override: str | None = None
+    prov = cfg_obj.brain.providers.get(provider_id)
+    if prov is not None and prov.base_url:
+        override = prov.base_url
+    base_url = override or vendor_default_base_url
+    credential = get_provider_secret(provider_id)
+    return ResolvedEndpoint(base_url=base_url, credential=credential, via_proxy=False)
 
 
 def set_secret(key: str, value: str) -> bool:

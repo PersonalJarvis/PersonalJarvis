@@ -29,7 +29,8 @@ export function PersonaThemeStep({ goNext, skip }: StepProps) {
           maxLength={40}
           onChange={(e) => setName(e.target.value)}
           onBlur={saveName}
-          className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+          placeholder={t("onboarding.persona.name_placeholder")}
+          className="mt-1 w-full rounded-md border border-muted-foreground/25 bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
         />
       </label>
       <Button className="w-full" onClick={goNext}>{t("onboarding.nav.next")}</Button>

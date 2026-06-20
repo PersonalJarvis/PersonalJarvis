@@ -40,7 +40,24 @@
     "outputs": "Outputs",
     "socials": "Socials",
     "taskbar": "Taskbar",
-    "contacts": "Kontakte"
+    "contacts": "Kontakte",
+    "agent_instructions": "{name}.md"
+  },
+  "agent_instructions": {
+    "subtitle": "Deine persönlichen Präferenzen, wie der Assistent mit dir arbeitet — Ton, Sprache, Voreinstellungen, dauerhafte Fakten. Getrennt vom System-Prompt und hebelt niemals Sicherheit oder Bestätigungen aus.",
+    "active_badge": "Aktiv",
+    "empty_badge": "Leer",
+    "editor_label": "Deine Anweisungen (Markdown)",
+    "placeholder": "Schreibe deine persönlichen Präferenzen…",
+    "chars": "{0} Zeichen",
+    "empty_hint": "Leer — lade die Vorlage, um zu starten.",
+    "save": "Anweisungen speichern",
+    "saving": "Speichern…",
+    "saved": "Anweisungen gespeichert",
+    "reset": "Leeren",
+    "reset_done": "Anweisungen geleert",
+    "load_template": "Mit Vorlage starten",
+    "applies_next_turn": "Gilt ab der nächsten Antwort deines Assistenten — kein Neustart nötig."
   },
   "extensions": {
     "tab_skills": "Skills",
@@ -808,7 +825,7 @@
     },
     "wake_word": {
       "title": "Wake-Word",
-      "description": "Aktivierungsphrase für den Sprachmodus. Tippe deine eigene ein.",
+      "description": "Die Phrase, die du laut aussprichst, um den Sprachmodus zu aktivieren — dein gesprochenes Trigger-Wort. Tippe deine eigene ein.",
       "phrase_label": "Aktivierungsphrase",
       "phrase_placeholder": "z. B. Jonas",
       "engine_label": "Erkennungs-Engine",
@@ -864,7 +881,7 @@
     },
     "assistant_name": {
       "title": "Name des Assistenten",
-      "description": "Wie der Assistent sich in Antworten selbst nennt. Leer lassen, um dem Wake-Wort zu folgen.",
+      "description": "Wie sich der Assistent in Antworten selbst nennt. Das ist NICHT das Wake-Word, das du zum Aktivieren sagst — das gesprochene Trigger-Wort stellst du im Panel „Wake-Word“ darunter ein. Leer lassen, um dem Wake-Wort zu folgen.",
       "label": "Name",
       "current": "Der Assistent nennt sich „{0}“.",
       "auto_hint": "Leer — folgt dem Wake-Wort (aktuell „{0}“).",
@@ -1207,6 +1224,7 @@
     "persona": {
       "title": "Mach es zu deinem (optional)",
       "name_label": "Wie soll sich der Assistent nennen?",
+      "name_placeholder": "Namen eingeben…",
       "skip": "Personalisierung überspringen"
     },
     "system_style": {
@@ -1223,7 +1241,9 @@
         "mascot": "Ein schwebender Begleiter-Orb, der auf deine Stimme reagiert.",
         "none": "Nur das App-Fenster — kein schwebendes Element auf dem Bildschirm."
       },
-      "applies_next_start": "Gespeichert — wird beim nächsten Start von {name} aktiv.",
+      "needs_restart": "Fast geschafft — dieser Stil wird nach einem kurzen Neustart aktiv.",
+      "restart_now": "Jetzt neu starten",
+      "restarting": "Wird neu gestartet…",
       "save_error": "Konnte das nicht speichern — die empfohlene Voreinstellung bleibt. Du kannst es später in den Einstellungen ändern.",
       "skip": "Überspringen — Jarvis-Leiste behalten"
     },

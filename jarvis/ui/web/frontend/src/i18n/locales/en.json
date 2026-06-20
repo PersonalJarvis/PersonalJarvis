@@ -40,7 +40,24 @@
     "outputs": "Outputs",
     "socials": "Socials",
     "taskbar": "Taskbar",
-    "contacts": "Contacts"
+    "contacts": "Contacts",
+    "agent_instructions": "{name}.md"
+  },
+  "agent_instructions": {
+    "subtitle": "Your personal preferences for how the assistant works with you — tone, language, defaults, standing facts. Separate from the System Prompt, and it never overrides safety or confirmations.",
+    "active_badge": "Active",
+    "empty_badge": "Empty",
+    "editor_label": "Your instructions (Markdown)",
+    "placeholder": "Write your personal preferences…",
+    "chars": "{0} characters",
+    "empty_hint": "Empty — load the template to get started.",
+    "save": "Save instructions",
+    "saving": "Saving…",
+    "saved": "Instructions saved",
+    "reset": "Clear",
+    "reset_done": "Instructions cleared",
+    "load_template": "Start from template",
+    "applies_next_turn": "Applies on your assistant's next message — no restart needed."
   },
   "extensions": {
     "tab_skills": "Skills",
@@ -808,7 +825,7 @@
     },
     "wake_word": {
       "title": "Wake Word",
-      "description": "Activation phrase for voice mode. Type your own.",
+      "description": "The phrase you say out loud to activate voice mode — your spoken trigger. Type your own.",
       "phrase_label": "Wake phrase",
       "phrase_placeholder": "e.g. Jonas",
       "engine_label": "Detection engine",
@@ -864,7 +881,7 @@
     },
     "assistant_name": {
       "title": "Assistant Name",
-      "description": "How the assistant refers to itself in replies. Leave empty to follow the wake word.",
+      "description": "How the assistant refers to itself in its replies. This is NOT the wake word you say to activate it — set the spoken trigger in the Wake Word panel below. Leave empty to mirror the wake word.",
       "label": "Name",
       "current": "The assistant calls itself “{0}”.",
       "auto_hint": "Empty — follows the wake word (currently “{0}”).",
@@ -1207,6 +1224,7 @@
     "persona": {
       "title": "Make it yours (optional)",
       "name_label": "What should the assistant call itself?",
+      "name_placeholder": "Type a name…",
       "skip": "Skip personalization"
     },
     "system_style": {
@@ -1223,7 +1241,9 @@
         "mascot": "A floating companion orb that reacts as you talk.",
         "none": "Just the app window — no floating surface on screen."
       },
-      "applies_next_start": "Saved — this applies the next time you start {name}.",
+      "needs_restart": "Almost there — this style needs a quick restart to take effect.",
+      "restart_now": "Restart now to apply",
+      "restarting": "Restarting…",
       "save_error": "Couldn't save that — the recommended default stays. You can change it later in Settings.",
       "skip": "Skip — keep the Jarvis Bar"
     },

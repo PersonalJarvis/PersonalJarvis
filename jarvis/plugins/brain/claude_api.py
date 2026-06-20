@@ -29,15 +29,18 @@ class ClaudeAPIBrain:
 
     def _ensure_client(self) -> Any:
         if self._client is None:
-            api_key = cfg.get_provider_secret("claude-api")
-            if not api_key:
+            ep = cfg.resolve_provider_endpoint("claude-api")
+            if not ep.credential:
                 raise RuntimeError(
                     "Kein Anthropic-API-Key gefunden. Bitte via Wizard setzen oder "
                     "ANTHROPIC_API_KEY in ENV."
                 )
             from anthropic import AsyncAnthropic
             # max_retries=0 → BrainManager-Fallback greift schneller bei 429
-            self._client = AsyncAnthropic(api_key=api_key, max_retries=0, timeout=15.0)
+            kwargs: dict[str, Any] = {"api_key": ep.credential, "max_retries": 0, "timeout": 15.0}
+            if ep.base_url:
+                kwargs["base_url"] = ep.base_url
+            self._client = AsyncAnthropic(**kwargs)
         return self._client
 
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:

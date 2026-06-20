@@ -29,15 +29,15 @@ class GrokBrain:
 
     def _ensure_client(self) -> Any:
         if self._client is None:
-            api_key = cfg.get_provider_secret("grok")
-            if not api_key:
+            ep = cfg.resolve_provider_endpoint("grok", vendor_default_base_url=BASE_URL)
+            if not ep.credential:
                 raise RuntimeError(
                     "Kein Grok-API-Key gefunden "
                     "(grok_api_key / xai_api_key / GROK_API_KEY / XAI_API_KEY)."
                 )
             from openai import AsyncOpenAI
             self._client = AsyncOpenAI(
-                api_key=api_key, base_url=BASE_URL, timeout=CLIENT_TIMEOUT
+                api_key=ep.credential, base_url=ep.base_url, timeout=CLIENT_TIMEOUT
             )
         return self._client
 

@@ -17,6 +17,7 @@ import { SessionsView } from "@/views/SessionsView";
 import { SocialsView } from "@/views/socials/SocialsView";
 import { ContactsView } from "@/views/contacts/ContactsView";
 import BrowserVoiceView from "@/views/BrowserVoiceView";
+import { AgentInstructionsView } from "@/views/AgentInstructionsView";
 import { TelephonySetupView } from "@/views/TelephonyView";
 
 /**
@@ -99,6 +100,8 @@ function SwitchOnActiveSection({ active }: { active: string }) {
       return <ContactsView />;
     case "browser-voice":
       return <BrowserVoiceView />;
+    case "agent-instructions":
+      return <AgentInstructionsView />;
     default:
       return <ChatsView />;
   }

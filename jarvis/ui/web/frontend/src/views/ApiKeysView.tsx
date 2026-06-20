@@ -35,7 +35,7 @@ function makeTierMeta(t: (k: string) => string): Record<ProviderTier, { label: s
 export function ApiKeysView() {
   const t = useT();
   const TIER_META = makeTierMeta(t);
-  const { providers, loading, error, refetch } = useProviders();
+  const { providers, loading, error, refetch, setActiveOptimistic } = useProviders();
 
   return (
     <div className="flex h-full flex-col">
@@ -68,7 +68,13 @@ export function ApiKeysView() {
               const tierProviders = providers.filter((p) => p.tier === tier);
               if (!tierProviders.length) return null;
               return (
-                <TierSection key={tier} tier={tier} providers={tierProviders} onChanged={refetch} />
+                <TierSection
+                  key={tier}
+                  tier={tier}
+                  providers={tierProviders}
+                  onChanged={refetch}
+                  onActivateOptimistic={setActiveOptimistic}
+                />
               );
             })}
             {/* Subagent (OpenClaw) — own data source (/api/openclaw/status),
@@ -113,10 +119,12 @@ function TierSection({
   tier,
   providers,
   onChanged,
+  onActivateOptimistic,
 }: {
   tier: ProviderTier;
   providers: ProviderDescriptor[];
   onChanged: () => void;
+  onActivateOptimistic: (tier: ProviderTier, id: string) => void;
 }) {
   const t = useT();
   const meta = makeTierMeta(t)[tier];
@@ -134,6 +142,7 @@ function TierSection({
             <ProviderCard
               descriptor={p}
               onChanged={onChanged}
+              onActivateOptimistic={onActivateOptimistic}
               autoActivateOnSave={!tierHasActive}
             />
           </li>
@@ -146,10 +155,12 @@ function TierSection({
 function ProviderCard({
   descriptor,
   onChanged,
+  onActivateOptimistic,
   autoActivateOnSave,
 }: {
   descriptor: ProviderDescriptor;
   onChanged: () => void;
+  onActivateOptimistic: (tier: ProviderTier, id: string) => void;
   autoActivateOnSave: boolean;
 }) {
   const t = useT();
@@ -179,6 +190,11 @@ function ProviderCard({
       );
       return;
     }
+    // Flip the highlight immediately so the switch feels instant — the backend
+    // call below can take a few seconds (a TTS switch rebuilds the provider and
+    // injects it into the live pipeline). The refetch on success / failure then
+    // reconciles with server truth.
+    onActivateOptimistic(descriptor.tier, descriptor.id);
     setActivating(true);
     try {
       if (descriptor.tier === "brain") {
@@ -203,6 +219,8 @@ function ProviderCard({
       onChanged();
     } catch (e) {
       pushToast("error", (e as Error).message);
+      // Roll the optimistic highlight back to the true active provider.
+      onChanged();
     } finally {
       setActivating(false);
     }
