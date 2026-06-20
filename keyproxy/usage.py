@@ -101,7 +101,7 @@ class UsageStore:
                     ts if ts is not None else int(time.time()),
                 ),
             )
-        except Exception:  # noqa: BLE001 — metering must never fail the request
+        except Exception:  # noqa: BLE001, S110 — metering must never fail the request
             pass
 
     # ------------------------------------------------------------------
@@ -136,15 +136,15 @@ class UsageStore:
             params.append(until)
         clause = (" WHERE " + " AND ".join(where)) if where else ""
         # ``clause`` is built only from static literal fragments; all values are
-        # bound parameters.
+        # bound parameters, so this is not an injection vector.
         sql = (
-            "SELECT token_id, COUNT(*) AS calls, "
+            "SELECT token_id, COUNT(*) AS calls, "  # noqa: S608
             "COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens, "
             "COALESCE(SUM(completion_tokens), 0) AS completion_tokens, "
             "COALESCE(SUM(total_tokens), 0) AS total_tokens, "
             "COALESCE(SUM(est_cost), 0.0) AS est_cost "
             f"FROM usage{clause} "
-            "GROUP BY token_id ORDER BY total_tokens DESC"  # noqa: S608
+            "GROUP BY token_id ORDER BY total_tokens DESC"
         )
         rows = self._store.query_all(sql, tuple(params))
         return [dict(r) for r in rows]

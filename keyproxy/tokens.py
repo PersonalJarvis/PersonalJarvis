@@ -23,7 +23,7 @@ from .store import Store
 
 # Issued plaintext tokens carry a recognizable, non-secret prefix so they can
 # be spotted in client config; the entropy lives in the random suffix.
-_TOKEN_PREFIX = "kp_"
+_TOKEN_PREFIX = "kp_"  # noqa: S105 — a public label prefix, not a secret
 _TOKEN_ENTROPY_BYTES = 32  # 256 bits
 
 

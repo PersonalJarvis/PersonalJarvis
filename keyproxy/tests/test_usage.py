@@ -1,5 +1,6 @@
 """usage.py — record best-effort usage rows + per-token/period report."""
 
+# ruff: noqa: S105, S106 — fixture "token_id" values are opaque ids, not secrets
 from __future__ import annotations
 
 import time

@@ -1,13 +1,11 @@
 """vendors.py — provider->vendor map + credential extraction/placement + usage."""
 
+# ruff: noqa: S105 — fixture "token" values are fake inbound tokens, not secrets
 from __future__ import annotations
 
 import json
 
-import pytest
-
 from keyproxy import vendors
-
 
 # --------------------------------------------------------------------------
 # provider_id -> vendor wire contract (must match the client side exactly)

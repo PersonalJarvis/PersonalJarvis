@@ -52,7 +52,7 @@ class Store:
         with self._lock:
             self._conn.close()
 
-    def __enter__(self) -> "Store":
+    def __enter__(self) -> Store:
         return self
 
     def __exit__(self, *_: Any) -> None:
