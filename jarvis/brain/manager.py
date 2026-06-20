@@ -1352,7 +1352,10 @@ class BrainManager:
 
         Reads `config.brain.router` and writes into a deep copy of JarvisConfig:
           - `brain.primary = tier_cfg.provider` (or `provider_override`)
-          - `brain.deep_brain = tier_cfg.fallback_provider`
+          - `brain.deep_brain = tier_cfg.fallback_provider`, UNLESS a
+            `provider_override` collapses a non-split tier (fallback in
+            {None, provider}) — then deep_brain follows the override so a
+            user-chosen frontier provider leads deep/code too (see below).
 
         The global `config` instance is left unchanged.
 
@@ -1374,7 +1377,29 @@ class BrainManager:
         local_config = config.model_copy(deep=True)
         effective_provider = provider_override or tier_cfg.provider
         local_config.brain.primary = effective_provider
-        local_config.brain.deep_brain = tier_cfg.fallback_provider
+        # deep_brain normally mirrors the tier's fallback provider. But when an
+        # explicit override redirected the active provider away from the tier
+        # default AND there is no deliberate cross-provider deep split
+        # (fallback_provider == provider), the deep brain must FOLLOW the override
+        # — otherwise a user-chosen frontier provider (grok/codex) still delegates
+        # every deep/code turn to the orphaned tier default. Forensic 2026-06-20:
+        # primary=grok left deep_brain=gemini, so reasoning turns ran on Gemini
+        # despite the user picking Grok ("Grok for everything" mandate). An
+        # explicit split (fallback_provider != provider) is preserved.
+        deep_provider = tier_cfg.fallback_provider
+        if (
+            provider_override
+            and effective_provider != tier_cfg.provider
+            and (
+                # No fallback configured at all (None/"") is even less of a
+                # deliberate split than a symmetric one — follow the override
+                # rather than strand deep_brain at None for the whole session.
+                not tier_cfg.fallback_provider
+                or tier_cfg.fallback_provider == tier_cfg.provider
+            )
+        ):
+            deep_provider = effective_provider
+        local_config.brain.deep_brain = deep_provider
 
         # Tier model resolver:
         # - If a live override is active: ignore tier_cfg.model (it was for
@@ -2246,6 +2271,14 @@ class BrainManager:
                 return
             previous = self._active_name
             self._active_name = canonical
+            # Keep deep_brain following the active provider on a runtime switch
+            # when there is no explicit cross-provider deep split (deep_brain
+            # tracked the previous active, or was never configured) — so switching
+            # to a frontier provider leads ALL intents, not just fast ones (mirror
+            # of the from_tier_config override rule; "Grok for everything" mandate
+            # 2026-06-20). A None/"" deep_brain must follow too, not stay stranded.
+            if not self._config.brain.deep_brain or self._config.brain.deep_brain == previous:
+                self._config.brain.deep_brain = canonical
             self._reset_provider_caches()
             self.last_persist_ok = (
                 self._persist_primary(canonical) if persist else False
