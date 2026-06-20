@@ -66,6 +66,21 @@ export function useProviders() {
     }
   }, []);
 
+  /**
+   * Optimistically flip the active provider within a tier, in-memory, BEFORE
+   * the backend switch resolves. The `/api/{brain,tts,stt}/switch` calls can
+   * take a few seconds — a TTS switch rebuilds the provider client and injects
+   * it into the live pipeline — and the UI used to update only after that call
+   * AND a full `/api/providers` refetch, so the "active" highlight lagged for
+   * seconds. Callers flip the highlight here on click, then run the switch and
+   * `refetch()` to confirm; on failure a `refetch()` restores server truth.
+   */
+  const setActiveOptimistic = useCallback((tier: ProviderTier, id: string) => {
+    setProviders((prev) =>
+      prev.map((p) => (p.tier === tier ? { ...p, active: p.id === id } : p)),
+    );
+  }, []);
+
   useEffect(() => {
     void refetch();
     const onSecret = () => void refetch();
@@ -84,7 +99,7 @@ export function useProviders() {
     };
   }, [refetch]);
 
-  return { providers, loading, error, refetch };
+  return { providers, loading, error, refetch, setActiveOptimistic };
 }
 
 export async function postSecret(key: string, value: string): Promise<void> {

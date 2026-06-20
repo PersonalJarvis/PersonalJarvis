@@ -10,9 +10,21 @@ configured fast model (gemini-3.5-flash). Live evidence: voice_turns row for
 """
 from __future__ import annotations
 
+import pytest
+
 from jarvis.brain.manager import BrainManager
 from jarvis.core.bus import EventBus
 from jarvis.core.config import load_config
+
+# One representative non-default frontier model per configured brain provider.
+# Gemini is only one row — model selection must resolve for EVERY provider.
+PROVIDER_FAST_DEEP_CASES = [
+    ("claude-api", "claude-haiku-4-5-20251001", "claude-opus-4-8"),
+    ("openrouter", "anthropic/claude-sonnet-4.6", "anthropic/claude-opus-4.8"),
+    ("openai", "gpt-5.5", "gpt-5.5-pro"),
+    ("gemini", "gemini-3.5-flash", "gemini-3.1-pro-preview"),
+    ("grok", "grok-4.3", "grok-4.3"),
+]
 
 
 def test_router_keeps_fast_model_when_fallback_is_same_provider() -> None:
@@ -83,3 +95,39 @@ def test_user_selected_deep_model_drives_the_deep_chain() -> None:
     # BrainTurnCompleted and therefore in VoiceTurnRow.model.
     chain = mgr._build_fallback_chain("deep")
     assert chain[0] == ("gemini", "gemini-3.1-pro-preview")
+
+
+@pytest.mark.parametrize("provider,fast_pick,_deep", PROVIDER_FAST_DEEP_CASES)
+def test_user_selected_fast_model_resolves_for_every_provider(
+    provider, fast_pick, _deep
+) -> None:
+    """Gemini is only the example: the fast-tier model the user picks is honoured
+    for EVERY brain provider when that provider is the active router brain. The
+    fast/router model is steered by [brain.router].model and must survive the
+    same-provider-fallback clobber for all of them."""
+    cfg = load_config()
+    cfg.brain.router.provider = provider
+    cfg.brain.router.model = fast_pick
+    cfg.brain.router.fallback_provider = provider
+    cfg.brain.router.fallback_model = fast_pick
+
+    mgr = BrainManager.from_tier_config("router", cfg, EventBus())
+
+    assert mgr._fast_model(provider) == fast_pick
+
+
+@pytest.mark.parametrize("provider,_fast,deep_pick", PROVIDER_FAST_DEEP_CASES)
+def test_user_selected_deep_model_resolves_for_every_provider(
+    provider, _fast, deep_pick
+) -> None:
+    """Gemini is only the example: the deep-tier model selection is honoured for
+    EVERY brain provider. _deep_model reads [brain.providers.<p>].deep_model, so
+    whatever model the user picks per provider is the one a deep turn runs on
+    (and thus the one published on the brain turn and shown in the transcript).
+    The router-config build must not clobber deep_model for any provider."""
+    cfg = load_config()
+    cfg.brain.providers[provider].deep_model = deep_pick
+
+    mgr = BrainManager.from_tier_config("router", cfg, EventBus())
+
+    assert mgr._deep_model(provider) == deep_pick

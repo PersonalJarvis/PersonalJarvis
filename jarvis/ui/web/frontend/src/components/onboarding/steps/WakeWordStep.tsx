@@ -48,7 +48,7 @@ export function WakeWordStep({ onb, goNext }: StepProps) {
           autoFocus
           onChange={(e) => setWord(e.target.value)}
           placeholder={t("onboarding.wake_word.placeholder")}
-          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+          className="w-full rounded-md border border-muted-foreground/25 bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
         />
       </div>
 

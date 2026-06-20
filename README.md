@@ -179,13 +179,16 @@ straight into provider costs, infrastructure, and development time.
 
 ## Contributing
 
-Pull requests are welcome. A few house rules keep the project coherent:
+Pull requests are welcome — see **[`CONTRIBUTING.md`](CONTRIBUTING.md)** for the full guide
+(dev setup, architecture, the plugin-vs-tool-vs-skill decision, and the PR checklist). The
+short version:
 
 - **Artifacts are English** — code, comments, docs, and commit messages. (Conversation can
   be any language; the assistant speaks de/en/es at runtime.)
 - Read [`CLAUDE.md`](CLAUDE.md) and [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md) before larger
-  changes — they're the binding conventions and the cross-platform doctrine.
+  changes — the binding conventions and the cross-platform doctrine.
 - New providers must pass the contract test suite (`pytest tests/contract/`).
+- Found a security issue? Please report it privately — see [`SECURITY.md`](SECURITY.md).
 
 ## License
 

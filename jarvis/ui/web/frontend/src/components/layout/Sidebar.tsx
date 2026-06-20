@@ -16,6 +16,7 @@ import {
   Terminal,
   Share2,
   Contact,
+  ScrollText,
   Loader2,
   type LucideIcon,
   ChevronRight,
@@ -84,6 +85,12 @@ const NAV_GROUPS: NavItem[][] = [
     { id: "memory", labelKey: "nav.wiki", icon: Notebook },
     { id: "contacts", labelKey: "nav.contacts", icon: Contact },
     { id: "profile", labelKey: "nav.profile", icon: UserCircle2 },
+    {
+      id: "agent-instructions",
+      labelKey: "nav.agent_instructions",
+      icon: ScrollText,
+      fallbackLabel: "Instructions",
+    },
     { id: "docs", labelKey: "nav.docs", icon: BookOpen },
   ],
   // 3) Configuration. API Keys now also fronts the former "Telephony" screen —

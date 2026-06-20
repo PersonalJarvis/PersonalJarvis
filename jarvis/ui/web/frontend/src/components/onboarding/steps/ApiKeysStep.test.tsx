@@ -1,8 +1,14 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
-const { switchBrainProvider, switchTtsProvider, switchSttProvider, refetch, PROVIDERS } =
-  vi.hoisted(() => {
+const {
+  switchBrainProvider,
+  switchTtsProvider,
+  switchSttProvider,
+  refetch,
+  setActiveOptimistic,
+  PROVIDERS,
+} = vi.hoisted(() => {
     const mk = (over: Record<string, unknown>) => ({
       id: "x",
       label: "X",
@@ -24,6 +30,7 @@ const { switchBrainProvider, switchTtsProvider, switchSttProvider, refetch, PROV
       switchTtsProvider: vi.fn().mockResolvedValue({}),
       switchSttProvider: vi.fn().mockResolvedValue({}),
       refetch: vi.fn(),
+      setActiveOptimistic: vi.fn(),
       PROVIDERS: [
         mk({ id: "claude-api", label: "Claude", tier: "brain", secret_keys: ["anthropic_api_key"], configured: true }),
         mk({ id: "gemini", label: "Gemini", tier: "brain", secret_keys: ["gemini_api_key"], configured: false }),
@@ -46,7 +53,13 @@ vi.mock("@/components/SubagentSection", () => ({
   SubagentSection: () => <div data-testid="subagent-section" />,
 }));
 vi.mock("@/hooks/useProviders", () => ({
-  useProviders: () => ({ providers: PROVIDERS, loading: false, error: null, refetch }),
+  useProviders: () => ({
+    providers: PROVIDERS,
+    loading: false,
+    error: null,
+    refetch,
+    setActiveOptimistic,
+  }),
   switchBrainProvider,
   switchTtsProvider,
   switchSttProvider,
@@ -111,6 +124,16 @@ it("activates a configured provider via its select control", async () => {
   fireEvent.click(screen.getByRole("button", { name: /Claude/ }));
   expect(switchBrainProvider).toHaveBeenCalledWith("claude-api");
   await waitFor(() => expect(refetch).toHaveBeenCalled());
+});
+
+it("flips the highlight optimistically before the switch resolves", () => {
+  // A switch that never resolves proves the UI does not wait on the backend.
+  switchBrainProvider.mockReturnValueOnce(new Promise(() => {}));
+  renderStep();
+  fireEvent.click(screen.getByRole("button", { name: /Claude/ }));
+  // The optimistic active-flip fires synchronously on click, ahead of the
+  // (still-pending) switch call and any refetch.
+  expect(setActiveOptimistic).toHaveBeenCalledWith("brain", "claude-api");
 });
 
 it("disables selection for an unconfigured cloud provider", () => {
