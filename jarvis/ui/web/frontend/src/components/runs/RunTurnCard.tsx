@@ -11,6 +11,7 @@ import { Brain, Hourglass, Mic2, Volume2, Zap } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
 
 import { OutcomeBadge } from "./OutcomeBadge";
@@ -38,6 +39,7 @@ const ROLE_LABEL: Record<string, string> = {
 
 export function RunTurnCard({ turn }: { turn: RunTurn }) {
   const t = useT();
+  const assistantName = useEventStore((s) => s.assistantName);
   const [showForensics, setShowForensics] = useState(false);
 
   // "What happened" = every transcript line that is NOT the headline user
@@ -102,9 +104,9 @@ export function RunTurnCard({ turn }: { turn: RunTurn }) {
           </div>
         )}
 
-        {/* Jarvis */}
+        {/* Assistant reply */}
         {turn.jarvis_text && (
-          <Block icon={<Volume2 className="h-3 w-3" />} label="Jarvis" accent="text-primary"
+          <Block icon={<Volume2 className="h-3 w-3" />} label={assistantName} accent="text-primary"
                  box="border-primary/20 bg-primary/5">
             {turn.jarvis_text}
           </Block>

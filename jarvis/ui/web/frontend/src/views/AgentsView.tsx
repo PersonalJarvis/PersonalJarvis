@@ -1,7 +1,9 @@
 import { Users, Inbox } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
+import { useEventStore } from "@/store/events";
 
 export function AgentsView() {
+  const assistantName = useEventStore((s) => s.assistantName);
   return (
     <div className="flex h-full flex-col">
       <ViewHeader
@@ -18,7 +20,7 @@ export function AgentsView() {
             Keine aktiven Agents
           </h3>
           <p className="mt-2 text-sm text-muted-foreground">
-            Wenn Jarvis einen Sub-Agent startet, erscheint er hier als
+            Wenn {assistantName} einen Sub-Agent startet, erscheint er hier als
             Live-Kachel mit Streaming-Output und Kill-Button.
           </p>
           <p className="mt-4 text-xs italic text-muted-foreground/70">

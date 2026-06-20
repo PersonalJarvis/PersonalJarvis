@@ -1,6 +1,7 @@
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useBrainStatus } from "@/hooks/useBrainStatus";
 import { useVoiceStatus } from "@/hooks/useVoiceStatus";
+import { useAssistantNameSeed } from "@/hooks/useAssistantNameSeed";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopBar } from "@/components/layout/TopBar";
 import { MainView } from "@/components/layout/MainView";
@@ -13,6 +14,7 @@ export default function App() {
   useWebSocket();
   useBrainStatus();
   useVoiceStatus();
+  useAssistantNameSeed();
 
   return (
     <div className="relative flex h-screen w-screen overflow-hidden bg-background text-foreground">

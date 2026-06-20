@@ -14,6 +14,7 @@ import {
 
 import type { SubAgentNode, ToolCallEntry } from "@/store/subAgents";
 import { cn } from "@/lib/utils";
+import { useEventStore } from "@/store/events";
 
 const STATUS_COLOR: Record<SubAgentNode["status"], string> = {
   running: "text-primary",
@@ -227,6 +228,7 @@ function BoardHeader() {
 }
 
 function EmptyState() {
+  const assistantName = useEventStore((s) => s.assistantName);
   return (
     <div className="flex min-h-[420px] flex-col items-center justify-center px-8 text-center">
       <Bot className="mb-4 h-8 w-8 text-zinc-600" />
@@ -234,7 +236,7 @@ function EmptyState() {
         No subagents are running right now.
       </div>
       <p className="mt-2 max-w-lg text-sm text-zinc-500">
-        When Jarvis starts a real subagent, it will appear here with its task, status,
+        When {assistantName} starts a real subagent, it will appear here with its task, status,
         tool calls, runtime and result.
       </p>
     </div>

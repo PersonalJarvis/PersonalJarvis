@@ -62,6 +62,7 @@ import {
   type LocalSkillQueryFilters,
   type LinkHealthEntry,
 } from "@/hooks/useSkills";
+import { useEventStore } from "@/store/events";
 
 const STATE_LABEL: Record<SkillState, string> = {
   active: "aktiv",
@@ -1354,11 +1355,12 @@ function ResourceViewer({
 }
 
 function EmptyList() {
+  const assistantName = useEventStore((s) => s.assistantName);
   return (
     <div className="space-y-3 text-sm text-muted-foreground">
       <p>Noch keine Skills da.</p>
       <p className="text-xs">
-        Beim ersten Start kopiert Jarvis die Builtin-Skills nach
+        Beim ersten Start kopiert {assistantName} die Builtin-Skills nach
         <br />
         <code>%LOCALAPPDATA%\Jarvis\skills</code>. Passiert das nicht, check
         die Backend-Logs.

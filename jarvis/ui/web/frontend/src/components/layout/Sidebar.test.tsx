@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import { Sidebar } from "@/components/layout/Sidebar";
@@ -50,6 +50,46 @@ describe("Sidebar voice header", () => {
     // getByText throws if absent or if it matches more than once — so a single
     // hit proves the transcript survives exactly once (no duplicate bubble).
     expect(screen.getByText("auflegen")).toBeTruthy();
+  });
+});
+
+describe("Sidebar assistant name header", () => {
+  beforeEach(() => {
+    useEventStore.setState({
+      voiceState: "idle",
+      transcription: "",
+      transcriptionFinal: true,
+      connected: true,
+      voiceReady: true,
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  test("renders the resolved assistant name (not a hardcoded 'Jarvis')", () => {
+    // The header wordmark must follow the configured assistant name so a user
+    // who renames the assistant (e.g. to "Ruben") never sees a stale "Jarvis".
+    useEventStore.setState({ assistantName: "Ruben" });
+
+    render(<Sidebar />);
+
+    expect(screen.getByText("Ruben")).toBeTruthy();
+    expect(screen.queryByText("Jarvis")).toBeNull();
+  });
+
+  test("follows a live assistant-name change", () => {
+    useEventStore.setState({ assistantName: "Jarvis" });
+    render(<Sidebar />);
+    expect(screen.getByText("Jarvis")).toBeTruthy();
+
+    act(() => {
+      useEventStore.setState({ assistantName: "Athena" });
+    });
+
+    expect(screen.getByText("Athena")).toBeTruthy();
+    expect(screen.queryByText("Jarvis")).toBeNull();
   });
 });
 

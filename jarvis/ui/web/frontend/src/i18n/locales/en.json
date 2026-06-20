@@ -1,16 +1,16 @@
 {
   "jarvis_dock": {
-    "aria": "Jarvis — drop a mission here to talk about it",
+    "aria": "{name} — drop a mission here to talk about it",
     "hint": "Drag a sub-agent output here to pull it into the conversation",
     "drop_here": "Drop to discuss",
-    "drop_active": "Drop to brief Jarvis",
+    "drop_active": "Drop to brief {name}",
     "dropped": "Added to conversation"
   },
   "topbar": {
     "restart": "Restart",
     "restart_confirm": "Confirm restart?",
-    "restart_hint": "Restart Jarvis",
-    "restarting": "Restarting Jarvis…",
+    "restart_hint": "Restart {name}",
+    "restarting": "Restarting {name}…",
     "restart_failed": "Restart failed",
     "restart_force": "Restart anyway?",
     "restart_missions_running": "mission(s) still running — click again to restart anyway"
@@ -50,9 +50,9 @@
     "subtitle": "On-screen overlay appearance and dictation behaviour.",
     "appearance_title": "Appearance",
     "behavior_title": "Behavior",
-    "restart_required": "Saved — restart Jarvis to apply.",
+    "restart_required": "Saved — restart {name} to apply.",
     "restart_now": "Restart now",
-    "restarting": "Restarting Jarvis…",
+    "restarting": "Restarting {name}…",
     "bar_persistent": {
       "title": "Show bar at all times",
       "description": "Keep the bar on screen even when idle. Off: no standby — it only appears when you say your wake word.",
@@ -351,16 +351,16 @@
   },
   "mcps_view": {
     "title": "MCPs",
-    "subtitle": "Model Context Protocol servers — external tools Jarvis can call.",
+    "subtitle": "Model Context Protocol servers — external tools {name} can call.",
     "empty": "No MCP servers configured.",
     "connected": "Connected",
     "disconnected": "Disconnected",
     "edit_tooltip": "Edit mcp.json",
     "reload_tooltip": "Reload",
-    "intro": "Jarvis manages MCP servers automatically. Activate one with the switch — the connection is checked first. For manual edits open mcp.json.",
+    "intro": "{name} manages MCP servers automatically. Activate one with the switch — the connection is checked first. For manual edits open mcp.json.",
     "empty_title": "No MCPs yet",
     "empty_description": "MCP servers are configured exclusively via mcp.json (Claude Desktop format). Edit it directly, or import the full Claude Desktop config.",
-    "empty_tip": "Tip: Tell Jarvis later \"install MCP X\" — it will add it to mcp.json itself.",
+    "empty_tip": "Tip: Tell {name} later \"install MCP X\" — it will add it to mcp.json itself.",
     "open_config": "Open mcp.json",
     "import_claude": "Import Claude Desktop config",
     "importing": "Importing…",
@@ -383,7 +383,7 @@
   },
   "board_view": {
     "title": "Board",
-    "subtitle": "Everything you and Jarvis have done together — fully local.",
+    "subtitle": "Everything you and {name} have done together — fully local.",
     "refresh": "Refresh",
     "refresh_tooltip": "Trigger aggregator manually",
     "loading": "Loading board stats…",
@@ -392,7 +392,7 @@
       "button": "Share",
       "button_tooltip": "Share your stats",
       "title": "Share your stats",
-      "subtitle": "A snapshot of your Jarvis activity.",
+      "subtitle": "A snapshot of your {name} activity.",
       "handle_label": "Your X handle (optional)",
       "handle_placeholder": "yourhandle",
       "copy_image": "Copy Image",
@@ -409,15 +409,15 @@
       "card": {
         "brand": "PERSONAL JARVIS",
         "hero_label": "Words spoken",
-        "jarvis_suffix": "spoken by Jarvis",
+        "jarvis_suffix": "spoken by {name}",
         "talk_line": "{0} h active · {1} chats",
         "streak": "{0}-day best streak"
       }
     },
     "hero": {
       "you_spoke": "You said",
-      "you_spoke_sub": "words spoken to Jarvis",
-      "jarvis_spoke": "Jarvis said",
+      "you_spoke_sub": "words spoken to {name}",
+      "jarvis_spoke": "{name} said",
       "jarvis_spoke_sub": "words spoken back to you",
       "streak": "Day streak",
       "streak_sub": "{0} active days in total",
@@ -426,7 +426,7 @@
       "talk_time_sub": "across {0} conversations",
       "talk_time_sub_one": "across {0} conversation"
     },
-    "activity_subtitle": "How many words you and Jarvis exchanged each day.",
+    "activity_subtitle": "How many words you and {name} exchanged each day.",
     "activity_heatmap_hint": "Each square is a day — the brighter, the busier.",
     "chart_title": "Words over time",
     "chart_empty": "Not enough data yet to chart.",
@@ -434,9 +434,9 @@
     "longest_streak_one": "Longest streak · {0} day",
     "activity_streak_badge": "{0}-day streak",
     "activity_streak_badge_one": "{0}-day streak",
-    "categories_title": "What you use Jarvis for",
-    "categories_subtitle": "Every tool Jarvis ran for you, grouped by purpose.",
-    "categories_empty": "No tool usage yet — it fills in as Jarvis works.",
+    "categories_title": "What you use {name} for",
+    "categories_subtitle": "Every tool {name} ran for you, grouped by purpose.",
+    "categories_empty": "No tool usage yet — it fills in as {name} works.",
     "category": {
       "agents": "Agents",
       "browser": "Browser",
@@ -447,7 +447,7 @@
     },
     "micro": {
       "avg_words": "{0} words / conversation",
-      "ratio": "Jarvis says {0}× your words",
+      "ratio": "{name} says {0}× your words",
       "active_days": "{0} active days",
       "active_days_one": "{0} active day",
       "active_since": "Active since {0}"
@@ -463,15 +463,15 @@
       "voice_first_try": "Voice First-Try Rate",
       "voice_first_try_sub": "Base: {0} commands",
       "voice_no_data": "No voice data yet",
-      "hours_saved": "Sub-Jarvis work hours",
+      "hours_saved": "Sub-{name} work hours",
       "hours_saved_sub": "Summed across all runs",
-      "conversation_hours": "Active hours with Jarvis",
+      "conversation_hours": "Active hours with {name}",
       "conversation_hours_sub": "{0} h in the last {1} days"
     },
     "activity_title": "Activity",
     "activity_description": "Last 365 days. Voice, chat, tools, tasks and app starts. Each cell = one day.",
     "ai_profile_title": "AI Profile",
-    "ai_profile_description": "What Jarvis has learned about you. Updated evolutionarily on Sundays.",
+    "ai_profile_description": "What {name} has learned about you. Updated evolutionarily on Sundays.",
     "ai_profile_regenerate": "Regenerate now",
     "ai_profile_regenerate_tooltip": "Regenerate bio now",
     "ai_profile_loading": "Loading bio…",
@@ -521,11 +521,11 @@
         "unit": "Commands"
       },
       "most_hours_saved_in_a_day": {
-        "title": "Busiest Sub-Jarvis day",
+        "title": "Busiest Sub-{name} day",
         "unit": "Hours"
       },
       "most_active_events_in_a_day": {
-        "title": "Most active Jarvis day",
+        "title": "Most active {name} day",
         "unit": "Activities"
       },
       "most_conversation_hours_in_a_day": {
@@ -545,7 +545,7 @@
     "review_singular": "Review",
     "review_plural": "Reviews",
     "review_open": "open",
-    "no_name_yet": "Jarvis doesn't know your name yet. Tell him \"My name is …\".",
+    "no_name_yet": "{name} doesn't know your name yet. Tell him \"My name is …\".",
     "reload_tooltip": "Reload",
     "fact_accepted": "{0} fact(s) merged",
     "accepted": "Accepted",
@@ -557,16 +557,16 @@
     "reviews_disabled_body": "This session's fact curator writes straight to the wiki vault and doesn't use a review queue. Candidates show up here once a provider with the classic memory integration is running.",
     "hero_eyebrow": "Knowledge profile",
     "hero_classification": "Knowledge base",
-    "hero_maintained_by": "Maintained by Jarvis",
+    "hero_maintained_by": "Maintained by {name}",
     "hero_name_placeholder": "Who are you?",
-    "hero_tagline": "What Jarvis has learned about you — gathered from conversation, kept in one book.",
+    "hero_tagline": "What {name} has learned about you — gathered from conversation, kept in one book.",
     "hero_completeness": "Profile mapped",
     "field_unknown": "not known yet",
     "facts_ratio": "{0}/{1} facts",
-    "no_user_hint": "Jarvis doesn't know your name yet. Just tell him what to call you — the curator picks up the rest from your conversations over time.",
-    "section_knowledge": "What Jarvis knows",
-    "section_knowledge_sub": "Learned from your conversations, grouped the way Jarvis thinks about you.",
-    "section_people": "People Jarvis knows",
+    "no_user_hint": "{name} doesn't know your name yet. Just tell him what to call you — the curator picks up the rest from your conversations over time.",
+    "section_knowledge": "What {name} knows",
+    "section_knowledge_sub": "Learned from your conversations, grouped the way {name} thinks about you.",
+    "section_people": "People {name} knows",
     "section_reviews": "Waiting for your OK",
     "section_source": "The source file",
     "stages": {
@@ -580,16 +580,16 @@
     "stage_headline": {
       "blank_page": "A fresh page{0}.",
       "first_impressions": "First impressions{0}.",
-      "getting_acquainted": "Jarvis is getting to know you{0}.",
-      "well_acquainted": "Jarvis knows you quite well{0}.",
-      "trusted_company": "Jarvis knows you really well{0}.",
-      "inner_circle": "Jarvis knows you inside out{0}."
+      "getting_acquainted": "{name} is getting to know you{0}.",
+      "well_acquainted": "{name} knows you quite well{0}.",
+      "trusted_company": "{name} knows you really well{0}.",
+      "inner_circle": "{name} knows you inside out{0}."
     },
     "hero_sub": "Everything here was learned in passing, from real conversations — never asked twice, never guessed.",
     "entries_ratio": "{0} of {1} things learned",
     "people_known": "{0} people",
     "person_known": "{0} person",
-    "ask_title": "Jarvis would love to know",
+    "ask_title": "{name} would love to know",
     "ask_next": "Next",
     "ask_say_prefix": "Just say",
     "more_to_learn": "{0} more to learn",
@@ -618,7 +618,7 @@
       "feedback_pref": "How should I deliver hard truths?"
     },
     "says": {
-      "name": "Jarvis, my name is …",
+      "name": "{name}, my name is …",
       "preferred_address": "Call me …",
       "pronouns": "My pronouns are …",
       "primary_language": "Let's speak German",
@@ -638,7 +638,7 @@
       "feedback_pref": "Give me feedback straight"
     },
     "people_empty_title": "No people known yet",
-    "people_empty_body": "When you tell Jarvis about family, friends or colleagues, the curator automatically creates a file under data/workspace/people/.",
+    "people_empty_body": "When you tell {name} about family, friends or colleagues, the curator automatically creates a file under data/workspace/people/.",
     "person_detail_hint": "Pick a person on the left to see details.",
     "person_relationship": "Relationship",
     "person_aliases": "Aliases",
@@ -674,7 +674,7 @@
       },
       "communication": {
         "label": "Communication",
-        "description": "How Jarvis talks to you: directness, humor, formality."
+        "description": "How {name} talks to you: directness, humor, formality."
       },
       "work_style": {
         "label": "Work Style",
@@ -686,7 +686,7 @@
       },
       "relationship": {
         "label": "Relationship",
-        "description": "How Jarvis gives feedback, how the dynamic runs."
+        "description": "How {name} gives feedback, how the dynamic runs."
       }
     },
     "fields": {
@@ -749,7 +749,7 @@
   "settings_view": {
     "silence_window": {
       "title": "Thinking pause",
-      "description": "How long Jarvis waits in silence before it sends what you said. Raise it to give yourself more time to pause and finish a thought.",
+      "description": "How long {name} waits in silence before it sends what you said. Raise it to give yourself more time to pause and finish a thought.",
       "unit_seconds": "s",
       "reset": "Reset to default (1.5 s)",
       "saved_toast": "Thinking pause set to {0}.",
@@ -761,9 +761,9 @@
     "languages_group_title": "Languages",
     "app_settings_group_title": "App settings",
     "jarvis_api": {
-      "title": "Jarvis API",
+      "title": "{name} API",
       "key_label": "API key",
-      "description": "Local agents (Codex, Claude Code) use this key to drive Jarvis through the Control API — change settings, switch providers or language — instead of clicking the UI.",
+      "description": "Local agents (Codex, Claude Code) use this key to drive {name} through the Control API — change settings, switch providers or language — instead of clicking the UI.",
       "show": "Show",
       "hide": "Hide",
       "copy_button": "Copy",
@@ -771,7 +771,7 @@
       "copy_failed_toast": "Could not copy the API key.",
       "regenerate_button": "Regenerate key",
       "regenerated_toast": "A new API key was generated. Update any agent that used the old one.",
-      "usage_hint": "Send it as an Authorization: Bearer header to your local Jarvis (/api/control). GET /api/control/allowlist lists everything you can change."
+      "usage_hint": "Send it as an Authorization: Bearer header to your local {name} (/api/control). GET /api/control/allowlist lists everything you can change."
     },
     "save": "Save changes",
     "saving": "Saving…",
@@ -790,7 +790,7 @@
       "autostart_title": "Auto-start with Windows",
       "autostart_description": "The assistant starts in tray after login.",
       "toasts_title": "Autopilot Toasts",
-      "toasts_description": "Show \"Jarvis opened X\" notification when voice controls the UI."
+      "toasts_description": "Show \"{name} opened X\" notification when voice controls the UI."
     },
     "wake_word": {
       "title": "Wake Word",
@@ -815,7 +815,7 @@
     "onboarding": {
       "wake_word": {
         "title": "Set your wake word",
-        "body": "Choose a word or short phrase Jarvis will listen for. You can type anything — for example your name.",
+        "body": "Choose a word or short phrase {name} will listen for. You can type anything — for example your name.",
         "input_label": "Wake phrase",
         "placeholder": "e.g. Jonas",
         "cta": "Get started",
@@ -826,22 +826,22 @@
     "autostart": {
       "title": "Launch app at login",
       "description": "Launch the assistant automatically when you log in, so your wake word works right after a reboot. Turn it off here any time.",
-      "enabled_toast": "Autostart enabled — Jarvis will launch at login.",
+      "enabled_toast": "Autostart enabled — {name} will launch at login.",
       "disabled_toast": "Autostart disabled.",
       "unsupported": "Autostart is not available on this host (e.g. a headless server with no desktop session).",
       "enable_instant_start": "Enable instant start",
       "instant_start_hint": "On Windows, instant start uses a scheduled task and asks for permission once. Without it, Windows may delay startup by several minutes on machines with many startup programs.",
-      "instant_start_active": "Instant start is active — Jarvis launches within seconds of login.",
-      "instant_start_enabled_toast": "Instant start enabled — Jarvis will launch right after login.",
-      "instant_start_declined_toast": "Permission was declined — Jarvis still starts via the shortcut (may be delayed)."
+      "instant_start_active": "Instant start is active — {name} launches within seconds of login.",
+      "instant_start_enabled_toast": "Instant start enabled — {name} will launch right after login.",
+      "instant_start_declined_toast": "Permission was declined — {name} still starts via the shortcut (may be delayed)."
     },
     "overlay_style": {
       "title": "Display style",
-      "description": "Choose how Jarvis appears on screen during voice activity. The bar is the slim default; the mascot is the classic orb; or hide it entirely.",
+      "description": "Choose how {name} appears on screen during voice activity. The bar is the slim default; the mascot is the classic orb; or hide it entirely.",
       "label": "Style",
       "save": "Save",
       "saved": "Display style switched.",
-      "restart_required": "Saved — restart Jarvis to apply.",
+      "restart_required": "Saved — restart {name} to apply.",
       "options": {
         "whisper_bar": "Bar (default)",
         "mascot": "Mascot orb",
@@ -925,7 +925,7 @@
     "load_error": "Could not load telephony status",
     "not_configured_hint": "Set your Twilio Account SID, Auth Token, and phone number below to finish setup, then run \"Test connection\".",
     "unavailable_title": "Telephony extra not installed",
-    "unavailable_body": "The optional Twilio integration is not available in this install. Add the telephony extras group, then restart Jarvis.",
+    "unavailable_body": "The optional Twilio integration is not available in this install. Add the telephony extras group, then restart {name}.",
     "status": {
       "title": "Status",
       "twilio": "Twilio",
@@ -956,7 +956,7 @@
       "public_url": "Public base URL",
       "language": "Language code",
       "greeting": "Greeting (optional)",
-      "greeting_placeholder": "Leave empty for the Jarvis butler default",
+      "greeting_placeholder": "Leave empty for the {name} butler default",
       "test_connection": "Test connection",
       "self_test": "Self-test voice",
       "setup_script": "Setup script",
@@ -967,12 +967,12 @@
       "selftest_ok": "Voice chain works",
       "selftest_failed": "Self-test failed",
       "transcript": "Transcript",
-      "response": "Jarvis response",
+      "response": "{name} response",
       "audio_bytes": "Audio bytes"
     },
     "scripts": {
       "title": "Setup scripts",
-      "subtitle": "Run these to expose Jarvis publicly and provision the Twilio number. Copy a command with the button.",
+      "subtitle": "Run these to expose {name} publicly and provision the Twilio number. Copy a command with the button.",
       "empty": "No setup scripts reported by the backend yet."
     },
     "calls": {
@@ -998,14 +998,14 @@
     "subtitle": "Step-by-step guide and setup scripts for Twilio telephony.",
     "back": "Back to API Keys",
     "guide_title": "Setup",
-    "intro": "How to make Jarvis reachable by phone — from the Twilio number to the first call.",
+    "intro": "How to make {name} reachable by phone — from the Twilio number to the first call.",
     "step1_title": "Install the telephony extra",
-    "step1_body": "Run `pip install \"personal-jarvis[telephony]\"` on the server and restart Jarvis. Only needed if the status above reports the extra is missing.",
+    "step1_body": "Run `pip install \"personal-jarvis[telephony]\"` on the server and restart {name}. Only needed if the status above reports the extra is missing.",
     "step2_title": "Create a Twilio account",
     "step2_body": "Sign up at twilio.com, copy your Account SID and Auth Token, and buy a voice-capable phone number.",
-    "step3_title": "Expose Jarvis publicly",
-    "step3_body": "Twilio must reach Jarvis over HTTPS. Run the tunnel script below and paste the printed URL as the public base URL.",
-    "step4_title": "Point the Twilio webhook at Jarvis",
+    "step3_title": "Expose {name} publicly",
+    "step3_body": "Twilio must reach {name} over HTTPS. Run the tunnel script below and paste the printed URL as the public base URL.",
+    "step4_title": "Point the Twilio webhook at {name}",
     "step4_body": "In the Twilio console, set your number's Voice webhook to the webhook URL shown below.",
     "step5_title": "Enter credentials and test",
     "step5_body": "Back on the API Keys page, enter the Account SID, Auth Token and phone number, enable telephony, then run \"Test connection\" and \"Self-test voice\".",
@@ -1014,12 +1014,12 @@
   },
   "previews_view": {
     "title": "Previews",
-    "subtitle": "Live preview servers Jarvis spawned for you.",
+    "subtitle": "Live preview servers {name} spawned for you.",
     "empty": "No active previews."
   },
   "outputs_view": {
     "title": "Outputs",
-    "subtitle": "Files Jarvis or sub-agents wrote for you.",
+    "subtitle": "Files {name} or sub-agents wrote for you.",
     "empty": "No outputs yet.",
     "open": "Open",
     "delete": "Delete",
@@ -1149,8 +1149,8 @@
       "skip_setup": "Skip setup for now"
     },
     "intro": {
-      "scene_1": "Meet Jarvis — your voice-first assistant.",
-      "scene_2": "Just talk. Jarvis listens and acts.",
+      "scene_1": "Meet {name} — your voice-first assistant.",
+      "scene_2": "Just talk. {name} listens and acts.",
       "scene_3": "It keeps working in the background while you don't.",
       "scene_4": "And it runs locally — your data stays yours."
     },
@@ -1167,7 +1167,7 @@
     },
     "wake_word": {
       "title": "Pick your wake word",
-      "body": "Choose the word that wakes Jarvis. \"Hey\" stays fixed — you pick the rest.",
+      "body": "Choose the word that wakes {name}. \"Hey\" stays fixed — you pick the rest.",
       "prefix": "Hey",
       "input_label": "Your wake word",
       "placeholder": "e.g. Nova",
@@ -1186,8 +1186,8 @@
     },
     "mic_test": {
       "title": "Microphone check",
-      "body": "Let's make sure Jarvis can hear you.",
-      "no_mic": "No microphone detected. You can still talk to Jarvis by text or through a channel like Telegram.",
+      "body": "Let's make sure {name} can hear you.",
+      "no_mic": "No microphone detected. You can still talk to {name} by text or through a channel like Telegram.",
       "skip": "Skip microphone check"
     },
     "persona": {
@@ -1197,18 +1197,18 @@
     },
     "finish": {
       "title": "You're all set!",
-      "body": "Jarvis is ready. Try saying your wake word, or type a command to begin.",
+      "body": "{name} is ready. Try saying your wake word, or type a command to begin.",
       "skipped_title": "You skipped — set up anytime in Settings:",
-      "start_cta": "Start using Jarvis"
+      "start_cta": "Start using {name}"
     }
   },
   "languages_view": {
     "title": "Languages",
-    "subtitle": "Choose the UI language and the language Jarvis replies in.",
+    "subtitle": "Choose the UI language and the language {name} replies in.",
     "ui_section": "Interface Language",
     "ui_hint": "Affects every label, button and message in the app.",
     "reply_section": "Reply Language",
-    "reply_hint": "Which language Jarvis speaks when answering you. Proper names, code identifiers and technical terms stay in their original form.",
+    "reply_hint": "Which language {name} speaks when answering you. Proper names, code identifiers and technical terms stay in their original form.",
     "options": {
       "auto": {
         "label": "Automatic",
@@ -1228,10 +1228,10 @@
       }
     },
     "reply_options": {
-      "auto": "Jarvis mirrors whichever language you speak or type.",
-      "en": "Jarvis answers in English.",
-      "de": "Jarvis antwortet auf Deutsch.",
-      "es": "Jarvis responde en español."
+      "auto": "{name} mirrors whichever language you speak or type.",
+      "en": "{name} answers in English.",
+      "de": "{name} antwortet auf Deutsch.",
+      "es": "{name} responde en español."
     }
   }
 }

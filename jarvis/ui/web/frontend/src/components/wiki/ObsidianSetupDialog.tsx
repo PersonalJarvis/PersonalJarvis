@@ -23,6 +23,7 @@ import { Check, ExternalLink, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ObsidianStatus } from "@/types/setup";
+import { useEventStore } from "@/store/events";
 
 export interface ObsidianSetupDialogProps {
   /** Whether the dialog is visible. */
@@ -160,6 +161,7 @@ export function ObsidianSetupDialog({
   onComplete,
   fetchImpl,
 }: ObsidianSetupDialogProps): JSX.Element | null {
+  const assistantName = useEventStore((s) => s.assistantName);
   const [currentStep, setCurrentStep] = useState<StepId>(() =>
     decideInitialStep(initialStatus),
   );
@@ -374,7 +376,7 @@ export function ObsidianSetupDialog({
               Obsidian installieren
             </h3>
             <p className="text-sm text-muted-foreground">
-              Jarvis schreibt das Wiki als Markdown-Dateien auf die Platte.
+              {assistantName} schreibt das Wiki als Markdown-Dateien auf die Platte.
               Damit du sie wie eine echte Wissensdatenbank durchstoebern und
               bearbeiten kannst, brauchst du den kostenlosen Editor{" "}
               <strong>Obsidian</strong>.
@@ -444,7 +446,7 @@ export function ObsidianSetupDialog({
               Vault anbinden
             </h3>
             <p className="text-sm text-muted-foreground">
-              Jetzt traegt Jarvis sein Wiki in deine Obsidian-Konfiguration ein.
+              Jetzt traegt {assistantName} sein Wiki in deine Obsidian-Konfiguration ein.
               Damit erscheint es im Vault-Switcher und das{" "}
               <code className="rounded bg-background px-1 py-0.5 font-mono text-[12px]">
                 obsidian://

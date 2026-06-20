@@ -103,6 +103,7 @@ function formatDateTime(ts: number): string {
 type FilterTab = "all" | "connected" | "installed" | "custom";
 
 export function ClisView() {
+  const assistantName = useEventStore((s) => s.assistantName);
   const { data, isLoading, error, refetch } = useClisList();
   const [filter, setFilter] = useState<FilterTab>("all");
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
@@ -229,7 +230,7 @@ export function ClisView() {
             {filtered.length > 0 && (
               <>
                 <p className="mb-4 max-w-2xl text-xs leading-relaxed text-muted-foreground">
-                  Jarvis kann diese CLIs als Tools aufrufen. Nur{" "}
+                  {assistantName} kann diese CLIs als Tools aufrufen. Nur{" "}
                   <span className="text-primary">verbundene</span> CLIs erscheinen
                   im Brain-Tool-Katalog.
                 </p>

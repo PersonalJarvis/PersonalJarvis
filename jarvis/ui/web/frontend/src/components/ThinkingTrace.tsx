@@ -180,6 +180,7 @@ export function ThinkingTrace() {
   const t = useT();
   const steps = useEventStore((s) => s.thinkingSteps);
   const startedTs = useEventStore((s) => s.thinkingStartedTs);
+  const assistantName = useEventStore((s) => s.assistantName);
   const elapsed = useElapsedMs(startedTs);
 
   const visible = steps.slice(-VISIBLE_STEPS);
@@ -202,7 +203,7 @@ export function ThinkingTrace() {
         <div className="relative flex items-center gap-2">
           <CoreOrb />
           <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-primary">
-            Jarvis
+            {assistantName}
           </span>
           <span className="thinking-shimmer text-xs font-medium">
             {t("thinking.label")}

@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import { Sparkles, ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useEventStore } from "@/store/events";
 
 interface FrontierSwitch {
   provider: string;
@@ -19,6 +20,7 @@ interface FrontierSwitch {
 const POLL_INTERVAL_MS = 30_000;
 
 export function FrontierSwitchModal() {
+  const assistantName = useEventStore((s) => s.assistantName);
   const [pending, setPending] = useState<FrontierSwitch[]>([]);
   const [acking, setAcking] = useState(false);
 
@@ -100,7 +102,7 @@ export function FrontierSwitchModal() {
         </div>
 
         <p className="mb-4 text-sm text-muted-foreground">
-          Jarvis hat beim Start ein neueres Modell beim Anbieter erkannt
+          {assistantName} hat beim Start ein neueres Modell beim Anbieter erkannt
           und automatisch gewechselt. Bitte bestaetige.
         </p>
 

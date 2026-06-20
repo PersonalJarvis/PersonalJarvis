@@ -415,12 +415,15 @@ function formatTime(ms: number): string {
 /**
  * Shared assistant byline. Replaces the old sparkle-icon + "Jarvis" header —
  * the sparkle read as a generic-AI tell. Now a calm gold dot + mono wordmark.
+ * The wordmark follows the configured assistant name (store-seeded) so a rename
+ * propagates to every reply byline instead of leaking a stale "Jarvis".
  */
 function AssistantLabel() {
+  const assistantName = useEventStore((s) => s.assistantName);
   return (
     <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-primary">
       <span className="h-1 w-1 rounded-full bg-primary" aria-hidden />
-      Jarvis
+      {assistantName}
     </div>
   );
 }
@@ -432,6 +435,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   // Finished reasoning trace for this reply (assistant messages only) —
   // renders as the collapsible "Thought for Xs" disclosure above the text.
   const trace = useEventStore((s) => s.thinkingTraces[message.id]);
+  const assistantName = useEventStore((s) => s.assistantName);
 
   if (isSystem) {
     return (
@@ -450,7 +454,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
               pre-ack
             </span>
             <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-              Jarvis
+              {assistantName}
             </span>
           </div>
           <div className="whitespace-pre-wrap">{message.content}</div>

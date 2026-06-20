@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEventStore } from "@/store/events";
 import {
   Blocks,
   ArrowRight,
@@ -549,7 +550,7 @@ function InstalledLayout({
 }
 
 function Hero({
-  title = "Connect Jarvis to your services",
+  title = "Connect your assistant to your services",
   subtitle,
   query,
   setQuery,
@@ -975,6 +976,7 @@ function EmptyHits({ query }: { query: string }) {
 }
 
 function EmptyInstalled({ totalAvailable }: { totalAvailable: number }) {
+  const assistantName = useEventStore((s) => s.assistantName);
   return (
     <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card/40 px-8 py-14 text-center">
       <div className="mb-4 grid h-11 w-11 place-items-center rounded-full bg-primary/10 text-primary">
@@ -984,7 +986,7 @@ function EmptyInstalled({ totalAvailable }: { totalAvailable: number }) {
         Nothing connected yet
       </h3>
       <p className="mt-2 max-w-xs text-xs leading-relaxed text-muted-foreground">
-        Pick one of the {totalAvailable} services in the Browse tab to give Jarvis hands beyond
+        Pick one of the {totalAvailable} services in the Browse tab to give {assistantName} hands beyond
         your local machine.
       </p>
     </div>
@@ -1383,6 +1385,7 @@ function DisconnectConfirmDialog({
   onConfirm: () => void;
   errorMessage: string | null;
 }) {
+  const assistantName = useEventStore((s) => s.assistantName);
   // Close on Escape (unless a removal is in flight).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1439,7 +1442,7 @@ function DisconnectConfirmDialog({
           <p className="text-sm leading-relaxed text-muted-foreground">
             This disconnects{" "}
             <span className="font-medium text-foreground">{plugin.name}</span> and
-            deletes its stored credentials. Jarvis loses access until you reconnect it.
+            deletes its stored credentials. {assistantName} loses access until you reconnect it.
           </p>
           {errorMessage && (
             <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">

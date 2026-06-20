@@ -7,6 +7,7 @@
  */
 import { Mic } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useEventStore } from "@/store/events";
 
 import { ViewHeader } from "@/views/ChatsView";
 import { SessionDetail } from "@/components/sessions/SessionDetail";
@@ -15,6 +16,7 @@ import { useSessionDetail, useSessions } from "@/hooks/useSessions";
 import { useT } from "@/i18n";
 
 export function SessionsView() {
+  const assistantName = useEventStore((s) => s.assistantName);
   const t = useT();
   const sessionsQuery = useSessions();
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -59,7 +61,7 @@ export function SessionsView() {
           <div className="mt-0.5 text-xs text-amber-200/80">
             In <code className="font-mono">jarvis.toml</code> die Sektion{" "}
             <code className="font-mono">[sessions]</code> aktivieren
-            (<code className="font-mono">enabled = true</code>) und Jarvis neu
+            (<code className="font-mono">enabled = true</code>) und {assistantName} neu
             starten.
           </div>
         </div>

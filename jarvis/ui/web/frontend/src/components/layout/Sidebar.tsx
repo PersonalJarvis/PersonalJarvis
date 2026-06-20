@@ -106,6 +106,7 @@ export function Sidebar() {
   const active = useEventStore((s) => s.activeSection);
   const setActive = useEventStore((s) => s.setActiveSection);
   const voiceState = useEventStore((s) => s.voiceState);
+  const assistantName = useEventStore((s) => s.assistantName);
   const transcription = useEventStore((s) => s.transcription);
   const transcriptionFinal = useEventStore((s) => s.transcriptionFinal);
   const connected = useEventStore((s) => s.connected);
@@ -142,7 +143,7 @@ export function Sidebar() {
           <MascotGigi size={44} enableComments={false} />
           <div className="flex min-w-0 flex-1 flex-col">
             <span className="font-display text-sm font-semibold tracking-tight">
-              Jarvis
+              {assistantName}
             </span>
             <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
               {voiceLabel}
