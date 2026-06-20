@@ -29,7 +29,7 @@ from contextlib import suppress
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.core.protocols import BrainDelta, BrainRequest
-from jarvis.google_cli.resolver import resolve_google_cli
+from jarvis.google_cli.resolver import GoogleCli, resolve_google_cli
 
 log = logging.getLogger(__name__)
 
@@ -105,6 +105,33 @@ def _build_cli_prompt(req: BrainRequest) -> str:
     return "\n".join(lines)
 
 
+def _build_argv(cli: GoogleCli, prompt: str, model: str) -> list[str]:
+    """Build the headless argv for the resolved CLI — flags differ per binary.
+
+    * ``agy`` (Antigravity CLI 1.0.9): ``--print <prompt> --model <id>``. It has
+      neither ``--approval-mode`` nor ``-o json`` (live ``agy --help`` 2026-06-20);
+      output is plain text, which ``_parse_cli_answer`` handles via its raw
+      fallback. A read-only conversational answer needs no tool permissions.
+    * ``gemini`` (Gemini CLI): read-only ``--approval-mode plan`` + ``--skip-trust``
+      (so the throwaway workdir is trusted and the sandbox policy is not loaded —
+      forensic 2026-06-20) + ``-o json``.
+    """
+    if cli.kind == "agy":
+        return [*cli.argv_prefix, "--print", prompt, "--model", model]
+    return [
+        *cli.argv_prefix,
+        "-p",
+        prompt,
+        "-m",
+        model,
+        "--approval-mode",
+        "plan",
+        "--skip-trust",
+        "-o",
+        "json",
+    ]
+
+
 class AntigravityBrain:
     name: str = "antigravity"
     context_window: int = 1_048_576
@@ -123,17 +150,7 @@ class AntigravityBrain:
             )
 
         prompt = _build_cli_prompt(req)
-        argv = [
-            *cli.argv_prefix,
-            "-p",
-            prompt,
-            "-m",
-            self._model,
-            "--approval-mode",
-            "plan",
-            "-o",
-            "json",
-        ]
+        argv = _build_argv(cli, prompt, self._model)
         workdir = tempfile.mkdtemp(prefix="jarvis-antigravity-brain-")
         env = {k: v for k, v in os.environ.items() if k not in _DROP_ENV}
         creationflags = NO_WINDOW_CREATIONFLAGS if sys.platform == "win32" else 0

@@ -93,6 +93,40 @@ async def test_complete_raises_without_cli(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_argv_trusts_the_ephemeral_workdir(monkeypatch):
+    """The CLI must trust its own throwaway workdir, else it self-degrades.
+
+    Forensic 2026-06-20: the brain spawned the Gemini CLI in a fresh
+    ``tempfile.mkdtemp`` folder with ``--approval-mode plan``. Because that
+    folder is not a trusted workspace, the CLI logged "Approval mode overridden
+    to 'default' because the current folder is not trusted", then "Failed to
+    parse default sandbox policy" and exited rc=1 with an empty answer — forcing
+    a fallback to a different provider on every turn. ``--skip-trust`` trusts the
+    workspace for the session so ``plan`` (read-only) mode survives and no
+    sandbox policy is loaded.
+    """
+    monkeypatch.setattr(
+        agmod, "resolve_google_cli",
+        lambda: GoogleCli(kind="gemini", argv_prefix=["gemini"]),
+    )
+    captured: dict[str, object] = {}
+
+    async def _fake_exec(*args, **kwargs):
+        captured["argv"] = list(args)
+        return _FakeProc(b'{"response": "ok"}')
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+    brain = AntigravityBrain()
+    async for _ in brain.complete(_req()):
+        pass
+    argv = captured["argv"]
+    assert "--skip-trust" in argv
+    # Read-only conversational brain: approval mode stays "plan" (assert the
+    # value of the flag, not just that the word appears somewhere in argv).
+    assert argv[argv.index("--approval-mode") + 1] == "plan"
+
+
+@pytest.mark.asyncio
 async def test_complete_scrubs_api_key_env(monkeypatch):
     """The child must not inherit GEMINI_API_KEY (so the subscription login wins)."""
     monkeypatch.setenv("GEMINI_API_KEY", "should-not-leak")
@@ -113,3 +147,31 @@ async def test_complete_scrubs_api_key_env(monkeypatch):
     env = captured["env"]
     assert env is not None
     assert "GEMINI_API_KEY" not in env
+
+
+def test_build_argv_agy_uses_print_and_model():
+    """agy 1.0.9 has --print/--model but NOT the gemini-CLI flags --approval-mode
+    / -o json / --skip-trust (forensic 2026-06-20, live `agy --help`)."""
+    from jarvis.plugins.brain.antigravity import _build_argv
+
+    cli = GoogleCli(kind="agy", argv_prefix=["agy"])
+    argv = _build_argv(cli, "hello", "gemini-3.1-pro-preview")
+    assert argv[0] == "agy"
+    assert "--print" in argv
+    assert "hello" in argv
+    assert "--model" in argv
+    assert "gemini-3.1-pro-preview" in argv
+    assert "--approval-mode" not in argv
+    assert "-o" not in argv
+    assert "--skip-trust" not in argv
+
+
+def test_build_argv_gemini_keeps_skip_trust():
+    """The Gemini-CLI branch is unchanged (read-only plan + skip-trust + json)."""
+    from jarvis.plugins.brain.antigravity import _build_argv
+
+    cli = GoogleCli(kind="gemini", argv_prefix=["gemini"])
+    argv = _build_argv(cli, "hello", "gemini-3.5-flash")
+    assert "--print" in argv or "-p" in argv
+    assert "--skip-trust" in argv
+    assert "plan" in argv
