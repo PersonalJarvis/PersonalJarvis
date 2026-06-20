@@ -21,6 +21,7 @@ import { create } from "zustand";
 import enJson from "./locales/en.json";
 import deJson from "./locales/de.json";
 import esJson from "./locales/es.json";
+import { useEventStore } from "@/store/events";
 
 export type UiLanguage = "en" | "de" | "es";
 // "auto" mirrors the user's input language; the rest hard-pin the reply language.
@@ -204,9 +205,26 @@ function resolve(lang: UiLanguage, key: string): string {
   return tryLookup(RESOURCES[lang]) ?? tryLookup(RESOURCES.en) ?? key;
 }
 
+// The assistant-name token. Any locale value referring to the assistant by name
+// uses `{name}` instead of a hardcoded "Jarvis", so a rename (the configurable
+// assistant identity) propagates to EVERY translated string — headings, profile
+// copy, onboarding, etc. — through one substitution. Non-collision verified:
+// no other locale value contains a literal "{name}" (numeric placeholders use
+// the `{0}` form). The substitution is a no-op for strings without the token.
+const NAME_TOKEN = /\{name\}/g;
+
+export function interpolateName(text: string, name: string): string {
+  if (!name || !text.includes("{name}")) return text;
+  return text.replace(NAME_TOKEN, name);
+}
+
 export function useT(): (key: string) => string {
   const lang = useI18nStore((s) => s.ui);
-  return (key: string) => resolve(lang, key);
+  // Reactive: every t() consumer re-renders when the assistant name changes,
+  // so a Settings rename live-updates the whole UI. Selector-scoped, so other
+  // store mutations (voiceState, transcript, …) do NOT trigger a re-render.
+  const assistantName = useEventStore((s) => s.assistantName);
+  return (key: string) => interpolateName(resolve(lang, key), assistantName);
 }
 
 export function useUiLanguage(): UiLanguage {

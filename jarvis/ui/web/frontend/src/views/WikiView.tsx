@@ -19,6 +19,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { ViewHeader } from "@/views/ChatsView";
 import { cn } from "@/lib/utils";
+import { useEventStore } from "@/store/events";
 import { fetchWikiTree } from "@/lib/wikiApi";
 
 import { TreeSidebar } from "@/components/wiki/TreeSidebar";
@@ -317,6 +318,7 @@ function TabButton({
 }
 
 function EmptyState() {
+  const assistantName = useEventStore((s) => s.assistantName);
   return (
     <div className="flex flex-1 items-center justify-center p-6">
       <div
@@ -328,7 +330,7 @@ function EmptyState() {
           Dein Wiki ist noch leer.
         </h3>
         <p className="mb-2 text-sm text-muted-foreground">
-          Sobald Jarvis in einem Gespräch etwas Wichtiges aufschnappt, landet
+          Sobald {assistantName} in einem Gespräch etwas Wichtiges aufschnappt, landet
           es hier — Personen, Projekte, Vorlieben, Termine.
         </p>
         <p className="text-sm text-muted-foreground">

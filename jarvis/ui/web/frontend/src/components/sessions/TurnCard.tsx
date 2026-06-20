@@ -52,6 +52,12 @@ interface Props {
 
 export function TurnCard({ turn, spoken = [] }: Props) {
   const pushToast = useEventStore((s) => s.pushToast);
+  const assistantName = useEventStore((s) => s.assistantName);
+  // Override the subagent label so it follows the configured assistant name.
+  const kindLabel: Record<string, string> = {
+    ...SPOKEN_KIND_LABEL,
+    subagent: `${assistantName} Sub-Agent / Output`,
+  };
 
   const copyTurn = useCallback(async () => {
     const text = formatTurnPlain(turn, spoken);
@@ -196,10 +202,18 @@ export function TurnCard({ turn, spoken = [] }: Props) {
           <div className="space-y-1">
             <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-primary">
               <Volume2 className="h-3 w-3" />
-              Jarvis
+              {assistantName}
               <Badge variant="secondary" className="ml-1 text-[9px]">
                 {turn.jarvis_lang}
               </Badge>
+              {turn.awaiting_confirmation && (
+                <Badge
+                  variant="outline"
+                  className="ml-1 border-amber-400/40 text-[9px] text-amber-300"
+                >
+                  Awaiting confirmation
+                </Badge>
+              )}
             </div>
             <div className="rounded-md border border-primary/20 bg-primary/5 p-2 text-sm">
               {turn.jarvis_text}
@@ -241,7 +255,7 @@ export function TurnCard({ turn, spoken = [] }: Props) {
                           : "mt-0.5 shrink-0 text-[9px] uppercase tracking-wide"
                       }
                     >
-                      {SPOKEN_KIND_LABEL[s.spoken_kind] ?? s.spoken_kind}
+                      {kindLabel[s.spoken_kind] ?? s.spoken_kind}
                     </Badge>
                     <div className="min-w-0 flex-1">
                       <span className="break-words">{s.text}</span>
@@ -320,9 +334,10 @@ export function formatTurnPlain(
   }
   const jarvisLines: Array<{ ts_ms: number; lines: string[] }> = [];
   if (turn.jarvis_text) {
+    const prefix = turn.awaiting_confirmation ? "(awaiting confirmation) " : "";
     jarvisLines.push({
       ts_ms: turn.ended_ms ?? Number.MAX_SAFE_INTEGER,
-      lines: [`[JARVIS] ${turn.jarvis_text}`],
+      lines: [`[JARVIS] ${prefix}${turn.jarvis_text}`],
     });
   }
   for (const s of spoken) {

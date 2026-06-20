@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { AlertTriangle, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useEventStore } from "@/store/events";
 
 interface ViewErrorBoundaryProps {
   children: ReactNode;
@@ -71,7 +72,7 @@ export class ViewErrorBoundary extends Component<
                   Ansicht konnte nicht geladen werden
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {this.props.viewName} ist abgestuerzt. Jarvis bleibt bedienbar.
+                  {this.props.viewName} ist abgestuerzt. {useEventStore.getState().assistantName} bleibt bedienbar.
                 </p>
                 {this.state.message && (
                   <pre className="mt-3 max-h-32 overflow-auto rounded-md border border-border bg-background/80 p-3 text-xs text-muted-foreground">

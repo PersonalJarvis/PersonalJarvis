@@ -51,6 +51,11 @@ CREATE TABLE IF NOT EXISTS voice_turns (
     --              = wie lang Jarvis gesprochen hat (TTS-Playback-Dauer)
     think_ms           INTEGER NOT NULL DEFAULT 0,
     speak_ms           INTEGER NOT NULL DEFAULT 0,
+    -- 1 when the turn ended on a two-turn voice/chat confirmation
+    -- (finish_reason="voice_confirm_pending"): the reply is a pending yes/no
+    -- question, not a settled answer. Also added via _apply_migrations for
+    -- pre-existing DBs (the idempotent PRAGMA-guard makes both paths safe).
+    awaiting_confirmation INTEGER NOT NULL DEFAULT 0,
     tool_calls_json    TEXT NOT NULL DEFAULT '[]'  -- JSON-Array of tool-name strings
 );
 

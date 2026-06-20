@@ -39,6 +39,12 @@ vi.mock("@/components/ApiKeyForm", () => ({
     <div data-testid="keyform">{secretKey}</div>
   ),
 }));
+// The subagent section fetches /api/openclaw/status on mount, which jsdom has no
+// server for. Stub it so the step renders deterministically; its real behaviour
+// is covered by SubagentSection's own tests.
+vi.mock("@/components/SubagentSection", () => ({
+  SubagentSection: () => <div data-testid="subagent-section" />,
+}));
 vi.mock("@/hooks/useProviders", () => ({
   useProviders: () => ({ providers: PROVIDERS, loading: false, error: null, refetch }),
   switchBrainProvider,
@@ -67,24 +73,27 @@ function renderStep(over: Record<string, unknown> = {}) {
   return props;
 }
 
-it("pages Brain -> Voice -> Hearing, then advances the flow", () => {
-  const props = renderStep();
-  const next = () =>
-    fireEvent.click(screen.getByRole("button", { name: "onboarding.nav.next" }));
+it("shows every provider class and the subagent section at once", () => {
+  renderStep();
 
+  // All three tier headers are visible simultaneously — no paging.
   expect(screen.getByText("Brain — reasoning")).toBeTruthy();
+  expect(screen.getByText("Voice — text to speech")).toBeTruthy();
+  expect(screen.getByText("Hearing — speech to text")).toBeTruthy();
+
+  // ...and their providers, in order, in the same scroll container.
   expect(screen.getByText("Claude")).toBeTruthy();
   expect(screen.getByText("anthropic_api_key")).toBeTruthy();
-
-  next(); // -> Voice (TTS)
-  expect(screen.getByText("Voice — text to speech")).toBeTruthy();
   expect(screen.getByText("Cartesia")).toBeTruthy();
+  expect(screen.getByText("Deepgram")).toBeTruthy();
 
-  next(); // -> Hearing (STT)
-  expect(screen.getByText("Hearing — speech to text")).toBeTruthy();
-  expect(props.goNext).not.toHaveBeenCalled();
+  // The subagent class is folded in below the key tiers.
+  expect(screen.getByTestId("subagent-section")).toBeTruthy();
+});
 
-  next(); // last class -> advance the flow
+it("advances the flow directly on Next (no internal paging)", () => {
+  const props = renderStep();
+  fireEvent.click(screen.getByRole("button", { name: "onboarding.nav.next" }));
   expect(props.goNext).toHaveBeenCalledTimes(1);
 });
 
