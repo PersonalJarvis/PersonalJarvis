@@ -12,14 +12,19 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-try:
+if TYPE_CHECKING:
+    # Type-checkers see the real module so `sd.OutputStream` annotations resolve;
+    # at runtime the guarded import below binds sd (or None when absent).
     import sounddevice as sd
-except Exception:  # noqa: BLE001 — sounddevice/PortAudio (libportaudio2) absent (headless/slim)
-    sd = None  # type: ignore[assignment]
+else:
+    try:
+        import sounddevice as sd
+    except Exception:  # noqa: BLE001 — sounddevice/PortAudio (libportaudio2) absent (headless/slim)
+        sd = None  # type: ignore[assignment]
 
 from jarvis.audio import level_tap
 from jarvis.core.events import AudioOutFirst
