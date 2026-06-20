@@ -1742,6 +1742,23 @@ class CodexConfig(BaseModel):
     binary_path: str = ""
 
 
+class TeamProxyConfig(BaseModel):
+    """Client-side team / hosted-proxy mode (2026-06-20 team-proxy spec §4).
+
+    When ``enabled`` and a ``url`` is set, every provider whose id is NOT in
+    ``local_providers`` is routed through the proxy at ``{url}/p/{provider_id}``
+    using the per-user token (Credential Manager slot ``team_proxy_token`` /
+    ENV ``TEAM_PROXY_TOKEN``) instead of a real vendor key. ``local_providers``
+    is the escape hatch for providers that must stay direct/local (e.g. local
+    Whisper that should never leave the machine).
+    """
+
+    enabled: bool = False
+    url: str | None = None
+    local_providers: list[str] = Field(default_factory=list)
+    model_config = {"extra": "allow"}
+
+
 class JarvisConfig(BaseModel):
     """Root config model."""
     profile: ProfileConfig = Field(default_factory=ProfileConfig)
@@ -1810,6 +1827,10 @@ class JarvisConfig(BaseModel):
     pointer: PointerConfig = Field(default_factory=PointerConfig)
     # [codex] — OpenAI Codex CLI integration (binary path override).
     codex: CodexConfig = Field(default_factory=CodexConfig)
+    # [team_proxy] — client-side team/hosted-proxy mode (2026-06-20 spec). When
+    # enabled, providers are routed through a shared key proxy via a per-user
+    # token instead of holding real vendor keys locally.
+    team_proxy: TeamProxyConfig = Field(default_factory=TeamProxyConfig)
 
 
 # ----------------------------------------------------------------------
@@ -2057,10 +2078,23 @@ def resolve_provider_endpoint(
     provider's own configured secret (``get_provider_secret``). The ``config``
     argument exists for tests; production passes ``None`` → ``load_config()``.
 
-    This is purely additive: with no override configured, ``base_url`` equals the
-    vendor default (or ``None``) and behaviour is unchanged.
+    This is purely additive in direct mode: with no override configured,
+    ``base_url`` equals the vendor default (or ``None``) and behaviour is
+    unchanged.
+
+    Team mode (W2): when ``[team_proxy].enabled`` and a ``url`` is set and the
+    provider is not in ``local_providers``, the endpoint becomes
+    ``{url}/p/{provider_id}`` and the credential becomes the per-user team token
+    (``team_proxy_token``) — the same flip for every provider class.
     """
     cfg_obj = config if config is not None else load_config()
+
+    team = cfg_obj.team_proxy
+    if team.enabled and team.url and provider_id not in team.local_providers:
+        base_url = f"{team.url.rstrip('/')}/p/{provider_id}"
+        token = get_secret("team_proxy_token", "TEAM_PROXY_TOKEN")
+        return ResolvedEndpoint(base_url=base_url, credential=token, via_proxy=True)
+
     override: str | None = None
     prov = cfg_obj.brain.providers.get(provider_id)
     if prov is not None and prov.base_url:
