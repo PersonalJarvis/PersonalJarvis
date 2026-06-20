@@ -799,6 +799,17 @@
     "subtitle": "Palabra de activación, atajos, políticas de seguridad, inicio automático.",
     "overlay_taskbar_group_title": "Barra y superposición",
     "languages_group_title": "Idiomas",
+    "team_proxy": {
+      "title": "Modo equipo (proxy de claves compartido)",
+      "hint": "Enruta los proveedores a través de un proxy de claves compartido con un token por usuario, en lugar de guardar las claves reales en este equipo. Déjalo desactivado para la configuración local normal.",
+      "enable_label": "Usar un proxy de claves de equipo",
+      "url_label": "URL del proxy",
+      "token_label": "Tu token de equipo",
+      "token_placeholder": "Pega tu token por usuario",
+      "token_set_placeholder": "Token guardado — escribe para reemplazar",
+      "local_label": "Mantener estos proveedores en local (sin proxy)",
+      "save": "Guardar modo equipo"
+    },
     "app_settings_group_title": "Ajustes de la app",
     "jarvis_api": {
       "title": "{name} API",

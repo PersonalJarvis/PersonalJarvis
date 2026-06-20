@@ -799,6 +799,17 @@
     "subtitle": "Wake-word, hotkeys, safety policies, autostart.",
     "overlay_taskbar_group_title": "Bar & Overlay",
     "languages_group_title": "Languages",
+    "team_proxy": {
+      "title": "Team mode (shared key proxy)",
+      "hint": "Route providers through a shared key proxy with a per-user token instead of storing real vendor keys on this machine. Leave off for the normal local-key setup.",
+      "enable_label": "Use a team key proxy",
+      "url_label": "Proxy URL",
+      "token_label": "Your team token",
+      "token_placeholder": "Paste your per-user token",
+      "token_set_placeholder": "Token stored — type to replace",
+      "local_label": "Keep these providers local (not proxied)",
+      "save": "Save team mode"
+    },
     "app_settings_group_title": "App settings",
     "jarvis_api": {
       "title": "{name} API",

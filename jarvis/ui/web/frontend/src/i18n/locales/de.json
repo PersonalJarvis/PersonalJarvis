@@ -799,6 +799,17 @@
     "subtitle": "Wake-Word, Hotkeys, Safety-Policies, Autostart.",
     "overlay_taskbar_group_title": "Leiste & Overlay",
     "languages_group_title": "Sprachen",
+    "team_proxy": {
+      "title": "Team-Modus (geteilter Schlüssel-Proxy)",
+      "hint": "Provider über einen geteilten Schlüssel-Proxy mit persönlichem Token leiten, statt echte Anbieter-Schlüssel auf diesem Gerät zu speichern. Für das normale lokale Setup ausgeschaltet lassen.",
+      "enable_label": "Team-Schlüssel-Proxy verwenden",
+      "url_label": "Proxy-URL",
+      "token_label": "Dein Team-Token",
+      "token_placeholder": "Persönliches Token einfügen",
+      "token_set_placeholder": "Token gespeichert — zum Ersetzen tippen",
+      "local_label": "Diese Provider lokal lassen (nicht über den Proxy)",
+      "save": "Team-Modus speichern"
+    },
     "app_settings_group_title": "App-Einstellungen",
     "jarvis_api": {
       "title": "{name} API",
