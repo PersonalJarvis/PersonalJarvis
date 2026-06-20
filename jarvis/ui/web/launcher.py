@@ -307,7 +307,20 @@ async def _run_headless(cfg) -> int:
     # Bus is passed so mascot-originated user events (mute toggle on
     # doubleClick) can be republished on the EventBus where the voice
     # pipeline subscribes.
-    from jarvis.overlay.integration import start_overlay, stop_overlay
+    # Orb overlay is a desktop-only extra (separate `overlay` package). On a
+    # headless / cloud base install it isn't present — skip it cleanly so the
+    # server still boots (cloud-first). The no-op stubs keep the shutdown path
+    # (stop_overlay, below) valid. start_overlay itself no-ops when disabled.
+    try:
+        from jarvis.overlay.integration import start_overlay, stop_overlay
+    except ModuleNotFoundError:
+
+        async def start_overlay(*_a: object, **_k: object) -> None:  # type: ignore[misc]
+            return None
+
+        async def stop_overlay(*_a: object, **_k: object) -> None:  # type: ignore[misc]
+            return None
+
     await start_overlay(bus=server.bus)
 
     # Auto-start all enabled MCP servers as a fire-and-forget task
