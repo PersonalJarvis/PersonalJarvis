@@ -1,0 +1,5 @@
+# keyproxy runtime dependencies — deliberately minimal (cloud-first: boots on a
+# fresh python:3.11-slim with no desktop/GPU extras).
+fastapi>=0.110
+httpx>=0.27
+uvicorn[standard]>=0.29

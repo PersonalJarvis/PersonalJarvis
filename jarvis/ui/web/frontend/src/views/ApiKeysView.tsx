@@ -206,14 +206,14 @@ function ProviderCard({
         const note = result.restart_required
           ? " (active from next voice start)"
           : "";
-        pushToast("success", `Voice-Output → ${descriptor.label}${note}`);
+        pushToast("success", `Voice output → ${descriptor.label}${note}`);
         window.dispatchEvent(new CustomEvent("jarvis:tts-switched"));
       } else {
         const result = await switchSttProvider(descriptor.id);
         const note = result.restart_required
           ? " (active from next voice start)"
           : "";
-        pushToast("success", `Voice-Input → ${descriptor.label}${note}`);
+        pushToast("success", `Voice input → ${descriptor.label}${note}`);
         window.dispatchEvent(new CustomEvent("jarvis:stt-switched"));
       }
       onChanged();
@@ -290,9 +290,9 @@ function ProviderCard({
             <code className="font-mono">{descriptor.id}</code>
             {" · "}
             <span>
-              {descriptor.auth_mode === "api_key" && "API-Key-Auth"}
-              {descriptor.auth_mode === "codex" && "ChatGPT/Codex-Login"}
-              {descriptor.auth_mode === "none" && "Lokal — keine Auth"}
+              {descriptor.auth_mode === "api_key" && "API key auth"}
+              {descriptor.auth_mode === "codex" && "ChatGPT / Codex login"}
+              {descriptor.auth_mode === "none" && "Local — no auth"}
             </span>
           </p>
         </div>
@@ -457,12 +457,12 @@ function ActiveControl({
   disabled?: boolean;
 }) {
   const labelTitle = descriptor.active
-    ? "Dieser Provider ist aktiv"
+    ? "This provider is active"
     : disabled
-      ? "Erst einen OpenAI-API-Key setzen"
+      ? "Set an OpenAI API key first"
       : descriptor.configured
-        ? "Diesen Provider aktivieren"
-        : "Erst API-Key setzen";
+        ? "Activate this provider"
+        : "Set an API key first";
 
   return (
     <label
@@ -492,7 +492,7 @@ function ActiveControl({
         disabled={activating || disabled}
         className="accent-primary"
       />
-      {activating ? "Aktiviere…" : "Als aktiv"}
+      {activating ? "Activating…" : "Set active"}
     </label>
   );
 }
@@ -552,7 +552,7 @@ function CodexAuthWidget({
     setPending("copy");
     try {
       await navigator.clipboard.writeText(installCommand);
-      pushToast("success", "Installationsbefehl kopiert");
+      pushToast("success", "Install command copied");
     } catch {
       pushToast("warning", installCommand);
     } finally {
@@ -619,7 +619,7 @@ function CodexAuthWidget({
             className="ml-auto"
           >
             <LogOut className="h-3.5 w-3.5" />
-            Trennen
+            Disconnect
           </Button>
         </div>
       </div>
@@ -645,7 +645,7 @@ function CodexAuthWidget({
           </code>
           <Button size="sm" variant="outline" onClick={handleCopy} disabled={pending === "copy"}>
             {pending === "copy" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-            Befehl kopieren
+            Copy command
           </Button>
         </div>
       )}
@@ -653,12 +653,12 @@ function CodexAuthWidget({
       <div className="flex flex-wrap gap-2">
         <Button size="sm" onClick={handleLogin} disabled={pending !== null || !status?.installed}>
           <LogIn className="h-3.5 w-3.5" />
-          Mit ChatGPT verbinden
+          Connect with ChatGPT
         </Button>
         <Button size="sm" variant="outline" asChild>
           <a href="https://help.openai.com/en/articles/11381614" target="_blank" rel="noreferrer">
             <Terminal className="h-3.5 w-3.5" />
-            Codex installieren
+            Install Codex
           </a>
         </Button>
       </div>
@@ -668,17 +668,17 @@ function CodexAuthWidget({
 }
 
 function StatusBadge({ descriptor }: { descriptor: ProviderDescriptor }) {
-  if (descriptor.active) return <span className="chip-yellow">aktiv</span>;
+  if (descriptor.active) return <span className="chip-yellow">active</span>;
   if (descriptor.auth_mode === "codex") {
     const status = descriptor.codex_status;
     if (!status?.installed) {
-      return <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-destructive">fehlt</span>;
+      return <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-destructive">missing</span>;
     }
     if (descriptor.configured) {
-      return <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">eingerichtet</span>;
+      return <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">ready</span>;
     }
-    return <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">nicht verbunden</span>;
+    return <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">not connected</span>;
   }
-  if (descriptor.configured) return <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">eingerichtet</span>;
-  return <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">offen</span>;
+  if (descriptor.configured) return <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">ready</span>;
+  return <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">open</span>;
 }

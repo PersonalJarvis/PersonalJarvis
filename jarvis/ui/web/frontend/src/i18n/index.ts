@@ -218,6 +218,21 @@ export function interpolateName(text: string, name: string): string {
   return text.replace(NAME_TOKEN, name);
 }
 
+/**
+ * Imperative, non-hook translate accessor.
+ *
+ * `useT` is a React hook and is illegal outside a component body (class
+ * components, module-level helpers). This reads the current UI language from
+ * the store directly — the same pattern the codebase already uses via
+ * `useEventStore.getState()`. It interpolates the assistant name too, so the
+ * `{name}` token works the same as in `useT`.
+ */
+export function translate(key: string): string {
+  const lang = useI18nStore.getState().ui;
+  const name = useEventStore.getState().assistantName;
+  return interpolateName(resolve(lang, key), name);
+}
+
 export function useT(): (key: string) => string {
   const lang = useI18nStore((s) => s.ui);
   // Reactive: every t() consumer re-renders when the assistant name changes,

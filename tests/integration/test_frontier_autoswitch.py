@@ -21,12 +21,7 @@ from jarvis.brain.frontier_autoswitch import (
     get_pending_switches,
 )
 from jarvis.core.bus import EventBus
-from jarvis.core.config import (
-    BrainConfig,
-    BrainProviderConfig,
-    BrainTierConfig,
-    JarvisConfig,
-)
+from jarvis.core.config import JarvisConfig
 from jarvis.core.events import FrontierModelSwitched
 
 
@@ -54,6 +49,9 @@ def _make_config_with_old_models() -> JarvisConfig:
     cfg = JarvisConfig.model_validate({
         "brain": {
             "primary": "claude-api",
+            # The auto-switch is opt-in (default False); these tests exercise the
+            # enabled apply path, so turn it on explicitly.
+            "frontier_auto_apply": True,
             "providers": {
                 "gemini": {
                     "model": "gemini-2.5-flash",
@@ -155,6 +153,39 @@ async def test_apply_switches_when_resolver_returns_newer_models(
     # Pending-Modal-Queue gefuellt
     pending = get_pending_switches()
     assert len(pending) == 3
+
+
+@pytest.mark.asyncio
+async def test_disabled_by_default_is_noop(
+    _mock_toml_persist: list[tuple[str, dict[str, str | None]]],
+) -> None:
+    """With ``brain.frontier_auto_apply`` unset (default False) the boot hook is
+    a complete no-op: no resolver call, no TOML/soll persist, no mutation, no
+    event, no pending — even though newer models are available. User mandate
+    2026-06-20: providers/models must NOT switch by themselves.
+    """
+    cfg = _make_config_with_old_models()
+    # Flip the flag back off — the default the user actually runs with.
+    cfg.brain.frontier_auto_apply = False
+    resolver = _StubResolver({
+        ("gemini", "fast"): "gemini-3-flash",
+        ("gemini", "deep"): "gemini-3.1-pro-preview",
+        ("grok", "fast"): "grok-4.1-fast",
+    })
+    bus = EventBus()
+    received: list[FrontierModelSwitched] = []
+    bus.subscribe(FrontierModelSwitched, lambda e: received.append(e))
+
+    switches = await apply_frontier_resolution(cfg, resolver, bus)
+
+    assert switches == []
+    assert resolver.calls == []           # resolver never queried
+    assert _mock_toml_persist == []       # nothing persisted to TOML/soll
+    assert cfg.brain.providers["gemini"].model == "gemini-2.5-flash"  # unmutated
+    assert get_pending_switches() == []
+    import asyncio
+    await asyncio.sleep(0.01)
+    assert received == []
 
 
 @pytest.mark.asyncio

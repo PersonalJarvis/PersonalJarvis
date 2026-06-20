@@ -1,0 +1,11 @@
+tests/
+__pycache__/
+*.pyc
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.ruff_cache/
+.pytest_cache/
+README.md
+.dockerignore
+Dockerfile

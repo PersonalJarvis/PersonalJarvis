@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { AlertTriangle, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { translate } from "@/i18n";
 import { useEventStore } from "@/store/events";
 
 interface ViewErrorBoundaryProps {
@@ -69,10 +70,12 @@ export class ViewErrorBoundary extends Component<
               </div>
               <div className="min-w-0 flex-1">
                 <h2 className="font-display text-base font-semibold">
-                  Ansicht konnte nicht geladen werden
+                  {translate("view_error_boundary.title")}
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {this.props.viewName} ist abgestuerzt. {useEventStore.getState().assistantName} bleibt bedienbar.
+                  {this.props.viewName} {translate("view_error_boundary.crashed_prefix")}{" "}
+                  {useEventStore.getState().assistantName}{" "}
+                  {translate("view_error_boundary.crashed_suffix")}
                 </p>
                 {this.state.message && (
                   <pre className="mt-3 max-h-32 overflow-auto rounded-md border border-border bg-background/80 p-3 text-xs text-muted-foreground">
@@ -81,7 +84,7 @@ export class ViewErrorBoundary extends Component<
                 )}
                 <Button className="mt-4" size="sm" onClick={this.recover}>
                   <RotateCcw className="h-3.5 w-3.5" />
-                  <span className="ml-1.5">Zurueck zu Chats</span>
+                  <span className="ml-1.5">{translate("view_error_boundary.back_to_chats")}</span>
                 </Button>
               </div>
             </div>

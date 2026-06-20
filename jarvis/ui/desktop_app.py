@@ -1399,26 +1399,6 @@ class DesktopApp:
         )
         return True
 
-    def _signal_voice_offline(self) -> None:
-        """Clear the overlay's "voice starting up" indicator when the speech
-        pipeline failed to come up.
-
-        The bar/mascot shows the boot loading look until
-        ``VoiceBootStatus(ready=True)`` arms the wake word. If the pipeline
-        crashes at startup that signal never arrives, so the boot indicator
-        would otherwise stick. Called from the voice-offline paths. Fully
-        guarded: no bridge (headless) or an older bridge without the hook is a
-        safe no-op.
-        """
-        bridge = getattr(self, "_bridge", None)
-        notify = getattr(bridge, "notify_voice_offline", None)
-        if not callable(notify):
-            return
-        try:
-            notify()
-        except Exception:  # noqa: BLE001 — never let cleanup raise on a crash path
-            pass
-
     def _start_speech_and_orb(
         self,
         loop: asyncio.AbstractEventLoop,
@@ -1779,10 +1759,6 @@ class DesktopApp:
                     logger.opt(exception=exc).error(
                         "Speech-Pipeline gestorben — Voice offline bis Restart."
                     )
-                    # Wake word will never arm — clear the bar/mascot boot
-                    # loading look so it does not stay stuck (this runs on the
-                    # event loop, so the timeout cancel is in-loop and clean).
-                    self._signal_voice_offline()
 
             self._pipeline_task.add_done_callback(_on_pipeline_done)
             logger.info("Speech-Pipeline gestartet — Wake: 'Hey Jarvis'.")
@@ -1799,11 +1775,6 @@ class DesktopApp:
                 "VOICE OFFLINE — Speech-Pipeline crashed at startup; "
                 "'Hey Jarvis' will not respond until restart."
             )
-            # The wake word never armed — clear the bar/mascot boot loading look
-            # so it does not stay stuck on a startup crash. _boot_timeout_task is
-            # None here (it is only armed once warm-up actually emits
-            # ready=False), so this is a clean, in-thread surface revert.
-            self._signal_voice_offline()
             try:
                 from jarvis.audio.alerts import play_voice_offline_alert
                 loop.create_task(

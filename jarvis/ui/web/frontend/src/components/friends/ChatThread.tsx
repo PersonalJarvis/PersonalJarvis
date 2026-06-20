@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Loader2, Send } from "lucide-react";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useT } from "@/i18n";
 import {
   useFriendMessages,
   useSendFriendMessage,
@@ -21,6 +22,7 @@ import { cn } from "@/lib/utils";
  * Wenn der Friend keinen verknuepften Channel hat, ist der Send-Pfad disabled.
  */
 export function ChatThread({ friend }: { friend: FriendDetail }) {
+  const t = useT();
   const messages = useFriendMessages(friend.id);
   const send = useSendFriendMessage();
   const [draft, setDraft] = useState("");
@@ -55,7 +57,7 @@ export function ChatThread({ friend }: { friend: FriendDetail }) {
           <SourceBadge channels={friend.channels} />
         </div>
         <span className="rounded-md border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-          Profil: {friend.permission_profile}
+          {t("chat_thread.profile")}: {friend.permission_profile}
         </span>
       </header>
 
@@ -83,8 +85,8 @@ export function ChatThread({ friend }: { friend: FriendDetail }) {
           onChange={(e) => setDraft(e.target.value)}
           placeholder={
             hasChannel
-              ? "Nachricht an " + friend.display_name + " ..."
-              : "Kein Channel verknuepft - Outbound nicht moeglich"
+              ? `${t("chat_thread.message_to")} ${friend.display_name} ...`
+              : t("chat_thread.no_channel_placeholder")
           }
           disabled={!hasChannel || send.isPending}
           className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-primary/40 focus:outline-none disabled:opacity-60"
@@ -99,13 +101,13 @@ export function ChatThread({ friend }: { friend: FriendDetail }) {
           ) : (
             <Send className="h-3 w-3" />
           )}
-          Senden
+          {t("chat_thread.send")}
         </button>
       </form>
 
       {send.isError && (
         <div className="border-t border-destructive/40 bg-destructive/10 px-5 py-2 text-xs text-destructive">
-          Senden fehlgeschlagen: {(send.error as Error).message}
+          {t("chat_thread.send_failed")}: {(send.error as Error).message}
         </div>
       )}
     </div>
@@ -140,12 +142,13 @@ function FriendMessageBubble({ message }: { message: FriendMessage }) {
 }
 
 function EmptyThread({ hasChannel }: { hasChannel: boolean }) {
+  const t = useT();
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2 px-8 text-center text-sm text-muted-foreground">
-      <span>Noch keine Nachrichten</span>
+      <span>{t("chat_thread.no_messages")}</span>
       {!hasChannel && (
         <span className="rounded-md border border-dashed border-border/60 px-3 py-1 text-[11px]">
-          Verknuepfe einen Channel (Telegram/Jarvis), um zu schreiben
+          {t("chat_thread.link_channel_hint")}
         </span>
       )}
     </div>

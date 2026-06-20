@@ -49,3 +49,55 @@ def test_loads_config_when_not_injected(monkeypatch):
     monkeypatch.setattr(cfg, "load_config", lambda: _cfg_with("openai", "https://p/v1"))
     res = resolve_provider_endpoint("openai", vendor_default_base_url=None)
     assert res.base_url == "https://p/v1"
+
+
+# ── W2: team-mode flip ──────────────────────────────────────────────────────
+from jarvis.core.config import TeamProxyConfig  # noqa: E402
+
+
+def _team_cfg(url: str, *, enabled: bool = True, local: list[str] | None = None) -> JarvisConfig:
+    return JarvisConfig(
+        team_proxy=TeamProxyConfig(enabled=enabled, url=url, local_providers=local or [])
+    )
+
+
+def test_team_mode_routes_through_proxy(monkeypatch):
+    monkeypatch.setattr(cfg, "get_provider_secret", lambda pid: "sk-real")
+    monkeypatch.setattr(cfg, "get_secret", lambda key, env=None: "tok-123")
+    res = resolve_provider_endpoint(
+        "grok",
+        vendor_default_base_url="https://api.x.ai/v1",
+        config=_team_cfg("https://keys.acme.dev"),
+    )
+    assert res.base_url == "https://keys.acme.dev/p/grok"
+    assert res.credential == "tok-123"
+    assert res.via_proxy is True
+
+
+def test_team_mode_trailing_slash_normalized(monkeypatch):
+    monkeypatch.setattr(cfg, "get_secret", lambda key, env=None: "tok-123")
+    res = resolve_provider_endpoint("openai", config=_team_cfg("https://keys.acme.dev/"))
+    assert res.base_url == "https://keys.acme.dev/p/openai"
+
+
+def test_team_mode_local_provider_stays_direct(monkeypatch):
+    monkeypatch.setattr(cfg, "get_provider_secret", lambda pid: "sk-real")
+    monkeypatch.setattr(cfg, "get_secret", lambda key, env=None: "tok-123")
+    res = resolve_provider_endpoint(
+        "faster-whisper",
+        vendor_default_base_url=None,
+        config=_team_cfg("https://keys.acme.dev", local=["faster-whisper"]),
+    )
+    assert res.via_proxy is False
+    assert res.credential == "sk-real"
+
+
+def test_team_mode_disabled_stays_direct(monkeypatch):
+    monkeypatch.setattr(cfg, "get_provider_secret", lambda pid: "sk-real")
+    res = resolve_provider_endpoint(
+        "grok",
+        vendor_default_base_url="https://api.x.ai/v1",
+        config=_team_cfg("https://keys.acme.dev", enabled=False),
+    )
+    assert res.via_proxy is False
+    assert res.base_url == "https://api.x.ai/v1"

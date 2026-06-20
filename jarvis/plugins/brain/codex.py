@@ -208,6 +208,31 @@ class CodexBrain:
         deadline = t0 + _CLI_TIMEOUT_S
         stdout_bytes = b""
         stderr_bytes = b""
+
+        async def _kill_cli_process() -> None:
+            if not comm_task.done():
+                comm_task.cancel()
+            pid = getattr(proc, "pid", None)
+            if sys.platform == "win32" and isinstance(pid, int) and pid > 0:
+                with suppress(Exception):  # noqa: BLE001
+                    killer = await asyncio.create_subprocess_exec(
+                        "taskkill",
+                        "/PID",
+                        str(pid),
+                        "/T",
+                        "/F",
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL,
+                        creationflags=creationflags,
+                    )
+                    await asyncio.wait_for(killer.wait(), timeout=3.0)
+            with suppress(OSError):
+                proc.kill()
+            with suppress(Exception):  # noqa: BLE001
+                await asyncio.wait_for(proc.wait(), timeout=3.0)
+            with suppress(asyncio.CancelledError, Exception):
+                await comm_task
+
         try:
             while True:
                 slice_timeout = min(3.0, deadline - time.monotonic())
@@ -220,12 +245,12 @@ class CodexBrain:
                 # No-text progress tick: keeps the caller's no-progress deadline
                 # alive through the ~20 s codex spin-up (yields nothing visible).
                 yield BrainDelta(content="")
+        except asyncio.CancelledError:
+            await _kill_cli_process()
+            log.info("CodexBrain CLI: cancelled (killed)")
+            raise
         except TimeoutError as exc:
-            comm_task.cancel()
-            with suppress(ProcessLookupError):
-                proc.kill()
-            with suppress(Exception):
-                await asyncio.wait_for(proc.wait(), timeout=3.0)
+            await _kill_cli_process()
             log.warning(
                 "CodexBrain CLI: no answer within %.0fs (killed)", _CLI_TIMEOUT_S
             )

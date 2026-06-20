@@ -12,6 +12,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { cn } from "@/lib/utils";
 import { fetchWikiTree, type WikiTreeFolder } from "@/lib/wikiApi";
+import { useT } from "@/i18n";
 
 interface TreeSidebarProps {
   selectedSlug: string | null;
@@ -29,6 +30,7 @@ const FOLDER_SWATCH: Record<string, string> = {
 const DEFAULT_OPEN = new Set(["entities", "projects"]);
 
 export function TreeSidebar({ selectedSlug, onSelect }: TreeSidebarProps) {
+  const t = useT();
   const { data, isLoading, isError } = useQuery({
     queryKey: ["wiki", "tree"],
     queryFn: fetchWikiTree,
@@ -104,7 +106,7 @@ export function TreeSidebar({ selectedSlug, onSelect }: TreeSidebarProps) {
             role="alert"
             className="m-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
           >
-            Konnte das Wiki nicht laden.
+            {t("tree_sidebar.load_error")}
           </div>
         )}
 
@@ -193,7 +195,7 @@ export function TreeSidebar({ selectedSlug, onSelect }: TreeSidebarProps) {
             <span className="text-foreground">{stats.total_links}</span>
           </div>
           <div className="flex justify-between">
-            <span>Letzte Änderung</span>
+            <span>{t("tree_sidebar.last_change")}</span>
             <span className="text-foreground">{lastChangedLabel}</span>
           </div>
         </div>

@@ -22,6 +22,7 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEventStore } from "@/store/events";
+import { useT } from "@/i18n";
 
 const POLL_INTERVAL_MS = 3_000;
 const MAX_ATTEMPTS = 100; // 100 * 3s = 5 Minuten
@@ -31,6 +32,7 @@ export function CliConnectPoller() {
   const setCoach = useEventStore((s) => s.setCliConnectCoach);
   const pushToast = useEventStore((s) => s.pushToast);
   const qc = useQueryClient();
+  const t = useT();
   const attemptsRef = useRef(0);
 
   useEffect(() => {
@@ -52,7 +54,7 @@ export function CliConnectPoller() {
         const data = (await r.json()) as { connected?: boolean };
         if (cancelled) return;
         if (data.connected) {
-          pushToast("success", `${coach.displayName} verbunden`);
+          pushToast("success", `${coach.displayName} ${t("cli_connect_poller.connected")}`);
           qc.invalidateQueries({ queryKey: ["clis"] });
           qc.invalidateQueries({ queryKey: ["cli", coach.cliName] });
           setCoach(null);
@@ -61,7 +63,7 @@ export function CliConnectPoller() {
         if (attemptsRef.current >= MAX_ATTEMPTS) {
           pushToast(
             "warning",
-            `${coach.displayName}: Login nicht abgeschlossen`,
+            `${coach.displayName}: ${t("cli_connect_poller.login_incomplete")}`,
           );
           setCoach(null);
         }

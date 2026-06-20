@@ -106,6 +106,13 @@ def test_arbitrary_phrase_tolerates_transcription_drift() -> None:
     assert m.search("hey athena") is not None
 
 
+def test_arbitrary_phrase_tolerates_diacritic_transcription_drift() -> None:
+    # Cloud/local STT may add or remove accents for names. A typed wake word
+    # like "Alex" must still fire when the transcript comes back as "Rubén".
+    m = compile_wake_matcher("Alex")
+    assert m.search("hey rubén") is not None
+
+
 def test_prefix_phrase_strips_prefix_so_core_word_alone_matches() -> None:
     # "Hey Athena" -> core is "athena"; bare "athena" in the transcript fires.
     m = compile_wake_matcher("Hey Athena")

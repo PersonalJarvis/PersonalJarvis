@@ -25,6 +25,7 @@ import { ArrowLeft, Brain, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useT } from "@/i18n";
 import type { SubAgentNode, ToolCallEntry } from "@/store/subAgents";
 
 import { getToolAppearance, type ToolAppearance } from "./tool-icons";
@@ -99,6 +100,7 @@ export function ToolsCanvas({
   agent: SubAgentNode;
   onBack: () => void;
 }) {
+  const t = useT();
   const toolCalls = agent.tool_calls;
 
   // Layout: Tools in einem Grid, bis zu 4 pro Zeile.
@@ -181,10 +183,10 @@ export function ToolsCanvas({
           <button
             onClick={onBack}
             className="text-zinc-400 hover:text-zinc-100 p-1.5 rounded hover:bg-zinc-800 flex items-center gap-1.5 text-xs"
-            title="Zurück zur Agents-Übersicht"
+            title={t("tools_canvas.back_tooltip")}
           >
             <ArrowLeft className="h-4 w-4" />
-            Zurück
+            {t("common.back")}
           </button>
           <div className="h-6 w-px bg-zinc-800" />
           <div className="flex items-center gap-2 min-w-0">
@@ -194,7 +196,8 @@ export function ToolsCanvas({
                 {agent.name}
               </div>
               <div className="text-[11px] text-zinc-500 truncate">
-                {toolCalls.length} Tool-Calls · {runningCount} aktiv
+                {toolCalls.length} {t("tools_canvas.tool_calls")} · {runningCount}{" "}
+                {t("tools_canvas.active")}
                 {agent.utterance && <> · „{agent.utterance}"</>}
               </div>
             </div>
@@ -264,6 +267,7 @@ function ToolDetailSheet({
   appearance: ToolAppearance;
   onClose: () => void;
 }) {
+  const t = useT();
   const { Icon } = appearance;
   return (
     <motion.div
@@ -293,16 +297,19 @@ function ToolDetailSheet({
           onClick={onClose}
           className="text-zinc-400 hover:text-zinc-100 text-xs px-2 py-1 rounded hover:bg-zinc-800"
         >
-          schließen
+          {t("common.close")}
         </button>
       </header>
 
       <ScrollArea className="flex-1">
         <div className="p-4 text-xs text-zinc-300 space-y-3">
           <div className="flex flex-wrap gap-3">
-            <KV label="Status" value={tool.status} />
+            <KV label={t("common.status")} value={tool.status} />
             {tool.duration_ms !== undefined && (
-              <KV label="Dauer" value={`${(tool.duration_ms / 1000).toFixed(2)}s`} />
+              <KV
+                label={t("tools_canvas.duration")}
+                value={`${(tool.duration_ms / 1000).toFixed(2)}s`}
+              />
             )}
           </div>
 
@@ -311,7 +318,7 @@ function ToolDetailSheet({
               Arguments
             </div>
             <pre className="rounded bg-zinc-800/60 p-2 text-[11px] whitespace-pre-wrap text-zinc-200 break-all">
-              {tool.args_preview || "(leer)"}
+              {tool.args_preview || t("tools_canvas.empty")}
             </pre>
           </div>
 
@@ -347,17 +354,17 @@ function KV({ label, value }: { label: string; value: string }) {
 }
 
 function EmptyTools({ agentName }: { agentName: string }) {
+  const t = useT();
   return (
     <div className="h-full flex flex-col items-center justify-center text-center px-8 gap-3">
       <div className="rounded-full bg-zinc-900 border border-zinc-800 p-4">
         <Sparkles className="h-8 w-8 text-violet-400" />
       </div>
       <h2 className="text-base font-medium text-zinc-100">
-        {agentName} hat noch keine Tools aufgerufen.
+        {agentName} {t("tools_canvas.no_tools_yet")}
       </h2>
       <p className="max-w-md text-sm text-zinc-500">
-        Sobald der OpenClaw-Worker ein Tool triggert (z.&nbsp;B. dispatch_to_harness,
-        run_shell, screenshot), erscheint es hier als Icon-Node.
+        {t("tools_canvas.no_tools_explainer")}
       </p>
     </div>
   );

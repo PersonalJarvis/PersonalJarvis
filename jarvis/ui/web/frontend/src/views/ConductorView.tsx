@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import { translate, useT } from "@/i18n";
 import {
   useConductorDashboard,
   useCreateConductorJob,
@@ -61,6 +62,7 @@ const SCHED_ICON: Record<string, typeof Clock> = {
 // ---------------------------------------------------------------------
 
 export function ConductorView() {
+  const t = useT();
   const { data, isLoading, error, refetch, isRefetching } =
     useConductorDashboard();
   const [editorOpen, setEditorOpen] = useState(false);
@@ -88,7 +90,7 @@ export function ConductorView() {
               onClick={() => setEditorOpen(true)}
             >
               <Plus className="mr-1 h-4 w-4" />
-              Neuer Job
+              {t("conductor_view.new_job")}
             </Button>
             <Button
               size="sm"
@@ -115,11 +117,11 @@ export function ConductorView() {
           <ScrollArea className="flex-1">
             <div className="space-y-2 px-5 pb-6">
               {isLoading && (
-                <div className="text-sm text-muted-foreground">Lade Jobs…</div>
+                <div className="text-sm text-muted-foreground">{t("conductor_view.loading_jobs")}</div>
               )}
               {error && (
                 <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
-                  Conductor-API antwortet nicht: {(error as Error).message}
+                  {t("conductor_view.api_unreachable")}: {(error as Error).message}
                 </div>
               )}
               {!isLoading && !error && jobs.length === 0 && <EmptyJobs />}
@@ -171,6 +173,7 @@ function SummaryBar({
   jobCount: number;
   runCount: number;
 }) {
+  const t = useT();
   return (
     <div className="flex items-center gap-3 border-b border-border bg-background/30 px-5 py-2.5">
       <StatChip
@@ -180,7 +183,7 @@ function SummaryBar({
       />
       <StatChip
         icon={<Play className="h-3.5 w-3.5 text-emerald-400" />}
-        label="Aktiv"
+        label={t("conductor_view.stat_active")}
         value={String(summary?.enabled ?? 0)}
       />
       <StatChip
@@ -199,7 +202,7 @@ function SummaryBar({
         value={String(summary?.by_type?.shell ?? 0)}
       />
       <div className="ml-auto text-xs text-muted-foreground">
-        {runCount} Runs (letzte 30)
+        {runCount} {t("conductor_view.runs_last_30")}
       </div>
     </div>
   );
@@ -230,6 +233,7 @@ function StatChip({
 // ---------------------------------------------------------------------
 
 function JobCard({ job }: { job: JobSummary }) {
+  const t = useT();
   const runMut = useRunConductorJob();
   const toggleMut = useToggleConductorJob();
   const deleteMut = useDeleteConductorJob();
@@ -268,12 +272,12 @@ function JobCard({ job }: { job: JobSummary }) {
           </p>
           {job.tags.length > 0 && (
             <div className="mt-1.5 flex flex-wrap gap-1">
-              {job.tags.map((t) => (
+              {job.tags.map((tag) => (
                 <span
-                  key={t}
+                  key={tag}
                   className="rounded-full border border-border bg-background/60 px-2 py-0.5 text-[10px] text-muted-foreground"
                 >
-                  #{t}
+                  #{tag}
                 </span>
               ))}
             </div>
@@ -303,11 +307,17 @@ function JobCard({ job }: { job: JobSummary }) {
             size="sm"
             variant="ghost"
             onClick={() => {
-              if (window.confirm(`Job "${job.name}" wirklich löschen?`))
+              if (
+                window.confirm(
+                  `${t("conductor_view.delete_confirm_prefix")} "${job.name}" ${t(
+                    "conductor_view.delete_confirm_suffix",
+                  )}`,
+                )
+              )
                 deleteMut.mutate(job.id);
             }}
             disabled={deleteMut.isPending}
-            title="Löschen"
+            title={t("common.delete")}
           >
             <Trash2 className="h-4 w-4" />
           </Button>
@@ -476,6 +486,7 @@ const EXAMPLE_SHELL_JSON = `{
 }`;
 
 function JobEditorModal({ onClose }: { onClose: () => void }) {
+  const t = useT();
   const [text, setText] = useState(EXAMPLE_SHELL_JSON);
   const [err, setErr] = useState<string | null>(null);
   const createMut = useCreateConductorJob();
@@ -486,7 +497,7 @@ function JobEditorModal({ onClose }: { onClose: () => void }) {
     try {
       parsed = JSON.parse(text);
     } catch (e) {
-      setErr("JSON-Syntaxfehler: " + (e as Error).message);
+      setErr(`${t("conductor_view.json_syntax_error")}: ${(e as Error).message}`);
       return;
     }
     try {
@@ -509,7 +520,7 @@ function JobEditorModal({ onClose }: { onClose: () => void }) {
         <div className="flex items-center justify-between border-b border-border px-5 py-3">
           <div className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-primary" />
-            <h2 className="text-sm font-semibold">Neuer Job</h2>
+            <h2 className="text-sm font-semibold">{t("conductor_view.new_job")}</h2>
             <Badge variant="outline" className="text-[10px]">
               JSON
             </Badge>
@@ -524,7 +535,7 @@ function JobEditorModal({ onClose }: { onClose: () => void }) {
         </div>
         <div className="flex-1 overflow-auto p-4">
           <p className="mb-3 text-xs text-muted-foreground">
-            Jobs sind JSON — kopierbar, diffbar, git-friendly. Drei Types:{" "}
+            {t("conductor_view.editor_intro")}{" "}
             <code className="rounded bg-background/60 px-1">shell</code>,{" "}
             <code className="rounded bg-background/60 px-1">http</code>,{" "}
             <code className="rounded bg-background/60 px-1">agent</code>.
@@ -548,7 +559,7 @@ function JobEditorModal({ onClose }: { onClose: () => void }) {
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-border bg-background/30 px-4 py-3">
           <Button variant="ghost" size="sm" onClick={onClose}>
-            Abbrechen
+            {t("common.cancel")}
           </Button>
           <Button size="sm" onClick={submit} disabled={createMut.isPending}>
             {createMut.isPending ? (
@@ -556,7 +567,7 @@ function JobEditorModal({ onClose }: { onClose: () => void }) {
             ) : (
               <Plus className="mr-1 h-3.5 w-3.5" />
             )}
-            Anlegen
+            {t("conductor_view.create")}
           </Button>
         </div>
       </div>
@@ -569,25 +580,27 @@ function JobEditorModal({ onClose }: { onClose: () => void }) {
 // ---------------------------------------------------------------------
 
 function EmptyJobs() {
+  const t = useT();
   return (
     <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/60 bg-background/30 p-8 text-center">
       <Orbit className="h-6 w-6 text-muted-foreground/50" />
       <p className="text-sm text-muted-foreground">
-        Noch keine Jobs. Drücke "Neuer Job" oben rechts.
+        {t("conductor_view.empty_jobs")}
       </p>
       <p className="text-xs text-muted-foreground/60">
-        Beim ersten Start werden 3 Demo-Jobs geseedet.
+        {t("conductor_view.empty_jobs_hint")}
       </p>
     </div>
   );
 }
 
 function EmptyTimeline() {
+  const t = useT();
   return (
     <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/60 bg-background/30 p-8 text-center">
       <Clock className="h-6 w-6 text-muted-foreground/50" />
       <p className="text-sm text-muted-foreground">
-        Noch keine Runs — klick auf Play bei einem Job.
+        {t("conductor_view.empty_timeline")}
       </p>
     </div>
   );
@@ -599,7 +612,7 @@ function EmptyTimeline() {
 
 function formatDeltaPast(ns: number): string {
   const delta = Date.now() * 1e6 - ns;
-  if (delta <= 0) return "jetzt";
+  if (delta <= 0) return translate("conductor_view.now");
   const sec = Math.round(delta / 1e9);
   if (sec < 60) return `${sec}s`;
   const min = Math.round(sec / 60);

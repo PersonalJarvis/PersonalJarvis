@@ -22,6 +22,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import {
   MISSION_STATE_BADGE,
@@ -148,6 +149,7 @@ export function MissionTree() {
 }
 
 function NodeRenderer({ node, style, dragHandle }: NodeRendererProps<TreeNode>) {
+  const t = useT();
   const data = node.data;
   const isMission = data.kind === "mission";
   const meta: MissionStateBadgeMeta | null =
@@ -205,7 +207,7 @@ function NodeRenderer({ node, style, dragHandle }: NodeRendererProps<TreeNode>) 
             meta.className,
           )}
         >
-          {meta.label}
+          {t(meta.labelKey)}
         </span>
       )}
     </div>

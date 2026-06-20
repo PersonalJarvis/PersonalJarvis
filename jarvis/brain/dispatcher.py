@@ -151,8 +151,14 @@ class BrainDispatcher:
             stream=True,
         )
         if text_consumer is not None:
+            def _delta_progress(_delta: object) -> None:
+                if on_progress is not None:
+                    on_progress()
+
             return await aggregate_with_consumer(
-                self._brain.complete(req), text_consumer,
+                self._brain.complete(req),
+                text_consumer,
+                delta_consumer=_delta_progress if on_progress is not None else None,
             )
         from .streaming import aggregate
         return await aggregate(self._brain.complete(req))
