@@ -100,6 +100,9 @@ export function useWakeWord() {
       }
       const result = body as WakeWordSaveResult;
       window.dispatchEvent(new CustomEvent("jarvis:wake-word-changed"));
+      // The assistant's display name is derived from the wake phrase, so bylines
+      // that read from /api/settings/assistant-name must re-seed on every save.
+      window.dispatchEvent(new CustomEvent("jarvis:assistant-name-changed"));
       return result;
     },
     [],

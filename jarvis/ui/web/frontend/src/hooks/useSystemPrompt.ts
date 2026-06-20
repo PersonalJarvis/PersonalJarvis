@@ -20,7 +20,7 @@ export interface SystemPromptSaveResult extends SystemPromptConfig {
 
 /**
  * Loads /api/settings/system-prompt and exposes savePrompt()/resetPrompt().
- * Mirrors useAssistantName/useWakeWord. The override applies on the assistant's
+ * Mirrors useWakeWord. The override applies on the assistant's
  * next turn (no restart), so there is no restart plumbing here.
  */
 export function useSystemPrompt() {

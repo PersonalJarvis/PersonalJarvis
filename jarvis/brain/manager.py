@@ -77,7 +77,11 @@ from .local_action_gate import (
 )
 from .local_action_gate import _normalize as _gate_normalize
 from .mission_command_gate import match_mission_command
-from .assistant_name import DEFAULT_ASSISTANT_NAME, resolve_assistant_name
+from .assistant_name import (
+    DEFAULT_ASSISTANT_NAME,
+    PERSONA_BASELINE_NAME,
+    resolve_assistant_name,
+)
 from .persona_loader import load_effective_persona_prompt
 from .provider_registry import BrainProviderRegistry
 from .rate_limit_tracker import RateLimitTracker
@@ -1767,14 +1771,15 @@ class BrainManager:
         """
         parts: list[str] = []
 
-        # Configurable assistant identity. Derived from the wake phrase (so a
-        # custom wake word "Micron" makes the assistant call itself Micron) or
-        # an explicit [persona].name. When it is NOT the historical "Jarvis", a
-        # prominent identity directive overrides the "Jarvis" mentions baked
-        # into the persona files (SOUL.md / JARVIS_PERSONA.md), which are static
-        # and cannot be parameterised. Placed first so it frames everything.
+        # Configurable assistant identity. Derived solely from the wake phrase
+        # (so a custom wake word "Micron" makes the assistant call itself
+        # Micron). When the name is neither the neutral fallback nor the
+        # historical "Jarvis" baseline, a prominent identity directive overrides
+        # the "Jarvis" mentions baked into the persona files (SOUL.md /
+        # JARVIS_PERSONA.md), which are static and cannot be parameterised.
+        # Placed first so it frames everything.
         name = resolve_assistant_name(getattr(self, "_config", None))
-        if name != DEFAULT_ASSISTANT_NAME:
+        if name not in (DEFAULT_ASSISTANT_NAME, PERSONA_BASELINE_NAME):
             parts.append(
                 f"DEIN NAME IST {name.upper()}. Du heisst {name} — nicht Jarvis. "
                 f"Wo die folgende Persona-Beschreibung 'Jarvis' sagt, gilt {name}. "

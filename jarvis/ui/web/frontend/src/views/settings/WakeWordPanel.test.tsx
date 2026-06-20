@@ -24,19 +24,11 @@ vi.mock("@/i18n", async (importOriginal) => {
 
 // ---------------------------------------------------------------------------
 // Silence hooks that make real network calls unrelated to wake-word:
-//   useWebSocket, useBrainStatus, useAssistantName, useKeybinds, useProviders,
+//   useWebSocket, useBrainStatus, useKeybinds, useProviders,
 //   useAutostart, and the event store's pushToast.
 // ---------------------------------------------------------------------------
 vi.mock("@/hooks/useWebSocket", () => ({ useWebSocket: vi.fn() }));
 vi.mock("@/hooks/useBrainStatus", () => ({ useBrainStatus: vi.fn() }));
-vi.mock("@/hooks/useAssistantName", () => ({
-  useAssistantName: () => ({
-    config: null,
-    loading: true,
-    error: null,
-    saveName: vi.fn(),
-  }),
-}));
 vi.mock("@/hooks/useHotkey", () => ({
   useKeybinds: () => ({
     config: null,

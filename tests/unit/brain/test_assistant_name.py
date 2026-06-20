@@ -40,17 +40,18 @@ def test_name_derived_from_wake_phrase(phrase, expected):
 
 
 # ----------------------------------------------------------------------
-# Explicit override wins
+# The wake phrase is the single source — a legacy [persona].name is ignored
 # ----------------------------------------------------------------------
 
-def test_explicit_persona_name_overrides_wake_phrase():
-    # Wake "Hey Computer" but identity pinned to "Friday".
+def test_legacy_persona_name_is_ignored_in_favor_of_wake_phrase():
+    # A stale override from before the coupling must NOT win anymore.
     cfg = _cfg(persona_name="Friday", wake_phrase="Hey Computer")
-    assert resolve_assistant_name(cfg) == "Friday"
+    assert resolve_assistant_name(cfg) == "Computer"
 
 
-def test_explicit_name_is_trimmed():
-    assert resolve_assistant_name(_cfg(persona_name="  Vision  ")) == "Vision"
+def test_legacy_persona_name_alone_does_not_name_the_assistant():
+    # No wake phrase + a stale persona name → fall back, do not use the override.
+    assert resolve_assistant_name(_cfg(persona_name="Friday", wake_phrase="")) == DEFAULT_ASSISTANT_NAME
 
 
 # ----------------------------------------------------------------------

@@ -856,6 +856,7 @@
       "restart_required": "Es necesario reiniciar para que surta efecto.",
       "degraded_warning": "La frase elegida no es compatible con el motor seleccionado — recurrirá a otro motor.",
       "needs_whisper_hint": "Una frase arbitraria requiere el extra de Whisper local. Sin él, el motor recurrirá a una frase rápida integrada.",
+      "derived_name": "Tu asistente se llamará: {0}",
       "engine_options": {
         "auto": "Automático (recomendado)",
         "openwakeword": "openWakeWord (frases integradas)",
@@ -898,16 +899,6 @@
         "mascot": "Orbe mascota",
         "none": "Ninguno (oculto)"
       }
-    },
-    "assistant_name": {
-      "title": "Nombre del asistente",
-      "description": "Cómo se llama el asistente a sí mismo en las respuestas. Esto NO es la palabra de activación que dices para activarlo — define el disparador hablado en el panel «Palabra de activación» de abajo. Déjalo vacío para seguir la palabra de activación.",
-      "label": "Nombre",
-      "current": "El asistente se llama «{0}».",
-      "auto_hint": "Vacío — sigue la palabra de activación (actualmente «{0}»).",
-      "save": "Guardar nombre",
-      "saved": "Nombre guardado",
-      "restart_required": "Reinicio necesario para que surta efecto."
     },
     "system_prompt": {
       "title": "Prompt del sistema",

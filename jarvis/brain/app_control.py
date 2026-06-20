@@ -236,7 +236,6 @@ def build_settings_snapshot(cfg: Any) -> dict[str, Any]:
     stt = getattr(cfg, "stt", None)
     ui = getattr(cfg, "ui", None)
     profile = getattr(cfg, "profile", None)
-    persona = getattr(cfg, "persona", None)
     wake = getattr(cfg, "wake", None) or getattr(cfg, "wakeword", None)
     autostart = getattr(cfg, "autostart", None)
     computer_use = getattr(cfg, "computer_use", None)
@@ -265,9 +264,14 @@ def build_settings_snapshot(cfg: Any) -> dict[str, Any]:
         },
     }
 
+    # Resolved name (the wake phrase is now the single source — there is no
+    # separate [persona].name; resolve_assistant_name derives it and is fully
+    # defensive, so it is safe inside the read-only snapshot).
+    from jarvis.brain.assistant_name import resolve_assistant_name
+
     settings = {
         "reply_language": _safe(lambda: brain.reply_language),
-        "assistant_name": _safe(lambda: persona.name),
+        "assistant_name": _safe(lambda: resolve_assistant_name(cfg)),
         "wake_phrase": _safe(lambda: wake.phrase),
         "wake_engine": _safe(lambda: wake.engine),
         "autostart_enabled": _safe(lambda: autostart.enabled),

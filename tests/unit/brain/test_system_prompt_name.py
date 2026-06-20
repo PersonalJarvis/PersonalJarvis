@@ -11,7 +11,7 @@ from jarvis.brain.manager import BrainManager
 from jarvis.core.config import load_config
 
 
-def _manager_with_name(*, persona_name: str = "", wake_phrase: str = "Hey Jarvis") -> BrainManager:
+def _manager_with_name(*, wake_phrase: str = "Hey Jarvis") -> BrainManager:
     """A BrainManager with __init__ bypassed — only the attrs the prompt needs."""
     m = BrainManager.__new__(BrainManager)
     m._soul = None
@@ -24,7 +24,6 @@ def _manager_with_name(*, persona_name: str = "", wake_phrase: str = "Hey Jarvis
     m._reply_language = "auto"
     cfg = load_config()
     cfg.performance.cache_optimized_prompt = False
-    cfg.persona.name = persona_name
     cfg.trigger.wake_word.phrase = wake_phrase
     m._config = cfg
     return m
@@ -33,7 +32,9 @@ def _manager_with_name(*, persona_name: str = "", wake_phrase: str = "Hey Jarvis
 def test_default_name_keeps_jarvis_and_no_identity_directive() -> None:
     prompt = _manager_with_name(wake_phrase="Hey Jarvis")._build_system_prompt()
     assert "Du bist Jarvis" in prompt
-    # No override directive when the name is still the historical default.
+    # "Jarvis" is the persona-file baseline (SOUL.md / JARVIS_PERSONA.md already
+    # say "Jarvis"), so no identity-override directive is needed — emitting one
+    # would produce the self-contradictory "Du heisst Jarvis — nicht Jarvis".
     assert "DEIN NAME IST" not in prompt
 
 
@@ -45,9 +46,9 @@ def test_wake_phrase_micron_makes_assistant_micron() -> None:
     assert "nicht Jarvis" in prompt
 
 
-def test_explicit_persona_name_wins_over_wake_phrase() -> None:
-    prompt = _manager_with_name(
-        persona_name="Friday", wake_phrase="Hey Computer"
-    )._build_system_prompt()
-    assert "Du bist Friday" in prompt
-    assert "DEIN NAME IST FRIDAY" in prompt
+def test_wake_phrase_is_the_only_name_source() -> None:
+    # "Hey Computer" wake → the assistant is "Computer"; there is no override.
+    prompt = _manager_with_name(wake_phrase="Hey Computer")._build_system_prompt()
+    assert "Du bist Computer" in prompt
+    assert "DEIN NAME IST COMPUTER" in prompt
+    assert "nicht Jarvis" in prompt
