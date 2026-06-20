@@ -8,6 +8,7 @@
 // und zusätzlich clientseitig mit einer "***"-Badge visuell markiert.
 
 import { useEffect, useMemo, useState } from "react";
+import { useEventStore } from "@/store/events";
 
 type AuditEvent = {
   ts: string;
@@ -352,6 +353,7 @@ function BackupsList() {
 // ----------------------------------------------------------------------
 
 export default function SelfModView() {
+  const assistantName = useEventStore((s) => s.assistantName);
   const [tab, setTab] = useState<Tab>("history");
   return (
     <div style={{ padding: 16 }}>
@@ -359,7 +361,7 @@ export default function SelfModView() {
       <p style={{ fontSize: 13, color: "#aaa" }}>
         Read-only Sicht auf Audit-Trail, mutierbare Settings und Backups.
         Mutationen erfolgen ausschließlich via Voice/Chat — diese View
-        zeigt nur, was Jarvis an sich selbst geändert hat.
+        zeigt nur, was {assistantName} an sich selbst geändert hat.
       </p>
       <nav style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         {(["history", "mutable", "backups"] as Tab[]).map((t) => (

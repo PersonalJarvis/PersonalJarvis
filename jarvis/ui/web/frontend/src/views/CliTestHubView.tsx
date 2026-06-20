@@ -116,6 +116,7 @@ function RiskBadge({ tier }: { tier: RiskTier | null }) {
 // ---------------------------------------------------------------------------
 
 export function CliTestHubView() {
+  const assistantName = useEventStore((s) => s.assistantName);
   const { data, isLoading: listLoading, error: listError } = useClisList();
   const testRun = useCliTestRun();
 
@@ -143,7 +144,7 @@ export function CliTestHubView() {
       <ViewHeader
         icon={<Wand2 className="h-4 w-4 text-primary" />}
         title="CLI Test Hub"
-        subtitle="Sag Jarvis in natürlicher Sprache, was es mit deinen CLIs tun soll"
+        subtitle={`Sag ${assistantName} in natürlicher Sprache, was es mit deinen CLIs tun soll`}
       />
 
       <ScrollArea className="flex-1">
@@ -194,6 +195,7 @@ function ConnectedClisPanel({
   error: Error | null;
 }) {
   const setActiveSection = useEventStore((s) => s.setActiveSection);
+  const assistantName = useEventStore((s) => s.assistantName);
 
   return (
     <section className="rounded-xl border border-border bg-card/40 p-4">
@@ -234,7 +236,7 @@ function ConnectedClisPanel({
             Keine CLI verbunden
           </div>
           <p className="text-xs leading-relaxed text-muted-foreground">
-            Jarvis kann erst dann ein Tool aufrufen, wenn mindestens eine CLI
+            {assistantName} kann erst dann ein Tool aufrufen, wenn mindestens eine CLI
             verbunden ist (z.B. gcloud, gh, docker). Verbinde eine CLI in der
             CLIs-Sektion — sie erscheint dann hier automatisch.
           </p>
@@ -299,6 +301,7 @@ function PromptPanel({
   isPending: boolean;
   onRun: () => void;
 }) {
+  const assistantName = useEventStore((s) => s.assistantName);
   // Ctrl/Cmd+Enter submits — a textarea swallows plain Enter for multi-line.
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && canRun) {
@@ -320,8 +323,8 @@ function PromptPanel({
           onKeyDown={handleKeyDown}
           disabled={isPending}
           rows={3}
-          aria-label="Anweisung an Jarvis"
-          placeholder="Sag Jarvis, was es mit deinen CLIs tun soll…"
+          aria-label={`Anweisung an ${assistantName}`}
+          placeholder={`Sag ${assistantName}, was es mit deinen CLIs tun soll…`}
           className="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm leading-relaxed focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60"
         />
       </label>
@@ -339,7 +342,7 @@ function PromptPanel({
             aria-label="CLI-Hinweis"
             className="min-w-[180px] rounded-md border border-input bg-background px-3 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60"
           >
-            <option value="">Jarvis entscheiden lassen</option>
+            <option value="">{assistantName} entscheiden lassen</option>
             {connectedClis.map((cli) => (
               <option key={cli.name} value={cli.name}>
                 {cli.name}
@@ -382,6 +385,7 @@ function PromptPanel({
 // ---------------------------------------------------------------------------
 
 function ResultSkeleton() {
+  const assistantName = useEventStore((s) => s.assistantName);
   return (
     <section
       data-testid="result-skeleton"
@@ -390,7 +394,7 @@ function ResultSkeleton() {
     >
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Loader2 className="h-4 w-4 animate-spin text-primary" />
-        Jarvis wählt ein Tool und führt den Befehl aus…
+        {assistantName} wählt ein Tool und führt den Befehl aus…
       </div>
       <div className="h-3 w-2/3 animate-jarvis-pulse rounded bg-muted-foreground/15" />
       <div className="h-3 w-1/2 animate-jarvis-pulse rounded bg-muted-foreground/15" />
@@ -426,6 +430,7 @@ function RequestErrorPanel({ error }: { error: Error }) {
 // ---------------------------------------------------------------------------
 
 function ResultPanel({ result }: { result: TestRunResponse }) {
+  const assistantName = useEventStore((s) => s.assistantName);
   const failed = result.ok === false || Boolean(result.error);
   // Severity stroke for the whole panel: failures dominate, otherwise the
   // resolved risk tier drives the colour; default to gold (brand accent).
@@ -449,7 +454,7 @@ function ResultPanel({ result }: { result: TestRunResponse }) {
       <div>
         <div className="mb-1 flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground/70">
           <Wand2 className="h-3 w-3 text-primary" />
-          Jarvis sagt
+          {assistantName} sagt
         </div>
         <p
           data-testid="result-summary"
@@ -555,7 +560,7 @@ function ResultPanel({ result }: { result: TestRunResponse }) {
       {!result.tool_called && !result.command && !result.error && (
         <div className="flex items-center gap-2 rounded-md border border-border border-l-[3px] border-l-primary/40 bg-background/40 px-3 py-2 text-xs text-muted-foreground">
           <ExternalLink className="h-3.5 w-3.5" />
-          Jarvis hat kein passendes CLI-Tool gefunden. Formuliere die Anweisung
+          {assistantName} hat kein passendes CLI-Tool gefunden. Formuliere die Anweisung
           konkreter oder gib einen CLI-Hinweis an.
         </div>
       )}

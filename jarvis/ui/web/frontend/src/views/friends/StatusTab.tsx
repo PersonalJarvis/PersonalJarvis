@@ -1,5 +1,6 @@
 // === F-FRIENDS [F4] · feature/friends-section · alex-2026-05-01 ===
 import { Loader2, Radio, ShieldAlert } from "lucide-react";
+import { useEventStore } from "@/store/events";
 
 import { PermissionMatrix } from "@/components/friends/PermissionMatrix";
 import {
@@ -21,6 +22,7 @@ import {
  * Memory-Updates verlassen die Maschine NIE — egal welches Profile aktiv ist.
  */
 export function StatusTab() {
+  const assistantName = useEventStore((s) => s.assistantName);
   const friends = useFriends();
 
   return (
@@ -31,7 +33,7 @@ export function StatusTab() {
           Status-Sharing
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
-          Du entscheidest pro Friend, wie viel von deinem Jarvis-Status
+          Du entscheidest pro Friend, wie viel von deinem {assistantName}-Status
           ausgespielt wird. Privacy-First: Default ist <strong>minimal</strong>{" "}
           (nur online/offline), Aenderungen wirken sofort.
         </p>

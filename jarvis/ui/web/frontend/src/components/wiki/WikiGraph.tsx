@@ -23,11 +23,13 @@ import {
   type RenderNode,
   type WikiGraphPayload,
 } from "@/lib/wikiGraph";
+import { useEventStore } from "@/store/events";
 
 const GRAPH_QUERY_KEY = ["wiki", "graph"] as const;
 
-const EMPTY_STATE_DE =
-  "Dein Memory-Graph ist noch leer. Sobald Jarvis Notizen anlegt, verbinden sich die Knoten hier automatisch.";
+function emptyStateDe(name: string): string {
+  return `Dein Memory-Graph ist noch leer. Sobald ${name} Notizen anlegt, verbinden sich die Knoten hier automatisch.`;
+}
 
 async function fetchGraph(): Promise<WikiGraphPayload> {
   const res = await fetch("/api/wiki/graph");
@@ -47,6 +49,7 @@ export interface WikiGraphProps {
  * an idle Wiki tab stops repainting the canvas.
  */
 export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.Element {
+  const assistantName = useEventStore((s) => s.assistantName);
   const { data, isLoading, isError } = useQuery({
     queryKey: GRAPH_QUERY_KEY,
     queryFn: fetchGraph,
@@ -214,7 +217,7 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
         data-testid="wiki-graph-empty"
         className="flex h-full items-center justify-center px-8 text-center text-sm text-muted-foreground"
       >
-        {EMPTY_STATE_DE}
+        {emptyStateDe(assistantName)}
       </div>
     );
   }

@@ -33,6 +33,7 @@ function turn(over: Partial<VoiceTurnRow> = {}): VoiceTurnRow {
     think_ms: 0,
     speak_ms: 0,
     tool_calls: [],
+    awaiting_confirmation: false,
     ...over,
   };
 }
@@ -129,6 +130,34 @@ describe("TurnCard spoken track", () => {
     const line = container.querySelector('[data-spoken-kind="completion"]');
     expect(line?.className).toContain("sky-400");
     expect(line?.className).not.toContain("violet");
+  });
+
+  it("labels a pending two-turn confirmation reply distinctly", () => {
+    render(
+      <TurnCard
+        turn={turn({
+          jarvis_text: "Soll ich die E-Mail wirklich senden? Sag ja oder nein.", // i18n-allow: German voice fixture
+          awaiting_confirmation: true,
+        })}
+      />,
+    );
+    expect(screen.getByText("Awaiting confirmation")).toBeTruthy();
+  });
+
+  it("shows no awaiting label on a normal settled reply", () => {
+    render(
+      <TurnCard
+        turn={turn({ jarvis_text: "Es ist drei Uhr.", awaiting_confirmation: false })} // i18n-allow: German voice fixture
+      />,
+    );
+    expect(screen.queryByText("Awaiting confirmation")).toBeNull();
+  });
+
+  it("marks a pending confirmation in the copied plain text", () => {
+    const copied = formatTurnPlain(
+      turn({ jarvis_text: "Soll ich senden?", awaiting_confirmation: true }), // i18n-allow: German voice fixture
+    );
+    expect(copied).toContain("(awaiting confirmation)");
   });
 
   it("copies spoken preambles before the final Jarvis reply", () => {

@@ -435,6 +435,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   // Finished reasoning trace for this reply (assistant messages only) —
   // renders as the collapsible "Thought for Xs" disclosure above the text.
   const trace = useEventStore((s) => s.thinkingTraces[message.id]);
+  const assistantName = useEventStore((s) => s.assistantName);
 
   if (isSystem) {
     return (
@@ -453,7 +454,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
               pre-ack
             </span>
             <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-              Jarvis
+              {assistantName}
             </span>
           </div>
           <div className="whitespace-pre-wrap">{message.content}</div>

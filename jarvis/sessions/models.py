@@ -115,6 +115,10 @@ class VoiceTurnRow(BaseModel):
     think_ms: int = 0
     speak_ms: int = 0
     tool_calls: list[str] = Field(default_factory=list)
+    # True when the turn ended on a two-turn voice/chat confirmation
+    # (finish_reason="voice_confirm_pending"): the reply is a pending yes/no
+    # question, not a normal answer, so the transcript labels it distinctly.
+    awaiting_confirmation: bool = False
 
 
 class VoiceSessionRow(BaseModel):

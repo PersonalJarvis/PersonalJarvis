@@ -1,16 +1,16 @@
 {
   "jarvis_dock": {
-    "aria": "Jarvis — suelta una misión aquí para hablar de ella",
+    "aria": "{name} — suelta una misión aquí para hablar de ella",
     "hint": "Arrastra un resultado de sub-agente aquí para llevarlo a la conversación",
     "drop_here": "Suelta para comentar",
-    "drop_active": "Suelta para informar a Jarvis",
+    "drop_active": "Suelta para informar a {name}",
     "dropped": "Añadido a la conversación"
   },
   "topbar": {
     "restart": "Reiniciar",
     "restart_confirm": "¿Confirmar reinicio?",
-    "restart_hint": "Reiniciar Jarvis",
-    "restarting": "Reiniciando Jarvis…",
+    "restart_hint": "Reiniciar {name}",
+    "restarting": "Reiniciando {name}…",
     "restart_failed": "Error al reiniciar",
     "restart_force": "¿Reiniciar de todos modos?",
     "restart_missions_running": "misión(es) en curso — haz clic de nuevo para reiniciar igualmente"
@@ -50,9 +50,9 @@
     "subtitle": "Apariencia del overlay en pantalla y comportamiento al dictar.",
     "appearance_title": "Apariencia",
     "behavior_title": "Comportamiento",
-    "restart_required": "Guardado: reinicia Jarvis para aplicar.",
+    "restart_required": "Guardado: reinicia {name} para aplicar.",
     "restart_now": "Reiniciar ahora",
-    "restarting": "Reiniciando Jarvis…",
+    "restarting": "Reiniciando {name}…",
     "bar_persistent": {
       "title": "Mostrar la barra siempre",
       "description": "Mantén la barra en pantalla incluso inactiva. Desactivado: sin standby — solo aparece cuando dices tu palabra de activación.",
@@ -351,16 +351,16 @@
   },
   "mcps_view": {
     "title": "MCPs",
-    "subtitle": "Servidores Model Context Protocol — herramientas externas que Jarvis puede invocar.",
+    "subtitle": "Servidores Model Context Protocol — herramientas externas que {name} puede invocar.",
     "empty": "Ningún servidor MCP configurado.",
     "connected": "Conectado",
     "disconnected": "Desconectado",
     "edit_tooltip": "Editar mcp.json",
     "reload_tooltip": "Recargar",
-    "intro": "Jarvis gestiona los servidores MCP automáticamente. Activa uno con el interruptor — la conexión se prueba primero. Para ediciones manuales abre mcp.json.",
+    "intro": "{name} gestiona los servidores MCP automáticamente. Activa uno con el interruptor — la conexión se prueba primero. Para ediciones manuales abre mcp.json.",
     "empty_title": "Aún sin MCPs",
     "empty_description": "Los servidores MCP se configuran exclusivamente vía mcp.json (formato Claude Desktop). Edítalo directamente o importa toda la configuración de Claude Desktop.",
-    "empty_tip": "Consejo: Dile a Jarvis luego \"instala MCP X\" — lo añadirá él mismo al mcp.json.",
+    "empty_tip": "Consejo: Dile a {name} luego \"instala MCP X\" — lo añadirá él mismo al mcp.json.",
     "open_config": "Abrir mcp.json",
     "import_claude": "Importar config de Claude Desktop",
     "importing": "Importando…",
@@ -383,7 +383,7 @@
   },
   "board_view": {
     "title": "Tablero",
-    "subtitle": "Todo lo que tú y Jarvis habéis hecho juntos — totalmente local.",
+    "subtitle": "Todo lo que tú y {name} habéis hecho juntos — totalmente local.",
     "refresh": "Actualizar",
     "refresh_tooltip": "Disparar agregador manualmente",
     "loading": "Cargando estadísticas…",
@@ -392,7 +392,7 @@
       "button": "Compartir",
       "button_tooltip": "Comparte tus estadísticas",
       "title": "Comparte tus estadísticas",
-      "subtitle": "Una instantánea de tu actividad con Jarvis.",
+      "subtitle": "Una instantánea de tu actividad con {name}.",
       "handle_label": "Tu usuario de X (opcional)",
       "handle_placeholder": "tuusuario",
       "copy_image": "Copiar imagen",
@@ -409,15 +409,15 @@
       "card": {
         "brand": "PERSONAL JARVIS",
         "hero_label": "Palabras dichas",
-        "jarvis_suffix": "dichas por Jarvis",
+        "jarvis_suffix": "dichas por {name}",
         "talk_line": "{0} h activo · {1} chats",
         "streak": "Mejor racha · {0} días"
       }
     },
     "hero": {
       "you_spoke": "Tú dijiste",
-      "you_spoke_sub": "palabras dichas a Jarvis",
-      "jarvis_spoke": "Jarvis dijo",
+      "you_spoke_sub": "palabras dichas a {name}",
+      "jarvis_spoke": "{name} dijo",
       "jarvis_spoke_sub": "palabras dichas de vuelta",
       "streak": "Racha de días",
       "streak_sub": "{0} días activos en total",
@@ -426,7 +426,7 @@
       "talk_time_sub": "en {0} conversaciones",
       "talk_time_sub_one": "en {0} conversación"
     },
-    "activity_subtitle": "Cuántas palabras intercambiasteis tú y Jarvis cada día.",
+    "activity_subtitle": "Cuántas palabras intercambiasteis tú y {name} cada día.",
     "activity_heatmap_hint": "Cada cuadro es un día — cuanto más brillante, más actividad.",
     "chart_title": "Palabras a lo largo del tiempo",
     "chart_empty": "Aún no hay datos suficientes para el gráfico.",
@@ -434,9 +434,9 @@
     "longest_streak_one": "Racha más larga · {0} día",
     "activity_streak_badge": "racha de {0} días",
     "activity_streak_badge_one": "racha de {0} día",
-    "categories_title": "Para qué usas Jarvis",
-    "categories_subtitle": "Cada herramienta que Jarvis ejecutó para ti, agrupada por propósito.",
-    "categories_empty": "Aún no hay uso de herramientas — se llena mientras Jarvis trabaja.",
+    "categories_title": "Para qué usas {name}",
+    "categories_subtitle": "Cada herramienta que {name} ejecutó para ti, agrupada por propósito.",
+    "categories_empty": "Aún no hay uso de herramientas — se llena mientras {name} trabaja.",
     "category": {
       "agents": "Agentes",
       "browser": "Navegador",
@@ -447,7 +447,7 @@
     },
     "micro": {
       "avg_words": "{0} palabras / conversación",
-      "ratio": "Jarvis dice {0}× tus palabras",
+      "ratio": "{name} dice {0}× tus palabras",
       "active_days": "{0} días activos",
       "active_days_one": "{0} día activo",
       "active_since": "Activo desde {0}"
@@ -463,15 +463,15 @@
       "voice_first_try": "Tasa de acierto en primer intento (voz)",
       "voice_first_try_sub": "Base: {0} comandos",
       "voice_no_data": "Aún sin datos de voz",
-      "hours_saved": "Horas de trabajo Sub-Jarvis",
+      "hours_saved": "Horas de trabajo Sub-{name}",
       "hours_saved_sub": "Sumado en todas las ejecuciones",
-      "conversation_hours": "Horas activas con Jarvis",
+      "conversation_hours": "Horas activas con {name}",
       "conversation_hours_sub": "{0} h en los últimos {1} días"
     },
     "activity_title": "Actividad",
     "activity_description": "Últimos 365 días. Voz, chat, herramientas, tareas y arranques. Cada celda = un día.",
     "ai_profile_title": "Perfil IA",
-    "ai_profile_description": "Lo que Jarvis ha aprendido sobre ti. Actualizado los domingos.",
+    "ai_profile_description": "Lo que {name} ha aprendido sobre ti. Actualizado los domingos.",
     "ai_profile_regenerate": "Regenerar",
     "ai_profile_regenerate_tooltip": "Regenerar la bio ahora",
     "ai_profile_loading": "Cargando bio…",
@@ -521,11 +521,11 @@
         "unit": "Comandos"
       },
       "most_hours_saved_in_a_day": {
-        "title": "Día con más trabajo Sub-Jarvis",
+        "title": "Día con más trabajo Sub-{name}",
         "unit": "Horas"
       },
       "most_active_events_in_a_day": {
-        "title": "Día más activo de Jarvis",
+        "title": "Día más activo de {name}",
         "unit": "Actividades"
       },
       "most_conversation_hours_in_a_day": {
@@ -545,7 +545,7 @@
     "review_singular": "Revisión",
     "review_plural": "Revisiones",
     "review_open": "abierta",
-    "no_name_yet": "Jarvis aún no sabe tu nombre. Dile \"Me llamo …\".",
+    "no_name_yet": "{name} aún no sabe tu nombre. Dile \"Me llamo …\".",
     "reload_tooltip": "Recargar",
     "fact_accepted": "{0} dato(s) fusionado(s)",
     "accepted": "Aceptado",
@@ -557,16 +557,16 @@
     "reviews_disabled_body": "El curador de datos de esta sesión escribe directamente en el vault del wiki y no usa una cola de revisión. Los candidatos aparecerán aquí cuando se ejecute un proveedor con la integración de memoria clásica.",
     "hero_eyebrow": "Perfil de conocimiento",
     "hero_classification": "Base de conocimiento",
-    "hero_maintained_by": "Mantenido por Jarvis",
+    "hero_maintained_by": "Mantenido por {name}",
     "hero_name_placeholder": "¿Quién eres?",
-    "hero_tagline": "Lo que Jarvis ha aprendido sobre ti — de tus conversaciones.",
+    "hero_tagline": "Lo que {name} ha aprendido sobre ti — de tus conversaciones.",
     "hero_completeness": "Perfil mapeado",
     "field_unknown": "aún no conocido",
     "facts_ratio": "{0}/{1} datos",
-    "no_user_hint": "Jarvis aún no sabe tu nombre. Solo dile cómo llamarte — el curador irá recogiendo el resto de tus conversaciones con el tiempo.",
-    "section_knowledge": "Lo que Jarvis sabe",
-    "section_knowledge_sub": "Aprendido de tus conversaciones, agrupado como Jarvis piensa en ti.",
-    "section_people": "Personas que Jarvis conoce",
+    "no_user_hint": "{name} aún no sabe tu nombre. Solo dile cómo llamarte — el curador irá recogiendo el resto de tus conversaciones con el tiempo.",
+    "section_knowledge": "Lo que {name} sabe",
+    "section_knowledge_sub": "Aprendido de tus conversaciones, agrupado como {name} piensa en ti.",
+    "section_people": "Personas que {name} conoce",
     "section_reviews": "Esperando tu visto bueno",
     "section_source": "El archivo fuente",
     "stages": {
@@ -580,16 +580,16 @@
     "stage_headline": {
       "blank_page": "Una página nueva{0}.",
       "first_impressions": "Primeras impresiones{0}.",
-      "getting_acquainted": "Jarvis te está conociendo{0}.",
-      "well_acquainted": "Jarvis ya te conoce bastante bien{0}.",
-      "trusted_company": "Jarvis te conoce muy bien{0}.",
-      "inner_circle": "Jarvis te conoce al dedillo{0}."
+      "getting_acquainted": "{name} te está conociendo{0}.",
+      "well_acquainted": "{name} ya te conoce bastante bien{0}.",
+      "trusted_company": "{name} te conoce muy bien{0}.",
+      "inner_circle": "{name} te conoce al dedillo{0}."
     },
-    "hero_sub": "Todo esto Jarvis lo aprendió sobre la marcha, de conversaciones reales — nunca preguntado dos veces, nunca adivinado.",
+    "hero_sub": "Todo esto {name} lo aprendió sobre la marcha, de conversaciones reales — nunca preguntado dos veces, nunca adivinado.",
     "entries_ratio": "{0} de {1} cosas aprendidas",
     "people_known": "{0} personas",
     "person_known": "{0} persona",
-    "ask_title": "A Jarvis le encantaría saber",
+    "ask_title": "A {name} le encantaría saber",
     "ask_next": "Siguiente",
     "ask_say_prefix": "Solo di",
     "more_to_learn": "{0} más por aprender",
@@ -618,7 +618,7 @@
       "feedback_pref": "¿Cómo te digo las verdades incómodas?"
     },
     "says": {
-      "name": "Jarvis, me llamo …",
+      "name": "{name}, me llamo …",
       "preferred_address": "Llámame …",
       "pronouns": "Mis pronombres son …",
       "primary_language": "Hablemos en español",
@@ -638,7 +638,7 @@
       "feedback_pref": "Dame el feedback sin rodeos"
     },
     "people_empty_title": "Aún no hay personas",
-    "people_empty_body": "Cuando le cuentas a Jarvis sobre tu familia, amistades o colegas, el curador crea automáticamente un archivo en data/workspace/people/.",
+    "people_empty_body": "Cuando le cuentas a {name} sobre tu familia, amistades o colegas, el curador crea automáticamente un archivo en data/workspace/people/.",
     "person_detail_hint": "Elige una persona a la izquierda para ver detalles.",
     "person_relationship": "Relación",
     "person_aliases": "Alias",
@@ -674,7 +674,7 @@
       },
       "communication": {
         "label": "Comunicación",
-        "description": "Cómo Jarvis te habla: franqueza, humor, formalidad."
+        "description": "Cómo {name} te habla: franqueza, humor, formalidad."
       },
       "work_style": {
         "label": "Estilo de trabajo",
@@ -686,7 +686,7 @@
       },
       "relationship": {
         "label": "Relación",
-        "description": "Cómo Jarvis da feedback, cómo es la dinámica."
+        "description": "Cómo {name} da feedback, cómo es la dinámica."
       }
     },
     "fields": {
@@ -749,7 +749,7 @@
   "settings_view": {
     "silence_window": {
       "title": "Pausa para pensar",
-      "description": "Cuánto espera Jarvis en silencio antes de enviar lo que dijiste. Súbelo para darte más tiempo para pausar y terminar una idea.",
+      "description": "Cuánto espera {name} en silencio antes de enviar lo que dijiste. Súbelo para darte más tiempo para pausar y terminar una idea.",
       "unit_seconds": "s",
       "reset": "Restablecer al valor predeterminado (1,5 s)",
       "saved_toast": "Pausa para pensar fijada en {0}.",
@@ -761,9 +761,9 @@
     "languages_group_title": "Idiomas",
     "app_settings_group_title": "Ajustes de la app",
     "jarvis_api": {
-      "title": "Jarvis API",
+      "title": "{name} API",
       "key_label": "Clave de API",
-      "description": "Los agentes locales (Codex, Claude Code) usan esta clave para controlar Jarvis a través de la Control API — cambiar ajustes, proveedores o idioma — en lugar de hacer clic en la interfaz.",
+      "description": "Los agentes locales (Codex, Claude Code) usan esta clave para controlar {name} a través de la Control API — cambiar ajustes, proveedores o idioma — en lugar de hacer clic en la interfaz.",
       "show": "Mostrar",
       "hide": "Ocultar",
       "copy_button": "Copiar",
@@ -771,7 +771,7 @@
       "copy_failed_toast": "No se pudo copiar la clave de API.",
       "regenerate_button": "Regenerar clave",
       "regenerated_toast": "Se generó una nueva clave de API. Actualiza cualquier agente que usara la anterior.",
-      "usage_hint": "Envíala como cabecera Authorization: Bearer a tu Jarvis local (/api/control). GET /api/control/allowlist lista todo lo que puedes cambiar."
+      "usage_hint": "Envíala como cabecera Authorization: Bearer a tu {name} local (/api/control). GET /api/control/allowlist lista todo lo que puedes cambiar."
     },
     "save": "Guardar",
     "saving": "Guardando…",
@@ -790,7 +790,7 @@
       "autostart_title": "Inicio automático con Windows",
       "autostart_description": "El asistente se inicia en la bandeja tras iniciar sesión.",
       "toasts_title": "Notificaciones del piloto automático",
-      "toasts_description": "Muestra \"Jarvis abrió X\" cuando la voz controla la UI."
+      "toasts_description": "Muestra \"{name} abrió X\" cuando la voz controla la UI."
     },
     "wake_word": {
       "title": "Palabra de activación",
@@ -815,7 +815,7 @@
     "onboarding": {
       "wake_word": {
         "title": "Establece tu palabra de activación",
-        "body": "Elige una palabra o frase corta que Jarvis escuchará. Puedes escribir lo que quieras — por ejemplo, tu nombre.",
+        "body": "Elige una palabra o frase corta que {name} escuchará. Puedes escribir lo que quieras — por ejemplo, tu nombre.",
         "input_label": "Frase de activación",
         "placeholder": "p. ej. Jonas",
         "cta": "Empezar",
@@ -826,22 +826,22 @@
     "autostart": {
       "title": "Iniciar la app al iniciar sesión",
       "description": "Inicia el asistente automáticamente al iniciar sesión, para que tu palabra de activación funcione justo después de reiniciar. Puedes desactivarlo aquí cuando quieras.",
-      "enabled_toast": "Inicio automático activado: Jarvis se iniciará al iniciar sesión.",
+      "enabled_toast": "Inicio automático activado: {name} se iniciará al iniciar sesión.",
       "disabled_toast": "Inicio automático desactivado.",
       "unsupported": "El inicio automático no está disponible en este host (p. ej. un servidor sin escritorio).",
       "enable_instant_start": "Activar inicio instantáneo",
       "instant_start_hint": "En Windows, el inicio instantáneo usa una tarea programada y pide permiso una vez. Sin ella, Windows puede retrasar el arranque varios minutos en equipos con muchos programas de inicio.",
-      "instant_start_active": "El inicio instantáneo está activo: Jarvis se inicia pocos segundos después de iniciar sesión.",
-      "instant_start_enabled_toast": "Inicio instantáneo activado: Jarvis se iniciará justo después de iniciar sesión.",
-      "instant_start_declined_toast": "Se denegó el permiso: Jarvis sigue iniciándose mediante el acceso directo (puede retrasarse)."
+      "instant_start_active": "El inicio instantáneo está activo: {name} se inicia pocos segundos después de iniciar sesión.",
+      "instant_start_enabled_toast": "Inicio instantáneo activado: {name} se iniciará justo después de iniciar sesión.",
+      "instant_start_declined_toast": "Se denegó el permiso: {name} sigue iniciándose mediante el acceso directo (puede retrasarse)."
     },
     "overlay_style": {
       "title": "Estilo de visualización",
-      "description": "Elige cómo aparece Jarvis en pantalla durante la actividad de voz. La barra es el valor predeterminado; el mascota es el orbe clásico; o ocúltalo por completo.",
+      "description": "Elige cómo aparece {name} en pantalla durante la actividad de voz. La barra es el valor predeterminado; el mascota es el orbe clásico; o ocúltalo por completo.",
       "label": "Estilo",
       "save": "Guardar",
       "saved": "Estilo de visualización cambiado.",
-      "restart_required": "Guardado: reinicia Jarvis para aplicar.",
+      "restart_required": "Guardado: reinicia {name} para aplicar.",
       "options": {
         "whisper_bar": "Barra (predeterminado)",
         "mascot": "Orbe mascota",
@@ -925,7 +925,7 @@
     "load_error": "No se pudo cargar el estado de telefonía",
     "not_configured_hint": "Introduce tu Account SID de Twilio, el Auth Token y el número de teléfono abajo para terminar la configuración, luego ejecuta \"Probar conexión\".",
     "unavailable_title": "Extra de telefonía no instalado",
-    "unavailable_body": "La integración opcional de Twilio no está disponible en esta instalación. Añade el grupo de extras de telefonía y reinicia Jarvis.",
+    "unavailable_body": "La integración opcional de Twilio no está disponible en esta instalación. Añade el grupo de extras de telefonía y reinicia {name}.",
     "status": {
       "title": "Estado",
       "twilio": "Twilio",
@@ -956,7 +956,7 @@
       "public_url": "URL base pública",
       "language": "Código de idioma",
       "greeting": "Saludo (opcional)",
-      "greeting_placeholder": "Déjalo vacío para el saludo de mayordomo de Jarvis por defecto",
+      "greeting_placeholder": "Déjalo vacío para el saludo de mayordomo de {name} por defecto",
       "test_connection": "Probar conexión",
       "self_test": "Autoprueba de voz",
       "setup_script": "Script de configuración",
@@ -967,12 +967,12 @@
       "selftest_ok": "La cadena de voz funciona",
       "selftest_failed": "Autoprueba fallida",
       "transcript": "Transcripción",
-      "response": "Respuesta de Jarvis",
+      "response": "Respuesta de {name}",
       "audio_bytes": "Bytes de audio"
     },
     "scripts": {
       "title": "Scripts de configuración",
-      "subtitle": "Ejecútalos para exponer Jarvis públicamente y aprovisionar el número de Twilio. Copia un comando con el botón.",
+      "subtitle": "Ejecútalos para exponer {name} públicamente y aprovisionar el número de Twilio. Copia un comando con el botón.",
       "empty": "El backend aún no reporta scripts de configuración."
     },
     "calls": {
@@ -998,14 +998,14 @@
     "subtitle": "Guía paso a paso y scripts de configuración para la telefonía Twilio.",
     "back": "Volver a Claves API",
     "guide_title": "Configuración",
-    "intro": "Cómo hacer que Jarvis sea accesible por teléfono — desde el número de Twilio hasta la primera llamada.",
+    "intro": "Cómo hacer que {name} sea accesible por teléfono — desde el número de Twilio hasta la primera llamada.",
     "step1_title": "Instala el extra de telefonía",
-    "step1_body": "Ejecuta `pip install \"personal-jarvis[telephony]\"` en el servidor y reinicia Jarvis. Solo necesario si el estado de arriba indica que falta el extra.",
+    "step1_body": "Ejecuta `pip install \"personal-jarvis[telephony]\"` en el servidor y reinicia {name}. Solo necesario si el estado de arriba indica que falta el extra.",
     "step2_title": "Crea una cuenta de Twilio",
     "step2_body": "Regístrate en twilio.com, copia tu Account SID y Auth Token, y compra un número de teléfono con capacidad de voz.",
-    "step3_title": "Expón Jarvis públicamente",
-    "step3_body": "Twilio debe alcanzar a Jarvis por HTTPS. Ejecuta el script de túnel de abajo y pega la URL mostrada como URL base pública.",
-    "step4_title": "Apunta el webhook de Twilio a Jarvis",
+    "step3_title": "Expón {name} públicamente",
+    "step3_body": "Twilio debe alcanzar a {name} por HTTPS. Ejecuta el script de túnel de abajo y pega la URL mostrada como URL base pública.",
+    "step4_title": "Apunta el webhook de Twilio a {name}",
     "step4_body": "En la consola de Twilio, configura el webhook de voz de tu número con la URL de webhook mostrada abajo.",
     "step5_title": "Introduce credenciales y prueba",
     "step5_body": "De vuelta en la página de Claves API, introduce el Account SID, el Auth Token y el número, activa la telefonía y ejecuta \"Probar conexión\" y \"Autoprueba de voz\".",
@@ -1014,12 +1014,12 @@
   },
   "previews_view": {
     "title": "Vistas previas",
-    "subtitle": "Servidores de vista previa que Jarvis ha lanzado para ti.",
+    "subtitle": "Servidores de vista previa que {name} ha lanzado para ti.",
     "empty": "Sin vistas previas activas."
   },
   "outputs_view": {
     "title": "Salidas",
-    "subtitle": "Archivos que Jarvis o los sub-agentes han escrito para ti.",
+    "subtitle": "Archivos que {name} o los sub-agentes han escrito para ti.",
     "empty": "Aún no hay salidas.",
     "open": "Abrir",
     "delete": "Eliminar",
@@ -1149,8 +1149,8 @@
       "skip_setup": "Omitir la configuración por ahora"
     },
     "intro": {
-      "scene_1": "Te presentamos a Jarvis, tu asistente de voz.",
-      "scene_2": "Solo habla. Jarvis escucha y actúa.",
+      "scene_1": "Te presentamos a {name}, tu asistente de voz.",
+      "scene_2": "Solo habla. {name} escucha y actúa.",
       "scene_3": "Sigue trabajando en segundo plano cuando tú no.",
       "scene_4": "Y funciona en local: tus datos siguen siendo tuyos."
     },
@@ -1167,7 +1167,7 @@
     },
     "wake_word": {
       "title": "Elige tu palabra de activación",
-      "body": "Elige la palabra que despierta a Jarvis. \"Hey\" queda fija — tú eliges el resto.",
+      "body": "Elige la palabra que despierta a {name}. \"Hey\" queda fija — tú eliges el resto.",
       "prefix": "Hey",
       "input_label": "Tu palabra de activación",
       "placeholder": "p. ej. Nova",
@@ -1186,8 +1186,8 @@
     },
     "mic_test": {
       "title": "Comprobación del micrófono",
-      "body": "Asegurémonos de que Jarvis puede oírte.",
-      "no_mic": "No se detectó ningún micrófono. Aún puedes hablar con Jarvis por texto o a través de un canal como Telegram.",
+      "body": "Asegurémonos de que {name} puede oírte.",
+      "no_mic": "No se detectó ningún micrófono. Aún puedes hablar con {name} por texto o a través de un canal como Telegram.",
       "skip": "Omitir la comprobación del micrófono"
     },
     "persona": {
@@ -1197,18 +1197,18 @@
     },
     "finish": {
       "title": "¡Todo listo!",
-      "body": "Jarvis está listo. Di tu palabra de activación o escribe un comando para empezar.",
+      "body": "{name} está listo. Di tu palabra de activación o escribe un comando para empezar.",
       "skipped_title": "Omitiste — configúralo cuando quieras en Ajustes:",
-      "start_cta": "Empezar a usar Jarvis"
+      "start_cta": "Empezar a usar {name}"
     }
   },
   "languages_view": {
     "title": "Idiomas",
-    "subtitle": "Elige el idioma de la interfaz y en qué idioma responde Jarvis.",
+    "subtitle": "Elige el idioma de la interfaz y en qué idioma responde {name}.",
     "ui_section": "Idioma de la Interfaz",
     "ui_hint": "Afecta cada etiqueta, botón y mensaje en la aplicación.",
     "reply_section": "Idioma de Respuesta",
-    "reply_hint": "En qué idioma habla Jarvis al responderte. Nombres propios, identificadores de código y términos técnicos se mantienen en su forma original.",
+    "reply_hint": "En qué idioma habla {name} al responderte. Nombres propios, identificadores de código y términos técnicos se mantienen en su forma original.",
     "options": {
       "auto": {
         "label": "Automático",
@@ -1228,10 +1228,10 @@
       }
     },
     "reply_options": {
-      "auto": "Jarvis refleja el idioma que hables o escribas.",
-      "en": "Jarvis responde en inglés.",
-      "de": "Jarvis responde en alemán.",
-      "es": "Jarvis responde en español."
+      "auto": "{name} refleja el idioma que hables o escribas.",
+      "en": "{name} responde en inglés.",
+      "de": "{name} responde en alemán.",
+      "es": "{name} responde en español."
     }
   }
 }

@@ -88,6 +88,12 @@ class SessionStore:
                 "ALTER TABLE voice_turns ADD COLUMN speak_ms INTEGER NOT NULL DEFAULT 0"
             )
             log.info("SessionStore migration: added voice_turns.speak_ms")
+        if "awaiting_confirmation" not in existing:
+            self._conn.execute(
+                "ALTER TABLE voice_turns "
+                "ADD COLUMN awaiting_confirmation INTEGER NOT NULL DEFAULT 0"
+            )
+            log.info("SessionStore migration: added voice_turns.awaiting_confirmation")
 
     def close(self) -> None:
         with self._lock:
@@ -209,26 +215,28 @@ class SessionStore:
         tool_calls: list[str],
         think_ms: int = 0,
         speak_ms: int = 0,
+        awaiting_confirmation: bool = False,
     ) -> None:
         with self._lock:
             self._c.execute(
                 """
                 UPDATE voice_turns SET
-                    ended_ms         = ?,
-                    user_text        = ?,
-                    user_lang        = ?,
-                    jarvis_text      = ?,
-                    jarvis_lang      = ?,
-                    tier             = ?,
-                    provider         = ?,
-                    model            = ?,
-                    tokens_in        = ?,
-                    tokens_out       = ?,
-                    cost_usd         = ?,
-                    latency_total_ms = ?,
-                    think_ms         = ?,
-                    speak_ms         = ?,
-                    tool_calls_json  = ?
+                    ended_ms              = ?,
+                    user_text             = ?,
+                    user_lang             = ?,
+                    jarvis_text           = ?,
+                    jarvis_lang           = ?,
+                    tier                  = ?,
+                    provider              = ?,
+                    model                 = ?,
+                    tokens_in             = ?,
+                    tokens_out            = ?,
+                    cost_usd              = ?,
+                    latency_total_ms      = ?,
+                    think_ms              = ?,
+                    speak_ms              = ?,
+                    awaiting_confirmation = ?,
+                    tool_calls_json       = ?
                 WHERE id = ?
                 """,
                 (
@@ -246,6 +254,7 @@ class SessionStore:
                     latency_total_ms,
                     think_ms,
                     speak_ms,
+                    1 if awaiting_confirmation else 0,
                     json.dumps(tool_calls),
                     turn_id,
                 ),
@@ -478,6 +487,10 @@ def _row_to_turn(r: sqlite3.Row) -> VoiceTurnRow:
         latency_total_ms=r["latency_total_ms"],
         think_ms=_safe_col(r, "think_ms", 0),
         speak_ms=_safe_col(r, "speak_ms", 0),
+        # SQLite stores this as INTEGER 0/1; bool() is intentional (0 -> False,
+        # 1 -> True). Keep _safe_col's contract at 0/1 — a sentinel like -1 would
+        # break the bool() mapping here.
+        awaiting_confirmation=bool(_safe_col(r, "awaiting_confirmation", 0)),
         tool_calls=json.loads(r["tool_calls_json"] or "[]"),
     )
 
