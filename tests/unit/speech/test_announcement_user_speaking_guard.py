@@ -53,8 +53,20 @@ class FakeTTS:
 class FakePlayer:
     stop_calls: int = 0
     plays: int = 0
+    last_should_play: object = None
 
-    async def play_chunks(self, chunks: AsyncIterator[AudioChunk]) -> None:
+    async def play_chunks(
+        self,
+        chunks: AsyncIterator[AudioChunk],
+        *,
+        should_play=None,
+    ) -> None:
+        self.last_should_play = should_play
+        # Mirror the real player: a False staleness verdict drops the playback.
+        if should_play is not None and not should_play():
+            async for _ in chunks:
+                pass
+            return
         self.plays += 1
         async for _ in chunks:
             pass
@@ -174,6 +186,64 @@ async def test_background_completion_while_user_speaking_is_deferred() -> None:
 
     assert player.plays == 1
     assert tts.calls and "Fertig" in tts.calls[0][0]
+
+
+@pytest.mark.asyncio
+async def test_preamble_while_jarvis_speaking_is_dropped() -> None:
+    """Regression (2026-06-20 'Ich schaue mir jetzt …' spoken AFTER the answer):
+    a preamble that reaches the handler once the answer is already being voiced
+    (``JARVIS_SPEAKING``) is stale and must be dropped — never queued behind the
+    answer. The pre-existing floor guard only covered USER_SPEAKING/LISTENING;
+    JARVIS_SPEAKING (the answer's own playback) was the missing case."""
+    bus = EventBus()
+    tts = FakeTTS()
+    player = FakePlayer()
+    pipeline = _make_pipeline(tts, bus, player)
+    pipeline._turn_state = TurnTakingState.JARVIS_SPEAKING  # type: ignore[attr-defined]
+
+    await bus.publish(
+        AnnouncementRequested(
+            text="Ich schaue mir jetzt die GitHub-CLI-Repositories an.",
+            language="de",
+            priority="normal",
+            kind="preamble",
+        )
+    )
+
+    assert tts.calls == [], "a stale preamble spoke after the answer started"
+    assert player.plays == 0
+
+
+@pytest.mark.asyncio
+async def test_preamble_during_processing_carries_staleness_gate() -> None:
+    """While the brain is still thinking (``PROCESSING``) the preamble plays —
+    AND it is handed a ``should_play`` predicate so the player drops it if the
+    answer overtakes it during synthesis / the play-lock wait (the race the
+    lazy play-lock fix narrows but does not eliminate)."""
+    bus = EventBus()
+    tts = FakeTTS()
+    player = FakePlayer()
+    pipeline = _make_pipeline(tts, bus, player)
+    pipeline._turn_state = TurnTakingState.PROCESSING  # type: ignore[attr-defined]
+
+    await bus.publish(
+        AnnouncementRequested(
+            text="Ich prüfe gerade den Google-Cloud-Status über die CLI.",
+            language="de",
+            priority="normal",
+            kind="preamble",
+        )
+    )
+
+    assert player.plays == 1, "the preamble should play during the thinking gap"
+    pred = player.last_should_play
+    assert callable(pred), "a preamble must carry a staleness predicate"
+    # Still thinking → valid.
+    assert pred() is True
+    # The answer starts voicing mid-flight → the predicate now reports stale,
+    # so the player would drop the still-unplayed preamble.
+    pipeline._turn_state = TurnTakingState.JARVIS_SPEAKING  # type: ignore[attr-defined]
+    assert pred() is False
 
 
 @pytest.mark.asyncio

@@ -19,6 +19,7 @@ import {
 import { useShallow } from "zustand/react/shallow";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
+import { useT } from "@/i18n";
 import type {
   CriticAxisResult,
   CriticVerdictReady,
@@ -44,6 +45,7 @@ const VERDICT_STYLE: Record<CriticVerdict, { className: string; label: string }>
 };
 
 export function VerdictPanel() {
+  const t = useT();
   const verdicts = useMissionsStore(
     useShallow((s) => {
       if (!s.selectedMissionId) return [] as CriticVerdictReady[];
@@ -55,7 +57,7 @@ export function VerdictPanel() {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-xs text-muted-foreground">
         <ListChecks className="h-7 w-7 text-muted-foreground/50" />
-        <p>Noch keine Critic-Verdicts fuer diese Mission.</p>
+        <p>{t("missions_view.no_critic_verdicts")}</p>
       </div>
     );
   }

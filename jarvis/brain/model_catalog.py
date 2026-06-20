@@ -129,8 +129,94 @@ class CatalogResult:
 
     provider: str
     models: tuple[ModelInfo, ...]
-    source: str  # "live" | "cache" | "static"
+    source: str  # "live" | "cache" | "static" | "curated"
     fetched_at: float
+    selects: str = "model"  # what the picker writes: "model" | "voice"
+
+
+def _ids(ids: list[str]) -> list[ModelInfo]:
+    return [ModelInfo(id=i, label=i) for i in ids]
+
+
+# TTS catalogs — for most TTS providers the user-facing pick is the VOICE
+# (Gemini Charon/Kore, Grok leo/rex, OpenAI alloy/nova, Google Neural2 names);
+# Cartesia's meaningful pick is its MODEL (sonic-3.5). The ``[tts]`` config is a
+# single block (voice_de/voice_en/model), so the picker only renders on the
+# ACTIVE TTS card and sets the global value.
+TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
+    "gemini-flash-tts": ("voice", _ids([
+        "Charon", "Kore", "Aoede", "Orus", "Iapetus",
+        "Rasalgethi", "Algenib", "Algieba", "Fenrir",
+    ])),
+    "grok-voice": ("voice", _ids(["leo", "rex", "sal", "ara", "eve"])),
+    "openai-tts": ("voice", _ids([
+        "alloy", "ash", "ballad", "coral", "echo",
+        "fable", "onyx", "nova", "sage", "shimmer",
+    ])),
+    "google-neural2": ("voice", _ids([
+        "en-US-Neural2-A", "en-US-Neural2-C", "en-US-Neural2-D", "en-US-Neural2-F",
+        "de-DE-Neural2-B", "de-DE-Neural2-C", "de-DE-Neural2-D", "de-DE-Neural2-F",
+    ])),
+    "cartesia": ("model", _ids(["sonic-3.5", "sonic-2", "sonic-turbo"])),
+}
+
+# STT model catalogs (the ``[stt] model`` is a single global value).
+STT_CATALOG: dict[str, list[ModelInfo]] = {
+    "groq-api": _ids(["whisper-large-v3", "whisper-large-v3-turbo", "distil-whisper-large-v3-en"]),
+    "faster-whisper": _ids([
+        "distil-large-v3", "large-v3", "large-v3-turbo", "medium", "small", "base", "tiny",
+    ]),
+    "openai-api": _ids(["gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1"]),
+    "deepgram": _ids(["nova-3", "nova-2", "nova-2-general", "enhanced", "base"]),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogSpec:
+    """Per-provider picker spec: which tier, what it selects, the curated list,
+    and whether a live ``/v1/models`` fetch is available (brain providers only)."""
+
+    tier: str       # "brain" | "tts" | "stt"
+    selects: str    # "model" | "voice"
+    curated: tuple[ModelInfo, ...]
+    live: bool
+
+
+def _build_provider_catalog() -> dict[str, CatalogSpec]:
+    cat: dict[str, CatalogSpec] = {}
+    # The 5 live-fetchable API brains.
+    for p in CATALOG_PROVIDERS:
+        cat[p] = CatalogSpec("brain", "model", tuple(CURATED_MODELS.get(p, ())), live=True)
+    # Codex — a subscription brain (ChatGPT login); no /v1/models over OAuth, so
+    # curated only. Its model is the OpenAI/codex gpt-5.5 family.
+    cat["codex"] = CatalogSpec("brain", "model", tuple(_curated([
+        ("gpt-5.5", "GPT-5.5"),
+        ("gpt-5.5-pro", "GPT-5.5 Pro"),
+        ("gpt-5.5-codex", "GPT-5.5 Codex"),
+        ("gpt-5.5-mini", "GPT-5.5 Mini"),
+    ])), live=False)
+    # Antigravity — a Google-subscription brain driven via the official agy/gemini
+    # CLI (OAuth login); no /v1/models over OAuth, so curated only. The available
+    # set is plan-gated by the user's Google subscription.
+    cat["antigravity"] = CatalogSpec("brain", "model", tuple(_curated([
+        ("gemini-3.1-pro-preview", "Gemini 3.1 Pro"),
+        ("gemini-3-pro", "Gemini 3 Pro"),
+        ("gemini-3.5-flash", "Gemini 3.5 Flash"),
+        ("gemini-3-flash-preview", "Gemini 3 Flash"),
+    ])), live=False)
+    for p, (selects, opts) in TTS_CATALOG.items():
+        cat[p] = CatalogSpec("tts", selects, tuple(opts), live=False)
+    for p, opts in STT_CATALOG.items():
+        cat[p] = CatalogSpec("stt", "model", tuple(opts), live=False)
+    return cat
+
+
+PROVIDER_CATALOG: dict[str, CatalogSpec] = _build_provider_catalog()
+
+
+def catalog_spec(provider: str) -> CatalogSpec | None:
+    """The picker spec for ``provider`` (None if it has no catalog)."""
+    return PROVIDER_CATALOG.get(provider)
 
 
 # ----------------------------------------------------------------------
@@ -292,19 +378,33 @@ class ModelCatalog:
     ) -> CatalogResult:
         """Return the catalog for ``provider`` with an honest ``source`` flag.
 
-        Fresh cache → ``cache`` (no network). Otherwise fetch → ``live`` (cache
-        updated). Fetch failure → the last cache entry (``cache``, even if stale)
-        or, if there is none, a maintained ``static`` fallback so the dropdown is
-        never empty.
+        Brain providers with a live endpoint: fresh cache → ``cache`` (no
+        network); else fetch → ``live`` (cache updated); fetch failure → stale
+        cache or the curated ``static`` fallback. TTS/STT providers (and Codex)
+        have no ``/v1/models`` endpoint → the curated catalog (``curated``). The
+        ``selects`` field tells the UI whether it picks a model or a voice.
         """
+        spec = catalog_spec(provider)
+        if spec is None:
+            return CatalogResult(provider, (), "static", 0.0, "model")
+
+        # TTS / STT / Codex: curated list only (no live endpoint). Returned as-is
+        # (no brain-model filtering/sorting — voices and STT models are not brain
+        # models and must keep their curated order).
+        if not spec.live:
+            return CatalogResult(
+                provider=provider,
+                models=tuple(spec.curated),
+                source="curated",
+                fetched_at=0.0,
+                selects=spec.selects,
+            )
+
         async with self._lock:
             cached = self._cache.get(provider)
             if cached and not force_refresh and self._is_fresh(cached[0]):
                 return CatalogResult(
-                    provider=provider,
-                    models=self._present(provider, cached[1]),
-                    source="cache",
-                    fetched_at=cached[0],
+                    provider, self._present(provider, cached[1]), "cache", cached[0], "model",
                 )
 
             try:
@@ -313,27 +413,18 @@ class ModelCatalog:
                 log.info("Model catalog fetch for %s failed: %s", provider, exc)
                 if cached:
                     return CatalogResult(
-                        provider=provider,
-                        models=self._present(provider, cached[1]),
-                        source="cache",
-                        fetched_at=cached[0],
+                        provider, self._present(provider, cached[1]), "cache", cached[0], "model",
                     )
                 static = self._static_fallback(provider)
                 return CatalogResult(
-                    provider=provider,
-                    models=self._present(provider, static),
-                    source="static",
-                    fetched_at=0.0,
+                    provider, self._present(provider, static), "static", 0.0, "model",
                 )
 
             now = time.time()
             self._cache[provider] = (now, models)
             self._save_cache()
             return CatalogResult(
-                provider=provider,
-                models=self._present(provider, models),
-                source="live",
-                fetched_at=now,
+                provider, self._present(provider, models), "live", now, "model",
             )
 
     # -- network -------------------------------------------------------

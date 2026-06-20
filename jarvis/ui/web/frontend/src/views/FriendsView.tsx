@@ -7,6 +7,7 @@ import { AddFriendMenu } from "@/components/friends/AddFriendMenu";
 import { ChatTab } from "@/views/friends/ChatTab";
 import { StatusTab } from "@/views/friends/StatusTab";
 import { cn } from "@/lib/utils";
+import { useT } from "@/i18n";
 
 /**
  * Phase F2 — zwei Tabs auf diesem Branch:
@@ -20,6 +21,7 @@ import { cn } from "@/lib/utils";
 type Tab = "chat" | "status";
 
 export function FriendsView() {
+  const t = useT();
   const [tab, setTab] = useState<Tab>("chat");
   const [addOpen, setAddOpen] = useState(false);
 
@@ -28,14 +30,14 @@ export function FriendsView() {
       <ViewHeader
         icon={<Users className="h-4 w-4 text-primary" />}
         title="Friends"
-        subtitle="Telegram-Bot + lokaler Friend-Registry. Du entscheidest, was Friends sehen."
+        subtitle={t("friends_view.subtitle")}
         right={
           <button
             type="button"
             onClick={() => setAddOpen(true)}
             className="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1 text-[11px] text-primary hover:bg-primary/20"
           >
-            <Plus className="h-3 w-3" /> Friend hinzufuegen
+            <Plus className="h-3 w-3" /> {t("add_friend_menu.title")}
           </button>
         }
       />

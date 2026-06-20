@@ -44,6 +44,14 @@ def test_other_providers_route_subjarvis(provider: str) -> None:
     assert _select_subagent_worker_kind(provider, "gemini-3.1-pro") == "subjarvis"
 
 
+@pytest.mark.parametrize("step_model", ["", "claude-opus-4-8", "gemini-3.1-pro"])
+def test_antigravity_routes_to_oauth_cli_worker(step_model: str) -> None:
+    """Choosing 'antigravity' (Google subscription) routes to the dedicated
+    OAuth-CLI worker kind — never the API-key Gemini path. Like claude-api, it
+    is a hard lock that no step model can divert."""
+    assert _select_subagent_worker_kind("antigravity", step_model) == "antigravity"
+
+
 def test_gemini_as_subagent_provider_uses_direct_gemini_worker() -> None:
     """Post-Welle-4: explicitly choosing 'gemini' routes to the direct
     GeminiWorker so the sub-agent actually RUNS on Gemini. The OpenClaw path it

@@ -79,6 +79,14 @@ class TestCuFailureReadback:
         out = cu_failure_readback("en", error="exit 5", exit_code=5)
         assert "screen" in out.lower()
 
+    def test_exit_2_names_invalid_model_response_not_screen_confusion(self) -> None:
+        # Live 2026-06-20: the CU brain provider chain returned no valid action
+        # response, but the user heard "I got confused on screen". Exit 2 is a
+        # model/parse failure; the readback must name that class honestly.
+        out = cu_failure_readback("en", error="exit 2", exit_code=2)
+        assert "confused" not in out.lower(), out
+        assert "valid screen-control response" in out.lower(), out
+
     def test_exit_124_timeout_phrase_distinct_from_gave_up(self) -> None:
         timed_out = cu_failure_readback("en", error="exit 124", exit_code=124)
         gave_up = cu_failure_readback("en", error="exit 5", exit_code=5)
@@ -114,6 +122,55 @@ class TestCuFailureReadback:
         out = cu_failure_readback("en", error="exit 5", exit_code=5, detail=detail)
         assert "BridgeMind has no news channel" in out
         assert not _EXIT_TOKEN_RE.search(out), out
+
+    def test_no_progress_guard_diagnostic_is_not_spoken(self) -> None:
+        # Live bug 2026-06-20 (Angela-Merkel x.com mission): the user heard
+        #   "Das am Bildschirm hat nicht geklappt: 3 identical screenshots in a
+        #    row at step 9 -- the click target is unreactive or off-screen."
+        # The no-progress guard writes a developer DIAGNOSTIC to stderr — it is
+        # loop instrumentation, not the model's human reason — so it must never
+        # be forwarded as the spoken reason. Fall back to the generic, localized
+        # exit-code phrase (exit 5 == the model gave up).
+        detail = (
+            "[cu] no progress: 3 identical screenshots in a row at step 9 -- "
+            "the click target is unreactive or off-screen."
+        )
+        out = cu_failure_readback("de", error="exit 5", exit_code=5, detail=detail)
+        assert "identical screenshots" not in out.lower(), out
+        assert "step 9" not in out.lower(), out
+        assert out == action_phrase("cu_exit_gave_up", "de")
+
+    def test_mission_profile_telemetry_never_reaches_readback(self) -> None:
+        # The latency profiler appends "[cu] mission profile: ..." to stderr on
+        # every _final; _cu_failure_detail forwards the WHOLE stderr block, so
+        # the telemetry rode along into the spoken readback. It must never be
+        # spoken or displayed.
+        detail = (
+            "[cu] no progress: 3 identical screenshots in a row at step 9 -- "
+            "the click target is unreactive or off-screen.\n"
+            "[cu] mission profile: steps=9 total=53.2s act=10.8s observe=2.1s "
+            "plan=5.2s think=27.6s verify=7.2s"
+        )
+        out = cu_failure_readback("de", error="exit 5", exit_code=5, detail=detail)
+        assert "mission profile" not in out.lower(), out
+        assert "[cu]" not in out.lower(), out
+        assert "steps=9" not in out, out
+
+    def test_anti_oscillation_guard_diagnostic_is_not_spoken(self) -> None:
+        # The toggle/guard family ("N guard-blocked actions this mission",
+        # "toggle-stop") is internal instrumentation too — not a spoken reason.
+        detail = "5 guard-blocked actions this mission (toggle-stop)"
+        out = cu_failure_readback("de", error="exit 5", exit_code=5, detail=detail)
+        assert "guard-blocked" not in out.lower(), out
+        assert out == action_phrase("cu_exit_gave_up", "de")
+
+    def test_internal_diagnostic_on_error_field_is_not_spoken(self) -> None:
+        # The same diagnostic arriving via the ``error`` field (path 2) must be
+        # rejected just like the ``detail`` path, not forwarded verbatim.
+        err = "3 identical screenshots in a row at step 9 -- the click target"
+        out = cu_failure_readback("de", error=err, exit_code=5)
+        assert "identical screenshots" not in out.lower(), out
+        assert out == action_phrase("cu_exit_gave_up", "de")
 
 
 class TestCuSuccessReadback:

@@ -39,7 +39,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import { useT } from "@/i18n";
+import { translate, useT } from "@/i18n";
 import {
   useSkillsList,
   useSkillDetail,
@@ -64,12 +64,20 @@ import {
 } from "@/hooks/useSkills";
 import { useEventStore } from "@/store/events";
 
-const STATE_LABEL: Record<SkillState, string> = {
-  active: "aktiv",
-  validated: "bereit",
-  draft: "fehler",
-  disabled: "aus",
-};
+function stateLabel(state: SkillState): string {
+  switch (state) {
+    case "active":
+      return translate("skills_view.active_badge");
+    case "validated":
+      return translate("skills_view.validated_badge");
+    case "draft":
+      return translate("skills_view.draft_badge");
+    case "disabled":
+      return translate("skills_view.disabled_badge");
+    default:
+      return state;
+  }
+}
 
 const STATE_VARIANT: Record<
   SkillState,
@@ -432,11 +440,11 @@ export function SkillsView() {
           <ScrollArea className="flex-1">
             <div className="space-y-3 p-4">
               {isLoading && (
-                <div className="text-sm text-muted-foreground">Lade Skills…</div>
+                <div className="text-sm text-muted-foreground">{t("skills_view.loading")}</div>
               )}
               {error && (
                 <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-                  Konnte Skills nicht laden: {(error as Error).message}
+                  {t("skills_view.load_error")}: {(error as Error).message}
                 </div>
               )}
               {searchActive ? (
@@ -484,7 +492,7 @@ export function SkillsView() {
             <SkillDetailPanel name={selected} />
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-              Waehle einen Skill aus der Liste.
+              {t("skills_view.select_from_list")}
             </div>
           )}
         </div>
@@ -939,7 +947,7 @@ function SkillDetailPanel({ name }: { name: string }) {
   if (error) {
     return (
       <div className="p-6 text-sm text-destructive">
-        Fehler: {(error as Error).message}
+        {t("common.error")}: {(error as Error).message}
       </div>
     );
   }
@@ -955,7 +963,7 @@ function SkillDetailPanel({ name }: { name: string }) {
             <div className="flex items-center gap-2">
               <h2 className="truncate text-lg font-semibold">{data.name}</h2>
               <Badge variant={STATE_VARIANT[data.state]}>
-                {STATE_LABEL[data.state]}
+                {stateLabel(data.state)}
               </Badge>
               {data.is_builtin && (
                 <Badge variant="outline" className="gap-1">
@@ -993,14 +1001,14 @@ function SkillDetailPanel({ name }: { name: string }) {
               disabled={!dirty || save.isPending}
             >
               <Save className="mr-1.5 h-3.5 w-3.5" />
-              {save.isPending ? "Speichert…" : "Speichern"}
+              {save.isPending ? t("common.saving") : t("common.save")}
             </Button>
           </div>
         </div>
 
         {data.error && (
           <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 p-2.5 text-xs text-destructive">
-            Validation-Fehler: {data.error}
+            {t("skills_view.validation_error")}: {data.error}
           </div>
         )}
         {saveError && !showAdminDialog && (
@@ -1025,7 +1033,7 @@ function SkillDetailPanel({ name }: { name: string }) {
             </span>
             {data.is_builtin && (
               <span className="text-[10px] text-muted-foreground">
-                Builtin — Admin-Password zum Speichern noetig
+                {t("skills_view.builtin_admin_needed")}
               </span>
             )}
           </div>
@@ -1100,16 +1108,18 @@ function AdminPassDialog({
   setPassInput: (v: string) => void;
   errorHint: string | null;
 }) {
+  const t = useT();
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
       <div className="w-[400px] rounded-lg border border-border bg-card p-6 shadow-xl">
         <h3 className="flex items-center gap-2 text-base font-semibold">
           <Lock className="h-4 w-4" />
-          Admin-Password
+          {t("skills_view.admin_password")}
         </h3>
         <p className="mt-2 text-sm text-muted-foreground">
-          Builtin-Skills sind geschuetzt. Gib das in <code>jarvis.toml</code> unter
-          <code> [security]</code> gesetzte Admin-Password ein.
+          {t("skills_view.admin_password_hint_a")} <code>jarvis.toml</code>{" "}
+          {t("skills_view.admin_password_hint_b")}
+          <code> [security]</code>.
         </p>
         <input
           type="password"
@@ -1128,14 +1138,14 @@ function AdminPassDialog({
         )}
         <div className="mt-5 flex justify-end gap-2">
           <Button size="sm" variant="ghost" onClick={onCancel}>
-            Abbrechen
+            {t("common.cancel")}
           </Button>
           <Button
             size="sm"
             disabled={!passInput}
             onClick={() => onConfirm(passInput)}
           >
-            Entsperren
+            {t("skills_view.unlock")}
           </Button>
         </div>
       </div>
@@ -1336,7 +1346,7 @@ function ResourceViewer({
         </Button>
       </div>
       {isLoading && (
-        <div className="p-4 text-xs text-muted-foreground">Laedt…</div>
+        <div className="p-4 text-xs text-muted-foreground">{t("skills_view.loading_skill")}</div>
       )}
       {error && (
         <div className="p-4 text-xs text-destructive">
@@ -1355,15 +1365,17 @@ function ResourceViewer({
 }
 
 function EmptyList() {
+  const t = useT();
   const assistantName = useEventStore((s) => s.assistantName);
   return (
     <div className="space-y-3 text-sm text-muted-foreground">
-      <p>Noch keine Skills da.</p>
+      <p>{t("skills_view.empty_list_title")}</p>
       <p className="text-xs">
-        Beim ersten Start kopiert {assistantName} die Builtin-Skills nach
+        {t("skills_view.empty_list_body_a")} {assistantName}{" "}
+        {t("skills_view.empty_list_body_b")}
         <br />
-        <code>%LOCALAPPDATA%\Jarvis\skills</code>. Passiert das nicht, check
-        die Backend-Logs.
+        <code>%LOCALAPPDATA%\Jarvis\skills</code>.{" "}
+        {t("skills_view.empty_list_body_c")}
       </p>
     </div>
   );
@@ -1485,6 +1497,7 @@ function SearchResults({
   selected: string | null;
   onSelect: (name: string) => void;
 }) {
+  const t = useT();
   if (isPending && results.length === 0) {
     return <div className="text-xs text-muted-foreground">Searching…</div>;
   }
@@ -1498,7 +1511,7 @@ function SearchResults({
   if (results.length === 0) {
     return (
       <div className="rounded-lg border border-border p-3 text-xs text-muted-foreground">
-        Keine Treffer. Probier einen anderen Begriff oder entferne einen Filter.
+        {t("skills_view.search_no_hits")}
       </div>
     );
   }

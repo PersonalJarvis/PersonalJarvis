@@ -39,6 +39,8 @@ __all__ = [
     "canonical_subagent_provider",
     "CODEX_SUBAGENT_SLUGS",
     "CODEX_SUBAGENT_CANONICAL",
+    "ANTIGRAVITY_SUBAGENT_SLUGS",
+    "ANTIGRAVITY_SUBAGENT_CANONICAL",
 ]
 
 
@@ -51,6 +53,16 @@ __all__ = [
 # persisted value is "openai-codex"; "chatgpt" is an accepted alias.
 CODEX_SUBAGENT_SLUGS: Final[frozenset[str]] = frozenset({"openai-codex", "chatgpt"})
 CODEX_SUBAGENT_CANONICAL: Final[str] = "openai-codex"
+
+
+# Subagent slugs that route to the OAuth Google-CLI worker (the GeminiWorker
+# driven over the "Sign in with Google" login, billed against the Google
+# subscription — no API key), NOT through MAPPINGS (no OpenClaw provider slug).
+# Mirror of CODEX_SUBAGENT_SLUGS so the acceptance set is a SINGLE SOURCE OF
+# TRUTH shared by /api/subagent/switch, the brain-tool path, and the worker
+# selector (init._select_subagent_worker_kind), and can never drift (BUG-008).
+ANTIGRAVITY_SUBAGENT_SLUGS: Final[frozenset[str]] = frozenset({"antigravity"})
+ANTIGRAVITY_SUBAGENT_CANONICAL: Final[str] = "antigravity"
 
 
 @dataclass(frozen=True, slots=True)

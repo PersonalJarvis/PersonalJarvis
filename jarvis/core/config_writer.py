@@ -182,22 +182,83 @@ def set_stt_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _sync_stt_provider_drift_soll(name)
 
 
+def set_tts_voice(voice: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Set the global TTS voice (``[tts] voice_de`` + ``voice_en``).
+
+    The TTS config is a single ``[tts]`` block, so this is the voice of the
+    ACTIVE TTS provider. Most generative voices are multilingual (Gemini Charon,
+    Grok leo …), so both language slots get the same value. ``voice_de`` /
+    ``voice_en`` are pinned in ``config-soll.json`` (like ``tts.provider``), so a
+    TOML-only write would be reverted by the drift-guard — we sync config-soll too.
+    """
+    _patch_table(path, "tts", "voice_de", voice)
+    _patch_table(path, "tts", "voice_en", voice)
+    try:
+        _update_config_soll_section("tts", {"voice_de": voice, "voice_en": voice})
+    except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
+        log.warning("Could not sync tts voice to config-soll.json: %s", exc)
+
+
+def set_tts_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Set the global TTS model (``[tts] model``) — e.g. Cartesia ``sonic-3.5``.
+
+    Synced to config-soll (drift-guard pinned, same class as the voice keys).
+    """
+    _patch_table(path, "tts", "model", model)
+    try:
+        _update_config_soll_section("tts", {"model": model})
+    except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
+        log.warning("Could not sync tts.model to config-soll.json: %s", exc)
+
+
+def set_stt_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Set the global STT model (``[stt] model``).
+
+    Takes effect on the next SpeechPipeline bootstrap (a voice restart): the STT
+    provider is instantiated once at pipeline start. config-soll synced (the stt
+    block is drift-guard pinned like its provider key).
+    """
+    _patch_table(path, "stt", "model", model)
+    try:
+        _update_config_soll_section("stt", {"model": model})
+    except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
+        log.warning("Could not sync stt.model to config-soll.json: %s", exc)
+
+
+def set_tts_cartesia_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Set Cartesia's model in its OWN sub-table ``[tts.cartesia] model_id``.
+
+    Cartesia reads its model from this sub-table (default ``sonic-3.5``), NOT the
+    global ``[tts] model`` that Gemini/OpenAI use. ``[tts.cartesia]`` is not pinned
+    in config-soll, so a plain atomic TOML write suffices (no drift-guard revert).
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"Config-Datei fehlt: {path}")
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+        tts = doc.get("tts")
+        if tts is None:
+            tts = tomlkit.table()
+            doc["tts"] = tts
+        cart = tts.get("cartesia")
+        if cart is None:
+            cart = tomlkit.table()
+            tts["cartesia"] = cart
+        cart["model_id"] = model
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
+
+
 def set_codex_binary_path(binary_path: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Set ``[codex] binary_path`` to work around Windows PATH issues."""
     _patch_table(path, "codex", "binary_path", binary_path)
 
-
-def set_assistant_name(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
-    """Persist the assistant's display name to ``[persona] name`` in jarvis.toml.
-
-    Toml-only by design: ``persona.name`` is NOT tracked in ``config-soll.json``,
-    so the drift-guard never reverts it (a plain atomic write suffices). Empty
-    string means "derive the name from the wake phrase" (see
-    ``jarvis.brain.assistant_name.resolve_assistant_name``). Takes effect on the
-    next BrainManager build (a Jarvis restart): the system prompt is assembled
-    once per manager.
-    """
-    _patch_table(path, "persona", "name", name)
 
 
 # Voice-keybind action vocabulary. Shared with the keybinds API
@@ -296,6 +357,10 @@ def set_wake_word(
     if fuzzy_match_ratio is not None:
         values["fuzzy_match_ratio"] = float(fuzzy_match_ratio)
     _patch_wake_word_toml(path, values)
+    try:
+        _strip_persona_name(path)
+    except Exception as exc:  # noqa: BLE001 — cleanup is best-effort, never breaks the save
+        log.debug("persona-name strip skipped: %s", exc)
 
 
 def set_autostart(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -1024,6 +1089,33 @@ def _patch_wake_word_toml(path: Path, values: dict[str, object]) -> None:
         for key, value in values.items():
             wake_word[key] = value
 
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
+
+
+def _strip_persona_name(path: Path) -> None:
+    """Remove a stale ``[persona] name`` entry (the legacy assistant-name override).
+
+    The wake word is now the single name source, so a leftover ``[persona] name``
+    from before the 2026-06-20 coupling must not linger. Best-effort: a missing
+    file/table/key is a no-op. Preserves comments and the optional BOM, exactly
+    like :func:`_patch_table`.
+    """
+    if not path.exists():
+        return
+
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM):]
+        doc: TOMLDocument = tomlkit.parse(raw)
+        persona = doc.get("persona")
+        if persona is None or "name" not in persona:
+            return
+        del persona["name"]
         out = tomlkit.dumps(doc)
         if had_bom:
             out = _BOM + out

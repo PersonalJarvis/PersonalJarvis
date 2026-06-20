@@ -302,9 +302,10 @@ def test_suppress_acks_are_short_and_unique() -> None:
         assert len(pool) >= 3, "need variety to avoid robot repetition"
         assert len(set(pool)) == len(pool)
         in_flight_markers = {
-            # German marker words below are the data under test.
+            # German/Spanish marker words below are the data under test.
             "de": ("schon", "läuft", "dabei", "dran", "bereits", "arbeit"),  # i18n-allow
             "en": ("already", "still", "running", "working", "progress"),
+            "es": ("marcha", "sigo", "proceso", "está"),  # i18n-allow
         }[lang]
         for ack in pool:
             assert 5 <= len(ack) <= 60, (

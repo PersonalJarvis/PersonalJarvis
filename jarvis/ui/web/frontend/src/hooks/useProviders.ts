@@ -324,8 +324,10 @@ export interface BrainModelsResult {
   provider: string;
   current_model: string;
   models: BrainModel[];
-  source: "live" | "cache" | "static";
+  source: "live" | "cache" | "static" | "curated";
   fetched_at: number;
+  // What the picker writes: "model" (brain/stt/cartesia) or "voice" (most TTS).
+  selects?: "model" | "voice";
 }
 
 /** Lists the available models for a brain provider for the picker dropdown. */
@@ -357,7 +359,8 @@ export interface BrainModelSaveResult {
   persisted: boolean;
   applied_live: boolean;
   restart_required: boolean;
-  probe: BrainModelProbe;
+  // Only brain providers run a live probe; TTS/STT save without one (null).
+  probe: BrainModelProbe | null;
 }
 
 /**

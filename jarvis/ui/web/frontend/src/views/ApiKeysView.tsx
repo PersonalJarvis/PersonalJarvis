@@ -315,15 +315,16 @@ function ProviderCard({
         onSavedActivate={handleSavedActivate}
       />
 
-      {/* Model picker — only for brain providers with a stored API key. The
-          live catalog comes from the provider's own /v1/models, so newly
-          released models appear without a code change. Codex (auth_mode
-          "codex") renders the login widget instead and has no model picker. */}
-      {descriptor.tier === "brain" &&
-        descriptor.auth_mode === "api_key" &&
-        descriptor.configured && (
-          <BrainModelSelector providerId={descriptor.id} />
-        )}
+      {/* Model / voice picker. Brain providers (incl. the Codex subscription)
+          pick a model from their own live catalog. TTS/STT share a single global
+          [tts]/[stt] block, so the picker only appears on the ACTIVE one and sets
+          the voice (Grok/Gemini/OpenAI/Google) or model (Cartesia/STT). */}
+      {((descriptor.tier === "brain" && descriptor.configured) ||
+        ((descriptor.tier === "tts" || descriptor.tier === "stt") &&
+          descriptor.active &&
+          descriptor.configured)) && (
+        <BrainModelSelector providerId={descriptor.id} />
+      )}
 
       <ProviderTestControl providerId={descriptor.id} />
     </div>

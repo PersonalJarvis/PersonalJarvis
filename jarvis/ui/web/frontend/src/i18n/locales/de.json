@@ -822,6 +822,8 @@
     "source_static_note": "Live-Katalog nicht erreichbar — gepflegte Standardauswahl.",
     "more_hint": "{0} weitere — Suche verfeinern",
     "choose_placeholder": "Modell wählen…",
+    "heading_voice": "Stimme",
+    "choose_voice": "Stimme wählen…",
     "use_custom": "\"{0}\" verwenden",
     "no_models": "Keine Modelle gefunden",
     "loading": "Lädt…"
@@ -896,6 +898,7 @@
       "restart_required": "Neustart erforderlich, damit die Änderung greift.",
       "degraded_warning": "Die gewählte Phrase wird von der ausgewählten Engine nicht unterstützt — sie fällt auf eine andere Engine zurück.",
       "needs_whisper_hint": "Eine beliebige Phrase benötigt das lokale-Whisper-Extra. Ohne es fällt die Engine auf eine eingebaute Schnellphrase zurück.",
+      "derived_name": "Dein Assistent heißt dann: {0}",
       "engine_options": {
         "auto": "Automatisch (empfohlen)",
         "openwakeword": "openWakeWord (eingebaute Phrasen)",
@@ -938,16 +941,6 @@
         "mascot": "Maskottchen-Orb",
         "none": "Keins (ausgeblendet)"
       }
-    },
-    "assistant_name": {
-      "title": "Name des Assistenten",
-      "description": "Wie der Assistent sich in Antworten selbst nennt. Leer lassen, um dem Wake-Wort zu folgen.",
-      "label": "Name",
-      "current": "Der Assistent nennt sich „{0}“.",
-      "auto_hint": "Leer — folgt dem Wake-Wort (aktuell „{0}“).",
-      "save": "Name speichern",
-      "saved": "Name gespeichert",
-      "restart_required": "Neustart nötig, damit es wirkt."
     },
     "system_prompt": {
       "title": "System-Prompt",
@@ -1270,7 +1263,7 @@
     },
     "welcome": {
       "title": "Willkommen bei Personal Jarvis",
-      "subtitle": "Dein lokaler, privater Sprachassistent. Lass uns alles einrichten.",
+      "subtitle": "Dein sprachgesteuerter KI-Assistent. Lass uns alles einrichten.",
       "cta": "Los geht's",
       "skip_setup": "Einrichtung vorerst überspringen"
     },
@@ -1283,10 +1276,10 @@
       "proceed": "Verstanden — fortfahren"
     },
     "intro": {
-      "scene_1": "Das ist {name} — dein Sprachassistent.",
-      "scene_2": "Sprich einfach. {name} hört zu und handelt.",
+      "scene_1": "Triff deinen sprachgesteuerten Assistenten.",
+      "scene_2": "Sprich einfach — er hört zu und handelt.",
       "scene_3": "Er arbeitet im Hintergrund weiter, wenn du es nicht tust.",
-      "scene_4": "Und er läuft lokal — deine Daten bleiben deine."
+      "scene_4": "Deine Schlüssel, deine Daten, deine Regeln."
     },
     "terms": {
       "title": "Nutzungsbedingungen & Haftungsausschluss",
@@ -1301,7 +1294,7 @@
     },
     "wake_word": {
       "title": "Wähle dein Aktivierungswort",
-      "body": "Wähle das Wort, das {name} aufweckt. \"Hey\" bleibt fest — den Rest bestimmst du.",
+      "body": "Wähle das Wort, das deinen Assistenten aufweckt. \"Hey\" bleibt fest — den Rest bestimmst du.",
       "prefix": "Hey",
       "input_label": "Dein Aktivierungswort",
       "placeholder": "z. B. Nova",
@@ -1310,7 +1303,8 @@
       "references_caveat": "Diese Referenzen dienen nur zur Information und können unvollständig oder veraltet sein — sie ersetzen nicht deine eigene Prüfung.",
       "ack_label": "Ich habe die Informationen zu geschützten Namen gesichtet und akzeptiere, dass ich allein für das gewählte Aktivierungswort verantwortlich bin.",
       "cta": "Aktivierungswort speichern",
-      "saving": "Speichern…"
+      "saving": "Speichern…",
+      "derived_name": "Dein Assistent heißt dann: {0}"
     },
     "api_keys": {
       "title": "Verbinde deine KI-Dienste (optional)",
@@ -1320,19 +1314,13 @@
     },
     "mic_test": {
       "title": "Mikrofon-Check",
-      "body": "Stellen wir sicher, dass {name} dich hören kann.",
-      "no_mic": "Kein Mikrofon erkannt. Du kannst trotzdem per Text oder über einen Kanal wie Telegram mit {name} sprechen.",
+      "body": "Stellen wir sicher, dass dein Assistent dich hören kann.",
+      "no_mic": "Kein Mikrofon erkannt. Du kannst trotzdem per Text oder über einen Kanal wie Telegram sprechen.",
       "skip": "Mikrofon-Check überspringen"
-    },
-    "persona": {
-      "title": "Mach es zu deinem (optional)",
-      "name_label": "Wie soll sich der Assistent nennen?",
-      "name_placeholder": "Namen eingeben…",
-      "skip": "Personalisierung überspringen"
     },
     "system_style": {
       "title": "Wähle deinen Stil",
-      "body": "Wie soll {name} auf dem Bildschirm erscheinen? Du kannst das jederzeit in den Einstellungen ändern.",
+      "body": "Wie soll dein Assistent auf dem Bildschirm erscheinen? Du kannst das jederzeit in den Einstellungen ändern.",
       "recommended": "Empfohlen",
       "options": {
         "whisper_bar": "Jarvis-Leiste",
@@ -1352,10 +1340,10 @@
     },
     "finish": {
       "title": "Alles bereit!",
-      "body": "{name} ist startklar. Sag dein Aktivierungswort oder tippe einen Befehl, um zu beginnen.",
+      "body": "Dein Assistent ist startklar. Sag dein Aktivierungswort oder tippe einen Befehl, um zu beginnen.",
       "skipped_title": "Du hast übersprungen — jederzeit in den Einstellungen nachholbar:",
-      "start_cta": "{name} verwenden",
-      "boot_notice": "Hinweis: Der erste Start dauert etwa 10 Sekunden, während {name} hochfährt — das ist völlig normal."
+      "start_cta": "Loslegen",
+      "boot_notice": "Hinweis: Der erste Start dauert etwa 10 Sekunden, während dein Assistent hochfährt — das ist völlig normal."
     }
   },
   "languages_view": {
@@ -1937,7 +1925,10 @@
     "title": "Missions",
     "subtitle": "Phase 6 — Worker/Critic-Loop. Live-Bus, PTY-Streams, Verdicts.",
     "tree_label": "Mission-Tree",
-    "timeline_label": "Event-Timeline"
+    "timeline_label": "Event-Timeline",
+    "no_events": "Noch keine Events für diese Mission.",
+    "no_critic_verdicts": "Noch keine Critic-Verdicts für diese Mission.",
+    "no_missions_yet": "Noch keine Missions. Hauptjarvis dispatched gleich…"
   },
   "skill_finder_dialog": {
     "install_failed": "Installation fehlgeschlagen",
@@ -1999,6 +1990,18 @@
     "timed_out": "Timeout"
   },
   "mascot_gigi": {
-    "aria_label": "{name}-Maskottchen Gigi"
+    "aria_label": "{name}-Maskottchen Gigi",
+    "back_online": "wieder online!",
+    "connection_lost": "Verbindung weg …"
+  },
+  "agents_view": {
+    "subtitle": "Laufende Sub-Agents — Rolle, Status, Output.",
+    "empty_title": "Keine aktiven Agents",
+    "empty_body_a": "Wenn",
+    "empty_body_b": "einen Sub-Agent startet, erscheint er hier als Live-Kachel mit Streaming-Output und Kill-Button.",
+    "phase4_notice": "Wird mit Phase 4 (Harness-Integration) aktiviert."
+  },
+  "friends_view": {
+    "subtitle": "Telegram-Bot + lokaler Friend-Registry. Du entscheidest, was Friends sehen."
   }
 }

@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
 import { saveSubagentModel, switchSubagentProvider } from "@/hooks/useProviders";
+import { BrainModelSelector } from "@/components/BrainModelSelector";
 
 /**
  * Subagent tier for the API-Keys view.
@@ -146,6 +147,13 @@ export function SubagentSection() {
  * (frontier) model — shown in the hint via `model_resolved` — and a concrete
  * id overrides it for every heavy-task worker spawn.
  */
+/**
+ * The dedicated subagent LLM model pin — the SAME dropdown as the brain cards,
+ * showing the active subagent provider's catalog (``brain_primary``) and saving
+ * through the subagent endpoint (POST /api/subagent/model) instead of the
+ * per-provider model route. Empty selection = the provider's deep/frontier model
+ * (shown in the hint via ``model_resolved``).
+ */
 function SubagentModelCard({
   status,
   onSaved,
@@ -154,63 +162,41 @@ function SubagentModelCard({
   onSaved: () => void;
 }) {
   const t = useT();
-  const pushToast = useEventStore((s) => s.pushToast);
-  const [model, setModel] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-
-  // Controlled value falls back to the server state until the user edits it.
-  const value = model ?? status.sub_model_override ?? "";
-
-  async function handleApply() {
-    setPending(true);
-    try {
-      const next = await saveSubagentModel(value.trim());
-      setModel(null);
-      pushToast(
-        "success",
-        next.restart_required
-          ? t("subagent_model.saved_restart")
-          : t("subagent_model.saved"),
-      );
-      window.dispatchEvent(new Event("jarvis:subagent-switched"));
-      onSaved();
-    } catch (e) {
-      pushToast("error", (e as Error).message);
-    } finally {
-      setPending(false);
-    }
-  }
-
+  // The subagent worker slug → the catalog provider id (Codex's worker slug
+  // "openai-codex" maps to the catalog's "codex"; all others match 1:1).
+  const catalogProvider =
+    status.brain_primary === "openai-codex" ? "codex" : status.brain_primary;
   return (
     <div className="card-outline space-y-3 p-4">
       <p className="text-[11px] leading-relaxed text-muted-foreground">
         {t("subagent_model.description")}
       </p>
-      <label className="block">
-        <span className="mb-1 block text-xs uppercase tracking-wide text-muted-foreground">
-          {t("subagent_model.model_label")}
-        </span>
-        <input
-          type="text"
-          aria-label={t("subagent_model.model_label")}
-          value={value}
-          onChange={(e) => setModel(e.target.value)}
-          placeholder={t("subagent_model.model_placeholder")}
-          className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm"
+      {catalogProvider ? (
+        <BrainModelSelector
+          providerId={catalogProvider}
+          currentModel={status.sub_model_override ?? ""}
+          onSave={async (model) => {
+            const r = await saveSubagentModel(model);
+            window.dispatchEvent(new Event("jarvis:subagent-switched"));
+            onSaved();
+            return {
+              ok: true,
+              provider: status.brain_primary,
+              model,
+              persisted: r.persisted,
+              applied_live: false,
+              restart_required: r.restart_required,
+              probe: null,
+            };
+          }}
         />
-        <span className="mt-1 block text-[11px] text-muted-foreground">
-          {t("subagent_model.model_hint")}
-          {status.model_resolved ? ` (${status.model_resolved})` : ""}
-        </span>
-      </label>
-      <button
-        type="button"
-        onClick={handleApply}
-        disabled={pending}
-        className="w-full rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
-      >
-        {pending ? t("subagent_model.applying") : t("subagent_model.apply")}
-      </button>
+      ) : (
+        <p className="text-[11px] text-muted-foreground">{t("subagent_model.model_hint")}</p>
+      )}
+      <p className="text-[11px] text-muted-foreground">
+        {t("subagent_model.model_hint")}
+        {status.model_resolved ? ` (${status.model_resolved})` : ""}
+      </p>
     </div>
   );
 }

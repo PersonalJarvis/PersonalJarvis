@@ -133,11 +133,11 @@ export function OutputsView() {
             </div>
           ) : error ? (
             <div className="p-4 text-xs text-destructive">
-              Outputs nicht geladen: {String(error)}
+              {t("outputs_view.list_load_error")}: {String(error)}
             </div>
           ) : sessions.length === 0 ? (
             <div className="flex flex-1 items-center justify-center p-6 text-center text-xs text-muted-foreground">
-              Noch keine Sub-Agent-Sessions. Starte einen OpenClaw-Task.
+              {t("outputs_view.empty_sessions")}
             </div>
           ) : (
             <ScrollArea className="flex-1">
@@ -162,7 +162,7 @@ export function OutputsView() {
             <SessionDetail meta={effectiveSelected} />
           ) : (
             <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground">
-              Waehle eine Session.
+              {t("outputs_view.select_session")}
             </div>
           )}
         </section>
@@ -396,7 +396,7 @@ function SessionDetail({ meta }: { meta: OutputSummary }) {
         {meta.error && (
           <section className="rounded-xl border border-destructive/30 bg-destructive/5 p-4">
             <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-destructive">
-              Fehler
+              {t("common.error")}
             </div>
             <pre className="whitespace-pre-wrap text-xs text-destructive/90">
               {meta.error}
@@ -423,16 +423,16 @@ function SessionDetail({ meta }: { meta: OutputSummary }) {
           {plan.isLoading ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" />
-              Lade Plan...
+              {t("outputs_view.loading_plan")}
             </div>
           ) : plan.isError ? (
             <div className="text-xs text-destructive">
-              Plan konnte nicht geladen werden: {String(plan.error)}
+              {t("outputs_view.plan_load_error")}: {String(plan.error)}
             </div>
           ) : isSingleShot ? (
             <div className="flex items-center gap-2 rounded-lg border border-border bg-background/50 p-3 text-xs text-muted-foreground">
               <FileQuestion className="h-4 w-4" />
-              Single-Shot-Run — kein strukturierter Plan fuer diese Session.
+              {t("outputs_view.single_shot_no_plan")}
             </div>
           ) : hasPlan && plan.data ? (
             <>
@@ -464,6 +464,7 @@ function isPlumbingArtifact(path: string): boolean {
 }
 
 function ArtifactsSection({ slug }: { slug: string }) {
+  const t = useT();
   const q = useArtifactsForOutput(slug);
   const caps = useOutputsCapabilities();
   const nativeActions = caps.data?.native_file_actions ?? false;
@@ -488,15 +489,15 @@ function ArtifactsSection({ slug }: { slug: string }) {
       {q.isLoading ? (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <Loader2 className="h-3 w-3 animate-spin" />
-          Lade Artefakte...
+          {t("outputs_view.loading_artifacts")}
         </div>
       ) : q.isError ? (
         <div className="text-xs text-destructive">
-          Artefakte nicht geladen: {String(q.error)}
+          {t("outputs_view.artifacts_load_error")}: {String(q.error)}
         </div>
       ) : files.length === 0 ? (
         <div className="text-xs text-muted-foreground">
-          Diese Session hat keine gespeicherten Dateien.
+          {t("outputs_view.no_files")}
         </div>
       ) : (
         <ul className="flex flex-col gap-1">
@@ -523,6 +524,7 @@ function ArtifactRow({
   file: ArtifactSummary;
   nativeActions: boolean;
 }) {
+  const t = useT();
   const [expanded, setExpanded] = useState(false);
   const full = useArtifactFile(slug, expanded ? file.path : null);
   const openUrl = artifactOpenUrl(slug, file.path);
@@ -600,16 +602,16 @@ function ArtifactRow({
         <div className="border-t border-border/40 px-3 py-2">
           {!file.is_text ? (
             <div className="text-[11px] text-muted-foreground">
-              Binärdatei — öffne den Ordner auf dem Desktop, um sie anzuzeigen.
+              {t("outputs_view.binary_file_hint")}
             </div>
           ) : full.isLoading ? (
             <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" />
-              Lade Datei...
+              {t("outputs_view.loading_file")}
             </div>
           ) : full.isError ? (
             <div className="text-[11px] text-destructive">
-              Fehler: {String(full.error)}
+              {t("common.error")}: {String(full.error)}
             </div>
           ) : (
             <>
@@ -618,7 +620,7 @@ function ArtifactRow({
               </pre>
               {full.data?.truncated && (
                 <div className="mt-1 text-[10px] text-muted-foreground">
-                  Datei gekürzt auf 1 MiB — Rest im Datei-Manager anzeigen.
+                  {t("outputs_view.file_truncated")}
                 </div>
               )}
             </>

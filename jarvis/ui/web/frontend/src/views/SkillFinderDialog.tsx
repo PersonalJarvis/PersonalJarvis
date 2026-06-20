@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
+import { useT } from "@/i18n";
 import {
   useSkillSearch,
   useSkillInstall,
@@ -40,6 +41,7 @@ interface SkillFinderDialogProps {
  * auf Backend-Filter (trust, min_stars, category, language, max_risk).
  */
 export function SkillFinderDialog({ open, onClose }: SkillFinderDialogProps) {
+  const t = useT();
   const [query, setQuery] = useState("");
   const [trust, setTrust] = useState<TrustFilter>("any");
   const [minStars, setMinStars] = useState<number | null>(null);
@@ -99,7 +101,7 @@ export function SkillFinderDialog({ open, onClose }: SkillFinderDialogProps) {
       await install.mutateAsync(c);
       setInstalledNames((s) => new Set(s).add(c.name));
     } catch (e) {
-      alert(`Installation fehlgeschlagen: ${(e as Error).message}`);
+      alert(`${t("skill_finder_dialog.install_failed")}: ${(e as Error).message}`);
     }
   };
 
@@ -167,44 +169,44 @@ export function SkillFinderDialog({ open, onClose }: SkillFinderDialogProps) {
           {/* Dropdowns — interaktive Fragen */}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <DropdownPicker
-              label="Vertrauensstufe"
+              label={t("skill_finder_dialog.filter_trust")}
               icon={<Shield className="h-3.5 w-3.5" />}
               value={trust}
               onChange={(v) => setTrust(v as TrustFilter)}
               options={[
-                { value: "any", label: "Alle", hint: "kein Filter" },
+                { value: "any", label: t("skill_finder_dialog.opt_all"), hint: t("skill_finder_dialog.hint_no_filter") },
                 {
                   value: "official",
-                  label: "Nur offiziell",
+                  label: t("skill_finder_dialog.opt_official_only"),
                   hint: "Anthropic, OpenAI",
                 },
                 {
                   value: "verified",
-                  label: "Verifiziert+",
-                  hint: "offiziell + 3k+ Stars",
+                  label: t("skill_finder_dialog.opt_verified_plus"),
+                  hint: t("skill_finder_dialog.hint_verified_plus"),
                 },
                 {
                   value: "community",
-                  label: "Community+",
-                  hint: "aktiv gewartet",
+                  label: t("skill_finder_dialog.opt_community_plus"),
+                  hint: t("skill_finder_dialog.hint_actively_maintained"),
                 },
                 {
                   value: "experimental",
-                  label: "Alles, auch Prototypen",
-                  hint: "Risiko ok",
+                  label: t("skill_finder_dialog.opt_everything"),
+                  hint: t("skill_finder_dialog.hint_risk_ok"),
                 },
               ]}
             />
 
             <DropdownPicker
-              label="GitHub-Stars"
+              label={t("skill_finder_dialog.filter_stars")}
               icon={<Star className="h-3.5 w-3.5" />}
               value={minStars === null ? "any" : String(minStars)}
               onChange={(v) =>
                 setMinStars(v === "any" ? null : parseInt(v, 10))
               }
               options={[
-                { value: "any", label: "Egal" },
+                { value: "any", label: t("skill_finder_dialog.opt_any") },
                 { value: "500", label: "500+" },
                 { value: "1000", label: "1.000+" },
                 { value: "3000", label: "3.000+" },
@@ -213,12 +215,12 @@ export function SkillFinderDialog({ open, onClose }: SkillFinderDialogProps) {
             />
 
             <DropdownPicker
-              label="Kategorie"
+              label={t("skill_finder_dialog.filter_category")}
               icon={<Search className="h-3.5 w-3.5" />}
               value={category ?? "any"}
               onChange={(v) => setCategory(v === "any" ? null : v)}
               options={[
-                { value: "any", label: "Alle" },
+                { value: "any", label: t("skill_finder_dialog.opt_all") },
                 ...(meta.data?.categories ?? []).map((c) => ({
                   value: c,
                   label: c,
@@ -227,38 +229,38 @@ export function SkillFinderDialog({ open, onClose }: SkillFinderDialogProps) {
             />
 
             <DropdownPicker
-              label="Risiko-Grenze"
+              label={t("skill_finder_dialog.filter_risk")}
               icon={<AlertTriangle className="h-3.5 w-3.5" />}
               value={maxRisk ?? "any"}
               onChange={(v) =>
                 setMaxRisk(v === "any" ? null : (v as RiskFilter))
               }
               options={[
-                { value: "any", label: "Beliebig" },
-                { value: "safe", label: "Nur safe" },
-                { value: "monitor", label: "Bis monitor" },
-                { value: "ask", label: "Bis ask (nachfragen ok)" },
+                { value: "any", label: t("skill_finder_dialog.opt_any") },
+                { value: "safe", label: t("skill_finder_dialog.opt_safe_only") },
+                { value: "monitor", label: t("skill_finder_dialog.opt_up_to_monitor") },
+                { value: "ask", label: t("skill_finder_dialog.opt_up_to_ask") },
               ]}
             />
           </div>
 
           <div className="flex items-center gap-3">
             <DropdownPicker
-              label="Sprache"
+              label={t("skill_finder_dialog.filter_language")}
               icon={<Globe className="h-3.5 w-3.5" />}
               value={language ?? "any"}
               onChange={(v) => setLanguage(v === "any" ? null : v)}
               options={[
-                { value: "any", label: "Alle" },
-                { value: "de", label: "Deutsch" },
-                { value: "en", label: "Englisch" },
+                { value: "any", label: t("skill_finder_dialog.opt_all") },
+                { value: "de", label: t("skill_finder_dialog.lang_de") },
+                { value: "en", label: t("skill_finder_dialog.lang_en") },
               ]}
             />
             <div className="flex-1" />
             <span className="text-xs text-muted-foreground">
               {meta.data
-                ? `${meta.data.total} Skills im Katalog`
-                : "Lade Katalog…"}
+                ? `${meta.data.total} ${t("skill_finder_dialog.skills_in_catalog")}`
+                : t("skill_finder_dialog.loading_catalog")}
             </span>
           </div>
         </div>
@@ -417,6 +419,7 @@ function CandidateCard({
   installing: boolean;
   onInstall: () => void;
 }) {
+  const t = useT();
   const noDirect = !candidate.raw_url;
   return (
     <div className="rounded-lg border border-border bg-background p-4 transition-colors hover:border-primary/30">
@@ -472,7 +475,7 @@ function CandidateCard({
           {installed ? (
             <Badge className="gap-1" variant="default">
               <Check className="h-3 w-3" />
-              installiert
+              {t("skill_finder_dialog.installed")}
             </Badge>
           ) : (
             <Button
@@ -481,8 +484,8 @@ function CandidateCard({
               disabled={installing || noDirect}
               title={
                 noDirect
-                  ? "Kein Direkt-Download verfuegbar — manuell installieren"
-                  : "In %LOCALAPPDATA%/Jarvis/skills installieren"
+                  ? t("skill_finder_dialog.no_direct_download")
+                  : t("skill_finder_dialog.install_to_skills_dir")
               }
             >
               {installing ? (
@@ -490,7 +493,7 @@ function CandidateCard({
               ) : (
                 <>
                   <Download className="mr-1 h-3.5 w-3.5" />
-                  {noDirect ? "Manuell" : "Installieren"}
+                  {noDirect ? t("skill_finder_dialog.manual") : t("skill_finder_dialog.install")}
                 </>
               )}
             </Button>
@@ -503,7 +506,7 @@ function CandidateCard({
               className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary"
             >
               <ExternalLink className="h-3 w-3" />
-              Quelle
+              {t("skill_finder_dialog.source")}
             </a>
           )}
         </div>
@@ -518,19 +521,20 @@ function formatStars(n: number): string {
 }
 
 function EmptyState({ hasQueried }: { hasQueried: boolean }) {
+  const t = useT();
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
       <Sparkles className="mb-3 h-8 w-8 text-muted-foreground/50" />
       <p className="text-sm text-muted-foreground">
         {hasQueried
-          ? "Keine Treffer. Andere Filter probieren?"
-          : "Beschreib, was du brauchst — die Suche rankt per KI."}
+          ? t("skill_finder_dialog.no_hits")
+          : t("skill_finder_dialog.empty_prompt")}
       </p>
       {!hasQueried && (
         <ul className="mt-4 space-y-1 text-xs text-muted-foreground/80">
-          <li>„erstell Skill der meine Emails priorisiert“</li>
-          <li>„Git-Workflow vereinfachen“</li>
-          <li>„PDF zu strukturiertem Markdown“</li>
+          <li>{t("skill_finder_dialog.example_1")}</li>
+          <li>{t("skill_finder_dialog.example_2")}</li>
+          <li>{t("skill_finder_dialog.example_3")}</li>
         </ul>
       )}
     </div>

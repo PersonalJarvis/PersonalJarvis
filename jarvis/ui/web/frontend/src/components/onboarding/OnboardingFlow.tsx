@@ -7,9 +7,6 @@ import { TermsStep } from "./steps/TermsStep";
 import { LanguageStep } from "./steps/LanguageStep";
 import { WakeWordStep } from "./steps/WakeWordStep";
 import { ApiKeysStep } from "./steps/ApiKeysStep";
-import { MicTestStep } from "./steps/MicTestStep";
-import { PersonaThemeStep } from "./steps/PersonaThemeStep";
-import { SystemStyleStep } from "./steps/SystemStyleStep";
 import { FinishStep } from "./steps/FinishStep";
 
 export interface StepProps {
@@ -27,9 +24,6 @@ const REGISTRY: Record<string, (p: StepProps) => JSX.Element> = {
   language: LanguageStep,
   "wake-word": WakeWordStep,
   "api-keys": ApiKeysStep,
-  "mic-test": MicTestStep,
-  "persona-theme": PersonaThemeStep,
-  "system-style": SystemStyleStep,
   finish: FinishStep,
 };
 
@@ -86,7 +80,7 @@ export function OnboardingFlow({
             />
           ))}
         </div>
-        <MascotGigi size={48} reactToVoice={steps[idx] === "mic-test"} enableComments={false} />
+        <MascotGigi size={48} reactToVoice={false} enableComments={false} />
       </div>
       <StepComp {...props} />
       {!props.isFirst && (

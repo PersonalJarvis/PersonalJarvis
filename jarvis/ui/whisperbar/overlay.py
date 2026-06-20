@@ -177,6 +177,15 @@ class WhisperBarOverlay:
     # ------------------------------------------------------------------ #
     # Lifecycle                                                          #
     # ------------------------------------------------------------------ #
+    def _should_start_withdrawn(self) -> bool:
+        """True when ``start()`` must withdraw the window instead of mapping it.
+
+        A non-persistent bar always starts hidden (it pops on a session). A
+        persistent bar normally maps immediately, but the boot gate
+        (``start_hidden=True``) keeps it hidden until voice is ready.
+        """
+        return (not self._persistent) or self._start_hidden
+
     def start_in_thread(self, timeout: float = 3.0) -> None:
         def _run() -> None:
             try:
@@ -234,8 +243,8 @@ class WhisperBarOverlay:
         self._canvas.bind("<Enter>", self._on_enter)
         self._canvas.bind("<Leave>", self._on_leave)
 
-        if not self._persistent:
-            root.withdraw()  # only-when-active variant starts hidden
+        if self._should_start_withdrawn():
+            root.withdraw()  # only-when-active variant / boot gate starts hidden
 
         try:
             from jarvis.audio import level_tap

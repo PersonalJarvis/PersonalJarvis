@@ -187,16 +187,30 @@ async def _weather_results(query: str, client: Any) -> list[dict[str, Any]] | No
 class SearchWebTool:
     name: str = "search_web"
     risk_tier: str = "safe"
+    # [Frische-Grenze, 2026-06-20] search_web is for FRESH, time-sensitive facts
+    # ONLY — evergreen / general knowledge is answered directly by the brain.
+    # Forensic: "what do I need to consider when emigrating to Melbourne?" fired
+    # search_web 3x with an empty answer (sessions.db voice session e0898d6e,
+    # 16:12). The Run-Inspector labels a search_web call "Recherche", so the user
+    # read it as an unwanted research spawn for a trivial question. Pinned by
+    # tests/unit/brain/test_search_web_freshness_doctrine.py.
     description: str = (
-        "[RESEARCH-PRIMARY] Web-Suche via DuckDuckGo mit Kurz-Zusammenfassung. "
-        "NUTZE DIESES TOOL wenn der User über ein Thema recherchieren, analysieren, "
-        "erklären, vergleichen oder zusammenfassen möchte — egal ob Firma, Produkt, "
-        "Technologie, Konzept oder News. Beispiele: 'recherchiere zu X', 'was ist X', "
-        "'vergleiche X mit Y', 'erklär mir X'. "
-        "ALSO for weather questions ('weather tomorrow') — include the location "
-        "in the query (e.g. 'weather Berlin tomorrow'). "
-        "NICHT NUTZEN für Aktionen auf verbundenen Systemen (dafür cli_* oder MCP-Tools) — "
-        "'meine X' oder 'starte X' sind NIE Research-Intent."
+        "Web-Suche via DuckDuckGo mit Kurz-Zusammenfassung — fuer FRISCHE, "  # i18n-allow
+        "zeitkritische Fakten. NUTZE DIESES TOOL nur wenn die Antwort AKTUELLE "  # i18n-allow
+        "oder volatile Information braucht, die sich seit deinem Wissensstand "  # i18n-allow
+        "geaendert haben kann: aktuelle News, heutige Preise/Boersenkurse, "  # i18n-allow
+        "Wetter, Sport-Ergebnisse, laufende Ereignisse, "  # i18n-allow
+        "'neueste/aktuelle/heute/gerade' — ODER wenn der User AUSDRUECKLICH zu "  # i18n-allow
+        "suchen bittet ('such mal', 'google das', 'recherchier'). "  # i18n-allow
+        "NICHT NUTZEN fuer Evergreen-/Allgemeinwissen, das du selbst direkt "  # i18n-allow
+        "beantworten kannst (Geografie, Geschichte, Definitionen, 'wie "  # i18n-allow
+        "funktioniert X', allgemeine Ablaeufe / Vorgehensweisen wie 'was muss "  # i18n-allow
+        "ich beim Auswandern beachten', bekannte Konzepte) — solche Fragen "  # i18n-allow
+        "beantwortest du direkt aus deinem Wissen, ohne Suche. "  # i18n-allow
+        "Fuer Wetterfragen die Location in die query schreiben (z.B. 'weather "  # i18n-allow
+        "Berlin tomorrow'). "  # i18n-allow
+        "NICHT NUTZEN fuer Aktionen auf verbundenen Systemen (dafuer cli_* oder "  # i18n-allow
+        "MCP-Tools) — 'meine X' oder 'starte X' sind NIE Such-Intent."  # i18n-allow
     )
     schema: dict[str, Any] = {
         "type": "object",

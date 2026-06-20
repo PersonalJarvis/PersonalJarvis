@@ -397,3 +397,97 @@ async def test_no_progress_message_blames_dead_target_when_nothing_suppressed() 
     assert "no progress" in final.stderr
     assert "off-screen" in final.stderr
     assert "suppressed" not in final.stderr
+
+
+# ---------------------------------------------------------------------------
+# No-progress abort: verify BEFORE failing (user forensic 2026-06-20)
+# ---------------------------------------------------------------------------
+# A fully-loaded page is static, so the very thing a SUCCESS looks like —
+# three byte-identical screenshots — is indistinguishable, by hash alone,
+# from a stuck session. Live forensic: "open x.com and the Angela Merkel
+# profile" actually reached the open profile page, but the frozen screen
+# tripped the no-progress guard and the mission was reported FAILED. Before
+# aborting, the loop must run the done-verifier ONCE against the current
+# screenshot: a proven goal ends as a verified success, not a stuck failure.
+
+
+def _verify_at_freeze_handler(*, verdict_done: bool) -> Any:
+    """Brain shim: trivial plan, repeated click, and a scripted completion
+    verdict whenever a STRICT-judge prompt arrives (its unique marker is the
+    verdict format ``"done": true|false``, which never appears in the
+    executor system prompt)."""
+
+    proof = (
+        "the @AngelaMerkel profile page is open on screen"
+        if verdict_done
+        else "only an empty page frame is visible, no profile loaded"
+    )
+
+    def handler(system: str, user: str) -> str:
+        if "desktop-automation planner" in system:
+            return '{"plan": []}'
+        if '"done": true|false' in system:  # any completion judge
+            return json.dumps({"done": verdict_done, "proof": proof})
+        return json.dumps(
+            {"action": "click", "x": 500, "y": 500, "target": "page"}
+        )
+
+    return handler
+
+
+async def test_no_progress_at_an_achieved_goal_verifies_as_success() -> None:
+    # The fix: when the screen freezes but the verifier confirms the goal IS
+    # achieved on the current screenshot, the mission ends as a clean success
+    # (exit 0 with the proof), NOT a "3 identical screenshots" failure.
+    brain = FakeBrain(_verify_at_freeze_handler(verdict_done=True))
+    ctx = make_ctx_with_engine(brain, _SequencedVisionEngine(distinct=2))
+
+    chunks = await run_loop(ctx, "navigate to the angela merkel profile on x.com")
+
+    final = chunks[-1]
+    assert final.exit_code == 0, (
+        f"a frozen screen AT the achieved goal must verify as success, not "
+        f"abort as stuck; got exit {final.exit_code}: {final.stderr!r}"
+    )
+    assert "no progress" not in final.stderr
+    assert "done" in final.stdout.lower()
+
+
+async def test_no_progress_still_fails_when_verifier_rejects_the_goal() -> None:
+    # The other half of the contract: a frozen screen where the goal is NOT
+    # achieved (verifier says done:false) must still end as an honest failure.
+    # The verify-before-fail gate may only RESCUE a real success, never paper
+    # over a genuine stall.
+    brain = FakeBrain(_verify_at_freeze_handler(verdict_done=False))
+    ctx = make_ctx_with_engine(brain, _SequencedVisionEngine(distinct=2))
+
+    chunks = await run_loop(ctx, "navigate to the angela merkel profile on x.com")
+
+    final = chunks[-1]
+    assert final.exit_code == loop_mod._FAIL_EXIT_CODE
+    assert "no progress" in final.stderr
+
+
+async def test_no_progress_does_not_rescue_a_frozen_play_goal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Safety guard for the verify-before-fail gate: a GENUINE play/submit stall
+    # must NOT be falsely rescued. For a media goal (matches _VERIFY_GOAL_RE)
+    # the done-verifier uses the two-frame MOTION check; on a frozen screen
+    # Frame A and Frame B are byte-identical, so it short-circuits to
+    # (False, "screen frozen ...") WITHOUT ever asking the judge. So even though
+    # this handler would answer the judge "done", that judge call never happens
+    # and the mission still ends as an honest failure. This pins the structural
+    # reason a real play-stall cannot be rescued by the new gate.
+    monkeypatch.setattr(loop_mod, "_VERIFY_FRAME_GAP_S", 0.0, raising=False)
+    brain = FakeBrain(_verify_at_freeze_handler(verdict_done=True))
+    ctx = make_ctx_with_engine(brain, _SequencedVisionEngine(distinct=2))
+
+    chunks = await run_loop(ctx, "play the angela merkel video on x.com")
+
+    final = chunks[-1]
+    assert final.exit_code == loop_mod._FAIL_EXIT_CODE, (
+        f"a frozen PLAY goal must stay a failure (two-frame motion gate), got "
+        f"exit {final.exit_code}: {final.stdout!r}"
+    )
+    assert "no progress" in final.stderr
