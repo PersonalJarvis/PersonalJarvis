@@ -166,3 +166,29 @@ Each unit is independently testable with fakes; the brain and worker share the r
 * **Browser subscription-tier check (deferred):** claude-in-chrome extension is offline; the Pro/Ultra confirmation is pending. Does not block the build (feature is tier-agnostic).
 * **`agy` on Windows:** the documented installer is a macOS/Linux `curl | bash`; the Windows install path for `agy` is unconfirmed. Until `agy` is installed here, the resolver uses the installed Gemini CLI — which is exactly the D1 fallback.
 * **PATH-shim repair for the Gemini CLI** (the broken `.gemini.cmd-XXedit` temp files) is a nice-to-have; the `node <bundle>` fallback makes it non-blocking.
+
+## 11. Implementation status (2026-06-20)
+
+Branch `feat/antigravity-google-subscription`. TDD throughout; 114 tests green.
+
+**Committed (fully owned, clean files):**
+* `jarvis/google_cli/resolver.py` — binary resolver (agy > gemini > npm bundle). **Fixed a real Windows bug live:** `npm root -g` fails (npm is a `.cmd`), so it now probes `%APPDATA%/npm/node_modules` directly.
+* `jarvis/google_cli/auth_service.py` — `GoogleCliAuthService` (status/login/logout from `~/.gemini`, never reads the token).
+* `jarvis/plugins/brain/antigravity.py` + `pyproject.toml` entry point — OAuth-only brain via the CLI.
+* `jarvis/ui/web/provider_spec.py` — `antigravity` provider entry (auth_mode, no secret).
+* `jarvis/ui/web/antigravity_routes.py` — `/api/antigravity/{status,login,logout}` (own router module).
+* `jarvis/missions/worker_runtime/provider_map.py` — `ANTIGRAVITY_SUBAGENT_SLUGS` SSoT.
+* `jarvis/missions/init.py` — selector hard-lock + factory branch + env force-OAuth.
+* `jarvis/missions/workers/gemini_worker.py` — hardened binary resolution (same Windows fix).
+
+**Live-verified (read-only, no billed call):** `resolve_google_cli()` → `node <bundle>`; `status()` → installed=True, connected=True, mode=oauth-personal, account `ruben.luetke10@gmail.com`. The brain registers in the plugin registry; the subagent worker resolves the CLI.
+
+**Uncommitted riders** (functional live via the editable install; they live in files a parallel session is actively rewriting — the per-provider model picker — so committing them would sweep that foreign work):
+* `server.py` — mount of the antigravity router.
+* `provider_routes.py` — `/api/providers` antigravity status, `/api/brain/switch` OAuth gate, `/api/subagent/switch` antigravity acceptance.
+
+**Remaining follow-up (rides with the sibling per-provider-picker work):**
+* Frontend `AntigravityAuthWidget.tsx` + the `auth_mode === "antigravity"` render branch in `ApiKeysView.tsx` + `useProviders` login/logout fns + the `SubagentSection` label.
+* The curated model-catalog entry for `antigravity` (`model_catalog._build_provider_catalog`).
+
+**Verification still open (user-gated):** browser subscription-tier check (claude-in-chrome extension was offline); one real billed `-p` call to confirm the OAuth path answers end-to-end (user opted out of auto-billing).
