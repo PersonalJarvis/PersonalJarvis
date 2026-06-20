@@ -1,0 +1,248 @@
+<!doctype html>
+<!--
+  Personal Jarvis — ALTERNATE CSS/SVG wordmark treatment.
+  NOTE: the live README hero (assets/brand/banner.png) is an AI-generated banner.
+  This file is a lightweight, fully-reproducible fallback. Rendering it writes
+  banner-css.png (NOT banner.png), so it never clobbers the AI hero.
+  Brand: matte-black #0A0A0A + signal-yellow #FFD60A (gold gradient).
+  Typeface: Space Grotesk (display), JetBrains Mono (tagline).
+  Rasterize:
+    chrome --headless=new --hide-scrollbars --force-device-scale-factor=2 \
+      --virtual-time-budget=4000 --window-size=1280,480 \
+      --screenshot=banner-css.png "file:///.../banner.html"
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@500&display=block"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --black: #0a0a0a;
+        --ink: #f4f4f5;
+        --yellow: #ffd60a;
+        --yellow-hi: #ffe552;
+        --gold-lo: #b8960a;
+        --muted: #8f8f8f;
+        --cyan: #29e0e0;
+        --magenta: #ff2d6f;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
+        width: 1280px;
+        height: 480px;
+        background: var(--black);
+        overflow: hidden;
+      }
+      .stage {
+        position: relative;
+        width: 1280px;
+        height: 480px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: var(--black);
+        isolation: isolate;
+      }
+
+      /* ---- Atmosphere: gold orb glow + vignette ---- */
+      .glow {
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(circle at 50% 42%, rgba(255, 214, 10, 0.20) 0%, rgba(255, 214, 10, 0.06) 26%, transparent 58%),
+          radial-gradient(circle at 50% 42%, rgba(255, 229, 82, 0.10) 0%, transparent 40%);
+        z-index: 0;
+      }
+      .vignette {
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(ellipse 80% 75% at 50% 50%, transparent 40%, rgba(0, 0, 0, 0.55) 100%);
+        z-index: 5;
+        pointer-events: none;
+      }
+      /* faint orbital ring, echoing the product Orb */
+      .ring {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 760px;
+        height: 760px;
+        transform: translate(-50%, -54%);
+        border-radius: 50%;
+        border: 1px solid rgba(255, 214, 10, 0.10);
+        box-shadow: 0 0 60px rgba(255, 214, 10, 0.05) inset;
+        z-index: 1;
+      }
+      .ring.two {
+        width: 980px;
+        height: 980px;
+        border-color: rgba(255, 214, 10, 0.05);
+      }
+
+      /* ---- Wordmark ---- */
+      .wordmark {
+        position: relative;
+        z-index: 3;
+        text-align: center;
+        padding: 0 44px;
+        filter: url(#rough);
+      }
+      .line {
+        position: relative;
+        font-family: "Space Grotesk", system-ui, sans-serif;
+        font-weight: 700;
+        font-size: 150px;
+        line-height: 0.88;
+        letter-spacing: -5px;
+        text-transform: uppercase;
+        color: transparent;
+        background: linear-gradient(177deg, var(--yellow-hi) 0%, var(--yellow) 52%, var(--gold-lo) 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        text-shadow: 0 0 1px rgba(255, 214, 10, 0.0);
+      }
+      .line .halo {
+        position: absolute;
+        inset: 0;
+        color: var(--yellow);
+        -webkit-text-fill-color: transparent;
+        filter: blur(26px);
+        opacity: 0.45;
+        z-index: -1;
+      }
+      /* RGB-split ghost layers (baked static glitch frame) */
+      .line::before,
+      .line::after {
+        content: attr(data-text);
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        -webkit-background-clip: border-box;
+        background: none;
+        mix-blend-mode: screen;
+        pointer-events: none;
+      }
+      .line::before {
+        color: var(--magenta);
+        transform: translate(-3px, 2px);
+        clip-path: polygon(0 16%, 100% 16%, 100% 25%, 0 25%, 0 66%, 100% 66%, 100% 72%, 0 72%);
+        opacity: 0.32;
+      }
+      .line::after {
+        color: var(--cyan);
+        transform: translate(3px, -1px);
+        clip-path: polygon(0 44%, 100% 44%, 100% 50%, 0 50%, 0 86%, 100% 86%, 100% 92%, 0 92%);
+        opacity: 0.3;
+      }
+      /* a couple of torn / displaced slices for the "gatschig" feel */
+      .slice {
+        position: absolute;
+        left: 0;
+        width: 100%;
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 700;
+        font-size: 158px;
+        line-height: 0.86;
+        letter-spacing: -4px;
+        text-transform: uppercase;
+        color: var(--yellow);
+        z-index: 4;
+      }
+
+      /* ---- Tagline + rule ---- */
+      .tagline {
+        position: relative;
+        z-index: 3;
+        margin-top: 34px;
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-weight: 500;
+        font-size: 19px;
+        letter-spacing: 7px;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .tagline b { color: var(--yellow); font-weight: 500; }
+      .rule {
+        z-index: 3;
+        margin-top: 22px;
+        width: 132px;
+        height: 2px;
+        background: linear-gradient(90deg, transparent, var(--yellow), transparent);
+        opacity: 0.7;
+      }
+
+      /* ---- Texture overlays ---- */
+      .scanlines {
+        position: absolute;
+        inset: 0;
+        z-index: 6;
+        background: repeating-linear-gradient(
+          to bottom,
+          rgba(0, 0, 0, 0) 0px,
+          rgba(0, 0, 0, 0) 2px,
+          rgba(0, 0, 0, 0.18) 3px,
+          rgba(0, 0, 0, 0) 4px
+        );
+        opacity: 0.5;
+        pointer-events: none;
+        mix-blend-mode: multiply;
+      }
+      .grain {
+        position: absolute;
+        inset: 0;
+        z-index: 6;
+        opacity: 0.07;
+        pointer-events: none;
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+        mix-blend-mode: overlay;
+      }
+      /* erosion: coarse noise on MULTIPLY eats into the bright gold,
+         leaving the near-black background almost untouched -> "gatschig" */
+      .erode {
+        position: absolute;
+        inset: 0;
+        z-index: 4;
+        opacity: 0.26;
+        pointer-events: none;
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='e'><feTurbulence type='fractalNoise' baseFrequency='0.5 0.42' numOctaves='2' seed='11' stitchTiles='stitch'/><feColorMatrix type='matrix' values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -0.55 0.7'/></filter><rect width='100%25' height='100%25' filter='url(%23e)'/></svg>");
+        background-size: 200px 200px;
+        mix-blend-mode: multiply;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- SVG filters: subtle erosion/displacement of the letterforms -->
+    <svg width="0" height="0" style="position: absolute">
+      <filter id="rough" x="-20%" y="-40%" width="140%" height="180%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.012 0.16" numOctaves="2" seed="7" result="n" />
+        <feDisplacementMap in="SourceGraphic" in2="n" scale="6" xChannelSelector="R" yChannelSelector="G" />
+      </filter>
+    </svg>
+
+    <div class="stage">
+      <div class="glow"></div>
+      <div class="ring"></div>
+      <div class="ring two"></div>
+
+      <div class="wordmark">
+        <div class="line" data-text="PERSONAL"><span class="halo">PERSONAL</span>PERSONAL</div>
+        <div class="line" data-text="JARVIS"><span class="halo">JARVIS</span>JARVIS</div>
+      </div>
+
+      <div class="rule"></div>
+      <div class="tagline">VOICE-DRIVEN <b>META-ORCHESTRATOR</b></div>
+
+      <div class="erode"></div>
+      <div class="scanlines"></div>
+      <div class="grain"></div>
+      <div class="vignette"></div>
+    </div>
+  </body>
+</html>

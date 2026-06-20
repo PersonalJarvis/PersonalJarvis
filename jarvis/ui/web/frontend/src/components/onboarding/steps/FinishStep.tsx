@@ -19,6 +19,10 @@ export function FinishStep({ onb, goNext }: StepProps) {
           </ul>
         </div>
       )}
+      <div className="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-left text-xs text-muted-foreground">
+        <span aria-hidden className="mt-px text-primary">⏱</span>
+        <span>{t("onboarding.finish.boot_notice")}</span>
+      </div>
       <Button className="w-full" onClick={goNext}>{t("onboarding.finish.start_cta")}</Button>
     </div>
   );

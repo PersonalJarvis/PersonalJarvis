@@ -1591,18 +1591,21 @@ class BrainManager:
             )
         self._reply_language = code
 
-    def _resolve_apology_lang(self) -> str:
-        """The de/en/es key this turn's total-failure apology is localized to.
+    def _resolve_turn_lang(self) -> str:
+        """The de/en/es key this turn's output is localized to.
 
-        An explicit pin wins; in auto mode it is THIS turn's detected language
-        (set at the top of generate()) so an English/Spanish "auto" user does
-        not hear a German apology on a total failure (Runtime Output Language).
-        An undetected/ambiguous turn keeps the German default.
+        The single authoritative resolver consumed by every ``ResponseGenerated``
+        publish (success replies AND the total-failure apology) so the recorded
+        transcript language is consistent and never the binary ``_looks_german``
+        gate — which silently tags any non-German reply "en" and so drops Spanish
+        (Runtime Output Language doctrine). An explicit pin wins; in auto mode it
+        is THIS turn's detected language (set at the top of generate()); an
+        undetected/ambiguous turn keeps the German default.
         """
         lang = self._reply_language
         if lang not in _REPLY_LANG_NAMES:
             lang = getattr(self, "_turn_detected_lang", "") or lang
-        return lang if lang in _PROVIDER_DOWN_PHRASES else "de"
+        return lang if lang in _REPLY_LANG_NAMES else "de"
 
     def _next_provider_down_phrase(self) -> str:
         """Localized 'I can't reach my model' apology + advance the rotation.
@@ -1613,7 +1616,7 @@ class BrainManager:
         was read aloud while Gemini was the active provider).
         """
         phrase = _provider_down_phrase(
-            self._resolve_apology_lang(), self._provider_down_idx
+            self._resolve_turn_lang(), self._provider_down_idx
         )
         self._provider_down_idx += 1
         return phrase
@@ -1632,14 +1635,14 @@ class BrainManager:
         """
         phrase = self._next_provider_down_phrase()
         # _next_provider_down_phrase already localized the phrase via
-        # _resolve_apology_lang; resolving again here is deterministic (same pin /
+        # _resolve_turn_lang; resolving again here is deterministic (same pin /
         # detected-language inputs, the rotation index does not affect language)
         # and only tags the transcript's jarvis_lang — NEVER _looks_german, which
         # would mislabel a Spanish apology as English (Runtime Output Language).
         await self._bus.publish(ResponseGenerated(
             trace_id=trace_uuid,
             text=phrase,
-            language=self._resolve_apology_lang(),
+            language=self._resolve_turn_lang(),
         ))
         return phrase
 
@@ -1793,6 +1796,21 @@ class BrainManager:
         persona_block = load_effective_persona_prompt()
         if persona_block:
             parts.append(persona_block)
+
+        # User's own standing-instructions file (AGENTS.md / CLAUDE.md equivalent),
+        # named after the assistant (e.g. Alex.md). Distinct from the persona: the
+        # user writes personal preferences here, and the block is framed so they
+        # refine behaviour but never override safety/confirmations. Read fresh each
+        # turn -> an edit applies on the next turn, no restart. A read fault must
+        # never break the prompt build.
+        try:
+            from jarvis.brain import agent_instructions as _agent_instructions
+
+            prefs_block = _agent_instructions.render_for_prompt(getattr(self, "_config", None))
+            if prefs_block:
+                parts.append(prefs_block)
+        except Exception:  # noqa: BLE001
+            pass
 
         if self._user_profile is not None:
             try:
@@ -2197,6 +2215,47 @@ class BrainManager:
                 "Provider '%s' reaktiviert (dead=%s, brain_cache_dropped=%d)",
                 provider, was_dead, len(keys_to_drop),
             )
+
+    def apply_provider_model(self, provider: str, model: str) -> bool:
+        """Live-apply a model override for a brain provider (no restart).
+
+        The model picker in the API-Keys view persists the choice to jarvis.toml
+        AND calls this so the running brain uses the new model on the next turn.
+        The manager builds its config independently of ``app.state.config``, so
+        mutating that route-level config would NOT reach the brain — this method
+        updates the manager's OWN ``self._config`` and drops cached brain
+        instances for the provider so the next ``_get_brain`` rebuilds with the
+        new model.
+
+        An empty string resets the override to ``None`` (the provider then falls
+        back to its frontier default via ``_fast_model``).
+
+        Returns ``True`` iff ``provider`` is the currently active brain — i.e.
+        the change takes effect immediately. For an inactive provider the
+        override is stored and applies as soon as the user switches to it.
+        """
+        from jarvis.core.config import BrainProviderConfig
+
+        canonical = PROVIDER_ALIASES.get(provider.lower().strip(), provider)
+        new_model = model.strip() or None
+        providers = self._config.brain.providers
+        pc = providers.get(canonical)
+        if pc is None:
+            providers[canonical] = BrainProviderConfig(model=new_model)
+        else:
+            try:
+                pc.model = new_model
+            except Exception:  # noqa: BLE001 — frozen/validation: rebuild the block.
+                data = pc.model_dump() if hasattr(pc, "model_dump") else {}
+                data["model"] = new_model
+                providers[canonical] = BrainProviderConfig(**data)
+
+        # Drop cached instances for this provider so the new model is used; lift
+        # any session-level deactivation (mirrors ``reactivate_provider``).
+        for key in [k for k in self._brain_cache if k[0] == canonical]:
+            self._brain_cache.pop(key, None)
+        self._dead_providers.discard(canonical)
+        return canonical == self._active_name
 
     @staticmethod
     def _persist_primary(name: str) -> bool:
@@ -3664,7 +3723,7 @@ class BrainManager:
         await self._bus.publish(ResponseGenerated(
             trace_id=trace_id or uuid4(),
             text=response_text,
-            language="de" if _looks_german(response_text) else "en",
+            language=self._resolve_turn_lang(),
         ))
 
         if self._curator is not None:
@@ -4920,7 +4979,7 @@ class BrainManager:
         await self._bus.publish(ResponseGenerated(
             trace_id=trace_uuid,
             text=response_text,
-            language="de" if _looks_german(response_text) else "en",
+            language=self._resolve_turn_lang(),
         ))
 
         # Fire-and-forget: the curator extracts personal facts from the turn

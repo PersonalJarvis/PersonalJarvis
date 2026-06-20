@@ -12,6 +12,7 @@ import {
   Notebook,
   Sparkles,
   Mic,
+  Headphones,
   Terminal,
   Share2,
   Contact,
@@ -34,6 +35,17 @@ interface NavItem {
   // skills/plugins/mcps, "CLIs" fronting clis/cli-test-hub); the active id
   // doubles as the tab state.
   matchIds?: SectionId[];
+  // English fallback shown when `labelKey` has no translation yet (used while
+  // the nav.browser_voice / browser_voice.* locale keys are still being wired in).
+  fallbackLabel?: string;
+}
+
+// Resolve a nav row's label, preferring the active-locale translation and
+// falling back to the English `fallbackLabel` when the key is not yet present
+// (the i18n resolver returns the key itself on a miss).
+function resolveNavLabel(t: (key: string) => string, item: NavItem): string {
+  const resolved = t(item.labelKey);
+  return resolved === item.labelKey && item.fallbackLabel ? item.fallbackLabel : resolved;
 }
 
 // Sidebar nav, clustered into logical groups separated by a thin divider:
@@ -61,6 +73,12 @@ const NAV_GROUPS: NavItem[][] = [
   [
     { id: "tasks", labelKey: "nav.tasks", icon: ListTodo },
     { id: "sessions", labelKey: "nav.sessions", icon: Mic },
+    {
+      id: "browser-voice",
+      labelKey: "nav.browser_voice",
+      icon: Headphones,
+      fallbackLabel: "Browser Voice",
+    },
     { id: "run_inspector", labelKey: "nav.run_inspector", icon: Gauge },
     { id: "board", labelKey: "nav.board", icon: Sparkles },
     { id: "memory", labelKey: "nav.wiki", icon: Notebook },
@@ -191,7 +209,7 @@ export function Sidebar() {
               <NavRow
                 key={item.id}
                 item={item}
-                label={t(item.labelKey)}
+                label={resolveNavLabel(t, item)}
                 active={item.matchIds ? item.matchIds.includes(active) : item.id === active}
                 badge={item.id === "agents" ? agentsCount : undefined}
                 onClick={() => setActive(item.id)}

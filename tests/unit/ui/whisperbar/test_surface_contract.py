@@ -18,6 +18,7 @@ REQUIRED = [
     "set_on_mute_toggle",
     "set_feedback_publisher",
     "set_on_show_window",
+    "set_booting",
     "start_in_thread",
     "stop",
     "_on_reset_double_click",
@@ -75,3 +76,16 @@ def test_methods_safe_without_tk_window():
 
     bar._on_reset_double_click()  # _root None → safe no-op
     bar.stop()  # _level_unsub unset on a bare __new__ object → safe
+
+
+def test_set_booting_toggles_the_boot_loading_look():
+    bar = WhisperBarOverlay.__new__(WhisperBarOverlay)
+    bar._root = None
+    bar._mode = "idle"
+    bar._persistent = True
+
+    bar.set_booting(True)  # voice is warming up → show the loading look
+    assert bar._mode == "boot"
+
+    bar.set_booting(False)  # wake word armed → back to the resting pill
+    assert bar._mode == "idle"

@@ -56,6 +56,29 @@ _SLUG_RE = re.compile(r"[^a-z0-9]+")
 # archive dirs is owned by ``cleanup.startup_sweep`` instead.
 _RUN_DIR_RE = re.compile(r"^\d{8}T\d{6}__.+__[0-9a-f]{8}$")
 
+# Regenerable dependency / cache trees a worker may create (npm/pip/yarn/etc.).
+# These are NEVER a deliverable and, on Windows, a fresh `npm install` can drop
+# tens of thousands of files here. Walking them blows the 10 s cap on the
+# per-iteration ``git add -A`` in ``Kontrollierer._capture_diff`` -> empty diff
+# -> "no usable output" -> the worker's REAL build is discarded and rmtree'd
+# (live mission 019ee416, 2026-06-20: a complete Remotion promo video lost this
+# way). Excluding them via the lean repo's ``.git/info/exclude`` makes git skip
+# the whole subtree (it never descends an ignored top-level dir) AND keeps the
+# patterns out of the captured diff. Build-OUTPUT dirs (dist/, build/, out/)
+# are DELIBERATELY not listed — a rendered video or a built site IS a
+# legitimate deliverable and must still reach the Critic.
+_DEPENDENCY_EXCLUDE_DIRS: tuple[str, ...] = (
+    "node_modules/",
+    ".venv/",
+    "venv/",
+    "__pycache__/",
+    ".pnpm-store/",
+    ".yarn/cache/",
+    ".pytest_cache/",
+    ".mypy_cache/",
+    ".ruff_cache/",
+)
+
 
 def _slugify(value: str) -> str:
     """Lowercase, non-alphanum -> '-', trimmed."""
@@ -207,7 +230,41 @@ class WorktreeManager:
             ],
             cwd=workspace,
         )
+        # Keep the per-iteration `git add -A` cheap when the worker installs
+        # dependencies (npm/pip) into this lean workspace — see
+        # `_DEPENDENCY_EXCLUDE_DIRS`. Lean only: a full worktree shares the host
+        # repo's `.git/info/exclude` (which already ignores node_modules/) and
+        # its `.git` is a FILE, so there is nothing local to write here.
+        self._write_dependency_excludes(workspace)
         return workspace
+
+    def _write_dependency_excludes(self, workspace: Path) -> None:
+        """Append `_DEPENDENCY_EXCLUDE_DIRS` to the lean repo's
+        ``.git/info/exclude``.
+
+        Local to this throwaway lean repo (never touches the host repo). The
+        patterns make git skip whole dependency subtrees during ``git add -A``,
+        the live cause of the 10 s diff-capture timeout that discarded a
+        finished Remotion build (mission 019ee416).
+
+        Best-effort: a write failure (e.g. a full-mode workspace whose ``.git``
+        is a file) is logged and swallowed — the mission still runs, it just
+        pays the slower add. Never aborts workspace creation.
+        """
+        exclude_file = workspace / ".git" / "info" / "exclude"
+        try:
+            exclude_file.parent.mkdir(parents=True, exist_ok=True)
+            with exclude_file.open("a", encoding="utf-8") as fh:
+                fh.write(
+                    "\n# Personal Jarvis: regenerable dependency/cache trees "
+                    "(keeps `git add -A` cheap; never a deliverable)\n"
+                )
+                fh.write("\n".join(_DEPENDENCY_EXCLUDE_DIRS) + "\n")
+        except OSError as exc:
+            logger.warning(
+                "could not write dependency excludes to %s: %s",
+                exclude_file, exc,
+            )
 
     # BUG-LIVE-05 (2026-05-14) — Retry delays for the Windows file-
     # handle race in `git worktree remove`. The OpenClaw subprocess

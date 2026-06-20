@@ -294,3 +294,77 @@ export async function testProvider(providerId: string): Promise<ProviderTestResu
   return body as ProviderTestResult;
 }
 
+// ── Per-provider model picker ───────────────────────────────────────────────
+// The brain provider's model list comes from its OWN /v1/models catalog (or
+// OpenRouter's public catalog), so a freshly released model shows up without any
+// code change. `source` is honest: "live" (just fetched) / "cache" (served from
+// a still-fresh prior fetch) / "static" (offline fallback — show a hint).
+
+export interface BrainModel {
+  id: string;
+  label: string;
+}
+
+export interface BrainModelsResult {
+  provider: string;
+  current_model: string;
+  models: BrainModel[];
+  source: "live" | "cache" | "static";
+  fetched_at: number;
+}
+
+/** Lists the available models for a brain provider for the picker dropdown. */
+export async function getBrainProviderModels(
+  providerId: string,
+  refresh = false,
+): Promise<BrainModelsResult> {
+  const res = await fetch(
+    `/api/providers/${encodeURIComponent(providerId)}/models${refresh ? "?refresh=true" : ""}`,
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as BrainModelsResult;
+}
+
+export interface BrainModelProbe {
+  status: ProviderTestStatus;
+  detail: string;
+  latency_ms: number;
+  integration_ok: boolean;
+}
+
+export interface BrainModelSaveResult {
+  ok: boolean;
+  provider: string;
+  model: string;
+  persisted: boolean;
+  applied_live: boolean;
+  restart_required: boolean;
+  probe: BrainModelProbe;
+}
+
+/**
+ * Pins a brain provider's model and verifies it with a REAL 1-token probe.
+ * Empty `model` resets the provider to its frontier default. The selection is
+ * saved regardless of the probe outcome; `probe.status` reports the truth
+ * (ok / bad_key / no_credits / model_unavailable / …).
+ */
+export async function saveBrainProviderModel(
+  providerId: string,
+  model: string,
+  persist = true,
+): Promise<BrainModelSaveResult> {
+  const res = await fetch(`/api/providers/${encodeURIComponent(providerId)}/model`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, persist }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as BrainModelSaveResult;
+}
+
