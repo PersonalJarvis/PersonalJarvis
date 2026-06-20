@@ -139,6 +139,55 @@ async def test_unknown_provider_is_404() -> None:
             json={"x": 1},
         )
     assert r.status_code == 404
+    assert r.json()["detail"] == "provider not available"
+
+
+@pytest.mark.anyio
+async def test_known_but_unkeyed_provider_404_is_indistinguishable() -> None:
+    # grok is in the wire contract but NOT keyed in this harness -> same generic
+    # 404 + message as a totally unknown provider, so probing can't enumerate
+    # known-but-unkeyed providers.
+    def upstream(_req: httpx.Request) -> httpx.Response:
+        return _json_stream(200, {"ok": True})
+
+    app, tokens, _usage = build_harness(upstream)
+    issued = tokens.issue("alice")
+    async with client_for(app) as c:
+        unkeyed = await c.post(
+            "/p/grok/v1/chat/completions",
+            headers={"authorization": f"Bearer {issued.plaintext}"},
+            json={"x": 1},
+        )
+        unknown = await c.post(
+            "/p/no-such-provider/x",
+            headers={"authorization": f"Bearer {issued.plaintext}"},
+            json={"x": 1},
+        )
+    assert unkeyed.status_code == unknown.status_code == 404
+    assert unkeyed.json() == unknown.json()
+
+
+@pytest.mark.anyio
+async def test_upstream_unreachable_is_502_without_leaking_url() -> None:
+    real_base = "https://api.openai.com/v1"
+
+    def upstream(_req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("Failed to connect to " + real_base)
+
+    app, tokens, _usage = build_harness(upstream)
+    issued = tokens.issue("alice")
+    async with client_for(app) as c:
+        r = await c.post(
+            "/p/openai/chat/completions",
+            headers={"authorization": f"Bearer {issued.plaintext}"},
+            json={"model": "gpt-4o-mini"},
+        )
+    assert r.status_code == 502
+    body = r.text
+    # The static message is returned; the real vendor URL never leaks.
+    assert r.json()["detail"] == "upstream vendor could not be reached"
+    assert real_base not in body
+    assert "api.openai.com" not in body
 
 
 # --------------------------------------------------------------------------

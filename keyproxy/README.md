@@ -122,7 +122,12 @@ curl -s -X POST https://keys.example.com/admin/tokens \
 curl -s https://keys.example.com/admin/tokens     -H "authorization: Bearer $KEYPROXY_ADMIN_KEY"
 curl -s -X DELETE https://keys.example.com/admin/tokens/<id> -H "authorization: Bearer $KEYPROXY_ADMIN_KEY"
 curl -s "https://keys.example.com/admin/usage?token_id=<id>" -H "authorization: Bearer $KEYPROXY_ADMIN_KEY"
+# which providers have a real key loaded (admin-only — never on /healthz)
+curl -s https://keys.example.com/admin/providers   -H "authorization: Bearer $KEYPROXY_ADMIN_KEY"
 ```
+
+`GET /healthz` is the only unauthenticated endpoint; it returns exactly
+`{"status": "ok"}` and reveals nothing about which providers or keys are loaded.
 
 ### CLI
 

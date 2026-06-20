@@ -51,13 +51,18 @@ def resolve_provider(provider_id: str) -> tuple[str, str] | None:
 
 
 def _bearer(value: str | None) -> str | None:
+    """Extract the token from an ``Authorization: Bearer <token>`` header.
+
+    The ``Bearer`` scheme is REQUIRED: a header without it returns ``None`` so
+    the caller fails closed (401). A bare header value is never treated as a
+    token.
+    """
     if not value:
         return None
     prefix = "bearer "
     if value.lower().startswith(prefix):
         return value[len(prefix):].strip() or None
-    # Some clients send the raw token in Authorization without the scheme.
-    return value.strip() or None
+    return None
 
 
 def extract_inbound_token(

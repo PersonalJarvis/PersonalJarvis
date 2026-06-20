@@ -52,10 +52,11 @@ class UsageReportRow(BaseModel):
 
 
 def _require_admin(request: Request) -> None:
-    admin_key = request.app.state.config.admin_key
-    if not admin_key:
-        # No admin key configured -> admin surface is disabled (fail closed).
-        raise HTTPException(status_code=503, detail="admin disabled (no KEYPROXY_ADMIN_KEY)")
+    # Always answer with 401 — never reveal whether KEYPROXY_ADMIN_KEY is set.
+    # An unset admin key resolves to the empty string, and
+    # ``compare_digest("", presented)`` is False for any non-empty bearer, so
+    # admin stays fail-closed without a distinguishable 503.
+    admin_key = request.app.state.config.admin_key or ""
     header = request.headers.get("authorization", "")
     prefix = "bearer "
     presented = header[len(prefix):].strip() if header.lower().startswith(prefix) else ""
@@ -70,6 +71,12 @@ def _require_admin(request: Request) -> None:
 
 def build_admin_router() -> APIRouter:
     router = APIRouter(prefix="/admin", dependencies=[Depends(_require_admin)])
+
+    @router.get("/providers", response_model=list[str])
+    def list_providers(request: Request) -> list[str]:
+        # Provider enumeration is admin-only — it reveals which real keys are
+        # loaded, so it must never sit on the unauthenticated /healthz probe.
+        return request.app.state.config.configured_providers()
 
     @router.post("/tokens", response_model=IssueTokenResponse)
     def issue_token(body: IssueTokenRequest, request: Request) -> IssueTokenResponse:

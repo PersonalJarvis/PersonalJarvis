@@ -99,9 +99,11 @@ def test_real_keys_not_in_repr(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KEYPROXY_OPENAI_KEY", "sk-super-secret-value")
     monkeypatch.setenv("KEYPROXY_ADMIN_KEY", "admin-secret-value")
     cfg = load_config()
-    text = repr(cfg)
-    assert "sk-super-secret-value" not in text
-    assert "admin-secret-value" not in text
+    # Neither repr() nor str() may contain a real key or the admin key — the
+    # object must be safe to log.
+    for text in (repr(cfg), str(cfg)):
+        assert "sk-super-secret-value" not in text
+        assert "admin-secret-value" not in text
 
 
 def test_provider_id_upper_mapping() -> None:

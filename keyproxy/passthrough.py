@@ -21,6 +21,7 @@ plus the token / usage / config dependencies.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
@@ -31,6 +32,8 @@ from . import vendors
 from .config import ProxyConfig
 from .tokens import TokenStore
 from .usage import UsageStore
+
+_log = logging.getLogger("keyproxy.passthrough")
 
 # Hop-by-hop headers (RFC 7230 §6.1) must not be forwarded by a proxy. Plus any
 # inbound auth header — the proxy sets the real credential itself.
@@ -127,11 +130,13 @@ async def handle_passthrough(
             status_code=401,
         )
 
-    # 3. Provider lookup — 404 if unknown OR known-but-unkeyed.
+    # 3. Provider lookup — 404 with ONE generic message whether the provider is
+    # unknown OR known-but-unkeyed, so an authenticated client cannot enumerate
+    # which known providers have a real key loaded.
     looked = config.lookup(provider_id)
     if looked is None:
         return JSONResponse(
-            {"error": "unknown_provider", "detail": f"provider '{provider_id}' is not configured"},
+            {"error": "provider_not_available", "detail": "provider not available"},
             status_code=404,
         )
     vendor, real_base, real_key = looked
@@ -162,8 +167,18 @@ async def handle_passthrough(
     except httpx.HTTPError as exc:
         # The upstream/proxy could not be reached — honest 502 (distinct from a
         # 401 bad-key or a 429 rate-limit, which pass through with their status).
+        # The exception string can carry the real vendor base URL, so it is
+        # logged server-side ONLY; the client gets a static message.
+        _log.warning(
+            "upstream unreachable for provider %s: %s",
+            provider_id,
+            exc.__class__.__name__,
+        )
         return JSONResponse(
-            {"error": "upstream_unreachable", "detail": str(exc)},
+            {
+                "error": "upstream_unreachable",
+                "detail": "upstream vendor could not be reached",
+            },
             status_code=502,
         )
 
@@ -176,16 +191,24 @@ async def handle_passthrough(
                     usage_buffer.extend(chunk[: _USAGE_BUFFER_CAP - len(usage_buffer)])
                 yield chunk
         finally:
-            await upstream_response.aclose()
+            # Both the close and the metering are best-effort cleanup that runs
+            # after the body has streamed; neither may surface as a stream error.
+            try:
+                await upstream_response.aclose()
+            except Exception:  # noqa: BLE001 — close failure must not break the stream
+                _log.debug("upstream response close failed", exc_info=True)
             # 6. Best-effort metering — never fails the response (we are past
             # the point where the body is already streamed).
-            _record_usage(
-                usage,
-                token_id=token_id,
-                provider_id=provider_id,
-                vendor=vendor,
-                body=bytes(usage_buffer),
-            )
+            try:
+                _record_usage(
+                    usage,
+                    token_id=token_id,
+                    provider_id=provider_id,
+                    vendor=vendor,
+                    body=bytes(usage_buffer),
+                )
+            except Exception:  # noqa: BLE001 — metering must never break the stream
+                _log.debug("usage recording failed", exc_info=True)
 
     response_headers = _safe_response_headers(upstream_response.headers)
     return StreamingResponse(

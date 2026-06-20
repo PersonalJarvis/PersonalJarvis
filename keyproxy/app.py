@@ -61,10 +61,10 @@ def create_app(
 
     @app.get("/healthz")
     def healthz() -> dict[str, object]:
-        return {
-            "status": "ok",
-            "providers": config.configured_providers(),
-        }
+        # Unauthenticated liveness probe — MUST NOT reveal which providers /
+        # real keys are loaded. Provider enumeration lives behind the admin
+        # bearer at GET /admin/providers.
+        return {"status": "ok"}
 
     app.include_router(build_admin_router())
 

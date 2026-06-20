@@ -50,6 +50,16 @@ def test_extract_openai_compatible_missing() -> None:
     )
 
 
+def test_extract_openai_compatible_requires_bearer_scheme() -> None:
+    # A raw Authorization value without the "Bearer " scheme is NOT a token —
+    # it must fail closed (None -> 401), never be treated as a bare token.
+    headers = {"authorization": "kp_inbound_token"}
+    assert (
+        vendors.extract_inbound_token("openai_compatible", headers, query={})
+        is None
+    )
+
+
 def test_extract_anthropic_x_api_key() -> None:
     headers = {"x-api-key": "kp_inbound_token"}
     token = vendors.extract_inbound_token("anthropic", headers, query={})

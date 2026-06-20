@@ -60,15 +60,18 @@ class TokenStore:
         return IssuedToken(id=token_id, label=label, plaintext=plaintext)
 
     # ------------------------------------------------------------------
-    # Verify (constant-time, fail-closed)
+    # Verify (fail-closed)
     # ------------------------------------------------------------------
 
     def verify(self, plaintext: str | None) -> str | None:
         """Return the token id for a valid, non-revoked token, else ``None``.
 
-        Constant-time comparison on the SHA-256 hex. Looks the candidate up by
-        its hash (an indexed equality match) and then constant-time-compares to
-        guard against any storage-layer timing leak.
+        The lookup is by the SHA-256 hash of the presented token, so the real
+        timing surface is the indexed DB equality match — not constant-time on
+        its own. We hash the token (the secret) before it touches the query, so
+        the comparison is over hash digests, not the raw secret. The
+        :func:`hmac.compare_digest` below is a belt-and-suspenders check on the
+        returned hash, NOT a standalone timing-attack guarantee.
         """
         if not plaintext:
             return None

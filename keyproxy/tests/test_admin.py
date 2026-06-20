@@ -130,9 +130,50 @@ async def test_usage_report() -> None:
 
 
 @pytest.mark.anyio
-async def test_healthz_is_open() -> None:
+async def test_healthz_is_open_and_reveals_nothing() -> None:
     app, _tokens, _usage = build_app()
     async with client_for(app) as c:
         r = await c.get("/healthz")
     assert r.status_code == 200
-    assert r.json()["status"] == "ok"
+    # Liveness only — must NOT enumerate providers / loaded keys.
+    assert r.json() == {"status": "ok"}
+
+
+@pytest.mark.anyio
+async def test_admin_providers_requires_auth() -> None:
+    app, _tokens, _usage = build_app()
+    async with client_for(app) as c:
+        r = await c.get("/admin/providers")
+    assert r.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_admin_providers_lists_configured() -> None:
+    app, _tokens, _usage = build_app()
+    async with client_for(app) as c:
+        r = await c.get("/admin/providers", headers=auth())
+    assert r.status_code == 200
+    assert r.json() == ["openai"]
+
+
+@pytest.mark.anyio
+async def test_admin_returns_401_not_503_when_no_admin_key() -> None:
+    # When KEYPROXY_ADMIN_KEY is unset the admin surface must still answer 401
+    # (never a 503 that reveals the key is absent).
+    store = Store(":memory:")
+    tokens = TokenStore(store)
+    usage = UsageStore(store)
+    cfg = ProxyConfig(providers={}, admin_key=None, allow_insecure=True)
+
+    def upstream_handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"ok": True})
+
+    upstream = httpx.AsyncClient(transport=httpx.MockTransport(upstream_handler))
+    app = create_app(config=cfg, tokens=tokens, usage=usage, upstream=upstream)
+    async with client_for(app) as c:
+        no_auth = await c.get("/admin/tokens")
+        with_bearer = await c.get(
+            "/admin/tokens", headers={"authorization": "Bearer anything"}
+        )
+    assert no_auth.status_code == 401
+    assert with_bearer.status_code == 401
