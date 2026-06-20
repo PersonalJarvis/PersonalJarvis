@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { useT } from "@/i18n";
+import { translate, useT } from "@/i18n";
 import { useEventStore, type VoiceState, type SectionId } from "@/store/events";
 
 type MascotAction =
@@ -378,7 +378,11 @@ function useMascotComments(enabled: boolean): string | null {
     if (!mountedRef.current) return;
     if (connected === lastConnectedRef.current) return;
     lastConnectedRef.current = connected;
-    show(connected ? "wieder online!" : "Verbindung weg …");
+    show(
+      connected
+        ? translate("mascot_gigi.back_online")
+        : translate("mascot_gigi.connection_lost"),
+    );
   }, [connected, show]);
 
   // Mount: begrüßen nach Tageszeit.

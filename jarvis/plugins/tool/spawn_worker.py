@@ -372,10 +372,22 @@ class SpawnWorkerTool:
         if not utterance:
             return ToolResult(success=False, error="empty utterance")
 
-        # Turn language for the spoken acknowledgement. Supplied by the brain
-        # tool-call or the force-spawn caller; the composer falls back to its
-        # own utterance heuristic when absent.
-        ack_language = (args.get("language") or "").strip() or None
+        # Turn output language — ONE authoritative source. The tool-use loop
+        # stamps ``ctx.config["output_language"]`` via ``resolve_output_language``
+        # (honors the reply_language pin + conversation stickiness + text
+        # detection), so it wins over the brain's ``language`` tool-call guess,
+        # which can echo a wrong STT tag (forensic 2026-06-20 "Mask it up":
+        # English speech mis-tagged ``German`` resolved to ``en``, yet the ACK
+        # came from the German pool and the mission readback was German — German
+        # text then spoken by the Cartesia English voice = "British accent").
+        # This one value drives BOTH the spoken ACK and the mission dispatch
+        # language so neither diverges from the turn (Runtime Output Language).
+        turn_language = (
+            str(ctx.config.get("output_language") or "").strip().lower()
+            or (args.get("language") or "").strip().lower()
+            or None
+        )
+        ack_language = turn_language
 
         # Spawn cooldown — suppress duplicate spawns while a dispatch is in
         # flight AND within _COOLDOWN_SECONDS of the last arm. Live regression
@@ -499,7 +511,8 @@ class SpawnWorkerTool:
             #    Listener als OpenClawBackgroundCompleted.
             asyncio.create_task(
                 self._background_dispatch(
-                    mission_prompt, utterance, manager, kontrollierer
+                    mission_prompt, utterance, manager, kontrollierer,
+                    mission_language=(turn_language or "de"),
                 ),
                 name=f"openclaw-{ctx.trace_id.hex[:8]}",
             )
@@ -535,6 +548,8 @@ class SpawnWorkerTool:
         utterance: str,
         manager: MissionManager,
         kontrollierer: Any | None,
+        *,
+        mission_language: str = "de",
     ) -> None:
         """Laeuft im Background. Dispatched + executes eine Mission.
 
@@ -571,7 +586,7 @@ class SpawnWorkerTool:
         try:
             mission_id = await manager.dispatch(
                 prompt=prompt,
-                language="de",
+                language=mission_language,
                 source_actor="hauptjarvis",
             )
             if kontrollierer is None:

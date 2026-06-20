@@ -90,12 +90,56 @@ _MISSION_REASONING_EFFORT: str = "medium"
 
 
 def _resolve_codex_binary() -> str | None:
-    """Return the on-PATH ``codex`` binary, considering Windows extensions."""
+    """Return the on-PATH ``codex`` binary, considering Windows extensions.
+
+    Kept for the fallback path in :func:`_resolve_codex_argv_prefix` and for
+    tests that pin a single string. Production spawns should call
+    :func:`_resolve_codex_argv_prefix` instead — it returns the full argv
+    prefix (``node`` + ``bin/codex.js``) that sidesteps the ``codex.CMD`` shim.
+    """
     for name in ("codex", "codex.cmd", "codex.exe"):
         path = shutil.which(name)
         if path:
             return path
     return None
+
+
+def _resolve_codex_argv_prefix() -> list[str]:
+    """Return the argv prefix for invoking codex, preferring ``node <codex.js>``.
+
+    On Windows the npm-installed CLI ships as ``codex.CMD`` — a batch shim whose
+    tail line resolves the interpreter as the *bare* command ``node`` via PATH:
+
+        ... || title %COMSPEC% & "%_prog%" "...\\bin\\codex.js" %*   (_prog="node")
+
+    When jarvis is launched with a degraded PATH that lacks the Node.js dir
+    (live forensic 2026-06-20: jarvis started by the hermes-agent runtime),
+    cmd.exe dies with ``'node' is not recognized`` and exits 1 in ~25 ms —
+    BEFORE codex starts — so every mission fails ``task_error`` ("Der Worker ist
+    abgebrochen."). Invoking the JS entrypoint with an ABSOLUTE ``node`` path
+    bypasses the .CMD shim, the cmd.exe layer, and the inherited-PATH
+    dependency entirely. Mirrors ``gemini_worker._resolve_gemini_argv_prefix``
+    and ``provider_chain._resolve_worker_argv_prefix`` (same class of fix).
+
+    Falls back to the bare codex binary only when ``node`` + the JS entrypoint
+    cannot be located together — the prompt is passed on stdin, so the cmd.exe
+    metacharacter trap does not apply to that fallback.
+    """
+    node = shutil.which("node") or shutil.which("node.exe")
+    if node:
+        for name in ("codex", "codex.cmd", "codex.exe"):
+            cli = shutil.which(name)
+            if not cli:
+                continue
+            cli_dir = Path(cli).resolve().parent
+            # npm shim layout: ``<npm-root>/codex.cmd`` →
+            # ``<npm-root>/node_modules/@openai/codex/bin/codex.js``.
+            candidate = (
+                cli_dir / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
+            )
+            if candidate.is_file():
+                return [node, str(candidate)]
+    return [_resolve_codex_binary() or "codex"]
 
 
 def _codex_oauth_available() -> bool:
@@ -183,7 +227,7 @@ def _build_codex_direct_cmd(
     ``--add-dir`` exposes the worktree to codex's filesystem layer.
     """
     cmd: list[str] = [
-        _resolve_codex_binary() or "codex",
+        *_resolve_codex_argv_prefix(),
         "exec",
         "--json",
         "--skip-git-repo-check",
@@ -745,5 +789,6 @@ class CodexDirectWorker:
 __all__ = [
     "CodexDirectWorker",
     "_build_codex_direct_cmd",
+    "_resolve_codex_argv_prefix",
     "_resolve_codex_binary",
 ]

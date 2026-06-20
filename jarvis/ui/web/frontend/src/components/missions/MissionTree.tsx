@@ -90,6 +90,7 @@ function shortPrompt(p: string): string {
 }
 
 export function MissionTree() {
+  const t = useT();
   const { missions, eventsByMission } = useMissionsStore(
     useShallow((s) => ({
       missions: selectMissionList(s),
@@ -110,7 +111,7 @@ export function MissionTree() {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-xs text-muted-foreground">
         <Target className="h-7 w-7 text-muted-foreground/50" />
-        <p>Noch keine Missions. Hauptjarvis dispatched gleich…</p>
+        <p>{t("missions_view.no_missions_yet")}</p>
       </div>
     );
   }

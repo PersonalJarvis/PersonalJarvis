@@ -11,6 +11,15 @@ const onb = {
   acknowledgeWakeWord: vi.fn().mockResolvedValue(undefined),
 } as never;
 
+it("shows the derived-name preview only after a valid word is typed", () => {
+  render(<WakeWordStep onb={onb} goNext={vi.fn()} goBack={vi.fn()} skip={vi.fn()} isFirst={false} isLast={false} />);
+  // No preview before typing.
+  expect(screen.queryByText("onboarding.wake_word.derived_name")).toBeNull();
+  // A valid word (>= 2 chars) surfaces the hint line.
+  fireEvent.change(screen.getByRole("textbox"), { target: { value: "Nova" } });
+  expect(screen.queryByText("onboarding.wake_word.derived_name")).not.toBeNull();
+});
+
 it("requires word + acknowledgment, then saves 'Hey <word>' and advances", async () => {
   const goNext = vi.fn();
   render(<WakeWordStep onb={onb} goNext={goNext} goBack={vi.fn()} skip={vi.fn()} isFirst={false} isLast={false} />);

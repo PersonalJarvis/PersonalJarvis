@@ -73,10 +73,10 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "I couldn't see the screen properly, so I stopped.",
         "es": "No pude ver bien la pantalla, así que lo detuve.",
     },
-    "cu_exit_confused": {  # exit 2 — parse error
-        "de": "Ich bin am Bildschirm durcheinandergekommen und habe abgebrochen.",  # i18n-allow
-        "en": "I got confused on screen and had to stop.",
-        "es": "Me confundí en la pantalla y tuve que detenerme.",
+    "cu_exit_confused": {  # exit 2 — invalid model / parse response
+        "de": "Ich konnte keine gueltige Bildschirm-Antwort bekommen und habe gestoppt.",  # i18n-allow
+        "en": "I couldn't get a valid screen-control response, so I stopped.",
+        "es": "No pude obtener una respuesta valida para controlar la pantalla, asi que me detuve.",
     },
     "cu_exit_too_many_steps": {  # exit 4 — step budget exhausted
         "de": "Es hat am Bildschirm zu viele Schritte gebraucht, ich habe "  # i18n-allow
@@ -179,6 +179,23 @@ _EXIT_CODE_PHRASE: dict[int, str] = {
 _CU_REASON_PREFIX_RE = re.compile(
     r"^\s*\[cu\][^:]*:\s*", re.IGNORECASE,
 )
+#: Internal computer-use DIAGNOSTIC / telemetry markers. A stderr fragment
+#: carrying any of these is loop instrumentation — the no-progress guard, the
+#: anti-oscillation / toggle guards, or the latency "mission profile" summary —
+#: NOT the model's human ``fail`` reason. It must never be forwarded into a
+#: spoken/displayed readback. Live bug 2026-06-20 (Angela-Merkel x.com mission):
+#: the user heard "Das am Bildschirm hat nicht geklappt: 3 identical screenshots
+#: in a row at step 9 -- the click ..." followed by the raw
+#: "[cu] mission profile: steps=9 ..." telemetry line. The exit-code phrases
+#: (``cu_exit_*``) exist precisely so these cases degrade to a plain sentence.
+_CU_DIAGNOSTIC_RE = re.compile(
+    r"\[cu\]"                      # any engineering-prefixed loop line
+    r"|identical\s+screenshots?"   # no-progress guard
+    r"|mission\s+profile"          # latency telemetry summary
+    r"|guard-blocked"              # anti-oscillation / modal guards
+    r"|toggle-stop",               # repeated-click toggle guard
+    re.IGNORECASE,
+)
 
 
 def _looks_human(text: str) -> bool:
@@ -197,6 +214,22 @@ def _looks_human(text: str) -> bool:
     if not re.search(r"[A-Za-zÀ-ÿ]", stripped):
         return False
     return True
+
+
+def _is_speakable_reason(text: str | None) -> bool:
+    """True if ``text`` is a real, user-facing reason — safe to forward verbatim.
+
+    Stricter than :func:`_looks_human`: besides rejecting bare ``exit N`` /
+    numeric / empty tokens, it rejects internal computer-use DIAGNOSTIC and
+    telemetry strings (the no-progress guard, the anti-oscillation / toggle
+    guards, and the latency ``mission profile`` summary). Those are developer
+    instrumentation written to the harness ``stderr`` — never the model's human
+    ``fail`` reason — so they must never reach a spoken/displayed readback. A
+    blocked string degrades to the generic, localized exit-code phrase instead.
+    """
+    if not _looks_human(text or ""):
+        return False
+    return _CU_DIAGNOSTIC_RE.search(text or "") is None
 
 
 def cu_failure_readback(
@@ -225,11 +258,11 @@ def cu_failure_readback(
     # 1) The harness detail string may carry the model's verified reason.
     if detail:
         candidate = _CU_REASON_PREFIX_RE.sub("", detail).strip()
-        if _looks_human(candidate):
+        if _is_speakable_reason(candidate):
             return action_phrase("cu_failed_reason", lang, error=candidate)
 
     # 2) A human reason already on the error field is forwarded verbatim.
-    if _looks_human(error or ""):
+    if _is_speakable_reason(error):
         return action_phrase("cu_failed_reason", lang, error=str(error).strip())
 
     # 3) Opaque / empty error -> map the exit code to a human phrase.

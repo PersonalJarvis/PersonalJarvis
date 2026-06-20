@@ -16,9 +16,17 @@ export function OnboardingGate() {
   // never touching onboarding/completed state, so it shows once per fresh open
   // of an unfinished guide and cannot reintroduce the restart-loop bug.
   const [riskAck, setRiskAck] = useState(false);
+  // Set once the user completes the guide (the "Get started" / complete() path
+  // dispatches jarvis:onboarding-changed). It dismisses the overlay even under
+  // ?onboarding=force, so a dev replay closes on finish exactly like a real
+  // first run instead of staying stuck open.
+  const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
-    const onChanged = () => void onb.refetch();
+    const onChanged = () => {
+      void onb.refetch();
+      setDismissed(true);
+    };
     window.addEventListener("jarvis:onboarding-changed", onChanged);
     return () => window.removeEventListener("jarvis:onboarding-changed", onChanged);
   }, [onb]);
@@ -35,7 +43,7 @@ export function OnboardingGate() {
   const termsOutdated =
     onb.state.terms.accepted &&
     onb.state.terms.accepted_version !== onb.state.terms.current_version;
-  const show = forced || !onb.state.completed || termsOutdated;
+  const show = (forced || !onb.state.completed || termsOutdated) && !dismissed;
   if (!show) return null;
 
   // On a terms version bump for an already-completed install, re-open at terms.

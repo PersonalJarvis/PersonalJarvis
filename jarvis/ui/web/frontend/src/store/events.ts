@@ -75,19 +75,19 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   plugins: "Plugins",
   docs: "Docs",
   mcps: "MCPs",
-  tasks: "Aufgaben",
-  sessions: "Transkription",
+  tasks: "Tasks",
+  sessions: "Transcription",
   run_inspector: "Run Inspector",
   clis: "CLIs",
   "cli-test-hub": "CLI Test Hub",
   board: "Board",
-  languages: "Sprachen",
-  profile: "Profil",
-  memory: "Notizen",
-  apikeys: "API-Keys",
-  settings: "Einstellungen",
-  telephony: "Telefonie",
-  "telephony-setup": "Telefonie-Setup",
+  languages: "Languages",
+  profile: "Profile",
+  memory: "Notes",
+  apikeys: "API Keys",
+  settings: "Settings",
+  telephony: "Telephony",
+  "telephony-setup": "Telephony setup",
   outputs: "Outputs",
   socials: "Socials",
   taskbar: "Taskbar",
@@ -193,9 +193,10 @@ interface EventStore {
   // renders as the collapsible "Thought for Xs" disclosure above the reply.
   thinkingTraces: Record<string, ThinkingTraceSnapshot>;
   brainProvider: string;
-  // How the assistant refers to itself (resolved name: explicit [persona].name,
-  // else derived from the wake phrase, else the neutral default). Seeded once at
-  // app start by useAssistantNameSeed and refreshed on a Settings rename, so the
+  // How the assistant refers to itself (resolved name: derived from the wake
+  // phrase with its prefix stripped, else the neutral "Assistant" default —
+  // [persona].name was removed 2026-06-20). Seeded once at app start by
+  // useAssistantNameSeed and refreshed on a wake-word save, so the
   // header wordmark + every assistant byline follow the configured identity
   // instead of a hardcoded "Jarvis". Defaults to "Jarvis" only for the sub-tick
   // before the local seed fetch resolves (zero-regression first paint).

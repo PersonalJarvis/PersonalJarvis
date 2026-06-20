@@ -822,6 +822,8 @@
     "source_static_note": "Catálogo en vivo no disponible — mostrando la selección predeterminada.",
     "more_hint": "{0} más — refina tu búsqueda",
     "choose_placeholder": "Elige un modelo…",
+    "heading_voice": "Voz",
+    "choose_voice": "Elige una voz…",
     "use_custom": "Usar \"{0}\"",
     "no_models": "Sin modelos",
     "loading": "Cargando…"
@@ -896,6 +898,7 @@
       "restart_required": "Es necesario reiniciar para que surta efecto.",
       "degraded_warning": "La frase elegida no es compatible con el motor seleccionado — recurrirá a otro motor.",
       "needs_whisper_hint": "Una frase arbitraria requiere el extra de Whisper local. Sin él, el motor recurrirá a una frase rápida integrada.",
+      "derived_name": "Tu asistente se llamará: {0}",
       "engine_options": {
         "auto": "Automático (recomendado)",
         "openwakeword": "openWakeWord (frases integradas)",
@@ -938,16 +941,6 @@
         "mascot": "Orbe mascota",
         "none": "Ninguno (oculto)"
       }
-    },
-    "assistant_name": {
-      "title": "Nombre del asistente",
-      "description": "Cómo se llama el asistente a sí mismo en las respuestas. Déjalo vacío para seguir la palabra de activación.",
-      "label": "Nombre",
-      "current": "El asistente se llama «{0}».",
-      "auto_hint": "Vacío — sigue la palabra de activación (actualmente «{0}»).",
-      "save": "Guardar nombre",
-      "saved": "Nombre guardado",
-      "restart_required": "Reinicio necesario para que surta efecto."
     },
     "system_prompt": {
       "title": "Prompt del sistema",
@@ -1270,7 +1263,7 @@
     },
     "welcome": {
       "title": "Bienvenido a Personal Jarvis",
-      "subtitle": "Tu asistente de voz local y privado. Vamos a configurarlo.",
+      "subtitle": "Tu asistente de IA por voz. Vamos a configurarlo.",
       "cta": "Empezar",
       "skip_setup": "Omitir la configuración por ahora"
     },
@@ -1283,10 +1276,10 @@
       "proceed": "Lo entiendo — continuar"
     },
     "intro": {
-      "scene_1": "Te presentamos a {name}, tu asistente de voz.",
-      "scene_2": "Solo habla. {name} escucha y actúa.",
+      "scene_1": "Te presentamos a tu asistente de voz.",
+      "scene_2": "Solo habla: escucha y actúa.",
       "scene_3": "Sigue trabajando en segundo plano cuando tú no.",
-      "scene_4": "Y funciona en local: tus datos siguen siendo tuyos."
+      "scene_4": "Tus claves, tus datos, tus reglas."
     },
     "terms": {
       "title": "Términos y descargo de responsabilidad",
@@ -1301,7 +1294,7 @@
     },
     "wake_word": {
       "title": "Elige tu palabra de activación",
-      "body": "Elige la palabra que despierta a {name}. \"Hey\" queda fija — tú eliges el resto.",
+      "body": "Elige la palabra que activa tu asistente. \"Hey\" queda fija — tú eliges el resto.",
       "prefix": "Hey",
       "input_label": "Tu palabra de activación",
       "placeholder": "p. ej. Nova",
@@ -1310,7 +1303,8 @@
       "references_caveat": "Estas referencias son informativas y pueden estar incompletas o desactualizadas; no sustituyen tu propia comprobación.",
       "ack_label": "He revisado la información sobre nombres protegidos y acepto que soy el único responsable de la palabra de activación que elija.",
       "cta": "Guardar palabra de activación",
-      "saving": "Guardando…"
+      "saving": "Guardando…",
+      "derived_name": "Tu asistente se llamará: {0}"
     },
     "api_keys": {
       "title": "Conecta tus servicios de IA (opcional)",
@@ -1320,19 +1314,13 @@
     },
     "mic_test": {
       "title": "Comprobación del micrófono",
-      "body": "Asegurémonos de que {name} puede oírte.",
-      "no_mic": "No se detectó ningún micrófono. Aún puedes hablar con {name} por texto o a través de un canal como Telegram.",
+      "body": "Asegurémonos de que tu asistente pueda oírte.",
+      "no_mic": "No se detectó ningún micrófono. Aún puedes hablar por texto o a través de un canal como Telegram.",
       "skip": "Omitir la comprobación del micrófono"
-    },
-    "persona": {
-      "title": "Hazlo tuyo (opcional)",
-      "name_label": "¿Cómo debería llamarse el asistente?",
-      "name_placeholder": "Escribe un nombre…",
-      "skip": "Omitir la personalización"
     },
     "system_style": {
       "title": "Elige tu estilo",
-      "body": "¿Cómo debería aparecer {name} en pantalla? Puedes cambiarlo cuando quieras en Ajustes.",
+      "body": "¿Cómo debería aparecer tu asistente en pantalla? Puedes cambiarlo cuando quieras en Ajustes.",
       "recommended": "Recomendado",
       "options": {
         "whisper_bar": "Barra de Jarvis",
@@ -1352,10 +1340,10 @@
     },
     "finish": {
       "title": "¡Todo listo!",
-      "body": "{name} está listo. Di tu palabra de activación o escribe un comando para empezar.",
+      "body": "Tu asistente está listo. Di tu palabra de activación o escribe un comando para empezar.",
       "skipped_title": "Omitiste — configúralo cuando quieras en Ajustes:",
-      "start_cta": "Empezar a usar {name}",
-      "boot_notice": "Nota: el primer inicio tarda unos 10 segundos mientras {name} se inicia — es completamente normal."
+      "start_cta": "Empezar",
+      "boot_notice": "Nota: el primer inicio tarda unos 10 segundos mientras tu asistente se inicia — es completamente normal."
     }
   },
   "languages_view": {
@@ -1937,7 +1925,10 @@
     "title": "Misiones",
     "subtitle": "Fase 6 — Bucle Worker/Critic. Bus en vivo, flujos PTY, veredictos.",
     "tree_label": "Árbol de misiones",
-    "timeline_label": "Cronología de eventos"
+    "timeline_label": "Cronología de eventos",
+    "no_events": "Aún no hay eventos para esta misión.",
+    "no_critic_verdicts": "Aún no hay veredictos del crítico para esta misión.",
+    "no_missions_yet": "Aún no hay misiones. Jarvis principal enviará una en breve…"
   },
   "skill_finder_dialog": {
     "install_failed": "La instalación falló",
@@ -1999,6 +1990,18 @@
     "timed_out": "tiempo agotado"
   },
   "mascot_gigi": {
-    "aria_label": "Mascota Gigi de {name}"
+    "aria_label": "Mascota Gigi de {name}",
+    "back_online": "¡de vuelta en línea!",
+    "connection_lost": "conexión perdida …"
+  },
+  "agents_view": {
+    "subtitle": "Subagentes en ejecución — rol, estado, salida.",
+    "empty_title": "No hay agentes activos",
+    "empty_body_a": "Cuando",
+    "empty_body_b": "inicia un subagente, aparece aquí como un panel en vivo con salida en streaming y un botón para detenerlo.",
+    "phase4_notice": "Se activa con la Fase 4 (integración del harness)."
+  },
+  "friends_view": {
+    "subtitle": "Bot de Telegram + registro local de amigos. Tú decides qué ven los amigos."
   }
 }

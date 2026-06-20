@@ -124,6 +124,35 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("jarvis.speech.pipeline")
 
+
+async def _gather_timed(
+    named_thunks: list[tuple[str, Callable[[], Awaitable[Any]]]],
+) -> tuple[dict[str, float], list[Any]]:
+    """Run named async thunks concurrently and time each one individually.
+
+    Returns ``(timings_ms, results)`` where ``timings_ms[name]`` is the
+    per-thunk wall-clock in milliseconds (recorded even if the thunk raises) and
+    ``results`` mirrors ``asyncio.gather(..., return_exceptions=True)`` order:
+    each entry is the thunk's return value or its captured exception. Used to
+    expose which Phase-A loader dominates warm-up (the gather otherwise hides
+    per-loader cost behind its slowest member).
+    """
+    timings: dict[str, float] = {}
+
+    async def _run(name: str, thunk: Callable[[], Awaitable[Any]]) -> Any:
+        t0 = time.monotonic()
+        try:
+            return await thunk()
+        finally:
+            timings[name] = (time.monotonic() - t0) * 1000.0
+
+    results = await asyncio.gather(
+        *(_run(name, thunk) for name, thunk in named_thunks),
+        return_exceptions=True,
+    )
+    return timings, list(results)
+
+
 # Long-dictation accumulation guardrails. When the VAD force-cuts a long
 # continuous utterance (reason in FORCED_CUT_REASONS), the pipeline buffers
 # the PCM fragments and only finalizes at a natural endpoint. These caps stop
@@ -1496,18 +1525,15 @@ class SpeechPipeline:
         # transcription), so this does not block the caller.
         if getattr(plan, "needs_local_whisper", False) and self._stt is None:
             try:
+                from jarvis.plugins.stt import build_wake_whisper
+
                 stt_cfg = getattr(self._config, "stt", None)
-                if stt_cfg is not None:
-                    lang = getattr(stt_cfg, "language", None)
-                    lang = None if lang in ("", "auto") else lang
-                    self._stt = FasterWhisperProvider(
-                        model=getattr(stt_cfg, "model", "distil-large-v3"),
-                        device=getattr(stt_cfg, "device", "cuda"),
-                        compute_type=getattr(stt_cfg, "compute_type", "int8_float16"),
-                        language=lang,
-                    )
-                else:
-                    self._stt = FasterWhisperProvider()
+                lang = getattr(stt_cfg, "language", None)
+                lang = None if lang in ("", "auto", None) else lang
+                # Small CPU wake model (cfg.stt.wake_*), not the heavy utterance
+                # model — keeps a live wake-word switch fast (Blackwell CUDA load
+                # is ~71 s; base/cpu ~0.45 s, measured).
+                self._stt = build_wake_whisper(stt_cfg, language=lang)
                 if self._probe_stt is None:
                     self._probe_stt = self._stt
                 log.info("Wake-Live-Switch: built local Whisper for custom phrase.")
@@ -2367,6 +2393,25 @@ class SpeechPipeline:
                 event.text[:80],
             )
             return
+        # A preamble ("I'm about to think about this") is only coherent BEFORE
+        # the answer is voiced. If the turn is already JARVIS_SPEAKING by the
+        # time it reaches the handler, the answer (or another readback) is being
+        # spoken right now, so the preamble is stale → drop it instead of
+        # queueing it behind the answer on the shared player (live bug
+        # 2026-06-20: the ack "Ich schaue mir jetzt …" played AFTER the tool
+        # result). The floor guard above only covers the USER holding the floor;
+        # this covers Jarvis already speaking. The remaining race — the answer
+        # starting DURING the preamble's synthesis / play-lock wait — is caught
+        # by the should_play predicate handed to play_chunks below.
+        if is_preamble and (
+            getattr(self, "_turn_state", TurnTakingState.IDLE)
+            is TurnTakingState.JARVIS_SPEAKING
+        ):
+            log.info(
+                "Preamble dropped — Jarvis already speaking the answer: %r",
+                event.text[:80],
+            )
+            return
         if event.priority == "interrupt":
             # Arm the quiet window BEFORE TTS so a synchronous publish of a
             # preamble immediately afterwards sees the up-to-date timestamp.
@@ -2435,7 +2480,27 @@ class SpeechPipeline:
                 chunks = self._tts.synthesize(scrubbed.cleaned, language_code=lang_code)
             except TypeError:
                 chunks = self._tts.synthesize(scrubbed.cleaned)
-            await self._player.play_chunks(chunks)
+            if is_preamble:
+                # Staleness gate evaluated by the player right before it writes
+                # audio: if the answer has started speaking by the time the
+                # preamble's synthesis + play-lock wait completes, drop it so it
+                # is never voiced after the answer (2026-06-20 misorder fix).
+                # TypeError fallback mirrors the synthesize() compat shim above:
+                # an older player / test fake without the should_play kwarg still
+                # plays (the synchronous JARVIS_SPEAKING guard already covers the
+                # already-speaking case; only the in-flight race is then uncovered).
+                try:
+                    await self._player.play_chunks(
+                        chunks,
+                        should_play=lambda: (
+                            getattr(self, "_turn_state", TurnTakingState.IDLE)
+                            is not TurnTakingState.JARVIS_SPEAKING
+                        ),
+                    )
+                except TypeError:
+                    await self._player.play_chunks(chunks)
+            else:
+                await self._player.play_chunks(chunks)
         except Exception as exc:  # noqa: BLE001
             log.warning("Announcement-Speak fehlgeschlagen: %s", exc)
         finally:
@@ -3146,17 +3211,28 @@ class SpeechPipeline:
         async def _init_tts() -> None:
             await asyncio.to_thread(self._tts._ensure_client)
 
-        # return_exceptions=True: one slow/failing loader must not abort the
-        # others. Each coroutine already isolates its own failure where a soft
-        # failure is tolerable; here we additionally log any hard exception
-        # without breaking the remaining critical path.
-        results = await asyncio.gather(
-            self._stabilize_audio_devices(),
-            _load_vad(),
-            _load_stt(),
-            _start_wake(),
-            _init_tts(),
-            return_exceptions=True,
+        # return_exceptions=True (inside _gather_timed): one slow/failing loader
+        # must not abort the others. Each coroutine already isolates its own
+        # failure where a soft failure is tolerable; here we additionally log any
+        # hard exception without breaking the remaining critical path. The
+        # per-loader timing exposes WHICH loader dominates warm-up — the gather
+        # otherwise hides that behind its slowest member (boot-perf forensic).
+        timings, results = await _gather_timed(
+            [
+                ("audio-stabilize", self._stabilize_audio_devices),
+                ("vad-load", _load_vad),
+                ("stt-load", _load_stt),
+                ("wake-start", _start_wake),
+                ("tts-init", _init_tts),
+            ]
+        )
+        self._warmup_phase_a_timings = timings
+        log.info(
+            "Warm-up Phase A per-loader (ms): %s",
+            ", ".join(
+                f"{name}={timings[name]:.0f}"
+                for name in sorted(timings, key=lambda n: -timings[n])
+            ),
         )
         for name, res in zip(
             ("audio-stabilize", "vad-load", "stt-load", "wake-start", "tts-init"),

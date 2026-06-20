@@ -9,6 +9,7 @@ Auf RTX 5070 Ti liefert distil-large-v3 für eine 5-Sekunden-Utterance
 """
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -16,6 +17,47 @@ import numpy as np
 
 from jarvis.audio.capture import pcm_bytes_to_np
 from jarvis.core.protocols import AudioChunk, Transcript
+
+log = logging.getLogger(__name__)
+
+
+def _normalize_model_name(model: str) -> str:
+    """Map known-invalid OpenAI-style aliases to faster-whisper model ids.
+
+    faster-whisper expects a bare size id ("large-v3", "large-v3-turbo",
+    "distil-large-v3", "base", "small", …) or a HuggingFace repo id
+    ("org/name"). A drifted config value like "whisper-large-v3" (the OpenAI
+    naming) is not a valid id and raises at load. Strip the bogus "whisper-"
+    prefix off bare ids; leave HF repo ids (containing "/") untouched.
+    """
+    if "/" in model:
+        return model
+    if model.startswith("whisper-"):
+        return model[len("whisper-"):]
+    return model
+
+
+def _cpu_safe_compute_type(compute_type: str) -> str:
+    """Downgrade CUDA-only compute types to a CPU-compatible one.
+
+    ``float16`` / ``int8_float16`` require a GPU; on a CPU / headless VPS they
+    raise. ``int8`` is the universal CPU-safe equivalent (cloud-first floor).
+    """
+    if compute_type in ("float16", "int8_float16"):
+        return "int8"
+    return compute_type
+
+
+def _new_whisper_model(model_name: str, device: str, compute_type: str) -> Any:
+    """Construct a ``WhisperModel`` (overridable seam for tests).
+
+    The heavy ``faster_whisper`` import stays lazy here so importing this module
+    on a host without it is cheap; tests monkeypatch this function to avoid the
+    import + a real model build.
+    """
+    from faster_whisper import WhisperModel
+
+    return WhisperModel(model_name, device=device, compute_type=compute_type)
 
 
 class FasterWhisperProvider:
@@ -48,13 +90,26 @@ class FasterWhisperProvider:
         self._model: Any = None  # lazy
 
     def _ensure_model(self) -> None:
-        if self._model is None:
-            from faster_whisper import WhisperModel
-            self._model = WhisperModel(
-                self._model_name,
-                device=self._device,
-                compute_type=self._compute_type,
+        if self._model is not None:
+            return
+        model_name = _normalize_model_name(self._model_name)
+        device, compute_type = self._device, self._compute_type
+        try:
+            self._model = _new_whisper_model(model_name, device, compute_type)
+            return
+        except Exception as exc:  # noqa: BLE001 — fall back rather than crash boot
+            fb_device, fb_ct = "cpu", _cpu_safe_compute_type(compute_type)
+            if (device, compute_type) == (fb_device, fb_ct):
+                # Already on the CPU-safe combo — the failure is not a
+                # device/compute mismatch (e.g. a genuinely bad model id).
+                # Re-raise instead of pointlessly retrying the same load.
+                raise
+            log.warning(
+                "WhisperModel(%s, device=%s, compute_type=%s) failed (%s); "
+                "retrying on cpu/%s.",
+                model_name, device, compute_type, exc, fb_ct,
             )
+        self._model = _new_whisper_model(model_name, fb_device, fb_ct)
 
     async def transcribe(self, audio: AsyncIterator[AudioChunk]) -> Transcript:
         """Sammelt alle Chunks, transkribiert am Stück.

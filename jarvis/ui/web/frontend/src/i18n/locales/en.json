@@ -822,6 +822,8 @@
     "source_static_note": "Live catalog unavailable — showing the maintained default selection.",
     "more_hint": "{0} more — refine your search",
     "choose_placeholder": "Choose a model…",
+    "heading_voice": "Voice",
+    "choose_voice": "Choose a voice…",
     "use_custom": "Use \"{0}\"",
     "no_models": "No models found",
     "loading": "Loading…"
@@ -896,6 +898,7 @@
       "restart_required": "Restart required to take effect.",
       "degraded_warning": "The chosen phrase isn't supported by the selected engine — it will fall back to a different engine.",
       "needs_whisper_hint": "An arbitrary phrase needs the local-Whisper extra. Without it the engine will degrade to a built-in quick phrase.",
+      "derived_name": "Your assistant will be called: {0}",
       "engine_options": {
         "auto": "Auto (recommended)",
         "openwakeword": "openWakeWord (built-in phrases)",
@@ -938,16 +941,6 @@
         "mascot": "Mascot orb",
         "none": "None (hidden)"
       }
-    },
-    "assistant_name": {
-      "title": "Assistant Name",
-      "description": "How the assistant refers to itself in replies. Leave empty to follow the wake word.",
-      "label": "Name",
-      "current": "The assistant calls itself “{0}”.",
-      "auto_hint": "Empty — follows the wake word (currently “{0}”).",
-      "save": "Save name",
-      "saved": "Name saved",
-      "restart_required": "Restart required to take effect."
     },
     "system_prompt": {
       "title": "System Prompt",
@@ -1270,7 +1263,7 @@
     },
     "welcome": {
       "title": "Welcome to Personal Jarvis",
-      "subtitle": "Your local, private voice assistant. Let's get you set up.",
+      "subtitle": "Your voice-first AI assistant. Let's get you set up.",
       "cta": "Get started",
       "skip_setup": "Skip setup for now"
     },
@@ -1283,10 +1276,10 @@
       "proceed": "I understand — continue"
     },
     "intro": {
-      "scene_1": "Meet {name} — your voice-first assistant.",
-      "scene_2": "Just talk. {name} listens and acts.",
+      "scene_1": "Meet your voice-first assistant.",
+      "scene_2": "Just talk — it listens and acts.",
       "scene_3": "It keeps working in the background while you don't.",
-      "scene_4": "And it runs locally — your data stays yours."
+      "scene_4": "Your keys, your data, your rules."
     },
     "terms": {
       "title": "Terms & Disclaimer",
@@ -1301,7 +1294,7 @@
     },
     "wake_word": {
       "title": "Pick your wake word",
-      "body": "Choose the word that wakes {name}. \"Hey\" stays fixed — you pick the rest.",
+      "body": "Choose the word that wakes your assistant. \"Hey\" stays fixed — you pick the rest.",
       "prefix": "Hey",
       "input_label": "Your wake word",
       "placeholder": "e.g. Nova",
@@ -1310,7 +1303,8 @@
       "references_caveat": "These references are informational and may be incomplete or out of date — they are not a substitute for your own check.",
       "ack_label": "I have reviewed the information on protected names and accept that I am solely responsible for the activation word I choose.",
       "cta": "Save wake word",
-      "saving": "Saving…"
+      "saving": "Saving…",
+      "derived_name": "Your assistant will be called: {0}"
     },
     "api_keys": {
       "title": "Connect your AI services (optional)",
@@ -1320,19 +1314,13 @@
     },
     "mic_test": {
       "title": "Microphone check",
-      "body": "Let's make sure {name} can hear you.",
-      "no_mic": "No microphone detected. You can still talk to {name} by text or through a channel like Telegram.",
+      "body": "Let's make sure your assistant can hear you.",
+      "no_mic": "No microphone detected. You can still talk by text or through a channel like Telegram.",
       "skip": "Skip microphone check"
-    },
-    "persona": {
-      "title": "Make it yours (optional)",
-      "name_label": "What should the assistant call itself?",
-      "name_placeholder": "Type a name…",
-      "skip": "Skip personalization"
     },
     "system_style": {
       "title": "Choose your style",
-      "body": "How should {name} appear on screen? You can change this any time in Settings.",
+      "body": "How should your assistant appear on screen? You can change this any time in Settings.",
       "recommended": "Recommended",
       "options": {
         "whisper_bar": "Jarvis Bar",
@@ -1352,10 +1340,10 @@
     },
     "finish": {
       "title": "You're all set!",
-      "body": "{name} is ready. Try saying your wake word, or type a command to begin.",
+      "body": "Your assistant is ready. Try saying your wake word, or type a command to begin.",
       "skipped_title": "You skipped — set up anytime in Settings:",
-      "start_cta": "Start using {name}",
-      "boot_notice": "Heads up: the first launch takes about 10 seconds while {name} warms up — that's completely normal."
+      "start_cta": "Get started",
+      "boot_notice": "Heads up: the first launch takes about 10 seconds while your assistant warms up — that's completely normal."
     }
   },
   "languages_view": {
@@ -1937,7 +1925,10 @@
     "title": "Missions",
     "subtitle": "Phase 6 — Worker/Critic loop. Live bus, PTY streams, verdicts.",
     "tree_label": "Mission tree",
-    "timeline_label": "Event timeline"
+    "timeline_label": "Event timeline",
+    "no_events": "No events for this mission yet.",
+    "no_critic_verdicts": "No critic verdicts for this mission yet.",
+    "no_missions_yet": "No missions yet. Main Jarvis will dispatch one shortly…"
   },
   "skill_finder_dialog": {
     "install_failed": "Installation failed",
@@ -1999,6 +1990,18 @@
     "timed_out": "timeout"
   },
   "mascot_gigi": {
-    "aria_label": "{name} mascot Gigi"
+    "aria_label": "{name} mascot Gigi",
+    "back_online": "back online!",
+    "connection_lost": "connection lost …"
+  },
+  "agents_view": {
+    "subtitle": "Running sub-agents — role, status, output.",
+    "empty_title": "No active agents",
+    "empty_body_a": "When",
+    "empty_body_b": "starts a sub-agent, it appears here as a live tile with streaming output and a kill button.",
+    "phase4_notice": "Activated with Phase 4 (harness integration)."
+  },
+  "friends_view": {
+    "subtitle": "Telegram bot + local friend registry. You decide what friends see."
   }
 }

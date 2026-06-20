@@ -1001,25 +1001,18 @@ async def _call_brain(
         result = await complete_text(system=system_prompt, user=user_message)
         return str(result)
 
-    # Production: direct provider dispatch.
+    # Production: provider-chain dispatch. This must mirror the BrainManager's
+    # fallback behavior closely enough for CU: a broken primary desktop brain
+    # must not make the whole screen-control loop fail while chat would have
+    # fallen through to the next provider.
     # TODO(L9 live-gated): when ``ctx.fast_step_model`` is set and the chosen
     # action is a trivial click_element on a known control label (see
     # ``_should_use_fast_step_model``), select that cheaper model here instead
     # of the active provider. Not wired yet — it touches BrainManager provider
     # routing and is a reliability risk; the knob + pure predicate ship first.
     manager = ctx.brain_manager
-    if all(hasattr(manager, n) for n in ("_get_brain", "active_provider")):
+    if hasattr(manager, "_get_brain"):
         from jarvis.brain.streaming import aggregate  # noqa: PLC0415
-
-        provider = manager.active_provider
-        if provider is None:
-            raise CULoopError("BrainManager.active_provider is None")
-        model = _select_fast_model(manager, provider)
-        brain = manager._get_brain(provider, model)
-        if brain is None:
-            raise CULoopError(
-                f"BrainManager._get_brain({provider!r}, {model!r}) returned None"
-            )
 
         # Attach screenshot(s), capped to the model-payload budget
         # (2026-06-09 latency fix). ``frame_b`` lets the two-frame motion
@@ -1059,8 +1052,61 @@ async def _call_brain(
             max_tokens=max_tokens,
             stream=True,
         )
-        agg = await aggregate(brain.complete(req))
-        return agg.text
+
+        chain: list[tuple[str, str | None]] = []
+        build_chain = getattr(manager, "_build_fallback_chain", None)
+        if callable(build_chain):
+            try:
+                chain = list(build_chain("fast") or [])
+            except Exception:  # noqa: BLE001
+                log.debug("ComputerUseLoop fallback-chain build failed", exc_info=True)
+        if not chain and hasattr(manager, "active_provider"):
+            provider = manager.active_provider
+            if provider is None:
+                raise CULoopError("BrainManager.active_provider is None")
+            chain = [(provider, _select_fast_model(manager, provider))]
+        if not chain:
+            raise CULoopError("BrainManager fallback chain is empty")
+
+        errors: list[str] = []
+        dead_providers = getattr(manager, "_dead_providers", set())
+        rate_tracker = getattr(manager, "_rate_tracker", None)
+        for idx, (provider, model) in enumerate(chain):
+            if provider in dead_providers:
+                errors.append(f"{provider}({model}): skipped dead provider")
+                continue
+            is_available = getattr(rate_tracker, "is_available", None)
+            if callable(is_available) and not is_available(provider, model):
+                errors.append(f"{provider}({model}): skipped cooldown")
+                continue
+            try:
+                brain = manager._get_brain(provider, model)
+                if brain is None:
+                    raise CULoopError(
+                        f"BrainManager._get_brain({provider!r}, {model!r}) returned None"
+                    )
+                agg = await aggregate(brain.complete(req))
+                text = (agg.text or "").strip()
+                if not text:
+                    errors.append(f"{provider}({model}): empty response")
+                    continue
+                if idx > 0:
+                    log.info(
+                        "ComputerUseLoop fallback hit: %s(%s) after %d skipped provider(s)",
+                        provider, model, idx,
+                    )
+                return text
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{provider}({model}): {exc}")
+                log.warning(
+                    "ComputerUseLoop brain provider %s(%s) failed: %s",
+                    provider, model, exc,
+                )
+                continue
+
+        raise CULoopError(
+            "ComputerUseLoop provider chain failed: " + "; ".join(errors[-4:])
+        )
 
     # Last-resort callable manager (legacy stub).
     if callable(manager):
@@ -2949,6 +2995,38 @@ async def _run_screenshot_loop(
                 len(recent_hashes) == _STUCK_LIMIT
                 and len(set(recent_hashes)) == 1
             ):
+                # Verify-before-fail (user forensic 2026-06-20): a frozen
+                # screen is ALSO exactly what a FINISHED task looks like -- a
+                # fully-loaded page is static, so the goal-reached state is
+                # byte-identical to a dead-click stall. Hash alone cannot tell
+                # "stuck" from "done". So before declaring the mission stuck,
+                # run the done-verifier ONCE against this stable screenshot. If
+                # the goal is provably achieved, end as a verified success
+                # instead of a false "3 identical screenshots" failure (live:
+                # the @AngelaMerkel profile page was open on screen, yet the
+                # mission reported FAILED because nothing moved). The verifier
+                # never raises (returns (False, "") on any error), so this can
+                # only RESCUE a real success -- it never masks a genuine stall,
+                # which still falls through to the honest failure below.
+                done, proof = await _verify_goal_done(
+                    ctx, observation=observation, user_goal=task_prompt,
+                )
+                if done:
+                    proof_cap = (
+                        _READ_PROOF_MAX
+                        if _goal_needs_reading(task_prompt)
+                        else 80
+                    )
+                    log.info(
+                        "[cu] no-progress freeze AT the goal -- verifier "
+                        "confirms done (proof=%r); ending as success",
+                        proof[:80],
+                    )
+                    yield _final(
+                        stdout=f"[cu] done (verified: {proof[:proof_cap]})\n",
+                        exit_code=0,
+                    )
+                    return
                 cause = (
                     "recent actions were suppressed by a guard "
                     "(repeated click / relaunch), so nothing changed"

@@ -121,4 +121,29 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
     )
 
 
-__all__ = ["build_stt_from_config"]
+def build_wake_whisper(stt_cfg: Any, *, language: str | None = None) -> Any:
+    """Build the LOCAL wake-match / live-preview Whisper.
+
+    Distinct from :func:`build_stt_from_config` (the post-wake *utterance* STT,
+    often a cloud provider). This instance only powers wake-phrase transcript
+    matching + the listening-bubble probe — both latency-tolerant — so it loads
+    a small model on CPU by default (``stt_cfg.wake_model`` / ``wake_device`` /
+    ``wake_compute_type``), NOT the heavy utterance model on the GPU.
+
+    Why this matters for boot: on a Blackwell GPU (RTX 50xx) CTranslate2 JIT-
+    compiles kernels at model load, costing ~71 s on CUDA vs ~0.45 s for ``base``
+    on CPU (measured) — the dominant Phase-A warm-up cost. CPU is also the
+    cloud-first floor. ``getattr`` fallbacks keep a pre-wake_*-field config (or a
+    bare stub) building a safe small/cpu instance.
+    """
+    from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
+
+    return FasterWhisperProvider(
+        model=getattr(stt_cfg, "wake_model", "base"),
+        device=getattr(stt_cfg, "wake_device", "cpu"),
+        compute_type=getattr(stt_cfg, "wake_compute_type", "int8"),
+        language=language,
+    )
+
+
+__all__ = ["build_stt_from_config", "build_wake_whisper"]

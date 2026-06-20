@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Loader2, MessageCircle, Plus, Users, Zap } from "lucide-react";
 
 import { useCreateFriend, useLinkChannel } from "@/hooks/useFriends";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 /**
@@ -25,6 +26,7 @@ export function AddFriendMenu({
   onClose: () => void;
   onPairOpen: () => void;
 }) {
+  const t = useT();
   const [mode, setMode] = useState<Mode>("telegram");
   const [displayName, setDisplayName] = useState("");
   const [handle, setHandle] = useState("");
@@ -47,14 +49,14 @@ export function AddFriendMenu({
     const name = displayName.trim();
     const value = handle.trim();
     if (!name) {
-      setError("Bitte einen Namen eintragen.");
+      setError(t("add_friend_menu.error_name_required"));
       return;
     }
     if ((mode === "telegram" || mode === "jarvis_pubkey") && !value) {
       setError(
         mode === "telegram"
-          ? "Telegram-Chat-ID fehlt."
-          : "Jarvis-Pubkey fehlt."
+          ? t("add_friend_menu.error_telegram_id_missing")
+          : t("add_friend_menu.error_pubkey_missing")
       );
       return;
     }
@@ -81,7 +83,7 @@ export function AddFriendMenu({
         <header className="flex items-center justify-between border-b border-border px-5 py-3">
           <h2 className="flex items-center gap-2 font-display text-sm font-semibold">
             <Plus className="h-4 w-4 text-primary" />
-            Friend hinzufuegen
+            {t("add_friend_menu.title")}
           </h2>
           <button
             type="button"
@@ -91,7 +93,7 @@ export function AddFriendMenu({
             }}
             className="text-xs text-muted-foreground hover:text-foreground"
           >
-            schliessen
+            {t("common.close")}
           </button>
         </header>
 
@@ -119,8 +121,7 @@ export function AddFriendMenu({
         {mode === "link" ? (
           <div className="space-y-3 px-5 py-4 text-sm text-muted-foreground">
             <p>
-              Pair-Link nutzt den bestehenden Pubkey-Pair-Flow ueber das
-              board-backend. Tausche Token + URL mit deinem Friend aus.
+              {t("add_friend_menu.link_mode_hint")}
             </p>
             <button
               type="button"
@@ -130,7 +131,7 @@ export function AddFriendMenu({
               }}
               className="w-full rounded-md border border-primary/40 bg-primary/10 px-3 py-2 text-xs uppercase tracking-wider text-primary hover:bg-primary/20"
             >
-              Pair-Dialog oeffnen
+              {t("add_friend_menu.open_pair_dialog")}
             </button>
           </div>
         ) : (
@@ -141,15 +142,15 @@ export function AddFriendMenu({
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
                 className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-primary/40 focus:outline-none"
-                placeholder="z.B. Daniel"
+                placeholder={t("add_friend_menu.name_placeholder")}
                 autoFocus
               />
             </FieldLabel>
             <FieldLabel
               label={
                 mode === "telegram"
-                  ? "Telegram-Chat-ID"
-                  : "Jarvis-Pubkey (hex)"
+                  ? t("add_friend_menu.label_telegram_id")
+                  : t("add_friend_menu.label_pubkey")
               }
             >
               <input
@@ -158,7 +159,9 @@ export function AddFriendMenu({
                 onChange={(e) => setHandle(e.target.value)}
                 className="w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-xs focus:border-primary/40 focus:outline-none"
                 placeholder={
-                  mode === "telegram" ? "z.B. 123456789" : "z.B. 4f3c2b..."
+                  mode === "telegram"
+                    ? t("add_friend_menu.telegram_id_placeholder")
+                    : t("add_friend_menu.pubkey_placeholder")
                 }
               />
             </FieldLabel>
@@ -175,7 +178,7 @@ export function AddFriendMenu({
               {(createFriend.isPending || linkChannel.isPending) && (
                 <Loader2 className="h-3 w-3 animate-spin" />
               )}
-              Hinzufuegen
+              {t("add_friend_menu.submit")}
             </button>
           </form>
         )}

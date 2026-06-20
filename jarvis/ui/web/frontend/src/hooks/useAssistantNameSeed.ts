@@ -4,14 +4,14 @@ import { useEventStore } from "@/store/events";
 /**
  * Seed the resolved assistant name into the global store on mount.
  *
- * The assistant's display name (header wordmark + every assistant byline) must
- * follow the configured identity — `[persona].name`, else the name derived from
- * the wake phrase — instead of a hardcoded "Jarvis". This hook reads the current
- * value once via GET /api/settings/assistant-name (mirroring useVoiceStatus /
+ * The assistant's display name (header wordmark + every assistant byline) is
+ * derived solely from the wake phrase configured in `[trigger.wake_word].phrase`
+ * (via `deriveAssistantName` on the backend). This hook reads the current value
+ * once on mount via GET /api/settings/assistant-name (mirroring useVoiceStatus /
  * useBrainStatus) and writes `resolved` into the store.
  *
- * The existing useAssistantName hook dispatches `jarvis:assistant-name-changed`
- * after a Settings rename, so we re-fetch on that event to keep every byline
+ * `useWakeWord.saveWakeWord` dispatches `jarvis:assistant-name-changed` after a
+ * successful wake-word save, so we re-fetch on that event to keep every byline
  * live without a reload. A fetch failure (offline / headless host) is a no-op:
  * the store keeps its default and the next event/mount re-seeds it.
  */

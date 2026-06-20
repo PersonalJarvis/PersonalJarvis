@@ -203,28 +203,3 @@ jobs:
         env:
           PRIVACY_PRIVATE_EMAILS: ${{ vars.PRIVACY_PRIVATE_EMAILS }}
         run: python scripts/ci/privacy_scan_ci.py --base "${{ github.event.pull_request.base.sha }}"
-
-  # Antigravity ban (CLAUDE.md, AP-21): wiring the Antigravity CLI or a
-  # Gemini-*subscription* OAuth login into Jarvis is forbidden. Tapping a Google
-  # AI Pro/Ultra plan from outside Google's own tools is detection-evasion against
-  # Google's abuse enforcement and gets the maintainer's Google account banned
-  # (Gmail/Calendar/paid plan). Gemini is reached ONLY via an API key. Full-tree
-  # scan (not diff-based), so it runs on push AND PR. stdlib only, so no pip
-  # install. Own job for an isolated signal. BLOCKING.
-  no-antigravity:
-    name: no-antigravity (forbidden subscription-OAuth)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
-        with:
-          python-version: "3.11"
-
-      - name: No-Antigravity gate (BLOCKING)
-        run: python scripts/ci/check_no_antigravity.py

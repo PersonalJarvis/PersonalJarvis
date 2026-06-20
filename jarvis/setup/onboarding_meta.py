@@ -21,9 +21,6 @@ ONBOARDING_STEPS: list[str] = [
     "language",
     "wake-word",
     "api-keys",
-    "mic-test",
-    "persona-theme",
-    "system-style",
     "finish",
 ]
 

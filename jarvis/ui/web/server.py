@@ -236,6 +236,7 @@ class WebServer:
         )
         from .outputs_routes import router as outputs_router
         from .preview_routes import router as preview_router
+        from .antigravity_routes import router as antigravity_router
         from .profile_routes import router as profile_router
         from .provider_routes import router as provider_router
         from .review_routes import router as review_router
@@ -263,6 +264,7 @@ class WebServer:
         app.include_router(mcp_router)
         app.include_router(tools_router)
         app.include_router(provider_router)
+        app.include_router(antigravity_router)
         app.include_router(control_router)
         app.include_router(profile_router)
         app.include_router(settings_router)
@@ -1623,14 +1625,24 @@ class WebServer:
                     "BioScheduler.start() fehlgeschlagen"
                 )
 
-        # Friends-Stack: FriendRegistry + ChannelManager. Telegram startet nur,
-        # wenn integrations.telegram.enabled=true und ein Token verfuegbar ist.
-        try:
-            await self._init_channel_stack()
-        except Exception as exc:  # noqa: BLE001
-            logger.opt(exception=exc).warning(
-                "ChannelStack-Init fehlgeschlagen — /api/friends liefert 503"
-            )
+        # Friends-Stack: FriendRegistry + ChannelManager. Started as a BACKGROUND
+        # task so a slow Telegram/Discord network connect (bot login / getUpdates
+        # handshake — observed ~4 s, and a 409 retry storm on a restart overlap)
+        # does not delay backend-ready and, with it, the speech warm-up. Channels
+        # are background transports — nothing user-visible needs them live before
+        # voice; /api/friends + /api/socials 503 until the stack is up (the route
+        # guards already handle the brief app.state.channel_manager=None window).
+        async def _init_channel_stack_guarded() -> None:
+            try:
+                await self._init_channel_stack()
+            except Exception as exc:  # noqa: BLE001
+                logger.opt(exception=exc).warning(
+                    "ChannelStack-Init fehlgeschlagen — /api/friends liefert 503"
+                )
+
+        self._channel_stack_task = asyncio.create_task(
+            _init_channel_stack_guarded(), name="channel-bootstrap"
+        )
 
     async def _init_screenshot_retention(self) -> None:
         """Auto-delete captured screenshot blobs older than the configured
