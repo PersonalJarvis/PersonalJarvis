@@ -9,6 +9,7 @@ import pytest
 from jarvis.brain.manager import BrainManager
 from jarvis.core.bus import EventBus
 from jarvis.core.config import BrainProviderConfig, JarvisConfig
+from jarvis.core.events import ResponseGenerated
 from tests.fixtures.brain.fake_brain import FakeBrain
 
 
@@ -59,6 +60,82 @@ async def test_all_providers_fail_returns_clear_error():
         "nicht erreichbar" in result.lower()
         or "unerreichbar" in result.lower()
         or "rate-limit" in result.lower()
+    )
+
+
+@pytest.mark.asyncio
+async def test_all_providers_fail_publishes_response_generated_for_transcript():
+    """Regression (live 2026-06-20, session 09eef351): the total-failure apology
+    must reach the SessionRecorder so the voice transcript shows what Jarvis said.
+
+    The recorder fills ``voice_turns.jarvis_text`` ONLY from a ``ResponseGenerated``
+    event (``recorder.py::_on_response_generated``). The total-failure branch of
+    ``generate`` returned the apology WITHOUT publishing that event, so the
+    recorded turn had an empty ``jarvis_text`` — the UI showed the user line but no
+    reply, even though the user clearly heard "ich komme gerade nicht an mein
+    Sprachmodell". The spoken apology must be published like any other reply.
+    """
+    bus = EventBus()
+    seen: list[ResponseGenerated] = []
+
+    async def _capture(event: ResponseGenerated) -> None:
+        seen.append(event)
+
+    bus.subscribe(ResponseGenerated, _capture)
+
+    config = JarvisConfig()
+    manager = BrainManager(config=config, bus=bus, tools={})
+    manager._registry._loaded = True
+
+    broken = FakeBrain(text_response="x", fail_on_call=0)
+    manager._brain_cache[("claude-subscription", "xyz")] = broken
+    manager._build_fallback_chain = lambda level: [("claude-subscription", "xyz")]
+
+    reply = await manager.generate("hi", use_history=False)
+
+    assert manager._last_turn_all_failed is True
+    assert reply.strip()
+    assert len(seen) == 1, "total-failure apology was not published for the transcript"
+    assert seen[0].text == reply
+    # The transcript language must be a real localized key, never empty — a
+    # regression that publishes the right text with language="" stays honest.
+    assert seen[0].language in ("de", "en", "es")
+
+
+@pytest.mark.asyncio
+async def test_success_reply_language_is_resolved_not_looks_german():
+    """A successful reply's ResponseGenerated.language must honor the resolved
+    turn language (de/en/es), not the binary _looks_german gate that silently
+    tags every non-German reply "en" and so drops Spanish (Runtime Output
+    Language doctrine). A Spanish-pinned user's reply must be tagged "es".
+    """
+    bus = EventBus()
+    seen: list[ResponseGenerated] = []
+
+    async def _capture(event: ResponseGenerated) -> None:
+        seen.append(event)
+
+    bus.subscribe(ResponseGenerated, _capture)
+
+    config = JarvisConfig()
+    config.brain.primary = "gemini"
+    config.brain.providers["gemini"] = BrainProviderConfig(model="gemini-flash")
+    manager = BrainManager(config=config, bus=bus, tools={})
+    manager._registry._loaded = True
+    manager._reply_language = "es"  # user pinned Spanish
+
+    manager._brain_cache[("gemini", "gemini-flash")] = FakeBrain(
+        text_response="Hola, ¿qué tal?"
+    )
+    manager._build_fallback_chain = lambda level: [("gemini", "gemini-flash")]
+
+    reply = await manager.generate("hola", use_history=False)
+
+    assert reply.strip()
+    assert len(seen) == 1
+    assert seen[0].language == "es", (
+        "success reply tagged with _looks_german binary instead of the resolved "
+        "turn language — Spanish dropped to English"
     )
 
 

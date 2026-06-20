@@ -1591,6 +1591,22 @@ class BrainManager:
             )
         self._reply_language = code
 
+    def _resolve_turn_lang(self) -> str:
+        """The de/en/es key this turn's output is localized to.
+
+        The single authoritative resolver consumed by every ``ResponseGenerated``
+        publish (success replies AND the total-failure apology) so the recorded
+        transcript language is consistent and never the binary ``_looks_german``
+        gate — which silently tags any non-German reply "en" and so drops Spanish
+        (Runtime Output Language doctrine). An explicit pin wins; in auto mode it
+        is THIS turn's detected language (set at the top of generate()); an
+        undetected/ambiguous turn keeps the German default.
+        """
+        lang = self._reply_language
+        if lang not in _REPLY_LANG_NAMES:
+            lang = getattr(self, "_turn_detected_lang", "") or lang
+        return lang if lang in _REPLY_LANG_NAMES else "de"
+
     def _next_provider_down_phrase(self) -> str:
         """Localized 'I can't reach my model' apology + advance the rotation.
 
@@ -1599,16 +1615,35 @@ class BrainManager:
         spoken (live complaint 2026-06-01: the grok/Anthropic billing message
         was read aloud while Gemini was the active provider).
         """
-        # An explicit pin wins; in auto mode speak THIS turn's detected language
-        # (set at the top of generate()) so an English/Spanish "auto" user does
-        # not hear a German apology on a total failure (Runtime Output Language).
-        # An undetected/ambiguous turn keeps the German default of
-        # _provider_down_phrase.
-        lang = self._reply_language
-        if lang not in _REPLY_LANG_NAMES:
-            lang = getattr(self, "_turn_detected_lang", "") or lang
-        phrase = _provider_down_phrase(lang, self._provider_down_idx)
+        phrase = _provider_down_phrase(
+            self._resolve_turn_lang(), self._provider_down_idx
+        )
         self._provider_down_idx += 1
+        return phrase
+
+    async def _provider_down_reply(self, trace_uuid: UUID) -> str:
+        """Total-failure apology, ALSO surfaced to the transcript.
+
+        Returns the localized provider-down phrase AND publishes it as a
+        ``ResponseGenerated`` event so the SessionRecorder records it as the
+        turn's ``jarvis_text`` (``recorder.py::_on_response_generated``). Without
+        this the recorded turn keeps an empty reply and the voice transcript
+        shows the user line with no answer, even though the user heard the
+        apology aloud (live forensic 2026-06-20, session 09eef351). The apology
+        is deliberately NOT appended to the conversation history — an "I can't
+        reach my model" line must not pollute the LLM context for later turns.
+        """
+        phrase = self._next_provider_down_phrase()
+        # _next_provider_down_phrase already localized the phrase via
+        # _resolve_turn_lang; resolving again here is deterministic (same pin /
+        # detected-language inputs, the rotation index does not affect language)
+        # and only tags the transcript's jarvis_lang — NEVER _looks_german, which
+        # would mislabel a Spanish apology as English (Runtime Output Language).
+        await self._bus.publish(ResponseGenerated(
+            trace_id=trace_uuid,
+            text=phrase,
+            language=self._resolve_turn_lang(),
+        ))
         return phrase
 
     def _mandatory_lang_directive(self, name: str) -> str:
@@ -3632,7 +3667,7 @@ class BrainManager:
         await self._bus.publish(ResponseGenerated(
             trace_id=trace_id or uuid4(),
             text=response_text,
-            language="de" if _looks_german(response_text) else "en",
+            language=self._resolve_turn_lang(),
         ))
 
         if self._curator is not None:
@@ -4453,7 +4488,7 @@ class BrainManager:
                 )
             else:
                 log.warning("No brain providers available — spoken fallback used.")
-            return self._next_provider_down_phrase()
+            return await self._provider_down_reply(trace_uuid)
 
         history = self._history if use_history else []
         last_exc: Exception | None = None
@@ -4820,7 +4855,7 @@ class BrainManager:
                 "Spoken fallback used instead of chain diagnostic: %s",
                 _format_provider_chain_error(provider_errors),
             )
-            return self._next_provider_down_phrase()
+            return await self._provider_down_reply(trace_uuid)
 
         # Robustness net (2026-05-24): a provider (notably Gemini) sometimes
         # emits a spawn_worker tool_use block as TEXT instead of executing
@@ -4888,7 +4923,7 @@ class BrainManager:
         await self._bus.publish(ResponseGenerated(
             trace_id=trace_uuid,
             text=response_text,
-            language="de" if _looks_german(response_text) else "en",
+            language=self._resolve_turn_lang(),
         ))
 
         # Fire-and-forget: the curator extracts personal facts from the turn
