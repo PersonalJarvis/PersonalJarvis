@@ -1,6 +1,7 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useOnboarding } from "@/hooks/useOnboarding";
 import { OnboardingFlow } from "./OnboardingFlow";
+import { RiskGate } from "./RiskGate";
 
 /**
  * Blocking overlay that shows the onboarding flow until it is completed.
@@ -11,6 +12,10 @@ import { OnboardingFlow } from "./OnboardingFlow";
  */
 export function OnboardingGate() {
   const onb = useOnboarding();
+  // Risk acknowledgement is gated in local state only — never persisted and
+  // never touching onboarding/completed state, so it shows once per fresh open
+  // of an unfinished guide and cannot reintroduce the restart-loop bug.
+  const [riskAck, setRiskAck] = useState(false);
 
   useEffect(() => {
     const onChanged = () => void onb.refetch();
@@ -42,7 +47,11 @@ export function OnboardingGate() {
       aria-modal="true"
       className="fixed inset-0 z-50 flex items-center justify-center bg-background/90 backdrop-blur-sm"
     >
-      <OnboardingFlow onb={onb} initialStep={initialStep} />
+      {riskAck ? (
+        <OnboardingFlow onb={onb} initialStep={initialStep} />
+      ) : (
+        <RiskGate onAccept={() => setRiskAck(true)} />
+      )}
     </div>
   );
 }

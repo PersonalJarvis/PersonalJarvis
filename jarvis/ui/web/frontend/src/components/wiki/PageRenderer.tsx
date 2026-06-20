@@ -23,6 +23,7 @@ import {
   type WikiTreeResponse,
 } from "@/lib/wikiApi";
 import { cn } from "@/lib/utils";
+import { useT } from "@/i18n";
 
 import { PageHeader } from "./PageHeader";
 
@@ -38,6 +39,7 @@ const WIKILINK_PREFIX = "#wiki:";
 const WIKILINK_RE = /\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g;
 
 export function PageRenderer({ slug, onWikilinkClick }: PageRendererProps) {
+  const t = useT();
   const qc = useQueryClient();
   const pageQuery = useQuery({
     queryKey: ["wiki", "page", slug],
@@ -74,7 +76,7 @@ export function PageRenderer({ slug, onWikilinkClick }: PageRendererProps) {
           role="alert"
           className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
         >
-          Seite konnte nicht geladen werden.
+          {t("page_renderer.load_error")}
         </div>
       </div>
     );
@@ -88,7 +90,7 @@ export function PageRenderer({ slug, onWikilinkClick }: PageRendererProps) {
           role="alert"
           className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
         >
-          {page?.error ?? "Seite nicht gefunden."}
+          {page?.error ?? t("page_renderer.not_found")}
         </div>
       </div>
     );

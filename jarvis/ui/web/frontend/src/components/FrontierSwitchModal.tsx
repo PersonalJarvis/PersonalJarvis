@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { Sparkles, ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
+import { useT } from "@/i18n";
 
 interface FrontierSwitch {
   provider: string;
@@ -20,6 +21,7 @@ interface FrontierSwitch {
 const POLL_INTERVAL_MS = 30_000;
 
 export function FrontierSwitchModal() {
+  const t = useT();
   const assistantName = useEventStore((s) => s.assistantName);
   const [pending, setPending] = useState<FrontierSwitch[]>([]);
   const [acking, setAcking] = useState(false);
@@ -97,13 +99,12 @@ export function FrontierSwitchModal() {
             id="frontier-modal-title"
             className="text-base font-semibold text-foreground"
           >
-            Frontier-Modell{pending.length === 1 ? "" : "e"} aktualisiert
+            {pending.length === 1 ? t("frontier_switch_modal.title_one") : t("frontier_switch_modal.title_many")}
           </h2>
         </div>
 
         <p className="mb-4 text-sm text-muted-foreground">
-          {assistantName} hat beim Start ein neueres Modell beim Anbieter erkannt
-          und automatisch gewechselt. Bitte bestaetige.
+          {assistantName} {t("frontier_switch_modal.description")}
         </p>
 
         <div className="mb-5 space-y-3">
@@ -150,7 +151,7 @@ export function FrontierSwitchModal() {
               "disabled:cursor-not-allowed disabled:opacity-50",
             )}
           >
-            {acking ? "Bestaetige…" : "OK"}
+            {acking ? t("frontier_switch_modal.acking") : "OK"}
           </button>
         </div>
       </div>

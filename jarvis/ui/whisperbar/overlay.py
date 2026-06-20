@@ -83,10 +83,17 @@ class WhisperBarOverlay:
         persistent: bool = True,
         accent: str = "#e7c46e",
         opacity: float = BAR_ALPHA,
+        start_hidden: bool = False,
     ) -> None:
         self._persistent = persistent
         self._accent = accent
         self._opacity = max(0.2, min(1.0, float(opacity)))  # clamp to sane range
+        # Boot gate: when set, the bar starts WITHDRAWN even if persistent, so it
+        # does not appear before the speech pipeline is ready to listen (the
+        # "looks ready but isn't" boot confusion). The boot wiring reveals it via
+        # show("idle") once VoiceBootStatus(ready=True) arrives. Default False
+        # keeps every other caller (live swap / set_bar_persistent) unchanged.
+        self._start_hidden = bool(start_hidden)
         self._mode = "idle"
         self._ext_level = 0.0
         # perf_counter() of the last set_level() that carried real sound
@@ -166,19 +173,6 @@ class WhisperBarOverlay:
         """Register the right-click → raise-main-window callback (set by
         OrbBusBridge, which publishes ``ShowWindowRequested`` on fire)."""
         self._on_show_window = callback
-
-    def set_booting(self, active: bool) -> None:
-        """Show the "voice starting up" loading look (active) or revert to the
-        resting pill.
-
-        Driven by OrbBusBridge from the bar's first frame until the speech
-        pipeline reports the wake word is armed (``VoiceBootStatus(ready=True)``).
-        ``show("boot")`` always reveals the bar (a non-persistent bar deiconifies
-        so the user still sees that voice is warming up); ``show("idle")`` then
-        reverts to the bar's normal resting behaviour — the standby pill for a
-        persistent bar, hidden for a non-persistent one.
-        """
-        self.show("boot" if active else "idle")
 
     # ------------------------------------------------------------------ #
     # Lifecycle                                                          #

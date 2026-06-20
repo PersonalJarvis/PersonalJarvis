@@ -45,7 +45,6 @@ from jarvis.core.events import (
     SystemStateChanged,
     TranscriptionUpdate,
     UserVisibleFeedback,
-    VoiceBootStatus,
     VoiceMuteToggleRequested,
     VoiceSessionEnded,
     VoiceSessionStarted,
@@ -66,16 +65,6 @@ log = logging.getLogger("jarvis.orb.bridge")
 # Range bewusst breit, damit der Ghost nicht "vorhersehbar" wirkt.
 IDLE_MIN_INTERVAL_S = 30.0
 IDLE_MAX_INTERVAL_S = 90.0
-
-# Boot ("voice starting up") safety timeout. The bar/mascot shows the loading
-# look from the moment it appears until VoiceBootStatus(ready=True) arms the
-# wake word. If that never arrives — a speech-pipeline crash during warm-up —
-# this is the last-resort revert so the indicator never sticks. Deliberately
-# generous: a genuine cold boot can take ~20 s on a low-spec VPS, and the
-# desktop app's explicit crash hook (notify_voice_offline) clears it far sooner
-# in the real failure case. This timer only guards the path where no signal of
-# any kind comes back.
-BOOT_SAFETY_TIMEOUT_S = 90.0
 
 # Hangup-Animation laeuft, dann verzoegerter hide()-Call.
 SALUTE_DURATION_S = 1.1
@@ -212,14 +201,6 @@ class OrbBusBridge:
         # drives _on_state without publishing VoiceSession events (and the
         # very first session before any end-event) behaves exactly as before.
         self._suppress_show_until_session: bool = False
-        # Voice boot-status indicator (the "still warming up" loading look).
-        # Driven by VoiceBootStatus: the surface shows it from the moment the
-        # bar appears until the wake word is armed. ``_voice_ready`` latches
-        # True on the first ready=True so a stray late ready=False can never
-        # pop the loading look back up within a single process lifetime.
-        self._voice_ready: bool = False
-        self._boot_indicator_active: bool = False
-        self._boot_timeout_task: asyncio.Task | None = None
 
     def attach(self) -> None:
         """Subscribt die Bridge auf SystemStateChanged. Idempotent."""
@@ -235,11 +216,6 @@ class OrbBusBridge:
             self._bus.subscribe(ResponseGenerated, self._on_response_generated)
             self._bus.subscribe(OpenClawBackgroundCompleted, self._on_background_completed)
             self._bus.subscribe(AudioOutFirst, self._on_audio_out_first)
-            # Voice warm-up readiness: the bar/mascot reflects "voice starting
-            # up" until the pipeline reports the wake word is armed. The signal
-            # already exists (VoiceBootStatus) but was only wired to the desktop
-            # window's sidebar badge — the floating surface never saw it.
-            self._bus.subscribe(VoiceBootStatus, self._on_voice_boot_status)
             # ADR-0016 L2 — voice-driven recovery from "orb lost on screen".
             # The local_action_gate publishes OrbResetRequested when the
             # user says "Orb zurück" / "wo bist du" / "reset orb".
@@ -295,13 +271,8 @@ class OrbBusBridge:
                 "+ VoiceSessionEnded + ListeningStarted + TranscriptionUpdate "
                 "+ ResponseGenerated + AudioOutFirst + OrbResetRequested "
                 "+ mute-toggle gesture + show-window gesture "
-                "+ visible-feedback contract + voice-boot-status."
+                "+ visible-feedback contract."
             )
-            # Show the loading look right away — before the pipeline even emits
-            # its first VoiceBootStatus — so there is no window where the bar
-            # looks ready while the wake word is still warming up. Synchronous
-            # and thread-safe (the surface enqueues onto its own Tk thread).
-            self._enter_boot_indicator()
         except Exception as exc:  # noqa: BLE001
             log.exception("OrbBridge.attach() fehlgeschlagen: %s", exc)
 
@@ -430,98 +401,6 @@ class OrbBusBridge:
             event.hangup_reason,
         )
         self._suppress_show_until_session = True
-
-    # --- Voice boot-status loading indicator ---------------------------------
-
-    async def _on_voice_boot_status(self, event: VoiceBootStatus) -> None:
-        """Reflect the speech pipeline's warm-up state on the overlay surface.
-
-        ``ready=True`` (the wake word is armed) latches voice ready and clears
-        the loading look for good. ``ready=False`` (warm-up started) re-asserts
-        it and arms the safety timeout — but only while voice has not yet been
-        declared ready, so a stray late ``ready=False`` cannot resurrect the
-        indicator after the user is already live.
-        """
-        if event.ready:
-            self._voice_ready = True
-            self._cancel_boot_timeout()
-            self._exit_boot_indicator()
-            log.info("OrbBridge: voice ready — boot indicator cleared.")
-            return
-        if self._voice_ready:
-            return
-        self._enter_boot_indicator()
-        self._arm_boot_timeout()
-
-    def notify_voice_offline(self) -> None:
-        """Clear a stuck boot indicator when the speech pipeline failed to come
-        up (a startup crash means ``ready=True`` will never arrive).
-
-        Called by the desktop app from its voice-offline paths. Thread-safe:
-        the surface call enqueues onto the Tk thread, and the timeout cancel is
-        guarded against being invoked off the event loop.
-        """
-        self._voice_ready = True
-        self._cancel_boot_timeout()
-        self._exit_boot_indicator()
-
-    def _enter_boot_indicator(self) -> None:
-        if self._voice_ready:
-            return
-        self._boot_indicator_active = True
-        self._drive_surface_booting(True)
-
-    def _exit_boot_indicator(self) -> None:
-        if not self._boot_indicator_active:
-            return
-        self._boot_indicator_active = False
-        self._drive_surface_booting(False)
-
-    def _drive_surface_booting(self, active: bool) -> None:
-        """Call ``set_booting`` on whichever surface is current (defensive
-        getattr so older surfaces / test doubles without it are a safe no-op)."""
-        set_booting = getattr(self._orb, "set_booting", None)
-        if not callable(set_booting):
-            return
-        try:
-            set_booting(active)
-        except Exception as exc:  # noqa: BLE001 — boot UI never breaks the bridge
-            log.debug("set_booting(%s) failed: %s", active, exc)
-
-    def _arm_boot_timeout(self) -> None:
-        if self._boot_timeout_task and not self._boot_timeout_task.done():
-            return
-        try:
-            self._boot_timeout_task = asyncio.create_task(
-                self._boot_timeout_loop(), name="orb-boot-timeout"
-            )
-        except RuntimeError:
-            # No running loop (e.g. a sync test driving the handler) — the
-            # explicit notify_voice_offline path still clears the indicator.
-            self._boot_timeout_task = None
-
-    def _cancel_boot_timeout(self) -> None:
-        task = self._boot_timeout_task
-        self._boot_timeout_task = None
-        if task is None or task.done():
-            return
-        try:
-            task.cancel()
-        except Exception:  # noqa: BLE001 — best-effort, possibly cross-thread
-            log.debug("boot timeout cancel failed", exc_info=True)
-
-    async def _boot_timeout_loop(self) -> None:
-        try:
-            await asyncio.sleep(BOOT_SAFETY_TIMEOUT_S)
-        except asyncio.CancelledError:
-            return
-        if not self._voice_ready:
-            log.warning(
-                "OrbBridge: no VoiceBootStatus(ready=True) within %.0fs — "
-                "clearing boot indicator (voice may be offline).",
-                BOOT_SAFETY_TIMEOUT_S,
-            )
-            self._exit_boot_indicator()
 
     async def _on_state(self, event: SystemStateChanged) -> None:
         state = event.new_state

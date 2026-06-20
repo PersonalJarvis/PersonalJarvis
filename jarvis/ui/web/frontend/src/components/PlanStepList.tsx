@@ -5,6 +5,7 @@
  * eine flache Liste die alle Step-Felder als kompakte Karten zeigt.
  */
 import { CheckCircle2, Circle, Loader2, XCircle } from "lucide-react";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { PlanStep } from "@/hooks/useOutputs";
 
@@ -17,10 +18,11 @@ const STATUS_ICON: Record<string, JSX.Element> = {
 };
 
 export function PlanStepList({ steps }: { steps: PlanStep[] }) {
+  const t = useT();
   if (!steps || steps.length === 0) {
     return (
       <div className="text-xs text-muted-foreground">
-        Kein strukturierter Plan — Single-Shot-Run.
+        {t("plan_step_list.no_plan")}
       </div>
     );
   }
@@ -56,7 +58,7 @@ export function PlanStepList({ steps }: { steps: PlanStep[] }) {
           {s.output && s.status === "done" && (
             <details className="mt-1">
               <summary className="cursor-pointer text-[10px] text-muted-foreground hover:text-foreground">
-                Output anzeigen
+                {t("plan_step_list.show_output")}
               </summary>
               <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-background/40 p-2 font-mono text-[10px]">
                 {s.output}

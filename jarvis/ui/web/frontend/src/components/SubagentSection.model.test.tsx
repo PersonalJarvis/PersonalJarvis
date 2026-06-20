@@ -80,6 +80,36 @@ describe("SubagentSection — dedicated subagent LLM model", () => {
     });
   });
 
+  it("explains that subagents reuse the Brain keys, and locks a keyless provider", async () => {
+    const statusWithMapping = {
+      ...STATUS,
+      mapping: [
+        {
+          jarvis: "openai",
+          openclaw: "openai",
+          env_var: "OPENAI_API_KEY",
+          env_fallback: null,
+          key_set: false,
+          is_active_brain: false,
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: async () => statusWithMapping }),
+    );
+    render(<SubagentSection />);
+
+    // The section-level coupling explainer points at the Brain section above.
+    await waitFor(() =>
+      expect(screen.getByText(/Subagents reuse the API keys/i)).toBeTruthy(),
+    );
+
+    // A provider without a key shows a clear "Locked — add the key above" hint.
+    expect(screen.getByText(/Locked/i)).toBeTruthy();
+    expect(screen.getByText(/unlock it/i)).toBeTruthy();
+  });
+
   it("empty input is a valid reset to the provider default", async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       if (String(url).includes("/api/subagent/model")) {

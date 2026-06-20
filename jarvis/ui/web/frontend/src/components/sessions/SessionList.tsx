@@ -11,6 +11,7 @@ import { Clock, Loader2, Mic, MicOff } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { translate, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 import type { SessionListItem } from "./types";
@@ -23,11 +24,12 @@ interface Props {
 }
 
 export function SessionList({ sessions, selectedId, onSelect, loading }: Props) {
+  const t = useT();
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-        Lade Transkripte…
+        {t("session_list.loading")}
       </div>
     );
   }
@@ -36,9 +38,9 @@ export function SessionList({ sessions, selectedId, onSelect, loading }: Props) 
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-sm text-muted-foreground">
         <MicOff className="h-8 w-8 opacity-40" />
-        <div className="font-medium">Noch keine Voice-Sessions</div>
+        <div className="font-medium">{t("session_list.empty_title")}</div>
         <div className="text-xs">
-          Sage dein Wake-Word — beim Auflegen erscheint die Session hier.
+          {t("session_list.empty_hint")}
         </div>
       </div>
     );
@@ -66,7 +68,7 @@ export function SessionList({ sessions, selectedId, onSelect, loading }: Props) 
                 </span>
                 {s.ended_ms === null ? (
                   <Badge variant="default" className="animate-pulse">
-                    läuft
+                    {t("sessions.running")}
                   </Badge>
                 ) : (
                   <Badge variant="secondary" className="text-[10px]">
@@ -77,7 +79,7 @@ export function SessionList({ sessions, selectedId, onSelect, loading }: Props) 
               <div className="line-clamp-2 text-foreground/90">
                 {s.preview || (
                   <span className="italic text-muted-foreground/70">
-                    (kein User-Text aufgezeichnet)
+                    {t("session_list.no_user_text")}
                   </span>
                 )}
               </div>
@@ -86,7 +88,7 @@ export function SessionList({ sessions, selectedId, onSelect, loading }: Props) 
                   <Clock className="h-3 w-3" />
                   {formatDuration(s.duration_s)}
                 </span>
-                <span>· {s.turn_count} Turns</span>
+                <span>· {s.turn_count} {t("session_list.turns")}</span>
                 {s.total_cost_usd > 0 && (
                   <span>· ${s.total_cost_usd.toFixed(4)}</span>
                 )}
@@ -101,38 +103,52 @@ export function SessionList({ sessions, selectedId, onSelect, loading }: Props) 
 
 // --- Helpers ---------------------------------------------------------
 
+// Compose "vor 5 min" / "5 min ago" / "hace 5 min" from a localized prefix and
+// suffix so the word order stays correct in every language. One side is empty
+// per locale (de/es use a prefix, en uses the "ago" suffix). Joined with a
+// single space and trimmed so the empty side leaves no double gap.
+function ago(value: string): string {
+  const prefix = translate("session_list.ago_prefix");
+  const suffix = translate("session_list.ago_suffix");
+  return [prefix, value, suffix].filter(Boolean).join(" ");
+}
+
 function formatRelative(ms: number): string {
   const diff = Date.now() - ms;
-  if (diff < 60_000) return "gerade eben";
-  if (diff < 3_600_000) return `vor ${Math.floor(diff / 60_000)} min`;
-  if (diff < 86_400_000) return `vor ${Math.floor(diff / 3_600_000)} h`;
+  if (diff < 60_000) return translate("session_list.just_now");
+  if (diff < 3_600_000)
+    return ago(`${Math.floor(diff / 60_000)} ${translate("session_list.unit_min")}`);
+  if (diff < 86_400_000)
+    return ago(`${Math.floor(diff / 3_600_000)} ${translate("session_list.unit_hour")}`);
   const d = new Date(ms);
-  return d.toLocaleDateString("de", { day: "2-digit", month: "short" });
+  return d.toLocaleDateString(undefined, { day: "2-digit", month: "short" });
 }
 
 function formatDuration(secs: number | null): string {
-  if (secs === null) return "läuft";
-  if (secs < 60) return `${secs.toFixed(0)} s`;
+  if (secs === null) return translate("session_list.duration_running");
+  if (secs < 60) return `${secs.toFixed(0)} ${translate("session_list.unit_sec")}`;
   const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins} min`;
+  if (mins < 60) return `${mins} ${translate("session_list.unit_min")}`;
   const hours = Math.floor(mins / 60);
-  return `${hours} h ${mins % 60} min`;
+  return `${hours} ${translate("session_list.unit_hour")} ${mins % 60} ${translate(
+    "session_list.unit_min",
+  )}`;
 }
 
 function hangupLabel(reason: string): string {
   switch (reason) {
     case "voice_pattern":
-      return "Auflegen";
+      return translate("session_list.hangup_voice_pattern");
     case "hotkey":
-      return "Hotkey";
+      return translate("session_list.hangup_hotkey");
     case "idle_timeout":
-      return "Timeout";
+      return translate("session_list.hangup_idle_timeout");
     case "shutdown":
-      return "Shutdown";
+      return translate("session_list.hangup_shutdown");
     case "error":
-      return "Fehler";
+      return translate("session_list.hangup_error");
     case "turn_complete":
-      return "Antwort fertig";
+      return translate("session_list.hangup_turn_complete");
     default:
       return reason || "—";
   }

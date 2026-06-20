@@ -317,14 +317,19 @@ class GeminiBrain:
 
     def _ensure_client(self) -> Any:
         if self._client is None:
-            api_key = cfg.get_provider_secret("gemini")
-            if not api_key:
+            ep = cfg.resolve_provider_endpoint("gemini")
+            if not ep.credential:
                 raise RuntimeError(
                     "Kein Gemini-API-Key gefunden. Setze GEMINI_API_KEY oder "
                     "GOOGLE_AIStudio_API_KEY in .env / Credential Manager."
                 )
             from google import genai
-            self._client = genai.Client(api_key=api_key)
+            client_kwargs: dict[str, Any] = {"api_key": ep.credential}
+            if ep.base_url:
+                from google.genai import types as genai_types
+
+                client_kwargs["http_options"] = genai_types.HttpOptions(base_url=ep.base_url)
+            self._client = genai.Client(**client_kwargs)
         return self._client
 
     async def _ensure_cache(

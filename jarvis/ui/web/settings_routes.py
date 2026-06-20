@@ -105,6 +105,76 @@ async def put_reply_language(body: ReplyLanguageBody, request: Request) -> dict[
 
 
 # ----------------------------------------------------------------------
+# Team / hosted-proxy mode ([team_proxy]) — 2026-06-20 team-proxy spec §4.
+# One global switch: when enabled with a url, every provider not in
+# local_providers is routed through {url}/p/<id> with the per-user team token
+# instead of a real vendor key. The token is a secret (slot team_proxy_token),
+# stored via the normal /secrets route — never written to jarvis.toml here.
+# ----------------------------------------------------------------------
+class TeamProxyBody(BaseModel):
+    enabled: bool = False
+    url: str = ""
+    local_providers: list[str] = Field(default_factory=list)
+
+
+def _resolve_cfg(request: Request):
+    return getattr(request.app.state, "config", None) or getattr(
+        request.app.state, "cfg", None
+    )
+
+
+@router.get("/team-proxy")
+async def get_team_proxy(request: Request) -> dict[str, object]:
+    from jarvis.core import config as cfg_mod
+
+    conf = _resolve_cfg(request) or cfg_mod.load_config()
+    tp = conf.team_proxy
+    token_set = bool(cfg_mod.get_secret("team_proxy_token", "TEAM_PROXY_TOKEN"))
+    return {
+        "enabled": bool(tp.enabled),
+        "url": tp.url or "",
+        "local_providers": list(tp.local_providers),
+        "token_configured": token_set,
+    }
+
+
+@router.put("/team-proxy")
+async def put_team_proxy(body: TeamProxyBody, request: Request) -> dict[str, object]:
+    url = (body.url or "").strip()
+    if body.enabled and not url:
+        raise HTTPException(status_code=400, detail="Team mode requires a proxy url.")
+
+    # Best-effort in-memory update so a later cfg read this session agrees. A
+    # provider already holding a cached client keeps its endpoint until rebuilt
+    # (provider switch / restart) — only new provider instances pick this up.
+    conf = _resolve_cfg(request)
+    if conf is not None and getattr(conf, "team_proxy", None) is not None:
+        try:
+            conf.team_proxy.enabled = bool(body.enabled)
+            conf.team_proxy.url = url or None
+            conf.team_proxy.local_providers = list(body.local_providers)
+        except Exception as exc:  # noqa: BLE001 — frozen model is not an error
+            log.debug("in-memory team_proxy update skipped: %s", exc)
+
+    persisted = False
+    try:
+        from jarvis.core import config_writer
+
+        config_writer.set_team_proxy(bool(body.enabled), url, list(body.local_providers))
+        persisted = True
+    except Exception as exc:  # noqa: BLE001 — a locked/read-only toml must not 500
+        log.warning("team-proxy persist failed: %s", exc)
+
+    return {
+        "ok": True,
+        "enabled": bool(body.enabled),
+        "url": url,
+        "local_providers": list(body.local_providers),
+        "persisted": persisted,
+    }
+
+
+# ----------------------------------------------------------------------
 # Interface (display) language — what the user SEES (every label/button).
 # Distinct from the reply language. The frontend used to keep this only in
 # localStorage; giving it a backend home lets a voice command / the Control API

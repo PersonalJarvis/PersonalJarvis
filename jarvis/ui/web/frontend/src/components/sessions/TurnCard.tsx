@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { downloadAs, robustCopy } from "@/lib/clipboard";
 import { useEventStore } from "@/store/events";
+import { useT } from "@/i18n";
 
 import type { VoiceSpokenLine, VoiceTurnRow } from "./types";
 
@@ -51,6 +52,7 @@ interface Props {
 }
 
 export function TurnCard({ turn, spoken = [] }: Props) {
+  const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
   const assistantName = useEventStore((s) => s.assistantName);
   // Override the subagent label so it follows the configured assistant name.
@@ -64,9 +66,9 @@ export function TurnCard({ turn, spoken = [] }: Props) {
     const ok = await robustCopy(text);
     pushToast(
       ok ? "success" : "error",
-      ok ? `Turn ${turn.idx + 1} kopiert` : "Kopieren fehlgeschlagen",
+      ok ? `${t("turn_card.turn")} ${turn.idx + 1} ${t("turn_card.copied")}` : t("turn_card.copy_failed"),
     );
-  }, [turn, spoken, pushToast]);
+  }, [turn, spoken, pushToast, t]);
 
   const downloadTurn = useCallback(() => {
     const text = formatTurnPlain(turn, spoken);
@@ -76,8 +78,8 @@ export function TurnCard({ turn, spoken = [] }: Props) {
       `voice-turn-${stamp.getFullYear()}-${pad(stamp.getMonth() + 1)}-${pad(stamp.getDate())}` +
       `_${pad(stamp.getHours())}-${pad(stamp.getMinutes())}-${pad(stamp.getSeconds())}.txt`;
     downloadAs(filename, text, "text/plain;charset=utf-8");
-    pushToast("success", `Heruntergeladen als ${filename}`);
-  }, [turn, spoken, pushToast]);
+    pushToast("success", `${t("turn_card.downloaded_as")} ${filename}`);
+  }, [turn, spoken, pushToast, t]);
 
   const startedAt = new Date(turn.started_ms).toLocaleTimeString("de", {
     hour: "2-digit",
@@ -111,10 +113,10 @@ export function TurnCard({ turn, spoken = [] }: Props) {
               size="sm"
               onClick={copyTurn}
               className="h-7 px-2 text-xs"
-              title="Diesen Turn kopieren"
+              title={t("turn_card.copy_turn")}
             >
               <Copy className="mr-1 h-3 w-3" />
-              Kopieren
+              {t("turn_card.copy")}
             </Button>
             <Button
               type="button"
@@ -122,7 +124,7 @@ export function TurnCard({ turn, spoken = [] }: Props) {
               size="sm"
               onClick={downloadTurn}
               className="h-7 w-7 p-0"
-              title="Diesen Turn als Datei herunterladen"
+              title={t("turn_card.download_turn")}
             >
               <Download className="h-3 w-3" />
             </Button>
@@ -282,14 +284,14 @@ export function TurnCard({ turn, spoken = [] }: Props) {
           <div className="grid grid-cols-2 gap-2 border-t border-border/50 pt-2 text-[11px]">
             <div className="flex items-center gap-1.5">
               <Hourglass className="h-3 w-3 text-amber-300" />
-              <span className="text-muted-foreground">Nachgedacht:</span>
+              <span className="text-muted-foreground">{t("turn_card.thought")}</span>
               <span className="font-mono text-foreground/90">
                 {turn.think_ms > 0 ? formatMs(turn.think_ms) : "—"}
               </span>
             </div>
             <div className="flex items-center gap-1.5">
               <Volume2 className="h-3 w-3 text-primary" />
-              <span className="text-muted-foreground">Gesprochen:</span>
+              <span className="text-muted-foreground">{t("turn_card.spoke")}</span>
               <span className="font-mono text-foreground/90">
                 {turn.speak_ms > 0 ? formatMs(turn.speak_ms) : "—"}
               </span>

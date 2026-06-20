@@ -71,7 +71,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, onChanged, onS
           {"\u2022".repeat(20)}
         </code>
         <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
-          Ersetzen
+          Replace
         </Button>
         <Button
           size="sm"
@@ -94,7 +94,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, onChanged, onS
             type={reveal ? "text" : "password"}
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            placeholder={`${secretKey} eingeben…`}
+            placeholder={`Enter ${secretKey}…`}
             className={cn(
               "w-full rounded-md border border-input bg-background px-3 py-1.5 pr-9 font-mono text-xs",
               "focus:outline-none focus:ring-1 focus:ring-primary",
@@ -113,11 +113,11 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, onChanged, onS
           </button>
         </div>
         <Button size="sm" onClick={handleSave} disabled={pending || !value.trim()}>
-          {pending ? "…" : "Speichern"}
+          {pending ? "…" : "Save"}
         </Button>
         {configured && (
           <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
-            Abbrechen
+            Cancel
           </Button>
         )}
       </div>

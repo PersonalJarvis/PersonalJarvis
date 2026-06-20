@@ -54,6 +54,8 @@ async def aggregate(stream: AsyncIterator[BrainDelta]) -> StreamingAggregate:
 async def aggregate_with_consumer(
     stream: AsyncIterator[BrainDelta],
     text_consumer: Callable[[str], None] | None,
+    *,
+    delta_consumer: Callable[[BrainDelta], None] | None = None,
 ) -> StreamingAggregate:
     """Like ``aggregate`` — but emits every text chunk live to ``text_consumer``.
 
@@ -64,6 +66,11 @@ async def aggregate_with_consumer(
     """
     agg = StreamingAggregate()
     async for delta in stream:
+        if delta_consumer is not None:
+            try:
+                delta_consumer(delta)
+            except Exception:  # noqa: BLE001
+                pass
         if delta.content:
             agg.text += delta.content
             if text_consumer is not None:

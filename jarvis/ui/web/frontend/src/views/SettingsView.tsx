@@ -14,6 +14,7 @@ import { AppSettingsGroup } from "@/views/settings/AppSettingsGroup";
 import { SilenceWindowGroup } from "@/views/settings/SilenceWindowGroup";
 import { JarvisApiGroup } from "@/views/settings/JarvisApiGroup";
 import { SystemPromptGroup } from "@/views/settings/SystemPromptGroup";
+import { TeamProxyGroup } from "@/views/settings/TeamProxyGroup";
 import { useWakeWord, type WakeWordSaveResult } from "@/hooks/useWakeWord";
 import {
   useKeybinds,
@@ -65,6 +66,7 @@ export function SettingsView() {
         <LanguagesGroup />
         <AppSettingsGroup />
         <JarvisApiGroup />
+        <TeamProxyGroup />
         <AssistantNamePanel />
         <SystemPromptGroup />
         <WakeWordPanel />

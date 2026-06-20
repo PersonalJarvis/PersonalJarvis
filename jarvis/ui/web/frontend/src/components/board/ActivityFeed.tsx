@@ -7,8 +7,10 @@ import {
 import { ReactionBar } from "@/components/board/ReactionBar";
 import { StoryComposer } from "@/components/board/StoryComposer";
 import { cn } from "@/lib/utils";
+import { useT } from "@/i18n";
 
 export function ActivityFeed() {
+  const t = useT();
   const [sort, setSort] = useState<"interesting" | "latest">("interesting");
   const [composerOpen, setComposerOpen] = useState(false);
   const feed = useFeed(sort);
@@ -22,13 +24,13 @@ export function ActivityFeed() {
   return (
     <section className="space-y-4 rounded-xl border border-border bg-card/30 p-5 backdrop-blur">
       <header className="flex flex-wrap items-center gap-3">
-        <h3 className="font-display text-sm font-semibold flex-1">Activity-Feed</h3>
+        <h3 className="font-display text-sm font-semibold flex-1">{t("activity_feed.title")}</h3>
         <SortToggle value={sort} onChange={setSort} />
         <button
           type="button"
           onClick={() => feed.refetch()}
           className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-[11px] hover:border-primary/40"
-          title="Manueller Refresh"
+          title={t("activity_feed.refresh_tooltip")}
         >
           <RefreshCw className={cn("h-3 w-3", feed.isFetching && "animate-spin")} />
           Refresh
@@ -45,7 +47,7 @@ export function ActivityFeed() {
 
       {feed.isLoading && (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Loader2 className="h-3 w-3 animate-spin" /> Lade Feed…
+          <Loader2 className="h-3 w-3 animate-spin" /> {t("activity_feed.loading")}
         </div>
       )}
       {feed.isError && (
@@ -56,7 +58,7 @@ export function ActivityFeed() {
 
       {feed.data?.items.length === 0 && (
         <div className="rounded-md border border-dashed border-border/60 p-4 text-xs text-muted-foreground">
-          Noch keine Items. Pair' deinen ersten Friend, oder schreib eine Story.
+          {t("activity_feed.empty")}
         </div>
       )}
 

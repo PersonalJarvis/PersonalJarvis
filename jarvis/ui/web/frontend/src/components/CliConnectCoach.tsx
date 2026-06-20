@@ -14,8 +14,10 @@ import { useState } from "react";
 import { CheckCircle2, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useEventStore, type CliConnectCoach as CoachState } from "@/store/events";
+import { useT } from "@/i18n";
 
 export function CliConnectCoach({ coach }: { coach: CoachState }) {
+  const t = useT();
   const setCoach = useEventStore((s) => s.setCliConnectCoach);
   const [connected] = useState(false);
 
@@ -24,18 +26,18 @@ export function CliConnectCoach({ coach }: { coach: CoachState }) {
       <header className="flex items-start justify-between gap-2 border-b border-border px-4 py-3">
         <div className="min-w-0 flex-1">
           <div className="font-display text-sm font-semibold">
-            {coach.displayName} verbinden
+            {coach.displayName} {t("cli_connect_coach.connect")}
           </div>
           <div className="mt-0.5 flex items-center gap-1.5 text-[11px]">
             {connected ? (
               <>
                 <CheckCircle2 className="h-3 w-3 text-primary" />
-                <span className="text-primary">verbunden</span>
+                <span className="text-primary">{t("cli_connect_coach.connected")}</span>
               </>
             ) : (
               <>
                 <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-                <span className="text-muted-foreground">warte auf login…</span>
+                <span className="text-muted-foreground">{t("cli_connect_coach.waiting_for_login")}</span>
               </>
             )}
           </div>
@@ -51,20 +53,19 @@ export function CliConnectCoach({ coach }: { coach: CoachState }) {
       <div className="space-y-3 p-4 text-xs">
         <div>
           <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground/70">
-            Login-Command
+            {t("cli_connect_coach.login_command")}
           </div>
           <code className="block break-all rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[10px]">
             {coach.loginCommand}
           </code>
         </div>
         <p className="text-muted-foreground">
-          Folge den Anweisungen im Terminal links. Ich pruefe alle 3 Sekunden,
-          ob der Login durch ist.
+          {t("cli_connect_coach.instructions")}
         </p>
       </div>
       <footer className="flex items-center justify-end gap-2 border-t border-border px-4 py-3">
         <Button size="sm" variant="ghost" onClick={() => setCoach(null)}>
-          {connected ? "Fertig" : "Schliessen"}
+          {connected ? t("cli_connect_coach.done") : t("cli_connect_coach.close")}
         </Button>
       </footer>
     </aside>

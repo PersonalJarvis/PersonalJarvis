@@ -352,6 +352,31 @@ def set_mute_music(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _patch_table(path, "ducking", "enabled", bool(enabled))
 
 
+def set_team_proxy(
+    enabled: bool,
+    url: str,
+    local_providers: list[str],
+    *,
+    path: Path = DEFAULT_CONFIG_FILE,
+) -> None:
+    """Persist client-side team-proxy mode to ``[team_proxy]`` in jarvis.toml.
+
+    Writes ``enabled`` / ``url`` / ``local_providers`` (2026-06-20 team-proxy
+    spec §4). TOML-only (not drift-guarded), like :func:`set_autostart`; the
+    Settings route applies it live, this persists the boot default. The per-user
+    token is a SECRET and is NEVER written here — it lives in the Credential
+    Manager (slot ``team_proxy_token``).
+    """
+    _patch_table(path, "team_proxy", "enabled", bool(enabled))
+    _patch_table(path, "team_proxy", "url", (url or "").strip())
+    _patch_table(
+        path,
+        "team_proxy",
+        "local_providers",
+        [str(p).strip() for p in local_providers if str(p).strip()],
+    )
+
+
 def set_telegram_enabled(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the Telegram channel toggle to ``[integrations.telegram] enabled``.
 
@@ -770,9 +795,21 @@ def set_brain_provider_model(
     """Patch ``[brain.providers.<provider>]`` ``model`` / ``deep_model`` in
     the TOML file.
 
-    Used by the frontier auto-switch (Phase F.3, 2026-04-29) so that a detected
-    frontier model change is persisted in jarvis.toml — otherwise the switch is
-    lost on the next ``cfg.load_config()`` call in ``_phase2_full_brain``.
+    Used by the per-provider model picker (``PUT /api/providers/{id}/model``)
+    and the frontier auto-switch (Phase F.3) so a model change is persisted in
+    jarvis.toml — otherwise the switch is lost on the next ``cfg.load_config()``.
+
+    Three-layer persist (like ``set_brain_primary`` / ``set_sub_jarvis_provider``):
+    ``brain.providers.<p>.model`` / ``deep_model`` are pinned in
+    ``config-soll.json``, so a TOML-only write would be reverted by the
+    drift-guard within 5 minutes (BUG-010 class) — exactly the "I picked a model
+    and it flipped back" symptom. We therefore sync config-soll.json too. No ENV
+    layer is written: per-provider model keys have no effective ``JARVIS__*``
+    override (the boot override only nests on ``__`` and the drift-guard's dotted
+    ``JARVIS__BRAIN.PROVIDERS.*`` vars are inert), so adding one would only create
+    a new stale-override trap. Layer 2 is best-effort (cloud-first): a graceful
+    no-op on a headless Linux VPS, it never raises out of this function nor
+    breaks the TOML write.
 
     Idempotent: if the block is absent it is created; ``None`` values change
     nothing.
@@ -812,6 +849,11 @@ def set_brain_provider_model(
         if had_bom:
             out = _BOM + out
         _atomic_write(path, out)
+
+    # Layer 2 — best-effort drift-soll sync (never raises, never blocks the
+    # TOML write). Only the keys actually written are synced so the guard sees
+    # zero drift across the block.
+    _sync_brain_provider_model_drift_soll(provider, model=model, deep_model=deep_model)
 
 
 def set_telephony_config(values: dict[str, object], *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -856,13 +898,14 @@ def set_telephony_config(values: dict[str, object], *, path: Path = DEFAULT_CONF
         _atomic_write(path, out)
 
 
-def _patch_table(path: Path, table: str, key: str, value: str | bool) -> None:
+def _patch_table(path: Path, table: str, key: str, value: str | bool | list[str]) -> None:
     """Set ``[table] key = value`` in the TOML file.
 
     Creates the table if it is absent. Preserves comments and formatting via
     tomlkit, including the optional BOM (see module docstring). ``value`` may be
-    a ``str`` or a ``bool`` — tomlkit serialises ``bool`` as ``true``/``false``
-    (used by the autostart toggle ``[autostart] enabled``).
+    a ``str``, a ``bool`` (serialised as ``true``/``false`` — used by the
+    autostart toggle), or a ``list[str]`` (serialised as a TOML array — used by
+    ``[team_proxy] local_providers``).
     """
     if not path.exists():
         raise FileNotFoundError(f"Config-Datei fehlt: {path}")
@@ -1137,6 +1180,35 @@ def _sync_stt_provider_drift_soll(name: str) -> None:
         _set_user_env_var(_STT_PROVIDER_ENV, name)
     except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
         log.warning("Could not sync %s to the User environment: %s", _STT_PROVIDER_ENV, exc)
+
+
+def _sync_brain_provider_model_drift_soll(
+    provider: str, *, model: str | None, deep_model: str | None
+) -> None:
+    """Best-effort sync of ``brain.providers.<p>`` model keys into the drift-soll.
+
+    NEVER raises and NEVER breaks the (already-completed) TOML write. Only the
+    keys actually written (non-``None``) are synced, so config-soll ends up in
+    agreement with the TOML and the drift-guard reverts nothing. No ENV layer:
+    per-provider model keys have no effective ``JARVIS__*`` boot override (see
+    the docstring of :func:`set_brain_provider_model`). The flat dotted top-level
+    key ``brain.providers.<p>`` is exactly how the soll file stores it.
+    """
+    values: dict[str, object] = {}
+    if model is not None:
+        values["model"] = model
+    if deep_model is not None:
+        values["deep_model"] = deep_model
+    if not values:
+        return
+    try:
+        _update_config_soll_section(f"brain.providers.{provider}", values)
+    except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
+        log.warning(
+            "Could not sync brain.providers.%s model to config-soll.json: %s",
+            provider,
+            exc,
+        )
 
 
 def _update_config_soll_section(top: str, values: dict[str, object]) -> None:

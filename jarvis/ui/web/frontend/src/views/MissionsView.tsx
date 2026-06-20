@@ -46,6 +46,7 @@ import {
   useMissionsStore,
 } from "@/components/missions/store";
 import { useMissionWebSocket } from "@/components/missions/useMissionWebSocket";
+import { useT } from "@/i18n";
 import type { MissionPlanReady } from "@/types/missions";
 
 const PtyTerminal = lazy(() =>
@@ -55,6 +56,7 @@ const PtyTerminal = lazy(() =>
 );
 
 export function MissionsView() {
+  const t = useT();
   useMissionWebSocket();
 
   const setMissions = useMissionsStore((s) => s.setMissions);
@@ -97,8 +99,8 @@ export function MissionsView() {
     <div className="flex h-full flex-col">
       <ViewHeader
         icon={<Target className="h-4 w-4 text-primary" />}
-        title="Missions"
-        subtitle="Phase 6 — Worker/Critic-Loop. Live-Bus, PTY-Streams, Verdicts."
+        title={t("missions_view.title")}
+        subtitle={t("missions_view.subtitle")}
         right={
           <div className="flex items-center gap-3">
             <ConnectionBadge connected={connected} />
@@ -109,7 +111,7 @@ export function MissionsView() {
               variant={activeCount > 0 ? "default" : "outline"}
               className="font-mono text-[10px]"
             >
-              {activeCount} aktiv
+              {activeCount} {t("missions_view.active")}
             </Badge>
             <GlobalKillButton />
           </div>
@@ -120,7 +122,7 @@ export function MissionsView() {
         {/* Linke Pane */}
         <div className="flex h-full flex-col overflow-hidden border-r border-border bg-card/20">
           <div className="border-b border-border px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">
-            Mission-Tree
+            {t("missions_view.tree_label")}
           </div>
           <div className="flex-1 overflow-hidden">
             <MissionTree />
@@ -143,7 +145,7 @@ export function MissionsView() {
           </div>
           <div className="overflow-hidden bg-card/20">
             <div className="border-b border-border px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-              Event-Timeline
+              {t("missions_view.timeline_label")}
             </div>
             <div className="h-[calc(100%-28px)]">
               <EventTimeline />
@@ -217,17 +219,18 @@ function ConnectionBadge({ connected }: { connected: boolean }) {
 }
 
 function SelectionPlaceholder({ hasMission }: { hasMission: boolean }) {
+  const t = useT();
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border/60 bg-background/20 text-center text-sm text-muted-foreground">
       {hasMission ? (
         <>
           <CableCar className="h-8 w-8 text-muted-foreground/40" />
-          <p>Worker im Tree links auswaehlen, um den Live-Stream zu sehen.</p>
+          <p>{t("missions_view.select_worker_hint")}</p>
         </>
       ) : (
         <>
           <Cable className="h-8 w-8 text-muted-foreground/40" />
-          <p>Mission auswaehlen, um Details zu laden.</p>
+          <p>{t("missions_view.select_mission_hint")}</p>
         </>
       )}
     </div>
@@ -235,14 +238,16 @@ function SelectionPlaceholder({ hasMission }: { hasMission: boolean }) {
 }
 
 function TerminalFallback() {
+  const t = useT();
   return (
     <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
-      Lade Terminal…
+      {t("missions_view.loading_terminal")}
     </div>
   );
 }
 
 function ReasoningPanel() {
+  const t = useT();
   const events = useMissionsStore(
     useShallow((s) => {
       if (!s.selectedMissionId) return [];
@@ -258,7 +263,7 @@ function ReasoningPanel() {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-xs text-muted-foreground">
         <CircleSlash className="h-7 w-7 text-muted-foreground/40" />
-        <p>Keine Reasoning-Notes verfuegbar.</p>
+        <p>{t("missions_view.no_reasoning_notes")}</p>
       </div>
     );
   }
@@ -307,6 +312,7 @@ function ReasoningPanel() {
 }
 
 function PlanPanel() {
+  const t = useT();
   const planEnv = useMissionsStore(
     useShallow((s) => {
       if (!s.selectedMissionId) return null;
@@ -324,7 +330,7 @@ function PlanPanel() {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-xs text-muted-foreground">
         <MapIcon className="h-7 w-7 text-muted-foreground/40" />
-        <p>Noch kein Plan veroeffentlicht.</p>
+        <p>{t("missions_view.no_plan_published")}</p>
       </div>
     );
   }
@@ -334,14 +340,14 @@ function PlanPanel() {
       <div className="space-y-3 p-3">
         <div className="rounded border border-border/60 bg-card/30 p-2 text-xs">
           <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-            Erwartete Ausgabe
+            {t("missions_view.expected_output")}
           </div>
           <p className="mt-1 text-foreground/90">
-            {planEnv.expected_output || "(nicht spezifiziert)"}
+            {planEnv.expected_output || t("missions_view.not_specified")}
           </p>
         </div>
         <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-          Schritte ({planEnv.n_workers} Worker)
+          {t("missions_view.steps")} ({planEnv.n_workers} {t("missions_view.workers")})
         </div>
         <ol className="space-y-2">
           {planEnv.plan.map((step, idx) => (

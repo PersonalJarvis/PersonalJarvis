@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import unicodedata
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -72,6 +73,14 @@ _NON_WAKE_OWW_MODELS: frozenset[str] = frozenset({"timer", "weather"})
 INSTANT_WAKE_PHRASES: tuple[str, ...] = ()
 
 _NORMALISE_RE = re.compile(r"[^0-9a-zäöüß]+")
+_MATCH_NORMALISE_RE = re.compile(r"[^0-9a-z]+")
+
+
+def _strip_diacritics(text: str) -> str:
+    """Return an ASCII-ish form for STT matching, not display."""
+    decomposed = unicodedata.normalize("NFKD", text or "")
+    stripped = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    return stripped.replace("ß", "ss")
 
 
 def normalize_phrase(phrase: str) -> list[str]:
@@ -83,6 +92,13 @@ def normalize_phrase(phrase: str) -> list[str]:
     return cleaned.split() if cleaned else []
 
 
+def normalize_phrase_for_match(phrase: str) -> list[str]:
+    """Tokenise for fuzzy wake matching with accents folded away."""
+    folded = _strip_diacritics(phrase).lower()
+    cleaned = _MATCH_NORMALISE_RE.sub(" ", folded).strip()
+    return cleaned.split() if cleaned else []
+
+
 def phrase_core(phrase: str) -> list[str]:
     """Return the phrase tokens with leading wake-prefixes removed.
 
@@ -91,6 +107,15 @@ def phrase_core(phrase: str) -> list[str]:
     never return an empty core for a non-empty phrase.
     """
     tokens = normalize_phrase(phrase)
+    core = list(tokens)
+    while core and core[0] in WAKE_PREFIXES:
+        core.pop(0)
+    return core or tokens
+
+
+def phrase_core_for_match(phrase: str) -> list[str]:
+    """Return wake-prefix-stripped tokens for accent-insensitive matching."""
+    tokens = normalize_phrase_for_match(phrase)
     core = list(tokens)
     while core and core[0] in WAKE_PREFIXES:
         core.pop(0)
@@ -166,7 +191,9 @@ __all__ = [
     "KNOWN_OWW_MODELS",
     "INSTANT_WAKE_PHRASES",
     "normalize_phrase",
+    "normalize_phrase_for_match",
     "phrase_core",
+    "phrase_core_for_match",
     "match_known_oww_model",
     "resolve_oww_model_path",
 ]

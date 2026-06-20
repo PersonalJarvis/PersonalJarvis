@@ -179,6 +179,18 @@ SECRETS: list[SecretSpec] = [
         help_url="https://play.cartesia.ai/keys",
         required_for="TTS (Cartesia Sonic 3.5 — multilingual incl. Deutsch, ~90ms TTFB)",
     ),
+    # Team / hosted-proxy mode (2026-06-20 spec). The per-user token a client
+    # presents to the shared key proxy instead of holding a real vendor key.
+    # The proxy URL itself lives (non-secret) in [team_proxy].url; only this
+    # token is a secret. Optional — unset means the local per-machine key model.
+    SecretSpec(
+        key="team_proxy_token",
+        env_fallback="TEAM_PROXY_TOKEN",
+        label="Team Proxy Token (shared key proxy)",
+        help_url="",
+        required_for="Team mode — per-user token for the shared key proxy",
+        optional=True,
+    ),
     # Phase 5 — Admin-Helper HMAC-Key. Wird NICHT interaktiv abgefragt:
     # beim ersten Helper-Start generiert der `jarvis.admin.launcher` 32
     # zufaellige Bytes und persistiert sie base64-URL-safe-encoded im
