@@ -137,6 +137,63 @@ PROVIDER_ALIASES = {
     "openrouter": "openrouter",
 }
 
+# Human-readable display names for each brain provider id. Used to tell the
+# answering LLM which provider/model it is embodying this turn (the system
+# prompt never carried this before, so a "which model are you?" question got a
+# guessed answer that defaulted to "Gemini" — forensic 2026-06-20, voice session
+# 15:15: Grok was live and answering, yet Jarvis claimed to be Gemini). Kept
+# self-contained in the brain layer (no UI-catalog import — that would invert the
+# layer dependency) and defensive: an unmapped id degrades to a readable label.
+_PROVIDER_DISPLAY_NAMES: dict[str, str] = {
+    "claude-api": "Anthropic Claude",
+    "openai": "OpenAI GPT",
+    # Both the CLI brain id ("codex") and the sub-agent value ("openai-codex")
+    # map to the same readable label, so whichever surfaces as a turn prov_name
+    # is named correctly (the user explicitly wants "Codex / GPT-5.5" recognised).
+    "codex": "OpenAI Codex (GPT-5.5)",
+    "openai-codex": "OpenAI Codex (GPT-5.5)",
+    "openrouter": "OpenRouter",
+    "gemini": "Google Gemini",
+    "grok": "Grok (xAI)",
+    "antigravity": "Google Antigravity (Gemini)",
+}
+
+
+def _provider_display_name(provider: str) -> str:
+    """A readable label for a brain provider id (never crashes on unknown ids)."""
+    pid = (provider or "").strip()
+    mapped = _PROVIDER_DISPLAY_NAMES.get(pid)
+    if mapped:
+        return mapped
+    # Unknown id → readable fallback: "some-new_provider" → "Some New Provider".
+    return pid.replace("-", " ").replace("_", " ").title() or "the configured provider"
+
+
+def _provider_identity_directive(provider: str, model: str | None, name: str) -> str:
+    """Authoritative, anti-guessing self-identity line for the system prompt.
+
+    The single source of truth for "which AI model am I right now?". Names the
+    *actual* provider/model answering this turn (set per fallback-chain attempt
+    in ``generate()``), and carves out the one allowed exception to the persona's
+    "never discuss your technical nature" rule: a direct provider/model question
+    gets an honest, specific answer instead of a guessed "Gemini".
+    """
+    label = _provider_display_name(provider)
+    model_str = (model or "").strip() or "the provider's default"
+    return (
+        f"ACTIVE BRAIN MODEL — INFRASTRUCTURE FACT (authoritative): You are right "
+        f"now running on the brain provider {label} (model: {model_str}). {label} "
+        f"is the provider actually generating your reply this turn. If the user "
+        f"asks which provider, backend, or AI model is powering you right now, "
+        f"answer truthfully and specifically with this — never guess, and never "
+        f"name a provider other than the one stated here (a recurring failure was "
+        f'wrongly claiming to be "Gemini"). This is the one allowed exception to '
+        f"the persona rule about not discussing your own technical nature: a "
+        f"direct question about your underlying provider/model gets an honest, "
+        f"specific answer; otherwise you stay {name} and never raise it unprompted."
+    )
+
+
 # Mapping of Credential-Manager slot -> Brain provider ID. Brain slots only;
 # TTS/STT providers have their own lifecycles outside BrainManager.
 # Used by the SecretConfigured subscriber to remove the corresponding provider
@@ -1194,6 +1251,13 @@ class BrainManager:
 
         self._registry = BrainProviderRegistry()
         self._active_name: str = config.brain.primary
+        # The (provider, model) actually answering the CURRENT turn. Set per
+        # fallback-chain attempt in generate() right before the dispatcher is
+        # built, consumed by _build_system_prompt to inject the authoritative
+        # self-identity line (forensic 2026-06-20: the answering LLM never knew
+        # which provider it was, so a provider question got a guessed "Gemini").
+        # None outside a turn → no identity block on helper prompt builds.
+        self._active_turn_identity: tuple[str, str | None] | None = None
         # Last persist-to-disk outcome of ``switch(..., persist=True)``.
         # ``None`` = no persisting switch attempted yet. The provider route
         # reads this to report the ACTUAL disk result instead of echoing the
@@ -2035,6 +2099,26 @@ class BrainManager:
         # message in cache-optimized mode (keeps the cached system prefix stable).
         if self._wiki_context_suffix and not self._cache_optimized():
             parts.append(self._wiki_context_suffix)
+
+        # Active-model self-awareness: tell THIS turn's actually-answering
+        # provider/model who it is, so a "which model are you?" question gets an
+        # honest answer instead of a guessed "Gemini" (forensic 2026-06-20: Grok
+        # was live and answering yet claimed to be Gemini). Set per fallback-chain
+        # attempt in generate(), where the real prov_name/model are known; absent
+        # on non-turn prompt builds (compression / wiki-delta base) → no block.
+        # Placed late for high recency so it overrides the persona's "never
+        # discuss your technical nature" line; provider-stable across same-provider
+        # turns, so it stays prompt-cache-friendly. On a fallback the block's
+        # provider label changes between attempts within the turn, invalidating
+        # the prefix cache for the second attempt — acceptable, since a fallback
+        # is already a slow path (and matches the pre-existing per-turn mutable
+        # flags). getattr: tolerates __new__-constructed test managers that bypass
+        # __init__ (the attr is always set in __init__ for the production path).
+        identity = getattr(self, "_active_turn_identity", None)
+        if identity:
+            parts.append(
+                _provider_identity_directive(identity[0], identity[1], name)
+            )
 
         # Reply-language directive LAST — highest recency-salience so it wins
         # over the otherwise German prompt above it. Byte-stable across turns
@@ -4175,6 +4259,9 @@ class BrainManager:
         self._last_turn_all_failed = False
         self._last_turn_suppressed = False
         self._last_turn_executed_action_tool = False
+        # Clear last turn's provider identity so a helper prompt build before the
+        # fallback loop (wiki-delta base) does not carry a stale provider name.
+        self._active_turn_identity = None
         turn_trace_id = trace_id or uuid4()
 
         # auto mode: resolve this turn's language so _reply_language_directive()
@@ -4667,6 +4754,12 @@ class BrainManager:
                     has_image=bool(images),
                     pointing_turn=pointing_turn,
                 )
+            # Active-model self-awareness: stamp the provider/model that is about
+            # to answer so _build_system_prompt injects the correct, specific
+            # self-identity (anti-"I'm Gemini" hallucination, forensic 2026-06-20).
+            # Set here — after dead/cooldown skips — so it always names the
+            # provider that genuinely runs this attempt, including a fallback win.
+            self._active_turn_identity = (prov_name, model)
             disp = self._build_dispatcher(brain, tools_override=_turn_tools)
             try:
                 # CostMeter: start per-trace tracking (idempotent if already started).
