@@ -10,6 +10,7 @@
 | Label | Meaning |
 |---|---|
 | `verified-on-windows <date>` | Provable on the Windows host present in this environment: factory selection on Windows, platform-independent logic, the real-PTY echo round-trip, the import-cleanliness gate. **Not** a claim about macOS/Linux behavior. |
+| `verified-in-linux-container <date>` | Provable in a local `python:3.11-slim` Docker container present in this environment: base-install boot, module imports with the `[desktop]` extras absent, the import-cleanliness gate, and headless/logic test suites — on **real Linux**, not just configured CI. **Not** a claim about Linux **GUI/desktop** behavior (AX/AT-SPI tree, Orb, hotkey, elevation), which still need a real desktop session. |
 | `CI-configured — first green run pending push` | The `ci.yml` matrix is *configured* to prove this on the ubuntu/macos runners (terminal real-PTY, app-launch resolution, the import-clean gate on Linux/macOS), but the workflow **has not run yet** — nothing is pushed. **Not** "CI-verified". |
 | `unverified-on-real-desktop` | A macOS/Linux **live** GUI/permission behavior (AX/AT-SPI tree, Orb transparency, hotkey capture, elevation prompt). There is **no macOS/Linux hardware in this environment**, so it could not be observed. Run `signoff_probe.py` on a real device to fill it in. |
 | `live-verified <date> on <device>` | Observed on a dated real device. **None recorded yet** — this environment is Windows-only. |
@@ -20,10 +21,38 @@
 - **macOS hardware:** none available in this environment.
 - **Linux desktop hardware:** none available in this environment (the €5 VPS is a
   *headless* Linux box — it can exercise degrade paths and capability probes, but
-  not a GUI-present Linux session; it was not reached in this pass).
+  not a GUI-present Linux session). The **headless / import / logic** layer WAS
+  reached this pass via a local `python:3.11-slim` Docker container (see §0); the
+  GUI layer was not.
 - **CI matrix (`ci.yml`):** configured for `ubuntu-latest` + `macos-latest` +
   `windows-latest`, triggered on push to `main` / the migration branch and on PRs.
   **No push has occurred → the matrix has not run → no green run exists yet.**
+
+---
+
+## 0. Local Linux container pass — `verified-in-linux-container 2026-06-20`
+
+Run on a fresh `python:3.11-slim` Docker container (the cloud-first base target),
+source piped in via `tar` — the host working tree was never mounted or modified:
+
+- **Base install** — `pip install .` (pyproject base deps, **no `[desktop]` extras**)
+  boots cleanly; every dependency resolved via wheels (no build tools needed). ✅
+- **Imports** — `jarvis.browser_voice.{session,route}`, `jarvis.telephony.audio`,
+  `jarvis.audio.{player,capture}` all import with **sounddevice absent** (the H4
+  lazy-import / `_PortAudioError` sentinel degrade to `sd = None`). ✅
+- **B2 backend** — `tests/unit/browser_voice/` **13/13 passed** on Linux. ✅
+- **Import-cleanliness gate** — PASS on Linux. ✅
+- **Headless-import test** — `tests/unit/audio/test_headless_import.py` 6/6 passed. ✅
+- **Not regressions** — the telephony failures are `ModuleNotFoundError: twilio`
+  (the `[telephony]` extra) and the audio device-layer failures (WDM-KS /
+  persistent-stream / device-rate) need real sounddevice (the `[desktop]` extra):
+  i.e. correct cloud-first behaviour — the base install legitimately omits them.
+
+**Scope boundary (AD-3 honesty):** this proves the **headless / import / logic**
+layer on real Linux. It does **NOT** verify Linux **GUI/permission** behaviour — the
+AX/AT-SPI tree, Orb transparency, hotkey capture, and pkexec/sudo elevation remain
+`unverified-on-real-desktop` (no GUI Linux session here). macOS remains entirely
+unverified (no macOS host; Docker on Windows cannot run macOS).
 
 ---
 
