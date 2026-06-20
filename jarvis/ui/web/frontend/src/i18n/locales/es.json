@@ -40,7 +40,33 @@
     "outputs": "Salidas",
     "socials": "Redes",
     "taskbar": "Barra",
-    "contacts": "Contactos"
+    "contacts": "Contactos",
+    "agent_instructions": "{name}.md",
+    "browser_voice": "Voz del navegador"
+  },
+  "browser_voice": {
+    "title": "Voz del navegador",
+    "subtitle": "Habla con Jarvis usando el micrófono y los altavoces de tu navegador, sin instalación de escritorio. Requiere un contexto seguro (localhost o https).",
+    "start": "Iniciar voz",
+    "stop": "Detener",
+    "listening": "Escuchando…",
+    "speaking": "Hablando…"
+  },
+  "agent_instructions": {
+    "subtitle": "Tus preferencias personales sobre cómo el asistente trabaja contigo — tono, idioma, valores por defecto, hechos permanentes. Separado del System Prompt y nunca anula la seguridad ni las confirmaciones.",
+    "active_badge": "Activo",
+    "empty_badge": "Vacío",
+    "editor_label": "Tus instrucciones (Markdown)",
+    "placeholder": "Escribe tus preferencias personales…",
+    "chars": "{0} caracteres",
+    "empty_hint": "Vacío — carga la plantilla para empezar.",
+    "save": "Guardar instrucciones",
+    "saving": "Guardando…",
+    "saved": "Instrucciones guardadas",
+    "reset": "Vaciar",
+    "reset_done": "Instrucciones vaciadas",
+    "load_template": "Empezar con plantilla",
+    "applies_next_turn": "Se aplica en el próximo mensaje de tu asistente — sin reinicio."
   },
   "extensions": {
     "tab_skills": "Habilidades",
@@ -746,6 +772,20 @@
     "integration_bad_note": "No se pudo contactar al proveedor.",
     "failed": "Prueba fallida"
   },
+  "apikeys_model": {
+    "heading": "Modelo",
+    "model_label": "Modelo",
+    "search_placeholder": "Busca modelos o escribe un id…",
+    "apply": "Aplicar",
+    "refresh": "Actualizar",
+    "saved": "Modelo guardado",
+    "live_note": "(activo ahora)",
+    "restart_note": "(activo en el próximo inicio)",
+    "load_failed": "No se pudieron cargar los modelos",
+    "source_static": "lista sin conexión",
+    "source_static_note": "Catálogo en vivo no disponible — mostrando la lista de respaldo.",
+    "more_hint": "{0} más — refina tu búsqueda"
+  },
   "settings_view": {
     "silence_window": {
       "title": "Pausa para pensar",
@@ -794,7 +834,7 @@
     },
     "wake_word": {
       "title": "Palabra de activación",
-      "description": "Frase de activación para el modo de voz. Escribe la tuya.",
+      "description": "La frase que dices en voz alta para activar el modo de voz — tu disparador hablado. Escribe la tuya.",
       "phrase_label": "Frase de activación",
       "phrase_placeholder": "p. ej. Jonas",
       "engine_label": "Motor de detección",
@@ -850,7 +890,7 @@
     },
     "assistant_name": {
       "title": "Nombre del asistente",
-      "description": "Cómo se llama el asistente a sí mismo en las respuestas. Déjalo vacío para seguir la palabra de activación.",
+      "description": "Cómo se llama el asistente a sí mismo en las respuestas. Esto NO es la palabra de activación que dices para activarlo — define el disparador hablado en el panel «Palabra de activación» de abajo. Déjalo vacío para seguir la palabra de activación.",
       "label": "Nombre",
       "current": "El asistente se llama «{0}».",
       "auto_hint": "Vacío — sigue la palabra de activación (actualmente «{0}»).",
@@ -1050,7 +1090,8 @@
     "open_in_explorer": "Abrir en el Explorador",
     "open_in_editor": "Abrir archivo Markdown en el editor predeterminado",
     "running": "en ejecución",
-    "saving": "Guardando…"
+    "saving": "Guardando…",
+    "error": "Error"
   },
   "docs": {
     "search_placeholder": "Filtrar título/etiqueta…",
@@ -1070,7 +1111,9 @@
     "running": "en ejecución"
   },
   "provider_switcher": {
-    "loading_hint": "Cargando lista de proveedores — si sigue vacía, revisa el backend."
+    "loading_hint": "Cargando lista de proveedores — si sigue vacía, revisa el backend.",
+    "no_credential": "sin credencial",
+    "active": "Activo"
   },
   "wiki_provider": {
     "tier_label": "Wiki (memoria a largo plazo)",
@@ -1106,7 +1149,19 @@
     "heatmap_tooltip": "{0} - {1} actividades, {2} tareas, {3} h de conversación"
   },
   "story_composer": {
-    "close": "cerrar"
+    "close": "cerrar",
+    "title": "Escribir una historia",
+    "placeholder": "¿Qué has hecho hoy?",
+    "expiry_hint": "Desaparece después de 24 horas.",
+    "characters": "caracteres",
+    "post": "Publicar",
+    "error_prefix": "Error:",
+    "visibility_private": "Privado",
+    "visibility_private_hint": "Solo tú",
+    "visibility_friends": "Amigos",
+    "visibility_friends_hint": "Amigos emparejados",
+    "visibility_public": "Público",
+    "visibility_public_hint": "Cualquiera que conozca tu backend"
   },
   "reactions": {
     "others_reacted": "Otros reaccionaron"
@@ -1141,7 +1196,11 @@
     "install_failed": "{0}: instalación fallida (exit {1}). Prueba otro método."
   },
   "onboarding": {
-    "nav": { "next": "Siguiente", "back": "Atrás", "skip": "Omitir" },
+    "nav": {
+      "next": "Siguiente",
+      "back": "Atrás",
+      "skip": "Omitir"
+    },
     "welcome": {
       "title": "Bienvenido a Personal Jarvis",
       "subtitle": "Tu asistente de voz local y privado. Vamos a configurarlo.",
@@ -1193,13 +1252,35 @@
     "persona": {
       "title": "Hazlo tuyo (opcional)",
       "name_label": "¿Cómo debería llamarse el asistente?",
+      "name_placeholder": "Escribe un nombre…",
       "skip": "Omitir la personalización"
+    },
+    "system_style": {
+      "title": "Elige tu estilo",
+      "body": "¿Cómo debería aparecer {name} en pantalla? Puedes cambiarlo cuando quieras en Ajustes.",
+      "recommended": "Recomendado",
+      "options": {
+        "whisper_bar": "Barra de Jarvis",
+        "mascot": "Orbe",
+        "none": "Sin superposición"
+      },
+      "captions": {
+        "whisper_bar": "Una barra de voz flotante y delgada, siempre a mano.",
+        "mascot": "Un orbe acompañante flotante que reacciona cuando hablas.",
+        "none": "Solo la ventana de la app — sin elementos flotantes en pantalla."
+      },
+      "needs_restart": "Casi listo — este estilo se aplica tras un breve reinicio.",
+      "restart_now": "Reiniciar ahora",
+      "restarting": "Reiniciando…",
+      "save_error": "No se pudo guardar — se mantiene la opción recomendada. Puedes cambiarlo más tarde en Ajustes.",
+      "skip": "Omitir — mantener la Barra de Jarvis"
     },
     "finish": {
       "title": "¡Todo listo!",
       "body": "{name} está listo. Di tu palabra de activación o escribe un comando para empezar.",
       "skipped_title": "Omitiste — configúralo cuando quieras en Ajustes:",
-      "start_cta": "Empezar a usar {name}"
+      "start_cta": "Empezar a usar {name}",
+      "boot_notice": "Nota: el primer inicio tarda unos 10 segundos mientras {name} se inicia — es completamente normal."
     }
   },
   "languages_view": {
@@ -1233,5 +1314,449 @@
       "de": "{name} responde en alemán.",
       "es": "{name} responde en español."
     }
+  },
+  "cli_connect_poller": {
+    "connected": "conectado",
+    "login_incomplete": "inicio de sesión no completado"
+  },
+  "cli_connect_coach": {
+    "connect": "conectar",
+    "connected": "conectado",
+    "waiting_for_login": "esperando inicio de sesión…",
+    "login_command": "Comando de inicio de sesión",
+    "instructions": "Sigue las instrucciones en el terminal de la izquierda. Compruebo cada 3 segundos si el inicio de sesión se ha completado.",
+    "done": "Listo",
+    "close": "Cerrar"
+  },
+  "view_error_boundary": {
+    "title": "No se pudo cargar la vista",
+    "crashed_prefix": "se ha bloqueado.",
+    "crashed_suffix": "sigue disponible.",
+    "back_to_chats": "Volver a los chats"
+  },
+  "plan_step_list": {
+    "no_plan": "Sin plan estructurado: ejecución de un solo paso.",
+    "show_output": "Mostrar salida"
+  },
+  "frontier_switch_modal": {
+    "title_one": "Modelo de frontera actualizado",
+    "title_many": "Modelos de frontera actualizados",
+    "description": "detectó un modelo más nuevo en el proveedor al iniciarse y cambió automáticamente. Por favor, confirma.",
+    "acking": "Confirmando…"
+  },
+  "achievement_grid": {
+    "unlocked_of": "de",
+    "unlocked_count": "desbloqueados. Sin clasificación."
+  },
+  "activity_feed": {
+    "title": "Feed de actividad",
+    "refresh_tooltip": "Actualizar manualmente",
+    "loading": "Cargando feed…",
+    "empty": "Aún no hay nada. Empareja a tu primer amigo o escribe una historia."
+  },
+  "friends_list": {
+    "empty": "Aún no tienes amigos. Haz clic en “Emparejar” arriba a la derecha para generar un enlace.",
+    "since": "desde",
+    "last_pull": "última extracción",
+    "pull_every": "Extraer cada",
+    "time_just_now": "ahora mismo",
+    "time_ago_prefix": "hace"
+  },
+  "pair_dialog": {
+    "title": "Emparejar a un amigo",
+    "mode_invite": "Yo invito",
+    "mode_follow": "Sigo un enlace",
+    "generate_hint": "Genera un enlace de emparejamiento de 10 minutos y envíalo a tu amigo por Signal/Threema/SMS — cualquier canal privado.",
+    "generate_button": "Generar enlace",
+    "copied": "copiado",
+    "copy": "copiar",
+    "valid_until": "Válido hasta:",
+    "error_prefix": "Error:",
+    "accept_hint": "Pega aquí el enlace de emparejamiento que te envió tu amigo.",
+    "accept_button": "Emparejar",
+    "paired_with": "Emparejado con"
+  },
+  "session_list": {
+    "loading": "Cargando transcripciones…",
+    "empty_title": "Aún no hay sesiones de voz",
+    "empty_hint": "Di tu palabra de activación — al colgar, la sesión aparece aquí.",
+    "no_user_text": "(no se registró texto del usuario)",
+    "turns": "turnos",
+    "just_now": "ahora mismo",
+    "ago_prefix": "hace",
+    "hangup_voice_pattern": "Colgado",
+    "hangup_error": "Error",
+    "hangup_turn_complete": "Respuesta lista"
+  },
+  "session_detail": {
+    "copied_as": "Sesión copiada como",
+    "copy_failed_clipboard": "Error al copiar — ¿acceso al portapapeles bloqueado?",
+    "copy_failed": "Error al copiar",
+    "downloaded_as": "Descargado como",
+    "download_failed": "Error al descargar",
+    "loading": "Cargando sesión…",
+    "load_error": "Error al cargar",
+    "title": "Sesión de voz",
+    "turns": "turnos",
+    "no_turns_suffix": "sin una intervención posterior.",
+    "copy_action": "Copiar",
+    "download_file_action": "Descargar como archivo:"
+  },
+  "turn_card": {
+    "turn": "Turno",
+    "copied": "copiado",
+    "copy_failed": "Error al copiar",
+    "downloaded_as": "Descargado como",
+    "copy_turn": "Copiar este turno",
+    "copy": "Copiar",
+    "download_turn": "Descargar este turno como archivo",
+    "thought": "Pensó:",
+    "spoke": "Habló:"
+  },
+  "wiki_search": {
+    "dialog_label": "Búsqueda en el wiki",
+    "dialog_description": "Búsqueda de texto completo en el almacén. Escribe un término o navega con las teclas de flecha.",
+    "input_placeholder": "Búsqueda de texto completo en el almacén…",
+    "recent_heading": "Modificado recientemente",
+    "no_pages": "Aún no hay páginas en el almacén.",
+    "searching": "Buscando…",
+    "unavailable": "La búsqueda no está disponible en este momento.",
+    "no_hits_prefix": "Sin coincidencias para ",
+    "no_hits_suffix": ". Prueba otras palabras clave o consulta el grafo.",
+    "hits_heading": "Coincidencias"
+  },
+  "wiki_graph": {
+    "empty_prefix": "Tu grafo de memoria aún está vacío. En cuanto ",
+    "empty_suffix": " cree notas, los nodos se conectarán aquí automáticamente.",
+    "loading": "Cargando grafo…",
+    "load_error": "No se pudo cargar el grafo.",
+    "reset_view_title": "Restablecer el zoom a todos los nodos",
+    "center": "Centrar"
+  },
+  "tree_sidebar": {
+    "load_error": "No se pudo cargar el wiki.",
+    "last_change": "Último cambio"
+  },
+  "page_renderer": {
+    "load_error": "No se pudo cargar la página.",
+    "not_found": "Página no encontrada."
+  },
+  "page_header": {
+    "placeholder_title": "Proporcionado por el Agent D",
+    "open_in_obsidian": "Abrir en Obsidian"
+  },
+  "obsidian_button": {
+    "trigger_failed": "No se pudo activar el enlace de Obsidian",
+    "handed_over": "Entregado a Obsidian",
+    "not_installed_hint": "— si Obsidian no se inicia, no está instalado.",
+    "vault_handed_over": "Almacén entregado a Obsidian",
+    "open_in_obsidian": "Abrir en Obsidian",
+    "open_vault_in_obsidian": "Abrir almacén en Obsidian"
+  },
+  "backlinks_panel": {
+    "load_error": "No se pudieron cargar los retroenlaces.",
+    "empty": "Sin retroenlaces."
+  },
+  "obsidian_status": {
+    "loading": "Obsidian: …",
+    "connected": "Obsidian: conectado",
+    "not_registered": "Obsidian: no registrado",
+    "not_installed": "Obsidian: no instalado",
+    "unclear": "Obsidian: estado poco claro",
+    "loading_tooltip": "Cargando estado…",
+    "click_for_setup": "Haz clic para configurar",
+    "load_failed_note": "No se pudo cargar el estado."
+  },
+  "obsidian_setup_dialog": {
+    "step_install": "Instalar",
+    "step_connect": "Conectar",
+    "step_live_test": "Prueba en vivo",
+    "not_detected_hint": "Aún no se detecta. Puede que el instalador siga ejecutándose — inténtalo de nuevo.",
+    "status_check_failed": "No se pudo comprobar el estado. Inténtalo de nuevo.",
+    "register_failed": "No se pudo registrar",
+    "unknown_status": "estado desconocido",
+    "restart_obsidian_hint": "Abre Obsidian una vez y vuelve a cerrarlo — luego haz clic de nuevo.",
+    "close_dialog": "Cerrar diálogo",
+    "title": "Configurar Obsidian",
+    "subtitle": "Tres pasos sencillos y tu wiki estará activo en Obsidian.",
+    "install_heading": "Instalar Obsidian",
+    "install_body_1": "{name} escribe el wiki como archivos Markdown en el disco.",
+    "install_body_2": "Para explorarlos y editarlos como una base de conocimiento real, necesitas el editor gratuito",
+    "download_link": "Abrir obsidian.md/download",
+    "checking": "Comprobando…",
+    "installed_continue": "Ya lo instalé — continuar",
+    "connect_heading": "Conectar almacén",
+    "connect_body_1": "Ahora {name} registra su wiki en tu configuración de Obsidian.",
+    "connect_body_2": "Así aparece en el selector de almacenes y el",
+    "connect_body_3": "funciona.",
+    "vault_path_label": "Ruta del almacén",
+    "open_help": "Abrir ayuda",
+    "registering": "Registrando…",
+    "register_now": "Registrar ahora",
+    "live_test_body": "Haz clic en el botón — tu navegador abre el almacén directamente en Obsidian.",
+    "open_in_obsidian": "Abrir en Obsidian",
+    "did_not_work": "No funcionó",
+    "it_worked": "Funcionó — listo"
+  },
+  "docs_sidebar": {
+    "title": "Documentación",
+    "error": "Error"
+  },
+  "docs_content": {
+    "prev": "Anterior",
+    "next": "Siguiente"
+  },
+  "docs_search_modal": {
+    "navigate": "navegar",
+    "open": "abrir"
+  },
+  "global_kill_button": {
+    "cancel_all_running": "Cancelar todas las misiones en curso",
+    "cancel_all_title": "¿Cancelar todas las misiones?",
+    "cancel_all_body": "misión(es) en curso se detendrán de forma forzada. Los subprocesos de los workers se terminan mediante el Job Object; los diffs ya escritos permanecen en los worktrees.",
+    "error_prefix": "Error",
+    "stopping": "Deteniendo…",
+    "confirm_stop_all": "Sí, detener todas"
+  },
+  "mission_tree": {
+    "no_prompt": "(sin prompt)",
+    "empty": "Aún no hay misiones. El asistente principal enviará una en breve…"
+  },
+  "pty_terminal": {
+    "stream_unreachable": "Flujo PTY inaccesible.",
+    "stream_disconnected": "Flujo desconectado",
+    "connect_failed": "Conexión PTY fallida",
+    "connecting": "conectando…"
+  },
+  "event_timeline": {
+    "empty": "Aún no hay eventos para esta misión."
+  },
+  "verdict_panel": {
+    "empty": "Aún no hay veredictos del crítico para esta misión."
+  },
+  "openclaw_panel": {
+    "select_mission": "Selecciona una misión para ver los workers de OpenClaw.",
+    "no_workers": "No hay workers de OpenClaw en esta misión.",
+    "not_available": "(no disponible)",
+    "copy_path": "Copiar ruta",
+    "file_link_copies_path": "Enlace file:// (se copia la ruta)",
+    "ended_label": "Finalizado"
+  },
+  "clis_view": {
+    "status_connected": "conectado",
+    "status_disconnected": "desconectado",
+    "status_not_installed": "no instalado",
+    "status_error": "error",
+    "status_checking": "comprobando…",
+    "subtitle_connected": "conectadas",
+    "subtitle_installed": "instaladas",
+    "subtitle_in_catalog": "en el catálogo",
+    "add_custom_cli_title": "Añadir CLI personalizada",
+    "reload": "Recargar",
+    "filter_all": "Todas",
+    "filter_connected": "Conectadas",
+    "filter_installed": "Instaladas",
+    "category_label": "Categoría:",
+    "category_all": "todas",
+    "intro_can_call": "puede usar estas CLI como herramientas. Solo las CLI",
+    "intro_connected_word": "conectadas",
+    "intro_appear": "aparecen en el catálogo de herramientas del cerebro.",
+    "open_usage_history": "Abrir historial de uso",
+    "status_check_failed": "Comprobación de estado fallida",
+    "recheck_status": "Volver a comprobar el estado",
+    "close_detail_panel": "Cerrar el panel de detalles",
+    "loading_details": "Cargando detalles…",
+    "install": "Instalar",
+    "set_api_key": "Establecer clave API",
+    "disconnected_suffix": "desconectada",
+    "disconnect_failed": "Desconexión fallida",
+    "disconnect": "Desconectar",
+    "remove_custom_cli_prefix": "Eliminar CLI personalizada",
+    "remove_custom_cli_suffix": "",
+    "remove_custom_cli": "Eliminar CLI personalizada",
+    "confirm_remove_custom_prefix": "¿Eliminar realmente la CLI personalizada",
+    "confirm_remove_custom_suffix": "?",
+    "removed_suffix": "eliminada",
+    "kv_path": "Ruta",
+    "not_found": "no encontrado",
+    "section_secrets": "Secretos (autenticación con clave API)",
+    "secret_set": "establecido",
+    "secret_unset": "(no establecido)",
+    "section_tool_examples": "Ejemplos de herramientas (para el cerebro)",
+    "documentation": "Documentación",
+    "terminal_opened": "Terminal abierta",
+    "follow_browser_login": "sigue el inicio de sesión del navegador. El estado se comprueba automáticamente.",
+    "terminal_spawn_failed": "No se pudo iniciar la terminal",
+    "browser_login": "Inicio de sesión en el navegador",
+    "api_key_help": "Las claves se guardan en el Administrador de credenciales de Windows y se inyectan como variable de entorno en cada llamada.",
+    "api_key_already_set": "(ya establecida — sobrescribir)",
+    "api_key_enter": "Introduce la clave API",
+    "validation_failed": "Validación fallida",
+    "connected_suffix": "conectada",
+    "validating": "Validando…",
+    "save_and_validate": "Guardar y validar",
+    "install_lowercase": "— instalar",
+    "install_help": "Abre una terminal externa de Windows con el comando de instalación. El estado se comprueba automáticamente cuando la terminal termina.",
+    "choose_method": "Elegir método",
+    "recommended": "recomendado",
+    "command_label": "Comando",
+    "external_terminal_opened": "Terminal externa abierta",
+    "install_running": "la instalación está en curso. El estado se actualiza automáticamente.",
+    "spawning": "Iniciando…",
+    "open": "Abrir",
+    "install_in_terminal": "Instalar en la terminal",
+    "registered_suffix": "registrada",
+    "step": "Paso",
+    "wizard_step1_identity": "Identidad de la CLI",
+    "wizard_step2_check": "Comprobación + versión",
+    "wizard_step3_auth": "Configuración de autenticación",
+    "wizard_step4_risk": "Nivel de riesgo + patrones",
+    "eg_mytool": "p. ej. mytool",
+    "eg_my_tool_cli": "p. ej. My Tool CLI",
+    "field_binary_name": "Nombre del binario (lo que está en el PATH)",
+    "field_description": "Descripción",
+    "what_does_cli_do": "¿Qué hace la CLI?",
+    "field_category": "Categoría",
+    "field_homepage_url": "URL de la página principal",
+    "field_check_command": "Comando de comprobación",
+    "field_version_regex": "Regex de versión (un grupo de captura)",
+    "auth_mode_label": "Modo de autenticación",
+    "auth_none": "none (sin autenticación)",
+    "auth_oauth_cli": "oauth_cli (inicio de sesión propio de la CLI)",
+    "auth_api_key": "api_key (llavero + inyección de ENV)",
+    "auth_config_file": "config_file (gestionado externamente)",
+    "field_login_command": "Comando de inicio de sesión",
+    "field_status_command": "Comando de estado",
+    "field_secret_keys": "Claves secretas (separadas por comas)",
+    "field_env_vars": "Variables de entorno (separadas por comas, orden 1:1)",
+    "risk_safe": "safe (se ejecuta sin preguntar)",
+    "risk_ask": "ask (confirmación por llamada)",
+    "risk_block": "block (completamente bloqueado)",
+    "field_allow_patterns": "Patrones permitidos (uno por línea)",
+    "field_deny_patterns": "Patrones denegados (uno por línea)",
+    "steps_skippable": "Los pasos se pueden omitir con 'Guardar'",
+    "done": "¡Listo!",
+    "next": "Siguiente",
+    "no_entries": "Sin entradas",
+    "search_word": "búsqueda",
+    "confirm_clear_history_prefix": "¿Borrar todo el historial de",
+    "confirm_clear_history_suffix": "?",
+    "entries_deleted": "entradas eliminadas",
+    "empty_no_clis": "No hay CLI en el catálogo",
+    "empty_all": "Ninguna CLI coincide con el filtro.",
+    "empty_connected": "No hay ninguna CLI conectada actualmente.",
+    "empty_installed": "No hay ninguna CLI instalada.",
+    "empty_custom": "Aún no hay ninguna CLI personalizada registrada — haz clic en 'Add Custom' en la parte superior derecha."
+  },
+  "cli_test_hub_view": {
+    "subtitle_tell": "Dile a",
+    "subtitle_rest": "en lenguaje natural qué hacer con tus CLI",
+    "no_risk_tier": "sin nivel de riesgo",
+    "connected_clis": "CLI conectadas",
+    "available": "disponibles",
+    "loading_connected": "Cargando CLI conectadas…",
+    "list_load_failed": "No se pudo cargar la lista de CLI",
+    "no_cli_connected": "Ninguna CLI conectada",
+    "no_cli_help": "solo puede llamar a una herramienta cuando hay al menos una CLI conectada (p. ej. gcloud, gh, docker). Conecta una CLI en la sección CLIs — luego aparecerá aquí automáticamente.",
+    "go_to_clis": "Ir a las CLI",
+    "instruction_label": "Instrucción",
+    "instruction_to": "Instrucción para",
+    "placeholder_rest": "qué hacer con tus CLI…",
+    "cli_hint_label": "Sugerencia de CLI (opcional)",
+    "cli_hint_aria": "Sugerencia de CLI",
+    "let_decide": "decida",
+    "ctrl_cmd_enter": "Ctrl/Cmd + Intro",
+    "run_instruction": "Ejecutar instrucción",
+    "running": "Ejecutando…",
+    "run": "Ejecutar",
+    "picking_tool": "está eligiendo una herramienta y ejecutando el comando…",
+    "request_failed": "La solicitud falló",
+    "backend_check_prefix": "¿Está el servidor backend en ejecución y el endpoint",
+    "backend_check_suffix": "disponible?",
+    "says": "dice",
+    "command_failed": "El comando falló.",
+    "duration": "Duración",
+    "command_label": "Comando",
+    "steps": "Pasos",
+    "no_tool_found": "no encontró ninguna herramienta CLI adecuada. Formula la instrucción de forma más concreta o indica una sugerencia de CLI."
+  },
+  "workflows_view": {
+    "subtitle": "Tus pipelines de agentes de IA alojados: activados por cron o con solo pulsar un botón.",
+    "loading": "Cargando flujos de trabajo…",
+    "load_failed": "No se pudieron cargar los flujos de trabajo",
+    "integrations_need_setup": "Las integraciones requieren configuración",
+    "chat_id_missing": "Falta el ID de chat",
+    "token_missing": "Falta el token",
+    "dismiss_banner": "Descartar el aviso",
+    "stat_active": "Activos",
+    "stat_next_run": "Próxima ejecución",
+    "url_to_summarize": "URL para resumir:",
+    "run_failed": "La ejecución falló",
+    "collapse": "Contraer",
+    "expand": "Expandir",
+    "no_description": "Sin descripción.",
+    "disable": "Desactivar",
+    "enable": "Activar",
+    "run_now": "Ejecutar ahora",
+    "delete_confirm_prefix": "¿Eliminar de verdad el flujo de trabajo",
+    "delete_confirm_suffix": "?",
+    "loading_details": "Cargando detalles…",
+    "error_label": "Error",
+    "recent_runs": "Ejecuciones recientes",
+    "never_run": "Nunca se ha ejecutado.",
+    "loading_run_details": "Cargando detalles de la ejecución…",
+    "empty_title": "Aún no hay flujos de trabajo: se incluyen 3 ejemplos en el primer arranque.",
+    "empty_hint_pre": "¿El backend está recién instalado? Revisa"
+  },
+  "conductor_view": {
+    "new_job": "Nuevo trabajo",
+    "loading_jobs": "Cargando trabajos…",
+    "api_unreachable": "La API de Conductor no responde",
+    "stat_active": "Activos",
+    "runs_last_30": "ejecuciones (últimas 30)",
+    "delete_confirm_prefix": "¿Eliminar de verdad el trabajo",
+    "delete_confirm_suffix": "?",
+    "editor_intro": "Los trabajos son JSON: copiables, comparables y compatibles con git. Tres tipos:",
+    "create": "Crear",
+    "empty_jobs": "Aún no hay trabajos. Pulsa \"Nuevo trabajo\" arriba a la derecha.",
+    "empty_jobs_hint": "Se incluyen 3 trabajos de demostración en el primer arranque.",
+    "empty_timeline": "Aún no hay ejecuciones: pulsa Play en un trabajo.",
+    "json_syntax_error": "Error de sintaxis JSON"
+  },
+  "chat_tab": {
+    "loading_friends": "Cargando friends …",
+    "load_failed": "No se pudieron cargar los friends:",
+    "empty_hint": "Aún no hay friends. Haz clic arriba a la derecha en",
+    "add_friend": "+ Añadir friend",
+    "select_hint": "Elige un friend de la lista de la izquierda."
+  },
+  "status_tab": {
+    "heading": "Compartir estado",
+    "intro_part1": "Tú decides por cada friend cuánto de tu",
+    "intro_part2": "-estado se comparte. Privacidad ante todo: el valor predeterminado es",
+    "intro_part3": "(solo en línea/desconectado); los cambios se aplican al instante.",
+    "empty_hint": "Aún no hay friends. Cambia a la pestaña de chat y haz clic en",
+    "hard_blacklist_title": "Lista negra estricta (siempre bloqueada)",
+    "hard_blacklist_body": "Enunciados sin procesar, argumentos de herramientas, trazas de pila, actualizaciones de memoria, títulos de ventana. NUNCA salen de tu máquina, sin importar qué perfil esté activo ni lo que diga una lista blanca personalizada.",
+    "error_prefix": "Error",
+    "loading_permission": "Cargando permiso …",
+    "profile_minimal_subline": "Solo en línea/desconectado",
+    "profile_minimal_desc": "El friend ve: sesión de voz activa sí/no, duración. Sin contenido.",
+    "profile_standard_subline": "+ Título de la misión",
+    "profile_standard_desc": "El friend también ve: qué misiones/tareas se están ejecutando, éxito, duración.",
+    "profile_detailed_subline": "+ Resumen de OpenClaw",
+    "profile_detailed_desc": "El friend también ve: resúmenes de OpenClaw firmados (SIN enunciados)."
+  },
+  "tools_canvas": {
+    "back_tooltip": "Volver al resumen de agentes",
+    "tool_calls": "llamadas de herramienta",
+    "active": "activas",
+    "duration": "Duración",
+    "empty": "(vacío)",
+    "no_tools_yet": "aún no ha llamado a ninguna herramienta.",
+    "no_tools_explainer": "En cuanto el worker de OpenClaw activa una herramienta (p. ej. dispatch_to_harness, run_shell, screenshot), aparece aquí como un nodo de icono."
+  },
+  "use_web_socket": {
+    "jarvis_opened": "{name} abrió"
   }
 }

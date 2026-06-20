@@ -40,7 +40,33 @@
     "outputs": "Outputs",
     "socials": "Socials",
     "taskbar": "Taskbar",
-    "contacts": "Kontakte"
+    "contacts": "Kontakte",
+    "agent_instructions": "{name}.md",
+    "browser_voice": "Browser-Sprache"
+  },
+  "browser_voice": {
+    "title": "Browser-Sprache",
+    "subtitle": "Sprich mit Jarvis über das Mikrofon und die Lautsprecher deines Browsers — ohne Desktop-Installation. Erfordert einen sicheren Kontext (localhost oder https).",
+    "start": "Sprache starten",
+    "stop": "Stopp",
+    "listening": "Höre zu …",
+    "speaking": "Spreche …"
+  },
+  "agent_instructions": {
+    "subtitle": "Deine persönlichen Präferenzen, wie der Assistent mit dir arbeitet — Ton, Sprache, Voreinstellungen, dauerhafte Fakten. Getrennt vom System-Prompt und hebelt niemals Sicherheit oder Bestätigungen aus.",
+    "active_badge": "Aktiv",
+    "empty_badge": "Leer",
+    "editor_label": "Deine Anweisungen (Markdown)",
+    "placeholder": "Schreibe deine persönlichen Präferenzen…",
+    "chars": "{0} Zeichen",
+    "empty_hint": "Leer — lade die Vorlage, um zu starten.",
+    "save": "Anweisungen speichern",
+    "saving": "Speichern…",
+    "saved": "Anweisungen gespeichert",
+    "reset": "Leeren",
+    "reset_done": "Anweisungen geleert",
+    "load_template": "Mit Vorlage starten",
+    "applies_next_turn": "Gilt ab der nächsten Antwort deines Assistenten — kein Neustart nötig."
   },
   "extensions": {
     "tab_skills": "Skills",
@@ -746,6 +772,20 @@
     "integration_bad_note": "Provider konnte nicht erreicht werden.",
     "failed": "Test fehlgeschlagen"
   },
+  "apikeys_model": {
+    "heading": "Modell",
+    "model_label": "Modell",
+    "search_placeholder": "Modell suchen oder ID eintippen…",
+    "apply": "Übernehmen",
+    "refresh": "Aktualisieren",
+    "saved": "Modell gespeichert",
+    "live_note": "(ab sofort aktiv)",
+    "restart_note": "(aktiv ab nächstem Start)",
+    "load_failed": "Modelle konnten nicht geladen werden",
+    "source_static": "Offline-Liste",
+    "source_static_note": "Live-Katalog nicht erreichbar — gepflegte Fallback-Liste.",
+    "more_hint": "{0} weitere — Suche verfeinern"
+  },
   "settings_view": {
     "silence_window": {
       "title": "Denkpause",
@@ -794,7 +834,7 @@
     },
     "wake_word": {
       "title": "Wake-Word",
-      "description": "Aktivierungsphrase für den Sprachmodus. Tippe deine eigene ein.",
+      "description": "Die Phrase, die du laut aussprichst, um den Sprachmodus zu aktivieren — dein gesprochenes Trigger-Wort. Tippe deine eigene ein.",
       "phrase_label": "Aktivierungsphrase",
       "phrase_placeholder": "z. B. Jonas",
       "engine_label": "Erkennungs-Engine",
@@ -850,7 +890,7 @@
     },
     "assistant_name": {
       "title": "Name des Assistenten",
-      "description": "Wie der Assistent sich in Antworten selbst nennt. Leer lassen, um dem Wake-Wort zu folgen.",
+      "description": "Wie sich der Assistent in Antworten selbst nennt. Das ist NICHT das Wake-Word, das du zum Aktivieren sagst — das gesprochene Trigger-Wort stellst du im Panel „Wake-Word“ darunter ein. Leer lassen, um dem Wake-Wort zu folgen.",
       "label": "Name",
       "current": "Der Assistent nennt sich „{0}“.",
       "auto_hint": "Leer — folgt dem Wake-Wort (aktuell „{0}“).",
@@ -1050,7 +1090,8 @@
     "open_in_explorer": "Im Explorer öffnen",
     "open_in_editor": "Markdown-Datei im OS-Standard-Editor öffnen",
     "running": "läuft",
-    "saving": "Speichere…"
+    "saving": "Speichere…",
+    "error": "Fehler"
   },
   "docs": {
     "search_placeholder": "Titel/Tag filtern…",
@@ -1070,7 +1111,9 @@
     "running": "läuft"
   },
   "provider_switcher": {
-    "loading_hint": "Provider-Liste wird geladen — falls dauerhaft leer, prüfe das Backend."
+    "loading_hint": "Provider-Liste wird geladen — falls dauerhaft leer, prüfe das Backend.",
+    "no_credential": "kein Credential",
+    "active": "Aktiv"
   },
   "wiki_provider": {
     "tier_label": "Wiki (Langzeitgedächtnis)",
@@ -1106,7 +1149,19 @@
     "heatmap_tooltip": "{0} - {1} Aktivitäten, {2} Tasks, {3} h Gespräche"
   },
   "story_composer": {
-    "close": "schließen"
+    "close": "schließen",
+    "title": "Story schreiben",
+    "placeholder": "Was hast du heute gemacht?",
+    "expiry_hint": "Verschwindet nach 24 Stunden.",
+    "characters": "Zeichen",
+    "post": "Posten",
+    "error_prefix": "Fehler:",
+    "visibility_private": "Privat",
+    "visibility_private_hint": "Nur du",
+    "visibility_friends": "Freunde",
+    "visibility_friends_hint": "Gepairte Friends",
+    "visibility_public": "Öffentlich",
+    "visibility_public_hint": "Jeder, der dein Backend kennt"
   },
   "reactions": {
     "others_reacted": "Andere haben reagiert"
@@ -1141,7 +1196,11 @@
     "install_failed": "{0}: Install fehlgeschlagen (exit {1}). Versuch eine andere Methode."
   },
   "onboarding": {
-    "nav": { "next": "Weiter", "back": "Zurück", "skip": "Überspringen" },
+    "nav": {
+      "next": "Weiter",
+      "back": "Zurück",
+      "skip": "Überspringen"
+    },
     "welcome": {
       "title": "Willkommen bei Personal Jarvis",
       "subtitle": "Dein lokaler, privater Sprachassistent. Lass uns alles einrichten.",
@@ -1193,13 +1252,35 @@
     "persona": {
       "title": "Mach es zu deinem (optional)",
       "name_label": "Wie soll sich der Assistent nennen?",
+      "name_placeholder": "Namen eingeben…",
       "skip": "Personalisierung überspringen"
+    },
+    "system_style": {
+      "title": "Wähle deinen Stil",
+      "body": "Wie soll {name} auf dem Bildschirm erscheinen? Du kannst das jederzeit in den Einstellungen ändern.",
+      "recommended": "Empfohlen",
+      "options": {
+        "whisper_bar": "Jarvis-Leiste",
+        "mascot": "Orb",
+        "none": "Kein Overlay"
+      },
+      "captions": {
+        "whisper_bar": "Eine schmale schwebende Sprachleiste, immer griffbereit.",
+        "mascot": "Ein schwebender Begleiter-Orb, der auf deine Stimme reagiert.",
+        "none": "Nur das App-Fenster — kein schwebendes Element auf dem Bildschirm."
+      },
+      "needs_restart": "Fast geschafft — dieser Stil wird nach einem kurzen Neustart aktiv.",
+      "restart_now": "Jetzt neu starten",
+      "restarting": "Wird neu gestartet…",
+      "save_error": "Konnte das nicht speichern — die empfohlene Voreinstellung bleibt. Du kannst es später in den Einstellungen ändern.",
+      "skip": "Überspringen — Jarvis-Leiste behalten"
     },
     "finish": {
       "title": "Alles bereit!",
       "body": "{name} ist startklar. Sag dein Aktivierungswort oder tippe einen Befehl, um zu beginnen.",
       "skipped_title": "Du hast übersprungen — jederzeit in den Einstellungen nachholbar:",
-      "start_cta": "{name} verwenden"
+      "start_cta": "{name} verwenden",
+      "boot_notice": "Hinweis: Der erste Start dauert etwa 10 Sekunden, während {name} hochfährt — das ist völlig normal."
     }
   },
   "languages_view": {
@@ -1233,5 +1314,449 @@
       "de": "{name} antwortet auf Deutsch.",
       "es": "{name} antwortet auf Spanisch."
     }
+  },
+  "cli_connect_poller": {
+    "connected": "verbunden",
+    "login_incomplete": "Login nicht abgeschlossen"
+  },
+  "cli_connect_coach": {
+    "connect": "verbinden",
+    "connected": "verbunden",
+    "waiting_for_login": "warte auf login…",
+    "login_command": "Login-Command",
+    "instructions": "Folge den Anweisungen im Terminal links. Ich pruefe alle 3 Sekunden, ob der Login durch ist.",
+    "done": "Fertig",
+    "close": "Schliessen"
+  },
+  "view_error_boundary": {
+    "title": "Ansicht konnte nicht geladen werden",
+    "crashed_prefix": "ist abgestuerzt.",
+    "crashed_suffix": "bleibt bedienbar.",
+    "back_to_chats": "Zurueck zu Chats"
+  },
+  "plan_step_list": {
+    "no_plan": "Kein strukturierter Plan — Single-Shot-Run.",
+    "show_output": "Output anzeigen"
+  },
+  "frontier_switch_modal": {
+    "title_one": "Frontier-Modell aktualisiert",
+    "title_many": "Frontier-Modelle aktualisiert",
+    "description": "hat beim Start ein neueres Modell beim Anbieter erkannt und automatisch gewechselt. Bitte bestaetige.",
+    "acking": "Bestaetige…"
+  },
+  "achievement_grid": {
+    "unlocked_of": "von",
+    "unlocked_count": "freigeschaltet. Kein Leaderboard."
+  },
+  "activity_feed": {
+    "title": "Aktivitäts-Feed",
+    "refresh_tooltip": "Manueller Refresh",
+    "loading": "Lade Feed…",
+    "empty": "Noch keine Items. Pair' deinen ersten Friend, oder schreib eine Story."
+  },
+  "friends_list": {
+    "empty": "Noch keine Freunde. Klick „Pair“ oben rechts um einen Link zu generieren.",
+    "since": "seit",
+    "last_pull": "letzter Pull",
+    "pull_every": "Pull alle",
+    "time_just_now": "gerade",
+    "time_ago_prefix": "vor"
+  },
+  "pair_dialog": {
+    "title": "Friend pairen",
+    "mode_invite": "Ich lade ein",
+    "mode_follow": "Ich folge einem Link",
+    "generate_hint": "Erzeuge einen 10-Minuten-Pair-Link und schicke ihn deinem Freund über Signal/Threema/SMS — irgendeinen privaten Kanal.",
+    "generate_button": "Link generieren",
+    "copied": "kopiert",
+    "copy": "kopieren",
+    "valid_until": "Gültig bis:",
+    "error_prefix": "Fehler:",
+    "accept_hint": "Füge hier den Pair-Link ein, den dir dein Freund geschickt hat.",
+    "accept_button": "Pair ausführen",
+    "paired_with": "Gepairt mit"
+  },
+  "session_list": {
+    "loading": "Lade Transkripte…",
+    "empty_title": "Noch keine Voice-Sessions",
+    "empty_hint": "Sage dein Wake-Word — beim Auflegen erscheint die Session hier.",
+    "no_user_text": "(kein User-Text aufgezeichnet)",
+    "turns": "Turns",
+    "just_now": "gerade eben",
+    "ago_prefix": "vor",
+    "hangup_voice_pattern": "Auflegen",
+    "hangup_error": "Fehler",
+    "hangup_turn_complete": "Antwort fertig"
+  },
+  "session_detail": {
+    "copied_as": "Session kopiert als",
+    "copy_failed_clipboard": "Kopieren fehlgeschlagen — Clipboard-Zugriff blockiert?",
+    "copy_failed": "Kopieren fehlgeschlagen",
+    "downloaded_as": "Heruntergeladen als",
+    "download_failed": "Download fehlgeschlagen",
+    "loading": "Lade Session…",
+    "load_error": "Fehler beim Laden",
+    "title": "Voice-Session",
+    "turns": "Turns",
+    "no_turns_suffix": "ohne Folge-Utterance.",
+    "copy_action": "Kopieren",
+    "download_file_action": "Als Datei herunterladen:"
+  },
+  "turn_card": {
+    "turn": "Turn",
+    "copied": "kopiert",
+    "copy_failed": "Kopieren fehlgeschlagen",
+    "downloaded_as": "Heruntergeladen als",
+    "copy_turn": "Diesen Turn kopieren",
+    "copy": "Kopieren",
+    "download_turn": "Diesen Turn als Datei herunterladen",
+    "thought": "Nachgedacht:",
+    "spoke": "Gesprochen:"
+  },
+  "wiki_search": {
+    "dialog_label": "Wiki-Suche",
+    "dialog_description": "Volltext-Suche im Vault. Tippe einen Begriff oder navigiere mit den Pfeiltasten.",
+    "input_placeholder": "Volltext-Suche im Vault…",
+    "recent_heading": "Zuletzt geändert",
+    "no_pages": "Noch keine Seiten im Vault.",
+    "searching": "Suche läuft…",
+    "unavailable": "Suche gerade nicht verfügbar.",
+    "no_hits_prefix": "Keine Treffer für ",
+    "no_hits_suffix": ". Versuche andere Stichworte oder schau in den Graph.",
+    "hits_heading": "Treffer"
+  },
+  "wiki_graph": {
+    "empty_prefix": "Dein Memory-Graph ist noch leer. Sobald ",
+    "empty_suffix": " Notizen anlegt, verbinden sich die Knoten hier automatisch.",
+    "loading": "Lade Graph…",
+    "load_error": "Graph konnte nicht geladen werden.",
+    "reset_view_title": "Zoom auf alle Knoten zurücksetzen",
+    "center": "Zentrieren"
+  },
+  "tree_sidebar": {
+    "load_error": "Konnte das Wiki nicht laden.",
+    "last_change": "Letzte Änderung"
+  },
+  "page_renderer": {
+    "load_error": "Seite konnte nicht geladen werden.",
+    "not_found": "Seite nicht gefunden."
+  },
+  "page_header": {
+    "placeholder_title": "Wird durch Agent D bereitgestellt",
+    "open_in_obsidian": "In Obsidian öffnen"
+  },
+  "obsidian_button": {
+    "trigger_failed": "Obsidian-Link konnte nicht ausgelöst werden",
+    "handed_over": "An Obsidian übergeben",
+    "not_installed_hint": "— falls Obsidian nicht startet, ist es nicht installiert.",
+    "vault_handed_over": "Vault an Obsidian übergeben",
+    "open_in_obsidian": "In Obsidian öffnen",
+    "open_vault_in_obsidian": "Vault in Obsidian öffnen"
+  },
+  "backlinks_panel": {
+    "load_error": "Konnte Backlinks nicht laden.",
+    "empty": "Keine Backlinks."
+  },
+  "obsidian_status": {
+    "loading": "Obsidian: …",
+    "connected": "Obsidian: verbunden",
+    "not_registered": "Obsidian: nicht registriert",
+    "not_installed": "Obsidian: nicht installiert",
+    "unclear": "Obsidian: Status unklar",
+    "loading_tooltip": "Status wird geladen…",
+    "click_for_setup": "Klick für Setup",
+    "load_failed_note": "Status konnte nicht geladen werden."
+  },
+  "obsidian_setup_dialog": {
+    "step_install": "Installieren",
+    "step_connect": "Verbinden",
+    "step_live_test": "Live-Test",
+    "not_detected_hint": "Noch nicht erkannt. Vielleicht läuft der Installer noch — probier es nochmal.",
+    "status_check_failed": "Status konnte nicht geprüft werden. Versuch es bitte erneut.",
+    "register_failed": "Konnte nicht registrieren",
+    "unknown_status": "unbekannter Status",
+    "restart_obsidian_hint": "Bitte Obsidian einmal kurz starten und wieder schließen — danach klick erneut.",
+    "close_dialog": "Dialog schließen",
+    "title": "Obsidian einrichten",
+    "subtitle": "Drei kleine Schritte und dein Wiki ist live in Obsidian.",
+    "install_heading": "Obsidian installieren",
+    "install_body_1": "{name} schreibt das Wiki als Markdown-Dateien auf die Platte.",
+    "install_body_2": "Damit du sie wie eine echte Wissensdatenbank durchstöbern und bearbeiten kannst, brauchst du den kostenlosen Editor",
+    "download_link": "obsidian.md/download öffnen",
+    "checking": "Prüfe…",
+    "installed_continue": "Ich habs installiert — weiter",
+    "connect_heading": "Vault anbinden",
+    "connect_body_1": "Jetzt trägt {name} sein Wiki in deine Obsidian-Konfiguration ein.",
+    "connect_body_2": "Damit erscheint es im Vault-Switcher und das",
+    "connect_body_3": "-Protokoll funktioniert.",
+    "vault_path_label": "Vault-Pfad",
+    "open_help": "Hilfe öffnen",
+    "registering": "Registriere…",
+    "register_now": "Jetzt registrieren",
+    "live_test_body": "Klick den Knopf — dein Browser öffnet das Vault direkt in Obsidian.",
+    "open_in_obsidian": "In Obsidian öffnen",
+    "did_not_work": "Hat nicht geklappt",
+    "it_worked": "Hat geklappt — Fertig"
+  },
+  "docs_sidebar": {
+    "title": "Dokumentation",
+    "error": "Fehler"
+  },
+  "docs_content": {
+    "prev": "Vorher",
+    "next": "Nächstes"
+  },
+  "docs_search_modal": {
+    "navigate": "navigieren",
+    "open": "öffnen"
+  },
+  "global_kill_button": {
+    "cancel_all_running": "Alle laufenden Missions abbrechen",
+    "cancel_all_title": "Alle Missions abbrechen?",
+    "cancel_all_body": "laufende Mission(s) werden hart gestoppt. Worker-Subprocesses werden via Job-Object terminiert; bereits geschriebene Diffs bleiben in den Worktrees liegen.",
+    "error_prefix": "Fehler",
+    "stopping": "Stoppe…",
+    "confirm_stop_all": "Ja, alle stoppen"
+  },
+  "mission_tree": {
+    "no_prompt": "(ohne Prompt)",
+    "empty": "Noch keine Missions. Hauptjarvis dispatched gleich…"
+  },
+  "pty_terminal": {
+    "stream_unreachable": "PTY-Stream nicht erreichbar.",
+    "stream_disconnected": "Stream getrennt",
+    "connect_failed": "PTY-Connect fehlgeschlagen",
+    "connecting": "verbinde…"
+  },
+  "event_timeline": {
+    "empty": "Noch keine Events für diese Mission."
+  },
+  "verdict_panel": {
+    "empty": "Noch keine Critic-Verdicts für diese Mission."
+  },
+  "openclaw_panel": {
+    "select_mission": "Mission auswählen, um OpenClaw-Worker zu sehen.",
+    "no_workers": "Keine OpenClaw-Worker in dieser Mission.",
+    "not_available": "(nicht verfügbar)",
+    "copy_path": "Pfad kopieren",
+    "file_link_copies_path": "file://-Link (Pfad wird kopiert)",
+    "ended_label": "Ende"
+  },
+  "clis_view": {
+    "status_connected": "verbunden",
+    "status_disconnected": "getrennt",
+    "status_not_installed": "nicht installiert",
+    "status_error": "fehler",
+    "status_checking": "prüfe…",
+    "subtitle_connected": "verbunden",
+    "subtitle_installed": "installiert",
+    "subtitle_in_catalog": "im Katalog",
+    "add_custom_cli_title": "Custom CLI hinzufügen",
+    "reload": "Neu laden",
+    "filter_all": "Alle",
+    "filter_connected": "Verbunden",
+    "filter_installed": "Installiert",
+    "category_label": "Kategorie:",
+    "category_all": "alle",
+    "intro_can_call": "kann diese CLIs als Tools aufrufen. Nur",
+    "intro_connected_word": "verbundene",
+    "intro_appear": "CLIs erscheinen im Brain-Tool-Katalog.",
+    "open_usage_history": "Usage-History öffnen",
+    "status_check_failed": "Status-Check fehlgeschlagen",
+    "recheck_status": "Status neu prüfen",
+    "close_detail_panel": "Detail-Panel schließen",
+    "loading_details": "Lade Details…",
+    "install": "Installieren",
+    "set_api_key": "API-Key setzen",
+    "disconnected_suffix": "getrennt",
+    "disconnect_failed": "Trennen fehlgeschlagen",
+    "disconnect": "Trennen",
+    "remove_custom_cli_prefix": "Custom-CLI",
+    "remove_custom_cli_suffix": "entfernen",
+    "remove_custom_cli": "Custom-CLI entfernen",
+    "confirm_remove_custom_prefix": "Custom-CLI",
+    "confirm_remove_custom_suffix": "wirklich entfernen?",
+    "removed_suffix": "entfernt",
+    "kv_path": "Pfad",
+    "not_found": "nicht gefunden",
+    "section_secrets": "Secrets (API-Key-Auth)",
+    "secret_set": "gesetzt",
+    "secret_unset": "(nicht gesetzt)",
+    "section_tool_examples": "Tool-Beispiele (für Brain)",
+    "documentation": "Dokumentation",
+    "terminal_opened": "Terminal geoeffnet",
+    "follow_browser_login": "folge dem Browser-Login. Status wird automatisch geprueft.",
+    "terminal_spawn_failed": "Terminal-Spawn fehlgeschlagen",
+    "browser_login": "Browser-Login",
+    "api_key_help": "Keys werden im Windows Credential Manager gespeichert und beim Aufruf als ENV-Variable injiziert.",
+    "api_key_already_set": "(bereits gesetzt — überschreiben)",
+    "api_key_enter": "API-Key eingeben",
+    "validation_failed": "Validation fehlgeschlagen",
+    "connected_suffix": "verbunden",
+    "validating": "Validiere…",
+    "save_and_validate": "Speichern & Validieren",
+    "install_lowercase": "installieren",
+    "install_help": "Oeffnet ein externes Windows Terminal mit dem Install-Command. Der Status wird automatisch geprueft sobald das Terminal fertig ist.",
+    "choose_method": "Methode wählen",
+    "recommended": "empfohlen",
+    "command_label": "Befehl",
+    "external_terminal_opened": "Externes Terminal geoeffnet",
+    "install_running": "Install laeuft. Status wird automatisch aktualisiert.",
+    "spawning": "Spawne…",
+    "open": "Öffnen",
+    "install_in_terminal": "Im Terminal installieren",
+    "registered_suffix": "registriert",
+    "step": "Schritt",
+    "wizard_step1_identity": "Identität der CLI",
+    "wizard_step2_check": "Check + Version",
+    "wizard_step3_auth": "Auth-Konfiguration",
+    "wizard_step4_risk": "Risk-Tier + Patterns",
+    "eg_mytool": "z.B. mytool",
+    "eg_my_tool_cli": "z.B. My Tool CLI",
+    "field_binary_name": "Binary-Name (was im PATH liegt)",
+    "field_description": "Beschreibung",
+    "what_does_cli_do": "Was macht die CLI?",
+    "field_category": "Kategorie",
+    "field_homepage_url": "Homepage-URL",
+    "field_check_command": "Check-Command",
+    "field_version_regex": "Version-Regex (eine Capture-Group)",
+    "auth_mode_label": "Auth-Mode",
+    "auth_none": "none (keine Auth)",
+    "auth_oauth_cli": "oauth_cli (CLI-eigener Login)",
+    "auth_api_key": "api_key (Keyring + ENV-Injection)",
+    "auth_config_file": "config_file (fremdverwaltet)",
+    "field_login_command": "Login-Command",
+    "field_status_command": "Status-Command",
+    "field_secret_keys": "Secret-Keys (comma-separated)",
+    "field_env_vars": "ENV-Vars (comma-separated, 1:1 Reihenfolge)",
+    "risk_safe": "safe (läuft ohne Nachfrage)",
+    "risk_ask": "ask (Bestätigung pro Call)",
+    "risk_block": "block (komplett blockiert)",
+    "field_allow_patterns": "Allow-Patterns (eins pro Zeile)",
+    "field_deny_patterns": "Deny-Patterns (eins pro Zeile)",
+    "steps_skippable": "Schritte können übersprungen werden via 'Speichern'",
+    "done": "Fertig!",
+    "next": "Weiter",
+    "no_entries": "Keine Einträge",
+    "search_word": "suche",
+    "confirm_clear_history_prefix": "Komplette History von",
+    "confirm_clear_history_suffix": "löschen?",
+    "entries_deleted": "Einträge gelöscht",
+    "empty_no_clis": "Keine CLIs im Katalog",
+    "empty_all": "Kein CLI matched die Filter.",
+    "empty_connected": "Keine CLI ist gerade verbunden.",
+    "empty_installed": "Keine CLI ist installiert.",
+    "empty_custom": "Noch keine Custom-CLI registriert — klick 'Add Custom' oben rechts."
+  },
+  "cli_test_hub_view": {
+    "subtitle_tell": "Sag",
+    "subtitle_rest": "in natürlicher Sprache, was es mit deinen CLIs tun soll",
+    "no_risk_tier": "kein Risk-Tier",
+    "connected_clis": "Verbundene CLIs",
+    "available": "verfügbar",
+    "loading_connected": "Lade verbundene CLIs…",
+    "list_load_failed": "CLI-Liste konnte nicht geladen werden",
+    "no_cli_connected": "Keine CLI verbunden",
+    "no_cli_help": "kann erst dann ein Tool aufrufen, wenn mindestens eine CLI verbunden ist (z.B. gcloud, gh, docker). Verbinde eine CLI in der CLIs-Sektion — sie erscheint dann hier automatisch.",
+    "go_to_clis": "Zu den CLIs",
+    "instruction_label": "Anweisung",
+    "instruction_to": "Anweisung an",
+    "placeholder_rest": "was es mit deinen CLIs tun soll…",
+    "cli_hint_label": "CLI-Hinweis (optional)",
+    "cli_hint_aria": "CLI-Hinweis",
+    "let_decide": "entscheiden lassen",
+    "ctrl_cmd_enter": "Strg/Cmd + Enter",
+    "run_instruction": "Anweisung ausführen",
+    "running": "Läuft…",
+    "run": "Ausführen",
+    "picking_tool": "wählt ein Tool und führt den Befehl aus…",
+    "request_failed": "Anfrage fehlgeschlagen",
+    "backend_check_prefix": "Läuft der Backend-Server und ist der Endpunkt",
+    "backend_check_suffix": "verfügbar?",
+    "says": "sagt",
+    "command_failed": "Der Befehl ist fehlgeschlagen.",
+    "duration": "Dauer",
+    "command_label": "Befehl",
+    "steps": "Schritte",
+    "no_tool_found": "hat kein passendes CLI-Tool gefunden. Formuliere die Anweisung konkreter oder gib einen CLI-Hinweis an."
+  },
+  "workflows_view": {
+    "subtitle": "Deine gehosteten AI-Agent-Pipelines — cron-getriggert oder auf Knopfdruck.",
+    "loading": "Lade Workflows…",
+    "load_failed": "Workflows konnten nicht geladen werden",
+    "integrations_need_setup": "Integrationen brauchen Setup",
+    "chat_id_missing": "Chat-ID fehlt",
+    "token_missing": "Token fehlt",
+    "dismiss_banner": "Banner schließen",
+    "stat_active": "Aktiv",
+    "stat_next_run": "Nächster Lauf",
+    "url_to_summarize": "URL zum Zusammenfassen:",
+    "run_failed": "Run fehlgeschlagen",
+    "collapse": "Einklappen",
+    "expand": "Ausklappen",
+    "no_description": "Keine Beschreibung.",
+    "disable": "Deaktivieren",
+    "enable": "Aktivieren",
+    "run_now": "Jetzt ausführen",
+    "delete_confirm_prefix": "Workflow",
+    "delete_confirm_suffix": "wirklich löschen?",
+    "loading_details": "Lade Details…",
+    "error_label": "Fehler",
+    "recent_runs": "Letzte Runs",
+    "never_run": "Noch nie ausgeführt.",
+    "loading_run_details": "Lade Run-Details…",
+    "empty_title": "Noch keine Workflows — beim ersten Start werden 3 Beispiele geseedet.",
+    "empty_hint_pre": "Ist das Backend frisch? Schau in"
+  },
+  "conductor_view": {
+    "new_job": "Neuer Job",
+    "loading_jobs": "Lade Jobs…",
+    "api_unreachable": "Conductor-API antwortet nicht",
+    "stat_active": "Aktiv",
+    "runs_last_30": "Runs (letzte 30)",
+    "delete_confirm_prefix": "Job",
+    "delete_confirm_suffix": "wirklich löschen?",
+    "editor_intro": "Jobs sind JSON — kopierbar, diffbar, git-friendly. Drei Types:",
+    "create": "Anlegen",
+    "empty_jobs": "Noch keine Jobs. Drücke \"Neuer Job\" oben rechts.",
+    "empty_jobs_hint": "Beim ersten Start werden 3 Demo-Jobs geseedet.",
+    "empty_timeline": "Noch keine Runs — klick auf Play bei einem Job.",
+    "json_syntax_error": "JSON-Syntaxfehler"
+  },
+  "chat_tab": {
+    "loading_friends": "Friends laden …",
+    "load_failed": "Friends konnten nicht geladen werden:",
+    "empty_hint": "Noch keine Friends. Klick oben rechts auf",
+    "add_friend": "+ Friend hinzufügen",
+    "select_hint": "Wähle einen Friend aus der Liste links."
+  },
+  "status_tab": {
+    "heading": "Status-Sharing",
+    "intro_part1": "Du entscheidest pro Friend, wie viel von deinem",
+    "intro_part2": "-Status ausgespielt wird. Privacy-First: Default ist",
+    "intro_part3": "(nur online/offline), Änderungen wirken sofort.",
+    "empty_hint": "Noch keine Friends. Wechsle auf den Chat-Tab und klicke",
+    "hard_blacklist_title": "Hard-Blacklist (immer blockiert)",
+    "hard_blacklist_body": "Rohe Utterances, Tool-Args, Stacktraces, Memory-Updates, Window-Titles. Diese verlassen deine Maschine NIE – egal welches Profile aktiv ist und egal was eine Custom-Whitelist sagt.",
+    "error_prefix": "Fehler",
+    "loading_permission": "Berechtigung laden …",
+    "profile_minimal_subline": "Nur online/offline",
+    "profile_minimal_desc": "Friend sieht: Voice-Session aktiv ja/nein, Dauer. Keine Inhalte.",
+    "profile_standard_subline": "+ Mission-Titel",
+    "profile_standard_desc": "Friend sieht zusätzlich: Welche Missions/Tasks gerade laufen, Erfolg, Dauer.",
+    "profile_detailed_subline": "+ OpenClaw-Summary",
+    "profile_detailed_desc": "Friend sieht zusätzlich: Signierte OpenClaw-Summaries (KEINE Utterances)."
+  },
+  "tools_canvas": {
+    "back_tooltip": "Zurück zur Agents-Übersicht",
+    "tool_calls": "Tool-Calls",
+    "active": "aktiv",
+    "duration": "Dauer",
+    "empty": "(leer)",
+    "no_tools_yet": "hat noch keine Tools aufgerufen.",
+    "no_tools_explainer": "Sobald der OpenClaw-Worker ein Tool triggert (z. B. dispatch_to_harness, run_shell, screenshot), erscheint es hier als Icon-Node."
+  },
+  "use_web_socket": {
+    "jarvis_opened": "{name} öffnete"
   }
 }
