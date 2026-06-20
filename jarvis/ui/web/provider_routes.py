@@ -22,6 +22,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from jarvis.brain import provider_test as _provider_test
+from jarvis.brain.model_catalog import CATALOG_PROVIDERS
 from jarvis.codex_auth import CodexAuthService
 from jarvis.core import config as cfg_mod
 from jarvis.core.events import SecretConfigured
@@ -106,6 +107,50 @@ class ProviderTestResponse(BaseModel):
     # is the blocker (ok / bad_key / no_credits / rate_limited / model_unavailable
     # / not_configured). False only for ``unreachable`` / ``error``.
     integration_ok: bool = True
+
+
+# Per-provider model picker. ``CatalogSourceLiteral`` is the honest provenance of
+# the model list (live fetch vs. served-from-cache vs. offline static fallback) —
+# the UI must never present ``static`` as the live catalog.
+CatalogSourceLiteral = Literal["live", "cache", "static"]
+
+
+class BrainModelInfo(BaseModel):
+    id: str
+    label: str
+
+
+class BrainModelsResponse(BaseModel):
+    provider: str
+    current_model: str
+    models: list[BrainModelInfo]
+    source: CatalogSourceLiteral
+    fetched_at: float = 0.0
+
+
+class BrainModelBody(BaseModel):
+    # Empty string is meaningful: reset the provider to its frontier default.
+    model: str = Field(default="", max_length=200)
+    persist: bool = Field(default=True)
+
+
+class BrainModelProbe(BaseModel):
+    """Honest outcome of a real 1-token call against the *selected* model."""
+
+    status: ProviderTestStatusLiteral
+    detail: str = ""
+    latency_ms: float = 0.0
+    integration_ok: bool = True
+
+
+class BrainModelSaveResponse(BaseModel):
+    ok: bool
+    provider: str
+    model: str
+    persisted: bool
+    applied_live: bool
+    restart_required: bool
+    probe: BrainModelProbe
 
 
 # ----------------------------------------------------------------------
@@ -389,6 +434,194 @@ async def test_provider_connection(
         detail=result.detail,
         latency_ms=round(result.latency_ms, 1),
         integration_ok=result.status in _provider_test.INTEGRATION_OK_STATUSES,
+    )
+
+
+# ----------------------------------------------------------------------
+# Per-provider model picker (live catalog + pin + honest probe)
+# ----------------------------------------------------------------------
+
+
+def _get_model_catalog(request: Request):
+    """Lazily build + stash a process-wide :class:`ModelCatalog` on app.state.
+
+    A singleton so the 6 h cache is shared across requests (and its asyncio lock
+    actually serialises concurrent fetches) instead of re-reading the cache file
+    per call.
+    """
+    cat = getattr(request.app.state, "model_catalog", None)
+    if cat is None:
+        from jarvis.brain.model_catalog import ModelCatalog
+
+        cat = ModelCatalog()
+        try:
+            request.app.state.model_catalog = cat
+        except Exception as exc:  # noqa: BLE001 — detached app.state is not an error
+            log.debug("Could not stash model_catalog on app.state: %s", exc)
+    return cat
+
+
+def _current_brain_model(cfg: Any, provider: str) -> str:
+    """The model currently in effect for ``provider`` (override or frontier
+    default), so the picker can highlight the active selection."""
+    from jarvis.brain.manager import get_tier_default_model
+
+    pc = None
+    providers = getattr(getattr(cfg, "brain", None), "providers", None)
+    if isinstance(providers, dict):
+        pc = providers.get(provider)
+    model = getattr(pc, "model", None) if pc is not None else None
+    return model or get_tier_default_model("router", provider) or ""
+
+
+async def _probe_brain_model(
+    provider: str, model: str, *, timeout_s: float = 20.0
+) -> _provider_test.ProviderTestResult:
+    """Run a REAL 1-token call against the *specific* ``model`` and classify it.
+
+    Unlike :func:`provider_test.run_provider_test` (which probes the *configured*
+    model), this validates the model the user just selected — so a typo or a
+    model the key has no access to comes back as ``model_unavailable`` rather
+    than silently "saved but broken". Module-level so it is monkeypatchable.
+    """
+    from jarvis.brain.healthcheck import BrainHealthChecker
+    from jarvis.brain.provider_registry import BrainProviderRegistry
+
+    checker = BrainHealthChecker(BrainProviderRegistry())
+    hr = await checker.probe(provider, model, timeout_s=timeout_s)
+    if getattr(hr, "ok", False):
+        return _provider_test.ProviderTestResult(
+            provider, _provider_test.OK, "", getattr(hr, "duration_ms", 0.0)
+        )
+    err = getattr(hr, "error", None)
+    return _provider_test.ProviderTestResult(
+        provider,
+        _provider_test.classify_provider_error(err),
+        err or "",
+        getattr(hr, "duration_ms", 0.0),
+    )
+
+
+def _require_catalog_brain(provider_id: str):
+    """Validate that ``provider_id`` is a catalog-enumerable brain provider.
+
+    Raises the right HTTP error otherwise: 404 unknown, 400 non-brain, 400 a
+    brain with no enumerable catalog (codex — CLI/OAuth, model id is ignored).
+    """
+    spec = get_spec(provider_id)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Unbekannter Provider: {provider_id}")
+    if spec.tier != "brain":
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{provider_id}' ist kein Brain-Provider (tier={spec.tier}).",
+        )
+    if provider_id not in CATALOG_PROVIDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"'{provider_id}' bietet keine durchsuchbare Modell-Liste "
+                "(Login-/CLI-Provider)."
+            ),
+        )
+    return spec
+
+
+@router.get("/providers/{provider_id}/models")
+async def list_brain_models(
+    provider_id: str, request: Request, refresh: bool = False
+) -> BrainModelsResponse:
+    """Return the live model catalog for ``provider_id`` for the picker dropdown.
+
+    The list comes from the provider's own ``/v1/models`` endpoint (or OpenRouter's
+    public catalog), so a freshly released model appears without any code change.
+    ``?refresh=true`` bypasses the cache. ``source`` is honest: ``live`` / ``cache``
+    / ``static`` (offline fallback).
+    """
+    _require_catalog_brain(provider_id)
+    catalog = _get_model_catalog(request)
+    result = await catalog.list_models(provider_id, force_refresh=refresh)
+    cfg = _resolve_cfg(request)
+    return BrainModelsResponse(
+        provider=provider_id,
+        current_model=_current_brain_model(cfg, provider_id),
+        models=[BrainModelInfo(id=m.id, label=m.label) for m in result.models],
+        source=result.source,
+        fetched_at=result.fetched_at,
+    )
+
+
+@router.put("/providers/{provider_id}/model")
+async def set_brain_model(
+    provider_id: str, body: BrainModelBody, request: Request
+) -> BrainModelSaveResponse:
+    """Pin which MODEL a brain provider uses and verify it actually works.
+
+    Steps:
+      1. Persist to ``[brain.providers.<id>].model`` (durable, survives restart).
+      2. Live-apply to the running brain via ``BrainManager.apply_provider_model``
+         — for the ACTIVE provider this takes effect on the next turn, no restart.
+      3. Run a REAL 1-token probe against the selected model and return the honest
+         status (ok / bad_key / no_credits / model_unavailable / …). The selection
+         is saved regardless (maintainer choice 2026-06-20): a momentary
+         rate-limit must not block setting a valid model, and the probe status
+         tells the user the truth either way.
+
+    Empty ``model`` resets the provider to its frontier default.
+    """
+    _require_catalog_brain(provider_id)
+    model = body.model.strip()
+
+    persisted = False
+    if body.persist:
+        try:
+            from jarvis.core.config_writer import set_brain_provider_model
+
+            set_brain_provider_model(provider_id, model=model)
+            persisted = True
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+            ) from exc
+
+    # Live-apply to the running brain (separate config from app.state — the
+    # manager owns the apply). ``applied_live`` is True only for the ACTIVE brain.
+    brain = getattr(request.app.state, "brain", None)
+    applied_live = False
+    if brain is not None and hasattr(brain, "apply_provider_model"):
+        try:
+            applied_live = bool(brain.apply_provider_model(provider_id, model))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Live model apply for %s failed: %s", provider_id, exc)
+            applied_live = False
+    # Headless (no running brain) is the only case that genuinely needs a restart;
+    # an inactive provider's pin applies the moment the user activates it.
+    restart_required = brain is None
+
+    cfg = _resolve_cfg(request)
+    probe_model = model or _current_brain_model(cfg, provider_id)
+    result = await _probe_brain_model(provider_id, probe_model)
+    probe = BrainModelProbe(
+        status=result.status,
+        detail=result.detail,
+        latency_ms=round(result.latency_ms, 1),
+        integration_ok=result.status in _provider_test.INTEGRATION_OK_STATUSES,
+    )
+
+    await _emit(
+        request,
+        SecretConfigured(key=f"brain.providers.{provider_id}.model", action="set"),
+    )
+    return BrainModelSaveResponse(
+        ok=True,
+        provider=provider_id,
+        model=model,
+        persisted=persisted,
+        applied_live=applied_live,
+        restart_required=restart_required,
+        probe=probe,
     )
 
 

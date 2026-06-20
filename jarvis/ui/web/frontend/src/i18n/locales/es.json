@@ -746,6 +746,20 @@
     "integration_bad_note": "No se pudo contactar al proveedor.",
     "failed": "Prueba fallida"
   },
+  "apikeys_model": {
+    "heading": "Modelo",
+    "model_label": "Modelo",
+    "search_placeholder": "Busca modelos o escribe un id…",
+    "apply": "Aplicar",
+    "refresh": "Actualizar",
+    "saved": "Modelo guardado",
+    "live_note": "(activo ahora)",
+    "restart_note": "(activo en el próximo inicio)",
+    "load_failed": "No se pudieron cargar los modelos",
+    "source_static": "lista sin conexión",
+    "source_static_note": "Catálogo en vivo no disponible — mostrando la lista de respaldo.",
+    "more_hint": "{0} más — refina tu búsqueda"
+  },
   "settings_view": {
     "silence_window": {
       "title": "Pausa para pensar",
@@ -1195,11 +1209,30 @@
       "name_label": "¿Cómo debería llamarse el asistente?",
       "skip": "Omitir la personalización"
     },
+    "system_style": {
+      "title": "Elige tu estilo",
+      "body": "¿Cómo debería aparecer {name} en pantalla? Puedes cambiarlo cuando quieras en Ajustes.",
+      "recommended": "Recomendado",
+      "options": {
+        "whisper_bar": "Barra de Jarvis",
+        "mascot": "Orbe",
+        "none": "Sin superposición"
+      },
+      "captions": {
+        "whisper_bar": "Una barra de voz flotante y delgada, siempre a mano.",
+        "mascot": "Un orbe acompañante flotante que reacciona cuando hablas.",
+        "none": "Solo la ventana de la app — sin elementos flotantes en pantalla."
+      },
+      "applies_next_start": "Guardado — se aplicará la próxima vez que inicies {name}.",
+      "save_error": "No se pudo guardar — se mantiene la opción recomendada. Puedes cambiarlo más tarde en Ajustes.",
+      "skip": "Omitir — mantener la Barra de Jarvis"
+    },
     "finish": {
       "title": "¡Todo listo!",
       "body": "{name} está listo. Di tu palabra de activación o escribe un comando para empezar.",
       "skipped_title": "Omitiste — configúralo cuando quieras en Ajustes:",
-      "start_cta": "Empezar a usar {name}"
+      "start_cta": "Empezar a usar {name}",
+      "boot_notice": "Nota: el primer inicio tarda unos 10 segundos mientras {name} se inicia — es completamente normal."
     }
   },
   "languages_view": {

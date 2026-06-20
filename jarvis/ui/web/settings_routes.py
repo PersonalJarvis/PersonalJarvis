@@ -853,6 +853,76 @@ async def delete_system_prompt() -> dict[str, object]:
     return {"ok": True, "removed": removed, "restart_required": False, **_system_prompt_payload()}
 
 
+# ---------------------------------------------------------------------------
+# Agent instructions (personal standing-instructions file — an AGENTS.md /
+# CLAUDE.md equivalent). The user writes personal preferences here; the file is
+# named after the assistant (e.g. Alex.md) and injected into the brain system
+# prompt as a block distinct from the persona. No restart needed: the brain reads
+# it fresh each turn, so a save/reset applies on the next message.
+# ---------------------------------------------------------------------------
+
+
+class AgentInstructionsBody(BaseModel):
+    # The full Markdown. Whitespace-only is rejected (to clear, DELETE instead).
+    content: str = Field(..., min_length=1)
+
+
+def _agent_instructions_payload(request: Request) -> dict[str, object]:
+    from jarvis.brain import agent_instructions
+
+    cfg = _config(request)
+    content = agent_instructions.read_agent_instructions(cfg)
+    exists = content is not None
+    content = content or ""
+    return {
+        "content": content,
+        "exists": exists,
+        "filename": agent_instructions.instructions_filename(cfg),
+        "template": agent_instructions.seed_template(cfg),
+        "char_count": len(content),
+    }
+
+
+@router.get("/agent-instructions")
+async def get_agent_instructions(request: Request) -> dict[str, object]:
+    """Current agent instructions + the dynamic filename + a starter template."""
+    return _agent_instructions_payload(request)
+
+
+@router.put("/agent-instructions")
+async def put_agent_instructions(
+    body: AgentInstructionsBody, request: Request
+) -> dict[str, object]:
+    """Save the user's standing instructions. Applies on the next turn (no restart)."""
+    from jarvis.brain import agent_instructions
+
+    if not body.content.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Instructions must not be empty. Use reset to clear them.",
+        )
+    try:
+        agent_instructions.save_agent_instructions(_config(request), body.content)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not save: {exc}") from exc
+
+    return {"ok": True, "restart_required": False, **_agent_instructions_payload(request)}
+
+
+@router.delete("/agent-instructions")
+async def delete_agent_instructions(request: Request) -> dict[str, object]:
+    """Clear the user's standing instructions by deleting the file."""
+    from jarvis.brain import agent_instructions
+
+    removed = agent_instructions.reset_agent_instructions(_config(request))
+    return {
+        "ok": True,
+        "removed": removed,
+        "restart_required": False,
+        **_agent_instructions_payload(request),
+    }
+
+
 async def _running_mission_summaries(
     manager: object, ids: list[str]
 ) -> list[dict[str, str]]:

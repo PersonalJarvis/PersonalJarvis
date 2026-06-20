@@ -2,6 +2,7 @@
 import { Brain, Check, Copy, KeyRound, LogIn, LogOut, Mic, Phone, PlugZap, Terminal, Volume2, Loader2, AlertCircle, XCircle } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
+import { BrainModelSelector } from "@/components/BrainModelSelector";
 import { SubagentSection } from "@/components/SubagentSection";
 import { TelephonyPanel } from "@/views/TelephonyView";
 import { WikiProviderCard } from "@/views/settings/WikiProviderCard";
@@ -295,6 +296,16 @@ function ProviderCard({
         onChanged={onChanged}
         onSavedActivate={handleSavedActivate}
       />
+
+      {/* Model picker — only for brain providers with a stored API key. The
+          live catalog comes from the provider's own /v1/models, so newly
+          released models appear without a code change. Codex (auth_mode
+          "codex") renders the login widget instead and has no model picker. */}
+      {descriptor.tier === "brain" &&
+        descriptor.auth_mode === "api_key" &&
+        descriptor.configured && (
+          <BrainModelSelector providerId={descriptor.id} />
+        )}
 
       <ProviderTestControl providerId={descriptor.id} />
     </div>

@@ -746,6 +746,20 @@
     "integration_bad_note": "Provider konnte nicht erreicht werden.",
     "failed": "Test fehlgeschlagen"
   },
+  "apikeys_model": {
+    "heading": "Modell",
+    "model_label": "Modell",
+    "search_placeholder": "Modell suchen oder ID eintippen…",
+    "apply": "Übernehmen",
+    "refresh": "Aktualisieren",
+    "saved": "Modell gespeichert",
+    "live_note": "(ab sofort aktiv)",
+    "restart_note": "(aktiv ab nächstem Start)",
+    "load_failed": "Modelle konnten nicht geladen werden",
+    "source_static": "Offline-Liste",
+    "source_static_note": "Live-Katalog nicht erreichbar — gepflegte Fallback-Liste.",
+    "more_hint": "{0} weitere — Suche verfeinern"
+  },
   "settings_view": {
     "silence_window": {
       "title": "Denkpause",
@@ -1195,11 +1209,30 @@
       "name_label": "Wie soll sich der Assistent nennen?",
       "skip": "Personalisierung überspringen"
     },
+    "system_style": {
+      "title": "Wähle deinen Stil",
+      "body": "Wie soll {name} auf dem Bildschirm erscheinen? Du kannst das jederzeit in den Einstellungen ändern.",
+      "recommended": "Empfohlen",
+      "options": {
+        "whisper_bar": "Jarvis-Leiste",
+        "mascot": "Orb",
+        "none": "Kein Overlay"
+      },
+      "captions": {
+        "whisper_bar": "Eine schmale schwebende Sprachleiste, immer griffbereit.",
+        "mascot": "Ein schwebender Begleiter-Orb, der auf deine Stimme reagiert.",
+        "none": "Nur das App-Fenster — kein schwebendes Element auf dem Bildschirm."
+      },
+      "applies_next_start": "Gespeichert — wird beim nächsten Start von {name} aktiv.",
+      "save_error": "Konnte das nicht speichern — die empfohlene Voreinstellung bleibt. Du kannst es später in den Einstellungen ändern.",
+      "skip": "Überspringen — Jarvis-Leiste behalten"
+    },
     "finish": {
       "title": "Alles bereit!",
       "body": "{name} ist startklar. Sag dein Aktivierungswort oder tippe einen Befehl, um zu beginnen.",
       "skipped_title": "Du hast übersprungen — jederzeit in den Einstellungen nachholbar:",
-      "start_cta": "{name} verwenden"
+      "start_cta": "{name} verwenden",
+      "boot_notice": "Hinweis: Der erste Start dauert etwa 10 Sekunden, während {name} hochfährt — das ist völlig normal."
     }
   },
   "languages_view": {

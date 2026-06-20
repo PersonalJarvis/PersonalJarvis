@@ -103,6 +103,43 @@ async def test_all_providers_fail_publishes_response_generated_for_transcript():
 
 
 @pytest.mark.asyncio
+async def test_success_reply_language_is_resolved_not_looks_german():
+    """A successful reply's ResponseGenerated.language must honor the resolved
+    turn language (de/en/es), not the binary _looks_german gate that silently
+    tags every non-German reply "en" and so drops Spanish (Runtime Output
+    Language doctrine). A Spanish-pinned user's reply must be tagged "es".
+    """
+    bus = EventBus()
+    seen: list[ResponseGenerated] = []
+
+    async def _capture(event: ResponseGenerated) -> None:
+        seen.append(event)
+
+    bus.subscribe(ResponseGenerated, _capture)
+
+    config = JarvisConfig()
+    config.brain.primary = "gemini"
+    config.brain.providers["gemini"] = BrainProviderConfig(model="gemini-flash")
+    manager = BrainManager(config=config, bus=bus, tools={})
+    manager._registry._loaded = True
+    manager._reply_language = "es"  # user pinned Spanish
+
+    manager._brain_cache[("gemini", "gemini-flash")] = FakeBrain(
+        text_response="Hola, ¿qué tal?"
+    )
+    manager._build_fallback_chain = lambda level: [("gemini", "gemini-flash")]
+
+    reply = await manager.generate("hola", use_history=False)
+
+    assert reply.strip()
+    assert len(seen) == 1
+    assert seen[0].language == "es", (
+        "success reply tagged with _looks_german binary instead of the resolved "
+        "turn language — Spanish dropped to English"
+    )
+
+
+@pytest.mark.asyncio
 async def test_router_picks_deep_for_research_intent():
     """Integration: deep-Intent → deep_model in Chain zuerst."""
     bus = EventBus()

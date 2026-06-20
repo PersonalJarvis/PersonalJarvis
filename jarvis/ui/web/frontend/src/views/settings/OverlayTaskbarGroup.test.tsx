@@ -33,10 +33,8 @@ vi.mock("@/hooks/useMuteMusic", () => ({
   useMuteMusic: () => ({ enabled: false, loading: false, setEnabled: vi.fn() }),
 }));
 
-import {
-  OverlayTaskbarGroup,
-  NonePreview,
-} from "@/views/settings/OverlayTaskbarGroup";
+import { OverlayTaskbarGroup } from "@/views/settings/OverlayTaskbarGroup";
+import { NonePreview } from "@/components/overlay/OverlayStylePreviews";
 
 afterEach(() => {
   cleanup();

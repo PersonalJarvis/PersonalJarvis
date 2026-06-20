@@ -167,6 +167,19 @@ class WhisperBarOverlay:
         OrbBusBridge, which publishes ``ShowWindowRequested`` on fire)."""
         self._on_show_window = callback
 
+    def set_booting(self, active: bool) -> None:
+        """Show the "voice starting up" loading look (active) or revert to the
+        resting pill.
+
+        Driven by OrbBusBridge from the bar's first frame until the speech
+        pipeline reports the wake word is armed (``VoiceBootStatus(ready=True)``).
+        ``show("boot")`` always reveals the bar (a non-persistent bar deiconifies
+        so the user still sees that voice is warming up); ``show("idle")`` then
+        reverts to the bar's normal resting behaviour — the standby pill for a
+        persistent bar, hidden for a non-persistent one.
+        """
+        self.show("boot" if active else "idle")
+
     # ------------------------------------------------------------------ #
     # Lifecycle                                                          #
     # ------------------------------------------------------------------ #

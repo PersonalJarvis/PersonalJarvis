@@ -746,6 +746,20 @@
     "integration_bad_note": "The provider could not be reached.",
     "failed": "Test failed"
   },
+  "apikeys_model": {
+    "heading": "Model",
+    "model_label": "Model",
+    "search_placeholder": "Search models or type a custom id…",
+    "apply": "Apply",
+    "refresh": "Refresh",
+    "saved": "Model saved",
+    "live_note": "(active now)",
+    "restart_note": "(active from next start)",
+    "load_failed": "Could not load models",
+    "source_static": "offline list",
+    "source_static_note": "Live catalog unavailable — showing the maintained fallback list.",
+    "more_hint": "{0} more — refine your search"
+  },
   "settings_view": {
     "silence_window": {
       "title": "Thinking pause",
@@ -1195,11 +1209,30 @@
       "name_label": "What should the assistant call itself?",
       "skip": "Skip personalization"
     },
+    "system_style": {
+      "title": "Choose your style",
+      "body": "How should {name} appear on screen? You can change this any time in Settings.",
+      "recommended": "Recommended",
+      "options": {
+        "whisper_bar": "Jarvis Bar",
+        "mascot": "Orb",
+        "none": "No overlay"
+      },
+      "captions": {
+        "whisper_bar": "A slim floating voice bar, always within reach.",
+        "mascot": "A floating companion orb that reacts as you talk.",
+        "none": "Just the app window — no floating surface on screen."
+      },
+      "applies_next_start": "Saved — this applies the next time you start {name}.",
+      "save_error": "Couldn't save that — the recommended default stays. You can change it later in Settings.",
+      "skip": "Skip — keep the Jarvis Bar"
+    },
     "finish": {
       "title": "You're all set!",
       "body": "{name} is ready. Try saying your wake word, or type a command to begin.",
       "skipped_title": "You skipped — set up anytime in Settings:",
-      "start_cta": "Start using {name}"
+      "start_cta": "Start using {name}",
+      "boot_notice": "Heads up: the first launch takes about 10 seconds while {name} warms up — that's completely normal."
     }
   },
   "languages_view": {
