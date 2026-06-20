@@ -352,6 +352,31 @@ def set_mute_music(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _patch_table(path, "ducking", "enabled", bool(enabled))
 
 
+def set_team_proxy(
+    enabled: bool,
+    url: str,
+    local_providers: list[str],
+    *,
+    path: Path = DEFAULT_CONFIG_FILE,
+) -> None:
+    """Persist client-side team-proxy mode to ``[team_proxy]`` in jarvis.toml.
+
+    Writes ``enabled`` / ``url`` / ``local_providers`` (2026-06-20 team-proxy
+    spec §4). TOML-only (not drift-guarded), like :func:`set_autostart`; the
+    Settings route applies it live, this persists the boot default. The per-user
+    token is a SECRET and is NEVER written here — it lives in the Credential
+    Manager (slot ``team_proxy_token``).
+    """
+    _patch_table(path, "team_proxy", "enabled", bool(enabled))
+    _patch_table(path, "team_proxy", "url", (url or "").strip())
+    _patch_table(
+        path,
+        "team_proxy",
+        "local_providers",
+        [str(p).strip() for p in local_providers if str(p).strip()],
+    )
+
+
 def set_telegram_enabled(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the Telegram channel toggle to ``[integrations.telegram] enabled``.
 
@@ -856,13 +881,14 @@ def set_telephony_config(values: dict[str, object], *, path: Path = DEFAULT_CONF
         _atomic_write(path, out)
 
 
-def _patch_table(path: Path, table: str, key: str, value: str | bool) -> None:
+def _patch_table(path: Path, table: str, key: str, value: str | bool | list[str]) -> None:
     """Set ``[table] key = value`` in the TOML file.
 
     Creates the table if it is absent. Preserves comments and formatting via
     tomlkit, including the optional BOM (see module docstring). ``value`` may be
-    a ``str`` or a ``bool`` — tomlkit serialises ``bool`` as ``true``/``false``
-    (used by the autostart toggle ``[autostart] enabled``).
+    a ``str``, a ``bool`` (serialised as ``true``/``false`` — used by the
+    autostart toggle), or a ``list[str]`` (serialised as a TOML array — used by
+    ``[team_proxy] local_providers``).
     """
     if not path.exists():
         raise FileNotFoundError(f"Config-Datei fehlt: {path}")
