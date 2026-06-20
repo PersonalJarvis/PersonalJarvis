@@ -34,7 +34,7 @@ const SWITCH: Record<ProviderTier, (id: string) => Promise<unknown>> = {
 
 export function ApiKeysStep({ goNext, skip }: StepProps) {
   const t = useT();
-  const { providers, loading, error, refetch } = useProviders();
+  const { providers, loading, error, refetch, setActiveOptimistic } = useProviders();
 
   return (
     <div className="flex flex-col gap-4">
@@ -64,8 +64,11 @@ export function ApiKeysStep({ goNext, skip }: StepProps) {
           scrolls from Brain through Voice, Hearing and the Subagent section —
           the same content as Settings → API Keys, fitted into the modal. The
           max-height keeps the onboarding card inside the viewport; only this
-          list scrolls. */}
-      <div className="-mr-2 max-h-[52vh] space-y-6 overflow-y-auto scrollbar-jarvis pr-2">
+          list scrolls. Symmetric px-2/py-1 (compensated by -mx-2 so the content
+          stays flush with the modal) gives the active card's ring-1 highlight
+          room on every side — overflow-y-auto also clips horizontally, so
+          without left padding the ring was cut off on the left edge. */}
+      <div className="-mx-2 max-h-[52vh] space-y-6 overflow-y-auto scrollbar-jarvis px-2 py-1">
         {TIERS.map((meta) => {
           const list = providers.filter((p) => p.tier === meta.tier);
           if (!list.length) return null;
@@ -76,7 +79,12 @@ export function ApiKeysStep({ goNext, skip }: StepProps) {
               </h3>
               <div className="flex flex-col gap-3">
                 {list.map((p) => (
-                  <ProviderRow key={p.id} provider={p} onChanged={refetch} />
+                  <ProviderRow
+                    key={p.id}
+                    provider={p}
+                    onChanged={refetch}
+                    onActivateOptimistic={setActiveOptimistic}
+                  />
                 ))}
               </div>
             </section>
@@ -102,9 +110,11 @@ export function ApiKeysStep({ goNext, skip }: StepProps) {
 function ProviderRow({
   provider,
   onChanged,
+  onActivateOptimistic,
 }: {
   provider: ProviderDescriptor;
   onChanged: () => void;
+  onActivateOptimistic: (tier: ProviderTier, id: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
 
@@ -118,13 +128,18 @@ function ProviderRow({
 
   async function activate() {
     if (provider.active || !usable || busy) return;
+    // Flip the highlight immediately so the switch feels instant — the backend
+    // call below rebuilds the provider and can take a few seconds. The refetch
+    // afterwards confirms server truth; on failure it rolls the highlight back.
+    onActivateOptimistic(provider.tier, provider.id);
     setBusy(true);
     try {
       await SWITCH[provider.tier](provider.id);
       onChanged();
     } catch {
-      // Activation failed (e.g. backend rejected) — leave the list as-is;
-      // the status chip keeps reflecting the unchanged active provider.
+      // Activation failed (e.g. backend rejected) — refetch to roll the
+      // optimistic highlight back to the true active provider.
+      onChanged();
     } finally {
       setBusy(false);
     }

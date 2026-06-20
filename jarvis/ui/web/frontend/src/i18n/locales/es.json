@@ -40,7 +40,24 @@
     "outputs": "Salidas",
     "socials": "Redes",
     "taskbar": "Barra",
-    "contacts": "Contactos"
+    "contacts": "Contactos",
+    "agent_instructions": "{name}.md"
+  },
+  "agent_instructions": {
+    "subtitle": "Tus preferencias personales sobre cómo el asistente trabaja contigo — tono, idioma, valores por defecto, hechos permanentes. Separado del System Prompt y nunca anula la seguridad ni las confirmaciones.",
+    "active_badge": "Activo",
+    "empty_badge": "Vacío",
+    "editor_label": "Tus instrucciones (Markdown)",
+    "placeholder": "Escribe tus preferencias personales…",
+    "chars": "{0} caracteres",
+    "empty_hint": "Vacío — carga la plantilla para empezar.",
+    "save": "Guardar instrucciones",
+    "saving": "Guardando…",
+    "saved": "Instrucciones guardadas",
+    "reset": "Vaciar",
+    "reset_done": "Instrucciones vaciadas",
+    "load_template": "Empezar con plantilla",
+    "applies_next_turn": "Se aplica en el próximo mensaje de tu asistente — sin reinicio."
   },
   "extensions": {
     "tab_skills": "Habilidades",
@@ -808,7 +825,7 @@
     },
     "wake_word": {
       "title": "Palabra de activación",
-      "description": "Frase de activación para el modo de voz. Escribe la tuya.",
+      "description": "La frase que dices en voz alta para activar el modo de voz — tu disparador hablado. Escribe la tuya.",
       "phrase_label": "Frase de activación",
       "phrase_placeholder": "p. ej. Jonas",
       "engine_label": "Motor de detección",
@@ -864,7 +881,7 @@
     },
     "assistant_name": {
       "title": "Nombre del asistente",
-      "description": "Cómo se llama el asistente a sí mismo en las respuestas. Déjalo vacío para seguir la palabra de activación.",
+      "description": "Cómo se llama el asistente a sí mismo en las respuestas. Esto NO es la palabra de activación que dices para activarlo — define el disparador hablado en el panel «Palabra de activación» de abajo. Déjalo vacío para seguir la palabra de activación.",
       "label": "Nombre",
       "current": "El asistente se llama «{0}».",
       "auto_hint": "Vacío — sigue la palabra de activación (actualmente «{0}»).",
@@ -1207,6 +1224,7 @@
     "persona": {
       "title": "Hazlo tuyo (opcional)",
       "name_label": "¿Cómo debería llamarse el asistente?",
+      "name_placeholder": "Escribe un nombre…",
       "skip": "Omitir la personalización"
     },
     "system_style": {
@@ -1223,7 +1241,9 @@
         "mascot": "Un orbe acompañante flotante que reacciona cuando hablas.",
         "none": "Solo la ventana de la app — sin elementos flotantes en pantalla."
       },
-      "applies_next_start": "Guardado — se aplicará la próxima vez que inicies {name}.",
+      "needs_restart": "Casi listo — este estilo se aplica tras un breve reinicio.",
+      "restart_now": "Reiniciar ahora",
+      "restarting": "Reiniciando…",
       "save_error": "No se pudo guardar — se mantiene la opción recomendada. Puedes cambiarlo más tarde en Ajustes.",
       "skip": "Omitir — mantener la Barra de Jarvis"
     },
