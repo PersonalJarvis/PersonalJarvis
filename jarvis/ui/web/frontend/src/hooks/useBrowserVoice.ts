@@ -9,9 +9,14 @@
  * context rate and does no resampling itself.
  *
  * RUNTIME IS BROWSER-ONLY: AudioWorklet + getUserMedia + Web Audio playback are
- * not exercisable in jsdom/Vitest. This module compiles and is structured to the
- * standard streaming-PCM pattern, but it needs a real-browser smoke test
- * (localhost or https — AudioWorklet requires a secure context).
+ * not exercisable in jsdom/Vitest. This module compiles and follows the standard
+ * streaming-PCM pattern, but it needs a real-browser smoke test (localhost or
+ * https — AudioWorklet requires a secure context).
+ *
+ * Lifecycle is generation-guarded: start() captures a generation id and abandons
+ * itself (cleaning up only its own local stream/context) if stop() or a newer
+ * start() bumped the generation across an await — so a Stop during a slow mic
+ * permission prompt never leaks a dangling track.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -38,6 +43,9 @@ const TTS_SAMPLE_RATE = 24_000;
  * The AudioWorklet processor source, loaded as a Blob module. It converts each
  * Float32 input block to Int16 and posts the raw buffer to the main thread; it
  * writes no output (stays connected to the graph only so `process` keeps firing).
+ * The conversion is asymmetric ON PURPOSE: signed 16-bit spans -32768..+32767,
+ * so the negative side scales by 0x8000 and the positive side by 0x7fff — do NOT
+ * "simplify" it to one factor (that clips one polarity).
  */
 const PCM_WORKLET_SRC = `
 class PCMCaptureProcessor extends AudioWorkletProcessor {
@@ -73,11 +81,33 @@ export function useBrowserVoice(cb: BrowserVoiceCallbacks = {}) {
   const ctxRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const nodeRef = useRef<AudioWorkletNode | null>(null);
+  const micSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   // Playback scheduling cursor (seconds, in the AudioContext clock).
   const playCursorRef = useRef(0);
   const sourcesRef = useRef<AudioBufferSourceNode[]>([]);
+  // Bumped on every start()/stop() so an in-flight start() can detect it was
+  // superseded across an await and bail without touching the shared refs.
+  const startGenRef = useRef(0);
+  const activeRef = useRef(false);
+
+  /** Drop everything still queued for playback (barge-in / tts_cancel / stop). */
+  const flushPlayback = useCallback(() => {
+    const queued = sourcesRef.current;
+    sourcesRef.current = []; // clear BEFORE stopping so a deferred onended can't re-track
+    for (const src of queued) {
+      src.onended = null; // disarm the async onended filter (it would race a new chunk)
+      try {
+        src.stop();
+      } catch {
+        /* already stopped */
+      }
+    }
+    playCursorRef.current = ctxRef.current?.currentTime ?? 0;
+  }, []);
 
   const stop = useCallback(() => {
+    startGenRef.current++; // abandon any in-flight start()
+    activeRef.current = false;
     const safe = (fn: () => void) => {
       try {
         fn();
@@ -85,33 +115,27 @@ export function useBrowserVoice(cb: BrowserVoiceCallbacks = {}) {
         /* teardown is best-effort */
       }
     };
+    // Stop queued playback BEFORE closing the context (avoids InvalidStateError).
+    flushPlayback();
     safe(() => nodeRef.current?.disconnect());
+    safe(() => micSourceRef.current?.disconnect());
     safe(() => streamRef.current?.getTracks().forEach((t) => t.stop()));
     safe(() => {
-      if (wsRef.current && wsRef.current.readyState <= WebSocket.OPEN) wsRef.current.close();
+      const ws = wsRef.current;
+      if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
+        ws.close();
+      }
     });
     safe(() => ctxRef.current?.close());
     nodeRef.current = null;
+    micSourceRef.current = null;
     streamRef.current = null;
     wsRef.current = null;
     ctxRef.current = null;
     sourcesRef.current = [];
     playCursorRef.current = 0;
     setActive(false);
-  }, []);
-
-  /** Drop everything still queued for playback (barge-in / tts_cancel). */
-  const flushPlayback = useCallback(() => {
-    for (const src of sourcesRef.current) {
-      try {
-        src.stop();
-      } catch {
-        /* already stopped */
-      }
-    }
-    sourcesRef.current = [];
-    playCursorRef.current = ctxRef.current?.currentTime ?? 0;
-  }, []);
+  }, [flushPlayback]);
 
   /** Schedule one inbound 24 kHz int16 PCM chunk gaplessly after the last. */
   const playPcmChunk = useCallback((buf: ArrayBuffer) => {
@@ -135,32 +159,55 @@ export function useBrowserVoice(cb: BrowserVoiceCallbacks = {}) {
   }, []);
 
   const start = useCallback(async () => {
-    if (active) return;
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
+    if (activeRef.current) return;
+    const myGen = ++startGenRef.current;
+    const superseded = () => startGenRef.current !== myGen;
 
-      const ctx = new AudioContext();
-      ctxRef.current = ctx;
-      playCursorRef.current = ctx.currentTime;
-
-      const blob = new Blob([PCM_WORKLET_SRC], { type: "application/javascript" });
-      const url = URL.createObjectURL(blob);
+    let stream: MediaStream | null = null;
+    let ctx: AudioContext | null = null;
+    const cleanupLocal = () => {
       try {
-        await ctx.audioWorklet.addModule(url);
-      } finally {
-        URL.revokeObjectURL(url);
+        stream?.getTracks().forEach((t) => t.stop());
+      } catch {
+        /* best-effort */
       }
+      try {
+        void ctx?.close();
+      } catch {
+        /* best-effort */
+      }
+    };
 
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (superseded()) return cleanupLocal();
+
+      ctx = new AudioContext();
+      // Created in a microtask continuation (after the await), so Chrome/Safari
+      // start it suspended — resume or playback is silent.
+      if (ctx.state === "suspended") await ctx.resume();
+      if (superseded()) return cleanupLocal();
+
+      const blobUrl = URL.createObjectURL(
+        new Blob([PCM_WORKLET_SRC], { type: "application/javascript" }),
+      );
+      try {
+        await ctx.audioWorklet.addModule(blobUrl);
+      } finally {
+        URL.revokeObjectURL(blobUrl);
+      }
+      if (superseded()) return cleanupLocal();
+
+      // No awaits past this point: build the graph + sockets, then commit to the
+      // shared refs atomically so a concurrent start()/stop() cannot interleave.
+      const sampleRate = Math.round(ctx.sampleRate);
       const ws = new WebSocket(browserVoiceWsUrl());
       ws.binaryType = "arraybuffer";
-      wsRef.current = ws;
-
       ws.onopen = () => {
         ws.send(
           JSON.stringify({
             type: "audio_start",
-            sample_rate: Math.round(ctx.sampleRate),
+            sample_rate: sampleRate,
             language: cbRef.current.languageCode ?? "",
           }),
         );
@@ -194,7 +241,11 @@ export function useBrowserVoice(cb: BrowserVoiceCallbacks = {}) {
         }
       };
       ws.onerror = () => cbRef.current.onError?.("browser-voice connection error");
-      ws.onclose = () => stop();
+      // Only tear down if we still own this socket — prevents a double-stop when
+      // stop() itself triggered the close (stop() nulls wsRef first).
+      ws.onclose = () => {
+        if (wsRef.current === ws) stop();
+      };
 
       const node = new AudioWorkletNode(ctx, "pcm-capture");
       node.port.onmessage = (e: MessageEvent) => {
@@ -205,14 +256,21 @@ export function useBrowserVoice(cb: BrowserVoiceCallbacks = {}) {
       // Keep the node in the graph so `process` fires; it writes silence, so
       // routing it to the destination does not echo the microphone.
       node.connect(ctx.destination);
-      nodeRef.current = node;
 
+      streamRef.current = stream;
+      ctxRef.current = ctx;
+      wsRef.current = ws;
+      nodeRef.current = node;
+      micSourceRef.current = micSource;
+      playCursorRef.current = ctx.currentTime;
+      activeRef.current = true;
       setActive(true);
     } catch (err) {
       cbRef.current.onError?.(err instanceof Error ? err.message : String(err));
-      stop();
+      cleanupLocal();
+      if (!superseded()) stop();
     }
-  }, [active, playPcmChunk, flushPlayback, stop]);
+  }, [playPcmChunk, flushPlayback, stop]);
 
   /** Tear down on unmount. */
   useEffect(() => stop, [stop]);

@@ -69,7 +69,7 @@ export default function BrowserVoiceView() {
       {error && <p className="text-sm text-red-500">{error}</p>}
       <ul className="flex flex-col gap-1 text-sm">
         {transcripts.map((text, i) => (
-          <li key={i} className="rounded bg-muted/40 px-3 py-1.5">
+          <li key={`${i}-${text}`} className="rounded bg-muted/40 px-3 py-1.5">
             {text}
           </li>
         ))}
