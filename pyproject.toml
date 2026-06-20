@@ -223,6 +223,7 @@ openai = "jarvis.plugins.brain.openai:OpenAIBrain"
 gemini = "jarvis.plugins.brain.gemini:GeminiBrain"
 grok = "jarvis.plugins.brain.grok:GrokBrain"
 codex = "jarvis.plugins.brain.codex:CodexBrain"
+antigravity = "jarvis.plugins.brain.antigravity:AntigravityBrain"
 # Ollama-Provider 2026-04-21 entfernt — User-Entscheidung (reine API-Provider-Chain).
 
 [project.entry-points."jarvis.harness"]
