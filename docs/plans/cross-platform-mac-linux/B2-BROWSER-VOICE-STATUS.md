@@ -35,17 +35,14 @@ new optional `fallbackLabel` on `NavItem` + `resolveNavLabel()`, which auto-loca
 the moment the locale key below is added. Whole-project `tsc` is clean and
 `npm run build` succeeds with the view bundled.
 
-### Localized labels — DEFERRED (contested locale files)
-The view + sidebar work in **English today** via the view's `tr()` fallbacks and the
-sidebar's `fallbackLabel`, with no locale-file edit. The de/es localized labels are
-the one remaining piece: the three `i18n/locales/{en,de,es}.json` files are still
-being edited by parallel sessions, so adding keys would sweep that work (`git add -p`
-hunk-isolation is unavailable here). Paste the `browser_voice` block below into each
-locale when they are quiet, plus a `nav.browser_voice` sidebar key:
-
-```jsonc
-"nav": { "browser_voice": "Browser Voice" /* de: "Browser-Sprache", es: "Voz del navegador" */ }
-```
+### Localized labels — DONE (`e90102f2`)
+The de/es labels are committed: `nav.browser_voice` + the `browser_voice.{title,
+subtitle,start,stop,listening,speaking}` block landed in en/de/es. The sidebar +
+view now render localized (de "Browser-Sprache", es "Voz del navegador"); the
+`fallbackLabel` is now a no-op. Done with the maintainer's explicit authorization —
+because hunk-isolation (`git add -p`) is unavailable in this runtime, the commit
+also carried the parallel sessions' valid, build-clean in-flight i18n keys
+(agent_instructions / apikeys_model / onboarding); no foreign work was lost.
 
 ### Real-browser smoke — needs a human at the mic (parallel to the HW sign-off)
 The frontend is **build-verified** (the view bundles; `tsc` clean), but AudioWorklet
