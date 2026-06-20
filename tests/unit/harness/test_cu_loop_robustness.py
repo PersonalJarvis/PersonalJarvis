@@ -23,6 +23,7 @@ import pytest
 
 import jarvis.harness.screenshot_only_loop as loop_mod
 from jarvis.core.protocols import HarnessResult, HarnessTask, Observation
+from jarvis.core.protocols import BrainDelta
 from jarvis.harness.computer_use_context import ComputerUseContext
 from jarvis.harness.screenshot_only_loop import (
     CULoopError,
@@ -124,6 +125,53 @@ class FakeExecutor:
                       user_utterance: str = "", trace_id: Any = None) -> FakeToolResult:
         self.calls.append((tool.name, dict(args)))
         return FakeToolResult()
+
+
+class _StreamingBrain:
+    """Minimal provider-shaped brain for CU provider-chain tests."""
+
+    name = "streaming-brain"
+    context_window = 8192
+    supports_tools = False
+    supports_vision = True
+
+    def __init__(self, *, text: str = "", exc: Exception | None = None) -> None:
+        self.text = text
+        self.exc = exc
+        self.calls = 0
+
+    async def complete(self, req: Any):  # type: ignore[no-untyped-def]
+        self.calls += 1
+        if self.exc is not None:
+            raise self.exc
+        if self.text:
+            yield BrainDelta(content=self.text)
+        yield BrainDelta(finish_reason="stop")
+
+    def estimate_cost(self, req: Any) -> float:
+        return 0.0
+
+
+class _FallbackChainManager:
+    """BrainManager-shaped fake that exposes a configured provider chain."""
+
+    active_provider = "primary"
+
+    def __init__(self) -> None:
+        self.primary = _StreamingBrain(exc=RuntimeError("primary down"))
+        self.fallback = _StreamingBrain(text='{"action": "done"}')
+        self.requested: list[tuple[str, str | None]] = []
+
+    def _build_fallback_chain(self, level: str) -> list[tuple[str, str | None]]:
+        return [("primary", "bad-model"), ("fallback", "good-model")]
+
+    def _get_brain(self, name: str, model: str | None = None) -> _StreamingBrain:
+        self.requested.append((name, model))
+        if name == "primary":
+            return self.primary
+        if name == "fallback":
+            return self.fallback
+        raise AssertionError(f"unexpected provider {name!r}")
 
 
 def make_ctx(brain: FakeBrain, *, titles: list[str] | None = None,
@@ -279,6 +327,36 @@ async def test_call_brain_raises_on_unusable_manager() -> None:
     )
     with pytest.raises(CULoopError):
         await _call_brain(ctx, observation=obs, user_goal="g", history_text="")
+
+
+async def test_call_brain_uses_provider_fallback_chain() -> None:
+    """CU must not bypass BrainManager fallbacks.
+
+    Live regression 2026-06-20: the normal chat turn fell back from a broken
+    Antigravity CLI provider to Grok, but Computer-Use called only
+    ``active_provider``. The CU loop then retried the same broken provider
+    three times and exited with parse/confusion instead of using the configured
+    fallback provider.
+    """
+    manager = _FallbackChainManager()
+    ctx = make_ctx(FakeBrain())
+    ctx.brain_manager = manager
+    obs = Observation(
+        trace_id=uuid4(),
+        timestamp_ns=time.time_ns(),
+        screenshot_path=None,
+        screenshot_hash="x",
+    )
+
+    raw = await _call_brain(ctx, observation=obs, user_goal="open chrome", history_text="")
+
+    assert raw == '{"action": "done"}'
+    assert manager.primary.calls == 1
+    assert manager.fallback.calls == 1
+    assert manager.requested == [
+        ("primary", "bad-model"),
+        ("fallback", "good-model"),
+    ]
 
 
 def test_decide_native_batch_defined_only_once() -> None:

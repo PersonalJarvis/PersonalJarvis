@@ -26,7 +26,22 @@ from jarvis.board.sync import (
     _load_or_create_privkey,
     _resolve_admin_token,
 )
-from board_backend.crypto import canonical_json, sign
+try:
+    from board_backend.crypto import canonical_json, sign
+except ModuleNotFoundError:
+    # `board_backend` is a SEPARATE, optional package (the Board-federation
+    # backend). The base app MUST import this module without it (cloud-first:
+    # a fresh `pip install .` has no board_backend), so the whole server still
+    # boots. The federation routes then return a clear 503 when actually called,
+    # instead of crashing the server at import time.
+    def _federation_unavailable(*_a: Any, **_k: Any) -> Any:  # type: ignore[misc]
+        raise HTTPException(
+            status_code=503,
+            detail="Board federation is unavailable — the optional 'board_backend' package is not installed.",
+        )
+
+    canonical_json = _federation_unavailable  # type: ignore[assignment]
+    sign = _federation_unavailable  # type: ignore[assignment]
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/board/federation", tags=["board-federation"])

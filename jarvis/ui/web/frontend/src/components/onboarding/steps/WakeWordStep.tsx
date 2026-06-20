@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useWakeWord } from "@/hooks/useWakeWord";
 import { useT } from "@/i18n";
+import { deriveAssistantName } from "@/lib/deriveAssistantName";
 import type { StepProps } from "../OnboardingFlow";
 
 export function WakeWordStep({ onb, goNext }: StepProps) {
@@ -14,6 +15,7 @@ export function WakeWordStep({ onb, goNext }: StepProps) {
 
   const trimmed = word.trim();
   const canSave = trimmed.length >= 2 && ack && !busy;
+  const derivedName = deriveAssistantName(`Hey ${trimmed}`);
   const refs = onb.state?.legal_references ?? [];
 
   async function onSave() {
@@ -51,6 +53,12 @@ export function WakeWordStep({ onb, goNext }: StepProps) {
           className="w-full rounded-md border border-muted-foreground/25 bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
         />
       </div>
+
+      {trimmed.length >= 2 && derivedName ? (
+        <p className="text-xs text-muted-foreground">
+          {t("onboarding.wake_word.derived_name").replace("{0}", derivedName)}
+        </p>
+      ) : null}
 
       <p className="text-xs text-muted-foreground">{t("onboarding.wake_word.notice")}</p>
       <div className="text-xs">

@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-AuthMode = Literal["api_key", "codex", "none"]
+AuthMode = Literal["api_key", "codex", "antigravity", "none"]
 Tier = Literal["brain", "tts", "stt"]
 
 
@@ -69,6 +69,22 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         auth_mode="api_key",
         secret_keys=("openrouter_api_key",),
         dashboard_url="https://openrouter.ai/keys",
+    ),
+    # ── Brain: Google subscription via the official Antigravity/Gemini CLI ──
+    # OAuth-only (no API-key slot): we drive the official ``agy``/``gemini`` CLI
+    # as a subprocess over the user's "Sign in with Google" login — billed
+    # against the Google subscription, no Gemini API key. Mirror of the Codex
+    # ChatGPT-login path. The UI renders an OAuth connect widget (auth_mode).
+    ProviderSpec(
+        id="antigravity",
+        label="Antigravity (Google subscription)",
+        tier="brain",
+        auth_mode="antigravity",
+        secret_keys=(),
+        dashboard_url="https://antigravity.google",
+        login_cli=("agy", "login"),
+        install_hint="Install Antigravity (agy) or sign in with the Gemini CLI",
+        credential_path_hint="~/.gemini/oauth_creds.json",
     ),
     ProviderSpec(
         id="gemini",

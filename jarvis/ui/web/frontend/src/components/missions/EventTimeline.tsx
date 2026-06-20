@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Clock } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { cn } from "@/lib/utils";
+import { useT } from "@/i18n";
 import type { EventEnvelope } from "@/types/missions";
 import { useMissionsStore } from "./store";
 
@@ -22,6 +23,7 @@ const ACTOR_COLOR: Record<string, string> = {
 };
 
 export function EventTimeline() {
+  const t = useT();
   const events = useMissionsStore(
     useShallow((s) => {
       if (!s.selectedMissionId) return [] as EventEnvelope[];
@@ -47,7 +49,7 @@ export function EventTimeline() {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-xs text-muted-foreground">
         <Clock className="h-7 w-7 text-muted-foreground/50" />
-        <p>Noch keine Events fuer diese Mission.</p>
+        <p>{t("missions_view.no_events")}</p>
       </div>
     );
   }

@@ -189,3 +189,21 @@ def test_ad6_table_is_complete() -> None:
         "AD-6 Amendment-Tabelle weicht ab — bitte docs/openclaw-bridge.md "
         "und MAPPINGS synchron halten."
     )
+
+
+# --- Antigravity (Google subscription via OAuth CLI) subagent slug ---
+
+
+def test_antigravity_subagent_slugs_ssot() -> None:
+    """The Antigravity subagent slug set is the SSoT mirror of CODEX_SUBAGENT_SLUGS:
+    it routes to the dedicated OAuth-CLI worker, NOT through MAPPINGS (no OpenClaw
+    provider slug)."""
+    from jarvis.missions.worker_runtime.provider_map import (
+        ANTIGRAVITY_SUBAGENT_CANONICAL,
+        ANTIGRAVITY_SUBAGENT_SLUGS,
+    )
+
+    assert "antigravity" in ANTIGRAVITY_SUBAGENT_SLUGS
+    assert ANTIGRAVITY_SUBAGENT_CANONICAL == "antigravity"
+    # Not a MAPPINGS provider (OAuth CLI has no OpenClaw slug, like codex).
+    assert "antigravity" not in JARVIS_TO_OPENCLAW

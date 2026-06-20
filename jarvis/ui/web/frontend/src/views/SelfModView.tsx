@@ -9,6 +9,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useEventStore } from "@/store/events";
+import { useT } from "@/i18n";
 
 type AuditEvent = {
   ts: string;
@@ -219,6 +220,7 @@ function AuditEventDetail({
   event: AuditEvent;
   onClose: () => void;
 }) {
+  const t = useT();
   const sensitive = isSensitivePath(event.path);
   // Server hat schon redacted; clientseitig markieren wir das visuell.
   const display = useMemo(() => {
@@ -244,12 +246,12 @@ function AuditEventDetail({
       }}
     >
       <button onClick={onClose} style={{ marginBottom: 12 }}>
-        × Schließen
+        × {t("common.close")}
       </button>
       <h3>Audit-Event</h3>
       {sensitive && (
         <p style={{ color: "#fa0" }}>
-          ⚠ Sensitive Pfad — Werte serverseitig redacted (Plan-§AP-2).
+          ⚠ {t("self_mod_view.sensitive_path_notice")}
         </p>
       )}
       <pre style={{ fontSize: 11, background: "#000", padding: 8 }}>
@@ -353,31 +355,31 @@ function BackupsList() {
 // ----------------------------------------------------------------------
 
 export default function SelfModView() {
+  const t = useT();
   const assistantName = useEventStore((s) => s.assistantName);
   const [tab, setTab] = useState<Tab>("history");
   return (
     <div style={{ padding: 16 }}>
       <h2>Self-Modification</h2>
       <p style={{ fontSize: 13, color: "#aaa" }}>
-        Read-only Sicht auf Audit-Trail, mutierbare Settings und Backups.
-        Mutationen erfolgen ausschließlich via Voice/Chat — diese View
-        zeigt nur, was {assistantName} an sich selbst geändert hat.
+        {t("self_mod_view.intro_a")} {t("self_mod_view.intro_b")}{" "}
+        {assistantName} {t("self_mod_view.intro_c")}
       </p>
       <nav style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        {(["history", "mutable", "backups"] as Tab[]).map((t) => (
+        {(["history", "mutable", "backups"] as Tab[]).map((tabId) => (
           <button
-            key={t}
-            onClick={() => setTab(t)}
+            key={tabId}
+            onClick={() => setTab(tabId)}
             style={{
               padding: "6px 12px",
-              background: tab === t ? "#444" : "#222",
+              background: tab === tabId ? "#444" : "#222",
               color: "#fff",
               border: "none",
               borderRadius: 4,
               cursor: "pointer",
             }}
           >
-            {t === "history" ? "History" : t === "mutable" ? "Settings" : "Backups"}
+            {tabId === "history" ? "History" : tabId === "mutable" ? "Settings" : "Backups"}
           </button>
         ))}
       </nav>

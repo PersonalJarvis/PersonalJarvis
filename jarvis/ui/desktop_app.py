@@ -1178,13 +1178,18 @@ class DesktopApp:
             logger.opt(exception=exc).warning("Virtual mouse overlay not startable")
             self._virtual_cursor = None
 
-    def _build_overlay_surface(self, style: str):
+    def _build_overlay_surface(self, style: str, *, boot: bool = False):
         """Construct (and start) the overlay surface for a display style.
 
         Returns a ``NullOverlay`` for ``"none"`` (no Tk window, no-op surface),
         a started ``WhisperBarOverlay`` for ``"whisper_bar"``, or a started
         mascot ``OrbOverlay`` for anything else. Shared by boot wiring and the
         live ``swap_overlay`` path so the two never drift.
+
+        ``boot=True`` (only the first-boot call) builds the persistent bar
+        WITHDRAWN; the boot wiring then schedules its reveal on
+        ``VoiceBootStatus(ready=True)``. A non-boot caller must leave ``boot``
+        False so the bar maps immediately (it has no reveal task to wait on).
         """
         if style == "none":
             from jarvis.ui.whisperbar import NullOverlay
@@ -1193,9 +1198,15 @@ class DesktopApp:
         if style == "whisper_bar":
             from jarvis.ui.whisperbar import WhisperBarOverlay
 
+            # start_hidden only at boot: a persistent bar must NOT map its window
+            # before the speech pipeline can hear the user — the OrbBusBridge
+            # reveals it on VoiceBootStatus(ready=True). A runtime rebuild
+            # (boot=False) shows immediately; the non-persistent bar starts
+            # hidden regardless (it pops on a session).
             surface = WhisperBarOverlay(
                 persistent=self.cfg.ui.bar_persistent,
                 accent=self.cfg.ui.bar_accent,
+                start_hidden=boot,
             )
         else:  # "mascot" (and any legacy style value)
             from ui.orb.overlay import OrbOverlay
@@ -1451,8 +1462,9 @@ class DesktopApp:
                 from ui.orb.bus_bridge import OrbBusBridge
 
                 # NullOverlay for "none" still gets a bridge, so a live switch to
-                # bar/mascot works without a restart.
-                surface = self._build_overlay_surface(orb_style)
+                # bar/mascot works without a restart. boot=True builds the
+                # persistent bar withdrawn — revealed below on voice-ready.
+                surface = self._build_overlay_surface(orb_style, boot=True)
                 hide_on_idle = (
                     (not self.cfg.ui.bar_persistent)
                     if orb_style == "whisper_bar"
@@ -1460,6 +1472,15 @@ class DesktopApp:
                 )
                 bridge = OrbBusBridge(bus=bus, orb=surface, hide_on_idle=hide_on_idle)
                 bridge.attach()
+                # Reveal the (start-hidden) persistent bar only once voice is
+                # ready to listen — gated on VoiceBootStatus(ready=True), with a
+                # bounded fallback so a voice-offline host still gets its bar.
+                # loop.create_task works before run_forever (it just schedules);
+                # the boot surface starts withdrawn, so this never flickers.
+                loop.create_task(
+                    bridge.reveal_bar_when_voice_ready(),
+                    name="overlay-boot-reveal",
+                )
                 self._orb = surface
                 self._bridge = bridge
                 # Cache the boot surface so a later swap back to it reuses the
@@ -1611,12 +1632,14 @@ class DesktopApp:
             # docs/local-wakeword/{RESEARCH-AND-DESIGN,CUSTOM-WAKE-WORD-DESIGN}.md.
             stt = None
             if self.cfg.trigger.heavy_local_whisper or wake_plan.needs_local_whisper:
-                stt = FasterWhisperProvider(
-                    model=self.cfg.stt.model,
-                    device=self.cfg.stt.device,
-                    compute_type=self.cfg.stt.compute_type,
-                    language=stt_language,
-                )
+                # The local wake-match / live-preview Whisper — a SMALL model on
+                # CPU (cfg.stt.wake_*), not the heavy utterance model on the GPU.
+                # On a Blackwell GPU the CUDA model-load JIT cost dominates boot
+                # (~71 s vs ~0.45 s for base/cpu, measured); wake matching is
+                # latency-tolerant and does not need the big model.
+                from jarvis.plugins.stt import build_wake_whisper
+
+                stt = build_wake_whisper(self.cfg.stt, language=stt_language)
             tts = build_tts_from_config(self.cfg.tts)
             # SpeechPipeline.brain_callback braucht Callable[[str], Awaitable[str]].
             # BrainManager und Echo-/Gemini-Fallback erfüllen das via __call__.

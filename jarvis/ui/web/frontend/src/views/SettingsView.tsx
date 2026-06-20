@@ -3,7 +3,6 @@ import {
   Settings,
   Mic,
   Keyboard,
-  Bot,
 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { Switch } from "@/components/ui/switch";
@@ -30,7 +29,7 @@ import {
 } from "@/hooks/useHotkey";
 import { KeyboardMap } from "@/views/settings/KeyboardMap";
 import { detectKeyboardPlatform } from "@/views/settings/keyboardLayout";
-import { useAssistantName } from "@/hooks/useAssistantName";
+import { deriveAssistantName } from "@/lib/deriveAssistantName";
 import { WAKE_ENGINES, WAKE_ENGINE_I18N_KEY } from "@/constants/wakeEngines";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
@@ -67,7 +66,6 @@ export function SettingsView() {
         <AppSettingsGroup />
         <JarvisApiGroup />
         <TeamProxyGroup />
-        <AssistantNamePanel />
         <SystemPromptGroup />
         <WakeWordPanel />
         <SilenceWindowGroup />
@@ -137,6 +135,7 @@ function WakeWordPanel() {
   const trimmedPhrase = phrase.trim();
   // No local-Whisper extra + any non-empty phrase → the engine will degrade.
   const showNeedsWhisperHint = !localWhisperAvailable && trimmedPhrase.length > 0;
+  const derivedName = deriveAssistantName(phrase);
 
   async function onSave() {
     if (!trimmedPhrase) return;
@@ -192,6 +191,12 @@ function WakeWordPanel() {
             disabled={loading}
             className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
           />
+
+          {derivedName ? (
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              {t("settings_view.wake_word.derived_name").replace("{0}", derivedName)}
+            </p>
+          ) : null}
 
           {/* Engine select */}
           <label className="mt-4 block text-xs font-medium text-muted-foreground">
@@ -289,97 +294,6 @@ function WakeWordPanel() {
                   {t("settings_view.wake_word.restart_required")}
                 </p>
               )}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/**
- * Editable assistant-name panel. The assistant calls itself this name in its
- * replies. Empty = derive it from the wake phrase (so "Micron" wake → "Micron"
- * identity). A successful save surfaces a restart hint (the system prompt is
- * assembled once per BrainManager).
- */
-function AssistantNamePanel() {
-  const t = useT();
-  const { config, loading, error, saveName } = useAssistantName();
-  const pushToast = useEventStore((s) => s.pushToast);
-
-  const [name, setName] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    if (config) setName(config.name);
-  }, [config]);
-
-  async function onSave() {
-    setSaving(true);
-    setSaved(false);
-    try {
-      const res = await saveName(name.trim());
-      setSaved(res.restart_required);
-      pushToast("success", t("settings_view.assistant_name.saved"));
-    } catch (e) {
-      pushToast("error", (e as Error).message);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  const resolved = config?.resolved ?? "Assistant";
-  const dirty = !!config && name.trim() !== config.name;
-
-  return (
-    <div className="rounded-lg border border-border bg-card/60 p-4">
-      <div className="flex items-start gap-3">
-        <Bot className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-        <div className="min-w-0 flex-1">
-          <h4 className="font-display text-sm font-semibold">
-            {t("settings_view.assistant_name.title")}
-          </h4>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {t("settings_view.assistant_name.description")}
-          </p>
-
-          {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
-
-          <label className="mt-4 block text-xs font-medium text-muted-foreground">
-            {t("settings_view.assistant_name.label")}
-          </label>
-          <input
-            value={name}
-            onChange={(e) => {
-              setName(e.target.value);
-              setSaved(false);
-            }}
-            maxLength={40}
-            placeholder={resolved}
-            disabled={loading}
-            className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
-          />
-          <p className="mt-1.5 text-xs text-muted-foreground">
-            {name.trim()
-              ? t("settings_view.assistant_name.current").replace("{0}", resolved)
-              : t("settings_view.assistant_name.auto_hint").replace("{0}", resolved)}
-          </p>
-
-          <div className="mt-4 flex items-center gap-3">
-            <Button size="sm" onClick={onSave} disabled={saving || loading || !dirty}>
-              {saving
-                ? t("settings_view.saving")
-                : t("settings_view.assistant_name.save")}
-            </Button>
-          </div>
-
-          {saved && (
-            <div className="mt-3 rounded-md border border-primary/40 bg-primary/10 p-3 text-xs text-foreground">
-              <p className="text-muted-foreground">
-                {t("settings_view.assistant_name.restart_required")}
-              </p>
             </div>
           )}
         </div>

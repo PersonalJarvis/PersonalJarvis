@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -583,8 +583,19 @@ class AudioPlayer:
         except Exception:  # noqa: BLE001
             pass
 
-    async def play_chunks(self, chunks: AsyncIterator[AudioChunk]) -> None:
+    async def play_chunks(
+        self,
+        chunks: AsyncIterator[AudioChunk],
+        *,
+        should_play: Callable[[], bool] | None = None,
+    ) -> None:
         """Stream TTS chunks into a persistent WASAPI OutputStream.
+
+        ``should_play`` is an optional staleness predicate evaluated ONCE right
+        after the play lock is acquired (and before any audio is written). When
+        it returns False the playback is dropped silently — the ack preamble
+        uses this so it is never voiced once the main answer has started
+        speaking (2026-06-20 'preamble after the answer' defense-in-depth).
 
         History — what went wrong before:
             * First version: ``sd.play(blocking=True)`` **per chunk** — each
@@ -623,7 +634,40 @@ class AudioPlayer:
         # visible to the watchdog).
         self.last_write_ns = 0
         self.frames_written = 0
+        # Lazy lock acquisition (2026-06-20 'preamble spoken AFTER the answer'):
+        # pull the first NON-EMPTY chunk BEFORE taking the play lock. The
+        # streaming answer's play task is created at turn-start and, on a long
+        # tool turn, blocks for seconds waiting for its first audio chunk while
+        # the brain runs the tool. Grabbing the lock up front held the device
+        # idle for that whole gap, so a concurrently-published ack preamble
+        # blocked behind the still-silent answer and was voiced AFTER it. Pulling
+        # the first chunk first means the lock is held ONLY for real playback —
+        # the preamble can play during the gap. ``last_write_ns`` stays 0 through
+        # this pre-lock wait, preserving the BUG-032 "no first frame yet"
+        # watchdog invariant.
+        chunk_aiter = chunks.__aiter__()
+        first_chunk: AudioChunk | None = None
+        while True:
+            try:
+                candidate = await chunk_aiter.__anext__()
+            except StopAsyncIteration:
+                return  # producer yielded nothing — nothing to play
+            if candidate.pcm:
+                first_chunk = candidate
+                break
+
+        async def _from_first() -> AsyncIterator[AudioChunk]:
+            if first_chunk is not None:
+                yield first_chunk
+            async for _c in chunk_aiter:
+                yield _c
+
         async with self._get_play_lock():
+            # Staleness gate: re-check at the last moment before any audio is
+            # written. A preamble whose synthesis / lock-wait was overtaken by
+            # the main answer is dropped here rather than queued behind it.
+            if should_play is not None and not should_play():
+                return
             def _ensure_stream(needed_rate: int) -> tuple[sd.OutputStream, int]:
                 # Reuse the persistent OutputStream across sentence-by-sentence
                 # play_chunks() calls — closing+reopening per sentence is what
@@ -689,7 +733,7 @@ class AudioPlayer:
             # NOTE: no finally-close — the stream stays open across play_chunks
             # calls and is only torn down by stop() (barge-in) or by the next
             # _ensure_stream call that observes a sample-rate mismatch.
-            async for chunk in chunks:
+            async for chunk in _from_first():
                 if not chunk.pcm:
                     continue
                 if pending_rate is not None and chunk.sample_rate != pending_rate:

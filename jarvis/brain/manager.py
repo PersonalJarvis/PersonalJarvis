@@ -77,7 +77,11 @@ from .local_action_gate import (
 )
 from .local_action_gate import _normalize as _gate_normalize
 from .mission_command_gate import match_mission_command
-from .assistant_name import DEFAULT_ASSISTANT_NAME, resolve_assistant_name
+from .assistant_name import (
+    DEFAULT_ASSISTANT_NAME,
+    PERSONA_BASELINE_NAME,
+    resolve_assistant_name,
+)
 from .persona_loader import load_effective_persona_prompt
 from .provider_registry import BrainProviderRegistry
 from .rate_limit_tracker import RateLimitTracker
@@ -136,6 +140,63 @@ PROVIDER_ALIASES = {
     "grok": "grok",
     "openrouter": "openrouter",
 }
+
+# Human-readable display names for each brain provider id. Used to tell the
+# answering LLM which provider/model it is embodying this turn (the system
+# prompt never carried this before, so a "which model are you?" question got a
+# guessed answer that defaulted to "Gemini" — forensic 2026-06-20, voice session
+# 15:15: Grok was live and answering, yet Jarvis claimed to be Gemini). Kept
+# self-contained in the brain layer (no UI-catalog import — that would invert the
+# layer dependency) and defensive: an unmapped id degrades to a readable label.
+_PROVIDER_DISPLAY_NAMES: dict[str, str] = {
+    "claude-api": "Anthropic Claude",
+    "openai": "OpenAI GPT",
+    # Both the CLI brain id ("codex") and the sub-agent value ("openai-codex")
+    # map to the same readable label, so whichever surfaces as a turn prov_name
+    # is named correctly (the user explicitly wants "Codex / GPT-5.5" recognised).
+    "codex": "OpenAI Codex (GPT-5.5)",
+    "openai-codex": "OpenAI Codex (GPT-5.5)",
+    "openrouter": "OpenRouter",
+    "gemini": "Google Gemini",
+    "grok": "Grok (xAI)",
+    "antigravity": "Google Antigravity (Gemini)",
+}
+
+
+def _provider_display_name(provider: str) -> str:
+    """A readable label for a brain provider id (never crashes on unknown ids)."""
+    pid = (provider or "").strip()
+    mapped = _PROVIDER_DISPLAY_NAMES.get(pid)
+    if mapped:
+        return mapped
+    # Unknown id → readable fallback: "some-new_provider" → "Some New Provider".
+    return pid.replace("-", " ").replace("_", " ").title() or "the configured provider"
+
+
+def _provider_identity_directive(provider: str, model: str | None, name: str) -> str:
+    """Authoritative, anti-guessing self-identity line for the system prompt.
+
+    The single source of truth for "which AI model am I right now?". Names the
+    *actual* provider/model answering this turn (set per fallback-chain attempt
+    in ``generate()``), and carves out the one allowed exception to the persona's
+    "never discuss your technical nature" rule: a direct provider/model question
+    gets an honest, specific answer instead of a guessed "Gemini".
+    """
+    label = _provider_display_name(provider)
+    model_str = (model or "").strip() or "the provider's default"
+    return (
+        f"ACTIVE BRAIN MODEL — INFRASTRUCTURE FACT (authoritative): You are right "
+        f"now running on the brain provider {label} (model: {model_str}). {label} "
+        f"is the provider actually generating your reply this turn. If the user "
+        f"asks which provider, backend, or AI model is powering you right now, "
+        f"answer truthfully and specifically with this — never guess, and never "
+        f"name a provider other than the one stated here (a recurring failure was "
+        f'wrongly claiming to be "Gemini"). This is the one allowed exception to '
+        f"the persona rule about not discussing your own technical nature: a "
+        f"direct question about your underlying provider/model gets an honest, "
+        f"specific answer; otherwise you stay {name} and never raise it unprompted."
+    )
+
 
 # Mapping of Credential-Manager slot -> Brain provider ID. Brain slots only;
 # TTS/STT providers have their own lifecycles outside BrainManager.
@@ -1194,6 +1255,13 @@ class BrainManager:
 
         self._registry = BrainProviderRegistry()
         self._active_name: str = config.brain.primary
+        # The (provider, model) actually answering the CURRENT turn. Set per
+        # fallback-chain attempt in generate() right before the dispatcher is
+        # built, consumed by _build_system_prompt to inject the authoritative
+        # self-identity line (forensic 2026-06-20: the answering LLM never knew
+        # which provider it was, so a provider question got a guessed "Gemini").
+        # None outside a turn → no identity block on helper prompt builds.
+        self._active_turn_identity: tuple[str, str | None] | None = None
         # Last persist-to-disk outcome of ``switch(..., persist=True)``.
         # ``None`` = no persisting switch attempted yet. The provider route
         # reads this to report the ACTUAL disk result instead of echoing the
@@ -1288,7 +1356,10 @@ class BrainManager:
 
         Reads `config.brain.router` and writes into a deep copy of JarvisConfig:
           - `brain.primary = tier_cfg.provider` (or `provider_override`)
-          - `brain.deep_brain = tier_cfg.fallback_provider`
+          - `brain.deep_brain = tier_cfg.fallback_provider`, UNLESS a
+            `provider_override` collapses a non-split tier (fallback in
+            {None, provider}) — then deep_brain follows the override so a
+            user-chosen frontier provider leads deep/code too (see below).
 
         The global `config` instance is left unchanged.
 
@@ -1310,7 +1381,29 @@ class BrainManager:
         local_config = config.model_copy(deep=True)
         effective_provider = provider_override or tier_cfg.provider
         local_config.brain.primary = effective_provider
-        local_config.brain.deep_brain = tier_cfg.fallback_provider
+        # deep_brain normally mirrors the tier's fallback provider. But when an
+        # explicit override redirected the active provider away from the tier
+        # default AND there is no deliberate cross-provider deep split
+        # (fallback_provider == provider), the deep brain must FOLLOW the override
+        # — otherwise a user-chosen frontier provider (grok/codex) still delegates
+        # every deep/code turn to the orphaned tier default. Forensic 2026-06-20:
+        # primary=grok left deep_brain=gemini, so reasoning turns ran on Gemini
+        # despite the user picking Grok ("Grok for everything" mandate). An
+        # explicit split (fallback_provider != provider) is preserved.
+        deep_provider = tier_cfg.fallback_provider
+        if (
+            provider_override
+            and effective_provider != tier_cfg.provider
+            and (
+                # No fallback configured at all (None/"") is even less of a
+                # deliberate split than a symmetric one — follow the override
+                # rather than strand deep_brain at None for the whole session.
+                not tier_cfg.fallback_provider
+                or tier_cfg.fallback_provider == tier_cfg.provider
+            )
+        ):
+            deep_provider = effective_provider
+        local_config.brain.deep_brain = deep_provider
 
         # Tier model resolver:
         # - If a live override is active: ignore tier_cfg.model (it was for
@@ -1763,14 +1856,15 @@ class BrainManager:
         """
         parts: list[str] = []
 
-        # Configurable assistant identity. Derived from the wake phrase (so a
-        # custom wake word "Micron" makes the assistant call itself Micron) or
-        # an explicit [persona].name. When it is NOT the historical "Jarvis", a
-        # prominent identity directive overrides the "Jarvis" mentions baked
-        # into the persona files (SOUL.md / JARVIS_PERSONA.md), which are static
-        # and cannot be parameterised. Placed first so it frames everything.
+        # Configurable assistant identity. Derived solely from the wake phrase
+        # (so a custom wake word "Micron" makes the assistant call itself
+        # Micron). When the name is neither the neutral fallback nor the
+        # historical "Jarvis" baseline, a prominent identity directive overrides
+        # the "Jarvis" mentions baked into the persona files (SOUL.md /
+        # JARVIS_PERSONA.md), which are static and cannot be parameterised.
+        # Placed first so it frames everything.
         name = resolve_assistant_name(getattr(self, "_config", None))
-        if name != DEFAULT_ASSISTANT_NAME:
+        if name not in (DEFAULT_ASSISTANT_NAME, PERSONA_BASELINE_NAME):
             parts.append(
                 f"DEIN NAME IST {name.upper()}. Du heisst {name} — nicht Jarvis. "
                 f"Wo die folgende Persona-Beschreibung 'Jarvis' sagt, gilt {name}. "
@@ -2047,6 +2141,26 @@ class BrainManager:
         if self._wiki_context_suffix and not self._cache_optimized():
             parts.append(self._wiki_context_suffix)
 
+        # Active-model self-awareness: tell THIS turn's actually-answering
+        # provider/model who it is, so a "which model are you?" question gets an
+        # honest answer instead of a guessed "Gemini" (forensic 2026-06-20: Grok
+        # was live and answering yet claimed to be Gemini). Set per fallback-chain
+        # attempt in generate(), where the real prov_name/model are known; absent
+        # on non-turn prompt builds (compression / wiki-delta base) → no block.
+        # Placed late for high recency so it overrides the persona's "never
+        # discuss your technical nature" line; provider-stable across same-provider
+        # turns, so it stays prompt-cache-friendly. On a fallback the block's
+        # provider label changes between attempts within the turn, invalidating
+        # the prefix cache for the second attempt — acceptable, since a fallback
+        # is already a slow path (and matches the pre-existing per-turn mutable
+        # flags). getattr: tolerates __new__-constructed test managers that bypass
+        # __init__ (the attr is always set in __init__ for the production path).
+        identity = getattr(self, "_active_turn_identity", None)
+        if identity:
+            parts.append(
+                _provider_identity_directive(identity[0], identity[1], name)
+            )
+
         # Reply-language directive LAST — highest recency-salience so it wins
         # over the otherwise German prompt above it. Byte-stable across turns
         # (only changes on an explicit language switch), so it stays prompt-
@@ -2173,6 +2287,14 @@ class BrainManager:
                 return
             previous = self._active_name
             self._active_name = canonical
+            # Keep deep_brain following the active provider on a runtime switch
+            # when there is no explicit cross-provider deep split (deep_brain
+            # tracked the previous active, or was never configured) — so switching
+            # to a frontier provider leads ALL intents, not just fast ones (mirror
+            # of the from_tier_config override rule; "Grok for everything" mandate
+            # 2026-06-20). A None/"" deep_brain must follow too, not stay stranded.
+            if not self._config.brain.deep_brain or self._config.brain.deep_brain == previous:
+                self._config.brain.deep_brain = canonical
             self._reset_provider_caches()
             self.last_persist_ok = (
                 self._persist_primary(canonical) if persist else False
@@ -3529,7 +3651,7 @@ class BrainManager:
             # Now we launch the harness as a BACKGROUND task and return an
             # immediate ACK (AD-OE1); its outcome — success, failure, or timeout
             # — is spoken at the next turn boundary via an
-            # AnnouncementRequested(kind="subagent") readback (AD-OE5/OE6, zero
+            # AnnouncementRequested(kind="completion") readback (AD-OE5/OE6, zero
             # silent drops). Harness identity comes from the gate; fall back to
             # the canonical in-process harness name (routes to ComputerUseHarness,
             # never a claude-cli worker spawn).
@@ -3631,7 +3753,7 @@ class BrainManager:
         Launched fire-and-forget by ``_run_local_action_fast_path`` so the spoken
         turn ACKs immediately (AD-OE1) instead of blocking up to ~31 s on the
         harness. The outcome — success, failure, or timeout — is ALWAYS surfaced
-        as an ``AnnouncementRequested(kind="subagent")`` readback
+        as an ``AnnouncementRequested(kind="completion")`` readback
         (AD-OE5/OE6: zero silent drops). Never raises — a background-task crash
         must not leak into the event loop.
 
@@ -3693,9 +3815,9 @@ class BrainManager:
                 text=text,
                 priority="normal",
                 language=lang,
-                # A background Computer-Use task reporting its outcome is a
-                # spawned sub-agent result → the attributed readback track.
-                kind="subagent",
+                # A background Computer-Use task reports the user's requested
+                # desktop action as the turn completion.
+                kind="completion",
                 detail=diag,
             ))
         except Exception:  # noqa: BLE001
@@ -4227,6 +4349,9 @@ class BrainManager:
         self._last_turn_all_failed = False
         self._last_turn_suppressed = False
         self._last_turn_executed_action_tool = False
+        # Clear last turn's provider identity so a helper prompt build before the
+        # fallback loop (wiki-delta base) does not carry a stale provider name.
+        self._active_turn_identity = None
         turn_trace_id = trace_id or uuid4()
 
         # auto mode: resolve this turn's language so _reply_language_directive()
@@ -4719,6 +4844,12 @@ class BrainManager:
                     has_image=bool(images),
                     pointing_turn=pointing_turn,
                 )
+            # Active-model self-awareness: stamp the provider/model that is about
+            # to answer so _build_system_prompt injects the correct, specific
+            # self-identity (anti-"I'm Gemini" hallucination, forensic 2026-06-20).
+            # Set here — after dead/cooldown skips — so it always names the
+            # provider that genuinely runs this attempt, including a fallback win.
+            self._active_turn_identity = (prov_name, model)
             disp = self._build_dispatcher(brain, tools_override=_turn_tools)
             try:
                 # CostMeter: start per-trace tracking (idempotent if already started).

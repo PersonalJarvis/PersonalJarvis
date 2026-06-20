@@ -101,17 +101,16 @@ class ProfileConfig(BaseModel):
 
 
 class PersonaConfig(BaseModel):
-    """The assistant's own identity — how it refers to itself.
-
-    ``name`` is the spoken/written name the assistant uses ("Du bist <name>").
-    Empty (default) means "derive it from the wake phrase" — so setting the wake
-    word to "Micron" makes the assistant call itself Micron, with no second
-    field to fill in. Set a value here to decouple the name from the wake word
-    (e.g. wake "Hey Computer" but identity "Friday"). Resolved by
-    ``jarvis.brain.assistant_name.resolve_assistant_name``.
+    """Reserved ``[persona]`` table. The assistant's name is no longer stored
+    here — it derives solely from the wake phrase (see
+    ``jarvis.brain.assistant_name.resolve_assistant_name`` and the 2026-06-20
+    coupling design). A legacy ``[persona] name`` key in an existing jarvis.toml
+    is ignored (Pydantic ``extra="ignore"``); the next wake-word save strips it.
     """
 
-    name: str = ""
+    # Explicit so the "legacy name key is ignored" contract above cannot be
+    # silently broken by a future base-class / project-wide model_config change.
+    model_config = ConfigDict(extra="ignore")
 
 
 class WakeWordConfig(BaseModel):
@@ -229,6 +228,17 @@ class STTConfig(BaseModel):
     # faster-whisper path also tolerates "cuda" with a no-CUDA runtime fallback.
     device: str = "cpu"
     compute_type: str = "int8_float16"
+    # The LOCAL wake-match / live-preview Whisper (distinct from ``model``, which
+    # is the post-wake utterance model — often a cloud provider). It only powers
+    # wake-phrase transcript matching + the listening-bubble probe, both
+    # latency-tolerant, so it defaults to a small model on CPU. This matters a
+    # lot for boot: on a Blackwell GPU (RTX 50xx) CTranslate2 JIT-compiles kernels
+    # at model-load, costing ~71 s on CUDA vs ~0.45 s for ``base`` on CPU — the
+    # dominant warm-up cost. CPU is also the cloud-first floor (no GPU assumed).
+    # Power users on an older GPU may set ``wake_device = "cuda"``.
+    wake_model: str = "base"
+    wake_device: str = "cpu"
+    wake_compute_type: str = "int8"
     language: str = "auto"
     # Vocabulary biasing passed to Whisper's ``prompt`` field — the same
     # mechanism dictation tools like Wispr Flow use to keep proper nouns and

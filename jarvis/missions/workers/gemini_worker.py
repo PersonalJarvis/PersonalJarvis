@@ -75,7 +75,7 @@ def _stderr_signals_quota_block(stderr_bytes: bytes) -> bool:
     return any(marker in text for marker in _QUOTA_BLOCKED_MARKERS)
 
 
-def _resolve_gemini_argv_prefix() -> list[str]:
+def _resolve_gemini_argv_prefix(*, bundle_finder: Any = None) -> list[str]:
     """Returns the argv prefix for invoking the Gemini CLI.
 
     On Windows, the npm-installed CLI ships as `gemini.cmd` — a batch
@@ -110,6 +110,18 @@ def _resolve_gemini_argv_prefix() -> list[str]:
             )
             if candidate.is_file():
                 return [node, str(candidate)]
+
+    # Robust fallback: probe the npm-global node_modules DIRECTLY (handles this
+    # machine's broken-shim case, where shutil.which misses the stale gemini.cmd
+    # temp files, so the loop above finds nothing). Drives `node <bundle>`, which
+    # also avoids the .cmd metachar re-parse. Shared with the brain resolver.
+    from jarvis.google_cli.resolver import _default_npm_bundle
+
+    finder = bundle_finder or _default_npm_bundle
+    bundle = finder()
+    if bundle:
+        node = shutil.which("node") or shutil.which("node.exe") or "node"
+        return [node, str(bundle)]
 
     # Fallback: bare CLI (still works for prompts with no metachars).
     for name in _GEMINI_BINARIES:

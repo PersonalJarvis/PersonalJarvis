@@ -161,3 +161,104 @@ async def test_real_play_chunks_holds_lock_while_streaming(monkeypatch) -> None:
     # serial execution.
     assert enter_count >= 2
     assert enter_count == exit_count
+
+
+async def _gated_chunk(
+    gate: asyncio.Event, pcm: bytes
+) -> AsyncIterator[AudioChunk]:
+    """A producer that yields NOTHING until ``gate`` is set — mimics the
+    streaming answer whose brain is still thinking / running a tool, so its
+    ``_merged_chunks`` blocks on the sentence queue with no audio yet."""
+    await gate.wait()
+    yield AudioChunk(pcm=pcm, sample_rate=24_000, timestamp_ns=0, channels=1)
+
+
+@pytest.mark.asyncio
+async def test_play_chunks_does_not_hold_lock_while_awaiting_first_chunk(
+    monkeypatch,
+) -> None:
+    """Regression (2026-06-20 'preamble spoken AFTER the answer'): the answer's
+    ``play_chunks(_merged_chunks())`` task is created at turn-start and, on a
+    long tool turn, waits seconds for its first audio chunk. It must NOT hold
+    the play lock during that wait — otherwise a concurrently-published ack
+    preamble blocks behind the still-silent answer and is voiced AFTER it
+    (player.py:626 grabbed the lock before pulling the first chunk).
+
+    Contract: while a producer is still awaiting its first chunk, a second
+    ``play_chunks`` call can acquire the lock and play to completion.
+    """
+    player, _ = _make_player_with_recorded_inner(monkeypatch)
+    writes: list[str] = []
+
+    real_to_thread = asyncio.to_thread
+
+    async def rec_to_thread(func, *args, **kw):
+        if func is player._write_samples:
+            writes.append("preamble-write")
+            return None
+        return await real_to_thread(func, *args, **kw)
+
+    monkeypatch.setattr("jarvis.audio.player.asyncio.to_thread", rec_to_thread)
+
+    gate = asyncio.Event()
+    # The "answer" produces no audio until the gate opens.
+    answer_task = asyncio.create_task(
+        player.play_chunks(_gated_chunk(gate, b"\x09\x00" * 4000))
+    )
+    # Let the answer task start and (under the bug) seize the lock.
+    await asyncio.sleep(0.02)
+
+    # The preamble must be able to play NOW, while the answer is still silent.
+    # Under the bug this deadlocks (the answer holds the lock and never
+    # releases because its gate is closed) → wait_for raises TimeoutError.
+    try:
+        await asyncio.wait_for(
+            player.play_chunks(_one_chunk(b"\x01\x00" * 4000)), timeout=1.0
+        )
+    except TimeoutError:
+        gate.set()
+        await answer_task
+        pytest.fail(
+            "preamble blocked behind the still-silent answer — play lock held "
+            "while awaiting the first chunk"
+        )
+
+    assert writes, "the preamble produced no audio while the answer was silent"
+
+    # Release the answer and let it finish cleanly.
+    gate.set()
+    await answer_task
+
+
+@pytest.mark.asyncio
+async def test_play_chunks_should_play_predicate_drops_stale_playback(
+    monkeypatch,
+) -> None:
+    """A caller may pass ``should_play``; evaluated AFTER the lock is acquired,
+    a False verdict drops the playback without writing. This is the staleness
+    gate the ack preamble uses so it is never voiced once the answer has
+    started speaking (defense-in-depth for the 2026-06-20 misorder)."""
+    player, _ = _make_player_with_recorded_inner(monkeypatch)
+    writes: list[str] = []
+
+    real_to_thread = asyncio.to_thread
+
+    async def rec_to_thread(func, *args, **kw):
+        if func is player._write_samples:
+            writes.append("w")
+            return None
+        return await real_to_thread(func, *args, **kw)
+
+    monkeypatch.setattr("jarvis.audio.player.asyncio.to_thread", rec_to_thread)
+
+    # Stale: should_play() is False → no audio written.
+    await player.play_chunks(
+        _one_chunk(b"\x01\x00" * 4000), should_play=lambda: False
+    )
+    assert writes == [], "a stale playback wrote audio instead of being dropped"
+
+    # Valid: should_play() is True → audio written normally.
+    await player.play_chunks(
+        _one_chunk(b"\x01\x00" * 4000), should_play=lambda: True
+    )
+    assert writes, "a valid playback was dropped"

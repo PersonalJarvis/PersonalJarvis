@@ -5,6 +5,7 @@
  */
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useT } from "@/i18n";
 
 export function SkillCreateDialog({
   open,
@@ -14,6 +15,7 @@ export function SkillCreateDialog({
   onClose: () => void;
   onCreated?: (name: string) => void;
 }) {
+  const t = useT();
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -21,11 +23,11 @@ export function SkillCreateDialog({
         <div className="flex items-start justify-between gap-4 border-b border-border p-5">
           <div className="min-w-0 flex-1">
             <h3 className="font-display text-base font-semibold">
-              Skill erstellen
+              {t("skill_create_dialog.title")}
             </h3>
             <p className="mt-1 text-[11px] text-muted-foreground">
-              Diese Funktion wird gerade neu aufgebaut. Bis dahin Skills bitte
-              direkt als YAML-Dateien in <code>~/.jarvis/skills/</code> ablegen.
+              {t("skill_create_dialog.rebuild_notice_a")}{" "}
+              <code>~/.jarvis/skills/</code> {t("skill_create_dialog.rebuild_notice_b")}
             </p>
           </div>
           <button
@@ -38,7 +40,7 @@ export function SkillCreateDialog({
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-border p-4">
           <Button type="button" variant="ghost" onClick={onClose}>
-            Schliessen
+            {t("common.close")}
           </Button>
         </div>
       </div>

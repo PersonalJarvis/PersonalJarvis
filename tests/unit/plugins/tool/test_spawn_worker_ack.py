@@ -259,6 +259,65 @@ async def test_no_announcement_contains_the_banned_template_wording() -> None:
     await _drain_background_tasks()
 
 
+@pytest.mark.asyncio
+async def test_resolved_output_language_drives_mission_and_ack() -> None:
+    """The turn's resolved ``ctx.config['output_language']`` — not a hardcoded
+    'de' and not the STT tag — decides BOTH the mission dispatch language and
+    the spoken ACK language.
+
+    Forensic 2026-06-20 ("Mask it up"): an English turn (STT mis-tagged
+    German) resolved to output_language='en', but the mission was dispatched
+    language='de' and the ACK pulled the German fallback pool. The mission-fail
+    phrase then came out German, and the German ACK text was spoken by the
+    Cartesia *English* voice = "British accent on a German sentence". Both
+    spoken surfaces must follow the one authoritative resolver.
+    """
+    mgr = _FakeMissionManager()
+    announcer = _FakeAnnouncer()
+    tool = SpawnWorkerTool(bus=EventBus(), manager=mgr, announcer=announcer)
+
+    ctx = ExecutionContext(
+        trace_id=uuid4(),
+        user_utterance="Mask it up",
+        config={"output_language": "en"},
+        memory_read=None,
+    )
+    # No "language" arg from the brain — exactly the live "Mask it up" turn.
+    await tool.execute({"utterance": "Mask it up", "action": ""}, ctx)
+    await _drain_background_tasks()
+
+    assert announcer.calls[0]["language"] == "en"
+    assert mgr.dispatch_calls[0]["language"] == "en"
+
+
+@pytest.mark.asyncio
+async def test_ctx_output_language_overrides_stale_brain_arg() -> None:
+    """The authoritative resolved language wins over a conflicting tool-call arg.
+
+    The brain's ``language`` argument is a guess (it can echo a wrong STT tag);
+    ``ctx.config['output_language']`` is the single resolver's verdict and must
+    win, so no layer re-derives the language on its own terms (Runtime Output
+    Language doctrine).
+    """
+    mgr = _FakeMissionManager()
+    announcer = _FakeAnnouncer()
+    tool = SpawnWorkerTool(bus=EventBus(), manager=mgr, announcer=announcer)
+
+    ctx = ExecutionContext(
+        trace_id=uuid4(),
+        user_utterance="Mask it up",
+        config={"output_language": "en"},
+        memory_read=None,
+    )
+    await tool.execute(
+        {"utterance": "Mask it up", "action": "", "language": "de"}, ctx
+    )
+    await _drain_background_tasks()
+
+    assert announcer.calls[0]["language"] == "en"
+    assert mgr.dispatch_calls[0]["language"] == "en"
+
+
 def test_schema_offers_spoken_ack_and_language() -> None:
     """The router brain must be invited to phrase the announcement itself."""
     props = SpawnWorkerTool.schema["properties"]
