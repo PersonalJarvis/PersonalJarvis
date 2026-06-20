@@ -57,6 +57,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         dest="reset_onboarding",
         help="Clear onboarding markers so the first-run guide shows again.",
     )
+    parser.add_argument(
+        "command",
+        nargs="?",
+        choices=["serve"],
+        help="serve: start the headless web UI (browser/server, no desktop) — "
+             "the cloud-first path for a VPS, Mac or Linux. Open the printed URL.",
+    )
     return parser.parse_args(argv)
 
 
@@ -344,6 +351,12 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_install_admin_helper()
     if args.reset_onboarding:
         return _cmd_reset_onboarding()
+    if args.command == "serve":
+        # Headless web UI — the cloud-first path (no desktop/tray). Delegates to
+        # the web launcher so `jarvis serve` == `python -m jarvis.ui.web.launcher --headless`.
+        from jarvis.ui.web import launcher
+
+        return launcher.main(["--headless"])
     if args.wizard or cfg.is_first_run():
         rc = _cmd_wizard()
         if rc != 0 or args.wizard:
