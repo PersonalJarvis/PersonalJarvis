@@ -44,7 +44,10 @@ from .manager import MissionManager
 from .voice.announcer import MissionAnnouncer
 from .voice.listener import MissionVoiceListener
 from .voice.readback import MissionReadback
-from .worker_runtime.provider_map import CODEX_SUBAGENT_SLUGS
+from .worker_runtime.provider_map import (
+    ANTIGRAVITY_SUBAGENT_SLUGS,
+    CODEX_SUBAGENT_SLUGS,
+)
 from .workers.claude_direct_worker import ClaudeDirectWorker
 from .workers.codex_direct_worker import CodexDirectWorker
 from .workers.gemini_worker import GeminiWorker
@@ -145,8 +148,8 @@ def _select_subagent_worker_kind(
 ) -> str:
     """Pure routing decision for the Heavy-Task subagent worker.
 
-    Returns one of ``"claude_direct"`` | ``"codex_direct"`` | ``"subjarvis"``
-    | ``"gemini"``.
+    Returns one of ``"claude_direct"`` | ``"codex_direct"`` | ``"antigravity"``
+    | ``"subjarvis"`` | ``"gemini"``.
 
     Defense-in-depth (2026-05-29, user mandate: heavy tasks run on the
     configured provider — claude-api -> Claude Max OAuth — and Gemini must
@@ -166,6 +169,12 @@ def _select_subagent_worker_kind(
         return "subjarvis"
     if sub_jarvis_provider in CODEX_SUBAGENT_SLUGS:
         return "codex_direct"
+    # "antigravity" (Google subscription via the official agy/gemini CLI over the
+    # OAuth login) is a HARD LOCK like claude-api: no per-step model can divert it
+    # to the API-key Gemini path. It reuses GeminiWorker but with the API key
+    # stripped from the worker env (the OAuth login then bills the subscription).
+    if sub_jarvis_provider in ANTIGRAVITY_SUBAGENT_SLUGS:
+        return "antigravity"
     # Explicitly selecting "gemini" routes to the direct GeminiWorker so the
     # sub-agent actually runs on Gemini (the user's "selected provider must run"
     # mandate). This is NOT the anti-silent-Gemini case (2026-05-29) — that
@@ -385,11 +394,18 @@ async def bootstrap_missions(
                 openai_key = get_secret(
                     "openai_api_key", env_fallback="OPENAI_API_KEY"
                 )
-            gemini_key = get_secret(
-                "gemini_api_key", env_fallback="GEMINI_API_KEY"
-            ) or get_secret(
-                "google_api_key", env_fallback="GOOGLE_API_KEY"
-            )
+            # Antigravity (Google subscription) deliberately runs OAuth-only: a
+            # configured Gemini API key must NOT be injected, or the CLI would
+            # bill the key instead of the subscription login. Other subagents
+            # keep the API-key path unchanged.
+            if sub_jarvis_provider in ANTIGRAVITY_SUBAGENT_SLUGS:
+                gemini_key = None
+            else:
+                gemini_key = get_secret(
+                    "gemini_api_key", env_fallback="GEMINI_API_KEY"
+                ) or get_secret(
+                    "google_api_key", env_fallback="GOOGLE_API_KEY"
+                )
             # Grok / xAI: Jarvis stores under ``grok_api_key`` in the
             # credential manager (ENV fallback ``GROK_API_KEY``); we set
             # both XAI_API_KEY + GROK_API_KEY on the worker side so
@@ -523,6 +539,16 @@ async def bootstrap_missions(
                 )
                 return ClaudeDirectWorker(mcp_servers=_assemble_worker_mcp_servers())
             return CodexDirectWorker()
+        if kind == "antigravity":
+            # "antigravity" (Google subscription): reuse GeminiWorker — it already
+            # drives `gemini -p ... --yolo` in the worktree — but the worker env has
+            # the Gemini API key stripped (see the env builder below), so the CLI
+            # falls back to the ~/.gemini OAuth login and bills the subscription.
+            logger.info(
+                "Mission worker -> GeminiWorker over the Google subscription "
+                "(OAuth login, no API key) — billed against Antigravity/Gemini."
+            )
+            return GeminiWorker()
         if kind == "gemini":
             # Reached when [brain.sub_jarvis].provider == "gemini" was selected
             # (the user's "selected provider must run" mandate) OR, legacy, when
