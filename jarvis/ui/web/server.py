@@ -281,6 +281,12 @@ class WebServer:
         from jarvis.telephony.status import TelephonyManager
 
         app.state.telephony_manager = TelephonyManager()
+        # Browser-microphone voice bridge (B2): /ws/audio — the headless/VPS
+        # voice path via the browser's own mic/speaker, no sounddevice. Always
+        # mounted; gated by [browser_voice].enabled (default on) at connect time.
+        from jarvis.browser_voice.route import router as browser_voice_router
+
+        app.include_router(browser_voice_router)
         app.include_router(sub_agents_router)
         app.include_router(outputs_router)
         # Socials section — project social-media links (pure file store, no Brain dep).

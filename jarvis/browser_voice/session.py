@@ -128,7 +128,10 @@ class BrowserVoiceSession:
         utterance = self._endpointer.push(pcm16)
         if utterance is not None and not self._processing:
             # Run the turn off the inbound-frame path so we keep draining audio.
-            self._turn_task = asyncio.create_task(self._run_turn(utterance))
+            self._turn_task = asyncio.create_task(
+                self._run_turn(utterance), name=f"bv-turn-{self.session_id}"
+            )
+            self._turn_task.add_done_callback(self._on_turn_done)
 
     async def handle_control(self, msg: dict[str, Any]) -> None:
         """Process a JSON control frame from the browser."""
@@ -138,6 +141,9 @@ class BrowserVoiceSession:
             if rate != self.browser_sample_rate:
                 self.browser_sample_rate = rate
                 self._in_resampler = Resampler(rate, STT_SAMPLE_RATE)
+            # Drop any audio buffered at the old rate so STT never sees a
+            # rate-mismatched blob across a reconnect / rate change.
+            self._endpointer.reset()
             lang = msg.get("language")
             if isinstance(lang, str) and lang:
                 self.language_code = lang
@@ -146,6 +152,15 @@ class BrowserVoiceSession:
             await self._barge_in()
         elif kind == "audio_stop":
             await self.end(reason="client_stop")
+
+    def _on_turn_done(self, task: asyncio.Task[None]) -> None:
+        """Surface a turn task that died outside _run_turn's own guard (a bare
+        create_task otherwise loses the traceback with no session context)."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            log.warning("browser_voice[%s] turn task raised", self.session_id, exc_info=exc)
 
     # -- turn loop ---------------------------------------------------------
 
@@ -157,6 +172,9 @@ class BrowserVoiceSession:
             transcript = await self._transcribe(utterance_pcm16)
             text = (transcript or "").strip()
             if not text:
+                # End-of-turn fired but nothing transcribable — let the browser
+                # reset any "thinking" affordance (AD-OE6: never a silent drop).
+                await self._send_json({"type": "vad_silence"})
                 return
             log.info("browser_voice[%s] user: %s", self.session_id, text)
             await self._send_json({"type": "transcript", "text": text, "is_final": True})
@@ -219,10 +237,20 @@ class BrowserVoiceSession:
     # -- barge-in / lifecycle ---------------------------------------------
 
     async def _barge_in(self) -> None:
-        """Cancel in-flight TTS playback (the browser owns its playback queue)."""
+        """Cancel in-flight TTS playback and tell the browser to flush its queue.
+
+        On a mid-stream cancel the ``_speak`` coroutine never reaches its
+        ``tts_end``; without a signal the browser's playback queue would hang
+        (review BLOCKER). The canceller emits ``tts_cancel`` — best-effort,
+        since the socket may already be closing.
+        """
         if self._tts_task is not None and not self._tts_task.done():
             self._tts_task.cancel()
         self._speaking = False
+        try:
+            await self._send_json({"type": "tts_cancel"})
+        except Exception:  # noqa: BLE001, S110 — best-effort on a closing socket
+            pass
 
     async def end(self, *, reason: str = "") -> None:
         """End the session: cancel playback, mark ended."""
@@ -242,4 +270,7 @@ class BrowserVoiceSession:
         )
 
     def _lang_short(self) -> str:
-        return (self.language_code or "de-DE").split("-", 1)[0].lower()
+        # scrub_for_voice only knows the runtime locales de/en/es (AP-11, regex
+        # only); an unknown tag would silently apply the wrong blacklist.
+        tag = (self.language_code or "de-DE").split("-", 1)[0].lower()
+        return tag if tag in {"de", "en", "es"} else "de"

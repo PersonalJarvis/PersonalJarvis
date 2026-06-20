@@ -81,7 +81,9 @@ def _make_session(sink, *, stt=None, brain=None, tts=None, rate=STT_SAMPLE_RATE,
 
 async def _drive_one_utterance(session, rate=STT_SAMPLE_RATE) -> None:
     """Feed silence -> speech -> silence so the endpointer fires one turn, then
-    await the spawned turn task (mirrors the telephony driving helper)."""
+    await the spawned turn task. Waits for the turn count to INCREMENT (relative)
+    so it works when called repeatedly."""
+    start_turns = session.turns
     session._endpointer.silence_ms = 100
     session._endpointer.min_speech_ms = 60
     for _ in range(2):
@@ -92,7 +94,7 @@ async def _drive_one_utterance(session, rate=STT_SAMPLE_RATE) -> None:
         await session.handle_audio_frame(_pcm16_frame(0, rate=rate))
     for _ in range(200):
         await asyncio.sleep(0)
-        if session.turns >= 1:
+        if session.turns > start_turns:
             break
         await asyncio.sleep(0.01)
 
@@ -139,12 +141,24 @@ async def test_brain_receives_transcript():
     assert "Wie geht es dir?" in brain.prompts
 
 
-async def test_empty_transcript_skips_turn():
+async def test_empty_transcript_emits_vad_silence_and_skips_turn():
     sink = _Sink()
     session = _make_session(sink, stt=FakeSTT([""]))
     await _drive_one_utterance(session)
     assert session.turns == 0
     assert sink.binary == []
+    assert sink.json_of("vad_silence")  # browser can reset its "thinking" UI
+
+
+async def test_two_consecutive_utterances_both_complete():
+    # The _processing re-entrancy gate must reopen after each turn (the core
+    # correctness invariant of the session loop).
+    sink = _Sink()
+    session = _make_session(sink, stt=FakeSTT(["eins", "zwei"]))
+    await _drive_one_utterance(session)
+    assert session.turns == 1
+    await _drive_one_utterance(session)
+    assert session.turns == 2
 
 
 async def test_audio_start_sets_rate_and_language():
@@ -176,6 +190,8 @@ async def test_barge_in_cancels_tts():
     task = session._tts_task
     assert task is None or task.cancelled() or task.done()
     assert session._speaking is False
+    # The browser must get a flush signal (it never received tts_end).
+    assert sink.json_of("tts_cancel")
 
 
 async def test_end_cancels_tasks():
