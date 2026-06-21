@@ -51,6 +51,7 @@ from .worker_runtime.provider_map import (
 from .workers.claude_direct_worker import ClaudeDirectWorker
 from .workers.codex_direct_worker import CodexDirectWorker
 from .workers.gemini_worker import GeminiWorker
+from .workers.google_cli_worker import GoogleCliWorker
 
 logger = logging.getLogger(__name__)
 
@@ -540,15 +541,20 @@ async def bootstrap_missions(
                 return ClaudeDirectWorker(mcp_servers=_assemble_worker_mcp_servers())
             return CodexDirectWorker()
         if kind == "antigravity":
-            # "antigravity" (Google subscription): reuse GeminiWorker — it already
-            # drives `gemini -p ... --yolo` in the worktree — but the worker env has
-            # the Gemini API key stripped (see the env builder below), so the CLI
-            # falls back to the ~/.gemini OAuth login and bills the subscription.
+            # "antigravity" (Google subscription): drive the official `agy` CLI
+            # over a PTY with --dangerously-skip-permissions so it can write files
+            # in the worktree. The worker env has the Gemini API key stripped (see
+            # the env builder), so the CLI uses the ~/.gemini OAuth login and bills
+            # the subscription. GoogleCliWorker falls back to GeminiWorker when the
+            # resolver finds the Gemini CLI instead of agy (it writes to a pipe; agy
+            # emits 0 bytes over a pipe and needs the PTY). The previous code reused
+            # GeminiWorker here, which drove `gemini` with gemini flags and never
+            # invoked agy at all (the gemini consumer-OAuth was sunset 2026-06-18).
             logger.info(
-                "Mission worker -> GeminiWorker over the Google subscription "
-                "(OAuth login, no API key) — billed against Antigravity/Gemini."
+                "Mission worker -> GoogleCliWorker over the Google subscription "
+                "(agy over PTY, OAuth login, no API key) — billed against Antigravity."
             )
-            return GeminiWorker()
+            return GoogleCliWorker()
         if kind == "gemini":
             # Reached when [brain.sub_jarvis].provider == "gemini" was selected
             # (the user's "selected provider must run" mandate) OR, legacy, when

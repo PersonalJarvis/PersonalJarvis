@@ -21,7 +21,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.google_cli.resolver import GoogleCli, resolve_google_cli
 
 log = logging.getLogger(__name__)
@@ -164,19 +163,21 @@ class GoogleCliAuthService:
     def start_login(self) -> subprocess.Popen[bytes]:
         """Spawn the official CLI login in a visible console. Raises if absent.
 
-        ``agy`` uses ``agy login``; the Gemini CLI drops into its interactive
-        auth picker on a bare run. Detached with a fresh console (Windows) /
-        new session (POSIX) so the device/OAuth URL is reachable under pythonw.
+        Neither CLI has a dedicated ``login`` subcommand — verified 2026-06-21,
+        ``agy login`` simply HANGS (it is not a real subcommand; ``agy help``
+        lists only changelog/help/install/models/plugin/update). Both ``agy`` and
+        the Gemini CLI drop into the interactive "Sign in with Google" flow on a
+        bare run, so we launch the bare binary. Detached with a fresh console
+        (Windows) / new session (POSIX) so the device/OAuth URL is reachable
+        under pythonw.
         """
         cli = self._resolve()
         if cli is None:
             raise FileNotFoundError(
                 "No Google CLI found (install agy or the Gemini CLI)."
             )
-        argv = (
-            [*cli.argv_prefix, "login"] if cli.kind == "agy" else list(cli.argv_prefix)
-        )
-        log.info("Starting Google CLI login (interactive, kind=%s)", cli.kind)
+        argv = list(cli.argv_prefix)  # bare interactive run — no `login` subcommand
+        log.info("Starting Google CLI login (interactive bare run, kind=%s)", cli.kind)
         if sys.platform == "win32":
             kwargs: dict[str, Any] = {"creationflags": _NEW_CONSOLE_FLAGS}
         else:
@@ -189,26 +190,15 @@ class GoogleCliAuthService:
         return subprocess.Popen(argv, **kwargs)  # noqa: S603 — fixed argv, shell=False
 
     def logout_blocking(self) -> tuple[bool, str | None]:
-        """Disconnect: ``agy logout`` (best effort) then remove the on-disk creds.
+        """Disconnect by removing the on-disk OAuth creds.
 
-        Returns ``(ok, error)``. ``ok`` is True when the creds were removed or
-        the CLI logout succeeded.
+        Neither CLI has a ``logout`` subcommand (verified 2026-06-21) — ``agy
+        logout`` would hang like ``agy login``. Removing ``~/.gemini/oauth_creds
+        .json`` IS the disconnect; the isolated brain home re-syncs to the absent
+        creds on the next turn (see ``isolated_home``), so agy logs out there too.
+
+        Returns ``(ok, error)``; ``ok`` is True when the creds are gone.
         """
-        cli = self._resolve()
-        if cli is not None and cli.kind == "agy":
-            try:
-                proc = subprocess.run(
-                    [*cli.argv_prefix, "logout"],
-                    capture_output=True,
-                    text=True,
-                    timeout=15.0,
-                    creationflags=NO_WINDOW_CREATIONFLAGS,
-                )
-                if proc.returncode == 0:
-                    return True, None
-            except (OSError, subprocess.SubprocessError) as exc:
-                log.warning("agy logout failed (%s); removing creds", exc)
-
         try:
             (_gemini_home() / "oauth_creds.json").unlink(missing_ok=True)
             return True, None

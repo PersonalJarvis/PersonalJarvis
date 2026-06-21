@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 
+import jarvis.google_cli.auth_service as auth_mod
 from jarvis.google_cli.auth_service import (
     GoogleCliAuthService,
     _derive_google_auth,
@@ -91,3 +92,37 @@ def test_status_installed_but_logged_out(tmp_path, monkeypatch):
     st = svc.status()
     assert st.installed and not st.connected
     assert st.cli_kind == "agy"
+
+
+def test_start_login_uses_bare_agy_not_login_subcommand(monkeypatch):
+    # agy has NO `login` subcommand (verified 2026-06-21: `agy login` hangs
+    # forever). The login is an interactive bare run, so start_login must NOT
+    # append "login" — that would spawn a hung process behind the Connect button.
+    svc = GoogleCliAuthService()
+    svc._resolve = lambda: GoogleCli(kind="agy", argv_prefix=["agy.exe"])  # type: ignore[method-assign]
+    captured: dict = {}
+
+    def _fake_popen(argv, **kw):
+        captured["argv"] = list(argv)
+        return object()
+
+    monkeypatch.setattr(auth_mod.subprocess, "Popen", _fake_popen)
+    svc.start_login()
+    assert captured["argv"] == ["agy.exe"]  # bare binary, no "login"
+
+
+def test_logout_removes_creds_without_calling_agy_logout(tmp_path, monkeypatch):
+    # agy has NO `logout` subcommand either; removing the on-disk OAuth creds IS
+    # the disconnect. Trying `agy logout` would hang/time out for nothing.
+    gem = _seed_gemini_home(tmp_path)
+    monkeypatch.setenv("GEMINI_HOME", str(gem))
+    svc = GoogleCliAuthService()
+    svc._resolve = lambda: GoogleCli(kind="agy", argv_prefix=["agy.exe"])  # type: ignore[method-assign]
+
+    def _no_run(*a, **k):
+        raise AssertionError("agy logout must not be invoked (no such subcommand)")
+
+    monkeypatch.setattr(auth_mod.subprocess, "run", _no_run)
+    ok, err = svc.logout_blocking()
+    assert ok and err is None
+    assert not (gem / "oauth_creds.json").is_file()  # creds actually removed
