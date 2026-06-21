@@ -193,6 +193,78 @@ def _select_subagent_worker_kind(
     return "subjarvis"
 
 
+def subagent_runs_on_claude_fallback(sub_jarvis_provider: str | None) -> bool:
+    """True when picking this subagent provider does NOT run heavy missions on
+    THAT provider but silently falls back to the ClaudeDirectWorker (Opus).
+
+    ``grok`` / ``openai`` / ``openrouter`` resolve to the legacy ``"subjarvis"``
+    kind, whose dedicated worker (the OpenClaw subprocess) was removed after the
+    ~92% nested-claude hang — so ``_worker_factory`` falls them through to the
+    proven direct Claude worker. The UI reads this to flag those provider cards
+    honestly instead of pretending the selection runs on the chosen LLM.
+
+    Derived from the SINGLE routing source of truth (``_select_subagent_worker_
+    kind``) so the badge can never drift from the worker that actually runs:
+    the day a real grok/openrouter worker is wired, the kind stops being
+    ``"subjarvis"`` and this returns ``False`` automatically.
+    """
+    return _select_subagent_worker_kind(sub_jarvis_provider, "") == "subjarvis"
+
+
+def _live_subagent_provider(boot_snapshot: str | None) -> str | None:
+    """Re-resolve ``[brain.sub_jarvis].provider`` from the LIVE persisted config.
+
+    The worker factory used to freeze the boot-time provider snapshot, so a
+    subagent switch (UI / config / drift-guard) only took effect after an app
+    restart — every mission ran the hard-coded ClaudeDirectWorker (Opus)
+    fallback until then (live forensic 2026-06-21: a process booted before the
+    codex pin kept routing heavy missions to Claude/Opus for hours, even though
+    the persisted choice was already ``openai-codex``). Resolving per mission
+    makes the running app follow the current selection without a restart.
+
+    Two hops, both reusing tested machinery:
+      1. ``refresh_persisted_env_from_user_registry()`` pulls the authoritative
+         User-registry value of the persisted ``JARVIS__*`` keys (which already
+         include ``JARVIS__BRAIN__SUB_JARVIS__PROVIDER``) into this process's
+         ``os.environ``. Without it a stale inherited env keeps winning over the
+         TOML via ``_apply_env_overrides`` (env > toml). No-op off Windows /
+         when nothing changed.
+      2. ``load_config()`` is uncached (re-reads TOML + env on every call), so a
+         fresh read now reflects the persisted choice.
+
+    Any failure (config blip, registry hiccup) degrades to ``boot_snapshot`` so
+    a transient error can never break mission dispatch — the boot path already
+    treats that snapshot as authoritative, so this is strictly safer than the
+    frozen-closure behaviour it replaces.
+    """
+    try:
+        from jarvis.core.config import (
+            load_config,
+            refresh_persisted_env_from_user_registry,
+        )
+
+        try:
+            refresh_persisted_env_from_user_registry()
+        except Exception:  # noqa: BLE001,S110 — best-effort env heal, never fatal
+            pass
+
+        cfg = load_config()
+        sub_cfg = getattr(cfg.brain, "sub_jarvis", None)
+        raw = getattr(sub_cfg, "provider", None) if sub_cfg is not None else None
+        if raw:
+            resolved = str(raw).strip().lower()
+            if resolved:
+                return resolved
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(
+            "missions: live subagent re-resolve failed (%s) — using boot "
+            "snapshot %r",
+            exc,
+            boot_snapshot,
+        )
+    return boot_snapshot
+
+
 async def bootstrap_missions(
     *,
     db_path: Path,
@@ -380,6 +452,11 @@ async def bootstrap_missions(
         try:
             from jarvis.core.config import get_secret
 
+            # Resolve the provider LIVE here too, so the injected key matches the
+            # worker the factory will actually pick (both read the same current
+            # persisted choice instead of the frozen boot snapshot).
+            live_provider = _live_subagent_provider(sub_jarvis_provider)
+
             anthropic_key = get_secret(
                 "anthropic_api_key", env_fallback="ANTHROPIC_API_KEY"
             )
@@ -387,7 +464,7 @@ async def bootstrap_missions(
             # so OPENAI_API_KEY carries it (the OAuth path strips the key anyway —
             # see CodexDirectWorker._build_codex_env). Other subagents use the
             # general OpenAI key unchanged.
-            if sub_jarvis_provider in CODEX_SUBAGENT_SLUGS:
+            if live_provider in CODEX_SUBAGENT_SLUGS:
                 openai_key = get_secret(
                     "codex_openai_api_key", env_fallback="OPENAI_API_KEY"
                 ) or get_secret("openai_api_key", env_fallback="OPENAI_API_KEY")
@@ -399,7 +476,7 @@ async def bootstrap_missions(
             # configured Gemini API key must NOT be injected, or the CLI would
             # bill the key instead of the subscription login. Other subagents
             # keep the API-key path unchanged.
-            if sub_jarvis_provider in ANTIGRAVITY_SUBAGENT_SLUGS:
+            if live_provider in ANTIGRAVITY_SUBAGENT_SLUGS:
                 gemini_key = None
             else:
                 gemini_key = get_secret(
@@ -494,8 +571,15 @@ async def bootstrap_missions(
         # in particular a configured ``claude-api`` is a HARD LOCK that no
         # per-step model can divert to the Gemini API key (anti-silent-Gemini
         # defense-in-depth, 2026-05-29).
+        # Re-resolve the subagent provider from the LIVE persisted config on
+        # every mission, instead of the frozen boot snapshot. A switch to Codex
+        # then takes effect on the next mission without an app restart — the
+        # 2026-06-21 incident was a process that booted before the codex pin and
+        # kept routing every heavy mission to the ClaudeDirectWorker (Opus)
+        # fallback for hours. Degrades to the boot snapshot on any read failure.
+        live_provider = _live_subagent_provider(sub_jarvis_provider)
         kind = _select_subagent_worker_kind(
-            sub_jarvis_provider, getattr(step, "model", "") or ""
+            live_provider, getattr(step, "model", "") or ""
         )
         if kind == "claude_direct":
             # Proactive quota routing (mirror of the codex_needs_reauth branch
