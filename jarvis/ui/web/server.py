@@ -829,6 +829,30 @@ class WebServer:
                 }
             )
 
+            # Antigravity is a DIRECT worker (GoogleCliWorker over the official
+            # agy/Gemini CLI) with no OpenClaw slug, so it is not in MAPPINGS â€”
+            # the Google sibling of Codex. Surface it as an explicit selectable
+            # subagent row, backed by the Google subscription OAuth login (no API
+            # key): "key_set" is the connected state. Selecting it routes heavy
+            # tasks through agy; selecting any other provider routes through that
+            # one â€” the choice is never hardcoded (init._select_subagent_worker_kind).
+            try:
+                from jarvis.google_cli.auth_service import GoogleCliAuthService
+
+                antigravity_connected = GoogleCliAuthService().status().connected
+            except Exception:  # noqa: BLE001
+                antigravity_connected = False
+            mapping_rows.append(
+                {
+                    "jarvis": "antigravity",
+                    "openclaw": "agy-cli (direct)",
+                    "env_var": "Google-OAuth",
+                    "env_fallback": None,
+                    "key_set": antigravity_connected,
+                    "is_active_brain": primary == "antigravity",
+                }
+            )
+
             return {
                 "configured": oc_cfg is not None,
                 "enabled": bool(oc_cfg.enabled) if oc_cfg else False,
