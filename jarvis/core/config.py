@@ -1874,6 +1874,17 @@ _PERSISTED_PROVIDER_ENV_KEYS: tuple[str, ...] = (
     "JARVIS__BRAIN__SUB_JARVIS__PROVIDER",
     "JARVIS__TTS__PROVIDER",
     "JARVIS__STT__PROVIDER",
+    # ack_brain subsystem master + flash provider selection. Same drift-guard
+    # 3-layer sync as the provider tiers above, so a stale inherited value must
+    # heal at boot too. Forensic 2026-06-21: an in-app restart inherited a
+    # pre-change ancestor env with JARVIS__ACK_BRAIN__ENABLED=false /
+    # PROVIDER=gemini; absent from this list it survived the restart (env > toml)
+    # and kept the grounded spawn announcer in canned-pool mode even though the
+    # registry already held enabled=true / provider=grok. The spoken spawn ACK
+    # then stayed a generic stock phrase instead of context-aware text.
+    "JARVIS__ACK_BRAIN__ENABLED",
+    "JARVIS__ACK_BRAIN__PROVIDER",
+    "JARVIS__ACK_BRAIN__FALLBACK_PROVIDER",
 )
 
 
