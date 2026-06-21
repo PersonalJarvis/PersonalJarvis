@@ -2143,12 +2143,27 @@ def ensure_project_root_cwd() -> Path:
     — re-showing the first-run setup guide on every restart and splitting the
     user's Chats/Sessions/Missions across two folders.
 
+    It also pins the repo root onto ``sys.path``. ``python -m`` seeds
+    ``sys.path[0]`` from the *start-time* cwd, and a later ``os.chdir`` does NOT
+    patch the import path. A start from a foreign cwd (manual launch / an in-app
+    restart inheriting the user home) therefore left the repo root off
+    ``sys.path``, so the ROOT packages ``ui`` and ``conductor`` — which live
+    outside the editable-installed ``jarvis`` package — failed to import
+    ("No module named 'ui'"), silently disabling the on-screen overlay
+    (whisper-bar) and the Conductor view. Putting the root on the path makes
+    those imports resolve regardless of how the process was started.
+
     Call this once, as early as possible in every process entry point (before
     ``load_config`` and before the server touches any ``data/`` path). It is
     idempotent and never raises: a chdir failure is logged and the process
     continues with whatever CWD it had.
     """
     import logging
+
+    root = str(PROJECT_ROOT)
+    if root not in sys.path:
+        # First, mirroring the `python -m` cwd seeding the working boots had.
+        sys.path.insert(0, root)
 
     if Path.cwd() != PROJECT_ROOT:
         try:
