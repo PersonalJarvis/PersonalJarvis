@@ -27,6 +27,9 @@ from pydantic import BaseModel
 from starlette.responses import FileResponse, HTMLResponse
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+from jarvis.missions.kontrollierer.deliverable_paths import (
+    is_nondeliverable_scratch,
+)
 from jarvis.platform import detect_platform
 from jarvis.ui.web.artifact_view import VIEW_CSP, render_artifact_html
 
@@ -421,11 +424,19 @@ def _is_deliverable_relpath(rel_parts: tuple[str, ...]) -> bool:
     # Shortest valid deliverable: tasks/<id>/artifacts/files/<name> (5 parts).
     if len(rel_parts) < 5:
         return False
-    return (
+    if not (
         rel_parts[0] == "tasks"
         and rel_parts[2] == "artifacts"
         and rel_parts[3] == "files"
-    )
+    ):
+        return False
+    # Defence-in-depth (2026-06-21): hide tool-scratch the archive's --ignored
+    # union may have re-imported on a PRE-FIX mission — a browser/QA worker's
+    # gitignored Chrome user-data profiles (mission_019eeb34-bb67: 199 cache
+    # blobs buried 2 real deliverables here). Shares the orchestrator's archive
+    # predicate (single source of truth, anti-drift). ``rel_parts[4:]`` is the
+    # path BELOW ``tasks/<id>/artifacts/files/`` — the deliverable-relative part.
+    return not is_nondeliverable_scratch("/".join(rel_parts[4:]))
 
 
 def _resolve_artifact_target(request: Request, slug: str, path: str) -> Path:

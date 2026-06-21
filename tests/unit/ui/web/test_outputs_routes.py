@@ -567,6 +567,29 @@ def test_is_deliverable_relpath() -> None:
     assert not _is_deliverable_relpath(("tasks", "019e0000", "logs", "x.jsonl"))
 
 
+def test_is_deliverable_relpath_excludes_browser_scratch() -> None:
+    """Defence-in-depth (2026-06-21, mission_019eeb34-bb67): a browser/QA
+    worker's gitignored Chrome user-data profiles re-imported by the archive's
+    --ignored union must NOT show in Outputs even though they live under the
+    allowlisted ``tasks/<id>/artifacts/files/`` subtree. The real deliverable
+    inside the same qa-artifacts/ dir must still pass."""
+    base = ("tasks", "019eeb34-bc50", "artifacts", "files")
+    # Browser scratch — rejected.
+    assert not _is_deliverable_relpath(
+        (*base, "qa-artifacts", "chrome-profile-dd6355b8", "GrShaderCache", "data_2")
+    )
+    assert not _is_deliverable_relpath(
+        (*base, "qa-artifacts", "chrome-profile-dd6355b8", "Last Browser")
+    )
+    assert not _is_deliverable_relpath(
+        (*base, "qa-artifacts", "chrome-profile-dd6355b8", "Default",
+         "Shared Dictionary", "db-journal")
+    )
+    # Genuine deliverables — including one INSIDE qa-artifacts/ next to junk.
+    assert _is_deliverable_relpath((*base, "index.html"))
+    assert _is_deliverable_relpath((*base, "qa-artifacts", "melbourne-plan-render.png"))
+
+
 @pytest.mark.asyncio
 async def test_list_artifacts_lists_only_deliverables(
     app: FastAPI, tmp_path: Path
