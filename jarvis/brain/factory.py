@@ -1416,7 +1416,10 @@ def build_ack_brain(jcfg: Any | None = None) -> Any:
     See docs/superpowers/specs/2026-05-11-pre-thinking-ack-flash-brain-design.md.
 
     Returns ``None`` when:
-    - ``[ack_brain].enabled = false`` in jarvis.toml (default)
+    - ``[ack_brain].enabled = false`` in jarvis.toml (subsystem master off)
+    - ``[ack_brain].preamble_enabled = false`` (the default since 2026-06-21 —
+      the speculative preamble is retired; the grounded spawn announcer stays
+      wired via ``build_spawn_announcer``)
     - the configured provider is missing from REGISTRY
     - construction of the provider or breaker raises
 
@@ -1430,6 +1433,18 @@ def build_ack_brain(jcfg: Any | None = None) -> Any:
         ack_cfg = getattr(jcfg, "ack_brain", None)
         if ack_cfg is None or not getattr(ack_cfg, "enabled", False):
             log.info("Flash-Brain: disabled in jarvis.toml — skipping wiring.")
+            return None
+        # The speculative pre-thinking preamble is gated by its own
+        # sub-switch (default off, 2026-06-21). `enabled` stays the
+        # subsystem master so the grounded spawn announcer keeps its LLM
+        # path; only this blind preamble generator is retired here. With
+        # no AckGenerator the pipeline's fire-and-forget preamble task
+        # never spawns (pipeline.py guards on `_ack_brain is not None`).
+        if not getattr(ack_cfg, "preamble_enabled", False):
+            log.info(
+                "Flash-Brain: pre-thinking preamble disabled "
+                "([ack_brain].preamble_enabled=false) — spawn announcer unaffected."
+            )
             return None
 
         from jarvis.brain.ack_brain import AckGenerator, CircuitBreaker
