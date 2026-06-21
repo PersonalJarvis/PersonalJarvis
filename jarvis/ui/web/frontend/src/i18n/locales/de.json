@@ -856,6 +856,7 @@
       "restart_required": "Neustart erforderlich, damit die Änderung greift.",
       "degraded_warning": "Die gewählte Phrase wird von der ausgewählten Engine nicht unterstützt — sie fällt auf eine andere Engine zurück.",
       "needs_whisper_hint": "Eine beliebige Phrase benötigt das lokale-Whisper-Extra. Ohne es fällt die Engine auf eine eingebaute Schnellphrase zurück.",
+      "derived_name": "Dein Assistent heißt dann: {0}",
       "engine_options": {
         "auto": "Automatisch (empfohlen)",
         "openwakeword": "openWakeWord (eingebaute Phrasen)",
@@ -898,16 +899,6 @@
         "mascot": "Maskottchen-Orb",
         "none": "Keins (ausgeblendet)"
       }
-    },
-    "assistant_name": {
-      "title": "Name des Assistenten",
-      "description": "Wie sich der Assistent in Antworten selbst nennt. Das ist NICHT das Wake-Word, das du zum Aktivieren sagst — das gesprochene Trigger-Wort stellst du im Panel „Wake-Word“ darunter ein. Leer lassen, um dem Wake-Wort zu folgen.",
-      "label": "Name",
-      "current": "Der Assistent nennt sich „{0}“.",
-      "auto_hint": "Leer — folgt dem Wake-Wort (aktuell „{0}“).",
-      "save": "Name speichern",
-      "saved": "Name gespeichert",
-      "restart_required": "Neustart nötig, damit es wirkt."
     },
     "system_prompt": {
       "title": "System-Prompt",

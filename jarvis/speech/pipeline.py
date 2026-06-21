@@ -2367,6 +2367,25 @@ class SpeechPipeline:
                 event.text[:80],
             )
             return
+        # A preamble ("I'm about to think about this") is only coherent BEFORE
+        # the answer is voiced. If the turn is already JARVIS_SPEAKING by the
+        # time it reaches the handler, the answer (or another readback) is being
+        # spoken right now, so the preamble is stale → drop it instead of
+        # queueing it behind the answer on the shared player (live bug
+        # 2026-06-20: the ack "Ich schaue mir jetzt …" played AFTER the tool
+        # result). The floor guard above only covers the USER holding the floor;
+        # this covers Jarvis already speaking. The remaining race — the answer
+        # starting DURING the preamble's synthesis / play-lock wait — is caught
+        # by the should_play predicate handed to play_chunks below.
+        if is_preamble and (
+            getattr(self, "_turn_state", TurnTakingState.IDLE)
+            is TurnTakingState.JARVIS_SPEAKING
+        ):
+            log.info(
+                "Preamble dropped — Jarvis already speaking the answer: %r",
+                event.text[:80],
+            )
+            return
         if event.priority == "interrupt":
             # Arm the quiet window BEFORE TTS so a synchronous publish of a
             # preamble immediately afterwards sees the up-to-date timestamp.
@@ -2435,7 +2454,27 @@ class SpeechPipeline:
                 chunks = self._tts.synthesize(scrubbed.cleaned, language_code=lang_code)
             except TypeError:
                 chunks = self._tts.synthesize(scrubbed.cleaned)
-            await self._player.play_chunks(chunks)
+            if is_preamble:
+                # Staleness gate evaluated by the player right before it writes
+                # audio: if the answer has started speaking by the time the
+                # preamble's synthesis + play-lock wait completes, drop it so it
+                # is never voiced after the answer (2026-06-20 misorder fix).
+                # TypeError fallback mirrors the synthesize() compat shim above:
+                # an older player / test fake without the should_play kwarg still
+                # plays (the synchronous JARVIS_SPEAKING guard already covers the
+                # already-speaking case; only the in-flight race is then uncovered).
+                try:
+                    await self._player.play_chunks(
+                        chunks,
+                        should_play=lambda: (
+                            getattr(self, "_turn_state", TurnTakingState.IDLE)
+                            is not TurnTakingState.JARVIS_SPEAKING
+                        ),
+                    )
+                except TypeError:
+                    await self._player.play_chunks(chunks)
+            else:
+                await self._player.play_chunks(chunks)
         except Exception as exc:  # noqa: BLE001
             log.warning("Announcement-Speak fehlgeschlagen: %s", exc)
         finally:

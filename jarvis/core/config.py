@@ -101,17 +101,16 @@ class ProfileConfig(BaseModel):
 
 
 class PersonaConfig(BaseModel):
-    """The assistant's own identity — how it refers to itself.
-
-    ``name`` is the spoken/written name the assistant uses ("Du bist <name>").
-    Empty (default) means "derive it from the wake phrase" — so setting the wake
-    word to "Micron" makes the assistant call itself Micron, with no second
-    field to fill in. Set a value here to decouple the name from the wake word
-    (e.g. wake "Hey Computer" but identity "Friday"). Resolved by
-    ``jarvis.brain.assistant_name.resolve_assistant_name``.
+    """Reserved ``[persona]`` table. The assistant's name is no longer stored
+    here — it derives solely from the wake phrase (see
+    ``jarvis.brain.assistant_name.resolve_assistant_name`` and the 2026-06-20
+    coupling design). A legacy ``[persona] name`` key in an existing jarvis.toml
+    is ignored (Pydantic ``extra="ignore"``); the next wake-word save strips it.
     """
 
-    name: str = ""
+    # Explicit so the "legacy name key is ignored" contract above cannot be
+    # silently broken by a future base-class / project-wide model_config change.
+    model_config = ConfigDict(extra="ignore")
 
 
 class WakeWordConfig(BaseModel):

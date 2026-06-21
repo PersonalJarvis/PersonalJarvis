@@ -296,6 +296,10 @@ def set_wake_word(
     if fuzzy_match_ratio is not None:
         values["fuzzy_match_ratio"] = float(fuzzy_match_ratio)
     _patch_wake_word_toml(path, values)
+    try:
+        _strip_persona_name(path)
+    except Exception as exc:  # noqa: BLE001 — cleanup is best-effort, never breaks the save
+        log.debug("persona-name strip skipped: %s", exc)
 
 
 def set_autostart(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -1007,6 +1011,33 @@ def _patch_wake_word_toml(path: Path, values: dict[str, object]) -> None:
         for key, value in values.items():
             wake_word[key] = value
 
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
+
+
+def _strip_persona_name(path: Path) -> None:
+    """Remove a stale ``[persona] name`` entry (the legacy assistant-name override).
+
+    The wake word is now the single name source, so a leftover ``[persona] name``
+    from before the 2026-06-20 coupling must not linger. Best-effort: a missing
+    file/table/key is a no-op. Preserves comments and the optional BOM, exactly
+    like :func:`_patch_table`.
+    """
+    if not path.exists():
+        return
+
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM):]
+        doc: TOMLDocument = tomlkit.parse(raw)
+        persona = doc.get("persona")
+        if persona is None or "name" not in persona:
+            return
+        del persona["name"]
         out = tomlkit.dumps(doc)
         if had_bom:
             out = _BOM + out

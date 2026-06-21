@@ -93,6 +93,16 @@ dev = [
     "mypy>=1.13",
     "pyinstaller>=6.11",
 ]
+# "Everything a normal power user wants" in one shot: the desktop app (tray /
+# overlay / hotkey / screen capture) + telephony (phone calls) + chat channels.
+# Each sub-extra carries its own platform markers, so `pip install .[full]`
+# quietly skips what does not apply to the OS. Deliberately EXCLUDES the heavy
+# `local-voice` extra (torch + faster-whisper, multi-GB, GPU-oriented) — add that
+# explicitly with `.[local-voice]` for offline speech. The cloud-first BASE
+# install still needs none of this; `[full]` is the opposite end of the spectrum.
+full = [
+    "personal-jarvis[desktop,telephony,channels]",
+]
 # Twilio telephony voice agent (call Jarvis on a phone number). Optional extra
 # per the cloud-first doctrine: the base install must boot without it, and the
 # telephony routes degrade gracefully when it is absent (AD-T8). `audioop` is
@@ -223,6 +233,7 @@ openai = "jarvis.plugins.brain.openai:OpenAIBrain"
 gemini = "jarvis.plugins.brain.gemini:GeminiBrain"
 grok = "jarvis.plugins.brain.grok:GrokBrain"
 codex = "jarvis.plugins.brain.codex:CodexBrain"
+antigravity = "jarvis.plugins.brain.antigravity:AntigravityBrain"
 # Ollama-Provider 2026-04-21 entfernt — User-Entscheidung (reine API-Provider-Chain).
 
 [project.entry-points."jarvis.harness"]

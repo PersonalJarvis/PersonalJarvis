@@ -610,64 +610,21 @@ async def put_keybind(body: KeybindBody, request: Request) -> dict[str, object]:
 
 
 # ---------------------------------------------------------------------------
-# Assistant name (persona identity). GET current (explicit + resolved); PUT to
-# change. Persisted to jarvis.toml [persona].name; applies on the next
-# BrainManager build (a Jarvis restart). Empty = derive from the wake phrase.
+# Assistant name (read-only). The name derives from the wake phrase; GET
+# exposes the resolved name for the frontend bylines. There is no write endpoint.
 # ---------------------------------------------------------------------------
-
-
-class AssistantNameBody(BaseModel):
-    # Empty string is allowed and meaningful: "" = auto-derive from wake phrase.
-    name: str = Field(default="", max_length=40)
-    persist: bool = Field(default=True, description="Persist to jarvis.toml")
 
 
 @router.get("/assistant-name")
 async def get_assistant_name(request: Request) -> dict[str, object]:
+    """The assistant's resolved name. Read-only: the name derives from the wake
+    phrase (set via PUT /api/settings/wake-word), there is no separate control."""
     from jarvis.brain.assistant_name import DEFAULT_ASSISTANT_NAME, resolve_assistant_name
 
     cfg = _config(request)
-    persona = getattr(cfg, "persona", None) if cfg is not None else None
-    explicit = (getattr(persona, "name", "") or "") if persona is not None else ""
     return {
-        "name": explicit,                              # the explicit override ("" = auto)
-        "resolved": resolve_assistant_name(cfg),       # what the assistant actually calls itself
-        "default": DEFAULT_ASSISTANT_NAME,
-    }
-
-
-@router.put("/assistant-name")
-async def put_assistant_name(body: AssistantNameBody, request: Request) -> dict[str, object]:
-    from jarvis.brain.assistant_name import resolve_assistant_name
-
-    name = body.name.strip()
-
-    # Best-effort in-memory cfg update so a later cfg read agrees pre-restart.
-    cfg = _config(request)
-    if cfg is not None and getattr(cfg, "persona", None) is not None:
-        try:
-            cfg.persona.name = name  # type: ignore[attr-defined]
-        except Exception as exc:  # noqa: BLE001 — frozen model is not an error
-            log.debug("in-memory persona.name update skipped: %s", exc)
-
-    persisted = False
-    if body.persist:
-        try:
-            from jarvis.core import config_writer
-
-            config_writer.set_assistant_name(name)
-            persisted = True
-        except Exception as exc:  # noqa: BLE001
-            log.warning("assistant-name persist failed: %s", exc)
-
-    return {
-        "ok": True,
-        "name": name,
         "resolved": resolve_assistant_name(cfg),
-        "persisted": persisted,
-        # The system prompt is assembled once per BrainManager, so a name change
-        # needs a restart to take effect.
-        "restart_required": True,
+        "default": DEFAULT_ASSISTANT_NAME,
     }
 
 
