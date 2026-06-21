@@ -9,7 +9,6 @@ import {
   FileText,
   ChevronRight,
   ChevronDown,
-  AppWindow,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ViewHeader } from "@/views/ChatsView";
@@ -24,12 +23,16 @@ import {
   useArtifactFile,
   useCancelMission,
   useOutputsCapabilities,
+  useOpeners,
+  usePreferredOpener,
+  useSetPreferredOpener,
   artifactOpenUrl,
   revealArtifact,
-  openArtifactNative,
+  openArtifactWith,
   type OutputSummary,
   type ArtifactSummary,
 } from "@/hooks/useOutputs";
+import { OpenWithDialog } from "@/components/OpenWithDialog";
 import { useT } from "@/i18n";
 import { applyMissionDragImage } from "@/lib/missionDragImage";
 import { useMissionDrag } from "@/store/missionDrag";
@@ -523,9 +526,37 @@ function ArtifactRow({
   file: ArtifactSummary;
   nativeActions: boolean;
 }) {
+  const t = useT();
   const [expanded, setExpanded] = useState(false);
+  const [chooserOpen, setChooserOpen] = useState(false);
   const full = useArtifactFile(slug, expanded ? file.path : null);
   const openUrl = artifactOpenUrl(slug, file.path);
+  const openers = useOpeners();
+  const preferred = usePreferredOpener();
+  const setPreferred = useSetPreferredOpener();
+
+  // Open the file with a specific app (desktop). Remembering persists the
+  // choice so the next "Open" click skips the chooser.
+  const pickOpener = (opener: string, remember: boolean) => {
+    void openArtifactWith(slug, file.path, opener).catch(() => {});
+    if (remember) setPreferred.mutate(opener);
+    setChooserOpen(false);
+  };
+
+  const handleOpen = () => {
+    if (!nativeActions) {
+      // Headless VPS: the UI is already a real browser tab — open the render
+      // URL there (no local apps to launch).
+      if (openUrl) window.open(openUrl, "_blank", "noopener,noreferrer");
+      return;
+    }
+    const pref = preferred.data ?? "";
+    if (pref) {
+      void openArtifactWith(slug, file.path, pref).catch(() => {});
+    } else {
+      setChooserOpen(true); // first time: ask which app
+    }
+  };
 
   const sizeLabel =
     file.size < 1024
@@ -559,57 +590,63 @@ function ArtifactRow({
           {sizeLabel}
         </span>
         <div className="flex shrink-0 items-center gap-0.5">
-          {openUrl && (
+          {(nativeActions || openUrl) && (
             <button
               type="button"
-              title="Open in browser"
-              onClick={() => window.open(openUrl, "_blank", "noopener,noreferrer")}
+              title={t("outputs_view.open_action")}
+              onClick={handleOpen}
               className="rounded p-1 hover:bg-secondary/40"
             >
               <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
             </button>
           )}
           {nativeActions && (
-            <>
-              <button
-                type="button"
-                title="Open with default app"
-                onClick={() =>
-                  void openArtifactNative(slug, file.path).catch(() => {})
-                }
-                className="rounded p-1 hover:bg-secondary/40"
-              >
-                <AppWindow className="h-3.5 w-3.5 text-muted-foreground" />
-              </button>
-              <button
-                type="button"
-                title="Reveal in folder"
-                onClick={() =>
-                  void revealArtifact(slug, file.path).catch(() => {})
-                }
-                className="rounded p-1 hover:bg-secondary/40"
-              >
-                <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
-              </button>
-            </>
+            <button
+              type="button"
+              title={t("outputs_view.open_with_change")}
+              onClick={() => setChooserOpen(true)}
+              className="rounded p-1 hover:bg-secondary/40"
+            >
+              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+            </button>
+          )}
+          {nativeActions && (
+            <button
+              type="button"
+              title={t("outputs_view.reveal_in_folder")}
+              onClick={() =>
+                void revealArtifact(slug, file.path).catch(() => {})
+              }
+              className="rounded p-1 hover:bg-secondary/40"
+            >
+              <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
+            </button>
           )}
         </div>
       </div>
+
+      {chooserOpen && (
+        <OpenWithDialog
+          openers={openers.data ?? []}
+          onPick={pickOpener}
+          onClose={() => setChooserOpen(false)}
+        />
+      )}
 
       {expanded && (
         <div className="border-t border-border/40 px-3 py-2">
           {!file.is_text ? (
             <div className="text-[11px] text-muted-foreground">
-              Binärdatei — öffne den Ordner auf dem Desktop, um sie anzuzeigen.
+              {t("outputs_view.binary_file_hint")}
             </div>
           ) : full.isLoading ? (
             <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" />
-              Lade Datei...
+              {t("outputs_view.loading_file")}
             </div>
           ) : full.isError ? (
             <div className="text-[11px] text-destructive">
-              Fehler: {String(full.error)}
+              {t("common.error")}: {String(full.error)}
             </div>
           ) : (
             <>

@@ -256,6 +256,16 @@ def set_ui_language(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _patch_table(path, "ui", "language", name)
 
 
+def set_preferred_opener(opener: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist the remembered "open with" choice in ``[ui] preferred_opener``.
+
+    ``opener`` is an opener id (``default`` | ``browser`` | an editor key like
+    ``code``) validated by the caller. Used by the Outputs view so a file opens
+    straight in the chosen app without re-prompting. Desktop-only setting.
+    """
+    _patch_table(path, "ui", "preferred_opener", opener)
+
+
 def set_wake_word(
     phrase: str,
     *,

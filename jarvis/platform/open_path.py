@@ -82,4 +82,66 @@ def reveal_in_folder(path: Path) -> bool:
         return False
 
 
-__all__ = ["open_file", "reveal_in_folder"]
+def open_file_with(file: Path, launch_kind: str, launch_value: str) -> bool:
+    """Open *file* in a specific, already-resolved app. Returns True if launched.
+
+    ``launch_kind``/``launch_value`` come from ``resolve_app_launch_target`` in
+    the caller (so this module stays free of the plugins layer): ``executable``
+    + absolute exe, ``open_a`` + macOS app display-name, ``xdg_open`` (Linux
+    default handler), ``startfile`` + a Windows ``.lnk``/app. The file path is
+    always passed as the launch argument.
+
+    Unlike ``os.startfile(bare_name)`` — a silent ShellExecute no-op from the
+    pythonw background process — every branch starts a real ``subprocess`` so a
+    window actually appears. Returns False on a headless host, an unknown kind,
+    or a launch error. Never raises (mirrors :func:`open_file`).
+    """
+    if not detect_capabilities().display_present:
+        log.info("open_file_with: no display present — skipping %s", file)
+        return False
+    try:
+        if launch_kind == "executable":
+            # Direct exe + the file as its argument (VSCode, Sublime, a browser
+            # exe, …). CREATE_NO_WINDOW only suppresses a console, never the GUI.
+            subprocess.Popen(  # noqa: S603
+                [launch_value, str(file)],
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+                close_fds=True,
+            )
+            return True
+        if launch_kind == "open_a":
+            # macOS: `open -a <AppName> <file>` resolves the .app by name.
+            subprocess.Popen(  # noqa: S603
+                ["open", "-a", launch_value, file.as_posix()],
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+                close_fds=True,
+            )
+            return True
+        if launch_kind == "xdg_open":
+            # Linux fallback: hand the file to the desktop's default handler.
+            subprocess.Popen(  # noqa: S603
+                ["xdg-open", file.as_posix()],
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+                close_fds=True,
+            )
+            return True
+        if launch_kind == "startfile":
+            # Windows .lnk/app launched with the file as an argument via `start`.
+            subprocess.Popen(  # noqa: S603
+                ["cmd", "/c", "start", "", launch_value, str(file)],
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+                close_fds=True,
+            )
+            return True
+        log.warning("open_file_with: unknown launch_kind %r", launch_kind)
+        return False
+    except OSError as exc:
+        log.warning("open_file_with failed for %s (%s): %s", file, launch_value, exc)
+        return False
+
+
+__all__ = [
+    "open_file",
+    "open_file_with",
+    "reveal_in_folder",
+]

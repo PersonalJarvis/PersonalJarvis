@@ -1071,7 +1071,15 @@
     "continue_label": "Continue",
     "restart_label": "Restart",
     "rerun_starting": "Starting…",
-    "rerun_confirm": "Confirm re-run"
+    "rerun_confirm": "Confirm re-run",
+    "open_action": "Open",
+    "open_with_title": "Open with…",
+    "open_with_remember": "Remember as default",
+    "open_with_change": "Change how this opens",
+    "open_with_empty": "No apps detected to open this file.",
+    "opener_default": "System default app",
+    "opener_browser": "Browser",
+    "reveal_in_folder": "Reveal in folder"
   },
   "common": {
     "save": "Save",

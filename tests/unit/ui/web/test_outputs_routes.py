@@ -850,3 +850,181 @@ def test_view_rejects_oversize_file(app, monkeypatch):
     client = TestClient(app)
     r = client.get(f"/api/outputs/{slug}/files/{rel}/view")
     assert r.status_code == 413
+
+
+# --- "open with" chooser: detection + open-with + preferred-opener -----------
+# Replaces the silent-no-op os.startfile/ShellExecute path: the file is opened
+# in a resolved editor/app via a real subprocess so a window actually appears.
+
+from types import SimpleNamespace  # noqa: E402
+
+from jarvis.plugins.tool.app_resolver import LaunchTarget  # noqa: E402
+
+
+def _fake_resolver_only(*installed: str):
+    """Return a resolve_app_launch_target stub where only *installed* keys map
+    to a real executable; everything else returns the raw-name startfile
+    fallback (= 'not installed')."""
+    def _resolve(name: str) -> LaunchTarget:
+        if name in installed:
+            return LaunchTarget("executable", rf"C:\apps\{name}.exe")
+        return LaunchTarget("startfile", name)
+    return _resolve
+
+
+def test_openers_native_disabled_returns_empty(app):
+    app.state.native_file_actions = False
+    client = TestClient(app)
+    r = client.get("/api/outputs/openers")
+    assert r.status_code == 200
+    assert r.json()["openers"] == []
+
+
+def test_openers_always_includes_default(app):
+    app.state.native_file_actions = True
+    with patch(
+        "jarvis.plugins.tool.app_resolver.resolve_app_launch_target",
+        side_effect=_fake_resolver_only(),
+    ), patch(
+        "jarvis.ui.web.outputs_routes._resolve_browser_target", return_value=None
+    ):
+        client = TestClient(app)
+        r = client.get("/api/outputs/openers")
+    ids = {o["id"] for o in r.json()["openers"]}
+    assert "default" in ids
+
+
+def test_openers_detects_installed_editor_only(app):
+    app.state.native_file_actions = True
+    with patch(
+        "jarvis.plugins.tool.app_resolver.resolve_app_launch_target",
+        side_effect=_fake_resolver_only("code"),
+    ), patch(
+        "jarvis.ui.web.outputs_routes._resolve_browser_target", return_value=None
+    ):
+        client = TestClient(app)
+        r = client.get("/api/outputs/openers")
+    ids = {o["id"] for o in r.json()["openers"]}
+    assert "code" in ids
+    assert "cursor" not in ids  # raw fallback → not installed → hidden
+
+
+def test_open_with_404_when_native_disabled(app):
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    rel = _make_deliverable(root, "019ed2dfd0fab1234", "report.md", "# Hi")
+    app.state.native_file_actions = False
+    client = TestClient(app)
+    r = client.post(
+        f"/api/outputs/{slug}/files/{rel}/open-with", json={"opener": "default"}
+    )
+    assert r.status_code == 404
+
+
+def test_open_with_default_calls_open_file(app):
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    rel = _make_deliverable(root, "019ed2dfd0fab1234", "report.md", "# Hi")
+    app.state.native_file_actions = True
+    client = TestClient(app)
+    with patch("jarvis.platform.open_path.open_file", return_value=True) as opn:
+        r = client.post(
+            f"/api/outputs/{slug}/files/{rel}/open-with",
+            json={"opener": "default"},
+        )
+    assert r.status_code == 200
+    assert r.json()["opened"] is True
+    opn.assert_called_once()
+
+
+def test_open_with_editor_calls_open_file_with(app):
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    rel = _make_deliverable(root, "019ed2dfd0fab1234", "report.md", "# Hi")
+    app.state.native_file_actions = True
+    client = TestClient(app)
+    with patch(
+        "jarvis.plugins.tool.app_resolver.resolve_app_launch_target",
+        side_effect=_fake_resolver_only("code"),
+    ), patch(
+        "jarvis.platform.open_path.open_file_with", return_value=True
+    ) as opn:
+        r = client.post(
+            f"/api/outputs/{slug}/files/{rel}/open-with",
+            json={"opener": "code"},
+        )
+    assert r.status_code == 200
+    assert r.json()["opened"] is True
+    opn.assert_called_once()
+    # Called with (file_path, kind, value) — the resolved executable.
+    args = opn.call_args.args
+    assert args[1] == "executable"
+    assert args[2].endswith("code.exe")
+
+
+def test_open_with_rejects_unknown_opener(app):
+    """A free-form opener (path/arbitrary string) must be rejected — the server
+    only launches known opener ids, never a client-supplied executable path."""
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    rel = _make_deliverable(root, "019ed2dfd0fab1234", "report.md", "# Hi")
+    app.state.native_file_actions = True
+    client = TestClient(app)
+    r = client.post(
+        f"/api/outputs/{slug}/files/{rel}/open-with",
+        json={"opener": r"C:\Windows\System32\evil.exe"},
+    )
+    assert r.status_code == 400
+
+
+def test_open_with_blocks_non_deliverable(app):
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    d = root / slug
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "reflections.md").write_text("secret", encoding="utf-8")
+    app.state.native_file_actions = True
+    client = TestClient(app)
+    r = client.post(
+        f"/api/outputs/{slug}/files/reflections.md/open-with",
+        json={"opener": "default"},
+    )
+    assert r.status_code == 404
+
+
+def test_get_preferred_opener_reads_config(app):
+    app.state.config = SimpleNamespace(ui=SimpleNamespace(preferred_opener="code"))
+    client = TestClient(app)
+    r = client.get("/api/outputs/preferred-opener")
+    assert r.status_code == 200
+    assert r.json()["opener"] == "code"
+
+
+def test_get_preferred_opener_defaults_empty(app):
+    # No config on app.state → empty (chooser will prompt).
+    client = TestClient(app)
+    r = client.get("/api/outputs/preferred-opener")
+    assert r.status_code == 200
+    assert r.json()["opener"] == ""
+
+
+def test_put_preferred_opener_persists_and_updates(app):
+    app.state.config = SimpleNamespace(ui=SimpleNamespace(preferred_opener=""))
+    client = TestClient(app)
+    with patch(
+        "jarvis.core.config_writer.set_preferred_opener"
+    ) as setter:
+        r = client.put(
+            "/api/outputs/preferred-opener", json={"opener": "code"}
+        )
+    assert r.status_code == 200
+    setter.assert_called_once_with("code")
+    assert app.state.config.ui.preferred_opener == "code"
+
+
+def test_put_preferred_opener_rejects_unknown(app):
+    client = TestClient(app)
+    r = client.put(
+        "/api/outputs/preferred-opener", json={"opener": "../../evil"}
+    )
+    assert r.status_code == 400

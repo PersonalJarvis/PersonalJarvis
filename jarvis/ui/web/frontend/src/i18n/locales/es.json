@@ -1071,7 +1071,15 @@
     "continue_label": "Continuar",
     "restart_label": "Reiniciar",
     "rerun_starting": "Iniciando…",
-    "rerun_confirm": "Confirmar reejecución"
+    "rerun_confirm": "Confirmar reejecución",
+    "open_action": "Abrir",
+    "open_with_title": "Abrir con…",
+    "open_with_remember": "Recordar como predeterminado",
+    "open_with_change": "Cambiar cómo se abre",
+    "open_with_empty": "No se detectaron apps para abrir este archivo.",
+    "opener_default": "App predeterminada del sistema",
+    "opener_browser": "Navegador",
+    "reveal_in_folder": "Mostrar en la carpeta"
   },
   "common": {
     "save": "Guardar",

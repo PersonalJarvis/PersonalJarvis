@@ -1013,6 +1013,10 @@ class UIConfig(BaseModel):
     bar_persistent: bool = True
     # Hex accent the bar lights up with during activity (gold on-brand).
     bar_accent: str = "#e7c46e"
+    # Remembered "open with" choice for Outputs artifacts: an opener id
+    # ("default" = OS default app, "browser", or an editor key like "code").
+    # Empty = ask via the chooser dialog on first open. Desktop-only.
+    preferred_opener: str = ""
 
 
 class DuckingConfig(BaseModel):

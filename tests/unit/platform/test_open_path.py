@@ -78,3 +78,66 @@ def test_reveal_headless_is_noop():
          patch.object(op.subprocess, "Popen") as popen:
         assert op.reveal_in_folder(Path("/x/y/z.md")) is False
         popen.assert_not_called()
+
+
+# --- open_file_with (launch a file in a specific resolved app) ---------------
+# Takes an already-resolved launch (kind, value) — NOT a bare app name — and
+# starts a real process so a window actually appears (the os.startfile/
+# ShellExecute path is a silent no-op from the pythonw background server).
+
+
+def test_open_file_with_executable_starts_process_with_file_arg():
+    with patch.object(op, "detect_capabilities", return_value=_caps()), \
+         patch.object(op, "detect_platform", return_value="win32"), \
+         patch.object(op.subprocess, "Popen") as popen:
+        ok = op.open_file_with(
+            Path(r"C:\out\report.md"), "executable", r"C:\apps\Code.exe"
+        )
+        assert ok is True
+        argv = popen.call_args.args[0]
+        assert argv[0] == r"C:\apps\Code.exe"
+        assert argv[1] == r"C:\out\report.md"
+
+
+def test_open_file_with_open_a_macos_passes_file_after_app():
+    with patch.object(op, "detect_capabilities", return_value=_caps()), \
+         patch.object(op, "detect_platform", return_value="darwin"), \
+         patch.object(op.subprocess, "Popen") as popen:
+        ok = op.open_file_with(
+            Path("/out/report.md"), "open_a", "Visual Studio Code"
+        )
+        assert ok is True
+        argv = popen.call_args.args[0]
+        assert argv[:3] == ["open", "-a", "Visual Studio Code"]
+        assert argv[-1] == "/out/report.md"
+
+
+def test_open_file_with_xdg_open_linux_opens_file():
+    with patch.object(op, "detect_capabilities", return_value=_caps()), \
+         patch.object(op, "detect_platform", return_value="linux"), \
+         patch.object(op.subprocess, "Popen") as popen:
+        ok = op.open_file_with(Path("/out/report.md"), "xdg_open", "")
+        assert ok is True
+        argv = popen.call_args.args[0]
+        assert argv[0] == "xdg-open" and argv[1] == "/out/report.md"
+
+
+def test_open_file_with_headless_is_noop():
+    with patch.object(op, "detect_capabilities", return_value=_caps(display=False)), \
+         patch.object(op.subprocess, "Popen") as popen:
+        assert op.open_file_with(Path("/x/y.md"), "executable", "/a/b") is False
+        popen.assert_not_called()
+
+
+def test_open_file_with_unknown_kind_returns_false():
+    with patch.object(op, "detect_capabilities", return_value=_caps()), \
+         patch.object(op.subprocess, "Popen") as popen:
+        assert op.open_file_with(Path("/x/y.md"), "nonsense", "v") is False
+        popen.assert_not_called()
+
+
+def test_open_file_with_never_raises_on_error():
+    with patch.object(op, "detect_capabilities", return_value=_caps()), \
+         patch.object(op, "detect_platform", return_value="linux"), \
+         patch.object(op.subprocess, "Popen", side_effect=OSError("boom")):
+        assert op.open_file_with(Path("/x/y.md"), "executable", "/a/b") is False

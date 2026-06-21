@@ -1071,7 +1071,15 @@
     "continue_label": "Fortsetzen",
     "restart_label": "Neu starten",
     "rerun_starting": "Wird gestartet…",
-    "rerun_confirm": "Erneut ausführen"
+    "rerun_confirm": "Erneut ausführen",
+    "open_action": "Öffnen",
+    "open_with_title": "Öffnen mit…",
+    "open_with_remember": "Als Standard merken",
+    "open_with_change": "Öffnen-mit ändern",
+    "open_with_empty": "Keine Apps gefunden, um diese Datei zu öffnen.",
+    "opener_default": "System-Standard-App",
+    "opener_browser": "Browser",
+    "reveal_in_folder": "Im Ordner anzeigen"
   },
   "common": {
     "save": "Save",
