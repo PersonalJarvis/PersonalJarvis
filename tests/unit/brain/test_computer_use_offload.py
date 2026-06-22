@@ -78,7 +78,20 @@ async def test_computer_use_acks_immediately_not_blocking_on_harness(monkeypatch
 @pytest.mark.asyncio
 async def test_computer_use_result_announced_when_done(monkeypatch) -> None:
     bus = _FakeBus()
-    executor = _SlowHarnessExecutor(output="Chrome ist offen.", delay=0.2)
+    # dispatch_to_harness ALWAYS returns a DICT (never a bare string); a verified
+    # success carries the on-screen observation in stdout's "(verified: ...)"
+    # line. That proof is forwarded as the readback — and the raw dict is NEVER
+    # str()'d into the turn (regression for the 2026-06-22 dict-leak, fully
+    # covered in test_cu_readback_language.test_success_readback_never_leaks_raw_harness_dict).
+    output = {
+        "harness": "screenshot",
+        "exit_code": 0,
+        "stdout": "[cu] done at step 3.1 (verified: Chrome ist offen.)",
+        "stderr": "",
+        "cost_usd": 0.0,
+        "duration_ms": 1200,
+    }
+    executor = _SlowHarnessExecutor(output=output, delay=0.2)
     mgr = _make_manager(executor, bus)
     plan = LocalActionPlan(
         mode=LocalActionMode.COMPUTER_USE, harness="computer-use", prompt="open chrome"
@@ -91,8 +104,13 @@ async def test_computer_use_result_announced_when_done(monkeypatch) -> None:
     assert executor.called
     completions = [e for e in bus.published if getattr(e, "kind", None) == "completion"]
     assert any("Chrome ist offen." in getattr(e, "text", "") for e in completions), (
-        f"result must be spoken as a completion announcement; got {bus.published}"
+        f"the verified observation must be forwarded as the completion; got {bus.published}"
     )
+    # The raw harness dict must never leak into the spoken/chat completion.
+    assert all(
+        "{" not in getattr(e, "text", "") and "exit_code" not in getattr(e, "text", "")
+        for e in completions
+    ), f"raw harness dict leaked into completion: {bus.published}"
 
 
 @pytest.mark.asyncio

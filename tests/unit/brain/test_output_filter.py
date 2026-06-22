@@ -659,3 +659,105 @@ def test_scrub_sentinel_only_yields_empty() -> None:
 
     result = scrub_for_voice(END_CALL_SIGNAL, language="de")
     assert result.cleaned == ""
+
+
+# ---------------------------------------------------------------------------
+# Raw data-structure dump guard (live bug 2026-06-22).
+#
+# A code path str()'d a whole tool-result DICT instead of humanizing it, and
+# scrub_for_voice — which only knew SPECIFIC tool-leak shapes ({"tool":…},
+# XML tags, YAML, prose) — passed it through, stripping only the jargon word
+# "harness" (hence the leaked empty '' key). A raw Python/JSON data-structure
+# dump must NEVER be spoken/shown, regardless of its keys or quote style. This
+# is the fail-closed common-chokepoint defense that makes the bug class
+# impossible no matter which path forgets to humanize its output.
+# ---------------------------------------------------------------------------
+
+
+def test_scrub_replaces_raw_harness_result_dict_with_fallback() -> None:
+    """The exact leaked shape from the live bug -> fallback, never spoken."""
+    from jarvis.brain.output_filter import FALLBACK_PHRASES
+
+    leaked = (
+        "{'harness': 'screenshot', 'exit_code': 0, 'stdout': \"[cu] done at "
+        "step 6.1 (verified: Settings open)\", 'stderr': '[cu] mission profile: "
+        "steps=6 total=15.4s', 'cost_usd': 0.0, 'duration_ms': 15442}"
+    )
+    result = scrub_for_voice(leaked, language="de")
+    assert result.fallback_used is True
+    assert result.cleaned == FALLBACK_PHRASES["de"]
+    for leak in ("{", "}", "exit_code", "cost_usd", "duration_ms", "screenshot"):
+        assert leak not in result.cleaned, leak
+
+
+def test_scrub_replaces_already_scrubbed_harness_dict() -> None:
+    """Even the post-jargon form ({'' : 'screenshot', …} — what actually
+    reached the user) must be refused, not merely have 'harness' removed."""
+    from jarvis.brain.output_filter import FALLBACK_PHRASES
+
+    leaked = "{'': 'screenshot', 'exit_code': 0, 'cost_usd': 0.0, 'duration_ms': 15442}"
+    result = scrub_for_voice(leaked, language="de")
+    assert result.fallback_used is True
+    assert result.cleaned == FALLBACK_PHRASES["de"]
+
+
+def test_scrub_refuses_arbitrary_dict_dump_unknown_keys() -> None:
+    """STRUCTURAL guard: a brand-new result shape with keys never seen before
+    is refused too — no key-by-key whack-a-mole."""
+    from jarvis.brain.output_filter import FALLBACK_PHRASES
+
+    leaked = "{'foo': 1, 'bar': 'baz', 'nested': {'a': 2}, 'when': 'now'}"
+    result = scrub_for_voice(leaked, language="en")
+    assert result.fallback_used is True
+    assert result.cleaned == FALLBACK_PHRASES["en"]
+
+
+def test_scrub_refuses_json_list_of_objects_dump() -> None:
+    """A JSON array of objects (double quotes) is a dump too."""
+    from jarvis.brain.output_filter import FALLBACK_PHRASES
+
+    leaked = '[{"title": "X", "snippet": "y"}, {"title": "Z", "snippet": "w"}]'
+    result = scrub_for_voice(leaked, language="de")
+    assert result.fallback_used is True
+    assert result.cleaned == FALLBACK_PHRASES["de"]
+
+
+def test_fallback_phrase_localized_to_spanish() -> None:
+    """Runtime-output-language doctrine: every phrase table carries all
+    supported locales (de/en/es). A Spanish-pinned user must hear the Spanish
+    fallback, not German — true for BOTH the raw-dump guard and the stacktrace
+    guard (same FALLBACK_PHRASES table)."""
+    from jarvis.brain.output_filter import FALLBACK_PHRASES
+
+    assert "es" in FALLBACK_PHRASES, "Spanish fallback phrase missing"
+    # raw-dump guard in Spanish
+    dump = scrub_for_voice("{'exit_code': 0, 'cost_usd': 0.0}", language="es")
+    assert dump.fallback_used is True
+    assert dump.cleaned == FALLBACK_PHRASES["es"]
+    # stacktrace guard in Spanish (same table)
+    trace = scrub_for_voice(
+        "Traceback (most recent call last):\n  File x\nValueError: boom",
+        language="es",
+    )
+    assert trace.fallback_used is True
+    assert trace.cleaned == FALLBACK_PHRASES["es"]
+    # the Spanish phrase is actually Spanish, not the German default
+    assert dump.cleaned != FALLBACK_PHRASES["de"]
+
+
+def test_scrub_keeps_humanized_readback_with_quotes() -> None:
+    """No false positive: a clean readback that merely quotes a UI label (and
+    contains an apostrophe + colon-free) must pass through untouched."""
+    text = "Erledigt — die Einstellungen sind auf 'Bluetooth und Geräte' offen."
+    result = scrub_for_voice(text, language="de")
+    assert result.fallback_used is False
+    assert "Bluetooth und Geräte" in result.cleaned
+
+
+def test_scrub_keeps_sentence_with_inline_brace_not_a_dump() -> None:
+    """A sentence that happens to mention a brace mid-text is NOT a dump (it
+    does not OPEN with a container) — must pass."""
+    text = "Ich habe die Funktion test() geprüft, alles in Ordnung."
+    result = scrub_for_voice(text, language="de")
+    assert result.fallback_used is False
+    assert "test()" in result.cleaned or "test" in result.cleaned

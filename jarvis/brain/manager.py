@@ -58,7 +58,11 @@ from jarvis.core.turn_language import (
     resolve_output_language,
     resolve_turn_language,
 )
-from jarvis.voice.action_phrases import action_phrase, cu_failure_readback
+from jarvis.voice.action_phrases import (
+    action_phrase,
+    cu_failure_readback,
+    cu_success_readback,
+)
 from jarvis.memory import CoreMemory, PersonStore, RecallStore, Soul, UserProfile
 from jarvis.memory.curator import Curator
 from jarvis.safety.tool_executor import ToolExecutor
@@ -3729,7 +3733,20 @@ class BrainManager:
                 timeout=timeout_s + 1.0,
             )
             if result.success:
-                text = str(result.output or "").strip() or action_phrase("cu_done", lang)
+                # FORWARD the verifier's on-screen observation (sitting in the
+                # harness stdout) as the readback so an informational request
+                # ("...and check which tabs I have open") is actually answered —
+                # and NEVER ``str()`` the raw ``dispatch_to_harness`` result DICT
+                # ({'harness': ..., 'exit_code': ..., 'stdout': ..., 'cost_usd':
+                # ..., 'duration_ms': ...}), which used to leak verbatim into the
+                # spoken/chat turn (live bug 2026-06-22, voice "geh in die
+                # Einstellungen und öffne Bluetooth"; the scrubbed ``''`` key was
+                # the blacklisted word "harness"). This is the SUCCESS sibling of
+                # the ``cu_failure_readback`` humanization below and uses the same
+                # static parse as the ``computer_use`` tool path — no LLM (AP-11).
+                output = getattr(result, "output", None)
+                stdout = output.get("stdout") if isinstance(output, dict) else None
+                text = cu_success_readback(lang, stdout=stdout)
             else:
                 err = getattr(result, "error", None)
                 exit_code, detail = self._cu_failure_detail(
