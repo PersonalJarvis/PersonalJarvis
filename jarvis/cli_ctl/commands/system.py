@@ -17,6 +17,12 @@ def restart(
         "-f",
         help="Restart even while missions are running (this kills them).",
     ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Authorize the restart without a prompt."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print the request and exit without restarting."
+    ),
 ) -> None:
     """Cleanly restart the desktop app (POST /api/settings/restart-app).
 
@@ -26,7 +32,14 @@ def restart(
     A restart kills every in-flight mission, so the server refuses (HTTP 409)
     while missions run and lists them; pass ``--force`` to restart anyway.
     """
+    from jarvis.cli_ctl import safety
     from jarvis.cli_ctl.__main__ import as_json, make_client
+
+    if not safety.gate_request(
+        "POST", "/api/settings/restart-app",
+        assume_yes=yes, dry_run=dry_run, as_json=as_json(),
+    ):
+        return  # dry run: preview already printed, nothing sent
 
     try:
         with make_client() as client:

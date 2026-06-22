@@ -35,6 +35,7 @@ class JarvisClient:
             transport=transport,
         )
         self.base_url = base_url
+        self.has_auth = bool(control_key)
 
     def request(
         self,

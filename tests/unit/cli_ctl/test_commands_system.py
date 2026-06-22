@@ -9,9 +9,17 @@ runner = CliRunner()
 def test_restart_posts_and_reports(mock_api, monkeypatch):
     monkeypatch.setenv("JARVISCTL_CONTROL_KEY", "jctl_x")
     mock_api[("POST", "/api/settings/restart-app")] = (200, {"ok": True, "restarting": True})
-    res = runner.invoke(app, ["system", "restart"])
+    res = runner.invoke(app, ["system", "restart", "--yes"])
     assert res.exit_code == 0
     assert "restart" in res.stdout.lower()
+
+
+def test_restart_fails_closed_without_yes(mock_api, monkeypatch):
+    """restart is destructive; non-interactive without --yes refuses early."""
+    monkeypatch.setenv("JARVISCTL_CONTROL_KEY", "jctl_x")
+    mock_api[("POST", "/api/settings/restart-app")] = (200, {"ok": True})
+    res = runner.invoke(app, ["system", "restart"])
+    assert res.exit_code == 1
 
 
 def test_restart_on_headless_reports_clean_message(mock_api, monkeypatch):
@@ -19,7 +27,7 @@ def test_restart_on_headless_reports_clean_message(mock_api, monkeypatch):
     mock_api[("POST", "/api/settings/restart-app")] = (
         503, {"detail": "self-restart unavailable on this host"}
     )
-    res = runner.invoke(app, ["system", "restart"])
+    res = runner.invoke(app, ["system", "restart", "--yes"])
     assert res.exit_code == 1
     assert "unavailable" in (res.stdout + res.stderr).lower()
 
@@ -39,7 +47,7 @@ def test_restart_refused_when_missions_running_hints_force(mock_api, monkeypatch
             }
         },
     )
-    res = runner.invoke(app, ["system", "restart"])
+    res = runner.invoke(app, ["system", "restart", "--yes"])
     assert res.exit_code == 1
     out = (res.stdout + res.stderr).lower()
     assert "--force" in out
@@ -64,6 +72,6 @@ def test_restart_force_flag_sends_force_param(monkeypatch):
         real_init(self, base_url, control_key, **kw)
 
     monkeypatch.setattr(client_mod.JarvisClient, "__init__", patched_init)
-    res = runner.invoke(app, ["system", "restart", "--force"])
+    res = runner.invoke(app, ["system", "restart", "--force", "--yes"])
     assert res.exit_code == 0
     assert "force=true" in seen["query"].lower()
