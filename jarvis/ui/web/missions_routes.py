@@ -27,6 +27,7 @@ from jarvis.missions.manager import MissionManager
 from jarvis.missions.state_machine import (
     IllegalStateTransition,
     MissionState,
+    is_terminal,
 )
 from jarvis.ui.web.missions_worker import extract_worker_missions
 
@@ -349,6 +350,14 @@ _RERUNNABLE_STATES: frozenset[MissionState] = frozenset(
     }
 )
 
+# Terminal mission-state *values* (string form, as stored in the header). A
+# re-run child counts as "live" while its state is NOT in this set. Unknown
+# strings are treated as live (conservative: block a duplicate rather than
+# spawn one). Derived from the single source of truth in the state machine.
+_TERMINAL_STATE_VALUES: frozenset[str] = frozenset(
+    s.value for s in MissionState if is_terminal(s)
+)
+
 
 @router.post("/{mission_id}/rerun")
 async def rerun_mission(
@@ -402,6 +411,46 @@ async def rerun_mission(
                 "Only CANCELLED, FAILED or TIMED_OUT missions can be re-run."
             ),
         )
+
+    # Idempotency / liveness guard (forensic 2026-06-22, mission 019eefcb-cee2):
+    # the source mission stays terminal forever as an audit record, so it is
+    # re-runnable indefinitely — and a burst of /rerun POSTs (a click-storm or a
+    # frontend re-render loop) used to dispatch one NEW child per request: nine
+    # children, "one mission with nine sub-agents". A parent may have at most ONE
+    # live (non-terminal) re-run child; while one exists, return it idempotently
+    # instead of spawning a duplicate. This mirrors the spawn_worker tool's
+    # cooldown gate, which guards the source_actor="hauptjarvis" voice path the
+    # same way — the source_actor="ui" rerun path simply never had its
+    # equivalent. Once the child reaches a terminal state, a fresh re-run is
+    # allowed again (the guard is a liveness gate, not a permanent lock). Placed
+    # before the destructive gate so a still-running, already-confirmed child is
+    # never re-prompted for confirmation.
+    live_children = [
+        child_id
+        for (child_id, child_state) in await mgr.store.find_child_missions(
+            mission_id
+        )
+        if child_state not in _TERMINAL_STATE_VALUES
+    ]
+    if live_children:
+        existing_child = live_children[0]
+        action = (
+            "continue" if source_state is MissionState.CANCELLED else "restart"
+        )
+        logger.info(
+            "rerun_mission: parent %s already has a live re-run child %s — "
+            "returning it idempotently instead of dispatching a duplicate",
+            mission_id,
+            existing_child,
+        )
+        return {
+            "ok": True,
+            "parent_mission_id": mission_id,
+            "mission_id": existing_child,
+            "action": action,
+            "started": True,
+            "deduplicated": True,
+        }
 
     # Destructive re-gate: a re-run must not bypass the safety check the
     # original dispatch enforced. Same helper + same 409 shape as /dispatch.
