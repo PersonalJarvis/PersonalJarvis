@@ -983,6 +983,7 @@ async def _call_brain(
     frame_b: Observation | None = None,
     max_tokens: int = 256,
     images_override: list[ImageBlock] | None = None,
+    early_stop_json: bool = False,
 ) -> str:
     """Send screenshot + goal + history to the active brain, return raw text.
 
@@ -1025,7 +1026,17 @@ async def _call_brain(
     # routing and is a reliability risk; the knob + pure predicate ship first.
     manager = ctx.brain_manager
     if hasattr(manager, "_get_brain"):
-        from jarvis.brain.streaming import aggregate  # noqa: PLC0415
+        from jarvis.brain.streaming import (  # noqa: PLC0415
+            aggregate,
+            aggregate_first_json,
+        )
+
+        # Early-stop the per-step ACTION call at the first complete JSON action —
+        # skip the provider stream's tail (and any rambling past the JSON up to
+        # max_tokens) on the loop's #1 cost path. Verifier / planner calls keep
+        # the full-stream aggregate (early_stop_json=False, the default), so
+        # their free-text proofs are read in full. Provider-agnostic.
+        _agg = aggregate_first_json if early_stop_json else aggregate
 
         # Attach screenshot(s), capped to the model-payload budget
         # (2026-06-09 latency fix). ``frame_b`` lets the two-frame motion
@@ -1115,7 +1126,7 @@ async def _call_brain(
         ):
             attempted += 1
             try:
-                agg = await aggregate(brain.complete(req))
+                agg = await _agg(brain.complete(req))
                 text = (agg.text or "").strip()
                 if not text:
                     selector.record_empty(provider, model)
@@ -1154,7 +1165,7 @@ async def _call_brain(
                 manager, already_tried=already_tried,
             ):
                 try:
-                    agg = await aggregate(brain.complete(req))
+                    agg = await _agg(brain.complete(req))
                     text = (agg.text or "").strip()
                     if not text:
                         selector.record_empty(provider, model)
@@ -2919,6 +2930,13 @@ async def _run_screenshot_loop(
     recent_click_targets: _deque[tuple[int, int]] = _deque(maxlen=6)
     opened_apps: dict[str, int] = {}
     toggle_stop_engaged = False
+    #   * last_typed_text: the text of the most recent SUCCESSFUL ``type``. A
+    #     back-to-back ``type`` of the SAME text is a redundant no-op -- the
+    #     field already holds it -- so we suppress it and push the model to the
+    #     NEXT step (submit / click a result) instead of mashing the same query
+    #     (BUG-CU-RETYPE, live 2026-06-22: "Minecraft" typed into the Microsoft
+    #     Store search box in BOTH step 6 and step 7 -- "das ist ja dumm").
+    last_typed_text = ""
     # Cumulative guard-blocked actions this mission (see _MAX_GUARD_HITS).
     guard_hits = 0
     # On-demand done-verifier: set when a state-change click lands and the goal
@@ -3367,6 +3385,7 @@ async def _run_screenshot_loop(
                         history_text="\n".join(history[-12:]),
                         system_prompt=think_system_prompt,
                         user_message=plan_user_message,
+                        early_stop_json=True,
                     ),
                     timeout=_think_timeout_s(ctx),
                 )
@@ -3578,6 +3597,42 @@ async def _run_screenshot_loop(
                         )
                         return
                     break
+
+            # Repeated-type guard (BUG-CU-RETYPE, live 2026-06-22): re-typing the
+            # SAME text the model just successfully typed is a redundant no-op --
+            # the field already holds it. Do NOT execute it; inject a note that
+            # pushes the model to the next concrete step (submit with Enter, or
+            # click the matching result) instead of mashing the same query. Use
+            # ``continue`` (not ``break``) so a trailing submit key in THIS batch
+            # -- e.g. [click, type(repeat), key=Enter] -- still fires and the
+            # search actually goes through. Parity-safe: the field keeps the
+            # text from the first type.
+            if action == "type":
+                _typed = str(action_obj.get("text", "")).strip()
+                if _typed and _typed == last_typed_text:
+                    log.info(
+                        "[cu] %s repeated type %r — suppressed (already typed)",
+                        tag, _typed[:40],
+                    )
+                    history.append(
+                        f"{tag}: type {_typed!r} SKIPPED — you ALREADY typed this "
+                        "exact text and it is in the field. Do NOT type it again. "
+                        "Take the NEXT step instead: press Enter to submit, or "
+                        "click the matching on-screen result."
+                    )
+                    guard_hits += 1
+                    if guard_hits >= _MAX_GUARD_HITS:
+                        yield _final(
+                            stderr=(
+                                f"[cu] mission is circling: {guard_hits} "
+                                "guard-blocked actions this mission (suppressed "
+                                "relaunches / repeated clicks / re-types) — no "
+                                "productive next action found\n"
+                            ),
+                            exit_code=_FAIL_EXIT_CODE,
+                        )
+                        return
+                    continue
 
             # Telemetry — swallowed on failure to protect the loop.
             if ctx.bus is not None:
@@ -3877,6 +3932,9 @@ async def _run_screenshot_loop(
             # for play goals (BUG-CU-WRONG-SONG, 2026-05-29).
             if action == "type" and str(action_obj.get("text", "")).strip():
                 typed_query = True
+                # Arm the repeated-type guard: a back-to-back type of this exact
+                # text next is a redundant no-op (BUG-CU-RETYPE).
+                last_typed_text = str(action_obj.get("text", "")).strip()
             # Arm the on-demand done-verifier after a state-change click on a
             # play/submit/start-type goal: the NEXT iteration judges the fresh
             # screenshot before planning another (possibly toggle-undoing)

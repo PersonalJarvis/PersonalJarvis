@@ -2,6 +2,21 @@ import { useCallback, useEffect, useState } from "react";
 
 export type AuthMode = "api_key" | "codex" | "antigravity" | "none";
 export type ProviderTier = "brain" | "tts" | "stt";
+/** How using a provider is billed — mirror of provider_spec.Billing. */
+export type Billing = "api" | "subscription" | "subscription_or_api" | "local";
+
+/**
+ * An alternative credential path for the same provider — mirror of
+ * provider_spec.AltCredential. Gemini's AI-Studio-vs-Vertex split is the only
+ * one today; `null` for single-path providers.
+ */
+export interface AltCredential {
+  label: string;
+  billing: Billing;
+  credential_help: string;
+  dashboard_url: string | null;
+  credential_path_hint: string | null;
+}
 
 export interface ProviderDescriptor {
   id: string;
@@ -18,6 +33,14 @@ export interface ProviderDescriptor {
   active: boolean;
   brain_switchable?: boolean;
   cli_installed: boolean | null;
+  /** Plain-English "which key / subscription, and what for". */
+  credential_help: string | null;
+  /** Where to sign up for the account/subscription (distinct from dashboard_url). */
+  signup_url: string | null;
+  /** How using this provider is billed. */
+  billing: Billing;
+  /** Gemini's Vertex alternative; null for single-path providers. */
+  alt_credential: AltCredential | null;
   /**
    * Codex only: legacy credential readiness kept in /api/providers for older
    * UI consumers. The current UI does not render Codex as a switchable Brain;

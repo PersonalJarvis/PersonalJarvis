@@ -32,6 +32,30 @@ def test_windows_terminal_aliases_resolve_to_wt_executable(name: str) -> None:
     assert resolve_app_launch_target(name) == LaunchTarget("executable", "wt")
 
 
+@pytest.mark.parametrize("name", ["Microsoft Store", "microsoft store", "windows store", "store"])
+def test_microsoft_store_resolves_to_uwp_protocol(
+    name: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Microsoft Store is a UWP app: no .exe on PATH or App Paths, only the
+    ``ms-windows-store:`` protocol URI. Live 2026-06-22: open_app('Microsoft
+    Store') was rejected as "not found", forcing the computer-use loop into a
+    clumsy Windows-search detour. It must resolve to the protocol so os.startfile
+    launches the Store directly."""
+    monkeypatch.setattr(app_resolver, "detect_platform", lambda: "win32")
+    assert resolve_app_launch_target(name) == LaunchTarget(
+        "startfile", "ms-windows-store:"
+    )
+
+
+def test_microsoft_store_is_in_the_windows_app_whitelist() -> None:
+    """The plausibility gate must accept 'Microsoft Store' (else open_app rejects
+    it before the resolver ever runs)."""
+    from jarvis.plugins.tool.open_app import _KNOWN_APPS_WIN
+
+    assert "microsoft store" in _KNOWN_APPS_WIN
+    assert "store" in _KNOWN_APPS_WIN
+
+
 @pytest.mark.parametrize("name", ["powershell", "pwsh", "cmd"])
 def test_shell_names_remain_direct_executable_targets(name: str) -> None:
     assert resolve_app_launch_target(name) == LaunchTarget("executable", name)

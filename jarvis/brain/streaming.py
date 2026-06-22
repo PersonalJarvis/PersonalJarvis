@@ -6,6 +6,7 @@ we need an accumulator that collects text + tool-calls + usage.
 """
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -48,6 +49,109 @@ async def aggregate(stream: AsyncIterator[BrainDelta]) -> StreamingAggregate:
         if delta.usage:
             for k, v in delta.usage.items():
                 agg.usage[k] = agg.usage.get(k, 0) + int(v)
+    return agg
+
+
+def _has_complete_json_action(text: str) -> bool:
+    """True when ``text`` already contains a complete, parseable top-level JSON
+    object or array (an early-stop boundary for a Computer-Use action call).
+
+    Scans from the first structural opener (``{`` or ``[``), tolerating any
+    leading ```` ```json ```` fence or prose, and tracks bracket depth while
+    respecting string literals and escapes — so a ``}`` or ``]`` *inside* a
+    string value is never mistaken for the end. The candidate span is then
+    verified with ``json.loads`` so a balanced-but-invalid prefix can never
+    trigger a premature stop. Deterministic, no LLM call.
+    """
+    start = -1
+    for i, ch in enumerate(text):
+        if ch == "{" or ch == "[":
+            start = i
+            break
+    if start < 0:
+        return False
+    depth = 0
+    in_str = False
+    escape = False
+    end = -1
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{" or ch == "[":
+            depth += 1
+        elif ch == "}" or ch == "]":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    if end < 0:
+        return False
+    try:
+        json.loads(text[start : end + 1])
+    except (ValueError, TypeError):
+        return False
+    return True
+
+
+async def _aclose_quietly(stream: AsyncIterator[BrainDelta]) -> None:
+    """Best-effort close of an async stream after an early stop, so the
+    provider connection/generator is released. Never raises."""
+    aclose = getattr(stream, "aclose", None)
+    if aclose is None:
+        return
+    try:
+        await aclose()
+    except Exception:  # noqa: BLE001, S110 — closing must not surface upstream
+        pass
+
+
+async def aggregate_first_json(
+    stream: AsyncIterator[BrainDelta],
+) -> StreamingAggregate:
+    """Like :func:`aggregate`, but stops the moment the accumulated text holds a
+    complete top-level JSON object/array — then closes the stream.
+
+    Computer-Use action/plan calls return a small JSON action; waiting for the
+    provider's terminal ``finish_reason`` (or a rambling tail up to ``max_tokens``)
+    is pure latency on the loop's #1 cost path (THINK). This consumes deltas
+    identically to ``aggregate`` until the first *parseable* JSON boundary, so the
+    returned ``text`` is byte-identical to what ``aggregate`` would have collected
+    up to that point, and the downstream action parser sees the same payload.
+
+    Provider-agnostic (every provider yields ``BrainDelta``), deterministic, no
+    LLM call. If the stream never produces a complete JSON (e.g. a prose refusal),
+    it falls back to draining the whole stream exactly like ``aggregate``.
+
+    Note: a terminal ``finish_reason``/``usage`` delta that arrives *after* the
+    JSON is intentionally not awaited — callers that need usage/cost telemetry on
+    the full generation must use ``aggregate`` instead. The CU action path reads
+    only ``text``.
+    """
+    agg = StreamingAggregate()
+    async for delta in stream:
+        if delta.content:
+            agg.text += delta.content
+        if delta.tool_call:
+            agg.tool_calls.append(dict(delta.tool_call))
+        if delta.finish_reason:
+            agg.finish_reason = delta.finish_reason
+        if delta.usage:
+            for k, v in delta.usage.items():
+                agg.usage[k] = agg.usage.get(k, 0) + int(v)
+        # Only run the O(n) scan when this chunk could have *closed* a structure.
+        if delta.content and ("}" in delta.content or "]" in delta.content):
+            if _has_complete_json_action(agg.text):
+                await _aclose_quietly(stream)
+                break
     return agg
 
 
@@ -142,6 +246,7 @@ def is_length_truncated(finish_reason: str | None, text: str) -> bool:
 __all__ = [
     "StreamingAggregate",
     "aggregate",
+    "aggregate_first_json",
     "aggregate_with_consumer",
     "tee_text",
     "is_length_truncated",

@@ -9,9 +9,11 @@ from __future__ import annotations
 from jarvis.setup.wizard import SECRETS
 from jarvis.ui.web.provider_spec import (
     PROVIDERS,
+    AltCredential,
     ProviderSpec,
     all_secret_keys,
     get_spec,
+    provider_billing,
 )
 
 
@@ -30,14 +32,20 @@ def test_every_secret_key_exists_in_wizard() -> None:
             )
 
 
-def test_only_codex_uses_cli_login() -> None:
+def test_only_subscription_cli_providers_use_cli_login() -> None:
+    """A login CLI belongs to the subscription/login providers only. Codex logs
+    in via ``codex login``; Antigravity drives the bare ``agy`` binary (it has
+    no ``login`` subcommand). Every pure API-key / local provider has none."""
     for spec in PROVIDERS:
-        assert spec.auth_mode != "subscription_cli"
+        assert spec.auth_mode != "subscription_cli"  # never the legacy literal
         if spec.id == "codex":
             assert spec.auth_mode == "codex"
             assert spec.login_cli == ("codex", "login")
+        elif spec.id == "antigravity":
+            assert spec.auth_mode == "antigravity"
+            assert spec.login_cli == ("agy",)
         else:
-            assert spec.login_cli is None
+            assert spec.login_cli is None, f"{spec.id}: unexpected login_cli"
 
 
 def test_api_key_specs_have_dashboard_url() -> None:
@@ -101,3 +109,72 @@ def test_provider_spec_is_frozen_dataclass() -> None:
     except Exception:
         return
     raise AssertionError("ProviderSpec sollte frozen sein")
+
+
+# ── New: per-provider credential help + billing classification ───────────────
+
+
+def test_every_provider_has_credential_help() -> None:
+    """Each provider explains, in plain English, what credential it needs and
+    what it is for — the user-facing 'which key / subscription, and what for'."""
+    for spec in PROVIDERS:
+        assert spec.credential_help, f"{spec.id}: missing credential_help text"
+        assert spec.credential_help.strip() == spec.credential_help
+
+
+def test_provider_billing_is_derived_from_auth_mode() -> None:
+    """Billing is a pure function of auth_mode — never branched on a provider
+    name (multi-provider mandate). API-key → pay-per-token; antigravity →
+    subscription; codex → either; local → no credential."""
+    by_id = {spec.id: spec for spec in PROVIDERS}
+    assert provider_billing(by_id["claude-api"]) == "api"
+    assert provider_billing(by_id["gemini"]) == "api"
+    assert provider_billing(by_id["antigravity"]) == "subscription"
+    assert provider_billing(by_id["codex"]) == "subscription_or_api"
+    assert provider_billing(by_id["faster-whisper"]) == "local"
+
+
+def test_billing_covers_every_provider() -> None:
+    allowed = {"api", "subscription", "subscription_or_api", "local"}
+    for spec in PROVIDERS:
+        assert provider_billing(spec) in allowed, f"{spec.id}: unknown billing"
+
+
+def test_gemini_offers_both_aistudio_and_vertex() -> None:
+    """The Gemini brain + TTS must surface BOTH credential paths so a user does
+    not top up an AI-Studio key while Jarvis bills a Vertex service account
+    (the 2026-06-22 forensic). Primary path = AI Studio (API key); the
+    alt_credential = Vertex AI (service account, separate billing)."""
+    for pid in ("gemini", "gemini-flash-tts"):
+        spec = get_spec(pid)
+        assert spec is not None, pid
+        # Primary path is the AI-Studio API key.
+        assert spec.auth_mode == "api_key"
+        assert spec.dashboard_url and "aistudio.google.com" in spec.dashboard_url
+        # The Vertex path is offered as an explicit alternative.
+        assert spec.alt_credential is not None, f"{pid}: missing Vertex alt path"
+        alt = spec.alt_credential
+        assert "vertex" in alt.label.lower()
+        assert alt.billing == "api"
+        assert alt.credential_help
+        assert alt.dashboard_url and "cloud.google.com" in alt.dashboard_url
+
+
+def test_non_gemini_providers_have_no_alt_credential() -> None:
+    """Only Gemini has the AI-Studio-vs-Vertex split today; every other provider
+    keeps a single credential path (alt_credential is None)."""
+    for spec in PROVIDERS:
+        if spec.id in ("gemini", "gemini-flash-tts"):
+            continue
+        assert spec.alt_credential is None, f"{spec.id}: unexpected alt_credential"
+
+
+def test_alt_credential_is_frozen() -> None:
+    alt = AltCredential(
+        label="x", billing="api", credential_help="y", dashboard_url=None,
+    )
+    try:
+        alt.label = "mutated"  # type: ignore[misc]
+    except Exception:
+        return
+    raise AssertionError("AltCredential should be frozen")

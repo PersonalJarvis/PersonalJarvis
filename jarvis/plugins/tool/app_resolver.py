@@ -54,6 +54,20 @@ _DIRECT_EXECUTABLES = {
     "pwsh",
 }
 
+# Built-in Windows Store / UWP apps register a protocol URI, NOT an .exe on
+# PATH or in App Paths — ``os.startfile("ms-windows-store:")`` launches them.
+# Without this the resolver fell through to ``startfile("microsoft store")``
+# which the open_app plausibility gate rejected as "not found", forcing the
+# computer-use loop into a clumsy taskbar-search detour (live 2026-06-22: "open
+# the Microsoft Store" → rejected → Windows-search workaround → double-typed the
+# query). The protocol launch is direct and reliable. Checked BEFORE App
+# Paths/PATH so a stray ``store.exe`` cannot shadow the real Store.
+_UWP_PROTOCOLS = {
+    "microsoft store": "ms-windows-store:",
+    "windows store": "ms-windows-store:",
+    "store": "ms-windows-store:",
+}
+
 # Voice/whitelist alias -> the executable *basename* the OS actually knows.
 # (Chrome's exe is ``chrome.exe`` so it needs no entry; Edge/Word/PowerPoint
 # carry historic names that differ from how a user says them.) The map is
@@ -218,6 +232,13 @@ def _resolve_windows(
 
     if normalized in _DIRECT_EXECUTABLES:
         return LaunchTarget("executable", normalized)
+
+    # Built-in Store / UWP apps launch via a protocol URI (no .exe to find).
+    # Checked before App Paths/PATH so a stray ``store.exe`` cannot shadow the
+    # real Microsoft Store (live 2026-06-22).
+    uwp = _UWP_PROTOCOLS.get(normalized_without_exe)
+    if uwp is not None:
+        return LaunchTarget("startfile", uwp)
 
     # GUI apps (Chrome, Word, ...) — resolve to an absolute exe so Popen can
     # actually launch them. App Paths first (covers apps that are NOT on PATH),

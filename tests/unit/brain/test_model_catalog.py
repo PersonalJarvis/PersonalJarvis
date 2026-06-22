@@ -29,13 +29,12 @@ from jarvis.brain.model_catalog import (
     sort_models,
 )
 
-
 # ----------------------------------------------------------------------
-# Generalized provider catalog — brain (incl. codex) + tts + stt
+# Generalized provider catalog — brain/subagent model catalogs + tts + stt
 # ----------------------------------------------------------------------
 
 class TestProviderCatalog:
-    def test_codex_is_a_brain_model_provider(self) -> None:
+    def test_codex_catalog_is_available_for_subagent_model_picker(self) -> None:
         spec = catalog_spec("codex")
         assert spec is not None
         assert spec.tier == "brain"

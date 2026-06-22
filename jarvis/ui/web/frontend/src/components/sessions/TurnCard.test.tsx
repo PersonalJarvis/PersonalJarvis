@@ -72,9 +72,11 @@ describe("TurnCard spoken track", () => {
     expect(screen.queryByText("Spoken output")).toBeNull();
   });
 
-  it("renders the technical detail line under a failure readback", () => {
-    // The voice is humanized, but the transcript surfaces the exit code + raw
-    // harness reason for debugging (user request 2026-06-16).
+  it("does NOT surface the technical detail in the transcript", () => {
+    // The technical diagnostic (exit code + raw harness reason) is still recorded
+    // on the SpeechSpoken event so the Run Inspector can show it, but it must NOT
+    // appear in the Transcription section — the transcript shows only what was
+    // said/spoken (user request 2026-06-22, reversing the 2026-06-16 ask).
     render(
       <TurnCard
         turn={turn()}
@@ -87,14 +89,29 @@ describe("TurnCard spoken track", () => {
         ]}
       />,
     );
+    // The spoken phrase is still shown…
+    expect(screen.getByText("Das am Bildschirm hat nicht geklappt.")).toBeTruthy();
+    // …but the technical detail (and its "detail" label) is not.
     expect(
-      screen.getByText("exit 5 · 5 guard-blocked actions this mission"),
-    ).toBeTruthy();
+      screen.queryByText("exit 5 · 5 guard-blocked actions this mission"),
+    ).toBeNull();
+    expect(screen.queryByText("detail")).toBeNull();
   });
 
-  it("shows no detail line when a spoken phrase has no technical detail", () => {
-    render(<TurnCard turn={turn()} spoken={[spokenLine()]} />);
-    expect(screen.queryByText(/exit \d+/)).toBeNull();
+  it("omits the technical detail from the copied transcript text", () => {
+    // The copy-as-plain-text export is the transcript's textual form, so the
+    // technical detail must not ride along there either — only in the Run Inspector.
+    const copied = formatTurnPlain(turn({ ended_ms: 1_717_780_020_000 }), [
+      spokenLine({
+        ts_ms: 1_717_780_001_000,
+        spoken_kind: "completion",
+        text: "Das am Bildschirm hat nicht geklappt.", // i18n-allow: German voice fixture
+        detail: "exit 5 · 5 guard-blocked actions this mission",
+      }),
+    ]);
+    expect(copied).toContain("Das am Bildschirm hat nicht geklappt.");
+    expect(copied).not.toContain("[DETAIL]");
+    expect(copied).not.toContain("exit 5");
   });
 
   it("renders a sub-agent readback with its own label and a distinct colour", () => {

@@ -1,8 +1,10 @@
 ﻿import { useState } from "react";
 import { Brain, Check, Copy, KeyRound, LogIn, LogOut, Mic, Phone, PlugZap, Terminal, Volume2, Loader2, AlertCircle, XCircle } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
+import { AltCredentialNote } from "@/components/AltCredentialNote";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
+import { ProviderBillingBadge } from "@/components/ProviderBillingBadge";
 import { SubagentSection } from "@/components/SubagentSection";
 import { TelephonyPanel } from "@/views/TelephonyView";
 import { WikiProviderCard } from "@/views/settings/WikiProviderCard";
@@ -542,35 +544,38 @@ function AuthWidget({
   onChanged: () => void;
   onSavedActivate?: () => void;
 }) {
-  if (descriptor.auth_mode === "none") {
-    return (
-      <p className="text-xs text-muted-foreground">
-        Local provider — no credentials needed.
-      </p>
-    );
-  }
-
-  if (descriptor.auth_mode === "codex") {
-    return <CodexAuthWidget descriptor={descriptor} onChanged={onChanged} />;
-  }
-
-  if (descriptor.auth_mode === "antigravity") {
-    return <AntigravityAuthWidget descriptor={descriptor} onChanged={onChanged} />;
-  }
-
-  // api_key
   return (
     <div className="space-y-2">
-      {descriptor.secret_keys.map((k) => (
-        <ApiKeyForm
-          key={k}
-          secretKey={k}
-          dashboardUrl={descriptor.dashboard_url}
-          configured={Boolean(descriptor.secrets_set[k])}
-          onChanged={onChanged}
-          onSavedActivate={onSavedActivate}
-        />
-      ))}
+      <ProviderBillingBadge billing={descriptor.billing} />
+      {descriptor.auth_mode === "none" && (
+        <p className="text-xs text-muted-foreground">
+          Local provider — no credentials needed.
+        </p>
+      )}
+      {descriptor.auth_mode === "codex" && (
+        <CodexAuthWidget descriptor={descriptor} onChanged={onChanged} />
+      )}
+      {descriptor.auth_mode === "antigravity" && (
+        <AntigravityAuthWidget descriptor={descriptor} onChanged={onChanged} />
+      )}
+      {descriptor.auth_mode === "api_key" && (
+        <>
+          {descriptor.secret_keys.map((k) => (
+            <ApiKeyForm
+              key={k}
+              secretKey={k}
+              dashboardUrl={descriptor.dashboard_url}
+              configured={Boolean(descriptor.secrets_set[k])}
+              credentialHelp={descriptor.credential_help}
+              onChanged={onChanged}
+              onSavedActivate={onSavedActivate}
+            />
+          ))}
+          {descriptor.alt_credential && (
+            <AltCredentialNote alt={descriptor.alt_credential} />
+          )}
+        </>
+      )}
     </div>
   );
 }

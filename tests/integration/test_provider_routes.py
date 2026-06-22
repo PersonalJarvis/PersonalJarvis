@@ -123,6 +123,37 @@ def test_list_providers_returns_full_catalog(server_with_brain: WebServer, secre
         assert "ollama-local" not in ids, "Ollama wurde 2026-04-21 entfernt"
 
 
+def test_list_providers_exposes_credential_help_and_billing(
+    server_with_brain: WebServer, secret_store: _InMemorySecretStore
+) -> None:
+    """The catalog carries the per-provider help text + how it is billed, so the
+    UI can explain 'which key / subscription, and what for' without guessing."""
+    with TestClient(server_with_brain.app) as client:
+        body = client.get("/api/providers").json()
+        by_id = {p["id"]: p for p in body["providers"]}
+        assert by_id["gemini"]["credential_help"]
+        assert by_id["gemini"]["billing"] == "api"
+        assert by_id["antigravity"]["billing"] == "subscription"
+        assert by_id["codex"]["billing"] == "subscription_or_api"
+        assert by_id["faster-whisper"]["billing"] == "local"
+
+
+def test_list_providers_exposes_gemini_vertex_alt_path(
+    server_with_brain: WebServer, secret_store: _InMemorySecretStore
+) -> None:
+    """Gemini surfaces the Vertex AI alternative so the user sees AI Studio vs
+    Vertex are different billing accounts (2026-06-22 forensic)."""
+    with TestClient(server_with_brain.app) as client:
+        body = client.get("/api/providers").json()
+        by_id = {p["id"]: p for p in body["providers"]}
+        alt = by_id["gemini"]["alt_credential"]
+        assert alt is not None
+        assert "vertex" in alt["label"].lower()
+        assert alt["billing"] == "api"
+        assert "cloud.google.com" in alt["dashboard_url"]
+        assert by_id["openai"]["alt_credential"] is None
+
+
 def test_list_providers_marks_active_brain(server_with_brain: WebServer, secret_store: _InMemorySecretStore) -> None:
     with TestClient(server_with_brain.app) as client:
         body = client.get("/api/providers").json()
@@ -286,13 +317,7 @@ def test_brain_switch_rejects_provider_without_key(
 def test_brain_switch_codex_rejected_as_subagent_only_even_with_openai_key(
     server_with_brain: WebServer, secret_store: _InMemorySecretStore
 ) -> None:
-    """Codex-as-brain activates with ANY OpenAI key CodexBrain can use.
-
-    Here only the general ``openai_api_key`` is set (not the dedicated codex
-    slot). CodexBrain falls back to it, so the switch must succeed — matching
-    what the brain actually reads. The ChatGPT OAuth login alone is NOT enough
-    for a chat brain (covered by the next test).
-    """
+    """Codex remains subagent-only even if an OpenAI key is configured."""
     secret_store.set("openai_api_key", "sk-openai-test-123")
     fake: _FakeBrainManager = server_with_brain.app.state.brain
     with TestClient(server_with_brain.app) as client:
@@ -304,7 +329,7 @@ def test_brain_switch_codex_rejected_as_subagent_only_even_with_openai_key(
 
 def _patch_codex_status(monkeypatch: pytest.MonkeyPatch, *, connected: bool) -> None:
     """Pin provider_routes.CodexAuthService to a connected/disconnected stub so
-    the codex-brain tests don't depend on the dev machine's real `codex login`."""
+    Codex route tests don't depend on the dev machine's real `codex login`."""
 
     class _Fake:
         def __init__(self, binary_path: str | None = None) -> None:
