@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Eye, EyeOff, ExternalLink, Trash2 } from "lucide-react";
+import { AlertTriangle, Eye, EyeOff, ExternalLink, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { deleteSecret, postSecret } from "@/hooks/useProviders";
+import { keyMatchesSecret } from "@/lib/keyFormat";
 import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -10,6 +11,11 @@ interface ApiKeyFormProps {
   secretKey: string;
   dashboardUrl: string | null;
   configured: boolean;
+  /**
+   * Plain-English "which key, and what for" shown above the input. Optional so
+   * existing call sites keep working; the provider catalog supplies it.
+   */
+  credentialHelp?: string | null;
   onChanged?: () => void;
   /**
    * Wird aufgerufen, nachdem ein Key erfolgreich gespeichert wurde.
@@ -24,13 +30,18 @@ interface ApiKeyFormProps {
  * vorhandenem Wert. Schreibt direkt nach POST /api/secrets/{key}; der Wert
  * verlässt nach dem Submit das Frontend nie wieder (Read-Only-Flag im Backend).
  */
-export function ApiKeyForm({ secretKey, dashboardUrl, configured, onChanged, onSavedActivate }: ApiKeyFormProps) {
+export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp, onChanged, onSavedActivate }: ApiKeyFormProps) {
   const t = useT();
   const [value, setValue] = useState("");
   const [pending, setPending] = useState(false);
   const [reveal, setReveal] = useState(false);
   const [editing, setEditing] = useState(!configured);
   const pushToast = useEventStore((s) => s.pushToast);
+
+  // Live, client-side format recognition — the entered value never leaves the
+  // browser to be classified (the 2026-06-22 AI-Studio-vs-Vertex mix-up). Only
+  // hints; never blocks the save.
+  const fmt = value.trim() ? keyMatchesSecret(secretKey, value) : null;
 
   async function handleSave() {
     const trimmed = value.trim();
@@ -88,6 +99,9 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, onChanged, onS
 
   return (
     <div className="space-y-2">
+      {credentialHelp && (
+        <p className="text-[11px] leading-relaxed text-muted-foreground">{credentialHelp}</p>
+      )}
       <div className="flex gap-2">
         <div className="relative flex-1">
           <input
@@ -121,6 +135,17 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, onChanged, onS
           </Button>
         )}
       </div>
+      {fmt && !fmt.match && fmt.detected && (
+        <p className="flex items-start gap-1 text-[11px] text-amber-500">
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+          <span>
+            This looks like a {fmt.detected.label} — this field expects a different key.
+          </span>
+        </p>
+      )}
+      {fmt && fmt.match && fmt.detected?.note && (
+        <p className="text-[11px] text-muted-foreground">{fmt.detected.note}</p>
+      )}
       {dashboardUrl && (
         <a
           href={dashboardUrl}
@@ -128,7 +153,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, onChanged, onS
           rel="noreferrer"
           className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-primary"
         >
-          <ExternalLink className="h-3 w-3" /> Open dashboard — generate key there
+          <ExternalLink className="h-3 w-3" /> Get your key here
         </a>
       )}
     </div>

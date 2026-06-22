@@ -50,6 +50,10 @@ _KNOWN_APPS_WIN: frozenset[str] = frozenset({
     "mspaint", "paint", "photoshop", "illustrator", "figma", "gimp", "inkscape",
     # Gaming / Misc
     "steam", "epicgameslauncher", "battle.net", "blender",
+    # Built-in Windows Store / UWP apps (launched via a protocol URI by the
+    # resolver, see app_resolver._UWP_PROTOCOLS). Whitelisted so the
+    # plausibility gate does not reject them as "not found" (live 2026-06-22).
+    "microsoft store", "windows store", "store",
     # Jarvis-intern
     "jarvis",
 })

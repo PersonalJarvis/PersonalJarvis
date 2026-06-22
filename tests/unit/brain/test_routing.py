@@ -564,8 +564,7 @@ def test_force_spawn_follows_worker_provider_not_talker(brain_primary: str) -> N
 
 
 def test_force_spawn_codex_worker_with_codex_talker() -> None:
-    """A Codex talker + Codex worker must still force-spawn (the user's
-    Codex-as-brain switch must not disable delegation)."""
+    """A legacy Codex primary + Codex worker must still force-spawn."""
     manager, _executor = _manager_with_worker_provider(
         brain_primary="openai-codex", worker_provider="openai-codex",
     )

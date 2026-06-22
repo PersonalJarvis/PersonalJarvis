@@ -520,6 +520,105 @@ class _DummyObs:
 
 
 # ---------------------------------------------------------------------------
+# _call_brain early-stop wiring: the per-step action call must stop consuming
+# the provider stream the moment a complete JSON action is parseable, while the
+# default (verifier/plan) path still drains the whole stream.
+# ---------------------------------------------------------------------------
+
+
+class _StreamBrain:
+    """Production-path fake: yields a BrainDelta stream and records how many
+    deltas were actually consumed (so an early stop is observable)."""
+
+    supports_vision = True
+
+    def __init__(self, deltas, consumed) -> None:
+        self._deltas = deltas
+        self._consumed = consumed
+
+    async def complete(self, req):  # noqa: ANN001
+        for i, d in enumerate(self._deltas):
+            self._consumed.append(i)
+            yield d
+
+
+class _StreamManager:
+    """Minimal BrainManager stand-in driving the production (_get_brain) path —
+    deliberately has NO complete_text, so _call_brain uses aggregate()."""
+
+    def __init__(self, brain) -> None:
+        self._brain = brain
+        self._dead_providers: set = set()
+        self._rate_tracker = None
+
+    def _build_fallback_chain(self, tier):  # noqa: ANN001
+        return [("fake", "m")]
+
+    def _get_brain(self, provider, model):  # noqa: ANN001
+        return self._brain
+
+    def _fast_model(self, provider):  # noqa: ANN001
+        return "m"
+
+
+class _StreamCtx:
+    def __init__(self, brain) -> None:
+        self.brain_manager = brain
+        self.per_step_timeout_s = 5.0
+
+
+def _action_stream_deltas():
+    from jarvis.core.protocols import BrainDelta
+
+    return [
+        BrainDelta(content='{"action": '),
+        BrainDelta(content='"done"}'),
+        BrainDelta(content=" rambling tail the model kept generating"),
+        BrainDelta(finish_reason="stop"),
+    ]
+
+
+def test_call_brain_early_stops_on_complete_json_action() -> None:
+    import json as _json
+
+    from jarvis.harness.screenshot_only_loop import _call_brain
+
+    consumed: list[int] = []
+    brain = _StreamBrain(_action_stream_deltas(), consumed)
+    ctx = _StreamCtx(_StreamManager(brain))
+    text = asyncio.run(
+        _call_brain(
+            ctx,
+            observation=_DummyObs(),
+            user_goal="x",
+            history_text="",
+            early_stop_json=True,
+        )
+    )
+    assert _json.loads(text)["action"] == "done"
+    assert consumed == [0, 1]  # tail + finish delta never consumed
+
+
+def test_call_brain_default_drains_whole_stream() -> None:
+    from jarvis.harness.screenshot_only_loop import _call_brain
+
+    consumed: list[int] = []
+    brain = _StreamBrain(_action_stream_deltas(), consumed)
+    ctx = _StreamCtx(_StreamManager(brain))
+    text = asyncio.run(
+        _call_brain(
+            ctx,
+            observation=_DummyObs(),
+            user_goal="x",
+            history_text="",
+        )
+    )
+    # Default (verifier/plan) path is unchanged: the entire stream is read.
+    assert consumed == [0, 1, 2, 3]
+    assert "rambling tail" in text
+
+
+# ---------------------------------------------------------------------------
 # key action (BUG-CU-NO-PLAN): "press Enter" must dispatch to the hotkey tool
 # with a keys list -- without it, search flows could never submit.
 # ---------------------------------------------------------------------------

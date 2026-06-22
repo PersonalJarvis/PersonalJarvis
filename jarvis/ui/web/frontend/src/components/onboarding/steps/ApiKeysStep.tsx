@@ -3,6 +3,8 @@ import { Brain, Check, KeyRound, Mic, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
+import { AltCredentialNote } from "@/components/AltCredentialNote";
+import { ProviderBillingBadge } from "@/components/ProviderBillingBadge";
 import { SubagentSection } from "@/components/SubagentSection";
 import {
   useProviders,
@@ -171,6 +173,7 @@ function ProviderRow({
         </button>
         <StatusChip configured={provider.configured} active={provider.active} />
       </div>
+      <ProviderBillingBadge billing={provider.billing} />
       {provider.auth_mode === "api_key" &&
         provider.secret_keys.map((k) => (
           <ApiKeyForm
@@ -178,9 +181,13 @@ function ProviderRow({
             secretKey={k}
             dashboardUrl={provider.dashboard_url}
             configured={Boolean(provider.secrets_set[k])}
+            credentialHelp={provider.credential_help}
             onChanged={onChanged}
           />
         ))}
+      {provider.auth_mode === "api_key" && provider.alt_credential && (
+        <AltCredentialNote alt={provider.alt_credential} />
+      )}
       {provider.auth_mode === "codex" && (
         <p className="text-xs text-muted-foreground">
           Sign in with the official Codex / ChatGPT login from Settings → API Keys.

@@ -195,8 +195,8 @@ def _build_provider_catalog() -> dict[str, CatalogSpec]:
         ("gpt-5.5-codex", "GPT-5.5 Codex"),
         ("gpt-5.5-mini", "GPT-5.5 Mini"),
     ])), live=False)
-    # Antigravity — a Google-subscription brain driven via the official agy/gemini
-    # CLI (OAuth login); no /v1/models over OAuth, so curated only. Flash first =
+    # Antigravity — subagent model catalog for the official agy/gemini CLI
+    # (OAuth login); no /v1/models over OAuth, so curated only. Flash first =
     # the fast default; Pro is the deep option. Both are valid gemini-CLI ids.
     # NOTE (verified live 2026-06-21, agy 1.0.10): the agy CLI IGNORES the chosen
     # model — neither ``--model`` nor ``settings.json model.name`` overrides it

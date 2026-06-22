@@ -60,6 +60,10 @@ export function SessionDetail({ detail, loading, error }: Props) {
       if (e.kind !== "SpeechSpoken") continue;
       const text = String((e.payload as { text?: unknown })?.text ?? "");
       if (!text.trim()) continue;
+      // The technical diagnostic rides on the recorded event; it is carried on
+      // the projection for parity with the payload but deliberately NOT rendered
+      // in the transcript (TurnCard) — it is surfaced in the Run Inspector
+      // instead (user request 2026-06-22, reversing the 2026-06-16 ask).
       const rawDetail = (e.payload as { detail?: unknown })?.detail;
       const detail =
         typeof rawDetail === "string" && rawDetail.trim()

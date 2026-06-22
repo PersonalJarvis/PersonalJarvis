@@ -7,13 +7,21 @@ real implementation, a graceful null no-op, and a ``make_drop_target()`` factory
 that never raises.
 
 Cross-platform by construction: the real implementation drives the **tkdnd** Tcl
-extension via ``tkinterdnd2`` (bundled binaries for Windows / macOS / Linux),
-registered onto the existing Tk root **without replacing it** (``_require`` on the
-live root — compatible with the cached-root constraint, BUG-031). Where
-``tkinterdnd2`` / the ``tkdnd`` binary is unavailable (headless €5-VPS, an arch
-without a bundled binary), the factory returns :class:`NullDropTarget`, a logged
-no-op — the web dock (``POST /api/chat/drop``) still carries the feature on every
-OS, so this extra is purely additive.
+extension via ``tkinterdnd2`` (bundled binaries for Windows / macOS / Linux,
+verified loading + registering on Windows and Linux), registered onto the
+existing Tk root **without replacing it** (``_require`` on the live root —
+compatible with the cached-root constraint, BUG-031). Where ``tkinterdnd2`` / the
+``tkdnd`` binary fails to load (headless €5-VPS, an arch without a bundled binary,
+or — on Linux — the X11 runtime libs the tkdnd ``.so`` links against are absent),
+``register`` returns ``False`` and the factory/overlay degrade to a logged no-op
+— the web dock (``POST /api/chat/drop``) still carries the feature on every OS,
+so this extra is purely additive.
+
+**Linux runtime note (verified 2026-06-22):** the bundled ``linux-x64``
+``libtkdnd2.9.5.so`` links against X11 libs (``libXcursor.so.1`` et al.). A real
+Linux *desktop* running X11 has these; a bare ``python:3.11-slim`` does not, so
+``register`` returns ``False`` there (correctly — a headless box has no overlay
+anyway). Distro packages: ``libxcursor1 libxrender1 libxext6`` (+ ``python3-tk``).
 
 Import-cleanliness (HN-7): nothing here imports ``tkinterdnd2`` / Tk at module
 scope, so ``import jarvis.overlay.drop_target`` stays clean on a headless host.
