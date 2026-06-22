@@ -1,15 +1,9 @@
 /**
- * Component tests for the Antigravity (Google-subscription) provider card in
- * ApiKeysView.
+ * Component tests for Antigravity in ApiKeysView.
  *
- * Antigravity is the Google sibling of Codex: an OAuth-only brain provider with
- * no API-key field. The user signs in with Google once (the official agy/gemini
- * CLI), and Jarvis drives that CLI to bill the brain against the subscription.
- *   - connected → a compact "connected" badge (the account email) + Disconnect,
- *   - not connected → status message + a "Connect with Google" button that POSTs
- *     /api/antigravity/login and then polls /api/antigravity/status,
- *   - because `configured` mirrors `connected`, the brain "activate" radio works
- *     exactly like every other provider (no special OpenAI-key gating).
+ * Antigravity is a Google-subscription worker for Subagents only. It must not
+ * render as an activatable main Brain card; the Google login and active toggle
+ * live in the Subagent section.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -78,6 +72,7 @@ function antigravityDescriptor(overrides: Record<string, unknown> = {}) {
     credential_path_hint: "~/.gemini/oauth_creds.json",
     configured: true, // connected -> configured mirrors it
     active: false,
+    brain_switchable: false,
     cli_installed: true,
     antigravity_status: {
       installed: true,
@@ -142,7 +137,16 @@ const OPENCLAW_EMPTY = {
   provider_slug: null,
   model_override: null,
   model_resolved: null,
-  mapping: [],
+  mapping: [
+    {
+      jarvis: "antigravity",
+      openclaw: "agy-cli (direct)",
+      env_var: "Google-OAuth",
+      env_fallback: null,
+      key_set: true,
+      is_active_brain: false,
+    },
+  ],
 };
 
 // The Telephony section mounts inside ApiKeysView, so stub its four endpoints.
@@ -180,7 +184,10 @@ function routesFor(
   return {
     "/api/providers": () => ({ body: { providers: [provider] } }),
     "/api/openclaw/status": () => ({ body: OPENCLAW_EMPTY }),
-    "/api/brain/switch": () => ({
+    "/api/antigravity/status": () => ({
+      body: provider.antigravity_status ?? {},
+    }),
+    "/api/subagent/switch": () => ({
       body: { ok: true, active: "antigravity", persisted: true },
     }),
     "/api/antigravity/login": () => ({
@@ -210,16 +217,13 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
       expect(screen.getByText("Antigravity (Google subscription)")).toBeTruthy(),
     );
 
-    expect(screen.getByTestId("antigravity-connected")).toBeTruthy();
-    // The connected card names the Google account it bills against.
+    expect(screen.queryByText("Google subscription login")).toBeNull();
+    expect(screen.getByText("Antigravity Google login")).toBeTruthy();
     expect(screen.getByText(/google-user@example\.com/)).toBeTruthy();
-    // Connection-only card: no install command / connect button while connected.
-    expect(screen.queryByText("Connect with Google")).toBeNull();
-    // Selectable like every other brain provider.
     expect(screen.getByRole("radio")).toBeTruthy();
   });
 
-  it("switches the brain to Antigravity when connected", async () => {
+  it("switches the subagent to Antigravity when connected", async () => {
     const { calls } = installFetchMock(routesFor(antigravityDescriptor()));
     render(<ApiKeysView />);
 
@@ -230,7 +234,7 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
       expect(
         calls.some(
           (c) =>
-            c.url.startsWith("/api/brain/switch") &&
+            c.url.startsWith("/api/subagent/switch") &&
             c.method === "POST" &&
             (c.body as { provider?: string })?.provider === "antigravity",
         ),
@@ -238,16 +242,15 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
     );
   });
 
-  it("shows the Connect-with-Google button while not logged in and starts login", async () => {
+  it("shows the Connect button while not logged in and starts login", async () => {
     const { calls } = installFetchMock(routesFor(antigravityNotConnected()));
     render(<ApiKeysView />);
 
     await waitFor(() =>
-      expect(screen.getByText("Connect with Google")).toBeTruthy(),
+      expect(screen.getByText("Connect")).toBeTruthy(),
     );
-    expect(screen.queryByTestId("antigravity-connected")).toBeNull();
 
-    fireEvent.click(screen.getByText("Connect with Google"));
+    fireEvent.click(screen.getByText("Connect"));
     await waitFor(() =>
       expect(
         calls.some(
@@ -263,12 +266,12 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
     render(<ApiKeysView />);
 
     const connectBtn = await waitFor(() =>
-      screen.getByText("Connect with Google"),
+      screen.getByText("Connect"),
     );
-    // The connect button is disabled until a CLI is installed.
     expect((connectBtn.closest("button") as HTMLButtonElement).disabled).toBe(true);
-    // The install command is offered with a copy action.
-    expect(screen.getByText("Copy command")).toBeTruthy();
+    expect(
+      screen.getByText("Install Antigravity or the Gemini CLI before connecting."),
+    ).toBeTruthy();
   });
 
   it("disconnects via POST /api/antigravity/logout", async () => {

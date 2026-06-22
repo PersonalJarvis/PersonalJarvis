@@ -172,6 +172,56 @@ class TestCuFailureReadback:
         assert "identical screenshots" not in out.lower(), out
         assert out == action_phrase("cu_exit_gave_up", "de")
 
+    def test_bare_mission_profile_line_alone_is_not_spoken(self) -> None:
+        # Live bug 2026-06-22 (Ed-Sheeran "Perfect" turn): the spoken readback was
+        #   "That didn't work on screen: steps=3 total=9.5s act=3.0s observe=0.3s
+        #    plan=1.6s think=4.6s".
+        # When the detail is ONLY the "[cu] mission profile:" line (no preceding
+        # diagnostic line), _CU_REASON_PREFIX_RE strips the "[cu] mission profile:"
+        # PREFIX — deleting the very "[cu]"/"mission profile" markers the diagnostic
+        # gate keys on — so the BARE telemetry stats sailed through and were spoken.
+        # The profile is machine telemetry; detect it STRUCTURALLY and degrade to
+        # the generic exit-code phrase.
+        detail = (
+            "[cu] mission profile: steps=3 total=9.5s act=3.0s observe=0.3s "
+            "plan=1.6s think=4.6s"
+        )
+        out = cu_failure_readback("en", error="exit 5", exit_code=5, detail=detail)
+        assert "steps=" not in out, out
+        assert "total=" not in out, out
+        assert "9.5s" not in out, out
+        assert out == action_phrase("cu_exit_gave_up", "en")
+
+    def test_screenshot_path_never_reaches_readback(self) -> None:
+        # The harness temp capture path ("C:\\...\\pythonw_xxxx.png") rode the
+        # failure detail into the spoken text on the same 2026-06-22 turn. A spoken
+        # answer must never contain a filesystem path or an image filename.
+        detail = (
+            "steps=3 total=9.5s act=3.0s observe=0.3s plan=1.6s think=4.6s\n"
+            "'<USER_HOME>\\Desktop\\Personal Jarvis\\pythonw_TPMHbe4vdZ.png'"
+        )
+        out = cu_failure_readback("en", error="exit 5", exit_code=5, detail=detail)
+        assert ".png" not in out.lower(), out
+        assert "C:\\" not in out, out
+        assert "pythonw" not in out.lower(), out
+        assert out == action_phrase("cu_exit_gave_up", "en")
+
+    def test_telemetry_on_error_field_is_not_spoken(self) -> None:
+        # The bare profile arriving via the ``error`` field (path 2) is rejected
+        # too — same structural detection, with no "[cu]" prefix to strip.
+        err = "steps=6 total=30.1s act=5.0s observe=1.4s plan=3.0s think=7.2s"
+        out = cu_failure_readback("de", error=err, exit_code=5)
+        assert "steps=" not in out, out
+        assert out == action_phrase("cu_exit_gave_up", "de")
+
+    def test_real_reason_with_a_number_is_still_forwarded(self) -> None:
+        # False-positive guard: a genuine human reason that merely contains a
+        # number (but no key=value telemetry run and no path) must still be
+        # forwarded verbatim — the structural gate must not eat real answers.
+        reason = "The login form returned HTTP 403 after 2 attempts."
+        out = cu_failure_readback("en", error=reason, exit_code=5)
+        assert reason in out
+
 
 class TestCuSuccessReadback:
     """The SUCCESS sibling of cu_failure_readback (live bug 2026-06-18, session
@@ -257,3 +307,19 @@ class TestCuSuccessReadback:
         ):
             stdout = f"[cu] done at step 1 (verified: {proof})\n"
             assert cu_success_readback("de", stdout=stdout) == done_de, proof
+
+    def test_blocks_bare_telemetry_profile_and_paths_on_success(self) -> None:
+        """The user reported the giant dump on SUCCESS too. The shared structural
+        gate must protect the success readback: a verified-proof that is really a
+        telemetry profile, or that carries a leaked screenshot path, degrades to
+        the plain done phrase instead of being spoken."""
+        from jarvis.voice.action_phrases import action_phrase, cu_success_readback
+
+        done_en = action_phrase("cu_done", "en")
+        for proof in (
+            "steps=3 total=9.5s act=3.0s observe=0.3s plan=1.6s think=4.6s",
+            "saved <USER_HOME>\\Desktop\\Personal Jarvis\\pythonw_x.png",
+            "see screenshot pythonw_TPMHbe4vdZ.png",
+        ):
+            stdout = f"[cu] done at step 3 (verified: {proof})\n"
+            assert cu_success_readback("en", stdout=stdout) == done_en, proof

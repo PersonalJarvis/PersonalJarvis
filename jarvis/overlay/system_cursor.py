@@ -281,6 +281,17 @@ def _create_hcursor_from_rgba(
     gdi32 = ctypes.windll.gdi32
     user32 = ctypes.windll.user32
 
+    # 64-bit ctypes correctness: GDI/USER handles come back through the HBITMAP /
+    # HANDLE restypes as FULL-WIDTH Python ints. Any handle passed back into a
+    # Win32 call WITHOUT ``argtypes`` is marshalled as the default ``c_int``
+    # (32-bit), which OVERFLOWS for a >2^31 handle ("OverflowError: int too long
+    # to convert") and made ``_create_hcursor_from_rgba`` raise at the cleanup
+    # ``DeleteObject`` -- so the whole cursor swap failed silently (logged only
+    # at DEBUG) and the user kept their default cursor during every CU mission.
+    # Pin argtypes on the handle-consuming calls (BUG: 64-bit cursor swap).
+    gdi32.DeleteObject.argtypes = [wintypes.HANDLE]
+    gdi32.DeleteObject.restype = wintypes.BOOL
+
     # RGBA -> BGRA byte swap for Windows DIB order.
     bgra = bytearray(rgba)
     for i in range(0, len(bgra), 4):
@@ -365,12 +376,19 @@ def _real_activate() -> None:
     the swap.
     """
     import ctypes
+    from ctypes import wintypes
 
     rgba = _draw_jarvis_arrow_rgba(48)
     hcur = _create_hcursor_from_rgba(rgba, width=48, height=48, hotspot_x=2, hotspot_y=2)
     if not hcur:
         raise RuntimeError("CreateIconIndirect returned 0")
-    if not ctypes.windll.user32.SetSystemCursor(hcur, _OCR_NORMAL):
+    user32 = ctypes.windll.user32
+    # argtypes pinned so the 64-bit HCURSOR is passed as a real HANDLE, not
+    # truncated to a 32-bit c_int (same OverflowError class as the DeleteObject
+    # cleanup in _create_hcursor_from_rgba). Without this the swap silently fails.
+    user32.SetSystemCursor.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    user32.SetSystemCursor.restype = wintypes.BOOL
+    if not user32.SetSystemCursor(hcur, _OCR_NORMAL):
         raise ctypes.WinError(ctypes.get_last_error())
 
 

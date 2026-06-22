@@ -26,9 +26,27 @@ def _probe(url: str, key: str) -> bool:
 @app.command()
 def login(
     url: str = typer.Option(..., "--url", help="Base URL, e.g. http://127.0.0.1:47821"),
-    key: str = typer.Option(..., "--key", help="Control key (jctl_…)."),
+    key: str = typer.Option(
+        None, "--key",
+        prompt="Control key (jctl_…)",
+        hide_input=True,
+        help="Control key. Omit to be prompted (hidden), or pass '-' to read it "
+             "from stdin. Avoid an inline value — it leaks into shell history.",
+    ),
 ) -> None:
-    """Verify the key against the server and persist it for future calls."""
+    """Verify the key against the server and persist it for future calls.
+
+    The key is read from a hidden prompt by default, or from stdin with
+    ``--key -`` (for CI / agents) — never required as an inline argument that
+    would land in shell history (AP-12 / spec §7.2).
+    """
+    if key == "-":
+        import sys
+
+        key = sys.stdin.readline().strip()
+    if not key:
+        render.error("no control key provided.")
+        raise typer.Exit(code=2)
     if not _probe(url, key):
         render.error("control key rejected or server unreachable; not saved.")
         raise typer.Exit(code=1)

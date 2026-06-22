@@ -90,6 +90,19 @@ if [ -f "$language_gate" ]; then
     done < "$refs_file"
 fi
 
+# --- 3) CLI COVERAGE gate (FAIL-CLOSED) ---------------------------------------
+# Every jarvis/ui/web/*_routes.py router must be mounted in server.py, so every
+# WebUI action stays reachable from the `jarvis` CLI (catches the unmounted-router
+# / dead-command bug class). Static + stdlib-only; safe to run on every push.
+cli_gate="scripts/ci/check_cli_coverage.py"
+if [ -f "$cli_gate" ]; then
+    "$PY" "$cli_gate" </dev/null
+    if [ "$?" -ne 0 ]; then
+        status=1
+        cli_coverage_hit=1
+    fi
+fi
+
 rm -f "$refs_file"
 
 if [ "$status" -ne 0 ]; then
@@ -100,6 +113,10 @@ if [ "$status" -ne 0 ]; then
     fi
     if [ "$language_hit" -ne 0 ]; then
         echo "pre-push BLOCKED: LANGUAGE gate (newly added German text)."
+    fi
+    if [ "${cli_coverage_hit:-0}" -ne 0 ]; then
+        echo "pre-push BLOCKED: CLI COVERAGE gate (a route module is not mounted)."
+        echo "  Mount it in jarvis/ui/web/server.py — see the findings above."
     fi
     echo "Bypass once with:  git push --no-verify   (layer-3 CI is the backstop)."
 fi

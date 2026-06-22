@@ -67,7 +67,9 @@ export function ApiKeysView() {
         {!loading && providers.length > 0 && (
           <div className="mt-6 space-y-8">
             {(Object.keys(TIER_META) as ProviderTier[]).map((tier) => {
-              const tierProviders = providers.filter((p) => p.tier === tier);
+              const tierProviders = providers.filter(
+                (p) => p.tier === tier && p.brain_switchable !== false,
+              );
               if (!tierProviders.length) return null;
               return (
                 <TierSection
@@ -169,14 +171,19 @@ function ProviderCard({
   const [activating, setActivating] = useState(false);
   const pushToast = useEventStore((s) => s.pushToast);
 
-  // Codex IS a selectable brain like every other provider, but a chat brain
-  // needs an OpenAI API key — the ChatGPT login cannot back one (it powers the
-  // Codex *worker*). `codex_brain_ready` reflects whether any OpenAI key is
-  // configured; the radio is gated on it so activation never silently fails.
+  // Codex is filtered out of the Brain tier (`brain_switchable=false`) and is
+  // selected from the Subagent section. This branch stays for older payloads or
+  // tests that still mount a Codex descriptor directly.
   const isCodex = descriptor.auth_mode === "codex";
+  const isBrainSwitchable =
+    descriptor.tier !== "brain" || descriptor.brain_switchable !== false;
 
   async function activate(assumeConfigured = false) {
     if (descriptor.active) return;
+    if (!isBrainSwitchable) {
+      pushToast("warning", `${descriptor.label} is only available for Subagents.`);
+      return;
+    }
     if (isCodex && !descriptor.codex_brain_ready) {
       // The card is "connected" via OAuth, but a chat brain needs an OpenAI key.
       // Guide honestly instead of switching and failing on the first turn.
@@ -239,6 +246,7 @@ function ProviderCard({
   function handleCardActivate(e: React.MouseEvent<HTMLDivElement>) {
     // Codex is connection-only — a card click must never trigger a brain switch.
     if (isCodex) return;
+    if (!isBrainSwitchable) return;
     const target = e.target as HTMLElement | null;
     if (
       target &&
@@ -269,6 +277,8 @@ function ProviderCard({
       title={
         descriptor.active
           ? t("apikeys_view.active_tooltip")
+          : !isBrainSwitchable
+            ? "Available for Subagents only"
           : descriptor.configured
             ? t("apikeys_view.click_to_activate")
             : descriptor.auth_mode === "codex"
@@ -282,7 +292,9 @@ function ProviderCard({
         descriptor.active
           ? "border-primary bg-primary/[0.06] ring-1 ring-primary/30"
           : descriptor.configured
-            ? "cursor-pointer hover:border-primary/40 hover:bg-primary/[0.02]"
+            ? isBrainSwitchable
+              ? "cursor-pointer hover:border-primary/40 hover:bg-primary/[0.02]"
+              : ""
             : "opacity-95",
       )}
     >
@@ -312,7 +324,14 @@ function ProviderCard({
           }
           activating={activating}
           onActivate={activate}
-          disabled={isCodex && !descriptor.codex_brain_ready}
+          disabled={!isBrainSwitchable || (isCodex && !descriptor.codex_brain_ready)}
+          disabledReason={
+            !isBrainSwitchable
+              ? "Available for Subagents only"
+              : isCodex && !descriptor.codex_brain_ready
+                ? t("apikeys_codex.brain_needs_openai_key")
+                : undefined
+          }
         />
       </div>
 
@@ -322,11 +341,18 @@ function ProviderCard({
         onSavedActivate={handleSavedActivate}
       />
 
-      {/* Model / voice picker. Brain providers (incl. the Codex subscription)
+      {!isBrainSwitchable && (
+        <p className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-700">
+          Subagent only. This provider cannot be used as the main Brain or
+          Computer-Use planner because it does not receive screenshots.
+        </p>
+      )}
+
+      {/* Model / voice picker. Switchable brain providers
           pick a model from their own live catalog. TTS/STT share a single global
           [tts]/[stt] block, so the picker only appears on the ACTIVE one and sets
           the voice (Grok/Gemini/OpenAI/Google) or model (Cartesia/STT). */}
-      {((descriptor.tier === "brain" && descriptor.configured) ||
+      {((descriptor.tier === "brain" && descriptor.configured && isBrainSwitchable) ||
         ((descriptor.tier === "tts" || descriptor.tier === "stt") &&
           descriptor.active &&
           descriptor.configured)) && (
@@ -452,6 +478,7 @@ function ActiveControl({
   activating,
   onActivate,
   disabled = false,
+  disabledReason,
 }: {
   descriptor: ProviderDescriptor;
   activating: boolean;
@@ -463,11 +490,12 @@ function ActiveControl({
    * (warn-on-click) because their key field is right on the card.
    */
   disabled?: boolean;
+  disabledReason?: string;
 }) {
   const labelTitle = descriptor.active
     ? "This provider is active"
     : disabled
-      ? "Set an OpenAI API key first"
+      ? disabledReason ?? "Provider cannot be activated"
       : descriptor.configured
         ? "Activate this provider"
         : "Set an API key first";

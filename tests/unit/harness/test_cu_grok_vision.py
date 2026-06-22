@@ -93,10 +93,10 @@ def test_grok_image_is_routed_to_openai_image_url_not_dropped() -> None:
 
 
 class _BlindThenGrokManager:
-    """Chain = [antigravity(blind)×2, grok]. ``_get_brain('grok')`` returns the
+    """Chain = [codex(blind)×2, grok]. ``_get_brain('grok')`` returns the
     REAL GrokBrain so the loop reads grok's real ``supports_vision`` flag."""
 
-    active_provider = "antigravity"
+    active_provider = "codex"
 
     def __init__(self, grok_brain: GrokBrain) -> None:
         self.blind = _StreamingBrain(
@@ -109,14 +109,14 @@ class _BlindThenGrokManager:
         # Mirrors the live chain shape: the blind active brain appears twice
         # (fast + deep model), then grok as the vision-capable fallback.
         return [
-            ("antigravity", "gemini-3.5-flash"),
-            ("antigravity", "gemini-3.1-pro-preview"),
+            ("codex", "gpt-5.5"),
+            ("codex", "gpt-5.5-pro"),
             ("grok", "grok-4.3"),
         ]
 
     def _get_brain(self, name: str, model: str | None = None) -> Any:
         self.requested.append((name, model))
-        if name == "antigravity":
+        if name == "codex":
             return self.blind
         if name == "grok":
             return self.grok
@@ -126,7 +126,7 @@ class _BlindThenGrokManager:
 async def test_cu_loop_reaches_grok_when_active_provider_is_blind(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The exact 18:41 failure shape: antigravity (blind) leads, grok is the
+    """The exact 18:41 failure shape: a blind CLI provider leads, grok is the
     only vision-capable provider with a key. With grok flagged vision-capable
     the loop must skip the blind provider and dispatch the screenshot to grok."""
     grok = GrokBrain(model="grok-4.3")
@@ -269,7 +269,7 @@ async def test_cu_dispatches_screenshot_to_active_vision_provider(
 async def test_cu_falls_through_blind_active_to_any_vision_provider(
     vision_provider: str,
 ) -> None:
-    """A blind active provider (antigravity-like, ``supports_vision=False``)
+    """A blind active provider (codex-like, ``supports_vision=False``)
     must be skipped and the screenshot must fall through to WHICHEVER
     vision-capable provider is next — proving the fallthrough is generic, not
     grok-specific."""
@@ -279,20 +279,20 @@ async def test_cu_falls_through_blind_active_to_any_vision_provider(
     seeing = _StreamingBrain(text='{"action": "done"}', supports_vision=True)
 
     class _BlindThenVisionManager:
-        active_provider = "antigravity"
+        active_provider = "codex"
 
         def __init__(self) -> None:
             self.requested: list[tuple[str, str | None]] = []
 
         def _build_fallback_chain(self, level: str) -> list[tuple[str, str | None]]:
             return [
-                ("antigravity", "agy-cli"),
+                ("codex", "gpt-5.5"),
                 (vision_provider, f"{vision_provider}-model"),
             ]
 
         def _get_brain(self, name: str, model: str | None = None) -> _StreamingBrain:
             self.requested.append((name, model))
-            return blind if name == "antigravity" else seeing
+            return blind if name == "codex" else seeing
 
     manager = _BlindThenVisionManager()
     ctx = make_ctx(FakeBrain())
@@ -312,6 +312,127 @@ async def test_cu_falls_through_blind_active_to_any_vision_provider(
     assert blind.calls == 0, "the blind active provider must never be dispatched"
     assert seeing.calls == 1, "the screenshot must reach the vision-capable brain"
     assert (vision_provider, f"{vision_provider}-model") in manager.requested
+
+
+# ---------------------------------------------------------------------------
+# 6. STALE DEAD-FLAG RESILIENCE (live forensic 2026-06-21 18:41, exit 2):
+#    "[cu] giving up after 3 model failures … provider chain failed: 3
+#    provider(s) skipped — no vision; … codex supports_vision=False;
+#    gemini 429; claude-api incomplete chunked read". grok — the ONE live,
+#    vision-capable brain — was NOT even in the tail: it had been filtered out
+#    of the chain entirely by a stale ``_dead_providers`` flag (a recurring
+#    "spuriously flagged dead" bug). With every other vision provider keyless/
+#    throttled and grok filtered out, CU had no vision brain and gave up. CU
+#    must not be permanently disabled by a stale dead-flag on its only eyes.
+# ---------------------------------------------------------------------------
+
+
+async def test_cu_reaches_vision_brain_despite_stale_dead_flag() -> None:
+    """The blind active provider leads and the one vision-capable provider
+    (grok) was filtered out of the chain by a stale ``_dead_providers`` flag, so
+    the normal chain reaches NO vision brain. As a last resort CU must try every
+    registered vision-capable provider IGNORING the transient dead/cooldown
+    flags, and reach grok — instead of failing "no vision"."""
+    seeing = _StreamingBrain(text='{"action": "done"}', supports_vision=True)
+    blind = _StreamingBrain(
+        text='{"action": "click", "x": 1, "y": 1}', supports_vision=False,
+    )
+
+    class _Registry:
+        def available(self) -> list[str]:
+            return ["codex", "grok"]
+
+    class _DeadFlaggedGrokManager:
+        active_provider = "codex"
+
+        def __init__(self) -> None:
+            self._dead_providers = {"grok"}  # stale flag on the only vision brain
+            self._registry = _Registry()
+            self.requested: list[tuple[str, str | None]] = []
+
+        def _build_fallback_chain(self, level: str) -> list[tuple[str, str | None]]:
+            # The real builder filters dead providers OUT, so grok is gone and
+            # only the blind active provider survives → no vision brain in chain.
+            return [("codex", "gpt-5.5"), ("codex", "gpt-5.5-pro")]
+
+        def _fast_model(self, name: str) -> str | None:
+            return {"codex": "gpt-5.5", "grok": "grok-4.3"}.get(name)
+
+        def _get_brain(self, name: str, model: str | None = None) -> Any:
+            self.requested.append((name, model))
+            if name == "codex":
+                return blind
+            if name == "grok":
+                return seeing
+            raise AssertionError(f"unexpected provider {name!r}")
+
+    manager = _DeadFlaggedGrokManager()
+    ctx = make_ctx(FakeBrain())
+    ctx.brain_manager = manager
+    obs = Observation(
+        trace_id=uuid4(), timestamp_ns=time.time_ns(),
+        screenshot_path=None, screenshot_hash="x",
+    )
+    img = ImageBlock(mime="image/jpeg", data_b64="QQ==", source_hash="x")
+
+    raw = await _call_brain(
+        ctx, observation=obs, user_goal="open chrome with computer use",
+        history_text="", images_override=[img],
+    )
+
+    assert raw == '{"action": "done"}', (
+        "CU gave up 'no vision' despite a live, vision-capable grok behind a "
+        "stale dead-flag"
+    )
+    assert blind.calls == 0, "the blind active provider must never plan a screenshot"
+    assert seeing.calls == 1, "the last-resort must reach grok"
+    assert ("grok", "grok-4.3") in manager.requested
+
+
+async def test_cu_still_fails_honestly_when_no_vision_provider_exists() -> None:
+    """When there is genuinely NO vision-capable provider anywhere (active blind,
+    none else registered), CU still fails honestly with a 'vision' message — the
+    last-resort must not invent a provider, loop, or hang."""
+    blind = _StreamingBrain(
+        text='{"action": "click", "x": 1, "y": 1}', supports_vision=False,
+    )
+
+    class _Registry:
+        def available(self) -> list[str]:
+            return ["codex"]
+
+    class _OnlyBlindManager:
+        active_provider = "codex"
+
+        def __init__(self) -> None:
+            self._dead_providers: set[str] = set()
+            self._registry = _Registry()
+
+        def _build_fallback_chain(self, level: str) -> list[tuple[str, str | None]]:
+            return [("codex", "gpt-5.5")]
+
+        def _fast_model(self, name: str) -> str | None:
+            return "gpt-5.5"
+
+        def _get_brain(self, name: str, model: str | None = None) -> Any:
+            return blind
+
+    manager = _OnlyBlindManager()
+    ctx = make_ctx(FakeBrain())
+    ctx.brain_manager = manager
+    obs = Observation(
+        trace_id=uuid4(), timestamp_ns=time.time_ns(),
+        screenshot_path=None, screenshot_hash="x",
+    )
+    img = ImageBlock(mime="image/jpeg", data_b64="QQ==", source_hash="x")
+
+    with pytest.raises(CULoopError) as excinfo:
+        await _call_brain(
+            ctx, observation=obs, user_goal="open chrome",
+            history_text="", images_override=[img],
+        )
+    assert "vision" in str(excinfo.value).lower()
+    assert blind.calls == 0
 
 
 @pytest.mark.integration

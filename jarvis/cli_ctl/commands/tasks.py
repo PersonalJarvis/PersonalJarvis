@@ -6,22 +6,12 @@ import sys
 
 import typer
 
-from jarvis.cli_ctl import render
-from jarvis.cli_ctl.client import ApiError
+from jarvis.cli_ctl import invoke, render
 
 app = typer.Typer(no_args_is_help=True, help="Inspect and manage scheduled tasks.")
 
-
-def _run(method: str, path: str, *, params=None, body=None):
-    from jarvis.cli_ctl.__main__ import as_json, make_client
-
-    try:
-        with make_client() as client:
-            out = client.request(method, path, params=params, json=body)
-    except ApiError as exc:
-        render.error(exc.message)
-        raise typer.Exit(code=1) from exc
-    render.emit(out, as_json=as_json())
+_YES = typer.Option(False, "--yes", "-y", help="Authorize the mutation without a prompt.")
+_DRY = typer.Option(False, "--dry-run", help="Print the request and exit without sending.")
 
 
 @app.command("list")
@@ -30,16 +20,16 @@ def list_tasks(
     limit: int = typer.Option(100, "--limit"),
 ) -> None:
     """List tasks (optionally filtered by state)."""
-    params = {"limit": limit}
+    params: dict[str, object] = {"limit": limit}
     if state:
         params["state"] = state
-    _run("GET", "/api/tasks", params=params)
+    invoke.run("GET", "/api/tasks", params=params)
 
 
 @app.command()
 def get(task_id: str = typer.Argument(..., help="Task id.")) -> None:
     """Show one task with its step timeline."""
-    _run("GET", f"/api/tasks/{task_id}")
+    invoke.run("GET", f"/api/tasks/{task_id}")
 
 
 @app.command()
@@ -48,6 +38,8 @@ def create(
         ..., "--json-body",
         help="TaskSpec as JSON (use '-' to read from stdin).",
     ),
+    yes: bool = _YES,
+    dry_run: bool = _DRY,
 ) -> None:
     """Create + schedule a task from a TaskSpec JSON document.
 
@@ -64,16 +56,24 @@ def create(
     except ValueError as exc:
         render.error(f"--json-body is not valid JSON: {exc}")
         raise typer.Exit(code=2) from exc
-    _run("POST", "/api/tasks", body=spec)
+    invoke.run("POST", "/api/tasks", body=spec, assume_yes=yes, dry_run=dry_run)
 
 
 @app.command()
-def cancel(task_id: str = typer.Argument(...)) -> None:
+def cancel(
+    task_id: str = typer.Argument(...),
+    yes: bool = _YES,
+    dry_run: bool = _DRY,
+) -> None:
     """Soft-cancel a scheduled/running task."""
-    _run("POST", f"/api/tasks/{task_id}/cancel")
+    invoke.run("POST", f"/api/tasks/{task_id}/cancel", assume_yes=yes, dry_run=dry_run)
 
 
 @app.command()
-def delete(task_id: str = typer.Argument(...)) -> None:
+def delete(
+    task_id: str = typer.Argument(...),
+    yes: bool = _YES,
+    dry_run: bool = _DRY,
+) -> None:
     """Hard-delete a task (terminal states only, server-enforced)."""
-    _run("DELETE", f"/api/tasks/{task_id}")
+    invoke.run("DELETE", f"/api/tasks/{task_id}", assume_yes=yes, dry_run=dry_run)

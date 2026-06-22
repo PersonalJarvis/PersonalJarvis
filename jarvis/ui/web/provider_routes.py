@@ -199,14 +199,11 @@ def _cli_installed(spec: ProviderSpec) -> bool | None:
 
 
 def _has_openai_brain_credential() -> bool:
-    """True iff an OpenAI API key usable by the Codex *brain* is configured.
+    """True iff an OpenAI API key usable by the legacy Codex brain is configured.
 
-    Mirrors ``CodexBrain._ensure_client``: the dedicated codex slot, the general
-    OpenAI provider key, or the ``OPENAI_API_KEY`` env fallback. The ChatGPT
-    OAuth login is intentionally NOT counted — it powers the codex *subagent*
-    (the CLI), not a chat-completions brain. Used to gate Codex-as-brain
-    activation so the switch never "succeeds" on OAuth and then fails on the
-    first turn.
+    Codex is no longer switchable as the main Brain because Computer Use needs
+    screenshot-capable planning. This helper is kept for old payload fields and
+    defensive compatibility with the CodexBrain plugin.
     """
     return bool(
         cfg_mod.get_secret("codex_openai_api_key")
@@ -215,12 +212,11 @@ def _has_openai_brain_credential() -> bool:
 
 
 def _codex_brain_usable() -> bool:
-    """True iff Codex can serve as a brain: an OpenAI API key (the fast chat-API
-    path) OR a ChatGPT login (the slow ``codex exec`` CLI path).
+    """Legacy readiness signal for Codex credentials.
 
-    The CLI path is genuinely slow (~15-20 s per turn) and burns subscription
-    tokens, but it IS a working brain (CodexBrain drives ``codex exec`` over the
-    OAuth token). So the brain toggle unlocks on OAuth too, not only on a key.
+    The Brain switch rejects Codex earlier via ``brain_switchable=False``; Codex
+    belongs in the Subagent section. The value remains in ``/api/providers`` for
+    older UI consumers that still read ``codex_brain_ready``.
     """
     if _has_openai_brain_credential():
         return True
@@ -265,6 +261,7 @@ def _spec_to_payload(
         "login_cli": list(spec.login_cli) if spec.login_cli else None,
         "install_hint": spec.install_hint,
         "credential_path_hint": spec.credential_path_hint,
+        "brain_switchable": spec.brain_switchable,
         "configured": (
             bool(antigravity_status["connected"])
             if antigravity_status is not None
@@ -280,9 +277,8 @@ def _spec_to_payload(
         payload["antigravity_status"] = antigravity_status
     if codex_status is not None:
         payload["codex_status"] = codex_status
-        # Codex IS a selectable brain. It works with an OpenAI API key (fast)
-        # OR the ChatGPT login (slow codex-exec CLI path). The UI gates the brain
-        # "activate" radio on this — unlocked for either credential.
+        # Back-compat only. Codex is not rendered as a switchable Brain anymore;
+        # the Subagent section owns its ChatGPT login and activation.
         payload["codex_brain_ready"] = _codex_brain_usable()
     return payload
 
@@ -872,6 +868,15 @@ async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     spec = get_spec(body.provider)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Unbekannter Provider: {body.provider}")
+    if spec.tier == "brain" and not spec.brain_switchable:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{spec.label} is subagent-only in Jarvis. It cannot be used as "
+                "the main Brain provider because it cannot see Computer-Use "
+                "screenshots. Activate it in the Subagent section instead."
+            ),
+        )
 
     cfg = _resolve_cfg(request)
     profile_name = getattr(getattr(cfg, "profile", None), "name", "default")
@@ -901,12 +906,9 @@ async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     # 409 (Provider bekannt, aber Credentials fehlen) — Identifiability vor
     # Konfiguration.
     #
-    # Codex-as-BRAIN is special: a chat-completions brain needs an OpenAI API
-    # key. The ChatGPT subscription (OAuth) cannot back a chat endpoint — it
-    # only powers the Codex *subagent*. Accept ANY OpenAI key CodexBrain can use
-    # (codex_openai_api_key / openai_api_key / OPENAI_API_KEY), not just the
-    # dedicated codex slot — so activation matches what the brain actually reads,
-    # and never "succeeds" on OAuth alone and then fails on the first turn.
+    # Defensive legacy branch: Codex/Antigravity are rejected above as
+    # ``brain_switchable=False``. If that guard is ever relaxed, keep credential
+    # checks explicit instead of letting a switch succeed and fail on first turn.
     if spec.id == "codex":
         if not _codex_brain_usable():
             raise HTTPException(

@@ -187,8 +187,8 @@ def _build_provider_catalog() -> dict[str, CatalogSpec]:
     # The 5 live-fetchable API brains.
     for p in CATALOG_PROVIDERS:
         cat[p] = CatalogSpec("brain", "model", tuple(CURATED_MODELS.get(p, ())), live=True)
-    # Codex — a subscription brain (ChatGPT login); no /v1/models over OAuth, so
-    # curated only. Its model is the OpenAI/codex gpt-5.5 family.
+    # Codex — subagent model catalog for the ChatGPT-login worker; no /v1/models
+    # over OAuth, so curated only. Its model is the OpenAI/codex gpt-5.5 family.
     cat["codex"] = CatalogSpec("brain", "model", tuple(_curated([
         ("gpt-5.5", "GPT-5.5"),
         ("gpt-5.5-pro", "GPT-5.5 Pro"),

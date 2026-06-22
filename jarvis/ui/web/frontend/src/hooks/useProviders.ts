@@ -16,20 +16,19 @@ export interface ProviderDescriptor {
   credential_path_hint: string | null;
   configured: boolean;
   active: boolean;
+  brain_switchable?: boolean;
   cli_installed: boolean | null;
   /**
-   * Codex only: whether an OpenAI API key usable by the Codex *brain* is
-   * configured (codex_openai_api_key / openai_api_key / OPENAI_API_KEY). The
-   * ChatGPT login alone cannot back a chat brain, so the brain "activate" radio
-   * is gated on this rather than on the OAuth connection.
+   * Codex only: legacy credential readiness kept in /api/providers for older
+   * UI consumers. The current UI does not render Codex as a switchable Brain;
+   * Codex is connected and selected from the Subagent section.
    */
   codex_brain_ready?: boolean;
   codex_status?: CodexStatus;
   /**
    * Antigravity only: the honest Google CLI login snapshot (mirror of
    * `GoogleCliAuthStatus.to_dict()`). Drives the OAuth connect/disconnect widget
-   * — `configured` already mirrors `connected`, so the brain "activate" radio is
-   * gated the same way as every other provider.
+   * in the Subagent section. It is not switchable as the main Brain provider.
    */
   antigravity_status?: AntigravityStatus;
 }
@@ -41,7 +40,11 @@ export interface CodexStatus {
   message: string;
   version?: string | null;
   accountLabel?: string | null;
+  account_label?: string | null;
+  user_email?: string | null;
   binaryPath?: string | null;
+  binary_path?: string | null;
+  error?: string | null;
 }
 
 /**

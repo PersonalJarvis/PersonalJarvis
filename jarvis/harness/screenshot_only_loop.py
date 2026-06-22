@@ -609,6 +609,19 @@ _UIA_TIMEOUT_S = 3.0
 #: case on a 4K monitor is ~1.05s; 3s leaves headroom without letting a
 #: wedged GDI call eat the step.
 _OBSERVE_TIMEOUT_S = 3.0
+#: How many consecutive observe (screenshot-capture) timeouts a mission
+#: tolerates before giving up. A SINGLE transient timeout must not end the
+#: mission: the capture runs on the shared asyncio loop and can spuriously hit
+#: the `_OBSERVE_TIMEOUT_S` budget when the loop is momentarily saturated by a
+#: concurrent burst (live forensic 2026-06-22: the Spotify CU turn died
+#: "[cu] observe timeout (step 1)" total=3.3s while a degraded-voice TTS
+#: failover + double mic-open contended the loop). Mirror the brain-timeout
+#: retry: retry the observe, only fail after the cap. Provider/OS-agnostic.
+_MAX_OBSERVE_FAILURES = 3
+#: Brief breath before retrying a timed-out observe, so a transient loop
+#: contention spike can clear before the next capture attempt (bounded well
+#: under the per-step budget). Tests monkeypatch this to 0.0.
+_OBSERVE_RETRY_BACKOFF_S = 0.25
 #: Single tool execution (click/type/open_app/...). App launches are the slow
 #: end; anything beyond this is a wedged tool, not a slow action.
 _ACT_TIMEOUT_S = 5.0
@@ -1120,6 +1133,45 @@ async def _call_brain(
                     provider, model, exc,
                 )
                 continue
+
+        # LAST RESORT (stale dead-flag resilience, live 2026-06-21 18:41): the
+        # normal chain reached no vision-capable brain — usually because a stale
+        # ``_dead_providers`` flag filtered the one vision provider (grok) out of
+        # the chain entirely, leaving CU "no vision" while a live, image-reading
+        # brain existed. Re-try every REGISTERED vision-capable provider once,
+        # IGNORING the transient dead/cooldown flags, deduped against what was
+        # already tried this turn. Provider-agnostic; a truly-dead provider just
+        # raises and is skipped, so this only rescues a wrongly-flagged one.
+        if images_attached:
+            from jarvis.harness.computer_use_planner import (  # noqa: PLC0415
+                iter_last_resort_vision,
+            )
+
+            already_tried = set(chain) | {
+                (err.provider, err.model) for err in selector.errors
+            }
+            for provider, model, brain in iter_last_resort_vision(
+                manager, already_tried=already_tried,
+            ):
+                try:
+                    agg = await aggregate(brain.complete(req))
+                    text = (agg.text or "").strip()
+                    if not text:
+                        selector.record_empty(provider, model)
+                        continue
+                    log.warning(
+                        "ComputerUseLoop LAST-RESORT vision brain %s(%s) reached "
+                        "— normal chain had no vision provider (stale dead-flag?)",
+                        provider, model,
+                    )
+                    return text
+                except Exception as exc:  # noqa: BLE001
+                    selector.record_failure(provider, model, exc)
+                    log.warning(
+                        "ComputerUseLoop last-resort provider %s(%s) failed: %s",
+                        provider, model, exc,
+                    )
+                    continue
 
         raise CULoopError(
             selector.error_message(
@@ -2804,6 +2856,13 @@ async def _run_screenshot_loop(
     # failures per mission end it, with a clean error message.
     _MAX_LLM_FAILURES = 3
     llm_failures = 0
+    # Observe-timeout retry budget (live forensic 2026-06-22, exit 124): a
+    # single transient screenshot-capture timeout used to END the whole mission
+    # at step 1 (the Spotify "[cu] observe timeout (step 1)" total=3.3s). The
+    # capture shares the asyncio loop and can spuriously hit its budget under a
+    # momentary contention burst, so retry like a brain timeout; only this many
+    # consecutive observe timeouts end the mission.
+    observe_failures = 0
     # Done-verification gate (2026-06-09 shippability fix): a model-emitted
     # "done" is only accepted once the strict judge confirms the goal on the
     # CURRENT screenshot (``ctx.verify_after_each_step`` -- previously a dead
@@ -2979,11 +3038,29 @@ async def _run_screenshot_loop(
             observation = await _observe(ctx, cancel_token)
         except TimeoutError:
             labels_task.cancel()
-            yield _final(
-                stderr=f"[cu] observe timeout (step {step_idx})\n",
-                exit_code=_TIMEOUT_EXIT_CODE,
+            observe_failures += 1
+            log.info(
+                "[cu] observe timeout (step %d, failure %d/%d)",
+                step_idx, observe_failures, _MAX_OBSERVE_FAILURES,
             )
-            return
+            if observe_failures >= _MAX_OBSERVE_FAILURES:
+                yield _final(
+                    stderr=(
+                        f"[cu] giving up after {observe_failures} observe "
+                        f"timeouts (last at step {step_idx})\n"
+                    ),
+                    exit_code=_TIMEOUT_EXIT_CODE,
+                )
+                return
+            # A single transient capture timeout (shared-loop contention) must
+            # not end the mission -- retry on the next step (mirrors the
+            # brain-timeout retry), after a brief breath so the spike can clear.
+            yield _progress(
+                f"[cu] step {step_idx}: observe timeout -- retrying"
+            )
+            if _OBSERVE_RETRY_BACKOFF_S > 0:
+                await asyncio.sleep(_OBSERVE_RETRY_BACKOFF_S)
+            continue
         except Exception as exc:  # noqa: BLE001
             labels_task.cancel()
             yield _final(

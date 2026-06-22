@@ -1,9 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowUp, Bot, CheckCircle2, Lock, XCircle } from "lucide-react";
+import { ArrowUp, Bot, CheckCircle2, Lock, LogIn, LogOut, Terminal, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
-import { saveSubagentModel, switchSubagentProvider } from "@/hooks/useProviders";
+import {
+  codexLogout,
+  loginAntigravity,
+  logoutAntigravity,
+  saveSubagentModel,
+  startCodexLogin,
+  switchSubagentProvider,
+  type AntigravityStatus,
+  type CodexStatus,
+} from "@/hooks/useProviders";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
 
 /**
@@ -71,16 +80,33 @@ const PROVIDER_LABELS: Record<string, string> = {
 export function SubagentSection() {
   const t = useT();
   const [bridge, setBridge] = useState<SubagentStatus | null>(null);
+  const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null);
+  const [antigravityStatus, setAntigravityStatus] =
+    useState<AntigravityStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Re-fetch on brain-switch / subagent-switch / secret-set so the active
   // provider highlight + the per-provider "Key gesetzt" badges track live.
   const reload = useCallback(async () => {
     try {
-      const res = await fetch("/api/openclaw/status");
+      const [res, codexRes, antigravityRes] = await Promise.all([
+        fetch("/api/openclaw/status"),
+        fetch("/api/codex/status").catch(() => null),
+        fetch("/api/antigravity/status").catch(() => null),
+      ]);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: SubagentStatus = await res.json();
       setBridge(data);
+      if (codexRes?.ok) {
+        setCodexStatus(await codexRes.json());
+      } else {
+        setCodexStatus(null);
+      }
+      if (antigravityRes?.ok) {
+        setAntigravityStatus(await antigravityRes.json());
+      } else {
+        setAntigravityStatus(null);
+      }
       setError(null);
     } catch (e) {
       setError((e as Error).message);
@@ -121,10 +147,11 @@ export function SubagentSection() {
       <p className="mb-3 flex items-start gap-2 rounded-md border border-primary/25 bg-primary/[0.04] px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
         <ArrowUp className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
         <span>
-          Subagents reuse the API keys from the{" "}
-          <strong className="text-foreground">Brain</strong> section above — there
-          is no key field here. Add a key to a brain provider first, then pick
-          which one runs your heavy background tasks.
+          Most subagents reuse the API keys from the{" "}
+          <strong className="text-foreground">Brain</strong> section above.
+          Codex uses the ChatGPT login here, and Antigravity uses the Google
+          login here. Connect the provider first, then pick which one runs heavy
+          background tasks.
         </span>
       </p>
       <ul className="space-y-3">
@@ -134,6 +161,19 @@ export function SubagentSection() {
         <li>
           <SubagentModelCard status={bridge} onSaved={reload} />
         </li>
+        {bridge.mapping.some((row) => row.jarvis === "openai-codex") && (
+          <li>
+            <CodexConnectionCard status={codexStatus} onChanged={reload} />
+          </li>
+        )}
+        {bridge.mapping.some((row) => row.jarvis === "antigravity") && (
+          <li>
+            <AntigravityConnectionCard
+              status={antigravityStatus}
+              onChanged={reload}
+            />
+          </li>
+        )}
         {bridge.mapping.map((row) => (
           <li key={row.jarvis}>
             <SubagentProviderCard row={row} onSwitched={reload} />
@@ -301,6 +341,201 @@ function BridgeCard({ status }: { status: SubagentStatus }) {
   );
 }
 
+function CodexConnectionCard({
+  status,
+  onChanged,
+}: {
+  status: CodexStatus | null;
+  onChanged: () => void | Promise<void>;
+}) {
+  const pushToast = useEventStore((s) => s.pushToast);
+  const [pending, setPending] = useState(false);
+  const connected = Boolean(status?.connected);
+  const installed = status?.installed ?? false;
+  const email =
+    status?.user_email ??
+    status?.account_label ??
+    status?.accountLabel ??
+    null;
+  const detail = connected
+    ? email
+      ? `Connected as ${email}`
+      : status?.message || "Connected via ChatGPT"
+    : status?.message || "ChatGPT login not connected";
+
+  async function connect() {
+    setPending(true);
+    try {
+      await startCodexLogin();
+      pushToast("info", "Codex login started");
+      await onChanged();
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function disconnect() {
+    setPending(true);
+    try {
+      await codexLogout();
+      pushToast("info", "Codex login disconnected");
+      await onChanged();
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="card-outline space-y-3 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">OpenAI Codex ChatGPT login</span>
+            {connected ? (
+              <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">
+                ready
+              </span>
+            ) : (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                open
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+            {detail}
+          </p>
+          {!installed && (
+            <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-600">
+              <Terminal className="h-3 w-3 shrink-0" />
+              <span>Install Codex before connecting.</span>
+            </p>
+          )}
+        </div>
+        {connected ? (
+          <button
+            type="button"
+            onClick={disconnect}
+            disabled={pending}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            Disconnect
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={connect}
+            disabled={pending || !installed}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+          >
+            <LogIn className="h-3.5 w-3.5" />
+            Connect
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AntigravityConnectionCard({
+  status,
+  onChanged,
+}: {
+  status: AntigravityStatus | null;
+  onChanged: () => void | Promise<void>;
+}) {
+  const pushToast = useEventStore((s) => s.pushToast);
+  const [pending, setPending] = useState(false);
+  const connected = Boolean(status?.connected);
+  const installed = status?.installed ?? false;
+  const detail = connected
+    ? status?.user_email
+      ? `Connected as ${status.user_email}`
+      : status?.message || "Connected"
+    : status?.message || "Google login not connected";
+
+  async function connect() {
+    setPending(true);
+    try {
+      await loginAntigravity();
+      pushToast("info", "Google login started");
+      await onChanged();
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function disconnect() {
+    setPending(true);
+    try {
+      await logoutAntigravity();
+      pushToast("info", "Google login disconnected");
+      await onChanged();
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="card-outline space-y-3 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">Antigravity Google login</span>
+            {connected ? (
+              <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">
+                ready
+              </span>
+            ) : (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                open
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+            {detail}
+          </p>
+          {!installed && (
+            <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-600">
+              <Terminal className="h-3 w-3 shrink-0" />
+              <span>Install Antigravity or the Gemini CLI before connecting.</span>
+            </p>
+          )}
+        </div>
+        {connected ? (
+          <button
+            type="button"
+            onClick={disconnect}
+            disabled={pending}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            Disconnect
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={connect}
+            disabled={pending || !installed}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+          >
+            <LogIn className="h-3.5 w-3.5" />
+            Connect
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /**
  * One sub-agent-capable provider, styled to match the `ProviderCard` in
  * `ApiKeysView` (header + badge + id·auth sub-line + active highlight + the
@@ -325,7 +560,11 @@ function SubagentProviderCard({
     if (!row.key_set) {
       pushToast(
         "warning",
-        `${label}: set the API key on the brain provider above first.`,
+        row.jarvis === "openai-codex"
+          ? `${label}: connect the ChatGPT login above first.`
+          : row.jarvis === "antigravity"
+            ? `${label}: connect the Google login above first.`
+            : `${label}: set the API key on the brain provider above first.`,
       );
       return;
     }
@@ -404,8 +643,22 @@ function SubagentProviderCard({
         <p className="flex items-center gap-1.5 text-[11px] text-amber-600">
           <Lock className="h-3 w-3 shrink-0" />
           <span>
-            Locked &mdash; add the <strong>{label}</strong> key in the Brain
-            section above to unlock it.
+            {row.jarvis === "openai-codex" ? (
+              <>
+                Locked &mdash; connect <strong>{label}</strong> with ChatGPT above
+                to unlock it.
+              </>
+            ) : row.jarvis === "antigravity" ? (
+              <>
+                Locked &mdash; connect <strong>{label}</strong> with Google above
+                to unlock it.
+              </>
+            ) : (
+              <>
+                Locked &mdash; add the <strong>{label}</strong> key in the Brain
+                section above to unlock it.
+              </>
+            )}
           </span>
         </p>
       )}
