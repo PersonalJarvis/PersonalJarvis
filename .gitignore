@@ -12,6 +12,11 @@ apikeys-snapshot.md
 !install/keys/*.pub
 !install/keys/*.enc
 
+# Boot-timing harness artifacts (scripts/measure_boot.py) — throwaway, local
+.boot-bench/
+boot-latest.json
+boot-baseline.json
+
 # Config-Drift-Guard temp backups (never commit)
 jarvis.toml.tmp
 *.toml.tmp

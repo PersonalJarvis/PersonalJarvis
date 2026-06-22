@@ -99,8 +99,8 @@ def run_restart_quit_sequence(
     *,
     set_quit,
     destroy_window,
-    pre_delay: float = 0.8,
-    hard_exit_after: float = 10.0,
+    pre_delay: float = 0.15,
+    hard_exit_after: float = 0.7,
     _sleep=time.sleep,
     _exit=os._exit,
 ) -> None:
@@ -119,6 +119,14 @@ def run_restart_quit_sequence(
     it: the "shuts down but never comes back" bug. If the normal shutdown
     finishes first, the main thread exits the process and this daemon thread
     dies before reaching ``_exit`` — so the force-exit only fires when it must.
+
+    Speed note (2026-06-21): for a RESTART the dying app does not need a full,
+    leisurely clean shutdown — the fresh instance re-initialises every subsystem
+    anyway. So the hard-exit cap is tight (2 s, was 10 s): a slow or hanging
+    teardown (MCP session close, the BUG-031 window-destroy hang) is force-exited
+    fast, freeing the lock + port for the fresh, fast-booting instance. The only
+    cost is some teardown skipped on restart (e.g. an MCP subprocess re-spawned
+    by the new instance) — acceptable for a controlled restart.
     """
     _sleep(pre_delay)
     try:
@@ -198,8 +206,9 @@ def main(
         if _alive(pid):
             _wait(pid, timeout=45.0 if attempt == 0 else 15.0)
         # Extra grace so the kernel finishes releasing the mutex + the TCP port
-        # before the new launcher tries to claim them.
-        _sleep(1.0)
+        # before the new launcher tries to claim them. Short — the kernel frees
+        # both the instant the old PID is gone; this only covers the tail.
+        _sleep(0.2)
 
         proc = _spawn(build_launch_command(sys.executable), **kwargs)
         new_pid = getattr(proc, "pid", None)
