@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -178,9 +179,17 @@ class WebServer:
         self._register_rest_routes(app)
         self._register_ws_route(app)
 
+        # Registries constructed here defer their blocking disk scan
+        # (``reload_sync`` — globbing + FTS indexing, ~hundreds of ms) off the
+        # boot critical path. The scans run after uvicorn is listening (see
+        # ``start()``); nothing at BOOT_READY needs the skill/doc lists (the
+        # brain builds its own skill context; the Skills/Docs views tolerate an
+        # empty registry until the reload lands). Each entry is (label, registry).
+        self._pending_reloads: list[tuple[str, Any]] = []
+
         # Skill-Registry-Setup: Bootstrap (Builtin-Skills kopieren) + Registry
-        # anlegen + reload_sync(). Der watchdog-Watcher wird erst in ``start()``
-        # aktiviert, wenn eine Event-Loop laeuft.
+        # anlegen. reload_sync() ist deferred (siehe _pending_reloads). Der
+        # watchdog-Watcher wird erst in ``start()`` aktiviert.
         self._setup_skill_registry(app)
 
         # Doc-Registry: Markdown-Discovery unter ``docs/`` + Geschwistern,
@@ -218,6 +227,7 @@ class WebServer:
         )
         from .chats_routes import router as chats_router
         from .cli_routes import router as cli_router
+        from .drop_routes import router as drop_router
         from .contacts_routes import router as contacts_router
         from .control_routes import router as control_router
         from .docs_routes import router as docs_router
@@ -315,6 +325,7 @@ class WebServer:
         # "Speak in this conversation". Reuses chat_store + session_store +
         # brain + speech_pipeline from app.state (graceful 503s when absent).
         app.include_router(chats_router)
+        app.include_router(drop_router)
         # Default: kein Recorder verdrahtet — _init_session_stack() in start()
         # setzt das beim Erfolg um.
         app.state.session_store = None
@@ -503,12 +514,13 @@ class WebServer:
                 bus=self.bus,
                 state_prefs_loader=load_state_overrides,
             )
-            registry.reload_sync()
             self._skill_registry = registry
             app.state.skill_registry = registry
+            # reload_sync() (disk glob + parse) is deferred off the boot critical
+            # path — run after uvicorn is listening (start()).
+            self._pending_reloads.append(("SkillRegistry", registry))
             logger.info(
-                "SkillRegistry initialisiert ({} Skills geladen aus {})",
-                len(registry.list()), skills_root,
+                "SkillRegistry created (scan deferred) from {}", skills_root
             )
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
@@ -535,12 +547,14 @@ class WebServer:
                 index_db=docs_index_db_path(),
                 bus=self.bus,
             )
-            registry.reload_sync()
             self._doc_registry = registry
             app.state.doc_registry = registry
+            # reload_sync() (glob 200+ docs + FTS index build, ~hundreds of ms)
+            # is deferred off the boot critical path — run after uvicorn is
+            # listening (start()).
+            self._pending_reloads.append(("DocRegistry", registry))
             logger.info(
-                "DocRegistry initialisiert ({} Docs aus {} Roots)",
-                len(registry.list()), len(roots),
+                "DocRegistry created (scan deferred) for {} Roots", len(roots)
             )
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
@@ -828,6 +842,30 @@ class WebServer:
                     "env_fallback": "OPENAI_API_KEY",
                     "key_set": codex_connected or codex_key,
                     "is_active_brain": primary == "openai-codex",
+                }
+            )
+
+            # Antigravity is a DIRECT worker (GoogleCliWorker over the official
+            # agy/Gemini CLI) with no OpenClaw slug, so it is not in MAPPINGS —
+            # the Google sibling of Codex. Surface it as an explicit selectable
+            # subagent row, backed by the Google subscription OAuth login (no API
+            # key): "key_set" is the connected state. Selecting it routes heavy
+            # tasks through agy; selecting any other provider routes through that
+            # one — the choice is never hardcoded (init._select_subagent_worker_kind).
+            try:
+                from jarvis.google_cli.auth_service import GoogleCliAuthService
+
+                antigravity_connected = GoogleCliAuthService().status().connected
+            except Exception:  # noqa: BLE001
+                antigravity_connected = False
+            mapping_rows.append(
+                {
+                    "jarvis": "antigravity",
+                    "openclaw": "agy-cli (direct)",
+                    "env_var": "Google-OAuth",
+                    "env_fallback": None,
+                    "key_set": antigravity_connected,
+                    "is_active_brain": primary == "antigravity",
                 }
             )
 
@@ -1444,41 +1482,74 @@ class WebServer:
         self,
         host: str = "127.0.0.1",
         port: int | None = None,
+        *,
+        start_serving: bool = True,
     ) -> None:
+        """Run the boot init chain. When ``start_serving`` is False the uvicorn
+        server is NOT started — the caller already serves this app's ASGI
+        callable (the fast-boot bootstrap in launcher.py serves a holding app on
+        the port and delegates to ``self.app`` once this init chain completes).
+        """
         import uvicorn
+
+        # Boot profiling (opt-in via JARVIS_BOOT_PROFILE=1; zero behavior change
+        # otherwise). Emits one machine-readable ``[BOOT_PROFILE] <phase>=<ms>``
+        # line per phase to stdout so the boot-timing harness
+        # (scripts/measure_boot.py) can attribute cold-start cost without an LLM
+        # or a log-level change. NEVER on the voice critical path.
+        _boot_profile = os.environ.get("JARVIS_BOOT_PROFILE") == "1"
+        _boot_last = time.perf_counter()
+
+        def _boot_mark(_name: str) -> None:
+            nonlocal _boot_last
+            _now = time.perf_counter()
+            if _boot_profile:
+                print(
+                    f"[BOOT_PROFILE] {_name}={(_now - _boot_last) * 1000.0:.1f}",
+                    flush=True,
+                )
+            _boot_last = _now
 
         # Cloud-first fail-closed: never expose a non-loopback bind without a
         # Control API key — the key, not the bind address, is the boundary.
         from jarvis.core import control_key as _control_key
         from jarvis.ui.web.control_auth import assert_bind_safe
 
-        assert_bind_safe(host, _control_key.get_control_key())
+        if start_serving:
+            assert_bind_safe(host, _control_key.get_control_key())
 
-        resolved_port = port if port is not None else self.cfg.ui.admin_api_port
-        config = uvicorn.Config(
-            app=self.app,
-            host=host,
-            port=resolved_port,
-            log_level=self.cfg.telemetry.log_level.lower(),
-            lifespan="on",
-            loop="asyncio",
-        )
-        server = uvicorn.Server(config)
-        self._server = server
-        self._serve_task = asyncio.create_task(server.serve())
+            resolved_port = port if port is not None else self.cfg.ui.admin_api_port
+            config = uvicorn.Config(
+                app=self.app,
+                host=host,
+                port=resolved_port,
+                log_level=self.cfg.telemetry.log_level.lower(),
+                lifespan="on",
+                loop="asyncio",
+            )
+            server = uvicorn.Server(config)
+            self._server = server
+            self._serve_task = asyncio.create_task(server.serve())
 
-        deadline = asyncio.get_running_loop().time() + 5.0
-        while not server.started:
-            if asyncio.get_running_loop().time() > deadline:
-                raise TimeoutError(
-                    f"uvicorn server auf {host}:{resolved_port} nicht in 5s ready"
-                )
-            if self._serve_task.done():
-                exc = self._serve_task.exception()
-                if exc is not None:
-                    raise exc
-                raise RuntimeError("uvicorn.Server.serve() beendet vor 'started'")
-            await asyncio.sleep(0.05)
+            deadline = asyncio.get_running_loop().time() + 5.0
+            while not server.started:
+                if asyncio.get_running_loop().time() > deadline:
+                    raise TimeoutError(
+                        f"uvicorn server auf {host}:{resolved_port} nicht in 5s ready"
+                    )
+                if self._serve_task.done():
+                    exc = self._serve_task.exception()
+                    if exc is not None:
+                        raise exc
+                    raise RuntimeError("uvicorn.Server.serve() beendet vor 'started'")
+                await asyncio.sleep(0.05)
+        else:
+            # Bootstrap fast-boot path: a separate server already serves on the
+            # port and delegates to self.app once this init chain finishes.
+            self._server = None
+            self._serve_task = None
+
+        _boot_mark("uvicorn_serve")
 
         # Phase-6 Mission-Stack — MissionManager mit DB-Path aus dem
         # Memory-data_dir der Config (selber Ordner wie data/jarvis.db,
@@ -1489,6 +1560,7 @@ class WebServer:
             logger.opt(exception=exc).warning(
                 "MissionManager-Init fehlgeschlagen — /api/missions liefert 503"
             )
+        _boot_mark("mission_stack")
 
         # Screenshot retention: auto-delete old Vision / Flight-Recorder blobs
         # (data/flight_recorder/blobs/) after the configured window. Runs a
@@ -1499,6 +1571,7 @@ class WebServer:
             logger.opt(exception=exc).warning(
                 "Screenshot retention init failed — blobs will not be auto-pruned"
             )
+        _boot_mark("screenshot_retention")
 
         # Phase B5 wiki write-wiring — SessionRollupWorker + WikiCurator.
         # Subscribes to IdleEntered; gracefully disabled when wiki_integration
@@ -1509,6 +1582,7 @@ class WebServer:
             logger.opt(exception=exc).warning(
                 "WikiIntegration-Init fehlgeschlagen — wiki write-wiring inaktiv"
             )
+        _boot_mark("wiki_integration")
 
         # Build the FTS5 search index once if it is empty so a pre-existing
         # or restored vault returns search hits immediately (idempotent,
@@ -1520,6 +1594,7 @@ class WebServer:
                 "WikiBootIndex-Init failed — vault search may return no hits "
                 "until the first page write or a manual reindex"
             )
+        _boot_mark("wiki_boot_index")
 
         # Phase B3 wiki live-reload — start the WikiWatcher so file
         # changes in the vault publish WikiPageChanged events that the
@@ -1530,6 +1605,7 @@ class WebServer:
             logger.opt(exception=exc).warning(
                 "WikiWatcher-Init fehlgeschlagen — desktop wiki live-reload inaktiv"
             )
+        _boot_mark("wiki_watcher")
 
         # Voice-Session-Recorder + Store fuer die Transkriptions-View.
         # Sub-Setup: laeuft sync (SQLite-WAL, kein async-Loop noetig), wird
@@ -1540,6 +1616,7 @@ class WebServer:
             logger.opt(exception=exc).warning(
                 "SessionRecorder-Init fehlgeschlagen — /api/sessions liefert 503"
             )
+        _boot_mark("session_stack")
 
         # Phase-5 Task-Stack (Aufgaben-View). TaskStore liegt additiv in
         # data/jarvis.db (ADR-0003), Scheduler laeuft als asyncio-Loop, der
@@ -1550,6 +1627,7 @@ class WebServer:
             logger.opt(exception=exc).warning(
                 "TaskStack-Init fehlgeschlagen — /api/tasks liefert 503"
             )
+        _boot_mark("task_stack")
 
         # Skill-Hot-Reload-Watcher starten, sobald die Loop stabil laeuft.
         if self._skill_registry is not None:
@@ -1644,6 +1722,39 @@ class WebServer:
             _init_channel_stack_guarded(), name="channel-bootstrap"
         )
 
+        # Run the deferred registry disk scans (skill + doc reload_sync) off the
+        # boot critical path. Each is a blocking glob + FTS index build (~hundreds
+        # of ms) that nothing at BOOT_READY needs — the views tolerate an empty
+        # registry until the scan lands. Run in a worker thread so the scan never
+        # stalls the event loop; sequential so two SQLite writers don't contend.
+        if self._pending_reloads:
+            pending = list(self._pending_reloads)
+            self._pending_reloads.clear()
+
+            async def _run_deferred_reloads() -> None:
+                # Let BOOT_READY emit and the first requests settle before the
+                # blocking scans start their worker thread — otherwise the scan
+                # CPU contends with the pre-ready window via the start_overlay
+                # yield. The views tolerate an empty registry for this brief gap.
+                await asyncio.sleep(0.3)
+                for label, registry in pending:
+                    try:
+                        await asyncio.to_thread(registry.reload_sync)
+                        logger.info(
+                            "{} deferred scan complete ({} entries)",
+                            label, len(registry.list()),
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.opt(exception=exc).warning(
+                            "{} deferred reload failed — view stays empty", label
+                        )
+
+            self._deferred_reload_task = asyncio.create_task(
+                _run_deferred_reloads(), name="deferred-registry-reload"
+            )
+
+        _boot_mark("watchers_and_background")
+
     async def _init_screenshot_retention(self) -> None:
         """Auto-delete captured screenshot blobs older than the configured
         window (default 10 days).
@@ -1719,7 +1830,19 @@ class WebServer:
         # Isolation-Root: <repo_parent>/sub-agents-outputs/. Repo-Root ist 4 Ebenen
         # ueber jarvis/ui/web/server.py: server.py -> web -> ui -> jarvis -> repo.
         repo_root = WEB_DIR.parent.parent.parent
-        isolation_root = repo_root.parent / "sub-agents-outputs"
+        # Test/benchmark isolation seam: an explicit JARVIS_ISOLATION_ROOT
+        # redirects the mission worktree container (and, with it, the startup
+        # cleanup sweep) away from the SHARED production sub-agents-outputs/.
+        # Unset in production → unchanged behavior. Critical because
+        # ``startup_sweep`` is filesystem-driven (removes any entry older than
+        # cleanup_days by mtime, not DB-gated): without this seam an isolated
+        # headless boot (e.g. scripts/measure_boot.py) would sweep real mission
+        # outputs older than 14 days.
+        _iso_override = os.environ.get("JARVIS_ISOLATION_ROOT")
+        if _iso_override:
+            isolation_root = Path(_iso_override)
+        else:
+            isolation_root = repo_root.parent / "sub-agents-outputs"
 
         # Fail-closed primary-instance gate: POSITIVE proof is required.
         # Only the launcher process, after confirming it holds the

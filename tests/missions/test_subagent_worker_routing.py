@@ -10,10 +10,14 @@ never drifts from the configured ``[brain.sub_jarvis].provider``.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
-from jarvis.missions.init import _select_subagent_worker_kind
-
+from jarvis.missions.init import (
+    _live_subagent_provider,
+    _select_subagent_worker_kind,
+)
 
 # --- HARD LOCK: claude-api wins over ANY step model ----------------------
 
@@ -72,3 +76,121 @@ def test_gemini_worker_only_when_no_provider_configured() -> None:
 def test_unconfigured_non_gemini_defaults_to_subjarvis() -> None:
     assert _select_subagent_worker_kind(None, "sonnet") == "subjarvis"
     assert _select_subagent_worker_kind(None, "") == "subjarvis"
+
+
+# --- Live re-resolution: a subagent switch takes effect WITHOUT a restart ---
+#
+# The worker factory used to freeze ``[brain.sub_jarvis].provider`` at the
+# boot-time snapshot, so switching the heavy-mission subagent to Codex only
+# took effect after an app restart — every mission ran on the hard-coded
+# ClaudeDirectWorker (Opus) fallback in the meantime. ``_live_subagent_provider``
+# re-resolves the persisted choice per mission (healing a stale inherited
+# process-env first, then re-reading the uncached config) so the running app
+# follows the current selection.
+
+
+def _fake_cfg(provider: object) -> SimpleNamespace:
+    return SimpleNamespace(brain=SimpleNamespace(sub_jarvis=SimpleNamespace(provider=provider)))
+
+
+def test_live_provider_overrides_stale_boot_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A live config of openai-codex wins over a stale boot snapshot of claude-api
+    — the exact incident: a process booted before the codex pin kept running Claude."""
+    import jarvis.core.config as cfg_mod
+
+    monkeypatch.setattr(cfg_mod, "load_config", lambda: _fake_cfg("openai-codex"))
+    monkeypatch.setattr(cfg_mod, "refresh_persisted_env_from_user_registry", lambda *a, **k: {})
+
+    assert _live_subagent_provider("claude-api") == "openai-codex"
+
+
+def test_live_provider_heals_inherited_env_before_reading(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The persisted JARVIS__* override is refreshed from the registry into
+    os.environ BEFORE the (uncached, env>toml) re-read, or a frozen inherited
+    env would keep winning over the user's persisted choice."""
+    import jarvis.core.config as cfg_mod
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        cfg_mod,
+        "refresh_persisted_env_from_user_registry",
+        lambda *a, **k: calls.append("refreshed") or {},
+    )
+    monkeypatch.setattr(cfg_mod, "load_config", lambda: _fake_cfg("openai-codex"))
+
+    assert _live_subagent_provider("claude-api") == "openai-codex"
+    assert calls == ["refreshed"]
+
+
+def test_live_provider_normalizes_case_and_whitespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    import jarvis.core.config as cfg_mod
+
+    monkeypatch.setattr(cfg_mod, "load_config", lambda: _fake_cfg("  OpenAI-Codex  "))
+    monkeypatch.setattr(cfg_mod, "refresh_persisted_env_from_user_registry", lambda *a, **k: {})
+
+    assert _live_subagent_provider("claude-api") == "openai-codex"
+
+
+@pytest.mark.parametrize("live_value", [None, "", "   "])
+def test_live_provider_falls_back_to_boot_when_unset(
+    monkeypatch: pytest.MonkeyPatch, live_value: object
+) -> None:
+    import jarvis.core.config as cfg_mod
+
+    monkeypatch.setattr(cfg_mod, "load_config", lambda: _fake_cfg(live_value))
+    monkeypatch.setattr(cfg_mod, "refresh_persisted_env_from_user_registry", lambda *a, **k: {})
+
+    assert _live_subagent_provider("claude-api") == "claude-api"
+
+
+def test_live_provider_falls_back_to_boot_on_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A config read failure must never break dispatch — fall back to the boot
+    snapshot, exactly as the boot path already does."""
+    import jarvis.core.config as cfg_mod
+
+    def _boom() -> object:
+        raise RuntimeError("config unreadable")
+
+    monkeypatch.setattr(cfg_mod, "load_config", _boom)
+    monkeypatch.setattr(cfg_mod, "refresh_persisted_env_from_user_registry", lambda *a, **k: {})
+
+    assert _live_subagent_provider("openai-codex") == "openai-codex"
+
+
+def test_live_provider_survives_registry_refresh_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A registry-refresh blip is best-effort — the live read still proceeds."""
+    import jarvis.core.config as cfg_mod
+
+    def _boom(*a: object, **k: object) -> dict[str, str]:
+        raise OSError("registry unavailable")
+
+    monkeypatch.setattr(cfg_mod, "refresh_persisted_env_from_user_registry", _boom)
+    monkeypatch.setattr(cfg_mod, "load_config", lambda: _fake_cfg("openai-codex"))
+
+    assert _live_subagent_provider("claude-api") == "openai-codex"
+
+
+# --- Honesty surface: which selections silently fall back to Claude ----------
+#
+# grok / openai / openrouter map to the removed-OpenClaw ``"subjarvis"`` kind,
+# so picking them runs the ClaudeDirectWorker (Opus) — NOT the picked provider.
+# The UI reads ``subagent_runs_on_claude_fallback`` (derived from the SAME
+# routing function) to flag those cards instead of silently lying.
+
+
+@pytest.mark.parametrize("provider", ["grok", "openai", "openrouter"])
+def test_fallback_providers_flagged_as_claude(provider: str) -> None:
+    from jarvis.missions.init import subagent_runs_on_claude_fallback
+
+    assert subagent_runs_on_claude_fallback(provider) is True
+
+
+@pytest.mark.parametrize(
+    "provider", ["openai-codex", "chatgpt", "gemini", "claude-api", "antigravity"]
+)
+def test_native_providers_not_flagged(provider: str) -> None:
+    """A provider with its own dedicated worker (incl. claude-api itself, which
+    genuinely IS Claude) is not a misleading fallback."""
+    from jarvis.missions.init import subagent_runs_on_claude_fallback
+
+    assert subagent_runs_on_claude_fallback(provider) is False

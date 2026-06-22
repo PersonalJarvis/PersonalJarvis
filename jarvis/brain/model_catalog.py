@@ -196,13 +196,16 @@ def _build_provider_catalog() -> dict[str, CatalogSpec]:
         ("gpt-5.5-mini", "GPT-5.5 Mini"),
     ])), live=False)
     # Antigravity — a Google-subscription brain driven via the official agy/gemini
-    # CLI (OAuth login); no /v1/models over OAuth, so curated only. The available
-    # set is plan-gated by the user's Google subscription.
+    # CLI (OAuth login); no /v1/models over OAuth, so curated only. Flash first =
+    # the fast default; Pro is the deep option. Both are valid gemini-CLI ids.
+    # NOTE (verified live 2026-06-21, agy 1.0.10): the agy CLI IGNORES the chosen
+    # model — neither ``--model`` nor ``settings.json model.name`` overrides it
+    # (a bogus name still answers), so agy always runs its IDE-configured default.
+    # The selection here therefore only takes effect on the gemini-CLI fallback
+    # path (and any future agy that honors the flag); for agy it is informational.
     cat["antigravity"] = CatalogSpec("brain", "model", tuple(_curated([
-        ("gemini-3.1-pro-preview", "Gemini 3.1 Pro"),
-        ("gemini-3-pro", "Gemini 3 Pro"),
         ("gemini-3.5-flash", "Gemini 3.5 Flash"),
-        ("gemini-3-flash-preview", "Gemini 3 Flash"),
+        ("gemini-3.1-pro-preview", "Gemini 3.1 Pro"),
     ])), live=False)
     for p, (selects, opts) in TTS_CATALOG.items():
         cat[p] = CatalogSpec("tts", selects, tuple(opts), live=False)

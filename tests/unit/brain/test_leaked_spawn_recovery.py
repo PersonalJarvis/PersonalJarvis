@@ -67,7 +67,7 @@ def _manager_with_fake_spawn(captured: dict) -> BrainManager:
     cfg.brain.primary = "fake"
 
     class _FakeExecutor:
-        async def execute(self, tool, args, *, user_utterance, trace_id):  # type: ignore[no-untyped-def]
+        async def execute(self, tool, args, *, user_utterance, trace_id, config_snapshot=None):  # type: ignore[no-untyped-def]
             captured["args"] = args
             captured["tool"] = tool
             captured["user_utterance"] = user_utterance
@@ -150,7 +150,7 @@ def _manager_with_fake_tool(captured: dict, *, name: str, output: object) -> Bra
     cfg.brain.primary = "fake"
 
     class _FakeExecutor:
-        async def execute(self, tool, args, *, user_utterance, trace_id):  # type: ignore[no-untyped-def]
+        async def execute(self, tool, args, *, user_utterance, trace_id, config_snapshot=None):  # type: ignore[no-untyped-def]
             captured["args"] = args
             captured["tool"] = tool
             return SimpleNamespace(success=True, output=output, error=None)
@@ -266,7 +266,7 @@ def _manager_with_failing_tool(
     cfg.brain.primary = "fake"
 
     class _FailingExecutor:
-        async def execute(self, tool, args, *, user_utterance, trace_id):  # type: ignore[no-untyped-def]
+        async def execute(self, tool, args, *, user_utterance, trace_id, config_snapshot=None):  # type: ignore[no-untyped-def]
             captured["args"] = args
             return SimpleNamespace(success=False, output=output, error=error)
 

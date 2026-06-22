@@ -44,7 +44,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
-from .process_utils import create_worker_subprocess
+from .process_utils import create_worker_subprocess, resolve_node_executable
 from .stream_consumer import (
     ClaudeAssistantMessage,
     ClaudeResult,
@@ -124,8 +124,12 @@ def _resolve_codex_argv_prefix() -> list[str]:
     Falls back to the bare codex binary only when ``node`` + the JS entrypoint
     cannot be located together — the prompt is passed on stdin, so the cmd.exe
     metacharacter trap does not apply to that fallback.
+
+    Node is resolved via :func:`resolve_node_executable`, which probes well-known
+    install locations when the inherited PATH is degraded — otherwise the very
+    PATH gap that breaks ``codex.CMD`` would also hide node from this bypass.
     """
-    node = shutil.which("node") or shutil.which("node.exe")
+    node = resolve_node_executable()
     if node:
         for name in ("codex", "codex.cmd", "codex.exe"):
             cli = shutil.which(name)

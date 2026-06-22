@@ -102,6 +102,40 @@ def test_codex_not_connected_is_not_configured() -> None:
     assert res.status == "not_configured"
 
 
+def test_antigravity_connected_is_ok_without_billed_call() -> None:
+    # antigravity is OAuth-only: a connected Google login IS a working brain.
+    # The real agy/gemini turn (~8s, bills the subscription) must NOT run on Test.
+    called = False
+
+    async def probe(_p, _m):  # pragma: no cover - must NOT run
+        nonlocal called
+        called = True
+        return HealthResult(provider="antigravity", model="m", ok=True)
+
+    res = _run(
+        run_provider_test(
+            get_spec("antigravity"), _cfg(), present=True, brain_probe=probe,
+            antigravity_status=lambda: SimpleNamespace(
+                installed=True, connected=True, message="Connected via Google subscription"
+            ),
+        )
+    )
+    assert res.status == "ok"
+    assert called is False  # no slow/billed agy turn on a button click
+
+
+def test_antigravity_not_connected_is_not_configured() -> None:
+    res = _run(
+        run_provider_test(
+            get_spec("antigravity"), _cfg(), present=True,
+            antigravity_status=lambda: SimpleNamespace(
+                installed=True, connected=False, message="Not connected"
+            ),
+        )
+    )
+    assert res.status == "not_configured"
+
+
 def test_tts_synthesis_credits_error_is_no_credits() -> None:
     class _Boom:
         async def synthesize(self, _text, voice=None):

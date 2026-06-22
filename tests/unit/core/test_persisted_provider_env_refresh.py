@@ -73,7 +73,34 @@ def test_refresh_covers_all_persistent_provider_keys() -> None:
         "JARVIS__BRAIN__SUB_JARVIS__PROVIDER",
         "JARVIS__TTS__PROVIDER",
         "JARVIS__STT__PROVIDER",
+        # ack_brain master + flash provider: drift-guard-maintained, so a stale
+        # inherited value must heal too. Forensic 2026-06-21: a restart inherited
+        # JARVIS__ACK_BRAIN__ENABLED=false / PROVIDER=gemini from a pre-change
+        # ancestor env; not being on this list, it survived the restart and kept
+        # the grounded spawn announcer in canned-pool mode despite the registry
+        # already holding enabled=true / provider=grok.
+        "JARVIS__ACK_BRAIN__ENABLED",
+        "JARVIS__ACK_BRAIN__PROVIDER",
+        "JARVIS__ACK_BRAIN__FALLBACK_PROVIDER",
     } <= keys
+
+
+def test_refresh_heals_stale_ack_brain_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The exact 2026-06-21 regression: a stale inherited enabled=false is healed
+    to the registry's true, so the spawn announcer's LLM path is wired on boot."""
+    monkeypatch.setenv("JARVIS__ACK_BRAIN__ENABLED", "false")  # stale inherited
+    monkeypatch.setenv("JARVIS__ACK_BRAIN__PROVIDER", "gemini")  # stale, dead provider
+    reg = {
+        "JARVIS__ACK_BRAIN__ENABLED": "true",
+        "JARVIS__ACK_BRAIN__PROVIDER": "grok",
+    }
+
+    changed = config.refresh_persisted_env_from_user_registry(read=reg.get)
+
+    assert os.environ["JARVIS__ACK_BRAIN__ENABLED"] == "true"
+    assert os.environ["JARVIS__ACK_BRAIN__PROVIDER"] == "grok"
+    assert changed["JARVIS__ACK_BRAIN__ENABLED"] == "true"
+    assert changed["JARVIS__ACK_BRAIN__PROVIDER"] == "grok"
 
 
 def test_refresh_default_reader_is_noop_off_win32(monkeypatch: pytest.MonkeyPatch) -> None:

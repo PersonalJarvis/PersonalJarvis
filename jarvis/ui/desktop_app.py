@@ -873,6 +873,36 @@ class DesktopApp:
                 await supervisor.set_state("IDLE")
 
         server.bus.subscribe(MessageSent, _on_user_message)
+
+        # Drag-drop onto the floating overlay (bar/mascot) → a proactive brain
+        # turn, reusing the SAME intake as the web dock (jarvis/brain/
+        # drop_context.ingest_drop). The overlay (Tk thread) calls dispatch_drop;
+        # we marshal here onto the long-running backend loop and run the intake.
+        # A no-op until tkdnd is present (NullDropTarget); brain may be None
+        # (build error) → ingest_drop degrades to a text-only turn.
+        try:
+            from jarvis.brain.drop_context import ingest_drop, items_from_paths
+            from jarvis.overlay.drop_bridge import set_drop_handler
+
+            def _on_overlay_drop(paths: list[str], text: str) -> None:
+                items = items_from_paths(paths) if paths else []
+                dragged = (text or "").strip() or None
+                if not items and dragged is None:
+                    return
+                coro = ingest_drop(
+                    bus=server.bus,
+                    brain=brain,
+                    thread_id="default",
+                    items=items,
+                    dragged_text=dragged,
+                )
+                asyncio.run_coroutine_threadsafe(coro, loop)
+
+            set_drop_handler(_on_overlay_drop)
+        except Exception as exc:  # noqa: BLE001 — drop wiring must never block boot.
+            from loguru import logger as _dlog
+            _dlog.opt(exception=exc).debug("overlay drop handler wiring skipped")
+
         # Overlay right-click (bar OR mascot) → raise the main desktop window.
         # OrbBusBridge publishes ShowWindowRequested from the Tk thread; the
         # handler runs on the asyncio loop and pywebview.show() is thread-safe.
@@ -1405,8 +1435,8 @@ class DesktopApp:
             target=_quit_soon, name="jarvis-restart-quit", daemon=True
         ).start()
         logger.info(
-            "Self-restart scheduled (relauncher spawned; quitting in ~0.8 s, "
-            "hard-exit fallback at ~10 s)."
+            "Self-restart scheduled (relauncher spawned; quitting in ~0.3 s, "
+            "hard-exit fallback at ~2 s)."
         )
         return True
 

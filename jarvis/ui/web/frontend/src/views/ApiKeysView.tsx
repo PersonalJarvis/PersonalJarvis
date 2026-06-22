@@ -9,6 +9,8 @@ import { WikiProviderCard } from "@/views/settings/WikiProviderCard";
 import { Button } from "@/components/ui/button";
 import {
   codexLogout,
+  loginAntigravity,
+  logoutAntigravity,
   type ProviderDescriptor,
   type ProviderTestResult,
   type ProviderTestStatus,
@@ -186,7 +188,9 @@ function ProviderCard({
         "warning",
         descriptor.auth_mode === "codex"
           ? t("apikeys_codex.needs_codex_full").replace("{0}", descriptor.label)
-          : t("apikeys_codex.needs_key_full").replace("{0}", descriptor.label),
+          : descriptor.auth_mode === "antigravity"
+            ? t("apikeys_antigravity.needs_login_full").replace("{0}", descriptor.label)
+            : t("apikeys_codex.needs_key_full").replace("{0}", descriptor.label),
       );
       return;
     }
@@ -269,7 +273,9 @@ function ProviderCard({
             ? t("apikeys_view.click_to_activate")
             : descriptor.auth_mode === "codex"
               ? t("apikeys_view.needs_codex")
-              : t("apikeys_view.needs_key")
+              : descriptor.auth_mode === "antigravity"
+                ? t("apikeys_view.needs_login")
+                : t("apikeys_view.needs_key")
       }
       className={cn(
         "card-outline space-y-3 p-4 transition-colors",
@@ -292,6 +298,7 @@ function ProviderCard({
             <span>
               {descriptor.auth_mode === "api_key" && "API key auth"}
               {descriptor.auth_mode === "codex" && "ChatGPT / Codex login"}
+              {descriptor.auth_mode === "antigravity" && "Google subscription login"}
               {descriptor.auth_mode === "none" && "Local — no auth"}
             </span>
           </p>
@@ -519,6 +526,10 @@ function AuthWidget({
     return <CodexAuthWidget descriptor={descriptor} onChanged={onChanged} />;
   }
 
+  if (descriptor.auth_mode === "antigravity") {
+    return <AntigravityAuthWidget descriptor={descriptor} onChanged={onChanged} />;
+  }
+
   // api_key
   return (
     <div className="space-y-2">
@@ -668,6 +679,138 @@ function CodexAuthWidget({
   );
 }
 
+function AntigravityAuthWidget({
+  descriptor,
+  onChanged,
+}: {
+  descriptor: ProviderDescriptor;
+  onChanged: () => void;
+}) {
+  const t = useT();
+  const [pending, setPending] = useState<"login" | "logout" | "copy" | null>(null);
+  const pushToast = useEventStore((s) => s.pushToast);
+  const status = descriptor.antigravity_status;
+  const installCommand =
+    descriptor.install_hint ?? "curl -fsSL https://antigravity.google/cli/install.sh | bash";
+
+  async function handleCopy() {
+    setPending("copy");
+    try {
+      await navigator.clipboard.writeText(installCommand);
+      pushToast("success", "Install command copied");
+    } catch {
+      pushToast("warning", installCommand);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function handleLogin() {
+    setPending("login");
+    try {
+      await loginAntigravity();
+      pushToast("info", t("apikeys_antigravity.login_started"));
+      // The Google CLI opens the browser "Sign in with Google" flow; it only
+      // completes once the user clicks through (seconds later). Poll a few times
+      // so the card flips to the compact "connected" state on its own once the
+      // on-disk creds appear — no manual refresh needed (mirror of Codex).
+      [1500, 4000, 8000, 15000, 25000].forEach((ms) =>
+        window.setTimeout(onChanged, ms),
+      );
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function handleLogout() {
+    setPending("logout");
+    try {
+      await logoutAntigravity();
+      pushToast("info", t("apikeys_antigravity.disconnected"));
+      onChanged();
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  // Connected: collapse to a small "logged in" badge instead of the full card.
+  // The Google subscription bills the brain/subagent; no key field (OAuth-only).
+  if (status?.connected) {
+    return (
+      <div className="space-y-3">
+        <div
+          data-testid="antigravity-connected"
+          className="flex flex-wrap items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/[0.06] px-3 py-2 text-xs"
+        >
+          <Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+          <span className="min-w-0 break-words text-foreground">
+            {status.user_email
+              ? t("apikeys_antigravity.connected_as").replace("{0}", status.user_email)
+              : status.message || t("apikeys_antigravity.connected")}
+          </span>
+          {status.version && (
+            <code className="rounded bg-muted px-1.5 py-0.5 font-mono">{status.version}</code>
+          )}
+          <span className="chip-yellow">GOOGLE-LOGIN</span>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={handleLogout}
+            disabled={pending !== null}
+            className="ml-auto"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            Disconnect
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Not connected: status + (install hint) + the single "connect" action.
+  return (
+    <div className="space-y-3">
+      <div className="rounded-md border border-border bg-background/40 p-3 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-2">
+          <span>{status?.message ?? t("apikeys_antigravity.status_loading")}</span>
+          {status?.version && (
+            <code className="rounded bg-muted px-1.5 py-0.5 font-mono">{status.version}</code>
+          )}
+        </div>
+      </div>
+
+      {!status?.installed && (
+        <div className="flex flex-wrap items-center gap-2">
+          <code className="min-w-[220px] flex-1 rounded-md border border-border bg-muted/30 px-3 py-1.5 font-mono text-xs">
+            {installCommand}
+          </code>
+          <Button size="sm" variant="outline" onClick={handleCopy} disabled={pending === "copy"}>
+            {pending === "copy" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+            Copy command
+          </Button>
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" onClick={handleLogin} disabled={pending !== null || !status?.installed}>
+          <LogIn className="h-3.5 w-3.5" />
+          Connect with Google
+        </Button>
+        <Button size="sm" variant="outline" asChild>
+          <a href="https://antigravity.google" target="_blank" rel="noreferrer">
+            <Terminal className="h-3.5 w-3.5" />
+            Install Antigravity
+          </a>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function StatusBadge({ descriptor }: { descriptor: ProviderDescriptor }) {
   if (descriptor.active) return <span className="chip-yellow">active</span>;
   if (descriptor.auth_mode === "codex") {
@@ -676,6 +819,16 @@ function StatusBadge({ descriptor }: { descriptor: ProviderDescriptor }) {
       return <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-destructive">missing</span>;
     }
     if (descriptor.configured) {
+      return <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">ready</span>;
+    }
+    return <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">not connected</span>;
+  }
+  if (descriptor.auth_mode === "antigravity") {
+    const status = descriptor.antigravity_status;
+    if (!status?.installed) {
+      return <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-destructive">missing</span>;
+    }
+    if (status.connected) {
       return <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">ready</span>;
     }
     return <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">not connected</span>;

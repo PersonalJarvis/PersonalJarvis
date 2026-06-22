@@ -198,6 +198,12 @@ def _default_codex_status() -> Any:
     return CodexAuthService().status()
 
 
+def _default_antigravity_status() -> Any:
+    from jarvis.google_cli.auth_service import GoogleCliAuthService
+
+    return GoogleCliAuthService().status()
+
+
 async def _silence_chunks():
     """One ~0.5 s 16 kHz mono PCM16 silence chunk — enough for a cloud STT to
     authenticate and answer (with an empty transcript); never long enough to
@@ -219,6 +225,7 @@ async def run_provider_test(
     make_tts: Callable[[Any, str], Any] | None = None,
     make_stt: Callable[[Any, str], Any] | None = None,
     codex_status: Callable[[], Any] | None = None,
+    antigravity_status: Callable[[], Any] | None = None,
     timeout_s: float = 25.0,
 ) -> ProviderTestResult:
     """Run a REAL minimal call against ``spec``'s provider and classify it.
@@ -232,6 +239,22 @@ async def run_provider_test(
     # Codex is OAuth-or-key: a connected ChatGPT login IS a working subagent.
     if spec.auth_mode == "codex":
         status_fn = codex_status or _default_codex_status
+        try:
+            st = status_fn()
+        except Exception as exc:  # noqa: BLE001
+            return ProviderTestResult(provider, ERROR, f"{type(exc).__name__}: {exc}")
+        if getattr(st, "connected", False):
+            return ProviderTestResult(provider, OK, getattr(st, "message", "") or "Connected.")
+        return ProviderTestResult(
+            provider, NOT_CONFIGURED, getattr(st, "message", "") or "Not connected.",
+        )
+
+    # Antigravity is OAuth-only (Google subscription): a connected login IS a
+    # working brain. NEVER run a real agy/gemini turn here — it is slow (~8s) and
+    # bills the subscription; the connected status is the honest, instant signal.
+    # (A real turn would also false-OK on AntigravityBrain's empty progress tick.)
+    if spec.auth_mode == "antigravity":
+        status_fn = antigravity_status or _default_antigravity_status
         try:
             st = status_fn()
         except Exception as exc:  # noqa: BLE001

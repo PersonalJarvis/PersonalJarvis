@@ -22,8 +22,13 @@ from uuid import uuid4
 import pytest
 
 import jarvis.harness.screenshot_only_loop as loop_mod
-from jarvis.core.protocols import HarnessResult, HarnessTask, Observation
-from jarvis.core.protocols import BrainDelta
+from jarvis.core.protocols import (
+    BrainDelta,
+    HarnessResult,
+    HarnessTask,
+    ImageBlock,
+    Observation,
+)
 from jarvis.harness.computer_use_context import ComputerUseContext
 from jarvis.harness.screenshot_only_loop import (
     CULoopError,
@@ -135,10 +140,12 @@ class _StreamingBrain:
     supports_tools = False
     supports_vision = True
 
-    def __init__(self, *, text: str = "", exc: Exception | None = None) -> None:
+    def __init__(self, *, text: str = "", exc: Exception | None = None,
+                 supports_vision: bool = True) -> None:
         self.text = text
         self.exc = exc
         self.calls = 0
+        self.supports_vision = supports_vision
 
     async def complete(self, req: Any):  # type: ignore[no-untyped-def]
         self.calls += 1
@@ -172,6 +179,22 @@ class _FallbackChainManager:
         if name == "fallback":
             return self.fallback
         raise AssertionError(f"unexpected provider {name!r}")
+
+
+class _RateTrackerProbe:
+    def __init__(self) -> None:
+        self.marked: list[tuple[str, str | None]] = []
+        self.blocked: set[tuple[str, str | None]] = set()
+
+    def is_available(self, provider: str, model: str | None = None) -> bool:
+        return (provider, model) not in self.blocked
+
+    def mark_rate_limited(
+        self, provider: str, model: str | None = None,
+        cooldown_s: float | None = None,
+    ) -> None:
+        self.marked.append((provider, model))
+        self.blocked.add((provider, model))
 
 
 def make_ctx(brain: FakeBrain, *, titles: list[str] | None = None,
@@ -357,6 +380,214 @@ async def test_call_brain_uses_provider_fallback_chain() -> None:
         ("primary", "bad-model"),
         ("fallback", "good-model"),
     ]
+
+
+# ---------------------------------------------------------------------------
+# Vision-grounding — a screenshot-blind provider must never plan a CU step
+# ---------------------------------------------------------------------------
+
+
+async def test_call_brain_skips_blind_provider_when_screenshot_attached() -> None:
+    """CU is screenshot-grounded: a provider that cannot see the image (a
+    text-only CLI brain such as Antigravity, ``supports_vision=False``) would
+    plan blind. The dispatch must SKIP it and fall through to the next
+    vision-capable provider.
+
+    Forensic 2026-06-20: with ``antigravity`` the active brain, the CU planner
+    ran blind — the CLI provider silently dropped the attached screenshot, so
+    the model looped on hallucinated ``click_element name='Edit'`` actions and
+    never grounded on the real screen.
+    """
+    manager = _FallbackChainManager()
+    # Active provider answers, but blind (text-only). It must never be
+    # dispatched while a screenshot is attached.
+    manager.primary = _StreamingBrain(
+        text='{"action": "click", "x": 5, "y": 5}', supports_vision=False,
+    )
+    ctx = make_ctx(FakeBrain())
+    ctx.brain_manager = manager
+    obs = Observation(
+        trace_id=uuid4(), timestamp_ns=time.time_ns(),
+        screenshot_path=None, screenshot_hash="x",
+    )
+    img = ImageBlock(mime="image/jpeg", data_b64="QQ==", source_hash="x")
+
+    raw = await _call_brain(
+        ctx, observation=obs, user_goal="open chrome", history_text="",
+        images_override=[img],
+    )
+
+    assert raw == '{"action": "done"}'   # the vision-capable fallback answered
+    assert manager.primary.calls == 0     # blind provider never dispatched
+    assert manager.fallback.calls == 1
+
+
+async def test_call_brain_raises_when_all_providers_blind_for_screenshot() -> None:
+    """When every provider in the chain is text-only and a screenshot is
+    attached, CU must fail with a clear vision error rather than dispatch a
+    blind provider that hallucinates clicks."""
+    manager = _FallbackChainManager()
+    manager.primary = _StreamingBrain(text='{"action": "done"}', supports_vision=False)
+    manager.fallback = _StreamingBrain(text='{"action": "done"}', supports_vision=False)
+    ctx = make_ctx(FakeBrain())
+    ctx.brain_manager = manager
+    obs = Observation(
+        trace_id=uuid4(), timestamp_ns=time.time_ns(),
+        screenshot_path=None, screenshot_hash="x",
+    )
+    img = ImageBlock(mime="image/jpeg", data_b64="QQ==", source_hash="x")
+
+    with pytest.raises(CULoopError) as excinfo:
+        await _call_brain(
+            ctx, observation=obs, user_goal="g", history_text="",
+            images_override=[img],
+        )
+
+    msg = str(excinfo.value).lower()
+    assert "vision" in msg or "see the screen" in msg
+    assert manager.primary.calls == 0
+    assert manager.fallback.calls == 0
+
+
+async def test_call_brain_text_only_call_still_uses_active_provider() -> None:
+    """A CU sub-call with NO screenshot attached (e.g. a pure-text decision)
+    must NOT be vision-filtered — the active provider answers as before, even
+    if it is text-only. The skip is strictly gated on an attached image."""
+    manager = _FallbackChainManager()
+    manager.primary = _StreamingBrain(text='{"action": "done"}', supports_vision=False)
+    ctx = make_ctx(FakeBrain())
+    ctx.brain_manager = manager
+    obs = Observation(
+        trace_id=uuid4(), timestamp_ns=time.time_ns(),
+        screenshot_path=None, screenshot_hash="x",
+    )
+
+    raw = await _call_brain(
+        ctx, observation=obs, user_goal="g", history_text="",
+    )
+
+    assert raw == '{"action": "done"}'
+    assert manager.primary.calls == 1
+    assert manager.fallback.calls == 0
+
+
+async def test_call_brain_mixed_blind_and_failed_surfaces_both_in_error() -> None:
+    """A blind active provider + a vision-capable fallback that is DOWN must
+    surface BOTH facts in the failure: the fallback's real outage AND that a
+    provider was skipped for having no vision. Otherwise an operator reads only
+    "fallback down" and chases the wrong root cause, when the real story is
+    "the active brain is blind, so a fallback was hit and it happened to be
+    down". (Guards the truncation-proof blind-skip summary in the generic
+    chain-failure error.)"""
+    manager = _FallbackChainManager()
+    manager.primary = _StreamingBrain(text='{"action": "done"}', supports_vision=False)
+    manager.fallback = _StreamingBrain(
+        exc=RuntimeError("fallback down"), supports_vision=True,
+    )
+    ctx = make_ctx(FakeBrain())
+    ctx.brain_manager = manager
+    obs = Observation(
+        trace_id=uuid4(), timestamp_ns=time.time_ns(),
+        screenshot_path=None, screenshot_hash="x",
+    )
+    img = ImageBlock(mime="image/jpeg", data_b64="QQ==", source_hash="x")
+
+    with pytest.raises(CULoopError) as excinfo:
+        await _call_brain(
+            ctx, observation=obs, user_goal="g", history_text="",
+            images_override=[img],
+        )
+
+    msg = str(excinfo.value).lower()
+    assert "fallback down" in msg           # the genuine fallback outage
+    assert "vision" in msg or "skipped" in msg   # AND the blind-skip signal
+    assert manager.primary.calls == 0        # blind provider never dispatched
+    assert manager.fallback.calls == 1       # vision fallback was attempted
+
+
+async def test_call_brain_marks_rate_limited_provider_and_skips_next_call() -> None:
+    manager = _FallbackChainManager()
+    manager._rate_tracker = _RateTrackerProbe()
+    manager._dead_providers = set()
+    manager.primary = _StreamingBrain(exc=RuntimeError("429 Too Many Requests"))
+    manager.fallback = _StreamingBrain(text='{"action": "done"}')
+    ctx = make_ctx(FakeBrain())
+    ctx.brain_manager = manager
+    obs = Observation(
+        trace_id=uuid4(), timestamp_ns=time.time_ns(),
+        screenshot_path=None, screenshot_hash="x",
+    )
+    img = ImageBlock(mime="image/jpeg", data_b64="QQ==", source_hash="x")
+
+    raw = await _call_brain(
+        ctx, observation=obs, user_goal="g", history_text="",
+        images_override=[img],
+    )
+    assert raw == '{"action": "done"}'
+    assert manager._rate_tracker.marked == [("primary", "bad-model")]
+
+    manager.primary.calls = 0
+    raw = await _call_brain(
+        ctx, observation=obs, user_goal="g", history_text="",
+        images_override=[img],
+    )
+    assert raw == '{"action": "done"}'
+    assert manager.primary.calls == 0
+
+
+async def test_call_brain_marks_invalid_key_provider_dead() -> None:
+    manager = _FallbackChainManager()
+    manager._rate_tracker = _RateTrackerProbe()
+    manager._dead_providers = set()
+    manager.primary = _StreamingBrain(
+        exc=RuntimeError("Error code: 401 - invalid x-api-key")
+    )
+    manager.fallback = _StreamingBrain(text='{"action": "done"}')
+    ctx = make_ctx(FakeBrain())
+    ctx.brain_manager = manager
+    obs = Observation(
+        trace_id=uuid4(), timestamp_ns=time.time_ns(),
+        screenshot_path=None, screenshot_hash="x",
+    )
+    img = ImageBlock(mime="image/jpeg", data_b64="QQ==", source_hash="x")
+
+    raw = await _call_brain(
+        ctx, observation=obs, user_goal="g", history_text="",
+        images_override=[img],
+    )
+    assert raw == '{"action": "done"}'
+    assert "primary" in manager._dead_providers
+
+    manager.primary.calls = 0
+    raw = await _call_brain(
+        ctx, observation=obs, user_goal="g", history_text="",
+        images_override=[img],
+    )
+    assert raw == '{"action": "done"}'
+    assert manager.primary.calls == 0
+
+
+async def test_call_brain_does_not_mark_transient_5xx_dead() -> None:
+    manager = _FallbackChainManager()
+    manager._rate_tracker = _RateTrackerProbe()
+    manager._dead_providers = set()
+    manager.primary = _StreamingBrain(exc=RuntimeError("502 Bad Gateway"))
+    manager.fallback = _StreamingBrain(text='{"action": "done"}')
+    ctx = make_ctx(FakeBrain())
+    ctx.brain_manager = manager
+    obs = Observation(
+        trace_id=uuid4(), timestamp_ns=time.time_ns(),
+        screenshot_path=None, screenshot_hash="x",
+    )
+    img = ImageBlock(mime="image/jpeg", data_b64="QQ==", source_hash="x")
+
+    raw = await _call_brain(
+        ctx, observation=obs, user_goal="g", history_text="",
+        images_override=[img],
+    )
+    assert raw == '{"action": "done"}'
+    assert manager._dead_providers == set()
+    assert manager._rate_tracker.marked == []
 
 
 def test_decide_native_batch_defined_only_once() -> None:

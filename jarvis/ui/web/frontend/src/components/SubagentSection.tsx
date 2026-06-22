@@ -63,6 +63,9 @@ const PROVIDER_LABELS: Record<string, string> = {
   // Codex is a direct worker (ChatGPT subscription / OpenAI key), not an
   // OpenClaw-routed provider — surfaced as its own selectable subagent row.
   "openai-codex": "OpenAI Codex",
+  // Antigravity drives the Google subscription CLI as a direct worker (OAuth, no
+  // API key), the Google sibling of Codex.
+  antigravity: "Antigravity (Google subscription)",
 };
 
 export function SubagentSection() {

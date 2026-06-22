@@ -1453,6 +1453,21 @@ class OrbOverlay:
         self._canvas.bind("<Button-3>", self._on_right_click)
         self._canvas.bind("<Button-2>", self._on_reset_double_click)
 
+        # Drag-drop onto the mascot (desktop extra, cross-platform via tkdnd).
+        # Pure addition, fully guarded: a no-op when tkinterdnd2 is absent
+        # (NullDropTarget) so the live overlay is never destabilised. Dropped
+        # paths/text go to the process-global bridge, which the desktop app
+        # marshals to the brain intake (jarvis/brain/drop_context.ingest_drop).
+        try:
+            from jarvis.overlay.drop_bridge import dispatch_drop
+            from jarvis.overlay.drop_target import make_drop_target
+
+            make_drop_target().register(self._canvas, dispatch_drop)
+        except Exception:  # noqa: BLE001 — drop is optional; never block orb boot.
+            logging.getLogger("jarvis.orb").debug(
+                "mascot drop target registration skipped", exc_info=True
+            )
+
         self._comment_bubble = OrbCommentBubble(
             parent=self._root,
             orb_x=anchor.x,

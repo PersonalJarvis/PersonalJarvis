@@ -29,6 +29,7 @@ installed.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
 from jarvis.platform import detect_platform
@@ -78,8 +79,14 @@ class PtyBackend(Protocol):
         cwd: str | None,
         cols: int,
         rows: int,
+        env: Mapping[str, str] | None = None,
     ) -> PtyHandle:
-        """Spawn a PTY running ``argv`` and return a normalized handle."""
+        """Spawn a PTY running ``argv`` and return a normalized handle.
+
+        ``env`` (when given) replaces the child environment; ``None`` inherits
+        the parent's (the integrated-terminal default). Both pywinpty and
+        ptyprocess accept ``env=`` directly.
+        """
 
 
 # ----------------------------------------------------------------------
@@ -133,6 +140,7 @@ class WinptyBackend:
         cwd: str | None,
         cols: int,
         rows: int,
+        env: Mapping[str, str] | None = None,
     ) -> PtyHandle:
         try:
             from winpty import PtyProcess  # type: ignore[import-not-found]
@@ -145,6 +153,7 @@ class WinptyBackend:
         proc = PtyProcess.spawn(
             list(argv),
             cwd=cwd,
+            env=dict(env) if env is not None else None,
             dimensions=(rows, cols),
         )
         return _WinptyHandle(proc)
@@ -202,6 +211,7 @@ class UnixPtyBackend:
         cwd: str | None,
         cols: int,
         rows: int,
+        env: Mapping[str, str] | None = None,
     ) -> PtyHandle:
         try:
             import ptyprocess  # type: ignore[import-not-found]
@@ -215,6 +225,7 @@ class UnixPtyBackend:
         proc = ptyprocess.PtyProcess.spawn(
             list(argv),
             cwd=cwd,
+            env=dict(env) if env is not None else None,
             dimensions=(rows, cols),
         )
         return _UnixPtyHandle(proc)
@@ -239,6 +250,7 @@ class NullPtyBackend:
         cwd: str | None,
         cols: int,
         rows: int,
+        env: Mapping[str, str] | None = None,
     ) -> PtyHandle:
         raise RuntimeError(
             "No pseudo-terminal backend available on this host — the integrated "

@@ -41,16 +41,7 @@
     "socials": "Socials",
     "taskbar": "Taskbar",
     "contacts": "Contacts",
-    "agent_instructions": "{name}.md",
-    "browser_voice": "Browser Voice"
-  },
-  "browser_voice": {
-    "title": "Browser Voice",
-    "subtitle": "Talk to Jarvis using your browser's microphone and speakers — no desktop install. Requires a secure context (localhost or https).",
-    "start": "Start voice",
-    "stop": "Stop",
-    "listening": "Listening…",
-    "speaking": "Speaking…"
+    "agent_instructions": "{name}.md"
   },
   "agent_instructions": {
     "subtitle": "Your personal preferences for how the assistant works with you — tone, language, defaults, standing facts. Separate from the System Prompt, and it never overrides safety or confirmations.",
@@ -59,10 +50,11 @@
     "editor_label": "Your instructions (Markdown)",
     "placeholder": "Write your personal preferences…",
     "chars": "{0} characters",
-    "empty_hint": "Empty — load the template to get started.",
+    "empty_hint": "Empty - save to clear the file, or start from the template.",
     "save": "Save instructions",
     "saving": "Saving…",
     "saved": "Instructions saved",
+    "revert": "Revert changes",
     "reset": "Clear",
     "reset_done": "Instructions cleared",
     "load_template": "Start from template",
@@ -790,6 +782,7 @@
     "active_tooltip": "Already active",
     "click_to_activate": "Click to activate this provider",
     "needs_codex": "First connect Codex or save API key, then activate",
+    "needs_login": "First sign in with Google, then activate",
     "needs_key": "First save API key, then activate",
     "security_notice": ""
   },
@@ -1128,7 +1121,15 @@
     "no_files": "This session has no saved files.",
     "binary_file_hint": "Binary file — open the folder on the desktop to view it.",
     "loading_file": "Loading file…",
-    "file_truncated": "File truncated to 1 MiB — view the rest in the file manager."
+    "file_truncated": "File truncated to 1 MiB — view the rest in the file manager.",
+    "open_action": "Open",
+    "open_with_title": "Open with…",
+    "open_with_remember": "Remember as default",
+    "open_with_change": "Change how this opens",
+    "open_with_empty": "No apps detected to open this file.",
+    "opener_default": "System default app",
+    "opener_browser": "Browser",
+    "reveal_in_folder": "Reveal in folder"
   },
   "common": {
     "save": "Save",
@@ -1238,6 +1239,14 @@
     "runs_as_subagent_hint": "Codex works as a subagent (background worker) on your ChatGPT login. After connecting, activate it in the Subagent list below. A thinking brain needs the separate OpenAI API-key provider.",
     "brain_needs_openai_key": "Codex as a brain needs an OpenAI API key — the ChatGPT login only powers the Codex worker. Add an OpenAI key (e.g. on the OpenAI provider), then select Codex here.",
     "brain_key_hint": "To use Codex as a brain too, add an OpenAI API key (paid, separate from your ChatGPT login — which only powers the worker). Saving it unlocks the brain toggle above."
+  },
+  "apikeys_antigravity": {
+    "login_started": "Google login was started in the terminal",
+    "disconnected": "Antigravity (Google) disconnected",
+    "status_loading": "Loading Google login status",
+    "connected": "Connected via your Google subscription.",
+    "connected_as": "Connected via Google ({0}).",
+    "needs_login_full": "{0}: first sign in with Google, then activate."
   },
   "mcps_toast": {
     "connected": "{0} connected"

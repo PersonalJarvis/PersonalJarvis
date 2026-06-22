@@ -41,16 +41,7 @@
     "socials": "Redes",
     "taskbar": "Barra",
     "contacts": "Contactos",
-    "agent_instructions": "{name}.md",
-    "browser_voice": "Voz del navegador"
-  },
-  "browser_voice": {
-    "title": "Voz del navegador",
-    "subtitle": "Habla con Jarvis usando el micrófono y los altavoces de tu navegador, sin instalación de escritorio. Requiere un contexto seguro (localhost o https).",
-    "start": "Iniciar voz",
-    "stop": "Detener",
-    "listening": "Escuchando…",
-    "speaking": "Hablando…"
+    "agent_instructions": "{name}.md"
   },
   "agent_instructions": {
     "subtitle": "Tus preferencias personales sobre cómo el asistente trabaja contigo — tono, idioma, valores por defecto, hechos permanentes. Separado del System Prompt y nunca anula la seguridad ni las confirmaciones.",
@@ -59,10 +50,11 @@
     "editor_label": "Tus instrucciones (Markdown)",
     "placeholder": "Escribe tus preferencias personales…",
     "chars": "{0} caracteres",
-    "empty_hint": "Vacío — carga la plantilla para empezar.",
+    "empty_hint": "Vacío - guarda para vaciar el archivo o carga la plantilla.",
     "save": "Guardar instrucciones",
     "saving": "Guardando…",
     "saved": "Instrucciones guardadas",
+    "revert": "Descartar cambios",
     "reset": "Vaciar",
     "reset_done": "Instrucciones vaciadas",
     "load_template": "Empezar con plantilla",
@@ -790,6 +782,7 @@
     "active_tooltip": "Ya activo",
     "click_to_activate": "Clic para activar este proveedor",
     "needs_codex": "Primero conecta Codex o guarda la clave API",
+    "needs_login": "Primero inicia sesión con Google, luego se puede activar",
     "needs_key": "Primero guarda la clave API, luego se puede activar",
     "security_notice": ""
   },
@@ -1128,7 +1121,15 @@
     "no_files": "Esta sesión no tiene archivos guardados.",
     "binary_file_hint": "Archivo binario: abre la carpeta en el escritorio para verlo.",
     "loading_file": "Cargando el archivo…",
-    "file_truncated": "Archivo truncado a 1 MiB: ver el resto en el gestor de archivos."
+    "file_truncated": "Archivo truncado a 1 MiB: ver el resto en el gestor de archivos.",
+    "open_action": "Abrir",
+    "open_with_title": "Abrir con…",
+    "open_with_remember": "Recordar como predeterminado",
+    "open_with_change": "Cambiar cómo se abre",
+    "open_with_empty": "No se detectaron apps para abrir este archivo.",
+    "opener_default": "App predeterminada del sistema",
+    "opener_browser": "Navegador",
+    "reveal_in_folder": "Mostrar en la carpeta"
   },
   "common": {
     "save": "Guardar",
@@ -1238,6 +1239,14 @@
     "runs_as_subagent_hint": "Con tu inicio de sesión de ChatGPT, Codex funciona como subagente (trabajador en segundo plano). Tras conectar, actívalo en la lista de subagentes de abajo. Un cerebro pensante necesita el proveedor de clave API de OpenAI por separado.",
     "brain_needs_openai_key": "Codex como cerebro necesita una clave API de OpenAI — el inicio de sesión de ChatGPT solo impulsa el trabajador de Codex. Añade una clave de OpenAI (p. ej. en el proveedor OpenAI) y luego selecciona Codex aquí.",
     "brain_key_hint": "Para usar Codex también como cerebro, añade una clave API de OpenAI (de pago, independiente de tu inicio de sesión de ChatGPT — que solo impulsa el trabajador). Al guardarla se desbloquea el interruptor de arriba."
+  },
+  "apikeys_antigravity": {
+    "login_started": "El inicio de sesión de Google se inició en el terminal",
+    "disconnected": "Antigravity (Google) desconectado",
+    "status_loading": "Cargando estado del inicio de sesión de Google",
+    "connected": "Conectado a través de tu suscripción de Google.",
+    "connected_as": "Conectado a través de Google ({0}).",
+    "needs_login_full": "{0}: primero inicia sesión con Google, luego activa."
   },
   "mcps_toast": {
     "connected": "{0} conectado"

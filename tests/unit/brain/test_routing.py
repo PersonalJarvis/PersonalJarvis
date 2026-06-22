@@ -2782,6 +2782,32 @@ def test_mission_inject_source_layer_parity() -> None:
     assert MISSION_INJECT_SOURCE_LAYER in _NON_SPAWN_SOURCE_LAYERS
 
 
+def test_drop_source_layer_parity() -> None:
+    """Anti-drift: a dropped file/content directive (ui.drop) must be exempt
+    from force-spawn — it is reacted to inline, never auto-dispatched as a
+    worker (parity with mission_inject; AP-5/AP-14, anti-doom-loop)."""
+    from jarvis.brain.drop_context import DROP_SOURCE_LAYER
+    from jarvis.brain.manager import _NON_SPAWN_SOURCE_LAYERS
+
+    assert DROP_SOURCE_LAYER in _NON_SPAWN_SOURCE_LAYERS
+
+
+def test_dropped_file_directive_is_never_force_spawned() -> None:
+    """A drop directive carrying an action verb must still be discussed inline
+    when stamped with the ui.drop source marker."""
+    from jarvis.brain.drop_context import DROP_SOURCE_LAYER
+
+    manager, _ = _manager_with_spawn(force_spawn_mode="permissive")
+    directive = "Open this file and fix the bug you find in it."
+    # Precondition: WITHOUT the drop source this DOES force-spawn.
+    assert manager._should_force_spawn(directive) is True
+    # WITH the drop source it must be answered inline, never spawned.
+    assert (
+        manager._should_force_spawn(directive, source_layer=DROP_SOURCE_LAYER)
+        is False
+    ), "a dropped-file directive must be reacted to inline, never re-dispatched"
+
+
 def test_dropped_mission_recap_is_never_force_spawned() -> None:
     """A mission.inject recap directive must not trip the force-spawn heuristic."""
     from jarvis.ui.web.mission_inject import compose_mission_inject_text

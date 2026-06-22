@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-export type AuthMode = "api_key" | "codex" | "none";
+export type AuthMode = "api_key" | "codex" | "antigravity" | "none";
 export type ProviderTier = "brain" | "tts" | "stt";
 
 export interface ProviderDescriptor {
@@ -25,6 +25,13 @@ export interface ProviderDescriptor {
    */
   codex_brain_ready?: boolean;
   codex_status?: CodexStatus;
+  /**
+   * Antigravity only: the honest Google CLI login snapshot (mirror of
+   * `GoogleCliAuthStatus.to_dict()`). Drives the OAuth connect/disconnect widget
+   * — `configured` already mirrors `connected`, so the brain "activate" radio is
+   * gated the same way as every other provider.
+   */
+  antigravity_status?: AntigravityStatus;
 }
 
 export interface CodexStatus {
@@ -35,6 +42,24 @@ export interface CodexStatus {
   version?: string | null;
   accountLabel?: string | null;
   binaryPath?: string | null;
+}
+
+/**
+ * Mirror of `jarvis/google_cli/auth_service.py::GoogleCliAuthStatus.to_dict()`.
+ * The Google-subscription sibling of `CodexStatus`: whether the official
+ * `agy`/`gemini` CLI is installed and signed in with Google, plus the account
+ * email so the connected card can show whose subscription is billed.
+ */
+export interface AntigravityStatus {
+  installed: boolean;
+  connected: boolean;
+  mode: string; // "oauth-personal" | "api_key" | "unknown"
+  cli_kind: string | null; // "agy" | "gemini"
+  message: string;
+  version: string | null;
+  user_email: string | null;
+  binary_path: string;
+  error: string | null;
 }
 
 interface ProvidersResponse {
@@ -139,6 +164,34 @@ export async function startCodexLogin(): Promise<void> {
 
 export async function codexLogout(): Promise<void> {
   const res = await fetch("/api/codex/logout", { method: "POST" });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+}
+
+/**
+ * Starts the interactive "Sign in with Google" flow by driving the official
+ * `agy`/`gemini` CLI as a subprocess (POST /api/antigravity/login). The Google
+ * sibling of `startCodexLogin` — a 409 means no Google CLI is installed (the
+ * detail carries an install_command).
+ */
+export async function loginAntigravity(): Promise<void> {
+  const res = await fetch("/api/antigravity/login", { method: "POST" });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const detail = body.detail;
+    throw new Error(
+      typeof detail === "object" && detail?.message
+        ? detail.message
+        : detail ?? `HTTP ${res.status}`,
+    );
+  }
+}
+
+/** Disconnects the Google login (POST /api/antigravity/logout). */
+export async function logoutAntigravity(): Promise<void> {
+  const res = await fetch("/api/antigravity/logout", { method: "POST" });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(body.detail ?? `HTTP ${res.status}`);

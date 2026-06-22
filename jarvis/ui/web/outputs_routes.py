@@ -23,9 +23,13 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 from starlette.responses import FileResponse, HTMLResponse
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+from jarvis.missions.kontrollierer.deliverable_paths import (
+    is_nondeliverable_scratch,
+)
 from jarvis.platform import detect_platform
 from jarvis.ui.web.artifact_view import VIEW_CSP, render_artifact_html
 
@@ -420,11 +424,19 @@ def _is_deliverable_relpath(rel_parts: tuple[str, ...]) -> bool:
     # Shortest valid deliverable: tasks/<id>/artifacts/files/<name> (5 parts).
     if len(rel_parts) < 5:
         return False
-    return (
+    if not (
         rel_parts[0] == "tasks"
         and rel_parts[2] == "artifacts"
         and rel_parts[3] == "files"
-    )
+    ):
+        return False
+    # Defence-in-depth (2026-06-21): hide tool-scratch the archive's --ignored
+    # union may have re-imported on a PRE-FIX mission — a browser/QA worker's
+    # gitignored Chrome user-data profiles (mission_019eeb34-bb67: 199 cache
+    # blobs buried 2 real deliverables here). Shares the orchestrator's archive
+    # predicate (single source of truth, anti-drift). ``rel_parts[4:]`` is the
+    # path BELOW ``tasks/<id>/artifacts/files/`` — the deliverable-relative part.
+    return not is_nondeliverable_scratch("/".join(rel_parts[4:]))
 
 
 def _resolve_artifact_target(request: Request, slug: str, path: str) -> Path:
@@ -711,6 +723,194 @@ async def open_output_artifact_native(
 
     opened = await asyncio.to_thread(open_path.open_file, target)
     return {"opened": bool(opened), "path": str(target)}
+
+
+# --- "Open with" chooser ----------------------------------------------------
+# The user picks which app opens an artifact (an editor like VS Code, the OS
+# default app, or a browser). Every launch resolves the app to an absolute
+# executable and starts a real subprocess (open_path.open_file/open_file_with)
+# — NOT os.startfile(bare_name), which is a silent ShellExecute no-op from the
+# pythonw background server (the "open button does nothing" root cause).
+
+# Curated editor candidates shown in the chooser, in priority order. The id is
+# the voice/app alias the cross-platform resolver understands; the label is the
+# English display name (the frontend localises the structural pieces).
+_OPENER_EDITORS: list[tuple[str, str]] = [
+    ("code", "VS Code"),
+    ("cursor", "Cursor"),
+    ("subl", "Sublime Text"),
+    ("notepad++", "Notepad++"),
+    ("zed", "Zed"),
+    ("windsurf", "Windsurf"),
+]
+
+# Browsers tried, in order, for the "browser" opener (first installed wins).
+_BROWSER_CANDIDATES: tuple[str, ...] = (
+    "chrome", "msedge", "firefox", "brave", "opera", "vivaldi",
+)
+
+
+def _known_opener_ids() -> set[str]:
+    """The closed set of opener ids the server will launch — the security
+    boundary. A client may only pick one of these, never a raw executable path,
+    so an ``open-with`` request can't turn into arbitrary code execution."""
+    return {"default", "browser"} | {oid for oid, _ in _OPENER_EDITORS}
+
+
+def _macos_app_present(display_name: str) -> bool:
+    """True if a macOS ``.app`` bundle with *display_name* exists. Best-effort —
+    only consulted on darwin where the resolver yields an ``open_a`` target."""
+    for base in ("/Applications", os.path.expanduser("~/Applications")):
+        if os.path.isdir(os.path.join(base, f"{display_name}.app")):
+            return True
+    return False
+
+
+def _resolve_installed(app_id: str) -> tuple[str, str] | None:
+    """Resolve *app_id* to a launch ``(kind, value)`` IFF it is actually
+    installed, else None. Distinguishes a real resolution (executable / a
+    Start-Menu ``.lnk`` / a present macOS ``.app``) from the resolver's
+    raw-name ``startfile`` fallback, which just means "not found"."""
+    from jarvis.plugins.tool.app_resolver import resolve_app_launch_target
+
+    target = resolve_app_launch_target(app_id)
+    if target.kind == "executable":
+        return (target.kind, target.value)
+    if target.kind == "startfile" and target.value.lower().endswith(".lnk"):
+        return (target.kind, target.value)
+    if target.kind == "open_a" and _macos_app_present(target.value):
+        return (target.kind, target.value)
+    return None
+
+
+def _resolve_browser_target() -> tuple[str, str] | None:
+    """Resolve the first installed browser to a launch ``(kind, value)``, or
+    None. Launching ``browser_exe <file>`` renders an HTML/PDF artifact in a
+    real browser window without the WebView download trap or the strict CSP."""
+    for cand in _BROWSER_CANDIDATES:
+        resolved = _resolve_installed(cand)
+        if resolved is not None:
+            return resolved
+    return None
+
+
+def _resolve_opener(opener_id: str) -> tuple[str, str] | None:
+    """Map an opener id to a launch ``(kind, value)``, or None if unavailable.
+
+    ``default`` → the sentinel ``("default", "")`` (caller uses ``open_file``);
+    ``browser`` → the first installed browser; an editor key → that editor iff
+    installed. Unknown ids resolve to None."""
+    if opener_id == "default":
+        return ("default", "")
+    if opener_id == "browser":
+        return _resolve_browser_target()
+    if opener_id in {oid for oid, _ in _OPENER_EDITORS}:
+        return _resolve_installed(opener_id)
+    return None
+
+
+def _available_openers() -> list[dict[str, str]]:
+    """The openers actually launchable on this host, for the chooser dialog."""
+    out: list[dict[str, str]] = [{"id": "default", "label": "System default app"}]
+    if _resolve_browser_target() is not None:
+        out.append({"id": "browser", "label": "Browser"})
+    for oid, label in _OPENER_EDITORS:
+        if _resolve_installed(oid) is not None:
+            out.append({"id": oid, "label": label})
+    return out
+
+
+class OpenWithBody(BaseModel):
+    opener: str
+
+
+class PreferredOpenerBody(BaseModel):
+    opener: str = ""
+
+
+@router.get("/openers")
+def list_openers(request: Request) -> dict[str, Any]:
+    """List the apps that can open an artifact here (editors + default + browser).
+
+    Empty on a headless VPS (no local desktop apps): the frontend then falls
+    back to opening the render URL in the current browser tab.
+    """
+    if not getattr(request.app.state, "native_file_actions", False):
+        return {"openers": []}
+    return {"openers": _available_openers()}
+
+
+@router.get("/preferred-opener")
+def get_preferred_opener(request: Request) -> dict[str, Any]:
+    """Return the remembered opener id (``""`` = ask via the chooser)."""
+    cfg = getattr(request.app.state, "config", None)
+    opener = ""
+    if cfg is not None:
+        opener = getattr(getattr(cfg, "ui", None), "preferred_opener", "") or ""
+    return {"opener": opener}
+
+
+@router.put("/preferred-opener")
+def put_preferred_opener(
+    body: PreferredOpenerBody, request: Request
+) -> dict[str, Any]:
+    """Persist the remembered opener id (or ``""`` to clear it).
+
+    Validated against the closed opener set — never a raw path. Persists to
+    ``[ui] preferred_opener`` and hot-updates the in-memory config so the next
+    open uses it without a restart.
+    """
+    opener = (body.opener or "").strip()
+    if opener and opener not in _known_opener_ids():
+        raise HTTPException(status_code=400, detail=f"unknown opener: {opener}")
+    from jarvis.core import config_writer
+
+    try:
+        config_writer.set_preferred_opener(opener)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("preferred-opener persist failed: %s", exc)
+    cfg = getattr(request.app.state, "config", None)
+    ui = getattr(cfg, "ui", None) if cfg is not None else None
+    if ui is not None:
+        try:
+            ui.preferred_opener = opener
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("in-memory preferred_opener update skipped: %s", exc)
+    return {"opener": opener}
+
+
+@router.post("/{slug}/files/{path:path}/open-with")
+async def open_artifact_with(
+    slug: str, path: str, body: OpenWithBody, request: Request
+) -> dict[str, Any]:
+    """Open an artifact in the chosen app. Local desktop only.
+
+    ``opener`` must be a known id (``default`` | ``browser`` | an editor key) —
+    never a raw path, so this can't launch an arbitrary client-supplied binary.
+    The app is resolved to an absolute executable and started via a real
+    subprocess so a window actually appears.
+    """
+    if not getattr(request.app.state, "native_file_actions", False):
+        raise HTTPException(status_code=404, detail="native file actions unavailable")
+    opener = (body.opener or "").strip()
+    if opener not in _known_opener_ids():
+        raise HTTPException(status_code=400, detail=f"unknown opener: {opener}")
+    target = _resolve_artifact_target(request, slug, path)
+    resolved = _resolve_opener(opener)
+    if resolved is None:
+        raise HTTPException(
+            status_code=409, detail=f"opener not available: {opener}"
+        )
+    from jarvis.platform import open_path
+
+    kind, value = resolved
+    if kind == "default":
+        opened = await asyncio.to_thread(open_path.open_file, target)
+    else:
+        opened = await asyncio.to_thread(
+            open_path.open_file_with, target, kind, value
+        )
+    return {"opened": bool(opened), "opener": opener}
 
 
 @router.post("/{slug}/open")
