@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "updated": "2026-04-23",
+  "updated": "2026-06-22",
   "note": "Curated seed catalog for the CLI integration. 21 entries across 7 categories (cloud/paas/baas/git/payments/container/workspace). All risk-tier defaults follow business impact: payments/prod-cluster -> ask, everything else -> monitor + blacklist.",
   "entries": [
     {
@@ -2123,6 +2123,79 @@
           "description": "Self-control: inspect and manage Jarvis's own tasks, settings, and lifecycle from the terminal."
         }
       ]
+    },
+    {
+      "name": "jarvis",
+      "display_name": "Jarvis (self-control)",
+      "description": "Personal Jarvis's own CLI — lets Jarvis control its running instance from the terminal: switch the brain / sub-agent provider, read & change config, search the wiki, list missions / sessions / outputs, manage skills. Thin client over the local REST API; zero-config on the same machine.",
+      "homepage": "https://github.com/PersonalJarvis/PersonalJarvis",
+      "binary_name": "jarvis",
+      "check_command": [
+        "jarvis",
+        "--version"
+      ],
+      "version_parse_regex": "jarvis (\\S+)",
+      "install": {
+        "winget_id": null,
+        "scoop_package": null,
+        "npm_package": null,
+        "pip_package": null,
+        "cargo_package": null,
+        "script_url": null,
+        "manual_url": "https://github.com/PersonalJarvis/PersonalJarvis",
+        "recommended": null
+      },
+      "auth": {
+        "type": "none",
+        "login_command": null,
+        "logout_command": null,
+        "status_command": [
+          "jarvis",
+          "--json",
+          "system",
+          "status"
+        ],
+        "status_parse": "json_object_exists",
+        "secret_keys": [],
+        "env_vars": []
+      },
+      "risk": {
+        "default_tier": "monitor",
+        "blacklist_patterns": [
+          "jarvis * dispatch*",
+          "jarvis * restart*",
+          "jarvis * kill*",
+          "jarvis * rerun*",
+          "jarvis * cancel*",
+          "jarvis * outbound*",
+          "jarvis * delete*"
+        ],
+        "whitelist_patterns": [
+          "jarvis --version*",
+          "jarvis * status*",
+          "jarvis * list*",
+          "jarvis * show*",
+          "jarvis config get*",
+          "jarvis wiki recall*",
+          "jarvis wiki page*",
+          "jarvis wiki tree*",
+          "jarvis docs *",
+          "jarvis * pending*",
+          "jarvis * --dry-run*"
+        ]
+      },
+      "tool_schema_examples": [
+        "jarvis brain status",
+        "jarvis brain switch openai",
+        "jarvis brain subagent-switch openai",
+        "jarvis --json missions list",
+        "jarvis config get brain.primary",
+        "jarvis wiki recall \"melbourne visa\""
+      ],
+      "icon": "",
+      "category": "automation",
+      "source": "seed",
+      "capabilities": []
     }
   ]
 }
