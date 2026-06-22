@@ -886,7 +886,7 @@ jobs:
 
       - name: Attach signed assets to the GitHub Release
         # pin: softprops/action-gh-release@v2.2.1 — pinned by commit SHA.
-        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b
         with:
           tag_name: ${{ env.TAG }}
           name: ${{ env.TAG }}
