@@ -25,7 +25,7 @@ import asyncio
 import logging
 import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING
 
 from jarvis.brain.ack_brain.circuit_breaker import CircuitBreaker
@@ -37,6 +37,25 @@ if TYPE_CHECKING:
     from jarvis.brain.ack_brain.providers.base import AbstractAckProvider
 
 log = logging.getLogger(__name__)
+
+
+def _augment_with_preferences(
+    base_prompt: str, provider: Callable[[], str] | None
+) -> str:
+    """Append the user's standing-preferences block to a flash persona prompt.
+
+    Shared by the ack preamble and the spawn announcement. ``provider`` returns
+    the (already framed) preferences block, or ``""`` when none is set. A faulty
+    provider must never break the latency-critical flash call, so any exception
+    falls back to the unmodified base prompt (silent-on-failure, US-4).
+    """
+    if provider is None:
+        return base_prompt
+    try:
+        extra = (provider() or "").strip()
+    except Exception:  # noqa: BLE001 — a prefs read fault must not mute the ack
+        return base_prompt
+    return f"{base_prompt}\n\n{extra}" if extra else base_prompt
 
 
 # ----------------------------------------------------------------------
@@ -244,10 +263,16 @@ class AckGenerator:
         config: AckBrainConfig,
         breaker: CircuitBreaker,
         fallback: "AckGenerator | None" = None,
+        preferences_provider: Callable[[], str] | None = None,
     ) -> None:
         self._provider = provider
         self._config = config
         self._breaker = breaker
+        # Returns the user's standing-preferences block (or "") so the ack
+        # preamble honors the user's agent-instructions file on action turns —
+        # the deep brain already injects it, but action turns speak the ack.
+        # Read fresh per call so an edit applies without a restart.
+        self._preferences_provider = preferences_provider
         # Derived name for telemetry labels — config.provider is the
         # registry-key, not a human-readable label, but they coincide
         # by design ("gemini", "grok", "openai", "ollama").
@@ -289,7 +314,9 @@ class AckGenerator:
         _emit_counter("ack_called_total", provider=provider_label)
 
         # (c) persona prompt
-        prompt = get_persona_prompt(language)
+        prompt = _augment_with_preferences(
+            get_persona_prompt(language), self._preferences_provider
+        )
 
         # (d) provider call with hard timeout
         t_start = time.perf_counter()
@@ -414,7 +441,9 @@ class AckGenerator:
             return
 
         _emit_counter("ack_called_total", provider=provider_label)
-        prompt = get_persona_prompt(language)
+        prompt = _augment_with_preferences(
+            get_persona_prompt(language), self._preferences_provider
+        )
         t_start = time.perf_counter()
         buffer = ""
         yielded_any = False

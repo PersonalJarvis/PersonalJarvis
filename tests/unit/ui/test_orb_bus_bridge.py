@@ -54,6 +54,9 @@ class _FakeOrb:
     def show(self, mode: str = "listen") -> None:
         self.calls.append(("show", mode))
 
+    def set_level(self, level: float) -> None:
+        self.calls.append(("set_level", level))
+
     def hide(self) -> None:
         self.calls.append(("hide", None))
 
@@ -815,6 +818,71 @@ async def test_orb_shows_again_after_genuine_wake_following_hangup() -> None:
     )
 
     assert ("show", "listen") in orb.calls
+
+
+async def test_session_start_shows_listening_when_listening_state_is_deduped() -> None:
+    """Live forensic (2026-06-21, session 1a3df62a): the bar only "woke up" at
+    THINKING, never while the user spoke into it.
+
+    Root cause: the supervisor's high-level state was already ``LISTENING`` when
+    the new session started (a stale prior teardown left it there), so
+    ``set_state("LISTENING")`` was a no-op and NO ``SystemStateChanged(LISTENING)``
+    reached the bridge. The bridge then saw nothing until ``THINKING`` and only
+    revealed/activated the bar there.
+
+    ``VoiceSessionStarted`` is the authoritative "the user is being listened to
+    now" signal — the bar must enter its listening look from THAT, never depend
+    on a derived ``LISTENING`` state event that can be deduplicated upstream.
+    """
+    orb = _FakeOrb()
+    bridge = OrbBusBridge(bus=_FakeBus(), orb=orb, idle_animations_enabled=False)  # type: ignore[arg-type]
+
+    # A genuine wake starts a session, but the supervisor was already LISTENING,
+    # so NO SystemStateChanged(LISTENING) follows — the next state the bridge
+    # would see is THINKING.
+    await bridge._on_session_started(  # noqa: SLF001
+        VoiceSessionStarted(session_id="s1", wake_keyword="hey_jarvis")
+    )
+
+    # The bar must already be in its listening look — before any THINKING.
+    assert ("show", "listen") in orb.calls
+    # A fresh turn opens an empty transcript bubble.
+    assert ("show_listening_transcript", "") in orb.calls
+
+
+async def test_session_start_drives_mic_equalizer_immediately() -> None:
+    """The bar's equalizer reacts to mic loudness only while the bridge
+    considers the state LISTENING. After a session starts (even when the
+    LISTENING state event is deduped upstream), mic loudness must drive the
+    bars from the very first word — otherwise the bar looks dead while the user
+    is talking."""
+    orb = _FakeOrb()
+    bridge = OrbBusBridge(bus=_FakeBus(), orb=orb, idle_animations_enabled=False)  # type: ignore[arg-type]
+
+    await bridge._on_session_started(  # noqa: SLF001
+        VoiceSessionStarted(session_id="s1", wake_keyword="hey_jarvis")
+    )
+    orb.calls.clear()
+
+    bridge._on_mic_level(0.5)  # noqa: SLF001
+    assert ("set_level", 0.5) in orb.calls
+
+
+async def test_session_start_then_real_listening_does_not_double_show() -> None:
+    """The normal flow (session start FOLLOWED by a genuine
+    SystemStateChanged(LISTENING)) must enter the listening look exactly once —
+    the genuine event is a clean same-state no-op, not a second show."""
+    orb = _FakeOrb()
+    bridge = OrbBusBridge(bus=_FakeBus(), orb=orb, idle_animations_enabled=False)  # type: ignore[arg-type]
+
+    await bridge._on_session_started(  # noqa: SLF001
+        VoiceSessionStarted(session_id="s1", wake_keyword="hey_jarvis")
+    )
+    await bridge._on_state(  # noqa: SLF001
+        SystemStateChanged(new_state="LISTENING", previous="IDLE")
+    )
+
+    assert orb.calls.count(("show", "listen")) == 1
 
 
 async def test_active_state_shows_orb_before_any_session_event() -> None:

@@ -196,6 +196,33 @@ _CU_DIAGNOSTIC_RE = re.compile(
     r"|toggle-stop",               # repeated-click toggle guard
     re.IGNORECASE,
 )
+#: A raw VERIFIER OBSERVATION dump, as opposed to a clean user-facing answer.
+#: The read-goal verifier (``_READ_VERIFIER_SYSTEM_PROMPT`` in
+#: ``screenshot_only_loop.py``) is a STRICT completion judge: it often PROVES the
+#: goal by describing the UI structurally ("Foreground window (...): title '...',
+#: content starts '...', followed by bullet points ..., Bottom status bar: ...")
+#: rather than answering the user in plain language. Such a proof is an internal
+#: evidence artifact (the spirit of ADR-0009 — the voice readback speaks only a
+#: clean summary, never the raw signed observation), so it must never be spoken
+#: verbatim. Live bug 2026-06-21 (Melbourne HTML turn): a "look at my screen and
+#: tell me which app is open" mission read out the full structural dump, INCLUDING
+#: the verbatim content of an unrelated parallel Claude-Code AskUserQuestion box
+#: ("Eine Detail-Erkenntnis ... Der Melbourne-Guide rendert ..."). A genuine
+#: content answer ("the browser is open showing tab 'Gmail'", "newest messages:
+#: Alice 'hi'") carries none of these structural markers and is still forwarded.
+_CU_VERIFIER_DUMP_RE = re.compile(
+    r"\b(?:fore|back)ground\s+window\b"        # window-layer vocabulary
+    r"|\bactive\s+window\b"
+    r"|\bvordergrundfenster\b"                  # i18n-allow: DE verifier
+    r"|\b(?:status|title|menu|tool|task|side|scroll|address)[\s-]?bars?\b"
+    r"|(?:status|titel|men[üu]|symbol|seiten|bildlauf|adress|task|werkzeug)"  # i18n-allow
+    r"[\s-]?leisten?\b"                         # i18n-allow: Status-/Titel-/Symbolleiste
+    r"|\bcontent\s+(?:starts?|reads?|begins?|shows?|says?)\b"
+    r"|\bfollowed\s+by\s+bullet"
+    r"|\bbullet\s+points?\b"
+    r"|\bwindow\s+(?:title|content|titled)\b",
+    re.IGNORECASE,
+)
 
 
 def _looks_human(text: str) -> bool:
@@ -230,6 +257,24 @@ def _is_speakable_reason(text: str | None) -> bool:
     if not _looks_human(text or ""):
         return False
     return _CU_DIAGNOSTIC_RE.search(text or "") is None
+
+
+def _is_speakable_observation(text: str | None) -> bool:
+    """True if ``text`` is a clean, user-facing observation — safe to speak.
+
+    The SUCCESS sibling of :func:`_is_speakable_reason`. Besides rejecting bare
+    ``exit N`` / numeric / empty tokens and internal diagnostic markers, it also
+    rejects a raw VERIFIER UI-STRUCTURE dump (``_CU_VERIFIER_DUMP_RE``): a
+    "Foreground window (...): title '...', content starts '...'" proof is the
+    judge's internal evidence, not the answer the user asked for, and leaks
+    whatever happened to be on screen (incl. unrelated windows). A blocked
+    observation degrades to the generic, localized ``cu_done`` phrase instead.
+    """
+    if not _looks_human(text or ""):
+        return False
+    if _CU_DIAGNOSTIC_RE.search(text or "") is not None:
+        return False
+    return _CU_VERIFIER_DUMP_RE.search(text or "") is None
 
 
 def cu_failure_readback(
@@ -308,11 +353,12 @@ def cu_success_readback(lang: str, *, stdout: str | None) -> str:
     downstream like every other spoken phrase.
 
     Falls back to the plain localized ``cu_done`` phrase when the mission left
-    no usable observation (no ``(verified: ...)`` segment, or an empty/opaque
-    proof).
+    no usable observation (no ``(verified: ...)`` segment, an empty/opaque
+    proof, or — via :func:`_is_speakable_observation` — a raw verifier UI
+    STRUCTURE dump that describes the screen instead of answering the user).
     """
     proof = _extract_cu_proof(stdout or "")
-    if proof and _looks_human(proof):
+    if proof and _is_speakable_observation(proof):
         return action_phrase("cu_done_detail", lang, detail=proof)
     return action_phrase("cu_done", lang)
 

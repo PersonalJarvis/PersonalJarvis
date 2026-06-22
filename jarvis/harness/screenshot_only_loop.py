@@ -1053,6 +1053,19 @@ async def _call_brain(
             stream=True,
         )
 
+        # PROVIDER-AGNOSTIC BY DESIGN. The CU loop is NOT pinned to any provider
+        # or model. The candidate order is whatever ``BrainManager`` resolves for
+        # the active/selected provider via ``_build_fallback_chain("fast")`` —
+        # the *active* provider leads, its tier fallbacks follow. Which one is
+        # actually dispatched is decided ONLY by capability + availability below:
+        # skip ``_dead_providers`` (keyless/blocked), skip rate-limit cooldown,
+        # and — when a screenshot rides on the request — skip any brain whose
+        # ``supports_vision`` is False, then use the FIRST remaining brain that
+        # returns text. Never gate on a provider NAME or a model id here: do not
+        # "fix" this into ``if provider == 'grok'`` / ``if model == 'grok-4.3'``.
+        # That an installed key happens to make grok the only live vision brain
+        # is a *credential* fact owned by the manager, not a hardcode here — give
+        # claude-api/openrouter/openai/gemini a key and CU uses them identically.
         chain: list[tuple[str, str | None]] = []
         build_chain = getattr(manager, "_build_fallback_chain", None)
         if callable(build_chain):
@@ -1068,27 +1081,31 @@ async def _call_brain(
         if not chain:
             raise CULoopError("BrainManager fallback chain is empty")
 
-        errors: list[str] = []
-        dead_providers = getattr(manager, "_dead_providers", set())
-        rate_tracker = getattr(manager, "_rate_tracker", None)
-        for idx, (provider, model) in enumerate(chain):
-            if provider in dead_providers:
-                errors.append(f"{provider}({model}): skipped dead provider")
-                continue
-            is_available = getattr(rate_tracker, "is_available", None)
-            if callable(is_available) and not is_available(provider, model):
-                errors.append(f"{provider}({model}): skipped cooldown")
-                continue
+        # Computer-Use is screenshot-grounded: the screenshot is the loop's
+        # SOLE grounding signal. A provider that cannot see the attached image
+        # (supports_vision=False) would plan BLIND. Forensic 2026-06-20: with
+        # the text-only Antigravity Google-CLI brain (supports_vision=False)
+        # active, the CLI silently dropped the screenshot, so the planner
+        # looped on hallucinated ``click_element name='Edit'`` actions and
+        # never grounded. Skip blind providers exactly like dead/cooldown ones
+        # whenever an image rides on the request; fall through to a
+        # vision-capable brain (gemini/claude-api/...), or fail honestly.
+        from jarvis.harness.computer_use_planner import (  # noqa: PLC0415
+            ComputerUsePlannerSelector,
+        )
+
+        images_attached = bool(images)
+        selector = ComputerUsePlannerSelector(manager=manager, chain=chain)
+        attempted = 0
+        for idx, provider, model, brain in selector.iter_candidates(
+            images_attached=images_attached,
+        ):
+            attempted += 1
             try:
-                brain = manager._get_brain(provider, model)
-                if brain is None:
-                    raise CULoopError(
-                        f"BrainManager._get_brain({provider!r}, {model!r}) returned None"
-                    )
                 agg = await aggregate(brain.complete(req))
                 text = (agg.text or "").strip()
                 if not text:
-                    errors.append(f"{provider}({model}): empty response")
+                    selector.record_empty(provider, model)
                     continue
                 if idx > 0:
                     log.info(
@@ -1097,7 +1114,7 @@ async def _call_brain(
                     )
                 return text
             except Exception as exc:  # noqa: BLE001
-                errors.append(f"{provider}({model}): {exc}")
+                selector.record_failure(provider, model, exc)
                 log.warning(
                     "ComputerUseLoop brain provider %s(%s) failed: %s",
                     provider, model, exc,
@@ -1105,7 +1122,10 @@ async def _call_brain(
                 continue
 
         raise CULoopError(
-            "ComputerUseLoop provider chain failed: " + "; ".join(errors[-4:])
+            selector.error_message(
+                images_attached=images_attached,
+                attempted=attempted,
+            )
         )
 
     # Last-resort callable manager (legacy stub).

@@ -1408,6 +1408,26 @@ def build_default_brain(
 # Flash-Brain (Pre-Thinking Ack) factory helper
 # ----------------------------------------------------------------------
 
+def _flash_preferences_provider(jcfg: Any) -> Any:
+    """A zero-arg callable returning the user's flash-tier preferences block.
+
+    Wired into the ack preamble and the spawn announcement so the user's
+    agent-instructions file is honored on action turns (where the spoken output
+    comes from these flash tiers, not the deep brain). Reads the file fresh per
+    call (via ``agent_instructions.render_for_flash``) so an edit applies without
+    a restart, and degrades to ``""`` when no file is set.
+    """
+    from jarvis.brain import agent_instructions
+
+    def _provide() -> str:
+        try:
+            return agent_instructions.render_for_flash(jcfg)
+        except Exception:  # noqa: BLE001 — never break the flash call on a prefs fault
+            return ""
+
+    return _provide
+
+
 def build_ack_brain(jcfg: Any | None = None) -> Any:
     """Build an AckGenerator from cfg.ack_brain, or return ``None`` when disabled.
 
@@ -1416,7 +1436,10 @@ def build_ack_brain(jcfg: Any | None = None) -> Any:
     See docs/superpowers/specs/2026-05-11-pre-thinking-ack-flash-brain-design.md.
 
     Returns ``None`` when:
-    - ``[ack_brain].enabled = false`` in jarvis.toml (default)
+    - ``[ack_brain].enabled = false`` in jarvis.toml (subsystem master off)
+    - ``[ack_brain].preamble_enabled = false`` (the default since 2026-06-21 —
+      the speculative preamble is retired; the grounded spawn announcer stays
+      wired via ``build_spawn_announcer``)
     - the configured provider is missing from REGISTRY
     - construction of the provider or breaker raises
 
@@ -1431,6 +1454,18 @@ def build_ack_brain(jcfg: Any | None = None) -> Any:
         if ack_cfg is None or not getattr(ack_cfg, "enabled", False):
             log.info("Flash-Brain: disabled in jarvis.toml — skipping wiring.")
             return None
+        # The speculative pre-thinking preamble is gated by its own
+        # sub-switch (default off, 2026-06-21). `enabled` stays the
+        # subsystem master so the grounded spawn announcer keeps its LLM
+        # path; only this blind preamble generator is retired here. With
+        # no AckGenerator the pipeline's fire-and-forget preamble task
+        # never spawns (pipeline.py guards on `_ack_brain is not None`).
+        if not getattr(ack_cfg, "preamble_enabled", False):
+            log.info(
+                "Flash-Brain: pre-thinking preamble disabled "
+                "([ack_brain].preamble_enabled=false) — spawn announcer unaffected."
+            )
+            return None
 
         from jarvis.brain.ack_brain import AckGenerator, CircuitBreaker
 
@@ -1442,9 +1477,14 @@ def build_ack_brain(jcfg: Any | None = None) -> Any:
             cooldown_s=ack_cfg.circuit_breaker_cooldown_s,
         )
         # ack_cfg.provider is now the RESOLVED primary (follow_brain expanded).
-        fallback_gen = _build_ack_fallback(ack_cfg)
+        prefs_provider = _flash_preferences_provider(jcfg)
+        fallback_gen = _build_ack_fallback(ack_cfg, preferences_provider=prefs_provider)
         ack_gen = AckGenerator(
-            provider=provider, config=ack_cfg, breaker=breaker, fallback=fallback_gen
+            provider=provider,
+            config=ack_cfg,
+            breaker=breaker,
+            fallback=fallback_gen,
+            preferences_provider=prefs_provider,
         )
         log.info(
             "Flash-Brain: AckGenerator wired (provider=%s, timeout_ms=%d, fallback=%s).",
@@ -1502,7 +1542,7 @@ def _build_flash_provider(jcfg: Any, ack_cfg: Any) -> Any:
     return provider_cls(provider_cfg)
 
 
-def _build_ack_fallback(ack_cfg: Any) -> Any:
+def _build_ack_fallback(ack_cfg: Any, preferences_provider: Any = None) -> Any:
     """Build the secondary failover AckGenerator, or ``None``.
 
     Wires ``[ack_brain].fallback_provider`` onto its OWN provider + circuit
@@ -1545,7 +1585,12 @@ def _build_ack_fallback(ack_cfg: Any) -> Any:
             threshold=ack_cfg.circuit_breaker_threshold,
             cooldown_s=ack_cfg.circuit_breaker_cooldown_s,
         )
-        return AckGenerator(provider=fb_provider, config=fb_cfg, breaker=fb_breaker)
+        return AckGenerator(
+            provider=fb_provider,
+            config=fb_cfg,
+            breaker=fb_breaker,
+            preferences_provider=preferences_provider,
+        )
     except Exception as exc:  # noqa: BLE001 — failover must never break wiring
         log.warning(
             "Flash-Brain: failover provider %r build failed: %s — no failover.",
@@ -1553,6 +1598,51 @@ def _build_ack_fallback(ack_cfg: Any) -> Any:
             exc,
         )
         return None
+
+
+def _build_spawn_fallback(ack_cfg: Any) -> tuple[Any, Any]:
+    """Build the spawn announcer's failover ``(provider, breaker)`` or ``(None, None)``.
+
+    Mirrors :func:`_build_ack_fallback`, but yields a bare provider (the
+    ``SpawnAnnouncementComposer`` owns the validate/pool logic, so it needs the
+    provider directly, not a wrapping ``AckGenerator``). Returns ``(None, None)``
+    — composer runs primary-only — when the failover is unset, equal to the
+    already-resolved primary, missing from REGISTRY, or unbuildable. Must never
+    break the announcer wiring.
+
+    Call AFTER ``_build_flash_provider`` so ``ack_cfg.provider`` is the resolved
+    primary (``follow_brain`` expanded) and the ``== primary`` check is accurate.
+    """
+    fb_name = getattr(ack_cfg, "fallback_provider", None)
+    if not fb_name or fb_name == ack_cfg.provider:
+        return None, None
+    try:
+        from jarvis.brain.ack_brain import CircuitBreaker
+        from jarvis.brain.ack_brain.providers import REGISTRY
+
+        provider_cls = REGISTRY.get(fb_name)
+        if provider_cls is None:
+            log.warning(
+                "Spawn-Announcer: fallback_provider %r not in REGISTRY (have %s)"
+                " — no failover wired.",
+                fb_name,
+                sorted(REGISTRY.keys()),
+            )
+            return None, None
+        fb_provider = provider_cls(getattr(ack_cfg.providers, fb_name))
+        fb_breaker = CircuitBreaker(
+            threshold=ack_cfg.circuit_breaker_threshold,
+            cooldown_s=ack_cfg.circuit_breaker_cooldown_s,
+        )
+        log.info("Spawn-Announcer: failover wired (provider=%s).", fb_name)
+        return fb_provider, fb_breaker
+    except Exception as exc:  # noqa: BLE001 — failover must never break wiring
+        log.warning(
+            "Spawn-Announcer: failover provider %r build failed: %s — no failover.",
+            fb_name,
+            exc,
+        )
+        return None, None
 
 
 def build_spawn_announcer(jcfg: Any | None = None) -> Any:
@@ -1604,8 +1694,17 @@ def build_spawn_announcer(jcfg: Any | None = None) -> Any:
             "Spawn-Announcer: LLM composition wired (provider=%s).",
             ack_cfg.provider,
         )
+        # Failover on a separate provider/key so a dead primary flash provider
+        # degrades to the live secondary, not to the canned pool (2026-06-21
+        # regression: gemini 429 with no spawn-path failover -> stock phrases).
+        fb_provider, fb_breaker = _build_spawn_fallback(ack_cfg)
         return SpawnAnnouncementComposer(
-            provider=provider, config=ack_cfg, breaker=breaker
+            provider=provider,
+            config=ack_cfg,
+            breaker=breaker,
+            fallback_provider=fb_provider,
+            fallback_breaker=fb_breaker,
+            preferences_provider=_flash_preferences_provider(jcfg),
         )
     except Exception as exc:  # noqa: BLE001
         log.warning(

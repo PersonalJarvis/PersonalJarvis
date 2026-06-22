@@ -17,6 +17,24 @@ function hasMission(dt: DataTransfer | null): boolean {
   return Array.from(dt.types ?? []).includes(MISSION_DND_MIME);
 }
 
+/** True for a native OS drag carrying files or draggable text/URL — the only
+ *  thing the file-drop path acts on. `useMissionDrag` never fires for these. */
+function hasNativePayload(dt: DataTransfer | null): boolean {
+  if (!dt) return false;
+  const types = Array.from(dt.types ?? []);
+  return (
+    types.includes("Files") ||
+    types.includes("text/plain") ||
+    types.includes("text/uri-list")
+  );
+}
+
+/** Either an internal mission card or a native OS payload — anything the dock
+ *  should bloom for and accept. */
+function isDroppable(dt: DataTransfer | null): boolean {
+  return hasMission(dt) || hasNativePayload(dt);
+}
+
 /**
  * A small, always-present "Jarvis presence" dock in the bottom-right corner.
  * Drop a mission/output card on it to pull that sub-agent task into the live
@@ -38,6 +56,7 @@ export function JarvisDock() {
   const dragging = useMissionDrag((s) => s.dragging);
   const endDrag = useMissionDrag((s) => s.end);
   const [armed, setArmed] = useState(false); // a card is directly over the dock
+  const [fileArmed, setFileArmed] = useState(false); // a native OS drag is in flight
   const [flash, setFlash] = useState(false); // brief post-drop "absorb" burst
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isBar = config?.style === "whisper_bar";
@@ -50,6 +69,36 @@ export function JarvisDock() {
     },
     [],
   );
+
+  // A native OS drag that leaves the window (or ends anywhere) must disarm the
+  // dock. The full-window catch layer has no dragleave of its own, so without
+  // this the bloom could stick after the cursor exits the window over the catch
+  // layer. Wired only while a file drag is armed.
+  useEffect(() => {
+    if (!fileArmed) return;
+    const disarm = () => setFileArmed(false);
+    const onWindowDragLeave = (e: DragEvent) => {
+      // relatedTarget === null + a viewport-edge cursor = the drag left the
+      // window entirely (not just moved between elements inside it).
+      if (
+        e.relatedTarget === null &&
+        (e.clientX <= 0 ||
+          e.clientY <= 0 ||
+          e.clientX >= window.innerWidth ||
+          e.clientY >= window.innerHeight)
+      ) {
+        setFileArmed(false);
+      }
+    };
+    window.addEventListener("drop", disarm);
+    window.addEventListener("dragend", disarm);
+    window.addEventListener("dragleave", onWindowDragLeave);
+    return () => {
+      window.removeEventListener("drop", disarm);
+      window.removeEventListener("dragend", disarm);
+      window.removeEventListener("dragleave", onWindowDragLeave);
+    };
+  }, [fileArmed]);
 
   /** Parse + dispatch the dropped mission. Shared by the dock and the catch
    *  layer so a release anywhere near Jarvis behaves identically. */
@@ -77,29 +126,82 @@ export function JarvisDock() {
     return true;
   }
 
-  async function handleDrop(e: React.DragEvent) {
-    e.preventDefault();
-    setArmed(false);
-    const ok = await injectFrom(e.dataTransfer);
-    endDrag(); // tear down the bloom whether or not the payload was valid
-    if (!ok) return;
+  /** Ship a native OS drop (files or text/URL) to the proactive-reaction
+   *  endpoint as multipart/form-data. Returns true when something was sent. */
+  async function dropNative(dt: DataTransfer): Promise<boolean> {
+    const files = Array.from(dt.files ?? []);
+    const text =
+      files.length === 0
+        ? dt.getData("text/uri-list") || dt.getData("text/plain")
+        : "";
+    if (files.length === 0 && !text) return false;
+
+    const form = new FormData();
+    for (const file of files) form.append("files", file);
+    if (text) form.set("text", text);
+    form.set("surface", "dock");
+    try {
+      const threadId = await useEventStore.getState().ensureActiveThread();
+      if (threadId) form.set("thread_id", threadId);
+    } catch {
+      // Tolerate a missing thread — the backend can still react.
+    }
+    try {
+      // No Content-Type header: the browser sets the multipart boundary.
+      const res = await fetch("/api/chat/drop", { method: "POST", body: form });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  function celebrate() {
     playDropConfirm();
     setFlash(true);
     if (flashTimer.current) clearTimeout(flashTimer.current);
     flashTimer.current = setTimeout(() => setFlash(false), 1100);
   }
 
+  async function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setArmed(false);
+    setFileArmed(false);
+    const dt = e.dataTransfer;
+    // Disambiguate: an internal mission card keeps the existing WS path; any
+    // other native payload (files / text / URL) goes to the file-drop endpoint.
+    const ok = hasMission(dt) ? await injectFrom(dt) : await dropNative(dt);
+    endDrag(); // tear down the bloom whether or not the payload was valid
+    if (!ok) return;
+    celebrate();
+  }
+
   function acceptOver(e: React.DragEvent) {
-    if (hasMission(e.dataTransfer)) {
+    if (isDroppable(e.dataTransfer)) {
       // preventDefault here is what turns the OS cursor from 🚫 into "copy".
       e.preventDefault();
       e.dataTransfer.dropEffect = "copy";
     }
   }
 
+  function handleDragEnter(e: React.DragEvent) {
+    if (hasMission(e.dataTransfer)) setArmed(true);
+    else if (hasNativePayload(e.dataTransfer)) setFileArmed(true);
+  }
+
+  // A drag is "live" for the dock whenever an internal mission card is in
+  // flight OR a native OS payload is hovering — the latter never reaches
+  // `useMissionDrag`, so `fileArmed` is what blooms the dock for OS drops.
+  const live = dragging || fileArmed;
+
   // One mutually-exclusive visual state — avoids conflicting Tailwind utilities
   // (scale-105 vs scale-110) fighting over which wins in the generated CSS.
-  const state = flash ? "flash" : armed ? "armed" : dragging ? "bloom" : "idle";
+  const state = flash
+    ? "flash"
+    : armed || fileArmed
+      ? "armed"
+      : live
+        ? "bloom"
+        : "idle";
   const stateClass = {
     idle: "border-border bg-card/70",
     bloom:
@@ -112,19 +214,20 @@ export function JarvisDock() {
 
   const label = flash
     ? t("jarvis_dock.dropped")
-    : armed || dragging
+    : armed || fileArmed || dragging
       ? t("jarvis_dock.drop_active")
       : null;
 
-  // The dock earns screen space only when a mission card is actually in flight
-  // (`dragging`) or has just landed (`flash`, the brief absorb burst). In idle
-  // it stays mounted — so the drop handler and catch layer remain wired — but
-  // is faded out and non-interactive, so no permanent icon clutters the corner.
-  const visible = dragging || flash;
+  // The dock earns screen space only when a drag is actually in flight (a
+  // mission card via `dragging`, or a native OS payload via `fileArmed`) or has
+  // just landed (`flash`, the brief absorb burst). In idle it stays mounted —
+  // so the drop handler and catch layer remain wired — but is faded out and
+  // non-interactive, so no permanent icon clutters the corner.
+  const visible = live || flash;
 
   return (
     <>
-      {dragging && (
+      {live && (
         <div
           data-testid="jarvis-dock-catch"
           aria-hidden
@@ -140,11 +243,12 @@ export function JarvisDock() {
         aria-label={t("jarvis_dock.aria")}
         aria-hidden={visible ? undefined : true}
         title={t("jarvis_dock.hint")}
-        onDragEnter={(e) => {
-          if (hasMission(e.dataTransfer)) setArmed(true);
-        }}
+        onDragEnter={handleDragEnter}
         onDragOver={acceptOver}
-        onDragLeave={() => setArmed(false)}
+        onDragLeave={() => {
+          setArmed(false);
+          setFileArmed(false);
+        }}
         onDrop={handleDrop}
         className={cn(
           "fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-full border px-3 py-2 shadow-lg backdrop-blur transition-all duration-300 ease-out",

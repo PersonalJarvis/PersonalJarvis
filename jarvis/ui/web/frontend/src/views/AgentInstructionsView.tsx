@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ScrollText, RotateCcw, FilePlus2 } from "lucide-react";
+import { FilePlus2, RotateCcw, Save, ScrollText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAgentInstructions } from "@/hooks/useAgentInstructions";
 import { useEventStore } from "@/store/events";
@@ -18,14 +18,13 @@ import { useT } from "@/i18n";
  */
 export function AgentInstructionsView() {
   const t = useT();
-  const { config, loading, error, save, reset } = useAgentInstructions();
+  const { config, loading, error, save } = useAgentInstructions();
   const pushToast = useEventStore((s) => s.pushToast);
 
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
-  const [resetting, setResetting] = useState(false);
 
-  // Reflect the server value on load and after every save/reset. Coalesce a
+  // Reflect the server value on load and after every save. Coalesce a
   // missing `content` to "" so a malformed response degrades instead of crashing.
   useEffect(() => {
     if (config) setDraft(config.content ?? "");
@@ -34,11 +33,11 @@ export function AgentInstructionsView() {
   const filename = config?.filename ?? "…";
   const exists = !!config?.exists;
   const dirty = !!config && draft !== (config.content ?? "");
-  const canReset = exists || dirty;
+  const canRevert = dirty;
   const trimmedEmpty = draft.trim().length === 0;
 
   async function onSave() {
-    if (trimmedEmpty || !dirty) return;
+    if (!dirty) return;
     setSaving(true);
     try {
       await save(draft);
@@ -50,16 +49,8 @@ export function AgentInstructionsView() {
     }
   }
 
-  async function onReset() {
-    setResetting(true);
-    try {
-      await reset();
-      pushToast("success", t("agent_instructions.reset_done"));
-    } catch (e) {
-      pushToast("error", (e as Error).message);
-    } finally {
-      setResetting(false);
-    }
+  function onRevert() {
+    if (config) setDraft(config.content ?? "");
   }
 
   function onLoadTemplate() {
@@ -123,8 +114,10 @@ export function AgentInstructionsView() {
         <Button
           size="sm"
           onClick={onSave}
-          disabled={saving || loading || !dirty || trimmedEmpty}
+          disabled={saving || loading || !dirty}
+          className="gap-1.5"
         >
+          <Save className="h-3.5 w-3.5" />
           {saving ? t("agent_instructions.saving") : t("agent_instructions.save")}
         </Button>
         <Button
@@ -140,12 +133,12 @@ export function AgentInstructionsView() {
         <Button
           size="sm"
           variant="outline"
-          onClick={onReset}
-          disabled={resetting || loading || !canReset}
+          onClick={onRevert}
+          disabled={loading || !canRevert}
           className="gap-1.5"
         >
           <RotateCcw className="h-3.5 w-3.5" />
-          {t("agent_instructions.reset")}
+          {t("agent_instructions.revert")}
         </Button>
       </div>
 

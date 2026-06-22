@@ -82,7 +82,10 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         auth_mode="antigravity",
         secret_keys=(),
         dashboard_url="https://antigravity.google",
-        login_cli=("agy", "login"),
+        # agy has NO `login` subcommand (verified 2026-06-21) — the bare binary
+        # drops into the interactive "Sign in with Google" flow. The Connect
+        # button drives POST /api/antigravity/login (start_login → bare run).
+        login_cli=("agy",),
         install_hint="Install Antigravity (agy) or sign in with the Gemini CLI",
         credential_path_hint="~/.gemini/oauth_creds.json",
     ),

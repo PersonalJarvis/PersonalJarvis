@@ -370,3 +370,67 @@ def test_archive_skips_managed_contract_files(
     assert not (files_dir / "AGENTS.md").exists(), (
         "managed contract file AGENTS.md leaked into artifacts/files/"
     )
+
+
+def test_archive_skips_browser_profile_scratch(
+    worktree: Path, kontrollierer: Kontrollierer, tmp_path: Path
+) -> None:
+    """Live forensic 2026-06-21 (mission_019eeb34-bb67): a browser/QA worker
+    launched headless Chrome with a ``--user-data-dir`` under ``qa-artifacts/``
+    and correctly gitignored the profiles (``chrome-profile-*/``). The archive's
+    ``--ignored`` enumeration union re-imported all 199 cache / journal blobs
+    into ``artifacts/files/``, where the Outputs view (cap 200, sort-by-mtime)
+    buried the 2 real deliverables — the user saw "files not shown" / "empty
+    files". The archive must drop the browser-profile subtree while KEEPING the
+    genuine deliverables, including a real artifact that lives inside the same
+    ``qa-artifacts/`` dir next to the junk."""
+    # Genuine deliverables (one of them sits INSIDE qa-artifacts next to junk).
+    (worktree / "index.html").write_text("<h1>real</h1>\n", encoding="utf-8")
+    qa = worktree / "qa-artifacts"
+    qa.mkdir()
+    (qa / ".gitignore").write_text("chrome-profile-*/\n", encoding="utf-8")
+    (qa / "melbourne-plan-render.png").write_bytes(b"\x89PNG\r\n\x1a\n realdata")
+    # Browser scratch the worker gitignored — 4 profiles' worth of cache junk,
+    # incl. a 0-byte journal ("empty file") and a top-level profile file that
+    # carries no cache-dir segment (only the profile-root match catches it).
+    prof = qa / "chrome-profile-dd6355b81ddb49db87fc5045a7012b19"
+    (prof / "GrShaderCache").mkdir(parents=True)
+    (prof / "GrShaderCache" / "data_2").write_text("shadercache", encoding="utf-8")
+    (prof / "Default" / "Shared Dictionary").mkdir(parents=True)
+    (prof / "Default" / "Shared Dictionary" / "db-journal").write_text(
+        "", encoding="utf-8"
+    )
+    (prof / "Last Browser").write_text("chrome\n", encoding="utf-8")
+
+    # Sanity: the profile really is gitignored (so only the --ignored union
+    # could resurrect it), mirroring the live mission.
+    chk = _git("check-ignore", "qa-artifacts/chrome-profile-dd6355b81ddb49db87fc5045a7012b19/Last Browser", cwd=worktree)
+    if chk.returncode != 0:
+        pytest.skip(
+            "chrome-profile not gitignored in this worktree state — "
+            f"check-ignore rc={chk.returncode}"
+        )
+
+    mission_dir = tmp_path / "mission_root"
+    mission_dir.mkdir()
+    task_id = "beefcafe98760000"
+
+    artifacts = kontrollierer._archive_task_artifacts(
+        worktree=worktree,
+        mission_dir=mission_dir,
+        task_id=task_id,
+    )
+
+    assert artifacts is not None
+    files_dir = artifacts / "files"
+    # Real deliverables survive.
+    assert (files_dir / "index.html").exists(), "genuine deliverable missing"
+    assert (files_dir / "qa-artifacts" / "melbourne-plan-render.png").exists(), (
+        "real artifact inside qa-artifacts/ was wrongly dropped"
+    )
+    # The whole browser-profile subtree is gone — no chrome-profile dir at all.
+    leaked = [
+        p for p in files_dir.rglob("*")
+        if "chrome-profile-dd6355b81ddb49db87fc5045a7012b19" in p.parts
+    ]
+    assert not leaked, f"browser-profile scratch leaked into archive: {leaked}"

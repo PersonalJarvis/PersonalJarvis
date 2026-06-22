@@ -42,6 +42,21 @@ class TestProviderCatalog:
         assert spec.selects == "model"
         assert any("gpt-5.5" in m.id for m in spec.curated)
 
+    def test_antigravity_is_curated_brain_provider(self) -> None:
+        spec = catalog_spec("antigravity")
+        assert spec is not None
+        assert spec.tier == "brain"
+        assert spec.selects == "model"
+        assert spec.live is False  # OAuth CLI has no /v1/models endpoint
+        assert "antigravity" not in CATALOG_PROVIDERS  # never live-fetched
+        ids = [m.id for m in spec.curated]
+        # Flash (the fast default) is offered first; Pro is the deep option.
+        assert ids[0] == "gemini-3.5-flash"
+        assert "gemini-3.1-pro-preview" in ids
+        # No phantom ids that aren't real gemini-CLI models.
+        assert "gemini-3-pro" not in ids
+        assert "gemini-3-flash-preview" not in ids
+
     def test_grok_voice_is_a_tts_voice_provider(self) -> None:
         spec = catalog_spec("grok-voice")
         assert spec.tier == "tts"

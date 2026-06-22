@@ -295,3 +295,103 @@ def test_subagent_switch_409_codex_when_not_connected(
     resp = _client(cfg).post("/api/subagent/switch", json={"provider": "openai-codex"})
     assert resp.status_code == 409
     assert persisted == []
+
+
+# --- Antigravity as a subagent (direct GoogleCliWorker, no OpenClaw slug) ---
+# The Google sibling of Codex: a selectable subagent row backed by the Google
+# subscription OAuth login (no API key), so the user can run heavy tasks over
+# agy — exactly like picking OpenRouter/Grok/Claude, never hardcoded.
+
+
+class _FakeGoogleCli:
+    connected_value = True
+
+    def __init__(self, *_a, **_k) -> None:  # noqa: ANN002, ANN003
+        pass
+
+    def status(self):  # noqa: ANN201
+        from jarvis.google_cli.auth_service import GoogleCliAuthStatus
+
+        return GoogleCliAuthStatus(
+            installed=True,
+            connected=type(self).connected_value,
+            mode="oauth-personal",
+            cli_kind="agy",
+        )
+
+
+def _patch_antigravity(monkeypatch: pytest.MonkeyPatch, *, connected: bool) -> None:
+    """Stub GoogleCliAuthService at its source so both the status endpoint and
+    the switch route (each lazy-imports it) pick up the fake."""
+    _FakeGoogleCli.connected_value = connected
+    monkeypatch.setattr(
+        "jarvis.google_cli.auth_service.GoogleCliAuthService", _FakeGoogleCli
+    )
+
+
+def test_openclaw_status_includes_antigravity_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Antigravity is selectable as a subagent even though it has no OpenClaw slug."""
+    _patch_antigravity(monkeypatch, connected=False)
+    cfg = load_config()
+    data = _status(cfg)
+    slugs = {r["jarvis"] for r in data["mapping"]}
+    assert "antigravity" in slugs
+
+
+def test_antigravity_row_key_set_reflects_oauth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No API key — the row is unlocked iff the Google OAuth login is connected."""
+    _patch_antigravity(monkeypatch, connected=True)
+    cfg = load_config()
+    row = next(r for r in _status(cfg)["mapping"] if r["jarvis"] == "antigravity")
+    assert row["key_set"] is True
+    _patch_antigravity(monkeypatch, connected=False)
+    row = next(r for r in _status(cfg)["mapping"] if r["jarvis"] == "antigravity")
+    assert row["key_set"] is False
+
+
+def test_antigravity_subagent_active_when_selected(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_antigravity(monkeypatch, connected=True)
+    cfg = load_config()
+    cfg.brain.primary = "gemini"
+    cfg.brain.sub_jarvis = BrainTierConfig(provider="antigravity", model="")
+    data = _status(cfg)
+    active = {r["jarvis"]: r["is_active_brain"] for r in data["mapping"]}
+    assert active["antigravity"] is True
+    assert active["gemini"] is False  # gemini is only the router, not the subagent
+
+
+def test_subagent_switch_accepts_antigravity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Google OAuth connected, no API key -> antigravity selectable as subagent."""
+    import jarvis.core.config as cfg_mod
+    import jarvis.core.config_writer as config_writer
+
+    monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _p: None)
+    _patch_antigravity(monkeypatch, connected=True)
+    calls: list[str] = []
+    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: calls.append(n))
+
+    cfg = load_config()
+    resp = _client(cfg).post(
+        "/api/subagent/switch", json={"provider": "antigravity", "persist": True}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["active"] == "antigravity"
+    assert calls == ["antigravity"]
+
+
+def test_subagent_switch_409_antigravity_when_not_connected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Not signed in with Google -> 409, nothing persisted."""
+    import jarvis.core.config as cfg_mod
+    import jarvis.core.config_writer as config_writer
+
+    monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _p: None)
+    _patch_antigravity(monkeypatch, connected=False)
+    persisted: list[str] = []
+    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: persisted.append(n))
+
+    cfg = load_config()
+    resp = _client(cfg).post("/api/subagent/switch", json={"provider": "antigravity"})
+    assert resp.status_code == 409
+    assert persisted == []

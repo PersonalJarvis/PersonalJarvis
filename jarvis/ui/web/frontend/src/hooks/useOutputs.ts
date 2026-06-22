@@ -293,13 +293,76 @@ export async function revealArtifact(slug: string, path: string): Promise<void> 
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
 }
 
-export async function openArtifactNative(
+// --- "Open with" chooser --------------------------------------------------
+
+/** One launchable app in the "open with" chooser. `id` is "default",
+ *  "browser", or an editor key like "code"; `label` is the display name. */
+export interface OpenerInfo {
+  id: string;
+  label: string;
+}
+
+/** The apps that can open an artifact on this host (desktop only; empty on a
+ *  headless VPS, where the UI falls back to opening the render URL in a tab). */
+export function useOpeners() {
+  return useQuery<OpenerInfo[]>({
+    queryKey: ["outputs-openers"],
+    queryFn: async () => {
+      const r = await fetch("/api/outputs/openers");
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = (await r.json()) as { openers?: OpenerInfo[] };
+      return data.openers ?? [];
+    },
+    staleTime: 60_000,
+  });
+}
+
+/** The remembered opener id ("" = ask via the chooser on first open). */
+export function usePreferredOpener() {
+  return useQuery<string>({
+    queryKey: ["outputs-preferred-opener"],
+    queryFn: async () => {
+      const r = await fetch("/api/outputs/preferred-opener");
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = (await r.json()) as { opener?: string };
+      return data.opener ?? "";
+    },
+    staleTime: 30_000,
+  });
+}
+
+/** Persist the remembered opener id (or "" to clear it). */
+export function useSetPreferredOpener() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (opener: string) => {
+      const r = await fetch("/api/outputs/preferred-opener", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ opener }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return (await r.json()) as { opener: string };
+    },
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["outputs-preferred-opener"] }),
+  });
+}
+
+/** Open an artifact in the chosen app (desktop only). The backend resolves the
+ *  opener id to an absolute executable and starts a real process. */
+export async function openArtifactWith(
   slug: string,
   path: string,
+  opener: string,
 ): Promise<void> {
   const r = await fetch(
-    `/api/outputs/${slug}/files/${encodeArtifactPath(path)}/open-native`,
-    { method: "POST" },
+    `/api/outputs/${slug}/files/${encodeArtifactPath(path)}/open-with`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ opener }),
+    },
   );
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
 }

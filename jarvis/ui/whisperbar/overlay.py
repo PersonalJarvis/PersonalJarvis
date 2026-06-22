@@ -243,6 +243,18 @@ class WhisperBarOverlay:
         self._canvas.bind("<Enter>", self._on_enter)
         self._canvas.bind("<Leave>", self._on_leave)
 
+        # Drag-drop onto the bar (desktop extra, cross-platform via tkdnd). Pure
+        # addition, fully guarded: a no-op when tkinterdnd2 is absent so the live
+        # overlay is never destabilised. Dropped paths/text go to the
+        # process-global bridge, which the desktop app marshals to the brain.
+        try:
+            from jarvis.overlay.drop_bridge import dispatch_drop
+            from jarvis.overlay.drop_target import make_drop_target
+
+            make_drop_target().register(self._canvas, dispatch_drop)
+        except Exception:  # noqa: BLE001 — drop is optional; never block bar boot.
+            log.debug("bar drop target registration skipped", exc_info=True)
+
         if self._should_start_withdrawn():
             root.withdraw()  # only-when-active variant / boot gate starts hidden
 

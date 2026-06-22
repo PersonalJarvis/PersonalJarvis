@@ -12,7 +12,6 @@ import {
   Notebook,
   Sparkles,
   Mic,
-  Headphones,
   Terminal,
   Share2,
   Contact,
@@ -36,8 +35,8 @@ interface NavItem {
   // skills/plugins/mcps, "CLIs" fronting clis/cli-test-hub); the active id
   // doubles as the tab state.
   matchIds?: SectionId[];
-  // English fallback shown when `labelKey` has no translation yet (used while
-  // the nav.browser_voice / browser_voice.* locale keys are still being wired in).
+  // English fallback shown when `labelKey` has no translation yet in the active
+  // locale (the i18n resolver returns the key itself on a miss).
   fallbackLabel?: string;
 }
 
@@ -74,12 +73,6 @@ const NAV_GROUPS: NavItem[][] = [
   [
     { id: "tasks", labelKey: "nav.tasks", icon: ListTodo },
     { id: "sessions", labelKey: "nav.sessions", icon: Mic },
-    {
-      id: "browser-voice",
-      labelKey: "nav.browser_voice",
-      icon: Headphones,
-      fallbackLabel: "Browser Voice",
-    },
     { id: "run_inspector", labelKey: "nav.run_inspector", icon: Gauge },
     { id: "board", labelKey: "nav.board", icon: Sparkles },
     { id: "memory", labelKey: "nav.wiki", icon: Notebook },

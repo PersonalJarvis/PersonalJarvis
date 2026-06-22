@@ -41,16 +41,7 @@
     "socials": "Socials",
     "taskbar": "Taskbar",
     "contacts": "Kontakte",
-    "agent_instructions": "{name}.md",
-    "browser_voice": "Browser-Sprache"
-  },
-  "browser_voice": {
-    "title": "Browser-Sprache",
-    "subtitle": "Sprich mit Jarvis über das Mikrofon und die Lautsprecher deines Browsers — ohne Desktop-Installation. Erfordert einen sicheren Kontext (localhost oder https).",
-    "start": "Sprache starten",
-    "stop": "Stopp",
-    "listening": "Höre zu …",
-    "speaking": "Spreche …"
+    "agent_instructions": "{name}.md"
   },
   "agent_instructions": {
     "subtitle": "Deine persönlichen Präferenzen, wie der Assistent mit dir arbeitet — Ton, Sprache, Voreinstellungen, dauerhafte Fakten. Getrennt vom System-Prompt und hebelt niemals Sicherheit oder Bestätigungen aus.",
@@ -59,10 +50,11 @@
     "editor_label": "Deine Anweisungen (Markdown)",
     "placeholder": "Schreibe deine persönlichen Präferenzen…",
     "chars": "{0} Zeichen",
-    "empty_hint": "Leer — lade die Vorlage, um zu starten.",
+    "empty_hint": "Leer - Speichern leert die Datei, oder lade die Vorlage.",
     "save": "Anweisungen speichern",
     "saving": "Speichern…",
     "saved": "Anweisungen gespeichert",
+    "revert": "Verwerfen",
     "reset": "Leeren",
     "reset_done": "Anweisungen geleert",
     "load_template": "Mit Vorlage starten",
@@ -790,6 +782,7 @@
     "active_tooltip": "Bereits aktiv",
     "click_to_activate": "Klick aktiviert diesen Provider",
     "needs_codex": "Erst Codex verbinden oder API-Key speichern",
+    "needs_login": "Erst mit Google anmelden, dann aktivierbar",
     "needs_key": "Erst API-Key speichern, dann aktivierbar",
     "security_notice": ""
   },
@@ -1128,7 +1121,15 @@
     "no_files": "Diese Session hat keine gespeicherten Dateien.",
     "binary_file_hint": "Binärdatei — öffne den Ordner auf dem Desktop, um sie anzuzeigen.",
     "loading_file": "Lade Datei…",
-    "file_truncated": "Datei gekürzt auf 1 MiB — Rest im Datei-Manager anzeigen."
+    "file_truncated": "Datei gekürzt auf 1 MiB — Rest im Datei-Manager anzeigen.",
+    "open_action": "Öffnen",
+    "open_with_title": "Öffnen mit…",
+    "open_with_remember": "Als Standard merken",
+    "open_with_change": "Öffnen-mit ändern",
+    "open_with_empty": "Keine Apps gefunden, um diese Datei zu öffnen.",
+    "opener_default": "System-Standard-App",
+    "opener_browser": "Browser",
+    "reveal_in_folder": "Im Ordner anzeigen"
   },
   "common": {
     "save": "Save",
@@ -1238,6 +1239,14 @@
     "runs_as_subagent_hint": "Mit deinem ChatGPT-Login arbeitet Codex als Subagent (Hintergrund-Arbeiter). Nach dem Verbinden unten in der Subagent-Liste aktivieren. Ein denkendes Hirn braucht den separaten OpenAI-API-Key-Provider.",
     "brain_needs_openai_key": "Codex als Hirn braucht einen OpenAI-API-Key — das ChatGPT-Login treibt nur den Codex-Arbeiter. Trag einen OpenAI-Key ein (z. B. beim OpenAI-Provider), dann kannst du Codex hier auswählen.",
     "brain_key_hint": "Um Codex auch als Hirn zu nutzen, trag einen OpenAI-API-Key ein (kostenpflichtig, getrennt vom ChatGPT-Login — der treibt nur den Arbeiter). Nach dem Speichern entsperrt sich der „Als aktiv\"-Schalter oben."
+  },
+  "apikeys_antigravity": {
+    "login_started": "Die Google-Anmeldung wurde im Terminal gestartet",
+    "disconnected": "Antigravity (Google) wurde getrennt",
+    "status_loading": "Google-Anmeldestatus wird geladen",
+    "connected": "Verbunden über dein Google-Abo.",
+    "connected_as": "Verbunden über Google ({0}).",
+    "needs_login_full": "{0}: erst mit Google anmelden, dann aktivieren."
   },
   "mcps_toast": {
     "connected": "{0} verbunden"

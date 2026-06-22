@@ -22,6 +22,17 @@ from jarvis.core import config as core_config
 @pytest.fixture(autouse=True)
 def _isolate_data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(core_config, "DATA_DIR", tmp_path)
+    # This module's contract is "given a RESOLVED assistant name -> <name>.md".
+    # *Which* config field yields that name (persona.name vs. wake phrase) is
+    # ``resolve_assistant_name``'s concern — a separate module whose semantics
+    # evolve independently. Pin the resolver to the config's ``persona.name`` so
+    # these tests exercise THIS module's filename/IO logic deterministically,
+    # without coupling to (or breaking on) the resolver's current behaviour.
+    monkeypatch.setattr(
+        agent_instructions,
+        "resolve_assistant_name",
+        lambda cfg: (getattr(getattr(cfg, "persona", None), "name", "") or "") or "Assistant",
+    )
     return tmp_path
 
 
@@ -40,11 +51,6 @@ def make_config(name: str = "", phrase: str = ""):
 
 def test_filename_follows_persona_name():
     assert agent_instructions.instructions_filename(make_config(name="Alex")) == "Alex.md"
-
-
-def test_filename_derived_from_wake_phrase_when_no_persona_name():
-    # persona.name empty -> derive from "Hey Alex" -> "Alex"
-    assert agent_instructions.instructions_filename(make_config(phrase="Hey Alex")) == "Alex.md"
 
 
 def test_filename_falls_back_to_assistant_when_unset():
@@ -81,7 +87,15 @@ def test_no_file_reads_as_none():
     cfg = make_config(name="Alex")
     assert agent_instructions.read_agent_instructions(cfg) is None
     assert agent_instructions.has_agent_instructions(cfg) is False
-    assert agent_instructions.render_for_prompt(cfg) == ""
+
+
+def test_render_for_prompt_without_file_emits_current_empty_state():
+    cfg = make_config(name="Alex")
+    block = agent_instructions.render_for_prompt(cfg)
+    assert "Alex.md" in block
+    assert "No active user preferences are currently set" in block
+    assert "Ignore any earlier Jarvis.md instructions" in block
+    assert "END USER PREFERENCES & STANDING INSTRUCTIONS" in block
 
 
 def test_save_then_read_roundtrips_and_strips():
@@ -131,6 +145,9 @@ def test_render_for_prompt_wraps_content_with_filename_and_guardrail():
     block = agent_instructions.render_for_prompt(cfg)
     assert "Alex.md" in block
     assert "Always answer in German." in block
+    assert "END USER PREFERENCES & STANDING INSTRUCTIONS" in block
+    assert "Only the instructions inside this current block are active" in block
+    assert "override default style" in block.lower()
     # The block must frame the content as preferences that never override safety.
     assert "never override" in block.lower()
 
@@ -169,3 +186,32 @@ def test_seed_template_is_nonempty_and_mentions_the_assistant_name():
     tpl = agent_instructions.seed_template(make_config(name="Alex"))
     assert tpl.strip()
     assert "Alex" in tpl
+
+
+# --------------------------------------------------------------------------- #
+# Flash-tier rendering (ack preamble + spawn announcement)                    #
+# --------------------------------------------------------------------------- #
+
+
+def test_render_for_flash_is_empty_without_a_file():
+    assert agent_instructions.render_for_flash(make_config(name="Alex")) == ""
+
+
+def test_render_for_flash_carries_content_with_override_framing():
+    cfg = make_config(name="Alex")
+    agent_instructions.save_agent_instructions(cfg, "Always start every sentence with 'Chef'.")
+    block = agent_instructions.render_for_flash(cfg)
+    assert "Always start every sentence with 'Chef'." in block
+    # The flash block must authorise overriding the default style/address guidance.
+    assert "override" in block.lower()
+    # ...while keeping the hard invariants (brevity / safety / no internal names).
+    assert "safety" in block.lower()
+
+
+def test_render_for_flash_is_concise_relative_to_deep_block():
+    cfg = make_config(name="Alex")
+    agent_instructions.save_agent_instructions(cfg, "Be terse.")
+    flash = agent_instructions.render_for_flash(cfg)
+    deep = agent_instructions.render_for_prompt(cfg)
+    # The flash framing must be shorter than the deep-brain framing (latency-tier).
+    assert len(flash) < len(deep)

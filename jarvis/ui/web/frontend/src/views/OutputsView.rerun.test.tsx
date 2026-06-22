@@ -50,6 +50,21 @@ function installFetchMock(
         }),
       };
     }
+    if (url.includes("/openers")) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          openers: [
+            { id: "default", label: "System default app" },
+            { id: "code", label: "VS Code" },
+          ],
+        }),
+      };
+    }
+    if (url.includes("/preferred-opener")) {
+      return { ok: true, status: 200, json: async () => ({ opener: "" }) };
+    }
     if (url.includes("/api/outputs")) {
       return { ok: true, status: 200, json: async () => ({ sessions }) };
     }
@@ -150,8 +165,11 @@ describe("OutputsView artifact actions", () => {
     );
 
     expect(screen.queryByTitle("Download")).toBeNull();
-    expect(screen.getByTitle("Open in browser")).toBeDefined();
-    expect(screen.getByTitle("Open with default app")).toBeDefined();
+    // The artifact opens in an app of the user's choice (chooser), not a fixed
+    // "open in browser" — and the file is already mirrored to Downloads.
+    expect(screen.getByTitle("Open")).toBeDefined();
+    expect(screen.getByTitle("Change how this opens")).toBeDefined();
     expect(screen.getByTitle("Reveal in folder")).toBeDefined();
+    expect(screen.queryByTitle("Open in browser")).toBeNull();
   });
 });

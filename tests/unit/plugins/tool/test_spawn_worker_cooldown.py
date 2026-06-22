@@ -35,9 +35,13 @@ from jarvis.plugins.tool.spawn_worker import (
 )
 
 # The suppress ACK is composed by SpawnAnnouncementComposer in its
-# deterministic "already_running" mode — bilingual pools, no LLM.
-_SUPPRESS_POOL = set(_FALLBACK_ALREADY_RUNNING["de"]) | set(
-    _FALLBACK_ALREADY_RUNNING["en"]
+# deterministic "already_running" mode — de/en/es pools, no LLM. All three
+# supported languages are included so a Spanish suppress ACK never false-fails
+# the pool assertions (the composer's _resolve_language can return "es").
+_SUPPRESS_POOL = (
+    set(_FALLBACK_ALREADY_RUNNING["de"])
+    | set(_FALLBACK_ALREADY_RUNNING["en"])
+    | set(_FALLBACK_ALREADY_RUNNING["es"])
 )
 
 

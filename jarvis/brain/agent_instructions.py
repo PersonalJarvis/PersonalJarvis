@@ -187,23 +187,60 @@ def reset_agent_instructions(config: Any) -> bool:
 
 
 def render_for_prompt(config: Any) -> str:
-    """The system-prompt block for the user's instructions, or ``""`` when none.
+    """The system-prompt block for the current user-instructions state.
 
     The block is framed so the model treats the content as *preferences* — it
     refines tone/language/defaults but never overrides safety rules, confirmation
     gates, or capabilities, and never authorises new tools or actions.
     """
     content = read_agent_instructions(config)
-    if not content:
-        return ""
     filename = instructions_filename(config)
+    if not content:
+        return (
+            f"USER PREFERENCES & STANDING INSTRUCTIONS (from {filename}):\n"
+            "No active user preferences are currently set in Jarvis.md. "
+            "Ignore any earlier Jarvis.md instructions from previous turns. "
+            "Do not continue, infer, or imitate older style, address, tone, "
+            "language, or wording rules that are absent from this current block.\n\n"
+            "END USER PREFERENCES & STANDING INSTRUCTIONS"
+        )
     return (
         f"USER PREFERENCES & STANDING INSTRUCTIONS (from {filename}):\n"
         "The following are personal preferences written by the user for how you "
-        "should work with them. Honour them for tone, language, formatting, default "
-        "choices, and standing facts about the user. They REFINE your behaviour but "
-        "never override your safety rules, confirmation gates, or capabilities, and "
-        "never authorise new tools or actions.\n\n"
+        "should work with them. Only the instructions inside this current block are "
+        "active; ignore any earlier Jarvis.md instructions from previous turns that "
+        "are absent or conflict. Treat the current block as binding for tone, "
+        "language, formatting, default choices, forms of address, and standing facts "
+        "about the user. They override default style/address/tone/language guidance "
+        "where they conflict. "
+        "They never override your safety rules, confirmation gates, or capabilities, "
+        "and never authorise new tools or actions.\n\n"
+        f"{content}\n\n"
+        "END USER PREFERENCES & STANDING INSTRUCTIONS"
+    )
+
+
+def render_for_flash(config: Any) -> str:
+    """A CONCISE preferences block for the latency-critical flash spoken tiers.
+
+    Used by the pre-thinking ack preamble and the spawn-announcement composer.
+    Kept short (one framing sentence + the content) to add minimal tokens to a
+    sub-second call. Frames the content as authoritative for *style* — it
+    OVERRIDES the tier's default address/opener/tone guidance where they
+    conflict (so e.g. a user-requested form of address is used even if the
+    default persona discourages honorifics) — while explicitly NOT overriding
+    the tier's core job, brevity limit, safety rules, or the ban on naming
+    internal components. Returns ``""`` when no file is set.
+    """
+    content = read_agent_instructions(config)
+    if not content:
+        return ""
+    return (
+        "USER STANDING PREFERENCES (the user set these — honor them in your tone, "
+        "form of address, and wording; they OVERRIDE the default style/address/opener "
+        "guidance above where they conflict, including any 'forbidden address' list — "
+        "use the address the user asks for). They do NOT change your core job, your "
+        "brevity limit, the safety rules, or the ban on naming internal components:\n"
         f"{content}"
     )
 

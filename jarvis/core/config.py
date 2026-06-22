@@ -447,6 +447,22 @@ class BrainRoutingConfig(BaseModel):
     # heuristic. Default is "strict" per user mandate 2026-05-14.
     force_spawn_mode: str = "strict"
 
+    # Intelligent router (2026-06-21 user mandate "Jarvis must choose wisely among
+    # ALL tools, like Claude Code"). When the ACTIVE talker cannot emit tool_calls
+    # at runtime (the subscription-CLI brains — Antigravity over the Google login,
+    # Codex over the ChatGPT login — drop ALL tools), a tool-capable provider
+    # (the deep_brain / router, e.g. Gemini) leads every SUBSTANTIVE turn and the
+    # LLM itself picks the tool via its tool-use loop + the router system prompt —
+    # no signal-word list decides the tool. If the router picks NO tool (pure
+    # conversation), the turn FALLS THROUGH to the chosen talker so the user keeps
+    # their selected brain's voice. Tool-capable talkers are unaffected (they
+    # already pick tools in their own loop). The deterministic gates (force-spawn,
+    # match_local_action, on-screen, build-artifact) remain as HIGH-PRECISION
+    # guardrails for the obvious cases. This flag is the reversible kill switch:
+    # set false → exactly the prior behaviour (the narrower action-intent
+    # delegation). See manager._build_fallback_chain / the router fall-through.
+    intelligent_router: bool = True
+
     # Heavy-research force-spawn (live bug 2026-06-14, the Berlin→Melbourne
     # turn): a multi-step research/analysis request must be OFFLOADED to a
     # background mission, not run inline on the deep brain where it blows the
@@ -1033,6 +1049,10 @@ class UIConfig(BaseModel):
     bar_persistent: bool = True
     # Hex accent the bar lights up with during activity (gold on-brand).
     bar_accent: str = "#e7c46e"
+    # Remembered "open with" choice for Outputs artifacts: an opener id
+    # ("default" = OS default app, "browser", or an editor key like "code").
+    # Empty = ask via the chooser dialog on first open. Desktop-only.
+    preferred_opener: str = ""
 
 
 class DuckingConfig(BaseModel):
@@ -1894,6 +1914,17 @@ _PERSISTED_PROVIDER_ENV_KEYS: tuple[str, ...] = (
     "JARVIS__BRAIN__SUB_JARVIS__PROVIDER",
     "JARVIS__TTS__PROVIDER",
     "JARVIS__STT__PROVIDER",
+    # ack_brain subsystem master + flash provider selection. Same drift-guard
+    # 3-layer sync as the provider tiers above, so a stale inherited value must
+    # heal at boot too. Forensic 2026-06-21: an in-app restart inherited a
+    # pre-change ancestor env with JARVIS__ACK_BRAIN__ENABLED=false /
+    # PROVIDER=gemini; absent from this list it survived the restart (env > toml)
+    # and kept the grounded spawn announcer in canned-pool mode even though the
+    # registry already held enabled=true / provider=grok. The spoken spawn ACK
+    # then stayed a generic stock phrase instead of context-aware text.
+    "JARVIS__ACK_BRAIN__ENABLED",
+    "JARVIS__ACK_BRAIN__PROVIDER",
+    "JARVIS__ACK_BRAIN__FALLBACK_PROVIDER",
 )
 
 
@@ -2163,12 +2194,27 @@ def ensure_project_root_cwd() -> Path:
     — re-showing the first-run setup guide on every restart and splitting the
     user's Chats/Sessions/Missions across two folders.
 
+    It also pins the repo root onto ``sys.path``. ``python -m`` seeds
+    ``sys.path[0]`` from the *start-time* cwd, and a later ``os.chdir`` does NOT
+    patch the import path. A start from a foreign cwd (manual launch / an in-app
+    restart inheriting the user home) therefore left the repo root off
+    ``sys.path``, so the ROOT packages ``ui`` and ``conductor`` — which live
+    outside the editable-installed ``jarvis`` package — failed to import
+    ("No module named 'ui'"), silently disabling the on-screen overlay
+    (whisper-bar) and the Conductor view. Putting the root on the path makes
+    those imports resolve regardless of how the process was started.
+
     Call this once, as early as possible in every process entry point (before
     ``load_config`` and before the server touches any ``data/`` path). It is
     idempotent and never raises: a chdir failure is logged and the process
     continues with whatever CWD it had.
     """
     import logging
+
+    root = str(PROJECT_ROOT)
+    if root not in sys.path:
+        # First, mirroring the `python -m` cwd seeding the working boots had.
+        sys.path.insert(0, root)
 
     if Path.cwd() != PROJECT_ROOT:
         try:
