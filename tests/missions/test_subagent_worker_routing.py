@@ -42,10 +42,24 @@ def test_codex_providers_route_codex(provider: str) -> None:
 
 
 @pytest.mark.parametrize("provider", ["grok", "openai", "openrouter"])
-def test_other_providers_route_subjarvis(provider: str) -> None:
-    """Even with a gemini step model, a non-empty provider goes via OpenClaw,
-    never directly to the Gemini API worker."""
-    assert _select_subagent_worker_kind(provider, "gemini-3.1-pro") == "subjarvis"
+@pytest.mark.parametrize("step_model", ["", "gemini-3.1-pro", "sonnet", "claude-opus-4-8"])
+def test_api_agent_providers_route_to_api_agent(provider: str, step_model: str) -> None:
+    """grok/openai/openrouter run ON their own provider via the in-process
+    ApiAgentWorker (2026-06-22). A HARD LOCK like claude-api/antigravity: no step
+    model can divert them — and they must NOT silently route to Claude (subjarvis)
+    or to the Gemini API worker. The credential gate (no key -> Claude) lives in
+    the worker factory, not in this pure routing decision."""
+    assert _select_subagent_worker_kind(provider, step_model) == "api_agent"
+
+
+def test_api_agent_providers_are_not_a_claude_fallback() -> None:
+    """The UI badge must stop pretending grok/openai/openrouter run on Claude."""
+    from jarvis.missions.init import subagent_runs_on_claude_fallback
+
+    for provider in ("grok", "openai", "openrouter"):
+        assert subagent_runs_on_claude_fallback(provider) is False
+    # the genuine always-Claude case stays True
+    assert subagent_runs_on_claude_fallback("openclaw-claude") is True
 
 
 @pytest.mark.parametrize("step_model", ["", "claude-opus-4-8", "gemini-3.1-pro"])
@@ -172,17 +186,25 @@ def test_live_provider_survives_registry_refresh_failure(monkeypatch: pytest.Mon
 
 # --- Honesty surface: which selections silently fall back to Claude ----------
 #
-# grok / openai / openrouter map to the removed-OpenClaw ``"subjarvis"`` kind,
-# so picking them runs the ClaudeDirectWorker (Opus) — NOT the picked provider.
-# The UI reads ``subagent_runs_on_claude_fallback`` (derived from the SAME
-# routing function) to flag those cards instead of silently lying.
+# As of 2026-06-22 grok/openai/openrouter run on their OWN provider via the
+# in-process ApiAgentWorker, so they are NO LONGER routing-level Claude
+# fallbacks. Only the legacy ``"subjarvis"`` kind (openclaw-claude / unknown)
+# still always runs Claude. The UI reads ``subagent_runs_on_claude_fallback``
+# (derived from the SAME routing function) so the badge never lies.
 
 
-@pytest.mark.parametrize("provider", ["grok", "openai", "openrouter"])
-def test_fallback_providers_flagged_as_claude(provider: str) -> None:
+@pytest.mark.parametrize("provider", ["openclaw-claude"])
+def test_subjarvis_kind_flagged_as_claude(provider: str) -> None:
     from jarvis.missions.init import subagent_runs_on_claude_fallback
 
     assert subagent_runs_on_claude_fallback(provider) is True
+
+
+@pytest.mark.parametrize("provider", ["grok", "openai", "openrouter"])
+def test_api_agent_providers_no_longer_flagged_as_claude(provider: str) -> None:
+    from jarvis.missions.init import subagent_runs_on_claude_fallback
+
+    assert subagent_runs_on_claude_fallback(provider) is False
 
 
 @pytest.mark.parametrize(
