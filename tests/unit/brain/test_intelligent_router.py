@@ -1,7 +1,7 @@
 """Intelligent router (2026-06-21 mandate: "choose wisely among ALL tools").
 
-When the ACTIVE talker cannot emit tool_calls (subscription-CLI brains —
-Antigravity / Codex — drop ALL tools), a tool-capable provider LEADS every
+When the ACTIVE talker cannot emit tool_calls (for example a provider/model
+path without tool-call support), a tool-capable provider LEADS every
 substantive turn and the LLM picks the tool via its tool-use loop + system
 prompt (no signal-word list decides the tool). If the router picks NO tool (pure
 conversation), the turn FALLS THROUGH to the chosen talker so the user keeps
@@ -24,6 +24,9 @@ from jarvis.core.bus import EventBus
 from jarvis.core.config import BrainProviderConfig, JarvisConfig
 from tests.fixtures.brain.fake_brain import FakeBrain
 
+TALKER_PROVIDER = "openrouter"
+TALKER_MODEL = "openrouter-model"
+
 
 class _FakeSpawn:
     name = "spawn_worker"
@@ -42,7 +45,7 @@ def _manager(*, intelligent: bool = True) -> BrainManager:
         config=cfg, bus=EventBus(),
         tools={"spawn_worker": _FakeSpawn()}, tool_executor=_Inert(),  # type: ignore[arg-type]
     )
-    mgr._active_name = "antigravity"  # type: ignore[attr-defined]
+    mgr._active_name = TALKER_PROVIDER  # type: ignore[attr-defined]
     mgr._active_can_call_tools = lambda: False  # type: ignore[assignment]
     mgr._first_tool_capable_provider = (  # type: ignore[assignment]
         lambda level: ("gemini", "gemini-3.5-flash")
@@ -68,7 +71,7 @@ def test_smalltalk_turn_does_not_get_a_router_lead() -> None:
     mgr = _manager(intelligent=True)
     mgr._turn_substantive = False  # smalltalk → chosen talker answers directly
     chain = mgr._build_fallback_chain("deep")
-    assert chain[0][0] == "antigravity"
+    assert chain[0][0] == TALKER_PROVIDER
     assert mgr._router_lead_key is None
 
 
@@ -77,7 +80,7 @@ def test_tool_capable_talker_keeps_its_own_loop() -> None:
     mgr._active_can_call_tools = lambda: True  # type: ignore[assignment]
     mgr._turn_substantive = True
     chain = mgr._build_fallback_chain("deep")
-    assert chain[0][0] == "antigravity", "a tool-capable talker is not pre-empted"
+    assert chain[0][0] == TALKER_PROVIDER, "a tool-capable talker is not pre-empted"
     assert mgr._router_lead_key is None
 
 
@@ -87,7 +90,7 @@ def test_flag_off_falls_back_to_narrow_action_intent_delegation() -> None:
     # flag off: a NON-action substantive turn must NOT get a router lead...
     mgr._turn_needs_tools = False
     chain_conv = mgr._build_fallback_chain("deep")
-    assert chain_conv[0][0] == "antigravity"
+    assert chain_conv[0][0] == TALKER_PROVIDER
     assert mgr._router_lead_key is None
     # ...but an action-intent turn still delegates (legacy), with no fall-through.
     mgr._turn_needs_tools = True
@@ -107,9 +110,9 @@ async def test_router_with_no_tool_falls_through_to_chosen_talker() -> None:
     the user keeps their selected brain's voice."""
     cfg = JarvisConfig()
     cfg.brain.routing.intelligent_router = True
-    cfg.brain.primary = "antigravity"
-    cfg.brain.providers["antigravity"] = BrainProviderConfig(
-        model="agy-model", deep_model="agy-model"
+    cfg.brain.primary = TALKER_PROVIDER
+    cfg.brain.providers[TALKER_PROVIDER] = BrainProviderConfig(
+        model=TALKER_MODEL, deep_model=TALKER_MODEL
     )
     mgr = BrainManager(config=cfg, bus=EventBus(), tools={})
     mgr._registry._loaded = True
@@ -121,7 +124,7 @@ async def test_router_with_no_tool_falls_through_to_chosen_talker() -> None:
     router = FakeBrain(text_response="ROUTER_TALKED")   # plain text, no tool
     talker = FakeBrain(text_response="TALKER_ANSWER")
     mgr._brain_cache[("gemini", "gemini-flash")] = router
-    mgr._brain_cache[("antigravity", "agy-model")] = talker
+    mgr._brain_cache[(TALKER_PROVIDER, TALKER_MODEL)] = talker
 
     reply = await mgr.generate(
         "Erzähl mir bitte etwas über die Geschichte von Rom", use_history=False
@@ -142,9 +145,9 @@ async def test_streaming_path_does_not_double_speak_the_router_lead() -> None:
     the chosen talker's answer reaches TTS."""
     cfg = JarvisConfig()
     cfg.brain.routing.intelligent_router = True
-    cfg.brain.primary = "antigravity"
-    cfg.brain.providers["antigravity"] = BrainProviderConfig(
-        model="agy-model", deep_model="agy-model"
+    cfg.brain.primary = TALKER_PROVIDER
+    cfg.brain.providers[TALKER_PROVIDER] = BrainProviderConfig(
+        model=TALKER_MODEL, deep_model=TALKER_MODEL
     )
     mgr = BrainManager(config=cfg, bus=EventBus(), tools={})
     mgr._registry._loaded = True
@@ -153,7 +156,7 @@ async def test_streaming_path_does_not_double_speak_the_router_lead() -> None:
         lambda level: ("gemini", "gemini-flash")
     )
     mgr._brain_cache[("gemini", "gemini-flash")] = FakeBrain(text_response="ROUTER_TALKED")
-    mgr._brain_cache[("antigravity", "agy-model")] = FakeBrain(text_response="TALKER_ANSWER")
+    mgr._brain_cache[(TALKER_PROVIDER, TALKER_MODEL)] = FakeBrain(text_response="TALKER_ANSWER")
 
     chunks: list[str] = []
     async for c in mgr.generate_stream(

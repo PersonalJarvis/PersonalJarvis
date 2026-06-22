@@ -167,6 +167,85 @@ async def test_switch_wrong_tier(configured_keys):
     assert res["error_kind"] == "wrong_tier"
 
 
+async def test_switch_antigravity_rejected_as_main_brain(configured_keys):
+    from jarvis.brain.app_control import apply_provider_switch
+
+    fake = FakeBrainManager(active="grok")
+    runtime_refs.set_brain_manager(fake)
+
+    res = await apply_provider_switch(
+        "brain", "antigravity", cfg=make_cfg(), persist=False,
+    )
+
+    assert res["ok"] is False
+    assert res["error_kind"] == "subagent_only"
+    assert fake.switch_calls == []
+
+
+async def test_switch_codex_rejected_as_main_brain(configured_keys):
+    from jarvis.brain.app_control import apply_provider_switch
+
+    fake = FakeBrainManager(active="grok")
+    runtime_refs.set_brain_manager(fake)
+
+    res = await apply_provider_switch(
+        "brain", "codex", cfg=make_cfg(), persist=False,
+    )
+
+    assert res["ok"] is False
+    assert res["error_kind"] == "subagent_only"
+    assert fake.switch_calls == []
+
+
+async def test_switch_antigravity_allowed_as_subagent(monkeypatch, no_keys):
+    from jarvis.brain.app_control import apply_provider_switch
+
+    class _Status:
+        connected = True
+
+    class _FakeGoogleCliAuthService:
+        def status(self):
+            return _Status()
+
+    monkeypatch.setattr(
+        "jarvis.google_cli.auth_service.GoogleCliAuthService",
+        _FakeGoogleCliAuthService,
+    )
+
+    cfg = make_cfg(sub="gemini")
+    res = await apply_provider_switch(
+        "subagent", "antigravity", cfg=cfg, persist=False,
+    )
+
+    assert res["ok"] is True
+    assert res["tier"] == "subagent"
+    assert res["new_provider"] == "antigravity"
+    assert cfg.brain.sub_jarvis.provider == "antigravity"
+
+
+async def test_switch_codex_allowed_as_subagent(monkeypatch, no_keys):
+    from jarvis.brain.app_control import apply_provider_switch
+
+    class _Status:
+        connected = True
+
+    class _FakeCodexAuthService:
+        def status(self):
+            return _Status()
+
+    monkeypatch.setattr("jarvis.codex_auth.CodexAuthService", _FakeCodexAuthService)
+
+    cfg = make_cfg(sub="gemini")
+    res = await apply_provider_switch(
+        "subagent", "openai-codex", cfg=cfg, persist=False,
+    )
+
+    assert res["ok"] is True
+    assert res["tier"] == "subagent"
+    assert res["new_provider"] == "openai-codex"
+    assert cfg.brain.sub_jarvis.provider == "openai-codex"
+
+
 async def test_switch_unknown_tier(configured_keys):
     from jarvis.brain.app_control import apply_provider_switch
 

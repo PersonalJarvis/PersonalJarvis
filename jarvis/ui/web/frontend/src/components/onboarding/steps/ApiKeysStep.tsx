@@ -70,7 +70,9 @@ export function ApiKeysStep({ goNext, skip }: StepProps) {
           without left padding the ring was cut off on the left edge. */}
       <div className="-mx-2 max-h-[52vh] space-y-6 overflow-y-auto scrollbar-jarvis px-2 py-1">
         {TIERS.map((meta) => {
-          const list = providers.filter((p) => p.tier === meta.tier);
+          const list = providers.filter(
+            (p) => p.tier === meta.tier && p.brain_switchable !== false,
+          );
           if (!list.length) return null;
           return (
             <section key={meta.tier}>

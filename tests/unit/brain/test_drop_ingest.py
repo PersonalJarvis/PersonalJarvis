@@ -1,16 +1,22 @@
-"""``ingest_drop`` — compose a drop directive, inject images keyed by trace_id,
-publish one ``MessageSent`` so the normal reply pipeline reacts proactively.
+"""``ingest_drop`` — capture dropped content as SILENT context (never a turn).
+
+A drop must NOT trigger a brain turn. ``ingest_drop`` classifies the content and
+hands it to ``brain.add_dropped_context``; it does not publish any turn-triggering
+event. Jarvis reacts only on the user's next real turn.
 """
 from __future__ import annotations
 
 import pytest
 
-from jarvis.brain.drop_context import (
-    DROP_SOURCE_LAYER,
-    DroppedItem,
-    ingest_drop,
-)
-from jarvis.core.events import MessageSent
+from jarvis.brain.drop_context import DroppedItem, ingest_drop
+
+
+class _FakeBrain:
+    def __init__(self) -> None:
+        self.dropped: list[tuple] = []
+
+    def add_dropped_context(self, text, images=()) -> None:
+        self.dropped.append((text, images))
 
 
 class _FakeBus:
@@ -21,18 +27,10 @@ class _FakeBus:
         self.published.append(event)
 
 
-class _FakeBrain:
-    def __init__(self) -> None:
-        self.injected: list[tuple] = []
-
-    def inject_images_for_turn(self, trace_id, images) -> None:
-        self.injected.append((trace_id, images))
-
-
 @pytest.mark.asyncio
-async def test_ingest_drop_publishes_message_and_injects_images() -> None:
-    bus = _FakeBus()
+async def test_ingest_drop_adds_context_and_triggers_no_turn() -> None:
     brain = _FakeBrain()
+    bus = _FakeBus()
     items = [
         DroppedItem("a.png", "image/png", b"img"),
         DroppedItem("b.txt", "text/plain", b"hello body"),
@@ -41,42 +39,46 @@ async def test_ingest_drop_publishes_message_and_injects_images() -> None:
     ok = await ingest_drop(bus=bus, brain=brain, thread_id="t1", items=items)
 
     assert ok is True
-    assert len(bus.published) == 1
-    msg = bus.published[0]
-    assert isinstance(msg, MessageSent)
-    assert msg.role == "user"
-    assert msg.source_layer == DROP_SOURCE_LAYER
-    assert msg.thread_id == "t1"
-    assert "a.png" in msg.text and "b.txt" in msg.text and "hello body" in msg.text
-    # The image is injected keyed by the SAME trace_id the MessageSent carries.
-    assert len(brain.injected) == 1
-    inj_trace, inj_images = brain.injected[0]
-    assert inj_trace == msg.trace_id
-    assert len(inj_images) == 1
-
-
-@pytest.mark.asyncio
-async def test_ingest_empty_drop_publishes_nothing() -> None:
-    bus = _FakeBus()
-    ok = await ingest_drop(bus=bus, brain=None, thread_id="t1", items=[])
-    assert ok is False
+    # Captured as context...
+    assert len(brain.dropped) == 1
+    text, images = brain.dropped[0]
+    assert "a.png" in text and "b.txt" in text and "hello body" in text
+    assert len(images) == 1
+    # ...and NOTHING was published that could trigger a turn.
     assert bus.published == []
 
 
 @pytest.mark.asyncio
-async def test_ingest_text_drop_without_brain_still_publishes() -> None:
-    bus = _FakeBus()
-    items = [DroppedItem("b.txt", "text/plain", b"hello")]
-    ok = await ingest_drop(bus=bus, brain=None, thread_id="t1", items=items)
-    assert ok is True
-    assert len(bus.published) == 1
-    assert bus.published[0].source_layer == DROP_SOURCE_LAYER
+async def test_ingest_empty_drop_captures_nothing() -> None:
+    brain = _FakeBrain()
+    ok = await ingest_drop(brain=brain, thread_id="t1", items=[])
+    assert ok is False
+    assert brain.dropped == []
 
 
 @pytest.mark.asyncio
-async def test_ingest_drop_without_images_does_not_inject() -> None:
-    bus = _FakeBus()
+async def test_ingest_dragged_text_only_is_captured() -> None:
     brain = _FakeBrain()
-    items = [DroppedItem("b.txt", "text/plain", b"hello")]
-    await ingest_drop(bus=bus, brain=brain, thread_id="t1", items=items)
-    assert brain.injected == []  # nothing to inject for a text-only drop
+    ok = await ingest_drop(
+        brain=brain, thread_id="t3", items=[], dragged_text="https://example.com/x"
+    )
+    assert ok is True
+    assert "example.com" in brain.dropped[0][0]
+
+
+@pytest.mark.asyncio
+async def test_ingest_without_brain_returns_false() -> None:
+    ok = await ingest_drop(
+        brain=None, thread_id="t1", items=[DroppedItem("b.txt", "text/plain", b"hi")]
+    )
+    assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_ingest_text_only_drop_carries_no_images() -> None:
+    brain = _FakeBrain()
+    await ingest_drop(
+        brain=brain, thread_id="t1", items=[DroppedItem("b.txt", "text/plain", b"hello")]
+    )
+    _text, images = brain.dropped[0]
+    assert images == ()

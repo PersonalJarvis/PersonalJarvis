@@ -33,6 +33,33 @@ def test_login_rejects_bad_key(mock_api):
     assert res.exit_code == 1
 
 
+def test_login_reads_key_from_stdin(mock_api, tmp_path):
+    """`--key -` reads the key from stdin so it never lands in shell history."""
+    mock_api[("GET", "/api/control/auth/probe")] = (200, {"ok": True})
+    res = runner.invoke(
+        app, ["auth", "login", "--url", "http://h:1", "--key", "-"],
+        input="jctl_stdin\n",
+    )
+    assert res.exit_code == 0
+    saved = json.loads(
+        (tmp_path / "cfg" / "config.json").read_text(encoding="utf-8")
+    )
+    assert saved["control_key"] == "jctl_stdin"
+
+
+def test_login_prompts_when_key_omitted(mock_api, tmp_path):
+    """Omitting --key prompts (hidden) instead of requiring an inline value."""
+    mock_api[("GET", "/api/control/auth/probe")] = (200, {"ok": True})
+    res = runner.invoke(
+        app, ["auth", "login", "--url", "http://h:1"], input="jctl_prompted\n"
+    )
+    assert res.exit_code == 0
+    saved = json.loads(
+        (tmp_path / "cfg" / "config.json").read_text(encoding="utf-8")
+    )
+    assert saved["control_key"] == "jctl_prompted"
+
+
 def test_status_reports_reachability(mock_api):
     mock_api[("GET", "/api/control/auth/probe")] = (200, {"ok": True})
     res = runner.invoke(

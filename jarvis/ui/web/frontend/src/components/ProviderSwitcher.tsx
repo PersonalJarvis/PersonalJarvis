@@ -11,7 +11,9 @@ import { useEventStore } from "@/store/events";
 export function ProviderSwitcher() {
   const t = useT();
   const { providers, refetch } = useProviders();
-  const brainProviders = providers.filter((p) => p.tier === "brain");
+  const brainProviders = providers.filter(
+    (p) => p.tier === "brain" && p.brain_switchable !== false,
+  );
   const active = brainProviders.find((p) => p.active) ?? brainProviders[0];
   const [target, setTarget] = useState(active?.id ?? "");
   const [pending, setPending] = useState(false);

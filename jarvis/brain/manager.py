@@ -141,6 +141,18 @@ PROVIDER_ALIASES = {
     "openrouter": "openrouter",
 }
 
+SUBAGENT_ONLY_BRAIN_PROVIDERS: frozenset[str] = frozenset(
+    {"antigravity", "codex", "openai-codex"}
+)
+
+_MAIN_BRAIN_FALLBACK_PROVIDER_ORDER: tuple[str, ...] = (
+    "grok",
+    "gemini",
+    "claude-api",
+    "openai",
+    "openrouter",
+)
+
 # Human-readable display names for each brain provider id. Used to tell the
 # answering LLM which provider/model it is embodying this turn (the system
 # prompt never carried this before, so a "which model are you?" question got a
@@ -263,20 +275,6 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         "claude-api": "claude-haiku-4-5-20251001",
         "gemini": "gemini-3-flash-preview",
         "openai": "gpt-5.5",
-        # Codex MUST be listed or `_fast_model("codex")` returns None and
-        # `_build_fallback_chain` silently drops codex from the chain (its
-        # `if fast:` guard) — so an explicitly-active codex brain never gets
-        # called and the turn falls through to a fallback (the live "Gemini
-        # answered while Codex was the active brain" bug, 2026-06-09). gpt-5.5
-        # is the model `codex exec` itself reports; the CLI (ChatGPT-login) path
-        # ignores it, the OpenAI-key path uses it.
-        "codex": "gpt-5.5",
-        # Antigravity (Google subscription via agy CLI) MUST be listed for the
-        # same reason as codex: without it `_fast_model("antigravity")` returns
-        # None when no model is pinned and `_build_fallback_chain` silently drops
-        # the chosen brain. agy ignores the model anyway (runs its IDE default);
-        # this keeps it in the chain and steers the gemini-CLI fallback.
-        "antigravity": "gemini-3.5-flash",
         # grok-4.3 (released 2026-04-30) is simultaneously the fastest
         # AND most capable Grok — replaces 4.1-fast in both tiers.
         "grok": "grok-4.3",
@@ -294,10 +292,6 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         "claude-api": "claude-opus-4-8",
         "gemini": "gemini-3.1-pro-preview",
         "openai": "gpt-5.5-pro",
-        # Codex deep-tier anchor (same reason as the router tier above). The CLI
-        # path ignores the model; this keeps codex in the deep/code chain too.
-        "codex": "gpt-5.5",
-        "antigravity": "gemini-3.1-pro-preview",
         "grok": "grok-4.3",
         "deepseek": "deepseek-reasoner",
         "openrouter": "anthropic/claude-opus-4.8",
@@ -335,6 +329,23 @@ def get_tier_default_model(tier: str, provider: str) -> str | None:
     supported at all.
     """
     return TIER_DEFAULTS_BY_PROVIDER.get(tier, {}).get(provider)
+
+
+def _coerce_main_brain_provider(provider: str | None, *fallbacks: str | None) -> str:
+    """Return a main-brain-capable provider.
+
+    Some provider integrations exist only for the heavy subagent worker. They
+    must remain present in the codebase for that path, but an old persisted
+    ``brain.primary`` must not make the main router run through them.
+    """
+    candidate = (provider or "").strip()
+    if candidate and candidate not in SUBAGENT_ONLY_BRAIN_PROVIDERS:
+        return candidate
+    for fallback in (*fallbacks, *_MAIN_BRAIN_FALLBACK_PROVIDER_ORDER):
+        value = (fallback or "").strip()
+        if value and value not in SUBAGENT_ONLY_BRAIN_PROVIDERS:
+            return value
+    return _MAIN_BRAIN_FALLBACK_PROVIDER_ORDER[0]
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -1266,6 +1277,10 @@ class BrainManager:
         # _collect_vision_images, bypassing the screen-vision gate so a dropped
         # picture reaches the multimodal brain even with screen-vision off.
         self._pending_turn_images: dict[UUID, tuple[ImageBlock, ...]] = {}
+        # Drag-drop SILENT context: pictures dropped onto the bar/mascot, parked
+        # for the NEXT real turn (a drop never triggers a turn). See
+        # add_dropped_context / generate. Dropped TEXT goes into _history.
+        self._pending_drop_images: tuple[ImageBlock, ...] = ()
         # B5 Agent C: wiki context injector.  None = no-op (Agent B not merged
         # yet, or [wiki_context].enabled = false).  Set by factory.py for the
         # router tier only; sub-tiers never get wiki injection.
@@ -1318,7 +1333,21 @@ class BrainManager:
         self._provider_down_idx: int = 0
 
         self._registry = BrainProviderRegistry()
-        self._active_name: str = config.brain.primary
+        raw_primary = getattr(config.brain, "primary", None)
+        router_cfg = getattr(config.brain, "router", None)
+        coerced_primary = _coerce_main_brain_provider(
+            raw_primary,
+            getattr(router_cfg, "provider", None),
+            getattr(config.brain, "deep_brain", None),
+        )
+        if coerced_primary != (raw_primary or "").strip():
+            log.warning(
+                "Brain provider %r is subagent-only; using %r as main brain.",
+                raw_primary,
+                coerced_primary,
+            )
+            config.brain.primary = coerced_primary
+        self._active_name: str = coerced_primary
         # The (provider, model) actually answering the CURRENT turn. Set per
         # fallback-chain attempt in generate() right before the dispatcher is
         # built, consumed by _build_system_prompt to inject the authoritative
@@ -1443,7 +1472,19 @@ class BrainManager:
             )
 
         local_config = config.model_copy(deep=True)
-        effective_provider = provider_override or tier_cfg.provider
+        requested_provider = provider_override or tier_cfg.provider
+        effective_provider = _coerce_main_brain_provider(
+            requested_provider,
+            tier_cfg.provider,
+            tier_cfg.fallback_provider,
+            getattr(config.brain, "deep_brain", None),
+        )
+        if effective_provider != (requested_provider or "").strip():
+            log.warning(
+                "Brain provider %r is subagent-only; using %r as router brain.",
+                requested_provider,
+                effective_provider,
+            )
         local_config.brain.primary = effective_provider
         # deep_brain normally mirrors the tier's fallback provider. But when an
         # explicit override redirected the active provider away from the tier
@@ -4490,18 +4531,16 @@ class BrainManager:
         #    gemini-3.1-pro-preview).
         deep_brain = self._config.brain.deep_brain
         # When the user has explicitly made a frontier SUBSCRIPTION brain the
-        # active one (codex via ChatGPT, antigravity via the Google subscription),
+        # active one (codex via ChatGPT),
         # it leads ALL turns — the deep_brain (e.g. gemini) must NOT jump ahead for
         # deep/code intents, or the chosen brain would never actually answer a hard
         # question despite being selected (it would silently fall through to the
-        # deep_brain). Both are themselves frontier models, so there is no
-        # capability reason to delegate. Other active brains keep the deep_brain
-        # routing unchanged.
+        # deep_brain). Other active brains keep the deep_brain routing unchanged.
         if (
             level in ("deep", "code")
             and deep_brain
             and deep_brain != active
-            and active not in ("codex", "antigravity")
+            and active != "codex"
             and deep_brain in self._registry.available()
         ):
             preferred_deep = self._deep_model(deep_brain) or self._fast_model(deep_brain)
@@ -4961,6 +5000,17 @@ class BrainManager:
             return await self._provider_down_reply(trace_uuid)
 
         history = self._history if use_history else []
+        _drop_in_hist = sum(
+            1 for m in history
+            if isinstance(getattr(m, "content", None), str)
+            and "\U0001F4CE" in m.content
+        )
+        if _drop_in_hist:
+            log.info(
+                "📎 DROP CONTEXT present in this turn's history: %d note(s), "
+                "use_history=%s, total history=%d",
+                _drop_in_hist, use_history, len(history),
+            )
         last_exc: Exception | None = None
         response_text = ""
         used_provider: str | None = None
@@ -5060,6 +5110,15 @@ class BrainManager:
             turn_context = (
                 f"{turn_context}\n\n{pointer_block}" if turn_context else pointer_block
             )
+
+        # Drag-drop SILENT context: pictures parked by ``add_dropped_context``
+        # (a drop never triggers its own turn) are pulled into THIS real turn,
+        # once — added AFTER vision + AI-Pointer image logic so neither clobbers
+        # them. Cleared on consume; never re-sent on later turns.
+        _dropped_imgs = getattr(self, "_pending_drop_images", ()) or ()
+        if _dropped_imgs:
+            self._pending_drop_images = ()
+            images = tuple(_dropped_imgs) + tuple(images)
 
         for idx, (prov_name, model) in enumerate(chain):
             # Skip providers already marked dead in THIS turn.
@@ -5467,6 +5526,36 @@ class BrainManager:
         if getattr(self, "_pending_turn_images", None) is None:
             self._pending_turn_images = {}
         self._pending_turn_images[trace_id] = tuple(images)
+
+    def add_dropped_context(
+        self, text: str, images: tuple[ImageBlock, ...] = ()
+    ) -> None:
+        """Stash drag-and-dropped content as SILENT conversation context.
+
+        A drop must NOT trigger a brain turn — the user keeps the normal speaking
+        flow, and the dropped content is simply remembered and used on the NEXT
+        real turn (a drop while idle is kept for next time; a drop mid-flow joins
+        the running context). The text is appended to history as a user-context
+        message so it is naturally in the next turn's context (and persists for
+        follow-ups); images are parked and consumed once by the next
+        ``generate`` call. getattr-guarded for managers built via ``__new__``.
+        """
+        if text and text.strip():
+            if getattr(self, "_history", None) is None:
+                self._history = []
+            self._history.append(BrainMessage(role="user", content=text.strip()))
+            if len(self._history) > 40:
+                self._history = self._history[-40:]
+        log.info(
+            "📎 DROP CONTEXT stashed: %d text chars, %d images "
+            "(history now %d msgs, pending drop images %d)",
+            len(text or ""), len(images),
+            len(getattr(self, "_history", []) or []),
+            len(getattr(self, "_pending_drop_images", ()) or ()) + len(images),
+        )
+        if images:
+            cur = getattr(self, "_pending_drop_images", ()) or ()
+            self._pending_drop_images = tuple(cur) + tuple(images)
 
     async def _collect_vision_images(
         self,

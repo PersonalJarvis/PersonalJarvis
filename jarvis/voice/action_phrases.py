@@ -223,6 +223,51 @@ _CU_VERIFIER_DUMP_RE = re.compile(
     r"|\bwindow\s+(?:title|content|titled)\b",
     re.IGNORECASE,
 )
+#: The latency "mission profile" line is a run of numeric ``key=value`` telemetry
+#: tokens: "steps=3 total=9.5s act=3.0s observe=0.3s plan=1.6s think=4.6s". The
+#: FAILURE path strips the "[cu] mission profile:" PREFIX (via
+#: ``_CU_REASON_PREFIX_RE``) before the speakability gate runs, which deletes the
+#: very "[cu]"/"mission profile" markers ``_CU_DIAGNOSTIC_RE`` keys on — so the
+#: BARE profile sailed straight through and was spoken (live bug 2026-06-22, the
+#: Ed-Sheeran "Perfect" turn: 'That didn't work on screen: steps=3 total=9.5s
+#: act=3.0s observe=0.3s plan=1.6s think=4.6s'). Detect the profile STRUCTURALLY
+#: instead — independent of any prefix: any of the named phase keys, or two or
+#: more numeric ``key=value`` tokens in a row, is a machine stats dump, never a
+#: human sentence. A lone "HTTP 403" / "2 attempts" carries no ``=`` and survives.
+_CU_TELEMETRY_RE = re.compile(
+    r"\b(?:steps|total|act|observe|plan|think|verify)=\d"  # a named profile stat
+    r"|(?:\b[A-Za-z_][\w-]*=\d[\d.]*\w*\b\s*){2,}",        # >=2 numeric key=value
+    re.IGNORECASE,
+)
+#: A filesystem path or screenshot-artifact filename that leaked into a readback.
+#: The harness temp capture ("C:\\…\\pythonw_xxxx.png") rode the failure ``detail``
+#: into the spoken text on the same 2026-06-22 turn. A spoken answer never names a
+#: path or an image file, so any of these forces the generic phrase. The image
+#: extension is matched cross-platform (the screenshot leak is identical on a
+#: headless Linux VPS, where the path would be POSIX).
+_CU_PATH_ARTIFACT_RE = re.compile(
+    r"[A-Za-z]:[\\/]"                                  # a Windows drive-letter path
+    r"|\b[\w-]+\.(?:png|jpe?g|gif|bmp|webp|tiff?)\b",  # a screenshot / image file
+    re.IGNORECASE,
+)
+
+
+def _is_diagnostic_noise(text: str) -> bool:
+    """True if ``text`` is internal machine noise that must never be spoken.
+
+    The shared, structural junk-detector behind both speakability gates. Covers
+    the named loop markers (``_CU_DIAGNOSTIC_RE``), the bare latency ``mission
+    profile`` stats run (``_CU_TELEMETRY_RE`` — matched by SHAPE so it still trips
+    after the "[cu] mission profile:" prefix has been stripped off), and a leaked
+    filesystem / screenshot path (``_CU_PATH_ARTIFACT_RE``). Pure regex, no LLM
+    (AP-11): the answer is "is this a sentence a butler would say, or a developer
+    log line?" — the user's "if you see that junk, you know not to speak it".
+    """
+    return bool(
+        _CU_DIAGNOSTIC_RE.search(text)
+        or _CU_TELEMETRY_RE.search(text)
+        or _CU_PATH_ARTIFACT_RE.search(text)
+    )
 
 
 def _looks_human(text: str) -> bool:
@@ -249,30 +294,33 @@ def _is_speakable_reason(text: str | None) -> bool:
     Stricter than :func:`_looks_human`: besides rejecting bare ``exit N`` /
     numeric / empty tokens, it rejects internal computer-use DIAGNOSTIC and
     telemetry strings (the no-progress guard, the anti-oscillation / toggle
-    guards, and the latency ``mission profile`` summary). Those are developer
-    instrumentation written to the harness ``stderr`` — never the model's human
-    ``fail`` reason — so they must never reach a spoken/displayed readback. A
-    blocked string degrades to the generic, localized exit-code phrase instead.
+    guards, the bare latency ``mission profile`` stats run, and a leaked
+    screenshot path). Those are developer instrumentation written to the harness
+    ``stderr`` — never the model's human ``fail`` reason — so they must never
+    reach a spoken/displayed readback. A blocked string degrades to the generic,
+    localized exit-code phrase instead.
     """
     if not _looks_human(text or ""):
         return False
-    return _CU_DIAGNOSTIC_RE.search(text or "") is None
+    return not _is_diagnostic_noise(text or "")
 
 
 def _is_speakable_observation(text: str | None) -> bool:
     """True if ``text`` is a clean, user-facing observation — safe to speak.
 
     The SUCCESS sibling of :func:`_is_speakable_reason`. Besides rejecting bare
-    ``exit N`` / numeric / empty tokens and internal diagnostic markers, it also
-    rejects a raw VERIFIER UI-STRUCTURE dump (``_CU_VERIFIER_DUMP_RE``): a
-    "Foreground window (...): title '...', content starts '...'" proof is the
-    judge's internal evidence, not the answer the user asked for, and leaks
-    whatever happened to be on screen (incl. unrelated windows). A blocked
-    observation degrades to the generic, localized ``cu_done`` phrase instead.
+    ``exit N`` / numeric / empty tokens, internal diagnostic markers, the bare
+    telemetry profile, and a leaked screenshot path (all via
+    :func:`_is_diagnostic_noise`), it also rejects a raw VERIFIER UI-STRUCTURE
+    dump (``_CU_VERIFIER_DUMP_RE``): a "Foreground window (...): title '...',
+    content starts '...'" proof is the judge's internal evidence, not the answer
+    the user asked for, and leaks whatever happened to be on screen (incl.
+    unrelated windows). A blocked observation degrades to the generic, localized
+    ``cu_done`` phrase instead.
     """
     if not _looks_human(text or ""):
         return False
-    if _CU_DIAGNOSTIC_RE.search(text or "") is not None:
+    if _is_diagnostic_noise(text or ""):
         return False
     return _CU_VERIFIER_DUMP_RE.search(text or "") is None
 

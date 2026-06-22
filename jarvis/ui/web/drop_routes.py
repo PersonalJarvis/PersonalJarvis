@@ -38,10 +38,11 @@ async def drop_into_context(
     Returns ``{"dispatched": bool}`` — ``False`` when the drop carried nothing
     usable (no turn dispatched). 413 when the total payload exceeds the cap.
     """
-    bus = getattr(request.app.state, "bus", None)
-    if bus is None:
-        raise HTTPException(status_code=503, detail="Event bus unavailable.")
     brain = getattr(request.app.state, "brain", None)
+    if brain is None:
+        raise HTTPException(
+            status_code=503, detail="Brain unavailable to hold dropped context."
+        )
 
     items: list[DroppedItem] = []
     total = 0
@@ -63,11 +64,12 @@ async def drop_into_context(
             )
         )
 
-    dispatched = await ingest_drop(
-        bus=bus,
+    captured = await ingest_drop(
         brain=brain,
         thread_id=thread_id or "default",
         items=items,
         dragged_text=text,
     )
-    return {"dispatched": dispatched}
+    # ``dispatched`` kept as the response key for frontend compatibility; it now
+    # means "captured into context" (a drop never dispatches a turn on its own).
+    return {"dispatched": captured}

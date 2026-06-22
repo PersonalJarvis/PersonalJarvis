@@ -61,7 +61,13 @@ def _build_command(
     path: str, method: str, op: dict[str, Any], runner: Runner
 ) -> click.Command:
     parameters = op.get("parameters", [])
-    path_names = {p["name"] for p in parameters if p.get("in") == "path"}
+    # Map Click's normalized kwarg name (hyphens -> underscores) back to the raw
+    # OpenAPI path-param name, so a route like /x/{some-id} substitutes correctly.
+    path_param_raw = {
+        p["name"].replace("-", "_"): p["name"]
+        for p in parameters
+        if p.get("in") == "path"
+    }
     params: list[click.Parameter] = [_option_for(p) for p in parameters]
     has_body = "requestBody" in op
     if has_body:
@@ -72,8 +78,26 @@ def _build_command(
                 required=bool(op["requestBody"].get("required", False)),
             )
         )
+    # Safety flags — added unless an endpoint already exposes a colliding param.
+    existing_kwargs = {p["name"].replace("-", "_") for p in parameters}
+    if "yes" not in existing_kwargs:
+        params.append(
+            click.Option(
+                ["--yes", "-y"], is_flag=True, default=False,
+                help="Authorize a mutating/destructive request without a prompt.",
+            )
+        )
+    if "dry_run" not in existing_kwargs:
+        params.append(
+            click.Option(
+                ["--dry-run"], is_flag=True, default=False,
+                help="Print the request that would be sent and exit without sending.",
+            )
+        )
 
     def callback(**kwargs: Any) -> None:
+        assume_yes = bool(kwargs.pop("yes", False))
+        dry_run = bool(kwargs.pop("dry_run", False))
         body = None
         raw = kwargs.pop("json_body", None)
         if raw is not None:
@@ -83,16 +107,23 @@ def _build_command(
         for key, value in kwargs.items():
             if value is None:
                 continue
-            if key in path_names:
-                url_path = url_path.replace("{" + key + "}", str(value))
+            raw = path_param_raw.get(key)
+            if raw is not None:
+                url_path = url_path.replace("{" + raw + "}", str(value))
             else:
                 query[key] = value
-        result = runner(method, url_path, query, body)
         # Local import avoids a load-time cycle with __main__.
-        from jarvis.cli_ctl import render
+        from jarvis.cli_ctl import render, safety
         from jarvis.cli_ctl.__main__ import as_json
 
-        render.emit(result, as_json=as_json())
+        json_out = as_json()
+        if not safety.gate_request(
+            method, url_path, body=body,
+            assume_yes=assume_yes, dry_run=dry_run, as_json=json_out,
+        ):
+            return  # dry run: preview already printed, nothing sent
+        result = runner(method, url_path, query, body)
+        render.emit(result, as_json=json_out)
 
     return click.Command(
         name=_clean_name(op.get("operationId", ""), method, path),

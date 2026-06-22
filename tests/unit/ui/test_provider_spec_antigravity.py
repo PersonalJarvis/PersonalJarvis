@@ -15,6 +15,7 @@ def test_antigravity_provider_spec():
     spec = get_spec("antigravity")
     assert spec is not None
     assert spec.tier == "brain"
+    assert spec.brain_switchable is False
     assert spec.auth_mode == "antigravity"
     assert spec.secret_keys == ()  # OAuth-only, no API-key slot
     assert spec.login_cli is not None
@@ -25,3 +26,12 @@ def test_antigravity_provider_spec():
 def test_antigravity_excluded_from_live_catalog():
     # No /v1/models endpoint over OAuth — must not be live-fetched.
     assert "antigravity" not in model_catalog.CATALOG_PROVIDERS
+
+
+def test_codex_provider_spec_is_subagent_only():
+    spec = get_spec("codex")
+    assert spec is not None
+    assert spec.tier == "brain"
+    assert spec.brain_switchable is False
+    assert spec.auth_mode == "codex"
+    assert spec.login_cli == ("codex", "login")

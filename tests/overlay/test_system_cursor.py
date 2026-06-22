@@ -9,6 +9,7 @@ CI box this project's cloud-first doctrine targets.
 from __future__ import annotations
 
 import asyncio
+import sys
 
 import pytest
 
@@ -139,6 +140,36 @@ def test_activate_failure_keeps_state_inactive() -> None:
     assert c._active is False
     c.shutdown()
     assert restores == []  # nothing to restore — activation never succeeded
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="real Win32 HCURSOR build is Windows-only")
+def test_create_hcursor_does_not_overflow_on_64bit_handles() -> None:
+    """Regression (2026-06-22): the gdi32/user32 handle args were passed to
+    ctypes WITHOUT ``argtypes``, so on 64-bit Windows a >2^31 HBITMAP overflowed
+    the default ``c_int`` marshalling ("OverflowError: int too long to convert")
+    at the cleanup ``DeleteObject``. ``_real_activate`` therefore raised on EVERY
+    Computer-Use mission, the failure was swallowed at DEBUG by
+    ``JarvisSystemCursor.ping``, and the user kept their default cursor instead of
+    the gold Jarvis one. Building the cursor must NOT raise and must return a
+    real non-zero HCURSOR. (Builds + destroys an icon only — does NOT swap the
+    live system cursor, so it is safe to run in the suite.)"""
+    import ctypes
+    from ctypes import wintypes
+
+    from jarvis.overlay.system_cursor import _create_hcursor_from_rgba
+
+    rgba = bytes(48 * 48 * 4)  # synthetic transparent RGBA; no Pillow needed
+    hcur = _create_hcursor_from_rgba(
+        rgba, width=48, height=48, hotspot_x=2, hotspot_y=2,
+    )
+    assert hcur != 0, "HCURSOR build returned 0 (DIB / CreateIconIndirect failed)"
+
+    # Clean up the HICON/HCURSOR we just built (argtypes pinned for the same
+    # 64-bit-handle reason the fix is about).
+    user32 = ctypes.windll.user32
+    user32.DestroyIcon.argtypes = [wintypes.HANDLE]
+    user32.DestroyIcon.restype = wintypes.BOOL
+    user32.DestroyIcon(hcur)
 
 
 def test_ping_jarvis_cursor_helper_is_safe_when_none_set() -> None:

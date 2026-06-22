@@ -1,18 +1,17 @@
-"""Turn dragged-and-dropped OS content into a proactive brain turn.
+"""Capture dragged-and-dropped OS content as SILENT conversation context.
 
 A user drops files / images / text onto the Jarvis presence (the in-app dock or
 the floating overlay). This module is the **shared, surface-agnostic intake**:
-it classifies the dropped items, composes one bounded, human-readable directive
-that tells the brain to *react* to what was dropped, and (for images) returns the
-multimodal :class:`ImageBlock` payloads so the brain can actually *see* a dropped
-picture.
+it classifies the dropped items, composes one bounded, human-readable context
+note, and (for images) returns the multimodal :class:`ImageBlock` payloads so the
+brain can later *see* a dropped picture.
 
-The directive is published as a normal ``MessageSent(role="user")`` — reusing the
-entire existing reply pipeline (spoken on the voice build, shown in chat, landed
-in ``_history``), exactly like the mission-drop feature. The model decides the
-reaction from the content; nothing here hard-codes behaviour.
+**A drop never triggers a brain turn.** The user keeps the normal speaking flow;
+``ingest_drop`` hands the content to ``brain.add_dropped_context``, which keeps
+the text in the conversation context (history) and parks images for the NEXT real
+user turn. Jarvis only reacts when the user next speaks or types — a drop while
+idle is remembered for next time, a drop mid-flow joins the running context.
 
-See ``docs/superpowers/specs/2026-06-21-dragdrop-files-into-context-design.md``.
 No FastAPI / no Tk imports here — both the web route and the desktop overlay call
 this module.
 """
@@ -24,7 +23,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from jarvis.core.protocols import ImageBlock
 
@@ -219,10 +218,12 @@ def classify_and_compose(
         return "", ()
 
     dropped_list = ", ".join(names) if names else "some content"
-    header = f"\U0001F4CE You just dropped this onto me: {dropped_list}."
+    header = (
+        f"\U0001F4CE (Context — I dropped this into our conversation: {dropped_list}.)"
+    )
     instruction = (
-        "Take a look at what I gave you and react naturally and helpfully: point "
-        "out what stands out, analyse it, or ask me what I'd like done with it."
+        "Keep this in mind for whatever I say next — there's no need to react to "
+        "it on its own."
     )
     directive = "\n".join([header, *notes, instruction]).strip()
     if len(directive) > max_total_chars:
@@ -232,41 +233,27 @@ def classify_and_compose(
 
 async def ingest_drop(
     *,
-    bus: Any,
+    bus: Any = None,  # kept for call-site stability; the silent flow needs no bus
     brain: Any,
-    thread_id: str,
+    thread_id: str = "default",  # noqa: ARG001 — kept for call-site stability
     items: Sequence[DroppedItem],
     dragged_text: str | None = None,
-    trace_id: UUID | None = None,
+    trace_id: UUID | None = None,  # noqa: ARG001 — kept for call-site stability
 ) -> bool:
-    """Compose a drop directive and dispatch it as one proactive brain turn.
+    """Capture dropped content as SILENT conversation context — never a turn.
 
-    Returns ``True`` when a ``MessageSent`` was published, ``False`` when the
-    drop carried nothing usable (no turn dispatched). Reuses the entire reply
-    pipeline: the published ``MessageSent(role="user")`` is picked up by the
-    chat handler → ``brain.generate`` → spoken on the voice build + shown in
-    chat + landed in ``_history``. Dropped images are injected for exactly this
-    turn (keyed by ``trace_id``) so the multimodal brain can see them.
+    A drop must NOT make Jarvis think on its own (the user keeps the normal
+    speaking flow). We stash the classified content on the brain via
+    ``add_dropped_context``: the text joins the conversation context and any
+    images are parked for the NEXT real user turn. Jarvis only reacts when the
+    user next speaks/types. Returns ``True`` when something was captured,
+    ``False`` for an empty drop or when no brain is available to hold context.
     """
-    from jarvis.core.events import MessageSent
-
     directive, images = classify_and_compose(items, dragged_text)
     if not directive:
         return False
-
-    turn_trace = trace_id or uuid4()
-    if images and brain is not None:
-        inject = getattr(brain, "inject_images_for_turn", None)
-        if callable(inject):
-            inject(turn_trace, images)
-
-    await bus.publish(
-        MessageSent(
-            trace_id=turn_trace,
-            thread_id=thread_id or "default",
-            role="user",
-            text=directive,
-            source_layer=DROP_SOURCE_LAYER,
-        )
-    )
+    add = getattr(brain, "add_dropped_context", None)
+    if not callable(add):
+        return False
+    add(directive, images)
     return True

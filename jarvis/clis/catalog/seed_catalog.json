@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "updated": "2026-04-23",
+  "updated": "2026-06-22",
   "note": "Curated seed catalog for the CLI integration. 21 entries across 7 categories (cloud/paas/baas/git/payments/container/workspace). All risk-tier defaults follow business impact: payments/prod-cluster -> ask, everything else -> monitor + blacklist.",
   "entries": [
     {
@@ -2053,7 +2053,7 @@
     {
       "name": "jarvisctl",
       "display_name": "Jarvis Control CLI",
-      "description": "Control this Personal Jarvis instance: list/create/cancel tasks, read or switch settings, restart the app, and reach any API endpoint.",
+      "description": "Control this running Jarvis via its own CLI: switch the brain / sub-agent provider, read or change config, search the wiki, list missions / sessions / outputs, manage skills. Reads run free; destructive / recursive commands (dispatch, restart, delete, outbound, …) are blocked.",
       "homepage": "https://github.com/PersonalJarvis/PersonalJarvis",
       "binary_name": "jarvisctl",
       "check_command": [
@@ -2078,21 +2078,40 @@
         "default_tier": "monitor",
         "blacklist_patterns": [
           "jarvisctl * delete *",
+          "jarvisctl * delete*",
           "jarvisctl auth *",
           "jarvisctl api * secrets*",
-          "jarvisctl api * keys*"
+          "jarvisctl api * keys*",
+          "jarvisctl * dispatch*",
+          "jarvisctl * restart*",
+          "jarvisctl * kill*",
+          "jarvisctl * rerun*",
+          "jarvisctl * cancel*",
+          "jarvisctl * outbound*"
         ],
         "whitelist_patterns": [
-          "jarvisctl tasks list*",
-          "jarvisctl tasks get*",
-          "jarvisctl system status*",
-          "jarvisctl version*"
+          "jarvisctl version*",
+          "jarvisctl --version*",
+          "jarvisctl * status*",
+          "jarvisctl * list*",
+          "jarvisctl * show*",
+          "jarvisctl * get*",
+          "jarvisctl config get*",
+          "jarvisctl wiki recall*",
+          "jarvisctl wiki page*",
+          "jarvisctl wiki tree*",
+          "jarvisctl docs *",
+          "jarvisctl * pending*",
+          "jarvisctl * --dry-run*"
         ]
       },
       "tool_schema_examples": [
-        "jarvisctl tasks list --state scheduled",
-        "jarvisctl system restart",
-        "jarvisctl --json tasks get <id>"
+        "jarvisctl brain status",
+        "jarvisctl brain switch openai",
+        "jarvisctl brain subagent-switch openai",
+        "jarvisctl --json missions list",
+        "jarvisctl config get brain.primary",
+        "jarvisctl wiki recall \"melbourne visa\""
       ],
       "icon": "terminal",
       "category": "self",

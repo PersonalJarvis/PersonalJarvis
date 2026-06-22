@@ -102,16 +102,36 @@ class TkDnDDropTarget:
             # (BUG-031 cached-root constraint). Idempotent across overlays.
             TkinterDnD._require(root)
 
+            # Remember the resting opacity so the hover highlight can dim back.
+            try:
+                rest_alpha = float(root.wm_attributes("-alpha"))
+            except Exception:  # noqa: BLE001
+                rest_alpha = 0.6
+
+            def _highlight(on: bool) -> None:
+                # Visible drag feedback (window-level only — never fights the
+                # renderer): the pill goes fully opaque while a file hovers, so
+                # the user SEES exactly where the (small, frameless) drop zone is.
+                try:
+                    root.wm_attributes("-alpha", 1.0 if on else rest_alpha)
+                except Exception:  # noqa: BLE001, S110 — cosmetic; never crash a drop
+                    pass
+
             def _accept(event: Any) -> str:
                 # DropEnter/DropPosition MUST return the accepted action, else
                 # tkdnd rejects the drag and the OS shows the "no-drop" cursor.
-                # This also logs that the OS is delivering drag events to this
-                # (frameless/topmost/color-key) window — the key live diagnostic.
+                # The log line is the key live diagnostic that the OS is
+                # delivering drag events to this frameless/topmost/color-key window.
                 action = str(getattr(event, "action", "") or COPY)
+                _highlight(True)
                 log.info("overlay DRAG over bar (tkdnd delivering) action=%s", action)
                 return action
 
+            def _leave(_event: Any) -> None:
+                _highlight(False)
+
             def _on_drop(event: Any) -> None:
+                _highlight(False)
                 try:
                     data = str(getattr(event, "data", "") or "")
                     paths = _parse_dnd_files(data)
@@ -135,6 +155,7 @@ class TkDnDDropTarget:
             widget.dnd_bind("<<Drop>>", _on_drop)
             widget.dnd_bind("<<DropEnter>>", _accept)
             widget.dnd_bind("<<DropPosition>>", _accept)
+            widget.dnd_bind("<<DropLeave>>", _leave)
             log.info("Overlay drop target registered (tkdnd).")
             return True
         except Exception:  # noqa: BLE001 — AD-6: registration must never crash the overlay.
