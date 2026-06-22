@@ -47,3 +47,27 @@ def test_undecodable_input_falls_back_to_original() -> None:
     # Telemetry/robustness: a bad image must never break the vision path.
     bad = ("image/png", "not-valid-base64-image!!")
     assert cap_image_b64(*bad, max_bytes=10) == bad
+
+
+def test_custom_max_dimension_downscales_further() -> None:
+    # L7 (CU speed): a smaller longest-side cap shrinks the payload more. Vision
+    # models resample to ~1568 px internally, so 2048 ships pixels they discard.
+    mime, b64 = _png_b64(2200, 1500)
+    out_mime, out_b64 = cap_image_b64(
+        mime, b64, max_bytes=200_000, max_dimension=1280,
+    )
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(base64.b64decode(out_b64)))
+    assert out_mime == "image/jpeg"
+    assert max(img.size) <= 1280  # honours the custom longest-side cap
+
+
+def test_default_max_dimension_is_2048() -> None:
+    # No-regression: the default longest-side cap is unchanged (2048 px).
+    mime, b64 = _png_b64(2600, 1700)
+    _, out_b64 = cap_image_b64(mime, b64, max_bytes=200_000)
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(base64.b64decode(out_b64)))
+    assert 2048 - 2 <= max(img.size) <= 2048  # still capped at the legacy 2048

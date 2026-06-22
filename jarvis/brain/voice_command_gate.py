@@ -69,15 +69,120 @@ _FAST_PATTERNS = (
     "nimm haiku", "use haiku", "schnell-modus", "think fast",
 )
 
+# Reply-language switch (added 2026-06-22, broadened after forensic #2). A
+# config change like "stell auf Englisch um" / "antworte auf Spanisch" /
+# "respond in German" must be a DETERMINISTIC, provider-independent action (set
+# brain.reply_language directly) — not an LLM tool-choice, never a worker
+# mission. A language word ALONE never matches; it needs an intent marker:
+#   (a) an unambiguous CHANGE verb (umstell/umänder/wechsel/änder/switch/change),
+#   (b) a bare imperative SPEAK verb (sprich/speak <lang>), or
+#   (c) an OUTPUT verb (antwort/respond/reply/answer/rede/set/stell/mach) plus a
+#       directional preposition (auf/in/zu/to <lang>).
+# So "wie heißt das auf Englisch?", "ich spreche Englisch", "auf Deutsch klingt
+# das besser", "erzähl mir was auf Englisch" still fall through to the brain.
+_LANG_ALIASES: dict[str, str] = {
+    "englisch": "en", "english": "en",
+    "deutsch": "de", "german": "de",
+    "spanisch": "es", "spanish": "es", "español": "es", "espanol": "es", "castellano": "es",
+    "automatisch": "auto", "automatik": "auto", "automatic": "auto", "auto": "auto",
+}
+# (a) Unambiguous change verbs — incl. German separable forms ("umändern",
+# "umstellen") whose "um" prefix breaks a plain "\bänder" boundary.
+_LANG_CHANGE_VERB = re.compile(
+    r"\b(?:um(?:stell|schalt|änder|aender|stellung)\w*|wechsel\w*|wechsle"
+    r"|änder\w*|aender\w*|switch\w*|change\w*)\b",
+    re.IGNORECASE,
+)
+# (b) Imperative speak verbs — match directly (no preposition needed):
+# "sprich Englisch", "speak English". German "spreche/spricht" (statements) are
+# intentionally NOT matched.
+_LANG_IMPERATIVE_SPEAK = re.compile(r"\b(?:sprich|speak\w*)\b", re.IGNORECASE)
+# (c) Output / request verbs — need a directional preposition to anchor the
+# language as the OUTPUT target. "respond in X", "antworte auf X", "rede auf X",
+# "set/stell … auf/to X", "mach … auf X".
+_LANG_OUTPUT_VERB = re.compile(
+    r"\b(?:antwort\w*|respond\w*|repl(?:y|ies)|answer\w*|rede|reden|set|stell\w*"
+    r"|mach\w*)\b",
+    re.IGNORECASE,
+)
+_LANG_PREP = re.compile(r"\b(?:auf|zu|to|in|on)\b", re.IGNORECASE)
+
+
+def _match_language_switch(t: str) -> str | None:
+    code: str | None = None
+    for word, c in _LANG_ALIASES.items():
+        if re.search(rf"\b{re.escape(word)}\b", t):
+            code = c
+            break
+    if code is None:
+        return None
+    if _LANG_CHANGE_VERB.search(t):
+        return code
+    if _LANG_IMPERATIVE_SPEAK.search(t):
+        return code
+    if _LANG_OUTPUT_VERB.search(t) and _LANG_PREP.search(t):
+        return code
+    return None
+
+
+# Sub-agent / Heavy-Task-worker provider switch (added 2026-06-22). Sibling of
+# the main provider_switch, but for [brain.sub_jarvis].provider — the worker
+# that runs heavy missions, NOT the router brain. The gate stays pure: it only
+# recognises the intent + the spoken provider word; the manager handler maps it
+# to a canonical subagent slug, validates, and persists via the 3-layer writer
+# (config-soll pinned) so the drift-guard cannot revert it. A sub-agent
+# QUALIFIER is required, so a bare "switch to gemini" still means the main brain.
+_SUBAGENT_QUALIFIER = re.compile(
+    r"\b(?:sub[-\s]?agent|subagent|sub[-\s]?jarvis|subjarvis|worker|helfer|helper)\b",
+    re.IGNORECASE,
+)
+# Longer variants first so "openai-codex" wins over "openai".
+_SUBAGENT_PROVIDER_WORDS = (
+    "openai-codex", "openrouter", "antigravity", "chatgpt", "anthropic",
+    "claude", "gemini", "openai", "codex", "grok", "gpt",
+)
+_SUBAGENT_SWITCH_VERB = re.compile(
+    r"\b(?:wechsel[n]?|wechsle|umstell\w*|umschalt\w*|stell\w*|set|switch|change|nimm|mach)\b",
+    re.IGNORECASE,
+)
+_SUBAGENT_PREP = re.compile(r"\b(?:auf|zu|to)\b", re.IGNORECASE)
+_SUBAGENT_PROVIDER_NOUN = re.compile(r"\b(?:provider|anbieter)\b", re.IGNORECASE)
+
+
+def _match_subagent_switch(t: str) -> str | None:
+    if not _SUBAGENT_QUALIFIER.search(t):
+        return None
+    for word in _SUBAGENT_PROVIDER_WORDS:
+        if re.search(rf"\b{re.escape(word)}\b", t):
+            # An explicit change verb is an unambiguous command. Otherwise accept
+            # only "... provider auf/to <X>" (a noun + preposition) so a STATEMENT
+            # like "der Sub-Agent läuft auf Gemini" (no verb, no 'provider' word)
+            # falls through to the brain instead of silently switching.
+            if _SUBAGENT_SWITCH_VERB.search(t):
+                return word
+            if _SUBAGENT_PREP.search(t) and _SUBAGENT_PROVIDER_NOUN.search(t):
+                return word
+            return None
+    return None
+
 
 @dataclass(frozen=True)
 class VoiceCommandMatch:
     """Result of a gate match.
 
     - kind: Class of the recognised command.
-    - target: Only populated for provider_switch (provider alias).
+    - target: provider alias (provider_switch), the reply-language code
+      de/en/es/auto (language_switch), or the spoken sub-agent provider word
+      (subagent_switch — the manager maps it to a canonical slug).
     """
-    kind: Literal["provider_switch", "cancel", "depth_deep", "depth_fast"]
+    kind: Literal[
+        "provider_switch",
+        "subagent_switch",
+        "language_switch",
+        "cancel",
+        "depth_deep",
+        "depth_fast",
+    ]
     target: str = ""
 
 
@@ -91,10 +196,22 @@ def match_voice_command(text: str) -> VoiceCommandMatch | None:
     if _CANCEL_PATTERN.search(t):
         return VoiceCommandMatch(kind="cancel")
 
+    # Sub-agent provider switch BEFORE the main provider switch: a sub-agent
+    # qualifier ("switch the SUB-AGENT provider to X") must target the worker,
+    # not the router brain.
+    sub = _match_subagent_switch(t)
+    if sub:
+        return VoiceCommandMatch(kind="subagent_switch", target=sub)
+
     # Provider-Switch
     m = _PROVIDER_PATTERN.search(t)
     if m:
         return VoiceCommandMatch(kind="provider_switch", target=m.group("provider"))
+
+    # Reply-language switch (deterministic — never an LLM tool-choice / spawn).
+    lang = _match_language_switch(t)
+    if lang:
+        return VoiceCommandMatch(kind="language_switch", target=lang)
 
     # Depth-Override
     for p in _DEEP_PATTERNS:

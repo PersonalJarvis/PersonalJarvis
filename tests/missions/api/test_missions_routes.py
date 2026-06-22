@@ -622,3 +622,69 @@ def test_rerun_returns_503_without_manager(app_no_manager: FastAPI) -> None:
     with TestClient(app_no_manager) as client:
         r = client.post("/api/missions/some-id/rerun", json={})
     assert r.status_code == 503
+
+
+async def test_rerun_is_idempotent_while_child_alive(
+    manager: MissionManager,
+) -> None:
+    """A burst of /rerun POSTs must NOT spawn one child mission per request.
+
+    Forensic 2026-06-22 (mission 019eefcb-cee2): a click-storm / re-render loop
+    POSTed /rerun nine times in three seconds and the endpoint created NINE
+    child missions — "one mission, nine sub-agents". The source mission stays
+    terminal forever (a permanent audit record) and is thus re-runnable
+    indefinitely, so without a choke-point every repeated POST dispatched
+    another child. The spawn_worker voice path already has a liveness gate; the
+    source_actor="ui" rerun path is the missing equivalent: a parent may have
+    at most ONE live (non-terminal) re-run child, and extra POSTs resolve to
+    that same child idempotently.
+    """
+    src = await manager.dispatch(prompt="build the thing", language="en")
+    await _drive_to(manager, src, MissionState.CANCELLED)
+
+    ids: list[str] = []
+    with TestClient(_app_for(manager)) as client:
+        for _ in range(9):
+            r = client.post(f"/api/missions/{src}/rerun", json={})
+            assert r.status_code == 200
+            ids.append(r.json()["mission_id"])
+
+    # All nine POSTs resolve to the SAME single child mission.
+    assert len(set(ids)) == 1, f"expected one child, got {sorted(set(ids))}"
+    child = ids[0]
+    assert child != src
+
+    # The store holds exactly ONE child of the parent.
+    children = await manager.store.find_child_missions(src)
+    assert len(children) == 1
+    assert children[0][0] == child
+
+
+async def test_rerun_allowed_again_after_child_terminal(
+    manager: MissionManager,
+) -> None:
+    """The guard blocks only while a child is LIVE — never permanently.
+
+    Once the first re-run child reaches a terminal state, a fresh re-run is
+    allowed again and creates a second child. This keeps the legitimate
+    "Continue / Restart again" flow working.
+    """
+    src = await manager.dispatch(prompt="again please", language="en")
+    await _drive_to(manager, src, MissionState.CANCELLED)
+
+    with TestClient(_app_for(manager)) as client:
+        first = client.post(f"/api/missions/{src}/rerun", json={}).json()[
+            "mission_id"
+        ]
+
+    # Drive the live child to a terminal state, then re-run once more.
+    await _drive_to(manager, first, MissionState.FAILED)
+
+    with TestClient(_app_for(manager)) as client:
+        second = client.post(f"/api/missions/{src}/rerun", json={}).json()[
+            "mission_id"
+        ]
+
+    assert second != first
+    children = await manager.store.find_child_missions(src)
+    assert {c[0] for c in children} == {first, second}

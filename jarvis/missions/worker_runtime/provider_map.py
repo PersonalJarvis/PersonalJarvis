@@ -107,7 +107,7 @@ MAPPINGS: Final[tuple[ProviderMapping, ...]] = (
     ),
     ProviderMapping("openai", "openai", "OPENAI_API_KEY"),
     ProviderMapping("openrouter", "openrouter", "OPENROUTER_API_KEY"),
-    ProviderMapping("grok", "xai", "XAI_API_KEY", "GROK_API_KEY"),
+    # xAI Grok removed as a sub-agent/brain provider 2026-06-22 (TTS-only now).
 )
 
 
@@ -157,8 +157,8 @@ def to_jarvis_slug(openclaw_provider: str) -> str:
     """OpenClaw-Slug zu Personal-Jarvis-Slug (Reverse-Mapping fuer Telemetrie).
 
     Beispiel:
-        >>> to_jarvis_slug("xai")
-        'grok'
+        >>> to_jarvis_slug("google")
+        'gemini'
 
     Raises:
         UnknownOpenclawProviderError: Wenn `openclaw_provider` nicht in MAPPINGS ist.

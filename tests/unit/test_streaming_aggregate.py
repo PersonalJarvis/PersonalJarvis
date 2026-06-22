@@ -144,6 +144,20 @@ async def test_aggregate_first_json_falls_back_to_full_stream_for_prose():
     assert consumed == ["a", "b", "c"]
 
 
+def test_has_complete_json_action_caps_scan_on_oversized_text():
+    """Defensive bound: above a generous size cap (far over the action/planner
+    max_tokens), the scan is skipped (returns False -> the full aggregate takes
+    over) so a misbehaving provider streaming prose before the JSON cannot make
+    the per-delta scan quadratic. A normal-size action still early-stops."""
+    from jarvis.brain.streaming import _has_complete_json_action
+
+    assert _has_complete_json_action('{"action": "done"}') is True
+    # A *valid* but absurdly large object (>> any real 256/512-token response):
+    # not early-stopped, degrades safely to the full-stream aggregate.
+    oversized = '{"action":"type","text":"' + ("x" * 20000) + '"}'
+    assert _has_complete_json_action(oversized) is False
+
+
 @pytest.mark.asyncio
 async def test_aggregate_first_json_does_not_stop_on_empty_object_braces():
     """'{}' is balanced but not a usable action; an empty {} alone is still

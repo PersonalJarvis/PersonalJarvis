@@ -62,6 +62,16 @@ class ProviderSpec:
     # Alternative credential path (Gemini AI Studio vs Vertex). ``None`` =
     # single path.
     alt_credential: AltCredential | None = None
+    # Maintainer-recommended pick for this tier (UI badge). Set on exactly the
+    # provider the maintainer wants users to default to — currently the Gemini
+    # brain (best real-world experience, 2026-06-22). This is a presentation
+    # hint only: it never gates behavior, never branches a code path on a
+    # provider name (AP-21), and only the *brain* tier carries it today.
+    recommended: bool = False
+    # The specific model the recommendation points at (e.g. ``gemini-3.5-flash``),
+    # surfaced as an "empfohlen" marker in the model picker. ``None`` = the badge
+    # stands for the provider as a whole with no model preference.
+    recommended_model: str | None = None
 
 
 def provider_billing(spec: ProviderSpec) -> Billing:
@@ -198,19 +208,15 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "service-account path instead — it bills a different account."
         ),
         alt_credential=_GEMINI_VERTEX,
+        # Maintainer-recommended brain (2026-06-22): best real-world experience.
+        # Badge on the brain card; the model picker highlights gemini-3.5-flash.
+        recommended=True,
+        recommended_model="gemini-3.5-flash",
     ),
-    ProviderSpec(
-        id="grok",
-        label="xAI Grok",
-        tier="brain",
-        auth_mode="api_key",
-        secret_keys=("grok_api_key",),
-        dashboard_url="https://console.x.ai/",
-        credential_help=(
-            "xAI API key (starts with xai-). Billed per token. Shared by the "
-            "Grok brain and Grok Voice TTS."
-        ),
-    ),
+    # xAI Grok was removed as a BRAIN and SUB-AGENT provider on 2026-06-22
+    # (maintainer decision: Grok stays only as a TTS voice). The `grok-voice`
+    # TTS spec below is intentionally kept, and the `grok_api_key` credential it
+    # shares with the (now TTS-only) xAI key remains.
     # Ollama-Provider 2026-04-21 entfernt — reine API-Provider-Chain.
     # ── TTS ───────────────────────────────────────────────────────────────
     ProviderSpec(
@@ -259,7 +265,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         secret_keys=("grok_api_key",),
         dashboard_url="https://console.x.ai/",
         credential_help=(
-            "Uses your xAI key (shared with the Grok brain). Voices: leo, rex, "
+            "xAI API key (starts with xai-) for Grok Voice. Voices: leo, rex, "
             "sal, ara, eve."
         ),
     ),

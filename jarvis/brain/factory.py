@@ -995,6 +995,7 @@ def _phase2_full_brain(
                 per_step_timeout_s=cu_cfg.per_step_timeout_s,
                 think_timeout_cap_s=getattr(cu_cfg, "think_timeout_cap_s", 10.0),
                 image_max_bytes=getattr(cu_cfg, "image_max_bytes", 300_000),
+                image_max_dimension=getattr(cu_cfg, "image_max_dimension", 2048),
                 settle_scale=getattr(cu_cfg, "settle_scale", 1.0),
                 fast_step_model=getattr(cu_cfg, "fast_step_model", ""),
                 plan_model_override=cu_cfg.plan_model,

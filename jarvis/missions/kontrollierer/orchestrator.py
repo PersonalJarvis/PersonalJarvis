@@ -83,6 +83,7 @@ from ..safety import (
 from ..state_machine import IllegalStateTransition, MissionState
 from ..workers.base import WorkerProtocol
 from .decomposer import MissionDecomposer, MissionPlan, Step
+from .worker_prompt import compose_worker_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -1071,9 +1072,12 @@ class Kontrollierer:
         for iteration in range(MAX_CRITIC_LOOPS):
             # Per-iteration: render reflections, spawn worker, capture diff+log
             prior_block = reflections.render_for_worker_prompt(n=3)
-            worker_prompt = (
-                prior_block + "\n\n" + step.prompt if prior_block else step.prompt
-            )
+            # Lead every worker prompt with the artifact-language directive so
+            # generated code defaults to English regardless of the request
+            # language (the German-request -> German-code leak). This is the one
+            # chokepoint every worker prompt passes through — all decomposition
+            # paths, all worker CLIs, every critic iteration.
+            worker_prompt = compose_worker_prompt(prior_block, step.prompt)
 
             # State-Machine drive-thru:
             #   iter 0: PENDING/RUNNING -> CRITIQUING (single jump).

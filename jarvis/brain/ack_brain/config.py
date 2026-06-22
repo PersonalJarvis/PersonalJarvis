@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 # "gemini" with a warning. Letting users pin a separate flash provider
 # stays possible by setting one of the four concrete names.
 SUPPORTED_PROVIDERS: tuple[str, ...] = (
-    "follow_brain", "gemini", "grok", "openai", "ollama",
+    "follow_brain", "gemini", "openai", "ollama",
 )
 
 
@@ -37,12 +37,6 @@ class GeminiAckProviderConfig(_ProviderBase):
     """Google Gemini Flash provider config."""
 
     api_key_secret: str = Field(default="gemini_api_key")
-
-
-class GrokAckProviderConfig(_ProviderBase):
-    """xAI Grok Flash provider config."""
-
-    api_key_secret: str = Field(default="grok_api_key")
 
 
 class OpenAIAckProviderConfig(_ProviderBase):
@@ -64,11 +58,6 @@ class _ProvidersBundle(BaseModel):
 
     gemini: GeminiAckProviderConfig = Field(
         default_factory=lambda: GeminiAckProviderConfig(model="gemini-3.1-flash")
-    )
-    grok: GrokAckProviderConfig = Field(
-        # 2026-05-13: "grok-4-flash" returned 400 "Model not found" from
-        # xAI live. Valid fast variant is "grok-4-fast-non-reasoning".
-        default_factory=lambda: GrokAckProviderConfig(model="grok-4-fast-non-reasoning")
     )
     openai: OpenAIAckProviderConfig = Field(
         default_factory=lambda: OpenAIAckProviderConfig(model="gpt-5-mini")
