@@ -1,11 +1,14 @@
 """Resolve which Jarvis to talk to and how to authenticate.
 
 A 'profile' is a (base_url, control_key) pair. Resolution is per-field:
-  base_url:     JARVISCTL_BASE_URL -> config.json -> default loopback:47821
-  control_key:  JARVISCTL_CONTROL_KEY -> config.json -> jarvis.core.control_key
-The local control_key fallback only helps when the CLI runs on the same
-machine/venv as the server (desktop). For a remote VPS, `auth login` writes
-the remote key into config.json.
+  base_url:     JARVISCTL_BASE_URL -> config.json -> live session file -> default
+  control_key:  JARVISCTL_CONTROL_KEY -> config.json -> live session file ->
+                jarvis.core.control_key
+The live session file (written by the running desktop app, see
+``jarvis.cli_ctl.discovery``) gives zero-config discovery of a locally running
+instance even on a non-default port. The local control_key fallback only helps
+when the CLI runs on the same machine/venv as the server (desktop). For a remote
+VPS, `auth login` writes the remote key into config.json.
 """
 from __future__ import annotations
 
@@ -13,7 +16,7 @@ import json
 import os
 from dataclasses import dataclass
 
-from jarvis.cli_ctl import paths
+from jarvis.cli_ctl import discovery, paths
 
 DEFAULT_BASE_URL = "http://127.0.0.1:47821"
 
@@ -47,14 +50,17 @@ def _local_control_key() -> str | None:
 
 def resolve_profile() -> Profile:
     data = _load_file()
+    session = discovery.discover()  # None when no live instance is found
     base_url = (
         os.environ.get("JARVISCTL_BASE_URL")
         or data.get("base_url")
+        or (session.base_url if session else None)
         or DEFAULT_BASE_URL
     )
     resolved_key = (
         os.environ.get("JARVISCTL_CONTROL_KEY")
         or data.get("control_key")
+        or (session.token if session else None)
         or _local_control_key()
     )
     return Profile(base_url=base_url, control_key=resolved_key)

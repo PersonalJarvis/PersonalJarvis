@@ -147,6 +147,59 @@ class ComputerUsePlannerSelector:
         return kind
 
 
+def iter_last_resort_vision(
+    manager: Any, *, already_tried: set[tuple[str, str | None]],
+) -> Iterator[tuple[str, str | None, Any]]:
+    """Yield ``(provider, model, brain)`` for every REGISTERED vision-capable
+    provider, IGNORING the manager's transient ``_dead_providers`` / cooldown
+    flags.
+
+    Used only as a LAST RESORT when the normal ``_build_fallback_chain`` reached
+    no vision-capable brain — typically because a stale dead-flag filtered the
+    one vision provider (e.g. grok) out of the chain entirely (live 2026-06-21
+    18:41: CU gave up "no vision" while grok had a live key). A stale dead-flag
+    on Computer-Use's only eyes must not permanently disable it. Genuinely
+    keyless/broken providers simply raise when dispatched and are skipped by the
+    caller, so this never resurrects a truly-dead provider — it only gives the
+    one that may be wrongly flagged a real attempt.
+
+    Each ``(provider, model)`` already tried in the normal pass is skipped, so a
+    provider that really failed this turn is not retried. Provider-agnostic: the
+    only gate is ``supports_vision``; no provider name is special-cased.
+    """
+    registry = getattr(manager, "_registry", None)
+    available: list[str] = []
+    if registry is not None and hasattr(registry, "available"):
+        try:
+            available = list(registry.available())
+        except Exception:  # noqa: BLE001
+            available = []
+    seen = set(already_tried)
+    for provider in available:
+        picker = getattr(manager, "_fast_model", None)
+        model: str | None = None
+        if callable(picker):
+            try:
+                model = picker(provider)
+            except Exception:  # noqa: BLE001
+                model = None
+        key = (provider, model)
+        if key in seen:
+            continue
+        seen.add(key)
+        # Last-resort: a provider that cannot even be instantiated is simply
+        # skipped (expected on the failure path; logging each would be noise).
+        try:
+            brain = manager._get_brain(provider, model)
+        except Exception:  # noqa: BLE001, S112
+            continue
+        if brain is None:
+            continue
+        if not getattr(brain, "supports_vision", True):
+            continue
+        yield provider, model, brain
+
+
 def _looks_invalid_auth_error(detail: str) -> bool:
     msg = detail.lower()
     if "invalid x-api-key" in msg or "invalid api key" in msg:

@@ -26,6 +26,7 @@ class ProviderSpec:
     login_cli: tuple[str, ...] | None = None
     install_hint: str | None = None
     credential_path_hint: str | None = None
+    brain_switchable: bool = True
 
 
 PROVIDERS: tuple[ProviderSpec, ...] = (
@@ -61,6 +62,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         dashboard_url="https://platform.openai.com/api-keys",
         login_cli=("codex", "login"),
         install_hint="npm i -g @openai/codex",
+        brain_switchable=False,
     ),
     ProviderSpec(
         id="openrouter",
@@ -88,6 +90,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         login_cli=("agy",),
         install_hint="Install Antigravity (agy) or sign in with the Gemini CLI",
         credential_path_hint="~/.gemini/oauth_creds.json",
+        brain_switchable=False,
     ),
     ProviderSpec(
         id="gemini",

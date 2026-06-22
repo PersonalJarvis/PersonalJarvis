@@ -480,6 +480,7 @@ Before writing any code in a new worktree: **`pwsh scripts/preflight.ps1`**. If 
 - Operational: `scripts/README-auto-push.md`, `scripts/preflight.ps1`, `scripts/drift-guard-daemon.ps1`.
 - Self-Mod: `docs/self_mod.md`.
 - Bug register: `docs/BUGS.md`.
+- Jarvis CLI (drive a running Jarvis from the terminal / an external coding agent / Jarvis itself): `docs/jarvis-cli.md` + generated `docs/jarvis-cli-reference.md`. Thin HTTP client over the REST API in `jarvis/cli_ctl/` (binaries `jarvis`/`jarvisctl`/`jctl`); the dynamic `jarvis api <tag> <op>` layer covers every mounted endpoint, curated `jarvis <group> <command>` groups add ergonomics. Registered in the CLI catalog as `jarvisctl` so Jarvis self-controls via `cli_jarvisctl` (dangerous/recursive verbs blocked). New REST routes must stay mounted — enforced by `scripts/ci/check_cli_coverage.py` (pre-push + the `jarvisctl` CI job). Skills: `.claude/skills/generate-cli-command` + `.claude/skills/drive-jarvis-cli`.
 
 ---
 

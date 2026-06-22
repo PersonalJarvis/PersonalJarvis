@@ -10,8 +10,6 @@ configured fast model (gemini-3.5-flash). Live evidence: voice_turns row for
 """
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
 from jarvis.brain.manager import BrainManager
@@ -73,20 +71,19 @@ def test_router_caps_thinking_budget_without_touching_global_config() -> None:
     assert cfg.brain.providers["gemini"].thinking_budget is None  # global untouched
 
 
-def test_codex_chatgpt_login_keeps_active_brain_in_chain_without_api_key(
+def test_codex_chatgpt_login_does_not_make_codex_a_main_brain(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Codex-as-brain can run over ChatGPT OAuth, not only an OpenAI API key.
-
-    Live regression 2026-06-20: the API Keys card showed "OpenAI Codex" working
-    via ChatGPT login, but a voice turn skipped codex entirely because the
-    pre-boot API-key sweep had already put it into ``_dead_providers``.
-    """
+    """Codex OAuth unlocks the subagent only; the main router falls back."""
     monkeypatch.setattr("jarvis.core.config.get_secret_any", lambda *_a, **_k: None)
 
     class _ConnectedCodexAuth:
-        def status(self) -> SimpleNamespace:
-            return SimpleNamespace(connected=True, mode="chatgpt")
+        def status(self):
+            class _Status:
+                connected = True
+                mode = "chatgpt"
+
+            return _Status()
 
     monkeypatch.setattr("jarvis.codex_auth.CodexAuthService", _ConnectedCodexAuth)
 
@@ -95,8 +92,9 @@ def test_codex_chatgpt_login_keeps_active_brain_in_chain_without_api_key(
 
     mgr = BrainManager.from_tier_config("router", cfg, EventBus())
 
-    assert "codex" not in mgr._dead_providers
-    assert mgr._build_fallback_chain("fast")[0] == ("codex", "gpt-5.5")
+    assert mgr.active_provider == "gemini"
+    assert mgr._config.brain.primary == "gemini"
+    assert "codex" not in [provider for provider, _model in mgr._build_fallback_chain("fast")]
 
 
 def test_user_selected_deep_model_drives_the_deep_chain() -> None:

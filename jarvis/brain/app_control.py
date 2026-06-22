@@ -182,6 +182,13 @@ def is_credential_present(spec: ProviderSpec, binary_path: str | None = None) ->
             return CodexAuthService(binary_path).status().connected
         except Exception:  # noqa: BLE001 — codex CLI absent is just "not present"
             return False
+    if spec.auth_mode == "antigravity":
+        try:
+            from jarvis.google_cli.auth_service import GoogleCliAuthService
+
+            return GoogleCliAuthService().status().connected
+        except Exception:  # noqa: BLE001 — Google CLI absent is just "not present"
+            return False
     return False
 
 
@@ -393,6 +400,16 @@ async def apply_provider_switch(
                 f"Did you mean tier={spec.tier!r}?"
             ),
         }
+    if tier == "brain" and not getattr(spec, "brain_switchable", True):
+        return {
+            "ok": False,
+            "error_kind": "subagent_only",
+            "error": (
+                f"{spec.label} is subagent-only in Jarvis. It cannot be used as "
+                "the main Brain provider because it cannot see Computer-Use "
+                "screenshots. Switch it in the Subagent section instead."
+            ),
+        }
     if not is_credential_present(spec):
         return {
             "ok": False,
@@ -509,6 +526,8 @@ async def _switch_subagent(
 ) -> dict[str, Any]:
     try:
         from jarvis.missions.worker_runtime.provider_map import (
+            ANTIGRAVITY_SUBAGENT_CANONICAL,
+            ANTIGRAVITY_SUBAGENT_SLUGS,
             CODEX_SUBAGENT_CANONICAL,
             CODEX_SUBAGENT_SLUGS,
             JARVIS_TO_OPENCLAW,
@@ -559,6 +578,45 @@ async def _switch_subagent(
             "tier": "subagent",
             "old_provider": old,
             "new_provider": CODEX_SUBAGENT_CANONICAL,
+            "persisted": persisted,
+            "applied_live": False,
+            "requires_restart": True,
+        }
+
+    if canon in ANTIGRAVITY_SUBAGENT_SLUGS:
+        try:
+            from jarvis.google_cli.auth_service import GoogleCliAuthService
+
+            antigravity_connected = GoogleCliAuthService().status().connected
+        except Exception:  # noqa: BLE001 — Google CLI absent is just "not connected"
+            antigravity_connected = False
+        if not antigravity_connected:
+            return {
+                "ok": False,
+                "error_kind": "missing_credential",
+                "error": (
+                    "Antigravity is not connected — sign in with Google "
+                    "(install agy or the Gemini CLI and log in), then switch "
+                    "the subagent."
+                ),
+            }
+        persisted = (
+            _persist(
+                lambda: _import_writer().set_sub_jarvis_provider(
+                    ANTIGRAVITY_SUBAGENT_CANONICAL
+                )
+            )
+            if persist
+            else False
+        )
+        _set_in_memory(
+            cfg, ["brain", "sub_jarvis", "provider"], ANTIGRAVITY_SUBAGENT_CANONICAL
+        )
+        return {
+            "ok": True,
+            "tier": "subagent",
+            "old_provider": old,
+            "new_provider": ANTIGRAVITY_SUBAGENT_CANONICAL,
             "persisted": persisted,
             "applied_live": False,
             "requires_restart": True,

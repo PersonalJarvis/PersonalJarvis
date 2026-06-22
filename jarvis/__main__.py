@@ -30,7 +30,7 @@ from jarvis.hardware import detection
 from jarvis.ui.tray import JarvisState, JarvisTray, TrayCommand
 
 
-def _parse_args(argv: list[str]) -> argparse.Namespace:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jarvis",
         description="Personal Jarvis — voice-gesteuerter Meta-Orchestrator.",
@@ -64,7 +64,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="serve: start the headless web UI (browser/server, no desktop) — "
              "the cloud-first path for a VPS, Mac or Linux. Open the printed URL.",
     )
-    return parser.parse_args(argv)
+    return parser
+
+
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    return _build_parser().parse_args(argv)
 
 
 def _cmd_check() -> int:
@@ -336,8 +340,49 @@ async def _run_tray_app(debug: bool = False) -> int:
     return 0
 
 
+def _run_control(argv: list[str]) -> int:
+    """Forward a control invocation (``jarvis <group> ...``) to the control CLI.
+
+    The control surface is the Typer app in ``jarvis.cli_ctl.__main__`` (also the
+    ``jarvisctl`` / ``jctl`` binaries); routing it through ``jarvis`` gives one
+    brand without disturbing the launcher's own argument parsing. The dynamic
+    ``api`` group build is best-effort, so curated commands still work when the
+    server is down.
+    """
+    import click
+
+    from jarvis.cli_ctl.__main__ import build_root_command
+
+    root = build_root_command()
+    try:
+        rv = root.main(args=argv, prog_name="jarvis", standalone_mode=False)
+        return rv if isinstance(rv, int) else 0
+    except click.exceptions.Exit as exc:
+        return int(getattr(exc, "exit_code", 0) or 0)
+    except click.exceptions.Abort:
+        print("aborted", file=sys.stderr)
+        return 1
+    except click.exceptions.ClickException as exc:
+        exc.show()
+        return exc.exit_code
+    except SystemExit as exc:  # e.g. --help / no_args_is_help
+        code = exc.code
+        if code is None:
+            return 0
+        return code if isinstance(code, int) else 1
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = _parse_args(argv if argv is not None else sys.argv[1:])
+    raw = list(sys.argv[1:] if argv is None else argv)
+    # Unified entry point: `jarvis <group> ...` (or a control-global option like
+    # `--json`) drives the control CLI; bare `jarvis`, `jarvis serve`, and every
+    # launcher flag (`--wizard`, `--check`, …) keep their existing behavior.
+    from jarvis.cli_ctl.reserved import is_control_invocation
+
+    if is_control_invocation(raw):
+        return _run_control(raw)
+
+    args = _parse_args(raw)
 
     if args.check:
         return _cmd_check()

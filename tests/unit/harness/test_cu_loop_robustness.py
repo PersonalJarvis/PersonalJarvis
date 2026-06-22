@@ -393,7 +393,7 @@ async def test_call_brain_skips_blind_provider_when_screenshot_attached() -> Non
     plan blind. The dispatch must SKIP it and fall through to the next
     vision-capable provider.
 
-    Forensic 2026-06-20: with ``antigravity`` the active brain, the CU planner
+    Forensic 2026-06-20: with a screenshot-blind CLI brain active, the CU planner
     ran blind — the CLI provider silently dropped the attached screenshot, so
     the model looped on hallucinated ``click_element name='Edit'`` actions and
     never grounded on the real screen.
@@ -1175,3 +1175,94 @@ async def test_verify_first_directive_after_state_changing_action() -> None:
     _system, user = brain.executor_calls[1]
     assert "VERIFY FIRST" in user
     assert "open_app" in user
+
+
+# ---------------------------------------------------------------------------
+# Observe-timeout RETRY (live forensic 2026-06-22, exit 124): the Spotify CU
+# turn ran exactly ONE step and died "[cu] observe timeout (step 1)" total=3.3s.
+# The screenshot capture timed out because the shared asyncio loop was momentarily
+# saturated by a concurrent degraded-voice burst (Cartesia 402 -> Gemini-TTS 429
+# failover + double mic-open) -- NOT because the desktop was uncapturable. A
+# single transient observe timeout must NOT kill the whole mission at step 1;
+# it must retry (mirrors the existing brain-timeout retry) and only give up after
+# the cap. Provider/OS-agnostic: pure loop control, no platform code.
+# ---------------------------------------------------------------------------
+
+
+class _FlakyObserveEngine:
+    """Vision engine whose ``observe`` raises ``TimeoutError`` the first
+    ``fail_count`` calls (simulating a transient capture/loop-contention
+    timeout), then returns fresh unique observations like FakeVisionEngine."""
+
+    def __init__(self, fail_count: int) -> None:
+        self.fail_count = fail_count
+        self.calls = 0
+        self.probe_calls = 0
+        self.probe_titles: list[str] = []
+
+    def _guess_active_app_hint(self, window_title_filter: str | None = None) -> str:
+        return ""
+
+    async def observe(self, *, mode: str = "auto", cancel_token: Any = None,
+                      window_title_filter: str | None = None) -> Observation:
+        idx = self.calls
+        self.calls += 1
+        if idx < self.fail_count:
+            raise TimeoutError("observe budget elapsed (test-injected)")
+        return Observation(
+            trace_id=uuid4(),
+            timestamp_ns=time.time_ns(),
+            screenshot_path=None,
+            screenshot_hash=f"hash-{idx}",
+            nodes=(),
+            window_title="",
+            active_pid=0,
+            source="screenshot_only",
+            pruning_stats={},
+        )
+
+
+async def test_single_observe_timeout_retries_and_recovers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One transient observe timeout must NOT end the mission -- the loop
+    retries on the next step and completes (exit 0). This is the exact
+    2026-06-22 Spotify failure shape: it died at step 1 with exit 124."""
+    monkeypatch.setattr(loop_mod, "_OBSERVE_RETRY_BACKOFF_S", 0.0, raising=False)
+    brain = FakeBrain(script=[
+        '{"action": "open_app", "name": "chrome"}',
+        '{"action": "done"}',
+    ])
+    ctx = make_ctx(brain)
+    ctx.vision_engine = _FlakyObserveEngine(fail_count=1)
+
+    chunks = await run_loop(ctx, "oeffne chrome")
+
+    assert chunks[-1].exit_code == 0, (
+        "a single transient observe timeout killed the mission instead of retrying"
+    )
+    # The mission recovered and actually drove the brain (it did not die before
+    # the first plan).
+    assert len(brain.requests) >= 1
+
+
+async def test_persistent_observe_timeout_fails_after_cap_not_at_step_1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If observe keeps timing out it still fails honestly with exit 124 --
+    but only AFTER retrying past step 1, never an instant step-1 give-up."""
+    monkeypatch.setattr(loop_mod, "_OBSERVE_RETRY_BACKOFF_S", 0.0, raising=False)
+    brain = FakeBrain(script=['{"action": "done"}'])
+    ctx = make_ctx(brain)
+    # Always time out (fail_count huge).
+    ctx.vision_engine = _FlakyObserveEngine(fail_count=10_000)
+
+    chunks = await run_loop(ctx, "oeffne chrome")
+
+    assert chunks[-1].exit_code == loop_mod._TIMEOUT_EXIT_CODE
+    # It must have RETRIED before giving up -- more than one observe attempt.
+    assert ctx.vision_engine.calls >= 2, (
+        "persistent observe timeout gave up at step 1 without retrying"
+    )
+    stderr = chunks[-1].stderr
+    assert "observe timeout" in stderr

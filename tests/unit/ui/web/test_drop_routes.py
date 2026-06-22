@@ -1,17 +1,23 @@
 """REST-route tests for the drag-drop intake (`POST /api/chat/drop`).
 
 The dock / overlay POSTs dropped files (+ optional dragged text) as multipart;
-the route turns them into a proactive ``MessageSent`` brain turn via
-``ingest_drop``. Mirrors the avatar-upload pattern (size cap, multipart).
+the route captures them as SILENT context via ``brain.add_dropped_context`` — it
+never triggers a brain turn. Mirrors the avatar-upload pattern (size cap).
 """
 from __future__ import annotations
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from jarvis.brain.drop_context import DROP_SOURCE_LAYER
-from jarvis.core.events import MessageSent
 from jarvis.ui.web.drop_routes import router as drop_router
+
+
+class _FakeBrain:
+    def __init__(self) -> None:
+        self.dropped: list[tuple] = []
+
+    def add_dropped_context(self, text, images=()) -> None:
+        self.dropped.append((text, images))
 
 
 class _FakeBus:
@@ -22,26 +28,18 @@ class _FakeBus:
         self.published.append(event)
 
 
-class _FakeBrain:
-    def __init__(self) -> None:
-        self.injected: list[tuple] = []
-
-    def inject_images_for_turn(self, trace_id, images) -> None:
-        self.injected.append((trace_id, images))
-
-
-def _client(bus: _FakeBus, brain: object = None) -> TestClient:
+def _client(brain: object, bus: _FakeBus | None = None) -> TestClient:
     app = FastAPI()
     app.include_router(drop_router)
-    app.state.bus = bus
     app.state.brain = brain
-    return TestClient(app)
+    app.state.bus = bus or _FakeBus()
+    return app, TestClient(app)
 
 
-def test_drop_file_dispatches_message() -> None:
-    bus = _FakeBus()
+def test_drop_file_captures_context_no_turn() -> None:
     brain = _FakeBrain()
-    client = _client(bus, brain)
+    bus = _FakeBus()
+    app, client = _client(brain, bus)
 
     resp = client.post(
         "/api/chat/drop",
@@ -51,18 +49,15 @@ def test_drop_file_dispatches_message() -> None:
 
     assert resp.status_code == 200
     assert resp.json()["dispatched"] is True
-    assert len(bus.published) == 1
-    msg = bus.published[0]
-    assert isinstance(msg, MessageSent)
-    assert msg.source_layer == DROP_SOURCE_LAYER
-    assert msg.thread_id == "t1"
-    assert "notes.txt" in msg.text
+    assert len(brain.dropped) == 1
+    assert "notes.txt" in brain.dropped[0][0]
+    # No turn-triggering event published.
+    assert bus.published == []
 
 
-def test_drop_image_injects_into_brain() -> None:
-    bus = _FakeBus()
+def test_drop_image_captured_as_context_image() -> None:
     brain = _FakeBrain()
-    client = _client(bus, brain)
+    _app, client = _client(brain)
 
     resp = client.post(
         "/api/chat/drop",
@@ -71,15 +66,14 @@ def test_drop_image_injects_into_brain() -> None:
     )
 
     assert resp.status_code == 200
-    assert len(brain.injected) == 1
-    trace, images = brain.injected[0]
-    assert trace == bus.published[0].trace_id
+    assert len(brain.dropped) == 1
+    _text, images = brain.dropped[0]
     assert len(images) == 1
 
 
-def test_drop_dragged_text_only_dispatches() -> None:
-    bus = _FakeBus()
-    client = _client(bus, _FakeBrain())
+def test_drop_dragged_text_only_captured() -> None:
+    brain = _FakeBrain()
+    _app, client = _client(brain)
 
     resp = client.post(
         "/api/chat/drop",
@@ -88,23 +82,33 @@ def test_drop_dragged_text_only_dispatches() -> None:
 
     assert resp.status_code == 200
     assert resp.json()["dispatched"] is True
-    assert "example.com" in bus.published[0].text
+    assert "example.com" in brain.dropped[0][0]
 
 
-def test_empty_drop_dispatches_nothing() -> None:
-    bus = _FakeBus()
-    client = _client(bus, _FakeBrain())
+def test_empty_drop_captures_nothing() -> None:
+    brain = _FakeBrain()
+    _app, client = _client(brain)
 
     resp = client.post("/api/chat/drop", data={"thread_id": "t4"})
 
     assert resp.status_code == 200
     assert resp.json()["dispatched"] is False
-    assert bus.published == []
+    assert brain.dropped == []
+
+
+def test_no_brain_returns_503() -> None:
+    _app, client = _client(None)
+    resp = client.post(
+        "/api/chat/drop",
+        files=[("files", ("notes.txt", b"hi", "text/plain"))],
+        data={"thread_id": "t1"},
+    )
+    assert resp.status_code == 503
 
 
 def test_oversized_drop_is_rejected() -> None:
-    bus = _FakeBus()
-    client = _client(bus, _FakeBrain())
+    brain = _FakeBrain()
+    _app, client = _client(brain)
     huge = b"x" * (30 * 1024 * 1024)  # 30 MB > cap
 
     resp = client.post(
@@ -114,4 +118,4 @@ def test_oversized_drop_is_rejected() -> None:
     )
 
     assert resp.status_code == 413
-    assert bus.published == []
+    assert brain.dropped == []
