@@ -48,12 +48,19 @@ from .worker_runtime.provider_map import (
     ANTIGRAVITY_SUBAGENT_SLUGS,
     CODEX_SUBAGENT_SLUGS,
 )
+from .workers.api_agent_worker import ApiAgentWorker
 from .workers.claude_direct_worker import ClaudeDirectWorker
 from .workers.codex_direct_worker import CodexDirectWorker
 from .workers.gemini_worker import GeminiWorker
 from .workers.google_cli_worker import GoogleCliWorker
 
 logger = logging.getLogger(__name__)
+
+# Pure-API providers that run on THEIR OWN provider via the in-process
+# ApiAgentWorker (OpenAI-compatible chat API + tool-use loop), instead of the
+# legacy silent ClaudeDirectWorker fallback. Single source for the routing
+# decision so the UI "runs on Claude" badge can never drift from reality.
+_API_AGENT_SLUGS: frozenset[str] = frozenset({"grok", "openai", "openrouter"})
 
 
 # Type aliases
@@ -176,6 +183,14 @@ def _select_subagent_worker_kind(
     # stripped from the worker env (the OAuth login then bills the subscription).
     if sub_jarvis_provider in ANTIGRAVITY_SUBAGENT_SLUGS:
         return "antigravity"
+    # grok / openai / openrouter run ON their own provider via the in-process
+    # ApiAgentWorker (OpenAI-compatible chat API + tool-use loop writing files
+    # into the worktree). Before 2026-06-22 they fell through to "subjarvis" ->
+    # ClaudeDirectWorker, so picking "Grok" silently ran the mission on Claude
+    # (violates the "selected provider must run" mandate). A HARD LOCK like
+    # claude-api/antigravity: no per-step model can divert it.
+    if sub_jarvis_provider in _API_AGENT_SLUGS:
+        return "api_agent"
     # Explicitly selecting "gemini" routes to the direct GeminiWorker so the
     # sub-agent actually runs on Gemini (the user's "selected provider must run"
     # mandate). This is NOT the anti-silent-Gemini case (2026-05-29) — that
@@ -197,16 +212,20 @@ def subagent_runs_on_claude_fallback(sub_jarvis_provider: str | None) -> bool:
     """True when picking this subagent provider does NOT run heavy missions on
     THAT provider but silently falls back to the ClaudeDirectWorker (Opus).
 
-    ``grok`` / ``openai`` / ``openrouter`` resolve to the legacy ``"subjarvis"``
-    kind, whose dedicated worker (the OpenClaw subprocess) was removed after the
-    ~92% nested-claude hang — so ``_worker_factory`` falls them through to the
-    proven direct Claude worker. The UI reads this to flag those provider cards
-    honestly instead of pretending the selection runs on the chosen LLM.
+    As of 2026-06-22 grok/openai/openrouter resolve to the ``"api_agent"`` kind
+    (the in-process ApiAgentWorker runs them on their OWN provider), so they no
+    longer report a Claude fallback here — provided an API key is configured. The
+    only remaining always-Claude case is the legacy ``"subjarvis"`` kind
+    (openclaw-claude / unknown provider), whose dedicated OpenClaw worker was
+    removed after the ~92% nested-claude hang.
+
+    NOTE: this is the ROUTING truth, not a credential check — an api_agent
+    provider with NO key still falls back to Claude at run time (``_worker_
+    factory`` honest gate), which the provider card surfaces separately via its
+    key-present state.
 
     Derived from the SINGLE routing source of truth (``_select_subagent_worker_
-    kind``) so the badge can never drift from the worker that actually runs:
-    the day a real grok/openrouter worker is wired, the kind stops being
-    ``"subjarvis"`` and this returns ``False`` automatically.
+    kind``) so the badge can never drift from the worker that actually runs.
     """
     return _select_subagent_worker_kind(sub_jarvis_provider, "") == "subjarvis"
 
@@ -639,6 +658,34 @@ async def bootstrap_missions(
                 "(agy over PTY, OAuth login, no API key) — billed against Antigravity."
             )
             return GoogleCliWorker()
+        if kind == "api_agent":
+            # grok / openai / openrouter: run ON the selected provider via the
+            # in-process ApiAgentWorker. Honest credential gate — if no API key
+            # is configured the provider CANNOT run, so fall back to Claude Max
+            # (mission still completes) instead of spawning a guaranteed-fail
+            # worker (e.g. openai/openrouter with no key).
+            provider = live_provider or ""
+            try:
+                from jarvis.core import config as _cfg
+
+                ep = _cfg.resolve_provider_endpoint(provider, vendor_default_base_url="")
+                has_key = bool(getattr(ep, "credential", None))
+            except Exception:  # noqa: BLE001 — any resolve failure => no usable key
+                has_key = False
+            if has_key:
+                logger.info(
+                    "Mission worker -> ApiAgentWorker on %r (in-process tool-use "
+                    "loop over the provider's own API, writes files in the worktree).",
+                    provider,
+                )
+                return ApiAgentWorker(provider)
+            logger.warning(
+                "Mission worker -> ClaudeDirectWorker: subagent provider %r has no "
+                "API key configured, so it cannot run — completing on Claude Max "
+                "instead of failing the mission.",
+                provider,
+            )
+            return ClaudeDirectWorker(mcp_servers=_assemble_worker_mcp_servers())
         if kind == "gemini":
             # Reached when [brain.sub_jarvis].provider == "gemini" was selected
             # (the user's "selected provider must run" mandate) OR, legacy, when

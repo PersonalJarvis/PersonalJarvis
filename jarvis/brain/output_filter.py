@@ -86,6 +86,25 @@ STACKTRACE_RE = re.compile(
     re.DOTALL,
 )
 
+# Raw data-structure dump guard (live bug 2026-06-22). A code path may ``str()``
+# a tool-result container (dict / list of dicts) instead of humanizing it — e.g.
+# the whole ``dispatch_to_harness`` result ``{'harness': 'screenshot',
+# 'exit_code': 0, 'stdout': …, 'cost_usd': …, 'duration_ms': …}`` reached a
+# readback verbatim. The per-pattern tool-leak rules below only catch SPECIFIC
+# named shapes ({"tool":…}, XML, YAML, prose) and SPECIFIC keys, so a new result
+# shape or a single-quoted Python repr slips through. This is the STRUCTURAL,
+# key-independent, quote-style-independent guard that makes the whole bug class
+# impossible at the common chokepoint: if the text OPENS with a container ``{``/
+# ``[`` and carries a mapping signature (a quoted ``key:`` or a ``key='…'``
+# repr), it is a machine dump, never a spoken sentence — fail-closed to the
+# standard phrase, exactly like a stack trace. Real prose never opens with a
+# brace, so this does not touch a humanized readback (which reads "Erledigt — …").
+RAW_REPR_OPENER_RE = re.compile(r"^\s*[\{\[]")
+REPR_SIGNATURE_RE = re.compile(
+    r"['\"][^'\"]{0,120}['\"]\s*:"   # 'key': / "key":  (JSON or Python dict repr)
+    r"|\b\w+\s*=\s*['\"]"            # key='…'          (Python kwargs/obj repr)
+)
+
 # Tool-call patterns:
 #   1) tool_name({"...": "..."})       — function-call form (OpenAI)
 #   2) tool_name{"...": "..."}         — Anthropic tool-use inline
@@ -366,6 +385,20 @@ def scrub_for_voice(
         return ScrubResult(
             cleaned=fallback,
             actions=["replaced_stacktrace"],
+            fallback_used=True,
+        )
+
+    # 1b. Raw data-structure dump: Early-Return mit Standard-Phrase. A text that
+    #     OPENS with a container ({ / [) AND carries a mapping signature is a
+    #     machine repr (a str()'d tool-result dict / JSON array), never a spoken
+    #     sentence. Fail-closed at the common chokepoint so NO path — present or
+    #     future — can ever speak/show a raw {'…': …} dump again (live bug
+    #     2026-06-22: the whole dispatch_to_harness result reached a CU readback).
+    if RAW_REPR_OPENER_RE.match(text) and REPR_SIGNATURE_RE.search(text):
+        fallback = FALLBACK_PHRASES.get(language, FALLBACK_PHRASES["de"])
+        return ScrubResult(
+            cleaned=fallback,
+            actions=["replaced_raw_repr"],
             fallback_used=True,
         )
 

@@ -25,6 +25,18 @@ Run:
     python scripts/cu_bench.py            # full curated set
     python scripts/cu_bench.py --list     # list task ids, run nothing
     python scripts/cu_bench.py --only open_terminal,open_calc_compute
+
+A/B latency tuning (the "meter before the dials" — measure, never assume):
+    # 1. Baseline: run once with no overrides, keep the JSON report.
+    python scripts/cu_bench.py
+    # 2. Tuned: lower a knob and re-run; compare wall-clock AND pass-rate.
+    python scripts/cu_bench.py --image-max-dimension 1568   # L7: smaller frames
+    python scripts/cu_bench.py --settle-scale 0.5           # L8: trim settle waits
+    python scripts/cu_bench.py --think-timeout-cap 5.0      # L10: tighter ceiling
+    # ACCEPT a knob only if wall-clock drops AND the pass-rate does NOT (a
+    # faster-but-flakier knob is a regression). The JSON report records the
+    # knob values under "knobs" so two runs are directly comparable. Promote a
+    # validated knob by setting it under [computer_use] in jarvis.toml.
 """
 from __future__ import annotations
 
@@ -427,9 +439,16 @@ def _write_report(results: list[BenchResult], native: bool) -> Path:
     return out
 
 
-def _write_json_report(results: list[BenchResult], native: bool) -> Path:
+def _write_json_report(
+    results: list[BenchResult], native: bool,
+    knobs: dict[str, object] | None = None,
+) -> Path:
     """Machine-readable run record — the baseline/regression artifact the
-    frontier-speed plan's promotion gate compares against."""
+    frontier-speed plan's promotion gate compares against.
+
+    ``knobs`` records the live latency-knob values so a tuned run's JSON is
+    directly comparable against the baseline's (which knob produced the delta).
+    """
     all_spans = [s for r in results for s in r.spans]
     all_steps = sorted(d for r in results for d in r.step_durations_s)
 
@@ -440,6 +459,7 @@ def _write_json_report(results: list[BenchResult], native: bool) -> Path:
 
     payload = {
         "engine": "native" if native else "hand-rolled-v1",
+        "knobs": knobs or {},
         "slo": {"step_p50_s": SLO_STEP_P50_S, "step_p95_s": SLO_STEP_P95_S},
         "aggregate": {
             "step_p50_s": statistics.median(all_steps) if all_steps else None,
@@ -492,6 +512,48 @@ def _assert_slo(results: list[BenchResult]) -> list[str]:
     return violations
 
 
+#: CU latency knobs the bench can override on the live context for A/B tuning.
+#: Maps a CLI arg name -> the ComputerUseContext attribute it overrides.
+_KNOB_OVERRIDES: tuple[tuple[str, str], ...] = (
+    ("image_max_dimension", "image_max_dimension"),  # L7 longest-side px
+    ("image_max_bytes", "image_max_bytes"),          # L7 byte budget
+    ("settle_scale", "settle_scale"),                # L8 settle multiplier
+    ("think_timeout_cap", "think_timeout_cap_s"),    # L10 model-call ceiling
+)
+
+
+def apply_knob_overrides(ctx: object, args: object) -> list[str]:
+    """Apply ``--<knob>`` CLI overrides onto the live CU context for A/B tuning.
+
+    The ComputerUseContext is a mutable dataclass whose latency knobs the loop
+    reads per mission, so setting them here makes the whole bench run use the
+    tuned value. Returns a human-readable list of the overrides applied (empty
+    when none were given, i.e. a baseline run). Pure + side-effecting only on
+    ``ctx``; unit-testable with a stub ctx/args.
+    """
+    applied: list[str] = []
+    for arg_name, attr in _KNOB_OVERRIDES:
+        value = getattr(args, arg_name, None)
+        if value is None:
+            continue
+        old = getattr(ctx, attr, None)
+        setattr(ctx, attr, value)
+        applied.append(f"{attr}: {old} -> {value}")
+    return applied
+
+
+def _knob_snapshot(ctx: object) -> dict[str, object]:
+    """The live latency-knob values, recorded in the JSON report so two runs
+    (baseline vs. tuned) are comparable."""
+    return {
+        "image_max_dimension": getattr(ctx, "image_max_dimension", None),
+        "image_max_bytes": getattr(ctx, "image_max_bytes", None),
+        "settle_scale": getattr(ctx, "settle_scale", None),
+        "think_timeout_cap_s": getattr(ctx, "think_timeout_cap_s", None),
+        "fast_step_model": getattr(ctx, "fast_step_model", None),
+    }
+
+
 async def main() -> int:
     parser = argparse.ArgumentParser(description="Everyday Computer-Use benchmark")
     parser.add_argument("--list", action="store_true", help="list task ids and exit")
@@ -500,6 +562,25 @@ async def main() -> int:
         "--assert-slo", action="store_true",
         help="exit non-zero when the frontier-speed SLOs are violated "
              "(step p50/p95 + per-task wall-clock budgets)",
+    )
+    # CU latency knob overrides (A/B tuning vs. the baseline trace). Each is a
+    # ComputerUseContext field the loop reads per mission; lower them, re-run,
+    # and compare wall-clock AND success-rate against the unmodified baseline.
+    parser.add_argument(
+        "--image-max-dimension", type=int, default=None,
+        help="L7: longest-side px cap on the screenshot (e.g. 1568; default 2048)",
+    )
+    parser.add_argument(
+        "--image-max-bytes", type=int, default=None,
+        help="L7: per-screenshot byte budget (e.g. 200000; default 300000)",
+    )
+    parser.add_argument(
+        "--settle-scale", type=float, default=None,
+        help="L8: multiplier on fixed settle waits (e.g. 0.5; default 1.0)",
+    )
+    parser.add_argument(
+        "--think-timeout-cap", type=float, default=None,
+        help="L10: ceiling on a single model call in s (e.g. 5.0; default 10.0)",
     )
     args = parser.parse_args()
 
@@ -535,6 +616,12 @@ async def main() -> int:
     native = getattr(ctx, "native_cu", None) is not None
     print(f"[1] CU tools: {sorted((ctx.tools or {}).keys())}")
     print(f"[1] native Gemini engine: {'ENABLED' if native else 'off (hand-rolled)'}")
+    overrides = apply_knob_overrides(ctx, args)
+    if overrides:
+        print(f"[1] knob overrides (A/B tuning): {'; '.join(overrides)}")
+    else:
+        print("[1] knobs: baseline (no overrides)")
+    knobs = _knob_snapshot(ctx)
 
     harness = ComputerUseHarness()
     if not await harness.health():
@@ -548,7 +635,7 @@ async def main() -> int:
 
     passed = sum(1 for r in results if r.passed)
     report = _write_report(results, native)
-    json_report = _write_json_report(results, native)
+    json_report = _write_json_report(results, native, knobs)
     print("\n" + "=" * 66)
     print(f"SCORE: {passed}/{len(results)} passed   (report: {report})")
     print(f"JSON:  {json_report}")

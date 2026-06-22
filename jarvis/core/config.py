@@ -1352,6 +1352,12 @@ class ComputerUseConfig(BaseModel):
     # 300_000 (no change); lowering it -- with the cu_bench harness as proof --
     # shrinks the vision payload for faster inference, at some grounding risk.
     image_max_bytes: int = Field(default=300_000, ge=20_000, le=2_000_000)
+    # L7 (CU speed): per-screenshot longest-side pixel cap sent to the model.
+    # Default keeps 2048 (no change). Vision models resample to ~1568 px
+    # internally, so lowering this -- with the cu_bench harness as proof -- ships
+    # fewer pixels for faster encode + upload + image-token ingest, at some
+    # grounding risk on tiny controls. 0 disables the dimension cap entirely.
+    image_max_dimension: int = Field(default=2048, ge=0, le=8192)
     # L8 (CU speed): multiplier on the loop's fixed settle waits (pre-type and
     # post-click-verify pauses). Default keeps 1.0 (no change: every settle is
     # byte-for-byte the legacy duration); lower it -- with the cu_bench harness
@@ -1925,6 +1931,17 @@ _PERSISTED_PROVIDER_ENV_KEYS: tuple[str, ...] = (
     "JARVIS__ACK_BRAIN__ENABLED",
     "JARVIS__ACK_BRAIN__PROVIDER",
     "JARVIS__ACK_BRAIN__FALLBACK_PROVIDER",
+    # TTS engine selection beyond the provider tier. Forensic 2026-06-22: an
+    # in-app restart inherited a stale env (JARVIS__TTS__USE_VERTEX=true /
+    # MODEL=sonic-2 / VOICE_*=leo) from a pre-change ancestor. PROVIDER above
+    # healed, but these did not, so Gemini-TTS stayed on the wrong Vertex
+    # billing path (the user had topped up the AI-Studio key, which Vertex
+    # ignores) with a bogus model name → 404 on every sentence, silent voice.
+    # Pinning them here makes a restart honour the registry's corrected values.
+    "JARVIS__TTS__MODEL",
+    "JARVIS__TTS__USE_VERTEX",
+    "JARVIS__TTS__VOICE_DE",
+    "JARVIS__TTS__VOICE_EN",
 )
 
 

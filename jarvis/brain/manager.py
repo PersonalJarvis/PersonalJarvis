@@ -58,7 +58,11 @@ from jarvis.core.turn_language import (
     resolve_output_language,
     resolve_turn_language,
 )
-from jarvis.voice.action_phrases import action_phrase, cu_failure_readback
+from jarvis.voice.action_phrases import (
+    action_phrase,
+    cu_failure_readback,
+    cu_success_readback,
+)
 from jarvis.memory import CoreMemory, PersonStore, RecallStore, Soul, UserProfile
 from jarvis.memory.curator import Curator
 from jarvis.safety.tool_executor import ToolExecutor
@@ -137,7 +141,6 @@ PROVIDER_ALIASES = {
     "gemini": "gemini",
     "flash": "gemini",
     "pro": "gemini",
-    "grok": "grok",
     "openrouter": "openrouter",
 }
 
@@ -146,7 +149,6 @@ SUBAGENT_ONLY_BRAIN_PROVIDERS: frozenset[str] = frozenset(
 )
 
 _MAIN_BRAIN_FALLBACK_PROVIDER_ORDER: tuple[str, ...] = (
-    "grok",
     "gemini",
     "claude-api",
     "openai",
@@ -170,7 +172,6 @@ _PROVIDER_DISPLAY_NAMES: dict[str, str] = {
     "openai-codex": "OpenAI Codex (GPT-5.5)",
     "openrouter": "OpenRouter",
     "gemini": "Google Gemini",
-    "grok": "Grok (xAI)",
     "antigravity": "Google Antigravity (Gemini)",
 }
 
@@ -222,8 +223,6 @@ _SECRET_KEY_TO_BRAIN: dict[str, str] = {
     "anthropic_api_key": "claude-api",
     "openai_api_key": "openai",
     "openrouter_api_key": "openrouter",
-    "grok_api_key": "grok",
-    "xai_api_key": "grok",
 }
 
 # ──────────────────────────────────────────────────────────────────
@@ -275,9 +274,6 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         "claude-api": "claude-haiku-4-5-20251001",
         "gemini": "gemini-3-flash-preview",
         "openai": "gpt-5.5",
-        # grok-4.3 (released 2026-04-30) is simultaneously the fastest
-        # AND most capable Grok — replaces 4.1-fast in both tiers.
-        "grok": "grok-4.3",
         "deepseek": "deepseek-chat",
         "openrouter": "anthropic/claude-haiku-4.5",
         "mistral": "mistral-small-3.1",
@@ -292,7 +288,6 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         "claude-api": "claude-opus-4-8",
         "gemini": "gemini-3.1-pro-preview",
         "openai": "gpt-5.5-pro",
-        "grok": "grok-4.3",
         "deepseek": "deepseek-reasoner",
         "openrouter": "anthropic/claude-opus-4.8",
         "mistral": "mistral-large-3",
@@ -1140,6 +1135,44 @@ def _extract_leaked_tool_call(text: str) -> tuple[str, dict[str, Any]] | None:
 SUPPORTED_REPLY_LANGUAGES: tuple[str, ...] = ("auto", "de", "en", "es")
 _REPLY_LANGS: frozenset[str] = frozenset(SUPPORTED_REPLY_LANGUAGES)
 _REPLY_LANG_NAMES: dict[str, str] = {"de": "German", "en": "English", "es": "Spanish"}
+
+# Spoken confirmation for a deterministic reply-language switch (the
+# voice_command_gate "language_switch" path). Keyed by target code and phrased
+# IN that language so — because set_reply_language() runs first — the TTS voice
+# resolves to the new language and the switch is audible. "auto" has no single
+# language, so it confirms in the default locale (German).
+_LANG_SWITCH_CONFIRM: dict[str, str] = {
+    "de": "Erledigt — ich antworte ab jetzt auf Deutsch.",
+    "en": "Done — I'll reply in English from now on.",
+    "es": "Listo — a partir de ahora respondo en español.",
+    "auto": "Erledigt — ich passe meine Sprache ab jetzt automatisch deiner an.",
+}
+
+# Sub-agent (Heavy-Task worker) provider switch — the voice_command_gate
+# "subagent_switch" path. The gate returns the spoken provider word; this maps
+# it to a CANONICAL [brain.sub_jarvis].provider slug (the values are the only
+# accepted ones — this map IS the validation). Persisted via the 3-layer
+# config_writer.set_sub_jarvis_provider so the drift-guard cannot revert it; the
+# running worker re-resolves it per mission (_live_subagent_provider), so the
+# switch applies to the NEXT mission without a restart.
+_SUBAGENT_VOICE_TO_CANONICAL: dict[str, str] = {
+    "openai": "openai", "gpt": "openai",
+    "codex": "openai-codex", "chatgpt": "openai-codex", "openai-codex": "openai-codex",
+    "claude": "claude-api", "anthropic": "claude-api",
+    "gemini": "gemini",
+    "openrouter": "openrouter",
+    "antigravity": "antigravity",
+}
+_SUBAGENT_DISPLAY: dict[str, str] = {
+    "openai": "OpenAI", "openai-codex": "Codex", "claude-api": "Claude",
+    "gemini": "Gemini", "openrouter": "OpenRouter",
+    "antigravity": "Antigravity",
+}
+_SUBAGENT_SWITCH_CONFIRM: dict[str, str] = {
+    "de": "Erledigt — dein Sub-Agent läuft ab der nächsten Mission auf {p}.",
+    "en": "Done — your sub-agent will run on {p} from your next mission.",
+    "es": "Listo — tu sub-agente usará {p} desde tu próxima misión.",
+}
 
 
 def normalize_reply_language(value: object) -> str:
@@ -2500,6 +2533,108 @@ class BrainManager:
         if match is None or match.kind != "provider_switch":
             return None
         return match.target
+
+    def _detect_language_switch_intent(self, text: str) -> str | None:
+        """Strict gate-based reply-language switch detector.
+
+        Delegates to ``voice_command_gate.match_voice_command`` and returns the
+        target code (de/en/es/auto) ONLY for an unambiguous language command
+        like "stell auf Englisch um". A harmless mention ("wie heißt das auf
+        Englisch?") returns None and reaches the brain normally.
+        """
+        match = match_voice_command(text)
+        if match is None or match.kind != "language_switch":
+            return None
+        return match.target
+
+    def _apply_reply_language_switch(self, code: str) -> str:
+        """Execute a recognised reply-language switch deterministically.
+
+        Mirrors the canonical ``PUT /api/settings/reply-language`` path (live
+        set + persist) but is reached in ``generate()`` BEFORE the force-spawn
+        heuristic, so a trivial config change never becomes a worker mission
+        (2026-06-22 forensic: "stell auf Englisch um" was dispatched as a worker
+        and failed, harness down). It runs without the LLM, so it works no
+        matter the active provider's tool-calling capability. Returns the spoken
+        confirmation, or "" for an unknown code (caller falls through).
+        """
+        try:
+            self.set_reply_language(code)  # live; ValueError on unknown code
+        except ValueError:
+            return ""
+        lang = self._reply_language
+        # Best-effort in-memory cfg agreement (a frozen model is not an error).
+        try:
+            self._config.brain.reply_language = lang  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001
+            log.debug("in-memory cfg.brain.reply_language update skipped: %s", exc)
+        # Persist as boot default — best-effort: a read-only / locked jarvis.toml
+        # must not break the live switch that already applied.
+        try:
+            from jarvis.core import config_writer
+
+            config_writer.set_reply_language(lang)
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "reply-language persist failed (live switch still applied): %s", exc
+            )
+        log.info("reply-language switched to %r via deterministic voice gate", lang)
+        return _LANG_SWITCH_CONFIRM.get(lang, _LANG_SWITCH_CONFIRM["de"])
+
+    def _detect_subagent_switch_intent(self, text: str) -> str | None:
+        """Strict gate-based sub-agent (Heavy-Task worker) provider switch.
+
+        Delegates to ``voice_command_gate.match_voice_command``; returns the
+        spoken provider word ONLY for a sub-agent-qualified command like
+        "wechsle den Sub-Agent-Provider auf OpenAI". A bare "switch to gemini"
+        is a main-brain switch (kind=provider_switch) and returns None here.
+        """
+        match = match_voice_command(text)
+        if match is None or match.kind != "subagent_switch":
+            return None
+        return match.target
+
+    def _apply_subagent_provider_switch(self, word: str) -> str:
+        """Execute a recognised sub-agent provider switch deterministically.
+
+        The brain LLM used to escalate "switch the sub-agent provider to X" to a
+        worker mission, because ``brain.sub_jarvis.provider`` has no settable
+        self-mod tool (2026-06-22 forensic). This runs BEFORE the force-spawn /
+        LLM path: map the spoken word to a canonical slug, then persist via the
+        3-layer ``config_writer.set_sub_jarvis_provider`` (TOML + config-soll pin
+        + ENV) so the drift-guard cannot revert it. The running worker re-resolves
+        the provider per mission (``_live_subagent_provider``), so it applies to
+        the NEXT mission without a restart. Returns the spoken confirmation, or
+        "" for an unknown provider word (caller falls through to the brain).
+        """
+        canonical = _SUBAGENT_VOICE_TO_CANONICAL.get(word.strip().lower())
+        if canonical is None:
+            return ""
+        # Best-effort in-memory cfg agreement (a frozen model is not an error).
+        try:
+            from jarvis.core.config import BrainTierConfig
+
+            self._config.brain.sub_jarvis = BrainTierConfig(provider=canonical)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("in-memory cfg.brain.sub_jarvis update skipped: %s", exc)
+        # Persist across all 3 layers (TOML + config-soll drift-pin + ENV) — the
+        # generic TOML-only write would be rolled back by the drift-guard.
+        try:
+            from jarvis.core import config_writer
+
+            config_writer.set_sub_jarvis_provider(canonical)
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "sub-agent provider persist failed (in-memory switch applied): %s",
+                exc,
+            )
+        log.info(
+            "sub-agent provider switched to %r via deterministic voice gate",
+            canonical,
+        )
+        lang = self._resolve_turn_lang()
+        template = _SUBAGENT_SWITCH_CONFIRM.get(lang, _SUBAGENT_SWITCH_CONFIRM["de"])
+        return template.format(p=_SUBAGENT_DISPLAY.get(canonical, canonical))
 
     def _detect_cancel_intent(self, text: str) -> bool:
         """True when the user wants to cancel a running OpenClaw task."""
@@ -3929,7 +4064,20 @@ class BrainManager:
                 timeout=timeout_s + 1.0,
             )
             if result.success:
-                text = str(result.output or "").strip() or action_phrase("cu_done", lang)
+                # FORWARD the verifier's on-screen observation (sitting in the
+                # harness stdout) as the readback so an informational request
+                # ("...and check which tabs I have open") is actually answered —
+                # and NEVER ``str()`` the raw ``dispatch_to_harness`` result DICT
+                # ({'harness': ..., 'exit_code': ..., 'stdout': ..., 'cost_usd':
+                # ..., 'duration_ms': ...}), which used to leak verbatim into the
+                # spoken/chat turn (live bug 2026-06-22, voice "geh in die
+                # Einstellungen und öffne Bluetooth"; the scrubbed ``''`` key was
+                # the blacklisted word "harness"). This is the SUCCESS sibling of
+                # the ``cu_failure_readback`` humanization below and uses the same
+                # static parse as the ``computer_use`` tool path — no LLM (AP-11).
+                output = getattr(result, "output", None)
+                stdout = output.get("stdout") if isinstance(output, dict) else None
+                text = cu_success_readback(lang, stdout=stdout)
             else:
                 err = getattr(result, "error", None)
                 exit_code, detail = self._cu_failure_detail(
@@ -4435,7 +4583,7 @@ class BrainManager:
         db = self._config.brain.deep_brain
         if db:
             order.append(db)
-        order += ["gemini", "claude-api", "openai", "openrouter", "grok"]
+        order += ["gemini", "claude-api", "openai", "openrouter"]
         seen: set[str] = set()
         for name in order:
             if name in seen or name == self._active_name or name not in available:
@@ -4576,7 +4724,6 @@ class BrainManager:
             "gemini",               # Google AI Studio
             "openrouter",           # universal gateway
             "openai",
-            "grok",
         ]
         for name in cross_order:
             if name == active:
@@ -4666,6 +4813,38 @@ class BrainManager:
         if switch_target:
             await self.switch(switch_target)
             return ""
+
+        # Deterministic reply-language switch — runs BEFORE the force-spawn
+        # heuristic so "stell auf Englisch um" sets brain.reply_language
+        # directly (live + persisted) instead of being dispatched as a worker
+        # mission (2026-06-22 forensic). Provider-independent: no LLM tool-call.
+        lang_switch = self._detect_language_switch_intent(user_text)
+        if lang_switch:
+            confirmation = self._apply_reply_language_switch(lang_switch)
+            if confirmation:
+                await self._record_response_side_effects(
+                    user_text=user_text,
+                    response_text=confirmation,
+                    use_history=use_history,
+                    trace_id=turn_trace_id,
+                )
+                return confirmation
+
+        # Deterministic sub-agent (Heavy-Task worker) provider switch — same
+        # reasoning as the language switch: runs BEFORE the force-spawn/LLM path
+        # so "switch the sub-agent provider to X" sets brain.sub_jarvis.provider
+        # directly instead of escalating to a worker mission (2026-06-22 forensic).
+        subagent_switch = self._detect_subagent_switch_intent(user_text)
+        if subagent_switch:
+            confirmation = self._apply_subagent_provider_switch(subagent_switch)
+            if confirmation:
+                await self._record_response_side_effects(
+                    user_text=user_text,
+                    response_text=confirmation,
+                    use_history=use_history,
+                    trace_id=turn_trace_id,
+                )
+                return confirmation
 
         depth_override = self._detect_depth_override(user_text)
         if depth_override == "deep":
@@ -6326,7 +6505,6 @@ _PROVIDER_SETUP_HINTS: dict[str, str] = {
     "claude-api": "ANTHROPIC_API_KEY setzen",
     "openai": "OPENAI_API_KEY setzen",
     "openrouter": "OPENROUTER_API_KEY setzen",
-    "grok": "XAI_API_KEY setzen",
     "ollama-local": "Ollama-Server starten (localhost:11434)",
     "ollama-cloud": "Ollama-Cloud-Token setzen",
 }

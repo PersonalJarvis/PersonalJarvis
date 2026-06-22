@@ -41,6 +41,7 @@ class ComputerUseContext:
     per_step_timeout_s: float = 30.0
     think_timeout_cap_s: float = 10.0  # L10: tunable model-call ceiling (sec)
     image_max_bytes: int = 300_000  # L7: tunable per-screenshot byte budget
+    image_max_dimension: int = 2048  # L7: tunable per-screenshot longest-side px
     settle_scale: float = 1.0  # L8: multiplier on the loop's fixed settle waits
     fast_step_model: str = ""  # L9: cheaper model id for trivial steps ("" = off)
     plan_model_override: str | None = None
@@ -168,6 +169,7 @@ _RELOADABLE_FIELDS: tuple[str, ...] = (
     "per_step_timeout_s",
     "think_timeout_cap_s",
     "image_max_bytes",
+    "image_max_dimension",
     "settle_scale",
     "fast_step_model",
     "max_replans",

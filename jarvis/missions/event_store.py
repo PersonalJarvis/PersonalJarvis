@@ -297,6 +297,44 @@ class MissionEventStore:
         await cur.close()
         return [(str(r[0]), str(r[1]), str(r[2])) for r in rows]
 
+    async def find_child_missions(
+        self, parent_mission_id: str
+    ) -> list[tuple[str, str]]:
+        """Return ``(child_mission_id, current_state)`` for every mission whose
+        ``MissionDispatched`` event names ``parent_mission_id`` as its parent.
+
+        Newest first. The parent link lives only in the event payload (the
+        ``missions`` header has no parent column), so we read the dispatch
+        events and parse the payload in Python — the same idiom the sub-agent
+        registry (``jarvis/agents/registry.py``) uses, avoiding a hard
+        dependency on SQLite's JSON1 ``json_extract`` (cloud-first portability).
+
+        Used by the rerun endpoint to stay idempotent: a parent must not spawn
+        a second LIVE re-run child while a prior one is still active (forensic
+        2026-06-22, mission 019eefcb-cee2 — a ``/rerun`` click-storm created
+        nine children for one mission).
+        """
+        cur = await self.conn.execute(
+            """
+            SELECT m.id, m.state, e.payload_json
+            FROM mission_events e
+            JOIN missions m ON m.id = e.mission_id
+            WHERE e.event_type = 'MissionDispatched'
+            ORDER BY m.created_ms DESC
+            """
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+        out: list[tuple[str, str]] = []
+        for mid, state, payload_json in rows:
+            try:
+                parent = json.loads(payload_json or "{}").get("parent_mission_id")
+            except (ValueError, TypeError):
+                parent = None
+            if parent == parent_mission_id:
+                out.append((str(mid), str(state)))
+        return out
+
     async def get_mission_state(self, mission_id: str) -> str | None:
         cur = await self.conn.execute(
             "SELECT state FROM missions WHERE id = ?",

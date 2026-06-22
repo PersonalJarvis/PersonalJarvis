@@ -75,24 +75,41 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
     }
   }
 
+  // The "get your key" link to the provider's official dashboard. Shown in
+  // BOTH states \u2014 while entering a key AND once it's saved \u2014 so the official
+  // source is always one click away (rotating a key, checking quota, etc.).
+  const dashboardLink = dashboardUrl ? (
+    <a
+      href={dashboardUrl}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-primary"
+    >
+      <ExternalLink className="h-3 w-3" /> Get your key here
+    </a>
+  ) : null;
+
   if (configured && !editing) {
     return (
-      <div className="flex items-center gap-2">
-        <code className="flex-1 truncate rounded-md border border-border bg-muted/30 px-3 py-1.5 font-mono text-xs text-muted-foreground">
-          {"\u2022".repeat(20)}
-        </code>
-        <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
-          Replace
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={handleDelete}
-          disabled={pending}
-          className="text-destructive hover:text-destructive"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <code className="flex-1 truncate rounded-md border border-border bg-muted/30 px-3 py-1.5 font-mono text-xs text-muted-foreground">
+            {"\u2022".repeat(20)}
+          </code>
+          <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
+            Replace
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={handleDelete}
+            disabled={pending}
+            className="text-destructive hover:text-destructive"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+        {dashboardLink}
       </div>
     );
   }
@@ -146,16 +163,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
       {fmt && fmt.match && fmt.detected?.note && (
         <p className="text-[11px] text-muted-foreground">{fmt.detected.note}</p>
       )}
-      {dashboardUrl && (
-        <a
-          href={dashboardUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-primary"
-        >
-          <ExternalLink className="h-3 w-3" /> Get your key here
-        </a>
-      )}
+      {dashboardLink}
     </div>
   );
 }
