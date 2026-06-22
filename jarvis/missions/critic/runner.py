@@ -34,6 +34,7 @@ from pydantic import ValidationError
 
 from ..stream_evidence import (
     capability_refusal_answer,
+    diff_has_action_evidence,
     informational_file_answer,
     is_informational_request,
     readonly_answer,
@@ -206,6 +207,42 @@ def _resolve_capability_requires_evidence(user_request: str) -> tuple[bool, str 
     return (False, None)
 
 
+# --- Messaging-action discriminator (for the diff-as-evidence gate) ---
+#
+# A real worktree diff proves the worker DID file work — valid ground truth for
+# an artefact task (HTML/report/code), so it satisfies the honesty gate for a
+# prose-only CLI worker (agy/gemini) that writes files but emits no tool_use
+# frame. It is NOT valid for a real SEND action: writing draft.txt does not
+# prove an email/SMS/chat message was sent, so those must still show a real
+# messaging/MCP tool call. We require BOTH a send-verb AND a messaging noun so
+# an artefact task that merely mentions the topic ("write an HTML report ABOUT
+# my emails") is NOT misclassified as a send — only "send an email", "tweet
+# this", "reply to the message" are.
+_SEND_VERB_RE = re.compile(
+    r"\b(send|sende|sendest|schick|schicke|verschick|verschicke|post|poste|"
+    r"tweet|reply|antworte|antworten|message|nachricht|dm)\b",
+    re.I,
+)
+_MESSAGING_NOUN_RE = re.compile(
+    r"\b(e-?mails?|mails?|sms|whatsapp|telegram|discord|slack|tweets?|"
+    r"nachrichten?|message|messages|dm|dms)\b",
+    re.I,
+)
+
+
+def _request_is_messaging_action(user_request: str) -> bool:
+    """True when the request is to SEND a message (email/SMS/chat/tweet).
+
+    Such an action can never be satisfied by a file write, so the diff-as-
+    evidence credit must NOT apply to it — the honesty gate keeps requiring a
+    real messaging tool call. Requires a send-verb AND a messaging noun so an
+    artefact task that only mentions the topic keeps its diff credit.
+    """
+    return bool(_SEND_VERB_RE.search(user_request)) and bool(
+        _MESSAGING_NOUN_RE.search(user_request)
+    )
+
+
 # --- Main gate function ---
 
 _CAPABILITY_NOT_EXECUTED_SUMMARY_DE: Final[str] = (
@@ -220,6 +257,7 @@ def enforce_capability_honesty(
     user_request: str,
     verdict: CriticVerdict,
     worker_output: str,
+    worker_diff: str = "",
 ) -> CapabilityHonestyCheck:
     """Apply the capability-honesty gate to a CriticVerdict.
 
@@ -237,6 +275,12 @@ def enforce_capability_honesty(
         verdict: CriticVerdict returned by the LLM critic.
         worker_output: Raw worker log / stream.jsonl content used for
             evidence extraction.
+        worker_diff: The worker's git diff (in-worktree hunks + Kontrollierer
+            augmentations). A real diff is ground-truth evidence of an executed
+            action for CLI subscription workers (Antigravity ``agy``, Gemini
+            ``--yolo``) that DO the work but emit only prose / plain text and so
+            carry no machine-readable tool_use frame. Defaults to "" so existing
+            callers and the prose-only anti-hallucination contract are unchanged.
 
     Returns:
         A ``CapabilityHonestyCheck`` wrapping the (possibly overridden) verdict.
@@ -244,7 +288,22 @@ def enforce_capability_honesty(
     evidence = _extract_tool_call_evidence(worker_output)
     requires_ev, cap_id = _resolve_capability_requires_evidence(user_request)
 
-    if requires_ev and not evidence:
+    # A real worktree diff is ground-truth evidence of an executed file/action —
+    # the canonical artefact the gate demands. agy/gemini write real files but
+    # narrate over a PTY/pipe (no tool_use frame), so frame-based extraction is
+    # always empty for them; crediting the diff is what lets a genuinely
+    # completed CLI mission pass instead of looping 3× to exhaustion (live
+    # mission 019eefda, 2026-06-22). It is NOT a weakening of the honesty gate:
+    # a prose-only claim with an EMPTY diff still has no evidence and is still
+    # overridden (see test_gate_still_blocks_prose_only_email_claim). The one
+    # exception is a real SEND action (email/SMS/chat) — a file write does not
+    # prove a message was sent, so those still require a real messaging tool
+    # call even when a diff exists.
+    fs_evidence = diff_has_action_evidence(worker_diff) and not (
+        _request_is_messaging_action(user_request)
+    )
+
+    if requires_ev and not evidence and not fs_evidence:
         # Override: LLM approved but no real tool-call evidence found.
         logger.warning(
             "enforce_capability_honesty: requires_evidence=True but no tool-call "
@@ -285,9 +344,15 @@ def enforce_capability_honesty(
             honesty_overridden=True,
         )
 
+    # When no tool_use frame was found but the worktree diff proves a real
+    # action, surface that as the evidence so telemetry / downstream readers
+    # see the mission produced ground-truth work (not "no evidence").
+    effective_evidence = evidence or (
+        ("filesystem-change",) if fs_evidence else ()
+    )
     return CapabilityHonestyCheck(
         verdict=verdict,
-        tool_call_evidence=evidence,
+        tool_call_evidence=effective_evidence,
         capability_id=cap_id,
         honesty_overridden=False,
     )
@@ -810,6 +875,7 @@ class CriticRunner:
                 user_request=mission_prompt,
                 verdict=verdict,
                 worker_output=worker_log,
+                worker_diff=worker_diff,
             )
             if honesty.honesty_overridden:
                 logger.info(
