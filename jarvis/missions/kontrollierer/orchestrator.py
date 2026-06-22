@@ -73,6 +73,7 @@ from .deliverable import (
     deliver_to_user_folder,
     materialize_answer_document,
 )
+from .deliverable_paths import is_deliverable_path
 from ..safety import (
     extract_worker_authored_text,
     filter_diff_paths,
@@ -189,39 +190,20 @@ _MANAGED_PERSONA_FILES: Final[frozenset[str]] = frozenset({
     ".openclaw/workspace-state.json",
 })
 
-# Directory names whose contents are never worker deliverables — git
-# internals, the materialized OpenClaw state, and build/cache junk. The
-# ``--ignored`` enumeration union in ``_archive_task_artifacts`` (added by
-# the 2026-05-27 hardening audit to capture gitignored deliverables such as
-# ``output.log``) would otherwise surface this noise into ``artifacts/files/``
-# — the exact Outputs-UI garbage Wave 3 (2026-05-26) removed.
-_JUNK_DIR_NAMES: Final[frozenset[str]] = frozenset({
-    ".git",
-    ".openclaw",
-    "openclaw_state",
-    "node_modules",
-    "__pycache__",
-    ".venv",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-})
-
-
 def _is_deliverable_path(rel: str) -> bool:
     """True if a worktree-relative path is a genuine worker deliverable.
 
-    False for managed worker-contract files (``AGENTS.md`` etc.) and for
-    anything inside a git-internal / state / build-cache directory. Used to
-    filter the untracked-file enumeration before copying into
-    ``artifacts/files/`` so the Outputs UI shows only real deliverables.
+    Thin wrapper over the shared :func:`deliverable_paths.is_deliverable_path`
+    — the single source of truth shared with the Outputs view + the user-folder
+    mirror (anti-drift, BUG-008 class). False for managed worker-contract files
+    (``AGENTS.md`` etc.), git-internal / state / dep-cache dirs, AND browser
+    user-data / profile scratch (the 2026-06-21 chrome-profile leak,
+    mission_019eeb34-bb67: a QA worker's 4 gitignored Chrome profiles were
+    re-imported by the ``--ignored`` enumeration union below and buried the 2
+    real deliverables in the Outputs view). Used to filter the untracked +
+    ``--ignored`` union before copying into ``artifacts/files/``.
     """
-    norm = rel.replace("\\", "/").strip("/")
-    if not norm:
-        return False
-    if norm in _MANAGED_PERSONA_FILES:
-        return False
-    return not any(seg in _JUNK_DIR_NAMES for seg in norm.split("/"))
+    return is_deliverable_path(rel, managed_files=_MANAGED_PERSONA_FILES)
 
 
 def _real_diff_is_empty(diff_text: str) -> bool:

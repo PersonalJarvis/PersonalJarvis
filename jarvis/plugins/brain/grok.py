@@ -17,11 +17,16 @@ class GrokBrain:
     name: str = "grok"
     context_window: int = 1_000_000
     supports_tools: bool = True
-    # Grok-4.3 supports image and video input. supports_vision is intentionally
-    # left False until the image-routing path in the OpenAI-compat layer
-    # (_openai_base.stream_complete) has been tested end-to-end —
-    # otherwise image-bearing requests cause a runtime error. Follow-up.
-    supports_vision: bool = False
+    # Grok supports image input. The OpenAI-compat image-routing path
+    # (_openai_base._to_openai_messages → image_url base64 data-URI) is now
+    # verified end-to-end against the live xAI API (2026-06-21): grok-4.3 and
+    # grok-4.20-0309-(non-)reasoning all read an attached screenshot and answer
+    # about it — no runtime error. This matters for Computer-Use: the screenshot
+    # loop SKIPS every supports_vision=False provider (screenshot_only_loop.py
+    # _call_brain), so leaving this False made grok — often the only provider
+    # with a live key — get skipped, and CU failed with "provider chain failed:
+    # N provider(s) skipped — no vision" (live forensic 2026-06-21 18:41).
+    supports_vision: bool = True
 
     def __init__(self, model: str | None = None) -> None:
         self._model = model or DEFAULT_MODEL

@@ -18,6 +18,7 @@ export interface AgentInstructionsConfig {
 
 export interface AgentInstructionsSaveResult extends AgentInstructionsConfig {
   ok: boolean;
+  removed?: boolean;
   restart_required: boolean;
 }
 
@@ -51,11 +52,17 @@ export function useAgentInstructions() {
 
   const save = useCallback(
     async (content: string): Promise<AgentInstructionsSaveResult> => {
-      const res = await fetch("/api/settings/agent-instructions", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content }),
-      });
+      const isClearing = content.trim().length === 0;
+      const res = await fetch(
+        "/api/settings/agent-instructions",
+        isClearing
+          ? { method: "DELETE" }
+          : {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ content }),
+            },
+      );
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(body.detail ?? `HTTP ${res.status}`);

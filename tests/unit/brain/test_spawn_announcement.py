@@ -423,6 +423,120 @@ async def test_open_breaker_skips_provider() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Failover provider (primary exhausted → live secondary, not the pool)        #
+# --------------------------------------------------------------------------- #
+# Mirrors the pre-thinking ack's Gemini→Grok failover
+# (jarvis.brain.factory._build_ack_fallback). Root cause of the 2026-06-21
+# "contextless stock phrase" report: the primary flash provider (gemini) was
+# billing-exhausted (429 → None) and the spawn announcer had NO failover, so it
+# degraded straight to the generic pool while a healthy grok was available.
+
+
+def _composer_with_fallback(
+    primary: _FakeProvider,
+    fallback: _FakeProvider,
+    *,
+    timeout_ms: int = 1500,
+    primary_breaker: CircuitBreaker | None = None,
+) -> SpawnAnnouncementComposer:
+    cfg = AckBrainConfig(timeout_ms=timeout_ms)
+    return SpawnAnnouncementComposer(
+        provider=primary,
+        config=cfg,
+        breaker=primary_breaker or CircuitBreaker(threshold=3, cooldown_s=60),
+        fallback_provider=fallback,
+        fallback_breaker=CircuitBreaker(threshold=3, cooldown_s=60),
+    )
+
+
+@pytest.mark.asyncio
+async def test_fallback_provider_used_when_primary_exhausted() -> None:
+    """Primary returns nothing (e.g. a 429-exhausted adapter yields None) →
+    the live failover provider's context-aware text is spoken, NOT a canned
+    pool phrase. Without this, a dead primary silently degrades every spawn
+    announcement to a generic stock line."""
+    primary = _FakeProvider(reply=None)
+    fallback = _FakeProvider(
+        reply="Ich gebe das Thema Gmail gerade an meinen Helfer weiter."
+    )
+    composer = _composer_with_fallback(primary, fallback)
+    out = await composer.compose(
+        utterance="Schau bitte in mein Gmail rein.", language="de"
+    )
+    assert "Gmail" in out
+    assert out not in _FALLBACK_SPAWN["de"]
+    assert len(primary.calls) == 1
+    assert len(fallback.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_fallback_provider_used_when_primary_errors() -> None:
+    primary = _FakeProvider(raises=True)
+    fallback = _FakeProvider(reply="Ich kümmere mich gleich um dein Gmail.")
+    composer = _composer_with_fallback(primary, fallback)
+    out = await composer.compose(
+        utterance="Schau in mein Gmail.", language="de"
+    )
+    assert out == "Ich kümmere mich gleich um dein Gmail."
+    assert len(fallback.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_fallback_provider_used_when_primary_times_out() -> None:
+    primary = _FakeProvider(reply="Ich schaue in dein Gmail.", delay_s=0.5)
+    fallback = _FakeProvider(reply="Ich nehme mir dein Gmail gleich vor.")
+    composer = _composer_with_fallback(primary, fallback, timeout_ms=100)
+    out = await composer.compose(
+        utterance="Schau in mein Gmail.", language="de"
+    )
+    assert out == "Ich nehme mir dein Gmail gleich vor."
+
+
+@pytest.mark.asyncio
+async def test_primary_success_skips_fallback() -> None:
+    primary = _FakeProvider(reply="Ich schaue gleich in dein Gmail.")
+    fallback = _FakeProvider(reply="should never be reached")
+    composer = _composer_with_fallback(primary, fallback)
+    out = await composer.compose(
+        utterance="Schau in mein Gmail.", language="de"
+    )
+    assert out == "Ich schaue gleich in dein Gmail."
+    assert fallback.calls == []
+
+
+@pytest.mark.asyncio
+async def test_both_providers_dead_falls_back_to_pool() -> None:
+    primary = _FakeProvider(reply=None)
+    fallback = _FakeProvider(reply=None)
+    composer = _composer_with_fallback(primary, fallback)
+    out = await composer.compose(
+        utterance="Schau in mein Gmail.", language="de"
+    )
+    assert out in _FALLBACK_SPAWN["de"]
+    assert len(primary.calls) == 1
+    assert len(fallback.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_open_primary_breaker_still_consults_fallback() -> None:
+    """An open primary breaker (dead provider already tripped it) must not kill
+    the context-aware path — the failover is still consulted before the pool."""
+    primary = _FakeProvider(reply="primary text")
+    fallback = _FakeProvider(reply="Ich nehme mir dein Gmail gleich vor.")
+    primary_breaker = CircuitBreaker(threshold=1, cooldown_s=60)
+    await primary_breaker.record_failure()  # opens immediately at threshold=1
+    composer = _composer_with_fallback(
+        primary, fallback, primary_breaker=primary_breaker
+    )
+    out = await composer.compose(
+        utterance="Schau in mein Gmail.", language="de"
+    )
+    assert primary.calls == []  # primary skipped (breaker open)
+    assert out == "Ich nehme mir dein Gmail gleich vor."
+    assert len(fallback.calls) == 1
+
+
+# --------------------------------------------------------------------------- #
 # Brain-supplied candidate (spoken_ack from the router tool-call)             #
 # --------------------------------------------------------------------------- #
 

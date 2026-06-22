@@ -86,9 +86,10 @@ class FakePtyBackend:
         cwd: str | None,
         cols: int,
         rows: int,
+        env: object | None = None,
     ) -> FakePtyHandle:
         self.spawn_calls.append(
-            {"argv": argv, "cwd": cwd, "cols": cols, "rows": rows}
+            {"argv": argv, "cwd": cwd, "cols": cols, "rows": rows, "env": env}
         )
         handle = FakePtyHandle(pid=self._pid, exitstatus=self._exitstatus)
         self.last_handle = handle
@@ -116,12 +117,13 @@ class FakeBytesPtyProcess:
         self._alive = True
 
     @classmethod
-    def spawn(cls, argv, cwd=None, dimensions=None):  # noqa: ANN001
+    def spawn(cls, argv, cwd=None, dimensions=None, env=None):  # noqa: ANN001
         inst = cls()
         FakeBytesPtyProcess.last_spawn = {
             "argv": argv,
             "cwd": cwd,
             "dimensions": dimensions,
+            "env": env,
         }
         return inst
 

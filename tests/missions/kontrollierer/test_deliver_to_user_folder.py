@@ -98,3 +98,32 @@ def test_build_delivered_summary_single(tmp_path: Path) -> None:
 
 def test_build_delivered_summary_empty() -> None:
     assert build_delivered_summary([]) == ""
+
+
+def test_skips_browser_profile_scratch(tmp_path: Path) -> None:
+    """Defence-in-depth for the chrome-profile leak (mission_019eeb34-bb67):
+    the user-folder mirror must NOT flood Downloads with a browser/QA worker's
+    gitignored Chrome user-data profiles that a pre-fix archive captured. The
+    real deliverable (incl. one inside qa-artifacts/ next to the junk) must
+    still be delivered."""
+    mission = tmp_path / "mission_abc"
+    files = mission / "tasks" / "019eeb34-bc50" / "artifacts" / "files"
+    # Genuine deliverables.
+    _make_artifact(mission, "019eeb34-bc50", "index.html", "<h1>real</h1>")
+    (files / "qa-artifacts").mkdir(parents=True, exist_ok=True)
+    (files / "qa-artifacts" / "melbourne-plan-render.png").write_bytes(b"PNGdata")
+    # Browser scratch the archive should never have copied.
+    prof = files / "qa-artifacts" / "chrome-profile-dd6355b81ddb49db87fc5045a7012b19"
+    (prof / "GrShaderCache").mkdir(parents=True, exist_ok=True)
+    (prof / "GrShaderCache" / "data_2").write_text("junk", encoding="utf-8")
+    (prof / "Last Browser").write_text("chrome", encoding="utf-8")
+
+    target = tmp_path / "delivered"
+    delivered = deliver_to_user_folder(
+        mission, mission_short_id="019eeb34", override_dir=str(target)
+    )
+
+    names = sorted(p.name for p in delivered)
+    assert names == ["index.html", "melbourne-plan-render.png"], names
+    assert not (target / "data_2").exists()
+    assert not (target / "Last Browser").exists()

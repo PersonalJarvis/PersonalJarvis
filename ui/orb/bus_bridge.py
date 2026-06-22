@@ -387,17 +387,46 @@ class OrbBusBridge:
     async def _on_session_started(self, event: VoiceSessionStarted) -> None:
         """A genuine new voice session began (wake-word / hotkey / call).
 
-        Releases the post-hangup suppression latch so the orb shows normally
-        for this session's states. ``_last_state`` is reset to IDLE as a
-        defensive measure: a session always begins from idle, so even if the
-        previous session somehow left ``_last_state`` on a non-IDLE value (a
-        raced or missed IDLE transition), the first LISTENING of the new
-        session is still treated as a real change rather than a same-state
-        no-op — otherwise the show + wave would be skipped.
+        Releases the post-hangup suppression latch AND drives the surface into
+        its listening look immediately — from THIS authoritative signal, not
+        from the ``SystemStateChanged(IDLE→LISTENING)`` the pipeline emits right
+        after.
+
+        Why not rely on that state event: it is *derived* and lossy. When the
+        supervisor's high-level state was already ``LISTENING`` (a stale prior
+        teardown left it there, or the turn-state cycles LISTENING↔USER_SPEAKING
+        without ever re-entering IDLE), ``set_state("LISTENING")`` is a no-op and
+        NO ``SystemStateChanged`` is published. The bridge then saw nothing until
+        ``THINKING`` and the bar only "woke up" once Jarvis started thinking —
+        never while the user was speaking into it (live forensic 2026-06-21,
+        session 1a3df62a: ``_on_session_started`` → the next bridge state was
+        ``IDLE → THINKING`` with no LISTENING in between).
+
+        ``VoiceSessionStarted`` is the authoritative "the user is being listened
+        to now" signal (the pipeline opens the mic + sets LISTENING immediately
+        after publishing it), so the listening visual is driven from here.
+        ``_last_state`` is set to ``LISTENING`` (not ``IDLE``) so the genuine
+        ``SystemStateChanged(LISTENING)`` that normally follows is a clean
+        same-state no-op rather than a second show, and so mic loudness is
+        forwarded to the equalizer (gated on ``_last_state == "LISTENING"``) from
+        the very first word.
         """
         log.info("OrbBridge._on_session_started: session=%s", event.session_id)
+        prev_state = self._last_state
         self._suppress_show_until_session = False
-        self._last_state = "IDLE"
+        self._last_state = "LISTENING"
+        # Enter the listening look now — robust to a deduplicated LISTENING state.
+        self._orb.show(mode="listen")
+        if prev_state in ("IDLE", "ERROR", "PAUSED"):
+            self._orb.play_animation("wave")
+        # Fresh turn: clear any transcript/reply left over from a prior session
+        # and open an empty live-transcript bubble, mirroring the LISTENING
+        # branch of ``_on_state`` (a session never resumes a paused completion).
+        self._listening_transcript_text = ""
+        self._last_response_text = ""
+        self._show_listening_transcript("")
+        self._completion_continuation = False
+        self._cancel_idle_scheduler()
 
     async def _on_session_ended(self, event: VoiceSessionEnded) -> None:
         """A voice session ended (hangup / idle-timeout / shutdown / error).

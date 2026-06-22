@@ -1,9 +1,10 @@
 """The agent-instructions file must actually reach the brain's system prompt.
 
 Companion to test_agent_instructions.py (which locks the file/IO layer). This
-proves the wiring: ``BrainManager._build_system_prompt`` injects the user's
-standing instructions as a distinct, guard-railed block when one is set, and
-omits the block entirely otherwise.
+proves the wiring: ``BrainManager._build_system_prompt`` injects the current
+Jarvis.md state as a distinct, guard-railed block when one is set, and emits an
+explicit empty-state block otherwise so old Jarvis.md instructions cannot linger
+by imitation.
 """
 from __future__ import annotations
 
@@ -38,9 +39,11 @@ def _isolate_data_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
     return tmp_path
 
 
-def test_no_preferences_block_without_a_file() -> None:
+def test_empty_preferences_state_without_a_file() -> None:
     prompt = _manager()._build_system_prompt()
-    assert "USER PREFERENCES & STANDING INSTRUCTIONS" not in prompt
+    assert "USER PREFERENCES & STANDING INSTRUCTIONS" in prompt
+    assert "No active user preferences are currently set" in prompt
+    assert "Ignore any earlier Jarvis.md instructions" in prompt
 
 
 def test_agent_instructions_injected_with_filename_and_guardrail() -> None:

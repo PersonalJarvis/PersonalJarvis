@@ -58,6 +58,30 @@ describe("AgentInstructionsView", () => {
     });
   });
 
+  it("clears saved instructions only when the empty draft is saved", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => STATE })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ...EMPTY_STATE, ok: true, removed: true, restart_required: false }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AgentInstructionsView />);
+    const editor = await screen.findByTestId("agent-instructions-editor");
+    fireEvent.change(editor, { target: { value: "" } });
+
+    const save = screen.getByText("Save instructions").closest("button") as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
+
+    await waitFor(() => {
+      const del = fetchMock.mock.calls.find(([, opts]) => opts?.method === "DELETE");
+      expect(del).toBeTruthy();
+      expect(del![0]).toBe("/api/settings/agent-instructions");
+    });
+  });
+
   it("loads the starter template into an empty editor", async () => {
     vi.stubGlobal(
       "fetch",
@@ -73,23 +97,16 @@ describe("AgentInstructionsView", () => {
     );
   });
 
-  it("DELETEs on clear", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => STATE })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ ...EMPTY_STATE, ok: true, removed: true, restart_required: false }),
-      });
+  it("reverts unsaved changes without deleting the saved instructions", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => STATE });
     vi.stubGlobal("fetch", fetchMock);
     render(<AgentInstructionsView />);
-    await screen.findByTestId("agent-instructions-editor");
-    fireEvent.click(screen.getByText("Clear"));
-    await waitFor(() => {
-      const del = fetchMock.mock.calls.find(([, opts]) => opts?.method === "DELETE");
-      expect(del).toBeTruthy();
-      expect(del![0]).toBe("/api/settings/agent-instructions");
-    });
+    const editor = await screen.findByTestId("agent-instructions-editor");
+    fireEvent.change(editor, { target: { value: "Changed then regret" } });
+    fireEvent.click(screen.getByText("Revert changes"));
+
+    expect((editor as HTMLTextAreaElement).value).toBe("Be terse.");
+    expect(fetchMock.mock.calls.some(([, opts]) => opts?.method === "DELETE")).toBe(false);
   });
 
   it("disables Save until the draft changes", async () => {

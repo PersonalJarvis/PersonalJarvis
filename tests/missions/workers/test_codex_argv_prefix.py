@@ -114,6 +114,37 @@ def test_argv_prefix_falls_back_to_binary_when_node_missing(
         return None
 
     monkeypatch.setattr(shutil, "which", fake_which)
+    # Force the robust finder to miss too (no node anywhere on this host),
+    # otherwise it would discover the real Node.js install via a well-known dir.
+    from jarvis.missions.workers import codex_direct_worker as cdw
+    monkeypatch.setattr(cdw, "resolve_node_executable", lambda: None)
 
     prefix = _resolve_codex_argv_prefix()
     assert prefix == [str(cmd_shim)], f"expected [codex shim], got {prefix}"
+
+
+def test_argv_prefix_uses_node_from_wellknown_when_path_broken(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The production scenario: node is OFF the inherited PATH (shutil.which
+    misses) but the robust finder locates it via a well-known dir — the prefix
+    must STILL be node-direct, not the .CMD shim."""
+    cmd_shim, codex_js = _fake_npm_layout(tmp_path)
+    wellknown_node = tmp_path / "nodejs" / "node.exe"
+    wellknown_node.parent.mkdir()
+    wellknown_node.write_text("", encoding="utf-8")
+
+    def fake_which(name: str, *a, **k) -> str | None:
+        low = name.lower()
+        if low in ("node", "node.exe"):
+            return None  # node NOT on PATH (the degraded-launch condition)
+        if low in ("codex", "codex.cmd", "codex.exe"):
+            return str(cmd_shim)
+        return None
+
+    monkeypatch.setattr(shutil, "which", fake_which)
+    from jarvis.missions.workers import codex_direct_worker as cdw
+    monkeypatch.setattr(cdw, "resolve_node_executable", lambda: str(wellknown_node))
+
+    prefix = _resolve_codex_argv_prefix()
+    assert prefix == [str(wellknown_node), str(codex_js)], prefix

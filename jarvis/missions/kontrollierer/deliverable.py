@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Final
 
 from ..stream_evidence import clean_request_body
+from .deliverable_paths import is_nondeliverable_scratch
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +108,9 @@ def build_deliverable_summary(mission_dir: Path) -> str:
             if not files_dir.exists() or not files_dir.is_dir():
                 continue
             for path in files_dir.rglob("*"):
-                if path.is_file():
+                if path.is_file() and not is_nondeliverable_scratch(
+                    path.relative_to(files_dir).as_posix()
+                ):
                     names.append(path.name)
     except OSError:
         # Defensive: filesystem hiccups must not crash the readback path.
@@ -141,7 +144,12 @@ def _existing_deliverable_files(mission_dir: Path) -> list[Path]:
             files_dir = task_dir / "artifacts" / "files"
             if not files_dir.is_dir():
                 continue
-            out.extend(p for p in files_dir.rglob("*") if p.is_file())
+            out.extend(
+                p for p in files_dir.rglob("*")
+                if p.is_file() and not is_nondeliverable_scratch(
+                    p.relative_to(files_dir).as_posix()
+                )
+            )
     except OSError:
         return out
     return out
@@ -361,7 +369,9 @@ def deliver_to_user_folder(
             if not files_dir.is_dir():
                 continue
             for path in sorted(files_dir.rglob("*")):
-                if path.is_file():
+                if path.is_file() and not is_nondeliverable_scratch(
+                    path.relative_to(files_dir).as_posix()
+                ):
                     sources.append(path)
     except OSError as exc:
         logger.warning("deliver: enumerating %s failed: %s", tasks_root, exc)

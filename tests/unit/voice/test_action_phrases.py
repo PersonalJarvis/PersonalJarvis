@@ -216,3 +216,44 @@ class TestCuSuccessReadback:
         assert cu_success_readback(
             "es", stdout="[cu] done at step 2 (verified: )\n"
         ) == action_phrase("cu_done", "es")
+
+    def test_blocks_raw_verifier_ui_structure_dump(self) -> None:
+        """The read-goal verifier sometimes PROVES done by describing the UI
+        structurally instead of answering the user. Such a dump is an internal
+        evidence artifact — it must NOT be spoken verbatim. Live bug 2026-06-21
+        (Melbourne HTML turn): "look at my screen and tell me which app is open"
+        read out the full structural dump, including the verbatim content of an
+        unrelated parallel Claude-Code AskUserQuestion box.
+        """
+        from jarvis.voice.action_phrases import action_phrase, cu_success_readback
+
+        stdout = (
+            "[cu] done at step 2.1 (verified: Foreground window (right, orange "
+            "border, on top): title 'Eine Detail-Erkenntnis (deine Entscheidung)', "
+            "content starts 'Der Melbourne-Guide rendert unter der strengen "
+            "Sicherheits-CSP inhaltlich und optisch vollstaendig. Nur ein kleines "
+            "inline-<script>...' followed by bullet points on CSP, JS, and 'Die "
+            "Aenderungen sind uncommitted...'. Bottom status bar: 'Personal "
+            "Jarvis % main Opus 4.8 (1M context)')\n"
+        )
+        out = cu_success_readback("de", stdout=stdout)
+        # The dump (and the leaked foreign box content) must NOT be spoken.
+        assert out == action_phrase("cu_done", "de"), out
+        assert "Detail-Erkenntnis" not in out
+        assert "Foreground window" not in out
+        assert "status bar" not in out.lower()
+
+    def test_blocks_individual_ui_structure_markers(self) -> None:
+        from jarvis.voice.action_phrases import action_phrase, cu_success_readback
+
+        done_de = action_phrase("cu_done", "de")
+        for proof in (
+            "Foreground window shows the settings page",
+            "The active window is the editor",
+            "Bottom status bar: Ready",
+            "Statusleiste zeigt Bereit",
+            "title 'X', content starts with a heading and a paragraph",
+            "a list followed by bullet points on three topics",
+        ):
+            stdout = f"[cu] done at step 1 (verified: {proof})\n"
+            assert cu_success_readback("de", stdout=stdout) == done_de, proof

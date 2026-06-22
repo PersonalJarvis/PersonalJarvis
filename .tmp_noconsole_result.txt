@@ -1,7 +1,0 @@
-HAS CONSOLE (GetConsoleWindow!=0): False
-OLD CMD0: <USER_HOME>\AppData\Roaming\npm\codex.CMD
-NEW CMD0: C:\Program Files\nodejs\node.EXE <USER_HOME>/AppData/Roaming/npm/node_modules/@openai/codex/bin/codex.js
-[OLD codex.CMD] exit=0 wall_ms=37934 stdout_bytes=597
-   STDERR: 'Reading prompt from stdin...\n2026-06-20T14:24:57.778970Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer realm=\\"OAuth\\", resource_metadata=\\"https://mcp.cloudflare.com/.well-known/oauth-protected-resource/mcp\\", error=\\"invalid_token\\", error_description=\\"Missing or invalid access token\\"" })\n'
-[NEW node codex.js] exit=0 wall_ms=31964 stdout_bytes=598
-   STDERR: 'Reading prompt from stdin...\n2026-06-20T14:25:36.284363Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer realm=\\"OAuth\\", resource_metadata=\\"https://mcp.cloudflare.com/.well-known/oauth-protected-resource/mcp\\", error=\\"invalid_token\\", error_description=\\"Missing or invalid access token\\"" })\n'

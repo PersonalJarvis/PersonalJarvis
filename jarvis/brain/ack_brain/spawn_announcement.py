@@ -48,10 +48,12 @@ import logging
 import random
 import re
 from collections import deque
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from jarvis.brain.ack_brain.generator import (
     _TOKEN_RE,
+    _augment_with_preferences,
     _detect_language,
     _emit_counter,
 )
@@ -366,10 +368,28 @@ class SpawnAnnouncementComposer:
         provider: AbstractAckProvider | None = None,
         config: AckBrainConfig | None = None,
         breaker: CircuitBreaker | None = None,
+        fallback_provider: AbstractAckProvider | None = None,
+        fallback_breaker: CircuitBreaker | None = None,
+        preferences_provider: Callable[[], str] | None = None,
     ) -> None:
         self._provider = provider
         self._config = config
         self._breaker = breaker
+        # Failover flash provider on a SEPARATE endpoint/key, tried only when
+        # the primary is exhausted (None), times out, errors, or its breaker is
+        # open. Mirrors the pre-thinking ack's Gemini->Grok failover
+        # (jarvis.brain.factory._build_ack_fallback) so a dead primary flash
+        # provider degrades to the live secondary, NOT to the curated pool —
+        # the 2026-06-21 "contextless stock phrase" regression (gemini 429 with
+        # no failover on the spawn path). Its own breaker so a busy primary
+        # never starves both. None => primary-only (legacy behavior).
+        self._fallback_provider = fallback_provider
+        self._fallback_breaker = fallback_breaker
+        # Returns the user's standing-preferences block (or "") so the spoken
+        # spawn announcement honors the user's agent-instructions file. Read
+        # fresh per call so an edit applies without a restart. Only the LLM path
+        # consumes it; the curated fallback pool is fixed strings by design.
+        self._preferences_provider = preferences_provider
         # No-repeat memory across BOTH pools — back-to-back spawns must not
         # sound identical even when the LLM path is down. maxlen 3 still
         # leaves at least one pickable phrase in the smallest (4-item) pool.
@@ -455,20 +475,53 @@ class SpawnAnnouncementComposer:
     async def _compose_via_llm(
         self, utterance: str, lang: str, action: str, target: str
     ) -> str | None:
-        """One bounded flash-LLM attempt; ``None`` on any failure or reject."""
-        if self._provider is None:
-            return None
+        """Try the primary flash provider, then the failover; ``None`` if both fail.
+
+        The failover mirrors the pre-thinking ack's Gemini->Grok failover
+        (``jarvis.brain.factory._build_ack_fallback``): when the primary flash
+        provider is exhausted (429 -> ``None``), times out, errors, or its
+        breaker is open, a dead primary must NOT silently degrade the spawn
+        announcement to the generic pool while a healthy second provider is
+        wired. Each provider keeps its OWN breaker so a busy primary never
+        starves both. The first validated announcement wins.
+        """
+        content = self._build_content(utterance, action, target)
+        for provider, breaker in (
+            (self._provider, self._breaker),
+            (self._fallback_provider, self._fallback_breaker),
+        ):
+            if provider is None:
+                continue
+            validated = await self._try_provider(provider, breaker, content, lang)
+            if validated:
+                return validated
+        return None
+
+    @staticmethod
+    def _build_content(utterance: str, action: str, target: str) -> str:
+        """Compose the LLM input once (reused across primary + failover)."""
+        content = (utterance or "").strip()
+        interpreted = " ".join(p for p in (action.strip(), target.strip()) if p)
+        if interpreted:
+            content = (
+                f"{content}\n[Task: {interpreted}]" if content
+                else f"[Task: {interpreted}]"
+            )
+        return content
+
+    async def _try_provider(
+        self,
+        provider: AbstractAckProvider,
+        breaker: CircuitBreaker | None,
+        content: str,
+        lang: str,
+    ) -> str | None:
+        """One bounded flash-LLM attempt against a single provider/breaker."""
         try:
-            if self._breaker is not None and await self._breaker.is_open():
+            if breaker is not None and await breaker.is_open():
                 _emit_counter("spawn_ack_breaker_open_total")
                 return None
 
-            content = (utterance or "").strip()
-            interpreted = " ".join(p for p in (action.strip(), target.strip()) if p)
-            if interpreted:
-                content = f"{content}\n[Task: {interpreted}]" if content else (
-                    f"[Task: {interpreted}]"
-                )
             timeout_ms = (
                 getattr(self._config, "timeout_ms", _DEFAULT_TIMEOUT_MS)
                 if self._config is not None
@@ -477,27 +530,31 @@ class SpawnAnnouncementComposer:
 
             try:
                 raw = await asyncio.wait_for(
-                    self._provider.run(
-                        content, lang, persona_prompt=get_spawn_persona(lang)
+                    provider.run(
+                        content,
+                        lang,
+                        persona_prompt=_augment_with_preferences(
+                            get_spawn_persona(lang), self._preferences_provider
+                        ),
                     ),
                     timeout=timeout_ms / 1000.0,
                 )
             except TimeoutError:
                 _emit_counter("spawn_ack_timeout_total")
-                if self._breaker is not None:
-                    await self._breaker.record_failure()
+                if breaker is not None:
+                    await breaker.record_failure()
                 return None
             except Exception as exc:  # noqa: BLE001 — adapters should swallow; leak = failure
                 log.warning("Spawn-announcement provider raised: %s", exc)
                 _emit_counter("spawn_ack_provider_error_total")
-                if self._breaker is not None:
-                    await self._breaker.record_failure()
+                if breaker is not None:
+                    await breaker.record_failure()
                 return None
 
-            if self._breaker is not None:
+            if breaker is not None:
                 # The provider answered — it is healthy even if we reject the
                 # text below (same bookkeeping as AckGenerator.run).
-                await self._breaker.record_success()
+                await breaker.record_success()
             validated = self._validate(raw or "", lang)
             if validated is None and raw and raw.strip():
                 _emit_counter("spawn_ack_rejected_total")

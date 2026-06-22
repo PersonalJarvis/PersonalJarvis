@@ -41,10 +41,12 @@ def test_allowlist_vars_passed_through(tmp_path: Path) -> None:
     with patch.dict("os.environ", fake_env, clear=True):
         env = build_worker_env(run_dir=tmp_path)
 
-    for key in (
-        "PATH", "SystemRoot", "TEMP", "USERPROFILE", "LOCALAPPDATA", "APPDATA",
-    ):
+    for key in ("SystemRoot", "TEMP", "USERPROFILE", "LOCALAPPDATA", "APPDATA"):
         assert env[key] == fake_env[key]
+    # PATH is forwarded but may be additively repaired on Windows (essential
+    # System32 / Node.js dirs appended when missing). The original entries are
+    # always preserved, in order, at the front — never dropped or reordered.
+    assert env["PATH"].startswith(fake_env["PATH"])
 
 
 def test_appdata_is_passed_through(tmp_path: Path) -> None:
@@ -529,3 +531,97 @@ def test_classic_api_key_does_not_set_claude_code_oauth_token(tmp_path: Path) ->
         )
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
     assert env.get("ANTHROPIC_API_KEY") == "sk-ant-api03-classic1234567890"
+
+
+# --- DEGRADED-LAUNCH PATH REPAIR (live incident 2026-06-20) -----------------
+#
+# jarvis was launched by an agent runtime (hermes-agent) with a PATH that did
+# NOT contain the Node.js dir. build_worker_env forwarded that broken PATH
+# verbatim, so the codex worker's `codex.CMD` shim resolved bare `node` via PATH,
+# cmd.exe failed "'node' is not recognized" and exited 1 in ~25 ms — every
+# mission died `task_error` ("Der Worker ist abgebrochen."). The env builder must
+# ADDITIVELY repair the worker PATH (never reorder/drop) so essential System32 /
+# Node.js dirs are always present, and forward ComSpec/PATHEXT so .cmd shims and
+# `chcp` resolve regardless of how jarvis itself was launched.
+
+import sys  # noqa: E402
+
+from jarvis.missions.isolation.env import _repair_windows_worker_path  # noqa: E402
+
+
+def test_repair_path_appends_system32_when_missing() -> None:
+    repaired = _repair_windows_worker_path(
+        r"C:\some\dir", environ={"SystemRoot": r"C:\Windows"}, node_exe=None
+    )
+    parts = [p.rstrip("\\").lower() for p in repaired.split(";")]
+    assert r"c:\windows\system32" in parts, repaired
+
+
+def test_repair_path_appends_node_dir_when_missing() -> None:
+    repaired = _repair_windows_worker_path(
+        r"C:\some\dir",
+        environ={"SystemRoot": r"C:\Windows"},
+        node_exe=r"C:\Program Files\nodejs\node.exe",
+    )
+    assert r"c:\program files\nodejs" in repaired.lower(), repaired
+
+
+def test_repair_path_is_additive_and_preserves_leading_entries() -> None:
+    repaired = _repair_windows_worker_path(
+        r"C:\keep\me;C:\and\me", environ={"SystemRoot": r"C:\Windows"}, node_exe=None
+    )
+    assert repaired.startswith(r"C:\keep\me;C:\and\me"), repaired
+
+
+def test_repair_path_does_not_duplicate_existing_system32() -> None:
+    p = r"C:\Windows\System32;C:\other"
+    repaired = _repair_windows_worker_path(
+        p, environ={"SystemRoot": r"C:\Windows"}, node_exe=None
+    )
+    count = sum(
+        1 for x in repaired.split(";") if x.rstrip("\\").lower() == r"c:\windows\system32"
+    )
+    assert count == 1, repaired
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PATH repair only")
+def test_build_worker_env_repairs_broken_path_and_forwards_comspec(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """End-to-end: a degraded inherited PATH (no System32, no node) yields a
+    worker PATH that DOES contain both, plus ComSpec/PATHEXT forwarded."""
+    from jarvis.missions.isolation import env as env_mod
+
+    monkeypatch.setattr(
+        env_mod, "resolve_node_executable",
+        lambda: r"C:\Program Files\nodejs\node.exe",
+    )
+    fake = {
+        "PATH": r"C:\Users\X\AppData\Local\hermes\bin",
+        "SystemRoot": r"C:\Windows",
+        "APPDATA": r"C:\Users\X\AppData\Roaming",
+        "ComSpec": r"C:\Windows\System32\cmd.exe",
+        "PATHEXT": ".COM;.EXE;.BAT;.CMD",
+    }
+    with patch.dict("os.environ", fake, clear=True):
+        env = build_worker_env(run_dir=tmp_path)
+
+    pl = env["PATH"].lower()
+    assert r"\windows\system32" in pl, env["PATH"]
+    assert r"\nodejs" in pl, env["PATH"]
+    assert env["PATH"].startswith(fake["PATH"]), "original PATH must stay at front"
+    assert env.get("ComSpec") == r"C:\Windows\System32\cmd.exe"
+    assert env.get("PATHEXT") == ".COM;.EXE;.BAT;.CMD"
+
+
+def test_build_worker_env_leaves_posix_path_untouched(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Cross-platform doctrine: the Windows-shaped PATH repair must NOT run on
+    POSIX (a Linux VPS PATH must arrive verbatim)."""
+    from jarvis.missions.isolation import env as env_mod
+
+    monkeypatch.setattr(env_mod, "_worker_path_repair_is_windows", lambda: False)
+    with patch.dict("os.environ", {"PATH": "/usr/bin:/bin"}, clear=True):
+        env = build_worker_env(run_dir=tmp_path)
+    assert env["PATH"] == "/usr/bin:/bin"

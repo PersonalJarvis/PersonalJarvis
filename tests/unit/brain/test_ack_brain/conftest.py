@@ -116,8 +116,15 @@ def make_ack_config(
     circuit_breaker_threshold: int = 3,
     circuit_breaker_cooldown_s: int = 60,
     max_output_tokens: int = 40,
+    preamble_enabled: bool = True,
 ) -> AckBrainConfig:
-    """Build a Pydantic AckBrainConfig with sensible defaults for tests."""
+    """Build a Pydantic AckBrainConfig with sensible defaults for tests.
+
+    ``preamble_enabled`` defaults to True here (unlike the production default
+    of False) because this helper exists to exercise the pre-thinking preamble
+    generator; the production-default (preamble off) path is covered directly
+    in test_preamble_gate.py.
+    """
     providers = _ProvidersBundle(
         gemini=GeminiAckProviderConfig(
             model="gemini-3.1-flash", max_output_tokens=max_output_tokens
@@ -140,6 +147,7 @@ def make_ack_config(
         circuit_breaker_threshold=circuit_breaker_threshold,
         circuit_breaker_cooldown_s=circuit_breaker_cooldown_s,
         providers=providers,
+        preamble_enabled=preamble_enabled,
     )
 
 

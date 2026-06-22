@@ -91,7 +91,23 @@ class AckBrainConfig(BaseModel):
     # The Flash-Brain is on-by-default. The user opted into the
     # feature by enabling it in the spec; disabling it again is a
     # deliberate jarvis.toml edit, not the silent ground state.
+    # NOTE: `enabled` is the SUBSYSTEM master. It keeps the LLM-composed
+    # spawn announcement (`spawn_announcements`, grounded — speaks only
+    # after a real worker spawn) wired even when the speculative
+    # pre-thinking preamble below is off.
     enabled: bool = Field(default=True)
+    # 2026-06-21: dedicated sub-switch for the speculative pre-thinking
+    # PREAMBLE ("Ich schau gerade in Spotify nach …"), symmetric to
+    # `spawn_announcements`. OFF by default. Forensic (data/sessions.db):
+    # the preamble fired on every utterance with ZERO grounding in the
+    # action the deep brain actually takes, reached first token at a
+    # median 2.98 s (98 % slower than the 2 s suppress gate, so the gate
+    # almost never fired), and was the ONLY spoken output on 22 % of
+    # preamble turns ("says it is on it, then does nothing"). When False,
+    # build_ack_brain() returns None and the pipeline's fire-and-forget
+    # preamble task never spawns; the grounded spawn announcement is
+    # unaffected. Set True to opt back into the speculative preamble.
+    preamble_enabled: bool = Field(default=False)
     # "follow_brain" mirrors cfg.brain.primary so the Flash-Brain
     # naturally tracks whatever main provider the user is on. Pin to
     # a concrete name (gemini/grok/openai/ollama) to override.
