@@ -555,7 +555,6 @@ Line length 100. Target `py311`. One per-file `E501` exception (`jarvis/awarenes
 - **Grok = fallback** (xAI — primary TTS voice "leo" + Brain fallback). API key reused for both.
 - **Claude-API** plugin exists but **user has NO Anthropic API account** (AP-6). Workers use Claude Sonnet via Claude Max OAuth through the `claude-cli` backend (`@anthropic-ai/claude-code`), auto-installed by wizard via npm.
 - **OpenRouter** universal gateway, **OpenAI** GPT, **Codex** API-key mode.
-- **GitHub Claude Bot:** deployed on 29 private repos via `.github/workflows/claude.yml`. **Public-repo safety gate** baked in (workflow only runs if `repository.private == true`). OAuth tokens auto-synced from `.credentials.json` every 3h.
 
 **STT** (6 plugins): `faster-whisper` (local, GPU), `openai-api`, `groq-api`, `deepgram`, `deepgram-flux` (Phase L.3 streaming), `deepgram-nova3`. **Google Cloud STT** wired 2026-05-15 — `chirp_2` @ `europe-west4`, ~680ms warm latency. SA-key under `~/.config/jarvis/`.
 

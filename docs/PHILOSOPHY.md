@@ -93,7 +93,7 @@ These are explicitly **maintainer-only**, will never become part of the open-sou
 - `scripts/drift-guard-daemon.ps1` — `jarvis.toml` self-healing daemon (BUG-010 triple defense).
 - `scripts/auto-push-eod.ps1` + `scripts/install-auto-push-task.ps1` — nightly tag-and-push safety net.
 - `scripts/jarvis-config-drift-guard.ps1` — config drift defense.
-- The Claude-Max OAuth token sync (`.credentials.json` refresh every 3 h) used by the GitHub bot on 29 private repos.
+- The maintainer's private GitHub CI bot integration (runs only on the maintainer's own private repositories).
 - The `~/.claude/` private configuration directory (memory, plans, brand guidelines).
 
 These are the maintainer's *operational rituals* — they keep the maintainer's workstation healthy, but they have no place in an open-source user's runtime, and they would not work there either.
