@@ -41,7 +41,7 @@ def _isolate_data_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
 def test_default_persona_block_present_without_custom() -> None:
     prompt = _manager()._build_system_prompt()
     # A signature line from the packaged JARVIS_PERSONA.md persona block.
-    assert "Just A Rather Very Intelligent System" in prompt
+    assert "voice-based meta-orchestrator" in prompt
 
 
 def test_custom_prompt_replaces_default_persona_block() -> None:
@@ -51,4 +51,4 @@ def test_custom_prompt_replaces_default_persona_block() -> None:
     prompt = _manager()._build_system_prompt()
     assert "XYZZY-CUSTOM" in prompt
     # The packaged persona block is no longer injected once a custom one is set.
-    assert "Just A Rather Very Intelligent System" not in prompt
+    assert "voice-based meta-orchestrator" not in prompt

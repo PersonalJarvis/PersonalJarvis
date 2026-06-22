@@ -146,7 +146,7 @@ Explicitly **not** part of this feature:
 | **Multi-language UI in the overlay (V1)** | DE + EN for the tray menu and mascot tooltip is enough for now; full i18n in V2 |
 | **Sub-agent status in the overlay** | Sub-agents are not "on your computer" — they are subprocesses. The overlay reflects only Hauptjarvis state |
 | **Ambient idle-state glow** (e.g. "Jarvis is alive") | The glow should be **silent** when Jarvis is doing nothing. The mascot idle pulse is enough of a sign of life |
-| **Decorative animations for state transitions** (e.g. sparkle effects) | Too playful; does not fit Jarvis' British-butler persona |
+| **Decorative animations for state transitions** (e.g. sparkle effects) | Too playful; does not fit Jarvis' calm, understated assistant persona |
 | **Custom mouse-cursor replacement** | We only draw a *trail* behind the system cursor, we do not replace the cursor itself |
 
 ---
