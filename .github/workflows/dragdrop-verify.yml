@@ -1,0 +1,61 @@
+# Cross-platform drag-drop verification — proves the overlay drop mechanism
+# (tkdnd load + parse + register + drop chain) actually EXECUTES on Windows,
+# macOS AND Linux. The macos-latest leg is the autonomous macOS proof that
+# cannot be produced on a Windows dev box (no macOS container exists). Runs the
+# same `scripts/crossplatform/verify_drop_target.py` on all three OSes.
+name: dragdrop-crossplatform-verify
+
+on:
+  push:
+    paths:
+      - "jarvis/overlay/drop_target.py"
+      - "jarvis/overlay/drop_bridge.py"
+      - "scripts/crossplatform/verify_drop_target.py"
+      - ".github/workflows/dragdrop-verify.yml"
+  pull_request:
+    paths:
+      - "jarvis/overlay/drop_target.py"
+      - "jarvis/overlay/drop_bridge.py"
+      - "scripts/crossplatform/verify_drop_target.py"
+  workflow_dispatch: {}
+
+jobs:
+  verify:
+    name: drag-drop (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install tkinterdnd2 (+ Linux X11 runtime libs)
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          # Pin ==0.4.2: from 0.4.4.1 onward the osx-arm64 tkdnd binary is the
+          # Tcl-9 build (libtcl9tkdnd2.9.5.dylib) that fails to load on the
+          # standard Tcl-8.6 Python ("incompatible stubs mechanism"). 0.4.2 is the
+          # highest version whose osx-arm64 binary is the Tcl-8 build
+          # (libtkdnd2.9.3.dylib), which loads on Tcl-8.6 across all three OSes.
+          pip install "tkinterdnd2==0.4.2"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends \
+              python3-tk xvfb libxcursor1 libxrender1 libxext6 \
+              libxft2 libxinerama1 libxi6 libxrandr2
+          fi
+      - name: Verify drag-drop executes on ${{ matrix.os }}
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a python scripts/crossplatform/verify_drop_target.py
+          else
+            python scripts/crossplatform/verify_drop_target.py
+          fi

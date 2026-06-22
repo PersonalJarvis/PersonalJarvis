@@ -169,6 +169,55 @@ async def test_cu_failure_announcement_carries_technical_detail() -> None:
 
 
 @pytest.mark.asyncio
+async def test_success_readback_never_leaks_raw_harness_dict() -> None:
+    """Live bug 2026-06-22 (voice "geh in die Einstellungen und öffne Bluetooth").
+
+    The deterministic CU local-action gate's SUCCESS branch did
+    ``str(result.output)`` on the ``dispatch_to_harness`` DICT, so the user heard
+    /saw the raw repr ``{'harness': 'screenshot', 'exit_code': 0, 'stdout': ...,
+    'cost_usd': ..., 'duration_ms': ...}`` (the empty ``''`` key in the leak being
+    ``scrub_for_voice`` later stripping the blacklisted word "harness"). The
+    success branch must humanize via :func:`cu_success_readback` exactly like the
+    failure branch humanizes via :func:`cu_failure_readback` and like the
+    ``computer_use`` tool path — FORWARD the verified on-screen observation, never
+    the dict. ``comp.text`` here is the RAW bus text (scrubbing runs downstream),
+    so a leak still carries the dict braces + the word "screenshot".
+    """
+    bus = _FakeBus()
+    # Exactly the shape dispatch_to_harness returns on a verified success.
+    output = {
+        "harness": "screenshot",
+        "exit_code": 0,
+        "stdout": (
+            "[cu] step 5.1: click_element {name='Bluetooth und Geräte'}\n"
+            "[cu] done at step 6.1 (verified: The Windows Settings app is open "
+            "to the 'Bluetooth und Geräte' page)"
+        ),
+        "stderr": "[cu] mission profile: steps=6 total=15.4s act=3.0s observe=0.8s",
+        "cost_usd": 0.0,
+        "duration_ms": 15442,
+    }
+    mgr = _make_manager(_CUExecutor(success=True, output=output), bus)
+    await mgr._run_computer_use_background(
+        tool=object(), harness_name="screenshot",
+        prompt="öffne meine bluetooth einstellungen",
+        timeout_s=180.0, user_text="geh in meine einstellungen und öffne bluetooth",
+        trace_id=uuid4(), lang="de",
+    )
+    comp = _completion(bus)
+    text = comp.text
+    # The raw harness dict must NEVER reach the readback.
+    assert "{" not in text and "}" not in text, text
+    for leaked in (
+        "exit_code", "cost_usd", "duration_ms", "stdout", "stderr", "screenshot",
+    ):
+        assert leaked not in text, f"leaked '{leaked}': {text!r}"
+    # The verified on-screen observation IS forwarded as the answer.
+    assert "Bluetooth und Geräte" in text, text
+    assert comp.language == "de"
+
+
+@pytest.mark.asyncio
 async def test_cu_success_announcement_has_no_detail() -> None:
     """A successful run has no failure diagnostic — ``detail`` stays None so the
     transcript shows only the clean completion line."""

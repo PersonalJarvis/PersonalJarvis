@@ -47,7 +47,6 @@ CATALOG_PROVIDERS: tuple[str, ...] = (
     "claude-api",
     "openai",
     "gemini",
-    "grok",
     "openrouter",
 )
 
@@ -60,7 +59,6 @@ CATALOG_PROVIDERS: tuple[str, ...] = (
 _ENDPOINTS: dict[str, tuple[str, str]] = {
     "claude-api": ("https://api.anthropic.com/v1/models", "x-api-key"),
     "openai": ("https://api.openai.com/v1/models", "bearer"),
-    "grok": ("https://api.x.ai/v1/models", "bearer"),
     "gemini": (
         "https://generativelanguage.googleapis.com/v1beta/models",
         "query",
@@ -107,10 +105,6 @@ CURATED_MODELS: dict[str, list[ModelInfo]] = {
         ("gemini-3-flash-preview", "Gemini 3 Flash"),
         ("gemini-3.5-flash", "Gemini 3.5 Flash"),
         ("gemini-flash-lite-latest", "Gemini Flash Lite"),
-    ]),
-    "grok": _curated([
-        ("grok-4.3", "Grok 4.3"),
-        ("grok-4.3-fast", "Grok 4.3 Fast"),
     ]),
     "openrouter": _curated([
         ("anthropic/claude-opus-4.8", "Claude Opus 4.8"),

@@ -613,9 +613,28 @@ def test_call_brain_default_drains_whole_stream() -> None:
             history_text="",
         )
     )
-    # Default (verifier/plan) path is unchanged: the entire stream is read.
+    # Default (verifier) path is unchanged: the entire stream is read.
     assert consumed == [0, 1, 2, 3]
     assert "rambling tail" in text
+
+
+def test_make_plan_early_stops_at_complete_json() -> None:
+    """The planner call (max 512 out tokens) also early-stops at the plan JSON."""
+    from jarvis.core.protocols import BrainDelta
+    from jarvis.harness.screenshot_only_loop import _make_plan
+
+    consumed: list[int] = []
+    deltas = [
+        BrainDelta(content='{"plan": [{"intent":"open Spotify","success":"win"}]'),
+        BrainDelta(content="}"),
+        BrainDelta(content=" rambling tail after the plan object"),
+        BrainDelta(finish_reason="stop"),
+    ]
+    brain = _StreamBrain(deltas, consumed)
+    ctx = _StreamCtx(_StreamManager(brain))
+    plan = asyncio.run(_make_plan(ctx, observation=_DummyObs(), user_goal="x"))
+    assert plan and plan[0]["intent"] == "open Spotify"
+    assert consumed == [0, 1]  # tail never consumed
 
 
 # ---------------------------------------------------------------------------

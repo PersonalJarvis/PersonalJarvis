@@ -627,6 +627,44 @@ def _has_inworktree_hunk(diff_text: str) -> bool:
     return any(ln.startswith("diff --git ") for ln in diff_text.splitlines())
 
 
+# Every diff-block prefix the pipeline uses to record a real, ground-truth
+# worker action: an in-worktree file change (``diff --git``), an out-of-worktree
+# deliverable (``diff --external-target``, Kontrollierer-augmented), a verified
+# state-changing git/gh command (``diff --command-evidence``), or a verified
+# desktop launch (``diff --desktop-action-evidence``). Each one is observable
+# ground truth that the worker DID something — the same standard the empty-diff
+# GROUND-TRUTH-RULE applies.
+_DIFF_ACTION_PREFIXES: tuple[str, ...] = (
+    "diff --git ",
+    "diff --external-target",
+    "diff --command-evidence",
+    "diff --desktop-action-evidence",
+)
+
+
+def diff_has_action_evidence(diff_text: str) -> bool:
+    """True if the diff proves a real worker action (file change or augmented op).
+
+    This is the ground-truth counterpart to :func:`_extract_tool_call_evidence`
+    for workers that perform real work but emit NO machine-readable tool_use
+    frame: the Antigravity ``agy`` CLI (PTY prose) and the Gemini CLI
+    (``--yolo`` plain text) genuinely write files into the worktree, yet their
+    transcript is narrative ("I will create index.html…"), so the frame-based
+    extractor finds nothing. The git diff is where those writes ARE observable,
+    so it must count as evidence — otherwise the capability-honesty gate
+    overrides every such mission to failure (live mission 019eefda, 2026-06-22:
+    agy wrote an 80 KB index.html, the gate still said "made no tool call" and
+    burned all three critic loops). Crediting the diff is consistent with the
+    GROUND-TRUTH-RULE, not a weakening of it: a prose-only claim with an EMPTY
+    diff still yields False, so the anti-hallucination contract is intact.
+    """
+    if not diff_text or not diff_text.strip():
+        return False
+    return any(
+        ln.startswith(_DIFF_ACTION_PREFIXES) for ln in diff_text.splitlines()
+    )
+
+
 # --- informational / question request detection ----------------------------
 #
 # A pure question ("which city would you recommend for Australia?", "explain
@@ -1062,6 +1100,7 @@ def summarize_answers(answers: list[str], *, cap: int = 600) -> str:
 __all__ = [
     "StreamEvidence",
     "clean_request_body",
+    "diff_has_action_evidence",
     "extract_stream_evidence",
     "extract_verified_commands",
     "extract_verified_desktop_actions",

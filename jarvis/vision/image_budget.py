@@ -25,13 +25,25 @@ _DEFAULT_JPEG_QUALITY = 85
 _MIN_JPEG_QUALITY = 35
 
 
-def cap_image_b64(mime: str, data_b64: str, max_bytes: int) -> tuple[str, str]:
+def cap_image_b64(
+    mime: str,
+    data_b64: str,
+    max_bytes: int,
+    max_dimension: int = _MAX_DIMENSION,
+) -> tuple[str, str]:
     """Return ``(mime, base64)`` capped to roughly ``max_bytes``.
 
     No-op when the encoded image is already within budget. Otherwise the image
-    is downscaled to ``_MAX_DIMENSION`` longest side and JPEG-encoded, reducing
-    quality toward ``_MIN_JPEG_QUALITY`` to approach the budget (best-effort).
-    On any failure the original ``(mime, data_b64)`` is returned unchanged.
+    is downscaled to ``max_dimension`` longest side (default ``_MAX_DIMENSION``,
+    2048 px) and JPEG-encoded, reducing quality toward ``_MIN_JPEG_QUALITY`` to
+    approach the budget (best-effort). On any failure the original
+    ``(mime, data_b64)`` is returned unchanged.
+
+    ``max_dimension`` (L7 CU-speed lever) is tunable: vision models resample to
+    ~1568 px internally, so a smaller longest side ships fewer pixels for faster
+    encode + upload + ingest. ``<= 0`` disables the dimension cap (byte budget
+    only). The default keeps the legacy 2048 px, so existing callers are
+    byte-for-byte unchanged.
     """
     if max_bytes <= 0:
         return mime, data_b64
@@ -48,8 +60,8 @@ def cap_image_b64(mime: str, data_b64: str, max_bytes: int) -> tuple[str, str]:
             img = img.convert("RGB")
         w, h = img.size
         longest = max(w, h)
-        if longest > _MAX_DIMENSION:
-            scale = _MAX_DIMENSION / longest
+        if max_dimension > 0 and longest > max_dimension:
+            scale = max_dimension / longest
             img = img.resize(
                 (max(1, round(w * scale)), max(1, round(h * scale))),
                 resample=Image.Resampling.LANCZOS,

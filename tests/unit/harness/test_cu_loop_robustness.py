@@ -1320,3 +1320,80 @@ async def test_typing_a_different_text_is_not_suppressed() -> None:
     assert "Minecraft" in texts and "Roblox" in texts, (
         f"a distinct second type was wrongly suppressed (typed: {texts})"
     )
+
+
+# ---------------------------------------------------------------------------
+# General "no progress -> re-target" nudge (user mandate 2026-06-22: the loop
+# must GENERALLY recognise a missed target instead of mashing the same action --
+# "das war nur ein Beispiel ... ich möchte nicht dass es nur auf dieses eine
+# Beispiel bezogen ist ... unsere Mechanik ist Screenshot/Tastatur/Maus, das
+# bleibt"). The instant an action leaves the screen UNCHANGED, the loop tells
+# the model -- for ANY action type, ANY app -- that it had no effect and to
+# re-target, BEFORE the 3-strike stuck abort.
+# ---------------------------------------------------------------------------
+
+
+class _HashSeqEngine:
+    """Vision engine returning a fixed screenshot-hash sequence, to drive the
+    stall / no-progress logic deterministically."""
+
+    def __init__(self, hashes: list[str]) -> None:
+        self._hashes = hashes
+        self.calls = 0
+        self.probe_calls = 0
+        self.probe_titles: list[str] = []
+
+    def _guess_active_app_hint(self, window_title_filter: str | None = None) -> str:
+        return ""
+
+    async def observe(self, *, mode: str = "auto", cancel_token: Any = None,
+                      window_title_filter: str | None = None) -> Observation:
+        idx = self.calls
+        self.calls += 1
+        h = self._hashes[min(idx, len(self._hashes) - 1)]
+        return Observation(
+            trace_id=uuid4(), timestamp_ns=time.time_ns(),
+            screenshot_path=None, screenshot_hash=h, nodes=(),
+            window_title="", active_pid=0, source="screenshot_only",
+            pruning_stats={},
+        )
+
+
+async def test_unchanged_screen_nudges_model_to_retarget() -> None:
+    """A no-op action (screen unchanged) must make the loop tell the model to
+    STOP repeating and re-target -- generically, via plain click actions (not a
+    type/app special case)."""
+    brain = FakeBrain(script=[
+        '{"action": "click", "x": 10, "y": 10}',
+        '{"action": "click", "x": 20, "y": 20}',
+        '{"action": "done"}',
+    ])
+    ctx = make_ctx(brain)
+    ctx.vision_engine = _HashSeqEngine(["A", "A", "B"])  # no change after step 1
+
+    chunks = await run_loop(ctx, "klick etwas an")
+
+    assert any(
+        "did NOT change after your last action" in req[1]
+        for req in brain.requests
+    ), "the loop never warned the model that the screen was unchanged"
+    assert chunks[-1].exit_code == 0
+
+
+async def test_no_retarget_nudge_when_screen_keeps_changing() -> None:
+    """No false nudge on a healthy mission: every step changes the screen, so
+    the model must never be told 'no visible effect'."""
+    brain = FakeBrain(script=[
+        '{"action": "click", "x": 10, "y": 10}',
+        '{"action": "click", "x": 20, "y": 20}',
+        '{"action": "done"}',
+    ])
+    ctx = make_ctx(brain)
+    ctx.vision_engine = _HashSeqEngine(["A", "B", "C"])  # always changing
+
+    await run_loop(ctx, "klick etwas an")
+
+    assert not any(
+        "did NOT change after your last action" in req[1]
+        for req in brain.requests
+    ), "the re-target nudge fired even though the screen kept changing"

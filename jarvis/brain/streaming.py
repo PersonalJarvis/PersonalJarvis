@@ -52,6 +52,14 @@ async def aggregate(stream: AsyncIterator[BrainDelta]) -> StreamingAggregate:
     return agg
 
 
+#: Defensive ceiling on the early-stop scan. A CU action / planner response is
+#: bounded by max_tokens (256 / 512 -> a few KB), so this is far above any real
+#: payload; above it we skip the scan (degrade to the full aggregate) so a
+#: misbehaving provider streaming prose before the JSON cannot make the
+#: per-delta scan quadratic.
+_MAX_JSON_SCAN_CHARS = 16_384
+
+
 def _has_complete_json_action(text: str) -> bool:
     """True when ``text`` already contains a complete, parseable top-level JSON
     object or array (an early-stop boundary for a Computer-Use action call).
@@ -62,7 +70,13 @@ def _has_complete_json_action(text: str) -> bool:
     string value is never mistaken for the end. The candidate span is then
     verified with ``json.loads`` so a balanced-but-invalid prefix can never
     trigger a premature stop. Deterministic, no LLM call.
+
+    Returns ``False`` (no early stop) for text above ``_MAX_JSON_SCAN_CHARS`` —
+    the full aggregate then completes the read. Safe because that ceiling is far
+    above any real action/planner payload.
     """
+    if len(text) > _MAX_JSON_SCAN_CHARS:
+        return False
     start = -1
     for i, ch in enumerate(text):
         if ch == "{" or ch == "[":

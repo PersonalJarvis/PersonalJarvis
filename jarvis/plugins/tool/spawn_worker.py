@@ -123,7 +123,14 @@ _QUALITY_DIRECTIVE: Final[str] = (
     "finished artefact; never downgrade the task to a minimal version, and "
     'treat any hint (even one that says "Grundgerüst" / "skeleton") as a '
     "floor, not a ceiling. This raises the quality of exactly what was asked "
-    "— it does not add unrequested features. "
+    "— it does not add unrequested features, and it never overrides an explicit "
+    "constraint the user set on the SHAPE or scope of the deliverable (for "
+    'example "a single self-contained HTML file" or "one script"): honoring such '
+    "a constraint is part of satisfying the request, not a downgrade. "
+    # Form-constraint carve-out (2026-06-22, mission 019ef052): the "never
+    # downgrade to a minimal version" floor read a single-file request as a
+    # forbidden minimal version, so a "single HTML file" brief shipped four files
+    # (html+js+css+asset). The floor governs QUALITY, never the user's chosen form.
     # Honest-impossibility escape (latency 2026-06-14): without this, the "never
     # downgrade / build the finished artefact" floor pushes the worker to spiral
     # on a task it cannot actually do (e.g. "book a trip" with no booking tool —

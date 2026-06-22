@@ -28,6 +28,7 @@ from jarvis.missions.kontrollierer.orchestrator import (
     Kontrollierer,
     TaskOutcome,
 )
+from jarvis.missions.kontrollierer.worker_prompt import ARTIFACT_LANGUAGE_DIRECTIVE
 from jarvis.missions.manager import MissionManager
 from jarvis.missions.state_machine import MissionState
 from jarvis.missions.workers.base import SpawnedWorker
@@ -1394,3 +1395,37 @@ async def test_desktop_launch_evidence_reaches_critic_as_nonempty_diff(
     assert "(command succeeded; no output captured)" in reviewed_diff
     # And that augmented diff is NOT considered empty (no blind veto).
     assert not _real_diff_is_empty(reviewed_diff)
+
+
+@pytest.mark.asyncio
+async def test_worker_prompt_carries_artifact_language_directive(
+    manager: MissionManager, tmp_path: Path
+) -> None:
+    """Every dispatched worker prompt leads with the English-artifact directive.
+
+    Root-cause guard (2026-06-22): a German mission used to hand the worker a
+    purely German prompt, so the worker wrote German code. The orchestrator must
+    prepend ARTIFACT_LANGUAGE_DIRECTIVE to the worker prompt for EVERY step,
+    while keeping the step instruction intact (the directive is additive)."""
+    worker = FakeWorker()
+    critic = FakeCriticRunner(_make_approve_verdict())
+    plan = MissionPlan(
+        steps=[Step(slug="html", prompt="Erstelle eine HTML-Seite namens test.html")],
+        n_workers=1,
+        expected_output="x",
+    )
+    k = _make_kontrollierer(
+        manager=manager,
+        tmp_path=tmp_path,
+        critic=critic,
+        worker_factory_fn=lambda step: worker,
+        decomposer_plan=plan,
+    )
+    mid = await manager.dispatch(prompt="Erstelle eine HTML-Seite namens test.html")
+    await k.run_mission(mid)
+
+    assert worker.spawn_calls, "worker was never spawned"
+    prompt = worker.spawn_calls[0]["prompt"]
+    assert ARTIFACT_LANGUAGE_DIRECTIVE in prompt
+    # The step instruction survives — the directive is prepended, not a replacement.
+    assert "test.html" in prompt

@@ -952,10 +952,17 @@ def _select_fast_model(manager: Any, provider: Any) -> str | None:
 # 2048px longest side and JPEG-encodes toward this budget; on any failure it
 # returns the original image, so the vision path never breaks.
 _CU_IMAGE_MAX_BYTES = 300_000
+#: Per-screenshot longest-side pixel cap (L7). 2048 keeps the legacy default;
+#: vision models resample to ~1568 px internally, so a lower cap (tuned via
+#: ``[computer_use].image_max_dimension`` + the cu_bench proof gate) ships fewer
+#: pixels for faster encode + upload + ingest. 0 disables the dimension cap.
+_CU_IMAGE_MAX_DIMENSION = 2048
 
 
 async def _load_observation_image(
-    obs: Observation, max_bytes: int = _CU_IMAGE_MAX_BYTES,
+    obs: Observation,
+    max_bytes: int = _CU_IMAGE_MAX_BYTES,
+    max_dimension: int = _CU_IMAGE_MAX_DIMENSION,
 ) -> ImageBlock | None:
     """Read the observation's screenshot and cap it for the model payload.
 
@@ -969,7 +976,7 @@ async def _load_observation_image(
     from jarvis.vision.image_budget import cap_image_b64  # noqa: PLC0415
 
     mime, image_b64 = await _read_observation_image_b64(obs)
-    mime, image_b64 = cap_image_b64(mime, image_b64, max_bytes)
+    mime, image_b64 = cap_image_b64(mime, image_b64, max_bytes, max_dimension)
     return ImageBlock(mime=mime, data_b64=image_b64, source_hash=obs.screenshot_hash)
 
 async def _call_brain(
@@ -1036,6 +1043,11 @@ async def _call_brain(
         # max_tokens) on the loop's #1 cost path. Verifier / planner calls keep
         # the full-stream aggregate (early_stop_json=False, the default), so
         # their free-text proofs are read in full. Provider-agnostic.
+        # NOTE: on the early-stop path a terminal usage/finish_reason delta that
+        # arrives AFTER the JSON is intentionally dropped — _call_brain returns
+        # only the text string and no caller here reads agg.usage/finish_reason.
+        # A future maintainer adding cost tracking to this call must meter via
+        # ``aggregate`` (full stream), not the early-stop variant.
         _agg = aggregate_first_json if early_stop_json else aggregate
 
         # Attach screenshot(s), capped to the model-payload budget
@@ -1055,6 +1067,9 @@ async def _call_brain(
                     block = await _load_observation_image(
                         obs,
                         max_bytes=getattr(ctx, "image_max_bytes", _CU_IMAGE_MAX_BYTES),
+                        max_dimension=getattr(
+                            ctx, "image_max_dimension", _CU_IMAGE_MAX_DIMENSION,
+                        ),
                     )
                     if block is None:
                         continue
@@ -2019,6 +2034,7 @@ async def _make_plan(
                 system_prompt=_PLANNER_SYSTEM_PROMPT,
                 user_message=user_message,
                 max_tokens=512,
+                early_stop_json=True,
             ),
             timeout=_think_timeout_s(ctx),
         )
@@ -2937,6 +2953,14 @@ async def _run_screenshot_loop(
     #     (BUG-CU-RETYPE, live 2026-06-22: "Minecraft" typed into the Microsoft
     #     Store search box in BOTH step 6 and step 7 -- "das ist ja dumm").
     last_typed_text = ""
+    #   * last_stall_nudge_hash: the screenshot hash we last warned the model
+    #     about. When the screen is UNCHANGED since the previous step, the last
+    #     action had NO visible effect -- we nudge the model ONCE (per distinct
+    #     stall) to stop repeating it and re-target, BEFORE the 3-strike stuck
+    #     abort. General by design: every action type, every app, pure
+    #     screenshot+keyboard+mouse (user mandate 2026-06-22 -- not a per-example
+    #     patch).
+    last_stall_nudge_hash = ""
     # Cumulative guard-blocked actions this mission (see _MAX_GUARD_HITS).
     guard_hits = 0
     # On-demand done-verifier: set when a state-change click lands and the goal
@@ -3106,6 +3130,32 @@ async def _run_screenshot_loop(
         # when no action was guard-blocked is the dead-target reading correct.
         if observation.screenshot_hash:
             recent_hashes.append(observation.screenshot_hash)
+            # General "no progress -> re-target" nudge (user mandate 2026-06-22:
+            # make the loop GENERALLY recognise a missed target instead of
+            # mashing the same action -- NOT example-specific). The instant the
+            # screen is UNCHANGED since the previous step, the last action had no
+            # visible effect: a missed click, a non-existent element, a no-op
+            # key. Tell the model ONCE -- before the 3-strike stuck abort below --
+            # to STOP repeating it and re-target. Applies to EVERY action type
+            # and every app (pure screenshot+keyboard+mouse, no per-case logic).
+            if (
+                len(recent_hashes) >= 2
+                and recent_hashes[-1] == recent_hashes[-2]
+                and last_stall_nudge_hash != observation.screenshot_hash
+            ):
+                last_stall_nudge_hash = observation.screenshot_hash
+                history.append(
+                    "NOTE: the screen did NOT change after your last action -- "
+                    "it had NO visible effect (a missed target, a non-existent "
+                    "element, or a no-op). Do NOT repeat the same action. "
+                    "Re-target: prefer click_element on one of the EXACT labels "
+                    "in AVAILABLE CONTROLS, aim a different pixel, or take the "
+                    "next concrete step toward the goal."
+                )
+                log.info(
+                    "[cu] step %d: screen unchanged since last step — injected "
+                    "re-target nudge (no visible effect)", step_idx,
+                )
             if (
                 len(recent_hashes) == _STUCK_LIMIT
                 and len(set(recent_hashes)) == 1
