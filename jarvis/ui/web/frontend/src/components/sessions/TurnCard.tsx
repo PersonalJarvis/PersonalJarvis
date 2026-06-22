@@ -260,17 +260,12 @@ export function TurnCard({ turn, spoken = [] }: Props) {
                       {kindLabel[s.spoken_kind] ?? s.spoken_kind}
                     </Badge>
                     <div className="min-w-0 flex-1">
+                      {/* Only the spoken phrase belongs in the transcript. The
+                          technical diagnostic (exit code + raw harness reason)
+                          stays on the recorded SpeechSpoken event and is shown
+                          in the Run Inspector — never here (user request
+                          2026-06-22, reversing the 2026-06-16 ask). */}
                       <span className="break-words">{s.text}</span>
-                      {s.detail && (
-                        <div className="mt-1 flex items-start gap-1.5 font-mono text-[11px] text-muted-foreground">
-                          <span className="shrink-0 uppercase tracking-wide text-amber-400/80">
-                            detail
-                          </span>
-                          <span className="min-w-0 flex-1 break-words">
-                            {s.detail}
-                          </span>
-                        </div>
-                      )}
                     </div>
                   </div>
                 );
@@ -344,9 +339,9 @@ export function formatTurnPlain(
   }
   for (const s of spoken) {
     const label = (SPOKEN_KIND_LABEL[s.spoken_kind] ?? s.spoken_kind).toUpperCase();
-    const spokenLines = [`[SPOKEN: ${label}] ${s.text}`];
-    if (s.detail) spokenLines.push(`[DETAIL] ${s.detail}`);
-    jarvisLines.push({ ts_ms: s.ts_ms, lines: spokenLines });
+    // The technical detail is deliberately excluded from the transcript copy —
+    // it lives in the Run Inspector, not in what was said (user request 2026-06-22).
+    jarvisLines.push({ ts_ms: s.ts_ms, lines: [`[SPOKEN: ${label}] ${s.text}`] });
   }
   jarvisLines
     .sort((a, b) => a.ts_ms - b.ts_ms)

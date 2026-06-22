@@ -34,7 +34,7 @@ from jarvis.missions.worker_runtime.provider_map import (
 )
 from jarvis.setup.wizard import SECRETS as WIZARD_SECRETS
 
-from .provider_spec import PROVIDERS, ProviderSpec, get_spec
+from .provider_spec import PROVIDERS, ProviderSpec, get_spec, provider_billing
 
 log = logging.getLogger(__name__)
 
@@ -262,6 +262,24 @@ def _spec_to_payload(
         "install_hint": spec.install_hint,
         "credential_path_hint": spec.credential_path_hint,
         "brain_switchable": spec.brain_switchable,
+        # Plain-English help + how it is billed (api / subscription /
+        # subscription_or_api / local) so the UI explains "which key or
+        # subscription, and what for" without guessing.
+        "credential_help": spec.credential_help,
+        "signup_url": spec.signup_url,
+        "billing": provider_billing(spec),
+        # Gemini's AI-Studio-vs-Vertex split; None for single-path providers.
+        "alt_credential": (
+            {
+                "label": spec.alt_credential.label,
+                "billing": spec.alt_credential.billing,
+                "credential_help": spec.alt_credential.credential_help,
+                "dashboard_url": spec.alt_credential.dashboard_url,
+                "credential_path_hint": spec.alt_credential.credential_path_hint,
+            }
+            if spec.alt_credential is not None
+            else None
+        ),
         "configured": (
             bool(antigravity_status["connected"])
             if antigravity_status is not None

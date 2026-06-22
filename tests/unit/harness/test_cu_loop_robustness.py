@@ -1266,3 +1266,57 @@ async def test_persistent_observe_timeout_fails_after_cap_not_at_step_1(
     )
     stderr = chunks[-1].stderr
     assert "observe timeout" in stderr
+
+
+# ---------------------------------------------------------------------------
+# Repeated-type guard (live forensic 2026-06-22, Microsoft-Store/Minecraft
+# turn): the model typed the SAME query "Minecraft" into the Store search box
+# TWICE in a row (steps 6.3 + 7.3) because it could not tell the first type had
+# landed -- "das ist ja dumm". A back-to-back identical type into a field that
+# already holds the text is a redundant no-op. Suppress the repeat (like the
+# click toggle-stop) and push the model to the NEXT step instead of mashing the
+# same query. Provider/OS-agnostic: pure loop control.
+# ---------------------------------------------------------------------------
+
+
+async def test_repeated_type_of_same_text_is_suppressed() -> None:
+    """The exact 2026-06-22 dumbness: ``type 'Minecraft'`` twice in a row. The
+    SECOND identical type must be suppressed -- the executor must run a
+    type-with-text='Minecraft' only ONCE -- and the mission still completes."""
+    brain = FakeBrain(script=[
+        '{"action": "type", "text": "Minecraft"}',
+        '{"action": "type", "text": "Minecraft"}',  # redundant back-to-back repeat
+        '{"action": "done"}',
+    ])
+    ctx = make_ctx(brain)
+    chunks = await run_loop(ctx, "tippe Minecraft in die Suche")
+
+    typed = [
+        c for c in ctx.tool_executor.calls
+        if str(c[1].get("text", "")) == "Minecraft"
+    ]
+    assert len(typed) == 1, (
+        f"'Minecraft' was typed {len(typed)}x -- the back-to-back repeat must "
+        "be suppressed, not executed again"
+    )
+    assert chunks[-1].exit_code == 0
+
+
+async def test_typing_a_different_text_is_not_suppressed() -> None:
+    """The guard is precise: typing a DIFFERENT text after the first is a real
+    new action and must execute (no false positive)."""
+    brain = FakeBrain(script=[
+        '{"action": "type", "text": "Minecraft"}',
+        '{"action": "type", "text": "Roblox"}',  # different query -> must run
+        '{"action": "done"}',
+    ])
+    ctx = make_ctx(brain)
+    await run_loop(ctx, "suche zwei spiele")
+
+    texts = [
+        str(c[1].get("text", "")) for c in ctx.tool_executor.calls
+        if c[1].get("text")
+    ]
+    assert "Minecraft" in texts and "Roblox" in texts, (
+        f"a distinct second type was wrongly suppressed (typed: {texts})"
+    )

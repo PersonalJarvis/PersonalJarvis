@@ -1604,22 +1604,6 @@ class BrainManager:
             except Exception:  # noqa: BLE001
                 key_value = None
             if not key_value:
-                if provider_name == "codex":
-                    oauth_ok = False
-                    try:
-                        from jarvis.codex_auth import CodexAuthService
-
-                        st = CodexAuthService().status()
-                        oauth_ok = bool(st.connected and st.mode == "chatgpt")
-                    except Exception:  # noqa: BLE001
-                        oauth_ok = False
-                    if oauth_ok:
-                        log.info(
-                            "Pre-Boot-Key-Check: codex hat keinen OpenAI-API-Key, "
-                            "aber ChatGPT-OAuth ist verbunden -> Provider 'codex' "
-                            "bleibt als Brain aktiv (CLI-Pfad)."
-                        )
-                        continue
                 manager._dead_providers.add(provider_name)
                 log.info(
                     "Pre-Boot-Key-Check: kein Key in %s -> Provider '%s' deaktiviert.",
@@ -2375,6 +2359,13 @@ class BrainManager:
         """
         canonical = PROVIDER_ALIASES.get(provider_name.lower().strip(), provider_name)
         async with self._lock:
+            if canonical in SUBAGENT_ONLY_BRAIN_PROVIDERS:
+                log.warning(
+                    "Brain provider %r is subagent-only; ignoring main-brain switch.",
+                    canonical,
+                )
+                self.last_persist_ok = False
+                return
             if canonical == self._active_name:
                 # Re-activation of the already active provider — reset caches
                 # so a newly set key takes effect on the next turn (otherwise
