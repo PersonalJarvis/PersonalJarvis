@@ -22,6 +22,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from jarvis.brain import provider_test as _provider_test
+from jarvis.brain.model_catalog import catalog_spec
 from jarvis.codex_auth import CodexAuthService
 from jarvis.core import config as cfg_mod
 from jarvis.core.events import SecretConfigured
@@ -33,7 +34,7 @@ from jarvis.missions.worker_runtime.provider_map import (
 )
 from jarvis.setup.wizard import SECRETS as WIZARD_SECRETS
 
-from .provider_spec import PROVIDERS, ProviderSpec, get_spec
+from .provider_spec import PROVIDERS, ProviderSpec, get_spec, provider_billing
 
 log = logging.getLogger(__name__)
 
@@ -108,6 +109,53 @@ class ProviderTestResponse(BaseModel):
     integration_ok: bool = True
 
 
+# Per-provider model picker. ``CatalogSourceLiteral`` is the honest provenance of
+# the model list (live fetch vs. served-from-cache vs. offline static fallback) —
+# the UI must never present ``static`` as the live catalog.
+CatalogSourceLiteral = Literal["live", "cache", "static", "curated"]
+
+
+class BrainModelInfo(BaseModel):
+    id: str
+    label: str
+
+
+class BrainModelsResponse(BaseModel):
+    provider: str
+    current_model: str
+    models: list[BrainModelInfo]
+    source: CatalogSourceLiteral
+    fetched_at: float = 0.0
+    # What the picker writes: "model" (brain/stt/cartesia) or "voice" (most TTS).
+    selects: str = "model"
+
+
+class BrainModelBody(BaseModel):
+    # Empty string is meaningful: reset the provider to its frontier default.
+    model: str = Field(default="", max_length=200)
+    persist: bool = Field(default=True)
+
+
+class BrainModelProbe(BaseModel):
+    """Honest outcome of a real 1-token call against the *selected* model."""
+
+    status: ProviderTestStatusLiteral
+    detail: str = ""
+    latency_ms: float = 0.0
+    integration_ok: bool = True
+
+
+class BrainModelSaveResponse(BaseModel):
+    ok: bool
+    provider: str
+    model: str
+    persisted: bool
+    applied_live: bool
+    restart_required: bool
+    # Only brain providers run a live 1-token probe; TTS/STT save without one.
+    probe: BrainModelProbe | None = None
+
+
 # ----------------------------------------------------------------------
 # Helper
 # ----------------------------------------------------------------------
@@ -151,14 +199,11 @@ def _cli_installed(spec: ProviderSpec) -> bool | None:
 
 
 def _has_openai_brain_credential() -> bool:
-    """True iff an OpenAI API key usable by the Codex *brain* is configured.
+    """True iff an OpenAI API key usable by the legacy Codex brain is configured.
 
-    Mirrors ``CodexBrain._ensure_client``: the dedicated codex slot, the general
-    OpenAI provider key, or the ``OPENAI_API_KEY`` env fallback. The ChatGPT
-    OAuth login is intentionally NOT counted — it powers the codex *subagent*
-    (the CLI), not a chat-completions brain. Used to gate Codex-as-brain
-    activation so the switch never "succeeds" on OAuth and then fails on the
-    first turn.
+    Codex is no longer switchable as the main Brain because Computer Use needs
+    screenshot-capable planning. This helper is kept for old payload fields and
+    defensive compatibility with the CodexBrain plugin.
     """
     return bool(
         cfg_mod.get_secret("codex_openai_api_key")
@@ -167,12 +212,11 @@ def _has_openai_brain_credential() -> bool:
 
 
 def _codex_brain_usable() -> bool:
-    """True iff Codex can serve as a brain: an OpenAI API key (the fast chat-API
-    path) OR a ChatGPT login (the slow ``codex exec`` CLI path).
+    """Legacy readiness signal for Codex credentials.
 
-    The CLI path is genuinely slow (~15-20 s per turn) and burns subscription
-    tokens, but it IS a working brain (CodexBrain drives ``codex exec`` over the
-    OAuth token). So the brain toggle unlocks on OAuth too, not only on a key.
+    The Brain switch rejects Codex earlier via ``brain_switchable=False``; Codex
+    belongs in the Subagent section. The value remains in ``/api/providers`` for
+    older UI consumers that still read ``codex_brain_ready``.
     """
     if _has_openai_brain_credential():
         return True
@@ -200,6 +244,11 @@ def _spec_to_payload(
     codex_status = None
     if spec.id == "codex":
         codex_status = CodexAuthService(_codex_binary_path()).status().to_dict()
+    antigravity_status = None
+    if spec.id == "antigravity":
+        from jarvis.google_cli.auth_service import GoogleCliAuthService
+
+        antigravity_status = GoogleCliAuthService().status().to_dict()
 
     payload = {
         "id": spec.id,
@@ -212,18 +261,42 @@ def _spec_to_payload(
         "login_cli": list(spec.login_cli) if spec.login_cli else None,
         "install_hint": spec.install_hint,
         "credential_path_hint": spec.credential_path_hint,
-        "configured": _is_credential_present(
-            spec,
-            _codex_binary_path() if spec.id == "codex" else None,
+        "brain_switchable": spec.brain_switchable,
+        # Plain-English help + how it is billed (api / subscription /
+        # subscription_or_api / local) so the UI explains "which key or
+        # subscription, and what for" without guessing.
+        "credential_help": spec.credential_help,
+        "signup_url": spec.signup_url,
+        "billing": provider_billing(spec),
+        # Gemini's AI-Studio-vs-Vertex split; None for single-path providers.
+        "alt_credential": (
+            {
+                "label": spec.alt_credential.label,
+                "billing": spec.alt_credential.billing,
+                "credential_help": spec.alt_credential.credential_help,
+                "dashboard_url": spec.alt_credential.dashboard_url,
+                "credential_path_hint": spec.alt_credential.credential_path_hint,
+            }
+            if spec.alt_credential is not None
+            else None
+        ),
+        "configured": (
+            bool(antigravity_status["connected"])
+            if antigravity_status is not None
+            else _is_credential_present(
+                spec,
+                _codex_binary_path() if spec.id == "codex" else None,
+            )
         ),
         "active": active,
         "cli_installed": _cli_installed(spec),
     }
+    if antigravity_status is not None:
+        payload["antigravity_status"] = antigravity_status
     if codex_status is not None:
         payload["codex_status"] = codex_status
-        # Codex IS a selectable brain. It works with an OpenAI API key (fast)
-        # OR the ChatGPT login (slow codex-exec CLI path). The UI gates the brain
-        # "activate" radio on this — unlocked for either credential.
+        # Back-compat only. Codex is not rendered as a switchable Brain anymore;
+        # the Subagent section owns its ChatGPT login and activation.
         payload["codex_brain_ready"] = _codex_brain_usable()
     return payload
 
@@ -392,6 +465,334 @@ async def test_provider_connection(
     )
 
 
+# ----------------------------------------------------------------------
+# Per-provider model picker (live catalog + pin + honest probe)
+# ----------------------------------------------------------------------
+
+
+def _get_model_catalog(request: Request):
+    """Lazily build + stash a process-wide :class:`ModelCatalog` on app.state.
+
+    A singleton so the 6 h cache is shared across requests (and its asyncio lock
+    actually serialises concurrent fetches) instead of re-reading the cache file
+    per call.
+    """
+    cat = getattr(request.app.state, "model_catalog", None)
+    if cat is None:
+        from jarvis.brain.model_catalog import ModelCatalog
+
+        cat = ModelCatalog()
+        try:
+            request.app.state.model_catalog = cat
+        except Exception as exc:  # noqa: BLE001 — detached app.state is not an error
+            log.debug("Could not stash model_catalog on app.state: %s", exc)
+    return cat
+
+
+def _current_brain_model(cfg: Any, provider: str) -> str:
+    """The model currently in effect for ``provider`` (override or frontier
+    default), so the picker can highlight the active selection."""
+    from jarvis.brain.manager import get_tier_default_model
+
+    pc = None
+    providers = getattr(getattr(cfg, "brain", None), "providers", None)
+    if isinstance(providers, dict):
+        pc = providers.get(provider)
+    model = getattr(pc, "model", None) if pc is not None else None
+    return model or get_tier_default_model("router", provider) or ""
+
+
+async def _probe_brain_model(
+    provider: str, model: str, *, timeout_s: float = 20.0
+) -> _provider_test.ProviderTestResult:
+    """Run a REAL 1-token call against the *specific* ``model`` and classify it.
+
+    Unlike :func:`provider_test.run_provider_test` (which probes the *configured*
+    model), this validates the model the user just selected — so a typo or a
+    model the key has no access to comes back as ``model_unavailable`` rather
+    than silently "saved but broken". Module-level so it is monkeypatchable.
+    """
+    from jarvis.brain.healthcheck import BrainHealthChecker
+    from jarvis.brain.provider_registry import BrainProviderRegistry
+
+    checker = BrainHealthChecker(BrainProviderRegistry())
+    hr = await checker.probe(provider, model, timeout_s=timeout_s)
+    if getattr(hr, "ok", False):
+        return _provider_test.ProviderTestResult(
+            provider, _provider_test.OK, "", getattr(hr, "duration_ms", 0.0)
+        )
+    err = getattr(hr, "error", None)
+    return _provider_test.ProviderTestResult(
+        provider,
+        _provider_test.classify_provider_error(err),
+        err or "",
+        getattr(hr, "duration_ms", 0.0),
+    )
+
+
+def _require_catalog_provider(provider_id: str):
+    """Validate that ``provider_id`` has a model/voice catalog.
+
+    Returns ``(spec, cat)`` (the provider spec + the catalog spec). 404 unknown
+    provider; 400 a provider with no catalog (e.g. faster-whisper is fine, but a
+    provider absent from PROVIDER_CATALOG is rejected).
+    """
+    spec = get_spec(provider_id)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Unbekannter Provider: {provider_id}")
+    cat = catalog_spec(provider_id)
+    if cat is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{provider_id}' bietet keine Modell-/Stimmen-Auswahl.",
+        )
+    return spec, cat
+
+
+def _cartesia_model(tts: Any) -> str:
+    """Read Cartesia's model from its own sub-table ``[tts.cartesia].model_id``.
+
+    Cartesia does NOT use the global ``[tts] model`` (which holds Gemini's TTS
+    model); reading that would show a nonsensical Gemini id on the Cartesia card.
+    """
+    if tts is None:
+        return ""
+    sub: Any = None
+    extra = getattr(tts, "model_extra", None)
+    if isinstance(extra, dict):
+        sub = extra.get("cartesia")
+    if sub is None:
+        sub = getattr(tts, "cartesia", None)
+    if isinstance(sub, dict):
+        return str(sub.get("model_id") or "")
+    return str(getattr(sub, "model_id", "") or "")
+
+
+def _current_selection(cfg: Any, provider_id: str, cat: Any) -> str:
+    """The value currently in effect for ``provider_id``'s picker (tier-aware).
+
+    Brain → the per-provider model; TTS → the global voice (``voice_de``) or model;
+    Cartesia → its own ``[tts.cartesia].model_id``; STT → the global ``stt.model``.
+    """
+    if cat.tier == "brain":
+        return _current_brain_model(cfg, provider_id)
+    if cat.tier == "tts":
+        tts = getattr(cfg, "tts", None)
+        if cat.selects == "voice":
+            return getattr(tts, "voice_de", "") or ""
+        if provider_id == "cartesia":
+            return _cartesia_model(tts) or "sonic-3.5"
+        return getattr(tts, "model", "") or ""
+    if cat.tier == "stt":
+        return getattr(getattr(cfg, "stt", None), "model", "") or ""
+    return ""
+
+
+@router.get("/providers/{provider_id}/models")
+async def list_brain_models(
+    provider_id: str, request: Request, refresh: bool = False
+) -> BrainModelsResponse:
+    """Return the model/voice catalog for ``provider_id`` for the picker dropdown.
+
+    Brain providers fetch their own live ``/v1/models`` (so a freshly released
+    model appears with no code change); TTS/STT return a curated voice/model list.
+    ``selects`` tells the UI whether it picks a model or a voice. ``source`` is
+    honest: ``live`` / ``cache`` / ``static`` / ``curated``.
+    """
+    _spec, cat = _require_catalog_provider(provider_id)
+    catalog = _get_model_catalog(request)
+    result = await catalog.list_models(provider_id, force_refresh=refresh)
+    cfg = _resolve_cfg(request)
+    current = _current_selection(cfg, provider_id, cat)
+    # Safety net: for a curated TTS/STT list, never echo a value that isn't in the
+    # list (e.g. a stale global value belonging to a different provider) — show the
+    # placeholder instead. Brain keeps its value (custom model ids are allowed).
+    if cat.tier != "brain" and current and current not in {m.id for m in result.models}:
+        current = ""
+    return BrainModelsResponse(
+        provider=provider_id,
+        current_model=current,
+        models=[BrainModelInfo(id=m.id, label=m.label) for m in result.models],
+        source=result.source,
+        fetched_at=result.fetched_at,
+        selects=result.selects,
+    )
+
+
+async def _apply_brain_model(
+    provider_id: str, model: str, body: BrainModelBody, request: Request, *, probe: bool
+) -> BrainModelSaveResponse:
+    """Persist + live-apply a brain provider's model, optionally probing it."""
+    persisted = False
+    if body.persist:
+        try:
+            from jarvis.core.config_writer import set_brain_provider_model
+
+            set_brain_provider_model(provider_id, model=model)
+            persisted = True
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+            ) from exc
+
+    brain = getattr(request.app.state, "brain", None)
+    applied_live = False
+    if brain is not None and hasattr(brain, "apply_provider_model"):
+        try:
+            applied_live = bool(brain.apply_provider_model(provider_id, model))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Live model apply for %s failed: %s", provider_id, exc)
+            applied_live = False
+    restart_required = brain is None
+
+    probe_payload: BrainModelProbe | None = None
+    if probe:
+        cfg = _resolve_cfg(request)
+        probe_model = model or _current_brain_model(cfg, provider_id)
+        result = await _probe_brain_model(provider_id, probe_model)
+        probe_payload = BrainModelProbe(
+            status=result.status,
+            detail=result.detail,
+            latency_ms=round(result.latency_ms, 1),
+            integration_ok=result.status in _provider_test.INTEGRATION_OK_STATUSES,
+        )
+
+    await _emit(
+        request,
+        SecretConfigured(key=f"brain.providers.{provider_id}.model", action="set"),
+    )
+    return BrainModelSaveResponse(
+        ok=True, provider=provider_id, model=model, persisted=persisted,
+        applied_live=applied_live, restart_required=restart_required, probe=probe_payload,
+    )
+
+
+def _apply_tts_selection(
+    provider_id: str, value: str, selects: str, body: BrainModelBody, request: Request
+) -> BrainModelSaveResponse:
+    """Persist + live-apply a TTS voice/model (global ``[tts]`` block)."""
+    persisted = False
+    if body.persist:
+        try:
+            from jarvis.core.config_writer import (
+                set_tts_cartesia_model,
+                set_tts_model,
+                set_tts_voice,
+            )
+
+            if selects == "voice":
+                set_tts_voice(value)
+            elif provider_id == "cartesia":
+                # Cartesia's model lives in its own [tts.cartesia] sub-table.
+                set_tts_cartesia_model(value)
+            else:
+                set_tts_model(value)
+            persisted = True
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+            ) from exc
+
+    cfg = _resolve_cfg(request)
+    if cfg is not None and getattr(cfg, "tts", None) is not None:
+        try:
+            if selects == "voice":
+                cfg.tts.voice_de = value  # type: ignore[attr-defined]
+                cfg.tts.voice_en = value  # type: ignore[attr-defined]
+            elif provider_id == "cartesia":
+                extra = getattr(cfg.tts, "model_extra", None)
+                if isinstance(extra, dict):
+                    sub = extra.get("cartesia")
+                    if not isinstance(sub, dict):
+                        sub = {}
+                        extra["cartesia"] = sub
+                    sub["model_id"] = value
+            else:
+                cfg.tts.model = value  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 — frozen/detached cfg is not an error
+            log.debug("In-memory tts selection update skipped: %s", exc)
+
+    # Live-apply into the running SpeechPipeline (rebuild the TTS instance), so the
+    # next ``_speak()`` uses the new voice without a restart.
+    applied_live = False
+    pipeline = getattr(request.app.state, "speech_pipeline", None)
+    if pipeline is not None and hasattr(pipeline, "set_tts") and cfg is not None:
+        try:
+            from jarvis.plugins.tts import build_tts_from_config
+
+            pipeline.set_tts(build_tts_from_config(cfg.tts))
+            applied_live = True
+        except Exception as exc:  # noqa: BLE001
+            log.error("TTS live re-apply for %s failed: %s", provider_id, exc, exc_info=True)
+
+    return BrainModelSaveResponse(
+        ok=True, provider=provider_id, model=value, persisted=persisted,
+        applied_live=applied_live, restart_required=not applied_live, probe=None,
+    )
+
+
+def _apply_stt_model(
+    provider_id: str, value: str, body: BrainModelBody, request: Request
+) -> BrainModelSaveResponse:
+    """Persist a STT model (global ``[stt] model``). Takes effect on voice restart."""
+    persisted = False
+    if body.persist:
+        try:
+            from jarvis.core.config_writer import set_stt_model
+
+            set_stt_model(value)
+            persisted = True
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+            ) from exc
+
+    cfg = _resolve_cfg(request)
+    if cfg is not None and getattr(cfg, "stt", None) is not None:
+        try:
+            cfg.stt.model = value  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001
+            log.debug("In-memory stt model update skipped: %s", exc)
+
+    return BrainModelSaveResponse(
+        ok=True, provider=provider_id, model=value, persisted=persisted,
+        applied_live=False, restart_required=True, probe=None,
+    )
+
+
+@router.put("/providers/{provider_id}/model")
+async def set_brain_model(
+    provider_id: str, body: BrainModelBody, request: Request
+) -> BrainModelSaveResponse:
+    """Pin a provider's model/voice, persist it, live-apply where possible.
+
+    - **Brain** (incl. Codex): ``[brain.providers.<id>].model`` + live-apply +
+      a real 1-token probe (skipped for Codex — the ChatGPT-login CLI path is slow
+      and ignores the model id anyway). Empty ``model`` resets to the frontier default.
+    - **TTS**: the global ``[tts]`` voice (``voice_de``/``voice_en``) or model
+      (Cartesia) + live re-apply into the running SpeechPipeline.
+    - **STT**: the global ``[stt] model`` (restart-required — the STT engine is
+      built once at pipeline boot).
+    """
+    spec, cat = _require_catalog_provider(provider_id)
+    value = body.model.strip()
+
+    if cat.tier == "brain":
+        # Codex / Antigravity probes would drive a slow subscription CLI (and
+        # bill a real call); skip the live probe for those OAuth-CLI providers.
+        do_probe = getattr(spec, "auth_mode", None) not in ("codex", "antigravity")
+        return await _apply_brain_model(provider_id, value, body, request, probe=do_probe)
+    if cat.tier == "tts":
+        return _apply_tts_selection(provider_id, value, cat.selects, body, request)
+    return _apply_stt_model(provider_id, value, body, request)
+
+
 @router.get("/codex/status")
 async def codex_status(request: Request) -> dict[str, Any]:
     return CodexAuthService(_codex_binary_path(request)).status().to_dict()
@@ -485,6 +886,15 @@ async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     spec = get_spec(body.provider)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Unbekannter Provider: {body.provider}")
+    if spec.tier == "brain" and not spec.brain_switchable:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{spec.label} is subagent-only in Jarvis. It cannot be used as "
+                "the main Brain provider because it cannot see Computer-Use "
+                "screenshots. Activate it in the Subagent section instead."
+            ),
+        )
 
     cfg = _resolve_cfg(request)
     profile_name = getattr(getattr(cfg, "profile", None), "name", "default")
@@ -514,12 +924,9 @@ async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     # 409 (Provider bekannt, aber Credentials fehlen) — Identifiability vor
     # Konfiguration.
     #
-    # Codex-as-BRAIN is special: a chat-completions brain needs an OpenAI API
-    # key. The ChatGPT subscription (OAuth) cannot back a chat endpoint — it
-    # only powers the Codex *subagent*. Accept ANY OpenAI key CodexBrain can use
-    # (codex_openai_api_key / openai_api_key / OPENAI_API_KEY), not just the
-    # dedicated codex slot — so activation matches what the brain actually reads,
-    # and never "succeeds" on OAuth alone and then fails on the first turn.
+    # Defensive legacy branch: Codex/Antigravity are rejected above as
+    # ``brain_switchable=False``. If that guard is ever relaxed, keep credential
+    # checks explicit instead of letting a switch succeed and fail on first turn.
     if spec.id == "codex":
         if not _codex_brain_usable():
             raise HTTPException(
@@ -527,6 +934,19 @@ async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 detail=(
                     "Codex can't be a brain yet — add an OpenAI API key (fast) or "
                     "run 'codex login' (ChatGPT subscription, slower CLI path)."
+                ),
+            )
+    elif spec.id == "antigravity":
+        # OAuth-only: no API key. Gate on the Google CLI login being present,
+        # mirroring the codex branch (the CLI bills the Google subscription).
+        from jarvis.google_cli.auth_service import GoogleCliAuthService
+
+        if not GoogleCliAuthService().status().connected:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Antigravity isn't connected — sign in with Google (install "
+                    "agy or the Gemini CLI and log in), then activate."
                 ),
             )
     elif not _is_credential_present(spec):
@@ -810,6 +1230,47 @@ async def subagent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
         return {
             "ok": True,
             "active": _CODEX_SUBAGENT_CANONICAL,
+            "persisted": persisted,
+            "restart_required": True,
+        }
+
+    # Antigravity (Google subscription) is a DIRECT worker over the OAuth Google
+    # CLI — no OpenClaw slug, no API key. Mirror of the codex branch: gate on the
+    # OAuth login being present, then persist the "antigravity" slug.
+    from jarvis.missions.worker_runtime.provider_map import (
+        ANTIGRAVITY_SUBAGENT_CANONICAL,
+        ANTIGRAVITY_SUBAGENT_SLUGS,
+    )
+
+    if provider in ANTIGRAVITY_SUBAGENT_SLUGS:
+        from jarvis.google_cli.auth_service import GoogleCliAuthService
+
+        if not GoogleCliAuthService().status().connected:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Antigravity is not connected — sign in with Google "
+                    "(install agy or the Gemini CLI and log in), then activate."
+                ),
+            )
+        persisted = False
+        if body.persist:
+            try:
+                from jarvis.core.config_writer import set_sub_jarvis_provider
+
+                set_sub_jarvis_provider(ANTIGRAVITY_SUBAGENT_CANONICAL)
+                persisted = True
+            except FileNotFoundError as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(
+                    status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                ) from exc
+        _apply_sub_jarvis_in_memory(request, ANTIGRAVITY_SUBAGENT_CANONICAL)
+        await _emit(request, SecretConfigured(key="brain.sub_jarvis.provider", action="set"))
+        return {
+            "ok": True,
+            "active": ANTIGRAVITY_SUBAGENT_CANONICAL,
             "persisted": persisted,
             "restart_required": True,
         }

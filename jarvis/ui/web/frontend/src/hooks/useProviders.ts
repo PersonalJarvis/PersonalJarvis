@@ -1,7 +1,22 @@
 import { useCallback, useEffect, useState } from "react";
 
-export type AuthMode = "api_key" | "codex" | "none";
+export type AuthMode = "api_key" | "codex" | "antigravity" | "none";
 export type ProviderTier = "brain" | "tts" | "stt";
+/** How using a provider is billed — mirror of provider_spec.Billing. */
+export type Billing = "api" | "subscription" | "subscription_or_api" | "local";
+
+/**
+ * An alternative credential path for the same provider — mirror of
+ * provider_spec.AltCredential. Gemini's AI-Studio-vs-Vertex split is the only
+ * one today; `null` for single-path providers.
+ */
+export interface AltCredential {
+  label: string;
+  billing: Billing;
+  credential_help: string;
+  dashboard_url: string | null;
+  credential_path_hint: string | null;
+}
 
 export interface ProviderDescriptor {
   id: string;
@@ -16,15 +31,29 @@ export interface ProviderDescriptor {
   credential_path_hint: string | null;
   configured: boolean;
   active: boolean;
+  brain_switchable?: boolean;
   cli_installed: boolean | null;
+  /** Plain-English "which key / subscription, and what for". */
+  credential_help: string | null;
+  /** Where to sign up for the account/subscription (distinct from dashboard_url). */
+  signup_url: string | null;
+  /** How using this provider is billed. */
+  billing: Billing;
+  /** Gemini's Vertex alternative; null for single-path providers. */
+  alt_credential: AltCredential | null;
   /**
-   * Codex only: whether an OpenAI API key usable by the Codex *brain* is
-   * configured (codex_openai_api_key / openai_api_key / OPENAI_API_KEY). The
-   * ChatGPT login alone cannot back a chat brain, so the brain "activate" radio
-   * is gated on this rather than on the OAuth connection.
+   * Codex only: legacy credential readiness kept in /api/providers for older
+   * UI consumers. The current UI does not render Codex as a switchable Brain;
+   * Codex is connected and selected from the Subagent section.
    */
   codex_brain_ready?: boolean;
   codex_status?: CodexStatus;
+  /**
+   * Antigravity only: the honest Google CLI login snapshot (mirror of
+   * `GoogleCliAuthStatus.to_dict()`). Drives the OAuth connect/disconnect widget
+   * in the Subagent section. It is not switchable as the main Brain provider.
+   */
+  antigravity_status?: AntigravityStatus;
 }
 
 export interface CodexStatus {
@@ -34,7 +63,29 @@ export interface CodexStatus {
   message: string;
   version?: string | null;
   accountLabel?: string | null;
+  account_label?: string | null;
+  user_email?: string | null;
   binaryPath?: string | null;
+  binary_path?: string | null;
+  error?: string | null;
+}
+
+/**
+ * Mirror of `jarvis/google_cli/auth_service.py::GoogleCliAuthStatus.to_dict()`.
+ * The Google-subscription sibling of `CodexStatus`: whether the official
+ * `agy`/`gemini` CLI is installed and signed in with Google, plus the account
+ * email so the connected card can show whose subscription is billed.
+ */
+export interface AntigravityStatus {
+  installed: boolean;
+  connected: boolean;
+  mode: string; // "oauth-personal" | "api_key" | "unknown"
+  cli_kind: string | null; // "agy" | "gemini"
+  message: string;
+  version: string | null;
+  user_email: string | null;
+  binary_path: string;
+  error: string | null;
 }
 
 interface ProvidersResponse {
@@ -66,6 +117,21 @@ export function useProviders() {
     }
   }, []);
 
+  /**
+   * Optimistically flip the active provider within a tier, in-memory, BEFORE
+   * the backend switch resolves. The `/api/{brain,tts,stt}/switch` calls can
+   * take a few seconds — a TTS switch rebuilds the provider client and injects
+   * it into the live pipeline — and the UI used to update only after that call
+   * AND a full `/api/providers` refetch, so the "active" highlight lagged for
+   * seconds. Callers flip the highlight here on click, then run the switch and
+   * `refetch()` to confirm; on failure a `refetch()` restores server truth.
+   */
+  const setActiveOptimistic = useCallback((tier: ProviderTier, id: string) => {
+    setProviders((prev) =>
+      prev.map((p) => (p.tier === tier ? { ...p, active: p.id === id } : p)),
+    );
+  }, []);
+
   useEffect(() => {
     void refetch();
     const onSecret = () => void refetch();
@@ -84,7 +150,7 @@ export function useProviders() {
     };
   }, [refetch]);
 
-  return { providers, loading, error, refetch };
+  return { providers, loading, error, refetch, setActiveOptimistic };
 }
 
 export async function postSecret(key: string, value: string): Promise<void> {
@@ -124,6 +190,34 @@ export async function startCodexLogin(): Promise<void> {
 
 export async function codexLogout(): Promise<void> {
   const res = await fetch("/api/codex/logout", { method: "POST" });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+}
+
+/**
+ * Starts the interactive "Sign in with Google" flow by driving the official
+ * `agy`/`gemini` CLI as a subprocess (POST /api/antigravity/login). The Google
+ * sibling of `startCodexLogin` — a 409 means no Google CLI is installed (the
+ * detail carries an install_command).
+ */
+export async function loginAntigravity(): Promise<void> {
+  const res = await fetch("/api/antigravity/login", { method: "POST" });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const detail = body.detail;
+    throw new Error(
+      typeof detail === "object" && detail?.message
+        ? detail.message
+        : detail ?? `HTTP ${res.status}`,
+    );
+  }
+}
+
+/** Disconnects the Google login (POST /api/antigravity/logout). */
+export async function logoutAntigravity(): Promise<void> {
+  const res = await fetch("/api/antigravity/logout", { method: "POST" });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(body.detail ?? `HTTP ${res.status}`);
@@ -292,5 +386,82 @@ export async function testProvider(providerId: string): Promise<ProviderTestResu
     throw new Error(body.detail ?? `HTTP ${res.status}`);
   }
   return body as ProviderTestResult;
+}
+
+// ── Per-provider model picker ───────────────────────────────────────────────
+// The brain provider's model list comes from its OWN /v1/models catalog (or
+// OpenRouter's public catalog), so a freshly released model shows up without any
+// code change. `source` is honest: "live" (just fetched) / "cache" (served from
+// a still-fresh prior fetch) / "static" (offline fallback — show a hint).
+
+export interface BrainModel {
+  id: string;
+  label: string;
+}
+
+export interface BrainModelsResult {
+  provider: string;
+  current_model: string;
+  models: BrainModel[];
+  source: "live" | "cache" | "static" | "curated";
+  fetched_at: number;
+  // What the picker writes: "model" (brain/stt/cartesia) or "voice" (most TTS).
+  selects?: "model" | "voice";
+}
+
+/** Lists the available models for a brain provider for the picker dropdown. */
+export async function getBrainProviderModels(
+  providerId: string,
+  refresh = false,
+): Promise<BrainModelsResult> {
+  const res = await fetch(
+    `/api/providers/${encodeURIComponent(providerId)}/models${refresh ? "?refresh=true" : ""}`,
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as BrainModelsResult;
+}
+
+export interface BrainModelProbe {
+  status: ProviderTestStatus;
+  detail: string;
+  latency_ms: number;
+  integration_ok: boolean;
+}
+
+export interface BrainModelSaveResult {
+  ok: boolean;
+  provider: string;
+  model: string;
+  persisted: boolean;
+  applied_live: boolean;
+  restart_required: boolean;
+  // Only brain providers run a live probe; TTS/STT save without one (null).
+  probe: BrainModelProbe | null;
+}
+
+/**
+ * Pins a brain provider's model and verifies it with a REAL 1-token probe.
+ * Empty `model` resets the provider to its frontier default. The selection is
+ * saved regardless of the probe outcome; `probe.status` reports the truth
+ * (ok / bad_key / no_credits / model_unavailable / …).
+ */
+export async function saveBrainProviderModel(
+  providerId: string,
+  model: string,
+  persist = true,
+): Promise<BrainModelSaveResult> {
+  const res = await fetch(`/api/providers/${encodeURIComponent(providerId)}/model`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, persist }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as BrainModelSaveResult;
 }
 

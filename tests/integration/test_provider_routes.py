@@ -123,6 +123,37 @@ def test_list_providers_returns_full_catalog(server_with_brain: WebServer, secre
         assert "ollama-local" not in ids, "Ollama wurde 2026-04-21 entfernt"
 
 
+def test_list_providers_exposes_credential_help_and_billing(
+    server_with_brain: WebServer, secret_store: _InMemorySecretStore
+) -> None:
+    """The catalog carries the per-provider help text + how it is billed, so the
+    UI can explain 'which key / subscription, and what for' without guessing."""
+    with TestClient(server_with_brain.app) as client:
+        body = client.get("/api/providers").json()
+        by_id = {p["id"]: p for p in body["providers"]}
+        assert by_id["gemini"]["credential_help"]
+        assert by_id["gemini"]["billing"] == "api"
+        assert by_id["antigravity"]["billing"] == "subscription"
+        assert by_id["codex"]["billing"] == "subscription_or_api"
+        assert by_id["faster-whisper"]["billing"] == "local"
+
+
+def test_list_providers_exposes_gemini_vertex_alt_path(
+    server_with_brain: WebServer, secret_store: _InMemorySecretStore
+) -> None:
+    """Gemini surfaces the Vertex AI alternative so the user sees AI Studio vs
+    Vertex are different billing accounts (2026-06-22 forensic)."""
+    with TestClient(server_with_brain.app) as client:
+        body = client.get("/api/providers").json()
+        by_id = {p["id"]: p for p in body["providers"]}
+        alt = by_id["gemini"]["alt_credential"]
+        assert alt is not None
+        assert "vertex" in alt["label"].lower()
+        assert alt["billing"] == "api"
+        assert "cloud.google.com" in alt["dashboard_url"]
+        assert by_id["openai"]["alt_credential"] is None
+
+
 def test_list_providers_marks_active_brain(server_with_brain: WebServer, secret_store: _InMemorySecretStore) -> None:
     with TestClient(server_with_brain.app) as client:
         body = client.get("/api/providers").json()
@@ -283,28 +314,22 @@ def test_brain_switch_rejects_provider_without_key(
     assert fake.calls == []
 
 
-def test_brain_switch_codex_accepts_any_openai_key(
+def test_brain_switch_codex_rejected_as_subagent_only_even_with_openai_key(
     server_with_brain: WebServer, secret_store: _InMemorySecretStore
 ) -> None:
-    """Codex-as-brain activates with ANY OpenAI key CodexBrain can use.
-
-    Here only the general ``openai_api_key`` is set (not the dedicated codex
-    slot). CodexBrain falls back to it, so the switch must succeed — matching
-    what the brain actually reads. The ChatGPT OAuth login alone is NOT enough
-    for a chat brain (covered by the next test).
-    """
+    """Codex remains subagent-only even if an OpenAI key is configured."""
     secret_store.set("openai_api_key", "sk-openai-test-123")
     fake: _FakeBrainManager = server_with_brain.app.state.brain
     with TestClient(server_with_brain.app) as client:
         resp = client.post("/api/brain/switch", json={"provider": "codex", "persist": True})
-        assert resp.status_code == 200
-        assert resp.json()["active"] == "codex"
-    assert fake.calls == [("codex", True)]
+        assert resp.status_code == 409
+        assert "subagent-only" in resp.json()["detail"]
+    assert fake.calls == []
 
 
 def _patch_codex_status(monkeypatch: pytest.MonkeyPatch, *, connected: bool) -> None:
     """Pin provider_routes.CodexAuthService to a connected/disconnected stub so
-    the codex-brain tests don't depend on the dev machine's real `codex login`."""
+    Codex route tests don't depend on the dev machine's real `codex login`."""
 
     class _Fake:
         def __init__(self, binary_path: str | None = None) -> None:
@@ -322,7 +347,40 @@ def _patch_codex_status(monkeypatch: pytest.MonkeyPatch, *, connected: bool) -> 
     monkeypatch.setattr("jarvis.ui.web.provider_routes.CodexAuthService", _Fake)
 
 
-def test_brain_switch_codex_accepts_chatgpt_login(
+def _patch_antigravity_status(monkeypatch: pytest.MonkeyPatch, *, connected: bool) -> None:
+    class _Status:
+        def __init__(self) -> None:
+            self.installed = True
+            self.connected = connected
+            self.mode = "oauth-personal" if connected else "unknown"
+            self.cli_kind = "agy"
+            self.message = "connected" if connected else "not connected"
+            self.version = "1.0.0"
+            self.user_email = "dev@example.com" if connected else None
+            self.binary_path = "agy"
+            self.error = None
+
+        def to_dict(self) -> dict[str, Any]:
+            return {
+                "installed": self.installed,
+                "connected": self.connected,
+                "mode": self.mode,
+                "cli_kind": self.cli_kind,
+                "message": self.message,
+                "version": self.version,
+                "user_email": self.user_email,
+                "binary_path": self.binary_path,
+                "error": self.error,
+            }
+
+    class _Fake:
+        def status(self) -> _Status:
+            return _Status()
+
+    monkeypatch.setattr("jarvis.google_cli.auth_service.GoogleCliAuthService", _Fake)
+
+
+def test_brain_switch_codex_rejected_as_subagent_only_even_with_chatgpt_login(
     server_with_brain: WebServer,
     secret_store: _InMemorySecretStore,
     monkeypatch: pytest.MonkeyPatch,
@@ -333,9 +391,9 @@ def test_brain_switch_codex_accepts_chatgpt_login(
     fake: _FakeBrainManager = server_with_brain.app.state.brain
     with TestClient(server_with_brain.app) as client:
         resp = client.post("/api/brain/switch", json={"provider": "codex", "persist": True})
-        assert resp.status_code == 200
-        assert resp.json()["active"] == "codex"
-    assert fake.calls == [("codex", True)]
+        assert resp.status_code == 409
+        assert "subagent-only" in resp.json()["detail"]
+    assert fake.calls == []
 
 
 def test_brain_switch_codex_rejected_without_any_auth(
@@ -349,8 +407,30 @@ def test_brain_switch_codex_rejected_without_any_auth(
     with TestClient(server_with_brain.app) as client:
         resp = client.post("/api/brain/switch", json={"provider": "codex"})
         assert resp.status_code == 409
-        assert "Codex can't be a brain yet" in resp.json()["detail"]
+        assert "subagent-only" in resp.json()["detail"]
     # No silent switch — the manager must not have been called.
+    assert fake.calls == []
+
+
+def test_brain_switch_antigravity_rejected_as_subagent_only(
+    server_with_brain: WebServer,
+    secret_store: _InMemorySecretStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Antigravity is OAuth-connected but not selectable as the main brain.
+
+    It remains available through the dedicated subagent switch; the main-brain
+    endpoint must reject it before calling BrainManager.switch().
+    """
+    _patch_antigravity_status(monkeypatch, connected=True)
+    fake: _FakeBrainManager = server_with_brain.app.state.brain
+    fake._available.append("antigravity")
+
+    with TestClient(server_with_brain.app) as client:
+        resp = client.post("/api/brain/switch", json={"provider": "antigravity"})
+
+    assert resp.status_code == 409
+    assert "Subagent" in resp.json()["detail"]
     assert fake.calls == []
 
 
@@ -390,12 +470,7 @@ def test_brain_switch_codex_requires_api_key(
     secret_store: _InMemorySecretStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With NO credential (no key AND no ChatGPT login) -> 409, no switch.
-
-    Codex-as-brain now also works over a ChatGPT login via the slow codex-exec
-    CLI path (see ``test_brain_switch_codex_accepts_chatgpt_login``); here codex
-    is pinned to disconnected so neither path is available.
-    """
+    """Codex is rejected as main Brain before credential checks."""
     _patch_codex_status(monkeypatch, connected=False)
     fake: _FakeBrainManager = server_with_brain.app.state.brain
     with TestClient(server_with_brain.app) as client:
@@ -407,16 +482,16 @@ def test_brain_switch_codex_requires_api_key(
 def test_brain_switch_codex_with_api_key(
     server_with_brain: WebServer, secret_store: _InMemorySecretStore
 ) -> None:
-    """With the Codex key saved, codex activates as a first-class brain."""
+    """Even with a Codex key saved, Codex remains subagent-only."""
     secret_store.set("codex_openai_api_key", "sk-codex-123")
     fake: _FakeBrainManager = server_with_brain.app.state.brain
     with TestClient(server_with_brain.app) as client:
         resp = client.post(
             "/api/brain/switch", json={"provider": "codex", "persist": False}
         )
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["active"] == "codex"
-    assert fake.calls == [("codex", False)]
+        assert resp.status_code == 409, resp.text
+        assert "subagent-only" in resp.json()["detail"]
+    assert fake.calls == []
 
 
 # ----------------------------------------------------------------------

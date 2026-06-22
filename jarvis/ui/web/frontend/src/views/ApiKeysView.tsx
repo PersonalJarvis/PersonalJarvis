@@ -1,13 +1,18 @@
 ﻿import { useState } from "react";
 import { Brain, Check, Copy, KeyRound, LogIn, LogOut, Mic, Phone, PlugZap, Terminal, Volume2, Loader2, AlertCircle, XCircle } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
+import { AltCredentialNote } from "@/components/AltCredentialNote";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
+import { BrainModelSelector } from "@/components/BrainModelSelector";
+import { ProviderBillingBadge } from "@/components/ProviderBillingBadge";
 import { SubagentSection } from "@/components/SubagentSection";
 import { TelephonyPanel } from "@/views/TelephonyView";
 import { WikiProviderCard } from "@/views/settings/WikiProviderCard";
 import { Button } from "@/components/ui/button";
 import {
   codexLogout,
+  loginAntigravity,
+  logoutAntigravity,
   type ProviderDescriptor,
   type ProviderTestResult,
   type ProviderTestStatus,
@@ -34,7 +39,7 @@ function makeTierMeta(t: (k: string) => string): Record<ProviderTier, { label: s
 export function ApiKeysView() {
   const t = useT();
   const TIER_META = makeTierMeta(t);
-  const { providers, loading, error, refetch } = useProviders();
+  const { providers, loading, error, refetch, setActiveOptimistic } = useProviders();
 
   return (
     <div className="flex h-full flex-col">
@@ -64,10 +69,18 @@ export function ApiKeysView() {
         {!loading && providers.length > 0 && (
           <div className="mt-6 space-y-8">
             {(Object.keys(TIER_META) as ProviderTier[]).map((tier) => {
-              const tierProviders = providers.filter((p) => p.tier === tier);
+              const tierProviders = providers.filter(
+                (p) => p.tier === tier && p.brain_switchable !== false,
+              );
               if (!tierProviders.length) return null;
               return (
-                <TierSection key={tier} tier={tier} providers={tierProviders} onChanged={refetch} />
+                <TierSection
+                  key={tier}
+                  tier={tier}
+                  providers={tierProviders}
+                  onChanged={refetch}
+                  onActivateOptimistic={setActiveOptimistic}
+                />
               );
             })}
             {/* Subagent (OpenClaw) — own data source (/api/openclaw/status),
@@ -112,10 +125,12 @@ function TierSection({
   tier,
   providers,
   onChanged,
+  onActivateOptimistic,
 }: {
   tier: ProviderTier;
   providers: ProviderDescriptor[];
   onChanged: () => void;
+  onActivateOptimistic: (tier: ProviderTier, id: string) => void;
 }) {
   const t = useT();
   const meta = makeTierMeta(t)[tier];
@@ -133,6 +148,7 @@ function TierSection({
             <ProviderCard
               descriptor={p}
               onChanged={onChanged}
+              onActivateOptimistic={onActivateOptimistic}
               autoActivateOnSave={!tierHasActive}
             />
           </li>
@@ -145,24 +161,31 @@ function TierSection({
 function ProviderCard({
   descriptor,
   onChanged,
+  onActivateOptimistic,
   autoActivateOnSave,
 }: {
   descriptor: ProviderDescriptor;
   onChanged: () => void;
+  onActivateOptimistic: (tier: ProviderTier, id: string) => void;
   autoActivateOnSave: boolean;
 }) {
   const t = useT();
   const [activating, setActivating] = useState(false);
   const pushToast = useEventStore((s) => s.pushToast);
 
-  // Codex IS a selectable brain like every other provider, but a chat brain
-  // needs an OpenAI API key — the ChatGPT login cannot back one (it powers the
-  // Codex *worker*). `codex_brain_ready` reflects whether any OpenAI key is
-  // configured; the radio is gated on it so activation never silently fails.
+  // Codex is filtered out of the Brain tier (`brain_switchable=false`) and is
+  // selected from the Subagent section. This branch stays for older payloads or
+  // tests that still mount a Codex descriptor directly.
   const isCodex = descriptor.auth_mode === "codex";
+  const isBrainSwitchable =
+    descriptor.tier !== "brain" || descriptor.brain_switchable !== false;
 
   async function activate(assumeConfigured = false) {
     if (descriptor.active) return;
+    if (!isBrainSwitchable) {
+      pushToast("warning", `${descriptor.label} is only available for Subagents.`);
+      return;
+    }
     if (isCodex && !descriptor.codex_brain_ready) {
       // The card is "connected" via OAuth, but a chat brain needs an OpenAI key.
       // Guide honestly instead of switching and failing on the first turn.
@@ -174,10 +197,17 @@ function ProviderCard({
         "warning",
         descriptor.auth_mode === "codex"
           ? t("apikeys_codex.needs_codex_full").replace("{0}", descriptor.label)
-          : t("apikeys_codex.needs_key_full").replace("{0}", descriptor.label),
+          : descriptor.auth_mode === "antigravity"
+            ? t("apikeys_antigravity.needs_login_full").replace("{0}", descriptor.label)
+            : t("apikeys_codex.needs_key_full").replace("{0}", descriptor.label),
       );
       return;
     }
+    // Flip the highlight immediately so the switch feels instant — the backend
+    // call below can take a few seconds (a TTS switch rebuilds the provider and
+    // injects it into the live pipeline). The refetch on success / failure then
+    // reconciles with server truth.
+    onActivateOptimistic(descriptor.tier, descriptor.id);
     setActivating(true);
     try {
       if (descriptor.tier === "brain") {
@@ -189,19 +219,21 @@ function ProviderCard({
         const note = result.restart_required
           ? " (active from next voice start)"
           : "";
-        pushToast("success", `Voice-Output → ${descriptor.label}${note}`);
+        pushToast("success", `Voice output → ${descriptor.label}${note}`);
         window.dispatchEvent(new CustomEvent("jarvis:tts-switched"));
       } else {
         const result = await switchSttProvider(descriptor.id);
         const note = result.restart_required
           ? " (active from next voice start)"
           : "";
-        pushToast("success", `Voice-Input → ${descriptor.label}${note}`);
+        pushToast("success", `Voice input → ${descriptor.label}${note}`);
         window.dispatchEvent(new CustomEvent("jarvis:stt-switched"));
       }
       onChanged();
     } catch (e) {
       pushToast("error", (e as Error).message);
+      // Roll the optimistic highlight back to the true active provider.
+      onChanged();
     } finally {
       setActivating(false);
     }
@@ -216,6 +248,7 @@ function ProviderCard({
   function handleCardActivate(e: React.MouseEvent<HTMLDivElement>) {
     // Codex is connection-only — a card click must never trigger a brain switch.
     if (isCodex) return;
+    if (!isBrainSwitchable) return;
     const target = e.target as HTMLElement | null;
     if (
       target &&
@@ -246,18 +279,24 @@ function ProviderCard({
       title={
         descriptor.active
           ? t("apikeys_view.active_tooltip")
+          : !isBrainSwitchable
+            ? "Available for Subagents only"
           : descriptor.configured
             ? t("apikeys_view.click_to_activate")
             : descriptor.auth_mode === "codex"
               ? t("apikeys_view.needs_codex")
-              : t("apikeys_view.needs_key")
+              : descriptor.auth_mode === "antigravity"
+                ? t("apikeys_view.needs_login")
+                : t("apikeys_view.needs_key")
       }
       className={cn(
         "card-outline space-y-3 p-4 transition-colors",
         descriptor.active
           ? "border-primary bg-primary/[0.06] ring-1 ring-primary/30"
           : descriptor.configured
-            ? "cursor-pointer hover:border-primary/40 hover:bg-primary/[0.02]"
+            ? isBrainSwitchable
+              ? "cursor-pointer hover:border-primary/40 hover:bg-primary/[0.02]"
+              : ""
             : "opacity-95",
       )}
     >
@@ -271,9 +310,10 @@ function ProviderCard({
             <code className="font-mono">{descriptor.id}</code>
             {" · "}
             <span>
-              {descriptor.auth_mode === "api_key" && "API-Key-Auth"}
-              {descriptor.auth_mode === "codex" && "ChatGPT/Codex-Login"}
-              {descriptor.auth_mode === "none" && "Lokal — keine Auth"}
+              {descriptor.auth_mode === "api_key" && "API key auth"}
+              {descriptor.auth_mode === "codex" && "ChatGPT / Codex login"}
+              {descriptor.auth_mode === "antigravity" && "Google subscription login"}
+              {descriptor.auth_mode === "none" && "Local — no auth"}
             </span>
           </p>
         </div>
@@ -286,7 +326,14 @@ function ProviderCard({
           }
           activating={activating}
           onActivate={activate}
-          disabled={isCodex && !descriptor.codex_brain_ready}
+          disabled={!isBrainSwitchable || (isCodex && !descriptor.codex_brain_ready)}
+          disabledReason={
+            !isBrainSwitchable
+              ? "Available for Subagents only"
+              : isCodex && !descriptor.codex_brain_ready
+                ? t("apikeys_codex.brain_needs_openai_key")
+                : undefined
+          }
         />
       </div>
 
@@ -295,6 +342,24 @@ function ProviderCard({
         onChanged={onChanged}
         onSavedActivate={handleSavedActivate}
       />
+
+      {!isBrainSwitchable && (
+        <p className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-700">
+          Subagent only. This provider cannot be used as the main Brain or
+          Computer-Use planner because it does not receive screenshots.
+        </p>
+      )}
+
+      {/* Model / voice picker. Switchable brain providers
+          pick a model from their own live catalog. TTS/STT share a single global
+          [tts]/[stt] block, so the picker only appears on the ACTIVE one and sets
+          the voice (Grok/Gemini/OpenAI/Google) or model (Cartesia/STT). */}
+      {((descriptor.tier === "brain" && descriptor.configured && isBrainSwitchable) ||
+        ((descriptor.tier === "tts" || descriptor.tier === "stt") &&
+          descriptor.active &&
+          descriptor.configured)) && (
+        <BrainModelSelector providerId={descriptor.id} />
+      )}
 
       <ProviderTestControl providerId={descriptor.id} />
     </div>
@@ -415,6 +480,7 @@ function ActiveControl({
   activating,
   onActivate,
   disabled = false,
+  disabledReason,
 }: {
   descriptor: ProviderDescriptor;
   activating: boolean;
@@ -426,14 +492,15 @@ function ActiveControl({
    * (warn-on-click) because their key field is right on the card.
    */
   disabled?: boolean;
+  disabledReason?: string;
 }) {
   const labelTitle = descriptor.active
-    ? "Dieser Provider ist aktiv"
+    ? "This provider is active"
     : disabled
-      ? "Erst einen OpenAI-API-Key setzen"
+      ? disabledReason ?? "Provider cannot be activated"
       : descriptor.configured
-        ? "Diesen Provider aktivieren"
-        : "Erst API-Key setzen";
+        ? "Activate this provider"
+        : "Set an API key first";
 
   return (
     <label
@@ -463,7 +530,7 @@ function ActiveControl({
         disabled={activating || disabled}
         className="accent-primary"
       />
-      {activating ? "Aktiviere…" : "Als aktiv"}
+      {activating ? "Activating…" : "Set active"}
     </label>
   );
 }
@@ -477,31 +544,38 @@ function AuthWidget({
   onChanged: () => void;
   onSavedActivate?: () => void;
 }) {
-  if (descriptor.auth_mode === "none") {
-    return (
-      <p className="text-xs text-muted-foreground">
-        Local provider — no credentials needed.
-      </p>
-    );
-  }
-
-  if (descriptor.auth_mode === "codex") {
-    return <CodexAuthWidget descriptor={descriptor} onChanged={onChanged} />;
-  }
-
-  // api_key
   return (
     <div className="space-y-2">
-      {descriptor.secret_keys.map((k) => (
-        <ApiKeyForm
-          key={k}
-          secretKey={k}
-          dashboardUrl={descriptor.dashboard_url}
-          configured={Boolean(descriptor.secrets_set[k])}
-          onChanged={onChanged}
-          onSavedActivate={onSavedActivate}
-        />
-      ))}
+      <ProviderBillingBadge billing={descriptor.billing} />
+      {descriptor.auth_mode === "none" && (
+        <p className="text-xs text-muted-foreground">
+          Local provider — no credentials needed.
+        </p>
+      )}
+      {descriptor.auth_mode === "codex" && (
+        <CodexAuthWidget descriptor={descriptor} onChanged={onChanged} />
+      )}
+      {descriptor.auth_mode === "antigravity" && (
+        <AntigravityAuthWidget descriptor={descriptor} onChanged={onChanged} />
+      )}
+      {descriptor.auth_mode === "api_key" && (
+        <>
+          {descriptor.secret_keys.map((k) => (
+            <ApiKeyForm
+              key={k}
+              secretKey={k}
+              dashboardUrl={descriptor.dashboard_url}
+              configured={Boolean(descriptor.secrets_set[k])}
+              credentialHelp={descriptor.credential_help}
+              onChanged={onChanged}
+              onSavedActivate={onSavedActivate}
+            />
+          ))}
+          {descriptor.alt_credential && (
+            <AltCredentialNote alt={descriptor.alt_credential} />
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -523,7 +597,7 @@ function CodexAuthWidget({
     setPending("copy");
     try {
       await navigator.clipboard.writeText(installCommand);
-      pushToast("success", "Installationsbefehl kopiert");
+      pushToast("success", "Install command copied");
     } catch {
       pushToast("warning", installCommand);
     } finally {
@@ -590,7 +664,7 @@ function CodexAuthWidget({
             className="ml-auto"
           >
             <LogOut className="h-3.5 w-3.5" />
-            Trennen
+            Disconnect
           </Button>
         </div>
       </div>
@@ -616,7 +690,7 @@ function CodexAuthWidget({
           </code>
           <Button size="sm" variant="outline" onClick={handleCopy} disabled={pending === "copy"}>
             {pending === "copy" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-            Befehl kopieren
+            Copy command
           </Button>
         </div>
       )}
@@ -624,12 +698,12 @@ function CodexAuthWidget({
       <div className="flex flex-wrap gap-2">
         <Button size="sm" onClick={handleLogin} disabled={pending !== null || !status?.installed}>
           <LogIn className="h-3.5 w-3.5" />
-          Mit ChatGPT verbinden
+          Connect with ChatGPT
         </Button>
         <Button size="sm" variant="outline" asChild>
           <a href="https://help.openai.com/en/articles/11381614" target="_blank" rel="noreferrer">
             <Terminal className="h-3.5 w-3.5" />
-            Codex installieren
+            Install Codex
           </a>
         </Button>
       </div>
@@ -638,18 +712,160 @@ function CodexAuthWidget({
   );
 }
 
+function AntigravityAuthWidget({
+  descriptor,
+  onChanged,
+}: {
+  descriptor: ProviderDescriptor;
+  onChanged: () => void;
+}) {
+  const t = useT();
+  const [pending, setPending] = useState<"login" | "logout" | "copy" | null>(null);
+  const pushToast = useEventStore((s) => s.pushToast);
+  const status = descriptor.antigravity_status;
+  const installCommand =
+    descriptor.install_hint ?? "curl -fsSL https://antigravity.google/cli/install.sh | bash";
+
+  async function handleCopy() {
+    setPending("copy");
+    try {
+      await navigator.clipboard.writeText(installCommand);
+      pushToast("success", "Install command copied");
+    } catch {
+      pushToast("warning", installCommand);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function handleLogin() {
+    setPending("login");
+    try {
+      await loginAntigravity();
+      pushToast("info", t("apikeys_antigravity.login_started"));
+      // The Google CLI opens the browser "Sign in with Google" flow; it only
+      // completes once the user clicks through (seconds later). Poll a few times
+      // so the card flips to the compact "connected" state on its own once the
+      // on-disk creds appear — no manual refresh needed (mirror of Codex).
+      [1500, 4000, 8000, 15000, 25000].forEach((ms) =>
+        window.setTimeout(onChanged, ms),
+      );
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function handleLogout() {
+    setPending("logout");
+    try {
+      await logoutAntigravity();
+      pushToast("info", t("apikeys_antigravity.disconnected"));
+      onChanged();
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  // Connected: collapse to a small "logged in" badge instead of the full card.
+  // The Google subscription bills the brain/subagent; no key field (OAuth-only).
+  if (status?.connected) {
+    return (
+      <div className="space-y-3">
+        <div
+          data-testid="antigravity-connected"
+          className="flex flex-wrap items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/[0.06] px-3 py-2 text-xs"
+        >
+          <Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+          <span className="min-w-0 break-words text-foreground">
+            {status.user_email
+              ? t("apikeys_antigravity.connected_as").replace("{0}", status.user_email)
+              : status.message || t("apikeys_antigravity.connected")}
+          </span>
+          {status.version && (
+            <code className="rounded bg-muted px-1.5 py-0.5 font-mono">{status.version}</code>
+          )}
+          <span className="chip-yellow">GOOGLE-LOGIN</span>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={handleLogout}
+            disabled={pending !== null}
+            className="ml-auto"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            Disconnect
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Not connected: status + (install hint) + the single "connect" action.
+  return (
+    <div className="space-y-3">
+      <div className="rounded-md border border-border bg-background/40 p-3 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-2">
+          <span>{status?.message ?? t("apikeys_antigravity.status_loading")}</span>
+          {status?.version && (
+            <code className="rounded bg-muted px-1.5 py-0.5 font-mono">{status.version}</code>
+          )}
+        </div>
+      </div>
+
+      {!status?.installed && (
+        <div className="flex flex-wrap items-center gap-2">
+          <code className="min-w-[220px] flex-1 rounded-md border border-border bg-muted/30 px-3 py-1.5 font-mono text-xs">
+            {installCommand}
+          </code>
+          <Button size="sm" variant="outline" onClick={handleCopy} disabled={pending === "copy"}>
+            {pending === "copy" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+            Copy command
+          </Button>
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" onClick={handleLogin} disabled={pending !== null || !status?.installed}>
+          <LogIn className="h-3.5 w-3.5" />
+          Connect with Google
+        </Button>
+        <Button size="sm" variant="outline" asChild>
+          <a href="https://antigravity.google" target="_blank" rel="noreferrer">
+            <Terminal className="h-3.5 w-3.5" />
+            Install Antigravity
+          </a>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function StatusBadge({ descriptor }: { descriptor: ProviderDescriptor }) {
-  if (descriptor.active) return <span className="chip-yellow">aktiv</span>;
+  if (descriptor.active) return <span className="chip-yellow">active</span>;
   if (descriptor.auth_mode === "codex") {
     const status = descriptor.codex_status;
     if (!status?.installed) {
-      return <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-destructive">fehlt</span>;
+      return <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-destructive">missing</span>;
     }
     if (descriptor.configured) {
-      return <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">eingerichtet</span>;
+      return <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">ready</span>;
     }
-    return <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">nicht verbunden</span>;
+    return <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">not connected</span>;
   }
-  if (descriptor.configured) return <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">eingerichtet</span>;
-  return <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">offen</span>;
+  if (descriptor.auth_mode === "antigravity") {
+    const status = descriptor.antigravity_status;
+    if (!status?.installed) {
+      return <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-destructive">missing</span>;
+    }
+    if (status.connected) {
+      return <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">ready</span>;
+    }
+    return <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">not connected</span>;
+  }
+  if (descriptor.configured) return <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">ready</span>;
+  return <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">open</span>;
 }

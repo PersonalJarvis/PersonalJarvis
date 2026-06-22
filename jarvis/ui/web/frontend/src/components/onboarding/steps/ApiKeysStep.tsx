@@ -1,8 +1,11 @@
 import { useState } from "react";
-import { Brain, Check, Mic, Volume2 } from "lucide-react";
+import { Brain, Check, KeyRound, Mic, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
+import { AltCredentialNote } from "@/components/AltCredentialNote";
+import { ProviderBillingBadge } from "@/components/ProviderBillingBadge";
+import { SubagentSection } from "@/components/SubagentSection";
 import {
   useProviders,
   switchBrainProvider,
@@ -13,14 +16,14 @@ import {
 } from "@/hooks/useProviders";
 import type { StepProps } from "../OnboardingFlow";
 
-// One provider class per internal page — Brain first, then Voice, then Hearing.
-// Kept as a SINGLE flow step (no backend ONBOARDING_STEPS / parity change); the
-// paging lives inside this component so users see one class at a time instead of
-// a wall of every provider at once.
+// The provider classes, in the same order as the main Settings → API Keys view
+// (Brain first, then Voice, then Hearing). Rendered as stacked sections inside
+// one scroll container so the user can scroll through every class at once —
+// mirroring the real API-Keys section — instead of paging one class at a time.
 const TIERS: { tier: ProviderTier; label: string; icon: JSX.Element }[] = [
-  { tier: "brain", label: "Brain — reasoning", icon: <Brain className="h-5 w-5" /> },
-  { tier: "tts", label: "Voice — text to speech", icon: <Volume2 className="h-5 w-5" /> },
-  { tier: "stt", label: "Hearing — speech to text", icon: <Mic className="h-5 w-5" /> },
+  { tier: "brain", label: "Brain — reasoning", icon: <Brain className="h-3.5 w-3.5" /> },
+  { tier: "tts", label: "Voice — text to speech", icon: <Volume2 className="h-3.5 w-3.5" /> },
+  { tier: "stt", label: "Hearing — speech to text", icon: <Mic className="h-3.5 w-3.5" /> },
 ];
 
 // Activate (select) a provider by its tier — mirrors the main Settings API-Keys
@@ -33,47 +36,72 @@ const SWITCH: Record<ProviderTier, (id: string) => Promise<unknown>> = {
 
 export function ApiKeysStep({ goNext, skip }: StepProps) {
   const t = useT();
-  const { providers, loading, error, refetch } = useProviders();
-  const [ti, setTi] = useState(0);
-  const cur = TIERS[ti];
-  const list = providers.filter((p) => p.tier === cur.tier);
-  const isLastTier = ti >= TIERS.length - 1;
-
-  const next = () => (isLastTier ? goNext() : setTi((i) => i + 1));
+  const { providers, loading, error, refetch, setActiveOptimistic } = useProviders();
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-3">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-          {cur.icon}
+          <KeyRound className="h-5 w-5" />
         </div>
         <div className="min-w-0">
-          <h2 className="font-display text-lg font-semibold">{cur.label}</h2>
-          <p className="text-xs text-muted-foreground">
-            {t("onboarding.api_keys.body")} · {ti + 1}/{TIERS.length}
-          </p>
+          <h2 className="font-display text-lg font-semibold">
+            {t("onboarding.api_keys.title")}
+          </h2>
+          <p className="text-xs text-muted-foreground">{t("onboarding.api_keys.body")}</p>
         </div>
       </div>
 
-      {cur.tier === "brain" && (
-        <p className="flex items-center gap-1.5 rounded-md bg-emerald-500/10 px-3 py-2 text-xs text-emerald-600">
-          <Check className="h-3.5 w-3.5 shrink-0" />
-          {t("onboarding.api_keys.works_now")}
-        </p>
-      )}
+      <p className="flex items-center gap-1.5 rounded-md bg-emerald-500/10 px-3 py-2 text-xs text-emerald-600">
+        <Check className="h-3.5 w-3.5 shrink-0" />
+        {t("onboarding.api_keys.works_now")}
+      </p>
 
       {loading && <p className="text-xs text-muted-foreground">…</p>}
       {error && (
         <p className="text-xs text-amber-500">{t("onboarding.api_keys.body")}</p>
       )}
 
-      <div className="flex flex-col gap-3">
-        {list.map((p) => (
-          <ProviderRow key={p.id} provider={p} onChanged={refetch} />
-        ))}
+      {/* One scroll container holding every provider class in order, so the user
+          scrolls from Brain through Voice, Hearing and the Subagent section —
+          the same content as Settings → API Keys, fitted into the modal. The
+          max-height keeps the onboarding card inside the viewport; only this
+          list scrolls. Symmetric px-2/py-1 (compensated by -mx-2 so the content
+          stays flush with the modal) gives the active card's ring-1 highlight
+          room on every side — overflow-y-auto also clips horizontally, so
+          without left padding the ring was cut off on the left edge. */}
+      <div className="-mx-2 max-h-[52vh] space-y-6 overflow-y-auto scrollbar-jarvis px-2 py-1">
+        {TIERS.map((meta) => {
+          const list = providers.filter(
+            (p) => p.tier === meta.tier && p.brain_switchable !== false,
+          );
+          if (!list.length) return null;
+          return (
+            <section key={meta.tier}>
+              <h3 className="mb-2 inline-flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+                {meta.icon} {meta.label}
+              </h3>
+              <div className="flex flex-col gap-3">
+                {list.map((p) => (
+                  <ProviderRow
+                    key={p.id}
+                    provider={p}
+                    onChanged={refetch}
+                    onActivateOptimistic={setActiveOptimistic}
+                  />
+                ))}
+              </div>
+            </section>
+          );
+        })}
+
+        {/* Subagent (Heavy-Task worker) — own data source (/api/openclaw/status),
+            rendered as a sibling section so the onboarding key step matches the
+            full Settings → API Keys layout. */}
+        <SubagentSection />
       </div>
 
-      <Button className="w-full" onClick={next}>
+      <Button className="w-full" onClick={goNext}>
         {t("onboarding.nav.next")}
       </Button>
       <button className="text-xs text-muted-foreground underline" onClick={skip}>
@@ -86,9 +114,11 @@ export function ApiKeysStep({ goNext, skip }: StepProps) {
 function ProviderRow({
   provider,
   onChanged,
+  onActivateOptimistic,
 }: {
   provider: ProviderDescriptor;
   onChanged: () => void;
+  onActivateOptimistic: (tier: ProviderTier, id: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
 
@@ -102,13 +132,18 @@ function ProviderRow({
 
   async function activate() {
     if (provider.active || !usable || busy) return;
+    // Flip the highlight immediately so the switch feels instant — the backend
+    // call below rebuilds the provider and can take a few seconds. The refetch
+    // afterwards confirms server truth; on failure it rolls the highlight back.
+    onActivateOptimistic(provider.tier, provider.id);
     setBusy(true);
     try {
       await SWITCH[provider.tier](provider.id);
       onChanged();
     } catch {
-      // Activation failed (e.g. backend rejected) — leave the list as-is;
-      // the status chip keeps reflecting the unchanged active provider.
+      // Activation failed (e.g. backend rejected) — refetch to roll the
+      // optimistic highlight back to the true active provider.
+      onChanged();
     } finally {
       setBusy(false);
     }
@@ -138,6 +173,7 @@ function ProviderRow({
         </button>
         <StatusChip configured={provider.configured} active={provider.active} />
       </div>
+      <ProviderBillingBadge billing={provider.billing} />
       {provider.auth_mode === "api_key" &&
         provider.secret_keys.map((k) => (
           <ApiKeyForm
@@ -145,9 +181,13 @@ function ProviderRow({
             secretKey={k}
             dashboardUrl={provider.dashboard_url}
             configured={Boolean(provider.secrets_set[k])}
+            credentialHelp={provider.credential_help}
             onChanged={onChanged}
           />
         ))}
+      {provider.auth_mode === "api_key" && provider.alt_credential && (
+        <AltCredentialNote alt={provider.alt_credential} />
+      )}
       {provider.auth_mode === "codex" && (
         <p className="text-xs text-muted-foreground">
           Sign in with the official Codex / ChatGPT login from Settings → API Keys.
