@@ -2492,7 +2492,7 @@ class SpeechPipeline:
             # language_code=None, which lets the multilingual TTS (Cartesia)
             # fall back to its English voice on German text (the British-accent
             # symptom; forensic 2026-06-23).
-            lang_code = {"de": "de-DE", "en": "en-US", "es": "es-ES"}.get(ann_lang)
+            lang_code = self._bcp47(ann_lang)
             try:
                 chunks = self._tts.synthesize(scrubbed.cleaned, language_code=lang_code)
             except TypeError:
@@ -3358,14 +3358,11 @@ class SpeechPipeline:
 
     async def _play_ready_cue(self) -> None:
         """Play the ascending boot-ready tone once. Silent no-op on a headless
-        VPS / when no output device exists — never raises."""
-        try:
-            await self._player.play_pcm(READY_PCM, sample_rate=CHIME_SAMPLE_RATE)
-        except Exception as exc:  # noqa: BLE001
-            log.debug("Boot-Ready-Sound übersprungen (%s).", exc)
+        VPS / when no output device exists, or when the global "Sound effects"
+        switch is off — never raises."""
+        await self._play_earcon(READY_PCM)
 
     async def _prerender_task_acks(self) -> None:
-        lang_map = {"de": "de-DE", "en": "en-US"}
         phrases = iter_all_start_ack()
         log.info("Pre-rendere %d Task-Ack-Phrasen …", len(phrases))
 
@@ -3382,7 +3379,7 @@ class SpeechPipeline:
             try:
                 chunks: list[AudioChunk] = []
                 try:
-                    it = self._tts.synthesize(phrase, language_code=lang_map.get(lang))
+                    it = self._tts.synthesize(phrase, language_code=self._bcp47(lang))
                 except TypeError:
                     it = self._tts.synthesize(phrase)
                 async for c in it:
@@ -5902,7 +5899,7 @@ class SpeechPipeline:
 
         lang_code: str | None = None
         if lang:
-            lang_code = {"de": "de-DE", "en": "en-US", "es": "es-ES"}.get(lang.lower())
+            lang_code = self._bcp47(lang)
 
         # Bounded look-ahead: at most ``lookahead`` synthesized-but-not-yet-
         # consumed sentences in flight. maxsize on the channel-of-channels
@@ -6871,6 +6868,19 @@ class SpeechPipeline:
         except Exception:  # noqa: BLE001 — telemetry must never break the turn
             log.debug("SpeechSpoken emit failed", exc_info=True)
 
+    _BCP47: dict[str, str] = {"de": "de-DE", "en": "en-US", "es": "es-ES"}
+
+    @classmethod
+    def _bcp47(cls, lang: object) -> str | None:
+        """Map a de/en/es turn-language code to a TTS BCP-47 locale, else None.
+
+        Single source for the whole pipeline — replaces four hand-copied maps,
+        one of which (the task-ack prerender) had silently dropped ``es``, so a
+        Spanish turn there got no language pin and the multilingual TTS could
+        code-switch.
+        """
+        return cls._BCP47.get(str(lang or "").lower())
+
     def _output_language(self, stt_language: object, text: str) -> str:
         """Resolve THIS turn's output language for EVERY spoken/written layer.
 
@@ -6933,10 +6943,7 @@ class SpeechPipeline:
         # Track that the assistant has spoken at least once in this session.
         # Used by _emit_completeness_signal to pick earcon vs. spoken cue.
         self._session_has_assistant_spoken = True
-        lang_code: str | None = None
-        if language:
-            mapping = {"de": "de-DE", "en": "en-US", "es": "es-ES"}
-            lang_code = mapping.get(language.lower())
+        lang_code = self._bcp47(language)
         try:
             chunks = self._tts.synthesize(text, language_code=lang_code)
         except TypeError:

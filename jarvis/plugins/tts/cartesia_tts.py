@@ -16,6 +16,7 @@ from typing import Any
 
 from jarvis.core import config as cfg
 from jarvis.core.protocols import AudioChunk
+from jarvis.core.turn_language import DEFAULT_LOCALE
 from jarvis.plugins.tts.gemini_flash_tts import (
     SAPI5_SAMPLE_RATE,
     _sapi5_synthesize,
@@ -103,6 +104,12 @@ class CartesiaTTS:
             "es": voice_id_es or DEFAULT_VOICE_ID_ES,
         }
         self._language = language
+        # Voice used when neither a per-call language_code nor the text sniff
+        # resolves a language. A configured concrete language pins it; else the
+        # doctrine default locale — NEVER a hardcoded English voice on German
+        # text (the British-accent symptom; forensic 2026-06-23).
+        _loc = (language or "").lower().split("-", 1)[0]
+        self._default_locale = _loc if _loc in self._voice_by_lang else DEFAULT_LOCALE
         self._chunk_by_sentence = chunk_by_sentence
         self._speed = speed
         self._allow_sapi5_fallback = allow_sapi5_fallback
@@ -135,8 +142,10 @@ class CartesiaTTS:
         detected = _detect_lang_from_text(text)
         if detected and detected in self._voice_by_lang:
             return self._voice_by_lang[detected]
-        # Default English voice keeps the previous single-voice behaviour.
-        return self._voice_by_lang.get("en", self._voice_id)
+        # No language could be resolved — follow the configured default_locale,
+        # never a hardcoded English voice on German text (British-accent
+        # symptom). default_locale is "en" only when configured/auto.
+        return self._voice_by_lang.get(self._default_locale, self._voice_id)
 
     def _resolve_api_key(self) -> str:
         val = cfg.get_secret("cartesia_api_key", env_fallback="CARTESIA_API_KEY")
