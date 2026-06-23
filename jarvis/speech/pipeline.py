@@ -2435,7 +2435,15 @@ class SpeechPipeline:
         # here as a safety net, but pass ack_mode=is_preamble so legitimate
         # filler-opener phrases ("Lass mich kurz nachschauen.") are
         # preserved on the second pass too.
-        ann_lang = (event.language or "de").lower()
+        # Resolve the announcement's spoken language through the ONE
+        # authoritative resolver — the live brain.reply_language pin and the
+        # sticky conversation_language win over whatever an emitter stamped on
+        # the event, and an undetectable/None tag falls back to the resolved
+        # turn language, never a hardcoded German default (forensic 2026-06-23:
+        # a German voice chat spoke an English "ANNOUNCEMENT" because
+        # event.language was trusted verbatim). The event tag is only a hint,
+        # passed where the STT tag normally goes.
+        ann_lang = self._output_language(event.language, event.text or "")
         scrubbed = scrub_for_voice(
             event.text, language=ann_lang, ack_mode=is_preamble
         )
@@ -2462,7 +2470,7 @@ class SpeechPipeline:
         # surfaced in the transcript for debugging.
         self._emit_spoken(
             scrubbed.cleaned,
-            event.language,
+            ann_lang,
             _announcement_spoken_kind(getattr(event, "kind", None)),
             getattr(event, "detail", None),
         )
@@ -2479,11 +2487,12 @@ class SpeechPipeline:
         if animate:
             await self._transition("SPEAKING")
         try:
-            lang_code = None
-            if event.language:
-                lang_code = {"de": "de-DE", "en": "en-US", "es": "es-ES"}.get(
-                    event.language.lower()
-                )
+            # Drive the TTS pin from the SAME resolved language as the scrub,
+            # not from event.language again — a None/auto tag here used to send
+            # language_code=None, which lets the multilingual TTS (Cartesia)
+            # fall back to its English voice on German text (the British-accent
+            # symptom; forensic 2026-06-23).
+            lang_code = {"de": "de-DE", "en": "en-US", "es": "es-ES"}.get(ann_lang)
             try:
                 chunks = self._tts.synthesize(scrubbed.cleaned, language_code=lang_code)
             except TypeError:

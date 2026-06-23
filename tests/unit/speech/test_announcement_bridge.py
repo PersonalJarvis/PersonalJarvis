@@ -323,18 +323,28 @@ async def test_announcement_regression_no_speak_api() -> None:
 
 
 @pytest.mark.asyncio
-async def test_announcement_language_none_passes_none() -> None:
-    """Wenn ``language=None`` im Event, wird auch kein language_code gesetzt."""
+async def test_announcement_language_none_resolves_via_conversation() -> None:
+    """A ``language=None`` event must NOT pass ``language_code=None`` to TTS.
+
+    Forensic 2026-06-23: a None/auto language_code lets the multilingual TTS
+    (Cartesia) fall back to its English voice on German text. The announcement
+    handler now resolves the language through ``_output_language``, so an
+    untagged announcement follows the established conversation language (here
+    German) instead of leaking ``None``.
+    """
+    from types import SimpleNamespace
+
     bus = EventBus()
     tts = FakeTTS()
     player = FakePlayer()
-    _make_pipeline(tts, bus, player)
+    pipe = _make_pipeline(tts, bus, player)
+    pipe._brain = SimpleNamespace(reply_language="auto", conversation_language="de")
 
     await bus.publish(
         AnnouncementRequested(text="test", language=None)
     )
 
-    assert tts.calls == [("test", None)]
+    assert tts.calls == [("test", "de-DE")]
 
 
 @pytest.mark.asyncio
