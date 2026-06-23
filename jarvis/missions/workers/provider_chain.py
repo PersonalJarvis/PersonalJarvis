@@ -2,11 +2,11 @@
 provider-agnostic Phase-6 worker.
 
 SubJarvisWorker delegates to OpenClaw —
-which already supports `xai/grok-*`, `google/gemini-*`, `openai/gpt-*`,
+which already supports `google/gemini-*`, `openai/gpt-*`,
 `anthropic/claude-*`, and `openrouter/*` behind a single CLI surface.
 The provider+model is resolved from `[brain.sub_jarvis]` in jarvis.toml
-(provider in jarvis-slug form, e.g. "grok"; model in OpenClaw form, e.g.
-"grok-4.3"). The jarvis-to-openclaw slug translation lives in
+(provider in jarvis-slug form, e.g. "gemini"; model in OpenClaw form, e.g.
+"gemini-3.1-pro-preview"). The jarvis-to-openclaw slug translation lives in
 `jarvis.missions.worker_runtime.provider_map.to_provider_slug` so this worker
 never hardcodes slugs.
 
@@ -127,8 +127,8 @@ class _FallbackStep:
     """One link in the provider-fallback chain.
 
     Resolved from `[brain.sub_jarvis]` in jarvis.toml. `provider` is the
-    jarvis-slug ("grok", "openai", "gemini", "claude-api", "openrouter").
-    `model` is the provider-native model id ("grok-4.3", "gpt-5.5-pro",
+    jarvis-slug ("openai", "gemini", "claude-api", "openrouter").
+    `model` is the provider-native model id ("gpt-5.5-pro",
     "gemini-3.1-pro-preview", etc.). The OpenClaw slug translation
     happens at spawn time via `to_provider_slug`.
     """
@@ -226,8 +226,8 @@ def _resolve_provider_chain(
         1. Explicit `requested_provider` / `requested_model` args (the
            decomposer can override per-step).
         2. `cfg.brain.sub_jarvis.{provider,model}` plus fallback fields.
-        3. Last-ditch fallback to ("grok", "grok-4.3") so a stub config
-           still produces a runnable argv in tests.
+        3. Last-ditch fallback to ("gemini", "gemini-3.1-pro-preview") so a
+           stub config still produces a runnable argv in tests.
     """
     chain: list[_FallbackStep] = []
 
@@ -295,7 +295,7 @@ def _resolve_provider_chain(
             chain.append(candidate)
 
     if not chain:
-        chain.append(_FallbackStep("grok", "grok-4.3"))
+        chain.append(_FallbackStep("gemini", "gemini-3.1-pro-preview"))
 
     return tuple(chain)
 
@@ -322,7 +322,7 @@ def _build_openclaw_cmd(
     Stable order so the dry-run test can pin it argument-for-argument.
     The model arg is `<openclaw_slug>/<model>` — the jarvis-slug must
     have been translated to the openclaw-slug by the caller (e.g. via
-    `to_provider_slug("grok") -> "xai"`).
+    `to_provider_slug("gemini") -> "google"`).
     """
     prefix: list[str] = [binary] if isinstance(binary, str) else list(binary)
     cmd: list[str] = [

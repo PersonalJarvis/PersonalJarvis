@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from jarvis.speech import wake_constants as wc
+from jarvis.speech import wake_phrase as wp
 from jarvis.speech.wake_phrase import (
     WakeMatcher,
     compile_wake_matcher,
@@ -113,10 +114,11 @@ def test_arbitrary_phrase_tolerates_diacritic_transcription_drift() -> None:
     assert m.search("hey rubén") is not None
 
 
-def test_prefix_phrase_strips_prefix_so_core_word_alone_matches() -> None:
-    # "Hey Athena" -> core is "athena"; bare "athena" in the transcript fires.
+def test_prefix_phrase_requires_prefix_before_core_word() -> None:
+    # "Hey Athena" must not fire on bare "athena". Otherwise a name mention in
+    # ambient speech or Jarvis output re-triggers the listener without wake-up.
     m = compile_wake_matcher("Hey Athena")
-    assert m.search("athena") is not None
+    assert m.search("athena") is None
     assert m.search("hey athena") is not None
 
 
@@ -171,6 +173,22 @@ def _cfg(**kw: object) -> SimpleNamespace:
     return SimpleNamespace(**base)
 
 
+def _pretend_oww_models_exist(
+    monkeypatch: pytest.MonkeyPatch, *model_names: str
+) -> None:
+    """Make package-model tests independent of the local openwakeword install."""
+    models = set(model_names)
+    original_resolve = wc.resolve_oww_model_path
+
+    def fake_resolve(model_name: str) -> str | None:
+        if model_name in models:
+            return f"C:/fake-openwakeword/{model_name}_v0.1.onnx"
+        return original_resolve(model_name)
+
+    monkeypatch.setattr(wc, "resolve_oww_model_path", fake_resolve)
+    monkeypatch.setattr(wp, "resolve_oww_model_path", fake_resolve)
+
+
 def _cfg_blank(**kw: object) -> SimpleNamespace:
     """Config with empty phrase — the new shipped default pre-onboarding state."""
     base = dict(
@@ -194,7 +212,11 @@ def test_default_phrase_resolves_to_bundled_hey_jarvis_oww() -> None:
     assert plan.degraded is False
 
 
-def test_known_pretrained_phrase_resolves_to_that_model() -> None:
+def test_known_pretrained_phrase_resolves_to_that_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _pretend_oww_models_exist(monkeypatch, "alexa")
+
     plan = resolve_wake_plan(_cfg(phrase="Alexa"), local_whisper_available=False)
     assert plan.engine == "openwakeword"
     assert plan.oww_keyword == "alexa"
@@ -204,7 +226,11 @@ def test_known_pretrained_phrase_resolves_to_that_model() -> None:
     assert plan.degraded is False
 
 
-def test_mycroft_and_rhasspy_resolve_to_pretrained_models() -> None:
+def test_mycroft_and_rhasspy_resolve_to_pretrained_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _pretend_oww_models_exist(monkeypatch, "hey_mycroft")
+
     p1 = resolve_wake_plan(_cfg(phrase="Hey Mycroft"), local_whisper_available=False)
     assert p1.oww_keyword == "hey_mycroft"
     p2 = resolve_wake_plan(_cfg(phrase="Rhasspy"), local_whisper_available=False)

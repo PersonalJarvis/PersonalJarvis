@@ -35,6 +35,15 @@ WAKE_PREFIX_PATTERN = DEFAULT_PATTERN
 # activation.
 _WAKE_VERIFY_RETRIES = 1
 _WAKE_VERIFY_BACKOFF_S = 0.3
+# Hard cap on a single wake-verify STT round-trip. The cloud STT client itself
+# carries a 30 s request timeout meant for full utterance transcription — far
+# too long for a wake gate that sits IN FRONT of the orb spawn. A verify that
+# takes more than a couple of seconds is useless: the user already said
+# "Hey Jarvis" and is waiting for a reaction NOW. A hung/overloaded Groq must
+# therefore be cut off here and treated like a transient error (retry, then
+# fail-closed suppress) instead of freezing the wake path for the full client
+# timeout — that freeze was the "~10 second delay after the wake word" forensic.
+_WAKE_VERIFY_TIMEOUT_S = 2.5
 
 
 class _SupportsTranscribePCM(Protocol):
@@ -91,8 +100,11 @@ async def verify_wake_with_stt(
     last_exc: Exception | None = None
     for attempt in range(_WAKE_VERIFY_RETRIES + 1):
         try:
-            transcript = await stt.transcribe_pcm(
-                pcm_bytes, sample_rate=sample_rate, language=language
+            transcript = await asyncio.wait_for(
+                stt.transcribe_pcm(
+                    pcm_bytes, sample_rate=sample_rate, language=language
+                ),
+                timeout=_WAKE_VERIFY_TIMEOUT_S,
             )
             last_exc = None
             break

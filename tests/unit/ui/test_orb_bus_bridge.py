@@ -36,6 +36,7 @@ from jarvis.core.events import (
     ResponseGenerated,
     SystemStateChanged,
     TranscriptionUpdate,
+    WakeWordDetected,
     VoiceBootStatus,
     VoiceSessionEnded,
     VoiceSessionStarted,
@@ -45,6 +46,14 @@ from jarvis.core.events import (
 class _FakeBus:
     def subscribe(self, *_args, **_kwargs) -> None:
         pass
+
+
+class _RecordingBus:
+    def __init__(self) -> None:
+        self.subscriptions = []
+
+    def subscribe(self, event_type, handler) -> None:
+        self.subscriptions.append((event_type, handler))
 
 
 class _FakeOrb:
@@ -848,6 +857,33 @@ async def test_session_start_shows_listening_when_listening_state_is_deduped() -
     assert ("show", "listen") in orb.calls
     # A fresh turn opens an empty transcript bubble.
     assert ("show_listening_transcript", "") in orb.calls
+
+
+async def test_confirmed_wake_word_pops_orb_before_session_start() -> None:
+    """The first visual response should be tied to the confirmed wake event.
+
+    ``VoiceSessionStarted`` is published by the state loop after wake handling.
+    Waiting for it adds a small but visible delay after the selected wake phrase.
+    ``WakeWordDetected`` is already emitted only after wake verification, so it
+    is the earliest safe signal for the orb to appear.
+    """
+    orb = _FakeOrb()
+    bridge = OrbBusBridge(bus=_FakeBus(), orb=orb, idle_animations_enabled=False)  # type: ignore[arg-type]
+
+    await bridge._on_wake_word_detected(WakeWordDetected(keyword="hey_alex"))  # noqa: SLF001
+
+    assert ("show", "listen") in orb.calls
+    assert ("show_listening_transcript", "") not in orb.calls
+
+
+def test_attach_subscribes_to_confirmed_wake_word_for_immediate_pop() -> None:
+    bus = _RecordingBus()
+    orb = _FakeOrb()
+    bridge = OrbBusBridge(bus=bus, orb=orb, idle_animations_enabled=False)  # type: ignore[arg-type]
+
+    bridge.attach()
+
+    assert (WakeWordDetected, bridge._on_wake_word_detected) in bus.subscriptions  # noqa: SLF001
 
 
 async def test_session_start_drives_mic_equalizer_immediately() -> None:

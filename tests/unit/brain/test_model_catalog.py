@@ -2,7 +2,7 @@
 
 The model catalog backs the per-provider model picker in the API-Keys view.
 Three concerns:
-1. Pure response parsing per provider (Anthropic/OpenAI/Grok share the OpenAI
+1. Pure response parsing per provider (Anthropic/OpenAI share the OpenAI
    ``data[].id`` shape; Gemini uses ``models[].name``; OpenRouter adds a human
    ``name``).
 2. Cache TTL — a fresh cache entry skips the network; ``force_refresh`` bypasses.
@@ -101,8 +101,8 @@ class TestProviderCatalog:
         assert any("nova" in m.id for m in result.models)
 
     def test_brain_catalog_providers_unchanged(self) -> None:
-        # The brain-only CATALOG_PROVIDERS tuple stays the 5 API brains.
-        for p in ("claude-api", "openai", "gemini", "grok", "openrouter"):
+        # The brain-only CATALOG_PROVIDERS tuple stays the 4 API brains.
+        for p in ("claude-api", "openai", "gemini", "openrouter"):
             assert p in CATALOG_PROVIDERS
         assert PROVIDER_CATALOG["claude-api"].tier == "brain"
 
@@ -122,12 +122,6 @@ class TestParseModelsResponse:
         payload = {"data": [{"id": "claude-opus-4-8"}, {"id": "claude-haiku-4-5"}]}
         ids = [m.id for m in parse_models_response("claude-api", payload)]
         assert ids == ["claude-opus-4-8", "claude-haiku-4-5"]
-
-    def test_grok_shape(self) -> None:
-        payload = {"data": [{"id": "grok-4.3"}]}
-        assert parse_models_response("grok", payload) == [
-            ModelInfo(id="grok-4.3", label="grok-4.3"),
-        ]
 
     def test_gemini_strips_models_prefix_and_uses_display_name(self) -> None:
         payload = {
@@ -327,18 +321,18 @@ class TestListModels:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         cat = ModelCatalog(cache_path=tmp_path / "c.json", ttl_hours=0)  # all stale
-        cat._cache["grok"] = (
+        cat._cache["openrouter"] = (
             time.time() - 99999,
-            [ModelInfo(id="grok-4.3", label="grok-4.3")],
+            [ModelInfo(id="openai/gpt-5.5", label="openai/gpt-5.5")],
         )
 
         async def _fail(provider: str) -> list[ModelInfo]:
             raise RuntimeError("network down")
 
         monkeypatch.setattr(cat, "_fetch_raw", _fail)
-        result = await cat.list_models("grok")
+        result = await cat.list_models("openrouter")
         assert result.source == "cache"
-        assert result.models[0].id == "grok-4.3"
+        assert result.models[0].id == "openai/gpt-5.5"
 
     @pytest.mark.asyncio
     async def test_fetch_failure_no_cache_yields_static(
@@ -403,11 +397,10 @@ class TestListModels:
             # Curated ids must survive the brain-model filter (no media/embeds).
             assert filter_brain_models(CURATED_MODELS[provider]) == CURATED_MODELS[provider]
 
-    def test_catalog_providers_are_the_five_api_brain_providers(self) -> None:
+    def test_catalog_providers_are_the_four_api_brain_providers(self) -> None:
         assert set(CATALOG_PROVIDERS) == {
             "claude-api",
             "openai",
             "gemini",
-            "grok",
             "openrouter",
         }

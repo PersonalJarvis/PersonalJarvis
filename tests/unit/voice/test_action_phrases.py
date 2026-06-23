@@ -223,6 +223,51 @@ class TestCuFailureReadback:
         assert reason in out
 
 
+class TestElevationPausePhrases:
+    """Phrases for the UAC / privilege-prompt pause-and-resume flow.
+
+    When Computer-Use hits an OS elevation prompt (Windows Secure Desktop & co.)
+    it can neither see nor click it (UIPI). Instead of the misleading generic
+    "couldn't see the screen" abort (exit 1), it asks the user for the one
+    unavoidable confirmation click and continues — or, if no confirmation comes,
+    stops with an HONEST elevation-specific message (exit 9). Both surfaces must
+    exist in all supported languages.
+    """
+
+    def test_awaiting_elevation_localized_and_distinct(self) -> None:
+        de = action_phrase("cu_awaiting_elevation", "de")
+        en = action_phrase("cu_awaiting_elevation", "en")
+        es = action_phrase("cu_awaiting_elevation", "es")
+        for text in (de, en, es):
+            assert len(text) > 10
+        assert de != en != es
+        # It must tell the user WHAT to do: confirm an admin/security prompt.
+        assert "admin" in en.lower()
+
+    def test_awaiting_elevation_unknown_language_falls_back_to_german(self) -> None:
+        assert action_phrase("cu_awaiting_elevation", "fr") == action_phrase(
+            "cu_awaiting_elevation", "de"
+        )
+
+    def test_exit_9_is_the_needs_elevation_phrase(self) -> None:
+        # exit 9 == waited for the admin confirmation, none came. It must be an
+        # elevation-specific human sentence — NOT the generic "didn't work" and
+        # NOT the misleading "couldn't see the screen" (exit 1).
+        for lang in ("de", "en", "es"):
+            out = cu_failure_readback(lang, error="exit 9", exit_code=9)
+            assert not _EXIT_TOKEN_RE.search(out), out
+            assert out == action_phrase("cu_exit_needs_elevation", lang)
+            assert out != action_phrase("cu_failed", lang)
+            assert out != action_phrase("cu_exit_no_view", lang)
+
+    def test_exit_9_distinct_from_no_view_and_gave_up(self) -> None:
+        needs_elev = cu_failure_readback("en", error="exit 9", exit_code=9)
+        no_view = cu_failure_readback("en", error="exit 1", exit_code=1)
+        gave_up = cu_failure_readback("en", error="exit 5", exit_code=5)
+        assert needs_elev != no_view != gave_up
+        assert needs_elev != gave_up
+
+
 class TestCuSuccessReadback:
     """The SUCCESS sibling of cu_failure_readback (live bug 2026-06-18, session
     241a1984): "open the browser and check which tabs I have open" was answered

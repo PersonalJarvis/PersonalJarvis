@@ -20,17 +20,23 @@ from jarvis.core.protocols import ExecutionContext, ToolResult
 log = logging.getLogger(__name__)
 
 
-def _send_text_windows(text: str, delay_s: float) -> None:
-    """Sendet Unicode-Text an das aktive Windows-Fenster via SendInput."""
-    if os.name != "nt":
-        raise RuntimeError("Native Text-Eingabe ohne pyautogui ist nur auf Windows verfuegbar")
+def _build_windows_input_types() -> Any:
+    """Build the ctypes structs for SendInput keyboard injection.
 
+    The ``INPUT`` union MUST be sized to its LARGEST member (``MOUSEINPUT``) so
+    that ``sizeof(INPUT)`` matches the size Windows expects for ``cbSize``. A
+    union that declares only ``ki`` (``KEYBDINPUT``) is too small (32 vs 40 bytes
+    on x64), which makes ``SendInput`` reject every call with
+    ``ERROR_INVALID_PARAMETER`` ("Falscher Parameter"); every keystroke then
+    silently falls back to pyautogui's layout-dependent path, which does not
+    register in web inputs (Google-Flights typing bug, 2026-06-22).
+
+    Lazily imported so the module still imports on non-Windows hosts.
+    """
     import ctypes
     from ctypes import wintypes
+    from types import SimpleNamespace
 
-    INPUT_KEYBOARD = 1
-    KEYEVENTF_KEYUP = 0x0002
-    KEYEVENTF_UNICODE = 0x0004
     ULONG_PTR = wintypes.WPARAM
 
     class KEYBDINPUT(ctypes.Structure):
@@ -42,34 +48,72 @@ def _send_text_windows(text: str, delay_s: float) -> None:
             ("dwExtraInfo", ULONG_PTR),
         )
 
+    class MOUSEINPUT(ctypes.Structure):
+        _fields_ = (
+            ("dx", wintypes.LONG),
+            ("dy", wintypes.LONG),
+            ("mouseData", wintypes.DWORD),
+            ("dwFlags", wintypes.DWORD),
+            ("time", wintypes.DWORD),
+            ("dwExtraInfo", ULONG_PTR),
+        )
+
     class INPUT_UNION(ctypes.Union):
-        _fields_ = (("ki", KEYBDINPUT),)
+        # MOUSEINPUT is the LARGEST member and MUST be present: it sizes the
+        # union (and therefore INPUT.cbSize) to what Windows expects. Omitting
+        # it undersizes INPUT and SendInput rejects every call (see docstring).
+        _fields_ = (("mi", MOUSEINPUT), ("ki", KEYBDINPUT))
 
     class INPUT(ctypes.Structure):
         _fields_ = (("type", wintypes.DWORD), ("union", INPUT_UNION))
 
-    send_input = ctypes.windll.user32.SendInput
-    send_input.argtypes = (wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int)
-    send_input.restype = wintypes.UINT
+    return SimpleNamespace(
+        KEYBDINPUT=KEYBDINPUT,
+        MOUSEINPUT=MOUSEINPUT,
+        INPUT_UNION=INPUT_UNION,
+        INPUT=INPUT,
+        INPUT_KEYBOARD=1,
+        KEYEVENTF_KEYUP=0x0002,
+        KEYEVENTF_UNICODE=0x0004,
+        ULONG_PTR=ULONG_PTR,
+    )
+
+
+def _send_text_windows(text: str, delay_s: float) -> None:
+    """Sendet Unicode-Text an das aktive Windows-Fenster via SendInput."""
+    if os.name != "nt":
+        raise RuntimeError("Native Text-Eingabe ohne pyautogui ist nur auf Windows verfuegbar")
+
+    import ctypes
+
+    t = _build_windows_input_types()
+    INPUT, KEYBDINPUT, INPUT_UNION = t.INPUT, t.KEYBDINPUT, t.INPUT_UNION
+
+    # use_last_error=True so ``ctypes.get_last_error()`` reflects SendInput's real
+    # Win32 error (ctypes.windll does NOT track it -> misleading error codes).
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    send_input = user32.SendInput
+    send_input.argtypes = (ctypes.c_uint, ctypes.POINTER(INPUT), ctypes.c_int)
+    send_input.restype = ctypes.c_uint
 
     for char in text:
         code = ord(char)
         events = (INPUT * 2)(
             INPUT(
-                type=INPUT_KEYBOARD,
+                type=t.INPUT_KEYBOARD,
                 union=INPUT_UNION(
-                    ki=KEYBDINPUT(0, code, KEYEVENTF_UNICODE, 0, ULONG_PTR(0)),
+                    ki=KEYBDINPUT(0, code, t.KEYEVENTF_UNICODE, 0, t.ULONG_PTR(0)),
                 ),
             ),
             INPUT(
-                type=INPUT_KEYBOARD,
+                type=t.INPUT_KEYBOARD,
                 union=INPUT_UNION(
                     ki=KEYBDINPUT(
                         0,
                         code,
-                        KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
+                        t.KEYEVENTF_UNICODE | t.KEYEVENTF_KEYUP,
                         0,
-                        ULONG_PTR(0),
+                        t.ULONG_PTR(0),
                     ),
                 ),
             ),

@@ -2,7 +2,7 @@
 
 Generiert dieselbe Test-Phrase mit allen männlich-tiefen Gemini-Voices
 und spielt sie nacheinander mit 0.7 Sek Pause ab. Du hörst und entscheidest
-welche am ehesten nach Paul Bettany's J.A.R.V.I.S. klingt.
+welche am ehesten zum ruhigen, formellen Assistenten-Ton der Jarvis-Stimme passt.
 
 Aufruf:
     python -m jarvis.speech.voice_compare
@@ -36,10 +36,10 @@ JARVIS_CANDIDATES: tuple[str, ...] = (
     "Zubenelgenubi", # casual
 )
 
-# JARVIS-typische Begrüßung auf Englisch (Tony Stark Butler-Ton)
+# Neutral English voice-test phrase (calm, formal assistant tone; varied phonemes)
 TEST_PHRASE = (
-    "Good evening, Sir. This is JARVIS. "
-    "All systems are online and operational. How may I be of assistance?"
+    "Good evening. It is half past nine, and everything is on schedule. "
+    "How can I help you today?"
 )
 
 

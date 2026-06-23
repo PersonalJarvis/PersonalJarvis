@@ -19,10 +19,12 @@ def _cfg_with(provider_id: str, base_url: str | None) -> JarvisConfig:
 def test_returns_vendor_default_when_no_override(monkeypatch):
     monkeypatch.setattr(cfg, "get_provider_secret", lambda pid: "sk-real")
     res = resolve_provider_endpoint(
-        "grok", vendor_default_base_url="https://api.x.ai/v1", config=JarvisConfig()
+        "gemini",
+        vendor_default_base_url="https://generativelanguage.googleapis.com/v1beta",
+        config=JarvisConfig(),
     )
     assert isinstance(res, ResolvedEndpoint)
-    assert res.base_url == "https://api.x.ai/v1"
+    assert res.base_url == "https://generativelanguage.googleapis.com/v1beta"
     assert res.credential == "sk-real"
     assert res.via_proxy is False
 
@@ -30,11 +32,11 @@ def test_returns_vendor_default_when_no_override(monkeypatch):
 def test_explicit_override_wins(monkeypatch):
     monkeypatch.setattr(cfg, "get_provider_secret", lambda pid: "sk-real")
     res = resolve_provider_endpoint(
-        "grok",
-        vendor_default_base_url="https://api.x.ai/v1",
-        config=_cfg_with("grok", "https://proxy.example/p/grok/v1"),
+        "gemini",
+        vendor_default_base_url="https://generativelanguage.googleapis.com/v1beta",
+        config=_cfg_with("gemini", "https://proxy.example/p/gemini/v1"),
     )
-    assert res.base_url == "https://proxy.example/p/grok/v1"
+    assert res.base_url == "https://proxy.example/p/gemini/v1"
     assert res.credential == "sk-real"
 
 
@@ -65,11 +67,11 @@ def test_team_mode_routes_through_proxy(monkeypatch):
     monkeypatch.setattr(cfg, "get_provider_secret", lambda pid: "sk-real")
     monkeypatch.setattr(cfg, "get_secret", lambda key, env=None: "tok-123")
     res = resolve_provider_endpoint(
-        "grok",
-        vendor_default_base_url="https://api.x.ai/v1",
+        "gemini",
+        vendor_default_base_url="https://generativelanguage.googleapis.com/v1beta",
         config=_team_cfg("https://keys.acme.dev"),
     )
-    assert res.base_url == "https://keys.acme.dev/p/grok"
+    assert res.base_url == "https://keys.acme.dev/p/gemini"
     assert res.credential == "tok-123"
     assert res.via_proxy is True
 
@@ -95,9 +97,9 @@ def test_team_mode_local_provider_stays_direct(monkeypatch):
 def test_team_mode_disabled_stays_direct(monkeypatch):
     monkeypatch.setattr(cfg, "get_provider_secret", lambda pid: "sk-real")
     res = resolve_provider_endpoint(
-        "grok",
-        vendor_default_base_url="https://api.x.ai/v1",
+        "gemini",
+        vendor_default_base_url="https://generativelanguage.googleapis.com/v1beta",
         config=_team_cfg("https://keys.acme.dev", enabled=False),
     )
     assert res.via_proxy is False
-    assert res.base_url == "https://api.x.ai/v1"
+    assert res.base_url == "https://generativelanguage.googleapis.com/v1beta"

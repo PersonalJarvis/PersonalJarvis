@@ -21,7 +21,7 @@ const INITIAL = {
   model: "",
   available: [
     { provider: "gemini", models: ["gemini-3-flash-preview", "gemini-3.1-pro-preview"] },
-    { provider: "grok", models: ["grok-4.3"] },
+    { provider: "openai", models: ["gpt-5.5"] },
   ],
 };
 
@@ -72,15 +72,15 @@ describe("WikiProviderCard", () => {
     // "Same as brain" provider → only the cheap-default model option.
     expect(within(modelSelect).queryByText("gemini-3-flash-preview")).toBeNull();
 
-    // Picking gemini surfaces gemini's models; grok's stay hidden.
+    // Picking gemini surfaces gemini's models; openai's stay hidden.
     fireEvent.change(providerSelect, { target: { value: "gemini" } });
     expect(within(modelSelect).getByText("gemini-3-flash-preview")).toBeDefined();
     expect(within(modelSelect).getByText("gemini-3.1-pro-preview")).toBeDefined();
-    expect(within(modelSelect).queryByText("grok-4.3")).toBeNull();
+    expect(within(modelSelect).queryByText("gpt-5.5")).toBeNull();
 
-    // Switching to grok swaps the model options.
-    fireEvent.change(providerSelect, { target: { value: "grok" } });
-    expect(within(modelSelect).getByText("grok-4.3")).toBeDefined();
+    // Switching to openai swaps the model options.
+    fireEvent.change(providerSelect, { target: { value: "openai" } });
+    expect(within(modelSelect).getByText("gpt-5.5")).toBeDefined();
     expect(within(modelSelect).queryByText("gemini-3-flash-preview")).toBeNull();
   });
 

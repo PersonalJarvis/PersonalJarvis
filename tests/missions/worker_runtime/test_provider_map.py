@@ -35,12 +35,19 @@ from jarvis.missions.worker_runtime.provider_map import (
         ("claude-api", "claude-cli"),
         ("openai", "openai"),
         ("openrouter", "openrouter"),
-        ("grok", "xai"),
     ],
 )
 def test_to_provider_slug_known_providers(jarvis_slug: str, openclaw_slug: str) -> None:
-    """Alle 5 dokumentierten Provider mappen wie in AD-6 Amendment-Tabelle."""
+    """Alle dokumentierten Provider mappen wie in AD-6 Amendment-Tabelle."""
     assert to_provider_slug(jarvis_slug) == openclaw_slug
+
+
+def test_to_provider_slug_grok_removed_raises() -> None:
+    """Grok was removed as a brain/worker provider — its mapping is gone, so
+    the slug no longer resolves (only the grok-voice TTS + credential remain,
+    which never route through this provider map)."""
+    with pytest.raises(UnknownJarvisProviderError):
+        to_provider_slug("grok")
 
 
 def test_to_provider_slug_unknown_raises() -> None:
@@ -73,7 +80,6 @@ def test_to_provider_slug_case_sensitive() -> None:
         ("claude-cli", "claude-api"),
         ("openai", "openai"),
         ("openrouter", "openrouter"),
-        ("xai", "grok"),
     ],
 )
 def test_to_jarvis_slug_round_trip(openclaw_slug: str, jarvis_slug: str) -> None:
@@ -101,7 +107,6 @@ def test_round_trip_jarvis_openclaw_jarvis() -> None:
         ("claude-api", ("ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY")),
         ("openai", ("OPENAI_API_KEY",)),
         ("openrouter", ("OPENROUTER_API_KEY",)),
-        ("grok", ("XAI_API_KEY", "GROK_API_KEY")),
     ],
 )
 def test_env_vars_for_known_providers(
@@ -126,7 +131,7 @@ def test_env_vars_primary_always_first() -> None:
 
 
 def test_validate_configured_providers_all_mapped_returns_empty() -> None:
-    configured = ["gemini", "claude-api", "openai", "grok"]
+    configured = ["gemini", "claude-api", "openai", "openrouter"]
     assert validate_configured_providers(configured) == []
 
 
@@ -182,8 +187,12 @@ def test_provider_mapping_is_frozen() -> None:
 
 
 def test_ad6_table_is_complete() -> None:
-    """AD-6 Amendment listet exakt 5 Provider — Drift-Schutz gegen versehentliches Loeschen."""
-    expected_jarvis_slugs = {"gemini", "claude-api", "openai", "openrouter", "grok"}
+    """AD-6 Amendment listet exakt 4 Provider — Drift-Schutz gegen versehentliches Loeschen.
+
+    Grok was removed as a brain/worker provider, so its ``grok->xai`` row is
+    gone from the table (only grok-voice TTS + the credential remain, neither of
+    which routes through this map)."""
+    expected_jarvis_slugs = {"gemini", "claude-api", "openai", "openrouter"}
     actual = {m.jarvis for m in MAPPINGS}
     assert actual == expected_jarvis_slugs, (
         "AD-6 Amendment-Tabelle weicht ab — bitte docs/openclaw-bridge.md "

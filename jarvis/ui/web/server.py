@@ -793,7 +793,6 @@ class WebServer:
                 "openrouter": "openrouter_api_key",
                 "openai": "openai_api_key",
                 "gemini": "gemini_api_key",
-                "grok": "grok_api_key",
             }
             mapping_rows = []
             for mapping in MAPPINGS:

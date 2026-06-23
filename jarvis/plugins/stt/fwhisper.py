@@ -185,6 +185,7 @@ class FasterWhisperProvider:
                 "end": s.end,
                 "text": s.text,
                 "avg_logprob": s.avg_logprob,
+                "no_speech_prob": getattr(s, "no_speech_prob", None),
             }
             for s in segments
         )

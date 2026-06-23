@@ -13,6 +13,10 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from types import SimpleNamespace
 
+import pytest
+
+from jarvis.speech import wake_constants as wc
+from jarvis.speech import wake_phrase as wp
 from jarvis.speech.pipeline import SpeechPipeline
 from jarvis.speech.wake_phrase import resolve_wake_plan
 
@@ -48,6 +52,21 @@ def _cfg(**kw: object) -> SimpleNamespace:
     )
     base.update(kw)
     return SimpleNamespace(**base)
+
+
+def _pretend_oww_models_exist(
+    monkeypatch: pytest.MonkeyPatch, *model_names: str
+) -> None:
+    models = set(model_names)
+    original_resolve = wc.resolve_oww_model_path
+
+    def fake_resolve(model_name: str) -> str | None:
+        if model_name in models:
+            return f"C:/fake-openwakeword/{model_name}_v0.1.onnx"
+        return original_resolve(model_name)
+
+    monkeypatch.setattr(wc, "resolve_oww_model_path", fake_resolve)
+    monkeypatch.setattr(wp, "resolve_oww_model_path", fake_resolve)
 
 
 def _pipe() -> SpeechPipeline:
@@ -121,8 +140,11 @@ async def test_verify_oww_hit_still_verifies_jarvis() -> None:
 # set_wake_plan — live reconfiguration (no restart)
 # --------------------------------------------------------------------------
 
-def test_set_wake_plan_live_swaps_to_pretrained_model() -> None:
+def test_set_wake_plan_live_swaps_to_pretrained_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     pipe = _pipe()
+    _pretend_oww_models_exist(monkeypatch, "alexa")
     plan = resolve_wake_plan(_cfg(phrase="Alexa"), local_whisper_available=False)
     pipe.set_wake_plan(plan)
 

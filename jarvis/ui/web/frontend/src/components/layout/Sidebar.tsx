@@ -298,7 +298,6 @@ function prettyProviderName(id: string): string {
     "gemini": "Gemini",
     "openai": "OpenAI",
     "codex": "Codex",
-    "grok": "Grok",
     "mock": "Mock-Brain",
     "unknown": "—",
   };

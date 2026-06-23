@@ -45,6 +45,7 @@ from jarvis.core.events import (
     SystemStateChanged,
     TranscriptionUpdate,
     UserVisibleFeedback,
+    WakeWordDetected,
     VoiceBootStatus,
     VoiceMuteToggleRequested,
     VoiceSessionEnded,
@@ -218,6 +219,9 @@ class OrbBusBridge:
         """Subscribt die Bridge auf SystemStateChanged. Idempotent."""
         try:
             self._bus.subscribe(SystemStateChanged, self._on_state)
+            # Earliest safe visual wake cue: WakeWordDetected is emitted only
+            # after wake verification, before the later session/state events.
+            self._bus.subscribe(WakeWordDetected, self._on_wake_word_detected)
             # Voice-session lifecycle: the orb tracks SESSION boundaries, not
             # just raw turn-states, so a late in-flight turn after a hangup
             # cannot resurrect the mascot (orb-resurrection bug 2026-05-29).
@@ -383,6 +387,18 @@ class OrbBusBridge:
             asyncio.run(coro)
         except RuntimeError as exc:
             log.warning("show-window publish dropped: %s", exc)
+
+    async def _on_wake_word_detected(self, event: WakeWordDetected) -> None:
+        """Pop the orb on the earliest confirmed wake signal."""
+        log.info("OrbBridge._on_wake_word_detected: keyword=%s", event.keyword)
+        prev_state = self._last_state
+        self._last_state_trace_id = str(event.trace_id)
+        self._suppress_show_until_session = False
+        self._last_state = "LISTENING"
+        self._orb.show(mode="listen")
+        if prev_state in ("IDLE", "ERROR", "PAUSED"):
+            self._orb.play_animation("wave")
+        self._cancel_idle_scheduler()
 
     async def _on_session_started(self, event: VoiceSessionStarted) -> None:
         """A genuine new voice session began (wake-word / hotkey / call).

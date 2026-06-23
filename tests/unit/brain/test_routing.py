@@ -548,11 +548,11 @@ def _manager_with_worker_provider(
 
 
 @pytest.mark.parametrize(
-    "brain_primary", ["grok", "openai", "openai-codex", "openrouter", "ollama"]
+    "brain_primary", ["mistral", "openai", "openai-codex", "openrouter", "ollama"]
 )
 def test_force_spawn_follows_worker_provider_not_talker(brain_primary: str) -> None:
     """With a configured claude-api worker, switching the talker to
-    grok/openai/codex must NOT block force-spawn — viability follows the WORKER,
+    mistral/openai/codex must NOT block force-spawn — viability follows the WORKER,
     not the talker."""
     manager, _executor = _manager_with_worker_provider(
         brain_primary=brain_primary, worker_provider="claude-api",
@@ -571,7 +571,7 @@ def test_force_spawn_codex_worker_with_codex_talker() -> None:
     assert manager._should_force_spawn("Bau eine Landingpage") is True
 
 
-@pytest.mark.parametrize("brain_primary", ["grok", "openai", "ollama"])
+@pytest.mark.parametrize("brain_primary", ["mistral", "openai", "ollama"])
 def test_force_spawn_blocked_when_no_worker_and_nonviable_talker(
     brain_primary: str,
 ) -> None:

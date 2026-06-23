@@ -17,7 +17,7 @@ Multi-provider requirement (memory ``feedback_brain_providers.md`` point 6).
 Instead of accepting a fixed ``brain`` parameter, the generator receives
 a ``brain_resolver: Callable[[], Brain]`` — called fresh on EVERY
 ``generate_bio()`` call. This way a provider switch at runtime (user
-switches the UI from Grok to Claude) takes effect immediately.
+switches the UI from Gemini to Claude) takes effect immediately.
 
 Default resolver: ``jarvis.brain.resolver.resolve_frontier_brain(config)``.
 

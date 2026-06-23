@@ -98,8 +98,7 @@ _RESULT_LINE = (
 
 
 @pytest.mark.parametrize("provider,model", [
-    ("grok", "grok-4.3"),       # unset sub_jarvis -> chain stub default
-    ("gemini", "gemini-3.1-pro-preview"),
+    ("gemini", "gemini-3.1-pro-preview"),  # unset sub_jarvis -> chain stub default
     ("openai", "gpt-5.5-pro"),
     ("openrouter", "some/model"),
 ])
@@ -160,9 +159,9 @@ async def test_non_claude_provider_runs_on_claude_not_refused(
 def test_resolve_claude_model_never_returns_foreign_slug() -> None:
     """_resolve_claude_model must map any non-claude primary to a claude model,
     honour a claude-api primary verbatim, and survive a None primary."""
-    # Foreign provider -> a claude model, never the grok slug.
-    m = cdw._resolve_claude_model(_FallbackStep("grok", "grok-4.3"))
-    assert m != "grok-4.3"
+    # Foreign provider -> a claude model, never the foreign slug.
+    m = cdw._resolve_claude_model(_FallbackStep("gemini", "gemini-3.1-pro-preview"))
+    assert m != "gemini-3.1-pro-preview"
     assert m.startswith("claude") or m in {"opus", "sonnet", "haiku"}
     # claude-api primary with a model -> honoured verbatim.
     assert (
