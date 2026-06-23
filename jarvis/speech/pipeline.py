@@ -2738,11 +2738,16 @@ class SpeechPipeline:
         # deliberately-muted session, and the phrases below stay priority
         # "normal" → queued behind any current speech, never barging
         # mid-utterance (AD-OE5).
-        # Resolve the readback language from the ORIGINAL request utterance
-        # (pin > conversation-stickiness > detected utterance > default) so an
-        # English/Spanish user never hears "Fertig." in German (forensic
-        # 2026-06-23: announcement emitters bypassed the resolver).
-        lang = self._output_language(None, getattr(event, "utterance", "") or "")
+        # Resolve the readback language from the original request utterance,
+        # falling back to the worker summary text (pin > conversation-stickiness
+        # > detected utterance/summary > default) so an English/Spanish user
+        # never hears "Fertig." in German, and the "Done./Fertig." prefix never
+        # mismatches the summary language (forensic 2026-06-23: announcement
+        # emitters bypassed the resolver).
+        lang = self._output_language(
+            None,
+            getattr(event, "utterance", "") or getattr(event, "summary", "") or "",
+        )
         ph = self._BG_READBACK_PHRASES.get(lang, self._BG_READBACK_PHRASES["en"])
         if event.success and event.summary:
             summ = event.summary.strip()
