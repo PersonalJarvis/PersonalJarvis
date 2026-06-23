@@ -23,7 +23,6 @@ PROVIDER_FAST_DEEP_CASES = [
     ("openrouter", "anthropic/claude-sonnet-4.6", "anthropic/claude-opus-4.8"),
     ("openai", "gpt-5.5", "gpt-5.5-pro"),
     ("gemini", "gemini-3.5-flash", "gemini-3.1-pro-preview"),
-    ("grok", "grok-4.3", "grok-4.3"),
 ]
 
 

@@ -106,7 +106,7 @@ describe("BrainModelSelector", () => {
     const search = (await screen.findByLabelText(
       "apikeys_model.search_placeholder",
     )) as HTMLInputElement;
-    fireEvent.change(search, { target: { value: "x-ai/grok-9-brandnew" } });
+    fireEvent.change(search, { target: { value: "acme/experimental-9" } });
     fireEvent.click(screen.getByTestId("use-custom-row"));
     await waitFor(() => {
       const put = fetchMock.mock.calls.find(
@@ -114,7 +114,7 @@ describe("BrainModelSelector", () => {
       );
       expect(put).toBeDefined();
       expect(JSON.parse((put![1] as RequestInit).body as string).model).toBe(
-        "x-ai/grok-9-brandnew",
+        "acme/experimental-9",
       );
     });
   });

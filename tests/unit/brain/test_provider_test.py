@@ -8,7 +8,8 @@ stored, never that the provider answers — and a 401/403 proves the integration
 reached the provider and only the credential/account was rejected.
 
 Error strings below are VERBATIM from live probes against the real providers
-(Anthropic 401, xAI 403 out-of-credits, OpenAI missing-key RuntimeError).
+(Anthropic 401, an OpenAI-compatible 403 out-of-credits, OpenAI missing-key
+RuntimeError).
 """
 from __future__ import annotations
 
@@ -42,7 +43,7 @@ def test_anthropic_401_invalid_key_is_bad_key() -> None:
     assert classify_provider_error(msg) == "bad_key"
 
 
-def test_xai_403_out_of_credits_is_no_credits() -> None:
+def test_403_out_of_credits_is_no_credits() -> None:
     msg = (
         "PermissionDeniedError: Error code: 403 - {'code': 'permission-denied', "
         "'error': 'Your team e6d8 has either used all available credits or reached "

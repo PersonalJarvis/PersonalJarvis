@@ -53,9 +53,9 @@ def test_inactive_provider_returns_false_but_still_persists_in_memory() -> None:
 
 def test_creates_provider_block_when_absent() -> None:
     mgr = _manager(primary="gemini")
-    assert "grok" not in mgr._config.brain.providers
-    mgr.apply_provider_model("grok", "grok-4.3")
-    assert mgr._config.brain.providers["grok"].model == "grok-4.3"
+    assert "openrouter" not in mgr._config.brain.providers
+    mgr.apply_provider_model("openrouter", "openai/gpt-5.5")
+    assert mgr._config.brain.providers["openrouter"].model == "openai/gpt-5.5"
 
 
 def test_existing_block_is_updated_not_replaced_fields() -> None:

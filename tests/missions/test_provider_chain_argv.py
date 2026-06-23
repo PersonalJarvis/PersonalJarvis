@@ -110,8 +110,8 @@ def test_build_openclaw_cmd_accepts_string_binary_legacy() -> None:
         "Create hello.py",
         binary="C:/npm/openclaw.cmd",
         session_id="s-1",
-        openclaw_slug="xai",
-        model="grok-4.3",
+        openclaw_slug="google",
+        model="gemini-3.1-pro-preview",
         timeout_s=600.0,
     )
 
@@ -120,7 +120,7 @@ def test_build_openclaw_cmd_accepts_string_binary_legacy() -> None:
     assert "--message" in cmd
     assert cmd[cmd.index("--message") + 1] == "Create hello.py"
     assert "--model" in cmd
-    assert cmd[cmd.index("--model") + 1] == "xai/grok-4.3"
+    assert cmd[cmd.index("--model") + 1] == "google/gemini-3.1-pro-preview"
 
 
 def test_build_openclaw_cmd_accepts_argv_prefix_list() -> None:
@@ -131,8 +131,8 @@ def test_build_openclaw_cmd_accepts_argv_prefix_list() -> None:
         "Create hello.py with print('hi')",
         binary=["C:/Program Files/nodejs/node.exe", "C:/npm/openclaw.mjs"],
         session_id="s-2",
-        openclaw_slug="xai",
-        model="grok-4.3",
+        openclaw_slug="google",
+        model="gemini-3.1-pro-preview",
         timeout_s=600.0,
     )
 
@@ -151,8 +151,8 @@ def test_build_openclaw_cmd_extra_args_appended_after_timeout() -> None:
         "p",
         binary=["node", "openclaw.mjs"],
         session_id="s",
-        openclaw_slug="xai",
-        model="grok-4.3",
+        openclaw_slug="google",
+        model="gemini-3.1-pro-preview",
         timeout_s=10.0,
         extra_args=("--verbose", "--max-tokens", "4096"),
     )

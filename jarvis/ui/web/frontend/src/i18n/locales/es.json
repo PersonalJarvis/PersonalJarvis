@@ -784,6 +784,8 @@
     "needs_codex": "Primero conecta Codex o guarda la clave API",
     "needs_login": "Primero inicia sesión con Google, luego se puede activar",
     "needs_key": "Primero guarda la clave API, luego se puede activar",
+    "recommended": "Recomendado",
+    "recommended_tooltip": "Modelo recomendado: {0}",
     "security_notice": ""
   },
   "apikeys_test": {
@@ -803,6 +805,7 @@
   },
   "apikeys_model": {
     "heading": "Modelo",
+    "recommended_tag": "Recomendado",
     "model_label": "Modelo",
     "search_placeholder": "Busca modelos o escribe un id…",
     "apply": "Aplicar",

@@ -46,7 +46,7 @@ async def main() -> None:
         await _run_sample(
             Path(tmp), SCRIPTED_POWER_USER_BIO, _power_user_db,
             memory="User ist Nicht-Coder, arbeitet autonom. Multi-Provider-Brain.",
-            soul="Jarvis: Iron-Man-Style, trocken, kurz.",
+            soul="Jarvis: lakonisch, trocken, kurz.",
         )
 
     print("=== B - Casual-User (wenig Daten) ===")

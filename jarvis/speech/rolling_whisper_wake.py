@@ -22,6 +22,7 @@ Parameter:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -63,6 +64,38 @@ def _save_wav(pcm_bytes: bytes, sample_rate: int, path: Path) -> None:
         wf.writeframes(pcm_bytes)
 
 
+def _segment_no_speech_probs(transcript: Any) -> list[float]:
+    probs: list[float] = []
+    for seg in getattr(transcript, "segments", ()) or ():
+        if not isinstance(seg, dict):
+            continue
+        value = seg.get("no_speech_prob")
+        if value is None:
+            continue
+        try:
+            probs.append(float(value))
+        except (TypeError, ValueError):
+            continue
+    return probs
+
+
+def _reliable_wake_transcript(
+    transcript: Any,
+    *,
+    min_confidence: float,
+    max_no_speech_prob: float,
+) -> bool:
+    try:
+        confidence = float(getattr(transcript, "confidence", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    if confidence < min_confidence:
+        return False
+    return not any(
+        prob > max_no_speech_prob for prob in _segment_no_speech_probs(transcript)
+    )
+
+
 class RollingWhisperWake:
     """Rolling-Window Wake-Detection per Whisper-Transkription."""
 
@@ -95,6 +128,10 @@ class RollingWhisperWake:
         target_peak_dbfs: float = -3.0,
         max_gain_db: float = 40.0,
         language: str = "de",
+        # faster-whisper's exp(avg_logprob) score is harsh on 1-2 word wake
+        # chunks; live "Hey Alex!" was observed at 0.499 with clear speech.
+        min_wake_confidence: float = 0.45,
+        max_no_speech_prob: float = 0.6,
     ) -> None:
         self._stt = stt
         self._pattern = pattern
@@ -112,6 +149,8 @@ class RollingWhisperWake:
         # 1.8s-Chunks kippt oft fälschlich auf EN (User spricht DE, Whisper
         # halluziniert "Thank you"). None = auto (nicht empfohlen).
         self._language: str | None = language
+        self._min_wake_confidence = min_wake_confidence
+        self._max_no_speech_prob = max_no_speech_prob
         # Statistik für Heartbeat
         self._chunks_seen = 0
         self._total_bytes = 0
@@ -122,121 +161,172 @@ class RollingWhisperWake:
     async def detect(
         self, chunks: AsyncIterator[AudioChunk]
     ) -> AsyncIterator[str]:
-        """Konsumiert Audio-Chunks, yielded matched-Keyword bei Hit."""
-        # Ring-Buffer: float32 samples im [-1, 1] Bereich
+        """Konsumiert Audio-Chunks, yielded matched-Keyword bei Hit.
+
+        The chunk consumer and the (slow, blocking) Whisper transcription run as
+        TWO concurrent tasks. The consumer keeps the rolling ring-buffer pinned
+        to the freshest ``window_s`` of audio; a separate poll loop snapshots the
+        current window every ``poll_interval_s`` and transcribes THAT.
+
+        Why two tasks (forensic 2026-06-22): the old single loop did
+        ``await transcribe_pcm`` *inside* the consume loop, so while a CPU "base"
+        transcription ran for ~0.5-1 s no new chunks were pulled. They backed up
+        in the upstream fanout queue (observed ``wsp_q=100``) and every following
+        transcription ran on ~3 s-stale audio — the "riesige Verzoegerung". With
+        the consumer decoupled, the buffer is always live and the transcription
+        sees the newest window, never a backlog.
+        """
+        # Ring-Buffer: float32 samples im [-1, 1] Bereich. Held in a 1-element
+        # list so the consumer closure mutates it in place without ``nonlocal``.
         buffer: deque[np.ndarray] = deque()
-        buffer_len = 0
-        last_poll_t = time.time()
-        last_trigger_t = 0.0
+        buf_len = [0]
+        stopped = asyncio.Event()
 
-        async for chunk in chunks:
-            samples = pcm_bytes_to_np(chunk.pcm)
-            buffer.append(samples)
-            buffer_len += len(samples)
-
-            # Heartbeat-Statistik updaten (live RMS pro Chunk)
-            self._chunks_seen += 1
-            self._total_bytes += len(chunk.pcm)
-            chunk_rms = float(np.sqrt(np.mean(samples * samples) + 1e-12))
-            if chunk_rms > self._max_rms:
-                self._max_rms = chunk_rms
-
-            # Heartbeat regelmäßig ausgeben — auch wenn Whisper nichts matched
-            now_hb = time.time()
-            if now_hb - self._last_heartbeat_t >= self._heartbeat_interval_s:
-                dbfs = 20.0 * np.log10(max(self._max_rms, 1e-12))
-                log.info(
-                    "💓 wake-heartbeat: chunks=%d bytes=%dKB max-rms=%.4f (%.1f dBFS) last-transcript=%r",
-                    self._chunks_seen,
-                    self._total_bytes // 1024,
-                    self._max_rms,
-                    dbfs,
-                    self._last_transcript[:80],
-                )
-                self._chunks_seen = 0
-                self._total_bytes = 0
-                self._max_rms = 0.0
-                self._last_heartbeat_t = now_hb
-
-            # Ältere Samples rauswerfen wenn Buffer zu lang
-            while buffer_len > self._window_samples:
-                oldest = buffer[0]
-                overflow = buffer_len - self._window_samples
-                if len(oldest) <= overflow:
-                    buffer.popleft()
-                    buffer_len -= len(oldest)
-                else:
-                    buffer[0] = oldest[overflow:]
-                    buffer_len -= overflow
-
-            # Poll-Intervall abwarten
-            now = time.time()
-            if now - last_poll_t < self._poll_interval_s:
-                continue
-            last_poll_t = now
-
-            # Cooldown nach letztem Trigger
-            if now - last_trigger_t < self._cooldown_s:
-                continue
-
-            # Noch nicht genug Audio im Buffer
-            if buffer_len < self._sample_rate:  # mind. 1 Sek
-                continue
-
-            # Concatenate + Lautstärke-Check (RMS) — kein Whisper-Call bei Stille
-            audio_np = np.concatenate(list(buffer))
-            rms = float(np.sqrt(np.mean(audio_np * audio_np) + 1e-12))
-            if rms < self._min_rms:
-                continue
-
-            # Peak-Gate: bei reinem Rauschen gar nicht erst Whisper bemühen
-            peak = float(np.max(np.abs(audio_np)))
-            if peak < self._min_peak:
-                # Kein Whisper-Call — zu leise für Sprache
-                continue
-
-            # Whisper-Call mit Peak-Normalization (dynamischer Gain)
+        async def _consume() -> None:
+            """Drain audio into the rolling window — fast, never blocks on STT."""
             try:
-                if peak > 1e-6:
-                    # Gain berechnen um Ziel-Peak zu erreichen, aber cappen
-                    gain = min(self._target_peak / peak, self._max_gain_factor)
-                else:
-                    gain = 1.0
-                boosted = audio_np * gain
-                applied_db = 20.0 * np.log10(max(gain, 1e-12))
-                pcm_bytes = (
-                    np.clip(boosted, -1.0, 1.0) * 32767.0
-                ).astype(np.int16).tobytes()
-                log.debug("whisper-gain applied=%.1f dB (peak-in=%.3f)", applied_db, peak)
-                transcript = await self._stt.transcribe_pcm(
-                    pcm_bytes, language=self._language
-                )
-            except Exception as exc:  # noqa: BLE001
-                log.warning("Rolling-Whisper Transkription fehlgeschlagen: %s", exc)
-                continue
+                async for chunk in chunks:
+                    samples = pcm_bytes_to_np(chunk.pcm)
+                    buffer.append(samples)
+                    buf_len[0] += len(samples)
 
-            text = transcript.text.strip()
-            self._last_transcript = text
+                    # Heartbeat-Statistik updaten (live RMS pro Chunk)
+                    self._chunks_seen += 1
+                    self._total_bytes += len(chunk.pcm)
+                    chunk_rms = float(np.sqrt(np.mean(samples * samples) + 1e-12))
+                    if chunk_rms > self._max_rms:
+                        self._max_rms = chunk_rms
 
-            # Watchdog: WAV speichern damit User/ich die Aufnahme nachprüfen können
-            if self._save_debug_wavs:
+                    # Heartbeat regelmäßig ausgeben — auch wenn Whisper nichts matched
+                    now_hb = time.time()
+                    if now_hb - self._last_heartbeat_t >= self._heartbeat_interval_s:
+                        dbfs = 20.0 * np.log10(max(self._max_rms, 1e-12))
+                        log.info(
+                            "💓 wake-heartbeat: chunks=%d bytes=%dKB "
+                            "max-rms=%.4f (%.1f dBFS) last-transcript=%r",
+                            self._chunks_seen,
+                            self._total_bytes // 1024,
+                            self._max_rms,
+                            dbfs,
+                            self._last_transcript[:80],
+                        )
+                        self._chunks_seen = 0
+                        self._total_bytes = 0
+                        self._max_rms = 0.0
+                        self._last_heartbeat_t = now_hb
+
+                    # Ältere Samples rauswerfen wenn Buffer zu lang
+                    while buf_len[0] > self._window_samples:
+                        oldest = buffer[0]
+                        overflow = buf_len[0] - self._window_samples
+                        if len(oldest) <= overflow:
+                            buffer.popleft()
+                            buf_len[0] -= len(oldest)
+                        else:
+                            buffer[0] = oldest[overflow:]
+                            buf_len[0] -= overflow
+            finally:
+                stopped.set()
+
+        consumer = asyncio.create_task(_consume(), name="rolling-whisper-consume")
+        last_trigger_t = 0.0
+        try:
+            while not stopped.is_set():
+                # Wall-clock poll cadence — independent of the chunk arrival rate
+                # and, crucially, of how long the previous transcription took.
+                await asyncio.sleep(self._poll_interval_s)
+
+                now = time.time()
+                # Cooldown nach letztem Trigger
+                if now - last_trigger_t < self._cooldown_s:
+                    continue
+                # Noch nicht genug Audio im Buffer
+                if buf_len[0] < self._sample_rate:  # mind. 1 Sek
+                    continue
+
+                # Snapshot the freshest window. ``list(buffer)`` + concat run
+                # synchronously (no await), so the consumer cannot interleave a
+                # mutation mid-snapshot in this single-threaded loop.
+                if not buffer:
+                    continue
+                audio_np = np.concatenate(list(buffer))
+                if len(audio_np) < self._sample_rate:
+                    continue
+
+                # Lautstärke-Check (RMS) — kein Whisper-Call bei Stille
+                rms = float(np.sqrt(np.mean(audio_np * audio_np) + 1e-12))
+                if rms < self._min_rms:
+                    continue
+
+                # Peak-Gate: bei reinem Rauschen gar nicht erst Whisper bemühen
+                peak = float(np.max(np.abs(audio_np)))
+                if peak < self._min_peak:
+                    # Kein Whisper-Call — zu leise für Sprache
+                    continue
+
+                # Whisper-Call mit Peak-Normalization (dynamischer Gain)
                 try:
-                    pcm_bytes_for_wav = (
-                        np.clip(audio_np, -1.0, 1.0) * 32767.0
+                    if peak > 1e-6:
+                        # Gain berechnen um Ziel-Peak zu erreichen, aber cappen
+                        gain = min(self._target_peak / peak, self._max_gain_factor)
+                    else:
+                        gain = 1.0
+                    boosted = audio_np * gain
+                    applied_db = 20.0 * np.log10(max(gain, 1e-12))
+                    pcm_bytes = (
+                        np.clip(boosted, -1.0, 1.0) * 32767.0
                     ).astype(np.int16).tobytes()
-                    ts = time.strftime("%H%M%S")
-                    safe_text = re.sub(r"[^\w\-]+", "_", text[:40]) or "empty"
-                    wav_path = DEBUG_DIR / f"wake_{ts}_rms{rms:.3f}_{safe_text}.wav"
-                    _save_wav(pcm_bytes_for_wav, self._sample_rate, wav_path)
+                    log.debug("whisper-gain applied=%.1f dB (peak-in=%.3f)", applied_db, peak)
+                    transcript = await self._stt.transcribe_pcm(
+                        pcm_bytes, language=self._language
+                    )
                 except Exception as exc:  # noqa: BLE001
-                    log.warning("WAV-Save fehlgeschlagen: %s", exc)
+                    log.warning("Rolling-Whisper Transkription fehlgeschlagen: %s", exc)
+                    continue
 
-            if not text:
-                log.info("rolling-whisper: rms=%.4f text=<leer>", rms)
-                continue
+                text = transcript.text.strip()
+                self._last_transcript = text
 
-            log.info("rolling-whisper: rms=%.4f text=%r", rms, text)
-            m = self._pattern.search(text)
-            if m:
-                last_trigger_t = now
-                yield m.group(0)
+                # Watchdog: WAV speichern damit User/ich die Aufnahme nachprüfen können
+                if self._save_debug_wavs:
+                    try:
+                        pcm_bytes_for_wav = (
+                            np.clip(audio_np, -1.0, 1.0) * 32767.0
+                        ).astype(np.int16).tobytes()
+                        ts = time.strftime("%H%M%S")
+                        safe_text = re.sub(r"[^\w\-]+", "_", text[:40]) or "empty"
+                        wav_path = DEBUG_DIR / f"wake_{ts}_rms{rms:.3f}_{safe_text}.wav"
+                        _save_wav(pcm_bytes_for_wav, self._sample_rate, wav_path)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("WAV-Save fehlgeschlagen: %s", exc)
+
+                if not text:
+                    log.info("rolling-whisper: rms=%.4f text=<leer>", rms)
+                    continue
+
+                if not _reliable_wake_transcript(
+                    transcript,
+                    min_confidence=self._min_wake_confidence,
+                    max_no_speech_prob=self._max_no_speech_prob,
+                ):
+                    log.info(
+                        "rolling-whisper: rejected unreliable wake transcript "
+                        "rms=%.4f confidence=%.3f no_speech=%r text=%r",
+                        rms,
+                        float(getattr(transcript, "confidence", 0.0) or 0.0),
+                        _segment_no_speech_probs(transcript),
+                        text,
+                    )
+                    continue
+
+                log.info("rolling-whisper: rms=%.4f text=%r", rms, text)
+                m = self._pattern.search(text)
+                if m:
+                    last_trigger_t = now
+                    yield m.group(0)
+        finally:
+            consumer.cancel()
+            try:
+                await consumer
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                pass

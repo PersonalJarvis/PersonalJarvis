@@ -7,9 +7,9 @@ provider** — dynamically, without hardcoded model names.
 Multi-provider requirement (see memory ``feedback_brain_providers.md``):
 background generation tasks (BioGenerator, persona descriptions,
 skill authoring) MUST respect the provider chosen by the user.
-A user who only has a Grok API key gets a Grok bio. A user who has
-Claude configured gets Opus 4.7. Never hardcode model names such as
-``claude-opus-4-7`` directly in code.
+A user who only has a Gemini API key gets a Gemini bio. A user who has
+Claude configured gets Opus. Never hardcode model names such as
+``claude-opus-4-8`` directly in code.
 
 Fallback order:
 

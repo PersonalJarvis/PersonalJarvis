@@ -20,7 +20,6 @@ import pytest
 from jarvis.brain.ack_brain.config import (
     AckBrainConfig,
     GeminiAckProviderConfig,
-    GrokAckProviderConfig,
     OllamaAckProviderConfig,
     OpenAIAckProviderConfig,
     _ProvidersBundle,
@@ -128,9 +127,6 @@ def make_ack_config(
     providers = _ProvidersBundle(
         gemini=GeminiAckProviderConfig(
             model="gemini-3.1-flash", max_output_tokens=max_output_tokens
-        ),
-        grok=GrokAckProviderConfig(
-            model="grok-4-fast-non-reasoning", max_output_tokens=max_output_tokens
         ),
         openai=OpenAIAckProviderConfig(
             model="gpt-5-mini", max_output_tokens=max_output_tokens

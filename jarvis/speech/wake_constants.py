@@ -46,8 +46,9 @@ JARVIS_WAKE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Common wake prefixes stripped from the *core* of a custom phrase so that a
-# phrase like "Hey Athena" also fires on a bare "Athena" in the transcript.
+# Common wake prefixes stripped when deriving the phrase *core* for model
+# lookup and canonical keyword names. The matcher may still keep an explicit
+# prefix when the configured phrase includes one.
 WAKE_PREFIXES: frozenset[str] = frozenset(
     {"hey", "hi", "ok", "okay", "hello", "hallo", "yo", "hej"}
 )

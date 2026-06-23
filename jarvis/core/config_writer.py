@@ -645,7 +645,7 @@ def set_brain_provider_defaults(
     is created with the supplied defaults (typically the tier defaults from
     ``BrainManager.TIER_DEFAULTS_BY_PROVIDER``).
 
-    Background: providers added after the setup wizard via the UI (e.g. grok)
+    Background: providers added after the setup wizard via the UI (e.g. openrouter)
     often lack a ``[brain.providers.<name>]`` block. During a switch-persist we
     ensure here that after an app restart the tier-default fallback logic in
     BrainManager is not needed again — the block is then cleanly persisted.

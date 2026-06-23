@@ -44,7 +44,7 @@ describe("reduceThinkingSteps", () => {
 
   it("closes the previous brain attempt when the fallback chain restarts", () => {
     const steps = run([
-      ["BrainTurnStarted", { provider: "grok" }, T0],
+      ["BrainTurnStarted", { provider: "openai" }, T0],
       ["BrainTurnStarted", { provider: "claude-api" }, T0 + 500],
     ]);
     expect(steps).toHaveLength(2);

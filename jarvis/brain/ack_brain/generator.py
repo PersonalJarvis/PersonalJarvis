@@ -275,7 +275,7 @@ class AckGenerator:
         self._preferences_provider = preferences_provider
         # Derived name for telemetry labels — config.provider is the
         # registry-key, not a human-readable label, but they coincide
-        # by design ("gemini", "grok", "openai", "ollama").
+        # by design ("gemini", "openai", "ollama").
         self._provider_name = config.provider
         # Optional failover AckGenerator on a SEPARATE provider/breaker. Used
         # only when THIS provider is exhausted (timed out / errored / produced

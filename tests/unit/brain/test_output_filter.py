@@ -722,6 +722,29 @@ def test_scrub_refuses_json_list_of_objects_dump() -> None:
     assert result.cleaned == FALLBACK_PHRASES["de"]
 
 
+def test_fallback_phrase_localized_to_spanish() -> None:
+    """Runtime-output-language doctrine: every phrase table carries all
+    supported locales (de/en/es). A Spanish-pinned user must hear the Spanish
+    fallback, not German — true for BOTH the raw-dump guard and the stacktrace
+    guard (same FALLBACK_PHRASES table)."""
+    from jarvis.brain.output_filter import FALLBACK_PHRASES
+
+    assert "es" in FALLBACK_PHRASES, "Spanish fallback phrase missing"
+    # raw-dump guard in Spanish
+    dump = scrub_for_voice("{'exit_code': 0, 'cost_usd': 0.0}", language="es")
+    assert dump.fallback_used is True
+    assert dump.cleaned == FALLBACK_PHRASES["es"]
+    # stacktrace guard in Spanish (same table)
+    trace = scrub_for_voice(
+        "Traceback (most recent call last):\n  File x\nValueError: boom",
+        language="es",
+    )
+    assert trace.fallback_used is True
+    assert trace.cleaned == FALLBACK_PHRASES["es"]
+    # the Spanish phrase is actually Spanish, not the German default
+    assert dump.cleaned != FALLBACK_PHRASES["de"]
+
+
 def test_scrub_keeps_humanized_readback_with_quotes() -> None:
     """No false positive: a clean readback that merely quotes a UI label (and
     contains an apostrophe + colon-free) must pass through untouched."""

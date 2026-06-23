@@ -46,10 +46,17 @@ const STATUS_TONE: Record<ProviderTestStatus, string> = {
 export function BrainModelSelector({
   providerId,
   currentModel,
+  recommendedModel,
   onSave,
 }: {
   providerId: string;
   currentModel?: string;
+  /**
+   * The maintainer-recommended model id for this provider (e.g.
+   * "gemini-3.5-flash"). When the list contains it, that row gets an
+   * "empfohlen" tag. Presentation only — it never changes the pinned value.
+   */
+  recommendedModel?: string | null;
   /**
    * Override the save target. Used by the Subagent card, which persists to its
    * own endpoint (POST /api/subagent/model) instead of the per-provider model
@@ -225,7 +232,14 @@ export function BrainModelSelector({
                     m.id === pinned && "bg-primary/10",
                   )}
                 >
-                  <span className="truncate text-xs">{m.label}</span>
+                  <span className="flex min-w-0 items-center gap-1.5 truncate text-xs">
+                    {m.label}
+                    {recommendedModel && m.id === recommendedModel && (
+                      <span className="shrink-0 rounded-full bg-primary/15 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-primary">
+                        {t("apikeys_model.recommended_tag")}
+                      </span>
+                    )}
+                  </span>
                   <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
                     {m.id}
                   </span>

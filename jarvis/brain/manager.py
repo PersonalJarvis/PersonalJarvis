@@ -14,7 +14,7 @@ Architecture:
    - same provider, deep_model (if fast is rate-limited, try deeper)
    - `claude-api` (OAuth Max plan)
    - `claude-api` (separate quota)
-   - `gemini`, `openrouter`, `openai`, `grok` (when keys are present)
+   - `gemini`, `openrouter`, `openai` (when keys are present)
    - Ollama was completely removed from the project on 2026-04-21.
 
 4. **Pipeline-Adapter**: `__call__(text) -> str` for `speech/pipeline.py`.
@@ -1174,6 +1174,41 @@ _SUBAGENT_SWITCH_CONFIRM: dict[str, str] = {
     "es": "Listo — tu sub-agente usará {p} desde tu próxima misión.",
 }
 
+# General self-control (2026-06-22). Not every settings change can have its own
+# deterministic gate — the gates (language, sub-agent) are high-precision
+# guardrails for the common cases; this covers the LONG TAIL generally. When a
+# turn is recognised as a request to change/control Jarvis's OWN configuration,
+# a per-turn directive is injected into the system prompt so WHICHEVER provider
+# handles the turn (the active one, or — for a CLI brain that can't emit
+# tool_calls — the tool-capable provider the intelligent router hands the turn
+# to) reliably uses cli_jarvisctl / set_config_value instead of confabulating a
+# refusal. Detection needs BOTH a change verb AND a Jarvis-settings noun, so a
+# general "change the code" task is not mistaken for self-control. It must NOT
+# rely on the bare word "Jarvis" (the evidence gate filters that wake word).
+_SELF_CONTROL_VERB_RE = re.compile(
+    r"\b(?:änder\w*|aender\w*|umänder\w*|umaender\w*|stell\w*|umstell\w*|umschalt\w*"
+    r"|setz\w*|set|wechsel\w*|wechsle|aktivier\w*|deaktivier\w*|schalt\w*|switch\w*"
+    r"|change\w*|enable\w*|disable\w*|configure\w*|konfigurier\w*|adjust\w*|turn)\b",
+    re.IGNORECASE,
+)
+_SELF_CONTROL_NOUN_RE = re.compile(
+    r"\b(?:einstellung\w*|konfiguration\w*|config\w*|setting\w*|sprache|antwortsprache"
+    r"|stimme|voice|provider|anbieter|modell|model|theme|design|lautstärke|lautstaerke"
+    r"|volume|wake[-\s]?word\w*|hotkey|shortcut|stt|tts|sub[-\s]?agent|subagent"
+    r"|worker)\b",
+    re.IGNORECASE,
+)
+_SELF_CONTROL_DIRECTIVE = (
+    "SELF-CONTROL: The user is asking to change or control Jarvis's OWN settings, "
+    "configuration, providers, voice, language, or behavior. You have full "
+    "control over this. Use the `cli_jarvisctl` tool — it performs ANY Jarvis "
+    "action via the local API (e.g. `jarvisctl brain switch <provider>`, "
+    "`jarvisctl config set <key> <value>`) — or `set_config_value` for a simple "
+    "setting. NEVER say you lack access or permission to change a Jarvis setting, "
+    "and never claim the change without actually calling the tool: call it and "
+    "confirm success only AFTER it returns."
+)
+
 
 def normalize_reply_language(value: object) -> str:
     """Coerce a raw reply-language value to a known code, else ``"auto"``.
@@ -2172,12 +2207,16 @@ class BrainManager:
         if self._evidence_directive:
             parts.append(self._evidence_directive)
 
+        # General self-control directive (settings/config control long tail).
+        if getattr(self, "_self_control_directive", ""):
+            parts.append(self._self_control_directive)
+
         if self._system_prompt_extra:
             parts.append(self._system_prompt_extra)
 
         base = (
             f"Du bist {name}, der persoenliche Meta-Orchestrator dieses Users auf Windows 11. "
-            "Stil: trocken, praezise, ein Hauch britischer Butler im Tony-Stark-JARVIS-Stil "
+            "Stil: trocken, praezise, ein Hauch britischer Butler "
             "— nie servil, nie beflissen, nie speichelleckerisch. "
             "Sprich kurz (1 Satz), natuerlich, KEIN Markdown. "
             "STRENG VERBOTEN — generische Greeter-/Smalltalk-Phrasen, jede einzelne. Beispiele: "
@@ -2580,6 +2619,26 @@ class BrainManager:
             )
         log.info("reply-language switched to %r via deterministic voice gate", lang)
         return _LANG_SWITCH_CONFIRM.get(lang, _LANG_SWITCH_CONFIRM["de"])
+
+    def _is_self_control_turn(self, text: str) -> bool:
+        """Broad (class-level, NOT per-command) detector for a request to change
+        or control Jarvis's OWN configuration.
+
+        True only when BOTH a change verb (ändere/stell/wechsle/aktiviere/
+        switch/set/…) AND a Jarvis-settings noun (Einstellung/Sprache/Stimme/
+        Provider/Theme/Lautstärke/STT/TTS/Sub-Agent/…) are present, so a general
+        "change the code" task is never mistaken for self-control. Used only to
+        inject a prompt directive — the LLM still constructs the actual tool
+        call, so any phrasing/setting is covered without a per-command gate.
+        Never raises (getattr-safe); returns False on any error.
+        """
+        try:
+            t = (text or "").lower()
+            return bool(
+                _SELF_CONTROL_VERB_RE.search(t) and _SELF_CONTROL_NOUN_RE.search(t)
+            )
+        except Exception:  # noqa: BLE001 — a detector must never break a turn
+            return False
 
     def _detect_subagent_switch_intent(self, text: str) -> str | None:
         """Strict gate-based sub-agent (Heavy-Task worker) provider switch.
@@ -3038,6 +3097,9 @@ class BrainManager:
     # allowlist forms). Reset at the start of every generate() turn.
     _evidence_directive: str = ""
     _evidence_required_tool: str = ""
+    # Per-turn self-control directive (general settings/config control). Reset
+    # at the start of every generate() turn; appended to the system prompt.
+    _self_control_directive: str = ""
 
     def note_skill_trigger(
         self, skill_name: str, *, content: str = "", source: str = "trigger"
@@ -3805,7 +3867,7 @@ class BrainManager:
         provider talks to the user. A configured worker provider always maps to a
         real worker (claude-api -> ClaudeDirectWorker, codex -> CodexDirectWorker,
         else the OpenClaw/default path), so it is viable for ANY talker — this is
-        what lets the user switch ``brain.primary`` to grok / openai / codex
+        what lets the user switch ``brain.primary`` to gemini / openai / codex
         without silencing every action request (AP-6: never couple routing to a
         hardcoded talker provider).
 
@@ -4912,6 +4974,9 @@ class BrainManager:
         # early-returns before the gate runs).
         self._evidence_directive = ""
         self._evidence_required_tool = ""
+        # General self-control directive — reset here, set below once the
+        # smalltalk classification for this turn is known.
+        self._self_control_directive = ""
         # AD-S4: a trigger noted by the speech pipeline / chat hook takes
         # precedence — it carries the captured content and the source label.
         self._consume_pending_skill_trigger(user_text)
@@ -5128,6 +5193,13 @@ class BrainManager:
                 "Smalltalk-Turn → nur read-only Tools fuer LLM sichtbar: %r",
                 user_text[:80],
             )
+
+        # General self-control (the long tail not covered by a deterministic
+        # gate, which runs earlier and returns): inject a directive so whichever
+        # provider handles the turn reliably uses cli_jarvisctl / set_config_value
+        # instead of confabulating a refusal. Substantive turns only.
+        if not is_smalltalk_turn and self._is_self_control_turn(user_text):
+            self._self_control_directive = _SELF_CONTROL_DIRECTIVE
 
         # 2. Router: which level applies?
         decision = self._picked_level(user_text)

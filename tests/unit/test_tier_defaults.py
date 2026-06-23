@@ -12,7 +12,7 @@ from jarvis.brain.manager import (
 
 class TestTierDefaultsCatalog:
     def test_all_known_providers_have_router_defaults(self):
-        required = {"claude-api", "gemini", "openai", "grok"}
+        required = {"claude-api", "gemini", "openai"}
         assert required <= set(TIER_DEFAULTS_BY_PROVIDER["router"])
 
     def test_all_known_providers_have_deep_defaults(self):
@@ -23,23 +23,19 @@ class TestTierDefaultsCatalog:
         # 2026-04-29 Update: GPT-5.5 hat keine -mini-Variante released; OpenAI
         # sagt selbst "GPT-5.5 hat per-token-Latenz wie GPT-5.4". Fast-Tier-
         # Heuristik akzeptiert daher auch Frontier-Hauptmodelle.
-        # 2026-04-30 Update: xAI hat grok-4.3 als gleichzeitig schnellstes
-        # UND intelligentestes Grok released — keine -fast-Variante mehr.
         # Siehe TIER_DEFAULTS_BY_PROVIDER-Doc in jarvis/brain/manager.py.
         for provider, model in TIER_DEFAULTS_BY_PROVIDER["router"].items():
             if provider == "gemini":
                 continue  # hat keinen Fast-Mode
             if provider == "openai" and model in {"gpt-5.5", "gpt-5"}:
                 continue  # Frontier-Hauptmodell ohne -mini-Suffix
-            if provider == "grok" and model.startswith("grok-4"):
-                continue  # Frontier-Hauptmodell ohne -fast-Suffix
             assert any(tag in model.lower() for tag in ("haiku", "flash", "mini", "fast", "chat", "small")), \
                 f"{provider}: {model} sieht nicht nach Fast-Tier aus"
 
     def test_sub_models_look_frontier(self):
         for provider, model in TIER_DEFAULTS_BY_PROVIDER["deep"].items():
             assert any(tag in model.lower() for tag in
-                       ("fable", "opus", "pro", "large", "reasoner", "gpt-4", "gpt-5", "grok-4")), \
+                       ("fable", "opus", "pro", "large", "reasoner", "gpt-4", "gpt-5")), \
                 f"{provider}: {model} sieht nicht nach Frontier-Tier aus"
 
     def test_claude_deep_tier_is_reachable_opus_never_fable(self):

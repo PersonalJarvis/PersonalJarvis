@@ -1,4 +1,4 @@
-"""Tests for ApiAgentWorker — the in-process agentic worker for grok/openai/
+"""Tests for ApiAgentWorker — the in-process agentic worker for openai/
 openrouter. Uses a scripted FakeBrain so no network call is made; the real
 provider is exercised by the live probe, not the unit suite."""
 from __future__ import annotations
@@ -49,9 +49,10 @@ async def _drain(worker: ApiAgentWorker, **kw):  # noqa: ANN003
 
 
 def test_supports_api_agent_worker() -> None:
-    assert supports_api_agent_worker("grok")
     assert supports_api_agent_worker("openai")
     assert supports_api_agent_worker("openrouter")
+    # grok was removed as a brain/worker provider — no longer an api-agent slug.
+    assert not supports_api_agent_worker("grok")
     assert not supports_api_agent_worker("claude-api")
     assert not supports_api_agent_worker("antigravity")
     assert not supports_api_agent_worker(None)
@@ -75,12 +76,12 @@ async def test_worker_writes_file_and_emits_critic_readable_stream(
     ]
     fake = FakeBrain(turns)
     _patch_brain(monkeypatch, fake)
-    worker = ApiAgentWorker("grok")
+    worker = ApiAgentWorker("openai")
     log_dir = tmp_path / "_logs"
 
     events = await _drain(
         worker, prompt="make out.txt", worktree=tmp_path, env={}, job=None,
-        worker_id="m::0", log_dir=log_dir, model="grok-4.3",
+        worker_id="m::0", log_dir=log_dir, model="gpt-5.5",
     )
 
     kinds = [type(e).__name__ for e in events]
@@ -111,7 +112,7 @@ async def test_worker_tool_error_is_fed_back_not_fatal(
         [BrainDelta(content="Could not read; done."), BrainDelta(finish_reason="end_turn")],
     ]
     _patch_brain(monkeypatch, FakeBrain(turns))
-    worker = ApiAgentWorker("grok")
+    worker = ApiAgentWorker("openai")
     events = await _drain(
         worker, prompt="x", worktree=tmp_path, env={}, job=None,
         worker_id="m::0", log_dir=tmp_path / "_logs",
@@ -146,7 +147,7 @@ async def test_stream_jsonl_is_valid_ndjson(
         [BrainDelta(content="done"), BrainDelta(finish_reason="end_turn")],
     ]
     _patch_brain(monkeypatch, FakeBrain(turns))
-    worker = ApiAgentWorker("grok")
+    worker = ApiAgentWorker("openai")
     log_dir = tmp_path / "_logs"
     await _drain(worker, prompt="x", worktree=tmp_path, env={}, job=None,
                  worker_id="m::0", log_dir=log_dir)

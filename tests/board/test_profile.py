@@ -275,7 +275,7 @@ async def test_power_user_bio_not_cliche(tmp_path: Path) -> None:
     gen = _make_generator(brain, jsonl, db)
     result = await gen.generate_bio(
         memory_text="User ist Nicht-Coder. Autonom arbeiten bevorzugt.",
-        soul_text="Jarvis ist Iron-Man-Style trocken.",
+        soul_text="Jarvis ist lakonisch und trocken.",
         triggered_by="manual",
         model_hint="claude-opus-4-7",
     )

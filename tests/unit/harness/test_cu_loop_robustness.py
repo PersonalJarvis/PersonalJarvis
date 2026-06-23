@@ -240,6 +240,13 @@ def _isolate_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         loop_mod, "_capture_monitor_geometry", lambda: (0, 0, 1920, 1080),
     )
+    # Default the privileged-prompt probe to "no prompt" so the loop never makes
+    # the real OpenInputDesktop Win32 call from a test; the elevation tests
+    # override this with their own injected sequence.
+    monkeypatch.setattr(
+        "jarvis.platform.privileged_prompt.privileged_prompt_active",
+        lambda: False,
+    )
     # Keep the UI-tree-source singleton hermetic between tests.
     monkeypatch.setattr(loop_mod, "_UI_TREE_SOURCE", None, raising=False)
     # Neutralize the post-open_app settle probe suite-wide (it sleeps up to
@@ -1322,6 +1329,66 @@ async def test_typing_a_different_text_is_not_suppressed() -> None:
     )
 
 
+async def test_type_after_a_click_is_not_suppressed() -> None:
+    """RC#2 (Google-Flights, 2026-06-22): a click RE-FOCUSES / re-targets the
+    field, so a following type of the SAME text is a fresh retry (the first type
+    did not land in the web input), NOT a redundant back-to-back repeat. The
+    intervening click must clear the repeat-type guard so the retry executes --
+    otherwise the mission dead-ends 'in the right field but nothing typed'."""
+    brain = FakeBrain(script=[
+        '{"action": "type", "text": "Tokyo"}',
+        '{"action": "click", "x": 114, "y": 162, "target": "destination field"}',
+        '{"action": "type", "text": "Tokyo"}',  # retry after re-focus -> must run
+        '{"action": "done"}',
+    ])
+    ctx = make_ctx(brain)
+    await run_loop(ctx, "tippe Tokyo in das Zielfeld")
+
+    typed = [
+        c for c in ctx.tool_executor.calls
+        if str(c[1].get("text", "")) == "Tokyo"
+    ]
+    assert len(typed) == 2, (
+        f"'Tokyo' was typed {len(typed)}x -- a re-type AFTER a re-focusing click "
+        "must NOT be suppressed; the repeat-type guard must reset on a click"
+    )
+
+
+# ---------------------------------------------------------------------------
+# RC#3 (2026-06-22): a DRAG action -- press the mouse at (x,y), move to
+# (x2,y2), release -- so the agent can rotate a map/globe, pan, or move a
+# slider. A plain click cannot do this; before this action the vocabulary had
+# no press-and-hold-move primitive at all.
+# ---------------------------------------------------------------------------
+
+
+async def test_drag_action_performs_press_move_release(monkeypatch) -> None:
+    """A drag action must reach the mouse layer with both endpoints resolved."""
+    calls: list = []
+    monkeypatch.setattr(
+        "jarvis.harness.screenshot_only_loop._perform_drag",
+        lambda *a, **k: calls.append((a, k)),
+    )
+    brain = FakeBrain(script=[
+        '{"action": "drag", "x": 500, "y": 500, "x2": 700, "y2": 300}',
+        '{"action": "done"}',
+    ])
+    ctx = make_ctx(brain)
+    chunks = await run_loop(ctx, "rotate the globe to the right")
+
+    assert len(calls) == 1, "the drag action never reached the mouse layer"
+    # 4 coordinate args (start_x, start_y, end_x, end_y) plus a duration.
+    assert len(calls[0][0]) >= 4, f"drag called with too few args: {calls[0]}"
+    assert chunks[-1].exit_code == 0
+
+
+def test_drag_is_in_the_action_vocabulary() -> None:
+    from jarvis.harness import screenshot_only_loop as loop
+
+    assert "drag" in loop._VALID_ACTIONS
+    assert "drag" in loop._SYSTEM_PROMPT  # the model is told the shape exists
+
+
 # ---------------------------------------------------------------------------
 # General "no progress -> re-target" nudge (user mandate 2026-06-22: the loop
 # must GENERALLY recognise a missed target instead of mashing the same action --
@@ -1397,3 +1464,149 @@ async def test_no_retarget_nudge_when_screen_keeps_changing() -> None:
         "did NOT change after your last action" in req[1]
         for req in brain.requests
     ), "the re-target nudge fired even though the screen kept changing"
+
+
+# ---------------------------------------------------------------------------
+# Elevation pause-and-resume (UAC Secure Desktop, 2026-06-23). When a launched
+# app raises a privilege prompt mid-mission, a non-elevated process can neither
+# see (BitBlt -> black/raise) nor click (UIPI) the Secure Desktop. The loop must
+# PAUSE for the human's one confirmation click and resume, instead of aborting
+# blind with the misleading exit 1 "couldn't see the screen". The
+# privileged-prompt probe is injected here (no real Win32).
+# ---------------------------------------------------------------------------
+
+
+class _ObserveFailsThenWorks:
+    """VisionEngine whose observe() raises CULoopError (the Secure-Desktop
+    BitBlt failure) on the first ``fail_times`` calls, then yields frames."""
+
+    def __init__(self, fail_times: int) -> None:
+        self.fail_times = fail_times
+        self.calls = 0
+
+    def _guess_active_app_hint(self, window_title_filter: str | None = None) -> str:
+        return ""
+
+    async def observe(self, *, mode: str = "auto", cancel_token: Any = None,
+                      window_title_filter: str | None = None) -> Observation:
+        n = self.calls
+        self.calls += 1
+        if n < self.fail_times:
+            raise CULoopError(
+                "screenshot capture returned no frame (transient GDI failure)"
+            )
+        return Observation(
+            trace_id=uuid4(), timestamp_ns=time.time_ns(),
+            screenshot_path=None, screenshot_hash=f"hash-{n}",
+            nodes=(), window_title="", active_pid=0,
+            source="screenshot_only", pruning_stats={},
+        )
+
+
+class _RecordingBus:
+    def __init__(self) -> None:
+        self.events: list[Any] = []
+
+    async def publish(self, event: Any) -> None:
+        self.events.append(event)
+
+
+def _patch_prompt_probe(monkeypatch: pytest.MonkeyPatch, seq: Any) -> None:
+    """Patch privileged_prompt_active to a constant bool or a per-call sequence
+    of bools (the last value repeats)."""
+    if isinstance(seq, bool):
+        monkeypatch.setattr(
+            "jarvis.platform.privileged_prompt.privileged_prompt_active",
+            lambda: seq,
+        )
+        return
+    values = list(seq)
+    state = {"i": 0}
+
+    def _probe() -> bool:
+        v = values[min(state["i"], len(values) - 1)]
+        state["i"] += 1
+        return v
+
+    monkeypatch.setattr(
+        "jarvis.platform.privileged_prompt.privileged_prompt_active", _probe
+    )
+
+
+@pytest.fixture
+def _fast_elevation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(loop_mod, "_ELEVATION_WAIT_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(loop_mod, "_ELEVATION_POLL_S", 0.005)
+
+
+async def test_observe_failure_during_uac_pauses_and_resumes(
+    monkeypatch: pytest.MonkeyPatch, _fast_elevation: None,
+) -> None:
+    # Mode A: observe raises (Secure Desktop), prompt is up then cleared → the
+    # mission RESUMES and completes (exit 0), never the blind exit 1.
+    _patch_prompt_probe(monkeypatch, [True, False])
+    bus = _RecordingBus()
+    brain = FakeBrain(script=['{"action": "done"}'])
+    ctx = make_ctx(brain, bus=bus)
+    ctx.vision_engine = _ObserveFailsThenWorks(fail_times=1)
+
+    chunks = await run_loop(ctx, "Kannst du eine Aufnahme starten?")
+
+    assert chunks[-1].exit_code == 0
+    from jarvis.voice.action_phrases import action_phrase
+    texts = [getattr(e, "text", "") for e in bus.events]
+    assert action_phrase("cu_awaiting_elevation", "de") in texts
+
+
+async def test_uac_never_confirmed_aborts_with_elevation_exit_not_no_view(
+    monkeypatch: pytest.MonkeyPatch, _fast_elevation: None,
+) -> None:
+    # Mode A: observe raises, prompt stays up forever → exit 9 (needs
+    # elevation), NEVER exit 1 (the misleading "couldn't see the screen").
+    _patch_prompt_probe(monkeypatch, True)
+    brain = FakeBrain(script=['{"action": "done"}'])
+    ctx = make_ctx(brain)
+    ctx.vision_engine = _ObserveFailsThenWorks(fail_times=99)
+
+    chunks = await run_loop(ctx, "open OBS and record")
+
+    assert chunks[-1].exit_code == loop_mod._ELEVATION_EXIT_CODE
+    assert chunks[-1].exit_code != loop_mod._OBSERVE_EXIT_CODE
+
+
+async def test_observe_failure_without_uac_still_aborts_exit_1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No regression: observe raises and NO prompt is up → the original generic
+    # observe failure (exit 1). The probe must never invent a prompt.
+    _patch_prompt_probe(monkeypatch, False)
+    brain = FakeBrain(script=['{"action": "done"}'])
+    ctx = make_ctx(brain)
+    ctx.vision_engine = _ObserveFailsThenWorks(fail_times=99)
+
+    chunks = await run_loop(ctx, "do something on screen")
+
+    assert chunks[-1].exit_code == loop_mod._OBSERVE_EXIT_CODE
+
+
+async def test_uac_detected_before_brain_call_skips_blind_step(
+    monkeypatch: pytest.MonkeyPatch, _fast_elevation: None,
+) -> None:
+    # Mode B: observe SUCCEEDS (e.g. a black frame) but the prompt is up — the
+    # loop must detect it BEFORE the brain call and pause, never feed the model a
+    # blind frame. After it clears, the mission resumes and completes; the model
+    # is consulted only once (the paused step made no brain call).
+    _patch_prompt_probe(monkeypatch, [True, False, False, False])
+    bus = _RecordingBus()
+    brain = FakeBrain(script=['{"action": "done"}'])
+    ctx = make_ctx(brain, bus=bus)
+
+    chunks = await run_loop(ctx, "open OBS and record")
+
+    assert chunks[-1].exit_code == 0
+    assert len(brain.requests) == 1
+    # The goal is English, so the spoken ask resolves to English (Output-Language
+    # doctrine: never a hardcoded locale).
+    from jarvis.voice.action_phrases import action_phrase
+    texts = [getattr(e, "text", "") for e in bus.events]
+    assert action_phrase("cu_awaiting_elevation", "en") in texts

@@ -39,6 +39,12 @@ export interface ProviderDescriptor {
   signup_url: string | null;
   /** How using this provider is billed. */
   billing: Billing;
+  /** Maintainer-recommended pick for this tier — renders a "Recommended" badge
+   *  on the provider card (brain tier only today). Presentation hint only. */
+  recommended?: boolean;
+  /** The model the recommendation points at (e.g. "gemini-3.5-flash"), shown as
+   *  an "empfohlen" marker in the model picker. null = provider-level only. */
+  recommended_model?: string | null;
   /** Gemini's Vertex alternative; null for single-path providers. */
   alt_credential: AltCredential | null;
   /**

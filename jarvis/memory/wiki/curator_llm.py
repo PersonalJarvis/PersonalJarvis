@@ -73,7 +73,6 @@ _CHEAP_MODEL_FALLBACK: dict[str, str] = {
     "gemini": "gemini-3-flash-preview",
     "openai": "gpt-5.5",
     "codex": "gpt-5.5",
-    "grok": "grok-4.3",
     "deepseek": "deepseek-chat",
     "openrouter": "anthropic/claude-haiku-4.5",
     "mistral": "mistral-small-3.1",

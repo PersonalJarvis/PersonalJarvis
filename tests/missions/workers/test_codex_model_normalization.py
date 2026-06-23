@@ -84,7 +84,7 @@ def test_empty_inputs_normalize_to_empty(empty: str | None) -> None:
     # Unknown providers should pass through so future provider plugins
     # are not silently muted.
     "gemini-3.1-pro-preview",
-    "grok-4.3",
+    "gpt-5.5",
 ])
 def test_non_anthropic_models_pass_through_unchanged(model: str) -> None:
     """Anything that is not a Claude alias or claude-/anthropic-prefixed
