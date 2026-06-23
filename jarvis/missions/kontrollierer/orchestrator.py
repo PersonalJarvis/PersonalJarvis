@@ -73,7 +73,7 @@ from .deliverable import (
     deliver_to_user_folder,
     materialize_answer_document,
 )
-from .deliverable_paths import is_deliverable_path
+from .deliverable_paths import find_generator_scripts, is_deliverable_path
 from ..safety import (
     extract_worker_authored_text,
     filter_diff_paths,
@@ -205,6 +205,19 @@ def _is_deliverable_path(rel: str) -> bool:
     ``--ignored`` union before copying into ``artifacts/files/``.
     """
     return is_deliverable_path(rel, managed_files=_MANAGED_PERSONA_FILES)
+
+
+def _safe_read_text(path: Path) -> str:
+    """Read a worktree file as UTF-8 text, never raising.
+
+    Used by the generator-script filter (:func:`find_generator_scripts`) to
+    inspect a candidate script's body. Only script-typed files reach here, so
+    this never tries to slurp a large binary. Returns "" on any read error.
+    """
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
 
 
 def _real_diff_is_empty(diff_text: str) -> bool:
@@ -2279,6 +2292,20 @@ class Kontrollierer:
             # enumerate, so this filter keeps artifacts/files/ to genuine
             # deliverables (no Outputs-UI garbage, the Wave-3 invariant).
             untracked = [rel for rel in untracked if _is_deliverable_path(rel)]
+            # Drop generator/build scripts whose only purpose is to emit a
+            # sibling DOCUMENT deliverable that survives in the set (e.g. a
+            # generate_guide.py that writes melbourne_guide.html as an embedded
+            # literal). The script is process scratch the user did not ask for —
+            # live forensic 2026-06-22 (mission_019ef099): a "make me one HTML
+            # file" mission shipped the HTML PLUS its Python generator, which the
+            # user opened and saw "only code". Safe by construction: the emitted
+            # document is never script-typed, so it always survives.
+            if untracked:
+                _generators = find_generator_scripts(
+                    untracked, lambda rel: _safe_read_text(worktree / rel)
+                )
+                if _generators:
+                    untracked = [r for r in untracked if r not in _generators]
             if untracked:
                 files_root = artifacts / "files"
                 for rel in untracked:

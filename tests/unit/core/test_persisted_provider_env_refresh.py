@@ -124,18 +124,18 @@ def test_refresh_heals_stale_ack_brain_enabled(monkeypatch: pytest.MonkeyPatch) 
     """The exact 2026-06-21 regression: a stale inherited enabled=false is healed
     to the registry's true, so the spawn announcer's LLM path is wired on boot."""
     monkeypatch.setenv("JARVIS__ACK_BRAIN__ENABLED", "false")  # stale inherited
-    monkeypatch.setenv("JARVIS__ACK_BRAIN__PROVIDER", "gemini")  # stale, dead provider
+    monkeypatch.setenv("JARVIS__ACK_BRAIN__PROVIDER", "openai")  # stale, dead provider
     reg = {
         "JARVIS__ACK_BRAIN__ENABLED": "true",
-        "JARVIS__ACK_BRAIN__PROVIDER": "grok",
+        "JARVIS__ACK_BRAIN__PROVIDER": "gemini",
     }
 
     changed = config.refresh_persisted_env_from_user_registry(read=reg.get)
 
     assert os.environ["JARVIS__ACK_BRAIN__ENABLED"] == "true"
-    assert os.environ["JARVIS__ACK_BRAIN__PROVIDER"] == "grok"
+    assert os.environ["JARVIS__ACK_BRAIN__PROVIDER"] == "gemini"
     assert changed["JARVIS__ACK_BRAIN__ENABLED"] == "true"
-    assert changed["JARVIS__ACK_BRAIN__PROVIDER"] == "grok"
+    assert changed["JARVIS__ACK_BRAIN__PROVIDER"] == "gemini"
 
 
 def test_refresh_default_reader_is_noop_off_win32(monkeypatch: pytest.MonkeyPatch) -> None:

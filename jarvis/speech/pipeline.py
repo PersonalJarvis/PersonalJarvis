@@ -1382,7 +1382,7 @@ class SpeechPipeline:
             self._bus.subscribe(
                 OpenClawBackgroundCompleted, self._on_background_completed
             )
-            # Iron-Man-Style Spawn-Ansage: dynamisch aus action/target geformt.
+            # Spawn-Ansage: dynamisch aus action/target geformt.
             self._bus.subscribe(OpenClawAnnouncement, self._on_spawn_announcement)
             # Mute toggle from any trigger surface (mascot doubleClick,
             # future hotkey/REST). The handler flips ``self._muted`` and
@@ -1418,6 +1418,14 @@ class SpeechPipeline:
         # path so voice can declare ready early. Kept on the instance so tests
         # (and a graceful shutdown) can await it.
         self._warmup_background_task: asyncio.Task | None = None
+        # Audible boot-ready cue. It must never sit between ready=True and the
+        # wake loop; slow output devices can block playback for seconds.
+        self._warmup_ready_cue_task: asyncio.Task | None = None
+        # Deferred wake-non-critical loaders (VAD/STT/TTS) run off the
+        # wake-ready path so "Hey Jarvis" responds without waiting out the
+        # 7-24 s starved warm-up (see ``_warmup_phase_a``). Kept on the instance
+        # so a graceful shutdown can cancel + await it.
+        self._deferred_warmup_task: asyncio.Task | None = None
 
         # ContinuationBuffer (Spec docs/superpowers/specs/
         # 2026-05-25-incomplete-prompt-completion-design.md): coalesces a
@@ -1532,8 +1540,12 @@ class SpeechPipeline:
                 lang = None if lang in ("", "auto", None) else lang
                 # Small CPU wake model (cfg.stt.wake_*), not the heavy utterance
                 # model — keeps a live wake-word switch fast (Blackwell CUDA load
-                # is ~71 s; base/cpu ~0.45 s, measured).
-                self._stt = build_wake_whisper(stt_cfg, language=lang)
+                # is ~71 s; base/cpu ~0.45 s, measured). Seed the prompt with the
+                # custom phrase so the small model transcribes the (proper-noun)
+                # wake name instead of a common word — forensic 2026-06-22.
+                self._stt = build_wake_whisper(
+                    stt_cfg, language=lang, wake_phrase=getattr(plan, "phrase", None)
+                )
                 if self._probe_stt is None:
                     self._probe_stt = self._stt
                 log.info("Wake-Live-Switch: built local Whisper for custom phrase.")
@@ -3134,26 +3146,32 @@ class SpeechPipeline:
             log.warning("VoiceBootStatus(ready=%s) publish failed: %s", ready, exc)
 
     async def _cancel_warmup_background(self) -> None:
-        """Cancel + await the Phase-B confirmation-audio task on shutdown.
+        """Cancel + await the fire-and-forget warm-up tasks on shutdown.
 
-        Phase B (ACK + task-ack pre-render) runs fire-and-forget off the
-        critical path. When ``run()`` is cancelled (the normal desktop-shutdown
-        path) it must be cancelled and awaited, otherwise it is orphaned: under
+        Two background tasks run off the wake-critical path: Phase B (the ACK +
+        task-ack confirmation-audio pre-render) and the deferred VAD/STT/TTS
+        loaders. When ``run()`` is cancelled (the normal desktop-shutdown path)
+        both must be cancelled and awaited, otherwise they are orphaned: under
         ``pythonw.exe`` there is no stderr to surface the "Task exception was
         never retrieved" warning, and a late TTS render could write stale PCM
         into ``_ack_pcm`` / ``_task_ack_pcm`` after a live TTS-provider switch
         already cleared them. Guarded so shutdown never raises.
         """
-        task = self._warmup_background_task
-        if task is None:
-            return
-        if not task.done():
-            task.cancel()
-        try:
-            await task
-        except (asyncio.CancelledError, Exception):  # noqa: BLE001 — shutdown swallow
-            pass
-        self._warmup_background_task = None
+        for attr in (
+            "_warmup_background_task",
+            "_warmup_ready_cue_task",
+            "_deferred_warmup_task",
+        ):
+            task = getattr(self, attr, None)
+            if task is None:
+                continue
+            if not task.done():
+                task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001 — shutdown swallow
+                pass
+            setattr(self, attr, None)
 
     async def _warmup(self) -> None:
         log.info("Warm-up: Whisper / Silero / Wake-Word / TTS …")
@@ -3171,10 +3189,14 @@ class SpeechPipeline:
         await self._emit_boot_status(ready=True, detail="phase_a_done")
 
         # Audible "ready" cue: tells the user exactly when listening starts
-        # after a (cold) boot, closing the warm-up race where "Hey Jarvis"
-        # said too early silently does nothing. Until the ACK phrase is cached
-        # by Phase B, this chime is the wake feedback (see _on_wake / _ack_pcm).
-        await self._play_ready_cue()
+        # after a (cold) boot. It is intentionally fire-and-forget: a slow or
+        # wedged output device must not sit between ready=True and the wake loop.
+        self._warmup_ready_cue_task = asyncio.create_task(
+            self._play_ready_cue(), name="warmup-ready-cue"
+        )
+        self._warmup_ready_cue_task.add_done_callback(
+            self._log_warmup_ready_cue_done
+        )
 
         # --- Phase B: confirmation audio, off the critical path -----------
         # Pre-rendering the ACK + ~20 task-ack phrases used to dominate warm-up
@@ -3186,15 +3208,78 @@ class SpeechPipeline:
         )
         log.info("Warm-up Phase A complete — confirmation audio rendering in background.")
 
-    async def _warmup_phase_a(self) -> None:
-        """Run the critical, mutually-independent loaders concurrently.
+    def _log_warmup_ready_cue_done(self, task: asyncio.Task) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Warm-up ready cue failed: %s", exc)
 
-        Audio-device stabilization is a BUG-014 guard (settle the PortAudio
-        table before any stream opens); its logic is unchanged, only run inside
-        the concurrent group. The synchronous model/client loaders are pushed
-        to worker threads so the gather is genuinely parallel — each touches
-        only its own idempotent ``_ensure_*`` state, so there is no shared-state
-        race between the tasks.
+    async def _warmup_phase_a(self) -> None:
+        """Bring up ONLY the wake-critical listening path, then return.
+
+        The wake loop is started the moment this returns, so it must block on
+        the absolute minimum: the audio-device table settling (BUG-014 guard)
+        and the OpenWakeWord model starting. That is everything the wake path
+        needs to hear "Hey Jarvis" and spawn the orb.
+
+        The heavy VAD / STT / TTS-client loads are deliberately NOT here. Each
+        of them lazy-imports a large C-extension (onnxruntime for the wake model
+        and Silero-VAD, ctranslate2 for local Whisper); run concurrently inside
+        the boot storm they serialize on the Python import lock and starve to
+        7-24 s (measured: ``wake-start=14187, vad-load=12672``). Because the wake
+        loop used to start only after the WHOLE warm-up finished, gating it on
+        those loads left the wake word dead for that entire window — the
+        "~10 s delay / nothing spawns" regression. They are only needed AFTER a
+        wake and are lazy-safe (each object re-ensures its model on first use),
+        so they move to a background deferred task (``_warmup_deferred_loaders``)
+        that never gates wake readiness.
+        """
+        async def _start_wake() -> None:
+            if self._openwakeword_enabled:
+                await self._wake.start()
+
+        # return_exceptions=True (inside _gather_timed): a slow/failing loader
+        # must not abort the other. The per-loader timing exposes which one
+        # dominates the wake-critical warm-up (boot-perf forensic).
+        timings, results = await _gather_timed(
+            [
+                ("audio-stabilize", self._stabilize_audio_devices),
+                ("wake-start", _start_wake),
+            ]
+        )
+        self._warmup_phase_a_timings = timings
+        log.info(
+            "Warm-up Phase A (wake-critical) per-loader (ms): %s",
+            ", ".join(
+                f"{name}={timings[name]:.0f}"
+                for name in sorted(timings, key=lambda n: -timings[n])
+            ),
+        )
+        for name, res in zip(("audio-stabilize", "wake-start"), results, strict=True):
+            if isinstance(res, Exception):
+                log.warning("Warm-up Phase A task '%s' failed: %s", name, res)
+
+        # Heavy model loads move off the wake-ready path — fire-and-forget so a
+        # wake can fire (and the orb spawn) while they are still loading. A wake
+        # that arrives first simply triggers a one-off lazy load on the VAD/STT
+        # object instead of waiting out the whole warm-up. Cancelled on shutdown
+        # via ``_cancel_warmup_background``.
+        self._deferred_warmup_task = asyncio.create_task(
+            self._warmup_deferred_loaders(), name="warmup-deferred-loaders"
+        )
+
+    async def _warmup_deferred_loaders(self) -> None:
+        """Background pre-load of VAD + STT + TTS client — never gates wake
+        readiness (see ``_warmup_phase_a``).
+
+        VAD is the soonest thing needed after a wake (utterance endpointing), so
+        it is loaded first; the local-Whisper STT (if any) and the TTS client
+        follow. Each load is isolated (``return_exceptions=True``) so one
+        slow/failing load never breaks the others, and every object's
+        ``_ensure_*`` is idempotent — a concurrent lazy load on first use is a
+        harmless no-op once this has run.
         """
         async def _load_vad() -> None:
             await asyncio.to_thread(self._vad._ensure_model)
@@ -3204,43 +3289,28 @@ class SpeechPipeline:
             if self._stt is not None:
                 await asyncio.to_thread(self._stt._ensure_model)
 
-        async def _start_wake() -> None:
-            if self._openwakeword_enabled:
-                await self._wake.start()
-
         async def _init_tts() -> None:
             await asyncio.to_thread(self._tts._ensure_client)
 
-        # return_exceptions=True (inside _gather_timed): one slow/failing loader
-        # must not abort the others. Each coroutine already isolates its own
-        # failure where a soft failure is tolerable; here we additionally log any
-        # hard exception without breaking the remaining critical path. The
-        # per-loader timing exposes WHICH loader dominates warm-up — the gather
-        # otherwise hides that behind its slowest member (boot-perf forensic).
         timings, results = await _gather_timed(
             [
-                ("audio-stabilize", self._stabilize_audio_devices),
                 ("vad-load", _load_vad),
                 ("stt-load", _load_stt),
-                ("wake-start", _start_wake),
                 ("tts-init", _init_tts),
             ]
         )
-        self._warmup_phase_a_timings = timings
         log.info(
-            "Warm-up Phase A per-loader (ms): %s",
+            "Warm-up deferred loaders (ms): %s",
             ", ".join(
                 f"{name}={timings[name]:.0f}"
                 for name in sorted(timings, key=lambda n: -timings[n])
             ),
         )
         for name, res in zip(
-            ("audio-stabilize", "vad-load", "stt-load", "wake-start", "tts-init"),
-            results,
-            strict=True,
+            ("vad-load", "stt-load", "tts-init"), results, strict=True
         ):
             if isinstance(res, Exception):
-                log.warning("Warm-up Phase A task '%s' failed: %s", name, res)
+                log.warning("Warm-up deferred loader '%s' failed: %s", name, res)
 
     async def _warmup_phase_b(self) -> None:
         """Background pre-render of confirmation audio (never blocks ready).

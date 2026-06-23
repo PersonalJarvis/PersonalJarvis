@@ -62,7 +62,7 @@ _PHRASES: dict[str, dict[str, str]] = {
     # didn't work on screen: exit 5" and the user asked "what is the exit file?".
     # Exit-code semantics are documented at the top of
     # jarvis/harness/screenshot_only_loop.py (5=`fail`, 1=observe, 2=parse,
-    # 4=step budget, 8=tool failure, 124=timeout, 130=cancel).
+    # 4=step budget, 8=tool failure, 9=elevation unmet, 124=timeout, 130=cancel).
     "cu_exit_gave_up": {  # exit 5 — the model's `fail` action
         "de": "Ich habe es am Bildschirm versucht, aber nicht hinbekommen.",  # i18n-allow
         "en": "I tried it on screen but couldn't get it done.",
@@ -94,6 +94,12 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "The action on screen was cancelled.",
         "es": "La acción en la pantalla se canceló.",
     },
+    "cu_exit_needs_elevation": {  # exit 9 — waited for admin confirmation, none came
+        "de": "Ich habe auf die Administrator-Bestaetigung gewartet, aber es kam "  # i18n-allow
+              "keine -- ich habe gestoppt.",  # i18n-allow
+        "en": "I waited for the administrator confirmation, but none came, so I stopped.",
+        "es": "Esperé la confirmación de administrador, pero no llegó, así que me detuve.",
+    },
     "cu_timeout": {
         "de": "Das am Bildschirm hat zu lange gedauert "  # i18n-allow
               "(ueber {secs} Sekunden) und wurde abgebrochen.",  # i18n-allow
@@ -106,6 +112,19 @@ _PHRASES: dict[str, dict[str, str]] = {
               "und sage Bescheid, sobald es fertig ist.",  # i18n-allow
         "en": "On it — I'll handle that on screen and let you know when it's done.",
         "es": "Voy — lo hago directamente en la pantalla y te aviso cuando termine.",
+    },
+    # Computer-use pause: an OS elevation prompt (Windows Secure Desktop & co.)
+    # is up. A non-elevated process can neither see nor click it (UIPI), so we
+    # ask the user for the one unavoidable confirmation click and then continue.
+    # Phrased OS-neutrally ("security prompt") — the Windows path is the only one
+    # that triggers it today, but macOS/Linux detection may join later.
+    "cu_awaiting_elevation": {
+        "de": "Das verlangt gerade Administrator-Rechte. Bitte bestaetige die "  # i18n-allow
+              "Sicherheitsabfrage einmal, dann mache ich weiter.",  # i18n-allow
+        "en": "This needs administrator rights. Please confirm the security "
+              "prompt once, then I'll keep going.",
+        "es": "Esto requiere permisos de administrador. Confirma el aviso de "
+              "seguridad una vez y continúo.",
     },
     # Cost / budget guards on the computer-use branch.
     "cost_cooldown": {
@@ -171,6 +190,7 @@ _EXIT_CODE_PHRASE: dict[int, str] = {
     4: "cu_exit_too_many_steps",
     5: "cu_exit_gave_up",
     8: "cu_exit_action_failed",
+    9: "cu_exit_needs_elevation",
     130: "cu_exit_cancelled",
 }
 #: Strip the loop's "[cu] <verb> at <tag>: " prefix so the human reason the

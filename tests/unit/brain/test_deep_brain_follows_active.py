@@ -1,10 +1,10 @@
 """deep_brain must follow the user's chosen active provider.
 
-User mandate 2026-06-20: "Grok for everything." Forensic: with primary=grok but
+User mandate: "<provider> for everything." Forensic: with primary=openai but
 [brain.router].{provider,fallback_provider}=gemini, the startup override moved the
-ACTIVE provider to grok (factory.py:817) while deep_brain stayed pinned to the
+ACTIVE provider to openai (factory.py:817) while deep_brain stayed pinned to the
 tier's orphaned fallback (gemini). Result: deep/code intents led with Gemini
-(gemini-3.1-pro) even though the user picked Grok — chain[deep][0] == ("gemini", …).
+(gemini-3.1-pro) even though the user picked OpenAI — chain[deep][0] == ("gemini", …).
 
 These lock that deep_brain follows the active provider both at boot (override) and
 on a runtime switch, UNLESS there is a deliberate cross-provider deep split
@@ -28,41 +28,44 @@ def _cfg(*, primary: str, provider: str, fallback_provider: str | None):
 
 
 def test_deep_brain_follows_override_when_no_explicit_split() -> None:
-    # primary=grok overrides the tier default gemini; fallback==provider means
-    # there is NO deliberate cross-provider deep split → deep must follow grok.
-    cfg = _cfg(primary="grok", provider="gemini", fallback_provider="gemini")
-    mgr = BrainManager.from_tier_config("router", cfg, EventBus(), provider_override="grok")
+    # primary=claude-api overrides the tier default gemini; fallback==provider
+    # means there is NO deliberate cross-provider deep split → deep must follow
+    # claude-api. (claude-api is used because the chain builder drops providers
+    # without a configured key; claude-api is keyed in this environment.)
+    cfg = _cfg(primary="claude-api", provider="gemini", fallback_provider="gemini")
+    mgr = BrainManager.from_tier_config("router", cfg, EventBus(), provider_override="claude-api")
 
-    assert mgr.active_provider == "grok"
-    assert mgr._config.brain.deep_brain == "grok"
+    assert mgr.active_provider == "claude-api"
+    assert mgr._config.brain.deep_brain == "claude-api"
     deep_chain = mgr._build_fallback_chain("deep")
-    # Grok leads deep/code, NOT Gemini (the exact regression).
-    assert deep_chain[0][0] == "grok"
+    # The override provider leads deep/code, NOT Gemini (the exact regression).
+    assert deep_chain[0][0] == "claude-api"
     assert deep_chain[0][0] != "gemini"
 
 
 def test_code_intent_also_led_by_override_provider() -> None:
-    cfg = _cfg(primary="grok", provider="gemini", fallback_provider="gemini")
-    mgr = BrainManager.from_tier_config("router", cfg, EventBus(), provider_override="grok")
-    assert mgr._build_fallback_chain("code")[0][0] == "grok"
+    cfg = _cfg(primary="claude-api", provider="gemini", fallback_provider="gemini")
+    mgr = BrainManager.from_tier_config("router", cfg, EventBus(), provider_override="claude-api")
+    assert mgr._build_fallback_chain("code")[0][0] == "claude-api"
 
 
 def test_explicit_cross_provider_deep_split_is_preserved() -> None:
     # fallback_provider != provider is a deliberate "delegate deep elsewhere"
     # split — an override of the fast provider must NOT erase it.
-    cfg = _cfg(primary="grok", provider="gemini", fallback_provider="claude-api")
-    mgr = BrainManager.from_tier_config("router", cfg, EventBus(), provider_override="grok")
-    assert mgr.active_provider == "grok"
-    assert mgr._config.brain.deep_brain == "claude-api"
+    cfg = _cfg(primary="claude-api", provider="gemini", fallback_provider="openai")
+    mgr = BrainManager.from_tier_config("router", cfg, EventBus(), provider_override="claude-api")
+    assert mgr.active_provider == "claude-api"
+    assert mgr._config.brain.deep_brain == "openai"
 
 
 def test_deep_brain_follows_override_when_no_fallback_configured() -> None:
     # A minimal toml ([brain.router] provider only, no fallback_provider) must
-    # NOT strand deep_brain at None when an override is active — it follows grok.
-    cfg = _cfg(primary="grok", provider="gemini", fallback_provider=None)
-    mgr = BrainManager.from_tier_config("router", cfg, EventBus(), provider_override="grok")
-    assert mgr._config.brain.deep_brain == "grok"
-    assert mgr._build_fallback_chain("deep")[0][0] == "grok"
+    # NOT strand deep_brain at None when an override is active — it follows the
+    # override provider.
+    cfg = _cfg(primary="claude-api", provider="gemini", fallback_provider=None)
+    mgr = BrainManager.from_tier_config("router", cfg, EventBus(), provider_override="claude-api")
+    assert mgr._config.brain.deep_brain == "claude-api"
+    assert mgr._build_fallback_chain("deep")[0][0] == "claude-api"
 
 
 def test_deep_brain_stable_across_two_boots() -> None:
@@ -70,13 +73,13 @@ def test_deep_brain_stable_across_two_boots() -> None:
     # so deep_brain must be identical after a simulated restart (no persistence of
     # deep_brain itself needed). Load-bearing safety assumption — lock it.
     def boot():
-        cfg = _cfg(primary="grok", provider="gemini", fallback_provider="gemini")
+        cfg = _cfg(primary="claude-api", provider="gemini", fallback_provider="gemini")
         return BrainManager.from_tier_config(
-            "router", cfg, EventBus(), provider_override="grok"
+            "router", cfg, EventBus(), provider_override="claude-api"
         )._config.brain.deep_brain
 
-    assert boot() == "grok"
-    assert boot() == "grok"
+    assert boot() == "claude-api"
+    assert boot() == "claude-api"
 
 
 def test_no_override_keeps_tier_fallback_as_deep() -> None:
@@ -89,17 +92,17 @@ def test_no_override_keeps_tier_fallback_as_deep() -> None:
 
 @pytest.mark.asyncio
 async def test_runtime_switch_carries_deep_brain() -> None:
-    # Boot on gemini (deep_brain=gemini), then switch to grok at runtime: deep
+    # Boot on gemini (deep_brain=gemini), then switch to openai at runtime: deep
     # must follow so a frontier switch leads ALL intents, not just fast ones.
     cfg = _cfg(primary="gemini", provider="gemini", fallback_provider="gemini")
     mgr = BrainManager.from_tier_config("router", cfg, EventBus())
     assert mgr._config.brain.deep_brain == "gemini"
 
-    await mgr.switch("grok")
+    await mgr.switch("openai")
 
-    assert mgr.active_provider == "grok"
-    assert mgr._config.brain.deep_brain == "grok"
-    assert mgr._build_fallback_chain("deep")[0][0] == "grok"
+    assert mgr.active_provider == "openai"
+    assert mgr._config.brain.deep_brain == "openai"
+    assert mgr._build_fallback_chain("deep")[0][0] == "openai"
 
 
 @pytest.mark.asyncio
@@ -109,9 +112,9 @@ async def test_runtime_switch_promotes_none_deep_brain() -> None:
     cfg = _cfg(primary="gemini", provider="gemini", fallback_provider=None)
     mgr = BrainManager.from_tier_config("router", cfg, EventBus())
     assert mgr._config.brain.deep_brain is None
-    await mgr.switch("grok")
-    assert mgr.active_provider == "grok"
-    assert mgr._config.brain.deep_brain == "grok"
+    await mgr.switch("openai")
+    assert mgr.active_provider == "openai"
+    assert mgr._config.brain.deep_brain == "openai"
 
 
 @pytest.mark.asyncio
@@ -122,7 +125,7 @@ async def test_runtime_switch_preserves_explicit_split() -> None:
     mgr = BrainManager.from_tier_config("router", cfg, EventBus())
     assert mgr._config.brain.deep_brain == "claude-api"
 
-    await mgr.switch("grok")
+    await mgr.switch("openai")
 
-    assert mgr.active_provider == "grok"
+    assert mgr.active_provider == "openai"
     assert mgr._config.brain.deep_brain == "claude-api"

@@ -19,7 +19,7 @@ from jarvis.brain.voice_command_gate import match_voice_command
     [
         # existing, must keep working
         ("wechsel auf gemini", "gemini"),
-        ("switch to grok", "grok"),
+        ("switch to openai", "openai"),
         ("nutze openai", "openai"),
         ("wechsle zu claude", "claude"),
         ("use openrouter", "openrouter"),
@@ -27,7 +27,7 @@ from jarvis.brain.voice_command_gate import match_voice_command
         ("switch the brain provider to gemini", "gemini"),
         ("wechsel den Brain-Provider auf gemini", "gemini"),
         ("wechsel den Provider auf openrouter", "openrouter"),
-        ("wechsle den Anbieter zu grok", "grok"),
+        ("wechsle den Anbieter zu openrouter", "openrouter"),
         ("switch provider to claude", "claude"),
         ("switch the provider to openai", "openai"),
         ("wechsel deinen Provider auf gemini", "gemini"),
@@ -45,6 +45,11 @@ def test_provider_switch_matches(text: str, target: str) -> None:
         "ich gehe auf meinem Weg",
         "wie spät ist es",
         "erzähl mir was über gemini",  # a mention, not a switch command
+        # Grok was removed as a brain provider (only grok-voice TTS + the
+        # grok_api_key credential remain), so it is no longer a recognized
+        # brain/provider switch target — "switch to grok" must NOT match.
+        "switch to grok",
+        "wechsle den Anbieter zu grok",
     ],
 )
 def test_harmless_does_not_match_provider(text: str) -> None:

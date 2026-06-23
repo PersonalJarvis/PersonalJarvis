@@ -121,7 +121,9 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
     )
 
 
-def build_wake_whisper(stt_cfg: Any, *, language: str | None = None) -> Any:
+def build_wake_whisper(
+    stt_cfg: Any, *, language: str | None = None, wake_phrase: str | None = None
+) -> Any:
     """Build the LOCAL wake-match / live-preview Whisper.
 
     Distinct from :func:`build_stt_from_config` (the post-wake *utterance* STT,
@@ -135,6 +137,20 @@ def build_wake_whisper(stt_cfg: Any, *, language: str | None = None) -> Any:
     on CPU (measured) — the dominant Phase-A warm-up cost. CPU is also the
     cloud-first floor. ``getattr`` fallbacks keep a pre-wake_*-field config (or a
     bare stub) building a safe small/cpu instance.
+
+    ``wake_phrase`` (forensic 2026-06-22): when a user sets a CUSTOM wake word
+    with no pretrained openWakeWord model ("Hey Alex"), the wake routes to this
+    small CPU model. ``base`` transcribed the proper noun as a common word
+    ("Alex" -> "job") so the wake never fired. Passing the spoken trigger here
+    seeds Whisper's ``initial_prompt`` so it biases toward the actual name. This
+    is deliberately scoped to the custom stt_match wake (the pipeline only
+    forwards a phrase on that path) — the default "Hey Jarvis"/OWW paths pass
+    nothing, so the hot-path prompt-hallucination caveat in
+    ``FasterWhisperProvider.__init__`` does not apply to them.
+
+    Safety override: that prompt-bias path is now disabled. It made ambiguous
+    mumbling/noise hallucinate the exact configured wake phrase, so
+    ``wake_phrase`` remains an accepted argument but is not passed to Whisper.
     """
     from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
 
@@ -143,6 +159,7 @@ def build_wake_whisper(stt_cfg: Any, *, language: str | None = None) -> Any:
         device=getattr(stt_cfg, "wake_device", "cpu"),
         compute_type=getattr(stt_cfg, "wake_compute_type", "int8"),
         language=language,
+        initial_prompt=None,
     )
 
 

@@ -8,11 +8,21 @@ fallback when the native path fails (and the primary on non-Windows).
 """
 from __future__ import annotations
 
+import ctypes
 import sys
 import types
 
+import pytest
+
 from jarvis.plugins.tool import type_text as tt
 from jarvis.plugins.tool.type_text import TypeTextTool
+
+try:  # ``ctypes.wintypes`` is importable cross-platform, but guard for safety.
+    from ctypes import wintypes as _wt  # noqa: F401
+
+    _HAS_WINTYPES = True
+except Exception:  # pragma: no cover - exotic builds without wintypes
+    _HAS_WINTYPES = False
 
 
 class _Ctx:
@@ -66,3 +76,30 @@ async def test_windows_falls_back_to_pyautogui_when_native_fails(monkeypatch):
 async def test_empty_text_is_rejected(monkeypatch):
     res = await TypeTextTool().execute({"text": ""}, _Ctx())
     assert res.success is False
+
+
+# ---------------------------------------------------------------------------
+# RC#1 regression (Google-Flights typing bug, 2026-06-22): the SendInput INPUT
+# union must be sized to its LARGEST member (MOUSEINPUT). If it only carries
+# ``ki`` (KEYBDINPUT) the struct is too small (32 vs 40 bytes on x64), Windows
+# rejects every keystroke with ERROR_INVALID_PARAMETER ("Falscher Parameter"),
+# and typing silently degrades to the layout-dependent pyautogui fallback that
+# does not register in web inputs ("typed into the right field, nothing
+# appeared").
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not _HAS_WINTYPES, reason="ctypes.wintypes unavailable")
+def test_input_union_is_sized_to_largest_member():
+    t = tt._build_windows_input_types()
+    # MOUSEINPUT is larger than KEYBDINPUT, so a union that omits it is undersized.
+    assert ctypes.sizeof(t.MOUSEINPUT) > ctypes.sizeof(t.KEYBDINPUT)
+    # The union (and therefore INPUT.cbSize) must match the largest member.
+    assert ctypes.sizeof(t.INPUT_UNION) == ctypes.sizeof(t.MOUSEINPUT)
+
+
+@pytest.mark.skipif(not _HAS_WINTYPES, reason="ctypes.wintypes unavailable")
+def test_input_struct_size_matches_windows_cbsize():
+    t = tt._build_windows_input_types()
+    expected = 40 if ctypes.sizeof(ctypes.c_void_p) == 8 else 28
+    assert ctypes.sizeof(t.INPUT) == expected

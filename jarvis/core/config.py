@@ -945,7 +945,7 @@ class OpenClawConfig(BaseModel):
     Deliberately NO Anthropic lock in the ``model`` default: an empty ``model``
     means the bridge resolves the frontier-pro of the active Personal Jarvis
     provider (``cfg.brain.primary``) via the provider-slug mapping from AD-6
-    (gemini→google/gemini-..., claude-api→anthropic/..., grok→xai/...).
+    (gemini→google/gemini-..., claude-api→anthropic/..., openai→openai/...).
     This way OpenClaw automatically follows the user's provider choice.
 
     AD-21 pin-version mandate: ``version`` must be set whenever the block
@@ -1283,8 +1283,8 @@ class BoardBioConfig(BaseModel):
     Important: NO provider/model default. The bio dynamically uses the
     frontier model of the currently configured primary provider
     (see ``jarvis/brain/resolver.py:resolve_frontier_brain``). A user with
-    only a Grok API key gets a Grok bio; a user with Claude configured gets
-    Opus 4.7. Multi-provider compliance is mandatory.
+    only a Gemini API key gets a Gemini bio; a user with Claude configured gets
+    Opus. Multi-provider compliance is mandatory.
 
     ``override_provider`` / ``override_model`` are power-user fields for
     explicitly pinning a model for the bio only. Leave empty in 99% of cases.

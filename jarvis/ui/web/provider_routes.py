@@ -268,6 +268,10 @@ def _spec_to_payload(
         "credential_help": spec.credential_help,
         "signup_url": spec.signup_url,
         "billing": provider_billing(spec),
+        # Maintainer-recommended pick for this tier (UI badge) + the model it
+        # points at. Presentation only — never gates behavior (AP-21).
+        "recommended": spec.recommended,
+        "recommended_model": spec.recommended_model,
         # Gemini's AI-Studio-vs-Vertex split; None for single-path providers.
         "alt_credential": (
             {

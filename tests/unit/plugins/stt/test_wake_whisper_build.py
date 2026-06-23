@@ -55,3 +55,20 @@ def test_build_wake_whisper_tolerates_missing_wake_fields() -> None:
     assert p._model_name == "base"
     assert p._device == "cpu"
     assert p._compute_type == "int8"
+
+
+def test_build_wake_whisper_does_not_bias_prompt_with_custom_phrase() -> None:
+    # A custom wake word ("Hey Alex") routes to the stt_match path. Biasing
+    # Whisper with the spoken trigger made ambiguous mumbling/noise hallucinate
+    # the exact wake phrase, so the wake backstop must stay unbiased and rely on
+    # the transcript reliability gate instead.
+    p = build_wake_whisper(STTConfig(), language="de", wake_phrase="Hey Alex")
+    assert p._initial_prompt is None
+
+
+def test_build_wake_whisper_default_has_no_prompt_bias() -> None:
+    p = build_wake_whisper(STTConfig(), language="de")
+    assert p._initial_prompt is None
+
+    p_blank = build_wake_whisper(STTConfig(), language="de", wake_phrase="   ")
+    assert p_blank._initial_prompt is None

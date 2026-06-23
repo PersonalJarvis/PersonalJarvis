@@ -3,7 +3,7 @@ available and switches automatically (user mandate 2026-04-28).
 
 Procedure:
 1. Resolver queries /v1/models per Hauptjarvis provider (claude-api, gemini,
-   openai, grok). The former Sub-Jarvis tier (Wave-4 migration: removed) is
+   openai). The former Sub-Jarvis tier (Wave-4 migration: removed) is
    explicitly excluded.
 2. If new model > old model: mutate ``BrainProviderConfig`` in place
    (Pydantic ``extra="allow"`` permits mutation).

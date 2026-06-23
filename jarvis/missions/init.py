@@ -60,7 +60,7 @@ logger = logging.getLogger(__name__)
 # ApiAgentWorker (OpenAI-compatible chat API + tool-use loop), instead of the
 # legacy silent ClaudeDirectWorker fallback. Single source for the routing
 # decision so the UI "runs on Claude" badge can never drift from reality.
-_API_AGENT_SLUGS: frozenset[str] = frozenset({"grok", "openai", "openrouter"})
+_API_AGENT_SLUGS: frozenset[str] = frozenset({"openai", "openrouter"})
 
 
 # Type aliases
@@ -183,12 +183,13 @@ def _select_subagent_worker_kind(
     # stripped from the worker env (the OAuth login then bills the subscription).
     if sub_jarvis_provider in ANTIGRAVITY_SUBAGENT_SLUGS:
         return "antigravity"
-    # grok / openai / openrouter run ON their own provider via the in-process
+    # openai / openrouter run ON their own provider via the in-process
     # ApiAgentWorker (OpenAI-compatible chat API + tool-use loop writing files
-    # into the worktree). Before 2026-06-22 they fell through to "subjarvis" ->
-    # ClaudeDirectWorker, so picking "Grok" silently ran the mission on Claude
+    # into the worktree). They used to fall through to "subjarvis" ->
+    # ClaudeDirectWorker, so picking them silently ran the mission on Claude
     # (violates the "selected provider must run" mandate). A HARD LOCK like
-    # claude-api/antigravity: no per-step model can divert it.
+    # claude-api/antigravity: no per-step model can divert it. (xAI Grok was
+    # removed as a sub-agent provider 2026-06-22 — TTS-only now.)
     if sub_jarvis_provider in _API_AGENT_SLUGS:
         return "api_agent"
     # Explicitly selecting "gemini" routes to the direct GeminiWorker so the
@@ -212,7 +213,7 @@ def subagent_runs_on_claude_fallback(sub_jarvis_provider: str | None) -> bool:
     """True when picking this subagent provider does NOT run heavy missions on
     THAT provider but silently falls back to the ClaudeDirectWorker (Opus).
 
-    As of 2026-06-22 grok/openai/openrouter resolve to the ``"api_agent"`` kind
+    As of 2026-06-22 openai/openrouter resolve to the ``"api_agent"`` kind
     (the in-process ApiAgentWorker runs them on their OWN provider), so they no
     longer report a Claude fallback here — provided an API key is configured. The
     only remaining always-Claude case is the legacy ``"subjarvis"`` kind

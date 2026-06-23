@@ -1,4 +1,4 @@
-"""Computer-Use must reach a vision-capable provider — grok is one.
+"""Computer-Use must reach a vision-capable provider — provider-agnostically.
 
 Live forensic 2026-06-21 18:41: a "open Chrome with computer use …" command
 DID dispatch to the screenshot harness (routing fixed), but the harness gave up:
@@ -8,15 +8,21 @@ DID dispatch to the screenshot harness (routing fixed), but the harness gave up:
     incomplete chunked read; openrouter(opus-4.8): Kein O…
 
 Root cause: ``screenshot_only_loop._call_brain`` skips every provider whose
-``supports_vision`` is False when a screenshot is attached. The user's only
-provider with a live key — **grok** — was flagged ``supports_vision=False``
-(an over-cautious "untested" guard), so the loop skipped it and, with every
-other vision provider keyless/billing-dead, failed with "no vision". grok-4.3
-in fact reads images fine via the OpenAI-compat ``image_url`` path (verified
-end-to-end against the live xAI API), so the fix is to flag grok vision-capable.
+``supports_vision`` is False when a screenshot is attached, and the one live
+vision-capable provider had been filtered out of the chain by a stale
+``_dead_providers`` flag. CU must not be permanently disabled by a transient
+dead-flag on its only eyes.
 
-These tests pin the fix and reproduce the loop scenario hermetically; the live
-probe (self-skips without a key) is the strict end-to-end proof.
+The fix is PROVIDER-AGNOSTIC (AP-21): the CU loop dispatches the screenshot to
+whichever vision-capable provider leads the chain, falls through a blind active
+provider to the next vision-capable one, and — as a last resort —
+``computer_use_planner.iter_last_resort_vision`` tries every registered
+vision-capable provider IGNORING the transient dead/cooldown flags. The only
+gate anywhere is ``supports_vision`` — never a provider name.
+
+(Grok was the live example in the original forensic; it has since been removed
+as a brain provider. These tests therefore pin the generic mechanism across the
+remaining vision-capable providers, which is what AP-21 actually mandates.)
 """
 from __future__ import annotations
 
@@ -27,13 +33,10 @@ from uuid import uuid4
 import pytest
 
 from jarvis.core.protocols import (
-    BrainDelta,
-    BrainMessage,
     ImageBlock,
     Observation,
 )
 from jarvis.harness.screenshot_only_loop import CULoopError, _call_brain
-from jarvis.plugins.brain.grok import GrokBrain
 
 # Reuse the loop-test fakes (FakeBrain shim, ctx builder, host isolation fixture).
 from tests.unit.harness.test_cu_loop_robustness import (  # noqa: E402
@@ -48,133 +51,11 @@ from tests.unit.harness.test_cu_loop_robustness import _isolate_host  # noqa: E4
 
 
 # ---------------------------------------------------------------------------
-# 1. The fix itself — grok must declare vision so the CU loop will try it.
-# ---------------------------------------------------------------------------
-
-
-def test_grok_brain_declares_vision_support() -> None:
-    """grok reads images; the CU loop's blind-skip gate keys off this flag.
-
-    Before the fix this was False, so the CU loop skipped grok — the only
-    provider with a live key — and failed with "no vision".
-    """
-    assert GrokBrain.supports_vision is True
-
-
-# ---------------------------------------------------------------------------
-# 2. The image actually reaches the wire for grok (not silently dropped).
-# ---------------------------------------------------------------------------
-
-
-def test_grok_image_is_routed_to_openai_image_url_not_dropped() -> None:
-    """With grok's real ``supports_vision`` flag, an attached screenshot is
-    encoded as an OpenAI ``image_url`` data-URI — NOT dropped to plain text.
-    A dropped image is exactly what would make grok plan blind."""
-    from jarvis.plugins.brain._openai_base import _to_openai_messages
-
-    block = ImageBlock(mime="image/png", data_b64="AAAA", source_hash="h")
-    msgs = (BrainMessage(role="user", content="what is on screen?", images=(block,)),)
-
-    out = _to_openai_messages(msgs, None, supports_vision=GrokBrain.supports_vision)
-
-    user_msg = next(m for m in out if m["role"] == "user")
-    assert isinstance(user_msg["content"], list), (
-        "grok image was dropped to plain text — it would plan blind"
-    )
-    img = next(b for b in user_msg["content"] if b.get("type") == "image_url")
-    assert img["image_url"]["url"] == "data:image/png;base64,AAAA"
-
-
-# ---------------------------------------------------------------------------
-# 3. Reproduce the 18:41 loop scenario: blind active provider + grok fallback.
-#    Before the fix grok was skipped → CULoopError("provider chain failed:
-#    … no vision"). After the fix the loop reaches grok and uses its plan.
-# ---------------------------------------------------------------------------
-
-
-class _BlindThenGrokManager:
-    """Chain = [codex(blind)×2, grok]. ``_get_brain('grok')`` returns the
-    REAL GrokBrain so the loop reads grok's real ``supports_vision`` flag."""
-
-    active_provider = "codex"
-
-    def __init__(self, grok_brain: GrokBrain) -> None:
-        self.blind = _StreamingBrain(
-            text='{"action": "click", "x": 1, "y": 1}', supports_vision=False,
-        )
-        self.grok = grok_brain
-        self.requested: list[tuple[str, str | None]] = []
-
-    def _build_fallback_chain(self, level: str) -> list[tuple[str, str | None]]:
-        # Mirrors the live chain shape: the blind active brain appears twice
-        # (fast + deep model), then grok as the vision-capable fallback.
-        return [
-            ("codex", "gpt-5.5"),
-            ("codex", "gpt-5.5-pro"),
-            ("grok", "grok-4.3"),
-        ]
-
-    def _get_brain(self, name: str, model: str | None = None) -> Any:
-        self.requested.append((name, model))
-        if name == "codex":
-            return self.blind
-        if name == "grok":
-            return self.grok
-        raise AssertionError(f"unexpected provider {name!r}")
-
-
-async def test_cu_loop_reaches_grok_when_active_provider_is_blind(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The exact 18:41 failure shape: a blind CLI provider leads, grok is the
-    only vision-capable provider with a key. With grok flagged vision-capable
-    the loop must skip the blind provider and dispatch the screenshot to grok."""
-    grok = GrokBrain(model="grok-4.3")
-
-    # Stub grok's network call: it must be REACHED (proving the fix) but must
-    # not hit api.x.ai in a unit test. An async-generator complete() shaped
-    # like the real one.
-    async def _fake_complete(req: Any):  # type: ignore[no-untyped-def]
-        # The screenshot must have survived to the request (not dropped).
-        assert any(getattr(m, "images", ()) for m in req.messages), (
-            "grok was dispatched WITHOUT the screenshot — it would plan blind"
-        )
-        yield BrainDelta(content='{"action": "done"}')
-        yield BrainDelta(finish_reason="stop")
-
-    monkeypatch.setattr(grok, "complete", _fake_complete)
-
-    manager = _BlindThenGrokManager(grok)
-    ctx = make_ctx(FakeBrain())
-    ctx.brain_manager = manager
-    obs = Observation(
-        trace_id=uuid4(), timestamp_ns=time.time_ns(),
-        screenshot_path=None, screenshot_hash="x",
-    )
-    img = ImageBlock(mime="image/jpeg", data_b64="QQ==", source_hash="x")
-
-    raw = await _call_brain(
-        ctx, observation=obs, user_goal="open chrome with computer use",
-        history_text="", images_override=[img],
-    )
-
-    assert raw == '{"action": "done"}', "the CU loop did not reach grok"
-    assert manager.blind.calls == 0, "the blind active provider must be skipped"
-    # grok must have been the provider that answered.
-    assert ("grok", "grok-4.3") in manager.requested
-
-
-# ---------------------------------------------------------------------------
-# 4. Strict live proof: the REAL GrokBrain reads a real image via the real
-#    xAI API. Self-skips when no grok key is configured (CI / no-credential).
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# 3b. The sibling CLI brain (codex) must report vision per RUNTIME path: the
-#     ChatGPT-CLI path drops images (blind) → supports_vision must be False so
-#     the CU loop skips it and reaches grok; the API-key path can see → True.
-#     A static True made CU dispatch a screenshot to the blind CLI brain.
+# 1. The sibling CLI brain (codex) must report vision per RUNTIME path: the
+#    ChatGPT-CLI path drops images (blind) → supports_vision must be False so
+#    the CU loop skips it and reaches a vision-capable provider; the API-key
+#    path can see → True. A static True made CU dispatch a screenshot to the
+#    blind CLI brain.
 # ---------------------------------------------------------------------------
 
 
@@ -200,15 +81,14 @@ def test_codex_sees_on_the_api_key_path(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 # ---------------------------------------------------------------------------
-# 5. PROVIDER-AGNOSTIC proof: CU is not grok-specific. For EACH vision-capable
-#    provider set as the active/leading brain, ``_call_brain`` must dispatch the
-#    screenshot to THAT provider. The selection is capability-gated, never
-#    provider-name-gated — grok is used today only because it is the one with a
-#    live key, not because the loop prefers it.
+# 2. PROVIDER-AGNOSTIC proof: CU is not pinned to any provider. For EACH
+#    vision-capable provider set as the active/leading brain, ``_call_brain``
+#    must dispatch the screenshot to THAT provider. The selection is
+#    capability-gated, never provider-name-gated.
 # ---------------------------------------------------------------------------
 
 
-_VISION_PROVIDERS = ("claude-api", "openrouter", "openai", "gemini", "grok")
+_VISION_PROVIDERS = ("claude-api", "openrouter", "openai", "gemini")
 
 
 class _SingleProviderManager:
@@ -241,9 +121,9 @@ class _SingleProviderManager:
 async def test_cu_dispatches_screenshot_to_active_vision_provider(
     lead_provider: str,
 ) -> None:
-    """For EACH of the 5 vision-capable providers, when it is the active/leading
-    brain the CU loop dispatches the screenshot to IT — not to grok, not to any
-    hardcoded provider. This is the provider-agnosticism guarantee."""
+    """For EACH vision-capable provider, when it is the active/leading brain the
+    CU loop dispatches the screenshot to IT — not to any hardcoded provider.
+    This is the provider-agnosticism guarantee."""
     brain = _StreamingBrain(text='{"action": "done"}', supports_vision=True)
     manager = _SingleProviderManager(lead_provider, brain)
     ctx = make_ctx(FakeBrain())
@@ -272,7 +152,7 @@ async def test_cu_falls_through_blind_active_to_any_vision_provider(
     """A blind active provider (codex-like, ``supports_vision=False``)
     must be skipped and the screenshot must fall through to WHICHEVER
     vision-capable provider is next — proving the fallthrough is generic, not
-    grok-specific."""
+    pinned to one provider."""
     blind = _StreamingBrain(
         text='{"action": "click", "x": 1, "y": 1}', supports_vision=False,
     )
@@ -315,24 +195,23 @@ async def test_cu_falls_through_blind_active_to_any_vision_provider(
 
 
 # ---------------------------------------------------------------------------
-# 6. STALE DEAD-FLAG RESILIENCE (live forensic 2026-06-21 18:41, exit 2):
+# 3. STALE DEAD-FLAG RESILIENCE (live forensic 2026-06-21 18:41, exit 2):
 #    "[cu] giving up after 3 model failures … provider chain failed: 3
-#    provider(s) skipped — no vision; … codex supports_vision=False;
-#    gemini 429; claude-api incomplete chunked read". grok — the ONE live,
-#    vision-capable brain — was NOT even in the tail: it had been filtered out
-#    of the chain entirely by a stale ``_dead_providers`` flag (a recurring
-#    "spuriously flagged dead" bug). With every other vision provider keyless/
-#    throttled and grok filtered out, CU had no vision brain and gave up. CU
-#    must not be permanently disabled by a stale dead-flag on its only eyes.
+#    provider(s) skipped — no vision". The ONE live, vision-capable brain was
+#    NOT even in the tail: it had been filtered out of the chain entirely by a
+#    stale ``_dead_providers`` flag (a recurring "spuriously flagged dead" bug).
+#    With every other vision provider keyless/throttled and the live one
+#    filtered out, CU had no vision brain and gave up. CU must not be
+#    permanently disabled by a stale dead-flag on its only eyes.
 # ---------------------------------------------------------------------------
 
 
 async def test_cu_reaches_vision_brain_despite_stale_dead_flag() -> None:
     """The blind active provider leads and the one vision-capable provider
-    (grok) was filtered out of the chain by a stale ``_dead_providers`` flag, so
-    the normal chain reaches NO vision brain. As a last resort CU must try every
-    registered vision-capable provider IGNORING the transient dead/cooldown
-    flags, and reach grok — instead of failing "no vision"."""
+    (here gemini) was filtered out of the chain by a stale ``_dead_providers``
+    flag, so the normal chain reaches NO vision brain. As a last resort CU must
+    try every registered vision-capable provider IGNORING the transient dead/
+    cooldown flags, and reach gemini — instead of failing "no vision"."""
     seeing = _StreamingBrain(text='{"action": "done"}', supports_vision=True)
     blind = _StreamingBrain(
         text='{"action": "click", "x": 1, "y": 1}', supports_vision=False,
@@ -340,33 +219,33 @@ async def test_cu_reaches_vision_brain_despite_stale_dead_flag() -> None:
 
     class _Registry:
         def available(self) -> list[str]:
-            return ["codex", "grok"]
+            return ["codex", "gemini"]
 
-    class _DeadFlaggedGrokManager:
+    class _DeadFlaggedVisionManager:
         active_provider = "codex"
 
         def __init__(self) -> None:
-            self._dead_providers = {"grok"}  # stale flag on the only vision brain
+            self._dead_providers = {"gemini"}  # stale flag on the only vision brain
             self._registry = _Registry()
             self.requested: list[tuple[str, str | None]] = []
 
         def _build_fallback_chain(self, level: str) -> list[tuple[str, str | None]]:
-            # The real builder filters dead providers OUT, so grok is gone and
+            # The real builder filters dead providers OUT, so gemini is gone and
             # only the blind active provider survives → no vision brain in chain.
             return [("codex", "gpt-5.5"), ("codex", "gpt-5.5-pro")]
 
         def _fast_model(self, name: str) -> str | None:
-            return {"codex": "gpt-5.5", "grok": "grok-4.3"}.get(name)
+            return {"codex": "gpt-5.5", "gemini": "gemini-3.1-pro-preview"}.get(name)
 
         def _get_brain(self, name: str, model: str | None = None) -> Any:
             self.requested.append((name, model))
             if name == "codex":
                 return blind
-            if name == "grok":
+            if name == "gemini":
                 return seeing
             raise AssertionError(f"unexpected provider {name!r}")
 
-    manager = _DeadFlaggedGrokManager()
+    manager = _DeadFlaggedVisionManager()
     ctx = make_ctx(FakeBrain())
     ctx.brain_manager = manager
     obs = Observation(
@@ -381,12 +260,12 @@ async def test_cu_reaches_vision_brain_despite_stale_dead_flag() -> None:
     )
 
     assert raw == '{"action": "done"}', (
-        "CU gave up 'no vision' despite a live, vision-capable grok behind a "
+        "CU gave up 'no vision' despite a live, vision-capable provider behind a "
         "stale dead-flag"
     )
     assert blind.calls == 0, "the blind active provider must never plan a screenshot"
-    assert seeing.calls == 1, "the last-resort must reach grok"
-    assert ("grok", "grok-4.3") in manager.requested
+    assert seeing.calls == 1, "the last-resort must reach the vision-capable brain"
+    assert ("gemini", "gemini-3.1-pro-preview") in manager.requested
 
 
 async def test_cu_still_fails_honestly_when_no_vision_provider_exists() -> None:
@@ -433,54 +312,3 @@ async def test_cu_still_fails_honestly_when_no_vision_provider_exists() -> None:
         )
     assert "vision" in str(excinfo.value).lower()
     assert blind.calls == 0
-
-
-@pytest.mark.integration
-async def test_grok_reads_an_image_live() -> None:
-    """End-to-end: drive the production ``GrokBrain.complete`` with an attached
-    image against the live xAI endpoint and assert grok actually SEES it.
-
-    This is the verification the over-cautious comment asked for — it exercises
-    the exact path the Computer-Use loop uses (GrokBrain → _openai_base
-    image_url). Skips cleanly when no grok key is present.
-    """
-    import base64
-    import io
-
-    from jarvis.core import config as cfg
-
-    ep = cfg.resolve_provider_endpoint("grok", vendor_default_base_url="https://api.x.ai/v1")
-    if not ep.credential:
-        pytest.skip("no grok API key configured — live vision proof skipped")
-
-    try:
-        from PIL import Image
-    except Exception:  # noqa: BLE001
-        pytest.skip("Pillow not available to build the test image")
-
-    img = Image.new("RGB", (96, 96), (220, 20, 20))  # solid red
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    b64 = base64.b64encode(buf.getvalue()).decode()
-
-    from jarvis.brain.streaming import aggregate
-    from jarvis.core.protocols import BrainRequest
-
-    block = ImageBlock(mime="image/png", data_b64=b64, source_hash="red")
-    req = BrainRequest(
-        messages=(BrainMessage(
-            role="user",
-            content="What single color fills this image? Answer with one word.",
-            images=(block,),
-        ),),
-        system=None,
-        temperature=0.0,
-        max_tokens=20,
-        stream=True,
-    )
-
-    brain = GrokBrain(model="grok-4.3")
-    agg = await aggregate(brain.complete(req))
-    text = (agg.text or "").strip().lower()
-
-    assert "red" in text, f"grok did not see the red image (got: {text!r})"

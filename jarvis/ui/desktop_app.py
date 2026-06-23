@@ -1669,7 +1669,17 @@ class DesktopApp:
                 # latency-tolerant and does not need the big model.
                 from jarvis.plugins.stt import build_wake_whisper
 
-                stt = build_wake_whisper(self.cfg.stt, language=stt_language)
+                # Seed the wake Whisper's prompt with the custom phrase ONLY on
+                # the stt_match path (a custom name with no OWW model). The
+                # heavy_local_whisper backstop for "Hey Jarvis" keeps its OWW
+                # model as the discriminator and passes no prompt, so the hot-
+                # path prompt-hallucination caveat never applies to it.
+                wake_phrase = (
+                    wake_plan.phrase if wake_plan.needs_local_whisper else None
+                )
+                stt = build_wake_whisper(
+                    self.cfg.stt, language=stt_language, wake_phrase=wake_phrase
+                )
             tts = build_tts_from_config(self.cfg.tts)
             # SpeechPipeline.brain_callback braucht Callable[[str], Awaitable[str]].
             # BrainManager und Echo-/Gemini-Fallback erfüllen das via __call__.

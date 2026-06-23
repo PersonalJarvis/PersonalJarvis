@@ -16,7 +16,6 @@ cached value; if that is also missing → ``None`` (caller keeps its TOML defaul
 Tier mapping per provider:
 - claude-api : fast=haiku, deep=opus
 - gemini     : fast=flash, deep=pro
-- grok       : fast=*-fast (non-reasoning), deep=full / -reasoning
 - openai     : fast=gpt-{N} (without -pro/-mini/-nano), deep=gpt-{N}-pro
 """
 from __future__ import annotations
@@ -39,7 +38,7 @@ log = logging.getLogger(__name__)
 Tier = Literal["fast", "deep"]
 
 DEFAULT_TTL_HOURS = 24
-SUPPORTED_PROVIDERS: tuple[str, ...] = ("claude-api", "gemini", "openai", "grok")
+SUPPORTED_PROVIDERS: tuple[str, ...] = ("claude-api", "gemini", "openai")
 
 # Stale list — models we explicitly NEVER pick as frontier, even if the
 # provider API lists them (account tier limits, legacy snapshots).
@@ -219,19 +218,6 @@ class FrontierResolver:
                 resp.raise_for_status()
                 return [m["id"] for m in resp.json().get("data", [])]
 
-            if provider == "grok":
-                api_key = cfg.get_provider_secret("grok")
-                if not api_key:
-                    raise RuntimeError(
-                        "Kein xAI-API-Key fuer Frontier-Resolver.",
-                    )
-                resp = await client.get(
-                    "https://api.x.ai/v1/models",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                )
-                resp.raise_for_status()
-                return [m["id"] for m in resp.json().get("data", [])]
-
             if provider == "gemini":
                 api_key = cfg.get_provider_secret("gemini")
                 if not api_key:
@@ -263,8 +249,6 @@ class FrontierResolver:
             return _pick_anthropic(models, tier)
         if provider == "gemini":
             return _pick_gemini(models, tier)
-        if provider == "grok":
-            return _pick_grok(models, tier)
         if provider == "openai":
             return _pick_openai(models, tier)
         return None
@@ -348,73 +332,6 @@ def _pick_gemini(models: list[str], tier: Tier) -> str | None:
 
     candidates.sort(key=key, reverse=True)
     return candidates[0]
-
-
-def _pick_grok(models: list[str], tier: Tier) -> str | None:
-    """xAI: grok-{major}.{minor} or grok-{major}-fast{-reasoning?}.
-
-    Fast=*-fast (non-reasoning), Deep=full/-reasoning. CODE specialised variants
-    (grok-code-fast-1) are excluded — the user wants general-purpose frontier, not
-    a code model as the default brain. Date snapshots
-    (grok-4.20-0309-non-reasoning) are ranked below clean IDs (grok-4.20).
-    """
-    candidates = [m for m in models if m.startswith("grok-") and m not in STALE_MODELS]
-    # Remove specialised variants: general-purpose frontier only. Bug 2026-04-29:
-    # user account only listed grok-code-fast-1 and grok-4.20-multi-agent-0309
-    # — both are specialists, not what Hauptjarvis needs.
-    SPECIALIZED_GROK = ("-code-", "code-fast", "-vision-", "-image-",
-                       "-multi-agent", "-tts-", "-audio-", "-embed",
-                       "-thinking-", "-non-reasoning")
-    candidates = [
-        c for c in candidates
-        if not any(spec in c for spec in SPECIALIZED_GROK)
-    ]
-    if not candidates:
-        # If the API list for this user account contains ONLY specialised variants:
-        # do NOT downgrade — keep the TOML default (returns None).
-        return None
-
-    # grok-4.3 (released 2026-04-30) is, according to xAI, both the fastest
-    # and most intelligent Grok model. Both tiers (fast + deep) prefer it when
-    # the API lists it — otherwise the algorithm falls back to the old
-    # Major.Minor sort. Without this short-circuit grok-4.20 (integer minor 20)
-    # would beat grok-4.3 (minor 3), even though 4.3 is chronologically newer —
-    # xAI does NOT use semver.
-    if "grok-4.3" in candidates:
-        return "grok-4.3"
-
-    if tier == "fast":
-        filtered = [
-            c for c in candidates
-            if "fast" in c and "reasoning" not in c
-        ]
-    else:
-        # Deep: prefer non-fast (full grok-{N}.{M}) or -reasoning.
-        filtered = [
-            c for c in candidates
-            if "fast" not in c or "reasoning" in c
-        ]
-    if not filtered:
-        # Tier match empty — no fallback anchor, return None.
-        # Prevents e.g. grok-3.5 (another variant) from being picked as fast
-        # even though it is not the "fast" variant.
-        return None
-
-    def is_dated(m: str) -> bool:
-        # grok-4.20-0309-non-reasoning -> date suffix with a 4-digit date component
-        return bool(re.search(r"-\d{4,}-", m))
-
-    def key(m: str) -> tuple[int, int, int, int]:
-        match = re.search(r"grok-(\d+)(?:\.(\d+))?", m)
-        major = int(match.group(1)) if match else 0
-        minor = int(match.group(2)) if match and match.group(2) else 0
-        # Clean IDs > dated. Shorter variant > longer at the same version.
-        clean = 1 if not is_dated(m) else 0
-        length_penalty = -len(m)  # negative → shorter first
-        return (major, minor, clean, length_penalty)
-
-    filtered.sort(key=key, reverse=True)
-    return filtered[0]
 
 
 def _pick_openai(models: list[str], tier: Tier) -> str | None:

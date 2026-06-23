@@ -37,6 +37,7 @@ Termination paths:
     - step budget       -> exit_code 4
     - tool failure      -> exit_code 8
     - observe failure   -> exit_code 1
+    - elevation unmet   -> exit_code 9   (UAC/privilege prompt never confirmed)
     - any timeout       -> exit_code 124
     - cancel token      -> exit_code 130
 
@@ -88,8 +89,13 @@ class CULoopError(RuntimeError):
 
 
 _VALID_ACTIONS: frozenset[str] = frozenset(
-    {"click", "click_element", "type", "key", "scroll", "open_app", "wait", "done", "fail"}
+    {"click", "click_element", "type", "key", "scroll", "drag",
+     "open_app", "wait", "done", "fail"}
 )
+
+#: Default drag duration (ms) — slow enough that a map/globe/slider registers the
+#: press-move-release as a real drag gesture rather than a teleport.
+_DEFAULT_DRAG_DURATION_MS: int = 400
 
 #: Allowed scroll directions (mirror of ``ScrollTool._VALID_DIRECTIONS``).
 _SCROLL_DIRECTIONS: frozenset[str] = frozenset({"up", "down", "left", "right"})
@@ -126,7 +132,19 @@ _BUDGET_EXIT_CODE = 4
 _PARSE_EXIT_CODE = 2
 _TOOL_EXIT_CODE = 8
 _OBSERVE_EXIT_CODE = 1
+_ELEVATION_EXIT_CODE = 9  # waited for an OS elevation confirmation, none came
 _CANCEL_EXIT_CODE = 130
+
+# Elevation pause-and-resume (UAC Secure Desktop & co., 2026-06-23). When a
+# launched app raises a privilege prompt mid-mission, Windows hoists the Secure
+# Desktop; a non-elevated process can neither capture it (BitBlt -> black/raise)
+# nor click it (UIPI). Instead of aborting blind with the misleading "couldn't
+# see the screen" (exit 1), the loop asks the user for the one unavoidable
+# confirmation click and polls until the prompt clears. _WAIT is generous (a
+# human needs time to read + click Yes); _POLL is the cheap OpenInputDesktop
+# re-check cadence. Module-level so they are tunable + test-visible.
+_ELEVATION_WAIT_TIMEOUT_S = 60.0
+_ELEVATION_POLL_S = 0.5
 
 # Fail-gate reject budget (completion-enforcement, 2026-06-15). A voluntary
 # ``fail`` is the SYMMETRIC sibling of ``done``: it must survive the strict
@@ -170,6 +188,9 @@ _SYSTEM_PROMPT = (
     "  {\"action\": \"key\",           \"key\": \"<enter|tab|esc|...>\"}\n"
     "  {\"action\": \"scroll\",        \"direction\": \"<up|down|left|right>\", "
     "\"amount\": <int notches, default 3>}\n"
+    "  {\"action\": \"drag\",          \"x\": <int>, \"y\": <int>, "
+    "\"x2\": <int>, \"y2\": <int>}   (press at x,y, hold, drag to x2,y2, release "
+    "-- for rotating a map/globe, panning, or moving a slider; a click cannot)\n"
     "  {\"action\": \"open_app\",      \"name\": \"<app name>\"}\n"
     "  {\"action\": \"wait\",          \"ms\": <int 0-10000>}\n"
     "  {\"action\": \"done\"}\n"
@@ -414,6 +435,23 @@ def _parse_action(raw: str) -> dict[str, Any]:
         if isinstance(amount, bool) or not isinstance(amount, (int, float)):
             raise CULoopError("scroll action 'amount' must be a number of wheel notches")
         obj["amount"] = max(1, int(amount))
+    elif action == "drag":
+        # Press-and-hold drag (RC#3): two 0-1000 normalized points -- press at
+        # (x,y), drag to (x2,y2), release. For map/globe rotation, panning, and
+        # sliders, which a click cannot do.
+        for _k in ("x", "y", "x2", "y2"):
+            _v = obj.get(_k)
+            if isinstance(_v, bool) or not isinstance(_v, (int, float)):
+                raise CULoopError(
+                    "drag action requires integer x, y, x2, y2 (0-1000 normalized "
+                    "start and end points; press at x,y and drag to x2,y2)"
+                )
+            obj[_k] = int(_v)
+        _dur = obj.get("duration_ms", _DEFAULT_DRAG_DURATION_MS)
+        if isinstance(_dur, bool) or not isinstance(_dur, (int, float)):
+            raise CULoopError("drag action 'duration_ms' must be a number of ms")
+        obj["duration_ms"] = max(0, min(int(_dur), 3000))
+        _normalize_click_target(obj)
     elif action == "open_app":
         # Restored 2026-05-27 after observing the loop fall back to ``type
         # "calc"`` into the focused chat input when asked to "open Calc" —
@@ -572,6 +610,23 @@ def _validate_action_dict(obj: Any) -> dict[str, Any]:
         if isinstance(amount, bool) or not isinstance(amount, (int, float)):
             raise CULoopError("scroll action 'amount' must be a number of wheel notches")
         obj["amount"] = max(1, int(amount))
+    elif action == "drag":
+        # Press-and-hold drag (RC#3): two 0-1000 normalized points -- press at
+        # (x,y), drag to (x2,y2), release. For map/globe rotation, panning, and
+        # sliders, which a click cannot do.
+        for _k in ("x", "y", "x2", "y2"):
+            _v = obj.get(_k)
+            if isinstance(_v, bool) or not isinstance(_v, (int, float)):
+                raise CULoopError(
+                    "drag action requires integer x, y, x2, y2 (0-1000 normalized "
+                    "start and end points; press at x,y and drag to x2,y2)"
+                )
+            obj[_k] = int(_v)
+        _dur = obj.get("duration_ms", _DEFAULT_DRAG_DURATION_MS)
+        if isinstance(_dur, bool) or not isinstance(_dur, (int, float)):
+            raise CULoopError("drag action 'duration_ms' must be a number of ms")
+        obj["duration_ms"] = max(0, min(int(_dur), 3000))
+        _normalize_click_target(obj)
     elif action == "open_app":
         name = obj.get("name")
         if not isinstance(name, str) or not name.strip():
@@ -721,6 +776,81 @@ def _publish_announcement_nonblocking(bus: Any, event: Any) -> None:
     task = asyncio.create_task(_run(), name="cu-announce")
     _ANNOUNCE_TASKS.add(task)
     task.add_done_callback(_ANNOUNCE_TASKS.discard)
+
+
+async def _await_privileged_prompt_clearance(
+    ctx: ComputerUseContext,
+    task_prompt: str,
+    step_idx: int,
+    cancel_token: CancelToken | None,
+) -> str:
+    """Pause for an OS elevation prompt (UAC Secure Desktop & co.) and resume.
+
+    A launched app can raise a privilege prompt that Windows shows on the Secure
+    Desktop; a non-elevated process can neither capture it (BitBlt -> black or
+    ScreenShotError) nor send input to it (UIPI). When such a prompt is detected
+    we speak the one-time "please confirm it once" request and poll until it
+    clears, so the mission can continue instead of aborting blind with the
+    misleading "couldn't see the screen" (exit 1).
+
+    Returns one of:
+        ``"no_prompt"`` -- no privileged prompt detected; proceed as before.
+        ``"cleared"``   -- a prompt was up and is now gone; re-observe + resume.
+        ``"timeout"``   -- a prompt stayed up past the wait budget (-> exit 9).
+        ``"cancelled"`` -- the cancel token tripped while waiting.
+
+    Never raises: a missing/raising probe yields ``"no_prompt"`` (behave as
+    before). The probe is ``False`` on headless / macOS / Linux today, so this is
+    a graceful no-op there (AD-6) -- the €5-VPS runtime has no UAC.
+    """
+    def _probe() -> bool:
+        from jarvis.platform.privileged_prompt import (  # noqa: PLC0415
+            privileged_prompt_active,
+        )
+        return privileged_prompt_active()
+
+    try:
+        if not _probe():
+            return "no_prompt"
+    except Exception:  # noqa: BLE001 — a missing/raising probe must not end a mission
+        return "no_prompt"
+
+    # A prompt is up: speak the one-time confirmation request. Non-blocking like
+    # the progress announcement -- awaiting the publish would block the loop for
+    # the whole TTS synthesis (BUG-CU-ANNOUNCE-BLOCK). Resolve the language
+    # through the one phrase resolver so de/en/es each get the right wording
+    # (Output-Language doctrine -- never a hardcoded locale).
+    if ctx.bus is not None:
+        from jarvis.voice.action_phrases import (  # noqa: PLC0415
+            action_phrase,
+            resolve_phrase_language,
+        )
+        lang = resolve_phrase_language(None, task_prompt)
+        _publish_announcement_nonblocking(ctx.bus, AnnouncementRequested(
+            text=action_phrase("cu_awaiting_elevation", lang),
+            priority="normal",
+            language=lang,
+            kind="info",
+        ))
+    log.info(
+        "[cu] step %d: privileged prompt up -- awaiting user confirmation",
+        step_idx,
+    )
+
+    deadline = time.monotonic() + _ELEVATION_WAIT_TIMEOUT_S
+    while time.monotonic() < deadline:
+        if cancel_token is not None and cancel_token.is_cancelled():
+            return "cancelled"
+        await asyncio.sleep(_ELEVATION_POLL_S)
+        try:
+            if not _probe():
+                log.info(
+                    "[cu] step %d: elevation prompt cleared -- resuming", step_idx
+                )
+                return "cleared"
+        except Exception:  # noqa: BLE001 — can't tell anymore; re-observe + decide
+            return "cleared"
+    return "timeout"
 
 
 #: Settle probe after a successful open_app (2026-06-10 latency plan Task 6).
@@ -2597,6 +2727,21 @@ async def _click_with_refine(
     )
 
 
+def _perform_drag(
+    x1: int, y1: int, x2: int, y2: int, duration_s: float = 0.4
+) -> None:
+    """Press the left mouse button at ``(x1, y1)``, drag to ``(x2, y2)``, release.
+
+    The press-and-hold gesture a plain click cannot do — rotating a map/globe,
+    panning, or moving a slider. pyautogui is imported lazily so the module still
+    loads on a non-desktop host (the harness is desktop-gated anyway).
+    """
+    import pyautogui  # noqa: PLC0415 — lazy: keeps non-desktop import clean
+
+    pyautogui.moveTo(x1, y1)
+    pyautogui.dragTo(x2, y2, duration=max(0.0, duration_s), button="left")
+
+
 async def _execute_action(
     obj: dict[str, Any],
     ctx: ComputerUseContext,
@@ -2773,6 +2918,30 @@ async def _execute_action(
             bool(getattr(res, "success", False)),
             str(getattr(res, "output", "") or getattr(res, "error", "") or ""),
         )
+
+    if action == "drag":
+        # Press-and-hold drag: resolve BOTH endpoints from the 0-1000 grid to
+        # absolute pixels (same resolver as click), then press-move-release.
+        # Inline like ``wait`` — no separate tool to wire (RC#3, 2026-06-22).
+        start_x, start_y = _resolve_click_pixel(obj, monitor_geom)
+        end_x, end_y = _resolve_click_pixel(
+            {"x": obj["x2"], "y": obj["y2"]}, monitor_geom
+        )
+        duration_s = max(
+            0.0, float(obj.get("duration_ms", _DEFAULT_DRAG_DURATION_MS)) / 1000.0
+        )
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(
+                    _perform_drag, start_x, start_y, end_x, end_y, duration_s
+                ),
+                timeout=_ACT_TIMEOUT_S,
+            )
+        except TimeoutError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            return False, f"drag crash: {type(exc).__name__}: {exc}"
+        return True, f"dragged ({start_x},{start_y})->({end_x},{end_y})"
 
     if action == "open_app":
         tool = tools.get("open_app")
@@ -3105,6 +3274,36 @@ async def _run_screenshot_loop(
             continue
         except Exception as exc:  # noqa: BLE001
             labels_task.cancel()
+            # An OS elevation prompt (UAC Secure Desktop & co.) blocks BOTH
+            # capture and input for a non-elevated process, so this observe
+            # failure is most likely a UAC prompt, not a generic GDI fault.
+            # Detect it and PAUSE for the user's one unavoidable confirmation
+            # click instead of aborting blind with the misleading "couldn't see
+            # the screen" (exit 1, the live OBS forensic 2026-06-23).
+            clearance = await _await_privileged_prompt_clearance(
+                ctx, task_prompt, step_idx, cancel_token,
+            )
+            if clearance == "cleared":
+                yield _progress(
+                    f"[cu] step {step_idx}: elevation prompt cleared -- resuming"
+                )
+                continue
+            if clearance == "timeout":
+                yield _final(
+                    stderr=(
+                        f"[cu] aborted: elevation prompt not confirmed within "
+                        f"{_ELEVATION_WAIT_TIMEOUT_S:.0f}s (step {step_idx})\n"
+                    ),
+                    exit_code=_ELEVATION_EXIT_CODE,
+                )
+                return
+            if clearance == "cancelled":
+                yield _final(
+                    stderr="[cu] cancelled while awaiting elevation confirmation\n",
+                    exit_code=_CANCEL_EXIT_CODE,
+                )
+                return
+            # "no_prompt": the original generic observe failure stands.
             yield _final(
                 stderr=f"[cu] observe failed: {exc}\n",
                 exit_code=_OBSERVE_EXIT_CODE,
@@ -3120,6 +3319,37 @@ async def _run_screenshot_loop(
         await _profile_phase(
             ctx, phase="observe", step_idx=step_idx, t0=t_observe, acc=phase_ms,
         )
+
+        # Elevation-prompt guard (UAC Secure Desktop & co.): the capture can
+        # SUCCEED yet hand back a black/dimmed frame while a privilege prompt is
+        # up (BitBlt does not always raise). Detect that BEFORE the brain call so
+        # we never feed the model a blind frame and never try to click a window
+        # UIPI blocks us from. Cheap (one OpenInputDesktop read) and a graceful
+        # no-op off Windows / headless. On a detected prompt we pause for the
+        # user's confirmation click, then re-observe and resume.
+        clearance = await _await_privileged_prompt_clearance(
+            ctx, task_prompt, step_idx, cancel_token,
+        )
+        if clearance == "cleared":
+            yield _progress(
+                f"[cu] step {step_idx}: elevation prompt cleared -- resuming"
+            )
+            continue
+        if clearance == "timeout":
+            yield _final(
+                stderr=(
+                    f"[cu] aborted: elevation prompt not confirmed within "
+                    f"{_ELEVATION_WAIT_TIMEOUT_S:.0f}s (step {step_idx})\n"
+                ),
+                exit_code=_ELEVATION_EXIT_CODE,
+            )
+            return
+        if clearance == "cancelled":
+            yield _final(
+                stderr="[cu] cancelled while awaiting elevation confirmation\n",
+                exit_code=_CANCEL_EXIT_CODE,
+            )
+            return
 
         # No-progress guard: if the last _STUCK_LIMIT screenshots are
         # byte-identical, nothing on screen changed. Bail with a clear "stuck"
@@ -3985,12 +4215,22 @@ async def _run_screenshot_loop(
                 # Arm the repeated-type guard: a back-to-back type of this exact
                 # text next is a redundant no-op (BUG-CU-RETYPE).
                 last_typed_text = str(action_obj.get("text", "")).strip()
-            # Arm the on-demand done-verifier after a state-change click on a
-            # play/submit/start-type goal: the NEXT iteration judges the fresh
-            # screenshot before planning another (possibly toggle-undoing)
-            # action (BUG-CU-TOGGLE).
-            if action in ("click", "click_element") and _goal_needs_verification(task_prompt):
-                pending_verify = True
+            # Disarm the repeated-type guard on a click/click_element: a click
+            # RE-FOCUSES / re-targets a field, so a following type of the same
+            # text is a FRESH attempt (e.g. retrying after the first type did not
+            # land in a web input like the Google-Flights city field), NOT a
+            # redundant back-to-back repeat. Without this reset the legitimate
+            # retry is suppressed and the mission dead-ends "in the right field
+            # but nothing typed" (RC#2, 2026-06-22). The guard still catches a
+            # type-immediately-after-type with no click in between.
+            if action in ("click", "click_element"):
+                last_typed_text = ""
+                # Arm the on-demand done-verifier after a state-change click on a
+                # play/submit/start-type goal: the NEXT iteration judges the fresh
+                # screenshot before planning another (possibly toggle-undoing)
+                # action (BUG-CU-TOGGLE).
+                if _goal_needs_verification(task_prompt):
+                    pending_verify = True
 
         # End of batch. If the repeated-click guard engaged, inject a
         # constrained directive so the next turn VERIFIES instead of clicking
