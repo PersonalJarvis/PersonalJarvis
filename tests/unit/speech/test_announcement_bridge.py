@@ -268,7 +268,7 @@ async def test_openclaw_background_success_no_summary_speaks_fertig() -> None:
 
     await bus.publish(
         OpenClawBackgroundCompleted(
-            success=True, utterance="x", summary="", error="", duration_s=1.0,
+            success=True, utterance="mach mir das", summary="", error="", duration_s=1.0,
         )
     )
 
@@ -286,7 +286,7 @@ async def test_openclaw_background_failure_speaks_error() -> None:
 
     await bus.publish(
         OpenClawBackgroundCompleted(
-            success=False, utterance="x", summary="",
+            success=False, utterance="mach mir das", summary="",
             error="rate-limit reached", duration_s=2.0,
         )
     )
@@ -410,7 +410,7 @@ async def test_openclaw_completion_signal_does_speak_with_summary() -> None:
     await bus.publish(
         OpenClawBackgroundCompleted(
             success=True,
-            utterance="baue etwas",
+            utterance="baue mir etwas",
             summary="Fertig gebaut",
             duration_s=1.2,
         )

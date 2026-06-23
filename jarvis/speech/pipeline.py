@@ -2716,21 +2716,27 @@ class SpeechPipeline:
         # deliberately-muted session, and the phrases below stay priority
         # "normal" → queued behind any current speech, never barging
         # mid-utterance (AD-OE5).
+        # Resolve the readback language from the ORIGINAL request utterance
+        # (pin > conversation-stickiness > detected utterance > default) so an
+        # English/Spanish user never hears "Fertig." in German (forensic
+        # 2026-06-23: announcement emitters bypassed the resolver).
+        lang = self._output_language(None, getattr(event, "utterance", "") or "")
+        ph = self._BG_READBACK_PHRASES.get(lang, self._BG_READBACK_PHRASES["en"])
         if event.success and event.summary:
             summ = event.summary.strip()
             if len(summ) > 200:
                 summ = summ[:200].rsplit(" ", 1)[0] + "…"
-            text = f"Fertig. {summ}"
+            text = ph["done_summ"].format(s=summ)
         elif event.success:
-            text = "Fertig."
+            text = ph["done"]
         else:
-            err_short = (event.error or "unbekannter Fehler")[:80]
-            text = f"Das hat nicht geklappt. {err_short}"
+            err_short = (event.error or ph["unknown_err"])[:80]
+            text = ph["fail"].format(e=err_short)
         # Defense-in-Depth: Summary/Error kann aus dem OpenClaw-Pfad kommen
         # und Engineering-Tokens (Sub-Agent, Subprocess, MCP) enthalten.
         # scrub_for_voice filtert die raus, sonst leakt Worker-Mechanik
         # in den Voice-Kanal (vgl. Mandat-Pfad #2 Output-Filter).
-        scrubbed = scrub_for_voice(text, language="de")
+        scrubbed = scrub_for_voice(text, language=lang)
         if scrubbed.actions:
             log.info(
                 "🧹 Background-Filter: %s (fallback=%s)",
@@ -2757,7 +2763,7 @@ class SpeechPipeline:
                 AnnouncementRequested(
                     source_layer="harness.openclaw.background",
                     text=cleaned,
-                    language="de",
+                    language=lang,
                     priority="normal",
                     kind="subagent",
                 )
@@ -2771,7 +2777,7 @@ class SpeechPipeline:
         # through this background path, not _speak, so it would otherwise be
         # invisible in the Transcription view. Tagged ``subagent`` so it renders
         # on the attributed "Jarvis Sub-Agent / Output" track.
-        self._emit_spoken(cleaned, "de", SPOKEN_KIND_SUBAGENT)
+        self._emit_spoken(cleaned, lang, SPOKEN_KIND_SUBAGENT)
         # Re-arm the readback grace exactly like ``_on_announcement`` (:2386): a
         # background result delivered through THIS direct path also hands the
         # floor back to the user, so ``_active_session`` must keep the mic open
@@ -2792,7 +2798,7 @@ class SpeechPipeline:
             await self._transition("SPEAKING")
         try:
             try:
-                chunks = self._tts.synthesize(cleaned, language_code="de-DE")
+                chunks = self._tts.synthesize(cleaned, language_code=self._bcp47(lang))
             except TypeError:
                 chunks = self._tts.synthesize(cleaned)
             await self._player.play_chunks(chunks)
@@ -6867,6 +6873,31 @@ class SpeechPipeline:
             asyncio.create_task(bus.publish(event))  # noqa: RUF006 — fire-and-forget
         except Exception:  # noqa: BLE001 — telemetry must never break the turn
             log.debug("SpeechSpoken emit failed", exc_info=True)
+
+    #: Spoken readback for an OpenClaw background task that finished off the
+    #: chat path. de/en/es so the readback follows the conversation language
+    #: instead of a hardcoded German literal (forensic 2026-06-23). German
+    #: strings are TTS product surface, not source artifacts (i18n-allow).
+    _BG_READBACK_PHRASES: dict[str, dict[str, str]] = {
+        "de": {
+            "done": "Fertig.",  # i18n-allow
+            "done_summ": "Fertig. {s}",  # i18n-allow
+            "fail": "Das hat nicht geklappt. {e}",  # i18n-allow
+            "unknown_err": "unbekannter Fehler",  # i18n-allow
+        },
+        "en": {
+            "done": "Done.",
+            "done_summ": "Done. {s}",
+            "fail": "That didn't work. {e}",
+            "unknown_err": "unknown error",
+        },
+        "es": {
+            "done": "Listo.",
+            "done_summ": "Listo. {s}",
+            "fail": "Eso no funcionó. {e}",
+            "unknown_err": "error desconocido",
+        },
+    }
 
     _BCP47: dict[str, str] = {"de": "de-DE", "en": "en-US", "es": "es-ES"}
 
