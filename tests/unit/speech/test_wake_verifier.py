@@ -14,6 +14,8 @@ verification path.
 """
 from __future__ import annotations
 
+import asyncio
+import time
 from dataclasses import dataclass
 
 import pytest
@@ -197,3 +199,49 @@ async def test_verify_passes_through_language_override() -> None:
     await verify_wake_with_stt(stt, PCM_2S_16K, language="en")
 
     assert stt.calls == [(len(PCM_2S_16K), 16_000, "en")]
+
+
+# ---------------------------------------------------------------------------
+# Timeout cap — a wake-verify must never block the wake path for the full cloud
+# STT client timeout (Groq default 30 s). A verify that takes seconds is
+# useless: the user said "Hey Jarvis" and is waiting for the orb to spawn NOW.
+# A hung/slow STT round-trip is capped and treated like a transient error
+# (retry then fail-closed suppress), so the listener re-arms instead of freezing
+# for 10-30 s before any reaction (the exact "~10 second delay after the wake
+# word" forensic).
+# ---------------------------------------------------------------------------
+
+
+class _HangingSTT:
+    """STT whose transcribe_pcm hangs far longer than the wake-verify cap."""
+
+    def __init__(self, hang_s: float = 1.0) -> None:
+        self._hang_s = hang_s
+        self.calls = 0
+
+    async def transcribe_pcm(self, pcm_bytes, sample_rate=16_000, language=None):
+        self.calls += 1
+        await asyncio.sleep(self._hang_s)
+        return _FakeTranscript(text="Hey Jarvis")
+
+
+async def test_verify_caps_a_hung_stt_call(monkeypatch) -> None:
+    """A hung cloud STT round-trip is cut off by the wake-verify timeout cap
+    instead of blocking the wake path for seconds. On timeout the hit is
+    suppressed (fail-closed), exactly like a persistent STT error."""
+    import jarvis.speech.wake_verifier as wv
+
+    monkeypatch.setattr(wv, "_WAKE_VERIFY_BACKOFF_S", 0.0, raising=False)
+    monkeypatch.setattr(wv, "_WAKE_VERIFY_TIMEOUT_S", 0.05, raising=False)
+    monkeypatch.setattr(wv, "_WAKE_VERIFY_RETRIES", 0, raising=False)
+
+    stt = _HangingSTT(hang_s=1.0)
+    t0 = time.monotonic()
+    matched, _ = await verify_wake_with_stt(stt, PCM_2S_16K)
+    elapsed = time.monotonic() - t0
+
+    assert matched is False, "a capped (hung) verify must fail closed, not match"
+    assert elapsed < 0.5, (
+        f"wake-verify blocked {elapsed:.2f}s — the timeout cap did not fire"
+    )
+    assert stt.calls >= 1
