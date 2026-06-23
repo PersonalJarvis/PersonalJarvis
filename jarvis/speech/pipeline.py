@@ -2268,9 +2268,30 @@ class SpeechPipeline:
             return
 
         note(skill.name, source="cron")
+        # Compose the scheduled-run instruction in the conversation language so
+        # the brain answers in that language (it derives the reply language from
+        # the prompt text) — a German chat must not receive an English briefing
+        # (forensic 2026-06-23: the screenshot's English "Good morning, Chef…"
+        # announcement). ``lang`` also tags the announcement so the resolver
+        # speaks it in the same language. de strings are functional brain
+        # prompts, not user-facing artifacts (i18n-allow).
+        lang = self._output_language(None, "")
+        _prompts = {
+            "de": (
+                "[Geplanter Lauf] Es ist Zeit für den Skill '{name}'. Führe "  # i18n-allow
+                "jetzt seine Anweisungen aus und berichte das Ergebnis kurz."  # i18n-allow
+            ),
+            "es": (
+                "[ejecución programada] Es hora del skill '{name}'. Ejecuta sus "
+                "instrucciones ahora e informa brevemente el resultado."
+            ),
+            "en": (
+                "[scheduled run] It is time for the '{name}' skill. Execute its "
+                "instructions now and report the result briefly."
+            ),
+        }
         reply = await self._brain(
-            f"[scheduled run] It is time for the '{skill.name}' skill. "
-            "Execute its instructions now and report the result briefly."
+            _prompts.get(lang, _prompts["en"]).format(name=skill.name)
         )
         text = (reply or "").strip()
         if text and self._bus is not None:
@@ -2279,6 +2300,7 @@ class SpeechPipeline:
                     AnnouncementRequested(
                         source_layer="speech.pipeline",
                         text=text,
+                        language=lang,
                         priority="normal",
                     )
                 )
