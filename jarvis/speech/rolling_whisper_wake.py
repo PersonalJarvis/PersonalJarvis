@@ -23,7 +23,6 @@ Parameter:
 from __future__ import annotations
 
 import asyncio
-import difflib
 import logging
 import os
 import re
@@ -97,43 +96,6 @@ def _reliable_wake_transcript(
     )
 
 
-def _wake_confirmed_unbiased(unbiased_text: str, name: str) -> bool:
-    """Confirm a wake ONLY if an UNBIASED re-read POSITIVELY supports it.
-
-    The ``initial_prompt="Hey Ruben"`` bias is needed for recall (a strong model
-    still mishears the quiet proper noun without it) but makes that model
-    hallucinate the primed phrase on two things: (1) quiet noise / silence, where
-    Whisper's own artifact is "Vielen Dank."/"Ja." and the bias turns it into the
-    wake; (2) a different spoken wake ("Hey Jarvis"). Forensic 2026-06-24: 14 of
-    16 live fires were such hallucinations — and an earlier "reject only on a
-    competing name, else give the benefit of the doubt" rule let every silence
-    artifact ("Vielen Dank", which names nothing) straight through.
-
-    So require POSITIVE evidence in the unbiased read: a ``hey <name-ish>`` (or the
-    name as a strong standalone token). A silence artifact has no "hey"; a
-    competing wake has "hey" + the wrong name; pure garble has neither — all are
-    rejected. Validated on the user's real fire WAVs: confirms 2/2 genuine
-    "Hey Ruben"/"Hey Ruhm", rejects 14/14 hallucinations + "Hey Jarvis"/"Hey John".
-    The 0.4 fuzzy floor admits the model's honest mishearings of the name
-    ("Ruhm" 0.44, "Ruf" 0.5) but not jarvis(0.36)/john(0.18)/vielen(0.36).
-    """
-    u = unbiased_text.lower()
-    name_l = name.lower().strip()
-    # An unbiased "hey <name-ish>" -> a real wake. ``\W+`` (not just whitespace)
-    # spans the comma Whisper often inserts: "Hey, Ruf." must still match.
-    for mt in re.finditer(r"\b(?:hey|hi|hallo|ok|okay)\W+([a-zäöüß]{2,})", u):
-        if difflib.SequenceMatcher(None, mt.group(1), name_l).ratio() >= 0.4:
-            return True
-    # Or the name as a strong standalone token (the unbiased read dropped "hey").
-    if any(
-        difflib.SequenceMatcher(None, t, name_l).ratio() >= 0.7
-        for t in re.findall(r"[a-zäöüß]+", u)
-    ):
-        return True
-    # No positive support (silence artifact / competing name / garble) -> reject.
-    return False
-
-
 class RollingWhisperWake:
     """Rolling-Window Wake-Detection per Whisper-Transkription."""
 
@@ -144,14 +106,7 @@ class RollingWhisperWake:
         # ``.search(text)`` returning an object with ``.group(0)``.
         pattern: Any = DEFAULT_PATTERN,
         window_s: float = 1.8,        # kürzer = weniger Stille-Anteil = höhere avg-RMS
-        # 2026-06-24: the wake-reaction latency is dominated by the ~1.4s CPU
-        # base-Whisper transcription itself (measured: beam_size has no effect —
-        # the cost is the encoder pass over the ``window_s`` audio, not the
-        # decoder). The poll interval is the only *artificial* idle gap on the
-        # serialized ``sleep -> transcribe`` cadence, so keep it small. 0.3 -> 0.15
-        # trims ~150ms off every cycle for free; it does not add load on a slow
-        # box (there the transcription, not the sleep, paces the loop).
-        poll_interval_s: float = 0.15,  # schnellere Wake-Reaktion (transcribe-bound)
+        poll_interval_s: float = 0.3,  # schnellere Wake-Reaktion
         cooldown_s: float = 5.0,      # längerer Cooldown → weniger Over-Triggering
         sample_rate: int = 16_000,
         # 2026-04-22 (3. Iteration): RMS/Peak-Gates zurueck auf niedrig. Die
@@ -177,15 +132,13 @@ class RollingWhisperWake:
         # chunks: live, cleanly-heard custom-name wakes land at ~0.28-0.52 (real
         # samples 2026-06-23: "Ruben." 0.318, "Hey Ruhm" 0.365, "Hey Ruben" 0.52).
         # A 0.45 floor rejected EVERY genuine wake (142 rejects / 0 accepts in one
-        # evening). That floor was built to suppress *prompt-bias* hallucinations.
-        # The bias is ON again (2026-06-23: build_wake_whisper seeds the wake
-        # phrase as ``initial_prompt`` — without it the base/cpu model heard "Hey
-        # Ruben" as "Space"/"Ego" -> 2-13% recall, with it 83%). The hallucination
-        # guard is therefore NOT the confidence floor but the strict pattern (a
-        # random mis-hear does not match the specific adjacent "hey ruben") plus
-        # the ``max_no_speech_prob``/RMS/peak gates. Keep only a low sanity floor
-        # that still drops a near-zero-confidence transcript (regression: a
-        # 0.2-confidence match must stay rejected).
+        # evening). That floor was built to suppress *prompt-bias* hallucinations,
+        # but the bias is now disabled (build_wake_whisper passes initial_prompt
+        # =None), so the pattern itself is the hallucination guard — a random
+        # mis-hear does not match the specific wake phrase — and the
+        # ``max_no_speech_prob`` gate below still rejects silence/noise. Keep only
+        # a low sanity floor that still drops a near-zero-confidence transcript
+        # (regression: a 0.2-confidence match must stay rejected).
         min_wake_confidence: float = 0.28,
         max_no_speech_prob: float = 0.6,
     ) -> None:
@@ -213,26 +166,6 @@ class RollingWhisperWake:
         self._max_rms = 0.0
         self._last_transcript = ""
         self._last_heartbeat_t = time.time()
-        # Windows dropped pre-Whisper by the rms/peak gate since the last
-        # heartbeat. Surfaced in the heartbeat so a "wake never fires" report is
-        # diagnosable: a high gated-out count means the mic is too quiet (the gate
-        # eats real wakes), as opposed to a low count with many "rejected
-        # unreliable" lines, which points at the model/confidence (forensic
-        # 2026-06-24 — these quiet drops were previously a silent ``continue``).
-        self._gated_out = 0
-
-    def _should_confirm_unbiased(self) -> bool:
-        """Run the unbiased hallucination-confirm pass for this STT instance?
-
-        Only when (a) the STT is biased — no ``initial_prompt`` means nothing can
-        hallucinate the primed phrase — AND (b) the re-read is cheap: a CUDA model
-        re-transcribes a window in ~150 ms, whereas a CPU ``base`` model would add
-        ~1 s to every wake fire. On the slow CPU path the weak recall also makes
-        the bias hallucination rare, so the pass is not worth the latency there.
-        """
-        biased = bool(getattr(self._stt, "_initial_prompt", None))
-        fast = getattr(self._stt, "_device", "cpu") == "cuda"
-        return biased and fast
 
     async def detect(
         self, chunks: AsyncIterator[AudioChunk]
@@ -279,18 +212,16 @@ class RollingWhisperWake:
                         dbfs = 20.0 * np.log10(max(self._max_rms, 1e-12))
                         log.info(
                             "💓 wake-heartbeat: chunks=%d bytes=%dKB "
-                            "max-rms=%.4f (%.1f dBFS) gated-out=%d last-transcript=%r",
+                            "max-rms=%.4f (%.1f dBFS) last-transcript=%r",
                             self._chunks_seen,
                             self._total_bytes // 1024,
                             self._max_rms,
                             dbfs,
-                            self._gated_out,
                             self._last_transcript[:80],
                         )
                         self._chunks_seen = 0
                         self._total_bytes = 0
                         self._max_rms = 0.0
-                        self._gated_out = 0
                         self._last_heartbeat_t = now_hb
 
                     # Ältere Samples rauswerfen wenn Buffer zu lang
@@ -334,14 +265,12 @@ class RollingWhisperWake:
                 # Lautstärke-Check (RMS) — kein Whisper-Call bei Stille
                 rms = float(np.sqrt(np.mean(audio_np * audio_np) + 1e-12))
                 if rms < self._min_rms:
-                    self._gated_out += 1  # observability (surfaced in heartbeat)
                     continue
 
                 # Peak-Gate: bei reinem Rauschen gar nicht erst Whisper bemühen
                 peak = float(np.max(np.abs(audio_np)))
                 if peak < self._min_peak:
                     # Kein Whisper-Call — zu leise für Sprache
-                    self._gated_out += 1  # observability (surfaced in heartbeat)
                     continue
 
                 # Whisper-Call mit Peak-Normalization (dynamischer Gain)
@@ -402,30 +331,6 @@ class RollingWhisperWake:
                 log.info("rolling-whisper: rms=%.4f text=%r", rms, text)
                 m = self._pattern.search(text)
                 if m:
-                    # Unbiased hallucination-confirm (forensic 2026-06-24): on the
-                    # fast GPU path a biased turbo can hallucinate the primed wake
-                    # phrase onto a different "Hey X" ("Hey Jarvis"/"Hey John" fired
-                    # as "Hey Ruben"). Re-read the SAME boosted window WITHOUT the
-                    # bias; drop the hit if the unbiased read names a different wake.
-                    if self._should_confirm_unbiased():
-                        try:
-                            unbiased = await self._stt.transcribe_pcm(
-                                pcm_bytes, language=self._language, use_bias=False
-                            )
-                        except Exception as exc:  # noqa: BLE001
-                            log.warning("unbiased wake-confirm failed: %s", exc)
-                            unbiased = None
-                        if unbiased is not None:
-                            name = m.group(0).split()[-1] if m.group(0).split() else text
-                            if not _wake_confirmed_unbiased(
-                                (unbiased.text or "").strip(), name
-                            ):
-                                log.info(
-                                    "rolling-whisper: rejected hallucinated wake — "
-                                    "biased=%r unbiased=%r name=%r",
-                                    text, (unbiased.text or "").strip(), name,
-                                )
-                                continue
                     last_trigger_t = now
                     yield m.group(0)
         finally:
