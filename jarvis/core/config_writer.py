@@ -427,6 +427,15 @@ def set_mute_music(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _patch_table(path, "ducking", "enabled", bool(enabled))
 
 
+def set_sound_effects(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[ui] sound_effects`` (the global earcon master switch).
+
+    TOML-only (not drift-guarded); the Settings route applies it live by
+    mutating the shared in-memory config the speech pipeline reads.
+    """
+    _patch_table(path, "ui", "sound_effects", bool(enabled))
+
+
 def set_team_proxy(
     enabled: bool,
     url: str,
@@ -865,6 +874,7 @@ def set_brain_provider_model(
     *,
     model: str | None = None,
     deep_model: str | None = None,
+    cu_model: str | None = None,
     path: Path = DEFAULT_CONFIG_FILE,
 ) -> None:
     """Patch ``[brain.providers.<provider>]`` ``model`` / ``deep_model`` in
@@ -891,7 +901,7 @@ def set_brain_provider_model(
     """
     if not path.exists():
         raise FileNotFoundError(f"Config-Datei fehlt: {path}")
-    if model is None and deep_model is None:
+    if model is None and deep_model is None and cu_model is None:
         return
 
     with _WRITE_LOCK:
@@ -919,6 +929,10 @@ def set_brain_provider_model(
             block["model"] = model
         if deep_model is not None:
             block["deep_model"] = deep_model
+        if cu_model is not None:
+            # "" is a meaningful value (UI "use my main model") distinct from
+            # None ("leave unchanged"), so write whatever non-None was given.
+            block["cu_model"] = cu_model
 
         out = tomlkit.dumps(doc)
         if had_bom:
@@ -928,7 +942,9 @@ def set_brain_provider_model(
     # Layer 2 — best-effort drift-soll sync (never raises, never blocks the
     # TOML write). Only the keys actually written are synced so the guard sees
     # zero drift across the block.
-    _sync_brain_provider_model_drift_soll(provider, model=model, deep_model=deep_model)
+    _sync_brain_provider_model_drift_soll(
+        provider, model=model, deep_model=deep_model, cu_model=cu_model
+    )
 
 
 def set_telephony_config(values: dict[str, object], *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -1285,7 +1301,7 @@ def _sync_stt_provider_drift_soll(name: str) -> None:
 
 
 def _sync_brain_provider_model_drift_soll(
-    provider: str, *, model: str | None, deep_model: str | None
+    provider: str, *, model: str | None, deep_model: str | None, cu_model: str | None = None
 ) -> None:
     """Best-effort sync of ``brain.providers.<p>`` model keys into the drift-soll.
 
@@ -1301,6 +1317,8 @@ def _sync_brain_provider_model_drift_soll(
         values["model"] = model
     if deep_model is not None:
         values["deep_model"] = deep_model
+    if cu_model is not None:
+        values["cu_model"] = cu_model
     if not values:
         return
     try:

@@ -567,6 +567,19 @@ class DesktopApp:
         asyncio.set_event_loop(loop)
         self._backend_loop = loop
 
+        # Fire the heavy OpenWakeWord/onnxruntime import NOW, in a daemon thread,
+        # BEFORE the WebServer + brain build + subsystem boot storm grab the
+        # Python import lock. The wake-critical Phase-A warm-up gates
+        # VoiceBootStatus(ready=True) — the UI's "VOICE STARTING…" → listening
+        # flip — on the OWW model load, whose dominant cost is this ~3 s import
+        # (not the ~0.1 s parse). Inside the serve-first boot storm it otherwise
+        # starves on the import lock to 7-24 s. Prefetching it here means Phase A
+        # finds openwakeword already in sys.modules. No-op on a headless VPS /
+        # JARVIS_VOICE=0; never slower than today (worst case Phase A waits on
+        # the same import it would have triggered itself).
+        from jarvis.speech.warmup_prefetch import start_wake_import_prefetch
+        start_wake_import_prefetch()
+
         def _log_unhandled_async(loop_: asyncio.AbstractEventLoop, context: dict) -> None:
             exc = context.get("exception")
             msg = context.get("message", "<no message>")

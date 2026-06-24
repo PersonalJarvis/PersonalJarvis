@@ -268,7 +268,7 @@ async def test_openclaw_background_success_no_summary_speaks_fertig() -> None:
 
     await bus.publish(
         OpenClawBackgroundCompleted(
-            success=True, utterance="x", summary="", error="", duration_s=1.0,
+            success=True, utterance="mach mir das", summary="", error="", duration_s=1.0,
         )
     )
 
@@ -286,7 +286,7 @@ async def test_openclaw_background_failure_speaks_error() -> None:
 
     await bus.publish(
         OpenClawBackgroundCompleted(
-            success=False, utterance="x", summary="",
+            success=False, utterance="mach mir das", summary="",
             error="rate-limit reached", duration_s=2.0,
         )
     )
@@ -323,18 +323,28 @@ async def test_announcement_regression_no_speak_api() -> None:
 
 
 @pytest.mark.asyncio
-async def test_announcement_language_none_passes_none() -> None:
-    """Wenn ``language=None`` im Event, wird auch kein language_code gesetzt."""
+async def test_announcement_language_none_resolves_via_conversation() -> None:
+    """A ``language=None`` event must NOT pass ``language_code=None`` to TTS.
+
+    Forensic 2026-06-23: a None/auto language_code lets the multilingual TTS
+    (Cartesia) fall back to its English voice on German text. The announcement
+    handler now resolves the language through ``_output_language``, so an
+    untagged announcement follows the established conversation language (here
+    German) instead of leaking ``None``.
+    """
+    from types import SimpleNamespace
+
     bus = EventBus()
     tts = FakeTTS()
     player = FakePlayer()
-    _make_pipeline(tts, bus, player)
+    pipe = _make_pipeline(tts, bus, player)
+    pipe._brain = SimpleNamespace(reply_language="auto", conversation_language="de")
 
     await bus.publish(
         AnnouncementRequested(text="test", language=None)
     )
 
-    assert tts.calls == [("test", None)]
+    assert tts.calls == [("test", "de-DE")]
 
 
 @pytest.mark.asyncio
@@ -400,7 +410,7 @@ async def test_openclaw_completion_signal_does_speak_with_summary() -> None:
     await bus.publish(
         OpenClawBackgroundCompleted(
             success=True,
-            utterance="baue etwas",
+            utterance="baue mir etwas",
             summary="Fertig gebaut",
             duration_s=1.2,
         )

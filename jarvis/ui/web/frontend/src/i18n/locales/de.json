@@ -81,6 +81,12 @@
       "description": "Andere Apps (Spotify, Browser …) werden stumm, während du mit deinem Assistenten sprichst, und danach wiederhergestellt. Die eigene Stimme des Assistenten wird nie gemutet.",
       "enabled_toast": "Musik wird stumm, während du mit deinem Assistenten sprichst.",
       "disabled_toast": "Musik-Stummschaltung deaktiviert."
+    },
+    "sound_effects": {
+      "title": "Soundeffekte",
+      "description": "Spielt die kurzen Töne von Jarvis ab — den Piepton beim Wake-Word, den Auflege-Ton und den Hochfahr-Ton. Aus: lautlos; die gesprochene Stimme ist nie betroffen.",
+      "enabled_toast": "Soundeffekte an.",
+      "disabled_toast": "Soundeffekte stummgeschaltet."
     }
   },
   "socials": {
@@ -823,6 +829,13 @@
     "use_custom": "\"{0}\" verwenden",
     "no_models": "Keine Modelle gefunden",
     "loading": "Lädt…"
+  },
+  "apikeys_cu_model": {
+    "heading": "Modell für Computer-Use",
+    "use_main": "Mein Hauptmodell verwenden",
+    "using_main": "Verwendet dein Hauptmodell",
+    "effective": "Computer-Use nutzt",
+    "cleared": "Computer-Use-Modell auf dein Hauptmodell zurückgesetzt"
   },
   "settings_view": {
     "silence_window": {

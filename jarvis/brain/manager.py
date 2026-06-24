@@ -1708,6 +1708,23 @@ class BrainManager:
             or get_tier_default_model("deep", name)
         )
 
+    def _cu_model(self, name: str) -> str | None:
+        """Model the Computer-Use loop uses for ``name`` (Phase 3).
+
+        Precedence: the pinned ``cu_model`` -> the provider's main ``model`` ->
+        the router-tier default. Provider-agnostic (AP-21): no provider name or
+        model id is special-cased. When nothing is pinned this equals the model
+        chat already uses, so CU behaviour is unchanged until a CU model is set.
+        """
+        cfg = self._provider_cfg(name)
+        if cfg is None:
+            return get_tier_default_model("router", name)
+        return (
+            getattr(cfg, "cu_model", None)
+            or getattr(cfg, "model", None)
+            or get_tier_default_model("router", name)
+        )
+
     def _get_brain(self, name: str, model: str | None = None) -> Brain:
         """Retrieves a Brain instance from the cache, or builds a new one."""
         key = (name, model)

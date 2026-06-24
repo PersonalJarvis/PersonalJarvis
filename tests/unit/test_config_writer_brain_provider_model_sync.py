@@ -174,3 +174,40 @@ def test_noop_when_both_none(
 
     assert sample_toml.read_text(encoding="utf-8") == before_toml
     assert sample_soll.read_text(encoding="utf-8") == before_soll
+
+
+def test_writes_cu_model_to_toml_and_soll(
+    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Phase 3: the per-provider Computer-Use model persists like model/deep_model."""
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)
+    monkeypatch.setattr(config_writer, "_set_user_env_var", lambda name, value: None)
+
+    config_writer.set_brain_provider_model(
+        "gemini", cu_model="gemini-3.1-pro-preview", path=sample_toml,
+    )
+
+    toml_raw = sample_toml.read_text(encoding="utf-8")
+    assert 'cu_model = "gemini-3.1-pro-preview"' in toml_raw
+    # Untouched sibling keys remain.
+    assert 'model = "gemini-2.5-flash"' in toml_raw
+
+    soll = json.loads(sample_soll.read_text(encoding="utf-8"))
+    assert soll["brain.providers.gemini"]["cu_model"] == "gemini-3.1-pro-preview"
+    # Only cu_model synced — model/deep_model in the soll block stay as they were.
+    assert soll["brain.providers.gemini"]["model"] == "gemini-2.5-flash"
+    assert soll["brain.providers.gemini"]["deep_model"] == "gemini-2.5-pro"
+
+
+def test_cu_model_cleared_with_empty_string(
+    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty cu_model writes "" (UI 'use my main model') — distinct from None
+    which means 'leave unchanged'."""
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)
+    monkeypatch.setattr(config_writer, "_set_user_env_var", lambda name, value: None)
+
+    config_writer.set_brain_provider_model("gemini", cu_model="", path=sample_toml)
+
+    toml_raw = sample_toml.read_text(encoding="utf-8")
+    assert 'cu_model = ""' in toml_raw

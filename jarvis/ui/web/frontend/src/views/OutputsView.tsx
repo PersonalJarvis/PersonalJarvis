@@ -536,10 +536,18 @@ function ArtifactRow({
   const preferred = usePreferredOpener();
   const setPreferred = useSetPreferredOpener();
 
+  const openWithOpener = (opener: string) => {
+    if (opener === "browser" && openUrl) {
+      window.open(openUrl, "_blank", "noopener,noreferrer");
+      return;
+    }
+    void openArtifactWith(slug, file.path, opener).catch(() => {});
+  };
+
   // Open the file with a specific app (desktop). Remembering persists the
   // choice so the next "Open" click skips the chooser.
   const pickOpener = (opener: string, remember: boolean) => {
-    void openArtifactWith(slug, file.path, opener).catch(() => {});
+    openWithOpener(opener);
     if (remember) setPreferred.mutate(opener);
     setChooserOpen(false);
   };
@@ -553,7 +561,7 @@ function ArtifactRow({
     }
     const pref = preferred.data ?? "";
     if (pref) {
-      void openArtifactWith(slug, file.path, pref).catch(() => {});
+      openWithOpener(pref);
     } else {
       setChooserOpen(true); // first time: ask which app
     }
