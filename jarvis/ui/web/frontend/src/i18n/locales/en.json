@@ -1933,8 +1933,24 @@
   },
   "skill_create_dialog": {
     "title": "Create skill",
-    "rebuild_notice_a": "This feature is being rebuilt. Until then, please drop skills directly as YAML files into",
-    "rebuild_notice_b": "yourself."
+    "subtitle": "Describe what the skill should do — draft it with AI or fill the form yourself.",
+    "intent_label": "What should this skill do?",
+    "intent_placeholder": "e.g. \"Summarize my open browser tabs\", \"Start my morning routine\"…",
+    "draft_with_ai": "Draft with AI",
+    "brain_used": "AI draft applied — review and edit below.",
+    "brain_unavailable": "AI unavailable — filled a starter template you can edit.",
+    "name_label": "Name",
+    "name_placeholder": "Skill name",
+    "category_label": "Category",
+    "description_label": "Description",
+    "description_placeholder": "One sentence about what it does",
+    "body_label": "Instructions (Markdown)",
+    "body_placeholder": "## My Skill\n\nWhat the assistant should do…",
+    "trigger_label": "Voice trigger (optional)",
+    "trigger_placeholder": "e.g. start the morning routine",
+    "create": "Create skill",
+    "create_error": "Could not create the skill",
+    "name_required": "Please enter a name with at least 3 characters."
   },
   "missions_view": {
     "active": "active",

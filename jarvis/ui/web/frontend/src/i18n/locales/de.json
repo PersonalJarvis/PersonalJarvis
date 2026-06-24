@@ -1933,8 +1933,24 @@
   },
   "skill_create_dialog": {
     "title": "Skill erstellen",
-    "rebuild_notice_a": "Diese Funktion wird gerade neu aufgebaut. Bis dahin Skills bitte direkt als YAML-Dateien in",
-    "rebuild_notice_b": "ablegen."
+    "subtitle": "Beschreibe, was der Skill tun soll — per KI entwerfen oder das Formular selbst ausfüllen.",
+    "intent_label": "Was soll dieser Skill tun?",
+    "intent_placeholder": "z. B. „Meine offenen Browser-Tabs zusammenfassen“, „Meine Morgenroutine starten“…",
+    "draft_with_ai": "Mit KI entwerfen",
+    "brain_used": "KI-Entwurf übernommen — unten prüfen und anpassen.",
+    "brain_unavailable": "KI nicht verfügbar — eine Vorlage zum Bearbeiten eingefügt.",
+    "name_label": "Name",
+    "name_placeholder": "Skill-Name",
+    "category_label": "Kategorie",
+    "description_label": "Beschreibung",
+    "description_placeholder": "Ein Satz dazu, was er macht",
+    "body_label": "Anweisungen (Markdown)",
+    "body_placeholder": "## Mein Skill\n\nWas der Assistent tun soll…",
+    "trigger_label": "Sprach-Trigger (optional)",
+    "trigger_placeholder": "z. B. starte die Morgenroutine",
+    "create": "Skill erstellen",
+    "create_error": "Skill konnte nicht erstellt werden",
+    "name_required": "Bitte einen Namen mit mindestens 3 Zeichen eingeben."
   },
   "missions_view": {
     "active": "aktiv",

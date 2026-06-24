@@ -349,7 +349,8 @@ async def create_skill_draft(
     reg = _require_registry(request)
     brain = getattr(request.app.state, "brain", None)
     bus = getattr(request.app.state, "bus", None)
-    service = SkillCreatorService(brain=brain, registry=reg, bus=bus)
+    config = getattr(request.app.state, "config", None)
+    service = SkillCreatorService(brain=brain, registry=reg, bus=bus, config=config)
     result = await service.draft(
         SkillCreatorInput(
             intent=body.intent,
@@ -379,7 +380,8 @@ async def refine_skill_draft(
     reg = _require_registry(request)
     brain = getattr(request.app.state, "brain", None)
     bus = getattr(request.app.state, "bus", None)
-    service = SkillCreatorService(brain=brain, registry=reg, bus=bus)
+    config = getattr(request.app.state, "config", None)
+    service = SkillCreatorService(brain=brain, registry=reg, bus=bus, config=config)
     result = await service.refine(
         SkillCreatorInput(
             intent=body.intent,
@@ -430,7 +432,8 @@ async def commit_skill_draft(
     reg = _require_registry(request)
     brain = getattr(request.app.state, "brain", None)
     bus = getattr(request.app.state, "bus", None)
-    service = SkillCreatorService(brain=brain, registry=reg, bus=bus)
+    config = getattr(request.app.state, "config", None)
+    service = SkillCreatorService(brain=brain, registry=reg, bus=bus, config=config)
     try:
         created = await service.commit(body.draft)
     except SkillAuthoringError as exc:
