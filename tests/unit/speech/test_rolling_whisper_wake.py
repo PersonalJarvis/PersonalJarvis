@@ -330,6 +330,85 @@ async def test_detect_rejects_matching_high_no_speech_transcript() -> None:
             pass
 
 
+def test_default_poll_interval_is_responsive() -> None:
+    """The poll cadence sets the idle gap before a fresh window is transcribed.
+
+    Forensic 2026-06-24: the wake-reaction latency is dominated by the ~1.4s CPU
+    base-Whisper transcription itself (beam_size has no measurable effect — the
+    cost is the encoder pass over the window, not the decoder). The poll interval
+    is the only *artificial* idle gap on the cadence, so keep it small. This locks
+    in the faster default and guards against a regression back to the sluggish
+    0.3-0.5s cadence.
+    """
+    wake = RollingWhisperWake(_PhraseSTT("hi"), save_debug_wavs=False)
+    assert wake._poll_interval_s <= 0.15
+
+
+async def test_gated_out_windows_are_counted_for_observability() -> None:
+    """A too-quiet window is dropped *before* Whisper — and must be observable.
+
+    Forensic 2026-06-24: the rms/peak gate skips the transcription with a bare
+    ``continue`` and no log, so a user whose mic is too quiet sees "it never
+    fires" with zero evidence in the log (both deep-dive passes flagged this as
+    the blind spot). The drop must bump a counter the heartbeat can surface, so a
+    future "doesn't fire" turn is diagnosable (high gated-out = mic too quiet vs.
+    low gated-out + high rejects = model/confidence).
+    """
+    stt = _PhraseSTT("should not be called")
+    wake = RollingWhisperWake(
+        stt,
+        pattern=_NeverMatch(),
+        poll_interval_s=0.01,
+        cooldown_s=0.0,
+        save_debug_wavs=False,
+        # Floors well above the (near-silent) quiet chunks below, so every poll
+        # is gated out pre-Whisper.
+        min_rms=0.5,
+        min_peak=0.5,
+    )
+
+    src: asyncio.Queue = asyncio.Queue()
+    stop_feed = asyncio.Event()
+
+    async def _quiet_feeder() -> None:
+        # ~ -60 dBFS noise: passes the >=1s buffer fill, fails the rms/peak gate.
+        i = 0
+        while not stop_feed.is_set():
+            arr = np.full(1600, 30, dtype=np.int16)  # tiny amplitude
+            await src.put(
+                AudioChunk(pcm=arr.tobytes(), sample_rate=16000, timestamp_ns=i)
+            )
+            i += 1
+            await asyncio.sleep(0.002)
+
+    async def _iter():
+        while True:
+            chunk = await src.get()
+            if chunk is None:
+                return
+            yield chunk
+
+    async def _drive() -> None:
+        async for _kw in wake.detect(_iter()):
+            pass
+
+    feeder = asyncio.create_task(_quiet_feeder())
+    detect_task = asyncio.create_task(_drive())
+    try:
+        await asyncio.sleep(0.4)
+        assert wake._gated_out >= 1, "quiet windows were not counted as gated-out"
+    finally:
+        stop_feed.set()
+        await src.put(None)
+        feeder.cancel()
+        detect_task.cancel()
+        for t in (feeder, detect_task):
+            try:
+                await t
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                pass
+
+
 async def test_consumer_keeps_draining_while_transcription_is_in_flight() -> None:
     stt = _GatedSTT()
     wake = RollingWhisperWake(

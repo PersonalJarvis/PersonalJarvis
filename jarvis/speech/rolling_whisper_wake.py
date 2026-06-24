@@ -106,7 +106,14 @@ class RollingWhisperWake:
         # ``.search(text)`` returning an object with ``.group(0)``.
         pattern: Any = DEFAULT_PATTERN,
         window_s: float = 1.8,        # kürzer = weniger Stille-Anteil = höhere avg-RMS
-        poll_interval_s: float = 0.3,  # schnellere Wake-Reaktion
+        # 2026-06-24: the wake-reaction latency is dominated by the ~1.4s CPU
+        # base-Whisper transcription itself (measured: beam_size has no effect —
+        # the cost is the encoder pass over the ``window_s`` audio, not the
+        # decoder). The poll interval is the only *artificial* idle gap on the
+        # serialized ``sleep -> transcribe`` cadence, so keep it small. 0.3 -> 0.15
+        # trims ~150ms off every cycle for free; it does not add load on a slow
+        # box (there the transcription, not the sleep, paces the loop).
+        poll_interval_s: float = 0.15,  # schnellere Wake-Reaktion (transcribe-bound)
         cooldown_s: float = 5.0,      # längerer Cooldown → weniger Over-Triggering
         sample_rate: int = 16_000,
         # 2026-04-22 (3. Iteration): RMS/Peak-Gates zurueck auf niedrig. Die
@@ -132,13 +139,15 @@ class RollingWhisperWake:
         # chunks: live, cleanly-heard custom-name wakes land at ~0.28-0.52 (real
         # samples 2026-06-23: "Ruben." 0.318, "Hey Ruhm" 0.365, "Hey Ruben" 0.52).
         # A 0.45 floor rejected EVERY genuine wake (142 rejects / 0 accepts in one
-        # evening). That floor was built to suppress *prompt-bias* hallucinations,
-        # but the bias is now disabled (build_wake_whisper passes initial_prompt
-        # =None), so the pattern itself is the hallucination guard — a random
-        # mis-hear does not match the specific wake phrase — and the
-        # ``max_no_speech_prob`` gate below still rejects silence/noise. Keep only
-        # a low sanity floor that still drops a near-zero-confidence transcript
-        # (regression: a 0.2-confidence match must stay rejected).
+        # evening). That floor was built to suppress *prompt-bias* hallucinations.
+        # The bias is ON again (2026-06-23: build_wake_whisper seeds the wake
+        # phrase as ``initial_prompt`` — without it the base/cpu model heard "Hey
+        # Ruben" as "Space"/"Ego" -> 2-13% recall, with it 83%). The hallucination
+        # guard is therefore NOT the confidence floor but the strict pattern (a
+        # random mis-hear does not match the specific adjacent "hey ruben") plus
+        # the ``max_no_speech_prob``/RMS/peak gates. Keep only a low sanity floor
+        # that still drops a near-zero-confidence transcript (regression: a
+        # 0.2-confidence match must stay rejected).
         min_wake_confidence: float = 0.28,
         max_no_speech_prob: float = 0.6,
     ) -> None:
@@ -166,6 +175,13 @@ class RollingWhisperWake:
         self._max_rms = 0.0
         self._last_transcript = ""
         self._last_heartbeat_t = time.time()
+        # Windows dropped pre-Whisper by the rms/peak gate since the last
+        # heartbeat. Surfaced in the heartbeat so a "wake never fires" report is
+        # diagnosable: a high gated-out count means the mic is too quiet (the gate
+        # eats real wakes), as opposed to a low count with many "rejected
+        # unreliable" lines, which points at the model/confidence (forensic
+        # 2026-06-24 — these quiet drops were previously a silent ``continue``).
+        self._gated_out = 0
 
     async def detect(
         self, chunks: AsyncIterator[AudioChunk]
@@ -212,16 +228,18 @@ class RollingWhisperWake:
                         dbfs = 20.0 * np.log10(max(self._max_rms, 1e-12))
                         log.info(
                             "💓 wake-heartbeat: chunks=%d bytes=%dKB "
-                            "max-rms=%.4f (%.1f dBFS) last-transcript=%r",
+                            "max-rms=%.4f (%.1f dBFS) gated-out=%d last-transcript=%r",
                             self._chunks_seen,
                             self._total_bytes // 1024,
                             self._max_rms,
                             dbfs,
+                            self._gated_out,
                             self._last_transcript[:80],
                         )
                         self._chunks_seen = 0
                         self._total_bytes = 0
                         self._max_rms = 0.0
+                        self._gated_out = 0
                         self._last_heartbeat_t = now_hb
 
                     # Ältere Samples rauswerfen wenn Buffer zu lang
@@ -265,12 +283,14 @@ class RollingWhisperWake:
                 # Lautstärke-Check (RMS) — kein Whisper-Call bei Stille
                 rms = float(np.sqrt(np.mean(audio_np * audio_np) + 1e-12))
                 if rms < self._min_rms:
+                    self._gated_out += 1  # observability (surfaced in heartbeat)
                     continue
 
                 # Peak-Gate: bei reinem Rauschen gar nicht erst Whisper bemühen
                 peak = float(np.max(np.abs(audio_np)))
                 if peak < self._min_peak:
                     # Kein Whisper-Call — zu leise für Sprache
+                    self._gated_out += 1  # observability (surfaced in heartbeat)
                     continue
 
                 # Whisper-Call mit Peak-Normalization (dynamischer Gain)
