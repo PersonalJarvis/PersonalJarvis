@@ -143,11 +143,24 @@ class TelegramChannel:
                 "Token von @BotFather (https://t.me/BotFather) eintragen."
             )
 
-        try:
+        # Import python-telegram-bot off the event loop. It is a heavy import
+        # (~0.8 s isolated, more under the boot import-lock storm), and this
+        # start() runs as a boot-time channel-bootstrap task that shares the
+        # loop with the voice warm-up. Importing inline blocked the loop and
+        # delayed VoiceBootStatus(ready=True) by ~the import time; moving it to
+        # a thread keeps the loop free so the "VOICE STARTING…" spinner clears
+        # sooner. The module lands in sys.modules either way.
+        def _import_telegram_ext() -> tuple[Any, Any, Any]:
             from telegram.ext import (  # noqa: WPS433
                 ApplicationBuilder,
                 MessageHandler,
                 filters,
+            )
+            return ApplicationBuilder, MessageHandler, filters
+
+        try:
+            ApplicationBuilder, MessageHandler, filters = await asyncio.to_thread(
+                _import_telegram_ext
             )
         except ImportError as exc:
             raise ChannelStartError(
