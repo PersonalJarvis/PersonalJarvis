@@ -80,6 +80,21 @@ def slugify(name: str) -> str:
     return _SLUG_STRIP_RE.sub("-", name.strip().lower()).strip("-")
 
 
+def body_has_instructions(body: str) -> bool:
+    """True when the body carries real instructions, not just a heading/blank.
+
+    The Hallo-Hallo-Hallo forensic: a skill whose body is only ``## Title``
+    (the default the form fills in when the instructions field is left empty)
+    is functionless — ``run-skill`` loads an empty body and the brain does
+    nothing. A usable skill must have at least one non-heading, non-blank line.
+    """
+    for line in body.strip().splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            return True
+    return False
+
+
 def _build_frontmatter(req: SkillCreateRequest) -> dict[str, Any]:
     """Assemble the YAML frontmatter dict, omitting empty optional fields.
 
@@ -179,6 +194,16 @@ class SkillAuthoringService:
                 f"A skill folder '{slug}' already exists.", status=409
             )
 
+        # A skill without instructions in its body is functionless (the
+        # Hallo-Hallo-Hallo forensic). Refuse it here so no path — UI form,
+        # REST, or AI-commit — can persist a dead skill.
+        if not body_has_instructions(req.body):
+            raise SkillAuthoringError(
+                "A skill needs instructions in its body — describe what it "
+                "should do when it runs.",
+                status=400,
+            )
+
         rendered = render_skill_md(req)
 
         # Atomic write: temp file in the (newly created) slug dir, then replace.
@@ -221,6 +246,7 @@ __all__ = [
     "SkillAuthoringError",
     "SkillAuthoringService",
     "SkillCreateRequest",
+    "body_has_instructions",
     "render_skill_md",
     "slugify",
 ]

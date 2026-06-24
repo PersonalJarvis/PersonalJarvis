@@ -1950,7 +1950,8 @@
     "trigger_placeholder": "p. ej. inicia la rutina matutina",
     "create": "Crear habilidad",
     "create_error": "No se pudo crear la habilidad",
-    "name_required": "Introduce un nombre con al menos 3 caracteres."
+    "name_required": "Introduce un nombre con al menos 3 caracteres.",
+    "needs_instructions": "Describe qué debe hacer la habilidad: escríbelo en el campo de arriba o en las instrucciones de abajo."
   },
   "missions_view": {
     "active": "activas",

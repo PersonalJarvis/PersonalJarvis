@@ -18,6 +18,18 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useT } from "@/i18n";
 import { useCreateSkill, useDraftSkill } from "@/hooks/useSkills";
 
+/**
+ * A body carries real instructions only if it has at least one non-heading,
+ * non-blank line. Mirrors the backend guard (`body_has_instructions`) so the
+ * form refuses a functionless skill before the round trip — the root cause of
+ * the empty "Hallo Hallo Hallo" skill.
+ */
+function bodyHasInstructions(body: string): boolean {
+  return body
+    .split("\n")
+    .some((line) => line.trim() !== "" && !line.trim().startsWith("#"));
+}
+
 export function SkillCreateDialog({
   open,
   onClose,
@@ -93,12 +105,29 @@ export function SkillCreateDialog({
       setError(t("skill_create_dialog.name_required"));
       return;
     }
+    // The intent describes what the skill should do. If the user typed it but
+    // never drafted/filled the instructions, fold it into the body instead of
+    // losing it — that was the empty-skill trap. Then require real instructions
+    // so a functionless skill can never be created.
+    let finalBody = body.trim();
+    if (!bodyHasInstructions(finalBody) && intent.trim()) {
+      finalBody = `## ${name.trim()}\n\n${intent.trim()}\n`;
+    }
+    if (!bodyHasInstructions(finalBody)) {
+      setError(t("skill_create_dialog.needs_instructions"));
+      return;
+    }
+    // Backfill the description from the intent so the brain can discover the
+    // skill (an empty description makes it effectively invisible in the
+    // AVAILABLE SKILLS listing).
+    const finalDescription =
+      description.trim() || intent.trim().slice(0, 200);
     try {
       const detail = await createSkill.mutateAsync({
         name: name.trim(),
-        description: description.trim(),
+        description: finalDescription,
         category: category.trim() || "general",
-        body: body.trim() ? body : `## ${name.trim()}\n`,
+        body: finalBody,
         triggers: trigger.trim()
           ? [{ type: "voice", pattern: trigger.trim() }]
           : [],

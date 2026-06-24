@@ -27,6 +27,7 @@ from .service import (
     SkillAuthoringError,
     SkillAuthoringService,
     SkillCreateRequest,
+    body_has_instructions,
     render_skill_md,
     slugify,
 )
@@ -70,6 +71,7 @@ __all__ = [
     "SkillDraft",
     "SlugError",
     "UnsafeSkillError",
+    "body_has_instructions",
     "render_skill_md",
     "safe_lint_skill_body",
     "slugify",
