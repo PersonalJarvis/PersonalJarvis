@@ -19,6 +19,7 @@ import pytest
 
 import jarvis.missions.kontrollierer.deliverable as deliv_mod
 import jarvis.missions.kontrollierer.orchestrator as orch_mod
+from jarvis.missions.events import MissionApproved
 from jarvis.missions.kontrollierer.orchestrator import Kontrollierer
 
 _LONG_ANSWER = (
@@ -122,6 +123,45 @@ async def test_approve_no_duplicate_report_when_file_deliverable_exists(
 
     assert not list(files.glob("*.md")), "must not add a report next to a real file"
     assert (files / "landing.html").is_file()
+
+
+def _approved_event(store: _FakeStore) -> MissionApproved:
+    """The MissionApproved payload the approve path published (last one)."""
+    for env in reversed(store.published):
+        payload = getattr(env, "payload", None)
+        if isinstance(payload, MissionApproved):
+            return payload
+    raise AssertionError("no MissionApproved event was published")
+
+
+async def test_approve_builds_english_summary_en_for_file_deliverable(
+    orch: Kontrollierer,
+) -> None:
+    """summary_en must be genuinely English (de/en diverge) for a file mission.
+
+    Forensic 2026-06-24: the announcer picks summary_en for an English-dispatched
+    mission, but the orchestrator recycled the German-only deliverable summary
+    into BOTH fields, so an English request read its completion confirmation back
+    in German. With no worker answer (answer_summary empty) the summary comes
+    straight from the deliverable builders — the deterministic German leak.
+    """
+    mission_id = "019edf4c-f827dddd"
+    mdir = _mission_dir(orch, mission_id)
+    files = mdir / "tasks" / "019edf4c-task1" / "artifacts" / "files"
+    files.mkdir(parents=True, exist_ok=True)
+    (files / "landing.html").write_text("<html/>", encoding="utf-8")
+    # No _task_answers → answer_summary is empty → the deliverable builders run.
+
+    await orch._approve_mission(mission_id, _FakePlan(), prompt="build a landing page")
+
+    approved = _approved_event(orch._manager.store)  # type: ignore[attr-defined]
+    assert "landing.html" in approved.summary_en
+    assert "saved" in approved.summary_en
+    assert "Fertig" not in approved.summary_en and "gespeichert" not in approved.summary_en, (
+        f"summary_en must be English, got {approved.summary_en!r}"
+    )
+    # The German field still speaks German — the two diverge as designed.
+    assert "Fertig" in approved.summary_de and "Datei" in approved.summary_de
 
 
 async def test_approve_mirrors_materialised_report_to_user_folder(
