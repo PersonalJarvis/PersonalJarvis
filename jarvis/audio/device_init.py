@@ -26,11 +26,16 @@ installed) and never raises — audio robustness must never break boot.
 from __future__ import annotations
 
 import contextlib
+import threading
 import time
 from collections.abc import Callable
 from typing import Any
 
-__all__ = ["wait_for_stable_audio_devices"]
+__all__ = [
+    "wait_for_stable_audio_devices",
+    "start_audio_device_prefetch",
+    "get_prefetched_audio_result",
+]
 
 
 def _get_sd() -> Any | None:
@@ -122,3 +127,51 @@ def wait_for_stable_audio_devices(
                 "waited_s": round(now - start, 3),
             }
         sleep(poll_interval_s)
+
+
+# --- Boot-path prefetch ---------------------------------------------------
+# The device settle is a blocking ~1.5 s poll (``stable_window_s``). On the
+# desktop boot it sits directly on the path to ``VoiceBootStatus(ready=True)``
+# (the "VOICE STARTING…" spinner). The launcher can start it eagerly in a daemon
+# thread at process start so it runs concurrently with the brain build +
+# ``server.start()``; by the time Phase-A warm-up needs it, it has already
+# settled and the warm-up reuses the result instead of paying the wait again.
+_PREFETCH_EVENT = threading.Event()
+_PREFETCH_RESULT: dict[str, Any] | None = None
+
+
+def start_audio_device_prefetch() -> threading.Thread | None:
+    """Run :func:`wait_for_stable_audio_devices` eagerly in a daemon thread.
+
+    Returns ``None`` when sounddevice is unavailable (headless VPS / no
+    ``[desktop]`` extra) — nothing to settle. Never raises; audio robustness
+    must not break boot. The result is published for
+    :func:`get_prefetched_audio_result`.
+    """
+    if _get_sd() is None:
+        return None
+
+    def _run() -> None:
+        global _PREFETCH_RESULT
+        try:
+            _PREFETCH_RESULT = wait_for_stable_audio_devices()
+        except Exception:  # noqa: BLE001 — never break boot
+            _PREFETCH_RESULT = None
+        finally:
+            _PREFETCH_EVENT.set()
+
+    thread = threading.Thread(target=_run, name="audio-device-prefetch", daemon=True)
+    thread.start()
+    return thread
+
+
+def get_prefetched_audio_result() -> dict[str, Any] | None:
+    """Return the prefetch result iff it has already settled, else ``None``.
+
+    ``None`` means no prefetch was started OR it is still polling — the caller
+    then falls back to its own :func:`wait_for_stable_audio_devices` call (i.e.
+    today's behavior). Monotonically safe: it can only help, never slow boot.
+    """
+    if _PREFETCH_EVENT.is_set():
+        return _PREFETCH_RESULT
+    return None

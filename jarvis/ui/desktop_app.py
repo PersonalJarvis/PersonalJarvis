@@ -580,6 +580,15 @@ class DesktopApp:
         from jarvis.speech.warmup_prefetch import start_wake_import_prefetch
         start_wake_import_prefetch()
 
+        # Same idea for the audio-device settle: the BUG-014 guard
+        # (wait_for_stable_audio_devices) is a blocking ~1.5 s poll that gates
+        # the voice Phase-A warm-up. Start it NOW in a daemon thread so it
+        # settles concurrently with the brain build + server.start(); Phase A
+        # then reuses the result instead of re-paying the wait. No-op on a
+        # headless host without sounddevice.
+        from jarvis.audio.device_init import start_audio_device_prefetch
+        start_audio_device_prefetch()
+
         def _log_unhandled_async(loop_: asyncio.AbstractEventLoop, context: dict) -> None:
             exc = context.get("exception")
             msg = context.get("message", "<no message>")

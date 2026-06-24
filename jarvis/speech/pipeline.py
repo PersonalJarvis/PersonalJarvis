@@ -3377,7 +3377,16 @@ class SpeechPipeline:
         stale/silent device. Fully guarded — must never block or break boot.
         """
         try:
-            info = await asyncio.to_thread(wait_for_stable_audio_devices)
+            # If the launcher prefetched the (blocking ~1.5 s) device settle in a
+            # daemon thread at boot, reuse its already-settled result instead of
+            # re-paying the poll wait on the wake-critical path. Falls back to a
+            # fresh settle when no prefetch ran / it is still polling — identical
+            # to today's behavior, so this can only help, never slow boot.
+            from jarvis.audio.device_init import get_prefetched_audio_result
+
+            info = get_prefetched_audio_result()
+            if info is None:
+                info = await asyncio.to_thread(wait_for_stable_audio_devices)
             log.info(
                 "Audio-Geräte stabilisiert: %d Geräte (stable=%s, %.1fs, %d reinit).",
                 info.get("device_count", 0),
