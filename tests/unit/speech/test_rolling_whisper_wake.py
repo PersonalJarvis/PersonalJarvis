@@ -35,20 +35,25 @@ def test_confirm_accepts_unbiased_read_that_still_says_the_name() -> None:
 
 
 def test_confirm_accepts_mumbled_unbiased_near_name() -> None:
-    # A real but quiet "Hey Ruben" the unbiased model heard as "Hey Ruf"
-    # (ratio 0.5 vs "ruben") must still confirm — it is not a competing name.
+    # Real but quiet "Hey Ruben" the unbiased model heard as "Hey Ruf"/"Hey Ruhm"
+    # (ratio 0.5 / 0.44 vs "ruben") must still confirm — hey + a name-ish token.
     assert _wake_confirmed_unbiased("Hey, Ruf.", "ruben") is True
+    assert _wake_confirmed_unbiased("Hey Ruhm.", "ruben") is True
 
 
-def test_confirm_accepts_garbled_unbiased_with_no_competing_name() -> None:
-    # A quiet real wake the unbiased model garbled ("Drogen") names nothing else,
-    # so it gets the benefit of the doubt (recall over a false reject).
-    assert _wake_confirmed_unbiased("Drogen.", "ruben") is True
+def test_confirm_rejects_silence_artifact_hallucination() -> None:
+    # The bias turns Whisper's quiet-audio artifact ("Vielen Dank."/"Ja.") into the
+    # primed wake; the unbiased read positively supports nothing -> reject. This was
+    # 14/16 of the live false fires the old benefit-of-the-doubt rule let through.
+    assert _wake_confirmed_unbiased("Vielen Dank.", "ruben") is False
+    assert _wake_confirmed_unbiased("Ja.", "ruben") is False
+    assert _wake_confirmed_unbiased("Löffel.", "ruben") is False
+    assert _wake_confirmed_unbiased("", "ruben") is False
 
 
 def test_confirm_rejects_unbiased_competing_hey_name() -> None:
     # "Hey Jarvis" / "Hey John" spoken -> biased hallucinates "Hey Ruben"; the
-    # unbiased read names the real wake -> reject.
+    # unbiased read names a different wake (wrong name after "hey") -> reject.
     assert _wake_confirmed_unbiased("Hey Jarvis", "ruben") is False
     assert _wake_confirmed_unbiased("Hey John.", "ruben") is False
     assert _wake_confirmed_unbiased("Hallo Computer", "ruben") is False

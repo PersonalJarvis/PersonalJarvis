@@ -98,33 +98,40 @@ def _reliable_wake_transcript(
 
 
 def _wake_confirmed_unbiased(unbiased_text: str, name: str) -> bool:
-    """Reject a biased-Whisper wake that an UNBIASED re-read contradicts.
+    """Confirm a wake ONLY if an UNBIASED re-read POSITIVELY supports it.
 
-    A strong model seeded with ``initial_prompt="Hey Ruben"`` can hallucinate the
-    primed phrase onto a different "Hey X" (forensic 2026-06-24: live "Hey Jarvis"
-    / "Hey John" fired as "Hey Ruben"). Re-transcribed WITHOUT the bias, a real
-    wake still resembles ``name`` (or is too garbled to name anything else),
-    whereas a hallucination reveals the actually-spoken different "hey <word>".
+    The ``initial_prompt="Hey Ruben"`` bias is needed for recall (a strong model
+    still mishears the quiet proper noun without it) but makes that model
+    hallucinate the primed phrase on two things: (1) quiet noise / silence, where
+    Whisper's own artifact is "Vielen Dank."/"Ja." and the bias turns it into the
+    wake; (2) a different spoken wake ("Hey Jarvis"). Forensic 2026-06-24: 14 of
+    16 live fires were such hallucinations — and an earlier "reject only on a
+    competing name, else give the benefit of the doubt" rule let every silence
+    artifact ("Vielen Dank", which names nothing) straight through.
 
-    Reject ONLY on that positive competing-name signal, so recall is preserved:
-    a real but mumbled wake whose unbiased read is garbled (e.g. "Drogen" for a
-    quiet "Hey Ruben") carries no competing name and is confirmed. Empirically
-    (the user's real clips): confirms 3/3 genuine "Hey Ruben" + rejects
-    "Hey Jarvis"/"Hey John". The 0.5 fuzzy floor admits "Ruf" (a real mumbled
-    "Ruben", ratio 0.5) while still rejecting jarvis/john/thomas/alexa (all <0.5).
+    So require POSITIVE evidence in the unbiased read: a ``hey <name-ish>`` (or the
+    name as a strong standalone token). A silence artifact has no "hey"; a
+    competing wake has "hey" + the wrong name; pure garble has neither — all are
+    rejected. Validated on the user's real fire WAVs: confirms 2/2 genuine
+    "Hey Ruben"/"Hey Ruhm", rejects 14/14 hallucinations + "Hey Jarvis"/"Hey John".
+    The 0.4 fuzzy floor admits the model's honest mishearings of the name
+    ("Ruhm" 0.44, "Ruf" 0.5) but not jarvis(0.36)/john(0.18)/vielen(0.36).
     """
-    u = unbiased_text.lower().strip()
+    u = unbiased_text.lower()
     name_l = name.lower().strip()
-    tokens = re.findall(r"[a-zäöüß]+", u)
-    # The unbiased read still resembles the wake name -> a real wake.
-    if any(difflib.SequenceMatcher(None, t, name_l).ratio() >= 0.5 for t in tokens):
+    # An unbiased "hey <name-ish>" -> a real wake. ``\W+`` (not just whitespace)
+    # spans the comma Whisper often inserts: "Hey, Ruf." must still match.
+    for mt in re.finditer(r"\b(?:hey|hi|hallo|ok|okay)\W+([a-zäöüß]{2,})", u):
+        if difflib.SequenceMatcher(None, mt.group(1), name_l).ratio() >= 0.4:
+            return True
+    # Or the name as a strong standalone token (the unbiased read dropped "hey").
+    if any(
+        difflib.SequenceMatcher(None, t, name_l).ratio() >= 0.7
+        for t in re.findall(r"[a-zäöüß]+", u)
+    ):
         return True
-    # The unbiased read clearly heard a DIFFERENT wake-style "hey <word>" -> the
-    # bias hallucinated the primed phrase; reject.
-    if re.search(r"\b(?:hey|hi|hallo|ok|okay)\s+[a-zäöüß]{3,}", u):
-        return False
-    # Garbled / no competing name -> benefit of the doubt (preserve recall).
-    return True
+    # No positive support (silence artifact / competing name / garble) -> reject.
+    return False
 
 
 class RollingWhisperWake:
