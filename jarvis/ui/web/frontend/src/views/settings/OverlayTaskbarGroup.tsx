@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { Monitor, Eye, Volume2 } from "lucide-react";
+import { Monitor, Eye, Volume2, Bell } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useOverlayStyle, type OverlayStyle } from "@/hooks/useOverlayStyle";
 import { StylePreview } from "@/components/overlay/OverlayStylePreviews";
 import { useBarPersistent } from "@/hooks/useBarPersistent";
 import { useMuteMusic } from "@/hooks/useMuteMusic";
+import { useSoundEffects } from "@/hooks/useSoundEffects";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -40,6 +41,8 @@ export function OverlayTaskbarGroup() {
           <BarPersistentRow />
           <div className="mx-4 border-t border-border/60" />
           <MuteMusicRow />
+          <div className="mx-4 border-t border-border/60" />
+          <SoundEffectsRow />
         </div>
       </section>
     </div>
@@ -138,6 +141,41 @@ function MuteMusicRow() {
       title={t("taskbar_view.mute_music.title")}
       description={t("taskbar_view.mute_music.description")}
       checked={enabled ?? false}
+      disabled={loading || saving}
+      onToggle={onToggle}
+    />
+  );
+}
+
+function SoundEffectsRow() {
+  const t = useT();
+  const { enabled, loading, setEnabled } = useSoundEffects();
+  const pushToast = useEventStore((s) => s.pushToast);
+  const [saving, setSaving] = useState(false);
+
+  async function onToggle(next: boolean) {
+    setSaving(true);
+    try {
+      await setEnabled(next);
+      pushToast(
+        "success",
+        next
+          ? t("taskbar_view.sound_effects.enabled_toast")
+          : t("taskbar_view.sound_effects.disabled_toast"),
+      );
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <ToggleRow
+      icon={Bell}
+      title={t("taskbar_view.sound_effects.title")}
+      description={t("taskbar_view.sound_effects.description")}
+      checked={enabled ?? true}
       disabled={loading || saving}
       onToggle={onToggle}
     />

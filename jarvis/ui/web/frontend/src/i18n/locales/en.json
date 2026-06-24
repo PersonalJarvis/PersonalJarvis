@@ -81,6 +81,12 @@
       "description": "Mute other apps (Spotify, browser…) while you talk to your assistant, then restore them after. The assistant's own voice is never muted.",
       "enabled_toast": "Music will mute while you talk to your assistant.",
       "disabled_toast": "Music mute disabled."
+    },
+    "sound_effects": {
+      "title": "Sound effects",
+      "description": "Play Jarvis's short tones — the chime when you say the wake word, the hang-up tone, and the boot-ready cue. Off: silent; the spoken voice is never affected.",
+      "enabled_toast": "Sound effects on.",
+      "disabled_toast": "Sound effects muted."
     }
   },
   "socials": {
@@ -823,6 +829,13 @@
     "use_custom": "Use \"{0}\"",
     "no_models": "No models found",
     "loading": "Loading…"
+  },
+  "apikeys_cu_model": {
+    "heading": "Computer-Use model",
+    "use_main": "Use my main model",
+    "using_main": "Using your main model",
+    "effective": "Computer-Use runs",
+    "cleared": "Computer-Use model reset to your main model"
   },
   "settings_view": {
     "silence_window": {

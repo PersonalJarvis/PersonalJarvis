@@ -2272,9 +2272,30 @@ class SpeechPipeline:
             return
 
         note(skill.name, source="cron")
+        # Compose the scheduled-run instruction in the conversation language so
+        # the brain answers in that language (it derives the reply language from
+        # the prompt text) — a German chat must not receive an English briefing
+        # (forensic 2026-06-23: the screenshot's English "Good morning, Chef…"
+        # announcement). ``lang`` also tags the announcement so the resolver
+        # speaks it in the same language. de strings are functional brain
+        # prompts, not user-facing artifacts (i18n-allow).
+        lang = self._output_language(None, "")
+        _prompts = {
+            "de": (
+                "[Geplanter Lauf] Es ist Zeit für den Skill '{name}'. Führe "  # i18n-allow
+                "jetzt seine Anweisungen aus und berichte das Ergebnis kurz."  # i18n-allow
+            ),
+            "es": (
+                "[ejecución programada] Es hora del skill '{name}'. Ejecuta sus "
+                "instrucciones ahora e informa brevemente el resultado."
+            ),
+            "en": (
+                "[scheduled run] It is time for the '{name}' skill. Execute its "
+                "instructions now and report the result briefly."
+            ),
+        }
         reply = await self._brain(
-            f"[scheduled run] It is time for the '{skill.name}' skill. "
-            "Execute its instructions now and report the result briefly."
+            _prompts.get(lang, _prompts["en"]).format(name=skill.name)
         )
         text = (reply or "").strip()
         if text and self._bus is not None:
@@ -2283,6 +2304,7 @@ class SpeechPipeline:
                     AnnouncementRequested(
                         source_layer="speech.pipeline",
                         text=text,
+                        language=lang,
                         priority="normal",
                     )
                 )
@@ -2439,7 +2461,15 @@ class SpeechPipeline:
         # here as a safety net, but pass ack_mode=is_preamble so legitimate
         # filler-opener phrases ("Lass mich kurz nachschauen.") are
         # preserved on the second pass too.
-        ann_lang = (event.language or "de").lower()
+        # Resolve the announcement's spoken language through the ONE
+        # authoritative resolver — the live brain.reply_language pin and the
+        # sticky conversation_language win over whatever an emitter stamped on
+        # the event, and an undetectable/None tag falls back to the resolved
+        # turn language, never a hardcoded German default (forensic 2026-06-23:
+        # a German voice chat spoke an English "ANNOUNCEMENT" because
+        # event.language was trusted verbatim). The event tag is only a hint,
+        # passed where the STT tag normally goes.
+        ann_lang = self._output_language(event.language, event.text or "")
         scrubbed = scrub_for_voice(
             event.text, language=ann_lang, ack_mode=is_preamble
         )
@@ -2466,7 +2496,7 @@ class SpeechPipeline:
         # surfaced in the transcript for debugging.
         self._emit_spoken(
             scrubbed.cleaned,
-            event.language,
+            ann_lang,
             _announcement_spoken_kind(getattr(event, "kind", None)),
             getattr(event, "detail", None),
         )
@@ -2483,11 +2513,12 @@ class SpeechPipeline:
         if animate:
             await self._transition("SPEAKING")
         try:
-            lang_code = None
-            if event.language:
-                lang_code = {"de": "de-DE", "en": "en-US", "es": "es-ES"}.get(
-                    event.language.lower()
-                )
+            # Drive the TTS pin from the SAME resolved language as the scrub,
+            # not from event.language again — a None/auto tag here used to send
+            # language_code=None, which lets the multilingual TTS (Cartesia)
+            # fall back to its English voice on German text (the British-accent
+            # symptom; forensic 2026-06-23).
+            lang_code = self._bcp47(ann_lang)
             try:
                 chunks = self._tts.synthesize(scrubbed.cleaned, language_code=lang_code)
             except TypeError:
@@ -2711,21 +2742,32 @@ class SpeechPipeline:
         # deliberately-muted session, and the phrases below stay priority
         # "normal" → queued behind any current speech, never barging
         # mid-utterance (AD-OE5).
+        # Resolve the readback language from the original request utterance,
+        # falling back to the worker summary text (pin > conversation-stickiness
+        # > detected utterance/summary > default) so an English/Spanish user
+        # never hears "Fertig." in German, and the "Done./Fertig." prefix never
+        # mismatches the summary language (forensic 2026-06-23: announcement
+        # emitters bypassed the resolver).
+        lang = self._output_language(
+            None,
+            getattr(event, "utterance", "") or getattr(event, "summary", "") or "",
+        )
+        ph = self._BG_READBACK_PHRASES.get(lang, self._BG_READBACK_PHRASES["en"])
         if event.success and event.summary:
             summ = event.summary.strip()
             if len(summ) > 200:
                 summ = summ[:200].rsplit(" ", 1)[0] + "…"
-            text = f"Fertig. {summ}"
+            text = ph["done_summ"].format(s=summ)
         elif event.success:
-            text = "Fertig."
+            text = ph["done"]
         else:
-            err_short = (event.error or "unbekannter Fehler")[:80]
-            text = f"Das hat nicht geklappt. {err_short}"
+            err_short = (event.error or ph["unknown_err"])[:80]
+            text = ph["fail"].format(e=err_short)
         # Defense-in-Depth: Summary/Error kann aus dem OpenClaw-Pfad kommen
         # und Engineering-Tokens (Sub-Agent, Subprocess, MCP) enthalten.
         # scrub_for_voice filtert die raus, sonst leakt Worker-Mechanik
         # in den Voice-Kanal (vgl. Mandat-Pfad #2 Output-Filter).
-        scrubbed = scrub_for_voice(text, language="de")
+        scrubbed = scrub_for_voice(text, language=lang)
         if scrubbed.actions:
             log.info(
                 "🧹 Background-Filter: %s (fallback=%s)",
@@ -2752,7 +2794,7 @@ class SpeechPipeline:
                 AnnouncementRequested(
                     source_layer="harness.openclaw.background",
                     text=cleaned,
-                    language="de",
+                    language=lang,
                     priority="normal",
                     kind="subagent",
                 )
@@ -2766,7 +2808,7 @@ class SpeechPipeline:
         # through this background path, not _speak, so it would otherwise be
         # invisible in the Transcription view. Tagged ``subagent`` so it renders
         # on the attributed "Jarvis Sub-Agent / Output" track.
-        self._emit_spoken(cleaned, "de", SPOKEN_KIND_SUBAGENT)
+        self._emit_spoken(cleaned, lang, SPOKEN_KIND_SUBAGENT)
         # Re-arm the readback grace exactly like ``_on_announcement`` (:2386): a
         # background result delivered through THIS direct path also hands the
         # floor back to the user, so ``_active_session`` must keep the mic open
@@ -2787,7 +2829,7 @@ class SpeechPipeline:
             await self._transition("SPEAKING")
         try:
             try:
-                chunks = self._tts.synthesize(cleaned, language_code="de-DE")
+                chunks = self._tts.synthesize(cleaned, language_code=self._bcp47(lang))
             except TypeError:
                 chunks = self._tts.synthesize(cleaned)
             await self._player.play_chunks(chunks)
@@ -3369,14 +3411,11 @@ class SpeechPipeline:
 
     async def _play_ready_cue(self) -> None:
         """Play the ascending boot-ready tone once. Silent no-op on a headless
-        VPS / when no output device exists — never raises."""
-        try:
-            await self._player.play_pcm(READY_PCM, sample_rate=CHIME_SAMPLE_RATE)
-        except Exception as exc:  # noqa: BLE001
-            log.debug("Boot-Ready-Sound übersprungen (%s).", exc)
+        VPS / when no output device exists, or when the global "Sound effects"
+        switch is off — never raises."""
+        await self._play_earcon(READY_PCM)
 
     async def _prerender_task_acks(self) -> None:
-        lang_map = {"de": "de-DE", "en": "en-US"}
         phrases = iter_all_start_ack()
         log.info("Pre-rendere %d Task-Ack-Phrasen …", len(phrases))
 
@@ -3393,7 +3432,7 @@ class SpeechPipeline:
             try:
                 chunks: list[AudioChunk] = []
                 try:
-                    it = self._tts.synthesize(phrase, language_code=lang_map.get(lang))
+                    it = self._tts.synthesize(phrase, language_code=self._bcp47(lang))
                 except TypeError:
                     it = self._tts.synthesize(phrase)
                 async for c in it:
@@ -3935,17 +3974,37 @@ class SpeechPipeline:
                 self._state = PipelineState.IDLE
                 # Supervisor zurueck auf IDLE — Orb verschwindet
                 await self._set_turn_state(TurnTakingState.IDLE)
-                # Disconnect-Sound als hörbares Hangup-Signal
-                try:
-                    await self._player.play_pcm(
-                        DISCONNECT_PCM, sample_rate=CHIME_SAMPLE_RATE
-                    )
-                except Exception:  # noqa: BLE001
-                    pass
+                # Disconnect-Sound als hörbares Hangup-Signal (earcon — gated
+                # by the global "Sound effects" switch).
+                await self._play_earcon(DISCONNECT_PCM)
                 # Cooldown setzen damit Speaker-Echo nicht sofort re-triggert
                 self._wake_lock_until = time.time() + self._post_hangup_lock_s
                 log.info("📵 AUFGELEGT — zurück zu IDLE (Wake-Lock %.1fs).",
                          self._post_hangup_lock_s)
+
+    def _earcons_enabled(self) -> bool:
+        """Whether synthesized UI earcons may play.
+
+        Read fresh from the shared config object so the Settings → Behavior
+        "Sound effects" master switch applies live (no restart). Defensive
+        default ``True`` — a missing field must never silence tones.
+        """
+        ui = getattr(self._config, "ui", None)
+        return bool(getattr(ui, "sound_effects", True))
+
+    async def _play_earcon(
+        self, pcm: bytes, *, sample_rate: int = CHIME_SAMPLE_RATE
+    ) -> None:
+        """Play a synthesized earcon unless the global "Sound effects" switch
+        is off. Never raises — an earcon failure must not crash a turn (AD-OE6).
+        Does NOT gate the spoken TTS voice, which is not an earcon.
+        """
+        if not self._earcons_enabled():
+            return
+        try:
+            await self._player.play_pcm(pcm, sample_rate=sample_rate)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Earcon playback skipped (%s).", exc)
 
     async def _play_ack(self, *, ptt: bool = False) -> None:
         """Chime + pre-rendertes 'Ja?' — Gesamtdauer ~400-600 ms.
@@ -3955,7 +4014,7 @@ class SpeechPipeline:
         chime is immediate feedback that recording is live; speech is not.
         """
         try:
-            await self._player.play_pcm(CHIME_PCM, sample_rate=CHIME_SAMPLE_RATE)
+            await self._play_earcon(CHIME_PCM)
             if ptt:
                 # Chime only, and NO dead-zone: the mic opens the instant this
                 # returns and the user is already holding the key + talking. The
@@ -5810,9 +5869,11 @@ class SpeechPipeline:
                 kind, lang, signal_mode, use_earcon,
             )
 
-            if use_earcon:
+            if use_earcon and self._earcons_enabled():
                 # Non-blocking earcon: reuses the same CHIME_PCM that the wake
                 # acknowledgment uses (imported at the top of this module).
+                # Gated by the global "Sound effects" switch (checked before the
+                # task is scheduled, so a muted run spawns no no-op coroutine).
                 # play_pcm is async but we fire-and-forget to avoid adding latency
                 # to the LISTENING re-entry.  Failure is swallowed below.
                 try:
@@ -5913,7 +5974,7 @@ class SpeechPipeline:
 
         lang_code: str | None = None
         if lang:
-            lang_code = {"de": "de-DE", "en": "en-US", "es": "es-ES"}.get(lang.lower())
+            lang_code = self._bcp47(lang)
 
         # Bounded look-ahead: at most ``lookahead`` synthesized-but-not-yet-
         # consumed sentences in flight. maxsize on the channel-of-channels
@@ -6882,6 +6943,44 @@ class SpeechPipeline:
         except Exception:  # noqa: BLE001 — telemetry must never break the turn
             log.debug("SpeechSpoken emit failed", exc_info=True)
 
+    #: Spoken readback for an OpenClaw background task that finished off the
+    #: chat path. de/en/es so the readback follows the conversation language
+    #: instead of a hardcoded German literal (forensic 2026-06-23). German
+    #: strings are TTS product surface, not source artifacts (i18n-allow).
+    _BG_READBACK_PHRASES: dict[str, dict[str, str]] = {
+        "de": {
+            "done": "Fertig.",  # i18n-allow
+            "done_summ": "Fertig. {s}",  # i18n-allow
+            "fail": "Das hat nicht geklappt. {e}",  # i18n-allow
+            "unknown_err": "unbekannter Fehler",  # i18n-allow
+        },
+        "en": {
+            "done": "Done.",
+            "done_summ": "Done. {s}",
+            "fail": "That didn't work. {e}",
+            "unknown_err": "unknown error",
+        },
+        "es": {
+            "done": "Listo.",
+            "done_summ": "Listo. {s}",
+            "fail": "Eso no funcionó. {e}",
+            "unknown_err": "error desconocido",
+        },
+    }
+
+    _BCP47: dict[str, str] = {"de": "de-DE", "en": "en-US", "es": "es-ES"}
+
+    @classmethod
+    def _bcp47(cls, lang: object) -> str | None:
+        """Map a de/en/es turn-language code to a TTS BCP-47 locale, else None.
+
+        Single source for the whole pipeline — replaces four hand-copied maps,
+        one of which (the task-ack prerender) had silently dropped ``es``, so a
+        Spanish turn there got no language pin and the multilingual TTS could
+        code-switch.
+        """
+        return cls._BCP47.get(str(lang or "").lower())
+
     def _output_language(self, stt_language: object, text: str) -> str:
         """Resolve THIS turn's output language for EVERY spoken/written layer.
 
@@ -6944,10 +7043,7 @@ class SpeechPipeline:
         # Track that the assistant has spoken at least once in this session.
         # Used by _emit_completeness_signal to pick earcon vs. spoken cue.
         self._session_has_assistant_spoken = True
-        lang_code: str | None = None
-        if language:
-            mapping = {"de": "de-DE", "en": "en-US", "es": "es-ES"}
-            lang_code = mapping.get(language.lower())
+        lang_code = self._bcp47(language)
         try:
             chunks = self._tts.synthesize(text, language_code=lang_code)
         except TypeError:

@@ -243,17 +243,24 @@ class WhisperBarOverlay:
         self._canvas.bind("<Enter>", self._on_enter)
         self._canvas.bind("<Leave>", self._on_leave)
 
-        # Drag-drop onto the bar (desktop extra, cross-platform via tkdnd). Pure
-        # addition, fully guarded: a no-op when tkinterdnd2 is absent so the live
-        # overlay is never destabilised. Dropped paths/text go to the
-        # process-global bridge, which the desktop app marshals to the brain.
-        try:
-            from jarvis.overlay.drop_bridge import dispatch_drop
-            from jarvis.overlay.drop_target import make_drop_target
+        # Drag-drop onto the bar (desktop extra, cross-platform via tkdnd).
+        # TEMPORARILY DISABLED 2026-06-23 (wake-fix session): on this frameless
+        # color-key topmost window, tkdnd's ``_require(root)`` + drop_target_register
+        # injected PHANTOM mouse press/release events on every turn mode-switch,
+        # which the click handler read as a close-X click -> a ``request_hangup``
+        # STORM (6+/turn) that aborted every voice answer mid-thought (Hangup during
+        # thinking). The file-drop-onto-bar feature is purely additive — the web
+        # dock (POST /api/chat/drop) carries it on every OS — so disabling JUST the
+        # bar registration restores voice without losing the capability. Re-enable
+        # once the tkdnd phantom-event issue on the color-key window is resolved.
+        if False:  # noqa: SIM223 — intentional kill-switch (see note above)
+            try:
+                from jarvis.overlay.drop_bridge import dispatch_drop
+                from jarvis.overlay.drop_target import make_drop_target
 
-            make_drop_target().register(self._canvas, dispatch_drop)
-        except Exception:  # noqa: BLE001 — drop is optional; never block bar boot.
-            log.debug("bar drop target registration skipped", exc_info=True)
+                make_drop_target().register(self._canvas, dispatch_drop)
+            except Exception:  # noqa: BLE001 — drop is optional; never block bar boot.
+                log.debug("bar drop target registration skipped", exc_info=True)
 
         if self._should_start_withdrawn():
             root.withdraw()  # only-when-active variant / boot gate starts hidden

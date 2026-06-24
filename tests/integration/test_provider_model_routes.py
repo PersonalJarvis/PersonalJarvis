@@ -231,3 +231,84 @@ def test_put_stt_model_requires_restart(
         assert body["restart_required"] is True
         assert body["probe"] is None
     assert models == ["nova-3"]
+
+
+# ── GET/PUT /cu-model (Phase 3: selectable Computer-Use model) ────────────────
+
+
+def test_get_cu_model_defaults_to_main(server: WebServer) -> None:
+    with TestClient(server.app) as client:
+        resp = client.get("/api/providers/gemini/cu-model")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["provider"] == "gemini"
+        assert body["cu_model"] == ""           # nothing pinned
+        assert body["uses_main"] is True
+        assert body["effective_model"]          # the model CU would actually use
+
+
+def test_put_cu_model_persists_and_updates_live(
+    server: WebServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    writes: list[tuple[str, str | None]] = []
+
+    def _fake_writer(provider: str, *, cu_model: str | None = None, **_k: Any) -> None:
+        writes.append((provider, cu_model))
+
+    monkeypatch.setattr(
+        "jarvis.core.config_writer.set_brain_provider_model", _fake_writer
+    )
+
+    with TestClient(server.app) as client:
+        resp = client.put(
+            "/api/providers/gemini/cu-model",
+            json={"cu_model": "gemini-3.1-pro-preview", "persist": True},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["cu_model"] == "gemini-3.1-pro-preview"
+        assert body["uses_main"] is False
+        assert body["persisted"] is True
+        assert body["restart_required"] is False
+
+    assert ("gemini", "gemini-3.1-pro-preview") in writes
+    # In-memory cfg updated so the next CU mission uses it without a restart.
+    pc = server.app.state.config.brain.providers["gemini"]
+    assert pc.cu_model == "gemini-3.1-pro-preview"
+
+
+def test_put_cu_model_empty_clears_to_main(
+    server: WebServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.core.config import BrainProviderConfig
+
+    server.app.state.config.brain.providers["gemini"] = BrainProviderConfig(
+        model="gemini-3.5-flash", cu_model="gemini-3.1-pro-preview"
+    )
+    writes: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        "jarvis.core.config_writer.set_brain_provider_model",
+        lambda provider, *, cu_model=None, **_k: writes.append((provider, cu_model)),
+    )
+
+    with TestClient(server.app) as client:
+        resp = client.put(
+            "/api/providers/gemini/cu-model", json={"cu_model": "", "persist": True}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["uses_main"] is True
+
+    assert ("gemini", "") in writes
+
+
+def test_cu_model_rejected_for_non_brain_provider(server: WebServer) -> None:
+    with TestClient(server.app) as client:
+        # grok-voice is a TTS provider — Computer-Use model does not apply.
+        assert client.get("/api/providers/grok-voice/cu-model").status_code == 400
+        assert (
+            client.put(
+                "/api/providers/grok-voice/cu-model", json={"cu_model": "x"}
+            ).status_code
+            == 400
+        )

@@ -57,13 +57,19 @@ def test_build_wake_whisper_tolerates_missing_wake_fields() -> None:
     assert p._compute_type == "int8"
 
 
-def test_build_wake_whisper_does_not_bias_prompt_with_custom_phrase() -> None:
-    # A custom wake word ("Hey Alex") routes to the stt_match path. Biasing
-    # Whisper with the spoken trigger made ambiguous mumbling/noise hallucinate
-    # the exact wake phrase, so the wake backstop must stay unbiased and rely on
-    # the transcript reliability gate instead.
+def test_build_wake_whisper_biases_prompt_with_custom_phrase() -> None:
+    # A custom wake word ("Hey Alex") routes to the stt_match path, where the
+    # small base/cpu model otherwise mis-hears the proper noun. Empirical
+    # 2026-06-23 on the user's real wake WAVs: WITHOUT the bias the live model
+    # heard "Hey Alex" as "Space"/"Ego"/"Herum" -> 2-13% recall (effectively a
+    # dead wake word); WITH the spoken phrase as initial_prompt -> 83% recall.
+    # The earlier hallucination concern is held off by the strict ["hey","alex"]
+    # matcher (a stray "Alex" in speech is not an adjacent "hey alex") plus the
+    # no_speech_prob/RMS gates: false-wake stayed ~0% on real speech. So the bias
+    # is re-enabled on this path. It is scoped to the custom phrase only -- the
+    # OWW/"Hey Jarvis" paths pass no phrase and stay unbiased (test below).
     p = build_wake_whisper(STTConfig(), language="de", wake_phrase="Hey Alex")
-    assert p._initial_prompt is None
+    assert p._initial_prompt == "Hey Alex"
 
 
 def test_build_wake_whisper_default_has_no_prompt_bias() -> None:
