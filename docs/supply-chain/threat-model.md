@@ -1,11 +1,11 @@
-# Threat Model — `personal-jarvis/personal-jarvis` Quick-Install One-Liner
+# Threat Model — `PersonalJarvis/PersonalJarvis` Quick-Install One-Liner
 
 > Status: **Wave 1 of 4** (Sigstore keyless + Rekor freshness + pinned cosign +
 > pinned action SHAs). Waves 2-4 are scoped at the bottom of this document but
 > intentionally **not** delivered yet — promising more than is shipped is itself
 > a supply-chain anti-pattern.
 >
-> Last reviewed: 2026-05-26 against the `personal-jarvis/personal-jarvis` repo
+> Last reviewed: 2026-05-26 against the `PersonalJarvis/PersonalJarvis` repo
 > at `main` HEAD `e7cdefeca7e44ddf18ebd17a1e646d4471cf7a1e` (Wave 1 baseline).
 
 ---
@@ -15,7 +15,7 @@
 The artifact under threat is the **one-liner installation flow**:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/personal-jarvis/personal-jarvis/main/install/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash
 ```
 
 and its PowerShell sibling. This document enumerates every trust root a fresh
@@ -80,7 +80,7 @@ Each scenario follows: **pre-condition → action → blast radius → pre-Wave-
 - **Residual gap.** **Single-maintainer signing remains a single point of failure.** Wave 2: threshold signing (2-of-N maintainer keys, with one offline witness key held off-network). Wave 3: rebuilder farm + reproducible builds so an external party can independently verify that the signed bytes match the source commit. This is exactly what Debian's reproducible-builds project, GUAC, and in-toto are designed for.
 
 ### Scenario D — Dependency confusion against `personal-jarvis` itself (T8)
-- **Pre-condition.** `install/installer.py` runs `pip install -e ".[desktop]"` against PyPI with no index pinning. An attacker registers `personal-jarvis` on PyPI (the GitHub repo is `personal-jarvis/personal-jarvis` — the *PyPI* slot is currently unclaimed, an active dependency-confusion vector). The legitimate package is currently installed from the local clone — so PyPI's package would only matter for someone running `pip install personal-jarvis` manually, but **`pip install -e .` resolves transitive dependencies from PyPI** and any of those slots being claimed is a vector.
+- **Pre-condition.** `install/installer.py` runs `pip install -e ".[desktop]"` against PyPI with no index pinning. An attacker registers `personal-jarvis` on PyPI (the GitHub repo is `PersonalJarvis/PersonalJarvis` — the *PyPI* slot is currently unclaimed, an active dependency-confusion vector). The legitimate package is currently installed from the local clone — so PyPI's package would only matter for someone running `pip install personal-jarvis` manually, but **`pip install -e .` resolves transitive dependencies from PyPI** and any of those slots being claimed is a vector.
 - **Action.** A typosquatted `personnal-jarvis` package or a confusion-attack against a not-pinned dep (e.g. an internal package name leaking into pyproject.toml) ships malware on first `pip install`.
 - **Blast radius.** Full Python interpreter access, persistent via `pyproject.toml` entry-points.
 - **Pre-Wave-1 mitigation.** None.
@@ -247,7 +247,7 @@ treated as code, not as marketing.
 
 Wave 1's verifier accepts a signature iff `cosign verify-blob` succeeds
 against a single OIDC identity (the `sign-installer.yml` workflow on
-`personal-jarvis/personal-jarvis`). That is **one trust axis.** If an
+`PersonalJarvis/PersonalJarvis`). That is **one trust axis.** If an
 attacker compromises the maintainer's GitHub account, or pushes a
 poisoned `sign-installer.yml` that survives review, or successfully runs
 a `tj-actions/changed-files`-class Action-pinning attack on this repo,

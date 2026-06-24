@@ -59,8 +59,8 @@ def target_is_public(remote_name: str, remote_url: str) -> bool:
     """True iff the push target is the PUBLIC distribution repo.
 
     Matched by remote name == "public" OR the remote URL containing (case-
-    insensitive) "personaljarvis/personaljarvis". The work repo
-    `personal-jarvis/personal-jarvis` (hyphenated) deliberately does NOT match.
+    insensitive) "personaljarvis/personaljarvis". Hyphenated or otherwise
+    non-flagship repo slugs deliberately do NOT match.
     """
     if remote_name == "public":
         return True
