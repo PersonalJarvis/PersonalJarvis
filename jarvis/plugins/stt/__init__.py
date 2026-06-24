@@ -7,6 +7,7 @@ detector path keeps working when no cloud provider is registered.
 """
 from __future__ import annotations
 
+from functools import lru_cache
 from importlib import metadata as importlib_metadata
 from typing import Any
 
@@ -121,8 +122,28 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
     )
 
 
+@lru_cache(maxsize=1)
+def _wake_cuda_available() -> bool:
+    """True iff a CUDA device is usable by the CTranslate2 / faster-whisper backend.
+
+    Cached (the device count is stable per process). Any import/probe error is
+    treated as "no CUDA" so a host without the GPU stack degrades to the
+    cloud-first CPU default. AP-21: gate on the capability, never a hardware name.
+    """
+    try:
+        import ctranslate2
+
+        return ctranslate2.get_cuda_device_count() > 0
+    except Exception:  # noqa: BLE001 - any failure means "treat as no GPU"
+        return False
+
+
 def build_wake_whisper(
-    stt_cfg: Any, *, language: str | None = None, wake_phrase: str | None = None
+    stt_cfg: Any,
+    *,
+    language: str | None = None,
+    wake_phrase: str | None = None,
+    cuda_available: bool | None = None,
 ) -> Any:
     """Build the LOCAL wake-match / live-preview Whisper.
 
@@ -164,11 +185,39 @@ def build_wake_whisper(
     """
     from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
 
+    model = getattr(stt_cfg, "wake_model", "base")
+    device = getattr(stt_cfg, "wake_device", "cpu")
+    compute = getattr(stt_cfg, "wake_compute_type", "int8")
     bias = wake_phrase.strip() if wake_phrase and wake_phrase.strip() else None
+
+    # Capability-gated GPU upgrade (forensic 2026-06-24, validated on the user's
+    # real wake WAVs). On the cloud-first CPU defaults (base/cpu) AND a CUDA
+    # device, transcribe the wake on the GPU with a fast MULTILINGUAL turbo model
+    # AND DROP THE BIAS. The strong model hears the proper noun WITHOUT the
+    # ``initial_prompt`` hint, so the wake stays fast (~150 ms vs ~1.4 s on
+    # base/cpu) while it does NOT hallucinate the primed phrase onto quiet
+    # silence — the bias on the strong model was the false-wake source ("Vielen
+    # Dank." silence artifact -> "Hey Ruben"). Offline-validated: no-bias turbo is
+    # 0 false-wakes across the user's silence / own-speech / other-wake clips,
+    # while a clearly spoken wake still fires. The WEAK base/cpu model still NEEDS
+    # the bias to hear the name, so the bias is kept ONLY there. Only the
+    # stt_match custom-phrase path on a GPU box is affected; the bundled
+    # "Hey Jarvis"/openWakeWord path and every CPU/VPS host are untouched. An
+    # explicit wake_model/wake_device wins (only the base/cpu pair auto-upgrades).
+    if cuda_available is None:
+        cuda_available = _wake_cuda_available()
+    if model == "base" and device == "cpu" and cuda_available:
+        model, device, compute = "large-v3-turbo", "cuda", "int8_float16"
+        bias = None  # strong model needs no bias; the bias is what hallucinates
+        logger.info(
+            "Wake-Whisper: CUDA present -> GPU turbo (large-v3-turbo/cuda), "
+            "bias OFF (fast + no silence hallucination)."
+        )
+
     return FasterWhisperProvider(
-        model=getattr(stt_cfg, "wake_model", "base"),
-        device=getattr(stt_cfg, "wake_device", "cpu"),
-        compute_type=getattr(stt_cfg, "wake_compute_type", "int8"),
+        model=model,
+        device=device,
+        compute_type=compute,
         language=language,
         initial_prompt=bias,
     )
