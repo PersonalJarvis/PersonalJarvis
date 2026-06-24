@@ -1,9 +1,9 @@
 """ApiAgentWorker — an in-process agentic Phase-6 worker for API brains.
 
 The CLI workers (claude / codex / agy) wrap a vendor binary that ships its own
-agent loop + file tools. The pure-API providers — **grok**, **openai**,
-**openrouter** — have no such CLI, so picking them as the subagent provider used
-to fall through to the Claude worker ("Grok" silently ran on Claude). This worker
+agent loop + file tools. The pure-API providers — **openai**, **openrouter** —
+have no such CLI, so picking them as the subagent provider used to fall through
+to the Claude worker (they silently ran on Claude). This worker
 closes that gap: it drives the selected provider's own chat API
 (`jarvis.plugins.brain.*`) in a tool-use loop, writing real files into the git
 worktree via :mod:`api_agent_tools`, and emits the same claude-shaped stream the
@@ -47,7 +47,6 @@ logger = logging.getLogger(__name__)
 # Provider slug -> (module, class). Lazy-imported so a worker for one provider
 # never imports another's SDK path. Slugs match jarvis provider ids.
 _BRAIN_BY_PROVIDER: dict[str, tuple[str, str]] = {
-    "grok": ("jarvis.plugins.brain.grok", "GrokBrain"),
     "openai": ("jarvis.plugins.brain.openai", "OpenAIBrain"),
     "openrouter": ("jarvis.plugins.brain.openrouter", "OpenRouterBrain"),
 }
@@ -55,7 +54,6 @@ _BRAIN_BY_PROVIDER: dict[str, tuple[str, str]] = {
 # Per-provider default deep model when the step carries none. Documented
 # defaults only — never a gate (AP-21).
 _DEFAULT_MODEL: dict[str, str] = {
-    "grok": "grok-4.3",
     "openai": "gpt-5.5",
     "openrouter": "anthropic/claude-opus-4.8",
 }

@@ -96,6 +96,10 @@ export interface VoiceTurnRow {
   think_ms: number;
   speak_ms: number;
   tool_calls: string[];
+  // True when the turn ended on a two-turn voice/chat confirmation
+  // (finish_reason="voice_confirm_pending"): the reply is a pending yes/no
+  // question, not a settled answer, so the transcript labels it distinctly.
+  awaiting_confirmation: boolean;
 }
 
 export interface VoiceSessionRow {

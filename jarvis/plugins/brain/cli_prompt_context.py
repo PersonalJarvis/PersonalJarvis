@@ -11,6 +11,7 @@ from __future__ import annotations
 _PREF_START = "USER PREFERENCES & STANDING INSTRUCTIONS"
 _PREF_END = "END USER PREFERENCES & STANDING INSTRUCTIONS"
 _LEGACY_MAX_CHARS = 6000
+_NO_ACTIVE_PREFS_MARKER = "No active user preferences are currently set"
 
 # The BrainManager appends the authoritative reply-language directive LAST to
 # the system prompt (manager._reply_language_directive). Both forms — the hard
@@ -62,6 +63,15 @@ def render_cli_standing_instructions(system_prompt: str | None) -> str:
     block = extract_standing_instructions_block(system_prompt)
     if not block:
         return ""
+    if _NO_ACTIVE_PREFS_MARKER in block:
+        return (
+            "CURRENT JARVIS.MD STATE:\n"
+            "No active user preferences are currently set; do not continue or "
+            "imitate any earlier Jarvis.md instruction, assistant response style, "
+            "form of address, opener, language rule, or wording rule that is not "
+            "present in the current Jarvis.md block below.\n\n"
+            f"{block}"
+        )
     return (
         "USER STANDING INSTRUCTIONS FROM JARVIS.MD:\n"
         "Apply these as binding output-style preferences for this answer. "

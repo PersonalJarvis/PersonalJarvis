@@ -306,7 +306,7 @@ function TaskCard({
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h3 className="truncate text-sm font-semibold">{task.title || "(ohne Titel)"}</h3>
+            <h3 className="truncate text-sm font-semibold">{task.title || t("tasks_view.untitled")}</h3>
             <Badge variant={STATE_VARIANT[task.state]}>{STATE_LABEL[task.state]}</Badge>
             {task.attempts > 1 && (
               <span className="text-[10px] font-mono text-muted-foreground">
@@ -357,6 +357,7 @@ function TaskCard({
 }
 
 function TaskDetailBody({ taskId }: { taskId: string }) {
+  const t = useT();
   const { data, isLoading, error } = useQuery({
     queryKey: ["tasks", "detail", taskId],
     queryFn: () => fetchTask(taskId),
@@ -366,14 +367,14 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
   if (isLoading) {
     return (
       <div className="border-t border-border bg-background/30 px-5 py-3 text-xs text-muted-foreground">
-        Lade Details…
+        {t("tasks_view.loading_details")}
       </div>
     );
   }
   if (error) {
     return (
       <div className="border-t border-border bg-destructive/10 px-5 py-3 text-xs text-destructive">
-        Fehler: {(error as Error).message}
+        {t("common.error")}: {(error as Error).message}
       </div>
     );
   }
@@ -399,7 +400,7 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
           Timeline ({steps.length})
         </div>
         {steps.length === 0 ? (
-          <div className="text-xs text-muted-foreground">Noch keine Steps aufgezeichnet.</div>
+          <div className="text-xs text-muted-foreground">{t("tasks_view.no_steps")}</div>
         ) : (
           <ul className="space-y-1.5">
             {steps.map((s) => (
@@ -422,25 +423,27 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
 }
 
 function TriggerWhen({ task }: { task: TaskSummary }) {
+  const t = useT();
   const [tick, setTick] = useState(0);
   useEffect(() => {
-    const t = setInterval(() => setTick((x) => x + 1), 1000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => setTick((x) => x + 1), 1000);
+    return () => clearInterval(timer);
   }, []);
 
   const label = useMemo(() => {
-    if (task.trigger_type === "on_event") return "wartet auf Event";
-    if (task.state === "running") return "läuft gerade";
-    if (task.finished_at_ns) return `fertig ${formatWhen(task.finished_at_ns)}`;
+    if (task.trigger_type === "on_event") return t("tasks_view.waiting_for_event");
+    if (task.state === "running") return t("tasks_view.running_now");
+    if (task.finished_at_ns)
+      return `${t("tasks_view.done_at")} ${formatWhen(task.finished_at_ns)}`;
     if (task.due_at_ns) {
       const delta = task.due_at_ns - Date.now() * 1e6;
-      if (delta > 0) return `in ${formatDelta(delta)}`;
-      return "fällig";
+      if (delta > 0) return `${t("tasks_view.in_prefix")} ${formatDelta(delta)}`;
+      return t("tasks_view.due_now");
     }
     return "—";
-    // `tick` erzwingt Re-Render fuer den Countdown
+    // `tick` forces a re-render for the countdown
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [task, tick]);
+  }, [task, tick, t]);
 
   return <span>{label}</span>;
 }

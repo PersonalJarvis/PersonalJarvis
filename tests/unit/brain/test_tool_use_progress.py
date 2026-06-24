@@ -9,6 +9,7 @@ making progress at the round/tool boundaries that bracket the long silent gaps
 """
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -47,6 +48,21 @@ class _ToolThenAnswerBrain:
         yield BrainDelta(finish_reason="stop")
 
 
+class _HeartbeatThenAnswerBrain:
+    """Yields an invisible heartbeat before the model round completes."""
+
+    def __init__(self) -> None:
+        self.heartbeat_seen = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:  # noqa: ARG002
+        yield BrainDelta(content="")
+        self.heartbeat_seen.set()
+        await self.release.wait()
+        yield BrainDelta(content="Done.")
+        yield BrainDelta(finish_reason="stop")
+
+
 @pytest.mark.asyncio
 async def test_run_pings_on_progress_across_rounds_and_tools() -> None:
     brain = _ToolThenAnswerBrain()
@@ -73,6 +89,40 @@ async def test_run_pings_on_progress_across_rounds_and_tools() -> None:
     # >=3 floor catches removal of EITHER ping site (post-round OR post-tool),
     # which would silently revert the stall guard to the old broken behavior.
     assert pings >= 3, f"expected >=3 progress pings, got {pings}"
+
+
+@pytest.mark.asyncio
+async def test_empty_provider_heartbeat_pings_progress_before_round_finishes() -> None:
+    brain = _HeartbeatThenAnswerBrain()
+    loop = ToolUseLoop(
+        brain,
+        {"gmail/list_messages": _NeutralTool()},
+        _ExecOK(),  # type: ignore[arg-type]
+    )
+    pings = 0
+
+    def _on_progress() -> None:
+        nonlocal pings
+        pings += 1
+
+    task = asyncio.create_task(
+        loop.run(
+            [],
+            user_utterance="say hi",
+            text_consumer=lambda _chunk: None,
+            on_progress=_on_progress,
+        )
+    )
+
+    await asyncio.wait_for(brain.heartbeat_seen.wait(), timeout=1.0)
+    await asyncio.sleep(0)
+
+    assert not task.done()
+    assert pings >= 1
+
+    brain.release.set()
+    result = await asyncio.wait_for(task, timeout=1.0)
+    assert result.text == "Done."
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,7 @@
 // === F-FRIENDS [F4] · feature/friends-section · ruben-2026-05-01 ===
 import { Loader2, Radio, ShieldAlert } from "lucide-react";
 import { useEventStore } from "@/store/events";
+import { useT } from "@/i18n";
 
 import { PermissionMatrix } from "@/components/friends/PermissionMatrix";
 import {
@@ -22,6 +23,7 @@ import {
  * Memory-Updates verlassen die Maschine NIE — egal welches Profile aktiv ist.
  */
 export function StatusTab() {
+  const t = useT();
   const assistantName = useEventStore((s) => s.assistantName);
   const friends = useFriends();
 
@@ -30,12 +32,12 @@ export function StatusTab() {
       <div className="rounded-xl border border-border bg-card/30 p-5">
         <div className="flex items-center gap-2 font-display text-sm font-semibold text-foreground">
           <Radio className="h-4 w-4 text-primary" />
-          Status-Sharing
+          {t("status_tab.heading")}
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
-          Du entscheidest pro Friend, wie viel von deinem {assistantName}-Status
-          ausgespielt wird. Privacy-First: Default ist <strong>minimal</strong>{" "}
-          (nur online/offline), Aenderungen wirken sofort.
+          {t("status_tab.intro_part1")} {assistantName}{" "}
+          {t("status_tab.intro_part2")} <strong>minimal</strong>{" "}
+          {t("status_tab.intro_part3")}
         </p>
       </div>
 
@@ -43,21 +45,21 @@ export function StatusTab() {
 
       {friends.isLoading && (
         <div className="flex items-center justify-center rounded-md border border-border bg-card/20 py-6 text-sm text-muted-foreground">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Friends laden ...
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {t("status_tab.loading_permission")}
         </div>
       )}
 
       {friends.isError && (
         <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-          Friends konnten nicht geladen werden:{" "}
+          {t("status_tab.error_prefix")}:{" "}
           {(friends.error as Error).message}
         </div>
       )}
 
       {friends.data && friends.data.length === 0 && (
         <div className="rounded-md border border-dashed border-border/60 px-3 py-4 text-center text-xs text-muted-foreground">
-          Noch keine Friends. Wechsle auf den Chat-Tab und klicke{" "}
-          <strong>+ Friend hinzufuegen</strong>.
+          {t("status_tab.empty_hint")}{" "}
+          <strong>{t("add_friend_menu.title")}</strong>.
         </div>
       )}
 
@@ -72,12 +74,10 @@ export function StatusTab() {
       <div className="rounded-md border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-[11px] text-amber-100">
         <div className="flex items-center gap-2 font-display text-xs font-semibold text-amber-300">
           <ShieldAlert className="h-3.5 w-3.5" />
-          Hard-Blacklist (immer blockiert)
+          {t("status_tab.hard_blacklist_title")}
         </div>
         <p className="mt-1 text-amber-100/90">
-          Rohe Utterances, Tool-Args, Stacktraces, Memory-Updates,
-          Window-Titles. Diese verlassen deine Maschine NIE - egal welches
-          Profile aktiv ist und egal was eine Custom-Whitelist sagt.
+          {t("status_tab.hard_blacklist_body")}
         </p>
       </div>
     </div>
@@ -85,6 +85,7 @@ export function StatusTab() {
 }
 
 function FriendPermissionRow({ friend }: { friend: FriendItem }) {
+  const t = useT();
   const permission = useFriendPermission(friend.id);
   const update = useUpdatePermission();
 
@@ -111,12 +112,12 @@ function FriendPermissionRow({ friend }: { friend: FriendItem }) {
             </span>
             {update.isPending && (
               <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                <Loader2 className="h-3 w-3 animate-spin" /> speichern ...
+                <Loader2 className="h-3 w-3 animate-spin" /> {t("common.saving")}
               </span>
             )}
             {update.isError && (
               <span className="text-[10px] text-destructive">
-                Fehler: {(update.error as Error).message}
+                {t("status_tab.error_prefix")}: {(update.error as Error).message}
               </span>
             )}
           </div>
@@ -132,7 +133,7 @@ function FriendPermissionRow({ friend }: { friend: FriendItem }) {
         {permission.isLoading ? (
           <div className="flex items-center text-[11px] text-muted-foreground">
             <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
-            Permission laden ...
+            {t("status_tab.loading_permission")}
           </div>
         ) : (
           <PermissionMatrix
@@ -148,23 +149,24 @@ function FriendPermissionRow({ friend }: { friend: FriendItem }) {
 }
 
 function ProfileLegend() {
+  const t = useT();
   return (
     <div className="grid gap-3 sm:grid-cols-3">
       <ProfileCard
         name="minimal"
-        subline="Nur online/offline"
-        description="Friend sieht: Voice-Session aktiv ja/nein, Dauer. Keine Inhalte."
+        subline={t("status_tab.profile_minimal_subline")}
+        description={t("status_tab.profile_minimal_desc")}
         isDefault
       />
       <ProfileCard
         name="standard"
-        subline="+ Mission-Titel"
-        description="Friend sieht zusaetzlich: Welche Missions/Tasks gerade laufen, Erfolg, Dauer."
+        subline={t("status_tab.profile_standard_subline")}
+        description={t("status_tab.profile_standard_desc")}
       />
       <ProfileCard
         name="detailed"
-        subline="+ OpenClaw-Summary"
-        description="Friend sieht zusaetzlich: Signierte OpenClaw-Summaries (KEINE Utterances)."
+        subline={t("status_tab.profile_detailed_subline")}
+        description={t("status_tab.profile_detailed_desc")}
       />
     </div>
   );

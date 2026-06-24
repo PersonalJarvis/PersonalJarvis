@@ -19,7 +19,6 @@ from jarvis.brain.frontier_resolver import (
     FrontierResolver,
     _pick_anthropic,
     _pick_gemini,
-    _pick_grok,
     _pick_openai,
 )
 
@@ -90,51 +89,6 @@ class TestPickGemini:
         assert _pick_gemini(models, "fast") == "gemini-3-flash"
 
 
-class TestPickGrok:
-    def test_fast_picks_fast_variant(self) -> None:
-        models = [
-            "grok-3",
-            "grok-4",
-            "grok-4.1-fast",
-            "grok-4-fast-reasoning",
-            "grok-4.20",
-        ]
-        # Fast-Tier: nur "fast" ohne "reasoning". Hoechste Major.Minor → 4.1
-        assert _pick_grok(models, "fast") == "grok-4.1-fast"
-
-    def test_deep_picks_full_version(self) -> None:
-        models = [
-            "grok-3",
-            "grok-4",
-            "grok-4.1-fast",
-            "grok-4.20",
-        ]
-        # Deep-Tier: kein "fast" oder mit "reasoning". 4.20 > 4 > 3.
-        assert _pick_grok(models, "deep") == "grok-4.20"
-
-    def test_deep_returns_none_when_only_fast_available(self) -> None:
-        # 2026-04-29 Update: Notanker entfernt. Wenn die API-Liste nur
-        # fast-Varianten kennt, returnt Picker None — TOML-Default gewinnt.
-        # Verhindert dass grok-fast als deep-Pick gilt obwohl es nicht passt.
-        models = ["grok-3-fast", "grok-4-fast"]
-        assert _pick_grok(models, "deep") is None
-
-    def test_grok_4_3_wins_both_tiers_when_listed(self) -> None:
-        # 2026-04-30: grok-4.3 ist laut xAI gleichzeitig schnellstes UND
-        # intelligentestes Grok — Short-Circuit, beide Tiers bekommen 4.3
-        # statt der naiven Major.Minor-Sortierung (die 4.20 > 4.3 ergaebe).
-        models = ["grok-3", "grok-4.1-fast", "grok-4.20", "grok-4.3"]
-        assert _pick_grok(models, "fast") == "grok-4.3"
-        assert _pick_grok(models, "deep") == "grok-4.3"
-
-    def test_falls_back_when_grok_4_3_absent(self) -> None:
-        # Wenn der User-Account 4.3 noch nicht freigeschaltet hat,
-        # bleibt die alte Sortierlogik aktiv.
-        models = ["grok-3", "grok-4.1-fast", "grok-4.20"]
-        assert _pick_grok(models, "fast") == "grok-4.1-fast"
-        assert _pick_grok(models, "deep") == "grok-4.20"
-
-
 class TestPickOpenAI:
     def test_fast_picks_newest_non_pro(self) -> None:
         models = [
@@ -191,15 +145,15 @@ class TestCache:
     def test_save_cache_persists_to_disk(self, tmp_path: Path) -> None:
         cache_path = tmp_path / "frontier_cache.json"
         resolver = FrontierResolver(cache_path=cache_path)
-        resolver._cache["grok"] = {
+        resolver._cache["openai"] = {
             "fast": FrontierModel(
-                provider="grok", tier="fast",
-                model_id="grok-4.1-fast", fetched_at=time.time(),
+                provider="openai", tier="fast",
+                model_id="gpt-5.5", fetched_at=time.time(),
             ),
         }
         resolver._save_cache()
         loaded = json.loads(cache_path.read_text())
-        assert loaded["grok"]["fast"]["model_id"] == "grok-4.1-fast"
+        assert loaded["openai"]["fast"]["model_id"] == "gpt-5.5"
 
     def test_is_fresh_within_ttl(self, tmp_path: Path) -> None:
         resolver = FrontierResolver(cache_path=tmp_path / "c.json", ttl_hours=24)

@@ -22,7 +22,13 @@ from uuid import uuid4
 import pytest
 
 import jarvis.harness.screenshot_only_loop as loop_mod
-from jarvis.core.protocols import HarnessResult, HarnessTask, Observation
+from jarvis.core.protocols import (
+    BrainDelta,
+    HarnessResult,
+    HarnessTask,
+    ImageBlock,
+    Observation,
+)
 from jarvis.harness.computer_use_context import ComputerUseContext
 from jarvis.harness.screenshot_only_loop import (
     CULoopError,
@@ -126,6 +132,71 @@ class FakeExecutor:
         return FakeToolResult()
 
 
+class _StreamingBrain:
+    """Minimal provider-shaped brain for CU provider-chain tests."""
+
+    name = "streaming-brain"
+    context_window = 8192
+    supports_tools = False
+    supports_vision = True
+
+    def __init__(self, *, text: str = "", exc: Exception | None = None,
+                 supports_vision: bool = True) -> None:
+        self.text = text
+        self.exc = exc
+        self.calls = 0
+        self.supports_vision = supports_vision
+
+    async def complete(self, req: Any):  # type: ignore[no-untyped-def]
+        self.calls += 1
+        if self.exc is not None:
+            raise self.exc
+        if self.text:
+            yield BrainDelta(content=self.text)
+        yield BrainDelta(finish_reason="stop")
+
+    def estimate_cost(self, req: Any) -> float:
+        return 0.0
+
+
+class _FallbackChainManager:
+    """BrainManager-shaped fake that exposes a configured provider chain."""
+
+    active_provider = "primary"
+
+    def __init__(self) -> None:
+        self.primary = _StreamingBrain(exc=RuntimeError("primary down"))
+        self.fallback = _StreamingBrain(text='{"action": "done"}')
+        self.requested: list[tuple[str, str | None]] = []
+
+    def _build_fallback_chain(self, level: str) -> list[tuple[str, str | None]]:
+        return [("primary", "bad-model"), ("fallback", "good-model")]
+
+    def _get_brain(self, name: str, model: str | None = None) -> _StreamingBrain:
+        self.requested.append((name, model))
+        if name == "primary":
+            return self.primary
+        if name == "fallback":
+            return self.fallback
+        raise AssertionError(f"unexpected provider {name!r}")
+
+
+class _RateTrackerProbe:
+    def __init__(self) -> None:
+        self.marked: list[tuple[str, str | None]] = []
+        self.blocked: set[tuple[str, str | None]] = set()
+
+    def is_available(self, provider: str, model: str | None = None) -> bool:
+        return (provider, model) not in self.blocked
+
+    def mark_rate_limited(
+        self, provider: str, model: str | None = None,
+        cooldown_s: float | None = None,
+    ) -> None:
+        self.marked.append((provider, model))
+        self.blocked.add((provider, model))
+
+
 def make_ctx(brain: FakeBrain, *, titles: list[str] | None = None,
              verify: bool = False, step_budget: int = 10,
              bus: Any = None, announce_progress: bool = False,
@@ -168,6 +239,13 @@ def _isolate_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(loop_mod, "_foreground_clickable_labels", _no_labels)
     monkeypatch.setattr(
         loop_mod, "_capture_monitor_geometry", lambda: (0, 0, 1920, 1080),
+    )
+    # Default the privileged-prompt probe to "no prompt" so the loop never makes
+    # the real OpenInputDesktop Win32 call from a test; the elevation tests
+    # override this with their own injected sequence.
+    monkeypatch.setattr(
+        "jarvis.platform.privileged_prompt.privileged_prompt_active",
+        lambda: False,
     )
     # Keep the UI-tree-source singleton hermetic between tests.
     monkeypatch.setattr(loop_mod, "_UI_TREE_SOURCE", None, raising=False)
@@ -279,6 +357,244 @@ async def test_call_brain_raises_on_unusable_manager() -> None:
     )
     with pytest.raises(CULoopError):
         await _call_brain(ctx, observation=obs, user_goal="g", history_text="")
+
+
+async def test_call_brain_uses_provider_fallback_chain() -> None:
+    """CU must not bypass BrainManager fallbacks.
+
+    Live regression 2026-06-20: the normal chat turn fell back from a broken
+    Antigravity CLI provider to Grok, but Computer-Use called only
+    ``active_provider``. The CU loop then retried the same broken provider
+    three times and exited with parse/confusion instead of using the configured
+    fallback provider.
+    """
+    manager = _FallbackChainManager()
+    ctx = make_ctx(FakeBrain())
+    ctx.brain_manager = manager
+    obs = Observation(
+        trace_id=uuid4(),
+        timestamp_ns=time.time_ns(),
+        screenshot_path=None,
+        screenshot_hash="x",
+    )
+
+    raw = await _call_brain(ctx, observation=obs, user_goal="open chrome", history_text="")
+
+    assert raw == '{"action": "done"}'
+    assert manager.primary.calls == 1
+    assert manager.fallback.calls == 1
+    assert manager.requested == [
+        ("primary", "bad-model"),
+        ("fallback", "good-model"),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Vision-grounding — a screenshot-blind provider must never plan a CU step
+# ---------------------------------------------------------------------------
+
+
+async def test_call_brain_skips_blind_provider_when_screenshot_attached() -> None:
+    """CU is screenshot-grounded: a provider that cannot see the image (a
+    text-only CLI brain such as Antigravity, ``supports_vision=False``) would
+    plan blind. The dispatch must SKIP it and fall through to the next
+    vision-capable provider.
+
+    Forensic 2026-06-20: with a screenshot-blind CLI brain active, the CU planner
+    ran blind — the CLI provider silently dropped the attached screenshot, so
+    the model looped on hallucinated ``click_element name='Edit'`` actions and
+    never grounded on the real screen.
+    """
+    manager = _FallbackChainManager()
+    # Active provider answers, but blind (text-only). It must never be
+    # dispatched while a screenshot is attached.
+    manager.primary = _StreamingBrain(
+        text='{"action": "click", "x": 5, "y": 5}', supports_vision=False,
+    )
+    ctx = make_ctx(FakeBrain())
+    ctx.brain_manager = manager
+    obs = Observation(
+        trace_id=uuid4(), timestamp_ns=time.time_ns(),
+        screenshot_path=None, screenshot_hash="x",
+    )
+    img = ImageBlock(mime="image/jpeg", data_b64="QQ==", source_hash="x")
+
+    raw = await _call_brain(
+        ctx, observation=obs, user_goal="open chrome", history_text="",
+        images_override=[img],
+    )
+
+    assert raw == '{"action": "done"}'   # the vision-capable fallback answered
+    assert manager.primary.calls == 0     # blind provider never dispatched
+    assert manager.fallback.calls == 1
+
+
+async def test_call_brain_raises_when_all_providers_blind_for_screenshot() -> None:
+    """When every provider in the chain is text-only and a screenshot is
+    attached, CU must fail with a clear vision error rather than dispatch a
+    blind provider that hallucinates clicks."""
+    manager = _FallbackChainManager()
+    manager.primary = _StreamingBrain(text='{"action": "done"}', supports_vision=False)
+    manager.fallback = _StreamingBrain(text='{"action": "done"}', supports_vision=False)
+    ctx = make_ctx(FakeBrain())
+    ctx.brain_manager = manager
+    obs = Observation(
+        trace_id=uuid4(), timestamp_ns=time.time_ns(),
+        screenshot_path=None, screenshot_hash="x",
+    )
+    img = ImageBlock(mime="image/jpeg", data_b64="QQ==", source_hash="x")
+
+    with pytest.raises(CULoopError) as excinfo:
+        await _call_brain(
+            ctx, observation=obs, user_goal="g", history_text="",
+            images_override=[img],
+        )
+
+    msg = str(excinfo.value).lower()
+    assert "vision" in msg or "see the screen" in msg
+    assert manager.primary.calls == 0
+    assert manager.fallback.calls == 0
+
+
+async def test_call_brain_text_only_call_still_uses_active_provider() -> None:
+    """A CU sub-call with NO screenshot attached (e.g. a pure-text decision)
+    must NOT be vision-filtered — the active provider answers as before, even
+    if it is text-only. The skip is strictly gated on an attached image."""
+    manager = _FallbackChainManager()
+    manager.primary = _StreamingBrain(text='{"action": "done"}', supports_vision=False)
+    ctx = make_ctx(FakeBrain())
+    ctx.brain_manager = manager
+    obs = Observation(
+        trace_id=uuid4(), timestamp_ns=time.time_ns(),
+        screenshot_path=None, screenshot_hash="x",
+    )
+
+    raw = await _call_brain(
+        ctx, observation=obs, user_goal="g", history_text="",
+    )
+
+    assert raw == '{"action": "done"}'
+    assert manager.primary.calls == 1
+    assert manager.fallback.calls == 0
+
+
+async def test_call_brain_mixed_blind_and_failed_surfaces_both_in_error() -> None:
+    """A blind active provider + a vision-capable fallback that is DOWN must
+    surface BOTH facts in the failure: the fallback's real outage AND that a
+    provider was skipped for having no vision. Otherwise an operator reads only
+    "fallback down" and chases the wrong root cause, when the real story is
+    "the active brain is blind, so a fallback was hit and it happened to be
+    down". (Guards the truncation-proof blind-skip summary in the generic
+    chain-failure error.)"""
+    manager = _FallbackChainManager()
+    manager.primary = _StreamingBrain(text='{"action": "done"}', supports_vision=False)
+    manager.fallback = _StreamingBrain(
+        exc=RuntimeError("fallback down"), supports_vision=True,
+    )
+    ctx = make_ctx(FakeBrain())
+    ctx.brain_manager = manager
+    obs = Observation(
+        trace_id=uuid4(), timestamp_ns=time.time_ns(),
+        screenshot_path=None, screenshot_hash="x",
+    )
+    img = ImageBlock(mime="image/jpeg", data_b64="QQ==", source_hash="x")
+
+    with pytest.raises(CULoopError) as excinfo:
+        await _call_brain(
+            ctx, observation=obs, user_goal="g", history_text="",
+            images_override=[img],
+        )
+
+    msg = str(excinfo.value).lower()
+    assert "fallback down" in msg           # the genuine fallback outage
+    assert "vision" in msg or "skipped" in msg   # AND the blind-skip signal
+    assert manager.primary.calls == 0        # blind provider never dispatched
+    assert manager.fallback.calls == 1       # vision fallback was attempted
+
+
+async def test_call_brain_marks_rate_limited_provider_and_skips_next_call() -> None:
+    manager = _FallbackChainManager()
+    manager._rate_tracker = _RateTrackerProbe()
+    manager._dead_providers = set()
+    manager.primary = _StreamingBrain(exc=RuntimeError("429 Too Many Requests"))
+    manager.fallback = _StreamingBrain(text='{"action": "done"}')
+    ctx = make_ctx(FakeBrain())
+    ctx.brain_manager = manager
+    obs = Observation(
+        trace_id=uuid4(), timestamp_ns=time.time_ns(),
+        screenshot_path=None, screenshot_hash="x",
+    )
+    img = ImageBlock(mime="image/jpeg", data_b64="QQ==", source_hash="x")
+
+    raw = await _call_brain(
+        ctx, observation=obs, user_goal="g", history_text="",
+        images_override=[img],
+    )
+    assert raw == '{"action": "done"}'
+    assert manager._rate_tracker.marked == [("primary", "bad-model")]
+
+    manager.primary.calls = 0
+    raw = await _call_brain(
+        ctx, observation=obs, user_goal="g", history_text="",
+        images_override=[img],
+    )
+    assert raw == '{"action": "done"}'
+    assert manager.primary.calls == 0
+
+
+async def test_call_brain_marks_invalid_key_provider_dead() -> None:
+    manager = _FallbackChainManager()
+    manager._rate_tracker = _RateTrackerProbe()
+    manager._dead_providers = set()
+    manager.primary = _StreamingBrain(
+        exc=RuntimeError("Error code: 401 - invalid x-api-key")
+    )
+    manager.fallback = _StreamingBrain(text='{"action": "done"}')
+    ctx = make_ctx(FakeBrain())
+    ctx.brain_manager = manager
+    obs = Observation(
+        trace_id=uuid4(), timestamp_ns=time.time_ns(),
+        screenshot_path=None, screenshot_hash="x",
+    )
+    img = ImageBlock(mime="image/jpeg", data_b64="QQ==", source_hash="x")
+
+    raw = await _call_brain(
+        ctx, observation=obs, user_goal="g", history_text="",
+        images_override=[img],
+    )
+    assert raw == '{"action": "done"}'
+    assert "primary" in manager._dead_providers
+
+    manager.primary.calls = 0
+    raw = await _call_brain(
+        ctx, observation=obs, user_goal="g", history_text="",
+        images_override=[img],
+    )
+    assert raw == '{"action": "done"}'
+    assert manager.primary.calls == 0
+
+
+async def test_call_brain_does_not_mark_transient_5xx_dead() -> None:
+    manager = _FallbackChainManager()
+    manager._rate_tracker = _RateTrackerProbe()
+    manager._dead_providers = set()
+    manager.primary = _StreamingBrain(exc=RuntimeError("502 Bad Gateway"))
+    manager.fallback = _StreamingBrain(text='{"action": "done"}')
+    ctx = make_ctx(FakeBrain())
+    ctx.brain_manager = manager
+    obs = Observation(
+        trace_id=uuid4(), timestamp_ns=time.time_ns(),
+        screenshot_path=None, screenshot_hash="x",
+    )
+    img = ImageBlock(mime="image/jpeg", data_b64="QQ==", source_hash="x")
+
+    raw = await _call_brain(
+        ctx, observation=obs, user_goal="g", history_text="",
+        images_override=[img],
+    )
+    assert raw == '{"action": "done"}'
+    assert manager._dead_providers == set()
+    assert manager._rate_tracker.marked == []
 
 
 def test_decide_native_batch_defined_only_once() -> None:
@@ -866,3 +1182,431 @@ async def test_verify_first_directive_after_state_changing_action() -> None:
     _system, user = brain.executor_calls[1]
     assert "VERIFY FIRST" in user
     assert "open_app" in user
+
+
+# ---------------------------------------------------------------------------
+# Observe-timeout RETRY (live forensic 2026-06-22, exit 124): the Spotify CU
+# turn ran exactly ONE step and died "[cu] observe timeout (step 1)" total=3.3s.
+# The screenshot capture timed out because the shared asyncio loop was momentarily
+# saturated by a concurrent degraded-voice burst (Cartesia 402 -> Gemini-TTS 429
+# failover + double mic-open) -- NOT because the desktop was uncapturable. A
+# single transient observe timeout must NOT kill the whole mission at step 1;
+# it must retry (mirrors the existing brain-timeout retry) and only give up after
+# the cap. Provider/OS-agnostic: pure loop control, no platform code.
+# ---------------------------------------------------------------------------
+
+
+class _FlakyObserveEngine:
+    """Vision engine whose ``observe`` raises ``TimeoutError`` the first
+    ``fail_count`` calls (simulating a transient capture/loop-contention
+    timeout), then returns fresh unique observations like FakeVisionEngine."""
+
+    def __init__(self, fail_count: int) -> None:
+        self.fail_count = fail_count
+        self.calls = 0
+        self.probe_calls = 0
+        self.probe_titles: list[str] = []
+
+    def _guess_active_app_hint(self, window_title_filter: str | None = None) -> str:
+        return ""
+
+    async def observe(self, *, mode: str = "auto", cancel_token: Any = None,
+                      window_title_filter: str | None = None) -> Observation:
+        idx = self.calls
+        self.calls += 1
+        if idx < self.fail_count:
+            raise TimeoutError("observe budget elapsed (test-injected)")
+        return Observation(
+            trace_id=uuid4(),
+            timestamp_ns=time.time_ns(),
+            screenshot_path=None,
+            screenshot_hash=f"hash-{idx}",
+            nodes=(),
+            window_title="",
+            active_pid=0,
+            source="screenshot_only",
+            pruning_stats={},
+        )
+
+
+async def test_single_observe_timeout_retries_and_recovers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One transient observe timeout must NOT end the mission -- the loop
+    retries on the next step and completes (exit 0). This is the exact
+    2026-06-22 Spotify failure shape: it died at step 1 with exit 124."""
+    monkeypatch.setattr(loop_mod, "_OBSERVE_RETRY_BACKOFF_S", 0.0, raising=False)
+    brain = FakeBrain(script=[
+        '{"action": "open_app", "name": "chrome"}',
+        '{"action": "done"}',
+    ])
+    ctx = make_ctx(brain)
+    ctx.vision_engine = _FlakyObserveEngine(fail_count=1)
+
+    chunks = await run_loop(ctx, "oeffne chrome")
+
+    assert chunks[-1].exit_code == 0, (
+        "a single transient observe timeout killed the mission instead of retrying"
+    )
+    # The mission recovered and actually drove the brain (it did not die before
+    # the first plan).
+    assert len(brain.requests) >= 1
+
+
+async def test_persistent_observe_timeout_fails_after_cap_not_at_step_1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If observe keeps timing out it still fails honestly with exit 124 --
+    but only AFTER retrying past step 1, never an instant step-1 give-up."""
+    monkeypatch.setattr(loop_mod, "_OBSERVE_RETRY_BACKOFF_S", 0.0, raising=False)
+    brain = FakeBrain(script=['{"action": "done"}'])
+    ctx = make_ctx(brain)
+    # Always time out (fail_count huge).
+    ctx.vision_engine = _FlakyObserveEngine(fail_count=10_000)
+
+    chunks = await run_loop(ctx, "oeffne chrome")
+
+    assert chunks[-1].exit_code == loop_mod._TIMEOUT_EXIT_CODE
+    # It must have RETRIED before giving up -- more than one observe attempt.
+    assert ctx.vision_engine.calls >= 2, (
+        "persistent observe timeout gave up at step 1 without retrying"
+    )
+    stderr = chunks[-1].stderr
+    assert "observe timeout" in stderr
+
+
+# ---------------------------------------------------------------------------
+# Repeated-type guard (live forensic 2026-06-22, Microsoft-Store/Minecraft
+# turn): the model typed the SAME query "Minecraft" into the Store search box
+# TWICE in a row (steps 6.3 + 7.3) because it could not tell the first type had
+# landed -- "das ist ja dumm". A back-to-back identical type into a field that
+# already holds the text is a redundant no-op. Suppress the repeat (like the
+# click toggle-stop) and push the model to the NEXT step instead of mashing the
+# same query. Provider/OS-agnostic: pure loop control.
+# ---------------------------------------------------------------------------
+
+
+async def test_repeated_type_of_same_text_is_suppressed() -> None:
+    """The exact 2026-06-22 dumbness: ``type 'Minecraft'`` twice in a row. The
+    SECOND identical type must be suppressed -- the executor must run a
+    type-with-text='Minecraft' only ONCE -- and the mission still completes."""
+    brain = FakeBrain(script=[
+        '{"action": "type", "text": "Minecraft"}',
+        '{"action": "type", "text": "Minecraft"}',  # redundant back-to-back repeat
+        '{"action": "done"}',
+    ])
+    ctx = make_ctx(brain)
+    chunks = await run_loop(ctx, "tippe Minecraft in die Suche")
+
+    typed = [
+        c for c in ctx.tool_executor.calls
+        if str(c[1].get("text", "")) == "Minecraft"
+    ]
+    assert len(typed) == 1, (
+        f"'Minecraft' was typed {len(typed)}x -- the back-to-back repeat must "
+        "be suppressed, not executed again"
+    )
+    assert chunks[-1].exit_code == 0
+
+
+async def test_typing_a_different_text_is_not_suppressed() -> None:
+    """The guard is precise: typing a DIFFERENT text after the first is a real
+    new action and must execute (no false positive)."""
+    brain = FakeBrain(script=[
+        '{"action": "type", "text": "Minecraft"}',
+        '{"action": "type", "text": "Roblox"}',  # different query -> must run
+        '{"action": "done"}',
+    ])
+    ctx = make_ctx(brain)
+    await run_loop(ctx, "suche zwei spiele")
+
+    texts = [
+        str(c[1].get("text", "")) for c in ctx.tool_executor.calls
+        if c[1].get("text")
+    ]
+    assert "Minecraft" in texts and "Roblox" in texts, (
+        f"a distinct second type was wrongly suppressed (typed: {texts})"
+    )
+
+
+async def test_type_after_a_click_is_not_suppressed() -> None:
+    """RC#2 (Google-Flights, 2026-06-22): a click RE-FOCUSES / re-targets the
+    field, so a following type of the SAME text is a fresh retry (the first type
+    did not land in the web input), NOT a redundant back-to-back repeat. The
+    intervening click must clear the repeat-type guard so the retry executes --
+    otherwise the mission dead-ends 'in the right field but nothing typed'."""
+    brain = FakeBrain(script=[
+        '{"action": "type", "text": "Tokyo"}',
+        '{"action": "click", "x": 114, "y": 162, "target": "destination field"}',
+        '{"action": "type", "text": "Tokyo"}',  # retry after re-focus -> must run
+        '{"action": "done"}',
+    ])
+    ctx = make_ctx(brain)
+    await run_loop(ctx, "tippe Tokyo in das Zielfeld")
+
+    typed = [
+        c for c in ctx.tool_executor.calls
+        if str(c[1].get("text", "")) == "Tokyo"
+    ]
+    assert len(typed) == 2, (
+        f"'Tokyo' was typed {len(typed)}x -- a re-type AFTER a re-focusing click "
+        "must NOT be suppressed; the repeat-type guard must reset on a click"
+    )
+
+
+# ---------------------------------------------------------------------------
+# RC#3 (2026-06-22): a DRAG action -- press the mouse at (x,y), move to
+# (x2,y2), release -- so the agent can rotate a map/globe, pan, or move a
+# slider. A plain click cannot do this; before this action the vocabulary had
+# no press-and-hold-move primitive at all.
+# ---------------------------------------------------------------------------
+
+
+async def test_drag_action_performs_press_move_release(monkeypatch) -> None:
+    """A drag action must reach the mouse layer with both endpoints resolved."""
+    calls: list = []
+    monkeypatch.setattr(
+        "jarvis.harness.screenshot_only_loop._perform_drag",
+        lambda *a, **k: calls.append((a, k)),
+    )
+    brain = FakeBrain(script=[
+        '{"action": "drag", "x": 500, "y": 500, "x2": 700, "y2": 300}',
+        '{"action": "done"}',
+    ])
+    ctx = make_ctx(brain)
+    chunks = await run_loop(ctx, "rotate the globe to the right")
+
+    assert len(calls) == 1, "the drag action never reached the mouse layer"
+    # 4 coordinate args (start_x, start_y, end_x, end_y) plus a duration.
+    assert len(calls[0][0]) >= 4, f"drag called with too few args: {calls[0]}"
+    assert chunks[-1].exit_code == 0
+
+
+def test_drag_is_in_the_action_vocabulary() -> None:
+    from jarvis.harness import screenshot_only_loop as loop
+
+    assert "drag" in loop._VALID_ACTIONS
+    assert "drag" in loop._SYSTEM_PROMPT  # the model is told the shape exists
+
+
+# ---------------------------------------------------------------------------
+# General "no progress -> re-target" nudge (user mandate 2026-06-22: the loop
+# must GENERALLY recognise a missed target instead of mashing the same action --
+# "das war nur ein Beispiel ... ich möchte nicht dass es nur auf dieses eine
+# Beispiel bezogen ist ... unsere Mechanik ist Screenshot/Tastatur/Maus, das
+# bleibt"). The instant an action leaves the screen UNCHANGED, the loop tells
+# the model -- for ANY action type, ANY app -- that it had no effect and to
+# re-target, BEFORE the 3-strike stuck abort.
+# ---------------------------------------------------------------------------
+
+
+class _HashSeqEngine:
+    """Vision engine returning a fixed screenshot-hash sequence, to drive the
+    stall / no-progress logic deterministically."""
+
+    def __init__(self, hashes: list[str]) -> None:
+        self._hashes = hashes
+        self.calls = 0
+        self.probe_calls = 0
+        self.probe_titles: list[str] = []
+
+    def _guess_active_app_hint(self, window_title_filter: str | None = None) -> str:
+        return ""
+
+    async def observe(self, *, mode: str = "auto", cancel_token: Any = None,
+                      window_title_filter: str | None = None) -> Observation:
+        idx = self.calls
+        self.calls += 1
+        h = self._hashes[min(idx, len(self._hashes) - 1)]
+        return Observation(
+            trace_id=uuid4(), timestamp_ns=time.time_ns(),
+            screenshot_path=None, screenshot_hash=h, nodes=(),
+            window_title="", active_pid=0, source="screenshot_only",
+            pruning_stats={},
+        )
+
+
+async def test_unchanged_screen_nudges_model_to_retarget() -> None:
+    """A no-op action (screen unchanged) must make the loop tell the model to
+    STOP repeating and re-target -- generically, via plain click actions (not a
+    type/app special case)."""
+    brain = FakeBrain(script=[
+        '{"action": "click", "x": 10, "y": 10}',
+        '{"action": "click", "x": 20, "y": 20}',
+        '{"action": "done"}',
+    ])
+    ctx = make_ctx(brain)
+    ctx.vision_engine = _HashSeqEngine(["A", "A", "B"])  # no change after step 1
+
+    chunks = await run_loop(ctx, "klick etwas an")
+
+    assert any(
+        "did NOT change after your last action" in req[1]
+        for req in brain.requests
+    ), "the loop never warned the model that the screen was unchanged"
+    assert chunks[-1].exit_code == 0
+
+
+async def test_no_retarget_nudge_when_screen_keeps_changing() -> None:
+    """No false nudge on a healthy mission: every step changes the screen, so
+    the model must never be told 'no visible effect'."""
+    brain = FakeBrain(script=[
+        '{"action": "click", "x": 10, "y": 10}',
+        '{"action": "click", "x": 20, "y": 20}',
+        '{"action": "done"}',
+    ])
+    ctx = make_ctx(brain)
+    ctx.vision_engine = _HashSeqEngine(["A", "B", "C"])  # always changing
+
+    await run_loop(ctx, "klick etwas an")
+
+    assert not any(
+        "did NOT change after your last action" in req[1]
+        for req in brain.requests
+    ), "the re-target nudge fired even though the screen kept changing"
+
+
+# ---------------------------------------------------------------------------
+# Elevation pause-and-resume (UAC Secure Desktop, 2026-06-23). When a launched
+# app raises a privilege prompt mid-mission, a non-elevated process can neither
+# see (BitBlt -> black/raise) nor click (UIPI) the Secure Desktop. The loop must
+# PAUSE for the human's one confirmation click and resume, instead of aborting
+# blind with the misleading exit 1 "couldn't see the screen". The
+# privileged-prompt probe is injected here (no real Win32).
+# ---------------------------------------------------------------------------
+
+
+class _ObserveFailsThenWorks:
+    """VisionEngine whose observe() raises CULoopError (the Secure-Desktop
+    BitBlt failure) on the first ``fail_times`` calls, then yields frames."""
+
+    def __init__(self, fail_times: int) -> None:
+        self.fail_times = fail_times
+        self.calls = 0
+
+    def _guess_active_app_hint(self, window_title_filter: str | None = None) -> str:
+        return ""
+
+    async def observe(self, *, mode: str = "auto", cancel_token: Any = None,
+                      window_title_filter: str | None = None) -> Observation:
+        n = self.calls
+        self.calls += 1
+        if n < self.fail_times:
+            raise CULoopError(
+                "screenshot capture returned no frame (transient GDI failure)"
+            )
+        return Observation(
+            trace_id=uuid4(), timestamp_ns=time.time_ns(),
+            screenshot_path=None, screenshot_hash=f"hash-{n}",
+            nodes=(), window_title="", active_pid=0,
+            source="screenshot_only", pruning_stats={},
+        )
+
+
+class _RecordingBus:
+    def __init__(self) -> None:
+        self.events: list[Any] = []
+
+    async def publish(self, event: Any) -> None:
+        self.events.append(event)
+
+
+def _patch_prompt_probe(monkeypatch: pytest.MonkeyPatch, seq: Any) -> None:
+    """Patch privileged_prompt_active to a constant bool or a per-call sequence
+    of bools (the last value repeats)."""
+    if isinstance(seq, bool):
+        monkeypatch.setattr(
+            "jarvis.platform.privileged_prompt.privileged_prompt_active",
+            lambda: seq,
+        )
+        return
+    values = list(seq)
+    state = {"i": 0}
+
+    def _probe() -> bool:
+        v = values[min(state["i"], len(values) - 1)]
+        state["i"] += 1
+        return v
+
+    monkeypatch.setattr(
+        "jarvis.platform.privileged_prompt.privileged_prompt_active", _probe
+    )
+
+
+@pytest.fixture
+def _fast_elevation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(loop_mod, "_ELEVATION_WAIT_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(loop_mod, "_ELEVATION_POLL_S", 0.005)
+
+
+async def test_observe_failure_during_uac_pauses_and_resumes(
+    monkeypatch: pytest.MonkeyPatch, _fast_elevation: None,
+) -> None:
+    # Mode A: observe raises (Secure Desktop), prompt is up then cleared → the
+    # mission RESUMES and completes (exit 0), never the blind exit 1.
+    _patch_prompt_probe(monkeypatch, [True, False])
+    bus = _RecordingBus()
+    brain = FakeBrain(script=['{"action": "done"}'])
+    ctx = make_ctx(brain, bus=bus)
+    ctx.vision_engine = _ObserveFailsThenWorks(fail_times=1)
+
+    chunks = await run_loop(ctx, "Kannst du eine Aufnahme starten?")
+
+    assert chunks[-1].exit_code == 0
+    from jarvis.voice.action_phrases import action_phrase
+    texts = [getattr(e, "text", "") for e in bus.events]
+    assert action_phrase("cu_awaiting_elevation", "de") in texts
+
+
+async def test_uac_never_confirmed_aborts_with_elevation_exit_not_no_view(
+    monkeypatch: pytest.MonkeyPatch, _fast_elevation: None,
+) -> None:
+    # Mode A: observe raises, prompt stays up forever → exit 9 (needs
+    # elevation), NEVER exit 1 (the misleading "couldn't see the screen").
+    _patch_prompt_probe(monkeypatch, True)
+    brain = FakeBrain(script=['{"action": "done"}'])
+    ctx = make_ctx(brain)
+    ctx.vision_engine = _ObserveFailsThenWorks(fail_times=99)
+
+    chunks = await run_loop(ctx, "open OBS and record")
+
+    assert chunks[-1].exit_code == loop_mod._ELEVATION_EXIT_CODE
+    assert chunks[-1].exit_code != loop_mod._OBSERVE_EXIT_CODE
+
+
+async def test_observe_failure_without_uac_still_aborts_exit_1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No regression: observe raises and NO prompt is up → the original generic
+    # observe failure (exit 1). The probe must never invent a prompt.
+    _patch_prompt_probe(monkeypatch, False)
+    brain = FakeBrain(script=['{"action": "done"}'])
+    ctx = make_ctx(brain)
+    ctx.vision_engine = _ObserveFailsThenWorks(fail_times=99)
+
+    chunks = await run_loop(ctx, "do something on screen")
+
+    assert chunks[-1].exit_code == loop_mod._OBSERVE_EXIT_CODE
+
+
+async def test_uac_detected_before_brain_call_skips_blind_step(
+    monkeypatch: pytest.MonkeyPatch, _fast_elevation: None,
+) -> None:
+    # Mode B: observe SUCCEEDS (e.g. a black frame) but the prompt is up — the
+    # loop must detect it BEFORE the brain call and pause, never feed the model a
+    # blind frame. After it clears, the mission resumes and completes; the model
+    # is consulted only once (the paused step made no brain call).
+    _patch_prompt_probe(monkeypatch, [True, False, False, False])
+    bus = _RecordingBus()
+    brain = FakeBrain(script=['{"action": "done"}'])
+    ctx = make_ctx(brain, bus=bus)
+
+    chunks = await run_loop(ctx, "open OBS and record")
+
+    assert chunks[-1].exit_code == 0
+    assert len(brain.requests) == 1
+    # The goal is English, so the spoken ask resolves to English (Output-Language
+    # doctrine: never a hardcoded locale).
+    from jarvis.voice.action_phrases import action_phrase
+    texts = [getattr(e, "text", "") for e in bus.events]
+    assert action_phrase("cu_awaiting_elevation", "en") in texts

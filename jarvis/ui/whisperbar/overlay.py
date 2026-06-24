@@ -83,10 +83,17 @@ class WhisperBarOverlay:
         persistent: bool = True,
         accent: str = "#e7c46e",
         opacity: float = BAR_ALPHA,
+        start_hidden: bool = False,
     ) -> None:
         self._persistent = persistent
         self._accent = accent
         self._opacity = max(0.2, min(1.0, float(opacity)))  # clamp to sane range
+        # Boot gate: when set, the bar starts WITHDRAWN even if persistent, so it
+        # does not appear before the speech pipeline is ready to listen (the
+        # "looks ready but isn't" boot confusion). The boot wiring reveals it via
+        # show("idle") once VoiceBootStatus(ready=True) arrives. Default False
+        # keeps every other caller (live swap / set_bar_persistent) unchanged.
+        self._start_hidden = bool(start_hidden)
         self._mode = "idle"
         self._ext_level = 0.0
         # perf_counter() of the last set_level() that carried real sound
@@ -170,6 +177,15 @@ class WhisperBarOverlay:
     # ------------------------------------------------------------------ #
     # Lifecycle                                                          #
     # ------------------------------------------------------------------ #
+    def _should_start_withdrawn(self) -> bool:
+        """True when ``start()`` must withdraw the window instead of mapping it.
+
+        A non-persistent bar always starts hidden (it pops on a session). A
+        persistent bar normally maps immediately, but the boot gate
+        (``start_hidden=True``) keeps it hidden until voice is ready.
+        """
+        return (not self._persistent) or self._start_hidden
+
     def start_in_thread(self, timeout: float = 3.0) -> None:
         def _run() -> None:
             try:
@@ -227,8 +243,27 @@ class WhisperBarOverlay:
         self._canvas.bind("<Enter>", self._on_enter)
         self._canvas.bind("<Leave>", self._on_leave)
 
-        if not self._persistent:
-            root.withdraw()  # only-when-active variant starts hidden
+        # Drag-drop onto the bar (desktop extra, cross-platform via tkdnd).
+        # TEMPORARILY DISABLED 2026-06-23 (wake-fix session): on this frameless
+        # color-key topmost window, tkdnd's ``_require(root)`` + drop_target_register
+        # injected PHANTOM mouse press/release events on every turn mode-switch,
+        # which the click handler read as a close-X click -> a ``request_hangup``
+        # STORM (6+/turn) that aborted every voice answer mid-thought (Hangup during
+        # thinking). The file-drop-onto-bar feature is purely additive — the web
+        # dock (POST /api/chat/drop) carries it on every OS — so disabling JUST the
+        # bar registration restores voice without losing the capability. Re-enable
+        # once the tkdnd phantom-event issue on the color-key window is resolved.
+        if False:  # noqa: SIM223 — intentional kill-switch (see note above)
+            try:
+                from jarvis.overlay.drop_bridge import dispatch_drop
+                from jarvis.overlay.drop_target import make_drop_target
+
+                make_drop_target().register(self._canvas, dispatch_drop)
+            except Exception:  # noqa: BLE001 — drop is optional; never block bar boot.
+                log.debug("bar drop target registration skipped", exc_info=True)
+
+        if self._should_start_withdrawn():
+            root.withdraw()  # only-when-active variant / boot gate starts hidden
 
         try:
             from jarvis.audio import level_tap
@@ -372,12 +407,19 @@ class WhisperBarOverlay:
     # Drag (reposition) + click (start a voice session)                 #
     # ------------------------------------------------------------------ #
     def _on_press(self, event: Any) -> None:
+        # A press on the canvas means the pointer IS over the bar, so the close-X
+        # controls are (and visually become) available even if <Enter> was missed
+        # — e.g. the bar deiconified under a stationary cursor. resolve_click then
+        # still gates the hang-up on the X-glyph hit-box, so this only makes a
+        # DELIBERATE X-click reliable; it never widens the accidental-hangup zone.
+        self._hovered = True
         self._drag = {
             "sx": event.x_root,
             "sy": event.y_root,
             "ox": event.x_root - self._x,
             "oy": event.y_root - self._y,
             "cx": event.x,  # canvas-relative x → which control zone was clicked
+            "hovered": True,  # press-time hover (the pointer IS on the bar now)
             "moved": False,
         }
 
@@ -403,7 +445,10 @@ class WhisperBarOverlay:
         if d is None:
             return
         if interaction.classify_release(moved=bool(d["moved"])) == "click":
-            self._on_click(d.get("cx", renderer.WIN_W / 2))
+            # Use the PRESS-time hover (consistent with the press-time cx): a
+            # deliberate click that started on the bar registers even if a stray
+            # <Leave> flickered _hovered before release.
+            self._on_click(d.get("cx", renderer.WIN_W / 2), hovered=bool(d.get("hovered")))
             return
         try:
             sw = int(self._root.winfo_screenwidth())
@@ -437,7 +482,7 @@ class WhisperBarOverlay:
         except Exception:  # noqa: BLE001
             log.debug("whisperbar show-window callback failed", exc_info=True)
 
-    def _on_click(self, click_x: float | None = None) -> None:
+    def _on_click(self, click_x: float | None = None, *, hovered: bool = False) -> None:
         # Zone-routed: LEFT X → hang up (active only), RIGHT square → toggle
         # endpoint-free dictation, MIDDLE (idle) → start a normal session. All
         # entries are thread-safe from the Tk thread.
@@ -449,7 +494,16 @@ class WhisperBarOverlay:
             pipeline = get_speech_pipeline()
             if pipeline is None:
                 return
-            action = interaction.resolve_click(click_x, renderer.WIN_W, self._mode)
+            # Hang-up must be a deliberate click on the VISIBLE close-X glyph
+            # (the X is only drawn while hovered), never the wide left dead-zone
+            # — see interaction.resolve_click + the silent-hangup forensic. The
+            # active pill is ACTIVE_W, so the X glyph sits at WIN_W/2-0.42*pw.
+            active = self._mode in ("listen", "think", "speak")
+            pill_w = renderer.ACTIVE_W if active else None
+            action = interaction.resolve_click(
+                click_x, renderer.WIN_W, self._mode,
+                hovered=hovered, pill_w=pill_w,
+            )
             if action == "dictate":
                 toggle = getattr(pipeline, "request_ptt_toggle", None)
                 if callable(toggle):

@@ -19,6 +19,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
 import { AlertCircle, Terminal as TerminalIcon } from "lucide-react";
+import { useT } from "@/i18n";
 import {
   disposeTerminal,
   getTerminal,
@@ -41,6 +42,7 @@ function buildPtyUrl(workerId: string): string {
 }
 
 export function PtyTerminal({ workerId }: PtyTerminalProps) {
+  const t = useT();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -163,17 +165,17 @@ export function PtyTerminal({ workerId }: PtyTerminalProps) {
       });
 
       ws.addEventListener("error", () => {
-        setStreamError("PTY-Stream nicht erreichbar.");
+        setStreamError(t("pty_terminal.stream_unreachable"));
       });
 
       ws.addEventListener("close", (ev) => {
         setConnected(false);
         if (ev.code !== 1000 && ev.code !== 1001) {
-          setStreamError(`Stream getrennt (Code ${ev.code}).`);
+          setStreamError(`${t("pty_terminal.stream_disconnected")} (Code ${ev.code}).`);
         }
       });
     } catch (e) {
-      setStreamError(`PTY-Connect fehlgeschlagen: ${(e as Error).message}`);
+      setStreamError(`${t("pty_terminal.connect_failed")}: ${(e as Error).message}`);
     }
 
     return () => {
@@ -190,7 +192,7 @@ export function PtyTerminal({ workerId }: PtyTerminalProps) {
       termRef.current = null;
       fitRef.current = null;
     };
-  }, [workerId, sendControl]);
+  }, [workerId, sendControl, t]);
 
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden rounded-md border border-border bg-[#0b0d10]">
@@ -208,7 +210,7 @@ export function PtyTerminal({ workerId }: PtyTerminalProps) {
           ) : connected ? (
             <span className="text-emerald-400">live</span>
           ) : (
-            <span className="text-muted-foreground">verbinde…</span>
+            <span className="text-muted-foreground">{t("pty_terminal.connecting")}</span>
           )}
         </div>
       </header>

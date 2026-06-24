@@ -320,9 +320,9 @@ _STT_UNAVAILABLE_PHRASE: dict[str, str] = {
 # pre-empted brain_timeout, so the turn just hung up with no feedback). Short,
 # bilingual, TTS-clean (``_speak`` does not scrub).
 _BRAIN_TIMEOUT_PHRASE: dict[str, str] = {
-    "de": "Das hat gerade zu lange gedauert. Sag es bitte noch einmal.",
-    "en": "That took too long just now. Could you say it again?",
-    "es": "Eso ha tardado demasiado ahora mismo. ¿Puedes repetirlo, por favor?",
+    "de": "Entschuldige, ich habe die Antwort nicht rechtzeitig fertigbekommen.",
+    "en": "Sorry, I couldn't finish the answer in time.",
+    "es": "Lo siento, no pude terminar la respuesta a tiempo.",
 }
 
 # AD-OE6 zero-silent-drop fallback for an ABANDONED incomplete utterance. When
@@ -1382,7 +1382,7 @@ class SpeechPipeline:
             self._bus.subscribe(
                 OpenClawBackgroundCompleted, self._on_background_completed
             )
-            # Iron-Man-Style Spawn-Ansage: dynamisch aus action/target geformt.
+            # Spawn-Ansage: dynamisch aus action/target geformt.
             self._bus.subscribe(OpenClawAnnouncement, self._on_spawn_announcement)
             # Mute toggle from any trigger surface (mascot doubleClick,
             # future hotkey/REST). The handler flips ``self._muted`` and
@@ -1418,6 +1418,9 @@ class SpeechPipeline:
         # path so voice can declare ready early. Kept on the instance so tests
         # (and a graceful shutdown) can await it.
         self._warmup_background_task: asyncio.Task | None = None
+        # Audible boot-ready cue. It must never sit between ready=True and the
+        # wake loop; slow output devices can block playback for seconds.
+        self._warmup_ready_cue_task: asyncio.Task | None = None
         # Deferred wake-non-critical loaders (VAD/STT/TTS) run off the
         # wake-ready path so "Hey Jarvis" responds without waiting out the
         # 7-24 s starved warm-up (see ``_warmup_phase_a``). Kept on the instance
@@ -1530,18 +1533,19 @@ class SpeechPipeline:
         # transcription), so this does not block the caller.
         if getattr(plan, "needs_local_whisper", False) and self._stt is None:
             try:
+                from jarvis.plugins.stt import build_wake_whisper
+
                 stt_cfg = getattr(self._config, "stt", None)
-                if stt_cfg is not None:
-                    lang = getattr(stt_cfg, "language", None)
-                    lang = None if lang in ("", "auto") else lang
-                    self._stt = FasterWhisperProvider(
-                        model=getattr(stt_cfg, "model", "distil-large-v3"),
-                        device=getattr(stt_cfg, "device", "cuda"),
-                        compute_type=getattr(stt_cfg, "compute_type", "int8_float16"),
-                        language=lang,
-                    )
-                else:
-                    self._stt = FasterWhisperProvider()
+                lang = getattr(stt_cfg, "language", None)
+                lang = None if lang in ("", "auto", None) else lang
+                # Small CPU wake model (cfg.stt.wake_*), not the heavy utterance
+                # model — keeps a live wake-word switch fast (Blackwell CUDA load
+                # is ~71 s; base/cpu ~0.45 s, measured). Seed the prompt with the
+                # custom phrase so the small model transcribes the (proper-noun)
+                # wake name instead of a common word — forensic 2026-06-22.
+                self._stt = build_wake_whisper(
+                    stt_cfg, language=lang, wake_phrase=getattr(plan, "phrase", None)
+                )
                 if self._probe_stt is None:
                     self._probe_stt = self._stt
                 log.info("Wake-Live-Switch: built local Whisper for custom phrase.")
@@ -3195,7 +3199,11 @@ class SpeechPipeline:
         into ``_ack_pcm`` / ``_task_ack_pcm`` after a live TTS-provider switch
         already cleared them. Guarded so shutdown never raises.
         """
-        for attr in ("_warmup_background_task", "_deferred_warmup_task"):
+        for attr in (
+            "_warmup_background_task",
+            "_warmup_ready_cue_task",
+            "_deferred_warmup_task",
+        ):
             task = getattr(self, attr, None)
             if task is None:
                 continue
@@ -3223,10 +3231,14 @@ class SpeechPipeline:
         await self._emit_boot_status(ready=True, detail="phase_a_done")
 
         # Audible "ready" cue: tells the user exactly when listening starts
-        # after a (cold) boot, closing the warm-up race where "Hey Jarvis"
-        # said too early silently does nothing. Until the ACK phrase is cached
-        # by Phase B, this chime is the wake feedback (see _on_wake / _ack_pcm).
-        await self._play_ready_cue()
+        # after a (cold) boot. It is intentionally fire-and-forget: a slow or
+        # wedged output device must not sit between ready=True and the wake loop.
+        self._warmup_ready_cue_task = asyncio.create_task(
+            self._play_ready_cue(), name="warmup-ready-cue"
+        )
+        self._warmup_ready_cue_task.add_done_callback(
+            self._log_warmup_ready_cue_done
+        )
 
         # --- Phase B: confirmation audio, off the critical path -----------
         # Pre-rendering the ACK + ~20 task-ack phrases used to dominate warm-up
@@ -3237,6 +3249,14 @@ class SpeechPipeline:
             self._warmup_phase_b(), name="warmup-confirmation-audio"
         )
         log.info("Warm-up Phase A complete — confirmation audio rendering in background.")
+
+    def _log_warmup_ready_cue_done(self, task: asyncio.Task) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Warm-up ready cue failed: %s", exc)
 
     async def _warmup_phase_a(self) -> None:
         """Bring up ONLY the wake-critical listening path, then return.
@@ -3963,17 +3983,37 @@ class SpeechPipeline:
                 self._state = PipelineState.IDLE
                 # Supervisor zurueck auf IDLE — Orb verschwindet
                 await self._set_turn_state(TurnTakingState.IDLE)
-                # Disconnect-Sound als hörbares Hangup-Signal
-                try:
-                    await self._player.play_pcm(
-                        DISCONNECT_PCM, sample_rate=CHIME_SAMPLE_RATE
-                    )
-                except Exception:  # noqa: BLE001
-                    pass
+                # Disconnect-Sound als hörbares Hangup-Signal (earcon — gated
+                # by the global "Sound effects" switch).
+                await self._play_earcon(DISCONNECT_PCM)
                 # Cooldown setzen damit Speaker-Echo nicht sofort re-triggert
                 self._wake_lock_until = time.time() + self._post_hangup_lock_s
                 log.info("📵 AUFGELEGT — zurück zu IDLE (Wake-Lock %.1fs).",
                          self._post_hangup_lock_s)
+
+    def _earcons_enabled(self) -> bool:
+        """Whether synthesized UI earcons may play.
+
+        Read fresh from the shared config object so the Settings → Behavior
+        "Sound effects" master switch applies live (no restart). Defensive
+        default ``True`` — a missing field must never silence tones.
+        """
+        ui = getattr(self._config, "ui", None)
+        return bool(getattr(ui, "sound_effects", True))
+
+    async def _play_earcon(
+        self, pcm: bytes, *, sample_rate: int = CHIME_SAMPLE_RATE
+    ) -> None:
+        """Play a synthesized earcon unless the global "Sound effects" switch
+        is off. Never raises — an earcon failure must not crash a turn (AD-OE6).
+        Does NOT gate the spoken TTS voice, which is not an earcon.
+        """
+        if not self._earcons_enabled():
+            return
+        try:
+            await self._player.play_pcm(pcm, sample_rate=sample_rate)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Earcon playback skipped (%s).", exc)
 
     async def _play_ack(self, *, ptt: bool = False) -> None:
         """Chime + pre-rendertes 'Ja?' — Gesamtdauer ~400-600 ms.
@@ -3983,7 +4023,7 @@ class SpeechPipeline:
         chime is immediate feedback that recording is live; speech is not.
         """
         try:
-            await self._player.play_pcm(CHIME_PCM, sample_rate=CHIME_SAMPLE_RATE)
+            await self._play_earcon(CHIME_PCM)
             if ptt:
                 # Chime only, and NO dead-zone: the mic opens the instant this
                 # returns and the user is already holding the key + talking. The
@@ -5838,9 +5878,11 @@ class SpeechPipeline:
                 kind, lang, signal_mode, use_earcon,
             )
 
-            if use_earcon:
+            if use_earcon and self._earcons_enabled():
                 # Non-blocking earcon: reuses the same CHIME_PCM that the wake
                 # acknowledgment uses (imported at the top of this module).
+                # Gated by the global "Sound effects" switch (checked before the
+                # task is scheduled, so a muted run spawns no no-op coroutine).
                 # play_pcm is async but we fire-and-forget to avoid adding latency
                 # to the LISTENING re-entry.  Failure is swallowed below.
                 try:

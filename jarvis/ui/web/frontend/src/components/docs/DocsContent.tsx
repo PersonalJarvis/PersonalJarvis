@@ -215,6 +215,7 @@ function NavCard({
   direction: "prev" | "next";
   onSelect?: (slug: string) => void;
 }) {
+  const t = useT();
   if (!doc) return <div />;
   const Icon = direction === "prev" ? ChevronLeft : ChevronRight;
   const align = direction === "next" ? "text-right items-end" : "items-start";
@@ -226,7 +227,7 @@ function NavCard({
     >
       <span className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-muted-foreground">
         {direction === "prev" ? <Icon className="h-3 w-3" /> : null}
-        {direction === "prev" ? "Vorher" : "Naechstes"}
+        {direction === "prev" ? t("docs_content.prev") : t("docs_content.next")}
         {direction === "next" ? <Icon className="h-3 w-3" /> : null}
       </span>
       <span className="text-sm font-medium">{doc.title}</span>

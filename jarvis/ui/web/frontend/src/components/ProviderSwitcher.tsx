@@ -11,7 +11,9 @@ import { useEventStore } from "@/store/events";
 export function ProviderSwitcher() {
   const t = useT();
   const { providers, refetch } = useProviders();
-  const brainProviders = providers.filter((p) => p.tier === "brain");
+  const brainProviders = providers.filter(
+    (p) => p.tier === "brain" && p.brain_switchable !== false,
+  );
   const active = brainProviders.find((p) => p.active) ?? brainProviders[0];
   const [target, setTarget] = useState(active?.id ?? "");
   const [pending, setPending] = useState(false);
@@ -55,7 +57,7 @@ export function ProviderSwitcher() {
         {brainProviders.map((p) => (
           <option key={p.id} value={p.id} disabled={!p.configured}>
             {p.label}
-            {!p.configured && " — kein Credential"}
+            {!p.configured && ` — ${t("provider_switcher.no_credential")}`}
           </option>
         ))}
       </select>
@@ -64,7 +66,7 @@ export function ProviderSwitcher() {
       </Button>
       {active && (
         <p className="text-xs text-muted-foreground">
-          Aktiv: <code className="font-mono">{active.id}</code>
+          {t("provider_switcher.active")}: <code className="font-mono">{active.id}</code>
         </p>
       )}
     </div>

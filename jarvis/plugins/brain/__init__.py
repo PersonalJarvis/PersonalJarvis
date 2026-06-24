@@ -1,1 +1,1 @@
-"""Brain-Provider-Plugins (Claude, OpenRouter, OpenAI, Gemini, Grok)."""
+"""Brain-Provider-Plugins (Claude, OpenRouter, OpenAI, Gemini)."""

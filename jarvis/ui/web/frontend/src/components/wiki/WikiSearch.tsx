@@ -17,6 +17,7 @@ import { Command } from "cmdk";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { colourForKind } from "@/lib/wikiGraph";
+import { useT } from "@/i18n";
 
 const SEARCH_DEBOUNCE_MS = 200;
 const SEARCH_LIMIT = 8;
@@ -135,6 +136,7 @@ export const WikiSearch = forwardRef<WikiSearchHandle, WikiSearchProps>(function
   { onResultClick },
   ref,
 ): JSX.Element {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [rawQuery, setRawQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -197,23 +199,23 @@ export const WikiSearch = forwardRef<WikiSearchHandle, WikiSearchProps>(function
     <Command.Dialog
       open={open}
       onOpenChange={setOpen}
-      label="Wiki-Suche"
+      label={t("wiki_search.dialog_label")}
       data-testid="wiki-search-dialog"
       contentClassName="fixed left-1/2 top-[20vh] z-50 w-[min(640px,90vw)] -translate-x-1/2 rounded-xl border border-border bg-background shadow-2xl"
       overlayClassName="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm"
     >
       {/* Screen-reader-only title and description — required by Radix Dialog's
           a11y contract; visually hidden so the palette UI stays clean. */}
-      <h2 className="sr-only">Wiki-Suche</h2>
+      <h2 className="sr-only">{t("wiki_search.dialog_label")}</h2>
       <p className="sr-only" id="wiki-search-description">
-        Volltext-Suche im Vault. Tippe einen Begriff oder navigiere mit den Pfeiltasten.
+        {t("wiki_search.dialog_description")}
       </p>
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
         <span aria-hidden="true" className="text-muted-foreground">⌕</span>
         <Command.Input
           value={rawQuery}
           onValueChange={setRawQuery}
-          placeholder="Volltext-Suche im Vault…"
+          placeholder={t("wiki_search.input_placeholder")}
           data-testid="wiki-search-input"
           className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           autoFocus
@@ -228,10 +230,10 @@ export const WikiSearch = forwardRef<WikiSearchHandle, WikiSearchProps>(function
         className="max-h-[60vh] overflow-y-auto p-2 text-sm"
       >
         {debouncedQuery.length === 0 ? (
-          <Command.Group heading="Zuletzt geändert" data-testid="wiki-search-recent">
+          <Command.Group heading={t("wiki_search.recent_heading")} data-testid="wiki-search-recent">
             {recent.length === 0 ? (
               <div className="px-2 py-3 text-muted-foreground" data-testid="wiki-search-recent-empty">
-                Noch keine Seiten im Vault.
+                {t("wiki_search.no_pages")}
               </div>
             ) : (
               recent.map((entry) => (
@@ -256,28 +258,28 @@ export const WikiSearch = forwardRef<WikiSearchHandle, WikiSearchProps>(function
           </Command.Group>
         ) : isFetching ? (
           <div className="px-2 py-3 text-muted-foreground" data-testid="wiki-search-loading">
-            Suche läuft…
+            {t("wiki_search.searching")}
           </div>
         ) : isError || !data?.ok ? (
           <div
             className="flex flex-col items-start gap-2 px-2 py-3 text-muted-foreground"
             data-testid="wiki-search-error"
           >
-            <span>Suche gerade nicht verfügbar.</span>
+            <span>{t("wiki_search.unavailable")}</span>
             <button
               type="button"
               onClick={() => refetch()}
               className="text-xs underline hover:text-foreground"
             >
-              Erneut versuchen
+              {t("common.retry")}
             </button>
           </div>
         ) : data.hits.length === 0 ? (
           <Command.Empty data-testid="wiki-search-empty">
-            Keine Treffer für &quot;{debouncedQuery}&quot;. Versuche andere Stichworte oder schau in den Graph.
+            {t("wiki_search.no_hits_prefix")}&quot;{debouncedQuery}&quot;{t("wiki_search.no_hits_suffix")}
           </Command.Empty>
         ) : (
-          <Command.Group heading="Treffer" data-testid="wiki-search-hits">
+          <Command.Group heading={t("wiki_search.hits_heading")} data-testid="wiki-search-hits">
             {data.hits.map((hit) => (
               <Command.Item
                 key={hit.slug}

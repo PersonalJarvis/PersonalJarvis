@@ -32,7 +32,8 @@ export type SectionId =
   | "outputs"
   | "socials"
   | "taskbar"
-  | "contacts";
+  | "contacts"
+  | "agent-instructions";
 
 export const SECTION_IDS = [
   "chats",
@@ -58,6 +59,7 @@ export const SECTION_IDS = [
   "socials",
   "taskbar",
   "contacts",
+  "agent-instructions",
 ] as const satisfies readonly SectionId[];
 
 export function isSectionId(value: unknown): value is SectionId {
@@ -71,23 +73,24 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   plugins: "Plugins",
   docs: "Docs",
   mcps: "MCPs",
-  tasks: "Aufgaben",
-  sessions: "Transkription",
+  tasks: "Tasks",
+  sessions: "Transcription",
   run_inspector: "Run Inspector",
   clis: "CLIs",
   "cli-test-hub": "CLI Test Hub",
   board: "Board",
-  languages: "Sprachen",
-  profile: "Profil",
-  memory: "Notizen",
-  apikeys: "API-Keys",
-  settings: "Einstellungen",
-  telephony: "Telefonie",
-  "telephony-setup": "Telefonie-Setup",
+  languages: "Languages",
+  profile: "Profile",
+  memory: "Notes",
+  apikeys: "API Keys",
+  settings: "Settings",
+  telephony: "Telephony",
+  "telephony-setup": "Telephony setup",
   outputs: "Outputs",
   socials: "Socials",
   taskbar: "Taskbar",
   contacts: "Contacts",
+  "agent-instructions": "Agent Instructions",
 };
 
 export interface EventItem {

@@ -3,7 +3,7 @@ available and switches automatically (user mandate 2026-04-28).
 
 Procedure:
 1. Resolver queries /v1/models per Hauptjarvis provider (claude-api, gemini,
-   openai, grok). The former Sub-Jarvis tier (Wave-4 migration: removed) is
+   openai). The former Sub-Jarvis tier (Wave-4 migration: removed) is
    explicitly excluded.
 2. If new model > old model: mutate ``BrainProviderConfig`` in place
    (Pydantic ``extra="allow"`` permits mutation).
@@ -96,8 +96,21 @@ async def apply_frontier_resolution(
     ``config.brain.providers[<p>].{model,deep_model}`` is updated here.
 
     Returns the list of completed switches (may be empty if already on frontier).
+
+    Gated behind ``[brain] frontier_auto_apply`` (default False, user mandate
+    2026-06-20 "providers must NOT switch by themselves"): when disabled this is
+    a complete no-op — no /v1/models query, no TOML write, no in-memory mutation,
+    no event — and the configured models are kept verbatim. A newer model is then
+    only ever adopted by an explicit pick in the per-provider model picker.
     """
     switches: list[FrontierSwitch] = []
+
+    if not bool(getattr(config.brain, "frontier_auto_apply", False)):
+        log.debug(
+            "Frontier auto-switch disabled (brain.frontier_auto_apply=False) — "
+            "keeping configured models verbatim."
+        )
+        return switches
 
     providers_dict = getattr(config.brain, "providers", None) or {}
 

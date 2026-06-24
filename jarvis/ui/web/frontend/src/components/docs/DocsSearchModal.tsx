@@ -107,11 +107,11 @@ export function DocsSearchModal({ open, onOpenChange, onSelect }: Props) {
             <div className="flex items-center justify-between border-t border-border bg-muted/20 px-3 py-1.5 text-[10px] text-muted-foreground">
               <span>
                 <kbd className="rounded border border-border px-1 font-medium">↑↓</kbd>{" "}
-                navigieren
+                {t("docs_search_modal.navigate")}
               </span>
               <span>
                 <kbd className="rounded border border-border px-1 font-medium">↵</kbd>{" "}
-                oeffnen
+                {t("docs_search_modal.open")}
               </span>
             </div>
           </Command>

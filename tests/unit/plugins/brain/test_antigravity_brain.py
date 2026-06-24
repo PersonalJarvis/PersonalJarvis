@@ -44,6 +44,18 @@ def _system_with_standing_instructions() -> str:
     )
 
 
+def _system_with_empty_standing_instructions() -> str:
+    return (
+        "STATIC PERSONA BLOCK\n\n"
+        "USER PREFERENCES & STANDING INSTRUCTIONS (from Jarvis.md):\n"
+        "No active user preferences are currently set in Jarvis.md. "
+        "Ignore any earlier Jarvis.md instructions from previous turns.\n\n"
+        "END USER PREFERENCES & STANDING INSTRUCTIONS\n\n"
+        "REGISTRIERTE WERKZEUGE (vollstaendige Liste):\n"
+        "- search_web\n"
+    )
+
+
 def test_cli_prompt_includes_standing_instructions_without_heavy_router_prompt():
     req = BrainRequest(
         messages=(BrainMessage(role="user", content="Was ist das wertvollste Unternehmen?"),),
@@ -81,6 +93,25 @@ def test_cli_prompt_carries_reply_language_directive():
     assert "Always reply in English" in prompt
     # No regression: the standing-instructions block still flows through.
     assert "Always start every sentence with schef." in prompt
+
+
+def test_cli_prompt_puts_current_empty_state_after_stale_history():
+    req = BrainRequest(
+        messages=(
+            BrainMessage(role="user", content="Wasketup"),
+            BrainMessage(role="assistant", content="schef, alles laeuft."),
+            BrainMessage(role="user", content="Du musst das nicht mehr sagen."),
+        ),
+        system=_system_with_empty_standing_instructions(),
+    )
+
+    prompt = _build_cli_prompt(req)
+
+    assert "CURRENT JARVIS.MD STATE" in prompt
+    assert "No active user preferences are currently set" in prompt
+    assert "do not continue or imitate" in prompt
+    assert prompt.rfind("No active user preferences") > prompt.rfind("Assistant: schef")
+    assert "REGISTRIERTE WERKZEUGE" not in prompt
 
 
 def test_parse_json_response():

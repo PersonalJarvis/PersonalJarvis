@@ -19,6 +19,7 @@ from __future__ import annotations
 import pytest
 
 from jarvis.missions.kontrollierer.deliverable_paths import (
+    find_generator_scripts,
     is_nondeliverable_scratch,
 )
 
@@ -109,3 +110,86 @@ def test_other_browser_profile_roots() -> None:
 def test_empty_and_root_paths() -> None:
     assert is_nondeliverable_scratch("") is False
     assert is_nondeliverable_scratch("/") is False
+
+
+# --- find_generator_scripts: the 2026-06-22 generator-script leak --------------
+# Live forensic (mission_019ef099): the user asked by voice for "one HTML file"
+# and got THREE deliverables — melbourne_guide.html PLUS its Python generator
+# generate_guide.py (which embeds the whole HTML as a string literal and writes
+# the sibling .html) PLUS a hero image. The user opened the .py and "only saw
+# code". A generator/build script is process scratch, not the thing asked for.
+# This filter drops it — but only when the document it emits SURVIVES, so a
+# script the user actually requested is never removed.
+
+
+def _reader(mapping: dict[str, str]):
+    return lambda rel: mapping.get(rel, "")
+
+
+def test_generator_script_emitting_sibling_html_is_detected() -> None:
+    files = ["generate_guide.py", "melbourne_guide.html", "melbourne_hero.jpg"]
+    text = {
+        "generate_guide.py": (
+            'html_content = """<!DOCTYPE html><html lang="de">...</html>"""\n'
+            'with open("melbourne_guide.html", "w", encoding="utf-8") as f:\n'
+            "    f.write(html_content)\n"
+        ),
+    }
+    assert find_generator_scripts(files, _reader(text)) == frozenset(
+        {"generate_guide.py"}
+    )
+
+
+def test_emitted_doc_and_its_asset_are_never_dropped() -> None:
+    files = ["generate_guide.py", "melbourne_guide.html", "melbourne_hero.jpg"]
+    text = {
+        "generate_guide.py": (
+            '<!DOCTYPE html>\nopen("melbourne_guide.html", "w").write(page)\n'
+        )
+    }
+    gen = find_generator_scripts(files, _reader(text))
+    assert "melbourne_guide.html" not in gen  # the real deliverable survives
+    assert "melbourne_hero.jpg" not in gen  # its asset survives
+
+
+def test_standalone_script_with_no_sibling_doc_is_kept() -> None:
+    # The user asked FOR a script — nothing it emits is in the set, so it must
+    # never be classified as scratch (the never-drop-a-deliverable guarantee).
+    files = ["scraper.py", "requirements.txt"]
+    text = {"scraper.py": 'import requests\nopen("out.txt", "w").write(r.text)\n'}
+    assert find_generator_scripts(files, _reader(text)) == frozenset()
+
+
+def test_script_only_reading_a_doc_is_not_a_generator() -> None:
+    # Reading an HTML (mode 'r') is not generating it.
+    files = ["lint.py", "page.html"]
+    text = {"lint.py": 'open("page.html", "r").read()  # validate markup\n'}
+    assert find_generator_scripts(files, _reader(text)) == frozenset()
+
+
+def test_two_scripts_importing_each_other_are_kept() -> None:
+    files = ["main.py", "utils.py"]
+    text = {"main.py": "import utils\nutils.run()\n", "utils.py": "def run():\n    pass\n"}
+    assert find_generator_scripts(files, _reader(text)) == frozenset()
+
+
+def test_generator_detected_via_embedded_markup_literal() -> None:
+    # A build.js that references index.html and embeds the doctype literal is a
+    # generator even when the write call is obscured (template engine, etc.).
+    files = ["build.js", "index.html"]
+    text = {"build.js": "const page = `<!DOCTYPE html><html></html>`; // index.html\n"}
+    assert find_generator_scripts(files, _reader(text)) == frozenset({"build.js"})
+
+
+def test_no_document_in_set_means_no_generators() -> None:
+    # Without any document target, there is nothing to generate -> empty result,
+    # never leaving the user with nothing.
+    files = ["only.py", "data.bin"]
+    text = {"only.py": 'open("only.html", "w").write("<html>")'}
+    assert find_generator_scripts(files, _reader(text)) == frozenset()
+
+
+def test_windows_backslash_rels_are_handled() -> None:
+    files = [r"src\gen.py", r"out\report.html"]
+    text = {r"src\gen.py": '<!DOCTYPE html>\nopen("report.html", "w").write(x)\n'}
+    assert find_generator_scripts(files, _reader(text)) == frozenset({r"src\gen.py"})

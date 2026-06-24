@@ -299,23 +299,27 @@ class ClaudeDirectWorker:
 
         # 1. Resolve which claude model this worker runs.
         #
-        # Post-Welle-4, ClaudeDirectWorker is the UNIVERSAL heavy-worker
-        # fallback: the OpenClaw-backed SubJarvisWorker was removed (it caused
-        # the ~92% nested-claude hang), so jarvis.missions.init._worker_factory
-        # routes EVERY [brain.sub_jarvis].provider that is not
-        # openai-codex/chatgpt (grok, gemini, openai, openrouter,
-        # openclaw-claude, AND the unset default — whose chain resolver falls
-        # back to the ("grok", "grok-4.3") stub) to THIS worker, which always
-        # executes on the Claude Max OAuth claude-cli backend.
+        # ClaudeDirectWorker runs the Claude Max OAuth claude-cli backend. The
+        # selected [brain.sub_jarvis].provider is HONORED — a provider with its
+        # own worker runs on THAT provider, picked in
+        # jarvis.missions.init._worker_factory: codex -> CodexDirectWorker,
+        # antigravity -> GoogleCliWorker, gemini -> GeminiWorker,
+        # openai/openrouter -> ApiAgentWorker. This worker is reached only:
+        #   1. when sub_jarvis.provider == "claude-api" (the deliberate choice), or
+        #   2. as the UNIVERSAL FALLBACK when the chosen provider cannot run this
+        #      mission — its API key is missing / the codex login is dead — or when
+        #      an old/unknown provider is configured (openclaw-claude / unset / the
+        #      removed OpenClaw "subjarvis" path that caused the ~92% nested-claude
+        #      hang). The factory LOGS every such fallback; the choice is never
+        #      silently swapped (anti-silent-fallback mandate).
         #
-        # The old "refuse unless the resolved provider is claude-api" guard
-        # assumed a SubJarvisWorker fall-through that NO LONGER EXISTS — so it
-        # turned every non-claude sub_jarvis setting into an INSTANT mission
-        # failure (forensic 2026-06-08: missions 019ea82e* / 019ea830* died in
-        # ~3 s with "primary provider is grok, expected claude-api"). We now
-        # always run on Claude and only LOG when the configured provider
-        # differs, so the fallback is legible, never a silent swap
-        # (anti-silent-fallback mandate).
+        # So this worker must NOT re-impose a "refuse unless provider==claude-api"
+        # guard: the old guard assumed a SubJarvisWorker fall-through that NO LONGER
+        # EXISTS and turned every non-claude sub_jarvis setting into an INSTANT
+        # mission failure (forensic 2026-06-08: missions 019ea82e* / 019ea830* died
+        # in ~3 s with "primary provider is <X>, expected claude-api"). We resolve
+        # the claude model from the chain, run on Claude here, and only LOG when the
+        # configured provider differs.
         chain = _resolve_provider_chain()
         primary = chain[0] if chain else None
         claude_model = _resolve_claude_model(primary)

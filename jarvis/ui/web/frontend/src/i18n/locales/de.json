@@ -41,16 +41,7 @@
     "socials": "Socials",
     "taskbar": "Taskbar",
     "contacts": "Kontakte",
-    "agent_instructions": "{name}.md",
-    "browser_voice": "Browser-Sprache"
-  },
-  "browser_voice": {
-    "title": "Browser-Sprache",
-    "subtitle": "Sprich mit Jarvis über das Mikrofon und die Lautsprecher deines Browsers — ohne Desktop-Installation. Erfordert einen sicheren Kontext (localhost oder https).",
-    "start": "Sprache starten",
-    "stop": "Stopp",
-    "listening": "Höre zu …",
-    "speaking": "Spreche …"
+    "agent_instructions": "{name}.md"
   },
   "agent_instructions": {
     "subtitle": "Deine persönlichen Präferenzen, wie der Assistent mit dir arbeitet — Ton, Sprache, Voreinstellungen, dauerhafte Fakten. Getrennt vom System-Prompt und hebelt niemals Sicherheit oder Bestätigungen aus.",
@@ -59,10 +50,11 @@
     "editor_label": "Deine Anweisungen (Markdown)",
     "placeholder": "Schreibe deine persönlichen Präferenzen…",
     "chars": "{0} Zeichen",
-    "empty_hint": "Leer — lade die Vorlage, um zu starten.",
+    "empty_hint": "Leer - Speichern leert die Datei, oder lade die Vorlage.",
     "save": "Anweisungen speichern",
     "saving": "Speichern…",
     "saved": "Anweisungen gespeichert",
+    "revert": "Verwerfen",
     "reset": "Leeren",
     "reset_done": "Anweisungen geleert",
     "load_template": "Mit Vorlage starten",
@@ -89,6 +81,12 @@
       "description": "Andere Apps (Spotify, Browser …) werden stumm, während du mit deinem Assistenten sprichst, und danach wiederhergestellt. Die eigene Stimme des Assistenten wird nie gemutet.",
       "enabled_toast": "Musik wird stumm, während du mit deinem Assistenten sprichst.",
       "disabled_toast": "Musik-Stummschaltung deaktiviert."
+    },
+    "sound_effects": {
+      "title": "Soundeffekte",
+      "description": "Spielt die kurzen Töne von Jarvis ab — den Piepton beim Wake-Word, den Auflege-Ton und den Hochfahr-Ton. Aus: lautlos; die gesprochene Stimme ist nie betroffen.",
+      "enabled_toast": "Soundeffekte an.",
+      "disabled_toast": "Soundeffekte stummgeschaltet."
     }
   },
   "socials": {
@@ -307,7 +305,14 @@
       "cancel": "Abbrechen",
       "save": "Aufgabe erstellen",
       "save_error": "Aufgabe konnte nicht erstellt werden."
-    }
+    },
+    "untitled": "(ohne Titel)",
+    "loading_details": "Lade Details…",
+    "waiting_for_event": "wartet auf Event",
+    "running_now": "läuft gerade",
+    "done_at": "fertig",
+    "in_prefix": "in",
+    "due_now": "fällig"
   },
   "skills_view": {
     "title": "Skills",
@@ -336,7 +341,31 @@
     "select_all": "Alle auswählen",
     "selected": "ausgewählt",
     "bulk_delete_title": "Skills löschen?",
-    "bulk_delete_body": "Diese Skills werden dauerhaft entfernt:"
+    "bulk_delete_body": "Diese Skills werden dauerhaft entfernt:",
+    "new_skill": "Neuer Skill",
+    "find_skill": "Skill suchen",
+    "clear_search": "Suche leeren",
+    "filter_all": "Alle",
+    "filter_mine": "Meine",
+    "all_categories": "Alle Kategorien",
+    "reset_filters": "Zurücksetzen",
+    "matches": "Treffer",
+    "ai_ranked": "KI-geranked",
+    "loading": "Lade Skills…",
+    "load_error": "Konnte Skills nicht laden",
+    "select_from_list": "Wähle einen Skill aus der Liste.",
+    "loading_skill": "Lade Skill…",
+    "validation_error": "Validierungsfehler",
+    "builtin_admin_needed": "Builtin — Admin-Passwort zum Speichern nötig",
+    "admin_password": "Admin-Passwort",
+    "admin_password_hint_a": "Builtin-Skills sind geschützt. Gib das in",
+    "admin_password_hint_b": "unter gesetzte Admin-Passwort ein.",
+    "unlock": "Entsperren",
+    "empty_list_title": "Noch keine Skills da.",
+    "empty_list_body_a": "Beim ersten Start kopiert",
+    "empty_list_body_b": "die Builtin-Skills nach",
+    "empty_list_body_c": "Passiert das nicht, check die Backend-Logs.",
+    "search_no_hits": "Keine Treffer. Probier einen anderen Begriff oder entferne einen Filter."
   },
   "run_inspector": {
     "title": "Run Inspector",
@@ -367,7 +396,12 @@
     "user": "Du",
     "assistant": "Assistent",
     "hangup": "Aufgelegt",
-    "duration": "Dauer"
+    "duration": "Dauer",
+    "unknown_error": "Unbekannter Fehler",
+    "recorder_disabled": "Session-Recorder ist deaktiviert.",
+    "recorder_hint_a": "In",
+    "recorder_hint_b": "die Sektion",
+    "recorder_hint_c": "und neu starten:"
   },
   "docs_view": {
     "title": "Docs",
@@ -754,7 +788,10 @@
     "active_tooltip": "Bereits aktiv",
     "click_to_activate": "Klick aktiviert diesen Provider",
     "needs_codex": "Erst Codex verbinden oder API-Key speichern",
+    "needs_login": "Erst mit Google anmelden, dann aktivierbar",
     "needs_key": "Erst API-Key speichern, dann aktivierbar",
+    "recommended": "Empfohlen",
+    "recommended_tooltip": "Empfohlenes Modell: {0}",
     "security_notice": ""
   },
   "apikeys_test": {
@@ -774,6 +811,7 @@
   },
   "apikeys_model": {
     "heading": "Modell",
+    "recommended_tag": "Empfohlen",
     "model_label": "Modell",
     "search_placeholder": "Modell suchen oder ID eintippen…",
     "apply": "Übernehmen",
@@ -782,9 +820,22 @@
     "live_note": "(ab sofort aktiv)",
     "restart_note": "(aktiv ab nächstem Start)",
     "load_failed": "Modelle konnten nicht geladen werden",
-    "source_static": "Offline-Liste",
-    "source_static_note": "Live-Katalog nicht erreichbar — gepflegte Fallback-Liste.",
-    "more_hint": "{0} weitere — Suche verfeinern"
+    "source_static": "Standardliste",
+    "source_static_note": "Live-Katalog nicht erreichbar — gepflegte Standardauswahl.",
+    "more_hint": "{0} weitere — Suche verfeinern",
+    "choose_placeholder": "Modell wählen…",
+    "heading_voice": "Stimme",
+    "choose_voice": "Stimme wählen…",
+    "use_custom": "\"{0}\" verwenden",
+    "no_models": "Keine Modelle gefunden",
+    "loading": "Lädt…"
+  },
+  "apikeys_cu_model": {
+    "heading": "Modell für Computer-Use",
+    "use_main": "Mein Hauptmodell verwenden",
+    "using_main": "Verwendet dein Hauptmodell",
+    "effective": "Computer-Use nutzt",
+    "cleared": "Computer-Use-Modell auf dein Hauptmodell zurückgesetzt"
   },
   "settings_view": {
     "silence_window": {
@@ -845,7 +896,7 @@
     },
     "wake_word": {
       "title": "Wake-Word",
-      "description": "Die Phrase, die du laut aussprichst, um den Sprachmodus zu aktivieren — dein gesprochenes Trigger-Wort. Tippe deine eigene ein.",
+      "description": "Aktivierungsphrase für den Sprachmodus. Tippe deine eigene ein.",
       "phrase_label": "Aktivierungsphrase",
       "phrase_placeholder": "z. B. Jonas",
       "engine_label": "Erkennungs-Engine",
@@ -1072,6 +1123,21 @@
     "restart_label": "Neu starten",
     "rerun_starting": "Wird gestartet…",
     "rerun_confirm": "Erneut ausführen",
+    "list_load_error": "Outputs nicht geladen",
+    "empty_sessions": "Noch keine Sub-Agent-Sessions. Starte einen OpenClaw-Task.",
+    "select_session": "Wähle eine Session.",
+    "loading_plan": "Lade Plan…",
+    "plan_load_error": "Plan konnte nicht geladen werden",
+    "single_shot_no_plan": "Single-Shot-Run — kein strukturierter Plan für diese Session.",
+    "results": "Ergebnisse",
+    "file": "Datei",
+    "files": "Dateien",
+    "loading_artifacts": "Lade Artefakte…",
+    "artifacts_load_error": "Artefakte nicht geladen",
+    "no_files": "Diese Session hat keine gespeicherten Dateien.",
+    "binary_file_hint": "Binärdatei — öffne den Ordner auf dem Desktop, um sie anzuzeigen.",
+    "loading_file": "Lade Datei…",
+    "file_truncated": "Datei gekürzt auf 1 MiB — Rest im Datei-Manager anzeigen.",
     "open_action": "Öffnen",
     "open_with_title": "Öffnen mit…",
     "open_with_remember": "Als Standard merken",
@@ -1101,7 +1167,8 @@
     "open_in_editor": "Markdown-Datei im OS-Standard-Editor öffnen",
     "running": "läuft",
     "saving": "Speichere…",
-    "error": "Fehler"
+    "error": "Fehler",
+    "status": "Status"
   },
   "docs": {
     "search_placeholder": "Titel/Tag filtern…",
@@ -1189,6 +1256,14 @@
     "brain_needs_openai_key": "Codex als Hirn braucht einen OpenAI-API-Key — das ChatGPT-Login treibt nur den Codex-Arbeiter. Trag einen OpenAI-Key ein (z. B. beim OpenAI-Provider), dann kannst du Codex hier auswählen.",
     "brain_key_hint": "Um Codex auch als Hirn zu nutzen, trag einen OpenAI-API-Key ein (kostenpflichtig, getrennt vom ChatGPT-Login — der treibt nur den Arbeiter). Nach dem Speichern entsperrt sich der „Als aktiv\"-Schalter oben."
   },
+  "apikeys_antigravity": {
+    "login_started": "Die Google-Anmeldung wurde im Terminal gestartet",
+    "disconnected": "Antigravity (Google) wurde getrennt",
+    "status_loading": "Google-Anmeldestatus wird geladen",
+    "connected": "Verbunden über dein Google-Abo.",
+    "connected_as": "Verbunden über Google ({0}).",
+    "needs_login_full": "{0}: erst mit Google anmelden, dann aktivieren."
+  },
   "mcps_toast": {
     "connected": "{0} verbunden"
   },
@@ -1213,15 +1288,23 @@
     },
     "welcome": {
       "title": "Willkommen bei Personal Jarvis",
-      "subtitle": "Dein lokaler, privater Sprachassistent. Lass uns alles einrichten.",
+      "subtitle": "Dein sprachgesteuerter KI-Assistent. Lass uns alles einrichten.",
       "cta": "Los geht's",
       "skip_setup": "Einrichtung vorerst überspringen"
     },
+    "risk": {
+      "title": "Bevor du fortfährst",
+      "lead": "Personal Jarvis ist mächtige, experimentelle Software.",
+      "body": "Sie kann deinen Computer steuern, Befehle ausführen, Apps öffnen, Nachrichten senden und Dateien in deinem Namen verändern — und sie kann Fehler machen. Sie kann ungewollte oder sogar zerstörerische Dinge tun.",
+      "liability": "Die Nutzung erfolgt vollständig auf eigenes Risiko. Die Entwickler übernehmen keine Haftung für Schäden, Datenverlust oder andere Folgen. Fahre nur fort, wenn du das verstehst und akzeptierst.",
+      "accept_label": "Ich verstehe die Risiken und akzeptiere, dass ich Personal Jarvis auf eigenes Risiko nutze.",
+      "proceed": "Verstanden — fortfahren"
+    },
     "intro": {
-      "scene_1": "Das ist {name} — dein Sprachassistent.",
-      "scene_2": "Sprich einfach. {name} hört zu und handelt.",
+      "scene_1": "Triff deinen sprachgesteuerten Assistenten.",
+      "scene_2": "Sprich einfach — er hört zu und handelt.",
       "scene_3": "Er arbeitet im Hintergrund weiter, wenn du es nicht tust.",
-      "scene_4": "Und er läuft lokal — deine Daten bleiben deine."
+      "scene_4": "Deine Schlüssel, deine Daten, deine Regeln."
     },
     "terms": {
       "title": "Nutzungsbedingungen & Haftungsausschluss",
@@ -1236,7 +1319,7 @@
     },
     "wake_word": {
       "title": "Wähle dein Aktivierungswort",
-      "body": "Wähle das Wort, das {name} aufweckt. \"Hey\" bleibt fest — den Rest bestimmst du.",
+      "body": "Wähle das Wort, das deinen Assistenten aufweckt. \"Hey\" bleibt fest — den Rest bestimmst du.",
       "prefix": "Hey",
       "input_label": "Dein Aktivierungswort",
       "placeholder": "z. B. Nova",
@@ -1245,7 +1328,8 @@
       "references_caveat": "Diese Referenzen dienen nur zur Information und können unvollständig oder veraltet sein — sie ersetzen nicht deine eigene Prüfung.",
       "ack_label": "Ich habe die Informationen zu geschützten Namen gesichtet und akzeptiere, dass ich allein für das gewählte Aktivierungswort verantwortlich bin.",
       "cta": "Aktivierungswort speichern",
-      "saving": "Speichern…"
+      "saving": "Speichern…",
+      "derived_name": "Dein Assistent heißt dann: {0}"
     },
     "api_keys": {
       "title": "Verbinde deine KI-Dienste (optional)",
@@ -1255,19 +1339,13 @@
     },
     "mic_test": {
       "title": "Mikrofon-Check",
-      "body": "Stellen wir sicher, dass {name} dich hören kann.",
-      "no_mic": "Kein Mikrofon erkannt. Du kannst trotzdem per Text oder über einen Kanal wie Telegram mit {name} sprechen.",
+      "body": "Stellen wir sicher, dass dein Assistent dich hören kann.",
+      "no_mic": "Kein Mikrofon erkannt. Du kannst trotzdem per Text oder über einen Kanal wie Telegram sprechen.",
       "skip": "Mikrofon-Check überspringen"
-    },
-    "persona": {
-      "title": "Mach es zu deinem (optional)",
-      "name_label": "Wie soll sich der Assistent nennen?",
-      "name_placeholder": "Namen eingeben…",
-      "skip": "Personalisierung überspringen"
     },
     "system_style": {
       "title": "Wähle deinen Stil",
-      "body": "Wie soll {name} auf dem Bildschirm erscheinen? Du kannst das jederzeit in den Einstellungen ändern.",
+      "body": "Wie soll dein Assistent auf dem Bildschirm erscheinen? Du kannst das jederzeit in den Einstellungen ändern.",
       "recommended": "Empfohlen",
       "options": {
         "whisper_bar": "Jarvis-Leiste",
@@ -1287,10 +1365,10 @@
     },
     "finish": {
       "title": "Alles bereit!",
-      "body": "{name} ist startklar. Sag dein Aktivierungswort oder tippe einen Befehl, um zu beginnen.",
+      "body": "Dein Assistent ist startklar. Sag dein Aktivierungswort oder tippe einen Befehl, um zu beginnen.",
       "skipped_title": "Du hast übersprungen — jederzeit in den Einstellungen nachholbar:",
-      "start_cta": "{name} verwenden",
-      "boot_notice": "Hinweis: Der erste Start dauert etwa 10 Sekunden, während {name} hochfährt — das ist völlig normal."
+      "start_cta": "Loslegen",
+      "boot_notice": "Hinweis: Der erste Start dauert etwa 10 Sekunden, während dein Assistent hochfährt — das ist völlig normal."
     }
   },
   "languages_view": {
@@ -1396,7 +1474,15 @@
     "ago_prefix": "vor",
     "hangup_voice_pattern": "Auflegen",
     "hangup_error": "Fehler",
-    "hangup_turn_complete": "Antwort fertig"
+    "hangup_turn_complete": "Antwort fertig",
+    "ago_suffix": "",
+    "unit_sec": "s",
+    "unit_min": "min",
+    "unit_hour": "h",
+    "duration_running": "läuft",
+    "hangup_hotkey": "Hotkey",
+    "hangup_idle_timeout": "Timeout",
+    "hangup_shutdown": "Shutdown"
   },
   "session_detail": {
     "copied_as": "Session kopiert als",
@@ -1656,7 +1742,16 @@
     "empty_all": "Kein CLI matched die Filter.",
     "empty_connected": "Keine CLI ist gerade verbunden.",
     "empty_installed": "Keine CLI ist installiert.",
-    "empty_custom": "Noch keine Custom-CLI registriert — klick 'Add Custom' oben rechts."
+    "empty_custom": "Noch keine Custom-CLI registriert — klick 'Add Custom' oben rechts.",
+    "loading_short": "Lade…",
+    "field_name_id": "Name (id, lowercase)",
+    "field_display_name": "Display-Name",
+    "risk_tier_label": "Risk-Tier",
+    "risk_monitor": "monitor (execute + log)",
+    "top_commands": "Top-Commands",
+    "just_now": "gerade eben",
+    "ago_prefix": "vor",
+    "ago_suffix": ""
   },
   "cli_test_hub_view": {
     "subtitle_tell": "Sag",
@@ -1716,7 +1811,19 @@
     "never_run": "Noch nie ausgeführt.",
     "loading_run_details": "Lade Run-Details…",
     "empty_title": "Noch keine Workflows — beim ersten Start werden 3 Beispiele geseedet.",
-    "empty_hint_pre": "Ist das Backend frisch? Schau in"
+    "empty_hint_pre": "Ist das Backend frisch? Schau in",
+    "load_error": "Workflows konnten nicht geladen werden",
+    "partial_token_ok": "Token ✓",
+    "partial_chat_id_missing": "Chat-ID fehlt",
+    "partial_chat_id_ok": "Chat-ID ✓",
+    "partial_token_missing": "Token fehlt",
+    "prompt_url_to_summarize": "URL zum Zusammenfassen:",
+    "deactivate": "Deaktivieren",
+    "activate": "Aktivieren",
+    "empty_hint_prefix": "Ist das Backend frisch? Schau in",
+    "step_speak": "Sprich",
+    "now": "jetzt",
+    "ago_suffix": "her"
   },
   "conductor_view": {
     "new_job": "Neuer Job",
@@ -1731,7 +1838,8 @@
     "empty_jobs": "Noch keine Jobs. Drücke \"Neuer Job\" oben rechts.",
     "empty_jobs_hint": "Beim ersten Start werden 3 Demo-Jobs geseedet.",
     "empty_timeline": "Noch keine Runs — klick auf Play bei einem Job.",
-    "json_syntax_error": "JSON-Syntaxfehler"
+    "json_syntax_error": "JSON-Syntaxfehler",
+    "now": "jetzt"
   },
   "chat_tab": {
     "loading_friends": "Friends laden …",
@@ -1768,5 +1876,173 @@
   },
   "use_web_socket": {
     "jarvis_opened": "{name} öffnete"
+  },
+  "chat_thread": {
+    "message_to": "Nachricht an",
+    "no_channel_placeholder": "Kein Channel verknüpft – Outbound nicht möglich",
+    "send": "Senden",
+    "send_failed": "Senden fehlgeschlagen",
+    "no_messages": "Noch keine Nachrichten",
+    "link_channel_hint": "Verknüpfe einen Channel (Telegram/Jarvis), um zu schreiben",
+    "profile": "Profil"
+  },
+  "add_friend_menu": {
+    "error_name_required": "Bitte einen Namen eintragen.",
+    "error_telegram_id_missing": "Telegram-Chat-ID fehlt.",
+    "error_pubkey_missing": "Jarvis-Pubkey fehlt.",
+    "title": "Friend hinzufügen",
+    "link_mode_hint": "Pair-Link nutzt den bestehenden Pubkey-Pair-Flow über das board-backend. Tausche Token + URL mit deinem Friend aus.",
+    "open_pair_dialog": "Pair-Dialog öffnen",
+    "name_placeholder": "z.B. Daniel",
+    "label_telegram_id": "Telegram-Chat-ID",
+    "label_pubkey": "Jarvis-Pubkey (hex)",
+    "telegram_id_placeholder": "z.B. 123456789",
+    "pubkey_placeholder": "z.B. 4f3c2b…",
+    "submit": "Hinzufügen"
+  },
+  "permission_matrix": {
+    "subline_minimal": "Nur online/offline",
+    "subline_standard": "+ Mission-Titel",
+    "subline_detailed": "+ OpenClaw-Summary",
+    "aria_label": "Sharing-Profil"
+  },
+  "self_mod_view": {
+    "all_actors": "Alle Actors",
+    "actor_main": "Haupt-Jarvis",
+    "successful_only": "Nur erfolgreiche",
+    "sensitive_path_notice": "Sensitiver Pfad — Werte serverseitig redacted (Plan-§AP-2).",
+    "intro_a": "Read-only-Sicht auf Audit-Trail, mutierbare Settings und Backups.",
+    "intro_b": "Mutationen erfolgen ausschließlich via Voice/Chat — diese View zeigt nur, was",
+    "intro_c": "an sich selbst geändert hat."
+  },
+  "wiki_view": {
+    "page_not_found": "Seite nicht gefunden",
+    "loading_vault": "Lade Vault…",
+    "vault_empty": "Vault ist leer",
+    "pages": "Seiten",
+    "wikilinks": "Wikilinks",
+    "load_error": "Wiki-Daten konnten nicht geladen werden. Läuft der Backend-Server?",
+    "no_selection_hint": "Wähle links eine Seite aus oder klick auf einen Knoten in der Memory Map.",
+    "backlinks_hint": "Backlinks erscheinen hier, sobald eine Seite ausgewählt ist.",
+    "empty_title": "Dein Wiki ist noch leer.",
+    "empty_body_a": "Sobald",
+    "empty_body_b": "in einem Gespräch etwas Wichtiges aufschnappt, landet es hier — Personen, Projekte, Vorlieben, Termine.",
+    "manual_a": "Du kannst auch jederzeit selbst eine",
+    "manual_b": "-Datei in",
+    "manual_c": "ablegen."
+  },
+  "skill_create_dialog": {
+    "title": "Skill erstellen",
+    "subtitle": "Beschreibe, was der Skill tun soll — per KI entwerfen oder das Formular selbst ausfüllen.",
+    "intent_label": "Was soll dieser Skill tun?",
+    "intent_placeholder": "z. B. „Meine offenen Browser-Tabs zusammenfassen“, „Meine Morgenroutine starten“…",
+    "draft_with_ai": "Mit KI entwerfen",
+    "brain_used": "KI-Entwurf übernommen — unten prüfen und anpassen.",
+    "brain_unavailable": "KI nicht verfügbar — eine Vorlage zum Bearbeiten eingefügt.",
+    "name_label": "Name",
+    "name_placeholder": "Skill-Name",
+    "category_label": "Kategorie",
+    "description_label": "Beschreibung",
+    "description_placeholder": "Ein Satz dazu, was er macht",
+    "body_label": "Anweisungen (Markdown)",
+    "body_placeholder": "## Mein Skill\n\nWas der Assistent tun soll…",
+    "trigger_label": "Sprach-Trigger (optional)",
+    "trigger_placeholder": "z. B. starte die Morgenroutine",
+    "create": "Skill erstellen",
+    "create_error": "Skill konnte nicht erstellt werden",
+    "name_required": "Bitte einen Namen mit mindestens 3 Zeichen eingeben."
+  },
+  "missions_view": {
+    "active": "aktiv",
+    "select_worker_hint": "Worker im Tree links auswählen, um den Live-Stream zu sehen.",
+    "select_mission_hint": "Mission auswählen, um Details zu laden.",
+    "loading_terminal": "Lade Terminal…",
+    "no_reasoning_notes": "Keine Reasoning-Notes verfügbar.",
+    "no_plan_published": "Noch kein Plan veröffentlicht.",
+    "expected_output": "Erwartete Ausgabe",
+    "not_specified": "(nicht spezifiziert)",
+    "steps": "Schritte",
+    "workers": "Worker",
+    "title": "Missions",
+    "subtitle": "Phase 6 — Worker/Critic-Loop. Live-Bus, PTY-Streams, Verdicts.",
+    "tree_label": "Mission-Tree",
+    "timeline_label": "Event-Timeline",
+    "no_events": "Noch keine Events für diese Mission.",
+    "no_critic_verdicts": "Noch keine Critic-Verdicts für diese Mission.",
+    "no_missions_yet": "Noch keine Missions. Hauptjarvis dispatched gleich…"
+  },
+  "skill_finder_dialog": {
+    "install_failed": "Installation fehlgeschlagen",
+    "title": "Skill-Finder",
+    "subtitle": "Beschreibe, was du brauchst — der Mini-Agent sucht im Katalog und rankt per KI.",
+    "brain_ranking_active": "Brain-Ranking aktiv",
+    "query_placeholder": "z.B. \"PDFs zusammenfassen\", \"Git-Workflow automatisieren\", \"Meeting-Notizen\"...",
+    "search": "Suchen",
+    "filter_trust": "Vertrauensstufe",
+    "opt_all": "Alle",
+    "hint_no_filter": "kein Filter",
+    "opt_official_only": "Nur offiziell",
+    "opt_verified_plus": "Verifiziert+",
+    "hint_verified_plus": "offiziell + 3k+ Stars",
+    "opt_community_plus": "Community+",
+    "hint_actively_maintained": "aktiv gewartet",
+    "opt_everything": "Alles, auch Prototypen",
+    "hint_risk_ok": "Risiko ok",
+    "filter_stars": "GitHub-Stars",
+    "opt_any": "Egal",
+    "filter_category": "Kategorie",
+    "filter_risk": "Risiko-Grenze",
+    "opt_safe_only": "Nur safe",
+    "opt_up_to_monitor": "Bis monitor",
+    "opt_up_to_ask": "Bis ask (nachfragen ok)",
+    "filter_language": "Sprache",
+    "lang_de": "Deutsch",
+    "lang_en": "Englisch",
+    "skills_in_catalog": "Skills im Katalog",
+    "loading_catalog": "Lade Katalog…",
+    "trust_official": "offiziell",
+    "trust_verified": "verifiziert",
+    "trust_community": "community",
+    "trust_experimental": "experimentell",
+    "installed": "installiert",
+    "no_direct_download": "Kein Direkt-Download verfügbar — manuell installieren",
+    "install_to_skills_dir": "In %LOCALAPPDATA%/Jarvis/skills installieren",
+    "manual": "Manuell",
+    "install": "Installieren",
+    "source": "Quelle",
+    "no_hits": "Keine Treffer. Andere Filter probieren?",
+    "empty_prompt": "Beschreib, was du brauchst — die Suche rankt per KI.",
+    "example_1": "„erstell Skill der meine Emails priorisiert“",
+    "example_2": "„Git-Workflow vereinfachen“",
+    "example_3": "„PDF zu strukturiertem Markdown“"
+  },
+  "missions": {
+    "state_critiquing": "Critic prüft",
+    "state_looping": "Korrektur"
+  },
+  "mission_state": {
+    "pending": "wartet",
+    "running": "läuft",
+    "critiquing": "Critic prüft",
+    "looping": "Korrektur",
+    "approved": "fertig",
+    "failed": "Fehler",
+    "cancelled": "abgebrochen",
+    "timed_out": "Timeout"
+  },
+  "mascot_gigi": {
+    "aria_label": "{name}-Maskottchen Gigi",
+    "back_online": "wieder online!",
+    "connection_lost": "Verbindung weg …"
+  },
+  "agents_view": {
+    "subtitle": "Laufende Sub-Agents — Rolle, Status, Output.",
+    "empty_title": "Keine aktiven Agents",
+    "empty_body_a": "Wenn",
+    "empty_body_b": "einen Sub-Agent startet, erscheint er hier als Live-Kachel mit Streaming-Output und Kill-Button.",
+    "phase4_notice": "Wird mit Phase 4 (Harness-Integration) aktiviert."
+  },
+  "friends_view": {
+    "subtitle": "Telegram-Bot + lokaler Friend-Registry. Du entscheidest, was Friends sehen."
   }
 }

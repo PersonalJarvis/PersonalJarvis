@@ -19,6 +19,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { ViewHeader } from "@/views/ChatsView";
 import { cn } from "@/lib/utils";
+import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
 import { fetchWikiTree } from "@/lib/wikiApi";
 
@@ -46,6 +47,7 @@ interface WikiToast {
 }
 
 export function WikiView(): JSX.Element {
+  const t = useT();
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [centreTab, setCentreTab] = useState<CentreTab>("graph");
   const [toast, setToast] = useState<WikiToast | null>(null);
@@ -131,7 +133,7 @@ export function WikiView(): JSX.Element {
   const handleSelect = useCallback(
     (slug: string) => {
       if (knownSlugs.size > 0 && !knownSlugs.has(slug)) {
-        showToast("Page nicht gefunden");
+        showToast(t("wiki_view.page_not_found"));
         return;
       }
       setSelectedSlug(slug);
@@ -142,10 +144,10 @@ export function WikiView(): JSX.Element {
   );
 
   const subtitle = treeQuery.isLoading
-    ? "Lade Vault…"
+    ? t("wiki_view.loading_vault")
     : totalPages === 0
-      ? "Vault ist leer"
-      : `${totalPages} Seiten · ${totalLinks} Wikilinks`;
+      ? t("wiki_view.vault_empty")
+      : `${totalPages} ${t("wiki_view.pages")} · ${totalLinks} ${t("wiki_view.wikilinks")}`;
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="wiki-view">
@@ -195,7 +197,7 @@ export function WikiView(): JSX.Element {
             className="max-w-md rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
             data-testid="wiki-tree-error"
           >
-            Wiki-Daten konnten nicht geladen werden. Läuft der Backend-Server?
+            {t("wiki_view.load_error")}
           </div>
         </div>
       ) : !treeQuery.isLoading && totalPages === 0 ? (
@@ -250,7 +252,7 @@ export function WikiView(): JSX.Element {
                       className="px-7 py-10 text-center text-sm text-muted-foreground"
                       data-testid="wiki-page-no-selection"
                     >
-                      Wähle links eine Seite aus oder klick auf einen Knoten in der Memory Map.
+                      {t("wiki_view.no_selection_hint")}
                     </div>
                   )}
                 </>
@@ -263,7 +265,7 @@ export function WikiView(): JSX.Element {
           ) : (
             <aside className="flex h-full w-[380px] shrink-0 flex-col border-l border-border bg-card/40 p-4">
               <div className="rounded-lg border border-border bg-secondary/30 p-4 text-xs text-muted-foreground">
-                Backlinks erscheinen hier, sobald eine Seite ausgewählt ist.
+                {t("wiki_view.backlinks_hint")}
               </div>
             </aside>
           )}
@@ -318,6 +320,7 @@ function TabButton({
 }
 
 function EmptyState() {
+  const t = useT();
   const assistantName = useEventStore((s) => s.assistantName);
   return (
     <div className="flex flex-1 items-center justify-center p-6">
@@ -327,22 +330,21 @@ function EmptyState() {
       >
         <Notebook className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
         <h3 className="mb-2 text-base font-semibold text-foreground">
-          Dein Wiki ist noch leer.
+          {t("wiki_view.empty_title")}
         </h3>
         <p className="mb-2 text-sm text-muted-foreground">
-          Sobald {assistantName} in einem Gespräch etwas Wichtiges aufschnappt, landet
-          es hier — Personen, Projekte, Vorlieben, Termine.
+          {t("wiki_view.empty_body_a")} {assistantName} {t("wiki_view.empty_body_b")}
         </p>
         <p className="text-sm text-muted-foreground">
-          Du kannst auch jederzeit selbst eine{" "}
+          {t("wiki_view.manual_a")}{" "}
           <code className="rounded bg-background px-1 py-0.5 font-mono text-[12px]">
             .md
           </code>
-          -Datei in{" "}
+          {t("wiki_view.manual_b")}{" "}
           <code className="rounded bg-background px-1 py-0.5 font-mono text-[12px]">
             wiki/obsidian-vault/entities/
           </code>{" "}
-          ablegen.
+          {t("wiki_view.manual_c")}
         </p>
       </div>
     </div>

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from jarvis.plugins.brain.cli_prompt_context import (
     extract_reply_language_directive,
+    render_cli_standing_instructions,
 )
 
 _MANDATORY = (
@@ -29,6 +30,15 @@ def _system_with_directive() -> str:
         "Always start every sentence with schef.\n\n"
         "END USER PREFERENCES & STANDING INSTRUCTIONS\n\n"
         f"{_MANDATORY}"
+    )
+
+
+def _empty_state_block() -> str:
+    return (
+        "USER PREFERENCES & STANDING INSTRUCTIONS (from Jarvis.md):\n"
+        "No active user preferences are currently set in Jarvis.md. "
+        "Ignore any earlier Jarvis.md instructions from previous turns.\n\n"
+        "END USER PREFERENCES & STANDING INSTRUCTIONS"
     )
 
 
@@ -57,3 +67,11 @@ def test_takes_last_occurrence() -> None:
     # the real directive is the one BrainManager appends last.
     text = "Some text mentioning REPLY LANGUAGE in passing.\n\n" + _MANDATORY
     assert extract_reply_language_directive(text) == _MANDATORY
+
+
+def test_renders_empty_state_as_current_state_not_binding_preferences() -> None:
+    rendered = render_cli_standing_instructions(_empty_state_block())
+    assert "CURRENT JARVIS.MD STATE" in rendered
+    assert "No active user preferences are currently set" in rendered
+    assert "do not continue or imitate" in rendered
+    assert "Apply these as binding output-style preferences" not in rendered

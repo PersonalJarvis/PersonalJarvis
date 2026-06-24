@@ -19,8 +19,6 @@ vi.mock("./steps/TermsStep", () => ({ TermsStep: dbl("step-terms") }));
 vi.mock("./steps/LanguageStep", () => ({ LanguageStep: dbl("step-language") }));
 vi.mock("./steps/WakeWordStep", () => ({ WakeWordStep: dbl("step-wake-word") }));
 vi.mock("./steps/ApiKeysStep", () => ({ ApiKeysStep: dbl("step-api-keys") }));
-vi.mock("./steps/MicTestStep", () => ({ MicTestStep: dbl("step-mic-test") }));
-vi.mock("./steps/PersonaThemeStep", () => ({ PersonaThemeStep: dbl("step-persona-theme") }));
 vi.mock("./steps/FinishStep", () => ({ FinishStep: dbl("step-finish") }));
 
 import { OnboardingFlow, STEP_KEYS } from "./OnboardingFlow";
@@ -81,7 +79,7 @@ it("REGISTRY covers exactly the canonical backend steps", () => {
   expect(new Set(STEP_KEYS)).toEqual(
     new Set([
       "welcome", "terms", "language", "wake-word",
-      "api-keys", "mic-test", "persona-theme", "finish",
+      "api-keys", "finish",
     ]),
   );
 });

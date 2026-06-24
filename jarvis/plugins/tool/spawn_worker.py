@@ -123,7 +123,14 @@ _QUALITY_DIRECTIVE: Final[str] = (
     "finished artefact; never downgrade the task to a minimal version, and "
     'treat any hint (even one that says "Grundgerüst" / "skeleton") as a '
     "floor, not a ceiling. This raises the quality of exactly what was asked "
-    "— it does not add unrequested features. "
+    "— it does not add unrequested features, and it never overrides an explicit "
+    "constraint the user set on the SHAPE or scope of the deliverable (for "
+    'example "a single self-contained HTML file" or "one script"): honoring such '
+    "a constraint is part of satisfying the request, not a downgrade. "
+    # Form-constraint carve-out (2026-06-22, mission 019ef052): the "never
+    # downgrade to a minimal version" floor read a single-file request as a
+    # forbidden minimal version, so a "single HTML file" brief shipped four files
+    # (html+js+css+asset). The floor governs QUALITY, never the user's chosen form.
     # Honest-impossibility escape (latency 2026-06-14): without this, the "never
     # downgrade / build the finished artefact" floor pushes the worker to spiral
     # on a task it cannot actually do (e.g. "book a trip" with no booking tool —
@@ -135,6 +142,44 @@ _QUALITY_DIRECTIVE: Final[str] = (
     "do NOT simulate, partially attempt, or keep retrying it — state plainly and "
     "briefly that you cannot do it and why, then stop."
 )
+
+
+# Trivial/function words carry no topic, so they are ignored when checking
+# whether two utterances describe the SAME turn — a real interpretation keeps a
+# content word (an app name, an object, a verb stem); a bled-in old task shares
+# none. Small, multilingual; not exhaustive (the check is a cheap signal).
+_BLEED_STOPWORDS: frozenset[str] = frozenset({
+    "the", "and", "you", "your", "for", "please", "can", "could", "would",
+    "der", "die", "das", "und", "ich", "mir", "mein", "meine", "bitte", "mal",  # i18n-allow
+    "kannst", "kann", "nach", "den", "dem", "ein", "eine",  # i18n-allow
+    "los", "las", "una", "por", "para", "que",
+})
+
+
+def _shares_content_word(a: str, b: str) -> bool:
+    """True if ``a`` and ``b`` share a non-trivial content word.
+
+    A cheap signal that ``b`` describes the same turn as ``a`` rather than a
+    bled-in different task. Case-insensitive; ignores digits, sub-3-char tokens
+    and a small multilingual stop-word set.
+
+    Deliberate safe default: when EITHER side has no content word (a short or
+    proper-noun-only turn like "ok" or "Spotify"), there is not enough signal to
+    call it a bleed, so we return ``True`` (treat as matching) — biasing toward
+    NOT dropping the brain's interpretation, since a false bleed-positive would
+    discard a legitimate action.
+    """
+    def _content(s: str) -> set[str]:
+        return {
+            w
+            for w in re.findall(r"[^\W\d_]{3,}", (s or "").lower())
+            if w not in _BLEED_STOPWORDS
+        }
+
+    wa, wb = _content(a), _content(b)
+    if not wa or not wb:
+        return True
+    return bool(wa & wb)
 
 
 def _build_mission_prompt(
@@ -372,10 +417,52 @@ class SpawnWorkerTool:
         if not utterance:
             return ToolResult(success=False, error="empty utterance")
 
-        # Turn language for the spoken acknowledgement. Supplied by the brain
-        # tool-call or the force-spawn caller; the composer falls back to its
-        # own utterance heuristic when absent.
-        ack_language = (args.get("language") or "").strip() or None
+        # Context-bleed guard (forensic 2026-06-20): under a full provider
+        # collapse the turn ran on a degraded fallback model fed a long prior
+        # context, which echoed a PREVIOUS request ("emigrate to Melbourne")
+        # into the spawn args although the user had just said "Mask it up" — the
+        # worker then built an entirely foreign task. ``ctx.user_utterance`` is
+        # the verbatim transcribed turn: the ground truth for what was just
+        # said. When the brain's utterance shares no content word with it, the
+        # whole tool-call belongs to a different turn — fall back to the verbatim
+        # turn and drop the (equally bled) action/target below, so the worker
+        # never executes a task the user did not ask for.
+        turn_text = (getattr(ctx, "user_utterance", "") or "").strip()
+        context_bleed = bool(
+            turn_text and not _shares_content_word(turn_text, utterance)
+        )
+        if context_bleed:
+            log.warning(
+                "spawn_worker: brain utterance %r is unrelated to the spoken "
+                "turn %r — context bleed; using the verbatim turn and dropping "
+                "the interpreted action/target",
+                utterance[:80], turn_text[:80],
+            )
+            utterance = turn_text
+
+        # Turn output language — ONE authoritative source. The tool-use loop
+        # stamps ``ctx.config["output_language"]`` via ``resolve_output_language``
+        # (honors the reply_language pin + conversation stickiness + text
+        # detection), so it wins over the brain's ``language`` tool-call guess,
+        # which can echo a wrong STT tag (forensic 2026-06-20 "Mask it up":
+        # English speech mis-tagged ``German`` resolved to ``en``, yet the ACK
+        # came from the German pool and the mission readback was German — German
+        # text then spoken by the Cartesia English voice = "British accent").
+        # This one value drives BOTH the spoken ACK and the mission dispatch
+        # language so neither diverges from the turn (Runtime Output Language).
+        turn_language = (
+            str(ctx.config.get("output_language") or "").strip().lower()
+            or (args.get("language") or "").strip().lower()
+            or None
+        )
+        ack_language = turn_language
+        # MissionManager.dispatch + the mission voice readback (announcer /
+        # readback) are de/en only — an "es" turn keeps the pre-existing German
+        # readback (bringing the mission voice layer to "es" is the tracked
+        # follow-up). Cap here so we never thread an unsupported value into the
+        # ``Literal["de","en"]`` dispatch contract; the spoken ACK itself stays
+        # fully de/en/es via the composer above.
+        mission_language = turn_language if turn_language in ("de", "en") else "de"
 
         # Spawn cooldown — suppress duplicate spawns while a dispatch is in
         # flight AND within _COOLDOWN_SECONDS of the last arm. Live regression
@@ -460,9 +547,11 @@ class SpawnWorkerTool:
                 ),
             )
 
-        raw_action = (args.get("action") or "").strip()
+        # On a context bleed the brain's action/target belong to the wrong turn
+        # — drop them so the worker builds only from the verbatim utterance.
+        raw_action = "" if context_bleed else (args.get("action") or "").strip()
         action = raw_action or _GENERIC_ACTION_FALLBACK
-        target = (args.get("target") or "").strip()
+        target = "" if context_bleed else (args.get("target") or "").strip()
         context_hints = args.get("context_hints") or []
         # The worker reads ONLY the mission prompt. Enrich the verbatim
         # utterance with the brain's interpreted action so a VAD-cut fragment
@@ -499,7 +588,8 @@ class SpawnWorkerTool:
             #    Listener als OpenClawBackgroundCompleted.
             asyncio.create_task(
                 self._background_dispatch(
-                    mission_prompt, utterance, manager, kontrollierer
+                    mission_prompt, utterance, manager, kontrollierer,
+                    mission_language=mission_language,
                 ),
                 name=f"openclaw-{ctx.trace_id.hex[:8]}",
             )
@@ -535,6 +625,8 @@ class SpawnWorkerTool:
         utterance: str,
         manager: MissionManager,
         kontrollierer: Any | None,
+        *,
+        mission_language: str = "de",
     ) -> None:
         """Laeuft im Background. Dispatched + executes eine Mission.
 
@@ -571,7 +663,7 @@ class SpawnWorkerTool:
         try:
             mission_id = await manager.dispatch(
                 prompt=prompt,
-                language="de",
+                language=mission_language,
                 source_actor="hauptjarvis",
             )
             if kontrollierer is None:

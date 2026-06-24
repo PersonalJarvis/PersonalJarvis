@@ -126,9 +126,9 @@ SECRETS: list[SecretSpec] = [
     SecretSpec(
         key="grok_api_key",
         env_fallback="GROK_API_KEY",
-        label="xAI Grok API Key (Brain + Voice/TTS)",
+        label="xAI Grok Voice API Key (TTS)",
         help_url="https://console.x.ai/",
-        required_for="Brain (Grok) + TTS (Grok Voice — leo/rex/sal/ara/eve) + OpenClaw-Bridge (xai-Provider, ENV XAI_API_KEY)",
+        required_for="TTS (Grok Voice — leo/rex/sal/ara/eve)",
     ),
     SecretSpec(
         key="google_tts_credentials_path",
@@ -527,7 +527,6 @@ def step_openclaw_check() -> None:
         "openrouter": "openrouter_api_key",
         "openai": "openai_api_key",
         "gemini": "gemini_api_key",
-        "grok": "grok_api_key",
     }
     for mapping in MAPPINGS:
         secret_key = secret_key_overrides.get(

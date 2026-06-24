@@ -7,7 +7,13 @@ def test_meta_constants():
     assert m.ONBOARDING_STEPS[1] == "terms"
     assert m.ONBOARDING_STEPS[-1] == "finish"
     assert "wake-word" in m.ONBOARDING_STEPS
-    assert len(m.ONBOARDING_STEPS) == 8
+    assert "persona-theme" not in m.ONBOARDING_STEPS
+    # Persona-name, overlay-style and the mic check were moved out of onboarding
+    # to keep first-run short; it ends at api-keys → finish (removed 2026-06-20).
+    assert "system-style" not in m.ONBOARDING_STEPS
+    assert "mic-test" not in m.ONBOARDING_STEPS
+    assert m.ONBOARDING_STEPS[-2] == "api-keys"
+    assert len(m.ONBOARDING_STEPS) == 6
     assert len(m.WAKE_WORD_LEGAL_REFERENCES) >= 3
     for ref in m.WAKE_WORD_LEGAL_REFERENCES:
         assert ref["label"] and ref["url"].startswith("https://")

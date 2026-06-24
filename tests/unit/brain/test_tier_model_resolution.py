@@ -14,7 +14,7 @@ import pytest
 
 from jarvis.brain.manager import BrainManager
 from jarvis.core.bus import EventBus
-from jarvis.core.config import load_config
+from jarvis.core.config import BrainTierConfig, JarvisConfig, load_config
 
 # One representative non-default frontier model per configured brain provider.
 # Gemini is only one row — model selection must resolve for EVERY provider.
@@ -23,7 +23,6 @@ PROVIDER_FAST_DEEP_CASES = [
     ("openrouter", "anthropic/claude-sonnet-4.6", "anthropic/claude-opus-4.8"),
     ("openai", "gpt-5.5", "gpt-5.5-pro"),
     ("gemini", "gemini-3.5-flash", "gemini-3.1-pro-preview"),
-    ("grok", "grok-4.3", "grok-4.3"),
 ]
 
 
@@ -69,6 +68,32 @@ def test_router_caps_thinking_budget_without_touching_global_config() -> None:
 
     assert mgr._config.brain.providers["gemini"].thinking_budget == 0  # router capped
     assert cfg.brain.providers["gemini"].thinking_budget is None  # global untouched
+
+
+def test_codex_chatgpt_login_does_not_make_codex_a_main_brain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex OAuth unlocks the subagent only; the main router falls back."""
+    monkeypatch.setattr("jarvis.core.config.get_secret_any", lambda *_a, **_k: None)
+
+    class _ConnectedCodexAuth:
+        def status(self):
+            class _Status:
+                connected = True
+                mode = "chatgpt"
+
+            return _Status()
+
+    monkeypatch.setattr("jarvis.codex_auth.CodexAuthService", _ConnectedCodexAuth)
+
+    cfg = JarvisConfig()
+    cfg.brain.router = BrainTierConfig(provider="codex", fallback_provider="gemini")
+
+    mgr = BrainManager.from_tier_config("router", cfg, EventBus())
+
+    assert mgr.active_provider == "gemini"
+    assert mgr._config.brain.primary == "gemini"
+    assert "codex" not in [provider for provider, _model in mgr._build_fallback_chain("fast")]
 
 
 def test_user_selected_deep_model_drives_the_deep_chain() -> None:

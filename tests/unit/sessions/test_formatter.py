@@ -129,6 +129,28 @@ def test_plain_has_no_developer_tags() -> None:
         assert tag not in out
 
 
+def test_markdown_labels_awaiting_confirmation_reply() -> None:
+    # A turn that ended on a two-turn confirmation tags its reply as a pending
+    # yes/no question — consistent with the english spoken_kind tags (preamble,
+    # clarify) the markdown renderer already uses (forensic 2026-06-19: the
+    # confirmation question was indistinguishable from a normal reply).
+    turn = _turn(
+        0,
+        "schick eine Mail an Tom",
+        "Soll ich die E-Mail wirklich senden? Sag ja oder nein.",
+        awaiting_confirmation=True,
+    )
+    out = format_session_markdown(_session(), [turn])
+    assert "awaiting confirmation" in out
+    assert "Soll ich die E-Mail wirklich senden" in out
+
+
+def test_markdown_normal_reply_has_no_awaiting_label() -> None:
+    turn = _turn(0, "wie spät ist es", "Es ist 15 Uhr.")
+    out = format_session_markdown(_session(), [turn])
+    assert "awaiting confirmation" not in out
+
+
 def test_plain_has_no_telemetry() -> None:
     out = format_session_plain(_session(), _example_turns())
     # No tokens / cost / provider / tier / latency clutter, and none of the

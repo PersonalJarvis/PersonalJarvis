@@ -182,22 +182,83 @@ def set_stt_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _sync_stt_provider_drift_soll(name)
 
 
+def set_tts_voice(voice: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Set the global TTS voice (``[tts] voice_de`` + ``voice_en``).
+
+    The TTS config is a single ``[tts]`` block, so this is the voice of the
+    ACTIVE TTS provider. Most generative voices are multilingual (Gemini Charon,
+    Grok leo …), so both language slots get the same value. ``voice_de`` /
+    ``voice_en`` are pinned in ``config-soll.json`` (like ``tts.provider``), so a
+    TOML-only write would be reverted by the drift-guard — we sync config-soll too.
+    """
+    _patch_table(path, "tts", "voice_de", voice)
+    _patch_table(path, "tts", "voice_en", voice)
+    try:
+        _update_config_soll_section("tts", {"voice_de": voice, "voice_en": voice})
+    except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
+        log.warning("Could not sync tts voice to config-soll.json: %s", exc)
+
+
+def set_tts_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Set the global TTS model (``[tts] model``) — e.g. Cartesia ``sonic-3.5``.
+
+    Synced to config-soll (drift-guard pinned, same class as the voice keys).
+    """
+    _patch_table(path, "tts", "model", model)
+    try:
+        _update_config_soll_section("tts", {"model": model})
+    except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
+        log.warning("Could not sync tts.model to config-soll.json: %s", exc)
+
+
+def set_stt_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Set the global STT model (``[stt] model``).
+
+    Takes effect on the next SpeechPipeline bootstrap (a voice restart): the STT
+    provider is instantiated once at pipeline start. config-soll synced (the stt
+    block is drift-guard pinned like its provider key).
+    """
+    _patch_table(path, "stt", "model", model)
+    try:
+        _update_config_soll_section("stt", {"model": model})
+    except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
+        log.warning("Could not sync stt.model to config-soll.json: %s", exc)
+
+
+def set_tts_cartesia_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Set Cartesia's model in its OWN sub-table ``[tts.cartesia] model_id``.
+
+    Cartesia reads its model from this sub-table (default ``sonic-3.5``), NOT the
+    global ``[tts] model`` that Gemini/OpenAI use. ``[tts.cartesia]`` is not pinned
+    in config-soll, so a plain atomic TOML write suffices (no drift-guard revert).
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"Config-Datei fehlt: {path}")
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+        tts = doc.get("tts")
+        if tts is None:
+            tts = tomlkit.table()
+            doc["tts"] = tts
+        cart = tts.get("cartesia")
+        if cart is None:
+            cart = tomlkit.table()
+            tts["cartesia"] = cart
+        cart["model_id"] = model
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
+
+
 def set_codex_binary_path(binary_path: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Set ``[codex] binary_path`` to work around Windows PATH issues."""
     _patch_table(path, "codex", "binary_path", binary_path)
 
-
-def set_assistant_name(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
-    """Persist the assistant's display name to ``[persona] name`` in jarvis.toml.
-
-    Toml-only by design: ``persona.name`` is NOT tracked in ``config-soll.json``,
-    so the drift-guard never reverts it (a plain atomic write suffices). Empty
-    string means "derive the name from the wake phrase" (see
-    ``jarvis.brain.assistant_name.resolve_assistant_name``). Takes effect on the
-    next BrainManager build (a Jarvis restart): the system prompt is assembled
-    once per manager.
-    """
-    _patch_table(path, "persona", "name", name)
 
 
 # Voice-keybind action vocabulary. Shared with the keybinds API
@@ -364,6 +425,15 @@ def set_mute_music(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     TOML-only (not drift-guarded); the Taskbar route applies it live.
     """
     _patch_table(path, "ducking", "enabled", bool(enabled))
+
+
+def set_sound_effects(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[ui] sound_effects`` (the global earcon master switch).
+
+    TOML-only (not drift-guarded); the Settings route applies it live by
+    mutating the shared in-memory config the speech pipeline reads.
+    """
+    _patch_table(path, "ui", "sound_effects", bool(enabled))
 
 
 def set_team_proxy(
@@ -584,7 +654,7 @@ def set_brain_provider_defaults(
     is created with the supplied defaults (typically the tier defaults from
     ``BrainManager.TIER_DEFAULTS_BY_PROVIDER``).
 
-    Background: providers added after the setup wizard via the UI (e.g. grok)
+    Background: providers added after the setup wizard via the UI (e.g. openrouter)
     often lack a ``[brain.providers.<name>]`` block. During a switch-persist we
     ensure here that after an app restart the tier-default fallback logic in
     BrainManager is not needed again — the block is then cleanly persisted.
@@ -804,21 +874,34 @@ def set_brain_provider_model(
     *,
     model: str | None = None,
     deep_model: str | None = None,
+    cu_model: str | None = None,
     path: Path = DEFAULT_CONFIG_FILE,
 ) -> None:
     """Patch ``[brain.providers.<provider>]`` ``model`` / ``deep_model`` in
     the TOML file.
 
-    Used by the frontier auto-switch (Phase F.3, 2026-04-29) so that a detected
-    frontier model change is persisted in jarvis.toml — otherwise the switch is
-    lost on the next ``cfg.load_config()`` call in ``_phase2_full_brain``.
+    Used by the per-provider model picker (``PUT /api/providers/{id}/model``)
+    and the frontier auto-switch (Phase F.3) so a model change is persisted in
+    jarvis.toml — otherwise the switch is lost on the next ``cfg.load_config()``.
+
+    Three-layer persist (like ``set_brain_primary`` / ``set_sub_jarvis_provider``):
+    ``brain.providers.<p>.model`` / ``deep_model`` are pinned in
+    ``config-soll.json``, so a TOML-only write would be reverted by the
+    drift-guard within 5 minutes (BUG-010 class) — exactly the "I picked a model
+    and it flipped back" symptom. We therefore sync config-soll.json too. No ENV
+    layer is written: per-provider model keys have no effective ``JARVIS__*``
+    override (the boot override only nests on ``__`` and the drift-guard's dotted
+    ``JARVIS__BRAIN.PROVIDERS.*`` vars are inert), so adding one would only create
+    a new stale-override trap. Layer 2 is best-effort (cloud-first): a graceful
+    no-op on a headless Linux VPS, it never raises out of this function nor
+    breaks the TOML write.
 
     Idempotent: if the block is absent it is created; ``None`` values change
     nothing.
     """
     if not path.exists():
         raise FileNotFoundError(f"Config-Datei fehlt: {path}")
-    if model is None and deep_model is None:
+    if model is None and deep_model is None and cu_model is None:
         return
 
     with _WRITE_LOCK:
@@ -846,11 +929,22 @@ def set_brain_provider_model(
             block["model"] = model
         if deep_model is not None:
             block["deep_model"] = deep_model
+        if cu_model is not None:
+            # "" is a meaningful value (UI "use my main model") distinct from
+            # None ("leave unchanged"), so write whatever non-None was given.
+            block["cu_model"] = cu_model
 
         out = tomlkit.dumps(doc)
         if had_bom:
             out = _BOM + out
         _atomic_write(path, out)
+
+    # Layer 2 — best-effort drift-soll sync (never raises, never blocks the
+    # TOML write). Only the keys actually written are synced so the guard sees
+    # zero drift across the block.
+    _sync_brain_provider_model_drift_soll(
+        provider, model=model, deep_model=deep_model, cu_model=cu_model
+    )
 
 
 def set_telephony_config(values: dict[str, object], *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -1204,6 +1298,37 @@ def _sync_stt_provider_drift_soll(name: str) -> None:
         _set_user_env_var(_STT_PROVIDER_ENV, name)
     except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
         log.warning("Could not sync %s to the User environment: %s", _STT_PROVIDER_ENV, exc)
+
+
+def _sync_brain_provider_model_drift_soll(
+    provider: str, *, model: str | None, deep_model: str | None, cu_model: str | None = None
+) -> None:
+    """Best-effort sync of ``brain.providers.<p>`` model keys into the drift-soll.
+
+    NEVER raises and NEVER breaks the (already-completed) TOML write. Only the
+    keys actually written (non-``None``) are synced, so config-soll ends up in
+    agreement with the TOML and the drift-guard reverts nothing. No ENV layer:
+    per-provider model keys have no effective ``JARVIS__*`` boot override (see
+    the docstring of :func:`set_brain_provider_model`). The flat dotted top-level
+    key ``brain.providers.<p>`` is exactly how the soll file stores it.
+    """
+    values: dict[str, object] = {}
+    if model is not None:
+        values["model"] = model
+    if deep_model is not None:
+        values["deep_model"] = deep_model
+    if cu_model is not None:
+        values["cu_model"] = cu_model
+    if not values:
+        return
+    try:
+        _update_config_soll_section(f"brain.providers.{provider}", values)
+    except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
+        log.warning(
+            "Could not sync brain.providers.%s model to config-soll.json: %s",
+            provider,
+            exc,
+        )
 
 
 def _update_config_soll_section(top: str, values: dict[str, object]) -> None:

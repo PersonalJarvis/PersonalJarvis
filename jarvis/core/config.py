@@ -228,6 +228,17 @@ class STTConfig(BaseModel):
     # faster-whisper path also tolerates "cuda" with a no-CUDA runtime fallback.
     device: str = "cpu"
     compute_type: str = "int8_float16"
+    # The LOCAL wake-match / live-preview Whisper (distinct from ``model``, which
+    # is the post-wake utterance model — often a cloud provider). It only powers
+    # wake-phrase transcript matching + the listening-bubble probe, both
+    # latency-tolerant, so it defaults to a small model on CPU. This matters a
+    # lot for boot: on a Blackwell GPU (RTX 50xx) CTranslate2 JIT-compiles kernels
+    # at model-load, costing ~71 s on CUDA vs ~0.45 s for ``base`` on CPU — the
+    # dominant warm-up cost. CPU is also the cloud-first floor (no GPU assumed).
+    # Power users on an older GPU may set ``wake_device = "cuda"``.
+    wake_model: str = "base"
+    wake_device: str = "cpu"
+    wake_compute_type: str = "int8"
     language: str = "auto"
     # Vocabulary biasing passed to Whisper's ``prompt`` field — the same
     # mechanism dictation tools like Wispr Flow use to keep proper nouns and
@@ -296,6 +307,8 @@ class TTSConfig(BaseModel):
 class BrainProviderConfig(BaseModel):
     model: str | None = None
     deep_model: str | None = None      # Optional: stronger reasoning model
+    cu_model: str | None = None        # Optional: model the Computer-Use loop uses
+                                       # (Phase 3). None -> use this provider's `model`.
     auth_mode: str | None = None       # "oauth" | "api_key"
     base_url: str | None = None
     # Latency sprint 1 (2026-04-30): Gemini thinking budget per provider tier.
@@ -435,6 +448,22 @@ class BrainRoutingConfig(BaseModel):
     # "permissive" falls back to the legacy spawn_verbs + external markers
     # heuristic. Default is "strict" per user mandate 2026-05-14.
     force_spawn_mode: str = "strict"
+
+    # Intelligent router (2026-06-21 user mandate "Jarvis must choose wisely among
+    # ALL tools, like Claude Code"). When the ACTIVE talker cannot emit tool_calls
+    # at runtime (the subscription-CLI brains — Antigravity over the Google login,
+    # Codex over the ChatGPT login — drop ALL tools), a tool-capable provider
+    # (the deep_brain / router, e.g. Gemini) leads every SUBSTANTIVE turn and the
+    # LLM itself picks the tool via its tool-use loop + the router system prompt —
+    # no signal-word list decides the tool. If the router picks NO tool (pure
+    # conversation), the turn FALLS THROUGH to the chosen talker so the user keeps
+    # their selected brain's voice. Tool-capable talkers are unaffected (they
+    # already pick tools in their own loop). The deterministic gates (force-spawn,
+    # match_local_action, on-screen, build-artifact) remain as HIGH-PRECISION
+    # guardrails for the obvious cases. This flag is the reversible kill switch:
+    # set false → exactly the prior behaviour (the narrower action-intent
+    # delegation). See manager._build_fallback_chain / the router fall-through.
+    intelligent_router: bool = True
 
     # Heavy-research force-spawn (live bug 2026-06-14, the Berlin→Melbourne
     # turn): a multi-step research/analysis request must be OFFLOADED to a
@@ -654,6 +683,15 @@ class BrainConfig(BaseModel):
         default_factory=EvidenceDomainsConfig,
     )
     healthcheck_on_start: bool = True
+    # Frontier model auto-switch (Phase F.3). When True, the boot hook
+    # ``apply_frontier_resolution`` queries each provider's /v1/models and may
+    # rewrite ``[brain.providers.<p>].model`` to a newer model on every start.
+    # Default False (2026-06-20, user mandate "providers must NOT switch by
+    # themselves"): the boot hook becomes a no-op and the configured models are
+    # kept verbatim. A newer model is only ever adopted by an explicit user pick
+    # in the per-provider model picker. Flip to True to restore the old
+    # auto-frontier behaviour.
+    frontier_auto_apply: bool = False
     # Two-turn spoken confirmation (forensic 2026-06-18): on a conversational
     # turn a consequential ``ask``-tier tool (e.g. gmail send) is deferred into a
     # spoken "Soll ich das wirklich tun? Sag ja." instead of blocking on a UI
@@ -909,7 +947,7 @@ class OpenClawConfig(BaseModel):
     Deliberately NO Anthropic lock in the ``model`` default: an empty ``model``
     means the bridge resolves the frontier-pro of the active Personal Jarvis
     provider (``cfg.brain.primary``) via the provider-slug mapping from AD-6
-    (gemini→google/gemini-..., claude-api→anthropic/..., grok→xai/...).
+    (gemini→google/gemini-..., claude-api→anthropic/..., openai→openai/...).
     This way OpenClaw automatically follows the user's provider choice.
 
     AD-21 pin-version mandate: ``version`` must be set whenever the block
@@ -989,6 +1027,11 @@ class UIConfig(BaseModel):
     tray_enabled: bool = True
     admin_api_port: int = 47821
     startup_chime: bool = True
+    # Global master switch for all synthesized UI earcons (wake "ding",
+    # hang-up tone, boot-ready tone, "still listening" earcon). The spoken TTS
+    # voice is NOT affected — only the non-verbal effect tones. Default on;
+    # toggled live from Settings → Behavior, persisted to [ui] sound_effects.
+    sound_effects: bool = True
     # Interface (display) language of the whole app — every label, button and
     # message. The backend home for what used to be a frontend-only localStorage
     # value, so a voice command or the Control API can change it and the open UI
@@ -1247,8 +1290,8 @@ class BoardBioConfig(BaseModel):
     Important: NO provider/model default. The bio dynamically uses the
     frontier model of the currently configured primary provider
     (see ``jarvis/brain/resolver.py:resolve_frontier_brain``). A user with
-    only a Grok API key gets a Grok bio; a user with Claude configured gets
-    Opus 4.7. Multi-provider compliance is mandatory.
+    only a Gemini API key gets a Gemini bio; a user with Claude configured gets
+    Opus. Multi-provider compliance is mandatory.
 
     ``override_provider`` / ``override_model`` are power-user fields for
     explicitly pinning a model for the bio only. Leave empty in 99% of cases.
@@ -1316,6 +1359,12 @@ class ComputerUseConfig(BaseModel):
     # 300_000 (no change); lowering it -- with the cu_bench harness as proof --
     # shrinks the vision payload for faster inference, at some grounding risk.
     image_max_bytes: int = Field(default=300_000, ge=20_000, le=2_000_000)
+    # L7 (CU speed): per-screenshot longest-side pixel cap sent to the model.
+    # Default keeps 2048 (no change). Vision models resample to ~1568 px
+    # internally, so lowering this -- with the cu_bench harness as proof -- ships
+    # fewer pixels for faster encode + upload + image-token ingest, at some
+    # grounding risk on tiny controls. 0 disables the dimension cap entirely.
+    image_max_dimension: int = Field(default=2048, ge=0, le=8192)
     # L8 (CU speed): multiplier on the loop's fixed settle waits (pre-type and
     # post-click-verify pauses). Default keeps 1.0 (no change: every settle is
     # byte-for-byte the legacy duration); lower it -- with the cu_bench harness
@@ -1889,6 +1938,17 @@ _PERSISTED_PROVIDER_ENV_KEYS: tuple[str, ...] = (
     "JARVIS__ACK_BRAIN__ENABLED",
     "JARVIS__ACK_BRAIN__PROVIDER",
     "JARVIS__ACK_BRAIN__FALLBACK_PROVIDER",
+    # TTS engine selection beyond the provider tier. Forensic 2026-06-22: an
+    # in-app restart inherited a stale env (JARVIS__TTS__USE_VERTEX=true /
+    # MODEL=sonic-2 / VOICE_*=leo) from a pre-change ancestor. PROVIDER above
+    # healed, but these did not, so Gemini-TTS stayed on the wrong Vertex
+    # billing path (the user had topped up the AI-Studio key, which Vertex
+    # ignores) with a bogus model name → 404 on every sentence, silent voice.
+    # Pinning them here makes a restart honour the registry's corrected values.
+    "JARVIS__TTS__MODEL",
+    "JARVIS__TTS__USE_VERTEX",
+    "JARVIS__TTS__VOICE_DE",
+    "JARVIS__TTS__VOICE_EN",
 )
 
 

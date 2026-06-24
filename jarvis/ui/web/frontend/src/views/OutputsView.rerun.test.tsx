@@ -7,7 +7,7 @@
  * - status "running" / "success" / no mission_id → neither.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { OutputsView } from "@/views/OutputsView";
@@ -27,6 +27,11 @@ afterEach(() => {
 function installFetchMock(
   sessions: OutputSummary[],
   artifacts: ArtifactSummary[] = [],
+  openers = [
+    { id: "default", label: "System default app" },
+    { id: "code", label: "VS Code" },
+  ],
+  preferredOpener = "",
 ) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
@@ -54,16 +59,15 @@ function installFetchMock(
       return {
         ok: true,
         status: 200,
-        json: async () => ({
-          openers: [
-            { id: "default", label: "System default app" },
-            { id: "code", label: "VS Code" },
-          ],
-        }),
+        json: async () => ({ openers }),
       };
     }
     if (url.includes("/preferred-opener")) {
-      return { ok: true, status: 200, json: async () => ({ opener: "" }) };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ opener: preferredOpener }),
+      };
     }
     if (url.includes("/api/outputs")) {
       return { ok: true, status: 200, json: async () => ({ sessions }) };
@@ -171,5 +175,86 @@ describe("OutputsView artifact actions", () => {
     expect(screen.getByTitle("Change how this opens")).toBeDefined();
     expect(screen.getByTitle("Reveal in folder")).toBeDefined();
     expect(screen.queryByTitle("Open in browser")).toBeNull();
+  });
+
+  it("opens the browser chooser option via the rendered artifact URL", async () => {
+    const fetchMock = installFetchMock(
+      [session({ slug: "artifact-slug", status: "success", mission_id: "m-a" })],
+      [
+        {
+          path: "tasks/019edf/artifacts/files/report.md",
+          size: 34_700,
+          mtime: 1_750_000_000,
+          is_text: true,
+          preview: "# Report",
+        },
+      ],
+      [
+        { id: "default", label: "System default app" },
+        { id: "browser", label: "Browser" },
+        { id: "code", label: "VS Code" },
+      ],
+    );
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+
+    renderView();
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("tasks/019edf/artifacts/files/report.md"),
+      ).toBeDefined(),
+    );
+
+    fireEvent.click(screen.getByTitle("Change how this opens"));
+    fireEvent.click(await screen.findByText("Browser"));
+
+    expect(openSpy).toHaveBeenCalledWith(
+      "/api/outputs/artifact-slug/files/tasks/019edf/artifacts/files/report.md/view",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    expect(
+      fetchMock.mock.calls.some(([input]) => String(input).includes("/open-with")),
+    ).toBe(false);
+  });
+
+  it("opens a remembered browser preference via the rendered artifact URL", async () => {
+    const fetchMock = installFetchMock(
+      [session({ slug: "artifact-slug", status: "success", mission_id: "m-a" })],
+      [
+        {
+          path: "tasks/019edf/artifacts/files/report.md",
+          size: 34_700,
+          mtime: 1_750_000_000,
+          is_text: true,
+          preview: "# Report",
+        },
+      ],
+      [
+        { id: "default", label: "System default app" },
+        { id: "browser", label: "Browser" },
+      ],
+      "browser",
+    );
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+
+    renderView();
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("tasks/019edf/artifacts/files/report.md"),
+      ).toBeDefined(),
+    );
+
+    fireEvent.click(screen.getByTitle("Open"));
+
+    expect(openSpy).toHaveBeenCalledWith(
+      "/api/outputs/artifact-slug/files/tasks/019edf/artifacts/files/report.md/view",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    expect(
+      fetchMock.mock.calls.some(([input]) => String(input).includes("/open-with")),
+    ).toBe(false);
   });
 });

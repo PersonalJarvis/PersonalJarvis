@@ -10,6 +10,7 @@ See docs/superpowers/specs/2026-06-09-skill-system-rebuild-design.md.
 """
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -355,3 +356,157 @@ async def test_no_skill_match_keeps_local_action_fast_path() -> None:
     reply = await m.generate("starte die Morgenroutine")
     assert reply == "LOCAL_ACTION_SENTINEL"
     assert m.local_action_calls == ["starte die Morgenroutine"]
+
+
+# ----------------------------------------------------------------------
+# A plugin skill that only keyword-matched an app name ("Discord",
+# "Spotify") must NOT capture a desktop-control / open-app turn —
+# Computer-Use is the universal GUI integration and owns "open Discord and
+# find the post on screen", even when the plugin's API/MCP integration is
+# absent.
+#
+# Live bug 2026-06-21 (sessions.db turn 67276501-…): the marketplace
+# `plugin-discord` skill matched the bare word "Discord", suppressed the
+# deterministic Computer-Use fast path, and the turn fell through to a
+# tool-less CLI talker (antigravity) that hallucinated a permissions refusal
+# ("ich habe keinen Zugriff auf Discord"). The user wanted it driven on
+# screen — exactly what Computer-Use exists for. The fix: when the
+# deterministic local-action gate claims the turn as DIRECT/COMPUTER_USE,
+# the keyword-matched plugin skill stands down (sibling of the AD-S9
+# explicit-heavy-work stand-down above).
+# ----------------------------------------------------------------------
+
+
+def _seed_plugin_skill(tmp_path: Path, name: str, pattern: str) -> None:
+    _write_skill(tmp_path, name, pattern)
+    registry = SkillRegistry(root=tmp_path)
+    registry.reload_sync()
+    set_skill_context(SkillContext(registry=registry, runner=_StubRunner()))  # type: ignore[arg-type]
+
+
+async def test_open_app_compound_stands_down_plugin_skill(tmp_path: Path) -> None:
+    """'Discord öffnen und ... raussuchen' is a Computer-Use intent: the
+    plugin-discord keyword match stands down so the local-action fast path
+    (the COMPUTER_USE dispatch) runs instead of falling to the talker."""
+    _seed_plugin_skill(tmp_path, "plugin-discord", "(discord)")
+    m = _make_probe_manager()
+    utterance = (
+        "Kannst du bitte für mich Discord öffnen und den letzten Post "  # i18n-allow
+        "von BridgeMind raussuchen?"
+    )
+    # Premise: the collision is real — the plugin skill DOES match.
+    assert m._match_skill_for_turn(utterance) is not None
+    reply = await m.generate(utterance)
+    assert m._skill_turn_match is None
+    assert reply == "LOCAL_ACTION_SENTINEL"
+    assert m.local_action_calls == [utterance]
+
+
+async def test_plain_open_app_stands_down_plugin_skill(tmp_path: Path) -> None:
+    """Even a plain 'öffne Discord' (a DIRECT open) is owned by the
+    deterministic gate, not the keyword-matched plugin skill."""
+    _seed_plugin_skill(tmp_path, "plugin-discord", "(discord)")
+    m = _make_probe_manager()
+    utterance = "öffne Discord"  # i18n-allow: German voice command exercising the open-app routing
+    assert m._match_skill_for_turn(utterance) is not None
+    reply = await m.generate(utterance)
+    assert m._skill_turn_match is None
+    assert reply == "LOCAL_ACTION_SENTINEL"
+    assert m.local_action_calls == [utterance]
+
+
+async def test_open_and_operate_stands_down_plugin_skill(tmp_path: Path) -> None:
+    """'öffne Spotify und spiel ...' is a compound open-and-operate
+    Computer-Use intent — the plugin-spotify keyword match stands down."""
+    _seed_plugin_skill(tmp_path, "plugin-spotify", "(spotify)")
+    m = _make_probe_manager()
+    utterance = "öffne Spotify und spiel Shape of You"  # i18n-allow
+    assert m._match_skill_for_turn(utterance) is not None
+    reply = await m.generate(utterance)
+    assert m._skill_turn_match is None
+    assert reply == "LOCAL_ACTION_SENTINEL"
+    assert m.local_action_calls == [utterance]
+
+
+async def test_pure_dispatch_keeps_plugin_skill(tmp_path: Path) -> None:
+    """A pure dispatch with NO open/desktop-control verb ('schick eine
+    Discord-Nachricht') is genuine plugin work — the skill KEEPS the turn,
+    the local-action fast path does NOT run (the stand-down is precise: it
+    only fires when the gate would handle the turn as DIRECT/COMPUTER_USE)."""
+    _seed_plugin_skill(tmp_path, "plugin-discord", "(discord)")
+    m = _make_probe_manager()
+    utterance = "schick eine Discord-Nachricht an Max"  # i18n-allow
+    assert m._match_skill_for_turn(utterance) is not None
+    reply = await m.generate(utterance)
+    assert m._skill_turn_match is not None
+    assert reply != "LOCAL_ACTION_SENTINEL"
+    assert m.local_action_calls == []
+
+
+# ----------------------------------------------------------------------
+# End-to-end: the EXACT live-bug utterance, through the REAL local-action
+# fast path, must DISPATCH a Computer-Use mission — never fall to the
+# (tool-less) talker that refuses. This is the closing proof for the
+# 2026-06-21 Discord bug: with no brain providers wired, a fall-through
+# would surface a provider-down refusal and the harness would never be
+# called; the test asserts the opposite.
+# ----------------------------------------------------------------------
+
+
+class _HarnessDispatchExecutor:
+    """tool_executor stand-in that records dispatch_to_harness calls."""
+
+    def __init__(self) -> None:
+        self.harness_calls: list[tuple[str, dict[str, Any], str]] = []
+
+    async def execute(
+        self,
+        tool: Any,
+        args: dict[str, Any],
+        *,
+        user_utterance: str = "",
+        trace_id: Any = None,
+        **_: Any,
+    ) -> ToolResult:
+        self.harness_calls.append((getattr(tool, "name", "?"), args, user_utterance))
+        return ToolResult(
+            success=True,
+            output="Discord ist offen — der letzte BridgeMind-Post ist da.",  # i18n-allow
+        )
+
+
+class _FakeHarnessTool:
+    name = "dispatch_to_harness"
+    schema: dict[str, Any] = {}
+
+
+async def test_open_discord_e2e_dispatches_computer_use_not_refusal(
+    tmp_path: Path,
+) -> None:
+    _seed_plugin_skill(tmp_path, "plugin-discord", "(discord)")
+    executor = _HarnessDispatchExecutor()
+    config = JarvisConfig()
+    config.brain.routing.force_spawn_mode = "permissive"
+    m = BrainManager(
+        config=config,
+        bus=EventBus(),
+        tools={"spawn_worker": _FakeSpawnTool(), "run-skill": _FakeRunSkillTool()},
+        tool_executor=executor,  # type: ignore[arg-type]
+        local_action_tools={"dispatch_to_harness": _FakeHarnessTool()},
+    )
+    # No brain providers: a fall-through to the talker would return a
+    # provider-down refusal AND never touch the harness. Prove neither.
+    m._build_fallback_chain = lambda level: []  # type: ignore[assignment,method-assign]
+    utterance = (
+        "Kannst du bitte für mich Discord öffnen und den letzten Post "  # i18n-allow
+        "von BridgeMind raussuchen?"
+    )
+    reply = await m.generate(utterance)
+    # The Computer-Use harness runs as a background task — drain it.
+    await asyncio.gather(*getattr(m, "_cu_background_tasks", set()))
+
+    assert m._skill_turn_match is None
+    assert any(
+        name == "dispatch_to_harness" for name, *_ in executor.harness_calls
+    ), f"Computer-Use was never dispatched; calls={executor.harness_calls}"
+    assert reply, "the turn must speak an immediate ACK, not stay silent"

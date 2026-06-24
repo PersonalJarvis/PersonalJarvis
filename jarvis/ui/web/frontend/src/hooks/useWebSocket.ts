@@ -9,7 +9,7 @@ import {
 } from "@/store/events";
 import { useSubAgentStore, SUB_AGENT_EVENT_NAMES } from "@/store/subAgents";
 import { WSEventEnvelope, WSWelcome } from "@/schema/ws";
-import { useI18nStore, hydrateUiLanguage, hydrateReplyLanguage } from "@/i18n";
+import { useI18nStore, hydrateUiLanguage, hydrateReplyLanguage, translate } from "@/i18n";
 
 let singleton: WSClient | null = null;
 
@@ -176,7 +176,10 @@ export function useWebSocket(): void {
           const p = env.payload as { section?: string };
           if (isSectionId(p.section)) {
             setActiveSection(p.section);
-            pushToast("info", `Jarvis oeffnete ${SECTION_LABELS[p.section]}`);
+            pushToast(
+              "info",
+              `${translate("use_web_socket.jarvis_opened")} ${SECTION_LABELS[p.section]}`,
+            );
           }
         }
 

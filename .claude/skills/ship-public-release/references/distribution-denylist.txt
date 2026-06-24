@@ -59,6 +59,11 @@ scripts/_*.py
 scripts/config-soll.json
 scripts/drift-guard-task.xml
 .tmp_research/**
+# Root-level optimization/loop ledgers — internal dev scratchpads (the running
+# notes of a /loop session: measurements, reasoning, file paths). Like the
+# untracked progress.md, they have no downstream product value. boot-progress.md
+# was committed (so it is tracked) and would otherwise ship; withhold it.
+boot-progress.md
 
 # --- Internal dev-process docs: whole subtrees ------------------------------
 docs/superpowers/**

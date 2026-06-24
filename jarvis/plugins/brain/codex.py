@@ -36,6 +36,10 @@ from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.core.protocols import BrainDelta, BrainRequest
 
 from ._openai_base import stream_complete
+from .cli_prompt_context import (
+    extract_reply_language_directive,
+    render_cli_standing_instructions,
+)
 
 log = logging.getLogger(__name__)
 
@@ -95,6 +99,7 @@ def _build_cli_prompt(req: BrainRequest) -> str:
     instruction plus the last few user/assistant turns for context.
     """
     lines: list[str] = [_CLI_SYSTEM, ""]
+    prefs = render_cli_standing_instructions(req.system)
     # Last ~6 non-system, non-tool turns for context (older history is dropped to
     # keep the codex turn small — every token is slow + billed on the CLI path).
     convo = [
@@ -106,6 +111,15 @@ def _build_cli_prompt(req: BrainRequest) -> str:
     for m in convo:
         speaker = "User" if m.role == "user" else "Assistant"
         lines.append(f"{speaker}: {m.content}")
+    if prefs:
+        lines.extend(["", prefs])
+    # The reply-language directive rides LAST (highest recency) so the CLI model
+    # answers in the turn's resolved language instead of anchoring to the German
+    # persona — without this the directive is dropped (live bug 2026-06-21, the
+    # antigravity sibling: an English request was answered in German).
+    lang_directive = extract_reply_language_directive(req.system)
+    if lang_directive:
+        lines.extend(["", lang_directive])
     lines.append("Assistant:")
     return "\n".join(lines)
 
@@ -114,11 +128,33 @@ class CodexBrain:
     name: str = "codex"
     context_window: int = 128_000
     supports_tools: bool = True
-    supports_vision: bool = True
+    # supports_vision is RUNTIME, not a fixed True (mirrors can_call_tools): only
+    # the API-key path passes images to the model (complete() → stream_complete,
+    # which defaults supports_vision=True). The ChatGPT-subscription CLI
+    # (codex exec) flattens the turn to text via _build_cli_prompt and DROPS
+    # every image, so on the CLI path codex is BLIND. The Computer-Use screenshot
+    # loop skips supports_vision=False providers (screenshot_only_loop._call_brain),
+    # so a static True made CU hand a screenshot to a brain that cannot see it and
+    # plan blind. The class default is the safe blind value; __init__ flips it to
+    # True only when an API key (→ the vision-capable API path) is configured.
+    supports_vision: bool = False
 
     def __init__(self, model: str | None = None) -> None:
         self._model = model or DEFAULT_MODEL
         self._client: Any = None
+        # Only the API-key path can see images (see the supports_vision note).
+        self.supports_vision = bool(self._api_key())
+
+    def can_call_tools(self) -> bool:
+        """Runtime tool-calling capability (NOT the static ``supports_tools``).
+
+        Only the API-key path can emit ``tool_calls``. The ChatGPT-subscription
+        CLI (``codex exec``) drives an autonomous agent over a flattened prompt
+        and drops every tool — so when no API key is configured this brain cannot
+        run a tool/Computer-Use turn itself. The caller (``BrainManager``) uses
+        this to delegate tool turns to a tool-capable provider instead of letting
+        the CLI confabulate a refusal."""
+        return bool(self._api_key())
 
     # ---- API-key path -------------------------------------------------
 
@@ -208,6 +244,31 @@ class CodexBrain:
         deadline = t0 + _CLI_TIMEOUT_S
         stdout_bytes = b""
         stderr_bytes = b""
+
+        async def _kill_cli_process() -> None:
+            if not comm_task.done():
+                comm_task.cancel()
+            pid = getattr(proc, "pid", None)
+            if sys.platform == "win32" and isinstance(pid, int) and pid > 0:
+                with suppress(Exception):  # noqa: BLE001
+                    killer = await asyncio.create_subprocess_exec(
+                        "taskkill",
+                        "/PID",
+                        str(pid),
+                        "/T",
+                        "/F",
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL,
+                        creationflags=creationflags,
+                    )
+                    await asyncio.wait_for(killer.wait(), timeout=3.0)
+            with suppress(OSError):
+                proc.kill()
+            with suppress(Exception):  # noqa: BLE001
+                await asyncio.wait_for(proc.wait(), timeout=3.0)
+            with suppress(asyncio.CancelledError, Exception):
+                await comm_task
+
         try:
             while True:
                 slice_timeout = min(3.0, deadline - time.monotonic())
@@ -220,12 +281,12 @@ class CodexBrain:
                 # No-text progress tick: keeps the caller's no-progress deadline
                 # alive through the ~20 s codex spin-up (yields nothing visible).
                 yield BrainDelta(content="")
+        except asyncio.CancelledError:
+            await _kill_cli_process()
+            log.info("CodexBrain CLI: cancelled (killed)")
+            raise
         except TimeoutError as exc:
-            comm_task.cancel()
-            with suppress(ProcessLookupError):
-                proc.kill()
-            with suppress(Exception):
-                await asyncio.wait_for(proc.wait(), timeout=3.0)
+            await _kill_cli_process()
             log.warning(
                 "CodexBrain CLI: no answer within %.0fs (killed)", _CLI_TIMEOUT_S
             )

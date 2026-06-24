@@ -133,6 +133,10 @@ class _TurnState:
     speaking_started_ms: int = 0
     think_ms: int = 0
     speak_ms: int = 0
+    # Set when the turn ended on a two-turn voice/chat confirmation
+    # (BrainTurnCompleted.finish_reason == "voice_confirm_pending"): the reply
+    # is a pending yes/no question, not a normal answer.
+    awaiting_confirmation: bool = False
     finalized: bool = False
 
 
@@ -442,6 +446,7 @@ class SessionRecorder:
             tool_calls=t.tool_calls,
             think_ms=t.think_ms,
             speak_ms=t.speak_ms,
+            awaiting_confirmation=t.awaiting_confirmation,
         )
         # Aggregate hochzaehlen
         self._state.turn_count += 1
@@ -584,6 +589,12 @@ class SessionRecorder:
             t.provider = event.provider
         if event.model:
             t.model = event.model
+        # A consequential ask-tier tool deferred into a two-turn confirmation
+        # ends the turn here; flag it so the transcript labels the reply as a
+        # pending yes/no question rather than a normal answer (forensic
+        # 2026-06-19). Latch True — a later successful round must not clear it.
+        if getattr(event, "finish_reason", "") == "voice_confirm_pending":
+            t.awaiting_confirmation = True
 
     def _on_tool_started(self, event: ToolCallStarted) -> None:
         assert self._state is not None
@@ -799,6 +810,18 @@ def _payload_for(event: Event) -> dict[str, Any]:
             payload["lang"] = getattr(v, "language", "")
             continue
         payload[k] = v
+    # ActionProposed.args may hold PII (an email body / recipient, a search
+    # query) — it is deliberately NOT in the whitelist, so the raw dict is never
+    # persisted. Pull only the short, enum-like ``action`` selector so forensics
+    # can tell which operation a mixed read/write tool ran: before this a gmail
+    # read was indistinguishable from a send in the persisted event (forensic
+    # 2026-06-19, session dc533e39). Bounded length keeps a tool from smuggling
+    # a payload through the key.
+    raw_args = getattr(event, "args", None)
+    if isinstance(raw_args, dict):
+        action = raw_args.get("action")
+        if isinstance(action, str) and 0 < len(action) <= 64:
+            payload["action"] = action
     return payload
 
 

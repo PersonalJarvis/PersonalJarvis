@@ -13,7 +13,6 @@ const PROXIABLE_PROVIDERS = [
   "claude-api",
   "openai",
   "openrouter",
-  "grok",
   "gemini",
   "groq-api",
 ] as const;

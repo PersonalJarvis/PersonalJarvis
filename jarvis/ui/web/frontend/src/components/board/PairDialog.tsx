@@ -43,7 +43,7 @@ export function PairDialog({ onClose }: PairDialogProps) {
           <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-primary/40 bg-primary/10 text-primary">
             <KeyRound className="h-4 w-4" />
           </div>
-          <h3 className="font-display text-base font-semibold flex-1">Friend pairen</h3>
+          <h3 className="font-display text-base font-semibold flex-1">{t("pair_dialog.title")}</h3>
           <button type="button" onClick={onClose} aria-label={t("common.close")}
                   className="text-muted-foreground hover:text-foreground">
             <X className="h-4 w-4" />
@@ -57,21 +57,20 @@ export function PairDialog({ onClose }: PairDialogProps) {
               "flex-1 rounded px-3 py-1.5 text-xs transition-colors",
               mode === "generate" ? "bg-primary/15 text-primary" : "text-muted-foreground"
             )}
-          >Ich lade ein</button>
+          >{t("pair_dialog.mode_invite")}</button>
           <button
             onClick={() => setMode("accept")}
             className={cn(
               "flex-1 rounded px-3 py-1.5 text-xs transition-colors",
               mode === "accept" ? "bg-primary/15 text-primary" : "text-muted-foreground"
             )}
-          >Ich folge einem Link</button>
+          >{t("pair_dialog.mode_follow")}</button>
         </div>
 
         {mode === "generate" && (
           <div className="space-y-3">
             <p className="text-xs text-muted-foreground">
-              Erzeuge einen 10-Minuten-Pair-Link und schicke ihn deinem Freund
-              uebers Signal/Threema/SMS — irgendeinen privaten Kanal.
+              {t("pair_dialog.generate_hint")}
             </p>
             <button
               type="button"
@@ -80,7 +79,7 @@ export function PairDialog({ onClose }: PairDialogProps) {
               className="inline-flex items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20"
             >
               {initiate.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
-              Link generieren
+              {t("pair_dialog.generate_button")}
             </button>
             {initiate.data && (
               <div className="space-y-3 rounded-lg border border-border bg-background/40 p-3">
@@ -109,17 +108,17 @@ export function PairDialog({ onClose }: PairDialogProps) {
                     }}
                     className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
                   >
-                    <Copy className="h-3 w-3" />{copied ? "kopiert" : "kopieren"}
+                    <Copy className="h-3 w-3" />{copied ? t("pair_dialog.copied") : t("pair_dialog.copy")}
                   </button>
                 </div>
                 <div className="text-[10px] text-muted-foreground">
-                  Gueltig bis: {new Date(initiate.data.expires_at).toLocaleString("de-DE")}
+                  {`${t("pair_dialog.valid_until")} ${new Date(initiate.data.expires_at).toLocaleString("de-DE")}`}
                 </div>
               </div>
             )}
             {initiate.isError && (
               <div className="text-xs text-destructive">
-                Fehler: {(initiate.error as Error).message}
+                {`${t("pair_dialog.error_prefix")} ${(initiate.error as Error).message}`}
               </div>
             )}
           </div>
@@ -128,7 +127,7 @@ export function PairDialog({ onClose }: PairDialogProps) {
         {mode === "accept" && (
           <div className="space-y-3">
             <p className="text-xs text-muted-foreground">
-              Fuege hier den Pair-Link ein, den dir dein Freund geschickt hat.
+              {t("pair_dialog.accept_hint")}
             </p>
             <input
               type="url"
@@ -144,16 +143,16 @@ export function PairDialog({ onClose }: PairDialogProps) {
               className="inline-flex items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 disabled:opacity-50"
             >
               {accept.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
-              Pair ausfuehren
+              {t("pair_dialog.accept_button")}
             </button>
             {accept.data && (
               <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-2 text-xs text-emerald-200">
-                Gepairt mit {accept.data.owner_display_name}.
+                {`${t("pair_dialog.paired_with")} ${accept.data.owner_display_name}.`}
               </div>
             )}
             {accept.isError && (
               <div className="text-xs text-destructive">
-                Fehler: {(accept.error as Error).message}
+                {`${t("pair_dialog.error_prefix")} ${(accept.error as Error).message}`}
               </div>
             )}
           </div>

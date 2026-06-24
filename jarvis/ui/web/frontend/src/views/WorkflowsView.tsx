@@ -28,6 +28,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import { translate, useT } from "@/i18n";
 import {
   useDeleteWorkflow,
   useIntegrations,
@@ -55,20 +56,34 @@ const STEP_ICON: Record<string, typeof Clock> = {
   telegram_send: Send,
 };
 
-const STEP_LABEL: Record<string, string> = {
-  brain_prompt: "Brain",
-  harness_dispatch: "Harness",
-  speak: "Sprich",
-  tool_call: "Tool",
-  shell_cmd: "Shell",
-  telegram_send: "Telegram",
-};
+// Most step labels are proper nouns / loanwords (Brain, Harness, Tool, Shell,
+// Telegram) and stay as-is across locales; only "speak" carries a translatable
+// verb, resolved through the one i18n accessor.
+function stepLabel(kind: string): string {
+  switch (kind) {
+    case "brain_prompt":
+      return "Brain";
+    case "harness_dispatch":
+      return "Harness";
+    case "speak":
+      return translate("workflows_view.step_speak");
+    case "tool_call":
+      return "Tool";
+    case "shell_cmd":
+      return "Shell";
+    case "telegram_send":
+      return "Telegram";
+    default:
+      return kind;
+  }
+}
 
 // ---------------------------------------------------------------------
 // View
 // ---------------------------------------------------------------------
 
 export function WorkflowsView() {
+  const t = useT();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const { data, isLoading, error, refetch, isRefetching } = useWorkflows();
   const { data: integrations } = useIntegrations();
@@ -81,7 +96,7 @@ export function WorkflowsView() {
       <ViewHeader
         icon={<Workflow className="h-4 w-4 text-primary" />}
         title="Workflows"
-        subtitle="Deine gehosteten AI-Agent-Pipelines — cron-getriggert oder auf Knopfdruck."
+        subtitle={t("workflows_view.subtitle")}
         right={
           <Button
             size="sm"
@@ -103,12 +118,12 @@ export function WorkflowsView() {
         <div className="space-y-3 p-6">
           {isLoading && (
             <div className="text-sm text-muted-foreground">
-              Lade Workflows…
+              {t("workflows_view.loading")}
             </div>
           )}
           {error && (
             <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
-              Workflows konnten nicht geladen werden: {(error as Error).message}
+              {t("workflows_view.load_failed")}: {(error as Error).message}
             </div>
           )}
           {!isLoading && !error && workflows.length === 0 && (
@@ -139,6 +154,7 @@ function IntegrationsBanner({
 }: {
   integrations: IntegrationsResponse | undefined;
 }) {
+  const t = useT();
   const [dismissed, setDismissed] = useState(false);
   if (!integrations || dismissed) return null;
 
@@ -147,12 +163,16 @@ function IntegrationsBanner({
   if (!integrations.telegram.configured) {
     let partial: string | undefined;
     if (integrations.telegram.has_token && !integrations.telegram.has_chat_id) {
-      partial = "Token ✓ — Chat-ID fehlt";
+      partial = `${t("workflows_view.partial_token_ok")} — ${t(
+        "workflows_view.partial_chat_id_missing",
+      )}`;
     } else if (
       !integrations.telegram.has_token &&
       integrations.telegram.has_chat_id
     ) {
-      partial = "Chat-ID ✓ — Token fehlt";
+      partial = `${t("workflows_view.partial_chat_id_ok")} — ${t(
+        "workflows_view.partial_token_missing",
+      )}`;
     }
     issues.push({
       name: "Telegram",
@@ -175,7 +195,7 @@ function IntegrationsBanner({
         <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
         <div className="flex-1 min-w-0">
           <div className="text-xs font-semibold text-foreground">
-            Integrationen brauchen Setup ({issues.length})
+            {t("workflows_view.integrations_need_setup")} ({issues.length})
           </div>
           <ul className="mt-1 space-y-1.5 text-[11px] text-muted-foreground">
             {issues.map((iss) => (
@@ -197,7 +217,7 @@ function IntegrationsBanner({
           type="button"
           onClick={() => setDismissed(true)}
           className="text-xs text-muted-foreground hover:text-foreground"
-          aria-label="Banner schließen"
+          aria-label={t("workflows_view.dismiss_banner")}
         >
           ×
         </button>
@@ -220,6 +240,7 @@ function DashboardStats({
     next_run_at_ns: number | null;
   };
 }) {
+  const t = useT();
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick((x) => x + 1), 1000);
@@ -240,7 +261,7 @@ function DashboardStats({
       />
       <StatBadge
         icon={<Power className="h-3.5 w-3.5 text-emerald-400" />}
-        label="Aktiv"
+        label={t("workflows_view.stat_active")}
         value={String(summary?.enabled ?? 0)}
       />
       <StatBadge
@@ -250,7 +271,7 @@ function DashboardStats({
       />
       <StatBadge
         icon={<Clock className="h-3.5 w-3.5 text-muted-foreground" />}
-        label="Nächster Lauf"
+        label={t("workflows_view.stat_next_run")}
         value={nextRunLabel}
       />
     </div>
@@ -292,6 +313,7 @@ function WorkflowCard({
   isExpanded: boolean;
   onToggleExpand: () => void;
 }) {
+  const t = useT();
   const runMut = useRunWorkflow();
   const toggleMut = useToggleWorkflow();
   const deleteMut = useDeleteWorkflow();
@@ -307,14 +329,14 @@ function WorkflowCard({
     // Seed) schlaegt dann mit "URL leer" fehl, was akzeptabel ist als MVP.
     let input: Record<string, unknown> = {};
     if (workflow.name.toLowerCase().includes("url")) {
-      const url = window.prompt("URL zum Zusammenfassen:", "https://");
+      const url = window.prompt(t("workflows_view.url_to_summarize"), "https://");
       if (url === null) return;
       input = { url };
     }
     try {
       await runMut.mutateAsync({ id: workflow.id, input });
     } catch (exc) {
-      window.alert(`Run fehlgeschlagen: ${(exc as Error).message}`);
+      window.alert(`${t("workflows_view.run_failed")}: ${(exc as Error).message}`);
     }
   };
 
@@ -330,7 +352,7 @@ function WorkflowCard({
           type="button"
           onClick={onToggleExpand}
           className="mt-0.5 rounded-md p-1 text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground"
-          aria-label={isExpanded ? "Einklappen" : "Ausklappen"}
+          aria-label={isExpanded ? t("workflows_view.collapse") : t("workflows_view.expand")}
         >
           {isExpanded ? (
             <ChevronDown className="h-4 w-4" />
@@ -355,7 +377,7 @@ function WorkflowCard({
             )}
           </div>
           <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-            {workflow.description || "Keine Beschreibung."}
+            {workflow.description || t("workflows_view.no_description")}
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
             <span>
@@ -378,14 +400,14 @@ function WorkflowCard({
               toggleMut.mutate({ id: workflow.id, enabled: v })
             }
             disabled={toggleMut.isPending}
-            aria-label={workflow.enabled ? "Deaktivieren" : "Aktivieren"}
+            aria-label={workflow.enabled ? t("workflows_view.deactivate") : t("workflows_view.activate")}
           />
           <Button
             size="sm"
             variant="ghost"
             onClick={handleRun}
             disabled={isRunning}
-            title="Jetzt ausführen"
+            title={t("workflows_view.run_now")}
           >
             {isRunning ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -399,13 +421,17 @@ function WorkflowCard({
               variant="ghost"
               onClick={() => {
                 if (
-                  window.confirm(`Workflow "${workflow.name}" wirklich löschen?`)
+                  window.confirm(
+                    `${t("workflows_view.delete_confirm_prefix")} "${workflow.name}" ${t(
+                      "workflows_view.delete_confirm_suffix",
+                    )}`,
+                  )
                 ) {
                   deleteMut.mutate(workflow.id);
                 }
               }}
               disabled={deleteMut.isPending}
-              title="Löschen"
+              title={t("common.delete")}
             >
               <Trash2 className="h-4 w-4" />
             </Button>
@@ -423,19 +449,20 @@ function WorkflowCard({
 // ---------------------------------------------------------------------
 
 function WorkflowDetailBody({ workflowId }: { workflowId: string }) {
+  const t = useT();
   const { data, isLoading, error } = useWorkflowDetail(workflowId);
 
   if (isLoading) {
     return (
       <div className="border-t border-border bg-background/30 px-5 py-3 text-xs text-muted-foreground">
-        Lade Details…
+        {t("workflows_view.loading_details")}
       </div>
     );
   }
   if (error) {
     return (
       <div className="border-t border-border bg-destructive/10 px-5 py-3 text-xs text-destructive">
-        Fehler: {(error as Error).message}
+        {t("workflows_view.error_label")}: {(error as Error).message}
       </div>
     );
   }
@@ -458,8 +485,7 @@ function WorkflowDetailBody({ workflowId }: { workflowId: string }) {
             const label =
               s.label ||
               (s.prompt ? s.prompt.slice(0, 80) : s.text?.slice(0, 80)) ||
-              STEP_LABEL[s.kind] ||
-              s.kind;
+              stepLabel(s.kind);
             return (
               <li
                 key={idx}
@@ -470,7 +496,7 @@ function WorkflowDetailBody({ workflowId }: { workflowId: string }) {
                 </span>
                 <Icon className="h-3.5 w-3.5 shrink-0 text-primary" />
                 <span className="w-20 text-primary">
-                  {STEP_LABEL[s.kind] ?? s.kind}
+                  {stepLabel(s.kind)}
                 </span>
                 <span className="flex-1 truncate text-muted-foreground">
                   {label}
@@ -483,11 +509,11 @@ function WorkflowDetailBody({ workflowId }: { workflowId: string }) {
 
       <div>
         <div className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">
-          Letzte Runs ({data.recent_runs.length})
+          {t("workflows_view.recent_runs")} ({data.recent_runs.length})
         </div>
         {data.recent_runs.length === 0 ? (
           <div className="text-xs text-muted-foreground">
-            Noch nie ausgeführt.
+            {t("workflows_view.never_run")}
           </div>
         ) : (
           <div className="space-y-2">
@@ -538,11 +564,12 @@ function RunRow({ run }: { run: WorkflowRun }) {
 }
 
 function RunStepsDetail({ runId }: { runId: string }) {
+  const t = useT();
   const { data, isLoading } = useRunDetail(runId);
   if (isLoading) {
     return (
       <div className="border-t border-border/60 p-2 text-[11px] text-muted-foreground">
-        Lade Run-Details…
+        {t("workflows_view.loading_run_details")}
       </div>
     );
   }
@@ -632,14 +659,15 @@ function NextRunLabel({ ns }: { ns: number | null }) {
 }
 
 function EmptyState() {
+  const t = useT();
   return (
     <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/60 bg-background/30 p-10 text-center">
       <Workflow className="h-7 w-7 text-muted-foreground/50" />
       <p className="text-sm text-muted-foreground">
-        Noch keine Workflows — beim ersten Start werden 3 Beispiele geseedet.
+        {t("workflows_view.empty_title")}
       </p>
       <p className="text-xs text-muted-foreground/60">
-        Ist das Backend frisch? Schau in <code>data/workflows.sqlite</code>.
+        {t("workflows_view.empty_hint_pre")} <code>data/workflows.sqlite</code>.
       </p>
     </div>
   );
@@ -651,14 +679,14 @@ function EmptyState() {
 
 function formatFutureDelta(ns: number): string {
   const delta = ns - Date.now() * 1e6;
-  if (delta <= 0) return "jetzt";
+  if (delta <= 0) return translate("workflows_view.now");
   return formatDelta(delta);
 }
 
 function formatPastDelta(ns: number): string {
   const delta = Date.now() * 1e6 - ns;
-  if (delta <= 0) return "jetzt";
-  return formatDelta(delta) + " her";
+  if (delta <= 0) return translate("workflows_view.now");
+  return `${formatDelta(delta)} ${translate("workflows_view.ago_suffix")}`;
 }
 
 function formatDelta(ns: number): string {

@@ -150,5 +150,38 @@ async def test_non_401_error_is_not_retried():
 def test_tool_contract_shape():
     tool = GmailRestTool()
     assert tool.name == "gmail"
-    assert tool.risk_tier == "ask"  # send is consequential
+    assert tool.risk_tier == "ask"  # conservative static fallback; send is consequential
     assert "schema" in dir(tool)
+
+
+# ----------------------------------------------------------------------
+# Per-action risk (forensic 2026-06-19, session dc533e39): "Was habe ich
+# heute auf dem Plan?" → morning-routine → gmail action=list_messages
+# (read) was forced through the ask-tier confirm and Jarvis spoke "Soll
+# ich die E-Mail wirklich senden?". Only send_message is consequential;
+# reads must stay safe so the morning briefing can check unread mail
+# without a spurious send confirmation.
+# ----------------------------------------------------------------------
+
+
+def test_risk_tier_for_args_read_actions_are_safe():
+    tool = GmailRestTool(access_token_provider=lambda: "x")
+    assert tool.risk_tier_for_args({"action": "list_messages"}) == "safe"
+    assert tool.risk_tier_for_args({"action": "get_message"}) == "safe"
+
+
+def test_risk_tier_for_args_send_is_ask():
+    tool = GmailRestTool(access_token_provider=lambda: "x")
+    assert tool.risk_tier_for_args({"action": "send_message"}) == "ask"
+
+
+def test_risk_tier_for_args_default_action_is_safe():
+    # No action key → defaults to list_messages (a read) → safe.
+    tool = GmailRestTool(access_token_provider=lambda: "x")
+    assert tool.risk_tier_for_args({}) == "safe"
+
+
+def test_risk_tier_for_args_unknown_action_is_conservative():
+    # An unrecognised action stays conservative (ask), never silently safe.
+    tool = GmailRestTool(access_token_provider=lambda: "x")
+    assert tool.risk_tier_for_args({"action": "purge_everything"}) == "ask"

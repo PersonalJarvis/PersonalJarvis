@@ -1,7 +1,7 @@
 """Worktree-scoped file/shell tools for the in-process API-agent worker.
 
 These are the hands of :class:`ApiAgentWorker` — the worker that drives an
-OpenAI-compatible brain (grok / openai / openrouter) in a tool-use loop. The
+OpenAI-compatible brain (openai / openrouter) in a tool-use loop. The
 CLI workers (claude / codex / agy) get Write/Edit/Read/Bash from their own
 binary; an in-process brain has none, so we supply a minimal, deliberately
 small set here.

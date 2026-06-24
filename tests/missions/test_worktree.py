@@ -175,6 +175,71 @@ def test_lean_workspace_written_file_shows_in_capture_diff_sequence(
     assert "Headlines" in diff.stdout
 
 
+def test_lean_workspace_excludes_node_modules_from_diff_capture(
+    manager: WorktreeManager,
+) -> None:
+    """Regenerable dependency trees (node_modules/) MUST be excluded from the
+    lean workspace so the per-iteration ``git add -A .`` does not have to stat
+    tens of thousands of files.
+
+    Live forensic (mission 019ee416, 2026-06-20): a worker installed Remotion
+    into the lean workspace, built a complete promo video, but every
+    ``_capture_diff`` call ran ``git add -A`` into a 10 s timeout walking
+    node_modules -> empty diff -> "no usable output" -> the finished build was
+    discarded and rmtree-d. Excluding node_modules keeps the add cheap; the
+    real deliverable still shows up.
+    """
+    workspace = manager.create(
+        mission_slug="vid", task_id="01-video", needs_repo=False
+    )
+    # Simulate `npm install`: a dependency tree the worker created.
+    nm = workspace / "node_modules" / "remotion"
+    nm.mkdir(parents=True)
+    (nm / "index.js").write_text("module.exports = {}\n", encoding="utf-8")
+    # A real deliverable written next to it.
+    (workspace / "Root.tsx").write_text(
+        "export const Root = () => null\n", encoding="utf-8"
+    )
+
+    add = _git_out(["add", "-A", "."], workspace)
+    assert add.returncode == 0, f"git add failed: {add.stderr!r}"
+    diff = _git_out(["diff", "--cached", "HEAD"], workspace)
+    assert diff.returncode == 0, f"git diff failed: {diff.stderr!r}"
+    # The deliverable is captured for the Critic...
+    assert "Root.tsx" in diff.stdout, f"deliverable missing: {diff.stdout!r}"
+    # ...but the regenerable dependency tree is NOT staged.
+    assert "node_modules" not in diff.stdout, (
+        f"node_modules leaked into the diff: {diff.stdout!r}"
+    )
+
+
+def test_lean_workspace_excludes_python_and_build_caches(
+    manager: WorktreeManager,
+) -> None:
+    """The same exclusion covers the other regenerable heavyweights a worker
+    can spawn (Python venvs, bytecode caches, package-manager stores) so a
+    `pip install` / `npm ci` task does not hit the same git-add timeout."""
+    workspace = manager.create(
+        mission_slug="py", task_id="01-pytask", needs_repo=False
+    )
+    for rel in (
+        ".venv/lib/site.py",
+        "venv/lib/site.py",
+        "__pycache__/mod.cpython-311.pyc",
+        ".pnpm-store/x/index.js",
+    ):
+        p = workspace / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("x\n", encoding="utf-8")
+    (workspace / "report.md").write_text("# done\n", encoding="utf-8")
+
+    assert _git_out(["add", "-A", "."], workspace).returncode == 0
+    diff = _git_out(["diff", "--cached", "HEAD"], workspace)
+    assert "report.md" in diff.stdout
+    for token in (".venv", "venv/", "__pycache__", ".pnpm-store"):
+        assert token not in diff.stdout, f"{token} leaked into diff"
+
+
 def test_lean_cleanup_via_remove_does_not_error(manager: WorktreeManager) -> None:
     """`remove()` must tear down a lean workspace without calling
     `git worktree remove` (which would fail: it is not a registered worktree).

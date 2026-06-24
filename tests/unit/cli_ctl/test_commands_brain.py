@@ -31,8 +31,8 @@ def test_switch_proceeds_without_yes(capture_api):
 
 
 def test_switch_no_persist(capture_api):
-    runner.invoke(app, ["brain", "switch", "grok", "--no-persist"])
-    assert capture_api["calls"][-1]["body"] == {"provider": "grok", "persist": False}
+    runner.invoke(app, ["brain", "switch", "openai", "--no-persist"])
+    assert capture_api["calls"][-1]["body"] == {"provider": "openai", "persist": False}
 
 
 def test_switch_dry_run_sends_nothing(capture_api):
@@ -50,9 +50,9 @@ def test_subagent_switch(capture_api):
 
 
 def test_test_provider(capture_api):
-    runner.invoke(app, ["brain", "test", "grok"])
+    runner.invoke(app, ["brain", "test", "openai"])
     call = capture_api["calls"][-1]
-    assert call["method"] == "POST" and call["path"] == "/api/providers/grok/test"
+    assert call["method"] == "POST" and call["path"] == "/api/providers/openai/test"
 
 
 def test_deep_model(capture_api):

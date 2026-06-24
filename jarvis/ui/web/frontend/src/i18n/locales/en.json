@@ -41,16 +41,7 @@
     "socials": "Socials",
     "taskbar": "Taskbar",
     "contacts": "Contacts",
-    "agent_instructions": "{name}.md",
-    "browser_voice": "Browser Voice"
-  },
-  "browser_voice": {
-    "title": "Browser Voice",
-    "subtitle": "Talk to Jarvis using your browser's microphone and speakers — no desktop install. Requires a secure context (localhost or https).",
-    "start": "Start voice",
-    "stop": "Stop",
-    "listening": "Listening…",
-    "speaking": "Speaking…"
+    "agent_instructions": "{name}.md"
   },
   "agent_instructions": {
     "subtitle": "Your personal preferences for how the assistant works with you — tone, language, defaults, standing facts. Separate from the System Prompt, and it never overrides safety or confirmations.",
@@ -59,10 +50,11 @@
     "editor_label": "Your instructions (Markdown)",
     "placeholder": "Write your personal preferences…",
     "chars": "{0} characters",
-    "empty_hint": "Empty — load the template to get started.",
+    "empty_hint": "Empty - save to clear the file, or start from the template.",
     "save": "Save instructions",
     "saving": "Saving…",
     "saved": "Instructions saved",
+    "revert": "Revert changes",
     "reset": "Clear",
     "reset_done": "Instructions cleared",
     "load_template": "Start from template",
@@ -89,6 +81,12 @@
       "description": "Mute other apps (Spotify, browser…) while you talk to your assistant, then restore them after. The assistant's own voice is never muted.",
       "enabled_toast": "Music will mute while you talk to your assistant.",
       "disabled_toast": "Music mute disabled."
+    },
+    "sound_effects": {
+      "title": "Sound effects",
+      "description": "Play Jarvis's short tones — the chime when you say the wake word, the hang-up tone, and the boot-ready cue. Off: silent; the spoken voice is never affected.",
+      "enabled_toast": "Sound effects on.",
+      "disabled_toast": "Sound effects muted."
     }
   },
   "socials": {
@@ -307,7 +305,14 @@
       "cancel": "Cancel",
       "save": "Create task",
       "save_error": "Could not create the task."
-    }
+    },
+    "untitled": "(untitled)",
+    "loading_details": "Loading details…",
+    "waiting_for_event": "waiting for event",
+    "running_now": "running now",
+    "done_at": "done",
+    "in_prefix": "in",
+    "due_now": "due"
   },
   "skills_view": {
     "title": "Skills",
@@ -336,7 +341,31 @@
     "select_all": "Select all",
     "selected": "selected",
     "bulk_delete_title": "Delete skills?",
-    "bulk_delete_body": "These skills will be permanently removed:"
+    "bulk_delete_body": "These skills will be permanently removed:",
+    "new_skill": "New skill",
+    "find_skill": "Find skill",
+    "clear_search": "Clear search",
+    "filter_all": "All",
+    "filter_mine": "Mine",
+    "all_categories": "All categories",
+    "reset_filters": "Reset",
+    "matches": "matches",
+    "ai_ranked": "AI-ranked",
+    "loading": "Loading skills…",
+    "load_error": "Could not load skills",
+    "select_from_list": "Select a skill from the list.",
+    "loading_skill": "Loading skill…",
+    "validation_error": "Validation error",
+    "builtin_admin_needed": "Built-in — admin password required to save",
+    "admin_password": "Admin password",
+    "admin_password_hint_a": "Built-in skills are protected. Enter the admin password set in",
+    "admin_password_hint_b": "under",
+    "unlock": "Unlock",
+    "empty_list_title": "No skills yet.",
+    "empty_list_body_a": "On first launch,",
+    "empty_list_body_b": "copies the built-in skills to",
+    "empty_list_body_c": "If that doesn't happen, check the backend logs.",
+    "search_no_hits": "No matches. Try a different term or remove a filter."
   },
   "run_inspector": {
     "title": "Run Inspector",
@@ -367,7 +396,12 @@
     "user": "You",
     "assistant": "Assistant",
     "hangup": "Hung up",
-    "duration": "Duration"
+    "duration": "Duration",
+    "unknown_error": "Unknown error",
+    "recorder_disabled": "Session recorder is disabled.",
+    "recorder_hint_a": "Enable the",
+    "recorder_hint_b": "section in",
+    "recorder_hint_c": "and restart"
   },
   "docs_view": {
     "title": "Docs",
@@ -754,7 +788,10 @@
     "active_tooltip": "Already active",
     "click_to_activate": "Click to activate this provider",
     "needs_codex": "First connect Codex or save API key, then activate",
+    "needs_login": "First sign in with Google, then activate",
     "needs_key": "First save API key, then activate",
+    "recommended": "Recommended",
+    "recommended_tooltip": "Recommended model: {0}",
     "security_notice": ""
   },
   "apikeys_test": {
@@ -774,6 +811,7 @@
   },
   "apikeys_model": {
     "heading": "Model",
+    "recommended_tag": "Recommended",
     "model_label": "Model",
     "search_placeholder": "Search models or type a custom id…",
     "apply": "Apply",
@@ -782,9 +820,22 @@
     "live_note": "(active now)",
     "restart_note": "(active from next start)",
     "load_failed": "Could not load models",
-    "source_static": "offline list",
-    "source_static_note": "Live catalog unavailable — showing the maintained fallback list.",
-    "more_hint": "{0} more — refine your search"
+    "source_static": "default list",
+    "source_static_note": "Live catalog unavailable — showing the maintained default selection.",
+    "more_hint": "{0} more — refine your search",
+    "choose_placeholder": "Choose a model…",
+    "heading_voice": "Voice",
+    "choose_voice": "Choose a voice…",
+    "use_custom": "Use \"{0}\"",
+    "no_models": "No models found",
+    "loading": "Loading…"
+  },
+  "apikeys_cu_model": {
+    "heading": "Computer-Use model",
+    "use_main": "Use my main model",
+    "using_main": "Using your main model",
+    "effective": "Computer-Use runs",
+    "cleared": "Computer-Use model reset to your main model"
   },
   "settings_view": {
     "silence_window": {
@@ -845,7 +896,7 @@
     },
     "wake_word": {
       "title": "Wake Word",
-      "description": "The phrase you say out loud to activate voice mode — your spoken trigger. Type your own.",
+      "description": "Activation phrase for voice mode. Type your own.",
       "phrase_label": "Wake phrase",
       "phrase_placeholder": "e.g. Jonas",
       "engine_label": "Detection engine",
@@ -1072,6 +1123,21 @@
     "restart_label": "Restart",
     "rerun_starting": "Starting…",
     "rerun_confirm": "Confirm re-run",
+    "list_load_error": "Could not load outputs",
+    "empty_sessions": "No sub-agent sessions yet. Start an OpenClaw task.",
+    "select_session": "Select a session.",
+    "loading_plan": "Loading plan…",
+    "plan_load_error": "Could not load plan",
+    "single_shot_no_plan": "Single-shot run — no structured plan for this session.",
+    "results": "Results",
+    "file": "file",
+    "files": "files",
+    "loading_artifacts": "Loading artifacts…",
+    "artifacts_load_error": "Could not load artifacts",
+    "no_files": "This session has no saved files.",
+    "binary_file_hint": "Binary file — open the folder on the desktop to view it.",
+    "loading_file": "Loading file…",
+    "file_truncated": "File truncated to 1 MiB — view the rest in the file manager.",
     "open_action": "Open",
     "open_with_title": "Open with…",
     "open_with_remember": "Remember as default",
@@ -1101,7 +1167,8 @@
     "open_in_editor": "Open Markdown file in OS default editor",
     "running": "running",
     "saving": "Saving…",
-    "error": "Error"
+    "error": "Error",
+    "status": "Status"
   },
   "docs": {
     "search_placeholder": "Filter title/tag…",
@@ -1189,6 +1256,14 @@
     "brain_needs_openai_key": "Codex as a brain needs an OpenAI API key — the ChatGPT login only powers the Codex worker. Add an OpenAI key (e.g. on the OpenAI provider), then select Codex here.",
     "brain_key_hint": "To use Codex as a brain too, add an OpenAI API key (paid, separate from your ChatGPT login — which only powers the worker). Saving it unlocks the brain toggle above."
   },
+  "apikeys_antigravity": {
+    "login_started": "Google login was started in the terminal",
+    "disconnected": "Antigravity (Google) disconnected",
+    "status_loading": "Loading Google login status",
+    "connected": "Connected via your Google subscription.",
+    "connected_as": "Connected via Google ({0}).",
+    "needs_login_full": "{0}: first sign in with Google, then activate."
+  },
   "mcps_toast": {
     "connected": "{0} connected"
   },
@@ -1213,15 +1288,23 @@
     },
     "welcome": {
       "title": "Welcome to Personal Jarvis",
-      "subtitle": "Your local, private voice assistant. Let's get you set up.",
+      "subtitle": "Your voice-first AI assistant. Let's get you set up.",
       "cta": "Get started",
       "skip_setup": "Skip setup for now"
     },
+    "risk": {
+      "title": "Before you continue",
+      "lead": "Personal Jarvis is powerful, experimental software.",
+      "body": "It can control your computer, run commands, open apps, send messages, and change files on your behalf — and it can make mistakes. It may do unintended or even destructive things.",
+      "liability": "You use it entirely at your own risk. The developers accept no liability for any damage, data loss, or other consequences. Only continue if you understand and accept this.",
+      "accept_label": "I understand the risks and accept that I use Personal Jarvis at my own risk.",
+      "proceed": "I understand — continue"
+    },
     "intro": {
-      "scene_1": "Meet {name} — your voice-first assistant.",
-      "scene_2": "Just talk. {name} listens and acts.",
+      "scene_1": "Meet your voice-first assistant.",
+      "scene_2": "Just talk — it listens and acts.",
       "scene_3": "It keeps working in the background while you don't.",
-      "scene_4": "And it runs locally — your data stays yours."
+      "scene_4": "Your keys, your data, your rules."
     },
     "terms": {
       "title": "Terms & Disclaimer",
@@ -1236,7 +1319,7 @@
     },
     "wake_word": {
       "title": "Pick your wake word",
-      "body": "Choose the word that wakes {name}. \"Hey\" stays fixed — you pick the rest.",
+      "body": "Choose the word that wakes your assistant. \"Hey\" stays fixed — you pick the rest.",
       "prefix": "Hey",
       "input_label": "Your wake word",
       "placeholder": "e.g. Nova",
@@ -1245,7 +1328,8 @@
       "references_caveat": "These references are informational and may be incomplete or out of date — they are not a substitute for your own check.",
       "ack_label": "I have reviewed the information on protected names and accept that I am solely responsible for the activation word I choose.",
       "cta": "Save wake word",
-      "saving": "Saving…"
+      "saving": "Saving…",
+      "derived_name": "Your assistant will be called: {0}"
     },
     "api_keys": {
       "title": "Connect your AI services (optional)",
@@ -1255,19 +1339,13 @@
     },
     "mic_test": {
       "title": "Microphone check",
-      "body": "Let's make sure {name} can hear you.",
-      "no_mic": "No microphone detected. You can still talk to {name} by text or through a channel like Telegram.",
+      "body": "Let's make sure your assistant can hear you.",
+      "no_mic": "No microphone detected. You can still talk by text or through a channel like Telegram.",
       "skip": "Skip microphone check"
-    },
-    "persona": {
-      "title": "Make it yours (optional)",
-      "name_label": "What should the assistant call itself?",
-      "name_placeholder": "Type a name…",
-      "skip": "Skip personalization"
     },
     "system_style": {
       "title": "Choose your style",
-      "body": "How should {name} appear on screen? You can change this any time in Settings.",
+      "body": "How should your assistant appear on screen? You can change this any time in Settings.",
       "recommended": "Recommended",
       "options": {
         "whisper_bar": "Jarvis Bar",
@@ -1287,10 +1365,10 @@
     },
     "finish": {
       "title": "You're all set!",
-      "body": "{name} is ready. Try saying your wake word, or type a command to begin.",
+      "body": "Your assistant is ready. Try saying your wake word, or type a command to begin.",
       "skipped_title": "You skipped — set up anytime in Settings:",
-      "start_cta": "Start using {name}",
-      "boot_notice": "Heads up: the first launch takes about 10 seconds while {name} warms up — that's completely normal."
+      "start_cta": "Get started",
+      "boot_notice": "Heads up: the first launch takes about 10 seconds while your assistant warms up — that's completely normal."
     }
   },
   "languages_view": {
@@ -1396,7 +1474,15 @@
     "ago_prefix": "",
     "hangup_voice_pattern": "Hung up",
     "hangup_error": "Error",
-    "hangup_turn_complete": "Reply done"
+    "hangup_turn_complete": "Reply done",
+    "ago_suffix": "ago",
+    "unit_sec": "s",
+    "unit_min": "min",
+    "unit_hour": "h",
+    "duration_running": "running",
+    "hangup_hotkey": "Hotkey",
+    "hangup_idle_timeout": "Timeout",
+    "hangup_shutdown": "Shutdown"
   },
   "session_detail": {
     "copied_as": "Session copied as",
@@ -1656,7 +1742,16 @@
     "empty_all": "No CLI matches the filter.",
     "empty_connected": "No CLI is currently connected.",
     "empty_installed": "No CLI is installed.",
-    "empty_custom": "No custom CLI registered yet — click 'Add Custom' at the top right."
+    "empty_custom": "No custom CLI registered yet — click 'Add Custom' at the top right.",
+    "loading_short": "Loading…",
+    "field_name_id": "Name (id, lowercase)",
+    "field_display_name": "Display name",
+    "risk_tier_label": "Risk tier",
+    "risk_monitor": "monitor (execute + log)",
+    "top_commands": "Top commands",
+    "just_now": "just now",
+    "ago_prefix": "",
+    "ago_suffix": "ago"
   },
   "cli_test_hub_view": {
     "subtitle_tell": "Tell",
@@ -1716,7 +1811,19 @@
     "never_run": "Never run yet.",
     "loading_run_details": "Loading run details…",
     "empty_title": "No workflows yet — 3 examples are seeded on first launch.",
-    "empty_hint_pre": "Is the backend fresh? Check"
+    "empty_hint_pre": "Is the backend fresh? Check",
+    "load_error": "Could not load workflows",
+    "partial_token_ok": "Token ✓",
+    "partial_chat_id_missing": "Chat ID missing",
+    "partial_chat_id_ok": "Chat ID ✓",
+    "partial_token_missing": "Token missing",
+    "prompt_url_to_summarize": "URL to summarize:",
+    "deactivate": "Deactivate",
+    "activate": "Activate",
+    "empty_hint_prefix": "Is the backend fresh? Check",
+    "step_speak": "Speak",
+    "now": "now",
+    "ago_suffix": "ago"
   },
   "conductor_view": {
     "new_job": "New job",
@@ -1731,7 +1838,8 @@
     "empty_jobs": "No jobs yet. Click \"New job\" in the top right.",
     "empty_jobs_hint": "3 demo jobs are seeded on first launch.",
     "empty_timeline": "No runs yet — click Play on a job.",
-    "json_syntax_error": "JSON syntax error"
+    "json_syntax_error": "JSON syntax error",
+    "now": "now"
   },
   "chat_tab": {
     "loading_friends": "Loading friends …",
@@ -1768,5 +1876,173 @@
   },
   "use_web_socket": {
     "jarvis_opened": "{name} opened"
+  },
+  "chat_thread": {
+    "message_to": "Message to",
+    "no_channel_placeholder": "No channel linked — outbound not possible",
+    "send": "Send",
+    "send_failed": "Send failed",
+    "no_messages": "No messages yet",
+    "link_channel_hint": "Link a channel (Telegram/Jarvis) to start writing",
+    "profile": "Profile"
+  },
+  "add_friend_menu": {
+    "error_name_required": "Please enter a name.",
+    "error_telegram_id_missing": "Telegram chat ID is missing.",
+    "error_pubkey_missing": "Jarvis public key is missing.",
+    "title": "Add friend",
+    "link_mode_hint": "Pair-Link uses the existing public-key pairing flow via the board backend. Exchange the token + URL with your friend.",
+    "open_pair_dialog": "Open pair dialog",
+    "name_placeholder": "e.g. Daniel",
+    "label_telegram_id": "Telegram chat ID",
+    "label_pubkey": "Jarvis public key (hex)",
+    "telegram_id_placeholder": "e.g. 123456789",
+    "pubkey_placeholder": "e.g. 4f3c2b…",
+    "submit": "Add"
+  },
+  "permission_matrix": {
+    "subline_minimal": "Online/offline only",
+    "subline_standard": "+ Mission title",
+    "subline_detailed": "+ OpenClaw summary",
+    "aria_label": "Sharing profile"
+  },
+  "self_mod_view": {
+    "all_actors": "All actors",
+    "actor_main": "Main Jarvis",
+    "successful_only": "Successful only",
+    "sensitive_path_notice": "Sensitive path — values redacted server-side (Plan §AP-2).",
+    "intro_a": "Read-only view of the audit trail, mutable settings and backups.",
+    "intro_b": "Mutations happen only via voice/chat — this view shows only what",
+    "intro_c": "changed about itself."
+  },
+  "wiki_view": {
+    "page_not_found": "Page not found",
+    "loading_vault": "Loading vault…",
+    "vault_empty": "Vault is empty",
+    "pages": "pages",
+    "wikilinks": "wikilinks",
+    "load_error": "Could not load wiki data. Is the backend server running?",
+    "no_selection_hint": "Pick a page on the left or click a node in the Memory Map.",
+    "backlinks_hint": "Backlinks appear here once a page is selected.",
+    "empty_title": "Your wiki is still empty.",
+    "empty_body_a": "Whenever",
+    "empty_body_b": "picks up something important in a conversation, it lands here — people, projects, preferences, appointments.",
+    "manual_a": "You can also drop a",
+    "manual_b": "file into",
+    "manual_c": "yourself at any time."
+  },
+  "skill_create_dialog": {
+    "title": "Create skill",
+    "subtitle": "Describe what the skill should do — draft it with AI or fill the form yourself.",
+    "intent_label": "What should this skill do?",
+    "intent_placeholder": "e.g. \"Summarize my open browser tabs\", \"Start my morning routine\"…",
+    "draft_with_ai": "Draft with AI",
+    "brain_used": "AI draft applied — review and edit below.",
+    "brain_unavailable": "AI unavailable — filled a starter template you can edit.",
+    "name_label": "Name",
+    "name_placeholder": "Skill name",
+    "category_label": "Category",
+    "description_label": "Description",
+    "description_placeholder": "One sentence about what it does",
+    "body_label": "Instructions (Markdown)",
+    "body_placeholder": "## My Skill\n\nWhat the assistant should do…",
+    "trigger_label": "Voice trigger (optional)",
+    "trigger_placeholder": "e.g. start the morning routine",
+    "create": "Create skill",
+    "create_error": "Could not create the skill",
+    "name_required": "Please enter a name with at least 3 characters."
+  },
+  "missions_view": {
+    "active": "active",
+    "select_worker_hint": "Select a worker in the tree on the left to see the live stream.",
+    "select_mission_hint": "Select a mission to load details.",
+    "loading_terminal": "Loading terminal…",
+    "no_reasoning_notes": "No reasoning notes available.",
+    "no_plan_published": "No plan published yet.",
+    "expected_output": "Expected output",
+    "not_specified": "(not specified)",
+    "steps": "Steps",
+    "workers": "workers",
+    "title": "Missions",
+    "subtitle": "Phase 6 — Worker/Critic loop. Live bus, PTY streams, verdicts.",
+    "tree_label": "Mission tree",
+    "timeline_label": "Event timeline",
+    "no_events": "No events for this mission yet.",
+    "no_critic_verdicts": "No critic verdicts for this mission yet.",
+    "no_missions_yet": "No missions yet. Main Jarvis will dispatch one shortly…"
+  },
+  "skill_finder_dialog": {
+    "install_failed": "Installation failed",
+    "title": "Skill Finder",
+    "subtitle": "Describe what you need — the mini-agent searches the catalog and ranks with AI.",
+    "brain_ranking_active": "Brain ranking active",
+    "query_placeholder": "e.g. \"summarize PDFs\", \"automate Git workflow\", \"meeting notes\"...",
+    "search": "Search",
+    "filter_trust": "Trust level",
+    "opt_all": "All",
+    "hint_no_filter": "no filter",
+    "opt_official_only": "Official only",
+    "opt_verified_plus": "Verified+",
+    "hint_verified_plus": "official + 3k+ stars",
+    "opt_community_plus": "Community+",
+    "hint_actively_maintained": "actively maintained",
+    "opt_everything": "Everything, including prototypes",
+    "hint_risk_ok": "risk ok",
+    "filter_stars": "GitHub stars",
+    "opt_any": "Any",
+    "filter_category": "Category",
+    "filter_risk": "Risk limit",
+    "opt_safe_only": "Safe only",
+    "opt_up_to_monitor": "Up to monitor",
+    "opt_up_to_ask": "Up to ask (confirmation ok)",
+    "filter_language": "Language",
+    "lang_de": "German",
+    "lang_en": "English",
+    "skills_in_catalog": "skills in catalog",
+    "loading_catalog": "Loading catalog…",
+    "trust_official": "official",
+    "trust_verified": "verified",
+    "trust_community": "community",
+    "trust_experimental": "experimental",
+    "installed": "installed",
+    "no_direct_download": "No direct download available — install manually",
+    "install_to_skills_dir": "Install into %LOCALAPPDATA%/Jarvis/skills",
+    "manual": "Manual",
+    "install": "Install",
+    "source": "Source",
+    "no_hits": "No matches. Try different filters?",
+    "empty_prompt": "Describe what you need — the search ranks with AI.",
+    "example_1": "“build a skill that prioritizes my emails”",
+    "example_2": "“simplify the Git workflow”",
+    "example_3": "“PDF to structured Markdown”"
+  },
+  "missions": {
+    "state_critiquing": "critic reviewing",
+    "state_looping": "correcting"
+  },
+  "mission_state": {
+    "pending": "waiting",
+    "running": "running",
+    "critiquing": "critic reviewing",
+    "looping": "correcting",
+    "approved": "done",
+    "failed": "error",
+    "cancelled": "cancelled",
+    "timed_out": "timeout"
+  },
+  "mascot_gigi": {
+    "aria_label": "{name} mascot Gigi",
+    "back_online": "back online!",
+    "connection_lost": "connection lost …"
+  },
+  "agents_view": {
+    "subtitle": "Running sub-agents — role, status, output.",
+    "empty_title": "No active agents",
+    "empty_body_a": "When",
+    "empty_body_b": "starts a sub-agent, it appears here as a live tile with streaming output and a kill button.",
+    "phase4_notice": "Activated with Phase 4 (harness integration)."
+  },
+  "friends_view": {
+    "subtitle": "Telegram bot + local friend registry. You decide what friends see."
   }
 }

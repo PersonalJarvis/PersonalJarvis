@@ -17,7 +17,7 @@ app = typer.Typer(
 )
 
 _PROVIDER_HELP = (
-    "Provider id: claude-api | openrouter | openai | gemini | grok | codex | "
+    "Provider id: claude-api | openrouter | openai | gemini | codex | "
     "antigravity (the server validates the value)."
 )
 

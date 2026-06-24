@@ -1,15 +1,9 @@
 /**
- * Component tests for the Codex provider card in ApiKeysView.
+ * Component tests for Codex in ApiKeysView.
  *
- * Design (2026-06-08): Codex is a connection-only card (ChatGPT login → compact
- * "connected" badge, no OpenAI API-key field on the card). It IS selectable as
- * a brain like every other brain provider — but a chat brain needs an OpenAI API
- * key, which the ChatGPT login cannot back. So:
- *   - the Codex card shows a brain "activate" radio (parity with Gemini),
- *   - the radio is gated on `codex_brain_ready` (any OpenAI key present): with a
- *     key, clicking it switches the brain to Codex; without one, it warns
- *     honestly instead of a silent first-turn failure,
- *   - it still collapses to a compact connected badge once logged in.
+ * Codex is a ChatGPT/Codex-login worker for Subagents only. It must not render
+ * as an activatable main Brain card; the login and active toggle live in the
+ * Subagent section.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -61,7 +55,22 @@ function installFetchMock(routes: Record<string, () => RouteResult>) {
   Object.assign(navigator, {
     clipboard: { writeText: vi.fn(async () => undefined) },
   });
-  return { fetchMock, calls };
+  return { calls };
+}
+
+function codexStatus(overrides: Record<string, unknown> = {}) {
+  return {
+    installed: true,
+    connected: true,
+    mode: "chatgpt",
+    message: "Connected via ChatGPT (chatgpt-user@example.com).",
+    version: "codex-cli 0.137.0",
+    account_label: "ChatGPT/Codex-Login",
+    user_email: "chatgpt-user@example.com",
+    binary_path: "codex",
+    error: null,
+    ...overrides,
+  };
 }
 
 function codexDescriptor(overrides: Record<string, unknown> = {}) {
@@ -76,21 +85,12 @@ function codexDescriptor(overrides: Record<string, unknown> = {}) {
     login_cli: ["codex", "login"],
     install_hint: "npm i -g @openai/codex",
     credential_path_hint: null,
-    configured: true, // OAuth present -> is_credential_present() is true
+    configured: true,
     active: false,
+    brain_switchable: false,
     cli_installed: true,
-    codex_brain_ready: false, // no OpenAI key -> cannot be a brain yet
-    codex_status: {
-      installed: true,
-      connected: true,
-      mode: "chatgpt",
-      message: "Connected via ChatGPT (chatgpt-user@example.com).",
-      version: "codex-cli 0.137.0",
-      account_label: "ChatGPT/Codex-Login",
-      user_email: "chatgpt-user@example.com",
-      binary_path: "codex",
-      error: null,
-    },
+    codex_brain_ready: true,
+    codex_status: codexStatus(),
     ...overrides,
   };
 }
@@ -98,21 +98,17 @@ function codexDescriptor(overrides: Record<string, unknown> = {}) {
 function codexDescriptorNotConnected() {
   return codexDescriptor({
     configured: false,
-    codex_status: {
-      installed: true,
+    codex_status: codexStatus({
       connected: false,
-      mode: "unknown",
-      message: "Codex is installed but not logged in — run 'codex login'.",
-      version: "codex-cli 0.137.0",
+      mode: "not_connected",
+      message: "Codex is installed but not logged in.",
       account_label: null,
       user_email: null,
-      binary_path: "codex",
-      error: null,
-    },
+    }),
   });
 }
 
-const OPENCLAW_EMPTY = {
+const OPENCLAW_CODEX = {
   configured: true,
   enabled: false,
   binary_path: "",
@@ -124,14 +120,20 @@ const OPENCLAW_EMPTY = {
   brain_primary: "gemini",
   provider_slug: null,
   model_override: null,
+  sub_model_override: null,
   model_resolved: null,
-  mapping: [],
+  mapping: [
+    {
+      jarvis: "openai-codex",
+      openclaw: "codex-cli (direct)",
+      env_var: "ChatGPT-OAuth",
+      env_fallback: "OPENAI_API_KEY",
+      key_set: true,
+      is_active_brain: false,
+    },
+  ],
 };
 
-// The Telephony section now lives inside ApiKeysView (a tier section below the
-// Subagent tier), so mounting the view fires the telephony panel's load(). Stub
-// the four telephony endpoints with a graceful not-available/not-configured
-// shape so the per-route fetch mock never throws on them.
 const TELEPHONY_STATUS_EMPTY = {
   available: false,
   configured: false,
@@ -165,8 +167,24 @@ function routesFor(
 ): Record<string, () => RouteResult> {
   return {
     "/api/providers": () => ({ body: { providers: [provider] } }),
-    "/api/openclaw/status": () => ({ body: OPENCLAW_EMPTY }),
-    "/api/brain/switch": () => ({ body: { ok: true, active: "codex", persisted: true } }),
+    "/api/openclaw/status": () => ({ body: OPENCLAW_CODEX }),
+    "/api/codex/status": () => ({
+      body: provider.codex_status ?? {},
+    }),
+    "/api/antigravity/status": () => ({ body: {} }),
+    "/api/subagent/switch": () => ({
+      body: { ok: true, active: "openai-codex", persisted: true },
+    }),
+    "/api/codex/login": () => ({
+      body: { ok: true, pid: 123, message: "Codex login was started" },
+    }),
+    "/api/codex/logout": () => ({
+      body: { ok: true, message: "Codex was disconnected" },
+    }),
+    "/api/brain/switch": () => ({
+      status: 500,
+      body: { detail: "Codex must not use brain switch" },
+    }),
     "/api/telephony/status": () => ({ body: TELEPHONY_STATUS_EMPTY }),
     "/api/telephony/config": () => ({ body: TELEPHONY_CONFIG_EMPTY }),
     "/api/telephony/scripts": () => ({ body: { scripts: [] } }),
@@ -179,39 +197,19 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("ApiKeysView — Codex is a selectable brain (parity with Gemini)", () => {
-  it("renders a brain 'activate' selector on the Codex card", async () => {
+describe("ApiKeysView - Codex is subagent-only", () => {
+  it("does not render Codex as a Brain provider card", async () => {
     installFetchMock(routesFor(codexDescriptor()));
     render(<ApiKeysView />);
 
-    await waitFor(() => expect(screen.getByText("OpenAI Codex")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("OpenAI Codex ChatGPT login")).toBeTruthy());
 
-    // The card is selectable like every other brain provider.
-    expect(screen.getByRole("radio")).toBeTruthy();
-    // Compact connected badge for the ChatGPT login...
-    expect(screen.getByTestId("codex-connected")).toBeTruthy();
-    // No OpenAI key field on the card — Codex works as a brain over the ChatGPT
-    // login (the OpenAI key, if any, lives on the separate "OpenAI" provider).
-    expect(screen.queryByTestId("codex-brain-key")).toBeNull();
+    expect(screen.queryByText("ChatGPT / Codex login")).toBeNull();
+    expect(screen.getByText(/chatgpt-user@example\.com/)).toBeTruthy();
   });
 
-  it("disables the brain radio (no error popup, no switch) when Codex has no OpenAI key", async () => {
-    const { calls } = installFetchMock(routesFor(codexDescriptor())); // codex_brain_ready: false
-    render(<ApiKeysView />);
-
-    const radio = await waitFor(() => screen.getByRole("radio"));
-    // Disabled until an OpenAI key is saved (the key field below unlocks it),
-    // so we disable instead of firing a warning toast.
-    expect((radio as HTMLInputElement).disabled).toBe(true);
-
-    fireEvent.click(radio);
-    expect(calls.some((c) => c.url.startsWith("/api/brain/switch"))).toBe(false);
-  });
-
-  it("switches the brain to Codex when an OpenAI key is present", async () => {
-    const { calls } = installFetchMock(
-      routesFor(codexDescriptor({ codex_brain_ready: true })),
-    );
+  it("switches the subagent to Codex without calling brain switch", async () => {
+    const { calls } = installFetchMock(routesFor(codexDescriptor()));
     render(<ApiKeysView />);
 
     await waitFor(() => screen.getByRole("radio"));
@@ -221,25 +219,44 @@ describe("ApiKeysView — Codex is a selectable brain (parity with Gemini)", () 
       expect(
         calls.some(
           (c) =>
-            c.url.startsWith("/api/brain/switch") &&
+            c.url.startsWith("/api/subagent/switch") &&
             c.method === "POST" &&
-            (c.body as { provider?: string })?.provider === "codex",
+            (c.body as { provider?: string })?.provider === "openai-codex",
+        ),
+      ).toBe(true),
+    );
+    expect(calls.some((c) => c.url.startsWith("/api/brain/switch"))).toBe(false);
+  });
+
+  it("shows the Connect button while not logged in and starts login", async () => {
+    const { calls } = installFetchMock(routesFor(codexDescriptorNotConnected()));
+    render(<ApiKeysView />);
+
+    const connect = await waitFor(() => screen.getByText("Connect"));
+    fireEvent.click(connect);
+
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (c) => c.url.startsWith("/api/codex/login") && c.method === "POST",
         ),
       ).toBe(true),
     );
   });
 
-  it("shows the connect button while not logged in (selector still present, greyed)", async () => {
-    installFetchMock(routesFor(codexDescriptorNotConnected()));
+  it("disconnects via POST /api/codex/logout", async () => {
+    const { calls } = installFetchMock(routesFor(codexDescriptor()));
     render(<ApiKeysView />);
 
-    await waitFor(() => expect(screen.getByText("OpenAI Codex")).toBeTruthy());
+    const disconnect = await waitFor(() => screen.getByText("Disconnect"));
+    fireEvent.click(disconnect);
 
-    expect(screen.getByText("Mit ChatGPT verbinden")).toBeTruthy();
-    expect(screen.queryByTestId("codex-connected")).toBeNull();
-    // Selector stays present for parity with the other brain providers.
-    expect(screen.getByRole("radio")).toBeTruthy();
-    // No OpenAI key field on the card (Codex is a brain over the ChatGPT login).
-    expect(screen.queryByTestId("codex-brain-key")).toBeNull();
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (c) => c.url.startsWith("/api/codex/logout") && c.method === "POST",
+        ),
+      ).toBe(true),
+    );
   });
 });

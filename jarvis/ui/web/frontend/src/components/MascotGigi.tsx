@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import { translate, useT } from "@/i18n";
 import { useEventStore, type VoiceState, type SectionId } from "@/store/events";
 
 type MascotAction =
@@ -51,6 +52,7 @@ export function MascotGigi({
   reactToVoice = true,
   enableComments = true,
 }: Props) {
+  const t = useT();
   const [action, setAction] = useState<MascotAction>("idle");
   const voiceState = useEventStore((s) => s.voiceState);
   const transcription = useEventStore((s) => s.transcription);
@@ -91,7 +93,7 @@ export function MascotGigi({
     <div className="gigi-container" style={{ width: size, height: size }}>
       <div
         className={cn("gigi-root", `gigi-${action}`, voiceClass, className)}
-        aria-label="Jarvis-Maskottchen Gigi"
+        aria-label={t("mascot_gigi.aria_label")}
         title="Gigi"
       >
         <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg" className="gigi-svg">
@@ -376,7 +378,11 @@ function useMascotComments(enabled: boolean): string | null {
     if (!mountedRef.current) return;
     if (connected === lastConnectedRef.current) return;
     lastConnectedRef.current = connected;
-    show(connected ? "wieder online!" : "Verbindung weg …");
+    show(
+      connected
+        ? translate("mascot_gigi.back_online")
+        : translate("mascot_gigi.connection_lost"),
+    );
   }, [connected, show]);
 
   // Mount: begrüßen nach Tageszeit.

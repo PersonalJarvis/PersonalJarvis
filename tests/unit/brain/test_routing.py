@@ -548,11 +548,11 @@ def _manager_with_worker_provider(
 
 
 @pytest.mark.parametrize(
-    "brain_primary", ["grok", "openai", "openai-codex", "openrouter", "ollama"]
+    "brain_primary", ["mistral", "openai", "openai-codex", "openrouter", "ollama"]
 )
 def test_force_spawn_follows_worker_provider_not_talker(brain_primary: str) -> None:
     """With a configured claude-api worker, switching the talker to
-    grok/openai/codex must NOT block force-spawn — viability follows the WORKER,
+    mistral/openai/codex must NOT block force-spawn — viability follows the WORKER,
     not the talker."""
     manager, _executor = _manager_with_worker_provider(
         brain_primary=brain_primary, worker_provider="claude-api",
@@ -564,15 +564,14 @@ def test_force_spawn_follows_worker_provider_not_talker(brain_primary: str) -> N
 
 
 def test_force_spawn_codex_worker_with_codex_talker() -> None:
-    """A Codex talker + Codex worker must still force-spawn (the user's
-    Codex-as-brain switch must not disable delegation)."""
+    """A legacy Codex primary + Codex worker must still force-spawn."""
     manager, _executor = _manager_with_worker_provider(
         brain_primary="openai-codex", worker_provider="openai-codex",
     )
     assert manager._should_force_spawn("Bau eine Landingpage") is True
 
 
-@pytest.mark.parametrize("brain_primary", ["grok", "openai", "ollama"])
+@pytest.mark.parametrize("brain_primary", ["mistral", "openai", "ollama"])
 def test_force_spawn_blocked_when_no_worker_and_nonviable_talker(
     brain_primary: str,
 ) -> None:
@@ -2780,6 +2779,32 @@ def test_mission_inject_source_layer_parity() -> None:
     from jarvis.brain.manager import _NON_SPAWN_SOURCE_LAYERS
 
     assert MISSION_INJECT_SOURCE_LAYER in _NON_SPAWN_SOURCE_LAYERS
+
+
+def test_drop_source_layer_parity() -> None:
+    """Anti-drift: a dropped file/content directive (ui.drop) must be exempt
+    from force-spawn — it is reacted to inline, never auto-dispatched as a
+    worker (parity with mission_inject; AP-5/AP-14, anti-doom-loop)."""
+    from jarvis.brain.drop_context import DROP_SOURCE_LAYER
+    from jarvis.brain.manager import _NON_SPAWN_SOURCE_LAYERS
+
+    assert DROP_SOURCE_LAYER in _NON_SPAWN_SOURCE_LAYERS
+
+
+def test_dropped_file_directive_is_never_force_spawned() -> None:
+    """A drop directive carrying an action verb must still be discussed inline
+    when stamped with the ui.drop source marker."""
+    from jarvis.brain.drop_context import DROP_SOURCE_LAYER
+
+    manager, _ = _manager_with_spawn(force_spawn_mode="permissive")
+    directive = "Open this file and fix the bug you find in it."
+    # Precondition: WITHOUT the drop source this DOES force-spawn.
+    assert manager._should_force_spawn(directive) is True
+    # WITH the drop source it must be answered inline, never spawned.
+    assert (
+        manager._should_force_spawn(directive, source_layer=DROP_SOURCE_LAYER)
+        is False
+    ), "a dropped-file directive must be reacted to inline, never re-dispatched"
 
 
 def test_dropped_mission_recap_is_never_force_spawned() -> None:

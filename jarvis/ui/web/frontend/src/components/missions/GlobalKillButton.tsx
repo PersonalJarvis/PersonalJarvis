@@ -9,11 +9,13 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, Loader2, Skull } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { useT } from "@/i18n";
 import { cancelAllMissions } from "./api";
 import { selectActiveCount, useMissionsStore } from "./store";
 import { useShallow } from "zustand/react/shallow";
 
 export function GlobalKillButton() {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const qc = useQueryClient();
   const activeCount = useMissionsStore(useShallow(selectActiveCount));
@@ -42,7 +44,7 @@ export function GlobalKillButton() {
         size="sm"
         onClick={() => setOpen(true)}
         disabled={activeCount === 0 || mut.isPending}
-        title="Alle laufenden Missions abbrechen"
+        title={t("global_kill_button.cancel_all_running")}
       >
         <Skull className="mr-1.5 h-4 w-4" />
         Kill All ({activeCount})
@@ -62,16 +64,14 @@ export function GlobalKillButton() {
               </div>
               <div className="min-w-0 flex-1">
                 <h3 className="font-display text-base font-semibold">
-                  Alle Missions abbrechen?
+                  {t("global_kill_button.cancel_all_title")}
                 </h3>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {activeCount} laufende Mission(s) werden hart gestoppt.
-                  Worker-Subprocesses werden via Job-Object terminiert; bereits
-                  geschriebene Diffs bleiben in den Worktrees liegen.
+                  {activeCount} {t("global_kill_button.cancel_all_body")}
                 </p>
                 {mut.isError && (
                   <p className="mt-2 rounded border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
-                    Fehler: {(mut.error as Error).message}
+                    {t("global_kill_button.error_prefix")}: {(mut.error as Error).message}
                   </p>
                 )}
               </div>
@@ -83,7 +83,7 @@ export function GlobalKillButton() {
                 onClick={() => setOpen(false)}
                 disabled={mut.isPending}
               >
-                Abbrechen
+                {t("common.cancel")}
               </Button>
               <Button
                 variant="destructive"
@@ -94,12 +94,12 @@ export function GlobalKillButton() {
                 {mut.isPending ? (
                   <>
                     <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-                    Stoppe…
+                    {t("global_kill_button.stopping")}
                   </>
                 ) : (
                   <>
                     <Skull className="mr-1.5 h-4 w-4" />
-                    Ja, alle stoppen
+                    {t("global_kill_button.confirm_stop_all")}
                   </>
                 )}
               </Button>

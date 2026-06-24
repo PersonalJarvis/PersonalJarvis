@@ -121,4 +121,57 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
     )
 
 
-__all__ = ["build_stt_from_config"]
+def build_wake_whisper(
+    stt_cfg: Any, *, language: str | None = None, wake_phrase: str | None = None
+) -> Any:
+    """Build the LOCAL wake-match / live-preview Whisper.
+
+    Distinct from :func:`build_stt_from_config` (the post-wake *utterance* STT,
+    often a cloud provider). This instance only powers wake-phrase transcript
+    matching + the listening-bubble probe — both latency-tolerant — so it loads
+    a small model on CPU by default (``stt_cfg.wake_model`` / ``wake_device`` /
+    ``wake_compute_type``), NOT the heavy utterance model on the GPU.
+
+    Why this matters for boot: on a Blackwell GPU (RTX 50xx) CTranslate2 JIT-
+    compiles kernels at model load, costing ~71 s on CUDA vs ~0.45 s for ``base``
+    on CPU (measured) — the dominant Phase-A warm-up cost. CPU is also the
+    cloud-first floor. ``getattr`` fallbacks keep a pre-wake_*-field config (or a
+    bare stub) building a safe small/cpu instance.
+
+    ``wake_phrase`` (forensic 2026-06-22): when a user sets a CUSTOM wake word
+    with no pretrained openWakeWord model ("Hey Ruben"), the wake routes to this
+    small CPU model. ``base`` transcribed the proper noun as a common word
+    ("Ruben" -> "job") so the wake never fired. Passing the spoken trigger here
+    seeds Whisper's ``initial_prompt`` so it biases toward the actual name. This
+    is deliberately scoped to the custom stt_match wake (the pipeline only
+    forwards a phrase on that path) — the default "Hey Jarvis"/OWW paths pass
+    nothing, so the hot-path prompt-hallucination caveat in
+    ``FasterWhisperProvider.__init__`` does not apply to them.
+
+    Bias is ON (forensic 2026-06-23). It was once disabled out of a hallucination
+    concern, but that disabled the custom wake word entirely: empirically, on the
+    user's real wake WAVs the unbiased base/cpu model heard "Hey Ruben" as
+    "Space"/"Ego"/"Herum" -> 2-13% recall; seeding ``wake_phrase`` as the
+    ``initial_prompt`` lifts that to 83%. The earlier false-wake risk is held off
+    by the strict ["hey","ruben"] matcher (a stray "Ruben" in ordinary speech is
+    not an adjacent "hey ruben") plus the ``no_speech_prob``/RMS gates, which kept
+    the false-wake rate ~0% on 50 real talking-about-Ruben clips. The bias is
+    scoped to this path: only the stt_match custom-phrase route forwards a
+    ``wake_phrase``; the default "Hey Jarvis"/OWW paths pass nothing and stay
+    unbiased, so the hot-path prompt-hallucination caveat in
+    ``FasterWhisperProvider.__init__`` does not apply to them. A blank phrase is
+    treated as no bias.
+    """
+    from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
+
+    bias = wake_phrase.strip() if wake_phrase and wake_phrase.strip() else None
+    return FasterWhisperProvider(
+        model=getattr(stt_cfg, "wake_model", "base"),
+        device=getattr(stt_cfg, "wake_device", "cpu"),
+        compute_type=getattr(stt_cfg, "wake_compute_type", "int8"),
+        language=language,
+        initial_prompt=bias,
+    )
+
+
+__all__ = ["build_stt_from_config", "build_wake_whisper"]

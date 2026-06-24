@@ -30,78 +30,74 @@ const STATUS = {
   mapping: [],
 };
 
+const MODELS = {
+  provider: "claude-api",
+  current_model: "claude-sonnet-4-6",
+  models: [
+    { id: "claude-opus-4-8", label: "Claude Opus 4.8" },
+    { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+  ],
+  source: "static",
+  fetched_at: 0,
+  selects: "model",
+};
+
+function mockFetch() {
+  return vi.fn().mockImplementation(async (url: string) => {
+    const u = String(url);
+    if (u.includes("/api/openclaw/status")) return { ok: true, json: async () => STATUS };
+    if (u.includes("/models")) return { ok: true, json: async () => MODELS };
+    if (u.includes("/api/subagent/model")) {
+      return {
+        ok: true,
+        json: async () => ({
+          ok: true,
+          model: "claude-opus-4-8",
+          persisted: true,
+          restart_required: true,
+        }),
+      };
+    }
+    return { ok: true, json: async () => ({}) };
+  });
+}
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
 
-describe("SubagentSection — dedicated subagent LLM model", () => {
-  it("shows the model input prefilled with the current override", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({ ok: true, json: async () => STATUS }),
-    );
+describe("SubagentSection — dedicated subagent LLM dropdown", () => {
+  it("opens a model dropdown for the active subagent provider", async () => {
+    vi.stubGlobal("fetch", mockFetch());
     render(<SubagentSection />);
-
-    const input = (await screen.findByLabelText(
-      "subagent_model.model_label",
-    )) as HTMLInputElement;
-    expect(input.value).toBe("claude-sonnet-4-6");
+    const trigger = (await screen.findByLabelText(
+      "apikeys_model.model_label",
+    )) as HTMLElement;
+    fireEvent.click(trigger);
+    expect(await screen.findByText("claude-opus-4-8")).toBeTruthy();
   });
 
-  it("saves a new model via POST /api/subagent/model", async () => {
-    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      if (String(url).includes("/api/subagent/model")) {
-        return {
-          ok: true,
-          json: async () => ({ ok: true, model: "claude-opus-4-8", persisted: true }),
-        };
-      }
-      return { ok: true, json: async () => STATUS };
-    });
+  it("saves a picked model via POST /api/subagent/model", async () => {
+    const fetchMock = mockFetch();
     vi.stubGlobal("fetch", fetchMock);
     render(<SubagentSection />);
-
-    const input = (await screen.findByLabelText(
-      "subagent_model.model_label",
-    )) as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "claude-opus-4-8" } });
-    fireEvent.click(screen.getByText("subagent_model.apply"));
-
-    await waitFor(() => {
-      const call = fetchMock.mock.calls.find(
-        (c) => String(c[0]).includes("/api/subagent/model"),
-      );
-      expect(call).toBeDefined();
-      expect(JSON.parse((call![1] as RequestInit).body as string)).toEqual({
-        model: "claude-opus-4-8",
-        persist: true,
-      });
-    });
-  });
-
-  it("empty input is a valid reset to the provider default", async () => {
-    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      if (String(url).includes("/api/subagent/model")) {
-        return { ok: true, json: async () => ({ ok: true, model: "", persisted: true }) };
-      }
-      return { ok: true, json: async () => STATUS };
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    render(<SubagentSection />);
-
-    const input = (await screen.findByLabelText(
-      "subagent_model.model_label",
-    )) as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "" } });
-    fireEvent.click(screen.getByText("subagent_model.apply"));
+    const trigger = (await screen.findByLabelText(
+      "apikeys_model.model_label",
+    )) as HTMLElement;
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByText("claude-opus-4-8"));
 
     await waitFor(() => {
-      const call = fetchMock.mock.calls.find(
-        (c) => String(c[0]).includes("/api/subagent/model"),
+      const post = fetchMock.mock.calls.find(
+        (c) =>
+          String(c[0]).includes("/api/subagent/model") &&
+          (c[1] as RequestInit | undefined)?.method === "POST",
       );
-      expect(call).toBeDefined();
-      expect(JSON.parse((call![1] as RequestInit).body as string).model).toBe("");
+      expect(post).toBeDefined();
+      expect(JSON.parse((post![1] as RequestInit).body as string).model).toBe(
+        "claude-opus-4-8",
+      );
     });
   });
 });

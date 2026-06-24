@@ -180,7 +180,12 @@ def format_session_markdown(
             lines.append(f"**🔊 Jarvis sagte** _(de={t.jarvis_lang})_")
             lines.append("")
             for output in outputs:
-                if output.is_reply:
+                if output.is_reply and t.awaiting_confirmation:
+                    # The reply is a pending yes/no confirmation, not a normal
+                    # answer — tag it like the other english spoken_kind tags so
+                    # the transcript does not read it as a settled response.
+                    lines.append(f"> _(awaiting confirmation)_ {output.text}")
+                elif output.is_reply:
                     lines.append(f"> {output.text}")
                 else:
                     lines.append(f"> _({output.kind})_ {output.text}")

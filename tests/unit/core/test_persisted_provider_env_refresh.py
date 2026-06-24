@@ -82,25 +82,60 @@ def test_refresh_covers_all_persistent_provider_keys() -> None:
         "JARVIS__ACK_BRAIN__ENABLED",
         "JARVIS__ACK_BRAIN__PROVIDER",
         "JARVIS__ACK_BRAIN__FALLBACK_PROVIDER",
+        # TTS engine selection beyond the provider tier. Forensic 2026-06-22: an
+        # in-app restart inherited a stale env (use_vertex=true / model=sonic-2 /
+        # voice=leo) from a pre-change ancestor; PROVIDER healed but these did
+        # not, leaving Gemini-TTS on the wrong Vertex billing path with a bogus
+        # model even after the registry was corrected to the AI-Studio key path.
+        "JARVIS__TTS__MODEL",
+        "JARVIS__TTS__USE_VERTEX",
+        "JARVIS__TTS__VOICE_DE",
+        "JARVIS__TTS__VOICE_EN",
     } <= keys
+
+
+def test_refresh_heals_stale_tts_vertex_model_and_voice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The exact 2026-06-22 regression: a stale inherited TTS env (Vertex on, a
+    bogus model, the wrong voice) is healed to the registry's AI-Studio values
+    so a restart actually switches Gemini-TTS back to the topped-up key path."""
+    monkeypatch.setenv("JARVIS__TTS__USE_VERTEX", "true")  # stale inherited
+    monkeypatch.setenv("JARVIS__TTS__MODEL", "sonic-2")  # stale, wrong engine
+    monkeypatch.setenv("JARVIS__TTS__VOICE_DE", "leo")  # stale
+    monkeypatch.setenv("JARVIS__TTS__VOICE_EN", "leo")  # stale
+    reg = {
+        "JARVIS__TTS__USE_VERTEX": "false",
+        "JARVIS__TTS__MODEL": "gemini-3.1-flash-tts-preview",
+        "JARVIS__TTS__VOICE_DE": "Charon",
+        "JARVIS__TTS__VOICE_EN": "Charon",
+    }
+
+    changed = config.refresh_persisted_env_from_user_registry(read=reg.get)
+
+    assert os.environ["JARVIS__TTS__USE_VERTEX"] == "false"
+    assert os.environ["JARVIS__TTS__MODEL"] == "gemini-3.1-flash-tts-preview"
+    assert os.environ["JARVIS__TTS__VOICE_DE"] == "Charon"
+    assert os.environ["JARVIS__TTS__VOICE_EN"] == "Charon"
+    assert changed["JARVIS__TTS__USE_VERTEX"] == "false"
 
 
 def test_refresh_heals_stale_ack_brain_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
     """The exact 2026-06-21 regression: a stale inherited enabled=false is healed
     to the registry's true, so the spawn announcer's LLM path is wired on boot."""
     monkeypatch.setenv("JARVIS__ACK_BRAIN__ENABLED", "false")  # stale inherited
-    monkeypatch.setenv("JARVIS__ACK_BRAIN__PROVIDER", "gemini")  # stale, dead provider
+    monkeypatch.setenv("JARVIS__ACK_BRAIN__PROVIDER", "openai")  # stale, dead provider
     reg = {
         "JARVIS__ACK_BRAIN__ENABLED": "true",
-        "JARVIS__ACK_BRAIN__PROVIDER": "grok",
+        "JARVIS__ACK_BRAIN__PROVIDER": "gemini",
     }
 
     changed = config.refresh_persisted_env_from_user_registry(read=reg.get)
 
     assert os.environ["JARVIS__ACK_BRAIN__ENABLED"] == "true"
-    assert os.environ["JARVIS__ACK_BRAIN__PROVIDER"] == "grok"
+    assert os.environ["JARVIS__ACK_BRAIN__PROVIDER"] == "gemini"
     assert changed["JARVIS__ACK_BRAIN__ENABLED"] == "true"
-    assert changed["JARVIS__ACK_BRAIN__PROVIDER"] == "grok"
+    assert changed["JARVIS__ACK_BRAIN__PROVIDER"] == "gemini"
 
 
 def test_refresh_default_reader_is_noop_off_win32(monkeypatch: pytest.MonkeyPatch) -> None:

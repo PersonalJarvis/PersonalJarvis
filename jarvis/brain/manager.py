@@ -14,7 +14,7 @@ Architecture:
    - same provider, deep_model (if fast is rate-limited, try deeper)
    - `claude-api` (OAuth Max plan)
    - `claude-api` (separate quota)
-   - `gemini`, `openrouter`, `openai`, `grok` (when keys are present)
+   - `gemini`, `openrouter`, `openai` (when keys are present)
    - Ollama was completely removed from the project on 2026-04-21.
 
 4. **Pipeline-Adapter**: `__call__(text) -> str` for `speech/pipeline.py`.
@@ -141,9 +141,19 @@ PROVIDER_ALIASES = {
     "gemini": "gemini",
     "flash": "gemini",
     "pro": "gemini",
-    "grok": "grok",
     "openrouter": "openrouter",
 }
+
+SUBAGENT_ONLY_BRAIN_PROVIDERS: frozenset[str] = frozenset(
+    {"antigravity", "codex", "openai-codex"}
+)
+
+_MAIN_BRAIN_FALLBACK_PROVIDER_ORDER: tuple[str, ...] = (
+    "gemini",
+    "claude-api",
+    "openai",
+    "openrouter",
+)
 
 # Human-readable display names for each brain provider id. Used to tell the
 # answering LLM which provider/model it is embodying this turn (the system
@@ -162,7 +172,6 @@ _PROVIDER_DISPLAY_NAMES: dict[str, str] = {
     "openai-codex": "OpenAI Codex (GPT-5.5)",
     "openrouter": "OpenRouter",
     "gemini": "Google Gemini",
-    "grok": "Grok (xAI)",
     "antigravity": "Google Antigravity (Gemini)",
 }
 
@@ -214,8 +223,6 @@ _SECRET_KEY_TO_BRAIN: dict[str, str] = {
     "anthropic_api_key": "claude-api",
     "openai_api_key": "openai",
     "openrouter_api_key": "openrouter",
-    "grok_api_key": "grok",
-    "xai_api_key": "grok",
 }
 
 # ──────────────────────────────────────────────────────────────────
@@ -267,17 +274,6 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         "claude-api": "claude-haiku-4-5-20251001",
         "gemini": "gemini-3-flash-preview",
         "openai": "gpt-5.5",
-        # Codex MUST be listed or `_fast_model("codex")` returns None and
-        # `_build_fallback_chain` silently drops codex from the chain (its
-        # `if fast:` guard) — so an explicitly-active codex brain never gets
-        # called and the turn falls through to a fallback (the live "Gemini
-        # answered while Codex was the active brain" bug, 2026-06-09). gpt-5.5
-        # is the model `codex exec` itself reports; the CLI (ChatGPT-login) path
-        # ignores it, the OpenAI-key path uses it.
-        "codex": "gpt-5.5",
-        # grok-4.3 (released 2026-04-30) is simultaneously the fastest
-        # AND most capable Grok — replaces 4.1-fast in both tiers.
-        "grok": "grok-4.3",
         "deepseek": "deepseek-chat",
         "openrouter": "anthropic/claude-haiku-4.5",
         "mistral": "mistral-small-3.1",
@@ -292,10 +288,6 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         "claude-api": "claude-opus-4-8",
         "gemini": "gemini-3.1-pro-preview",
         "openai": "gpt-5.5-pro",
-        # Codex deep-tier anchor (same reason as the router tier above). The CLI
-        # path ignores the model; this keeps codex in the deep/code chain too.
-        "codex": "gpt-5.5",
-        "grok": "grok-4.3",
         "deepseek": "deepseek-reasoner",
         "openrouter": "anthropic/claude-opus-4.8",
         "mistral": "mistral-large-3",
@@ -334,6 +326,23 @@ def get_tier_default_model(tier: str, provider: str) -> str | None:
     return TIER_DEFAULTS_BY_PROVIDER.get(tier, {}).get(provider)
 
 
+def _coerce_main_brain_provider(provider: str | None, *fallbacks: str | None) -> str:
+    """Return a main-brain-capable provider.
+
+    Some provider integrations exist only for the heavy subagent worker. They
+    must remain present in the codebase for that path, but an old persisted
+    ``brain.primary`` must not make the main router run through them.
+    """
+    candidate = (provider or "").strip()
+    if candidate and candidate not in SUBAGENT_ONLY_BRAIN_PROVIDERS:
+        return candidate
+    for fallback in (*fallbacks, *_MAIN_BRAIN_FALLBACK_PROVIDER_ORDER):
+        value = (fallback or "").strip()
+        if value and value not in SUBAGENT_ONLY_BRAIN_PROVIDERS:
+            return value
+    return _MAIN_BRAIN_FALLBACK_PROVIDER_ORDER[0]
+
+
 # ──────────────────────────────────────────────────────────────────
 # Force-spawn pattern builder (persona mandate phase 3)
 # ──────────────────────────────────────────────────────────────────
@@ -359,8 +368,12 @@ _NEVER_MATCH_RE: re.Pattern[str] = re.compile(r"(?!.*)", re.IGNORECASE)
 # empty diff -> critic_loop_exhausted. The doom-loop fixed 2026-06-16: every
 # failed mission the user dragged in to discuss spawned another failed mission.
 # Keep in sync with ``jarvis.ui.web.mission_inject.MISSION_INJECT_SOURCE_LAYER``
-# (parity test in tests/unit/brain/test_routing.py).
-_NON_SPAWN_SOURCE_LAYERS: frozenset[str] = frozenset({"ui.web.ws.mission_inject"})
+# and ``jarvis.brain.drop_context.DROP_SOURCE_LAYER`` (parity tests in
+# tests/unit/brain/test_routing.py). ``ui.drop`` = a dragged-and-dropped file /
+# image / text: reacted to inline, never auto-dispatched as a worker.
+_NON_SPAWN_SOURCE_LAYERS: frozenset[str] = frozenset(
+    {"ui.web.ws.mission_inject", "ui.drop"}
+)
 
 
 # Two-turn voice/chat confirmation for a consequential ``ask``-tier tool. Turn N
@@ -404,6 +417,13 @@ _BUILD_VERB_RE: re.Pattern[str] = re.compile(
 # A document / artefact NOUN — the thing being built is a file-shaped deliverable.
 _DOC_NOUN_RE: re.Pattern[str] = re.compile(
     r"\b(report|document|deck|slides?|spreadsheet|presentation|"
+    # build-a-deliverable nouns (a file-shaped result the Worker->Critic
+    # pipeline can verify via git diff): web/app/doc artefacts, DE + EN. A
+    # build VERB is still required by _research_wants_artifact, so a bare
+    # question ("what is an html file") never matches. "summary" is
+    # deliberately EXCLUDED — it is an ANSWER, not a file (discriminator test).
+    r"website|web ?page|webseite|html|app|application|anwendung|"
+    r"dashboard|landing ?page|visuali\w+|script|skript|"
     r"bericht|dokument|tabelle|praesentation|präsentation)\b",  # i18n-allow: DE artefact nouns
     re.IGNORECASE,
 )
@@ -488,6 +508,13 @@ _PC_CONTROL_RE: re.Pattern[str] = re.compile(
     r"klick|click|tippe|tipp|type|schreib|schreibe|reinschreib|prompt|prompten|"
     r"absenden|sende|send|drueck|druecke|drück|drücke|press|taste|hotkey|"
     r"browser|fenster|feld|eingabefeld|chatgpt|tab|button|pc|desktop|"
+    # The live SURFACE the user names to act ON — screen / Bildschirm. A request
+    # that points at the screen is computer-use (a worker has no desktop), so
+    # naming it must register here: it keeps the turn OFF the sub-agent path and
+    # marks it an action turn so a tool-incapable talker delegates it to a
+    # tool-capable provider that picks computer_use (user pain 2026-06-21:
+    # "mach es am Bildschirm" / "do it on screen" was not recognized at all).
+    r"bildschirm|screen|"
     r"maus|mouse|cursor"
     r")\w*\b",
     re.IGNORECASE,
@@ -495,7 +522,13 @@ _PC_CONTROL_RE: re.Pattern[str] = re.compile(
 
 _INSTRUCTIONAL_QUESTION_RE: re.Pattern[str] = re.compile(
     r"^\s*(?:"
-    r"wie\s+(?:kann|koennte|könnte|muss|soll|mach|mache|macht|geht|funktioniert)\s+"
+    # "wie <verb> ich/man …" — a HOW-TO question, never a build request. The
+    # build/create verbs are listed too so "wie erstelle/baue/schreibe ich eine
+    # HTML-Datei" stays an inline answer and is not mistaken for "build me a file"
+    # (live bug 2026-06-21). The English how-to is already caught by "how do/can …".
+    r"wie\s+(?:kann|koennte|könnte|muss|soll|mach|mache|macht|geht|funktioniert"
+    r"|erstell|erstelle|erstellt|baue|bau|baut|schreib|schreibe|schreibt"
+    r"|programmier|programmiere|generier|generiere|implementier|implementiere)\s+"
     r"|was\s+(?:ist|bedeutet|heisst|heißt)\s+"
     r"|woran\s+erkenne\s+"
     r"|warum\s+"
@@ -587,6 +620,34 @@ _ACTION_REQUEST_RE = re.compile(
 def _looks_like_pc_control(user_text: str) -> bool:
     """Detects local screen/PC control requests intended for the computer-use harness."""
     return bool(_PC_CONTROL_RE.search(user_text or ""))
+
+
+# Subset of ``force_spawn_phrases`` that NAMES the execution vehicle (a worker),
+# as opposed to merely describing how THOROUGH the work should be. This is a
+# PARTITION of the existing trigger phrases, not a new detection list: it only
+# decides which matched trigger keeps absolute priority over the computer-use
+# stand-down. Naming the vehicle ("subagent" / "spawn" / "openclaw" / "delegate")
+# is an UNAMBIGUOUS spawn request (mandate 2026-06-15) and wins over everything.
+# A DEPTH marker ("deep dive" / "gründlich" / "umfassend" / …) is ambiguous — it
+# overlaps with computer-use requests ("Mach einen Deep Dive mit Computer Use in
+# meinem Chrome Browser …") — so it must NOT override an explicit on-screen
+# request; that computer-use-vs-spawn call is the LLM router's. Matched as a
+# substring of the trigger the regex returned, so conjugations are covered
+# ("spawne"/"gespawnt" -> "spawn", "delegiert" -> "delegier"). No depth phrase
+# contains any of these stems, so the partition is clean.
+_VEHICLE_NAME_TRIGGER_STEMS: frozenset[str] = frozenset({
+    "openclaw", "open claw", "open-claw",
+    "subagent", "sub-agent", "sub agent",
+    "spawn", "delegier", "delegate",
+})
+
+
+def _trigger_names_vehicle(matched_trigger: str) -> bool:
+    """True iff the matched force-spawn trigger NAMES a worker vehicle (vs. a
+    thoroughness/depth descriptor). Only a vehicle name keeps absolute priority
+    over the computer-use stand-down — a depth marker yields to it."""
+    m = (matched_trigger or "").strip().lower()
+    return any(stem in m for stem in _VEHICLE_NAME_TRIGGER_STEMS)
 
 
 def _is_instructional_question(user_text: str) -> bool:
@@ -1075,6 +1136,79 @@ SUPPORTED_REPLY_LANGUAGES: tuple[str, ...] = ("auto", "de", "en", "es")
 _REPLY_LANGS: frozenset[str] = frozenset(SUPPORTED_REPLY_LANGUAGES)
 _REPLY_LANG_NAMES: dict[str, str] = {"de": "German", "en": "English", "es": "Spanish"}
 
+# Spoken confirmation for a deterministic reply-language switch (the
+# voice_command_gate "language_switch" path). Keyed by target code and phrased
+# IN that language so — because set_reply_language() runs first — the TTS voice
+# resolves to the new language and the switch is audible. "auto" has no single
+# language, so it confirms in the default locale (German).
+_LANG_SWITCH_CONFIRM: dict[str, str] = {
+    "de": "Erledigt — ich antworte ab jetzt auf Deutsch.",
+    "en": "Done — I'll reply in English from now on.",
+    "es": "Listo — a partir de ahora respondo en español.",
+    "auto": "Erledigt — ich passe meine Sprache ab jetzt automatisch deiner an.",
+}
+
+# Sub-agent (Heavy-Task worker) provider switch — the voice_command_gate
+# "subagent_switch" path. The gate returns the spoken provider word; this maps
+# it to a CANONICAL [brain.sub_jarvis].provider slug (the values are the only
+# accepted ones — this map IS the validation). Persisted via the 3-layer
+# config_writer.set_sub_jarvis_provider so the drift-guard cannot revert it; the
+# running worker re-resolves it per mission (_live_subagent_provider), so the
+# switch applies to the NEXT mission without a restart.
+_SUBAGENT_VOICE_TO_CANONICAL: dict[str, str] = {
+    "openai": "openai", "gpt": "openai",
+    "codex": "openai-codex", "chatgpt": "openai-codex", "openai-codex": "openai-codex",
+    "claude": "claude-api", "anthropic": "claude-api",
+    "gemini": "gemini",
+    "openrouter": "openrouter",
+    "antigravity": "antigravity",
+}
+_SUBAGENT_DISPLAY: dict[str, str] = {
+    "openai": "OpenAI", "openai-codex": "Codex", "claude-api": "Claude",
+    "gemini": "Gemini", "openrouter": "OpenRouter",
+    "antigravity": "Antigravity",
+}
+_SUBAGENT_SWITCH_CONFIRM: dict[str, str] = {
+    "de": "Erledigt — dein Sub-Agent läuft ab der nächsten Mission auf {p}.",
+    "en": "Done — your sub-agent will run on {p} from your next mission.",
+    "es": "Listo — tu sub-agente usará {p} desde tu próxima misión.",
+}
+
+# General self-control (2026-06-22). Not every settings change can have its own
+# deterministic gate — the gates (language, sub-agent) are high-precision
+# guardrails for the common cases; this covers the LONG TAIL generally. When a
+# turn is recognised as a request to change/control Jarvis's OWN configuration,
+# a per-turn directive is injected into the system prompt so WHICHEVER provider
+# handles the turn (the active one, or — for a CLI brain that can't emit
+# tool_calls — the tool-capable provider the intelligent router hands the turn
+# to) reliably uses cli_jarvisctl / set_config_value instead of confabulating a
+# refusal. Detection needs BOTH a change verb AND a Jarvis-settings noun, so a
+# general "change the code" task is not mistaken for self-control. It must NOT
+# rely on the bare word "Jarvis" (the evidence gate filters that wake word).
+_SELF_CONTROL_VERB_RE = re.compile(
+    r"\b(?:änder\w*|aender\w*|umänder\w*|umaender\w*|stell\w*|umstell\w*|umschalt\w*"
+    r"|setz\w*|set|wechsel\w*|wechsle|aktivier\w*|deaktivier\w*|schalt\w*|switch\w*"
+    r"|change\w*|enable\w*|disable\w*|configure\w*|konfigurier\w*|adjust\w*|turn)\b",
+    re.IGNORECASE,
+)
+_SELF_CONTROL_NOUN_RE = re.compile(
+    r"\b(?:einstellung\w*|konfiguration\w*|config\w*|setting\w*|sprache|antwortsprache"
+    r"|stimme|voice|provider|anbieter|modell|model|theme|design|lautstärke|lautstaerke"
+    r"|volume|wake[-\s]?word\w*|hotkey|shortcut|stt|tts|sub[-\s]?agent|subagent"
+    r"|worker)\b",
+    re.IGNORECASE,
+)
+_SELF_CONTROL_DIRECTIVE = (
+    "SELF-CONTROL: The user is asking to change or control Jarvis's OWN settings, "
+    "configuration, providers, voice, language, or behavior. You have full "
+    "control over this. Use the `cli_jarvisctl` tool — it performs ANY Jarvis "
+    "action via the local API (e.g. `jarvisctl brain switch <provider>`, "
+    "`jarvisctl config set <key> <value>`) — or `set_config_value` for a simple "
+    "setting. NEVER say you lack access or permission to change a Jarvis setting, "
+    "and never claim the change without actually calling the tool: call it and "
+    "confirm success only AFTER it returns."
+)
+
 
 def normalize_reply_language(value: object) -> str:
     """Coerce a raw reply-language value to a known code, else ``"auto"``.
@@ -1206,6 +1340,15 @@ class BrainManager:
         self._cost_meter = cost_meter
         self._curator = curator
         self._vision_provider = None
+        # Drag-drop: ad-hoc images attached to ONE upcoming turn, keyed by that
+        # turn's trace_id (see jarvis/brain/drop_context.py). Popped + cleared in
+        # _collect_vision_images, bypassing the screen-vision gate so a dropped
+        # picture reaches the multimodal brain even with screen-vision off.
+        self._pending_turn_images: dict[UUID, tuple[ImageBlock, ...]] = {}
+        # Drag-drop SILENT context: pictures dropped onto the bar/mascot, parked
+        # for the NEXT real turn (a drop never triggers a turn). See
+        # add_dropped_context / generate. Dropped TEXT goes into _history.
+        self._pending_drop_images: tuple[ImageBlock, ...] = ()
         # B5 Agent C: wiki context injector.  None = no-op (Agent B not merged
         # yet, or [wiki_context].enabled = false).  Set by factory.py for the
         # router tier only; sub-tiers never get wiki injection.
@@ -1258,7 +1401,21 @@ class BrainManager:
         self._provider_down_idx: int = 0
 
         self._registry = BrainProviderRegistry()
-        self._active_name: str = config.brain.primary
+        raw_primary = getattr(config.brain, "primary", None)
+        router_cfg = getattr(config.brain, "router", None)
+        coerced_primary = _coerce_main_brain_provider(
+            raw_primary,
+            getattr(router_cfg, "provider", None),
+            getattr(config.brain, "deep_brain", None),
+        )
+        if coerced_primary != (raw_primary or "").strip():
+            log.warning(
+                "Brain provider %r is subagent-only; using %r as main brain.",
+                raw_primary,
+                coerced_primary,
+            )
+            config.brain.primary = coerced_primary
+        self._active_name: str = coerced_primary
         # The (provider, model) actually answering the CURRENT turn. Set per
         # fallback-chain attempt in generate() right before the dispatcher is
         # built, consumed by _build_system_prompt to inject the authoritative
@@ -1383,7 +1540,19 @@ class BrainManager:
             )
 
         local_config = config.model_copy(deep=True)
-        effective_provider = provider_override or tier_cfg.provider
+        requested_provider = provider_override or tier_cfg.provider
+        effective_provider = _coerce_main_brain_provider(
+            requested_provider,
+            tier_cfg.provider,
+            tier_cfg.fallback_provider,
+            getattr(config.brain, "deep_brain", None),
+        )
+        if effective_provider != (requested_provider or "").strip():
+            log.warning(
+                "Brain provider %r is subagent-only; using %r as router brain.",
+                requested_provider,
+                effective_provider,
+            )
         local_config.brain.primary = effective_provider
         # deep_brain normally mirrors the tier's fallback provider. But when an
         # explicit override redirected the active provider away from the tier
@@ -1504,26 +1673,6 @@ class BrainManager:
                 key_value = None
             if not key_value:
                 manager._dead_providers.add(provider_name)
-                # codex-as-BRAIN genuinely needs an OpenAI API key, so disabling
-                # it here is correct. But codex-as-SUBAGENT runs on the ChatGPT
-                # OAuth login (no API key), so the bare "deaktiviert" line read as
-                # "codex is unusable" when the sub-agent still works. Log honestly.
-                if provider_name == "codex":
-                    oauth_ok = False
-                    try:
-                        from jarvis.codex_auth import CodexAuthService
-
-                        st = CodexAuthService().status()
-                        oauth_ok = bool(st.connected and st.mode == "chatgpt")
-                    except Exception:  # noqa: BLE001
-                        oauth_ok = False
-                    if oauth_ok:
-                        log.info(
-                            "Pre-Boot-Key-Check: codex hat keinen OpenAI-API-Key -> "
-                            "als BRAIN-Provider deaktiviert, aber als Sub-Agent "
-                            "nutzbar (ChatGPT-OAuth-Login)."
-                        )
-                        continue
                 log.info(
                     "Pre-Boot-Key-Check: kein Key in %s -> Provider '%s' deaktiviert.",
                     provider_to_slots.get(provider_name, [provider_name]),
@@ -1557,6 +1706,23 @@ class BrainManager:
         return (
             getattr(cfg, "deep_model", None)
             or get_tier_default_model("deep", name)
+        )
+
+    def _cu_model(self, name: str) -> str | None:
+        """Model the Computer-Use loop uses for ``name`` (Phase 3).
+
+        Precedence: the pinned ``cu_model`` -> the provider's main ``model`` ->
+        the router-tier default. Provider-agnostic (AP-21): no provider name or
+        model id is special-cased. When nothing is pinned this equals the model
+        chat already uses, so CU behaviour is unchanged until a CU model is set.
+        """
+        cfg = self._provider_cfg(name)
+        if cfg is None:
+            return get_tier_default_model("router", name)
+        return (
+            getattr(cfg, "cu_model", None)
+            or getattr(cfg, "model", None)
+            or get_tier_default_model("router", name)
         )
 
     def _get_brain(self, name: str, model: str | None = None) -> Brain:
@@ -1895,6 +2061,21 @@ class BrainManager:
         if persona_block:
             parts.append(persona_block)
 
+        # User's own standing-instructions file (AGENTS.md / CLAUDE.md equivalent),
+        # named after the assistant (e.g. Ruben.md). Distinct from the persona: the
+        # user writes personal preferences here, and the block is framed so they
+        # refine behaviour but never override safety/confirmations. Read fresh each
+        # turn -> an edit applies on the next turn, no restart. A read fault must
+        # never break the prompt build.
+        try:
+            from jarvis.brain import agent_instructions as _agent_instructions
+
+            prefs_block = _agent_instructions.render_for_prompt(getattr(self, "_config", None))
+            if prefs_block:
+                parts.append(prefs_block)
+        except Exception:  # noqa: BLE001
+            pass
+
         if self._user_profile is not None:
             try:
                 parts.append(self._user_profile.render_for_prompt())
@@ -2043,12 +2224,16 @@ class BrainManager:
         if self._evidence_directive:
             parts.append(self._evidence_directive)
 
+        # General self-control directive (settings/config control long tail).
+        if getattr(self, "_self_control_directive", ""):
+            parts.append(self._self_control_directive)
+
         if self._system_prompt_extra:
             parts.append(self._system_prompt_extra)
 
         base = (
             f"Du bist {name}, der persoenliche Meta-Orchestrator dieses Users auf Windows 11. "
-            "Stil: trocken, praezise, ein Hauch britischer Butler im Tony-Stark-JARVIS-Stil "
+            "Stil: trocken, praezise, ein Hauch britischer Butler "
             "— nie servil, nie beflissen, nie speichelleckerisch. "
             "Sprich kurz (1 Satz), natuerlich, KEIN Markdown. "
             "STRENG VERBOTEN — generische Greeter-/Smalltalk-Phrasen, jede einzelne. Beispiele: "
@@ -2263,6 +2448,13 @@ class BrainManager:
         """
         canonical = PROVIDER_ALIASES.get(provider_name.lower().strip(), provider_name)
         async with self._lock:
+            if canonical in SUBAGENT_ONLY_BRAIN_PROVIDERS:
+                log.warning(
+                    "Brain provider %r is subagent-only; ignoring main-brain switch.",
+                    canonical,
+                )
+                self.last_persist_ok = False
+                return
             if canonical == self._active_name:
                 # Re-activation of the already active provider — reset caches
                 # so a newly set key takes effect on the next turn (otherwise
@@ -2327,6 +2519,47 @@ class BrainManager:
                 provider, was_dead, len(keys_to_drop),
             )
 
+    def apply_provider_model(self, provider: str, model: str) -> bool:
+        """Live-apply a model override for a brain provider (no restart).
+
+        The model picker in the API-Keys view persists the choice to jarvis.toml
+        AND calls this so the running brain uses the new model on the next turn.
+        The manager builds its config independently of ``app.state.config``, so
+        mutating that route-level config would NOT reach the brain — this method
+        updates the manager's OWN ``self._config`` and drops cached brain
+        instances for the provider so the next ``_get_brain`` rebuilds with the
+        new model.
+
+        An empty string resets the override to ``None`` (the provider then falls
+        back to its frontier default via ``_fast_model``).
+
+        Returns ``True`` iff ``provider`` is the currently active brain — i.e.
+        the change takes effect immediately. For an inactive provider the
+        override is stored and applies as soon as the user switches to it.
+        """
+        from jarvis.core.config import BrainProviderConfig
+
+        canonical = PROVIDER_ALIASES.get(provider.lower().strip(), provider)
+        new_model = model.strip() or None
+        providers = self._config.brain.providers
+        pc = providers.get(canonical)
+        if pc is None:
+            providers[canonical] = BrainProviderConfig(model=new_model)
+        else:
+            try:
+                pc.model = new_model
+            except Exception:  # noqa: BLE001 — frozen/validation: rebuild the block.
+                data = pc.model_dump() if hasattr(pc, "model_dump") else {}
+                data["model"] = new_model
+                providers[canonical] = BrainProviderConfig(**data)
+
+        # Drop cached instances for this provider so the new model is used; lift
+        # any session-level deactivation (mirrors ``reactivate_provider``).
+        for key in [k for k in self._brain_cache if k[0] == canonical]:
+            self._brain_cache.pop(key, None)
+        self._dead_providers.discard(canonical)
+        return canonical == self._active_name
+
     @staticmethod
     def _persist_primary(name: str) -> bool:
         """Persist ``brain.primary`` to disk (all three layers via config_writer).
@@ -2356,6 +2589,128 @@ class BrainManager:
         if match is None or match.kind != "provider_switch":
             return None
         return match.target
+
+    def _detect_language_switch_intent(self, text: str) -> str | None:
+        """Strict gate-based reply-language switch detector.
+
+        Delegates to ``voice_command_gate.match_voice_command`` and returns the
+        target code (de/en/es/auto) ONLY for an unambiguous language command
+        like "stell auf Englisch um". A harmless mention ("wie heißt das auf
+        Englisch?") returns None and reaches the brain normally.
+        """
+        match = match_voice_command(text)
+        if match is None or match.kind != "language_switch":
+            return None
+        return match.target
+
+    def _apply_reply_language_switch(self, code: str) -> str:
+        """Execute a recognised reply-language switch deterministically.
+
+        Mirrors the canonical ``PUT /api/settings/reply-language`` path (live
+        set + persist) but is reached in ``generate()`` BEFORE the force-spawn
+        heuristic, so a trivial config change never becomes a worker mission
+        (2026-06-22 forensic: "stell auf Englisch um" was dispatched as a worker
+        and failed, harness down). It runs without the LLM, so it works no
+        matter the active provider's tool-calling capability. Returns the spoken
+        confirmation, or "" for an unknown code (caller falls through).
+        """
+        try:
+            self.set_reply_language(code)  # live; ValueError on unknown code
+        except ValueError:
+            return ""
+        lang = self._reply_language
+        # Best-effort in-memory cfg agreement (a frozen model is not an error).
+        try:
+            self._config.brain.reply_language = lang  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001
+            log.debug("in-memory cfg.brain.reply_language update skipped: %s", exc)
+        # Persist as boot default — best-effort: a read-only / locked jarvis.toml
+        # must not break the live switch that already applied.
+        try:
+            from jarvis.core import config_writer
+
+            config_writer.set_reply_language(lang)
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "reply-language persist failed (live switch still applied): %s", exc
+            )
+        log.info("reply-language switched to %r via deterministic voice gate", lang)
+        return _LANG_SWITCH_CONFIRM.get(lang, _LANG_SWITCH_CONFIRM["de"])
+
+    def _is_self_control_turn(self, text: str) -> bool:
+        """Broad (class-level, NOT per-command) detector for a request to change
+        or control Jarvis's OWN configuration.
+
+        True only when BOTH a change verb (ändere/stell/wechsle/aktiviere/
+        switch/set/…) AND a Jarvis-settings noun (Einstellung/Sprache/Stimme/
+        Provider/Theme/Lautstärke/STT/TTS/Sub-Agent/…) are present, so a general
+        "change the code" task is never mistaken for self-control. Used only to
+        inject a prompt directive — the LLM still constructs the actual tool
+        call, so any phrasing/setting is covered without a per-command gate.
+        Never raises (getattr-safe); returns False on any error.
+        """
+        try:
+            t = (text or "").lower()
+            return bool(
+                _SELF_CONTROL_VERB_RE.search(t) and _SELF_CONTROL_NOUN_RE.search(t)
+            )
+        except Exception:  # noqa: BLE001 — a detector must never break a turn
+            return False
+
+    def _detect_subagent_switch_intent(self, text: str) -> str | None:
+        """Strict gate-based sub-agent (Heavy-Task worker) provider switch.
+
+        Delegates to ``voice_command_gate.match_voice_command``; returns the
+        spoken provider word ONLY for a sub-agent-qualified command like
+        "wechsle den Sub-Agent-Provider auf OpenAI". A bare "switch to gemini"
+        is a main-brain switch (kind=provider_switch) and returns None here.
+        """
+        match = match_voice_command(text)
+        if match is None or match.kind != "subagent_switch":
+            return None
+        return match.target
+
+    def _apply_subagent_provider_switch(self, word: str) -> str:
+        """Execute a recognised sub-agent provider switch deterministically.
+
+        The brain LLM used to escalate "switch the sub-agent provider to X" to a
+        worker mission, because ``brain.sub_jarvis.provider`` has no settable
+        self-mod tool (2026-06-22 forensic). This runs BEFORE the force-spawn /
+        LLM path: map the spoken word to a canonical slug, then persist via the
+        3-layer ``config_writer.set_sub_jarvis_provider`` (TOML + config-soll pin
+        + ENV) so the drift-guard cannot revert it. The running worker re-resolves
+        the provider per mission (``_live_subagent_provider``), so it applies to
+        the NEXT mission without a restart. Returns the spoken confirmation, or
+        "" for an unknown provider word (caller falls through to the brain).
+        """
+        canonical = _SUBAGENT_VOICE_TO_CANONICAL.get(word.strip().lower())
+        if canonical is None:
+            return ""
+        # Best-effort in-memory cfg agreement (a frozen model is not an error).
+        try:
+            from jarvis.core.config import BrainTierConfig
+
+            self._config.brain.sub_jarvis = BrainTierConfig(provider=canonical)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("in-memory cfg.brain.sub_jarvis update skipped: %s", exc)
+        # Persist across all 3 layers (TOML + config-soll drift-pin + ENV) — the
+        # generic TOML-only write would be rolled back by the drift-guard.
+        try:
+            from jarvis.core import config_writer
+
+            config_writer.set_sub_jarvis_provider(canonical)
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "sub-agent provider persist failed (in-memory switch applied): %s",
+                exc,
+            )
+        log.info(
+            "sub-agent provider switched to %r via deterministic voice gate",
+            canonical,
+        )
+        lang = self._resolve_turn_lang()
+        template = _SUBAGENT_SWITCH_CONFIRM.get(lang, _SUBAGENT_SWITCH_CONFIRM["de"])
+        return template.format(p=_SUBAGENT_DISPLAY.get(canonical, canonical))
 
     def _detect_cancel_intent(self, text: str) -> bool:
         """True when the user wants to cancel a running OpenClaw task."""
@@ -2759,6 +3114,9 @@ class BrainManager:
     # allowlist forms). Reset at the start of every generate() turn.
     _evidence_directive: str = ""
     _evidence_required_tool: str = ""
+    # Per-turn self-control directive (general settings/config control). Reset
+    # at the start of every generate() turn; appended to the system prompt.
+    _self_control_directive: str = ""
 
     def note_skill_trigger(
         self, skill_name: str, *, content: str = "", source: str = "trigger"
@@ -3265,21 +3623,43 @@ class BrainManager:
             log.info("force-spawn skipped: explicit spawn decline — answer inline")
             return False
         # User mandate (2026-06-15, "when I say subagent it MUST spawn"): an
-        # EXPLICIT heavy-work trigger ("subagent", "spawn", "openclaw",
-        # "delegate", "deep dive", …) names the execution vehicle. That is an
-        # UNAMBIGUOUS request to dispatch a worker, so it is checked FIRST —
-        # ahead of every disambiguation guard below (instructional / pointer /
-        # navigation / smalltalk / open-app / skill). Those guards exist only to
-        # suppress AMBIGUOUS, implicit spawns; they must never veto a request in
-        # which the user literally named the vehicle. Before this hoist, an
-        # explicit "Starte OpenClaw" / "Spawne einen Subagenten und zeig …" was
-        # swallowed by the open-app / navigation guard and never spawned
-        # ("sometimes saying subagent doesn't spawn a subagent"). The fatal
-        # preconditions above (no tool/executor, Whisper-FP seed, min length,
-        # worker not viable) still win — they mean a spawn is impossible or the
-        # transcript is noise, not that the user changed their mind.
-        if self._get_force_spawn_pattern().search(t):
-            return True
+        # EXPLICIT heavy-work trigger that NAMES the execution vehicle
+        # ("subagent", "spawn", "openclaw", "delegate") is an UNAMBIGUOUS request
+        # to dispatch a worker, so it is checked FIRST — ahead of every
+        # disambiguation guard below (instructional / pointer / navigation /
+        # smalltalk / open-app / skill). Those guards exist only to suppress
+        # AMBIGUOUS, implicit spawns; they must never veto a request in which the
+        # user literally named the vehicle. Before this hoist, an explicit
+        # "Starte OpenClaw" / "Spawne einen Subagenten und zeig …" was swallowed
+        # by the open-app / navigation guard and never spawned ("sometimes saying
+        # subagent doesn't spawn a subagent"). The fatal preconditions above (no
+        # tool/executor, Whisper-FP seed, min length, worker not viable) still
+        # win — they mean a spawn is impossible or the transcript is noise.
+        #
+        # A DEPTH marker ("deep dive", "gründlich", "umfassend", …) is NOT a
+        # vehicle name — it describes thoroughness and OVERLAPS with computer-use
+        # requests. It still force-spawns on its own ("Mach einen Deep Dive in
+        # meine Google Cloud Kosten") BUT it must NOT override an explicit
+        # on-screen / computer / browser request: "Mach einen Deep Dive mit
+        # Computer Use in meinem Chrome Browser …" is a Computer-Use turn, not a
+        # background mission. When the depth marker co-occurs with a pc-control
+        # signal we hand the computer-use-vs-spawn decision to the LLM router (it
+        # owns computer_use + the SYSTEM_PROMPT rule "Bildschirm/Browser bedienen
+        # ist computer_use, kein spawn_worker") instead of letting the keyword
+        # decide. This reuses the existing pc-control detector — no new
+        # signal-word list, no widening of force_spawn_phrases.
+        _trigger = self._get_force_spawn_pattern().search(t)
+        if _trigger is not None:
+            if _trigger_names_vehicle(_trigger.group(0)):
+                return True
+            if not _looks_like_pc_control(t):
+                return True  # depth marker, no screen signal → heavy background work
+            log.info(
+                "force-spawn deferred to LLM: depth trigger %r + computer-use "
+                "request — router decides computer_use vs spawn",
+                _trigger.group(0),
+            )
+            return False
         verb_re, marker_re, _smalltalk_re = self._get_routing_patterns()
         if _is_instructional_question(t):
             return False
@@ -3344,7 +3724,13 @@ class BrainManager:
         # first; this guard is defense-in-depth so a conjugated open verb
         # ("öffnest") can never fall through to a force-spawn (live bug
         # 2026-06-08: "Ich möchte, dass du mir Hermes Agent öffnest, also …").
-        if is_open_app_intent(t):
+        # BUT a genuine build-a-deliverable request ("build me a website",
+        # "generate a landing page for the product launch") must NOT be vetoed by
+        # an is_open_app_intent false positive (it trips on "launch" / English
+        # phrasings) — building a file/site/app is a mission, not opening an app.
+        # _research_wants_artifact requires a build VERB, so a real "open X"
+        # command (no build verb) still stands down to computer-use here.
+        if is_open_app_intent(t) and not self._research_wants_artifact(t):
             return False
         # NOTE: the EXPLICIT heavy-work trigger check (AD-S9, 2026-06-10) was
         # hoisted to the top of this method (above every disambiguation guard)
@@ -3376,7 +3762,16 @@ class BrainManager:
                 return False
         except Exception:  # noqa: BLE001 — capability lookup must never break routing
             pass
-        if "dispatch_to_harness" in self._tools and _looks_like_pc_control(t):
+        # A pc-control request (incl. an explicit "am Bildschirm / on screen")
+        # is computer-use, not a sub-agent — stand down. BUT a build-a-deliverable
+        # request that merely mentions the screen ("bau mir eine Website und zeig
+        # sie am Bildschirm") must still spawn the mission, so the artifact build
+        # wins over this stand-down (mirrors the open-app guard above).
+        if (
+            "dispatch_to_harness" in self._tools
+            and _looks_like_pc_control(t)
+            and not self._research_wants_artifact(t)
+        ):
             return False
         # User-Mandate 2026-05-14: strict-mode is the default. The router
         # used to spawn on every spawn_verb hit ("schreib", "mach",
@@ -3414,6 +3809,21 @@ class BrainManager:
             # dive"/"umfassende"/...) already returned True above (AD-S9 trigger).
             if self._is_heavy_research(t):
                 return self._research_wants_artifact(t)
+            # A request to BUILD a deliverable (an HTML file / website / app /
+            # report / document / visualization) is a sub-agent MISSION even
+            # without a research verb — the Worker->Critic pipeline verifies the
+            # built artefact via git diff. This fires PROVIDER-INDEPENDENTLY: a
+            # tool-incapable talker (Codex/Antigravity subscription CLI) cannot
+            # spawn via an LLM tool_call, so the deterministic gate is its only
+            # spawn path. Live bug 2026-06-21: "build me an HTML file for my
+            # Melbourne vacation" fell to the Antigravity deep brain, which (no
+            # tools) only asked permission instead of building. NOT a Computer-Use
+            # trigger: a build verb is not a screen action — "open/show the file"
+            # stays Computer-Use via match_local_action; a bare question is caught
+            # by the instructional guard above. _research_wants_artifact requires
+            # a build verb, so a pure answer ("write a short summary") stays inline.
+            if self._research_wants_artifact(t):
+                return True
             return self._is_generic_subagent_work(t)
         if verb_re.search(t):
             return True
@@ -3474,7 +3884,7 @@ class BrainManager:
         provider talks to the user. A configured worker provider always maps to a
         real worker (claude-api -> ClaudeDirectWorker, codex -> CodexDirectWorker,
         else the OpenClaw/default path), so it is viable for ANY talker — this is
-        what lets the user switch ``brain.primary`` to grok / openai / codex
+        what lets the user switch ``brain.primary`` to gemini / openai / codex
         without silencing every action request (AP-6: never couple routing to a
         hardcoded talker provider).
 
@@ -3603,7 +4013,7 @@ class BrainManager:
             # Now we launch the harness as a BACKGROUND task and return an
             # immediate ACK (AD-OE1); its outcome — success, failure, or timeout
             # — is spoken at the next turn boundary via an
-            # AnnouncementRequested(kind="subagent") readback (AD-OE5/OE6, zero
+            # AnnouncementRequested(kind="completion") readback (AD-OE5/OE6, zero
             # silent drops). Harness identity comes from the gate; fall back to
             # the canonical in-process harness name (routes to ComputerUseHarness,
             # never a claude-cli worker spawn).
@@ -3705,7 +4115,7 @@ class BrainManager:
         Launched fire-and-forget by ``_run_local_action_fast_path`` so the spoken
         turn ACKs immediately (AD-OE1) instead of blocking up to ~31 s on the
         harness. The outcome — success, failure, or timeout — is ALWAYS surfaced
-        as an ``AnnouncementRequested(kind="subagent")`` readback
+        as an ``AnnouncementRequested(kind="completion")`` readback
         (AD-OE5/OE6: zero silent drops). Never raises — a background-task crash
         must not leak into the event loop.
 
@@ -3780,9 +4190,9 @@ class BrainManager:
                 text=text,
                 priority="normal",
                 language=lang,
-                # A background Computer-Use task reporting its outcome is a
-                # spawned sub-agent result → the attributed readback track.
-                kind="subagent",
+                # A background Computer-Use task reports the user's requested
+                # desktop action as the turn completion.
+                kind="completion",
                 detail=diag,
             ))
         except Exception:  # noqa: BLE001
@@ -4019,10 +4429,21 @@ class BrainManager:
             "language": self._spawn_ack_language(user_text),
         }
         log.info("Force-Spawn OpenClaw: %r", user_text[:160])
+        # Stamp the turn's resolved output language so spawn_worker drives the
+        # spoken ACK + mission language from the ONE authoritative resolver on
+        # the force-spawn path too (the tool-use loop does this for brain
+        # function-calls; this caller must do it itself or ctx.config is empty
+        # and the language silently falls back — Runtime Output Language).
+        out_lang = resolve_output_language(
+            self._reply_language, "unknown", user_text,
+            default=DEFAULT_LOCALE,
+            conversation_language=self._conversation_language,
+        )
         result = await self._tool_executor.execute(
             tool,
             args,
             user_utterance=user_text,
+            config_snapshot={"output_language": out_lang},
             trace_id=tid,
         )
         if not result.success:
@@ -4083,8 +4504,18 @@ class BrainManager:
             "Recovered leaked spawn_worker tool-call from brain text "
             "(provider function-calling leak): %r", user_text[:160],
         )
+        # Same authoritative-language stamping as the force-spawn path: without
+        # a config snapshot ctx.config is empty and spawn_worker's language
+        # falls back instead of honoring the resolver (Runtime Output Language).
+        out_lang = resolve_output_language(
+            self._reply_language, "unknown", user_text,
+            default=DEFAULT_LOCALE,
+            conversation_language=self._conversation_language,
+        )
         result = await self._tool_executor.execute(
-            tool, args, user_utterance=user_text, trace_id=trace_id,
+            tool, args, user_utterance=user_text,
+            config_snapshot={"output_language": out_lang},
+            trace_id=trace_id,
         )
         if not result.success:
             return result.error or (
@@ -4193,10 +4624,123 @@ class BrainManager:
             return RoutingDecision(level="fast", reason="sticky-fast")
         return classify(user_text)
 
+    def _brain_can_call_tools(self, provider: str, model: str | None) -> bool:
+        """Runtime tool-calling capability of a provider, capability-driven.
+
+        A brain may expose ``can_call_tools()`` to report it cannot emit
+        tool_calls right now (the subscription-CLI brains — Codex over the ChatGPT
+        login, Antigravity over the Google login — drop ALL tools). Falls back to
+        the static ``supports_tools`` ceiling, then True. Any error → True so the
+        chain is never blocked by a capability probe."""
+        try:
+            brain = self._get_brain(provider, model)
+        except Exception:  # noqa: BLE001
+            return True
+        fn = getattr(brain, "can_call_tools", None)
+        if callable(fn):
+            try:
+                return bool(fn())
+            except Exception:  # noqa: BLE001
+                return True
+        return bool(getattr(brain, "supports_tools", True))
+
+    def _active_can_call_tools(self) -> bool:
+        """Whether the ACTIVE talker can emit tool_calls this turn."""
+        return self._brain_can_call_tools(
+            self._active_name, self._fast_model(self._active_name)
+        )
+
+    def _first_tool_capable_provider(
+        self, level: str
+    ) -> tuple[str, str | None] | None:
+        """First AVAILABLE provider that can emit tool_calls — used to lead a
+        tool/action turn when the active talker cannot. deep_brain first, then a
+        stable cross-provider order. Returns (name, model) or None when no
+        tool-capable provider is reachable (then the chain stays unchanged)."""
+        available = set(self._registry.available())
+        order: list[str] = []
+        db = self._config.brain.deep_brain
+        if db:
+            order.append(db)
+        order += ["gemini", "claude-api", "openai", "openrouter"]
+        seen: set[str] = set()
+        for name in order:
+            if name in seen or name == self._active_name or name not in available:
+                continue
+            seen.add(name)
+            model = (
+                self._deep_model(name) if level in ("deep", "code")
+                else self._fast_model(name)
+            ) or self._fast_model(name)
+            if self._brain_can_call_tools(name, model):
+                return (name, model)
+        return None
+
+    def _turn_has_action_intent(self, user_text: str) -> bool:
+        """Best-effort, provider-agnostic 'this turn wants a tool/desktop action'
+        using the EXISTING deterministic detectors (no new signal-word list).
+        Used only to decide whether a tool-incapable active talker should delegate
+        this turn — a pure conversation/knowledge turn returns False and stays on
+        the chosen provider."""
+        t = user_text or ""
+        if is_open_app_intent(t) or _looks_like_pc_control(t):
+            return True
+        try:
+            from jarvis.core.capabilities import get_registry  # noqa: PLC0415
+
+            reg = get_registry()
+            if getattr(reg, "all", lambda: ())() and reg.has_action_intent(t):
+                return True
+        except Exception:  # noqa: BLE001 — registry must never block routing
+            pass
+        return False
+
     def _build_fallback_chain(self, level: str) -> list[tuple[str, str | None]]:
         """Returns a prioritised list of (provider, model) attempts."""
         active = self._active_name
         chain: list[tuple[str, str | None]] = []
+        # Reset the per-turn router-lead marker every build (a stale value would
+        # make the loop wrongly fall through). Set below only when we prepend an
+        # intelligent-router lead.
+        self._router_lead_key: tuple[str, str | None] | None = None
+
+        # Capability-driven tool delegation (NOT a per-provider hardcode): the
+        # subscription-CLI brains (Codex over the ChatGPT login, Antigravity over
+        # the Google login) cannot emit tool_calls — can_call_tools() == False —
+        # so a tool turn reaching them is dropped/confabulated. We hand tool
+        # selection to a tool-capable provider; any future CLI brain inherits this.
+        if not self._active_can_call_tools():
+            intelligent = bool(
+                getattr(self._config.brain.routing, "intelligent_router", True)
+            )
+            if intelligent and getattr(self, "_turn_substantive", False):
+                # INTELLIGENT ROUTER (2026-06-21 mandate): a tool-capable provider
+                # LEADS every substantive turn and the LLM itself picks the tool
+                # via its tool-use loop + the router system prompt — no signal-word
+                # list decides the tool. If it picks NO tool (pure conversation),
+                # generate()'s chain loop FALLS THROUGH to the chosen talker (see
+                # ``_router_lead_key``), so the user keeps their selected brain's
+                # voice. The deterministic gates stay as high-precision guardrails.
+                helper = self._first_tool_capable_provider(level)
+                if helper is not None and helper[0] != active:
+                    log.info(
+                        "Intelligent router: %s cannot call tools — %s leads this "
+                        "turn and picks the tool (falls through to %s if none).",
+                        active, helper[0], active,
+                    )
+                    self._router_lead_key = helper
+                    chain.append(helper)
+            elif getattr(self, "_turn_needs_tools", False):
+                # Flag OFF (kill switch): the narrower action-intent delegation —
+                # delegate ONLY when a deterministic action signal fired, and let
+                # the tool-capable provider answer the whole turn (no fall-through).
+                helper = self._first_tool_capable_provider(level)
+                if helper is not None and helper[0] != active:
+                    log.info(
+                        "Tool delegation (legacy): %s cannot call tools — leading "
+                        "this action turn with %s.", active, helper[0],
+                    )
+                    chain.append(helper)
 
         # 0. Deep/code intents: dedicated deep_brain first (e.g. gemini via
         #    subscription — bypasses /v1/messages API quota). Bug fix 2026-04-29:
@@ -4204,13 +4748,12 @@ class BrainManager:
         #    _fast_model → gemini-3-flash for a deep request instead of
         #    gemini-3.1-pro-preview).
         deep_brain = self._config.brain.deep_brain
-        # When the user has explicitly made codex the active brain, codex leads
-        # for ALL turns — the deep_brain (e.g. gemini) must NOT jump ahead for
-        # deep/code intents, or codex would never actually answer a hard question
-        # despite being the chosen brain (it would silently fall through to the
-        # deep_brain). codex (gpt-5.5) is itself a frontier model, so there is no
-        # capability reason to delegate. Other active brains keep the deep_brain
-        # routing unchanged.
+        # When the user has explicitly made a frontier SUBSCRIPTION brain the
+        # active one (codex via ChatGPT),
+        # it leads ALL turns — the deep_brain (e.g. gemini) must NOT jump ahead for
+        # deep/code intents, or the chosen brain would never actually answer a hard
+        # question despite being selected (it would silently fall through to the
+        # deep_brain). Other active brains keep the deep_brain routing unchanged.
         if (
             level in ("deep", "code")
             and deep_brain
@@ -4260,7 +4803,6 @@ class BrainManager:
             "gemini",               # Google AI Studio
             "openrouter",           # universal gateway
             "openai",
-            "grok",
         ]
         for name in cross_order:
             if name == active:
@@ -4351,6 +4893,38 @@ class BrainManager:
             await self.switch(switch_target)
             return ""
 
+        # Deterministic reply-language switch — runs BEFORE the force-spawn
+        # heuristic so "stell auf Englisch um" sets brain.reply_language
+        # directly (live + persisted) instead of being dispatched as a worker
+        # mission (2026-06-22 forensic). Provider-independent: no LLM tool-call.
+        lang_switch = self._detect_language_switch_intent(user_text)
+        if lang_switch:
+            confirmation = self._apply_reply_language_switch(lang_switch)
+            if confirmation:
+                await self._record_response_side_effects(
+                    user_text=user_text,
+                    response_text=confirmation,
+                    use_history=use_history,
+                    trace_id=turn_trace_id,
+                )
+                return confirmation
+
+        # Deterministic sub-agent (Heavy-Task worker) provider switch — same
+        # reasoning as the language switch: runs BEFORE the force-spawn/LLM path
+        # so "switch the sub-agent provider to X" sets brain.sub_jarvis.provider
+        # directly instead of escalating to a worker mission (2026-06-22 forensic).
+        subagent_switch = self._detect_subagent_switch_intent(user_text)
+        if subagent_switch:
+            confirmation = self._apply_subagent_provider_switch(subagent_switch)
+            if confirmation:
+                await self._record_response_side_effects(
+                    user_text=user_text,
+                    response_text=confirmation,
+                    use_history=use_history,
+                    trace_id=turn_trace_id,
+                )
+                return confirmation
+
         depth_override = self._detect_depth_override(user_text)
         if depth_override == "deep":
             self._force_level = "deep"
@@ -4417,6 +4991,9 @@ class BrainManager:
         # early-returns before the gate runs).
         self._evidence_directive = ""
         self._evidence_required_tool = ""
+        # General self-control directive — reset here, set below once the
+        # smalltalk classification for this turn is known.
+        self._self_control_directive = ""
         # AD-S4: a trigger noted by the speech pipeline / chat hook takes
         # precedence — it carries the captured content and the source label.
         self._consume_pending_skill_trigger(user_text)
@@ -4435,6 +5012,35 @@ class BrainManager:
                 getattr(self._skill_turn_match, "name", "?"),
             )
             self._skill_turn_match = None
+        # Sibling of AD-S9: a plugin/marketplace skill that merely keyword-
+        # matched an APP NAME ("Discord", "Spotify", "Slack") must NOT capture a
+        # turn the deterministic desktop-control gate owns. Computer-Use is the
+        # universal GUI integration — "open Discord and find the post on screen"
+        # must reach it even when the plugin's API/MCP integration is absent,
+        # instead of suppressing the local-action fast path and falling through
+        # to a tool-less CLI talker that hallucinates a permissions refusal.
+        # Live bug 2026-06-21 (sessions.db turn 67276501-…): plugin-discord
+        # matched the bare word "Discord", the antigravity deep brain (a CLI
+        # talker that drops all tools) then said "ich habe keinen Zugriff auf
+        # Discord". The gate decision is authoritative and precise: only a
+        # DIRECT open or a COMPUTER_USE plan stands the skill down — a pure
+        # dispatch ("schick eine Discord-Nachricht", gate → None/UNSUPPORTED)
+        # keeps its skill, and a non-app skill turn ("starte die Morgenroutine",
+        # gate → None) is untouched.
+        if self._skill_turn_match is not None:
+            _gate_plan = match_local_action(user_text)
+            if _gate_plan is not None and _gate_plan.mode in (
+                LocalActionMode.DIRECT,
+                LocalActionMode.COMPUTER_USE,
+            ):
+                log.info(
+                    "Skill match %s stands down — the deterministic local-action "
+                    "gate claims this turn as %s; Computer-Use owns it "
+                    "(universal GUI integration, not a keyword-matched plugin).",
+                    getattr(self._skill_turn_match, "name", "?"),
+                    _gate_plan.mode.value,
+                )
+                self._skill_turn_match = None
         if self._skill_turn_match is not None:
             log.info(
                 "Skill-matched turn: %r → skill %s (fast paths stand down)",
@@ -4605,11 +5211,31 @@ class BrainManager:
                 user_text[:80],
             )
 
+        # General self-control (the long tail not covered by a deterministic
+        # gate, which runs earlier and returns): inject a directive so whichever
+        # provider handles the turn reliably uses cli_jarvisctl / set_config_value
+        # instead of confabulating a refusal. Substantive turns only.
+        if not is_smalltalk_turn and self._is_self_control_turn(user_text):
+            self._self_control_directive = _SELF_CONTROL_DIRECTIVE
+
         # 2. Router: which level applies?
         decision = self._picked_level(user_text)
         log.debug("Router-Decision: level=%s reason=%s", decision.level, decision.reason)
 
-        # 3. Build fallback chain and try each entry
+        # 3. Build fallback chain and try each entry.
+        # Provider-agnostic tool routing flags (consumed by _build_fallback_chain):
+        #  - _turn_substantive: a non-smalltalk turn. With the intelligent router
+        #    on, a tool-capable provider LEADS such a turn for a tool-incapable
+        #    talker and the LLM picks the tool (or falls through to the talker).
+        #  - _turn_needs_tools: the narrower action-intent signal used as the
+        #    flag-OFF (kill-switch) delegation. Reuses the deterministic detectors.
+        # Reset _router_lead_key here too so a monkeypatched _build_fallback_chain
+        # (tests / callers that replace it) never leaves a stale fall-through marker.
+        self._router_lead_key = None
+        self._turn_substantive = not is_smalltalk_turn
+        self._turn_needs_tools = (not is_smalltalk_turn) and self._turn_has_action_intent(
+            user_text
+        )
         chain = self._build_fallback_chain(decision.level)
         if not chain:
             # Empty chain means either (a) no providers registered or
@@ -4633,6 +5259,17 @@ class BrainManager:
             return await self._provider_down_reply(trace_uuid)
 
         history = self._history if use_history else []
+        _drop_in_hist = sum(
+            1 for m in history
+            if isinstance(getattr(m, "content", None), str)
+            and "\U0001F4CE" in m.content
+        )
+        if _drop_in_hist:
+            log.info(
+                "📎 DROP CONTEXT present in this turn's history: %d note(s), "
+                "use_history=%s, total history=%d",
+                _drop_in_hist, use_history, len(history),
+            )
         last_exc: Exception | None = None
         response_text = ""
         used_provider: str | None = None
@@ -4733,6 +5370,15 @@ class BrainManager:
                 f"{turn_context}\n\n{pointer_block}" if turn_context else pointer_block
             )
 
+        # Drag-drop SILENT context: pictures parked by ``add_dropped_context``
+        # (a drop never triggers its own turn) are pulled into THIS real turn,
+        # once — added AFTER vision + AI-Pointer image logic so neither clobbers
+        # them. Cleared on consume; never re-sent on later turns.
+        _dropped_imgs = getattr(self, "_pending_drop_images", ()) or ()
+        if _dropped_imgs:
+            self._pending_drop_images = ()
+            images = tuple(_dropped_imgs) + tuple(images)
+
         for idx, (prov_name, model) in enumerate(chain):
             # Skip providers already marked dead in THIS turn.
             # Example: gemini-fast fails with missing_key → gemini-deep would
@@ -4816,6 +5462,16 @@ class BrainManager:
             # provider that genuinely runs this attempt, including a fallback win.
             self._active_turn_identity = (prov_name, model)
             disp = self._build_dispatcher(brain, tools_override=_turn_tools)
+            # Intelligent router: the router LEAD must NOT stream its conversational
+            # text to TTS. On the streaming path (generate_stream) text_consumer
+            # speaks each chunk live DURING dispatch — so a no-tool router answer
+            # would be spoken and THEN the fall-through talker would speak again
+            # (double answer). Suppress the consumer for the lead: if it picks a
+            # tool, the result is surfaced by generate_stream's final reconciliation
+            # (nothing was yielded → it yields holder["final"]); if it picks none,
+            # the chosen talker streams the answer normally after the fall-through.
+            _is_router_lead = self._router_lead_key == (prov_name, model)
+            _attempt_consumer = None if _is_router_lead else text_consumer
             try:
                 # CostMeter: start per-trace tracking (idempotent if already started).
                 if self._cost_meter is not None:
@@ -4827,7 +5483,7 @@ class BrainManager:
                     trace_id=trace_id,
                     intent_level=decision.level,
                     evidence_required_tool=self._evidence_required_tool,
-                    text_consumer=text_consumer,
+                    text_consumer=_attempt_consumer,
                     on_progress=on_progress,
                     turn_context=turn_context,
                     reply_language=self._reply_language,
@@ -4878,6 +5534,29 @@ class BrainManager:
                         prov_name, model, "empty_response",
                         "Provider gab leere Antwort zurueck (Safety/Schema?)",
                     ))
+                    continue
+
+                # INTELLIGENT ROUTER fall-through: this attempt is the tool-capable
+                # router LEAD that was prepended for a tool-incapable talker. It got
+                # first crack at tool selection; if it picked NO tool (pure
+                # conversation) and a chosen talker follows in the chain, discard
+                # its answer and fall through so the user keeps their selected
+                # brain's voice. A tool it DID select (tool_calls non-empty) breaks
+                # normally below and IS the turn's result. Placed BEFORE the events
+                # publish below, so the discarded router turn is not recorded as the
+                # turn; its cost was metered above (it genuinely ran). Reversible
+                # via [brain.routing].intelligent_router (then _router_lead_key is
+                # never set, so this never fires).
+                if (
+                    self._router_lead_key == (prov_name, model)
+                    and not tool_calls_executed
+                    and idx < len(chain) - 1
+                ):
+                    log.info(
+                        "Intelligent router: %s picked no tool — falling through to "
+                        "%s for the conversational answer.",
+                        prov_name, chain[idx + 1][0],
+                    )
                     continue
 
                 response_text = agg.text
@@ -5089,6 +5768,54 @@ class BrainManager:
 
         return response_text
 
+    def inject_images_for_turn(
+        self, trace_id: UUID, images: tuple[ImageBlock, ...]
+    ) -> None:
+        """Attach ad-hoc ``images`` to the upcoming turn identified by ``trace_id``.
+
+        Used by the drag-drop intake (``jarvis/brain/drop_context.py``) so a
+        dropped picture reaches the multimodal brain. The images are consumed by
+        ``_collect_vision_images`` on that turn and never carry over. A no-op for
+        an empty tuple. ``trace_id`` is unique per turn → race-free.
+        """
+        if not images:
+            return
+        # Defensive: tolerate a manager built via __new__ (some unit tests bypass
+        # __init__), mirroring how _vision_provider is accessed via getattr.
+        if getattr(self, "_pending_turn_images", None) is None:
+            self._pending_turn_images = {}
+        self._pending_turn_images[trace_id] = tuple(images)
+
+    def add_dropped_context(
+        self, text: str, images: tuple[ImageBlock, ...] = ()
+    ) -> None:
+        """Stash drag-and-dropped content as SILENT conversation context.
+
+        A drop must NOT trigger a brain turn — the user keeps the normal speaking
+        flow, and the dropped content is simply remembered and used on the NEXT
+        real turn (a drop while idle is kept for next time; a drop mid-flow joins
+        the running context). The text is appended to history as a user-context
+        message so it is naturally in the next turn's context (and persists for
+        follow-ups); images are parked and consumed once by the next
+        ``generate`` call. getattr-guarded for managers built via ``__new__``.
+        """
+        if text and text.strip():
+            if getattr(self, "_history", None) is None:
+                self._history = []
+            self._history.append(BrainMessage(role="user", content=text.strip()))
+            if len(self._history) > 40:
+                self._history = self._history[-40:]
+        log.info(
+            "📎 DROP CONTEXT stashed: %d text chars, %d images "
+            "(history now %d msgs, pending drop images %d)",
+            len(text or ""), len(images),
+            len(getattr(self, "_history", []) or []),
+            len(getattr(self, "_pending_drop_images", ()) or ()) + len(images),
+        )
+        if images:
+            cur = getattr(self, "_pending_drop_images", ()) or ()
+            self._pending_drop_images = tuple(cur) + tuple(images)
+
     async def _collect_vision_images(
         self,
         *,
@@ -5102,6 +5829,16 @@ class BrainManager:
         Without this bridge, blobs were captured but the actual brain call
         remained text-only.
         """
+        # Drag-drop: ad-hoc images injected for THIS turn win over (and bypass)
+        # the screen-vision path — a dropped picture matters, not the current
+        # screen, and it must arrive even with screen-vision off. Pop so it is
+        # used exactly once. getattr-guarded for managers built via __new__.
+        pending = getattr(self, "_pending_turn_images", None)
+        if pending:
+            injected = pending.pop(trace_id, None)
+            if injected:
+                return injected
+
         vision = getattr(self, "_vision_provider", None)
         vision_none = vision is None
         paused = (
@@ -5857,7 +6594,6 @@ _PROVIDER_SETUP_HINTS: dict[str, str] = {
     "claude-api": "ANTHROPIC_API_KEY setzen",
     "openai": "OPENAI_API_KEY setzen",
     "openrouter": "OPENROUTER_API_KEY setzen",
-    "grok": "XAI_API_KEY setzen",
     "ollama-local": "Ollama-Server starten (localhost:11434)",
     "ollama-cloud": "Ollama-Cloud-Token setzen",
 }

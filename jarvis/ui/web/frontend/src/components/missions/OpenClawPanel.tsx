@@ -13,6 +13,7 @@ import { CircleSlash, Cpu, Copy, ExternalLink } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { OpenClawReattachStatus, OpenClawWorkerSnapshot } from "@/types/missions";
 
@@ -54,6 +55,7 @@ async function copyToClipboard(value: string): Promise<void> {
 }
 
 export function OpenClawPanel() {
+  const t = useT();
   const workers = useMissionsStore(
     useShallow((s) => {
       if (!s.selectedMissionId) return [];
@@ -66,7 +68,7 @@ export function OpenClawPanel() {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-xs text-muted-foreground">
         <Cpu className="h-7 w-7 text-muted-foreground/40" />
-        <p>Mission auswaehlen, um OpenClaw-Worker zu sehen.</p>
+        <p>{t("openclaw_panel.select_mission")}</p>
       </div>
     );
   }
@@ -75,7 +77,7 @@ export function OpenClawPanel() {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-xs text-muted-foreground">
         <CircleSlash className="h-7 w-7 text-muted-foreground/40" />
-        <p>Keine OpenClaw-Worker in dieser Mission.</p>
+        <p>{t("openclaw_panel.no_workers")}</p>
       </div>
     );
   }
@@ -96,6 +98,7 @@ interface WorkerRowProps {
 }
 
 function WorkerRow({ worker }: WorkerRowProps) {
+  const t = useT();
   const reattachClass = REATTACH_STYLE[worker.reattach_status] ?? REATTACH_STYLE.unknown;
   const reattachLabel = REATTACH_LABEL[worker.reattach_status] ?? "?";
 
@@ -159,7 +162,7 @@ function WorkerRow({ worker }: WorkerRowProps) {
           <span
             data-testid="openclaw-state-dir"
             className="truncate font-mono text-foreground/80"
-            title={worker.state_dir || "(nicht verfuegbar)"}
+            title={worker.state_dir || t("openclaw_panel.not_available")}
           >
             {worker.state_dir || "—"}
           </span>
@@ -167,7 +170,7 @@ function WorkerRow({ worker }: WorkerRowProps) {
             <button
               type="button"
               onClick={() => copyToClipboard(worker.state_dir)}
-              title="Pfad kopieren"
+              title={t("openclaw_panel.copy_path")}
               className="shrink-0 text-muted-foreground/70 hover:text-foreground"
             >
               <Copy className="h-3 w-3" />
@@ -180,7 +183,7 @@ function WorkerRow({ worker }: WorkerRowProps) {
           <span
             data-testid="openclaw-log-path"
             className="truncate font-mono text-foreground/80"
-            title={worker.log_path || "(nicht verfuegbar)"}
+            title={worker.log_path || t("openclaw_panel.not_available")}
           >
             {worker.log_path || "—"}
           </span>
@@ -189,7 +192,7 @@ function WorkerRow({ worker }: WorkerRowProps) {
               <button
                 type="button"
                 onClick={() => copyToClipboard(worker.log_path)}
-                title="Pfad kopieren"
+                title={t("openclaw_panel.copy_path")}
                 className="shrink-0 text-muted-foreground/70 hover:text-foreground"
               >
                 <Copy className="h-3 w-3" />
@@ -203,7 +206,7 @@ function WorkerRow({ worker }: WorkerRowProps) {
                   e.preventDefault();
                   copyToClipboard(worker.log_path);
                 }}
-                title="file://-Link (Pfad wird kopiert)"
+                title={t("openclaw_panel.file_link_copies_path")}
                 className="shrink-0 text-muted-foreground/70 hover:text-foreground"
               >
                 <ExternalLink className="h-3 w-3" />
@@ -214,7 +217,7 @@ function WorkerRow({ worker }: WorkerRowProps) {
 
         {worker.ended_reason && (
           <>
-            <dt className="text-muted-foreground">Ende</dt>
+            <dt className="text-muted-foreground">{t("openclaw_panel.ended_label")}</dt>
             <dd
               data-testid="openclaw-ended-reason"
               className="font-mono text-foreground/70"

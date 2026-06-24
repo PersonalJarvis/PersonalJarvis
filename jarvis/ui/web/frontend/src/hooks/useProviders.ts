@@ -39,6 +39,12 @@ export interface ProviderDescriptor {
   signup_url: string | null;
   /** How using this provider is billed. */
   billing: Billing;
+  /** Maintainer-recommended pick for this tier — renders a "Recommended" badge
+   *  on the provider card (brain tier only today). Presentation hint only. */
+  recommended?: boolean;
+  /** The model the recommendation points at (e.g. "gemini-3.5-flash"), shown as
+   *  an "empfohlen" marker in the model picker. null = provider-level only. */
+  recommended_model?: string | null;
   /** Gemini's Vertex alternative; null for single-path providers. */
   alt_credential: AltCredential | null;
   /**
@@ -463,5 +469,59 @@ export async function saveBrainProviderModel(
     throw new Error(body.detail ?? `HTTP ${res.status}`);
   }
   return body as BrainModelSaveResult;
+}
+
+// Phase 3: per-provider Computer-Use model. CU runs on the provider's main
+// `model` by default; a pinned `cu_model` lets the user run CU on a different
+// (e.g. stronger) model than chat. `cu_model === ""` means "use my main model".
+export interface CuModelResult {
+  ok?: boolean;
+  provider: string;
+  cu_model: string; // the pinned value ("" = use the main model)
+  effective_model: string; // what Computer-Use would actually run
+  uses_main: boolean; // true when nothing is pinned
+  persisted?: boolean;
+  restart_required?: boolean;
+}
+
+/** Reads the per-provider Computer-Use model selection. */
+export async function getCuModel(providerId: string): Promise<CuModelResult> {
+  const res = await fetch(`/api/providers/${encodeURIComponent(providerId)}/cu-model`);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as CuModelResult;
+}
+
+/**
+ * Pins (or clears with "") the per-provider Computer-Use model. Returns a
+ * BrainModelSaveResult shape so it can drive the shared BrainModelSelector's
+ * `onSave`. No live probe — CU validates the model lazily on its next dispatch.
+ */
+export async function saveCuModel(
+  providerId: string,
+  cuModel: string,
+  persist = true,
+): Promise<BrainModelSaveResult> {
+  const res = await fetch(`/api/providers/${encodeURIComponent(providerId)}/cu-model`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cu_model: cuModel, persist }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  const r = body as CuModelResult;
+  return {
+    ok: r.ok ?? true,
+    provider: r.provider,
+    model: r.cu_model,
+    persisted: r.persisted ?? false,
+    applied_live: !(r.restart_required ?? false),
+    restart_required: r.restart_required ?? false,
+    probe: null,
+  };
 }
 

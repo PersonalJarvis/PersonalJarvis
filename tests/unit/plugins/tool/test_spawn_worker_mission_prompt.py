@@ -241,3 +241,24 @@ def test_quality_directive_has_honest_impossibility_escape() -> None:
     assert "do not simulate" in low or "do not simulate," in low or "not simulate" in low
     # The anti-stub floor must still be present (regression guard).
     assert "production-quality" in low
+
+
+def test_quality_directive_respects_explicit_form_constraint() -> None:
+    """Live incident 2026-06-22 (mission 019ef052): the user asked for a SINGLE
+    HTML file, the worker shipped four (index.html + app.js + styles.css +
+    assets/), and the mission passed. The 'never downgrade to a minimal version /
+    skeleton is a floor not a ceiling' clause read a single self-contained file
+    as a forbidden minimal version. The directive must carve out an explicit
+    user constraint on the SHAPE/SCOPE of the deliverable: honoring it is part of
+    satisfying the request, never a downgrade."""
+    prompt = _build_mission_prompt(
+        utterance="mach mir bitte eine einzige, in sich geschlossene HTML-Datei",
+        action="",
+    )
+    low = prompt.lower()
+    # The new carve-out names an explicit user constraint on form/scope.
+    assert "constraint" in low, "the quality floor must defer to an explicit user constraint"
+    # Regression: the anti-stub quality floor and impossibility escape survive.
+    assert "production-quality" in low
+    assert "skeleton" in low or "stub" in low or "placeholder" in low
+    assert "cannot be completed with the tools available" in low

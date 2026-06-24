@@ -7,6 +7,7 @@
  */
 import { lazy, Suspense } from "react";
 
+import { useT } from "@/i18n";
 import type { WikiKind } from "@/lib/wikiApi";
 import { cn } from "@/lib/utils";
 
@@ -128,6 +129,7 @@ function breadcrumbFromPath(relPath: string): string[] {
 }
 
 function ObsidianButtonPlaceholder({ vaultRelPath: _vaultRelPath }: { vaultRelPath: string }) {
+  const t = useT();
   return (
     <button
       type="button"
@@ -137,12 +139,12 @@ function ObsidianButtonPlaceholder({ vaultRelPath: _vaultRelPath }: { vaultRelPa
         "px-3.5 py-2 text-sm text-muted-foreground opacity-60",
       )}
       data-testid="obsidian-button-placeholder"
-      title="Wird durch Agent D bereitgestellt"
+      title={t("page_header.placeholder_title")}
     >
       <span className="grid h-4 w-4 place-items-center rounded-sm bg-[#b48cf2] text-[10px] font-bold text-background">
         O
       </span>
-      In Obsidian öffnen
+      {t("page_header.open_in_obsidian")}
     </button>
   );
 }

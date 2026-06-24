@@ -1,16 +1,26 @@
 import { useCallback, useEffect, useState } from "react";
-import { Bot, CheckCircle2, XCircle } from "lucide-react";
+import { ArrowUp, Bot, CheckCircle2, Lock, LogIn, LogOut, Terminal, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
-import { saveSubagentModel, switchSubagentProvider } from "@/hooks/useProviders";
+import {
+  codexLogout,
+  loginAntigravity,
+  logoutAntigravity,
+  saveSubagentModel,
+  startCodexLogin,
+  switchSubagentProvider,
+  type AntigravityStatus,
+  type CodexStatus,
+} from "@/hooks/useProviders";
+import { BrainModelSelector } from "@/components/BrainModelSelector";
 
 /**
  * Subagent tier for the API-Keys view.
  *
  * Visually a sibling of the brain/tts/stt tiers in `ApiKeysView`: the same
  * tier header + `card-outline` cards + identical `StatusBadge` styling. Each
- * provider card carries the same "Als aktiv" radio as the API-key tiers, so
+ * provider card carries the same "Set active" radio as the API-key tiers, so
  * the user can switch the Heavy-Task subagent provider seamlessly instead of
  * being stuck on one. There is no key input — sub-agent workers reuse the
  * brain-provider keys entered above (`key_set` mirrors that state).
@@ -58,25 +68,44 @@ const PROVIDER_LABELS: Record<string, string> = {
   "claude-api": "Anthropic Claude",
   openai: "OpenAI",
   openrouter: "OpenRouter",
-  grok: "xAI Grok",
   // Codex is a direct worker (ChatGPT subscription / OpenAI key), not an
   // OpenClaw-routed provider — surfaced as its own selectable subagent row.
   "openai-codex": "OpenAI Codex",
+  // Antigravity drives the Google subscription CLI as a direct worker (OAuth, no
+  // API key), the Google sibling of Codex.
+  antigravity: "Antigravity (Google subscription)",
 };
 
 export function SubagentSection() {
   const t = useT();
   const [bridge, setBridge] = useState<SubagentStatus | null>(null);
+  const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null);
+  const [antigravityStatus, setAntigravityStatus] =
+    useState<AntigravityStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Re-fetch on brain-switch / subagent-switch / secret-set so the active
   // provider highlight + the per-provider "Key gesetzt" badges track live.
   const reload = useCallback(async () => {
     try {
-      const res = await fetch("/api/openclaw/status");
+      const [res, codexRes, antigravityRes] = await Promise.all([
+        fetch("/api/openclaw/status"),
+        fetch("/api/codex/status").catch(() => null),
+        fetch("/api/antigravity/status").catch(() => null),
+      ]);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: SubagentStatus = await res.json();
       setBridge(data);
+      if (codexRes?.ok) {
+        setCodexStatus(await codexRes.json());
+      } else {
+        setCodexStatus(null);
+      }
+      if (antigravityRes?.ok) {
+        setAntigravityStatus(await antigravityRes.json());
+      } else {
+        setAntigravityStatus(null);
+      }
       setError(null);
     } catch (e) {
       setError((e as Error).message);
@@ -100,7 +129,7 @@ export function SubagentSection() {
     return (
       <section>
         <SectionHeader label={t("apikeys_view.tier_subagent")} />
-        <p className="text-xs text-destructive">Status nicht ladbar: {error}</p>
+        <p className="text-xs text-destructive">Status unavailable: {error}</p>
       </section>
     );
   }
@@ -110,6 +139,20 @@ export function SubagentSection() {
   return (
     <section>
       <SectionHeader label={t("apikeys_view.tier_subagent")} />
+      {/* The coupling is non-obvious: subagent providers have no key field of
+          their own — they reuse the Brain-provider keys set above. Spell it out
+          so users know where to add the key instead of looking for an input
+          that isn't here. */}
+      <p className="mb-3 flex items-start gap-2 rounded-md border border-primary/25 bg-primary/[0.04] px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+        <ArrowUp className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+        <span>
+          Most subagents reuse the API keys from the{" "}
+          <strong className="text-foreground">Brain</strong> section above.
+          Codex uses the ChatGPT login here, and Antigravity uses the Google
+          login here. Connect the provider first, then pick which one runs heavy
+          background tasks.
+        </span>
+      </p>
       <ul className="space-y-3">
         <li>
           <BridgeCard status={bridge} />
@@ -117,6 +160,19 @@ export function SubagentSection() {
         <li>
           <SubagentModelCard status={bridge} onSaved={reload} />
         </li>
+        {bridge.mapping.some((row) => row.jarvis === "openai-codex") && (
+          <li>
+            <CodexConnectionCard status={codexStatus} onChanged={reload} />
+          </li>
+        )}
+        {bridge.mapping.some((row) => row.jarvis === "antigravity") && (
+          <li>
+            <AntigravityConnectionCard
+              status={antigravityStatus}
+              onChanged={reload}
+            />
+          </li>
+        )}
         {bridge.mapping.map((row) => (
           <li key={row.jarvis}>
             <SubagentProviderCard row={row} onSwitched={reload} />
@@ -133,6 +189,13 @@ export function SubagentSection() {
  * (frontier) model — shown in the hint via `model_resolved` — and a concrete
  * id overrides it for every heavy-task worker spawn.
  */
+/**
+ * The dedicated subagent LLM model pin — the SAME dropdown as the brain cards,
+ * showing the active subagent provider's catalog (``brain_primary``) and saving
+ * through the subagent endpoint (POST /api/subagent/model) instead of the
+ * per-provider model route. Empty selection = the provider's deep/frontier model
+ * (shown in the hint via ``model_resolved``).
+ */
 function SubagentModelCard({
   status,
   onSaved,
@@ -141,63 +204,41 @@ function SubagentModelCard({
   onSaved: () => void;
 }) {
   const t = useT();
-  const pushToast = useEventStore((s) => s.pushToast);
-  const [model, setModel] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-
-  // Controlled value falls back to the server state until the user edits it.
-  const value = model ?? status.sub_model_override ?? "";
-
-  async function handleApply() {
-    setPending(true);
-    try {
-      const next = await saveSubagentModel(value.trim());
-      setModel(null);
-      pushToast(
-        "success",
-        next.restart_required
-          ? t("subagent_model.saved_restart")
-          : t("subagent_model.saved"),
-      );
-      window.dispatchEvent(new Event("jarvis:subagent-switched"));
-      onSaved();
-    } catch (e) {
-      pushToast("error", (e as Error).message);
-    } finally {
-      setPending(false);
-    }
-  }
-
+  // The subagent worker slug → the catalog provider id (Codex's worker slug
+  // "openai-codex" maps to the catalog's "codex"; all others match 1:1).
+  const catalogProvider =
+    status.brain_primary === "openai-codex" ? "codex" : status.brain_primary;
   return (
     <div className="card-outline space-y-3 p-4">
       <p className="text-[11px] leading-relaxed text-muted-foreground">
         {t("subagent_model.description")}
       </p>
-      <label className="block">
-        <span className="mb-1 block text-xs uppercase tracking-wide text-muted-foreground">
-          {t("subagent_model.model_label")}
-        </span>
-        <input
-          type="text"
-          aria-label={t("subagent_model.model_label")}
-          value={value}
-          onChange={(e) => setModel(e.target.value)}
-          placeholder={t("subagent_model.model_placeholder")}
-          className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm"
+      {catalogProvider ? (
+        <BrainModelSelector
+          providerId={catalogProvider}
+          currentModel={status.sub_model_override ?? ""}
+          onSave={async (model) => {
+            const r = await saveSubagentModel(model);
+            window.dispatchEvent(new Event("jarvis:subagent-switched"));
+            onSaved();
+            return {
+              ok: true,
+              provider: status.brain_primary,
+              model,
+              persisted: r.persisted,
+              applied_live: false,
+              restart_required: r.restart_required,
+              probe: null,
+            };
+          }}
         />
-        <span className="mt-1 block text-[11px] text-muted-foreground">
-          {t("subagent_model.model_hint")}
-          {status.model_resolved ? ` (${status.model_resolved})` : ""}
-        </span>
-      </label>
-      <button
-        type="button"
-        onClick={handleApply}
-        disabled={pending}
-        className="w-full rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
-      >
-        {pending ? t("subagent_model.applying") : t("subagent_model.apply")}
-      </button>
+      ) : (
+        <p className="text-[11px] text-muted-foreground">{t("subagent_model.model_hint")}</p>
+      )}
+      <p className="text-[11px] text-muted-foreground">
+        {t("subagent_model.model_hint")}
+        {status.model_resolved ? ` (${status.model_resolved})` : ""}
+      </p>
     </div>
   );
 }
@@ -214,44 +255,44 @@ function SectionHeader({ label }: { label: string }) {
  * The subagent bridge meta-card — read-only configuration (engine state, pin,
  * active worker, model, time-cap). Shares the active-card highlight with
  * the provider cards so the section reads as one system. Engine internals
- * (binary path etc.) are reduced to an "installiert"/"nicht installiert"
+ * (binary path etc.) are reduced to an "installed"/"not installed"
  * status — the concrete path is developer noise and is not surfaced.
  */
 function BridgeCard({ status }: { status: SubagentStatus }) {
   const installed = Boolean(status.binary_detected);
   const live = status.enabled && installed;
   const stateLabel = !status.configured
-    ? "nicht konfiguriert"
+    ? "not configured"
     : !installed
-      ? "Engine nicht installiert"
+      ? "engine not installed"
       : status.enabled
-        ? "aktiviert"
-        : "deaktiviert (enabled = false)";
+        ? "enabled"
+        : "disabled (enabled = false)";
 
   const modelLabel =
     status.model_resolved ??
-    (status.provider_slug ? "(folgt brain.primary, kein Modell aufloesbar)" : "—");
+    (status.provider_slug ? "(follows brain.primary, no model resolvable)" : "—");
 
   return (
     <div className="card-outline space-y-3 p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">Subagent-Bridge</span>
+            <span className="font-medium">Subagent bridge</span>
             {live ? (
-              <span className="chip-yellow">aktiv</span>
+              <span className="chip-yellow">active</span>
             ) : (
               <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                inaktiv
+                inactive
               </span>
             )}
           </div>
           <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-            Externer Subagent fuer Heavy-Tasks (lies Repo, baue Feature,
-            reproduziere Bug). Nutzt dieselben Brain-Provider-Keys wie unten
-            &mdash; kein separates Eingabefeld noetig. Alle registrierten
-            MCP-Server werden beim Pre-Boot mit Mission-isoliertem State-Dir an
-            den Subagenten weitergegeben.
+            External subagent for heavy tasks (read a repo, build a feature,
+            reproduce a bug). It reuses the same brain-provider keys you set
+            above &mdash; no separate input field needed. Every registered MCP
+            server is handed to the subagent at pre-boot with a mission-isolated
+            state directory.
           </p>
         </div>
       </div>
@@ -268,27 +309,27 @@ function BridgeCard({ status }: { status: SubagentStatus }) {
         </dd>
 
         <dt className="text-muted-foreground">Engine</dt>
-        <dd className="font-mono">{installed ? "installiert" : "nicht installiert"}</dd>
+        <dd className="font-mono">{installed ? "installed" : "not installed"}</dd>
 
-        <dt className="text-muted-foreground">Pin-Version</dt>
+        <dt className="text-muted-foreground">Pin version</dt>
         <dd className="font-mono">{status.version_pin ?? "—"}</dd>
 
-        <dt className="text-muted-foreground">Aktiver Worker</dt>
+        <dt className="text-muted-foreground">Active worker</dt>
         <dd className="font-mono">
           <strong>{PROVIDER_LABELS[status.brain_primary] ?? status.brain_primary}</strong>
         </dd>
 
-        <dt className="text-muted-foreground">Modell</dt>
+        <dt className="text-muted-foreground">Model</dt>
         <dd className="break-all font-mono">
           {modelLabel}
           {status.model_override && (
-            <span className="ml-2 text-muted-foreground">(Override aus Config)</span>
+            <span className="ml-2 text-muted-foreground">(override from config)</span>
           )}
         </dd>
 
         {status.time_cap_min !== null && (
           <>
-            <dt className="text-muted-foreground">Time-Cap</dt>
+            <dt className="text-muted-foreground">Time cap</dt>
             <dd className="font-mono">
               {status.time_cap_min} min · max. {status.concurrency} parallel
             </dd>
@@ -299,10 +340,205 @@ function BridgeCard({ status }: { status: SubagentStatus }) {
   );
 }
 
+function CodexConnectionCard({
+  status,
+  onChanged,
+}: {
+  status: CodexStatus | null;
+  onChanged: () => void | Promise<void>;
+}) {
+  const pushToast = useEventStore((s) => s.pushToast);
+  const [pending, setPending] = useState(false);
+  const connected = Boolean(status?.connected);
+  const installed = status?.installed ?? false;
+  const email =
+    status?.user_email ??
+    status?.account_label ??
+    status?.accountLabel ??
+    null;
+  const detail = connected
+    ? email
+      ? `Connected as ${email}`
+      : status?.message || "Connected via ChatGPT"
+    : status?.message || "ChatGPT login not connected";
+
+  async function connect() {
+    setPending(true);
+    try {
+      await startCodexLogin();
+      pushToast("info", "Codex login started");
+      await onChanged();
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function disconnect() {
+    setPending(true);
+    try {
+      await codexLogout();
+      pushToast("info", "Codex login disconnected");
+      await onChanged();
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="card-outline space-y-3 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">OpenAI Codex ChatGPT login</span>
+            {connected ? (
+              <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">
+                ready
+              </span>
+            ) : (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                open
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+            {detail}
+          </p>
+          {!installed && (
+            <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-600">
+              <Terminal className="h-3 w-3 shrink-0" />
+              <span>Install Codex before connecting.</span>
+            </p>
+          )}
+        </div>
+        {connected ? (
+          <button
+            type="button"
+            onClick={disconnect}
+            disabled={pending}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            Disconnect
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={connect}
+            disabled={pending || !installed}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+          >
+            <LogIn className="h-3.5 w-3.5" />
+            Connect
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AntigravityConnectionCard({
+  status,
+  onChanged,
+}: {
+  status: AntigravityStatus | null;
+  onChanged: () => void | Promise<void>;
+}) {
+  const pushToast = useEventStore((s) => s.pushToast);
+  const [pending, setPending] = useState(false);
+  const connected = Boolean(status?.connected);
+  const installed = status?.installed ?? false;
+  const detail = connected
+    ? status?.user_email
+      ? `Connected as ${status.user_email}`
+      : status?.message || "Connected"
+    : status?.message || "Google login not connected";
+
+  async function connect() {
+    setPending(true);
+    try {
+      await loginAntigravity();
+      pushToast("info", "Google login started");
+      await onChanged();
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function disconnect() {
+    setPending(true);
+    try {
+      await logoutAntigravity();
+      pushToast("info", "Google login disconnected");
+      await onChanged();
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="card-outline space-y-3 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">Antigravity Google login</span>
+            {connected ? (
+              <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">
+                ready
+              </span>
+            ) : (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                open
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+            {detail}
+          </p>
+          {!installed && (
+            <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-600">
+              <Terminal className="h-3 w-3 shrink-0" />
+              <span>Install Antigravity or the Gemini CLI before connecting.</span>
+            </p>
+          )}
+        </div>
+        {connected ? (
+          <button
+            type="button"
+            onClick={disconnect}
+            disabled={pending}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            Disconnect
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={connect}
+            disabled={pending || !installed}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+          >
+            <LogIn className="h-3.5 w-3.5" />
+            Connect
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /**
  * One sub-agent-capable provider, styled to match the `ProviderCard` in
  * `ApiKeysView` (header + badge + id·auth sub-line + active highlight + the
- * "Als aktiv" radio). Clicking the card or the radio switches the Heavy-Task
+ * "Set active" radio). Clicking the card or the radio switches the Heavy-Task
  * subagent provider via `POST /api/subagent/switch` (3-layer persist). The key
  * itself is managed by the brain-provider card above; a provider with no key
  * cannot be activated (warning toast instead of a silent no-op).
@@ -323,7 +559,11 @@ function SubagentProviderCard({
     if (!row.key_set) {
       pushToast(
         "warning",
-        `${label}: erst den API-Key oben beim Brain-Provider setzen.`,
+        row.jarvis === "openai-codex"
+          ? `${label}: connect the ChatGPT login above first.`
+          : row.jarvis === "antigravity"
+            ? `${label}: connect the Google login above first.`
+            : `${label}: set the API key on the brain provider above first.`,
       );
       return;
     }
@@ -331,7 +571,7 @@ function SubagentProviderCard({
     try {
       const result = await switchSubagentProvider(row.jarvis);
       const note = result.restart_required
-        ? " (aktiv ab nächstem Neustart)"
+        ? " (active from next restart)"
         : "";
       pushToast("success", `Subagent → ${label}${note}`);
       window.dispatchEvent(new CustomEvent("jarvis:subagent-switched"));
@@ -359,10 +599,10 @@ function SubagentProviderCard({
       onDoubleClick={handleCardActivate}
       title={
         row.is_active_brain
-          ? "Dieser Subagent-Provider ist aktiv"
+          ? "This subagent provider is active"
           : row.key_set
-            ? "Diesen Subagent-Provider aktivieren"
-            : "Erst API-Key setzen"
+            ? "Activate this subagent provider"
+            : "Set an API key first"
       }
       className={cn(
         "card-outline space-y-2 p-4 transition-colors",
@@ -399,9 +639,26 @@ function SubagentProviderCard({
       </div>
 
       {!row.key_set && (
-        <p className="text-[11px] text-muted-foreground">
-          Key fehlt &mdash; oben beim Brain-Provider setzen, dann ist dieser
-          Subagent einsatzbereit.
+        <p className="flex items-center gap-1.5 text-[11px] text-amber-600">
+          <Lock className="h-3 w-3 shrink-0" />
+          <span>
+            {row.jarvis === "openai-codex" ? (
+              <>
+                Locked &mdash; connect <strong>{label}</strong> with ChatGPT above
+                to unlock it.
+              </>
+            ) : row.jarvis === "antigravity" ? (
+              <>
+                Locked &mdash; connect <strong>{label}</strong> with Google above
+                to unlock it.
+              </>
+            ) : (
+              <>
+                Locked &mdash; add the <strong>{label}</strong> key in the Brain
+                section above to unlock it.
+              </>
+            )}
+          </span>
         </p>
       )}
     </div>
@@ -426,10 +683,10 @@ function SubagentActiveControl({
   onActivate: () => void;
 }) {
   const labelTitle = row.is_active_brain
-    ? "Dieser Subagent-Provider ist aktiv"
+    ? "This subagent provider is active"
     : row.key_set
-      ? "Diesen Subagent-Provider aktivieren"
-      : "Erst API-Key setzen";
+      ? "Activate this subagent provider"
+      : "Set an API key first";
 
   return (
     <label
@@ -453,28 +710,28 @@ function SubagentActiveControl({
         disabled={activating}
         className="accent-primary"
       />
-      {activating ? "Aktiviere…" : "Als aktiv"}
+      {activating ? "Activating…" : "Set active"}
     </label>
   );
 }
 
 /**
  * Mirrors the three StatusBadge variants from `ApiKeysView` (chip-yellow
- * "aktiv" / emerald "eingerichtet" / muted "offen") so the subagent cards are
+ * "active" / emerald "ready" / muted "open") so the subagent cards are
  * visually indistinguishable from the API-key cards above.
  */
 function SubagentStatusBadge({ row }: { row: SubagentMappingRow }) {
-  if (row.is_active_brain) return <span className="chip-yellow">aktiv</span>;
+  if (row.is_active_brain) return <span className="chip-yellow">active</span>;
   if (row.key_set) {
     return (
       <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">
-        eingerichtet
+        ready
       </span>
     );
   }
   return (
     <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-      offen
+      open
     </span>
   );
 }

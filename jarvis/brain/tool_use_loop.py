@@ -411,6 +411,9 @@ class ToolUseLoop:
                 except Exception:  # noqa: BLE001
                     log.debug("on_progress callback raised (ignored)", exc_info=True)
 
+        def _delta_progress(_delta: object) -> None:
+            _progress()
+
         while True:
             req = BrainRequest(
                 messages=tuple(current_messages),
@@ -421,7 +424,11 @@ class ToolUseLoop:
             )
             stream = self._brain.complete(req)
             if text_consumer is not None:
-                agg = await aggregate_with_consumer(stream, text_consumer)
+                agg = await aggregate_with_consumer(
+                    stream,
+                    text_consumer,
+                    delta_consumer=_delta_progress,
+                )
             else:
                 agg = await aggregate(stream)
             # A model round finished — the brain is alive and working. Reset the

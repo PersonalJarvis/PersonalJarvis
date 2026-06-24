@@ -4,6 +4,7 @@ import { ViewHeader } from "@/views/ChatsView";
 import { AltCredentialNote } from "@/components/AltCredentialNote";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
+import { CuModelSelector } from "@/components/CuModelSelector";
 import { ProviderBillingBadge } from "@/components/ProviderBillingBadge";
 import { SubagentSection } from "@/components/SubagentSection";
 import { TelephonyPanel } from "@/views/TelephonyView";
@@ -305,6 +306,21 @@ function ProviderCard({
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium">{descriptor.label}</span>
             <StatusBadge descriptor={descriptor} />
+            {descriptor.recommended && (
+              <span
+                className="rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-primary"
+                title={
+                  descriptor.recommended_model
+                    ? t("apikeys_view.recommended_tooltip").replace(
+                        "{0}",
+                        descriptor.recommended_model,
+                      )
+                    : undefined
+                }
+              >
+                {t("apikeys_view.recommended")}
+              </span>
+            )}
           </div>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
             <code className="font-mono">{descriptor.id}</code>
@@ -358,7 +374,19 @@ function ProviderCard({
         ((descriptor.tier === "tts" || descriptor.tier === "stt") &&
           descriptor.active &&
           descriptor.configured)) && (
-        <BrainModelSelector providerId={descriptor.id} />
+        <BrainModelSelector
+          providerId={descriptor.id}
+          recommendedModel={descriptor.recommended_model}
+        />
+      )}
+
+      {/* Phase 3: a dedicated Computer-Use model, selectable per brain provider
+          (defaults to the provider's main model — no automatic escalation). */}
+      {descriptor.tier === "brain" && descriptor.configured && isBrainSwitchable && (
+        <CuModelSelector
+          providerId={descriptor.id}
+          recommendedModel={descriptor.recommended_model}
+        />
       )}
 
       <ProviderTestControl providerId={descriptor.id} />

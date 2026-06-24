@@ -156,6 +156,25 @@ class BrainModelSaveResponse(BaseModel):
     probe: BrainModelProbe | None = None
 
 
+# Phase 3: selectable Computer-Use model per provider. CU runs on the provider's
+# main ``model`` by default; a pinned ``cu_model`` lets the user run CU on a
+# different (e.g. stronger) model than chat. ``cu_model == ""`` means "use my
+# main model". Separate from the model endpoints so those stay untouched.
+class CuModelBody(BaseModel):
+    cu_model: str = Field(default="", max_length=200)  # "" -> use the main model
+    persist: bool = Field(default=True)
+
+
+class CuModelResponse(BaseModel):
+    ok: bool = True
+    provider: str
+    cu_model: str          # the pinned value ("" = use the main model)
+    effective_model: str   # the model Computer-Use would actually run
+    uses_main: bool        # True when nothing is pinned (effective == main model)
+    persisted: bool = False
+    restart_required: bool = False
+
+
 # ----------------------------------------------------------------------
 # Helper
 # ----------------------------------------------------------------------
@@ -268,6 +287,10 @@ def _spec_to_payload(
         "credential_help": spec.credential_help,
         "signup_url": spec.signup_url,
         "billing": provider_billing(spec),
+        # Maintainer-recommended pick for this tier (UI badge) + the model it
+        # points at. Presentation only — never gates behavior (AP-21).
+        "recommended": spec.recommended,
+        "recommended_model": spec.recommended_model,
         # Gemini's AI-Studio-vs-Vertex split; None for single-path providers.
         "alt_credential": (
             {
@@ -500,6 +523,30 @@ def _current_brain_model(cfg: Any, provider: str) -> str:
         pc = providers.get(provider)
     model = getattr(pc, "model", None) if pc is not None else None
     return model or get_tier_default_model("router", provider) or ""
+
+
+def _provider_cu_model(cfg: Any, provider: str) -> str:
+    """The pinned Computer-Use model for ``provider`` ("" when none is set)."""
+    providers = getattr(getattr(cfg, "brain", None), "providers", None)
+    pc = providers.get(provider) if isinstance(providers, dict) else None
+    return (getattr(pc, "cu_model", None) or "") if pc is not None else ""
+
+
+def _set_cu_model_in_memory(cfg: Any, provider: str, value: str) -> None:
+    """Update ``cfg.brain.providers[provider].cu_model`` live so the next CU
+    mission uses it without a restart (the loop reads cfg fresh each mission).
+    Best-effort: a frozen/detached cfg is not an error."""
+    try:
+        providers = cfg.brain.providers
+        pc = providers.get(provider)
+        if pc is None:
+            from jarvis.core.config import BrainProviderConfig
+
+            pc = BrainProviderConfig()
+            providers[provider] = pc
+        pc.cu_model = value
+    except Exception as exc:  # noqa: BLE001 — frozen/detached cfg is acceptable
+        log.debug("In-memory cu_model update skipped for %s: %s", provider, exc)
 
 
 async def _probe_brain_model(
@@ -791,6 +838,81 @@ async def set_brain_model(
     if cat.tier == "tts":
         return _apply_tts_selection(provider_id, value, cat.selects, body, request)
     return _apply_stt_model(provider_id, value, body, request)
+
+
+@router.get("/providers/{provider_id}/cu-model")
+async def get_cu_model(provider_id: str, request: Request) -> CuModelResponse:
+    """Return the per-provider Computer-Use model selection (Phase 3).
+
+    ``cu_model`` is the pinned value ("" = use the provider's main model);
+    ``effective_model`` is what CU would actually run. The dropdown options reuse
+    the existing ``GET /providers/{id}/models`` catalog.
+    """
+    _spec, cat = _require_catalog_provider(provider_id)
+    if cat.tier != "brain":
+        raise HTTPException(
+            status_code=400,
+            detail="A Computer-Use model only applies to brain providers.",
+        )
+    cfg = _resolve_cfg(request)
+    pinned = _provider_cu_model(cfg, provider_id)
+    effective = pinned or _current_brain_model(cfg, provider_id)
+    return CuModelResponse(
+        provider=provider_id,
+        cu_model=pinned,
+        effective_model=effective,
+        uses_main=not bool(pinned),
+    )
+
+
+@router.put("/providers/{provider_id}/cu-model")
+async def set_cu_model(
+    provider_id: str, body: CuModelBody, request: Request
+) -> CuModelResponse:
+    """Pin (or clear with "") the per-provider Computer-Use model (Phase 3).
+
+    Persists to ``[brain.providers.<id>].cu_model`` (+ drift-soll) and updates the
+    in-memory config so the next CU mission uses it with no restart. No live brain
+    probe — the model is validated lazily the next time CU dispatches.
+    """
+    _spec, cat = _require_catalog_provider(provider_id)
+    if cat.tier != "brain":
+        raise HTTPException(
+            status_code=400,
+            detail="A Computer-Use model only applies to brain providers.",
+        )
+    value = body.cu_model.strip()
+
+    persisted = False
+    if body.persist:
+        try:
+            from jarvis.core.config_writer import set_brain_provider_model
+
+            set_brain_provider_model(provider_id, cu_model=value)
+            persisted = True
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+            ) from exc
+
+    cfg = _resolve_cfg(request)
+    _set_cu_model_in_memory(cfg, provider_id, value)
+    await _emit(
+        request,
+        SecretConfigured(key=f"brain.providers.{provider_id}.cu_model", action="set"),
+    )
+    effective = value or _current_brain_model(cfg, provider_id)
+    return CuModelResponse(
+        ok=True,
+        provider=provider_id,
+        cu_model=value,
+        effective_model=effective,
+        uses_main=not bool(value),
+        persisted=persisted,
+        restart_required=False,
+    )
 
 
 @router.get("/codex/status")

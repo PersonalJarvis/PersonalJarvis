@@ -45,6 +45,8 @@ from jarvis.core.events import (
     SystemStateChanged,
     TranscriptionUpdate,
     UserVisibleFeedback,
+    WakeWordDetected,
+    VoiceBootStatus,
     VoiceMuteToggleRequested,
     VoiceSessionEnded,
     VoiceSessionStarted,
@@ -201,11 +203,25 @@ class OrbBusBridge:
         # drives _on_state without publishing VoiceSession events (and the
         # very first session before any end-event) behaves exactly as before.
         self._suppress_show_until_session: bool = False
+        # Boot-readiness gate. The persistent bar must not appear before the
+        # speech pipeline can actually hear the user — otherwise the user sees
+        # the bar on boot and assumes Jarvis is listening when warm-up is still
+        # running. ``reveal_bar_when_voice_ready`` waits for this event (set on
+        # VoiceBootStatus(ready=True)) and then reveals the persistent bar once.
+        # ``_boot_reveal_done`` makes the reveal idempotent across the ready
+        # signal and the fallback timeout. asyncio.Event() is loop-agnostic at
+        # construction (Py3.10+ dropped the loop param; project minimum is
+        # 3.11), so it is safe to build off the running loop.
+        self._voice_ready_event = asyncio.Event()
+        self._boot_reveal_done: bool = False
 
     def attach(self) -> None:
         """Subscribt die Bridge auf SystemStateChanged. Idempotent."""
         try:
             self._bus.subscribe(SystemStateChanged, self._on_state)
+            # Earliest safe visual wake cue: WakeWordDetected is emitted only
+            # after wake verification, before the later session/state events.
+            self._bus.subscribe(WakeWordDetected, self._on_wake_word_detected)
             # Voice-session lifecycle: the orb tracks SESSION boundaries, not
             # just raw turn-states, so a late in-flight turn after a hangup
             # cannot resurrect the mascot (orb-resurrection bug 2026-05-29).
@@ -216,6 +232,9 @@ class OrbBusBridge:
             self._bus.subscribe(ResponseGenerated, self._on_response_generated)
             self._bus.subscribe(OpenClawBackgroundCompleted, self._on_background_completed)
             self._bus.subscribe(AudioOutFirst, self._on_audio_out_first)
+            # Boot-readiness gate: the persistent bar is revealed only once the
+            # speech pipeline signals it can actually hear the user.
+            self._bus.subscribe(VoiceBootStatus, self._on_voice_boot_status)
             # ADR-0016 L2 — voice-driven recovery from "orb lost on screen".
             # The local_action_gate publishes OrbResetRequested when the
             # user says "Orb zurück" / "wo bist du" / "reset orb".
@@ -369,6 +388,18 @@ class OrbBusBridge:
         except RuntimeError as exc:
             log.warning("show-window publish dropped: %s", exc)
 
+    async def _on_wake_word_detected(self, event: WakeWordDetected) -> None:
+        """Pop the orb on the earliest confirmed wake signal."""
+        log.info("OrbBridge._on_wake_word_detected: keyword=%s", event.keyword)
+        prev_state = self._last_state
+        self._last_state_trace_id = str(event.trace_id)
+        self._suppress_show_until_session = False
+        self._last_state = "LISTENING"
+        self._orb.show(mode="listen")
+        if prev_state in ("IDLE", "ERROR", "PAUSED"):
+            self._orb.play_animation("wave")
+        self._cancel_idle_scheduler()
+
     async def _on_session_started(self, event: VoiceSessionStarted) -> None:
         """A genuine new voice session began (wake-word / hotkey / call).
 
@@ -430,6 +461,49 @@ class OrbBusBridge:
             event.hangup_reason,
         )
         self._suppress_show_until_session = True
+
+    async def _on_voice_boot_status(self, event: VoiceBootStatus) -> None:
+        """Track the speech-pipeline boot readiness.
+
+        ``ready=True`` (emitted once Phase A of warm-up is live — audio + VAD +
+        wake + STT + TTS client) releases the boot gate so the persistent bar is
+        revealed. ``ready=False`` (warm-up start) is ignored — the bar stays
+        hidden until voice can genuinely hear the user.
+        """
+        if event.ready:
+            self._voice_ready_event.set()
+
+    async def reveal_bar_when_voice_ready(self, *, timeout_s: float = 30.0) -> None:
+        """Keep the persistent bar hidden until voice is ready, then reveal it.
+
+        Scheduled once on the event loop at boot. Waits for
+        ``VoiceBootStatus(ready=True)``; if it never arrives within ``timeout_s``
+        (voice offline / pipeline crashed at startup), the bar is revealed anyway
+        so a degraded host is not left with no bar at all — a few seconds late
+        instead of never. A non-persistent bar / the mascot (``hide_on_idle``)
+        is left untouched: it pops on a real session, not at boot.
+        """
+        reason = "timeout-fallback"
+        try:
+            await asyncio.wait_for(self._voice_ready_event.wait(), timeout_s)
+            reason = "voice-ready"
+        except TimeoutError:
+            pass
+        self._reveal_persistent_bar(reason)
+
+    def _reveal_persistent_bar(self, reason: str) -> None:
+        """Show the persistent bar's idle pill exactly once. Idempotent."""
+        if self._boot_reveal_done:
+            return
+        self._boot_reveal_done = True
+        if self._hide_on_idle:
+            # Non-persistent bar / mascot: stays hidden until a voice session.
+            return
+        try:
+            self._orb.show("idle")
+            log.info("Persistent overlay revealed after boot (%s).", reason)
+        except Exception:  # noqa: BLE001
+            log.debug("persistent bar boot reveal failed", exc_info=True)
 
     async def _on_state(self, event: SystemStateChanged) -> None:
         state = event.new_state

@@ -4,7 +4,9 @@ import pytest
 
 from jarvis.core.bus import EventBus
 from jarvis.core.events import (
+    BrainTurnCompleted,
     ListeningStarted,
+    ResponseGenerated,
     SystemStateChanged,
     TranscriptFinal,
     VoiceSessionEnded,
@@ -148,6 +150,143 @@ async def test_multiple_transcript_finals_in_suppressed_session_keep_each_uttera
             f"expected one turn per utterance, got {len(turns)}: {user_texts}"
         )
         assert user_texts == ["Hallo Jarvis", "Wie spät ist es", "Auflegen."]
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_voice_confirm_pending_turn_is_flagged_awaiting_confirmation(
+    tmp_path,
+) -> None:
+    """A consequential ask-tier tool deferred into a two-turn voice/chat
+    confirmation ends the turn with ``finish_reason='voice_confirm_pending'``.
+    The persisted turn must carry ``awaiting_confirmation=True`` so the
+    transcript can label the reply as a pending yes/no question instead of an
+    ordinary answer (forensic 2026-06-19: "Soll ich die E-Mail senden?" was
+    indistinguishable from a normal reply in the transcript)."""
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    try:
+        bus = EventBus()
+        SessionRecorder(store).attach(bus)
+        await bus.publish(
+            VoiceSessionStarted(
+                source_layer="speech.pipeline",
+                session_id="s-confirm",
+                wake_keyword="hey_jarvis",
+                language="de",
+            )
+        )
+        await bus.publish(ListeningStarted(source_layer="speech"))
+        await bus.publish(_final("schick eine Mail an Tom"))
+        await bus.publish(
+            ResponseGenerated(
+                source_layer="brain",
+                text="Soll ich die E-Mail wirklich senden? Sag ja oder nein.",
+                language="de",
+            )
+        )
+        await bus.publish(
+            BrainTurnCompleted(
+                source_layer="brain", finish_reason="voice_confirm_pending"
+            )
+        )
+        await bus.publish(
+            VoiceSessionEnded(
+                source_layer="speech.pipeline",
+                session_id="s-confirm",
+                hangup_reason="voice_pattern",
+            )
+        )
+        turns = store.get_turns("s-confirm")
+        assert len(turns) == 1
+        assert turns[0].awaiting_confirmation is True
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_awaiting_confirmation_latch_survives_a_later_completed(
+    tmp_path,
+) -> None:
+    """One-way latch regression guard: once a turn is flagged
+    awaiting_confirmation, a later BrainTurnCompleted in the SAME turn (e.g. a
+    multi-step tool loop emitting a second completion with finish_reason='stop')
+    must NOT clear it. Guards against a refactor to
+    ``t.awaiting_confirmation = (finish_reason == 'voice_confirm_pending')``
+    that would silently break the invariant."""
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    try:
+        bus = EventBus()
+        SessionRecorder(store).attach(bus)
+        await bus.publish(
+            VoiceSessionStarted(
+                source_layer="speech.pipeline",
+                session_id="s-latch",
+                wake_keyword="hey_jarvis",
+                language="de",
+            )
+        )
+        await bus.publish(ListeningStarted(source_layer="speech"))
+        await bus.publish(_final("schick eine Mail an Tom"))
+        await bus.publish(
+            BrainTurnCompleted(
+                source_layer="brain", finish_reason="voice_confirm_pending"
+            )
+        )
+        # A later completion in the same turn must not reset the latch.
+        await bus.publish(
+            BrainTurnCompleted(source_layer="brain", finish_reason="stop")
+        )
+        await bus.publish(
+            VoiceSessionEnded(
+                source_layer="speech.pipeline",
+                session_id="s-latch",
+                hangup_reason="voice_pattern",
+            )
+        )
+        turns = store.get_turns("s-latch")
+        assert len(turns) == 1
+        assert turns[0].awaiting_confirmation is True
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_normal_turn_is_not_flagged_awaiting_confirmation(tmp_path) -> None:
+    """A normal reply (any other finish_reason) leaves the flag False."""
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    try:
+        bus = EventBus()
+        SessionRecorder(store).attach(bus)
+        await bus.publish(
+            VoiceSessionStarted(
+                source_layer="speech.pipeline",
+                session_id="s-normal",
+                wake_keyword="hey_jarvis",
+                language="de",
+            )
+        )
+        await bus.publish(ListeningStarted(source_layer="speech"))
+        await bus.publish(_final("wie spät ist es"))
+        await bus.publish(
+            ResponseGenerated(source_layer="brain", text="Es ist 15 Uhr.", language="de")
+        )
+        await bus.publish(
+            BrainTurnCompleted(source_layer="brain", finish_reason="stop")
+        )
+        await bus.publish(
+            VoiceSessionEnded(
+                source_layer="speech.pipeline",
+                session_id="s-normal",
+                hangup_reason="voice_pattern",
+            )
+        )
+        turns = store.get_turns("s-normal")
+        assert len(turns) == 1
+        assert turns[0].awaiting_confirmation is False
     finally:
         store.close()
 

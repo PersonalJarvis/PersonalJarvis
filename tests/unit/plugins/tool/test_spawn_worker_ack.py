@@ -259,6 +259,158 @@ async def test_no_announcement_contains_the_banned_template_wording() -> None:
     await _drain_background_tasks()
 
 
+@pytest.mark.asyncio
+async def test_resolved_output_language_drives_mission_and_ack() -> None:
+    """The turn's resolved ``ctx.config['output_language']`` — not a hardcoded
+    'de' and not the STT tag — decides BOTH the mission dispatch language and
+    the spoken ACK language.
+
+    Forensic 2026-06-20 ("Mask it up"): an English turn (STT mis-tagged
+    German) resolved to output_language='en', but the mission was dispatched
+    language='de' and the ACK pulled the German fallback pool. The mission-fail
+    phrase then came out German, and the German ACK text was spoken by the
+    Cartesia *English* voice = "British accent on a German sentence". Both
+    spoken surfaces must follow the one authoritative resolver.
+    """
+    mgr = _FakeMissionManager()
+    announcer = _FakeAnnouncer()
+    tool = SpawnWorkerTool(bus=EventBus(), manager=mgr, announcer=announcer)
+
+    ctx = ExecutionContext(
+        trace_id=uuid4(),
+        user_utterance="Mask it up",
+        config={"output_language": "en"},
+        memory_read=None,
+    )
+    # No "language" arg from the brain — exactly the live "Mask it up" turn.
+    await tool.execute({"utterance": "Mask it up", "action": ""}, ctx)
+    await _drain_background_tasks()
+
+    assert announcer.calls[0]["language"] == "en"
+    assert mgr.dispatch_calls[0]["language"] == "en"
+
+
+@pytest.mark.asyncio
+async def test_ctx_output_language_overrides_stale_brain_arg() -> None:
+    """The authoritative resolved language wins over a conflicting tool-call arg.
+
+    The brain's ``language`` argument is a guess (it can echo a wrong STT tag);
+    ``ctx.config['output_language']`` is the single resolver's verdict and must
+    win, so no layer re-derives the language on its own terms (Runtime Output
+    Language doctrine).
+    """
+    mgr = _FakeMissionManager()
+    announcer = _FakeAnnouncer()
+    tool = SpawnWorkerTool(bus=EventBus(), manager=mgr, announcer=announcer)
+
+    ctx = ExecutionContext(
+        trace_id=uuid4(),
+        user_utterance="Mask it up",
+        config={"output_language": "en"},
+        memory_read=None,
+    )
+    await tool.execute(
+        {"utterance": "Mask it up", "action": "", "language": "de"}, ctx
+    )
+    await _drain_background_tasks()
+
+    assert announcer.calls[0]["language"] == "en"
+    assert mgr.dispatch_calls[0]["language"] == "en"
+
+
+@pytest.mark.asyncio
+async def test_spanish_turn_caps_mission_language_to_de_but_acks_in_es() -> None:
+    """An "es" turn must not thread "es" into the de/en-only mission contract.
+
+    MissionManager.dispatch + the mission voice readback are de/en only, so the
+    mission language is capped to "de" for a Spanish turn (the spoken ACK itself
+    is still Spanish via the composer). Threading "es" into dispatch would
+    violate its Literal["de","en"] contract and the completion readback has no
+    "es" template.
+    """
+    mgr = _FakeMissionManager()
+    announcer = _FakeAnnouncer()
+    tool = SpawnWorkerTool(bus=EventBus(), manager=mgr, announcer=announcer)
+    utter = "Abre mi Gmail y busca facturas nuevas"
+    ctx = ExecutionContext(
+        trace_id=uuid4(),
+        user_utterance=utter,
+        config={"output_language": "es"},
+        memory_read=None,
+    )
+    await tool.execute({"utterance": utter, "action": "revisa el Gmail"}, ctx)
+    await _drain_background_tasks()
+
+    assert announcer.calls[0]["language"] == "es"
+    assert mgr.dispatch_calls[0]["language"] == "de"
+
+
+@pytest.mark.asyncio
+async def test_context_bleed_utterance_falls_back_to_verbatim_turn() -> None:
+    """The worker must carry the REAL spoken turn, never an echoed old task.
+
+    Forensic 2026-06-20: under a full provider collapse the turn ran on a
+    degraded fallback model fed a long prior context. For the spoken turn
+    "Mask it up" it called spawn_worker carrying a PREVIOUS request
+    ("emigrate to Melbourne") in both the utterance and action args — the
+    worker then built an entirely foreign task. ctx.user_utterance is the
+    ground truth for this turn; when the brain's utterance shares no content
+    word with it, the verbatim turn wins and the (equally bled) action/target
+    are dropped.
+    """
+    mgr = _FakeMissionManager()
+    tool = SpawnWorkerTool(bus=EventBus(), manager=mgr, announcer=_FakeAnnouncer())
+    ctx = ExecutionContext(
+        trace_id=uuid4(),
+        user_utterance="Mask it up",
+        config={"output_language": "en"},
+        memory_read=None,
+    )
+    await tool.execute(
+        {
+            "utterance": "research everything I need to emigrate to Melbourne",
+            "action": "prepare a detailed Melbourne emigration report",
+            "target": "Melbourne emigration checklist",
+        },
+        ctx,
+    )
+    await _drain_background_tasks()
+
+    prompt = mgr.dispatch_calls[0]["prompt"]
+    assert "Mask it up" in prompt
+    assert "Melbourne" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_related_interpretation_is_preserved() -> None:
+    """A genuine interpretation of the SAME turn keeps the brain's action.
+
+    Guard against over-correction: when the brain's utterance shares content
+    with the spoken turn, it is a real interpretation (possibly enriched), so
+    the action/target must survive — only an unrelated (bled) call is dropped.
+    """
+    mgr = _FakeMissionManager()
+    tool = SpawnWorkerTool(bus=EventBus(), manager=mgr, announcer=_FakeAnnouncer())
+    ctx = ExecutionContext(
+        trace_id=uuid4(),
+        user_utterance="Schau in mein Gmail nach neuen Rechnungen",
+        config={"output_language": "de"},
+        memory_read=None,
+    )
+    await tool.execute(
+        {
+            "utterance": "Schau in mein Gmail nach neuen Rechnungen",
+            "action": "durchsucht das Gmail-Postfach nach Rechnungen",
+            "target": "",
+        },
+        ctx,
+    )
+    await _drain_background_tasks()
+
+    prompt = mgr.dispatch_calls[0]["prompt"]
+    assert "durchsucht das Gmail-Postfach nach Rechnungen" in prompt
+
+
 def test_schema_offers_spoken_ack_and_language() -> None:
     """The router brain must be invited to phrase the announcement itself."""
     props = SpawnWorkerTool.schema["properties"]

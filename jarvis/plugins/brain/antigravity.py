@@ -112,8 +112,6 @@ def _build_cli_prompt(req: BrainRequest) -> str:
     """
     lines: list[str] = [_CLI_SYSTEM, ""]
     prefs = render_cli_standing_instructions(req.system)
-    if prefs:
-        lines.extend([prefs, ""])
     convo = [
         m
         for m in req.messages
@@ -123,6 +121,8 @@ def _build_cli_prompt(req: BrainRequest) -> str:
     for m in convo:
         speaker = "User" if m.role == "user" else "Assistant"
         lines.append(f"{speaker}: {m.content}")
+    if prefs:
+        lines.extend(["", prefs])
     # The reply-language directive rides LAST (highest recency) so the CLI model
     # answers in the turn's resolved language instead of anchoring to the German
     # persona — without this the directive is dropped and an English request is

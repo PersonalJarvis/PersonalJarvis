@@ -227,6 +227,7 @@ class WebServer:
         )
         from .chats_routes import router as chats_router
         from .cli_routes import router as cli_router
+        from .drop_routes import router as drop_router
         from .contacts_routes import router as contacts_router
         from .control_routes import router as control_router
         from .docs_routes import router as docs_router
@@ -245,6 +246,7 @@ class WebServer:
         )
         from .outputs_routes import router as outputs_router
         from .preview_routes import router as preview_router
+        from .antigravity_routes import router as antigravity_router
         from .profile_routes import router as profile_router
         from .provider_routes import router as provider_router
         from .review_routes import router as review_router
@@ -272,6 +274,7 @@ class WebServer:
         app.include_router(mcp_router)
         app.include_router(tools_router)
         app.include_router(provider_router)
+        app.include_router(antigravity_router)
         app.include_router(control_router)
         app.include_router(profile_router)
         app.include_router(settings_router)
@@ -322,6 +325,7 @@ class WebServer:
         # "Speak in this conversation". Reuses chat_store + session_store +
         # brain + speech_pipeline from app.state (graceful 503s when absent).
         app.include_router(chats_router)
+        app.include_router(drop_router)
         # Default: kein Recorder verdrahtet — _init_session_stack() in start()
         # setzt das beim Erfolg um.
         app.state.session_store = None
@@ -789,7 +793,6 @@ class WebServer:
                 "openrouter": "openrouter_api_key",
                 "openai": "openai_api_key",
                 "gemini": "gemini_api_key",
-                "grok": "grok_api_key",
             }
             mapping_rows = []
             for mapping in MAPPINGS:
@@ -842,12 +845,12 @@ class WebServer:
             )
 
             # Antigravity is a DIRECT worker (GoogleCliWorker over the official
-            # agy/Gemini CLI) with no OpenClaw slug, so it is not in MAPPINGS â€”
+            # agy/Gemini CLI) with no OpenClaw slug, so it is not in MAPPINGS —
             # the Google sibling of Codex. Surface it as an explicit selectable
             # subagent row, backed by the Google subscription OAuth login (no API
             # key): "key_set" is the connected state. Selecting it routes heavy
             # tasks through agy; selecting any other provider routes through that
-            # one â€” the choice is never hardcoded (init._select_subagent_worker_kind).
+            # one — the choice is never hardcoded (init._select_subagent_worker_kind).
             try:
                 from jarvis.google_cli.auth_service import GoogleCliAuthService
 

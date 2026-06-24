@@ -275,8 +275,43 @@ async def test_ready_cue_played_after_phase_a(monkeypatch) -> None:
     pipe = _new_pipe(monkeypatch, bus=FakeBus())
 
     await pipe._warmup()
+    task = pipe._warmup_ready_cue_task
+    assert task is not None
+    await task
 
     assert (READY_PCM, CHIME_SAMPLE_RATE) in pipe._player.play_pcm_calls
+
+
+@pytest.mark.asyncio
+async def test_ready_cue_does_not_block_wake_loop_start(monkeypatch) -> None:
+    """The ready chime must not sit between ready=True and the wake loop.
+
+    Live logs showed Phase A completing quickly, then ``_play_ready_cue`` holding
+    ``_warmup()`` for several seconds before ``Pipeline bereit`` and the wake
+    listener started. A wedged/slow output device must not keep the wake word
+    dead after the critical listening path is ready.
+    """
+    bus = FakeBus()
+    pipe = _new_pipe(monkeypatch, bus=bus)
+    cue_started = asyncio.Event()
+    cue_release = asyncio.Event()
+
+    async def _blocking_ready_cue() -> None:
+        cue_started.set()
+        await cue_release.wait()
+
+    pipe._play_ready_cue = _blocking_ready_cue  # type: ignore[method-assign]
+
+    await asyncio.wait_for(pipe._warmup(), timeout=0.5)
+
+    boot_events = [e for e in bus.published if isinstance(e, VoiceBootStatus)]
+    assert any(e.ready for e in boot_events), "ready=True must be emitted"
+    await asyncio.wait_for(cue_started.wait(), timeout=0.5)
+
+    task = pipe._warmup_ready_cue_task
+    assert task is not None and not task.done()
+    cue_release.set()
+    await asyncio.wait_for(task, timeout=0.5)
 
 
 @pytest.mark.asyncio

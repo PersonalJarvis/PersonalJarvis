@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { Monitor, Eye, Volume2 } from "lucide-react";
+import { Monitor, Eye, Volume2, Bell } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
-import { MascotGigi } from "@/components/MascotGigi";
 import { useOverlayStyle, type OverlayStyle } from "@/hooks/useOverlayStyle";
+import { StylePreview } from "@/components/overlay/OverlayStylePreviews";
 import { useBarPersistent } from "@/hooks/useBarPersistent";
 import { useMuteMusic } from "@/hooks/useMuteMusic";
+import { useSoundEffects } from "@/hooks/useSoundEffects";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -40,6 +41,8 @@ export function OverlayTaskbarGroup() {
           <BarPersistentRow />
           <div className="mx-4 border-t border-border/60" />
           <MuteMusicRow />
+          <div className="mx-4 border-t border-border/60" />
+          <SoundEffectsRow />
         </div>
       </section>
     </div>
@@ -138,6 +141,41 @@ function MuteMusicRow() {
       title={t("taskbar_view.mute_music.title")}
       description={t("taskbar_view.mute_music.description")}
       checked={enabled ?? false}
+      disabled={loading || saving}
+      onToggle={onToggle}
+    />
+  );
+}
+
+function SoundEffectsRow() {
+  const t = useT();
+  const { enabled, loading, setEnabled } = useSoundEffects();
+  const pushToast = useEventStore((s) => s.pushToast);
+  const [saving, setSaving] = useState(false);
+
+  async function onToggle(next: boolean) {
+    setSaving(true);
+    try {
+      await setEnabled(next);
+      pushToast(
+        "success",
+        next
+          ? t("taskbar_view.sound_effects.enabled_toast")
+          : t("taskbar_view.sound_effects.disabled_toast"),
+      );
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <ToggleRow
+      icon={Bell}
+      title={t("taskbar_view.sound_effects.title")}
+      description={t("taskbar_view.sound_effects.description")}
+      checked={enabled ?? true}
       disabled={loading || saving}
       onToggle={onToggle}
     />
@@ -285,65 +323,5 @@ function OverlayStylePanel() {
         </div>
       </div>
     </div>
-  );
-}
-
-/** Visual preview for each overlay style (mascot reuses the real Gigi SVG). */
-function StylePreview({ style }: { style: OverlayStyle }) {
-  if (style === "mascot") {
-    return <MascotGigi size={46} reactToVoice={false} enableComments={false} />;
-  }
-  if (style === "whisper_bar") return <BarPreview />;
-  return <NonePreview />;
-}
-
-function BarPreview() {
-  const heights = [6, 11, 15, 8, 14, 9, 7];
-  return (
-    <svg viewBox="0 0 100 40" className="w-20" aria-hidden="true">
-      <rect
-        x="6"
-        y="11"
-        width="88"
-        height="18"
-        rx="9"
-        fill="#0e0d0c"
-        stroke="#d7b669"
-        strokeWidth="1.6"
-      />
-      {heights.map((h, i) => (
-        <rect
-          key={i}
-          x={24 + i * 8}
-          y={20 - h / 2}
-          width="3"
-          height={h}
-          rx="1.5"
-          fill="#e7c46e"
-        />
-      ))}
-    </svg>
-  );
-}
-
-export function NonePreview() {
-  return (
-    <svg viewBox="0 0 100 40" className="w-20 opacity-50" aria-hidden="true">
-      <rect
-        x="6"
-        y="11"
-        width="88"
-        height="18"
-        rx="9"
-        fill="none"
-        stroke="#7c766b"
-        strokeWidth="1.6"
-        strokeDasharray="4 3"
-      />
-      {/* Diagonal "disabled" strike — kept inside the dashed box (y 11..29)
-          and symmetric about its centre (50, 20) so it never juts out as a
-          stub above/below the pill. */}
-      <line x1="25" y1="25" x2="75" y2="15" stroke="#7c766b" strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
   );
 }

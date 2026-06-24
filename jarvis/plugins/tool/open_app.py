@@ -16,11 +16,18 @@ import subprocess
 from typing import Any
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
-from jarvis.platform import detect_platform
+from jarvis.platform import detect_platform, window_state
 from jarvis.plugins.tool.app_resolver import (
     _resolve_via_start_menu,
     resolve_app_launch_target,
 )
+
+# Apps for which a second window is normal/expected — never short-circuit these
+# to "already running -> focus"; the user almost always wants a fresh instance.
+_MULTI_INSTANCE_APPS: frozenset[str] = frozenset({
+    "explorer", "cmd", "powershell", "pwsh", "wt", "windowsterminal",
+    "terminal", "conhost", "gnome-terminal", "konsole", "xterm",
+})
 
 # Bekannte Apps + haeufige Aliases. Reicht fuer 95% der Voice-Commands;
 # exotische Apps laufen ueber PATH-Resolve oder expliziten Pfad.
@@ -50,6 +57,10 @@ _KNOWN_APPS_WIN: frozenset[str] = frozenset({
     "mspaint", "paint", "photoshop", "illustrator", "figma", "gimp", "inkscape",
     # Gaming / Misc
     "steam", "epicgameslauncher", "battle.net", "blender",
+    # Built-in Windows Store / UWP apps (launched via a protocol URI by the
+    # resolver, see app_resolver._UWP_PROTOCOLS). Whitelisted so the
+    # plausibility gate does not reject them as "not found" (live 2026-06-22).
+    "microsoft store", "windows store", "store",
     # Jarvis-intern
     "jarvis",
 })
@@ -200,6 +211,15 @@ class OpenAppTool:
                 "description": "Optionale CLI-Argumente",
                 "default": "",
             },
+            "reuse_existing": {
+                "type": "boolean",
+                "description": (
+                    "If the app is already running, focus its existing window "
+                    "instead of launching a new instance (default true). Set "
+                    "false to force a fresh window."
+                ),
+                "default": True,
+            },
         },
         "required": ["app_name"],
     }
@@ -234,6 +254,31 @@ class OpenAppTool:
                 output=None,
                 error=f"App-Name '{app_name[:80]}' abgelehnt ({reason}). {hint}",
             )
+
+        # Already-running short-circuit: if the app is open, focus its existing
+        # window instead of launching a second instance (saves a CU step — the
+        # "OBS is already in the taskbar" case). Conservative: only for plausible
+        # single-instance app names, never for URLs/paths or multi-instance apps,
+        # and only when reuse is requested. A focus failure falls through to a
+        # normal launch (never blocks). is_app_running is best-effort and never
+        # raises, so this can only help, never break, the launch path.
+        reuse_existing = bool(args.get("reuse_existing", True))
+        low = app_name.lower().removesuffix(".exe")
+        is_url = app_name.startswith(("http://", "https://", "file://"))
+        is_path = (
+            any(sep in app_name for sep in (":\\", ":/"))
+            or app_name.startswith((".", "\\", "/"))
+        )
+        if reuse_existing and not is_url and not is_path and low not in _MULTI_INSTANCE_APPS:
+            running = window_state.is_app_running(app_name)
+            if running is not None:
+                focused, _msg = window_state.focus_window(running.title)
+                if focused:
+                    return ToolResult(
+                        success=True,
+                        output=f"{app_name} is already running — brought it to the front.",
+                    )
+                # focus failed (e.g. foreground-lock) -> fall through to launch
 
         try:
             launch_target = resolve_app_launch_target(app_name)

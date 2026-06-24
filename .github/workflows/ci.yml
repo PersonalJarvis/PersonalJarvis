@@ -19,6 +19,15 @@
 #   * pytest failures            -> reported (the floor script warns; pass
 #     --strict once the suite is fully green to make them blocking).
 #
+# Cost policy (added 2026-06-23): macOS runners bill at ~10x the Linux rate, so
+# the macOS leg is OFF for ordinary push/PR runs and ON only for a manual
+# workflow_dispatch (the `include_macos` input, default true). Linux + Windows
+# run on every push/PR and catch almost all cross-platform regressions. A
+# `concurrency` group cancels a superseded in-flight run so a burst of commits
+# can't stack billable minutes. To prove macOS on demand: the Actions tab ->
+# "Run workflow", or `gh workflow run ci.yml`. The `configure` job is the single
+# source of truth for which OS legs run (consumed by both `test` and `jarvisctl`).
+#
 # Action SHAs are pinned to 40-char commits already vetted elsewhere in this
 # repo's workflows (CVE-2025-30066 hardening).
 
@@ -30,20 +39,55 @@ on:
       - main
       - "wip/cross-platform-cloud-first-20260529"
   pull_request:
+  workflow_dispatch:
+    inputs:
+      include_macos:
+        description: "Also run the macOS leg (~10x runner cost). On by default for a manual run, since proving macOS is usually the point of dispatching by hand."
+        type: boolean
+        default: true
+
+# Cost control: a new push to the same ref cancels the previous in-flight run,
+# so a burst of commits doesn't stack up billable runner minutes. Keyed on ref
+# so different branches never cancel each other.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
+  # Single source of truth for which OS legs run. macOS bills at ~10x the Linux
+  # rate, so it is included ONLY for a manual workflow_dispatch with include_macos
+  # (default true). Every ordinary push/PR runs the cheap Linux + Windows legs,
+  # which catch almost all cross-platform regressions. Both `test` and `jarvisctl`
+  # consume this output so the policy lives in exactly one place.
+  configure:
+    name: configure matrix (cost-aware)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      os-matrix: ${{ steps.pick.outputs.os-matrix }}
+    steps:
+      - name: Pick OS matrix
+        id: pick
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.include_macos }}" = "true" ]; then
+            echo 'os-matrix=["ubuntu-latest","windows-latest","macos-latest"]' >> "$GITHUB_OUTPUT"
+            echo "macOS leg INCLUDED (manual dispatch)."
+          else
+            echo 'os-matrix=["ubuntu-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
+            echo "macOS leg SKIPPED (cheap push/PR run). Dispatch manually to include it."
+          fi
+
   test:
     name: test (${{ matrix.os }})
+    needs: configure
     strategy:
-      fail-fast: false # we want to see ALL three OS legs, not just the first red one
+      fail-fast: false # we want to see ALL OS legs, not just the first red one
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
+        os: ${{ fromJSON(needs.configure.outputs.os-matrix) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
 
@@ -116,13 +160,11 @@ jobs:
   # all three OS legs.
   jarvisctl:
     name: jarvisctl unit (${{ matrix.os }})
+    needs: configure
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
+        os: ${{ fromJSON(needs.configure.outputs.os-matrix) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
 
@@ -142,7 +184,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]" --no-deps
-          python -m pip install typer platformdirs httpx rich
+          # pytest is needed to RUN the suite; --no-deps above skips it (and all
+          # of [dev]'s deps), so install the test runner explicitly alongside the
+          # CLI's own runtime deps. Keeps the job light (no torch/heavy deps).
+          python -m pip install typer platformdirs httpx rich pytest pytest-asyncio
 
       - name: pytest (jarvisctl unit suite)
         run: python -m pytest tests/unit/cli_ctl/ -v

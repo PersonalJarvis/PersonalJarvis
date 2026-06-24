@@ -60,6 +60,10 @@ export function SessionDetail({ detail, loading, error }: Props) {
       if (e.kind !== "SpeechSpoken") continue;
       const text = String((e.payload as { text?: unknown })?.text ?? "");
       if (!text.trim()) continue;
+      // The technical diagnostic rides on the recorded event; it is carried on
+      // the projection for parity with the payload but deliberately NOT rendered
+      // in the transcript (TurnCard) — it is surfaced in the Run Inspector
+      // instead (user request 2026-06-22, reversing the 2026-06-16 ask).
       const rawDetail = (e.payload as { detail?: unknown })?.detail;
       const detail =
         typeof rawDetail === "string" && rawDetail.trim()
@@ -89,14 +93,14 @@ export function SessionDetail({ detail, loading, error }: Props) {
         const text = await fetchSessionExport(detail.session.id, format);
         const ok = await robustCopy(text);
         if (ok) {
-          pushToast("success", `Session als ${FORMAT_LABEL[format]} kopiert`);
+          pushToast("success", `${t("session_detail.copied_as")} ${FORMAT_LABEL[format]}`);
         } else {
-          pushToast("error", "Kopieren fehlgeschlagen — Clipboard-Zugriff blockiert?");
+          pushToast("error", t("session_detail.copy_failed_clipboard"));
         }
       } catch (e) {
         pushToast(
           "error",
-          e instanceof Error ? e.message : "Kopieren fehlgeschlagen",
+          e instanceof Error ? e.message : t("session_detail.copy_failed"),
         );
       }
     },
@@ -113,11 +117,11 @@ export function SessionDetail({ detail, loading, error }: Props) {
           detail.turns.find((t) => t.user_text)?.user_text ?? "";
         const filename = buildSessionFilename(detail.session, preview, format);
         downloadAs(filename, text, mimeFor(format));
-        pushToast("success", `Heruntergeladen als ${filename}`);
+        pushToast("success", `${t("session_detail.downloaded_as")} ${filename}`);
       } catch (e) {
         pushToast(
           "error",
-          e instanceof Error ? e.message : "Download fehlgeschlagen",
+          e instanceof Error ? e.message : t("session_detail.download_failed"),
         );
       }
     },
@@ -128,7 +132,7 @@ export function SessionDetail({ detail, loading, error }: Props) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-        Lade Session…
+        {t("session_detail.loading")}
       </div>
     );
   }
@@ -137,7 +141,7 @@ export function SessionDetail({ detail, loading, error }: Props) {
     return (
       <div className="flex h-full items-center justify-center p-6">
         <div className="max-w-md rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm">
-          <div className="font-semibold text-destructive">Fehler beim Laden</div>
+          <div className="font-semibold text-destructive">{t("session_detail.load_error")}</div>
           <div className="mt-1 text-muted-foreground">{error.message}</div>
         </div>
       </div>
@@ -163,14 +167,14 @@ export function SessionDetail({ detail, loading, error }: Props) {
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="font-display text-lg font-semibold">
-              Voice-Session
+              {t("session_detail.title")}
             </div>
             <div className="font-mono text-xs text-muted-foreground">
               {startedDt.toLocaleString("de")}
               {endedDt && ` — ${endedDt.toLocaleTimeString("de")}`}
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              <Badge variant="secondary">{session.turn_count} Turns</Badge>
+              <Badge variant="secondary">{session.turn_count} {t("session_detail.turns")}</Badge>
               <Badge variant="secondary">{session.language}</Badge>
               {session.hangup_reason && (
                 <Badge variant="outline">{session.hangup_reason}</Badge>
@@ -229,7 +233,7 @@ export function SessionDetail({ detail, loading, error }: Props) {
           {turns.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
               {t("sessions.no_turns")}
-              ohne Folge-Utterance.
+              {t("session_detail.no_turns_suffix")}
             </div>
           ) : (
             turns.map((t) => (
@@ -266,6 +270,7 @@ function ExportRow({
   onDownload,
   variant,
 }: ExportRowProps) {
+  const t = useT();
   const labelClass =
     variant === "primary"
       ? "rounded-md border border-primary/40 bg-primary/10 px-2 py-1 text-xs font-medium text-primary"
@@ -283,7 +288,7 @@ function ExportRow({
         variant="ghost"
         onClick={onCopy}
         className="h-7 w-7 shrink-0 p-0"
-        title={`${label} kopieren`}
+        title={`${t("session_detail.copy_action")} ${label}`}
       >
         <Copy className="h-3.5 w-3.5" />
       </Button>
@@ -293,7 +298,7 @@ function ExportRow({
         variant="ghost"
         onClick={onDownload}
         className="h-7 w-7 shrink-0 p-0"
-        title={`${label} als Datei herunterladen`}
+        title={`${t("session_detail.download_file_action")} ${label}`}
       >
         <Download className="h-3.5 w-3.5" />
       </Button>

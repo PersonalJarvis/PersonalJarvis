@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import shutil
 import subprocess
 import sys
 from contextlib import suppress as contextlib_suppress
@@ -12,6 +14,51 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+
+
+def _windows_node_dir_candidates() -> list[str]:
+    """Well-known Windows directories that may contain ``node.exe``.
+
+    Probed only when ``shutil.which`` misses node — which happens when jarvis is
+    launched with a degraded PATH that lacks the Node.js dir (live forensic
+    2026-06-20: jarvis started by the hermes-agent runtime, PATH had no nodejs
+    entry, so the codex worker's ``node`` lookup failed and every mission died).
+    """
+    candidates: list[str] = []
+    for var in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
+        base = os.environ.get(var)
+        if base:
+            candidates.append(os.path.join(base, "nodejs"))
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        candidates.append(os.path.join(local, "Programs", "nodejs"))
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        # npm-global shims (codex.cmd etc.) and sometimes a node copy live here.
+        candidates.append(os.path.join(appdata, "npm"))
+    # Hardcoded default install path as a last resort.
+    candidates.append(r"C:\Program Files\nodejs")
+    return candidates
+
+
+def resolve_node_executable() -> str | None:
+    """Return an absolute path to ``node``, robust against a degraded PATH.
+
+    ``shutil.which`` searches the *inherited* PATH; when jarvis is launched with
+    a PATH that lacks the Node.js dir, that returns ``None`` and any node-direct
+    worker spawn would fall back to the fragile ``.cmd`` shim (whose own bare
+    ``node`` lookup ALSO fails) — the 2026-06-20 "alle Missionen scheitern"
+    incident. So when ``which`` misses, probe the well-known install locations.
+    """
+    found = shutil.which("node") or shutil.which("node.exe")
+    if found:
+        return found
+    if sys.platform == "win32":
+        for directory in _windows_node_dir_candidates():
+            candidate = os.path.join(directory, "node.exe")
+            if os.path.isfile(candidate):
+                return candidate
+    return None
 
 
 def worker_creationflags() -> int:
@@ -93,5 +140,6 @@ __all__ = [
     "contextlib_suppress",
     "create_worker_subprocess",
     "drain_stderr",
+    "resolve_node_executable",
     "worker_creationflags",
 ]

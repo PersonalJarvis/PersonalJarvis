@@ -22,8 +22,8 @@ import { Check, ExternalLink, Loader2, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useT } from "@/i18n";
 import type { ObsidianStatus } from "@/types/setup";
-import { useEventStore } from "@/store/events";
 
 export interface ObsidianSetupDialogProps {
   /** Whether the dialog is visible. */
@@ -90,10 +90,11 @@ interface HeaderProps {
 }
 
 function StepHeader({ current, reached }: HeaderProps): JSX.Element {
+  const t = useT();
   const stepLabels: Record<StepId, string> = {
-    1: "Installieren",
-    2: "Verbinden",
-    3: "Live-Test",
+    1: t("obsidian_setup_dialog.step_install"),
+    2: t("obsidian_setup_dialog.step_connect"),
+    3: t("obsidian_setup_dialog.step_live_test"),
   };
 
   function stateOf(step: StepId): StepState {
@@ -161,7 +162,7 @@ export function ObsidianSetupDialog({
   onComplete,
   fetchImpl,
 }: ObsidianSetupDialogProps): JSX.Element | null {
-  const assistantName = useEventStore((s) => s.assistantName);
+  const t = useT();
   const [currentStep, setCurrentStep] = useState<StepId>(() =>
     decideInitialStep(initialStatus),
   );
@@ -223,18 +224,14 @@ export function ObsidianSetupDialog({
           advance(2);
         }
       } else {
-        setInstallRetryHint(
-          "Noch nicht erkannt. Vielleicht laeuft der Installer noch — probier es nochmal.",
-        );
+        setInstallRetryHint(t("obsidian_setup_dialog.not_detected_hint"));
       }
     } catch {
-      setInstallRetryHint(
-        "Status konnte nicht geprueft werden. Versuch es bitte erneut.",
-      );
+      setInstallRetryHint(t("obsidian_setup_dialog.status_check_failed"));
     } finally {
       setRefreshing(false);
     }
-  }, [advance, onStatusRefresh, vaultPath]);
+  }, [advance, onStatusRefresh, vaultPath, t]);
 
   const handleRegister = useCallback(async () => {
     setRegisterHint(null);
@@ -262,15 +259,15 @@ export function ObsidianSetupDialog({
         } else {
           // Defensive: 200 with an unexpected body — surface as error.
           setRegisterError(
-            `Konnte nicht registrieren: ${body.error ?? "unbekannter Status"}`,
+            `${t("obsidian_setup_dialog.register_failed")}: ${
+              body.error ?? t("obsidian_setup_dialog.unknown_status")
+            }`,
           );
         }
         return;
       }
       if (res.status === 409) {
-        setRegisterHint(
-          "Bitte Obsidian einmal kurz starten und wieder schliessen — danach klick erneut.",
-        );
+        setRegisterHint(t("obsidian_setup_dialog.restart_obsidian_hint"));
         return;
       }
       // 500 or anything else: try to extract an error string from the
@@ -291,14 +288,14 @@ export function ObsidianSetupDialog({
       } catch {
         // Body wasn't JSON — keep HTTP status fallback.
       }
-      setRegisterError(`Konnte nicht registrieren: ${errMsg}`);
+      setRegisterError(`${t("obsidian_setup_dialog.register_failed")}: ${errMsg}`);
     } catch (exc) {
       const msg = exc instanceof Error ? exc.message : String(exc);
-      setRegisterError(`Konnte nicht registrieren: ${msg}`);
+      setRegisterError(`${t("obsidian_setup_dialog.register_failed")}: ${msg}`);
     } finally {
       setRegistering(false);
     }
-  }, [advance]);
+  }, [advance, t]);
 
   const vaultName = useMemo(() => deriveVaultName(vaultPath), [vaultPath]);
 
@@ -345,7 +342,7 @@ export function ObsidianSetupDialog({
           type="button"
           onClick={onClose}
           className="absolute right-3 top-3 rounded-md p-1 text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
-          aria-label="Dialog schliessen"
+          aria-label={t("obsidian_setup_dialog.close_dialog")}
           data-testid="obsidian-setup-close"
         >
           <X className="h-4 w-4" />
@@ -355,10 +352,10 @@ export function ObsidianSetupDialog({
           id="obsidian-setup-title"
           className="mb-1 text-base font-semibold text-foreground"
         >
-          Obsidian einrichten
+          {t("obsidian_setup_dialog.title")}
         </h2>
         <p className="mb-3 text-xs text-muted-foreground">
-          Drei kleine Schritte und dein Wiki ist live in Obsidian.
+          {t("obsidian_setup_dialog.subtitle")}
         </p>
 
         <StepHeader current={currentStep} reached={reached} />
@@ -373,12 +370,11 @@ export function ObsidianSetupDialog({
               id="obsidian-setup-step-1-title"
               className="text-sm font-semibold text-foreground"
             >
-              Obsidian installieren
+              {t("obsidian_setup_dialog.install_heading")}
             </h3>
             <p className="text-sm text-muted-foreground">
-              {assistantName} schreibt das Wiki als Markdown-Dateien auf die Platte.
-              Damit du sie wie eine echte Wissensdatenbank durchstoebern und
-              bearbeiten kannst, brauchst du den kostenlosen Editor{" "}
+              {t("obsidian_setup_dialog.install_body_1")}{" "}
+              {t("obsidian_setup_dialog.install_body_2")}{" "}
               <strong>Obsidian</strong>.
             </p>
             <a
@@ -389,7 +385,7 @@ export function ObsidianSetupDialog({
               data-testid="obsidian-setup-download-link"
             >
               <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-              obsidian.md/download oeffnen
+              {t("obsidian_setup_dialog.download_link")}
             </a>
             {installRetryHint && (
               <p
@@ -408,7 +404,7 @@ export function ObsidianSetupDialog({
                 onClick={onClose}
                 data-testid="obsidian-setup-cancel"
               >
-                Abbrechen
+                {t("common.cancel")}
               </Button>
               <Button
                 type="button"
@@ -423,10 +419,10 @@ export function ObsidianSetupDialog({
                       className="mr-1.5 h-3.5 w-3.5 animate-spin"
                       aria-hidden
                     />
-                    Pruefe…
+                    {t("obsidian_setup_dialog.checking")}
                   </>
                 ) : (
-                  "Ich habs installiert — weiter"
+                  t("obsidian_setup_dialog.installed_continue")
                 )}
               </Button>
             </div>
@@ -443,22 +439,22 @@ export function ObsidianSetupDialog({
               id="obsidian-setup-step-2-title"
               className="text-sm font-semibold text-foreground"
             >
-              Vault anbinden
+              {t("obsidian_setup_dialog.connect_heading")}
             </h3>
             <p className="text-sm text-muted-foreground">
-              Jetzt traegt {assistantName} sein Wiki in deine Obsidian-Konfiguration ein.
-              Damit erscheint es im Vault-Switcher und das{" "}
+              {t("obsidian_setup_dialog.connect_body_1")}{" "}
+              {t("obsidian_setup_dialog.connect_body_2")}{" "}
               <code className="rounded bg-background px-1 py-0.5 font-mono text-[12px]">
                 obsidian://
-              </code>
-              -Protokoll funktioniert.
+              </code>{" "}
+              {t("obsidian_setup_dialog.connect_body_3")}
             </p>
             <p
               className="rounded-md border border-border bg-background/40 px-3 py-2 text-xs text-muted-foreground"
               data-testid="obsidian-setup-vault-path"
             >
               <span className="block text-[10px] uppercase tracking-wide text-muted-foreground/70">
-                Vault-Pfad
+                {t("obsidian_setup_dialog.vault_path_label")}
               </span>
               <span className="font-mono text-foreground">{vaultPath}</span>
             </p>
@@ -486,7 +482,7 @@ export function ObsidianSetupDialog({
                   data-testid="obsidian-setup-help-link"
                 >
                   <ExternalLink className="h-3 w-3" aria-hidden />
-                  Hilfe oeffnen
+                  {t("obsidian_setup_dialog.open_help")}
                 </a>
               </div>
             )}
@@ -498,7 +494,7 @@ export function ObsidianSetupDialog({
                 onClick={onClose}
                 data-testid="obsidian-setup-cancel"
               >
-                Abbrechen
+                {t("common.cancel")}
               </Button>
               <Button
                 type="button"
@@ -513,10 +509,10 @@ export function ObsidianSetupDialog({
                       className="mr-1.5 h-3.5 w-3.5 animate-spin"
                       aria-hidden
                     />
-                    Registriere…
+                    {t("obsidian_setup_dialog.registering")}
                   </>
                 ) : (
-                  "Jetzt registrieren"
+                  t("obsidian_setup_dialog.register_now")
                 )}
               </Button>
             </div>
@@ -533,11 +529,10 @@ export function ObsidianSetupDialog({
               id="obsidian-setup-step-3-title"
               className="text-sm font-semibold text-foreground"
             >
-              Live-Test
+              {t("obsidian_setup_dialog.step_live_test")}
             </h3>
             <p className="text-sm text-muted-foreground">
-              Klick den Knopf — dein Browser oeffnet das Vault direkt in
-              Obsidian.
+              {t("obsidian_setup_dialog.live_test_body")}
             </p>
             <div className="flex items-center justify-start gap-2 pt-1">
               <Button
@@ -547,7 +542,7 @@ export function ObsidianSetupDialog({
                 data-testid="obsidian-setup-launch"
               >
                 <ExternalLink className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                In Obsidian oeffnen
+                {t("obsidian_setup_dialog.open_in_obsidian")}
               </Button>
             </div>
             <div className="flex flex-col items-stretch gap-2 pt-2 sm:flex-row sm:items-center sm:justify-end">
@@ -558,7 +553,7 @@ export function ObsidianSetupDialog({
                 onClick={handleTroubleshoot}
                 data-testid="obsidian-setup-troubleshoot"
               >
-                Hat nicht geklappt
+                {t("obsidian_setup_dialog.did_not_work")}
               </Button>
               <Button
                 type="button"
@@ -566,7 +561,7 @@ export function ObsidianSetupDialog({
                 onClick={handleComplete}
                 data-testid="obsidian-setup-finish"
               >
-                Hat geklappt — Fertig
+                {t("obsidian_setup_dialog.it_worked")}
               </Button>
             </div>
           </section>

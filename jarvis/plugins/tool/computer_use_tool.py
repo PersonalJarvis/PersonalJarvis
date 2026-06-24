@@ -231,12 +231,11 @@ class ComputerUseTool:
                 text=text,
                 priority="normal",
                 language=lang,
-                # A background Computer-Use mission reporting its outcome is a
-                # spawned sub-agent result → the attributed readback track, same
-                # as the manager-initiated CU-background path. The exit-code /
-                # harness reason rides ``detail`` (shown in the transcript, never
-                # spoken) so a failure is debuggable.
-                kind="subagent",
+                # A background Computer-Use mission reports the user's requested
+                # desktop action as the turn completion. The exit-code / harness
+                # reason rides ``detail`` (shown in the transcript, never spoken)
+                # so a failure is debuggable.
+                kind="completion",
                 detail=detail,
             ))
         except Exception:  # noqa: BLE001

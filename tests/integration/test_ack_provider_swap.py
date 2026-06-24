@@ -5,7 +5,7 @@ The Flash-Brain provider is chosen at startup via
 ``brain.primary`` via the ``"follow_brain"`` meta-value). These tests
 cover the spec's §8 "Provider swap" cases:
 
-1. Config change ``gemini`` → ``grok`` → next ack uses the Grok adapter.
+1. Config change ``gemini`` → ``openai`` → next ack uses the OpenAI adapter.
 2. Provider with missing API key surfaces a clear error path: the
    adapter returns ``None`` and the AckGenerator increments the
    ``ack_provider_error_total`` counter.
@@ -52,11 +52,11 @@ def _jcfg(
 
 
 # ---------------------------------------------------------------------------
-# Case 1: gemini → grok config swap
+# Case 1: gemini → openai config swap
 # ---------------------------------------------------------------------------
 
 
-def test_config_swap_gemini_to_grok_rebuilds_with_grok_adapter() -> None:
+def test_config_swap_gemini_to_openai_rebuilds_with_openai_adapter() -> None:
     """A second build_ack_brain() call with a new provider rebuilds the
     AckGenerator around the new adapter class — no stale adapter instance."""
     first = build_ack_brain(_jcfg(provider="gemini"))
@@ -64,11 +64,11 @@ def test_config_swap_gemini_to_grok_rebuilds_with_grok_adapter() -> None:
     assert first._provider_name == "gemini"
     assert type(first._provider).__name__ == "GeminiFlashAck"
 
-    # User edits jarvis.toml: [ack_brain].provider = "grok"
-    second = build_ack_brain(_jcfg(provider="grok"))
+    # User edits jarvis.toml: [ack_brain].provider = "openai"
+    second = build_ack_brain(_jcfg(provider="openai"))
     assert second is not None
-    assert second._provider_name == "grok"
-    assert type(second._provider).__name__ == "GrokFlashAck"
+    assert second._provider_name == "openai"
+    assert type(second._provider).__name__ == "OpenAIMiniAck"
 
     # The two builds returned distinct AckGenerator instances.
     assert first is not second
@@ -83,14 +83,14 @@ def test_follow_brain_tracks_primary_provider_swap(caplog: pytest.LogCaptureFixt
     )
     jcfg_b = SimpleNamespace(
         ack_brain=make_ack_config(provider="follow_brain"),
-        brain=SimpleNamespace(primary="grok"),
+        brain=SimpleNamespace(primary="openai"),
     )
     with caplog.at_level(logging.INFO):
         ack_a = build_ack_brain(jcfg_a)
         ack_b = build_ack_brain(jcfg_b)
     assert ack_a is not None and ack_b is not None
     assert ack_a._provider_name == "gemini"
-    assert ack_b._provider_name == "grok"
+    assert ack_b._provider_name == "openai"
 
 
 # ---------------------------------------------------------------------------

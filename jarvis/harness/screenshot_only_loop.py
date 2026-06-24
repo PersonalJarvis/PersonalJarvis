@@ -37,6 +37,7 @@ Termination paths:
     - step budget       -> exit_code 4
     - tool failure      -> exit_code 8
     - observe failure   -> exit_code 1
+    - elevation unmet   -> exit_code 9   (UAC/privilege prompt never confirmed)
     - any timeout       -> exit_code 124
     - cancel token      -> exit_code 130
 
@@ -72,6 +73,7 @@ from jarvis.core.protocols import (
     ImageBlock,
     Observation,
 )
+from jarvis.platform import window_state
 
 if TYPE_CHECKING:
     from .computer_use_context import ComputerUseContext
@@ -88,8 +90,22 @@ class CULoopError(RuntimeError):
 
 
 _VALID_ACTIONS: frozenset[str] = frozenset(
-    {"click", "click_element", "type", "key", "scroll", "open_app", "wait", "done", "fail"}
+    {"click", "click_element", "type", "key", "scroll", "drag",
+     "open_app", "switch_window", "wait", "done", "fail"}
 )
+
+# Max windows listed in the per-step awareness line (Phase 1a) — keep the prompt
+# compact; the foreground + a handful of titles is enough signal.
+_MAX_AWARENESS_WINDOWS: int = 12
+
+# UIA snap fallback (Phase 2): on a verified missed pixel click, snap to the
+# nearest clickable accessibility element before the expensive LLM refine retry.
+_UIA_SNAP_TIMEOUT_S: float = 3.0       # tight: a wedged UIA COM call must not stall
+_UIA_SNAP_MAX_DIST_PX: int = 80        # only snap to an element this close to the miss
+
+#: Default drag duration (ms) — slow enough that a map/globe/slider registers the
+#: press-move-release as a real drag gesture rather than a teleport.
+_DEFAULT_DRAG_DURATION_MS: int = 400
 
 #: Allowed scroll directions (mirror of ``ScrollTool._VALID_DIRECTIONS``).
 _SCROLL_DIRECTIONS: frozenset[str] = frozenset({"up", "down", "left", "right"})
@@ -126,7 +142,19 @@ _BUDGET_EXIT_CODE = 4
 _PARSE_EXIT_CODE = 2
 _TOOL_EXIT_CODE = 8
 _OBSERVE_EXIT_CODE = 1
+_ELEVATION_EXIT_CODE = 9  # waited for an OS elevation confirmation, none came
 _CANCEL_EXIT_CODE = 130
+
+# Elevation pause-and-resume (UAC Secure Desktop & co., 2026-06-23). When a
+# launched app raises a privilege prompt mid-mission, Windows hoists the Secure
+# Desktop; a non-elevated process can neither capture it (BitBlt -> black/raise)
+# nor click it (UIPI). Instead of aborting blind with the misleading "couldn't
+# see the screen" (exit 1), the loop asks the user for the one unavoidable
+# confirmation click and polls until the prompt clears. _WAIT is generous (a
+# human needs time to read + click Yes); _POLL is the cheap OpenInputDesktop
+# re-check cadence. Module-level so they are tunable + test-visible.
+_ELEVATION_WAIT_TIMEOUT_S = 60.0
+_ELEVATION_POLL_S = 0.5
 
 # Fail-gate reject budget (completion-enforcement, 2026-06-15). A voluntary
 # ``fail`` is the SYMMETRIC sibling of ``done``: it must survive the strict
@@ -170,7 +198,11 @@ _SYSTEM_PROMPT = (
     "  {\"action\": \"key\",           \"key\": \"<enter|tab|esc|...>\"}\n"
     "  {\"action\": \"scroll\",        \"direction\": \"<up|down|left|right>\", "
     "\"amount\": <int notches, default 3>}\n"
+    "  {\"action\": \"drag\",          \"x\": <int>, \"y\": <int>, "
+    "\"x2\": <int>, \"y2\": <int>}   (press at x,y, hold, drag to x2,y2, release "
+    "-- for rotating a map/globe, panning, or moving a slider; a click cannot)\n"
     "  {\"action\": \"open_app\",      \"name\": \"<app name>\"}\n"
+    "  {\"action\": \"switch_window\", \"name\": \"<window title substring>\"}\n"
     "  {\"action\": \"wait\",          \"ms\": <int 0-10000>}\n"
     "  {\"action\": \"done\"}\n"
     "  {\"action\": \"fail\", \"reason\": \"<short string>\"}\n\n"
@@ -260,6 +292,12 @@ _SYSTEM_PROMPT = (
     "* If the target app is ALREADY VISIBLE in the current screenshot, do "
     "NOT call open_app again -- re-launching steals window focus and resets "
     "your progress. Interact with the app's existing window instead.\n"
+    "* CHECK THE 'OPEN WINDOWS' LIST (given in the user message when "
+    "available): if the app you need is listed there it is ALREADY RUNNING -- "
+    "even if its window is minimized and NOT visible in the screenshot. Do NOT "
+    "open_app it; emit {\"action\":\"switch_window\",\"name\":\"<a substring of "
+    "its title>\"} to bring its window to the front, then continue. This saves "
+    "a step and avoids a duplicate window.\n"
     "* DO NOT type the app name into a focused field hoping it is a search "
     "box -- use open_app to launch.\n\n"
     "Hard rules:\n"
@@ -414,6 +452,23 @@ def _parse_action(raw: str) -> dict[str, Any]:
         if isinstance(amount, bool) or not isinstance(amount, (int, float)):
             raise CULoopError("scroll action 'amount' must be a number of wheel notches")
         obj["amount"] = max(1, int(amount))
+    elif action == "drag":
+        # Press-and-hold drag (RC#3): two 0-1000 normalized points -- press at
+        # (x,y), drag to (x2,y2), release. For map/globe rotation, panning, and
+        # sliders, which a click cannot do.
+        for _k in ("x", "y", "x2", "y2"):
+            _v = obj.get(_k)
+            if isinstance(_v, bool) or not isinstance(_v, (int, float)):
+                raise CULoopError(
+                    "drag action requires integer x, y, x2, y2 (0-1000 normalized "
+                    "start and end points; press at x,y and drag to x2,y2)"
+                )
+            obj[_k] = int(_v)
+        _dur = obj.get("duration_ms", _DEFAULT_DRAG_DURATION_MS)
+        if isinstance(_dur, bool) or not isinstance(_dur, (int, float)):
+            raise CULoopError("drag action 'duration_ms' must be a number of ms")
+        obj["duration_ms"] = max(0, min(int(_dur), 3000))
+        _normalize_click_target(obj)
     elif action == "open_app":
         # Restored 2026-05-27 after observing the loop fall back to ``type
         # "calc"`` into the focused chat input when asked to "open Calc" —
@@ -422,6 +477,17 @@ def _parse_action(raw: str) -> dict[str, Any]:
         name = obj.get("name")
         if not isinstance(name, str) or not name.strip():
             raise CULoopError("open_app action requires a non-empty string name field")
+        obj["name"] = name.strip()
+    elif action == "switch_window":
+        # Focus an ALREADY-OPEN window by a title substring (Phase 1c) -- the
+        # model emits this when the awareness line shows the app is running, so
+        # it focuses instead of re-launching. Accept "name" or "title".
+        name = obj.get("name") or obj.get("title")
+        if not isinstance(name, str) or not name.strip():
+            raise CULoopError(
+                "switch_window action requires a non-empty 'name' (or 'title') "
+                "window-title substring"
+            )
         obj["name"] = name.strip()
     elif action == "click_element":
         # UIA-grounded click — the user says e.g. ``click_element name="7"``
@@ -572,10 +638,37 @@ def _validate_action_dict(obj: Any) -> dict[str, Any]:
         if isinstance(amount, bool) or not isinstance(amount, (int, float)):
             raise CULoopError("scroll action 'amount' must be a number of wheel notches")
         obj["amount"] = max(1, int(amount))
+    elif action == "drag":
+        # Press-and-hold drag (RC#3): two 0-1000 normalized points -- press at
+        # (x,y), drag to (x2,y2), release. For map/globe rotation, panning, and
+        # sliders, which a click cannot do.
+        for _k in ("x", "y", "x2", "y2"):
+            _v = obj.get(_k)
+            if isinstance(_v, bool) or not isinstance(_v, (int, float)):
+                raise CULoopError(
+                    "drag action requires integer x, y, x2, y2 (0-1000 normalized "
+                    "start and end points; press at x,y and drag to x2,y2)"
+                )
+            obj[_k] = int(_v)
+        _dur = obj.get("duration_ms", _DEFAULT_DRAG_DURATION_MS)
+        if isinstance(_dur, bool) or not isinstance(_dur, (int, float)):
+            raise CULoopError("drag action 'duration_ms' must be a number of ms")
+        obj["duration_ms"] = max(0, min(int(_dur), 3000))
+        _normalize_click_target(obj)
     elif action == "open_app":
         name = obj.get("name")
         if not isinstance(name, str) or not name.strip():
             raise CULoopError("open_app action requires a non-empty string name field")
+        obj["name"] = name.strip()
+    elif action == "switch_window":
+        # Focus an ALREADY-OPEN window by a title substring (Phase 1c). Accept
+        # "name" or "title"; normalise to "name" for the executor.
+        name = obj.get("name") or obj.get("title")
+        if not isinstance(name, str) or not name.strip():
+            raise CULoopError(
+                "switch_window action requires a non-empty 'name' (or 'title') "
+                "window-title substring"
+            )
         obj["name"] = name.strip()
     elif action == "wait":
         ms = obj.get("ms")
@@ -609,6 +702,19 @@ _UIA_TIMEOUT_S = 3.0
 #: case on a 4K monitor is ~1.05s; 3s leaves headroom without letting a
 #: wedged GDI call eat the step.
 _OBSERVE_TIMEOUT_S = 3.0
+#: How many consecutive observe (screenshot-capture) timeouts a mission
+#: tolerates before giving up. A SINGLE transient timeout must not end the
+#: mission: the capture runs on the shared asyncio loop and can spuriously hit
+#: the `_OBSERVE_TIMEOUT_S` budget when the loop is momentarily saturated by a
+#: concurrent burst (live forensic 2026-06-22: the Spotify CU turn died
+#: "[cu] observe timeout (step 1)" total=3.3s while a degraded-voice TTS
+#: failover + double mic-open contended the loop). Mirror the brain-timeout
+#: retry: retry the observe, only fail after the cap. Provider/OS-agnostic.
+_MAX_OBSERVE_FAILURES = 3
+#: Brief breath before retrying a timed-out observe, so a transient loop
+#: contention spike can clear before the next capture attempt (bounded well
+#: under the per-step budget). Tests monkeypatch this to 0.0.
+_OBSERVE_RETRY_BACKOFF_S = 0.25
 #: Single tool execution (click/type/open_app/...). App launches are the slow
 #: end; anything beyond this is a wedged tool, not a slow action.
 _ACT_TIMEOUT_S = 5.0
@@ -708,6 +814,81 @@ def _publish_announcement_nonblocking(bus: Any, event: Any) -> None:
     task = asyncio.create_task(_run(), name="cu-announce")
     _ANNOUNCE_TASKS.add(task)
     task.add_done_callback(_ANNOUNCE_TASKS.discard)
+
+
+async def _await_privileged_prompt_clearance(
+    ctx: ComputerUseContext,
+    task_prompt: str,
+    step_idx: int,
+    cancel_token: CancelToken | None,
+) -> str:
+    """Pause for an OS elevation prompt (UAC Secure Desktop & co.) and resume.
+
+    A launched app can raise a privilege prompt that Windows shows on the Secure
+    Desktop; a non-elevated process can neither capture it (BitBlt -> black or
+    ScreenShotError) nor send input to it (UIPI). When such a prompt is detected
+    we speak the one-time "please confirm it once" request and poll until it
+    clears, so the mission can continue instead of aborting blind with the
+    misleading "couldn't see the screen" (exit 1).
+
+    Returns one of:
+        ``"no_prompt"`` -- no privileged prompt detected; proceed as before.
+        ``"cleared"``   -- a prompt was up and is now gone; re-observe + resume.
+        ``"timeout"``   -- a prompt stayed up past the wait budget (-> exit 9).
+        ``"cancelled"`` -- the cancel token tripped while waiting.
+
+    Never raises: a missing/raising probe yields ``"no_prompt"`` (behave as
+    before). The probe is ``False`` on headless / macOS / Linux today, so this is
+    a graceful no-op there (AD-6) -- the €5-VPS runtime has no UAC.
+    """
+    def _probe() -> bool:
+        from jarvis.platform.privileged_prompt import (  # noqa: PLC0415
+            privileged_prompt_active,
+        )
+        return privileged_prompt_active()
+
+    try:
+        if not _probe():
+            return "no_prompt"
+    except Exception:  # noqa: BLE001 — a missing/raising probe must not end a mission
+        return "no_prompt"
+
+    # A prompt is up: speak the one-time confirmation request. Non-blocking like
+    # the progress announcement -- awaiting the publish would block the loop for
+    # the whole TTS synthesis (BUG-CU-ANNOUNCE-BLOCK). Resolve the language
+    # through the one phrase resolver so de/en/es each get the right wording
+    # (Output-Language doctrine -- never a hardcoded locale).
+    if ctx.bus is not None:
+        from jarvis.voice.action_phrases import (  # noqa: PLC0415
+            action_phrase,
+            resolve_phrase_language,
+        )
+        lang = resolve_phrase_language(None, task_prompt)
+        _publish_announcement_nonblocking(ctx.bus, AnnouncementRequested(
+            text=action_phrase("cu_awaiting_elevation", lang),
+            priority="normal",
+            language=lang,
+            kind="info",
+        ))
+    log.info(
+        "[cu] step %d: privileged prompt up -- awaiting user confirmation",
+        step_idx,
+    )
+
+    deadline = time.monotonic() + _ELEVATION_WAIT_TIMEOUT_S
+    while time.monotonic() < deadline:
+        if cancel_token is not None and cancel_token.is_cancelled():
+            return "cancelled"
+        await asyncio.sleep(_ELEVATION_POLL_S)
+        try:
+            if not _probe():
+                log.info(
+                    "[cu] step %d: elevation prompt cleared -- resuming", step_idx
+                )
+                return "cleared"
+        except Exception:  # noqa: BLE001 — can't tell anymore; re-observe + decide
+            return "cleared"
+    return "timeout"
 
 
 #: Settle probe after a successful open_app (2026-06-10 latency plan Task 6).
@@ -928,6 +1109,27 @@ def _select_fast_model(manager: Any, provider: Any) -> str | None:
     return None
 
 
+def _select_cu_model(manager: Any, provider: Any) -> str | None:
+    """Pick the Computer-Use model for ``provider`` (Phase 3).
+
+    Prefers the BrainManager's ``_cu_model`` (cu_model -> main model -> tier
+    default); falls back to ``_select_fast_model`` for stubs that don't expose
+    it. Provider-agnostic (AP-21): the manager owns the per-provider resolution;
+    nothing here name-checks a provider or model. When no CU model is pinned the
+    result equals today's fast model, so the loop is unchanged until a user pins
+    one in Settings.
+    """
+    picker = getattr(manager, "_cu_model", None)
+    if callable(picker):
+        try:
+            model = picker(provider)
+        except Exception:  # noqa: BLE001
+            model = None
+        if model:
+            return str(model)
+    return _select_fast_model(manager, provider)
+
+
 # ---------------------------------------------------------------------------
 # Brain dispatch
 # ---------------------------------------------------------------------------
@@ -939,10 +1141,17 @@ def _select_fast_model(manager: Any, provider: Any) -> str | None:
 # 2048px longest side and JPEG-encodes toward this budget; on any failure it
 # returns the original image, so the vision path never breaks.
 _CU_IMAGE_MAX_BYTES = 300_000
+#: Per-screenshot longest-side pixel cap (L7). 2048 keeps the legacy default;
+#: vision models resample to ~1568 px internally, so a lower cap (tuned via
+#: ``[computer_use].image_max_dimension`` + the cu_bench proof gate) ships fewer
+#: pixels for faster encode + upload + ingest. 0 disables the dimension cap.
+_CU_IMAGE_MAX_DIMENSION = 2048
 
 
 async def _load_observation_image(
-    obs: Observation, max_bytes: int = _CU_IMAGE_MAX_BYTES,
+    obs: Observation,
+    max_bytes: int = _CU_IMAGE_MAX_BYTES,
+    max_dimension: int = _CU_IMAGE_MAX_DIMENSION,
 ) -> ImageBlock | None:
     """Read the observation's screenshot and cap it for the model payload.
 
@@ -956,8 +1165,48 @@ async def _load_observation_image(
     from jarvis.vision.image_budget import cap_image_b64  # noqa: PLC0415
 
     mime, image_b64 = await _read_observation_image_b64(obs)
-    mime, image_b64 = cap_image_b64(mime, image_b64, max_bytes)
+    mime, image_b64 = cap_image_b64(mime, image_b64, max_bytes, max_dimension)
     return ImageBlock(mime=mime, data_b64=image_b64, source_hash=obs.screenshot_hash)
+
+def _window_awareness_line(ctx: ComputerUseContext) -> str:
+    """A compact, best-effort "what is already open" line for the CU prompt.
+
+    Lets the fast model focus an already-running app (``switch_window``) instead
+    of re-launching it (the OBS-already-in-the-taskbar case) and plan with real
+    state. Returns "" on failure / headless / a platform that returns nothing —
+    never raises (``list_windows`` is microseconds and self-guards). Opt out per
+    context via ``window_awareness = False``.
+    """
+    if not getattr(ctx, "window_awareness", True):
+        return ""
+    try:
+        windows = window_state.list_windows()
+        foreground = window_state.get_foreground_title()
+    except Exception:  # noqa: BLE001
+        return ""
+    labels: list[str] = []
+    for w in windows:
+        label = (w.title or "").strip()
+        if not label:
+            continue
+        if w.minimized:
+            label += " (minimized)"
+        if label not in labels:
+            labels.append(label)
+        if len(labels) >= _MAX_AWARENESS_WINDOWS:
+            break
+    if not labels:
+        return ""
+    line = (
+        "\n\nOPEN WINDOWS (these apps are ALREADY running — to use one, emit "
+        '{"action":"switch_window","name":"<title substring>"} or interact with '
+        "its visible window; do NOT open_app it again): " + "; ".join(labels)
+    )
+    fg = (foreground or "").strip()
+    if fg:
+        line += f"\nFOREGROUND: {fg}"
+    return line
+
 
 async def _call_brain(
     ctx: ComputerUseContext,
@@ -970,6 +1219,7 @@ async def _call_brain(
     frame_b: Observation | None = None,
     max_tokens: int = 256,
     images_override: list[ImageBlock] | None = None,
+    early_stop_json: bool = False,
 ) -> str:
     """Send screenshot + goal + history to the active brain, return raw text.
 
@@ -1001,25 +1251,33 @@ async def _call_brain(
         result = await complete_text(system=system_prompt, user=user_message)
         return str(result)
 
-    # Production: direct provider dispatch.
+    # Production: provider-chain dispatch. This must mirror the BrainManager's
+    # fallback behavior closely enough for CU: a broken primary desktop brain
+    # must not make the whole screen-control loop fail while chat would have
+    # fallen through to the next provider.
     # TODO(L9 live-gated): when ``ctx.fast_step_model`` is set and the chosen
     # action is a trivial click_element on a known control label (see
     # ``_should_use_fast_step_model``), select that cheaper model here instead
     # of the active provider. Not wired yet — it touches BrainManager provider
     # routing and is a reliability risk; the knob + pure predicate ship first.
     manager = ctx.brain_manager
-    if all(hasattr(manager, n) for n in ("_get_brain", "active_provider")):
-        from jarvis.brain.streaming import aggregate  # noqa: PLC0415
+    if hasattr(manager, "_get_brain"):
+        from jarvis.brain.streaming import (  # noqa: PLC0415
+            aggregate,
+            aggregate_first_json,
+        )
 
-        provider = manager.active_provider
-        if provider is None:
-            raise CULoopError("BrainManager.active_provider is None")
-        model = _select_fast_model(manager, provider)
-        brain = manager._get_brain(provider, model)
-        if brain is None:
-            raise CULoopError(
-                f"BrainManager._get_brain({provider!r}, {model!r}) returned None"
-            )
+        # Early-stop the per-step ACTION call at the first complete JSON action —
+        # skip the provider stream's tail (and any rambling past the JSON up to
+        # max_tokens) on the loop's #1 cost path. Verifier / planner calls keep
+        # the full-stream aggregate (early_stop_json=False, the default), so
+        # their free-text proofs are read in full. Provider-agnostic.
+        # NOTE: on the early-stop path a terminal usage/finish_reason delta that
+        # arrives AFTER the JSON is intentionally dropped — _call_brain returns
+        # only the text string and no caller here reads agg.usage/finish_reason.
+        # A future maintainer adding cost tracking to this call must meter via
+        # ``aggregate`` (full stream), not the early-stop variant.
+        _agg = aggregate_first_json if early_stop_json else aggregate
 
         # Attach screenshot(s), capped to the model-payload budget
         # (2026-06-09 latency fix). ``frame_b`` lets the two-frame motion
@@ -1038,6 +1296,9 @@ async def _call_brain(
                     block = await _load_observation_image(
                         obs,
                         max_bytes=getattr(ctx, "image_max_bytes", _CU_IMAGE_MAX_BYTES),
+                        max_dimension=getattr(
+                            ctx, "image_max_dimension", _CU_IMAGE_MAX_DIMENSION,
+                        ),
                     )
                     if block is None:
                         continue
@@ -1059,8 +1320,129 @@ async def _call_brain(
             max_tokens=max_tokens,
             stream=True,
         )
-        agg = await aggregate(brain.complete(req))
-        return agg.text
+
+        # PROVIDER-AGNOSTIC BY DESIGN. The CU loop is NOT pinned to any provider
+        # or model. The candidate order is whatever ``BrainManager`` resolves for
+        # the active/selected provider via ``_build_fallback_chain("fast")`` —
+        # the *active* provider leads, its tier fallbacks follow. Which one is
+        # actually dispatched is decided ONLY by capability + availability below:
+        # skip ``_dead_providers`` (keyless/blocked), skip rate-limit cooldown,
+        # and — when a screenshot rides on the request — skip any brain whose
+        # ``supports_vision`` is False, then use the FIRST remaining brain that
+        # returns text. Never gate on a provider NAME or a model id here: do not
+        # "fix" this into ``if provider == 'grok'`` / ``if model == 'grok-4.3'``.
+        # That an installed key happens to make grok the only live vision brain
+        # is a *credential* fact owned by the manager, not a hardcode here — give
+        # claude-api/openrouter/openai/gemini a key and CU uses them identically.
+        chain: list[tuple[str, str | None]] = []
+        build_chain = getattr(manager, "_build_fallback_chain", None)
+        if callable(build_chain):
+            try:
+                chain = list(build_chain("fast") or [])
+            except Exception:  # noqa: BLE001
+                log.debug("ComputerUseLoop fallback-chain build failed", exc_info=True)
+        if not chain and hasattr(manager, "active_provider"):
+            provider = manager.active_provider
+            if provider is None:
+                raise CULoopError("BrainManager.active_provider is None")
+            chain = [(provider, _select_cu_model(manager, provider))]
+        if not chain:
+            raise CULoopError("BrainManager fallback chain is empty")
+
+        # Per-provider Computer-Use model override (Phase 3): the user may pin a
+        # dedicated CU model in Settings (e.g. run CU on a stronger model than
+        # chat). _select_cu_model resolves cu_model -> the provider's main model
+        # -> the tier default, so when nothing is pinned this equals today's fast
+        # model (backward-compatible). Provider-agnostic; applies to every brain
+        # in the chain so a fallback provider also uses ITS configured CU model.
+        if callable(getattr(manager, "_cu_model", None)):
+            chain = [(p, _select_cu_model(manager, p) or m) for (p, m) in chain]
+
+        # Computer-Use is screenshot-grounded: the screenshot is the loop's
+        # SOLE grounding signal. A provider that cannot see the attached image
+        # (supports_vision=False) would plan BLIND. Forensic 2026-06-20: with
+        # the text-only Antigravity Google-CLI brain (supports_vision=False)
+        # active, the CLI silently dropped the screenshot, so the planner
+        # looped on hallucinated ``click_element name='Edit'`` actions and
+        # never grounded. Skip blind providers exactly like dead/cooldown ones
+        # whenever an image rides on the request; fall through to a
+        # vision-capable brain (gemini/claude-api/...), or fail honestly.
+        from jarvis.harness.computer_use_planner import (  # noqa: PLC0415
+            ComputerUsePlannerSelector,
+        )
+
+        images_attached = bool(images)
+        selector = ComputerUsePlannerSelector(manager=manager, chain=chain)
+        attempted = 0
+        for idx, provider, model, brain in selector.iter_candidates(
+            images_attached=images_attached,
+        ):
+            attempted += 1
+            try:
+                agg = await _agg(brain.complete(req))
+                text = (agg.text or "").strip()
+                if not text:
+                    selector.record_empty(provider, model)
+                    continue
+                if idx > 0:
+                    log.info(
+                        "ComputerUseLoop fallback hit: %s(%s) after %d skipped provider(s)",
+                        provider, model, idx,
+                    )
+                return text
+            except Exception as exc:  # noqa: BLE001
+                selector.record_failure(provider, model, exc)
+                log.warning(
+                    "ComputerUseLoop brain provider %s(%s) failed: %s",
+                    provider, model, exc,
+                )
+                continue
+
+        # LAST RESORT (stale dead-flag resilience, live 2026-06-21 18:41): the
+        # normal chain reached no vision-capable brain — usually because a stale
+        # ``_dead_providers`` flag filtered the one vision provider (grok) out of
+        # the chain entirely, leaving CU "no vision" while a live, image-reading
+        # brain existed. Re-try every REGISTERED vision-capable provider once,
+        # IGNORING the transient dead/cooldown flags, deduped against what was
+        # already tried this turn. Provider-agnostic; a truly-dead provider just
+        # raises and is skipped, so this only rescues a wrongly-flagged one.
+        if images_attached:
+            from jarvis.harness.computer_use_planner import (  # noqa: PLC0415
+                iter_last_resort_vision,
+            )
+
+            already_tried = set(chain) | {
+                (err.provider, err.model) for err in selector.errors
+            }
+            for provider, model, brain in iter_last_resort_vision(
+                manager, already_tried=already_tried,
+            ):
+                try:
+                    agg = await _agg(brain.complete(req))
+                    text = (agg.text or "").strip()
+                    if not text:
+                        selector.record_empty(provider, model)
+                        continue
+                    log.warning(
+                        "ComputerUseLoop LAST-RESORT vision brain %s(%s) reached "
+                        "— normal chain had no vision provider (stale dead-flag?)",
+                        provider, model,
+                    )
+                    return text
+                except Exception as exc:  # noqa: BLE001
+                    selector.record_failure(provider, model, exc)
+                    log.warning(
+                        "ComputerUseLoop last-resort provider %s(%s) failed: %s",
+                        provider, model, exc,
+                    )
+                    continue
+
+        raise CULoopError(
+            selector.error_message(
+                images_attached=images_attached,
+                attempted=attempted,
+            )
+        )
 
     # Last-resort callable manager (legacy stub).
     if callable(manager):
@@ -1890,6 +2272,7 @@ async def _make_plan(
                 system_prompt=_PLANNER_SYSTEM_PROMPT,
                 user_message=user_message,
                 max_tokens=512,
+                early_stop_json=True,
             ),
             timeout=_think_timeout_s(ctx),
         )
@@ -2341,6 +2724,83 @@ async def _dispatch_raw_click(
     )
 
 
+def _pick_snap_node(nodes: Any, x: int, y: int, max_dist: int) -> Any | None:
+    """Pick the clickable accessibility node to snap a missed click to.
+
+    Preference: the SMALLEST node whose bounds contain ``(x, y)`` (the most
+    specific control under the cursor); otherwise the node whose center is
+    NEAREST ``(x, y)`` within ``max_dist`` pixels. Disabled and zero-area nodes
+    are skipped. Returns the node or ``None`` when nothing is close enough.
+    """
+    containing: list[tuple[int, Any]] = []
+    nearest: Any | None = None
+    nearest_d2 = max_dist * max_dist
+    for n in nodes:
+        if not getattr(n, "enabled", True):
+            continue
+        try:
+            bx, by, bw, bh = n.bounds
+        except Exception:  # noqa: BLE001 — a malformed node is simply skipped
+            continue
+        if bw <= 0 or bh <= 0:
+            continue
+        if bx <= x <= bx + bw and by <= y <= by + bh:
+            containing.append((bw * bh, n))
+            continue
+        cx, cy = bx + bw // 2, by + bh // 2
+        d2 = (cx - x) ** 2 + (cy - y) ** 2
+        if d2 <= nearest_d2:
+            nearest_d2 = d2
+            nearest = n
+    if containing:
+        return min(containing, key=lambda t: t[0])[1]
+    return nearest
+
+
+async def _uia_snap_click(
+    ctx: ComputerUseContext,
+    *,
+    executor: Any,
+    tool: Any,
+    x: int,
+    y: int,
+    trace_id: Any,
+) -> tuple[bool, str] | None:
+    """Snap a verified-missed pixel click to the nearest clickable UIA element.
+
+    Returns ``(ok, message)`` when an element was found near ``(x, y)`` and
+    clicked, else ``None`` so the caller falls through to the LLM refine. The
+    fast model often guesses a pixel a few px off a labelled control; the
+    accessibility tree knows the control's true bounds, so this fixes the miss
+    deterministically. Best-effort: a missing tree backend (headless / Null
+    source), no nearby element, a timeout, or any error all return ``None``.
+    Cross-platform via ``make_ui_tree_source`` (UIA / AX / AT-SPI / Null).
+    Disable per context with ``uia_click_fallback = False``.
+    """
+    if not getattr(ctx, "uia_click_fallback", True):
+        return None
+    try:
+        from jarvis.vision.tree_factory import make_ui_tree_source  # noqa: PLC0415
+
+        source = make_ui_tree_source()
+        obs = await asyncio.wait_for(source.observe(), timeout=_UIA_SNAP_TIMEOUT_S)
+    except Exception:  # noqa: BLE001 — best-effort recovery, never raises
+        return None
+    node = _pick_snap_node(
+        list(getattr(obs, "nodes", ()) or ()), x, y, _UIA_SNAP_MAX_DIST_PX
+    )
+    if node is None:
+        return None
+    try:
+        bx, by, bw, bh = node.bounds
+        cx, cy = bx + bw // 2, by + bh // 2
+        ok, msg = await _dispatch_raw_click(executor, tool, cx, cy, trace_id)
+    except Exception:  # noqa: BLE001
+        return None
+    label = (getattr(node, "name", "") or "element").strip() or "element"
+    return ok, f"{msg} (UIA-snapped to '{label[:40]}' at ({cx},{cy}))"
+
+
 async def _click_with_refine(
     obj: dict[str, Any],
     ctx: ComputerUseContext,
@@ -2370,6 +2830,7 @@ async def _click_with_refine(
     clicked: list[tuple[int, int]] = []
     last_msg = ""
     retry_note = ""
+    snapped = False  # Phase 2: UIA snap is tried at most once per click action
     for _attempt in range(_CLICK_MAX_ATTEMPTS):
         refined = None
         if clicked:
@@ -2437,6 +2898,22 @@ async def _click_with_refine(
             # Something near the click visibly reacted (or we cannot tell) —
             # accept; the loop's fresh screenshot judges the semantics.
             return ok, last_msg
+        # Verified miss: the click produced no visible change. Before the costly
+        # LLM refine, snap to the nearest clickable accessibility element and
+        # click its true center (Phase 2) — fixes a "guessed a pixel, missed the
+        # button by a few px" thrash deterministically. Tried once per action;
+        # falls through to the refine when no element is near / no tree backend.
+        if not snapped:
+            snapped = True
+            snap = await _uia_snap_click(
+                ctx, executor=executor, tool=tool, x=x, y=y, trace_id=trace_id,
+            )
+            if snap is not None:
+                log.info(
+                    "[cu] click at (%d,%d) missed — UIA-snapped: %s",
+                    x, y, snap[1][:80],
+                )
+                return snap
         log.info(
             "[cu] click at (%d,%d) produced no local change — refining for a "
             "corrected retry (%d/%d)", x, y, len(clicked), _CLICK_MAX_ATTEMPTS,
@@ -2450,6 +2927,21 @@ async def _click_with_refine(
         last_msg + f" (no visible reaction near the target after "
         f"{len(clicked)} click(s) — verify and re-plan if needed)"
     )
+
+
+def _perform_drag(
+    x1: int, y1: int, x2: int, y2: int, duration_s: float = 0.4
+) -> None:
+    """Press the left mouse button at ``(x1, y1)``, drag to ``(x2, y2)``, release.
+
+    The press-and-hold gesture a plain click cannot do — rotating a map/globe,
+    panning, or moving a slider. pyautogui is imported lazily so the module still
+    loads on a non-desktop host (the harness is desktop-gated anyway).
+    """
+    import pyautogui  # noqa: PLC0415 — lazy: keeps non-desktop import clean
+
+    pyautogui.moveTo(x1, y1)
+    pyautogui.dragTo(x2, y2, duration=max(0.0, duration_s), button="left")
 
 
 async def _execute_action(
@@ -2629,6 +3121,30 @@ async def _execute_action(
             str(getattr(res, "output", "") or getattr(res, "error", "") or ""),
         )
 
+    if action == "drag":
+        # Press-and-hold drag: resolve BOTH endpoints from the 0-1000 grid to
+        # absolute pixels (same resolver as click), then press-move-release.
+        # Inline like ``wait`` — no separate tool to wire (RC#3, 2026-06-22).
+        start_x, start_y = _resolve_click_pixel(obj, monitor_geom)
+        end_x, end_y = _resolve_click_pixel(
+            {"x": obj["x2"], "y": obj["y2"]}, monitor_geom
+        )
+        duration_s = max(
+            0.0, float(obj.get("duration_ms", _DEFAULT_DRAG_DURATION_MS)) / 1000.0
+        )
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(
+                    _perform_drag, start_x, start_y, end_x, end_y, duration_s
+                ),
+                timeout=_ACT_TIMEOUT_S,
+            )
+        except TimeoutError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            return False, f"drag crash: {type(exc).__name__}: {exc}"
+        return True, f"dragged ({start_x},{start_y})->({end_x},{end_y})"
+
     if action == "open_app":
         tool = tools.get("open_app")
         if tool is None:
@@ -2652,6 +3168,24 @@ async def _execute_action(
             bool(getattr(res, "success", False)),
             str(getattr(res, "output", "") or getattr(res, "error", "") or ""),
         )
+
+    if action == "switch_window":
+        # Focus an already-open window by a title substring (Phase 1c). Runs the
+        # cross-platform focus helper directly (best-effort, never raises); no
+        # tool-executor round-trip needed (focus is reversible, monitor-tier).
+        title = str(obj.get("name", "")).strip()
+        if not title:
+            return False, "switch_window requires a window-title substring"
+        try:
+            found, msg = await asyncio.wait_for(
+                asyncio.to_thread(window_state.focus_window, title),
+                timeout=_ACT_TIMEOUT_S,
+            )
+        except TimeoutError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            return False, f"switch_window crash: {type(exc).__name__}: {exc}"
+        return found, msg
 
     return False, f"action {action!r} reached _execute_action -- caller bug"
 
@@ -2738,6 +3272,13 @@ async def _run_screenshot_loop(
     # failures per mission end it, with a clean error message.
     _MAX_LLM_FAILURES = 3
     llm_failures = 0
+    # Observe-timeout retry budget (live forensic 2026-06-22, exit 124): a
+    # single transient screenshot-capture timeout used to END the whole mission
+    # at step 1 (the Spotify "[cu] observe timeout (step 1)" total=3.3s). The
+    # capture shares the asyncio loop and can spuriously hit its budget under a
+    # momentary contention burst, so retry like a brain timeout; only this many
+    # consecutive observe timeouts end the mission.
+    observe_failures = 0
     # Done-verification gate (2026-06-09 shippability fix): a model-emitted
     # "done" is only accepted once the strict judge confirms the goal on the
     # CURRENT screenshot (``ctx.verify_after_each_step`` -- previously a dead
@@ -2794,6 +3335,21 @@ async def _run_screenshot_loop(
     recent_click_targets: _deque[tuple[int, int]] = _deque(maxlen=6)
     opened_apps: dict[str, int] = {}
     toggle_stop_engaged = False
+    #   * last_typed_text: the text of the most recent SUCCESSFUL ``type``. A
+    #     back-to-back ``type`` of the SAME text is a redundant no-op -- the
+    #     field already holds it -- so we suppress it and push the model to the
+    #     NEXT step (submit / click a result) instead of mashing the same query
+    #     (BUG-CU-RETYPE, live 2026-06-22: "Minecraft" typed into the Microsoft
+    #     Store search box in BOTH step 6 and step 7 -- "das ist ja dumm").
+    last_typed_text = ""
+    #   * last_stall_nudge_hash: the screenshot hash we last warned the model
+    #     about. When the screen is UNCHANGED since the previous step, the last
+    #     action had NO visible effect -- we nudge the model ONCE (per distinct
+    #     stall) to stop repeating it and re-target, BEFORE the 3-strike stuck
+    #     abort. General by design: every action type, every app, pure
+    #     screenshot+keyboard+mouse (user mandate 2026-06-22 -- not a per-example
+    #     patch).
+    last_stall_nudge_hash = ""
     # Cumulative guard-blocked actions this mission (see _MAX_GUARD_HITS).
     guard_hits = 0
     # On-demand done-verifier: set when a state-change click lands and the goal
@@ -2913,13 +3469,61 @@ async def _run_screenshot_loop(
             observation = await _observe(ctx, cancel_token)
         except TimeoutError:
             labels_task.cancel()
-            yield _final(
-                stderr=f"[cu] observe timeout (step {step_idx})\n",
-                exit_code=_TIMEOUT_EXIT_CODE,
+            observe_failures += 1
+            log.info(
+                "[cu] observe timeout (step %d, failure %d/%d)",
+                step_idx, observe_failures, _MAX_OBSERVE_FAILURES,
             )
-            return
+            if observe_failures >= _MAX_OBSERVE_FAILURES:
+                yield _final(
+                    stderr=(
+                        f"[cu] giving up after {observe_failures} observe "
+                        f"timeouts (last at step {step_idx})\n"
+                    ),
+                    exit_code=_TIMEOUT_EXIT_CODE,
+                )
+                return
+            # A single transient capture timeout (shared-loop contention) must
+            # not end the mission -- retry on the next step (mirrors the
+            # brain-timeout retry), after a brief breath so the spike can clear.
+            yield _progress(
+                f"[cu] step {step_idx}: observe timeout -- retrying"
+            )
+            if _OBSERVE_RETRY_BACKOFF_S > 0:
+                await asyncio.sleep(_OBSERVE_RETRY_BACKOFF_S)
+            continue
         except Exception as exc:  # noqa: BLE001
             labels_task.cancel()
+            # An OS elevation prompt (UAC Secure Desktop & co.) blocks BOTH
+            # capture and input for a non-elevated process, so this observe
+            # failure is most likely a UAC prompt, not a generic GDI fault.
+            # Detect it and PAUSE for the user's one unavoidable confirmation
+            # click instead of aborting blind with the misleading "couldn't see
+            # the screen" (exit 1, the live OBS forensic 2026-06-23).
+            clearance = await _await_privileged_prompt_clearance(
+                ctx, task_prompt, step_idx, cancel_token,
+            )
+            if clearance == "cleared":
+                yield _progress(
+                    f"[cu] step {step_idx}: elevation prompt cleared -- resuming"
+                )
+                continue
+            if clearance == "timeout":
+                yield _final(
+                    stderr=(
+                        f"[cu] aborted: elevation prompt not confirmed within "
+                        f"{_ELEVATION_WAIT_TIMEOUT_S:.0f}s (step {step_idx})\n"
+                    ),
+                    exit_code=_ELEVATION_EXIT_CODE,
+                )
+                return
+            if clearance == "cancelled":
+                yield _final(
+                    stderr="[cu] cancelled while awaiting elevation confirmation\n",
+                    exit_code=_CANCEL_EXIT_CODE,
+                )
+                return
+            # "no_prompt": the original generic observe failure stands.
             yield _final(
                 stderr=f"[cu] observe failed: {exc}\n",
                 exit_code=_OBSERVE_EXIT_CODE,
@@ -2936,6 +3540,37 @@ async def _run_screenshot_loop(
             ctx, phase="observe", step_idx=step_idx, t0=t_observe, acc=phase_ms,
         )
 
+        # Elevation-prompt guard (UAC Secure Desktop & co.): the capture can
+        # SUCCEED yet hand back a black/dimmed frame while a privilege prompt is
+        # up (BitBlt does not always raise). Detect that BEFORE the brain call so
+        # we never feed the model a blind frame and never try to click a window
+        # UIPI blocks us from. Cheap (one OpenInputDesktop read) and a graceful
+        # no-op off Windows / headless. On a detected prompt we pause for the
+        # user's confirmation click, then re-observe and resume.
+        clearance = await _await_privileged_prompt_clearance(
+            ctx, task_prompt, step_idx, cancel_token,
+        )
+        if clearance == "cleared":
+            yield _progress(
+                f"[cu] step {step_idx}: elevation prompt cleared -- resuming"
+            )
+            continue
+        if clearance == "timeout":
+            yield _final(
+                stderr=(
+                    f"[cu] aborted: elevation prompt not confirmed within "
+                    f"{_ELEVATION_WAIT_TIMEOUT_S:.0f}s (step {step_idx})\n"
+                ),
+                exit_code=_ELEVATION_EXIT_CODE,
+            )
+            return
+        if clearance == "cancelled":
+            yield _final(
+                stderr="[cu] cancelled while awaiting elevation confirmation\n",
+                exit_code=_CANCEL_EXIT_CODE,
+            )
+            return
+
         # No-progress guard: if the last _STUCK_LIMIT screenshots are
         # byte-identical, nothing on screen changed. Bail with a clear "stuck"
         # failure instead of grinding through the rest of the budget.
@@ -2945,10 +3580,68 @@ async def _run_screenshot_loop(
         # when no action was guard-blocked is the dead-target reading correct.
         if observation.screenshot_hash:
             recent_hashes.append(observation.screenshot_hash)
+            # General "no progress -> re-target" nudge (user mandate 2026-06-22:
+            # make the loop GENERALLY recognise a missed target instead of
+            # mashing the same action -- NOT example-specific). The instant the
+            # screen is UNCHANGED since the previous step, the last action had no
+            # visible effect: a missed click, a non-existent element, a no-op
+            # key. Tell the model ONCE -- before the 3-strike stuck abort below --
+            # to STOP repeating it and re-target. Applies to EVERY action type
+            # and every app (pure screenshot+keyboard+mouse, no per-case logic).
+            if (
+                len(recent_hashes) >= 2
+                and recent_hashes[-1] == recent_hashes[-2]
+                and last_stall_nudge_hash != observation.screenshot_hash
+            ):
+                last_stall_nudge_hash = observation.screenshot_hash
+                history.append(
+                    "NOTE: the screen did NOT change after your last action -- "
+                    "it had NO visible effect (a missed target, a non-existent "
+                    "element, or a no-op). Do NOT repeat the same action. "
+                    "Re-target: prefer click_element on one of the EXACT labels "
+                    "in AVAILABLE CONTROLS, aim a different pixel, or take the "
+                    "next concrete step toward the goal."
+                )
+                log.info(
+                    "[cu] step %d: screen unchanged since last step — injected "
+                    "re-target nudge (no visible effect)", step_idx,
+                )
             if (
                 len(recent_hashes) == _STUCK_LIMIT
                 and len(set(recent_hashes)) == 1
             ):
+                # Verify-before-fail (user forensic 2026-06-20): a frozen
+                # screen is ALSO exactly what a FINISHED task looks like -- a
+                # fully-loaded page is static, so the goal-reached state is
+                # byte-identical to a dead-click stall. Hash alone cannot tell
+                # "stuck" from "done". So before declaring the mission stuck,
+                # run the done-verifier ONCE against this stable screenshot. If
+                # the goal is provably achieved, end as a verified success
+                # instead of a false "3 identical screenshots" failure (live:
+                # the @AngelaMerkel profile page was open on screen, yet the
+                # mission reported FAILED because nothing moved). The verifier
+                # never raises (returns (False, "") on any error), so this can
+                # only RESCUE a real success -- it never masks a genuine stall,
+                # which still falls through to the honest failure below.
+                done, proof = await _verify_goal_done(
+                    ctx, observation=observation, user_goal=task_prompt,
+                )
+                if done:
+                    proof_cap = (
+                        _READ_PROOF_MAX
+                        if _goal_needs_reading(task_prompt)
+                        else 80
+                    )
+                    log.info(
+                        "[cu] no-progress freeze AT the goal -- verifier "
+                        "confirms done (proof=%r); ending as success",
+                        proof[:80],
+                    )
+                    yield _final(
+                        stdout=f"[cu] done (verified: {proof[:proof_cap]})\n",
+                        exit_code=0,
+                    )
+                    return
                 cause = (
                     "recent actions were suppressed by a guard "
                     "(repeated click / relaunch), so nothing changed"
@@ -3164,6 +3857,19 @@ async def _run_screenshot_loop(
                     plan_user_message += _SEARCH_DISCIPLINE_BLOCK
             else:
                 plan_user_message += verify_note
+        # Window-state awareness (Phase 1a): tell the model what is ALREADY open
+        # so it focuses an existing window (switch_window) instead of re-launching
+        # it -- the OBS-already-in-the-taskbar case. Best-effort (~microseconds),
+        # never raises; empty on headless / a platform that returns nothing.
+        awareness_hint = _window_awareness_line(ctx)
+        if awareness_hint:
+            if plan_user_message is None:
+                plan_user_message = (
+                    f"GOAL: {task_prompt}\n"
+                    f"PREVIOUS_STEPS:\n{chr(10).join(history[-12:]) or '(none)'}\n\n"
+                    "Inspect the screenshot and emit ONE JSON action."
+                )
+            plan_user_message += awareness_hint
         log.info("[cu] step %d phase=think", step_idx)
         t_think = time.monotonic()
         # Wave 3 hybrid: try the native Gemini computer_use engine first when
@@ -3192,6 +3898,7 @@ async def _run_screenshot_loop(
                         history_text="\n".join(history[-12:]),
                         system_prompt=think_system_prompt,
                         user_message=plan_user_message,
+                        early_stop_json=True,
                     ),
                     timeout=_think_timeout_s(ctx),
                 )
@@ -3403,6 +4110,42 @@ async def _run_screenshot_loop(
                         )
                         return
                     break
+
+            # Repeated-type guard (BUG-CU-RETYPE, live 2026-06-22): re-typing the
+            # SAME text the model just successfully typed is a redundant no-op --
+            # the field already holds it. Do NOT execute it; inject a note that
+            # pushes the model to the next concrete step (submit with Enter, or
+            # click the matching result) instead of mashing the same query. Use
+            # ``continue`` (not ``break``) so a trailing submit key in THIS batch
+            # -- e.g. [click, type(repeat), key=Enter] -- still fires and the
+            # search actually goes through. Parity-safe: the field keeps the
+            # text from the first type.
+            if action == "type":
+                _typed = str(action_obj.get("text", "")).strip()
+                if _typed and _typed == last_typed_text:
+                    log.info(
+                        "[cu] %s repeated type %r — suppressed (already typed)",
+                        tag, _typed[:40],
+                    )
+                    history.append(
+                        f"{tag}: type {_typed!r} SKIPPED — you ALREADY typed this "
+                        "exact text and it is in the field. Do NOT type it again. "
+                        "Take the NEXT step instead: press Enter to submit, or "
+                        "click the matching on-screen result."
+                    )
+                    guard_hits += 1
+                    if guard_hits >= _MAX_GUARD_HITS:
+                        yield _final(
+                            stderr=(
+                                f"[cu] mission is circling: {guard_hits} "
+                                "guard-blocked actions this mission (suppressed "
+                                "relaunches / repeated clicks / re-types) — no "
+                                "productive next action found\n"
+                            ),
+                            exit_code=_FAIL_EXIT_CODE,
+                        )
+                        return
+                    continue
 
             # Telemetry — swallowed on failure to protect the loop.
             if ctx.bus is not None:
@@ -3702,12 +4445,25 @@ async def _run_screenshot_loop(
             # for play goals (BUG-CU-WRONG-SONG, 2026-05-29).
             if action == "type" and str(action_obj.get("text", "")).strip():
                 typed_query = True
-            # Arm the on-demand done-verifier after a state-change click on a
-            # play/submit/start-type goal: the NEXT iteration judges the fresh
-            # screenshot before planning another (possibly toggle-undoing)
-            # action (BUG-CU-TOGGLE).
-            if action in ("click", "click_element") and _goal_needs_verification(task_prompt):
-                pending_verify = True
+                # Arm the repeated-type guard: a back-to-back type of this exact
+                # text next is a redundant no-op (BUG-CU-RETYPE).
+                last_typed_text = str(action_obj.get("text", "")).strip()
+            # Disarm the repeated-type guard on a click/click_element: a click
+            # RE-FOCUSES / re-targets a field, so a following type of the same
+            # text is a FRESH attempt (e.g. retrying after the first type did not
+            # land in a web input like the Google-Flights city field), NOT a
+            # redundant back-to-back repeat. Without this reset the legitimate
+            # retry is suppressed and the mission dead-ends "in the right field
+            # but nothing typed" (RC#2, 2026-06-22). The guard still catches a
+            # type-immediately-after-type with no click in between.
+            if action in ("click", "click_element"):
+                last_typed_text = ""
+                # Arm the on-demand done-verifier after a state-change click on a
+                # play/submit/start-type goal: the NEXT iteration judges the fresh
+                # screenshot before planning another (possibly toggle-undoing)
+                # action (BUG-CU-TOGGLE).
+                if _goal_needs_verification(task_prompt):
+                    pending_verify = True
 
         # End of batch. If the repeated-click guard engaged, inject a
         # constrained directive so the next turn VERIFIES instead of clicking

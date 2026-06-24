@@ -24,12 +24,9 @@ import {
   type WikiGraphPayload,
 } from "@/lib/wikiGraph";
 import { useEventStore } from "@/store/events";
+import { useT } from "@/i18n";
 
 const GRAPH_QUERY_KEY = ["wiki", "graph"] as const;
-
-function emptyStateDe(name: string): string {
-  return `Dein Memory-Graph ist noch leer. Sobald ${name} Notizen anlegt, verbinden sich die Knoten hier automatisch.`;
-}
 
 async function fetchGraph(): Promise<WikiGraphPayload> {
   const res = await fetch("/api/wiki/graph");
@@ -50,6 +47,7 @@ export interface WikiGraphProps {
  */
 export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.Element {
   const assistantName = useEventStore((s) => s.assistantName);
+  const t = useT();
   const { data, isLoading, isError } = useQuery({
     queryKey: GRAPH_QUERY_KEY,
     queryFn: fetchGraph,
@@ -195,7 +193,7 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
         data-testid="wiki-graph-loading"
         className="flex h-full items-center justify-center text-sm text-muted-foreground"
       >
-        Lade Graph…
+        {t("wiki_graph.loading")}
       </div>
     );
   }
@@ -206,7 +204,7 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
         data-testid="wiki-graph-error"
         className="flex h-full items-center justify-center text-sm text-muted-foreground"
       >
-        Graph konnte nicht geladen werden.
+        {t("wiki_graph.load_error")}
       </div>
     );
   }
@@ -217,7 +215,9 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
         data-testid="wiki-graph-empty"
         className="flex h-full items-center justify-center px-8 text-center text-sm text-muted-foreground"
       >
-        {emptyStateDe(assistantName)}
+        {t("wiki_graph.empty_prefix")}
+        {assistantName}
+        {t("wiki_graph.empty_suffix")}
       </div>
     );
   }
@@ -300,9 +300,9 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
         onClick={handleResetView}
         data-testid="wiki-graph-reset-view"
         className="absolute top-3 right-3 z-10 rounded-md border border-border bg-card/80 px-3 py-1.5 text-xs text-muted-foreground backdrop-blur transition hover:text-foreground hover:bg-card"
-        title="Zoom auf alle Knoten zurücksetzen"
+        title={t("wiki_graph.reset_view_title")}
       >
-        Zentrieren
+        {t("wiki_graph.center")}
       </button>
       {/* Hidden DOM mirror — keeps the canvas-based graph testable without a
           full canvas mock. The visible canvas remains the source of truth for

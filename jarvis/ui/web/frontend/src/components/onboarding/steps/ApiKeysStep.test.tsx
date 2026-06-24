@@ -1,8 +1,14 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
-const { switchBrainProvider, switchTtsProvider, switchSttProvider, refetch, PROVIDERS } =
-  vi.hoisted(() => {
+const {
+  switchBrainProvider,
+  switchTtsProvider,
+  switchSttProvider,
+  refetch,
+  setActiveOptimistic,
+  PROVIDERS,
+} = vi.hoisted(() => {
     const mk = (over: Record<string, unknown>) => ({
       id: "x",
       label: "X",
@@ -24,6 +30,7 @@ const { switchBrainProvider, switchTtsProvider, switchSttProvider, refetch, PROV
       switchTtsProvider: vi.fn().mockResolvedValue({}),
       switchSttProvider: vi.fn().mockResolvedValue({}),
       refetch: vi.fn(),
+      setActiveOptimistic: vi.fn(),
       PROVIDERS: [
         mk({ id: "claude-api", label: "Claude", tier: "brain", secret_keys: ["anthropic_api_key"], configured: true }),
         mk({ id: "gemini", label: "Gemini", tier: "brain", secret_keys: ["gemini_api_key"], configured: false }),
@@ -39,8 +46,20 @@ vi.mock("@/components/ApiKeyForm", () => ({
     <div data-testid="keyform">{secretKey}</div>
   ),
 }));
+// The subagent section fetches /api/openclaw/status on mount, which jsdom has no
+// server for. Stub it so the step renders deterministically; its real behaviour
+// is covered by SubagentSection's own tests.
+vi.mock("@/components/SubagentSection", () => ({
+  SubagentSection: () => <div data-testid="subagent-section" />,
+}));
 vi.mock("@/hooks/useProviders", () => ({
-  useProviders: () => ({ providers: PROVIDERS, loading: false, error: null, refetch }),
+  useProviders: () => ({
+    providers: PROVIDERS,
+    loading: false,
+    error: null,
+    refetch,
+    setActiveOptimistic,
+  }),
   switchBrainProvider,
   switchTtsProvider,
   switchSttProvider,
@@ -67,24 +86,27 @@ function renderStep(over: Record<string, unknown> = {}) {
   return props;
 }
 
-it("pages Brain -> Voice -> Hearing, then advances the flow", () => {
-  const props = renderStep();
-  const next = () =>
-    fireEvent.click(screen.getByRole("button", { name: "onboarding.nav.next" }));
+it("shows every provider class and the subagent section at once", () => {
+  renderStep();
 
+  // All three tier headers are visible simultaneously — no paging.
   expect(screen.getByText("Brain — reasoning")).toBeTruthy();
+  expect(screen.getByText("Voice — text to speech")).toBeTruthy();
+  expect(screen.getByText("Hearing — speech to text")).toBeTruthy();
+
+  // ...and their providers, in order, in the same scroll container.
   expect(screen.getByText("Claude")).toBeTruthy();
   expect(screen.getByText("anthropic_api_key")).toBeTruthy();
-
-  next(); // -> Voice (TTS)
-  expect(screen.getByText("Voice — text to speech")).toBeTruthy();
   expect(screen.getByText("Cartesia")).toBeTruthy();
+  expect(screen.getByText("Deepgram")).toBeTruthy();
 
-  next(); // -> Hearing (STT)
-  expect(screen.getByText("Hearing — speech to text")).toBeTruthy();
-  expect(props.goNext).not.toHaveBeenCalled();
+  // The subagent class is folded in below the key tiers.
+  expect(screen.getByTestId("subagent-section")).toBeTruthy();
+});
 
-  next(); // last class -> advance the flow
+it("advances the flow directly on Next (no internal paging)", () => {
+  const props = renderStep();
+  fireEvent.click(screen.getByRole("button", { name: "onboarding.nav.next" }));
   expect(props.goNext).toHaveBeenCalledTimes(1);
 });
 
@@ -102,6 +124,16 @@ it("activates a configured provider via its select control", async () => {
   fireEvent.click(screen.getByRole("button", { name: /Claude/ }));
   expect(switchBrainProvider).toHaveBeenCalledWith("claude-api");
   await waitFor(() => expect(refetch).toHaveBeenCalled());
+});
+
+it("flips the highlight optimistically before the switch resolves", () => {
+  // A switch that never resolves proves the UI does not wait on the backend.
+  switchBrainProvider.mockReturnValueOnce(new Promise(() => {}));
+  renderStep();
+  fireEvent.click(screen.getByRole("button", { name: /Claude/ }));
+  // The optimistic active-flip fires synchronously on click, ahead of the
+  // (still-pending) switch call and any refetch.
+  expect(setActiveOptimistic).toHaveBeenCalledWith("brain", "claude-api");
 });
 
 it("disables selection for an unconfigured cloud provider", () => {

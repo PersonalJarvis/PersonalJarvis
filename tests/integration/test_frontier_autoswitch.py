@@ -21,12 +21,7 @@ from jarvis.brain.frontier_autoswitch import (
     get_pending_switches,
 )
 from jarvis.core.bus import EventBus
-from jarvis.core.config import (
-    BrainConfig,
-    BrainProviderConfig,
-    BrainTierConfig,
-    JarvisConfig,
-)
+from jarvis.core.config import JarvisConfig
 from jarvis.core.events import FrontierModelSwitched
 
 
@@ -54,12 +49,15 @@ def _make_config_with_old_models() -> JarvisConfig:
     cfg = JarvisConfig.model_validate({
         "brain": {
             "primary": "claude-api",
+            # The auto-switch is opt-in (default False); these tests exercise the
+            # enabled apply path, so turn it on explicitly.
+            "frontier_auto_apply": True,
             "providers": {
                 "gemini": {
                     "model": "gemini-2.5-flash",
                     "deep_model": "gemini-2.5-pro",
                 },
-                "grok": {"model": "grok-3"},
+                "openai": {"model": "gpt-5"},
                 "claude-api": {
                     "model": "claude-sonnet-4-6",
                     "deep_model": "claude-opus-4-7",
@@ -110,7 +108,7 @@ async def test_apply_switches_when_resolver_returns_newer_models(
     resolver = _StubResolver({
         ("gemini", "fast"): "gemini-3-flash",
         ("gemini", "deep"): "gemini-3.1-pro-preview",
-        ("grok", "fast"): "grok-4.1-fast",
+        ("openai", "fast"): "gpt-5.5",
         ("claude-api", "fast"): "claude-sonnet-4-6",  # unverändert
         ("claude-api", "deep"): "claude-opus-4-7",    # unverändert
     })
@@ -123,19 +121,19 @@ async def test_apply_switches_when_resolver_returns_newer_models(
     # Verifiziere dass TOML-Persist auch gerufen wurde (3 Switches → 3 Calls).
     assert len(_mock_toml_persist) == 3
     persist_providers = {p for p, _ in _mock_toml_persist}
-    assert persist_providers == {"gemini", "grok"}
+    assert persist_providers == {"gemini", "openai"}
 
-    # 3 Switches: gemini/fast, gemini/deep, grok/fast.
+    # 3 Switches: gemini/fast, gemini/deep, openai/fast.
     assert len(switches) == 3
     providers_switched = {(s.provider, s.tier) for s in switches}
     assert providers_switched == {
-        ("gemini", "fast"), ("gemini", "deep"), ("grok", "fast"),
+        ("gemini", "fast"), ("gemini", "deep"), ("openai", "fast"),
     }
 
     # Config tatsaechlich mutiert
     assert cfg.brain.providers["gemini"].model == "gemini-3-flash"
     assert cfg.brain.providers["gemini"].deep_model == "gemini-3.1-pro-preview"
-    assert cfg.brain.providers["grok"].model == "grok-4.1-fast"
+    assert cfg.brain.providers["openai"].model == "gpt-5.5"
 
     # Sub-Jarvis-Override unangetastet
     assert cfg.brain.sub_jarvis is not None
@@ -158,12 +156,45 @@ async def test_apply_switches_when_resolver_returns_newer_models(
 
 
 @pytest.mark.asyncio
+async def test_disabled_by_default_is_noop(
+    _mock_toml_persist: list[tuple[str, dict[str, str | None]]],
+) -> None:
+    """With ``brain.frontier_auto_apply`` unset (default False) the boot hook is
+    a complete no-op: no resolver call, no TOML/soll persist, no mutation, no
+    event, no pending — even though newer models are available. User mandate
+    2026-06-20: providers/models must NOT switch by themselves.
+    """
+    cfg = _make_config_with_old_models()
+    # Flip the flag back off — the default the user actually runs with.
+    cfg.brain.frontier_auto_apply = False
+    resolver = _StubResolver({
+        ("gemini", "fast"): "gemini-3-flash",
+        ("gemini", "deep"): "gemini-3.1-pro-preview",
+        ("openai", "fast"): "gpt-5.5",
+    })
+    bus = EventBus()
+    received: list[FrontierModelSwitched] = []
+    bus.subscribe(FrontierModelSwitched, lambda e: received.append(e))
+
+    switches = await apply_frontier_resolution(cfg, resolver, bus)
+
+    assert switches == []
+    assert resolver.calls == []           # resolver never queried
+    assert _mock_toml_persist == []       # nothing persisted to TOML/soll
+    assert cfg.brain.providers["gemini"].model == "gemini-2.5-flash"  # unmutated
+    assert get_pending_switches() == []
+    import asyncio
+    await asyncio.sleep(0.01)
+    assert received == []
+
+
+@pytest.mark.asyncio
 async def test_no_switch_when_models_unchanged() -> None:
     cfg = _make_config_with_old_models()
     resolver = _StubResolver({
         ("gemini", "fast"): "gemini-2.5-flash",  # gleich
         ("gemini", "deep"): "gemini-2.5-pro",    # gleich
-        ("grok", "fast"): "grok-3",              # gleich
+        ("openai", "fast"): "gpt-5",             # gleich
         ("claude-api", "fast"): "claude-sonnet-4-6",
         ("claude-api", "deep"): "claude-opus-4-7",
     })
@@ -182,7 +213,7 @@ async def test_no_switch_when_models_unchanged() -> None:
 @pytest.mark.asyncio
 async def test_resolver_crash_does_not_mutate_config() -> None:
     cfg = _make_config_with_old_models()
-    original_grok = cfg.brain.providers["grok"].model
+    original_openai = cfg.brain.providers["openai"].model
     resolver = _CrashingResolver()
     bus = EventBus()
 
@@ -191,7 +222,7 @@ async def test_resolver_crash_does_not_mutate_config() -> None:
     assert switches == []
 
     # Config unveraendert
-    assert cfg.brain.providers["grok"].model == original_grok
+    assert cfg.brain.providers["openai"].model == original_openai
 
 
 @pytest.mark.asyncio
@@ -203,16 +234,16 @@ async def test_resolver_returns_none_no_switch() -> None:
     resolver = _StubResolver({
         ("gemini", "fast"): None,                  # kein Key
         ("gemini", "deep"): None,
-        ("grok", "fast"): "grok-4.1-fast",         # OK
+        ("openai", "fast"): "gpt-5.5",             # OK
         ("claude-api", "fast"): "claude-sonnet-4-6",
         ("claude-api", "deep"): "claude-opus-4-7",
     })
     bus = EventBus()
 
     switches = await apply_frontier_resolution(cfg, resolver, bus)
-    # Nur grok/fast hat geswitcht
+    # Nur openai/fast hat geswitcht
     assert len(switches) == 1
-    assert switches[0].provider == "grok"
+    assert switches[0].provider == "openai"
     # Gemini unangetastet
     assert cfg.brain.providers["gemini"].model == "gemini-2.5-flash"
 
@@ -223,7 +254,7 @@ async def test_ack_clears_pending() -> None:
     resolver = _StubResolver({
         ("gemini", "fast"): "gemini-3-flash",
         ("gemini", "deep"): None,
-        ("grok", "fast"): None,
+        ("openai", "fast"): None,
         ("claude-api", "fast"): None,
         ("claude-api", "deep"): None,
     })

@@ -164,6 +164,27 @@ _DRAG_RE = re.compile(
     r"\b(?:fenster|datei|icon|maus|cursor|element|nach\s+(?:links|rechts|oben|unten))\b",
     re.IGNORECASE,
 )
+# Explicit "use Computer-Use to …" — the user NAMES the harness as the instrument
+# ("mit Computer-Use … abspielen", "per/über Computer-Use", "nutze/benutze/
+# verwende Computer-Use …", "use/with/via/using computer use …"). This is the
+# strongest possible deterministic CU signal: the user said WHICH harness to use,
+# so the command MUST reach the screenshot loop without depending on the LLM
+# talker emitting a computer_use tool_call (the codex CLI talker drops ALL tools
+# and never can — see the broader-CU comment above; live repro 2026-06-21: "mit
+# Computer-Use in Spotify … abspielen" only ACK'd, never acted, because the
+# phrase has no open verb and fell through to the talker). An instrument marker
+# must IMMEDIATELY precede the term (optionally an article), so a how-to/explain
+# mention without a marker ("erklär mir Computer-Use", "was ist Computer-Use")
+# never matches; question-word how-tos are also excluded in
+# _looks_like_desktop_control via _OPEN_INSTRUCTIONAL_RE. Input is pre-_normalize'd
+# (umlauts → ascii: "über" → "ueber"); the literal hyphen in "computer-use"
+# survives normalize, so [-\s]? covers both "computer-use" and "computer use".
+_EXPLICIT_COMPUTER_USE_RE = re.compile(
+    r"\b(?:mit|per|ueber|via|with|using|use|nutz\w*|benutz\w*|verwend\w*)\s+"
+    r"(?:der\s+|die\s+|das\s+|den\s+|the\s+)?"
+    r"computer[-\s]?use\b",
+    re.IGNORECASE,
+)
 
 
 def _looks_like_desktop_control(text: str) -> bool:
@@ -187,8 +208,12 @@ def _looks_like_desktop_control(text: str) -> bool:
         return True
     if _OPEN_INSTRUCTIONAL_RE.search(text):
         return False
+    # An explicit "use Computer-Use to …" names the harness as the instrument —
+    # the strongest deterministic CU signal. Checked AFTER the instructional
+    # guard so a how-to "wie nutze ich Computer-Use" stays a brain answer.
     return bool(
-        _NAVIGATE_RE.search(text)
+        _EXPLICIT_COMPUTER_USE_RE.search(text)
+        or _NAVIGATE_RE.search(text)
         or _SCREENSHOT_RE.search(text)
         or _WINDOW_OP_RE.search(text)
         or _DRAG_RE.search(text)

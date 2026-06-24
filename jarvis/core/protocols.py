@@ -310,6 +310,13 @@ class Tool(Protocol):
     schema: dict[str, Any]  # JSON-Schema für LLM-Tool-Use
     description: str
     risk_tier: RiskTier
+    # Optional extension (recognized by RiskTierEvaluator via getattr, NOT part
+    # of the structural Protocol check): a tool with mixed actions may define
+    #   def risk_tier_for_args(self, args: dict[str, Any]) -> RiskTier
+    # to refine its tier per call (e.g. gmail: reads "safe", send "ask"). The
+    # returned value is validated against the RiskTier vocabulary; blacklist and
+    # whitelist still take priority. Returning an unknown value falls back to
+    # the static ``risk_tier`` above.
 
     async def execute(self, args: dict[str, Any], ctx: ExecutionContext) -> ToolResult:
         """Execute the action."""

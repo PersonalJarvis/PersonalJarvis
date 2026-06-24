@@ -129,7 +129,25 @@ def test_unix_backend_spawn_threads_args_through_to_ptyprocess(monkeypatch):
         "argv": ["bash"],
         "cwd": "/home/x",
         "dimensions": (24, 80),  # ptyprocess takes (rows, cols)
+        "env": None,  # no env supplied -> inherit
     }
+
+
+def test_unix_backend_threads_env_through(monkeypatch):
+    """A caller-supplied env must reach ptyprocess.PtyProcess.spawn(env=...).
+
+    The Antigravity brain/worker hardens the child PATH + drops API keys, so the
+    seam must forward env, not silently inherit os.environ.
+    """
+    fake_module = type(sys)("ptyprocess")
+    fake_module.PtyProcess = FakeBytesPtyProcess  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "ptyprocess", fake_module)
+
+    backend = UnixPtyBackend()
+    backend.spawn(
+        argv=("agy",), cwd=None, cols=80, rows=24, env={"PATH": "/safe"}
+    )
+    assert FakeBytesPtyProcess.last_spawn["env"] == {"PATH": "/safe"}
 
 
 def test_unix_backend_decodes_bytes_to_str_on_read():
@@ -242,7 +260,7 @@ def test_fake_backend_records_spawn_args_and_echoes():
     backend = FakePtyBackend(pid=321)
     handle = backend.spawn(argv=("zsh", "-i"), cwd="/home", cols=100, rows=30)
     assert backend.spawn_calls == [
-        {"argv": ("zsh", "-i"), "cwd": "/home", "cols": 100, "rows": 30}
+        {"argv": ("zsh", "-i"), "cwd": "/home", "cols": 100, "rows": 30, "env": None}
     ]
     assert handle.pid == 321
     handle.write("echo round-trip")

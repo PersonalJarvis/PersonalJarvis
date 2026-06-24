@@ -1111,6 +1111,45 @@ async def put_mute_music(body: BoolToggleBody, request: Request) -> dict[str, ob
     return {"ok": True, "enabled": enabled, "persisted": persisted, "applied_live": applied_live}
 
 
+@router.get("/sound-effects")
+async def get_sound_effects(request: Request) -> dict[str, object]:
+    cfg = _config(request)
+    ui = getattr(cfg, "ui", None)
+    return {"enabled": bool(getattr(ui, "sound_effects", True))}
+
+
+@router.put("/sound-effects")
+async def put_sound_effects(body: BoolToggleBody, request: Request) -> dict[str, object]:
+    """Global earcon master switch. Persists to [ui] sound_effects and applies
+    live: the in-memory UI config is the same object the speech pipeline reads
+    before every earcon, so the next tone honors the new value with no restart.
+    """
+    enabled = bool(body.enabled)
+    cfg = _config(request)
+    ui = getattr(cfg, "ui", None)
+    applied_live = False
+    if ui is not None:
+        try:
+            ui.sound_effects = enabled  # type: ignore[attr-defined]
+            applied_live = True
+        except Exception as exc:  # noqa: BLE001
+            log.debug("in-memory sound_effects update skipped: %s", exc)
+    persisted = False
+    try:
+        from jarvis.core import config_writer
+
+        config_writer.set_sound_effects(enabled)
+        persisted = True
+    except Exception as exc:  # noqa: BLE001
+        log.warning("sound_effects persist failed (live apply still attempted): %s", exc)
+    return {
+        "ok": True,
+        "enabled": enabled,
+        "persisted": persisted,
+        "applied_live": applied_live,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Wiki curator model picker. GET current + selectable providers/models; PUT to
 # change. The dedicated long-term-memory LLM is provider-agnostic: an empty

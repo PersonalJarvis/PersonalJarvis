@@ -33,8 +33,9 @@ from jarvis.speech.wake_constants import (
     JARVIS_WAKE_PATTERN,
     WAKE_ENGINES,
     match_known_oww_model,
-    normalize_phrase,
+    normalize_phrase_for_match,
     phrase_core,
+    phrase_core_for_match,
     resolve_oww_model_path,
 )
 
@@ -82,7 +83,9 @@ class WakeMatcher:
 
     - jarvis-default: wraps the canonical :data:`JARVIS_WAKE_PATTERN`.
     - arbitrary phrase: fuzzy token-window match against a normalised
-      transcript using ``difflib.SequenceMatcher``.
+      transcript using ``difflib.SequenceMatcher``. A phrase that explicitly
+      starts with a wake prefix ("Hey Athena") must match that prefix too, so a
+      bare core word does not re-trigger the listener.
     """
 
     def __init__(
@@ -108,7 +111,7 @@ class WakeMatcher:
             return None
         if self._pattern is not None:
             return self._pattern.search(text)
-        tokens = normalize_phrase(text)
+        tokens = normalize_phrase_for_match(text)
         n = len(self._core)
         if n == 0 or len(tokens) < n:
             return None
@@ -126,12 +129,16 @@ def compile_wake_matcher(phrase: str, *, fuzzy_ratio: float = 0.8) -> WakeMatche
     """Build a :class:`WakeMatcher` for ``phrase``.
 
     The default "Hey Jarvis" (and any jarvis-only phrase) is matched by the
-    strict legacy pattern; everything else is fuzzy-matched on its core tokens.
+    strict legacy pattern. Other phrases are fuzzy-matched on their core tokens
+    unless the user explicitly included a wake prefix ("Hey", "Hallo", "Ok",
+    ...), in which case the prefix is part of the match contract.
     """
-    core = phrase_core(phrase)
+    tokens = normalize_phrase_for_match(phrase)
+    core = phrase_core_for_match(phrase)
     if core == ["jarvis"]:
         return WakeMatcher(pattern=JARVIS_WAKE_PATTERN, is_jarvis_default=True)
-    return WakeMatcher(core_tokens=core, fuzzy_ratio=fuzzy_ratio)
+    match_tokens = tokens if tokens and core and len(core) < len(tokens) else core
+    return WakeMatcher(core_tokens=match_tokens, fuzzy_ratio=fuzzy_ratio)
 
 
 def _canonical_keyword(phrase: str) -> str:

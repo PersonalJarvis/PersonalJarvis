@@ -21,9 +21,56 @@ import json
 import logging
 import os
 import shutil
+from collections.abc import Mapping
 from pathlib import Path
 
+from jarvis.missions.workers.process_utils import resolve_node_executable
+
 logger = logging.getLogger(__name__)
+
+
+def _worker_path_repair_is_windows() -> bool:
+    """True on Windows hosts. Extracted so tests can force the POSIX branch."""
+    return os.name == "nt"
+
+
+def _repair_windows_worker_path(
+    path: str, *, environ: Mapping[str, str], node_exe: str | None
+) -> str:
+    """Additively repair a worker PATH so essential dirs are always present.
+
+    The worker env REPLACES os.environ, so it inherits whatever PATH jarvis was
+    launched with. When jarvis is started by an agent runtime with a degraded
+    PATH (live forensic 2026-06-20: the hermes-agent launch had no Node.js dir),
+    the codex worker's ``codex.CMD`` shim resolves bare ``node`` via PATH,
+    cmd.exe fails "'node' is not recognized", and every mission dies in ~25 ms.
+    A missing System32 also breaks ``chcp`` (the Antigravity-brain symptom).
+
+    This APPENDS the essential System32 / Node.js / npm-global dirs when they
+    are absent — it never reorders or drops existing entries, so a binary that
+    was already resolvable keeps its original source. Returns ``path`` unchanged
+    when nothing needs adding.
+    """
+    root = environ.get("SystemRoot") or environ.get("windir") or r"C:\Windows"
+    essentials: list[str] = [
+        os.path.join(root, "System32"),
+        root,
+        os.path.join(root, "System32", "Wbem"),
+        os.path.join(root, "System32", "WindowsPowerShell", "v1.0"),
+    ]
+    if node_exe:
+        essentials.append(str(Path(node_exe).parent))
+    appdata = environ.get("APPDATA")
+    if appdata:
+        # npm-global shims (codex.cmd / claude.cmd / gemini.cmd) live here.
+        essentials.append(os.path.join(appdata, "npm"))
+
+    existing = [p for p in path.split(os.pathsep) if p]
+    seen = {p.rstrip("\\/").lower() for p in existing}
+    additions = [d for d in essentials if d.rstrip("\\/").lower() not in seen]
+    if not additions:
+        return path
+    return os.pathsep.join(existing + additions)
 
 # System variables that are ALWAYS forwarded from os.environ (when set).
 # - PATH: without it the worker cannot find binaries (git, claude, codex, python).
@@ -94,6 +141,32 @@ def build_worker_env(
     env["PYTHONIOENCODING"] = "utf-8"
     env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
     env["CODEX_HOME"] = str(run_dir / ".codex")
+
+    # ROOT-CAUSE FIX (2026-06-20): jarvis can be launched by an agent runtime
+    # (hermes-agent) with a degraded PATH that lacks the Node.js dir / System32.
+    # Because this env REPLACES os.environ, the worker inherits that broken PATH
+    # verbatim, the codex `codex.CMD` shim can't find `node`, and EVERY mission
+    # dies `task_error` in ~25 ms ("Der Worker ist abgebrochen."). Repair the
+    # PATH additively and forward the Windows shell vars a `.cmd` shim / `chcp`
+    # need, so a worker runs regardless of how jarvis itself was started.
+    if _worker_path_repair_is_windows():
+        env["PATH"] = _repair_windows_worker_path(
+            env.get("PATH", ""),
+            environ=os.environ,
+            node_exe=resolve_node_executable(),
+        )
+        for var in (
+            "ComSpec",
+            "PATHEXT",
+            "windir",
+            "NUMBER_OF_PROCESSORS",
+            "PROCESSOR_ARCHITECTURE",
+            "PROCESSOR_ARCHITEW6432",
+            "TMP",
+        ):
+            value = os.environ.get(var)
+            if value is not None and var not in env:
+                env[var] = value
 
     # ROOT-CAUSE FIX (2026-05-29): pin the worker/critic `claude` CLI to an
     # ISOLATED config dir so it does NOT load the user's global ~/.claude

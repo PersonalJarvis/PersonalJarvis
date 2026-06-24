@@ -22,6 +22,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import {
   MISSION_STATE_BADGE,
@@ -89,6 +90,7 @@ function shortPrompt(p: string): string {
 }
 
 export function MissionTree() {
+  const t = useT();
   const { missions, eventsByMission } = useMissionsStore(
     useShallow((s) => ({
       missions: selectMissionList(s),
@@ -109,7 +111,7 @@ export function MissionTree() {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-xs text-muted-foreground">
         <Target className="h-7 w-7 text-muted-foreground/50" />
-        <p>Noch keine Missions. Hauptjarvis dispatched gleich…</p>
+        <p>{t("missions_view.no_missions_yet")}</p>
       </div>
     );
   }
@@ -148,6 +150,7 @@ export function MissionTree() {
 }
 
 function NodeRenderer({ node, style, dragHandle }: NodeRendererProps<TreeNode>) {
+  const t = useT();
   const data = node.data;
   const isMission = data.kind === "mission";
   const meta: MissionStateBadgeMeta | null =
@@ -205,7 +208,7 @@ function NodeRenderer({ node, style, dragHandle }: NodeRendererProps<TreeNode>) 
             meta.className,
           )}
         >
-          {meta.label}
+          {t(meta.labelKey)}
         </span>
       )}
     </div>

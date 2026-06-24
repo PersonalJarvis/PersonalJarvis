@@ -155,6 +155,17 @@ desktop = [
     # no-op when they are absent.
     "pyautogui>=0.9.54",
     "mss>=10.0",
+    # Drag-drop ONTO the floating overlay (bar/mascot): the cross-platform tkdnd
+    # Tcl extension, with bundled binaries for Windows / macOS / Linux. Registered
+    # onto the live Tk root in place (jarvis/overlay/drop_target.py). All-platform
+    # desktop dep; absent → the overlay drop degrades to a logged no-op while the
+    # in-app web dock (POST /api/chat/drop) still carries the feature everywhere.
+    # PIN ==0.4.2 (verified on real Windows/macOS-arm64/Linux GitHub runners,
+    # 2026-06-22): from 0.4.4.1 onward the osx-arm64 binary is the Tcl-9 build
+    # (libtcl9tkdnd2.9.5.dylib) which fails to load on the standard Tcl-8.6 Python
+    # ("incompatible stubs mechanism") — breaking the overlay drop on Apple
+    # Silicon. 0.4.2 ships the Tcl-8 osx-arm64 binary that loads on all three OSes.
+    "tkinterdnd2==0.4.2",
 ]
 # macOS accessibility / overlay extras (Wave 2, AD-14). pyobjc frameworks back
 # the macOS AX-tree UI-element-click source (Wave 2.1) and are macOS-only, so
@@ -231,9 +242,9 @@ claude-api = "jarvis.plugins.brain.claude_api:ClaudeAPIBrain"
 openrouter = "jarvis.plugins.brain.openrouter:OpenRouterBrain"
 openai = "jarvis.plugins.brain.openai:OpenAIBrain"
 gemini = "jarvis.plugins.brain.gemini:GeminiBrain"
-grok = "jarvis.plugins.brain.grok:GrokBrain"
 codex = "jarvis.plugins.brain.codex:CodexBrain"
 antigravity = "jarvis.plugins.brain.antigravity:AntigravityBrain"
+# xAI Grok removed as a brain provider 2026-06-22 (TTS-only — see grok-voice).
 # Ollama-Provider 2026-04-21 entfernt — User-Entscheidung (reine API-Provider-Chain).
 
 [project.entry-points."jarvis.harness"]

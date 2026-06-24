@@ -35,9 +35,13 @@ from jarvis.plugins.tool.spawn_worker import (
 )
 
 # The suppress ACK is composed by SpawnAnnouncementComposer in its
-# deterministic "already_running" mode — bilingual pools, no LLM.
-_SUPPRESS_POOL = set(_FALLBACK_ALREADY_RUNNING["de"]) | set(
-    _FALLBACK_ALREADY_RUNNING["en"]
+# deterministic "already_running" mode — de/en/es pools, no LLM. All three
+# supported languages are included so a Spanish suppress ACK never false-fails
+# the pool assertions (the composer's _resolve_language can return "es").
+_SUPPRESS_POOL = (
+    set(_FALLBACK_ALREADY_RUNNING["de"])
+    | set(_FALLBACK_ALREADY_RUNNING["en"])
+    | set(_FALLBACK_ALREADY_RUNNING["es"])
 )
 
 
@@ -302,9 +306,10 @@ def test_suppress_acks_are_short_and_unique() -> None:
         assert len(pool) >= 3, "need variety to avoid robot repetition"
         assert len(set(pool)) == len(pool)
         in_flight_markers = {
-            # German marker words below are the data under test.
+            # German/Spanish marker words below are the data under test.
             "de": ("schon", "läuft", "dabei", "dran", "bereits", "arbeit"),  # i18n-allow
             "en": ("already", "still", "running", "working", "progress"),
+            "es": ("marcha", "sigo", "proceso", "está"),  # i18n-allow
         }[lang]
         for ack in pool:
             assert 5 <= len(ack) <= 60, (
