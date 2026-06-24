@@ -1950,7 +1950,8 @@
     "trigger_placeholder": "e.g. start the morning routine",
     "create": "Create skill",
     "create_error": "Could not create the skill",
-    "name_required": "Please enter a name with at least 3 characters."
+    "name_required": "Please enter a name with at least 3 characters.",
+    "needs_instructions": "Please describe what the skill should do — type it in the field at the top, or write the instructions below."
   },
   "missions_view": {
     "active": "active",

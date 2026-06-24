@@ -80,22 +80,70 @@ _TRANSLIT: Final[dict[str, str]] = {
 _DELIVERABLES_FOLDER_NAME: Final[str] = "Jarvis-Outputs"
 
 
-def build_deliverable_summary(mission_dir: Path) -> str:
-    """Return a TTS-safe German sentence naming the mission's archived files.
+#: TTS templates for the deliverable / delivered summaries, keyed by the
+#: mission's DISPATCH language. The summary is recycled into
+#: ``MissionApproved.summary_de`` / ``summary_en`` and spoken back by the
+#: announcer in the language the mission was dispatched in. Before 2026-06-24
+#: only the German forms existed, so an English-dispatched file mission read its
+#: completion confirmation back in German (the announcer picked ``summary_en``
+#: but it carried German text, and the pipeline re-detected German). Keys ``de``
+#: and ``en`` only — Spanish dispatch falls back to ``de`` at the spawn layer
+#: (the ``Literal["de","en"]`` dispatch contract). "Datei" / "File" stay outside
+#: the scrub blacklist so they survive ``scrub_for_voice``.
+_DELIVERABLE_TEMPLATES: Final[dict[str, dict[str, str]]] = {
+    "de": {
+        "one": "Fertig. Datei {name} ist gespeichert.",
+        "few": "Fertig. {count} Dateien gespeichert: {joined}.",
+        "many": "Fertig. {count} Dateien gespeichert.",
+    },
+    "en": {
+        "one": "Done. File {name} is saved.",
+        "few": "Done. {count} files saved: {joined}.",
+        "many": "Done. {count} files saved.",
+    },
+}
+
+_DELIVERED_TEMPLATES: Final[dict[str, dict[str, str]]] = {
+    "de": {
+        "one": "Fertig. Datei {name} liegt im Ordner {folder}.",
+        "few": "Fertig. {count} Dateien im Ordner {folder}: {joined}.",
+        "many": "Fertig. {count} Dateien im Ordner {folder} gespeichert.",
+    },
+    "en": {
+        "one": "Done. File {name} is in the folder {folder}.",
+        "few": "Done. {count} files in the folder {folder}: {joined}.",
+        "many": "Done. {count} files in the folder {folder}.",
+    },
+}
+
+
+def _templates(table: dict[str, dict[str, str]], language: str) -> dict[str, str]:
+    """Return the template set for *language*, defaulting to German.
+
+    German is the back-compat default (every pre-2026-06-24 caller and the
+    ``Literal["de","en"]`` spawn contract's ``es``-fallback resolve here).
+    """
+    return table.get(language, table["de"])
+
+
+def build_deliverable_summary(mission_dir: Path, *, language: str = "de") -> str:
+    """Return a TTS-safe sentence naming the mission's archived files.
 
     Args:
         mission_dir: Path to ``<isolation_root>/mission_<id[:13]>/``.
+        language: Dispatch language (``"de"`` / ``"en"``) the sentence is spoken
+            in. Defaults to German; an unknown code falls back to German.
 
     Returns:
         Empty string when there are no archived deliverables. Otherwise a
-        speakable German sentence:
+        speakable sentence in *language*, e.g. for German:
 
         * 1 file:           ``"Fertig. Datei <name> ist gespeichert."``
         * 2..3 files:       ``"Fertig. <n> Dateien gespeichert: A, B."``
         * 4+ files:         ``"Fertig. <n> Dateien gespeichert."``
 
         Caller (``Kontrollierer._approve_mission``) ``or``-fallbacks to
-        ``"Mission abgeschlossen."`` when this returns empty.
+        ``"Mission abgeschlossen."`` / ``"Mission completed."`` when empty.
     """
     tasks_root = mission_dir / "tasks"
     if not tasks_root.exists() or not tasks_root.is_dir():
@@ -119,13 +167,14 @@ def build_deliverable_summary(mission_dir: Path) -> str:
     if not names:
         return ""
 
+    tpl = _templates(_DELIVERABLE_TEMPLATES, language)
     count = len(names)
     if count == 1:
-        return f"Fertig. Datei {names[0]} ist gespeichert."
+        return tpl["one"].format(name=names[0])
     if count <= _MAX_NAMED_FILES:
         joined = ", ".join(names)
-        return f"Fertig. {count} Dateien gespeichert: {joined}."
-    return f"Fertig. {count} Dateien gespeichert."
+        return tpl["few"].format(count=count, joined=joined)
+    return tpl["many"].format(count=count)
 
 
 def _existing_deliverable_files(mission_dir: Path) -> list[Path]:
@@ -415,24 +464,30 @@ def deliver_to_user_folder(
     return delivered
 
 
-def build_delivered_summary(delivered: list[Path]) -> str:
-    """TTS-safe German sentence naming delivered files AND their folder.
+def build_delivered_summary(delivered: list[Path], *, language: str = "de") -> str:
+    """TTS-safe sentence naming delivered files AND their folder.
 
     Unlike :func:`build_deliverable_summary` (which only names the archive
     basenames), this also tells the user WHERE the file landed so they can open
     it. Empty string when nothing was delivered (caller falls back).
+
+    Args:
+        delivered: the on-disk paths the deliverables were mirrored to.
+        language: Dispatch language (``"de"`` / ``"en"``) the sentence is spoken
+            in. Defaults to German; an unknown code falls back to German.
     """
     if not delivered:
         return ""
     folder = delivered[0].parent
     names = [p.name for p in delivered]
+    tpl = _templates(_DELIVERED_TEMPLATES, language)
     count = len(names)
     if count == 1:
-        return f"Fertig. Datei {names[0]} liegt im Ordner {folder.name}."
+        return tpl["one"].format(name=names[0], folder=folder.name)
     if count <= _MAX_NAMED_FILES:
         joined = ", ".join(names)
-        return f"Fertig. {count} Dateien im Ordner {folder.name}: {joined}."
-    return f"Fertig. {count} Dateien im Ordner {folder.name} gespeichert."
+        return tpl["few"].format(count=count, folder=folder.name, joined=joined)
+    return tpl["many"].format(count=count, folder=folder.name)
 
 
 __all__ = [

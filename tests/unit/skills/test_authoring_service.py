@@ -81,7 +81,9 @@ async def test_create_skill_is_on_by_default(
     """A user who fills the form and hits Create expects an active skill —
     not a draft they have to flip on. No explicit state → VALIDATED ("on")."""
     svc = _service(registry, skills_root)
-    await svc.create(SkillCreateRequest(name="Active One", body="## x\n"))
+    await svc.create(
+        SkillCreateRequest(name="Active One", body="## Active One\n\nDo the active thing.\n")
+    )
     skill = registry.get("Active One")
     assert skill.state in (
         SkillLifecycleState.VALIDATED,
@@ -97,7 +99,7 @@ async def test_create_persists_voice_trigger(
     await svc.create(
         SkillCreateRequest(
             name="Trigger Skill",
-            body="## x\n",
+            body="## Trigger Skill\n\nDo the thing when invoked.\n",
             triggers=({"type": "voice", "pattern": "^do the thing"},),
         )
     )
@@ -113,9 +115,13 @@ async def test_create_rejects_duplicate_name(
     registry: SkillRegistry, skills_root: Path
 ) -> None:
     svc = _service(registry, skills_root)
-    await svc.create(SkillCreateRequest(name="Dup Skill", body="## x\n"))
+    await svc.create(
+        SkillCreateRequest(name="Dup Skill", body="## Dup Skill\n\nFirst body.\n")
+    )
     with pytest.raises(SkillAuthoringError) as exc:
-        await svc.create(SkillCreateRequest(name="Dup Skill", body="## y\n"))
+        await svc.create(
+            SkillCreateRequest(name="Dup Skill", body="## Dup Skill\n\nSecond body.\n")
+        )
     assert exc.value.status == 409
 
 
@@ -150,5 +156,56 @@ async def test_create_rejects_name_that_slugs_to_nothing(
     not a path-traversal or an empty-dir write."""
     svc = _service(registry, skills_root)
     with pytest.raises(SkillAuthoringError) as exc:
-        await svc.create(SkillCreateRequest(name="!!!", body="## x\n"))
+        await svc.create(
+            SkillCreateRequest(name="!!!", body="## x\n\nDo something.\n")
+        )
     assert exc.value.status == 400
+
+
+# ----------------------------------------------------------------------
+# Body must carry real instructions — the root cause of the "Hallo Hallo
+# Hallo" forensic: a skill created with no instructions in its body is
+# functionless (run-skill loads an empty body → the brain does nothing).
+# A skill with only a heading / whitespace must be refused at 400 so no
+# path (UI form, REST, AI-commit) can persist a dead skill.
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_rejects_empty_body(
+    registry: SkillRegistry, skills_root: Path
+) -> None:
+    svc = _service(registry, skills_root)
+    with pytest.raises(SkillAuthoringError) as exc:
+        await svc.create(SkillCreateRequest(name="Empty Body", body=""))
+    assert exc.value.status == 400
+    assert not (skills_root / "empty-body").exists()
+
+
+@pytest.mark.asyncio
+async def test_create_rejects_heading_only_body(
+    registry: SkillRegistry, skills_root: Path
+) -> None:
+    """Just ``## Title`` (the default when the form body is left blank) is not
+    a usable skill — this is exactly the Hallo-Hallo-Hallo failure."""
+    svc = _service(registry, skills_root)
+    with pytest.raises(SkillAuthoringError) as exc:
+        await svc.create(
+            SkillCreateRequest(name="Hallo Hallo Hallo", body="## Hallo Hallo Hallo\n")
+        )
+    assert exc.value.status == 400
+    assert not (skills_root / "hallo-hallo-hallo").exists()
+
+
+@pytest.mark.asyncio
+async def test_create_accepts_body_with_instructions(
+    registry: SkillRegistry, skills_root: Path
+) -> None:
+    svc = _service(registry, skills_root)
+    created = await svc.create(
+        SkillCreateRequest(
+            name="Good Skill",
+            body="## Good Skill\n\nReply with a cheerful greeting.\n",
+        )
+    )
+    assert created.name == "Good Skill"

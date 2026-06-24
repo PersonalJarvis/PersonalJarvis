@@ -261,7 +261,11 @@ def test_create_skill_endpoint_writes_and_lists(skills_root: Path) -> None:
     client, _reg = _client(skills_root)
     res = client.post(
         "/api/skills",
-        json={"name": "Form Made Skill", "description": "from the form", "body": "## x\n"},
+        json={
+            "name": "Form Made Skill",
+            "description": "from the form",
+            "body": "## Form Made Skill\n\nReply politely when invoked.\n",
+        },
     )
     assert res.status_code == 200, res.text
     assert res.json()["name"] == "Form Made Skill"
@@ -269,10 +273,19 @@ def test_create_skill_endpoint_writes_and_lists(skills_root: Path) -> None:
     assert "Form Made Skill" in names
 
 
+def test_create_skill_endpoint_rejects_empty_body(skills_root: Path) -> None:
+    """A skill with only a heading / blank body is functionless — refuse it
+    (the Hallo-Hallo-Hallo forensic) so no dead skill is ever persisted."""
+    client, _reg = _client(skills_root)
+    res = client.post("/api/skills", json={"name": "Hollow", "body": "## Hollow\n"})
+    assert res.status_code == 400, res.text
+    assert "instructions" in res.json()["detail"].lower()
+
+
 def test_create_skill_endpoint_rejects_duplicate(skills_root: Path) -> None:
     client, _reg = _client(skills_root)
-    client.post("/api/skills", json={"name": "Dup", "body": "## x\n"})
-    res = client.post("/api/skills", json={"name": "Dup", "body": "## y\n"})
+    client.post("/api/skills", json={"name": "Dup", "body": "## Dup\n\nDo a thing.\n"})
+    res = client.post("/api/skills", json={"name": "Dup", "body": "## Dup\n\nDo another.\n"})
     assert res.status_code == 409, res.text
 
 

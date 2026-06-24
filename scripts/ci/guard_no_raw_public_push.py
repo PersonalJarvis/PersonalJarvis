@@ -13,8 +13,8 @@ non-zero — aborting the push — when the destination is the public flagship.
 
 Why this never blocks the legitimate release: `ship-public-release` pushes from a
 *separate, fresh clone* (its own `.git`), so this working-repo hook is not on that
-push path at all. Normal `git push origin` (the private `personal-jarvis` backstage)
-is allowed. Only a raw push from THIS working tree to `PersonalJarvis/PersonalJarvis`
+push path at all. Normal `git push origin` to a non-flagship working repo is
+allowed. Only a raw push from THIS working tree to `PersonalJarvis/PersonalJarvis`
 is stopped.
 
 Escape hatch (should essentially never be needed): set `ALLOW_PUBLIC_RAW_PUSH=1`
@@ -28,9 +28,8 @@ import os
 import re
 import sys
 
-# The public flagship, case-sensitive on BOTH path segments. The private backstage
-# is `PersonalJarvis/personal-jarvis` (lower-case repo name) — only the PascalCase
-# repo name is the protected target.
+# The public flagship, case-sensitive on BOTH path segments.
+# Only the PascalCase repo name is the protected target.
 PUBLIC_OWNER = "PersonalJarvis"
 PUBLIC_REPO = "PersonalJarvis"
 

@@ -2427,18 +2427,27 @@ class Kontrollierer:
             logger.warning(
                 "deliver_to_user_folder failed for %s", mission_id, exc_info=True
             )
-        delivered_summary = build_delivered_summary(delivered)
-        # Prefer, in order: a read-only task's spoken answer, the delivered-file
-        # summary (names file + folder), the in-archive basename summary, then
-        # the generic phrase.
-        deliverable_summary = build_deliverable_summary(mission_dir)
+        # Build BOTH language variants so MissionApproved carries a genuinely
+        # English summary_en — the announcer selects the field by the mission's
+        # DISPATCH language, so a German-only summary_en made an English-dispatched
+        # mission read its completion confirmation back in German (forensic
+        # 2026-06-24: the deliverable summary was the deterministic German leak;
+        # answer_summary already mirrors the request language via the worker).
+        # Prefer, in order: a read-only task's spoken answer (already in the
+        # request language), the delivered-file summary (names file + folder),
+        # the in-archive basename summary, then the generic phrase.
         summary_de = (
             answer_summary
-            or delivered_summary
-            or deliverable_summary
+            or build_delivered_summary(delivered, language="de")
+            or build_deliverable_summary(mission_dir, language="de")
             or "Mission abgeschlossen."
         )
-        summary_en = answer_summary or deliverable_summary or "Mission completed."
+        summary_en = (
+            answer_summary
+            or build_delivered_summary(delivered, language="en")
+            or build_deliverable_summary(mission_dir, language="en")
+            or "Mission completed."
+        )
         env = EventEnvelope(
             mission_id=mission_id,
             source_actor="kontrollierer",

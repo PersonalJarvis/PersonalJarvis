@@ -567,6 +567,33 @@ class DesktopApp:
         asyncio.set_event_loop(loop)
         self._backend_loop = loop
 
+        # Cold-boot profiling (gated behind JARVIS_BOOT_PROFILE=1; production
+        # stdout unchanged). The desktop window only appears once
+        # ``_wait_for_backend`` sees ``/api/health`` 200, which the backend can
+        # answer the moment it is serving. BOOT_READY_MS below is therefore the
+        # honest "the window can be created now" anchor — the same anchor the
+        # headless harness uses (``scripts/measure_desktop_boot.py``).
+        _bp = os.environ.get("JARVIS_BOOT_PROFILE") == "1"
+        _bp_t0 = time.perf_counter()
+        _bp_last = _bp_t0
+
+        def _db_mark(_name: str) -> None:
+            nonlocal _bp_last
+            _now = time.perf_counter()
+            if _bp:
+                print(
+                    f"[BOOT_PROFILE] db_{_name}={(_now - _bp_last) * 1000.0:.1f}",
+                    flush=True,
+                )
+            _bp_last = _now
+
+        def _db_boot_ready() -> None:
+            if _bp:
+                print(
+                    f"BOOT_READY_MS={(time.perf_counter() - _bp_t0) * 1000.0:.1f}",
+                    flush=True,
+                )
+
         # Fire the heavy OpenWakeWord/onnxruntime import NOW, in a daemon thread,
         # BEFORE the WebServer + brain build + subsystem boot storm grab the
         # Python import lock. The wake-critical Phase-A warm-up gates
@@ -600,8 +627,10 @@ class DesktopApp:
 
         loop.set_exception_handler(_log_unhandled_async)
 
+        _db_mark("pre_webserver")
         server = WebServer(self.cfg)
         self._server = server
+        _db_mark("webserver_ctor")
 
         # Core-State in den Loop haengen — thread-lokal, nur hier referenziert.
         supervisor = Supervisor(bus=server.bus)
@@ -673,30 +702,9 @@ class DesktopApp:
                 "Frontier-Autoswitch fehlgeschlagen — TOML-Defaults bleiben.",
             )
 
-        # BrainManager auf demselben Bus wie das UI — Brain-Events
-        # (ResponseGenerated, BrainProviderSwitched, ToolStarted/Completed)
-        # erreichen so direkt das Frontend. Build-Fehler -> brain = None,
-        # der Chat-Handler liefert dann eine ehrliche Setup-Message statt
-        # eines stillen MockBrain-Fallbacks (User-Wunsch 2026-04-25).
-        brain: Any = None
-        brain_build_error: str | None = None
-        try:
-            brain = build_default_brain(bus=server.bus, tier="router")
-            from loguru import logger
-            logger.info(
-                "Text-Chat-Brain: {} aktiv (geteilt mit Voice-Pipeline).",
-                getattr(brain, "active_provider", "unknown"),
-            )
-        except Exception as exc:  # noqa: BLE001
-            from loguru import logger
-            brain_build_error = f"{type(exc).__name__}: {exc}"
-            logger.opt(exception=exc).error(
-                "BrainManager-Build fehlgeschlagen — Chat antwortet mit Setup-Hinweis."
-            )
-
         server.app.state.supervisor = supervisor
         server.app.state.chat_store = chat_store
-        server.app.state.brain = brain
+        server.app.state.brain = None
         # shell wird erst in run() gesetzt (nach webview.create_window);
         # _focus_handler holt sich den Wert dynamisch.
         server.app.state.shell = None
@@ -705,37 +713,105 @@ class DesktopApp:
         # default-app target their own desktop. Enable the native file actions.
         server.app.state.native_file_actions = True
 
-        # Welle-4 Y Bootstrap-Verdrahtung: Brain-Status-/Cancel-Handler an den
-        # MissionManager binden. Bis hier ist sowohl der Brain (oben) als auch
-        # der MissionManager (aus _init_mission_stack) bereit. Vorher konnte
-        # set_mission_command_handlers nicht laufen, weil Brain erst hier
-        # fertig ist — deshalb hat Y das absichtlich offen gelassen.
-        try:
-            mission_manager = getattr(server.app.state, "mission_manager", None)
-            if brain is not None and mission_manager is not None:
-                brain.set_mission_command_handlers(
-                    status_fn=mission_manager.openclaw_status,
-                    cancel_fn=mission_manager.openclaw_cancel,
-                )
+        # BrainManager auf demselben Bus wie das UI — aber nicht mehr auf der
+        # sichtbaren Startstrecke. Der Webserver soll zuerst /api/health bedienen;
+        # erste Chat-/Drop-Interaktionen warten bounded auf den Hintergrund-Build.
+        brain_holder: dict[str, Any] = {"brain": None, "error": None}
+        brain_ready = asyncio.Event()
+
+        def _wire_ready_brain(brain: Any) -> None:
+            try:
+                mission_manager = getattr(server.app.state, "mission_manager", None)
+                if mission_manager is not None:
+                    brain.set_mission_command_handlers(
+                        status_fn=mission_manager.openclaw_status,
+                        cancel_fn=mission_manager.openclaw_cancel,
+                    )
+                    from loguru import logger as _bootlog
+                    _bootlog.info(
+                        "Welle-4 Y bootstrap: Brain.set_mission_command_handlers "
+                        "verdrahtet (status/cancel via MissionManager)."
+                    )
+            except AttributeError:
                 from loguru import logger as _bootlog
-                _bootlog.info(
-                    "Welle-4 Y bootstrap: Brain.set_mission_command_handlers "
-                    "verdrahtet (status/cancel via MissionManager)."
+                _bootlog.warning(
+                    "MissionManager fehlt openclaw_status/-_cancel — Status-/Cancel-"
+                    "Voice-Patterns fallen auf den normalen Spawn-Pfad zurueck."
                 )
-        except AttributeError:
-            # MissionManager hat (noch) keine openclaw_status/-_cancel-Methoden
-            # — Welle 3 lief noch ohne, Welle 4 fuegt sie hinzu. Wenn wir hier
-            # AttributeError sehen, ist der Welle-4-Code-Stand inkonsistent.
-            from loguru import logger as _bootlog
-            _bootlog.warning(
-                "MissionManager fehlt openclaw_status/-_cancel — Status-/Cancel-"
-                "Voice-Patterns fallen auf den normalen Spawn-Pfad zurueck."
-            )
-        except Exception as exc:  # noqa: BLE001
-            from loguru import logger as _bootlog
-            _bootlog.opt(exception=exc).warning(
-                "Welle-4 Y bootstrap fehlgeschlagen — Status/Cancel-Handler bleiben unverdrahtet."
-            )
+            except Exception as exc:  # noqa: BLE001
+                from loguru import logger as _bootlog
+                _bootlog.opt(exception=exc).warning(
+                    "Welle-4 Y bootstrap fehlgeschlagen — "
+                    "Status/Cancel-Handler bleiben unverdrahtet."
+                )
+
+            try:
+                workflow_runner = getattr(server.app.state, "workflow_runner", None)
+                attach_brain = getattr(workflow_runner, "attach_brain", None)
+                if callable(attach_brain) and callable(brain):
+                    attach_brain(brain)
+            except Exception as exc:  # noqa: BLE001
+                from loguru import logger as _bootlog
+                _bootlog.opt(exception=exc).warning(
+                    "WorkflowRunner.attach_brain nach Deferred-Build fehlgeschlagen."
+                )
+
+            try:
+                task_runner = getattr(server.app.state, "task_runner", None)
+                if (
+                    task_runner is not None
+                    and getattr(task_runner, "_brain", None) is None
+                    and hasattr(brain, "run_task")
+                ):
+                    task_runner._brain = brain
+            except Exception as exc:  # noqa: BLE001
+                from loguru import logger as _bootlog
+                _bootlog.opt(exception=exc).warning(
+                    "TaskRunner-Brain-Wiring nach Deferred-Build fehlgeschlagen."
+                )
+
+        async def _build_brain_bg() -> None:
+            try:
+                built = await asyncio.to_thread(
+                    build_default_brain, bus=server.bus, tier="router"
+                )
+                brain_holder["brain"] = built
+                server.app.state.brain = built
+                from loguru import logger
+                logger.info(
+                    "Text-Chat-Brain: {} aktiv (geteilt mit Voice-Pipeline).",
+                    getattr(built, "active_provider", "unknown"),
+                )
+                _wire_ready_brain(built)
+
+                awareness_manager = getattr(built, "_awareness_manager", None)
+                if awareness_manager is not None:
+                    from loguru import logger as _aw_logger
+                    try:
+                        await awareness_manager.start()
+                        _aw_logger.info(
+                            "AwarenessManager started — StoryTracker is now listening on bus."
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        _aw_logger.opt(exception=exc).warning(
+                            "AwarenessManager.start() failed."
+                        )
+            except Exception as exc:  # noqa: BLE001
+                from loguru import logger
+                brain_holder["error"] = f"{type(exc).__name__}: {exc}"
+                logger.opt(exception=exc).error(
+                    "BrainManager-Build fehlgeschlagen — Chat antwortet mit Setup-Hinweis."
+                )
+            finally:
+                brain_ready.set()
+
+        async def _await_brain_ready(timeout_s: float = 30.0) -> Any | None:
+            if not brain_ready.is_set():
+                try:
+                    await asyncio.wait_for(brain_ready.wait(), timeout=timeout_s)
+                except TimeoutError:
+                    pass
+            return brain_holder["brain"]
 
         async def _on_user_message(evt: MessageSent) -> None:
             """Brain-Dispatcher: jedes user-turned MessageSent triggert generate.
@@ -756,6 +832,7 @@ class DesktopApp:
 
             thread_id = evt.thread_id or "default"
             from loguru import logger
+            brain = await _await_brain_ready()
 
             # ------------------------------------------------------------------
             # Pre-brain hook (instruction-skill model, 2026-06-09 rebuild,
@@ -797,7 +874,7 @@ class DesktopApp:
 
             if brain is None:
                 # Build-Fehler-Pfad: Systemfehler statt Jarvis-Antwort.
-                detail = brain_build_error or "BrainManager nicht initialisiert"
+                detail = brain_holder["error"] or "BrainManager nicht initialisiert"
                 message = f"Brain unavailable: {detail}"
                 await server.bus.publish(
                     ErrorOccurred(
@@ -911,16 +988,28 @@ class DesktopApp:
                 dragged = (text or "").strip() or None
                 if not items and dragged is None:
                     return
-                coro = ingest_drop(
-                    bus=server.bus,
-                    brain=brain,
-                    thread_id="default",
-                    items=items,
-                    dragged_text=dragged,
-                )
-                asyncio.run_coroutine_threadsafe(coro, loop)
+
+                async def _handle_drop() -> None:
+                    current_brain = await _await_brain_ready()
+                    await ingest_drop(
+                        bus=server.bus,
+                        brain=current_brain,
+                        thread_id="default",
+                        items=items,
+                        dragged_text=dragged,
+                    )
+
+                asyncio.run_coroutine_threadsafe(_handle_drop(), loop)
 
             set_drop_handler(_on_overlay_drop)
+        except ModuleNotFoundError as exc:
+            from loguru import logger as _dlog
+            if exc.name == "overlay":
+                _dlog.debug(
+                    "overlay drop handler wiring skipped: optional overlay package not installed"
+                )
+            else:
+                _dlog.opt(exception=exc).debug("overlay drop handler wiring skipped")
         except Exception as exc:  # noqa: BLE001 — drop wiring must never block boot.
             from loguru import logger as _dlog
             _dlog.opt(exception=exc).debug("overlay drop handler wiring skipped")
@@ -946,7 +1035,7 @@ class DesktopApp:
             workflow_runner = WorkflowRunner(
                 store=workflow_store,
                 bus=server.bus,
-                brain=brain if callable(brain) else None,
+                brain=None,
                 tool_registry=None,       # wird spaeter per attach_tools gesetzt
                 tool_executor=None,
             )
@@ -1127,39 +1216,57 @@ class DesktopApp:
 
         try:
             loop.run_until_complete(server.start())
+            _db_mark("server_start")
             # Erst nach erfolgreichem start() ist der Port wirklich belegt.
             _write_meta(self.cfg.ui.admin_api_port, os.getpid())
-            # Phase 9.8: Overlay-Subprocess starten wenn [overlay].enabled=true.
-            # Bus injected so mascot dblclick can drive voice mute via the bus.
-            from jarvis.overlay.integration import start_overlay
-            loop.run_until_complete(start_overlay(bus=server.bus))
+            # The backend is now serving /api/health — the desktop shell's
+            # ``_wait_for_backend`` poll can succeed and the window be created.
+            _db_boot_ready()
+            async def _start_overlay_bg() -> None:
+                try:
+                    # Phase 9.8: Overlay-Subprocess starten wenn [overlay].enabled=true.
+                    # Optional package: when it is not installed, desktop boot still serves.
+                    from jarvis.overlay.integration import start_overlay
+
+                    await start_overlay(bus=server.bus)
+                except ModuleNotFoundError as exc:
+                    from loguru import logger as _overlay_logger
+                    if exc.name == "overlay":
+                        _overlay_logger.debug(
+                            "Overlay-Bootstrap skipped: optional overlay package not installed."
+                        )
+                    else:
+                        _overlay_logger.opt(exception=exc).warning(
+                            "Overlay-Bootstrap fehlgeschlagen."
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    from loguru import logger as _overlay_logger
+                    _overlay_logger.opt(exception=exc).warning(
+                        "Overlay-Bootstrap fehlgeschlagen."
+                    )
+
+            loop.create_task(_start_overlay_bg(), name="overlay-bootstrap")
+            loop.create_task(_build_brain_bg(), name="brain-build")
             # MCP-Autostart als Fire-and-Forget-Task — blockt Backend-Ready nicht.
             loop.create_task(_start_enabled_mcps())
             loop.create_task(_bootstrap_workflows(), name="workflow-bootstrap")
             loop.create_task(_bootstrap_conductor(), name="conductor-bootstrap")
 
-            # B5 follow-up (2026-05-13): AwarenessManager.start() must run on
-            # the event loop so the StoryTracker can subscribe to bus events
-            # (ResponseGenerated, FrameUpdated, IdleEntered). The manager is
-            # constructed inside build_default_brain but its async start()
-            # hook is never invoked from sync code — start it here as a
-            # fire-and-forget task.
-            awareness_manager = getattr(brain, "_awareness_manager", None) if brain else None
-            if awareness_manager is not None:
-                from loguru import logger as _aw_logger
-                async def _start_awareness() -> None:
-                    try:
-                        await awareness_manager.start()
-                        _aw_logger.info("AwarenessManager started — StoryTracker is now listening on bus.")
-                    except Exception as exc:  # noqa: BLE001
-                        _aw_logger.opt(exception=exc).warning("AwarenessManager.start() failed.")
-                loop.create_task(_start_awareness(), name="awareness-bootstrap")
+            # Speech-Pipeline + Orb-Overlay: after the backend is serving. This
+            # used to run synchronously before ``run_forever()``, which meant the
+            # already-started uvicorn task could not answer ``/api/health`` while
+            # voice/overlay imports and setup ran. The desktop shell waits on
+            # that health probe before creating the window, so any slow wake/GUI
+            # warm-up inflated visible app startup.
+            def _start_desktop_post_ready_services() -> None:
+                brain = brain_holder["brain"]
+                if brain is None and not brain_ready.is_set():
+                    loop.call_later(0.25, _start_desktop_post_ready_services)
+                    return
+                self._start_speech_and_orb(loop, server.bus, supervisor, brain, server)
+                self._start_virtual_cursor()
 
-            # Speech-Pipeline + Orb-Overlay: nach Backend-Ready im selben Loop
-            # starten. Wake-Detection, VAD, STT, Brain (geteilt mit Text-Chat),
-            # TTS, Orb-Feedback.
-            self._start_speech_and_orb(loop, server.bus, supervisor, brain, server)
-            self._start_virtual_cursor()
+            loop.call_later(0.25, _start_desktop_post_ready_services)
             loop.run_forever()
         finally:
             try:
@@ -1193,6 +1300,13 @@ class DesktopApp:
             from jarvis.control.cursor_motion import set_glide_ms
             if cu is not None:
                 set_glide_ms(int(getattr(cu, "cursor_glide_ms", 220)))
+        except ModuleNotFoundError as exc:
+            if exc.name == "overlay":
+                logger.debug(
+                    "set_glide_ms skipped: optional overlay package not installed"
+                )
+            else:
+                logger.opt(exception=exc).debug("set_glide_ms failed")
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).debug("set_glide_ms failed")
 
@@ -1211,6 +1325,14 @@ class DesktopApp:
                 set_jarvis_system_cursor(jcur)
                 self._jarvis_cursor = jcur
                 logger.info("Jarvis system cursor armed (swap on Computer-Use mission).")
+        except ModuleNotFoundError as exc:
+            if exc.name == "overlay":
+                logger.debug(
+                    "Jarvis system cursor skipped: optional overlay package not installed"
+                )
+            else:
+                logger.opt(exception=exc).warning("Jarvis system cursor not startable")
+            self._jarvis_cursor = None
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning("Jarvis system cursor not startable")
             self._jarvis_cursor = None

@@ -1950,7 +1950,8 @@
     "trigger_placeholder": "z. B. starte die Morgenroutine",
     "create": "Skill erstellen",
     "create_error": "Skill konnte nicht erstellt werden",
-    "name_required": "Bitte einen Namen mit mindestens 3 Zeichen eingeben."
+    "name_required": "Bitte einen Namen mit mindestens 3 Zeichen eingeben.",
+    "needs_instructions": "Bitte beschreibe, was der Skill tun soll — entweder im Feld ganz oben oder in den Anweisungen darunter."
   },
   "missions_view": {
     "active": "aktiv",

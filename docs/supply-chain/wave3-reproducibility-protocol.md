@@ -17,7 +17,7 @@
 > `.github/workflows/sign-installer.yml`. No production workflow runs
 > Wave 3 logic yet.
 >
-> Last reviewed: 2026-05-27 against `personal-jarvis/personal-jarvis`
+> Last reviewed: 2026-05-27 against `PersonalJarvis/PersonalJarvis`
 > `main` HEAD `8d68b31` (Wave 2 baseline). Companion documents:
 > `docs/supply-chain/threat-model.md` §8, `install/in-toto/layout.template.json`,
 > `.github/workflows/cross-runner-hash.yml.tmpl`,
@@ -330,7 +330,7 @@ USER  →  TLS  →  release URL  →  fetch artifact, .sig, .pem, .bundle,
                                  ↓
                          (3) slsa-verifier verify-artifact
                                  --provenance-path <artifact>.intoto.jsonl
-                                 --source-uri github.com/personal-jarvis/personal-jarvis
+                                 --source-uri github.com/PersonalJarvis/PersonalJarvis
                                  --source-tag <release-tag>
                                  ↓
                          (4) in-toto layout verification

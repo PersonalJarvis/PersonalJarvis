@@ -3212,6 +3212,24 @@ class BrainManager:
             "clearly wrong."
         )
 
+    def _drop_run_skill_when_inline_injected(self, tools: Any) -> Any:
+        """Hide ``run-skill`` once a matched skill's instructions are already on
+        the turn context (``_skill_injected_inline``).
+
+        With the instructions inline (AD-S4) no tool call is needed; keeping
+        run-skill visible only tempts a weak model into a redundant, garbled
+        run-skill call — the gemini-fast ``<call:tool.run-skill ...>`` text leak
+        (forensic 2026-06-24). Dropping it makes skill execution provider- and
+        model-agnostic: every model just follows the injected instructions, no
+        tool call required. No-op when the skill was not inline-injected, or the
+        tool set is not a dict (intelligent-router lead path).
+        """
+        if not getattr(self, "_skill_injected_inline", False):
+            return tools
+        if not isinstance(tools, dict):
+            return tools
+        return {k: v for k, v in tools.items() if k != "run-skill"}
+
     def _render_skill_turn_injection(self, user_text: str) -> str | None:
         """Render the matched skill's instructions for direct turn injection.
 
@@ -3220,7 +3238,12 @@ class BrainManager:
         them in this very turn (guaranteed invocation). Publishes
         ``SkillInvoked``. Falls back to the steering hint when rendering
         fails (the model can still call run-skill itself).
+
+        Sets ``_skill_injected_inline`` True ONLY when the real instructions
+        were injected (not the hint fallback) so the caller can hide run-skill
+        for the turn (provider-agnostic execution, no tool-call leak).
         """
+        self._skill_injected_inline = False
         skill = self._skill_turn_match
         if skill is None:
             return None
@@ -3246,6 +3269,10 @@ class BrainManager:
             )
             return self._render_skill_turn_hint()
         self._publish_skill_invoked(name, source=self._skill_turn_source)
+        # The real instructions are now inline — the model needs no run-skill
+        # call; the caller drops that tool so a weak model cannot leak a garbled
+        # tool call (provider-agnostic skill execution).
+        self._skill_injected_inline = True
         return (
             f"[Skill instructions for `{name}` — the user's request matched "
             "this installed skill]\n"
@@ -5430,6 +5457,12 @@ class BrainManager:
                     self._apply_plugin_relevance(user_text, self._tools)
                 )
             )
+            # Skill inline-injected (AD-S4): drop run-skill so a weak model
+            # cannot make a redundant, garbled run-skill tool call — the
+            # gemini-fast ``<call:tool.run-skill ...>`` text leak. The
+            # instructions already ride on the turn context, so execution is
+            # provider-/model-agnostic (no tool call needed).
+            _turn_tools = self._drop_run_skill_when_inline_injected(_turn_tools)
             # AI Pointer: on a deictic pointer turn the cursor crop is already the
             # only attached image, so drop the redundant ``inspect-pointer`` PULL
             # tool (calling it produced an empty spoken answer — observed live).

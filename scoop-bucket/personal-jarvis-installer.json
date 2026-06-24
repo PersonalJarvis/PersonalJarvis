@@ -1,7 +1,7 @@
 {
     "version": "0.5.1-supplychain-wave5-audit-fixes",
     "description": "Supply-chain hardened installer for Personal Jarvis (cosign + offline Ed25519 + SLSA L3 + ML-DSA-65 + Wave-5 tag-binding + payload-commit pin + content-anchor rename). Scoop distribution makes the package manager's own signing chain the bootstrap-trust root, independent of github.com TLS.",
-    "homepage": "https://github.com/personal-jarvis/personal-jarvis",
+    "homepage": "https://github.com/PersonalJarvis/PersonalJarvis",
     "license": "MIT",
     "notes": [
         "After install, run: personal-jarvis-installer.ps1",
@@ -10,7 +10,7 @@
     ],
     "architecture": {
         "64bit": {
-            "url": "https://github.com/personal-jarvis/personal-jarvis/releases/download/v0.5.1-supplychain-wave5-audit-fixes/install-verify.ps1",
+            "url": "https://github.com/PersonalJarvis/PersonalJarvis/releases/download/v0.5.1-supplychain-wave5-audit-fixes/install-verify.ps1",
             "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
         }
     },
@@ -21,17 +21,17 @@
         ]
     ],
     "checkver": {
-        "github": "https://github.com/personal-jarvis/personal-jarvis",
+        "github": "https://github.com/PersonalJarvis/PersonalJarvis",
         "regex": "releases/tag/(v[\\d.]+-supplychain-wave\\d+)"
     },
     "autoupdate": {
         "architecture": {
             "64bit": {
-                "url": "https://github.com/personal-jarvis/personal-jarvis/releases/download/$version/install-verify.ps1"
+                "url": "https://github.com/PersonalJarvis/PersonalJarvis/releases/download/$version/install-verify.ps1"
             }
         },
         "hash": {
-            "url": "https://github.com/personal-jarvis/personal-jarvis/releases/download/$version/checksums.txt",
+            "url": "https://github.com/PersonalJarvis/PersonalJarvis/releases/download/$version/checksums.txt",
             "regex": "(?<sha256>[a-fA-F0-9]{64})\\s+\\*?install-verify\\.ps1"
         }
     }
