@@ -56,11 +56,27 @@ from .workers.google_cli_worker import GoogleCliWorker
 
 logger = logging.getLogger(__name__)
 
+# Fire-and-forget boot-time cleanup sweeps keep a strong reference here so the
+# event loop does not garbage-collect them mid-run; each self-discards on
+# completion. These sweeps are PURE cleanup (git worktree prune + rmtree over
+# stale dirs) whose result nothing downstream consumes â€” awaiting them only
+# delayed the desktop boot before the voice pipeline could come up.
+_BOOT_BACKGROUND_TASKS: set[asyncio.Task[Any]] = set()
+
+
+def _spawn_boot_cleanup(coro: Any, *, name: str) -> asyncio.Task[Any]:
+    """Schedule *coro* as a tracked fire-and-forget task (no boot-path await)."""
+    task = asyncio.create_task(coro, name=name)
+    _BOOT_BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BOOT_BACKGROUND_TASKS.discard)
+    return task
+
+
 # Pure-API providers that run on THEIR OWN provider via the in-process
 # ApiAgentWorker (OpenAI-compatible chat API + tool-use loop), instead of the
 # legacy silent ClaudeDirectWorker fallback. Single source for the routing
 # decision so the UI "runs on Claude" badge can never drift from reality.
-_API_AGENT_SLUGS: frozenset[str] = frozenset({"grok", "openai", "openrouter"})
+_API_AGENT_SLUGS: frozenset[str] = frozenset({"openai", "openrouter"})
 
 
 # Type aliases
@@ -400,19 +416,25 @@ async def bootstrap_missions(
     # rmtree over deep trees) and bootstrap runs on the event loop that
     # serves /api/health at boot — blocking it here kept the desktop window
     # from appearing (10s of the 30s-launch bug, 2026-06-10).
-    try:
-        sweep_report = await asyncio.to_thread(
-            worktree_mgr.prune_and_sweep_leaked, max_age_hours=6.0
-        )
-        if (
-            sweep_report.get("swept_run_dirs", 0) > 0
-            or sweep_report.get("errors", 0) > 0
-        ):
-            logger.info(
-                "worktree-sweep at bootstrap: %s", sweep_report,
+    # Fire-and-forget: nothing below consumes ``sweep_report`` (it is only
+    # logged), and the sweep is blocking cleanup (git subprocess + rmtree over
+    # deep trees). Awaiting it sat on the desktop-boot path; running it as a
+    # tracked background task lets the mission stack come up immediately while
+    # the leaked-worktree cleanup finishes behind the boot.
+    async def _bg_worktree_sweep() -> None:
+        try:
+            sweep_report = await asyncio.to_thread(
+                worktree_mgr.prune_and_sweep_leaked, max_age_hours=6.0
             )
-    except Exception:  # noqa: BLE001
-        logger.warning("worktree-sweep at bootstrap failed", exc_info=True)
+            if (
+                sweep_report.get("swept_run_dirs", 0) > 0
+                or sweep_report.get("errors", 0) > 0
+            ):
+                logger.info("worktree-sweep at bootstrap: %s", sweep_report)
+        except Exception:  # noqa: BLE001
+            logger.warning("worktree-sweep at bootstrap failed", exc_info=True)
+
+    _spawn_boot_cleanup(_bg_worktree_sweep(), name="mission-boot-worktree-sweep")
 
     # 5. CriticRunner
     critic_runner = CriticRunner()

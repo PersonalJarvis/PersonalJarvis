@@ -1786,30 +1786,40 @@ class WebServer:
         # → same directory as the writer.
         flight_recorder_dir = Path("data") / "flight_recorder"
 
-        stats = await sweep_old_blobs(
-            flight_recorder_dir=flight_recorder_dir,
-            retention_days=retention_days,
-        )
-        if stats["removed"] > 0:
-            logger.info(
-                "Screenshot retention boot sweep: removed={} freed={:.1f} MB "
-                "(cutoff={}d)",
-                stats["removed"],
-                stats["bytes_freed"] / (1024 * 1024),
-                retention_days,
-            )
-        else:
-            logger.debug(
-                "Screenshot retention boot sweep: nothing older than {}d",
-                retention_days,
-            )
-
-        self._screenshot_retention_task = asyncio.create_task(
-            retention_task(
+        # The one-shot boot sweep is pure cleanup of old blobs — nothing
+        # downstream consumes its stats (they are only logged). Awaiting it sat
+        # on the boot path before the voice pipeline could start. Fold it into
+        # the front of the (already background) retention task so _init returns
+        # immediately; the same task reference is still cancelled on shutdown.
+        async def _boot_sweep_then_retain() -> None:
+            try:
+                stats = await sweep_old_blobs(
+                    flight_recorder_dir=flight_recorder_dir,
+                    retention_days=retention_days,
+                )
+                if stats["removed"] > 0:
+                    logger.info(
+                        "Screenshot retention boot sweep: removed={} freed={:.1f} MB "
+                        "(cutoff={}d)",
+                        stats["removed"],
+                        stats["bytes_freed"] / (1024 * 1024),
+                        retention_days,
+                    )
+                else:
+                    logger.debug(
+                        "Screenshot retention boot sweep: nothing older than {}d",
+                        retention_days,
+                    )
+            except Exception:  # noqa: BLE001 — cleanup never blocks/breaks boot
+                logger.warning("Screenshot retention boot sweep failed", exc_info=True)
+            await retention_task(
                 flight_recorder_dir=flight_recorder_dir,
                 retention_days=retention_days,
                 interval_seconds=DEFAULT_RETENTION_INTERVAL_SECONDS,
             )
+
+        self._screenshot_retention_task = asyncio.create_task(
+            _boot_sweep_then_retain()
         )
 
     async def _init_mission_stack(self) -> None:
