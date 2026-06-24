@@ -149,3 +149,66 @@ def test_respects_max_wait_when_never_stable(monkeypatch) -> None:
 
     assert info["stable"] is False
     assert clock.t <= 2.5  # bounded by max_wait_s, never unbounded
+
+
+# --- Boot-path prefetch (2026-06-24 boot-speed work) ----------------------
+# The launcher starts the (blocking ~1.5 s) device settle in a daemon thread at
+# process start so Phase-A warm-up reuses the settled result instead of
+# re-paying the poll wait. Monotonically safe: get_prefetched_audio_result()
+# returns None while still polling, so the caller falls back to a fresh settle.
+
+
+def _reset_prefetch() -> None:
+    di._PREFETCH_EVENT.clear()
+    di._PREFETCH_RESULT = None
+
+
+def test_prefetch_result_none_before_any_prefetch() -> None:
+    _reset_prefetch()
+    assert di.get_prefetched_audio_result() is None
+
+
+def test_prefetch_result_none_while_still_polling() -> None:
+    # Result present but event not set => still polling => caller must fall back.
+    _reset_prefetch()
+    di._PREFETCH_RESULT = {"stale": True}
+    assert di.get_prefetched_audio_result() is None
+
+
+def test_start_prefetch_noop_without_sounddevice(monkeypatch) -> None:
+    _reset_prefetch()
+    monkeypatch.setattr(di, "_get_sd", lambda: None)
+    assert di.start_audio_device_prefetch() is None
+    assert di.get_prefetched_audio_result() is None
+
+
+def test_prefetch_publishes_settled_result(monkeypatch) -> None:
+    _reset_prefetch()
+    sentinel = {"available": True, "device_count": 7, "stable": True}
+    monkeypatch.setattr(di, "_get_sd", lambda: object())  # sounddevice "present"
+    monkeypatch.setattr(di, "wait_for_stable_audio_devices", lambda: sentinel)
+
+    thread = di.start_audio_device_prefetch()
+    assert thread is not None
+    thread.join(timeout=2)
+
+    assert di.get_prefetched_audio_result() == sentinel
+    _reset_prefetch()
+
+
+def test_prefetch_swallows_settle_failure(monkeypatch) -> None:
+    _reset_prefetch()
+
+    def _boom() -> dict:
+        raise RuntimeError("portaudio exploded mid-scan")
+
+    monkeypatch.setattr(di, "_get_sd", lambda: object())
+    monkeypatch.setattr(di, "wait_for_stable_audio_devices", _boom)
+
+    thread = di.start_audio_device_prefetch()
+    assert thread is not None
+    thread.join(timeout=2)
+
+    # Event set, result None => caller falls back to a fresh settle (today's path).
+    assert di.get_prefetched_audio_result() is None
+    _reset_prefetch()

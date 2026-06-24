@@ -218,34 +218,81 @@ def test_bulk_delete_prunes_prefs(skills_root: Path) -> None:
     assert "beta" not in overrides
 
 
-# --- optional-module route guards (Skill Creator / link-health) -------------
-# These features depend on optional modules (``jarvis.skills.creator_service``,
-# ``jarvis.skills.link_health``) that are not shipped in every build. When the
-# module is absent the route must answer a clean ``501 Not Implemented`` with an
-# honest message — never leak an unhandled ``ModuleNotFoundError`` as a 500. The
-# tests assert the absent-module behaviour that holds while those modules ship
-# separately; once a module is present its route is expected to work and these
-# guards become inert.
+# --- Skill Creator routes (deterministic, no brain in tests) ----------------
+# ``jarvis.skills.creator_service`` is now shipped, so the creator routes work.
+# With no brain wired on ``app.state`` they return the deterministic skeleton
+# draft (``brain_used`` False) — the cloud-first fallback that must always work.
+# The ``link-health`` route still 501s while its optional module is absent.
 
 
-def test_creator_draft_returns_clean_501_when_service_module_absent(
-    skills_root: Path,
-) -> None:
-    client, _reg = _client(skills_root)
-    res = client.post("/api/skills/creator/draft", json={"intent": "make a thing"})
-    assert res.status_code == 501, res.text
-    assert "not available" in res.json()["detail"].lower()
-
-
-def test_creator_validate_returns_clean_501_when_service_module_absent(
+def test_creator_draft_returns_valid_skeleton_without_brain(
     skills_root: Path,
 ) -> None:
     client, _reg = _client(skills_root)
     res = client.post(
-        "/api/skills/creator/validate", json={"skill_md": "---\nname: x\n---\n"}
+        "/api/skills/creator/draft",
+        json={"intent": "pause spotify when I talk", "name_hint": "Spotify Pause"},
     )
-    assert res.status_code == 501, res.text
-    assert "not available" in res.json()["detail"].lower()
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["brain_used"] is False
+    assert body["draft"]["name"]
+    assert body["validation"]["ok"] is True
+
+
+def test_creator_validate_checks_skill_md(skills_root: Path) -> None:
+    client, _reg = _client(skills_root)
+    ok = client.post(
+        "/api/skills/creator/validate",
+        json={"skill_md": '---\nschema_version: "1"\nname: X\n---\n\n## B\n'},
+    )
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["validation"]["ok"] is True
+
+    bad = client.post(
+        "/api/skills/creator/validate",
+        json={"skill_md": "no frontmatter here"},
+    )
+    assert bad.status_code == 200, bad.text
+    assert bad.json()["validation"]["ok"] is False
+
+
+def test_create_skill_endpoint_writes_and_lists(skills_root: Path) -> None:
+    client, _reg = _client(skills_root)
+    res = client.post(
+        "/api/skills",
+        json={"name": "Form Made Skill", "description": "from the form", "body": "## x\n"},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["name"] == "Form Made Skill"
+    names = [s["name"] for s in client.get("/api/skills").json()["skills"]]
+    assert "Form Made Skill" in names
+
+
+def test_create_skill_endpoint_rejects_duplicate(skills_root: Path) -> None:
+    client, _reg = _client(skills_root)
+    client.post("/api/skills", json={"name": "Dup", "body": "## x\n"})
+    res = client.post("/api/skills", json={"name": "Dup", "body": "## y\n"})
+    assert res.status_code == 409, res.text
+
+
+def test_creator_commit_persists_reviewed_draft(skills_root: Path) -> None:
+    client, _reg = _client(skills_root)
+    draft = {
+        "name": "Committed Via Route",
+        "description": "desc",
+        "category": "general",
+        "tags": [],
+        "triggers": [],
+        "requires_tools": [],
+        "risk_policy": {"default_tier": "ask"},
+        "body": "## Committed Via Route\n\nDo it.\n",
+    }
+    res = client.post("/api/skills/creator/commit", json={"draft": draft})
+    assert res.status_code == 200, res.text
+    assert res.json()["name"] == "Committed Via Route"
+    names = [s["name"] for s in client.get("/api/skills").json()["skills"]]
+    assert "Committed Via Route" in names
 
 
 def test_link_health_returns_clean_501_when_module_absent(skills_root: Path) -> None:

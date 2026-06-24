@@ -184,7 +184,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]" --no-deps
-          python -m pip install typer platformdirs httpx rich
+          # pytest is needed to RUN the suite; --no-deps above skips it (and all
+          # of [dev]'s deps), so install the test runner explicitly alongside the
+          # CLI's own runtime deps. Keeps the job light (no torch/heavy deps).
+          python -m pip install typer platformdirs httpx rich pytest pytest-asyncio
 
       - name: pytest (jarvisctl unit suite)
         run: python -m pytest tests/unit/cli_ctl/ -v
