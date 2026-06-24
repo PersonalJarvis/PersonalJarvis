@@ -1933,8 +1933,24 @@
   },
   "skill_create_dialog": {
     "title": "Crear habilidad",
-    "rebuild_notice_a": "Esta función se está reconstruyendo. Hasta entonces, coloca las habilidades directamente como archivos YAML en",
-    "rebuild_notice_b": "tú mismo."
+    "subtitle": "Describe qué debe hacer la habilidad: créala con IA o rellena el formulario tú mismo.",
+    "intent_label": "¿Qué debe hacer esta habilidad?",
+    "intent_placeholder": "p. ej. «Resumir mis pestañas abiertas», «Iniciar mi rutina matutina»…",
+    "draft_with_ai": "Crear con IA",
+    "brain_used": "Borrador de IA aplicado: revisa y edita abajo.",
+    "brain_unavailable": "IA no disponible: se rellenó una plantilla que puedes editar.",
+    "name_label": "Nombre",
+    "name_placeholder": "Nombre de la habilidad",
+    "category_label": "Categoría",
+    "description_label": "Descripción",
+    "description_placeholder": "Una frase sobre lo que hace",
+    "body_label": "Instrucciones (Markdown)",
+    "body_placeholder": "## Mi habilidad\n\nLo que debe hacer el asistente…",
+    "trigger_label": "Activación por voz (opcional)",
+    "trigger_placeholder": "p. ej. inicia la rutina matutina",
+    "create": "Crear habilidad",
+    "create_error": "No se pudo crear la habilidad",
+    "name_required": "Introduce un nombre con al menos 3 caracteres."
   },
   "missions_view": {
     "active": "activas",
