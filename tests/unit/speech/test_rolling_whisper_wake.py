@@ -18,7 +18,40 @@ import asyncio
 import numpy as np
 
 from jarvis.core.protocols import AudioChunk, Transcript
-from jarvis.speech.rolling_whisper_wake import RollingWhisperWake
+from jarvis.speech.rolling_whisper_wake import (
+    RollingWhisperWake,
+    _wake_confirmed_unbiased,
+)
+
+
+# --- unbiased hallucination-confirm (forensic 2026-06-24) ---------------------
+# A biased turbo can hallucinate the primed "Hey Ruben" onto a different "Hey X".
+# An unbiased re-read of the same window reveals the truth; reject only on a clear
+# competing wake-name so recall is preserved.
+
+
+def test_confirm_accepts_unbiased_read_that_still_says_the_name() -> None:
+    assert _wake_confirmed_unbiased("Hey Ruben", "ruben") is True
+
+
+def test_confirm_accepts_mumbled_unbiased_near_name() -> None:
+    # A real but quiet "Hey Ruben" the unbiased model heard as "Hey Ruf"
+    # (ratio 0.5 vs "ruben") must still confirm — it is not a competing name.
+    assert _wake_confirmed_unbiased("Hey, Ruf.", "ruben") is True
+
+
+def test_confirm_accepts_garbled_unbiased_with_no_competing_name() -> None:
+    # A quiet real wake the unbiased model garbled ("Drogen") names nothing else,
+    # so it gets the benefit of the doubt (recall over a false reject).
+    assert _wake_confirmed_unbiased("Drogen.", "ruben") is True
+
+
+def test_confirm_rejects_unbiased_competing_hey_name() -> None:
+    # "Hey Jarvis" / "Hey John" spoken -> biased hallucinates "Hey Ruben"; the
+    # unbiased read names the real wake -> reject.
+    assert _wake_confirmed_unbiased("Hey Jarvis", "ruben") is False
+    assert _wake_confirmed_unbiased("Hey John.", "ruben") is False
+    assert _wake_confirmed_unbiased("Hallo Computer", "ruben") is False
 
 
 def _loud_chunk(marker: int, n: int = 1600) -> AudioChunk:
@@ -82,6 +115,31 @@ class _PhraseSTT:
             confidence=self._confidence,
             segments=segments,
         )
+
+
+class _BiasAwareSTT:
+    """A biased CUDA wake-Whisper for the unbiased-confirm pass: returns
+    ``biased_text`` on a normal (biased) call and ``unbiased_text`` when the
+    detector re-reads with ``use_bias=False``."""
+
+    def __init__(
+        self, biased_text: str, unbiased_text: str, *, confidence: float = 0.9
+    ) -> None:
+        self._biased = biased_text
+        self._unbiased = unbiased_text
+        self._confidence = confidence
+        self._initial_prompt = "Hey Ruben"  # biased -> confirm is eligible
+        self._device = "cuda"               # fast -> confirm actually runs
+
+    async def transcribe_pcm(
+        self,
+        pcm: bytes,
+        sample_rate: int = 16000,
+        language: str | None = None,
+        use_bias: bool = True,
+    ) -> Transcript:
+        text = self._biased if use_bias else self._unbiased
+        return Transcript(text=text, language="de", confidence=self._confidence)
 
 
 async def _feed_until(src: asyncio.Queue, stop: asyncio.Event) -> None:
@@ -320,6 +378,100 @@ async def test_detect_rejects_matching_high_no_speech_transcript() -> None:
         except asyncio.TimeoutError:
             kw = ""
         assert kw == ""
+    finally:
+        stop_feed.set()
+        await src.put(None)
+        feeder.cancel()
+        try:
+            await feeder
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+            pass
+
+
+async def test_detect_rejects_biased_hallucination_via_unbiased_confirm() -> None:
+    """A biased turbo that prints 'hey ruben' for a spoken 'hey jarvis' is dropped.
+
+    The unbiased re-read (use_bias=False) names the real wake -> reject. This is
+    the false-wake the user hit (2026-06-24): "Hey Jarvis"/"Hey John" fired the
+    "Hey Ruben" wake because the bias collapsed every "Hey X" onto the primed name.
+    """
+    import re
+
+    wake = RollingWhisperWake(
+        _BiasAwareSTT(biased_text="hey ruben", unbiased_text="hey jarvis"),
+        pattern=re.compile(r"hey\W+ruben", re.IGNORECASE),
+        poll_interval_s=0.01,
+        cooldown_s=0.0,
+        save_debug_wavs=False,
+        min_rms=0.0,
+        min_peak=0.0,
+    )
+
+    src: asyncio.Queue = asyncio.Queue()
+    stop_feed = asyncio.Event()
+
+    async def _iter():
+        while True:
+            chunk = await src.get()
+            if chunk is None:
+                return
+            yield chunk
+
+    async def _first_keyword() -> str:
+        async for kw in wake.detect(_iter()):
+            return kw
+        return ""
+
+    feeder = asyncio.create_task(_feed_until(src, stop_feed))
+    try:
+        try:
+            kw = await asyncio.wait_for(_first_keyword(), timeout=0.7)
+        except TimeoutError:
+            kw = ""
+        assert kw == "", f"hallucinated wake was not rejected: {kw!r}"
+    finally:
+        stop_feed.set()
+        await src.put(None)
+        feeder.cancel()
+        try:
+            await feeder
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+            pass
+
+
+async def test_detect_confirms_real_wake_when_unbiased_agrees() -> None:
+    """A genuine 'hey ruben' the unbiased read also supports still fires."""
+    import re
+
+    wake = RollingWhisperWake(
+        _BiasAwareSTT(biased_text="hey ruben", unbiased_text="hey ruben"),
+        pattern=re.compile(r"hey\W+ruben", re.IGNORECASE),
+        poll_interval_s=0.01,
+        cooldown_s=0.0,
+        save_debug_wavs=False,
+        min_rms=0.0,
+        min_peak=0.0,
+    )
+
+    src: asyncio.Queue = asyncio.Queue()
+    stop_feed = asyncio.Event()
+
+    async def _iter():
+        while True:
+            chunk = await src.get()
+            if chunk is None:
+                return
+            yield chunk
+
+    async def _first_keyword() -> str:
+        async for kw in wake.detect(_iter()):
+            return kw
+        return ""
+
+    feeder = asyncio.create_task(_feed_until(src, stop_feed))
+    try:
+        kw = await asyncio.wait_for(_first_keyword(), timeout=3.0)
+        assert kw.lower() == "hey ruben"
     finally:
         stop_feed.set()
         await src.put(None)

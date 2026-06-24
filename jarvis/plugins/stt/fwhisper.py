@@ -134,27 +134,40 @@ class FasterWhisperProvider:
     async def transcribe_pcm(
         self, pcm_bytes: bytes, sample_rate: int = 16_000,
         language: str | None = None,
+        use_bias: bool = True,
     ) -> Transcript:
         """Direkter Weg für VAD-Output: int16-PCM-Bytes → Transcript.
 
         `language` überschreibt per Call die Default-Sprache. Nützlich für den
         Wake-Detector der auch bei STT-Default "auto" immer auf Deutsch hören soll.
+
+        `use_bias=False` transcribes this ONE call WITHOUT the ``initial_prompt``
+        bias, even on a biased instance. The wake backstop uses this for an
+        unbiased confirmation pass: a strong biased model can hallucinate the
+        primed wake phrase onto a different "Hey X", and the unbiased re-read
+        reveals the actually-spoken phrase (forensic 2026-06-24).
         """
         self._ensure_model()
         audio_np = pcm_bytes_to_np(pcm_bytes)
-        return await self._transcribe_np(audio_np, sample_rate, language=language)
+        return await self._transcribe_np(
+            audio_np, sample_rate, language=language, use_bias=use_bias
+        )
 
     async def _transcribe_np(
         self, audio_np: np.ndarray, sample_rate: int,
         language: str | None = None,
+        use_bias: bool = True,
     ) -> Transcript:
         # faster-whisper ist synchron → in Thread shippen
         import asyncio
-        return await asyncio.to_thread(self._transcribe_sync, audio_np, sample_rate, language)
+        return await asyncio.to_thread(
+            self._transcribe_sync, audio_np, sample_rate, language, use_bias
+        )
 
     def _transcribe_sync(
         self, audio_np: np.ndarray, sample_rate: int,
         language: str | None = None,
+        use_bias: bool = True,
     ) -> Transcript:
         assert self._model is not None
         # faster-whisper akzeptiert np.ndarray float32 direkt wenn 16 kHz
@@ -164,6 +177,9 @@ class FasterWhisperProvider:
 
         # Per-Call-Override hat Vorrang vor self._language
         effective_lang = language if language is not None else self._language
+        # Per-call bias override: an unbiased confirmation pass (use_bias=False)
+        # drops the wake-phrase prompt so a hallucinated echo cannot survive it.
+        effective_prompt = self._initial_prompt if use_bias else None
 
         segments_iter, info = self._model.transcribe(
             audio_np,
@@ -171,7 +187,7 @@ class FasterWhisperProvider:
             beam_size=self._beam_size,
             vad_filter=self._vad_filter,
             condition_on_previous_text=False,
-            initial_prompt=self._initial_prompt,
+            initial_prompt=effective_prompt,
             no_speech_threshold=self._no_speech_threshold,
         )
         # segments_iter ist generator — durchiterieren materialisiert

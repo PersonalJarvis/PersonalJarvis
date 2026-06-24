@@ -23,6 +23,7 @@ Parameter:
 from __future__ import annotations
 
 import asyncio
+import difflib
 import logging
 import os
 import re
@@ -94,6 +95,36 @@ def _reliable_wake_transcript(
     return not any(
         prob > max_no_speech_prob for prob in _segment_no_speech_probs(transcript)
     )
+
+
+def _wake_confirmed_unbiased(unbiased_text: str, name: str) -> bool:
+    """Reject a biased-Whisper wake that an UNBIASED re-read contradicts.
+
+    A strong model seeded with ``initial_prompt="Hey Ruben"`` can hallucinate the
+    primed phrase onto a different "Hey X" (forensic 2026-06-24: live "Hey Jarvis"
+    / "Hey John" fired as "Hey Ruben"). Re-transcribed WITHOUT the bias, a real
+    wake still resembles ``name`` (or is too garbled to name anything else),
+    whereas a hallucination reveals the actually-spoken different "hey <word>".
+
+    Reject ONLY on that positive competing-name signal, so recall is preserved:
+    a real but mumbled wake whose unbiased read is garbled (e.g. "Drogen" for a
+    quiet "Hey Ruben") carries no competing name and is confirmed. Empirically
+    (the user's real clips): confirms 3/3 genuine "Hey Ruben" + rejects
+    "Hey Jarvis"/"Hey John". The 0.5 fuzzy floor admits "Ruf" (a real mumbled
+    "Ruben", ratio 0.5) while still rejecting jarvis/john/thomas/alexa (all <0.5).
+    """
+    u = unbiased_text.lower().strip()
+    name_l = name.lower().strip()
+    tokens = re.findall(r"[a-zäöüß]+", u)
+    # The unbiased read still resembles the wake name -> a real wake.
+    if any(difflib.SequenceMatcher(None, t, name_l).ratio() >= 0.5 for t in tokens):
+        return True
+    # The unbiased read clearly heard a DIFFERENT wake-style "hey <word>" -> the
+    # bias hallucinated the primed phrase; reject.
+    if re.search(r"\b(?:hey|hi|hallo|ok|okay)\s+[a-zäöüß]{3,}", u):
+        return False
+    # Garbled / no competing name -> benefit of the doubt (preserve recall).
+    return True
 
 
 class RollingWhisperWake:
@@ -182,6 +213,19 @@ class RollingWhisperWake:
         # unreliable" lines, which points at the model/confidence (forensic
         # 2026-06-24 — these quiet drops were previously a silent ``continue``).
         self._gated_out = 0
+
+    def _should_confirm_unbiased(self) -> bool:
+        """Run the unbiased hallucination-confirm pass for this STT instance?
+
+        Only when (a) the STT is biased — no ``initial_prompt`` means nothing can
+        hallucinate the primed phrase — AND (b) the re-read is cheap: a CUDA model
+        re-transcribes a window in ~150 ms, whereas a CPU ``base`` model would add
+        ~1 s to every wake fire. On the slow CPU path the weak recall also makes
+        the bias hallucination rare, so the pass is not worth the latency there.
+        """
+        biased = bool(getattr(self._stt, "_initial_prompt", None))
+        fast = getattr(self._stt, "_device", "cpu") == "cuda"
+        return biased and fast
 
     async def detect(
         self, chunks: AsyncIterator[AudioChunk]
@@ -351,6 +395,30 @@ class RollingWhisperWake:
                 log.info("rolling-whisper: rms=%.4f text=%r", rms, text)
                 m = self._pattern.search(text)
                 if m:
+                    # Unbiased hallucination-confirm (forensic 2026-06-24): on the
+                    # fast GPU path a biased turbo can hallucinate the primed wake
+                    # phrase onto a different "Hey X" ("Hey Jarvis"/"Hey John" fired
+                    # as "Hey Ruben"). Re-read the SAME boosted window WITHOUT the
+                    # bias; drop the hit if the unbiased read names a different wake.
+                    if self._should_confirm_unbiased():
+                        try:
+                            unbiased = await self._stt.transcribe_pcm(
+                                pcm_bytes, language=self._language, use_bias=False
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            log.warning("unbiased wake-confirm failed: %s", exc)
+                            unbiased = None
+                        if unbiased is not None:
+                            name = m.group(0).split()[-1] if m.group(0).split() else text
+                            if not _wake_confirmed_unbiased(
+                                (unbiased.text or "").strip(), name
+                            ):
+                                log.info(
+                                    "rolling-whisper: rejected hallucinated wake — "
+                                    "biased=%r unbiased=%r name=%r",
+                                    text, (unbiased.text or "").strip(), name,
+                                )
+                                continue
                     last_trigger_t = now
                     yield m.group(0)
         finally:
