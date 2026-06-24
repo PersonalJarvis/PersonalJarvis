@@ -73,6 +73,7 @@ from jarvis.core.protocols import (
     ImageBlock,
     Observation,
 )
+from jarvis.platform import window_state
 
 if TYPE_CHECKING:
     from .computer_use_context import ComputerUseContext
@@ -90,8 +91,17 @@ class CULoopError(RuntimeError):
 
 _VALID_ACTIONS: frozenset[str] = frozenset(
     {"click", "click_element", "type", "key", "scroll", "drag",
-     "open_app", "wait", "done", "fail"}
+     "open_app", "switch_window", "wait", "done", "fail"}
 )
+
+# Max windows listed in the per-step awareness line (Phase 1a) — keep the prompt
+# compact; the foreground + a handful of titles is enough signal.
+_MAX_AWARENESS_WINDOWS: int = 12
+
+# UIA snap fallback (Phase 2): on a verified missed pixel click, snap to the
+# nearest clickable accessibility element before the expensive LLM refine retry.
+_UIA_SNAP_TIMEOUT_S: float = 3.0       # tight: a wedged UIA COM call must not stall
+_UIA_SNAP_MAX_DIST_PX: int = 80        # only snap to an element this close to the miss
 
 #: Default drag duration (ms) — slow enough that a map/globe/slider registers the
 #: press-move-release as a real drag gesture rather than a teleport.
@@ -192,6 +202,7 @@ _SYSTEM_PROMPT = (
     "\"x2\": <int>, \"y2\": <int>}   (press at x,y, hold, drag to x2,y2, release "
     "-- for rotating a map/globe, panning, or moving a slider; a click cannot)\n"
     "  {\"action\": \"open_app\",      \"name\": \"<app name>\"}\n"
+    "  {\"action\": \"switch_window\", \"name\": \"<window title substring>\"}\n"
     "  {\"action\": \"wait\",          \"ms\": <int 0-10000>}\n"
     "  {\"action\": \"done\"}\n"
     "  {\"action\": \"fail\", \"reason\": \"<short string>\"}\n\n"
@@ -281,6 +292,12 @@ _SYSTEM_PROMPT = (
     "* If the target app is ALREADY VISIBLE in the current screenshot, do "
     "NOT call open_app again -- re-launching steals window focus and resets "
     "your progress. Interact with the app's existing window instead.\n"
+    "* CHECK THE 'OPEN WINDOWS' LIST (given in the user message when "
+    "available): if the app you need is listed there it is ALREADY RUNNING -- "
+    "even if its window is minimized and NOT visible in the screenshot. Do NOT "
+    "open_app it; emit {\"action\":\"switch_window\",\"name\":\"<a substring of "
+    "its title>\"} to bring its window to the front, then continue. This saves "
+    "a step and avoids a duplicate window.\n"
     "* DO NOT type the app name into a focused field hoping it is a search "
     "box -- use open_app to launch.\n\n"
     "Hard rules:\n"
@@ -461,6 +478,17 @@ def _parse_action(raw: str) -> dict[str, Any]:
         if not isinstance(name, str) or not name.strip():
             raise CULoopError("open_app action requires a non-empty string name field")
         obj["name"] = name.strip()
+    elif action == "switch_window":
+        # Focus an ALREADY-OPEN window by a title substring (Phase 1c) -- the
+        # model emits this when the awareness line shows the app is running, so
+        # it focuses instead of re-launching. Accept "name" or "title".
+        name = obj.get("name") or obj.get("title")
+        if not isinstance(name, str) or not name.strip():
+            raise CULoopError(
+                "switch_window action requires a non-empty 'name' (or 'title') "
+                "window-title substring"
+            )
+        obj["name"] = name.strip()
     elif action == "click_element":
         # UIA-grounded click — the user says e.g. ``click_element name="7"``
         # and ClickElementTool resolves the exact pixel coords from the
@@ -631,6 +659,16 @@ def _validate_action_dict(obj: Any) -> dict[str, Any]:
         name = obj.get("name")
         if not isinstance(name, str) or not name.strip():
             raise CULoopError("open_app action requires a non-empty string name field")
+        obj["name"] = name.strip()
+    elif action == "switch_window":
+        # Focus an ALREADY-OPEN window by a title substring (Phase 1c). Accept
+        # "name" or "title"; normalise to "name" for the executor.
+        name = obj.get("name") or obj.get("title")
+        if not isinstance(name, str) or not name.strip():
+            raise CULoopError(
+                "switch_window action requires a non-empty 'name' (or 'title') "
+                "window-title substring"
+            )
         obj["name"] = name.strip()
     elif action == "wait":
         ms = obj.get("ms")
@@ -1071,6 +1109,27 @@ def _select_fast_model(manager: Any, provider: Any) -> str | None:
     return None
 
 
+def _select_cu_model(manager: Any, provider: Any) -> str | None:
+    """Pick the Computer-Use model for ``provider`` (Phase 3).
+
+    Prefers the BrainManager's ``_cu_model`` (cu_model -> main model -> tier
+    default); falls back to ``_select_fast_model`` for stubs that don't expose
+    it. Provider-agnostic (AP-21): the manager owns the per-provider resolution;
+    nothing here name-checks a provider or model. When no CU model is pinned the
+    result equals today's fast model, so the loop is unchanged until a user pins
+    one in Settings.
+    """
+    picker = getattr(manager, "_cu_model", None)
+    if callable(picker):
+        try:
+            model = picker(provider)
+        except Exception:  # noqa: BLE001
+            model = None
+        if model:
+            return str(model)
+    return _select_fast_model(manager, provider)
+
+
 # ---------------------------------------------------------------------------
 # Brain dispatch
 # ---------------------------------------------------------------------------
@@ -1108,6 +1167,46 @@ async def _load_observation_image(
     mime, image_b64 = await _read_observation_image_b64(obs)
     mime, image_b64 = cap_image_b64(mime, image_b64, max_bytes, max_dimension)
     return ImageBlock(mime=mime, data_b64=image_b64, source_hash=obs.screenshot_hash)
+
+def _window_awareness_line(ctx: ComputerUseContext) -> str:
+    """A compact, best-effort "what is already open" line for the CU prompt.
+
+    Lets the fast model focus an already-running app (``switch_window``) instead
+    of re-launching it (the OBS-already-in-the-taskbar case) and plan with real
+    state. Returns "" on failure / headless / a platform that returns nothing —
+    never raises (``list_windows`` is microseconds and self-guards). Opt out per
+    context via ``window_awareness = False``.
+    """
+    if not getattr(ctx, "window_awareness", True):
+        return ""
+    try:
+        windows = window_state.list_windows()
+        foreground = window_state.get_foreground_title()
+    except Exception:  # noqa: BLE001
+        return ""
+    labels: list[str] = []
+    for w in windows:
+        label = (w.title or "").strip()
+        if not label:
+            continue
+        if w.minimized:
+            label += " (minimized)"
+        if label not in labels:
+            labels.append(label)
+        if len(labels) >= _MAX_AWARENESS_WINDOWS:
+            break
+    if not labels:
+        return ""
+    line = (
+        "\n\nOPEN WINDOWS (these apps are ALREADY running — to use one, emit "
+        '{"action":"switch_window","name":"<title substring>"} or interact with '
+        "its visible window; do NOT open_app it again): " + "; ".join(labels)
+    )
+    fg = (foreground or "").strip()
+    if fg:
+        line += f"\nFOREGROUND: {fg}"
+    return line
+
 
 async def _call_brain(
     ctx: ComputerUseContext,
@@ -1246,9 +1345,18 @@ async def _call_brain(
             provider = manager.active_provider
             if provider is None:
                 raise CULoopError("BrainManager.active_provider is None")
-            chain = [(provider, _select_fast_model(manager, provider))]
+            chain = [(provider, _select_cu_model(manager, provider))]
         if not chain:
             raise CULoopError("BrainManager fallback chain is empty")
+
+        # Per-provider Computer-Use model override (Phase 3): the user may pin a
+        # dedicated CU model in Settings (e.g. run CU on a stronger model than
+        # chat). _select_cu_model resolves cu_model -> the provider's main model
+        # -> the tier default, so when nothing is pinned this equals today's fast
+        # model (backward-compatible). Provider-agnostic; applies to every brain
+        # in the chain so a fallback provider also uses ITS configured CU model.
+        if callable(getattr(manager, "_cu_model", None)):
+            chain = [(p, _select_cu_model(manager, p) or m) for (p, m) in chain]
 
         # Computer-Use is screenshot-grounded: the screenshot is the loop's
         # SOLE grounding signal. A provider that cannot see the attached image
@@ -2616,6 +2724,83 @@ async def _dispatch_raw_click(
     )
 
 
+def _pick_snap_node(nodes: Any, x: int, y: int, max_dist: int) -> Any | None:
+    """Pick the clickable accessibility node to snap a missed click to.
+
+    Preference: the SMALLEST node whose bounds contain ``(x, y)`` (the most
+    specific control under the cursor); otherwise the node whose center is
+    NEAREST ``(x, y)`` within ``max_dist`` pixels. Disabled and zero-area nodes
+    are skipped. Returns the node or ``None`` when nothing is close enough.
+    """
+    containing: list[tuple[int, Any]] = []
+    nearest: Any | None = None
+    nearest_d2 = max_dist * max_dist
+    for n in nodes:
+        if not getattr(n, "enabled", True):
+            continue
+        try:
+            bx, by, bw, bh = n.bounds
+        except Exception:  # noqa: BLE001 — a malformed node is simply skipped
+            continue
+        if bw <= 0 or bh <= 0:
+            continue
+        if bx <= x <= bx + bw and by <= y <= by + bh:
+            containing.append((bw * bh, n))
+            continue
+        cx, cy = bx + bw // 2, by + bh // 2
+        d2 = (cx - x) ** 2 + (cy - y) ** 2
+        if d2 <= nearest_d2:
+            nearest_d2 = d2
+            nearest = n
+    if containing:
+        return min(containing, key=lambda t: t[0])[1]
+    return nearest
+
+
+async def _uia_snap_click(
+    ctx: ComputerUseContext,
+    *,
+    executor: Any,
+    tool: Any,
+    x: int,
+    y: int,
+    trace_id: Any,
+) -> tuple[bool, str] | None:
+    """Snap a verified-missed pixel click to the nearest clickable UIA element.
+
+    Returns ``(ok, message)`` when an element was found near ``(x, y)`` and
+    clicked, else ``None`` so the caller falls through to the LLM refine. The
+    fast model often guesses a pixel a few px off a labelled control; the
+    accessibility tree knows the control's true bounds, so this fixes the miss
+    deterministically. Best-effort: a missing tree backend (headless / Null
+    source), no nearby element, a timeout, or any error all return ``None``.
+    Cross-platform via ``make_ui_tree_source`` (UIA / AX / AT-SPI / Null).
+    Disable per context with ``uia_click_fallback = False``.
+    """
+    if not getattr(ctx, "uia_click_fallback", True):
+        return None
+    try:
+        from jarvis.vision.tree_factory import make_ui_tree_source  # noqa: PLC0415
+
+        source = make_ui_tree_source()
+        obs = await asyncio.wait_for(source.observe(), timeout=_UIA_SNAP_TIMEOUT_S)
+    except Exception:  # noqa: BLE001 — best-effort recovery, never raises
+        return None
+    node = _pick_snap_node(
+        list(getattr(obs, "nodes", ()) or ()), x, y, _UIA_SNAP_MAX_DIST_PX
+    )
+    if node is None:
+        return None
+    try:
+        bx, by, bw, bh = node.bounds
+        cx, cy = bx + bw // 2, by + bh // 2
+        ok, msg = await _dispatch_raw_click(executor, tool, cx, cy, trace_id)
+    except Exception:  # noqa: BLE001
+        return None
+    label = (getattr(node, "name", "") or "element").strip() or "element"
+    return ok, f"{msg} (UIA-snapped to '{label[:40]}' at ({cx},{cy}))"
+
+
 async def _click_with_refine(
     obj: dict[str, Any],
     ctx: ComputerUseContext,
@@ -2645,6 +2830,7 @@ async def _click_with_refine(
     clicked: list[tuple[int, int]] = []
     last_msg = ""
     retry_note = ""
+    snapped = False  # Phase 2: UIA snap is tried at most once per click action
     for _attempt in range(_CLICK_MAX_ATTEMPTS):
         refined = None
         if clicked:
@@ -2712,6 +2898,22 @@ async def _click_with_refine(
             # Something near the click visibly reacted (or we cannot tell) —
             # accept; the loop's fresh screenshot judges the semantics.
             return ok, last_msg
+        # Verified miss: the click produced no visible change. Before the costly
+        # LLM refine, snap to the nearest clickable accessibility element and
+        # click its true center (Phase 2) — fixes a "guessed a pixel, missed the
+        # button by a few px" thrash deterministically. Tried once per action;
+        # falls through to the refine when no element is near / no tree backend.
+        if not snapped:
+            snapped = True
+            snap = await _uia_snap_click(
+                ctx, executor=executor, tool=tool, x=x, y=y, trace_id=trace_id,
+            )
+            if snap is not None:
+                log.info(
+                    "[cu] click at (%d,%d) missed — UIA-snapped: %s",
+                    x, y, snap[1][:80],
+                )
+                return snap
         log.info(
             "[cu] click at (%d,%d) produced no local change — refining for a "
             "corrected retry (%d/%d)", x, y, len(clicked), _CLICK_MAX_ATTEMPTS,
@@ -2966,6 +3168,24 @@ async def _execute_action(
             bool(getattr(res, "success", False)),
             str(getattr(res, "output", "") or getattr(res, "error", "") or ""),
         )
+
+    if action == "switch_window":
+        # Focus an already-open window by a title substring (Phase 1c). Runs the
+        # cross-platform focus helper directly (best-effort, never raises); no
+        # tool-executor round-trip needed (focus is reversible, monitor-tier).
+        title = str(obj.get("name", "")).strip()
+        if not title:
+            return False, "switch_window requires a window-title substring"
+        try:
+            found, msg = await asyncio.wait_for(
+                asyncio.to_thread(window_state.focus_window, title),
+                timeout=_ACT_TIMEOUT_S,
+            )
+        except TimeoutError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            return False, f"switch_window crash: {type(exc).__name__}: {exc}"
+        return found, msg
 
     return False, f"action {action!r} reached _execute_action -- caller bug"
 
@@ -3637,6 +3857,19 @@ async def _run_screenshot_loop(
                     plan_user_message += _SEARCH_DISCIPLINE_BLOCK
             else:
                 plan_user_message += verify_note
+        # Window-state awareness (Phase 1a): tell the model what is ALREADY open
+        # so it focuses an existing window (switch_window) instead of re-launching
+        # it -- the OBS-already-in-the-taskbar case. Best-effort (~microseconds),
+        # never raises; empty on headless / a platform that returns nothing.
+        awareness_hint = _window_awareness_line(ctx)
+        if awareness_hint:
+            if plan_user_message is None:
+                plan_user_message = (
+                    f"GOAL: {task_prompt}\n"
+                    f"PREVIOUS_STEPS:\n{chr(10).join(history[-12:]) or '(none)'}\n\n"
+                    "Inspect the screenshot and emit ONE JSON action."
+                )
+            plan_user_message += awareness_hint
         log.info("[cu] step %d phase=think", step_idx)
         t_think = time.monotonic()
         # Wave 3 hybrid: try the native Gemini computer_use engine first when

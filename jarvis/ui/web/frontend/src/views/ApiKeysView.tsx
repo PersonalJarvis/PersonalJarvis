@@ -4,6 +4,7 @@ import { ViewHeader } from "@/views/ChatsView";
 import { AltCredentialNote } from "@/components/AltCredentialNote";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
+import { CuModelSelector } from "@/components/CuModelSelector";
 import { ProviderBillingBadge } from "@/components/ProviderBillingBadge";
 import { SubagentSection } from "@/components/SubagentSection";
 import { TelephonyPanel } from "@/views/TelephonyView";
@@ -374,6 +375,15 @@ function ProviderCard({
           descriptor.active &&
           descriptor.configured)) && (
         <BrainModelSelector
+          providerId={descriptor.id}
+          recommendedModel={descriptor.recommended_model}
+        />
+      )}
+
+      {/* Phase 3: a dedicated Computer-Use model, selectable per brain provider
+          (defaults to the provider's main model — no automatic escalation). */}
+      {descriptor.tier === "brain" && descriptor.configured && isBrainSwitchable && (
+        <CuModelSelector
           providerId={descriptor.id}
           recommendedModel={descriptor.recommended_model}
         />

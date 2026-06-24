@@ -129,8 +129,17 @@ class RollingWhisperWake:
         max_gain_db: float = 40.0,
         language: str = "de",
         # faster-whisper's exp(avg_logprob) score is harsh on 1-2 word wake
-        # chunks; live "Hey Alex!" was observed at 0.499 with clear speech.
-        min_wake_confidence: float = 0.45,
+        # chunks: live, cleanly-heard custom-name wakes land at ~0.28-0.52 (real
+        # samples 2026-06-23: "Alex." 0.318, "Hey Ruhm" 0.365, "Hey Alex" 0.52).
+        # A 0.45 floor rejected EVERY genuine wake (142 rejects / 0 accepts in one
+        # evening). That floor was built to suppress *prompt-bias* hallucinations,
+        # but the bias is now disabled (build_wake_whisper passes initial_prompt
+        # =None), so the pattern itself is the hallucination guard — a random
+        # mis-hear does not match the specific wake phrase — and the
+        # ``max_no_speech_prob`` gate below still rejects silence/noise. Keep only
+        # a low sanity floor that still drops a near-zero-confidence transcript
+        # (regression: a 0.2-confidence match must stay rejected).
+        min_wake_confidence: float = 0.28,
         max_no_speech_prob: float = 0.6,
     ) -> None:
         self._stt = stt

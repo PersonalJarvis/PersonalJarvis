@@ -48,6 +48,9 @@ export function BrainModelSelector({
   currentModel,
   recommendedModel,
   onSave,
+  headingLabel,
+  placeholder,
+  controlled,
 }: {
   providerId: string;
   currentModel?: string;
@@ -63,6 +66,22 @@ export function BrainModelSelector({
    * route. Defaults to ``saveBrainProviderModel(providerId, model)``.
    */
   onSave?: (model: string) => Promise<BrainModelSaveResult>;
+  /**
+   * Override the section heading (e.g. "Computer-Use model"). Defaults to the
+   * standard model/voice heading. Presentation only.
+   */
+  headingLabel?: string;
+  /** Override the empty-selection placeholder text on the trigger. */
+  placeholder?: string;
+  /**
+   * Controlled mode: ``pinned`` follows the ``currentModel`` prop (synced on
+   * change) and the live catalog's ``current_model`` NEVER overrides it. Used by
+   * the Computer-Use model picker, whose pinned value is a SEPARATE selection
+   * (cu_model) the parent owns — not the provider's main model that
+   * ``GET /models`` reports. Off by default, so the standard uncontrolled
+   * behaviour (auto-pin from the catalog) is unchanged.
+   */
+  controlled?: boolean;
 }) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -84,7 +103,10 @@ export function BrainModelSelector({
       setModels(Array.isArray(res.models) ? res.models : []);
       setSource(res.source);
       setSelects(res.selects === "voice" ? "voice" : "model");
-      if (!pinned && res.current_model) setPinned(res.current_model);
+      // Uncontrolled: adopt the catalog's current selection as the pinned value.
+      // Controlled (CU picker): the parent owns the pinned value (cu_model) —
+      // never overwrite it with the provider's main model from GET /models.
+      if (!controlled && !pinned && res.current_model) setPinned(res.current_model);
     } catch (e) {
       pushToast("error", `${t("apikeys_model.load_failed")}: ${(e as Error).message}`);
     } finally {
@@ -96,6 +118,14 @@ export function BrainModelSelector({
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providerId]);
+
+  // Controlled mode: keep the displayed pinned value in sync with the parent's
+  // currentModel (e.g. the CU picker resolves cu_model asynchronously after
+  // mount). No-op in the default uncontrolled mode.
+  useEffect(() => {
+    if (controlled) setPinned(currentModel ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [controlled, currentModel]);
 
   // Close on an outside click (inline panel needs no fixed backdrop).
   useEffect(() => {
@@ -156,7 +186,8 @@ export function BrainModelSelector({
     >
       <div className="flex items-center justify-between gap-2">
         <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-          {selects === "voice" ? t("apikeys_model.heading_voice") : t("apikeys_model.heading")}
+          {headingLabel ??
+            (selects === "voice" ? t("apikeys_model.heading_voice") : t("apikeys_model.heading"))}
         </span>
         <button
           type="button"
@@ -188,6 +219,7 @@ export function BrainModelSelector({
       >
         <span className={cn("truncate text-xs", !pinned && "text-muted-foreground")}>
           {pinnedLabel ||
+            placeholder ||
             (selects === "voice"
               ? t("apikeys_model.choose_voice")
               : t("apikeys_model.choose_placeholder"))}

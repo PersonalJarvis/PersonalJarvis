@@ -81,6 +81,12 @@
       "description": "Silencia otras apps (Spotify, navegador…) mientras hablas con tu asistente y las restaura después. La voz del asistente nunca se silencia.",
       "enabled_toast": "La música se silenciará mientras hablas con tu asistente.",
       "disabled_toast": "Silenciado de música desactivado."
+    },
+    "sound_effects": {
+      "title": "Efectos de sonido",
+      "description": "Reproduce los tonos breves de Jarvis: el tono al decir la palabra de activación, el tono de colgado y el tono de arranque. Apagado: en silencio; la voz hablada nunca se ve afectada.",
+      "enabled_toast": "Efectos de sonido activados.",
+      "disabled_toast": "Efectos de sonido silenciados."
     }
   },
   "socials": {
@@ -823,6 +829,13 @@
     "use_custom": "Usar \"{0}\"",
     "no_models": "Sin modelos",
     "loading": "Cargando…"
+  },
+  "apikeys_cu_model": {
+    "heading": "Modelo para Computer-Use",
+    "use_main": "Usar mi modelo principal",
+    "using_main": "Usando tu modelo principal",
+    "effective": "Computer-Use usa",
+    "cleared": "Modelo de Computer-Use restablecido a tu modelo principal"
   },
   "settings_view": {
     "silence_window": {

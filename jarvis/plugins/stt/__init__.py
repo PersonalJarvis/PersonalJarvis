@@ -148,18 +148,29 @@ def build_wake_whisper(
     nothing, so the hot-path prompt-hallucination caveat in
     ``FasterWhisperProvider.__init__`` does not apply to them.
 
-    Safety override: that prompt-bias path is now disabled. It made ambiguous
-    mumbling/noise hallucinate the exact configured wake phrase, so
-    ``wake_phrase`` remains an accepted argument but is not passed to Whisper.
+    Bias is ON (forensic 2026-06-23). It was once disabled out of a hallucination
+    concern, but that disabled the custom wake word entirely: empirically, on the
+    user's real wake WAVs the unbiased base/cpu model heard "Hey Alex" as
+    "Space"/"Ego"/"Herum" -> 2-13% recall; seeding ``wake_phrase`` as the
+    ``initial_prompt`` lifts that to 83%. The earlier false-wake risk is held off
+    by the strict ["hey","alex"] matcher (a stray "Alex" in ordinary speech is
+    not an adjacent "hey alex") plus the ``no_speech_prob``/RMS gates, which kept
+    the false-wake rate ~0% on 50 real talking-about-Alex clips. The bias is
+    scoped to this path: only the stt_match custom-phrase route forwards a
+    ``wake_phrase``; the default "Hey Jarvis"/OWW paths pass nothing and stay
+    unbiased, so the hot-path prompt-hallucination caveat in
+    ``FasterWhisperProvider.__init__`` does not apply to them. A blank phrase is
+    treated as no bias.
     """
     from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
 
+    bias = wake_phrase.strip() if wake_phrase and wake_phrase.strip() else None
     return FasterWhisperProvider(
         model=getattr(stt_cfg, "wake_model", "base"),
         device=getattr(stt_cfg, "wake_device", "cpu"),
         compute_type=getattr(stt_cfg, "wake_compute_type", "int8"),
         language=language,
-        initial_prompt=None,
+        initial_prompt=bias,
     )
 
 

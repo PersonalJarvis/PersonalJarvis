@@ -1,8 +1,14 @@
 # Cross-platform drag-drop verification — proves the overlay drop mechanism
 # (tkdnd load + parse + register + drop chain) actually EXECUTES on Windows,
-# macOS AND Linux. The macos-latest leg is the autonomous macOS proof that
-# cannot be produced on a Windows dev box (no macOS container exists). Runs the
-# same `scripts/crossplatform/verify_drop_target.py` on all three OSes.
+# macOS AND Linux, by running the same
+# `scripts/crossplatform/verify_drop_target.py` on each.
+#
+# Cost policy (2026-06-23): macOS runners bill at ~10x the Linux rate, so the
+# macos-latest leg — the autonomous macOS proof that cannot be produced on a
+# Windows dev box — runs ONLY on a manual `workflow_dispatch` (the Actions tab
+# -> "Run workflow", or `gh workflow run dragdrop-verify.yml`). An ordinary
+# push/PR that touches the drop files runs the cheap Linux + Windows legs. The
+# `concurrency` group cancels a superseded in-flight run.
 name: dragdrop-crossplatform-verify
 
 on:
@@ -19,16 +25,19 @@ on:
       - "scripts/crossplatform/verify_drop_target.py"
   workflow_dispatch: {}
 
+# Cost control: a superseding push to the same ref cancels the in-flight run.
+concurrency:
+  group: dragdrop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     name: drag-drop (${{ matrix.os }})
     strategy:
       fail-fast: false
+      # macOS (~10x cost) only on a manual dispatch; push/PR runs Linux + Windows.
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
+        os: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["ubuntu-latest","macos-latest","windows-latest"]') || fromJSON('["ubuntu-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

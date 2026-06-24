@@ -57,15 +57,37 @@ permissions:
   contents: read
 
 jobs:
+  # Single source of truth for which OS legs run. macOS bills at ~10x the Linux
+  # rate, so it is included ONLY for a manual workflow_dispatch with include_macos
+  # (default true). Every ordinary push/PR runs the cheap Linux + Windows legs,
+  # which catch almost all cross-platform regressions. Both `test` and `jarvisctl`
+  # consume this output so the policy lives in exactly one place.
+  configure:
+    name: configure matrix (cost-aware)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      os-matrix: ${{ steps.pick.outputs.os-matrix }}
+    steps:
+      - name: Pick OS matrix
+        id: pick
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.include_macos }}" = "true" ]; then
+            echo 'os-matrix=["ubuntu-latest","windows-latest","macos-latest"]' >> "$GITHUB_OUTPUT"
+            echo "macOS leg INCLUDED (manual dispatch)."
+          else
+            echo 'os-matrix=["ubuntu-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
+            echo "macOS leg SKIPPED (cheap push/PR run). Dispatch manually to include it."
+          fi
+
   test:
     name: test (${{ matrix.os }})
+    needs: configure
     strategy:
-      fail-fast: false # we want to see ALL three OS legs, not just the first red one
+      fail-fast: false # we want to see ALL OS legs, not just the first red one
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
+        os: ${{ fromJSON(needs.configure.outputs.os-matrix) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
 
@@ -138,13 +160,11 @@ jobs:
   # all three OS legs.
   jarvisctl:
     name: jarvisctl unit (${{ matrix.os }})
+    needs: configure
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
+        os: ${{ fromJSON(needs.configure.outputs.os-matrix) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
 

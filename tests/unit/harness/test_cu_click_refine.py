@@ -168,6 +168,11 @@ class FakeCtx:
         self.bus = None
         self.per_step_timeout_s = 5.0
         self.verify_after_each_step = verify
+        # These tests isolate the LLM refine path; the Phase-2 UIA snap (which
+        # would otherwise fire first on a verified miss and query the real host
+        # accessibility tree) is turned off so the refine behaviour is tested in
+        # isolation. The snap itself is covered by tests/unit/harness/test_cu_uia_snap.py.
+        self.uia_click_fallback = False
 
 
 class FakeObservation:

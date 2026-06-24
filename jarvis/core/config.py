@@ -307,6 +307,8 @@ class TTSConfig(BaseModel):
 class BrainProviderConfig(BaseModel):
     model: str | None = None
     deep_model: str | None = None      # Optional: stronger reasoning model
+    cu_model: str | None = None        # Optional: model the Computer-Use loop uses
+                                       # (Phase 3). None -> use this provider's `model`.
     auth_mode: str | None = None       # "oauth" | "api_key"
     base_url: str | None = None
     # Latency sprint 1 (2026-04-30): Gemini thinking budget per provider tier.
@@ -1025,6 +1027,11 @@ class UIConfig(BaseModel):
     tray_enabled: bool = True
     admin_api_port: int = 47821
     startup_chime: bool = True
+    # Global master switch for all synthesized UI earcons (wake "ding",
+    # hang-up tone, boot-ready tone, "still listening" earcon). The spoken TTS
+    # voice is NOT affected — only the non-verbal effect tones. Default on;
+    # toggled live from Settings → Behavior, persisted to [ui] sound_effects.
+    sound_effects: bool = True
     # Interface (display) language of the whole app — every label, button and
     # message. The backend home for what used to be a frontend-only localStorage
     # value, so a voice command or the Control API can change it and the open UI
