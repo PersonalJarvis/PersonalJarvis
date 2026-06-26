@@ -151,6 +151,17 @@ def _acquire_primary_lock_for_headless(
     return lock
 
 
+def _claim_headless_primary_lock(args, *, lock_path=None, meta_path=None):
+    """Claim the headless primary lock unless this is an explicit no-lock run."""
+    if bool(getattr(args, "no_lock", False)):
+        os.environ["JARVIS_PRIMARY_INSTANCE"] = "0"
+        return None
+    return _acquire_primary_lock_for_headless(
+        lock_path=lock_path,
+        meta_path=meta_path,
+    )
+
+
 def _direct_filelock_fallback(lock_path=None):
     """Acquire the single-instance lock without importing ``desktop_app``.
 
@@ -207,6 +218,32 @@ def _fast_admin_port() -> int:
             if isinstance(port, int):
                 return port
     return _DEFAULT_ADMIN_PORT
+
+
+def _fast_auth_token_env() -> str:
+    """Read ``[ui].auth_token_env`` raw (no ``load_config``) so the fast-boot
+    desktop path can generate + set the session token BEFORE the heavy config /
+    DesktopApp imports. Falls back to the packaged default ``JARVIS_UI_TOKEN``."""
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        import tomllib
+
+        override = os.environ.get("JARVIS_CONFIG")
+        if override:
+            path = override
+        else:
+            repo_root = os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            )
+            path = os.path.join(repo_root, "jarvis.toml")
+        if os.path.exists(path):
+            with open(path, "rb") as fh:
+                data = tomllib.load(fh)
+            name = data.get("ui", {}).get("auth_token_env")
+            if isinstance(name, str) and name:
+                return name
+    return "JARVIS_UI_TOKEN"
 
 
 async def _run_headless(args) -> int:
@@ -292,7 +329,18 @@ async def _run_headless(args) -> int:
             # 1013 = "try again later" → clients reconnect once the app is up.
             await send({"type": "websocket.close", "code": 1013})
 
-    _host = "127.0.0.1"
+    # Cloud-first: a headless VPS / container must be reachable by a remote
+    # browser, which a 127.0.0.1-only listener is not. ``JARVIS_BIND_HOST`` opts
+    # into a non-loopback bind (e.g. ``0.0.0.0`` inside Docker); the default
+    # stays loopback so desktop installs are byte-for-byte unchanged. The
+    # Control-API key is the security boundary on any non-loopback bind, so
+    # ``assert_bind_safe`` fails closed without one — mirroring WebServer.start().
+    _host = (os.environ.get("JARVIS_BIND_HOST") or "127.0.0.1").strip() or "127.0.0.1"
+    if _host not in ("127.0.0.1", "::1", "localhost"):
+        from jarvis.core import control_key as _control_key
+        from jarvis.ui.web.control_auth import assert_bind_safe
+
+        assert_bind_safe(_host, _control_key.get_control_key())
     _port = args.port if args.port is not None else _fast_admin_port()
     _bootstrap_server = uvicorn.Server(
         uvicorn.Config(
@@ -370,7 +418,7 @@ async def _run_headless(args) -> int:
     # init below. Deferred off the time-to-serving path (its desktop_app import
     # is ~420 ms). After a host crash a stale lock is reclaimed here via the
     # PID-sidecar in acquire_single_instance_lock.
-    _headless_lock = _acquire_primary_lock_for_headless()
+    _headless_lock = _claim_headless_primary_lock(args)
     _lx_mark("lock")
 
     from jarvis.brain.factory import build_default_brain
@@ -739,6 +787,213 @@ def _run_desktop(cfg, use_lock: bool) -> int:
                 pass
 
 
+def _serve_bootstrap_with_retry(
+    loop,
+    host: str,
+    port: int,
+    *,
+    attempts: int = 5,
+    delay: float = 0.4,
+    _factory=None,
+    _sleep=time.sleep,
+):
+    """Bind the serve-first bootstrap, retrying a transient post-restart bind race.
+
+    A bind failure on the admin port immediately after an in-app self-restart is
+    almost always *transient*: the just-exited old process is still releasing the
+    socket, not a live second instance holding it. Treating that first failure as
+    "already running" (and bouncing) is the "shuts down but never comes back" bug
+    — so retry the bind a few times before giving up. The single-instance lock
+    (acquired later in :func:`_desktop_backend_main`) stays the authoritative
+    "is another instance live?" check; this only prevents the transient race from
+    being misread.
+
+    A fresh ``FastBootstrap`` is built per attempt (a failed ``serve`` leaves a
+    spent uvicorn server on the object — never reuse it). Returns the bound
+    bootstrap, or ``None`` if every attempt failed (the caller then maps that to
+    "already running"). The normal start (free port) binds on the first attempt
+    with no delay; only a genuinely, persistently-bound port pays the full backoff.
+    """
+    from jarvis.ui.web.fast_bootstrap import FastBootstrap
+
+    factory = _factory if _factory is not None else FastBootstrap
+    for attempt in range(attempts):
+        bootstrap = factory()
+        try:
+            loop.run_until_complete(bootstrap.serve(host, port))
+            return bootstrap
+        except Exception:  # noqa: BLE001 — bind failed; retry then treat as busy
+            if attempt < attempts - 1:
+                _sleep(delay)
+    return None
+
+
+def _desktop_backend_main(args, port: int, token: str, holder: dict, app_ready) -> None:
+    """Backend thread for the fast-boot desktop path.
+
+    Binds the serve-first bootstrap FIRST (light imports only), then does the
+    heavy config + ``DesktopApp`` build and serves the real app behind the
+    bootstrap on the same loop. Communicates back to the main thread via
+    *holder* (``app`` / ``err`` / ``lock`` / ``already_running``) + *app_ready*.
+    On a post-bind failure it frees the port so the classic fallback can bind.
+    """
+    import asyncio as _asyncio
+    import contextlib as _contextlib
+    import threading as _threadmod
+
+    def _t_current():
+        return _threadmod.current_thread()
+
+    loop = _asyncio.new_event_loop()
+    _asyncio.set_event_loop(loop)
+    bootstrap = None
+    try:
+        # A bind failure right after a self-restart is usually the old process
+        # still releasing the port, NOT a live second instance — so retry the
+        # bind before concluding "already running" (the lock below is the real
+        # arbiter). Without this, the fresh restart instance bounces and the app
+        # "shuts down but never comes back".
+        bootstrap = _serve_bootstrap_with_retry(loop, "127.0.0.1", port)
+        if bootstrap is None:
+            holder["already_running"] = True
+            app_ready.set()
+            return
+        if os.environ.get("JARVIS_BOOT_PROFILE") == "1" and _BOOT_PROFILE_T0 is not None:
+            print(
+                f"BOOT_READY_MS={(time.perf_counter() - _BOOT_PROFILE_T0) * 1000.0:.1f}",
+                flush=True,
+            )
+
+        from jarvis.core.config import (
+            ensure_project_root_cwd,
+            load_config,
+            refresh_persisted_env_from_user_registry,
+        )
+
+        ensure_project_root_cwd()
+        refresh_persisted_env_from_user_registry()
+        cfg = load_config()
+        if args.dev:
+            cfg = cfg.model_copy(update={"ui": cfg.ui.model_copy(update={"dev_mode": True})})
+        if args.port is not None:
+            cfg = cfg.model_copy(
+                update={"ui": cfg.ui.model_copy(update={"admin_api_port": args.port})}
+            )
+        try:
+            from jarvis.core import control_key
+
+            control_key.ensure_control_key()
+        except Exception:  # noqa: BLE001 — never block boot on key bootstrap
+            pass
+
+        from jarvis.ui.desktop_app import (
+            DesktopApp,
+            SingleInstanceError,
+            acquire_single_instance_lock,
+        )
+
+        if not args.no_lock:
+            try:
+                holder["lock"] = acquire_single_instance_lock()
+                os.environ["JARVIS_PRIMARY_INSTANCE"] = "1"
+            except SingleInstanceError:
+                holder["already_running"] = True
+                with _contextlib.suppress(Exception):
+                    loop.run_until_complete(bootstrap.stop())
+                app_ready.set()
+                return
+        else:
+            os.environ["JARVIS_PRIMARY_INSTANCE"] = "0"
+
+        def _reconcile() -> None:
+            try:
+                from jarvis.autostart import reconcile_autostart
+
+                reconcile_autostart(cfg)
+            except Exception:  # noqa: BLE001 — defense in depth; never block boot
+                pass
+
+        import threading as _t
+
+        _t.Thread(target=_reconcile, name="autostart-reconcile", daemon=True).start()
+
+        app = DesktopApp(cfg, session_token=token)
+        # Pre-publish the backend handles BEFORE app_ready so the main-thread
+        # window's shutdown path can never observe them as None (the window path
+        # itself only needs cfg + session_token, both set in __init__, so there
+        # is no race there — this is belt-and-suspenders for an early close).
+        app._backend_loop = loop
+        app._bootstrap = bootstrap
+        app._backend_thread = _t_current()
+        holder["app"] = app
+    except Exception as exc:  # noqa: BLE001
+        holder["err"] = repr(exc)
+        # Free the port so the classic fallback can bind it.
+        if bootstrap is not None:
+            with _contextlib.suppress(Exception):
+                loop.run_until_complete(bootstrap.stop())
+        with _contextlib.suppress(Exception):
+            loop.close()
+        app_ready.set()
+        return
+    app_ready.set()
+    # Build + serve the real app on this loop, reusing the already-bound bootstrap.
+    app._run_backend(prebound=(loop, bootstrap))
+
+
+def _run_desktop_fast(args) -> int | None:
+    """Fast-boot desktop entry. Returns the exit code on success, or ``None`` on
+    any setup failure so ``main()`` falls back to the classic boot."""
+    import logging as _log
+    import secrets
+    import threading as _threading
+
+    try:
+        _ensure_windows_app_identity()  # AUMID before the window (main thread)
+        port = args.port if args.port is not None else _fast_admin_port()
+        token = secrets.token_urlsafe(32)
+        os.environ[_fast_auth_token_env()] = token
+
+        holder: dict = {"app": None, "err": None, "lock": None, "already_running": False}
+        app_ready = _threading.Event()
+        backend = _threading.Thread(
+            target=_desktop_backend_main,
+            args=(args, port, token, holder, app_ready),
+            name="jarvis-backend",
+            daemon=True,
+        )
+        backend.start()
+        if not app_ready.wait(timeout=60.0):
+            _log.getLogger(__name__).error("fast-boot backend did not signal in 60s")
+            return None
+        if holder["already_running"]:
+            from jarvis.ui.desktop_app import focus_existing_instance_robust
+
+            print("Jarvis läuft bereits.", file=sys.stderr)
+            focus_existing_instance_robust()
+            return 3
+        app = holder["app"]
+        if app is None:
+            _log.getLogger(__name__).warning(
+                "fast-boot backend init failed (%s) — classic fallback", holder["err"]
+            )
+            return None
+        app._backend_thread = backend
+    except Exception:  # noqa: BLE001
+        _log.getLogger(__name__).exception("fast-boot setup raised — classic fallback")
+        return None
+
+    try:
+        return app.run_window_only()
+    finally:
+        lock = holder.get("lock")
+        if lock is not None:
+            try:
+                lock.release()
+            except Exception:  # noqa: BLE001
+                pass
+
+
 def main(argv: list[str] | None = None) -> int:
     # Stamp the boot-profiling t0 as early as possible (only when opted in) so
     # BOOT_READY_MS reflects nearly the full in-process cold-start cost. The
@@ -769,6 +1024,23 @@ def main(argv: list[str] | None = None) -> int:
     # pywebview window needs the resolved config before it can be shown.
     if args.headless:
         return asyncio.run(_run_headless(args))
+
+    # Desktop boot: CLASSIC path (proven + GUI-safe). The serve-first bootstrap
+    # + static-shell + boot-splash (the black-screen fix) live in
+    # ``DesktopApp._run_backend``, so this path still opens with the real UI
+    # shell and no black screen. The "early-bind" launcher path
+    # (``_run_desktop_fast``) is kept but NOT the default — it was disabled
+    # 2026-06-25 after a no-boot incident under parallel sessions; re-enable only
+    # after a real-desktop window sign-off (set JARVIS_DESKTOP_FASTBOOT=1).
+    if os.environ.get("JARVIS_DESKTOP_FASTBOOT") == "1":
+        _fast_exit = _run_desktop_fast(args)
+        if _fast_exit is not None:
+            return _fast_exit
+        import logging as _flog
+
+        _flog.getLogger(__name__).warning(
+            "fast-boot desktop unavailable — falling back to classic boot"
+        )
 
     from jarvis.core.config import (
         ensure_project_root_cwd,

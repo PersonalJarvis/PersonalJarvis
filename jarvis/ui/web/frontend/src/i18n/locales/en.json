@@ -155,6 +155,7 @@
     "speaking": "Speaking",
     "error": "Error",
     "offline": "Offline",
+    "booting": "Starting…",
     "starting": "Voice starting…"
   },
   "sidebar": {
@@ -302,6 +303,23 @@
       "tier_fast": "Fast",
       "tier_auto": "Auto",
       "tier_deep": "Deep",
+      "trigger_mode_label": "Trigger",
+      "mode_schedule": "Schedule",
+      "mode_event": "When-Then",
+      "when_label": "When",
+      "when_mission_succeeded": "A mission succeeds",
+      "when_mission_failed": "A mission fails",
+      "when_mission_cancelled": "A mission is cancelled",
+      "then_label": "Then",
+      "then_computer_use": "Computer-Use",
+      "then_agent": "Agent task",
+      "then_notify": "Just notify me",
+      "cu_goal_label": "What should Computer-Use do?",
+      "cu_goal_placeholder": "e.g. Open {result_uri} in the browser.",
+      "announce_label": "Say when done (optional)",
+      "notify_text_label": "What should it say?",
+      "announce_placeholder": "e.g. Your mission is ready — I opened it in the browser.",
+      "when_then_hint": "Fires every time this happens. You can use {result_uri}, {summary_en} or {mission_id} as placeholders in the text above.",
       "cancel": "Cancel",
       "save": "Create task",
       "save_error": "Could not create the task."
@@ -1951,7 +1969,11 @@
     "create": "Create skill",
     "create_error": "Could not create the skill",
     "name_required": "Please enter a name with at least 3 characters.",
-    "needs_instructions": "Please describe what the skill should do — type it in the field at the top, or write the instructions below."
+    "needs_instructions": "Please describe what the skill should do — type it in the field at the top, or write the instructions below.",
+    "write_with_ai": "Write the whole skill with AI",
+    "writing": "AI is writing your skill…",
+    "ai_done_review": "Done — the AI wrote the whole skill below. Review it, then click Create skill.",
+    "or_review_edit": "or review & edit"
   },
   "missions_view": {
     "active": "active",

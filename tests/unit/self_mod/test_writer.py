@@ -257,7 +257,9 @@ class TestAllowlistRejection:
         entries = _read_audit_lines(audit_log)
         assert len(entries) == 1
         assert entries[0]["ok"] is False
-        assert "ALLOWED" in entries[0]["error"]
+        # Wave 1.1 reworded the allowlist-violation message (the set is now the
+        # schema minus the deny layer, no longer a literal ALLOWED tuple).
+        assert "not a mutable config setting" in entries[0]["error"]
 
     def test_secret_path_raises_secret_access(
         self, writer: AtomicConfigWriter

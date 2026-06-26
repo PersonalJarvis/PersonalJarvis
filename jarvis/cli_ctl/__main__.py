@@ -21,10 +21,12 @@ from jarvis.cli_ctl.client import JarvisClient
 from jarvis.cli_ctl.commands import auth as auth_cmd
 from jarvis.cli_ctl.commands import board as board_cmd
 from jarvis.cli_ctl.commands import brain as brain_cmd
+from jarvis.cli_ctl.commands import clis as clis_cmd
 from jarvis.cli_ctl.commands import conductor as conductor_cmd
 from jarvis.cli_ctl.commands import config as config_cmd
 from jarvis.cli_ctl.commands import contacts as contacts_cmd
 from jarvis.cli_ctl.commands import docs as docs_cmd
+from jarvis.cli_ctl.commands import friends as friends_cmd
 from jarvis.cli_ctl.commands import frontier as frontier_cmd
 from jarvis.cli_ctl.commands import marketplace as marketplace_cmd
 from jarvis.cli_ctl.commands import mcps as mcps_cmd
@@ -32,6 +34,7 @@ from jarvis.cli_ctl.commands import missions as missions_cmd
 from jarvis.cli_ctl.commands import outputs as outputs_cmd
 from jarvis.cli_ctl.commands import sessions as sessions_cmd
 from jarvis.cli_ctl.commands import skills as skills_cmd
+from jarvis.cli_ctl.commands import socials as socials_cmd
 from jarvis.cli_ctl.commands import system as system_cmd
 from jarvis.cli_ctl.commands import tasks as tasks_cmd
 from jarvis.cli_ctl.commands import telephony as telephony_cmd
@@ -111,9 +114,12 @@ app.add_typer(board_cmd.app, name="board")
 app.add_typer(workflows_cmd.app, name="workflows")
 app.add_typer(conductor_cmd.app, name="conductor")
 app.add_typer(contacts_cmd.app, name="contacts")
+app.add_typer(friends_cmd.app, name="friends")
+app.add_typer(socials_cmd.app, name="socials")
 app.add_typer(telephony_cmd.app, name="telephony")
 app.add_typer(marketplace_cmd.app, name="marketplace")
 app.add_typer(mcps_cmd.app, name="mcps")
+app.add_typer(clis_cmd.app, name="clis")
 app.add_typer(docs_cmd.app, name="docs")
 app.add_typer(frontier_cmd.app, name="frontier")
 

@@ -17,6 +17,7 @@ import { useEventStore } from "@/store/events";
  */
 export function useBrainStatus(): void {
   const setBrainProvider = useEventStore((s) => s.setBrainProvider);
+  const setBrainModel = useEventStore((s) => s.setBrainModel);
 
   useEffect(() => {
     let cancelled = false;
@@ -29,6 +30,12 @@ export function useBrainStatus(): void {
           if (cancelled || !data) return;
           if (typeof data.provider === "string" && data.provider) {
             setBrainProvider(data.provider);
+          }
+          // The endpoint always returns a model; "unknown" means the provider
+          // has no model configured — surface an empty string then so the
+          // sidebar shows only the provider rather than a literal "unknown".
+          if (typeof data.model === "string") {
+            setBrainModel(data.model === "unknown" ? "" : data.model);
           }
         })
         .catch(() => {
@@ -50,5 +57,5 @@ export function useBrainStatus(): void {
       ctrl.abort();
       window.removeEventListener("jarvis:brain-switched", onBrainSwitched);
     };
-  }, [setBrainProvider]);
+  }, [setBrainProvider, setBrainModel]);
 }

@@ -155,6 +155,7 @@
     "speaking": "Spricht",
     "error": "Fehler",
     "offline": "Offline",
+    "booting": "Startet…",
     "starting": "Sprachmodul startet…"
   },
   "sidebar": {
@@ -302,6 +303,23 @@
       "tier_fast": "Schnell",
       "tier_auto": "Auto",
       "tier_deep": "Stark",
+      "trigger_mode_label": "Auslöser",
+      "mode_schedule": "Zeitplan",
+      "mode_event": "Wenn-Dann",
+      "when_label": "Wenn",
+      "when_mission_succeeded": "Eine Mission ist fertig",
+      "when_mission_failed": "Eine Mission scheitert",
+      "when_mission_cancelled": "Eine Mission wird abgebrochen",
+      "then_label": "Dann",
+      "then_computer_use": "Computer-Use",
+      "then_agent": "Agenten-Aufgabe",
+      "then_notify": "Nur Bescheid sagen",
+      "cu_goal_label": "Was soll Computer-Use tun?",
+      "cu_goal_placeholder": "z. B. Öffne {result_uri} im Browser.",
+      "announce_label": "Bescheid sagen, wenn fertig (optional)",
+      "notify_text_label": "Was soll gesagt werden?",
+      "announce_placeholder": "z. B. Deine Mission ist fertig — ich habe sie im Browser geöffnet.",
+      "when_then_hint": "Wird jedes Mal ausgelöst. Du kannst {result_uri}, {summary_de} oder {mission_id} als Platzhalter im Text oben verwenden.",
       "cancel": "Abbrechen",
       "save": "Aufgabe erstellen",
       "save_error": "Aufgabe konnte nicht erstellt werden."
@@ -959,7 +977,7 @@
       "editor_label": "System-Prompt (Markdown)",
       "placeholder": "Schreibe deinen eigenen System-Prompt…",
       "chars": "{0} Zeichen",
-      "empty_hint": "Darf nicht leer sein — nutze Zurücksetzen, um den Standard wiedersampleustellen.",
+      "empty_hint": "Darf nicht leer sein — nutze Zurücksetzen, um den Standard wiederherzustellen.",
       "save": "Prompt speichern",
       "saved": "System-Prompt gespeichert",
       "reset": "Auf Standard zurücksetzen",
@@ -1951,7 +1969,11 @@
     "create": "Skill erstellen",
     "create_error": "Skill konnte nicht erstellt werden",
     "name_required": "Bitte einen Namen mit mindestens 3 Zeichen eingeben.",
-    "needs_instructions": "Bitte beschreibe, was der Skill tun soll — entweder im Feld ganz oben oder in den Anweisungen darunter."
+    "needs_instructions": "Bitte beschreibe, was der Skill tun soll — entweder im Feld ganz oben oder in den Anweisungen darunter.",
+    "write_with_ai": "Den ganzen Skill von KI schreiben lassen",
+    "writing": "Die KI schreibt deinen Skill…",
+    "ai_done_review": "Fertig — die KI hat den ganzen Skill unten geschrieben. Prüfe ihn und klicke auf Skill erstellen.",
+    "or_review_edit": "oder prüfen & anpassen"
   },
   "missions_view": {
     "active": "aktiv",

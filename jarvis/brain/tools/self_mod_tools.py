@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, ClassVar, Final
+from typing import Any, ClassVar, Final, Literal
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.core.self_mod import (
@@ -118,6 +118,12 @@ class ListMutableSettingsTool:
                 error="invalid_input: list_mutable_settings akzeptiert keine Parameter",
             )
 
+        # Wave 2: enrich each entry with the value type + constraints so the
+        # brain can map a natural-language phrase ("talk slower") onto a concrete
+        # (path, value) — e.g. it sees tts.speed is a float at 1.0 and lowers it,
+        # or that ui.theme is an enum and picks an allowed value.
+        from jarvis.core.self_mod.schema_introspect import describe_field
+
         results: list[dict[str, Any]] = []
         for spec in SelfModRegistry.list_all():
             try:
@@ -125,15 +131,15 @@ class ListMutableSettingsTool:
             except BackupError as exc:
                 _LOG.warning("read_value(%s) failed: %s", spec.path, exc)
                 current = None
-            results.append(
-                {
-                    "path": spec.path,
-                    "current_value": _maybe_redact(spec.path, _as_typed_value(current)),
-                    "description": spec.description,
-                    "risk_tier": spec.risk_tier,
-                    "needs_restart": spec.needs_restart,
-                }
-            )
+            entry: dict[str, Any] = {
+                "path": spec.path,
+                "current_value": _maybe_redact(spec.path, _as_typed_value(current)),
+                "description": spec.description,
+                "risk_tier": spec.risk_tier,
+                "needs_restart": spec.needs_restart,
+            }
+            entry.update(describe_field(spec.path))  # value_type [+ enum/range]
+            results.append(entry)
         return ToolResult(success=True, output=results)
 
 
@@ -416,6 +422,7 @@ def build_self_mod_tools(
     writer: AtomicConfigWriter | None = None,
     pending_store: PendingMutationStore | None = None,
     auto_confirm_safe: bool = True,
+    auto_apply: Literal["safe_only", "all"] = "safe_only",
     actor: AuditActor = AuditActor.HAUPTJARVIS,
     source: AuditSource = AuditSource.VOICE,
     writer_kwargs: dict[str, Any] | None = None,
@@ -423,7 +430,9 @@ def build_self_mod_tools(
     """Creates the three self-mod tools with a shared writer + store.
 
     Convenience factory for `jarvis/brain/factory.py` wiring. Tests can
-    inject `writer` and/or `pending_store` directly.
+    inject `writer` and/or `pending_store` directly. ``auto_apply="all"`` is the
+    voice "never ask, always now" policy (Wave 1.3); the default ``"safe_only"``
+    keeps the SAFE-auto / ASK-confirm split for REST/CLI.
     """
     if writer is None:
         kwargs = dict(writer_kwargs or {})
@@ -432,7 +441,7 @@ def build_self_mod_tools(
         writer = AtomicConfigWriter(**kwargs)
     if pending_store is None:
         pending_store = PendingMutationStore(
-            writer=writer, auto_confirm_safe=auto_confirm_safe
+            writer=writer, auto_confirm_safe=auto_confirm_safe, auto_apply=auto_apply
         )
     return {
         ListMutableSettingsTool.name: ListMutableSettingsTool(writer=writer),

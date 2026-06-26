@@ -28,7 +28,14 @@ _FOOTER = (
     "machine-readable output flags (--json, --format json) when the CLI "
     "supports them. If you are unsure of the exact command or flags, first run "
     "`<cli> --help` or `<cli> <group> --help` (read-only) to discover them, "
-    "then issue the real command."
+    "then issue the real command.\n"
+    "Each cli_* tool result is a structured object: "
+    "{success, output:{exit_code, stdout, stderr, duration_ms}, error}. "
+    "An exit_code of 0 means success and stdout holds the real result (often "
+    "JSON) — read it, then summarize it in your own natural words. Never read "
+    "the result object, the JSON envelope, the exit code, or table characters "
+    "aloud. On a non-zero exit_code, briefly explain the cause from stderr in "
+    "plain language; never quote the error object."
 )
 
 

@@ -103,6 +103,20 @@ if [ -f "$cli_gate" ]; then
     fi
 fi
 
+# --- 4) CLI DOCGEN drift gate (FAIL-CLOSED) -----------------------------------
+# docs/jarvis-cli-reference.md is generated from the curated command tree; this
+# fails the push if a command was added/changed without regenerating it. Static
+# (imports the Typer app only, no live server). Run
+# `python scripts/ci/gen_cli_reference.py` to fix a drift.
+docgen_gate="scripts/ci/gen_cli_reference.py"
+if [ -f "$docgen_gate" ]; then
+    "$PY" "$docgen_gate" --check </dev/null
+    if [ "$?" -ne 0 ]; then
+        status=1
+        docgen_hit=1
+    fi
+fi
+
 rm -f "$refs_file"
 
 if [ "$status" -ne 0 ]; then
@@ -117,6 +131,10 @@ if [ "$status" -ne 0 ]; then
     if [ "${cli_coverage_hit:-0}" -ne 0 ]; then
         echo "pre-push BLOCKED: CLI COVERAGE gate (a route module is not mounted)."
         echo "  Mount it in jarvis/ui/web/server.py — see the findings above."
+    fi
+    if [ "${docgen_hit:-0}" -ne 0 ]; then
+        echo "pre-push BLOCKED: CLI DOCGEN drift (jarvis-cli-reference.md out of date)."
+        echo "  Run: python scripts/ci/gen_cli_reference.py  and commit the result."
     fi
     echo "Bypass once with:  git push --no-verify   (layer-3 CI is the backstop)."
 fi

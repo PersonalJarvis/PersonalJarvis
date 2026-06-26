@@ -1408,9 +1408,19 @@ async def subagent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
         )
 
     # Key-Check — a provider without a stored credential cannot be activated.
-    # ``claude-api`` counts the OAuth bearer as present (Claude Max). Reads the
-    # same secret store the status endpoint uses for the per-card ``key_set``.
-    if not cfg_mod.get_provider_secret(provider):
+    # ``claude-api`` counts the live Claude Max OAuth login (read by the
+    # ClaudeDirectWorker from ~/.claude/.credentials.json) as a credential, so a
+    # fresh Claude-Max user who only ran `claude login` (no stored API key) can
+    # still select it — mirrors the codex/antigravity OAuth branches above.
+    has_credential = bool(cfg_mod.get_provider_secret(provider))
+    if not has_credential and provider == "claude-api":
+        try:
+            from jarvis.missions.isolation.env import read_live_claude_oauth_token
+
+            has_credential = bool(read_live_claude_oauth_token())
+        except Exception:  # noqa: BLE001
+            has_credential = False
+    if not has_credential:
         raise HTTPException(
             status_code=409,
             detail=(

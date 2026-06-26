@@ -655,6 +655,47 @@ def _is_instructional_question(user_text: str) -> bool:
     return bool(_INSTRUCTIONAL_QUESTION_RE.search(user_text or ""))
 
 
+# Definitional "what IS X" guard for the deterministic skill match. A plugin
+# skill's voice trigger is an un-anchored bare-name pattern (e.g. ``(github|…)``)
+# that fires on ANY mention — including when the app is merely the SUBJECT of a
+# knowledge question ("was ist GitHub?", "what is Stripe?"). Such a turn must be
+# ANSWERED, not captured by the skill (live skill-routing eval 2026-06-24: both
+# negative controls over-fired here). Precision over recall: suppress ONLY when
+# the matched trigger token is the predicate of a copula in a definitional
+# opener — so a real data request that merely starts with "was ist" ("was ist
+# in meinem Posteingang?", token "posteingang") is NOT suppressed, because there
+# the token does not sit directly after the copula (the "in"/"mein" data context
+# breaks the predicate run).
+_DEFINITIONAL_OPENER_RE = re.compile(
+    r"^\s*(?:was\s+(?:ist|sind|bedeutet|war|waren)"
+    r"|wof[üu]r\s+(?:ist|steht|braucht|nutzt|benutzt|verwendet)"
+    r"|erkl[äa]r(?:e|st|en)?\b"
+    r"|what(?:'s|\s+is|\s+are|\s+does)\b"
+    r"|tell\s+me\s+(?:about|what)\b"
+    r")",
+    re.IGNORECASE,
+)
+# Copula → (optional adverb, but NOT a data-context word) → optional article →
+# the matched token. ``%s`` is filled with the re.escape'd trigger token.
+_DEFINITIONAL_PREDICATE_TMPL = (
+    r"\b(?:ist|sind|war|waren|is|are|was|were|bedeutet|means)\s+"
+    r"(?:(?!\b(?:in|auf|an|aus|von|mein|meine|meinem|meinen|my|on|from|of)\b)"
+    r"\w+\s+){0,2}"
+    r"(?:ein(?:e|er|en)?\s+|a\s+|an\s+|the\s+)?%s\b"
+)
+
+
+def _is_definitional_question_about(user_text: str, token: str) -> bool:
+    """True when ``user_text`` is a definitional question whose subject IS the
+    matched trigger ``token`` — so firing that skill would be wrong."""
+    if not user_text or not token:
+        return False
+    if not _DEFINITIONAL_OPENER_RE.match(user_text):
+        return False
+    pat = re.compile(_DEFINITIONAL_PREDICATE_TMPL % re.escape(token), re.IGNORECASE)
+    return bool(pat.search(user_text))
+
+
 # Opinion / advice / recommendation / decision questions, and casual
 # question-openers ("ich hab da mal eine Frage"). These are CONVERSATION, not
 # work: the brain answers them inline — they must NEVER force-spawn a worker,
@@ -3177,6 +3218,17 @@ class BrainManager:
             if res is None:
                 return None
             skill = res[0]
+            # Definitional-question guard: a bare-name plugin trigger must not
+            # capture a "was ist <App>?" knowledge turn (2026-06-24 eval).
+            matched_token = res[1].group(0) if res[1] is not None else ""
+            if _is_definitional_question_about(user_text, matched_token):
+                log.info(
+                    "skill %s matched token %r but the turn is a definitional "
+                    "question about it — not captured (answer it instead)",
+                    getattr(skill, "name", "?"),
+                    matched_token,
+                )
+                return None
             if self._skill_is_blocked(skill):
                 log.info(
                     "skill %s matched but is block-tier — turn not captured",

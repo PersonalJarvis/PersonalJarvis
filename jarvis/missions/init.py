@@ -41,6 +41,7 @@ from .isolation.worktree import WorktreeManager
 from .kontrollierer.decomposer import MissionDecomposer
 from .kontrollierer.orchestrator import Kontrollierer
 from .manager import MissionManager
+from .task_bridge import MissionEventBridge
 from .voice.announcer import MissionAnnouncer
 from .voice.listener import MissionVoiceListener
 from .voice.readback import MissionReadback
@@ -789,6 +790,23 @@ async def bootstrap_missions(
     else:
         logger.info("Phase-6 mission-announcer disabled (no speech_bus provided)")
 
+    # 8c. MissionEventBridge: Mission-Bus -> global-bus MissionCompleted signal
+    # that drives the When-Then Tasks rules (on_event triggers). Independent of
+    # the announcer (different event class — no double announcement). Activates
+    # whenever a global bus is present (speech_bus IS the global EventBus the
+    # Tasks scheduler binds to). The bridge only emits a machine-readable signal;
+    # it never speaks.
+    mission_event_bridge: MissionEventBridge | None = None
+    if speech_bus is not None:
+        mission_event_bridge = MissionEventBridge(
+            bus=manager.bus,
+            global_bus=speech_bus,
+        )
+        await mission_event_bridge.start()
+        logger.info("Phase-6 mission-event-bridge active (mission-bus -> global MissionCompleted)")
+    else:
+        logger.info("Phase-6 mission-event-bridge disabled (no global bus provided)")
+
     # 9. Daily cleanup task (opt-in)
     cleanup_task: asyncio.Task[None] | None = None
     if cleanup_daily:
@@ -808,6 +826,7 @@ async def bootstrap_missions(
         "budget": budget,
         "voice_listener": voice_listener,
         "mission_announcer": mission_announcer,
+        "mission_event_bridge": mission_event_bridge,
         "cleanup_task": cleanup_task,
         "sweep_stats": sweep_stats,
         "recovered_mission_ids": recovered,
@@ -828,6 +847,14 @@ async def shutdown_missions(bootstrap_result: dict[str, Any]) -> None:
             await cleanup_task
         except asyncio.CancelledError:
             pass
+
+    bridge = bootstrap_result.get("mission_event_bridge")
+    if bridge is not None:
+        bridge.stop()
+
+    announcer = bootstrap_result.get("mission_announcer")
+    if announcer is not None:
+        announcer.stop()
 
     manager = bootstrap_result.get("manager")
     if manager is not None:

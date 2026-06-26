@@ -31,9 +31,44 @@ log = logging.getLogger(__name__)
 # Serializes isolated-home (re)builds across concurrent turns/workers.
 _ISO_HOME_LOCK = threading.Lock()
 
-# Login material mirrored from the real ~/.gemini into the isolated home.
-_LOGIN_FILES: tuple[str, ...] = ("oauth_creds.json", "google_accounts.json", "installation_id")
+# Login material mirrored from the real ~/.gemini into the isolated home, as
+# paths RELATIVE to ~/.gemini so subdirs are preserved. The Gemini CLI keeps its
+# login flat (oauth_creds.json); the Antigravity ``agy`` CLI keeps its token +
+# install id under ``antigravity-cli/`` instead — mirroring only the flat files
+# left an agy worker logged out under the redirected HOME (verified 2026-06-26,
+# agy 1.0.12). We mirror whichever set exists.
+_LOGIN_FILES: tuple[tuple[str, ...], ...] = (
+    ("oauth_creds.json",),
+    ("google_accounts.json",),
+    ("installation_id",),
+    ("antigravity-cli", "antigravity-oauth-token"),
+    ("antigravity-cli", "installation_id"),
+)
+
+# The OAuth token files whose presence == "logged in"; a refresh of any of them
+# (newer mtime) re-triggers the mirror. Subset of _LOGIN_FILES — the account/id
+# files alone are not a login.
+_OAUTH_LOGIN_FILES: tuple[tuple[str, ...], ...] = (
+    ("oauth_creds.json",),
+    ("antigravity-cli", "antigravity-oauth-token"),
+)
 _MTIME_MARKER = ".jarvis_src_mtime"
+
+
+def _latest_login_mtime(real_dir: str) -> float | None:
+    """Newest mtime across present, non-empty OAuth login files, or ``None``.
+
+    ``None`` means "logged out" (no usable token in any known location). Using
+    the newest mtime across both the Gemini and agy token locations makes a
+    fresh login in either path re-trigger the mirror.
+    """
+    mtimes: list[float] = []
+    for rel in _OAUTH_LOGIN_FILES:
+        path = os.path.join(real_dir, *rel)
+        with suppress(OSError):
+            if os.path.isfile(path) and os.path.getsize(path) > 0:
+                mtimes.append(os.path.getmtime(path))
+    return max(mtimes) if mtimes else None
 
 
 def real_gemini_dir() -> str:
@@ -63,30 +98,32 @@ def ensure_isolated_home(*, real_dir: str, dest_root: str, model: str) -> str | 
         with _ISO_HOME_LOCK:
             g = os.path.join(dest_root, ".gemini")
             os.makedirs(g, exist_ok=True)
-            creds = os.path.join(real_dir, "oauth_creds.json")
             marker = os.path.join(g, _MTIME_MARKER)
-            if os.path.isfile(creds):
-                # Re-sync only when the real creds change (a fresh login), so the
+            login_mtime = _latest_login_mtime(real_dir)
+            if login_mtime is not None:
+                # Re-sync only when the real login changes (a fresh login), so the
                 # CLI's own token refresh inside the home is not clobbered.
-                stamp = repr(os.path.getmtime(creds))
+                stamp = repr(login_mtime)
                 prev: str | None = None
                 if os.path.isfile(marker):
                     with suppress(OSError):
                         with open(marker, encoding="utf-8") as fh:
                             prev = fh.read().strip()
                 if prev != stamp:
-                    for fname in _LOGIN_FILES:
-                        src = os.path.join(real_dir, fname)
+                    for rel in _LOGIN_FILES:
+                        src = os.path.join(real_dir, *rel)
                         if os.path.isfile(src):
-                            shutil.copy2(src, os.path.join(g, fname))
+                            dst = os.path.join(g, *rel)
+                            os.makedirs(os.path.dirname(dst), exist_ok=True)
+                            shutil.copy2(src, dst)
                     with open(marker, "w", encoding="utf-8") as fh:
                         fh.write(stamp)
             else:
-                # Logout removed the real creds → drop the stale copy so the CLI
+                # Logout removed the real login → drop every stale copy so the CLI
                 # is logged out under the redirected HOME too.
-                for fname in ("oauth_creds.json", "google_accounts.json", _MTIME_MARKER):
+                for rel in (*_LOGIN_FILES, (_MTIME_MARKER,)):
                     with suppress(OSError):
-                        os.remove(os.path.join(g, fname))
+                        os.remove(os.path.join(g, *rel))
             settings = {
                 "security": {"auth": {"selectedType": "oauth-personal"}},
                 "model": {"name": model},

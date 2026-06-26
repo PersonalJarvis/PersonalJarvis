@@ -10,7 +10,6 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel, ValidationError
 
-import jarvis.core.config as cfg_module
 from jarvis.core.self_mod import (
     FORBIDDEN_PATTERNS,
     AllowlistViolationError,
@@ -18,14 +17,13 @@ from jarvis.core.self_mod import (
     SecretAccessError,
     SelfModRegistry,
 )
+from jarvis.core.self_mod.schema_introspect import resolve_model_for_path
 
-# Plan-§7.1 table + voice-tunable computer_use.step_budget (the field the
-# screenshot loop actually reads; the legacy max_steps field was a no-op) +
-# the language keys added 2026-06-08 for the Jarvis Control API. The canonical
-# reply-language path is ``brain.reply_language`` (SAFE); ``profile.language``
-# is kept (legacy, no runtime effect) so old configs/flows keep validating.
-# 12 paths in the current allowlist.
-EXPECTED_PATHS = {
+# The 13 CURATED paths — since Wave 1.1 the mutable set is derived from the
+# whole JarvisConfig schema, but these keep their human-judgement overrides
+# (risk_tier / needs_restart / description). They must remain present and keep
+# those attributes; the rest of the schema is now mutable too with safe defaults.
+CURATED_PATHS = {
     "tts.provider",
     "tts.voice_de",
     "tts.voice_en",
@@ -54,14 +52,13 @@ RESTART_REQUIRED_PATHS = {
 
 
 class TestListAll:
-    def test_returns_thirteen_specs(self) -> None:
-        # 9 historical paths + brain.reply_language/stt.language/tts.language_code
-        # + ui.language (interface language, live-synced to the frontend).
-        assert len(SelfModRegistry.list_all()) == 13
+    def test_returns_many_specs(self) -> None:
+        # Wave 1.1: the set is schema-derived now, not a 13-entry hand-list.
+        assert len(SelfModRegistry.list_all()) > 50
 
-    def test_returns_expected_paths(self) -> None:
+    def test_curated_paths_remain_present(self) -> None:
         paths = {spec.path for spec in SelfModRegistry.list_all()}
-        assert paths == EXPECTED_PATHS
+        assert CURATED_PATHS <= paths
 
     def test_returns_independent_list_each_call(self) -> None:
         a = SelfModRegistry.list_all()
@@ -78,7 +75,7 @@ class TestListAll:
 
 
 class TestIsMutable:
-    @pytest.mark.parametrize("path", sorted(EXPECTED_PATHS))
+    @pytest.mark.parametrize("path", sorted(CURATED_PATHS))
     def test_returns_true_for_allowed_path(self, path: str) -> None:
         assert SelfModRegistry.is_mutable(path) is True
 
@@ -147,7 +144,7 @@ class TestGetSpec:
             )
 
     def test_ask_tier_paths_match_plan(self) -> None:
-        for path in EXPECTED_PATHS - SAFE_TIER_PATHS:
+        for path in CURATED_PATHS - SAFE_TIER_PATHS:
             spec = SelfModRegistry.get_spec(path)
             assert spec is not None
             assert spec.risk_tier == "ask", (
@@ -155,11 +152,13 @@ class TestGetSpec:
             )
 
     def test_restart_flags_match_plan(self) -> None:
-        """Plan-§7.1-Tabelle: stt.provider und brain.primary brauchen Restart."""
-        for spec in SelfModRegistry.list_all():
-            expected = spec.path in RESTART_REQUIRED_PATHS
+        """Curated paths keep their overridden needs_restart flag."""
+        for path in CURATED_PATHS:
+            spec = SelfModRegistry.get_spec(path)
+            assert spec is not None
+            expected = path in RESTART_REQUIRED_PATHS
             assert spec.needs_restart is expected, (
-                f"needs_restart-Flag von {spec.path} weicht vom Plan ab"
+                f"needs_restart flag of {path} deviates from the override table"
             )
 
 
@@ -282,7 +281,7 @@ class TestNoConfigFileIO:
         assert not (tmp_path / "jarvis.toml").exists()
 
         # Alle drei Public-API-Aufrufe müssen funktionieren.
-        assert len(SelfModRegistry.list_all()) == 13
+        assert len(SelfModRegistry.list_all()) > 50
         assert SelfModRegistry.is_mutable("tts.provider") is True
         assert SelfModRegistry.is_mutable("security.admin_password_hash") is False
         spec = SelfModRegistry.get_spec("brain.primary")
@@ -304,13 +303,15 @@ class TestAllowlistFieldParity:
 
     @pytest.mark.parametrize("spec", SelfModRegistry.list_all(), ids=lambda s: s.path)
     def test_model_and_field_exist(self, spec: MutableSpec) -> None:
-        model = getattr(cfg_module, spec.pydantic_model_name, None)
-        assert model is not None, (
-            f"{spec.path}: pydantic_model_name '{spec.pydantic_model_name}' "
-            "does not exist in jarvis.core.config"
-        )
-        assert isinstance(model, type) and issubclass(model, BaseModel), (
-            f"{spec.path}: '{spec.pydantic_model_name}' is not a Pydantic model"
+        # Resolve the owning model by navigating JarvisConfig along the path,
+        # not getattr(config, name): a submodule section model (e.g.
+        # AwarenessPrivacyConfig) is never re-exported into config, but it is
+        # still the real owner. This is the stronger anti-drift check.
+        model = resolve_model_for_path(spec.path)
+        assert issubclass(model, BaseModel)
+        assert model.__name__ == spec.pydantic_model_name, (
+            f"{spec.path}: spec names '{spec.pydantic_model_name}' but the "
+            f"owning model is '{model.__name__}'"
         )
         # A declared field is the strict case. A model with extra="allow"
         # legitimately stores undeclared keys (e.g. ui.theme on UIConfig), so

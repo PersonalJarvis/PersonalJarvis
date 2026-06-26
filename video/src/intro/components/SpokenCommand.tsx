@@ -17,7 +17,8 @@ export const SpokenCommand: React.FC<{
   delay?: number;
   size?: number;
   compact?: boolean;
-}> = ({ text, speaker = "user", delay = 0, size = 40, compact = false }) => {
+  jarvisSrc?: string;
+}> = ({ text, speaker = "user", delay = 0, size = 40, compact = false, jarvisSrc = "jarvis-mark.png" }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const s = spring({ frame: frame - delay, fps, config: { damping: 200, mass: 0.7 } });
@@ -55,7 +56,10 @@ export const SpokenCommand: React.FC<{
         boxShadow: `0 0 16px ${COLORS.primaryGlow}`,
       }}
     >
-      <Img src={staticFile("jarvis-mark.png")} style={{ width: dim * 0.74, height: dim * 0.74 }} />
+      <Img
+        src={staticFile(jarvisSrc)}
+        style={{ width: dim * 0.78, height: dim * 0.78, objectFit: "contain" }}
+      />
     </div>
   );
 

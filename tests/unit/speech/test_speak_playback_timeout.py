@@ -69,6 +69,33 @@ class HangingPlayer:
         self._release.set()
 
 
+@dataclass
+class OwnerTaggedNoFramePlayer:
+    """A turn playback that has not produced its own first frame yet.
+
+    Another playback, such as a mission-progress announcement, can update the
+    player's global write-progress counter while this task is still waiting.
+    The pipeline watchdog must ignore that unrelated progress.
+    """
+
+    last_write_ns: int = 0
+    last_write_owner_task_id: int | None = None
+    stop_calls: int = 0
+    _release: asyncio.Event = field(default_factory=asyncio.Event)
+
+    async def play_chunks(self, chunks: AsyncIterator[AudioChunk]) -> None:
+        task = asyncio.current_task()
+        self.last_write_owner_task_id = id(task) if task is not None else None
+        self.last_write_ns = 0
+        async for _ in chunks:
+            pass
+        await self._release.wait()
+
+    def stop(self) -> None:
+        self.stop_calls += 1
+        self._release.set()
+
+
 def _make_pipeline() -> tuple[SpeechPipeline, HangingPlayer]:
     bus = EventBus()
     pipeline = SpeechPipeline(tts=FakeTTS(), bus=bus, enable_whisper_wake=False)
@@ -723,6 +750,48 @@ async def test_hung_brain_times_out_despite_thinking_heartbeat() -> None:
         await asyncio.wait_for(
             pipeline._run_brain_with_stall_guard(_never_returns()), timeout=5.0
         )
+
+
+@pytest.mark.asyncio
+async def test_await_playback_ignores_unrelated_announcement_audio_progress() -> None:
+    """A background announcement must not satisfy the current turn's playback.
+
+    Live regression 2026-06-25: a spawn heartbeat spoke while a simple question
+    was still in the brain/tool path. The heartbeat updated ``last_write_ns`` on
+    the shared player; the current answer had not produced its own first frame
+    yet, but ``_await_playback`` treated the stale foreign timestamp as
+    mid-playback progress and fired the 5 s device-wedge abort. The generated
+    answer was recorded in the transcript but not reliably spoken.
+    """
+    bus = EventBus()
+    pipeline = SpeechPipeline(tts=FakeTTS(), bus=bus, enable_whisper_wake=False)
+    player = OwnerTaggedNoFramePlayer()
+    pipeline._player = player  # type: ignore[assignment]
+    pipeline._speak_playback_ceiling_s = 0.2  # type: ignore[attr-defined]
+    pipeline._speak_playback_stall_s = 0.08  # type: ignore[attr-defined]
+
+    play_task = asyncio.create_task(player.play_chunks(_empty_chunks()))
+
+    async def _foreign_audio_then_brain_finishes() -> None:
+        await asyncio.sleep(0.03)
+        # Simulate AudioPlayer progress from a different play_chunks task.
+        player.last_write_owner_task_id = -1
+        player.last_write_ns = time.monotonic_ns()
+        for _ in range(8):
+            pipeline._brain_thinking_heartbeat = time.monotonic()  # type: ignore[attr-defined]
+            await asyncio.sleep(0.04)
+        player._release.set()
+
+    foreign = asyncio.create_task(_foreign_audio_then_brain_finishes())
+    try:
+        done = await asyncio.wait_for(
+            pipeline._await_playback(play_task, set()), timeout=5.0
+        )
+    finally:
+        foreign.cancel()
+
+    assert done == {play_task}, "foreign announcement audio must not abort this turn"
+    assert player.stop_calls == 0
 
 
 @pytest.mark.asyncio

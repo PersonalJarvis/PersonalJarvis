@@ -326,6 +326,13 @@ class AudioPlayer:
         """
         self.frames_written: int = 0
         self.last_write_ns: int = 0
+        # Owner of the current playback-progress counter. ``SpeechPipeline``
+        # creates one ``play_chunks`` task for the main turn while background
+        # announcements may also call ``play_chunks`` on the same shared player.
+        # Without an owner stamp, an announcement's audio frame can look like
+        # progress for the still-silent main turn and trip the mid-playback
+        # stall watchdog.
+        self.last_write_owner_task_id: int | None = None
 
     def _get_play_lock(self) -> asyncio.Lock:
         if self._play_lock is None:
@@ -618,6 +625,8 @@ class AudioPlayer:
         appended seamlessly → no discontinuity, no clicks.
         """
         self._log_device_once()
+        owner_task = asyncio.current_task()
+        owner_task_id = id(owner_task) if owner_task is not None else None
         # Reset the playback-progress watchdog signal at the START of every
         # playback — BEFORE awaiting the play lock, so the invariant
         # "last_write_ns == 0 until this playback's first frame" holds from the
@@ -632,6 +641,7 @@ class AudioPlayer:
         # not just the first, and closes the lock-wait window (a lock held by a
         # non-writing op such as a slow stream-open must not leave a stale value
         # visible to the watchdog).
+        self.last_write_owner_task_id = owner_task_id
         self.last_write_ns = 0
         self.frames_written = 0
         # Lazy lock acquisition (2026-06-20 'preamble spoken AFTER the answer'):
@@ -715,6 +725,7 @@ class AudioPlayer:
                 # from inside _write_samples (so the whisper-bar equalizer moves
                 # with Jarvis's voice across the whole sentence, not one coarse
                 # level per flush). Nothing to feed here.
+                self.last_write_owner_task_id = owner_task_id
                 await asyncio.to_thread(
                     self._write_samples, stm, arr, pending_rate, dev_rate
                 )

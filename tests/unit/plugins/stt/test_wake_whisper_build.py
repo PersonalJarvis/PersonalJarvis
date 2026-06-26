@@ -32,7 +32,8 @@ def test_build_wake_whisper_uses_wake_fields_not_utterance_model() -> None:
         wake_device="cpu",
         wake_compute_type="int8",
     )
-    p = build_wake_whisper(cfg)
+    # cuda_available=False isolates this from the GPU auto-upgrade.
+    p = build_wake_whisper(cfg, cuda_available=False)
 
     assert isinstance(p, FasterWhisperProvider)
     # The wake instance must NOT inherit the heavy utterance model / cuda.
@@ -41,8 +42,28 @@ def test_build_wake_whisper_uses_wake_fields_not_utterance_model() -> None:
     assert p._compute_type == "int8"
 
 
+def test_build_wake_whisper_gpu_turbo_drops_bias_when_cuda() -> None:
+    # Capability-gated upgrade (forensic 2026-06-24): on a CUDA box the wake runs
+    # the fast turbo model AND drops the bias — the strong model hears the name
+    # without it, and the bias on a strong model is what hallucinated the wake
+    # onto silence (the false-wake source). Offline-validated 0 false-wakes.
+    p = build_wake_whisper(STTConfig(), wake_phrase="Hey Alex", cuda_available=True)
+    assert p._model_name == "large-v3-turbo"
+    assert p._device == "cuda"
+    assert p._initial_prompt is None  # bias OFF on turbo
+
+
+def test_build_wake_whisper_cpu_keeps_bias() -> None:
+    # The weak base/cpu model (no GPU / VPS) still NEEDS the bias to hear the
+    # proper noun, so it is kept there.
+    p = build_wake_whisper(STTConfig(), wake_phrase="Hey Alex", cuda_available=False)
+    assert p._model_name == "base"
+    assert p._device == "cpu"
+    assert p._initial_prompt == "Hey Alex"
+
+
 def test_build_wake_whisper_passes_language() -> None:
-    p = build_wake_whisper(STTConfig(), language="de")
+    p = build_wake_whisper(STTConfig(), language="de", cuda_available=False)
     assert p._language == "de"
 
 
@@ -51,7 +72,7 @@ def test_build_wake_whisper_tolerates_missing_wake_fields() -> None:
     class _Bare:
         pass
 
-    p = build_wake_whisper(_Bare())
+    p = build_wake_whisper(_Bare(), cuda_available=False)
     assert p._model_name == "base"
     assert p._device == "cpu"
     assert p._compute_type == "int8"
@@ -68,13 +89,17 @@ def test_build_wake_whisper_biases_prompt_with_custom_phrase() -> None:
     # no_speech_prob/RMS gates: false-wake stayed ~0% on real speech. So the bias
     # is re-enabled on this path. It is scoped to the custom phrase only -- the
     # OWW/"Hey Jarvis" paths pass no phrase and stay unbiased (test below).
-    p = build_wake_whisper(STTConfig(), language="de", wake_phrase="Hey Alex")
+    p = build_wake_whisper(
+        STTConfig(), language="de", wake_phrase="Hey Alex", cuda_available=False
+    )
     assert p._initial_prompt == "Hey Alex"
 
 
 def test_build_wake_whisper_default_has_no_prompt_bias() -> None:
-    p = build_wake_whisper(STTConfig(), language="de")
+    p = build_wake_whisper(STTConfig(), language="de", cuda_available=False)
     assert p._initial_prompt is None
 
-    p_blank = build_wake_whisper(STTConfig(), language="de", wake_phrase="   ")
+    p_blank = build_wake_whisper(
+        STTConfig(), language="de", wake_phrase="   ", cuda_available=False
+    )
     assert p_blank._initial_prompt is None

@@ -15,6 +15,7 @@ other routers::
 from __future__ import annotations
 
 import logging
+import sys
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -25,10 +26,21 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["antigravity"])
 
-# Shown to the user when no official Google CLI is installed. The Gemini CLI
-# (``npm i -g @google/gemini-cli``) is the cross-platform fallback; ``agy`` is
-# the official successor (macOS/Linux installer below).
-_INSTALL_HINT = "curl -fsSL https://antigravity.google/cli/install.sh | bash"
+
+def _install_hint() -> str:
+    """OS-appropriate install command for an official Google CLI.
+
+    Windows ships ``agy`` via winget (the ``curl … | bash`` script does not run
+    in PowerShell/cmd); macOS/Linux use the install script. The cross-platform
+    Gemini-CLI npm fallback works on every OS, so it is always offered too.
+    """
+    npm_fallback = "npm i -g @google/gemini-cli"
+    if sys.platform == "win32":
+        return f"winget install Google.AntigravityCLI   (or: {npm_fallback})"
+    return (
+        "curl -fsSL https://antigravity.google/cli/install.sh | bash"
+        f"   (or: {npm_fallback})"
+    )
 
 
 @router.get("/antigravity/status")
@@ -45,7 +57,7 @@ async def antigravity_login() -> dict[str, Any]:
     if not status.installed:
         raise HTTPException(
             status_code=409,
-            detail={"message": "No Google CLI found", "install_command": _INSTALL_HINT},
+            detail={"message": "No Google CLI found", "install_command": _install_hint()},
         )
     try:
         proc = service.start_login()

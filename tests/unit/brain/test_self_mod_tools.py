@@ -189,23 +189,32 @@ class TestSchemaCompliance:
 
 
 class TestListMutableSettings:
-    def test_returns_thirteen_entries(self, tools: dict[str, Any]) -> None:
-        # 9 historical settings + the language keys (brain.reply_language,
-        # stt.language, tts.language_code) + ui.language (interface language)
-        # added for the Jarvis Control API.
+    def test_returns_full_schema_set(self, tools: dict[str, Any]) -> None:
+        # Wave 1.1: list_mutable_settings now returns the whole schema-derived
+        # mutable set, not the 13-entry hand-list. Wave 2: each entry also
+        # carries value_type (+ enum/range) for NL value-mapping.
         result = _exec(tools["list_mutable_settings"], {})
         assert result.success is True
-        assert len(result.output) == 13
+        assert len(result.output) > 50
+        core = {"path", "current_value", "description", "risk_tier", "needs_restart"}
         for entry in result.output:
-            assert {"path", "current_value", "description", "risk_tier", "needs_restart"} == set(
-                entry.keys()
-            )
+            assert core <= set(entry.keys())
+            assert "value_type" in entry
         # The voice-tunable computer-use step ceiling must be present. Points at
         # step_budget (the field the loop reads), not the legacy max_steps no-op.
         paths = {entry["path"] for entry in result.output}
         assert "computer_use.step_budget" in paths
         # The canonical reply-language path must be discoverable by agents.
         assert "brain.reply_language" in paths
+
+    def test_enriches_with_type_and_constraints(self, tools: dict[str, Any]) -> None:
+        # Wave 2: the brain needs the type + bounds to map "talk slower" to a
+        # concrete value. tts.speed is a float; ui.language is an enum.
+        result = _exec(tools["list_mutable_settings"], {})
+        by_path = {entry["path"]: entry for entry in result.output}
+        assert by_path["tts.speed"]["value_type"] == "float"
+        assert by_path["ui.language"]["value_type"] == "enum"
+        assert set(by_path["ui.language"]["allowed_values"]) == {"en", "de", "es"}
 
     def test_current_values_match_fixture(self, tools: dict[str, Any]) -> None:
         result = _exec(tools["list_mutable_settings"], {})
@@ -232,6 +241,40 @@ class TestListMutableSettings:
 
 
 # ----------------------------------------------------------------------
+# build factory: auto_apply policy wiring (Wave 1.3)
+# ----------------------------------------------------------------------
+
+
+class TestBuildAutoApply:
+    def test_all_policy_applies_ask_tier_immediately(
+        self, writer: AtomicConfigWriter
+    ) -> None:
+        # The voice wiring passes auto_apply="all"; an ASK-tier change then
+        # applies at once (no pending), matching "never ask, always now".
+        tools = build_self_mod_tools(writer=writer, auto_apply="all")
+        result = _exec(
+            tools["set_config_value"],
+            {"path": "tts.provider", "new_value": "elevenlabs", "reason": ""},
+        )
+        assert result.success is True
+        assert result.output["applied"] is True
+        assert result.output["needs_confirmation"] is False
+
+    def test_default_policy_defers_ask_tier(
+        self, writer: AtomicConfigWriter
+    ) -> None:
+        # REST/CLI wiring (default) keeps the ASK confirm round-trip.
+        tools = build_self_mod_tools(writer=writer)
+        result = _exec(
+            tools["set_config_value"],
+            {"path": "tts.provider", "new_value": "elevenlabs", "reason": ""},
+        )
+        assert result.success is True
+        assert result.output["applied"] is False
+        assert result.output["needs_confirmation"] is True
+
+
+# ----------------------------------------------------------------------
 # get_config_value
 # ----------------------------------------------------------------------
 
@@ -244,7 +287,7 @@ class TestGetConfigValue:
             "path": "tts.provider",
             "value": "gemini-flash-tts",
             "in_allowlist": True,
-            "description": "TTS-Provider (Hot-Reload abgedeckt)",
+            "description": "TTS provider (hot-reload covered).",
         }
 
     def test_unknown_path_returns_in_allowlist_false(

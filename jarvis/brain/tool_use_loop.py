@@ -722,6 +722,26 @@ class ToolUseLoop:
                     ):
                         suppress_output = result.output
 
+                    # Wave 1.4 — deterministic honest readback for a config
+                    # change. In the voice/chat path config applies immediately
+                    # (auto_apply="all", no pre-confirm), so the post-change line
+                    # must be the REAL pipeline outcome (applied / rolled back /
+                    # refused), never a free-form "done" the brain invents. Render
+                    # it here and suppress the second brain turn. Language = the
+                    # already-resolved output_language (no per-layer re-derivation,
+                    # Runtime Output Language doctrine). Lazy import: jarvis.voice
+                    # couples to jarvis.core.self_mod via its package __init__.
+                    if tool_name == "set_config_value":
+                        from jarvis.voice.config_readback import config_readback
+
+                        readback = config_readback(
+                            success=result.success,
+                            output=result.output,
+                            language=out_lang,
+                        )
+                        if readback is not None:
+                            suppress_output = readback
+
                 # Append tool result as a new message
                 current_messages.append(BrainMessage(
                     role="tool",

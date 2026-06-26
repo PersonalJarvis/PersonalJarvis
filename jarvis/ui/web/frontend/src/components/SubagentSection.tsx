@@ -76,6 +76,38 @@ const PROVIDER_LABELS: Record<string, string> = {
   antigravity: "Antigravity (Google subscription)",
 };
 
+/**
+ * Poll a CLI status endpoint after starting an external login flow, refreshing
+ * the section on each tick, until it reports `connected` or a timeout.
+ *
+ * Why: external CLI logins (Codex `codex login`, Antigravity Google sign-in)
+ * complete in a SEPARATE browser/console window AFTER the POST returns, so a
+ * single immediate refetch always reads the still-disconnected state. Without
+ * this poll the card stays "open" / locked until the user manually reloads —
+ * the exact "I connected Codex but can't select it" symptom.
+ */
+async function pollStatusUntilConnected(
+  statusUrl: string,
+  onTick: () => void | Promise<void>,
+  { maxMs = 120_000, intervalMs = 2_500 }: { maxMs?: number; intervalMs?: number } = {},
+): Promise<boolean> {
+  const deadline = Date.now() + maxMs;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    await onTick();
+    try {
+      const res = await fetch(statusUrl);
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.connected) return true;
+      }
+    } catch {
+      // transient (app restarting / network blip) — keep polling
+    }
+  }
+  return false;
+}
+
 export function SubagentSection() {
   const t = useT();
   const [bridge, setBridge] = useState<SubagentStatus | null>(null);
@@ -366,8 +398,14 @@ function CodexConnectionCard({
     setPending(true);
     try {
       await startCodexLogin();
-      pushToast("info", "Codex login started");
+      pushToast("info", "Codex login started — finish it in the browser window");
       await onChanged();
+      // The login finishes asynchronously in the spawned console/browser, so
+      // poll until the CLI reports connected; then the card flips to selectable
+      // on its own — no manual reload needed.
+      void pollStatusUntilConnected("/api/codex/status", onChanged).then((ok) => {
+        if (ok) pushToast("success", "Codex connected — now selectable as a subagent");
+      });
     } catch (e) {
       pushToast("error", (e as Error).message);
     } finally {
@@ -461,8 +499,13 @@ function AntigravityConnectionCard({
     setPending(true);
     try {
       await loginAntigravity();
-      pushToast("info", "Google login started");
+      pushToast("info", "Google login started — finish it in the browser window");
       await onChanged();
+      // Same as Codex: the Google sign-in completes asynchronously, so poll
+      // until agy reports connected and the card unlocks on its own.
+      void pollStatusUntilConnected("/api/antigravity/status", onChanged).then((ok) => {
+        if (ok) pushToast("success", "Antigravity connected — now selectable as a subagent");
+      });
     } catch (e) {
       pushToast("error", (e as Error).message);
     } finally {

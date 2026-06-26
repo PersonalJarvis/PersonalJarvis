@@ -16,8 +16,23 @@ _out = Console(highlight=False)
 _err = Console(stderr=True, highlight=False)
 
 
+def _stdout_isatty() -> bool:
+    """True only for a real interactive terminal. Any failure (an exotic stdio
+    wrapper without ``isatty``, or one that raises) is treated as
+    non-interactive, so non-TTY consumers — the brain's piped subprocess, a
+    shell pipe, a script — receive machine-readable JSON."""
+    try:
+        return bool(sys.stdout.isatty())
+    except Exception:  # noqa: BLE001 - non-interactive is the safe default
+        return False
+
+
 def emit(payload: Any, *, as_json: bool) -> None:
-    if as_json:
+    # Machine-readable JSON when explicitly requested (--json) OR whenever stdout
+    # is not an interactive terminal. The cli_jarvisctl tool runs `jarvisctl`
+    # with a piped stdout, so the brain (and any pipe/script) gets parsable JSON
+    # instead of a Rich table it would have to parse character-by-character.
+    if as_json or not _stdout_isatty():
         # ensure_ascii=False keeps umlauts/emoji intact across platforms.
         sys.stdout.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
         return

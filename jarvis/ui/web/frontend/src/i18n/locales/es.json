@@ -155,6 +155,7 @@
     "speaking": "Hablando",
     "error": "Error",
     "offline": "Sin conexión",
+    "booting": "Iniciando…",
     "starting": "Iniciando voz…"
   },
   "sidebar": {
@@ -302,6 +303,23 @@
       "tier_fast": "Rápido",
       "tier_auto": "Auto",
       "tier_deep": "Potente",
+      "trigger_mode_label": "Disparador",
+      "mode_schedule": "Programado",
+      "mode_event": "Si-Entonces",
+      "when_label": "Cuando",
+      "when_mission_succeeded": "Una misión termina",
+      "when_mission_failed": "Una misión falla",
+      "when_mission_cancelled": "Una misión se cancela",
+      "then_label": "Entonces",
+      "then_computer_use": "Computer-Use",
+      "then_agent": "Tarea de agente",
+      "then_notify": "Solo avísame",
+      "cu_goal_label": "¿Qué debe hacer Computer-Use?",
+      "cu_goal_placeholder": "p. ej. Abre {result_uri} en el navegador.",
+      "announce_label": "Avisar al terminar (opcional)",
+      "notify_text_label": "¿Qué debe decir?",
+      "announce_placeholder": "p. ej. Tu misión está lista — la abrí en el navegador.",
+      "when_then_hint": "Se activa cada vez que ocurre. Puedes usar {result_uri}, {summary_en} o {mission_id} como variables en el texto de arriba.",
       "cancel": "Cancelar",
       "save": "Crear tarea",
       "save_error": "No se pudo crear la tarea."
@@ -1951,7 +1969,11 @@
     "create": "Crear habilidad",
     "create_error": "No se pudo crear la habilidad",
     "name_required": "Introduce un nombre con al menos 3 caracteres.",
-    "needs_instructions": "Describe qué debe hacer la habilidad: escríbelo en el campo de arriba o en las instrucciones de abajo."
+    "needs_instructions": "Describe qué debe hacer la habilidad: escríbelo en el campo de arriba o en las instrucciones de abajo.",
+    "write_with_ai": "Que la IA escriba toda la habilidad",
+    "writing": "La IA está escribiendo tu habilidad…",
+    "ai_done_review": "Listo: la IA escribió toda la habilidad abajo. Revísala y pulsa Crear habilidad.",
+    "or_review_edit": "o revisa y edita"
   },
   "missions_view": {
     "active": "activas",
