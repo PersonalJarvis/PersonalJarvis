@@ -20,10 +20,13 @@ import type { StepProps } from "../OnboardingFlow";
 // (Brain first, then Voice, then Hearing). Rendered as stacked sections inside
 // one scroll container so the user can scroll through every class at once —
 // mirroring the real API-Keys section — instead of paging one class at a time.
-const TIERS: { tier: ProviderTier; label: string; icon: JSX.Element }[] = [
-  { tier: "brain", label: "Brain — reasoning", icon: <Brain className="h-3.5 w-3.5" /> },
-  { tier: "tts", label: "Voice — text to speech", icon: <Volume2 className="h-3.5 w-3.5" /> },
-  { tier: "stt", label: "Hearing — speech to text", icon: <Mic className="h-3.5 w-3.5" /> },
+// Each provider class gets a plain-language hint so a first-time user
+// understands at a glance that Jarvis takes several *kinds* of keys — not just
+// one for the brain — and what each kind is for.
+const TIERS: { tier: ProviderTier; label: string; hint: string; icon: JSX.Element }[] = [
+  { tier: "brain", label: "Brain", hint: "The model that thinks and writes the answers", icon: <Brain className="h-3.5 w-3.5" /> },
+  { tier: "tts", label: "Voice", hint: "Speaks the answers out loud (text-to-speech)", icon: <Volume2 className="h-3.5 w-3.5" /> },
+  { tier: "stt", label: "Hearing", hint: "Turns what you say into text (speech-to-text)", icon: <Mic className="h-3.5 w-3.5" /> },
 ];
 
 // Activate (select) a provider by its tier — mirrors the main Settings API-Keys
@@ -78,9 +81,12 @@ export function ApiKeysStep({ goNext, skip }: StepProps) {
           if (!list.length) return null;
           return (
             <section key={meta.tier}>
-              <h3 className="mb-2 inline-flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
-                {meta.icon} {meta.label}
-              </h3>
+              <div className="mb-2">
+                <h3 className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-foreground/80">
+                  {meta.icon} {meta.label}
+                </h3>
+                <p className="text-[11px] leading-tight text-muted-foreground">{meta.hint}</p>
+              </div>
               <div className="flex flex-col gap-3">
                 {list.map((p) => (
                   <ProviderRow

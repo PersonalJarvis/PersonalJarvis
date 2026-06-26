@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import mimetypes
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,17 @@ class FastBootstrap:
         self._server: Any = None
         self._task: asyncio.Task | None = None
         self._dist_dir = (dist_dir or _DEFAULT_DIST_DIR).resolve()
+        # Listener self-healing (see the "lifecycle" section). The bootstrap
+        # OWNS the listening socket for the whole process lifetime (it delegates
+        # to the real app via set_app but never hands off the socket), so when a
+        # transient OS error kills the accept loop and closes the socket, only
+        # the bootstrap can bring the port back. These carry the bind target +
+        # the supervisor task so it can re-bind on the same host:port.
+        self._host: str | None = None
+        self._port: int | None = None
+        self._stopping = False
+        self._supervisor_task: asyncio.Task | None = None
+        self._supervise_interval = 5.0
         # Set once the window's critical shell assets (index.html + the entry
         # JS bundle) have been served. The backend build waits briefly on this
         # so the heavy, GIL-holding imports don't starve the loop while the UI
@@ -251,12 +263,35 @@ class FastBootstrap:
         self._full["app"] = app
         self._ready.set()
 
-    async def serve(self, host: str, port: int) -> None:
+    async def serve(
+        self,
+        host: str,
+        port: int,
+        *,
+        supervise: bool = True,
+        supervise_interval: float = 5.0,
+    ) -> None:
         """Bind *port* and start serving the bootstrap on the current loop.
 
         Returns once the server is accepting connections. ``uvicorn`` is
         imported here (lazily) so the module stays dependency-light.
+
+        When *supervise* is true (the default), a background watchdog keeps the
+        listening socket alive: if a transient OS error kills the accept loop
+        and closes the socket (the WinError-64 lock-zombie forensic), the
+        watchdog re-binds the same host:port so the port never stays dead while
+        the process lives on. *supervise_interval* is the probe period.
         """
+        self._host = host
+        self._port = port
+        self._supervise_interval = supervise_interval
+        await self._start_server(host, port)
+        if supervise and self._supervisor_task is None:
+            self._supervisor_task = asyncio.create_task(self._supervise())
+
+    async def _start_server(self, host: str, port: int) -> None:
+        """Build + start a fresh uvicorn server on *host:port* and wait until it
+        is accepting connections. Shared by :meth:`serve` and :meth:`_rebind`."""
         import uvicorn
 
         # Pass a plain async function (NOT the bound method ``self._asgi``):
@@ -291,12 +326,110 @@ class FastBootstrap:
                 raise RuntimeError("bootstrap serve() ended before 'started'")
             await asyncio.sleep(0.01)
 
-    async def stop(self) -> None:
-        """Stop the bootstrap server (it owns the listening socket)."""
+    async def _listener_alive(self) -> bool:
+        """True if the bound port still accepts a TCP connection.
+
+        An active loopback connect — not an inspection of uvicorn/asyncio
+        internals — so it is version-proof and tests the one thing that matters:
+        can a request still reach us. The proactor's ``sock.close()`` on
+        WinError 64 makes this connect fail with ECONNREFUSED, which is exactly
+        the dead-listener signal the watchdog acts on.
+        """
+        if self._host is None or self._port is None:
+            return True  # never bound → nothing to supervise
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(self._host, self._port), timeout=2.0
+            )
+            writer.close()
+            with suppress(Exception):
+                await writer.wait_closed()
+            return True
+        except (OSError, TimeoutError):
+            return False
+
+    async def _supervise(self) -> None:
+        """Watchdog: keep the listening socket alive for the process lifetime.
+
+        Probes the bound port every ``_supervise_interval`` seconds; on a
+        confirmed dead listener (two probes, to ride out a one-off transient) it
+        re-binds. Self-contained + error-swallowing so it can never crash the
+        backend loop; it simply retries on the next tick.
+        """
+        from loguru import logger
+
+        while not self._stopping:
+            try:
+                await asyncio.sleep(self._supervise_interval)
+                if self._stopping:
+                    return
+                if await self._listener_alive():
+                    continue
+                # Confirm with a second probe so a single transient blip does
+                # not trigger an unnecessary re-bind.
+                await asyncio.sleep(0.2)
+                if self._stopping or await self._listener_alive():
+                    continue
+                logger.warning(
+                    "fast-boot: listening socket on {}:{} is dead — re-binding "
+                    "(transient OS socket error / WinError 64 recovery)",
+                    self._host,
+                    self._port,
+                )
+                await self._rebind()
+                logger.info(
+                    "fast-boot: listener re-bound on {}:{} — port recovered",
+                    self._host,
+                    self._port,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — never let the watchdog die
+                logger.opt(exception=exc).error(
+                    "fast-boot: listener watchdog tick failed (will retry next tick)"
+                )
+
+    async def _rebind(self) -> None:
+        """Tear down the dead uvicorn server and start a fresh one on the same
+        host:port. The registered real app + readiness state are untouched, so
+        delegation survives the listener swap.
+        """
+        if self._host is None or self._port is None:
+            return
+        await self._teardown_server()
+        await self._start_server(self._host, self._port)
+
+    async def _teardown_server(self) -> None:
+        """Stop the current uvicorn server + serve task (no effect on the
+        socket already closed by the OS; just reaps the dead task)."""
         if self._server is not None:
             self._server.should_exit = True
         if self._task is not None:
             try:
-                await asyncio.wait_for(self._task, timeout=5.0)
-            except TimeoutError:
+                await asyncio.wait_for(asyncio.shield(self._task), timeout=3.0)
+            except (TimeoutError, asyncio.CancelledError):
                 self._task.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await self._task
+        self._server = None
+        self._task = None
+
+    async def _kill_listener_for_test(self) -> None:
+        """Test-only: close the uvicorn listening socket exactly as the asyncio
+        proactor does on WinError 64, so a test can drive the self-heal path
+        without a real network fault."""
+        server = self._server
+        for sub in getattr(server, "servers", []) or []:
+            sub.close()
+            with suppress(Exception):
+                await sub.wait_closed()
+
+    async def stop(self) -> None:
+        """Stop the bootstrap server (it owns the listening socket)."""
+        self._stopping = True
+        if self._supervisor_task is not None:
+            self._supervisor_task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await self._supervisor_task
+            self._supervisor_task = None
+        await self._teardown_server()

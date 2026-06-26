@@ -216,6 +216,56 @@ def test_verb_at_end_open_phrasings_take_direct_path(text: str, app: str) -> Non
 @pytest.mark.parametrize(
     "text",
     [
+        # Live bug 2026-06-26 (voice session): "in meinen Explorer meine Bilder
+        # öffnen" launched a BLANK explorer.exe and dropped the real target
+        # ("meine Bilder"). The robust open-app fallback extracted the first known
+        # app name ("explorer") from anywhere in the utterance and bare-launched
+        # it, ignoring that the app is a CONTAINER the user navigates INTO.
+        "Kannst du für mich bitte in meinen Explorer meine Bilder öffnen?",
+        "Öffne meine Bilder im Explorer",
+        "Öffne meine Dokumente im Explorer",
+        "In meinem Explorer die Downloads öffnen",
+    ],
+)
+def test_open_target_in_container_app_routes_to_computer_use(text: str) -> None:
+    """"open <target> in <app>" — the app is a folder/window to navigate into,
+    not the whole goal. A bare deterministic launch would drop the real target
+    (the Bilder/Downloads/Dokumente), so the goal routes to the multi-step
+    Computer-Use loop instead (maintainer decision 2026-06-26: ANY target beyond
+    the bare app hands off to Computer-Use)."""
+    plan = match_local_action(text, _registry=None)
+    assert plan is not None, f"{text!r} fell through to the brain"
+    assert plan.mode is LocalActionMode.COMPUTER_USE, (
+        f"{text!r} → {plan.mode}, want COMPUTER_USE (app used as a container)"
+    )
+    assert plan.harness == "screenshot"
+    assert plan.prompt == text
+
+
+@pytest.mark.parametrize(
+    ("text", "app"),
+    [
+        # The container guard must NOT swallow a plain bare open — "den/der" are
+        # articles, not container prepositions, so these stay the fast DIRECT path.
+        ("Öffne den Explorer", "explorer"),
+        ("Öffne den Explorer für mich", "explorer"),
+        ("Mach mir mal den Explorer auf", "explorer"),
+    ],
+)
+def test_bare_open_known_app_stays_direct_despite_container_guard(
+    text: str, app: str
+) -> None:
+    """A bare "open <app>" with no target behind it keeps the instant DIRECT path;
+    the container guard only fires on a real "in/im <app>" navigation."""
+    plan = match_local_action(text, _registry=None)
+    assert plan is not None, f"{text!r} fell through to the brain"
+    assert plan.mode is LocalActionMode.DIRECT, f"{text!r} → {plan.mode}, want DIRECT"
+    assert plan.tool_calls[0].args == {"app_name": app}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
         "ich will Spotify nicht öffnen",
         "bitte Chrome nicht starten",
         "mach mir kein Spotify auf",
@@ -937,6 +987,56 @@ class TestBrowserSearchFastPath:
         assert plan is not None
         assert plan.mode is LocalActionMode.COMPUTER_USE
         assert plan.prompt == utterance
+
+    @pytest.mark.parametrize(
+        "utterance",
+        [
+            # Finding 2026-06-26: the non-greedy query capture swallows a trailing
+            # desktop action ("... und scrolle runter", "... then click the first
+            # result") into the Google query, so the follow-up is silently dropped
+            # and a wrong search runs. A connector + GUI verb means the goal is
+            # multi-step → the whole turn must take the computer-use loop, which
+            # runs BOTH the search and the follow-up action.
+            "öffne chrome und google das wetter und scrolle runter",
+            "open chrome and google cats then click the first result",
+            "öffne chrome und google die nachrichten und dann klick das erste ergebnis",
+        ],
+    )
+    def test_search_query_with_trailing_gui_action_routes_to_cu(
+        self, utterance: str
+    ) -> None:
+        plan = match_local_action(utterance, _registry=None)
+        assert plan is not None, f"{utterance!r} fell through to the brain"
+        assert plan.mode is LocalActionMode.COMPUTER_USE, (
+            f"{utterance!r} → {plan.mode}, want COMPUTER_USE "
+            "(trailing GUI action smuggled into the search query)"
+        )
+        assert plan.prompt == utterance
+
+    @pytest.mark.parametrize(
+        ("utterance", "must_contain"),
+        [
+            # Legit multi-term searches must STAY a clean DIRECT search — a bare
+            # connector ("and"/"und") without a desktop verb is part of the query,
+            # not a follow-up action. A GUI word with NO connector in front of it
+            # ("how to click a button") is likewise just search terms.
+            ("open chrome and google cats and dogs", ("cats", "dogs")),
+            ("open chrome and search for how to click a button", ("click", "button")),
+            ("öffne chrome und google katzen und hunde", ("katzen", "hunde")),
+        ],
+    )
+    def test_legit_multiterm_search_stays_direct(
+        self, utterance: str, must_contain: tuple[str, ...]
+    ) -> None:
+        plan = match_local_action(utterance, lang="en", _registry=None)
+        assert plan is not None, f"{utterance!r} fell through"
+        assert plan.mode is LocalActionMode.DIRECT, (
+            f"{utterance!r} → {plan.mode}, want DIRECT (legit search, no follow-up)"
+        )
+        url = plan.tool_calls[0].args["arguments"]
+        assert url.startswith("https://www.google.com/search?q=")
+        for token in must_contain:
+            assert token in url, f"{token!r} dropped from search url {url!r}"
 
 
 # requires_external_integration — real-world booking/transaction requests no

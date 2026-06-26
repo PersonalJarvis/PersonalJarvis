@@ -423,9 +423,29 @@ def test_app_control_tools_have_correct_risk_tiers():
     from jarvis.plugins.tool.switch_provider import SwitchProviderTool
 
     assert DescribeAppSettingsTool.risk_tier == "safe"
-    assert SwitchProviderTool.risk_tier == "ask"
+    # Forensic 2026-06-26: a voice "switch the subagent brain to antigravity"
+    # asked "really do that? say yes or no" and then hung up. A provider switch
+    # is REVERSIBLE and the tool already speaks an honest post-change readback
+    # (old -> new), which catches an STT mishear after the fact — so it must not
+    # block on an up-front confirmation (anti-confirmation-fatigue mandate).
+    # "monitor" runs without confirmation but is still audited (state change).
+    assert SwitchProviderTool.risk_tier == "monitor"
     assert ManageMcpServerTool.risk_tier == "ask"
     assert RevealKeyPreviewTool.risk_tier == "monitor"
+
+
+def test_switch_provider_does_not_trigger_voice_confirmation():
+    """A reversible provider switch must not force an up-front yes/no.
+
+    Root cause of the 2026-06-26 voice incident: ``risk_tier="ask"`` is the one
+    tier in ``always_confirm_tiers``, so the executor returned the
+    VOICE_CONFIRM_SENTINEL and the brain asked before switching. "monitor" is
+    not a confirm tier, so the switch runs immediately.
+    """
+    from jarvis.core.config import SafetyConfig
+    from jarvis.plugins.tool.switch_provider import SwitchProviderTool
+
+    assert SwitchProviderTool.risk_tier not in SafetyConfig().always_confirm_tiers
 
 
 def test_provider_routes_uses_shared_credential_check(monkeypatch):

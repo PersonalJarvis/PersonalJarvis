@@ -20,8 +20,9 @@ import secrets
 import sys
 import threading
 import time
+from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 # Windows-UTF8-Fix (analog zu jarvis.__main__)
 if sys.platform == "win32":
@@ -404,26 +405,91 @@ async def _await_cancellable_chat_turn(
 # ---------------------------------------------------------------------------
 
 
+def _default_lock_holder_health(port: int) -> bool:
+    """True if a Jarvis webserver answers ``/api/health`` on *port* (loopback).
+
+    Retries briefly so a still-booting fast-boot instance — which binds + answers
+    health in well under a second — is NEVER mistaken for a dead one. Returns the
+    SAFE default (``True`` → "treat as alive, do not evict") whenever it cannot
+    probe at all (no httpx), so a probing failure can never cause an eviction.
+    """
+    try:
+        import httpx
+    except Exception:  # noqa: BLE001
+        return True  # cannot probe → never evict on uncertainty
+    url = f"http://127.0.0.1:{int(port)}/api/health"
+    for _ in range(4):
+        with suppress(Exception):
+            r = httpx.get(url, timeout=1.0)
+            if r.status_code == 200:
+                return True
+        time.sleep(0.5)
+    return False
+
+
+def _terminate_pid(pid: int) -> bool:
+    """Terminate a confirmed lock-zombie process. Returns True once it is gone.
+
+    Graceful ``terminate()`` first, then ``kill()`` if it lingers. Returns False
+    (→ the caller keeps the lock blocked, the SAFE outcome) when psutil is
+    missing or the kill did not take, so we never falsely report a still-living
+    process as evicted.
+    """
+    try:
+        import psutil  # type: ignore[import-not-found]
+    except Exception:  # noqa: BLE001
+        return False
+    try:
+        proc = psutil.Process(int(pid))
+    except Exception:  # noqa: BLE001
+        return True  # already gone
+    # terminate may race the process self-exiting; the final _pid_alive check is
+    # the authority on whether it is really gone.
+    with suppress(Exception):
+        proc.terminate()
+        try:
+            proc.wait(timeout=5.0)
+        except Exception:  # noqa: BLE001 — graceful timed out → hard kill
+            with suppress(Exception):
+                proc.kill()
+                proc.wait(timeout=5.0)
+    return not _pid_alive(pid)
+
+
 def acquire_single_instance_lock(
     *,
     timeout: float = _LOCK_ACQUIRE_TIMEOUT,
     lock_path: Path | None = None,
     meta_path: Path | None = None,
+    health_probe: Callable[[int], bool] | None = None,
+    terminate: Callable[[int], bool] | None = None,
 ) -> FileLock:
     """Acquire exklusives Lock oder raise :class:`SingleInstanceError`.
 
     Stale-Lock-Erkennung: wenn das Lock belegt ist, lesen wir das
     PID-Sidecar und pruefen ``psutil.pid_exists(pid)``. Ist der PID tot,
-    loeschen wir Lock + Sidecar und versuchen erneut (genau einmal).
+    loeschen wir Lock + Sidecar und versuchen erneut.
+
+    Lock-zombie eviction (forensic 2026-06-26): a holder PID can be ALIVE yet
+    non-functional — its webserver accept-socket died on a transient WinError 64
+    while voice/telegram kept the process running, so it holds the lock with no
+    bound port and no window and would block EVERY restart. When the holder is
+    alive but its admin port does not answer health (probed with retries so a
+    still-booting instance is never falsely accused), we terminate the zombie and
+    reclaim the lock. Never the own pid (no suicide); never a healthy holder.
 
     Args:
         timeout: Sekunden bis wir den ersten Acquire aufgeben. Default 0.0.
         lock_path: Override fuer Tests.
         meta_path: Override fuer Tests.
+        health_probe: Override fuer Tests — ``(port) -> bool`` health check.
+        terminate: Override fuer Tests — ``(pid) -> bool`` process kill.
     """
     lp = lock_path or LOCK_FILE_PATH
     mp = meta_path or META_FILE_PATH
     lp.parent.mkdir(parents=True, exist_ok=True)
+    probe = health_probe or _default_lock_holder_health
+    killer = terminate or _terminate_pid
 
     lock = FileLock(str(lp))
     try:
@@ -441,25 +507,52 @@ def acquire_single_instance_lock(
         meta = None
 
     pid = int(meta["pid"]) if meta and "pid" in meta else None
+    port = (
+        int(meta["port"]) if meta and "port" in meta and meta["port"] else None
+    )
     if pid is not None and _pid_alive(pid):
-        raise SingleInstanceError(
-            f"Jarvis laeuft bereits (pid={pid})."
-        )
+        # Holder is alive. Is it actually FUNCTIONAL (serving its port)? A
+        # healthy instance, the own pid, or a holder with no recorded port is
+        # respected; only a live-but-non-serving lock-zombie is evicted.
+        if pid == os.getpid() or port is None or probe(port):
+            raise SingleInstanceError(f"Jarvis laeuft bereits (pid={pid}).")
+        with suppress(Exception):
+            from loguru import logger
 
-    # Stale: Sidecar entfernen, Lock erneut versuchen. Das Lock-File auf
-    # Filesystem-Ebene wegzuraeumen ist nicht noetig — filelock nutzt
-    # fcntl/LockFileEx, d.h. sobald der Halter weg ist, ist das Lock frei.
-    try:
+            logger.warning(
+                "Jarvis-Lock von einer LEBENDEN, aber nicht-reagierenden Instanz "
+                "belegt (pid={}, port={} antwortet nicht) — Lock-Zombie wird "
+                "beendet, damit dieser Start durchkommt.",
+                pid,
+                port,
+            )
+        if not killer(pid):
+            raise SingleInstanceError(
+                f"Jarvis-Lock von nicht-reagierender Instanz (pid={pid}) belegt; "
+                "konnte sie nicht beenden."
+            )
+        # fall through to the stale-reclaim path below (sidecar + retry acquire)
+
+    # Stale (toter Halter) ODER eben beendeter Zombie: Sidecar entfernen, Lock
+    # erneut versuchen. Das Lock-File auf Filesystem-Ebene wegzuraeumen ist nicht
+    # noetig — filelock nutzt fcntl/LockFileEx, d.h. sobald der Halter weg ist,
+    # ist das Lock frei. Nach einem Kill braucht Windows allerdings einen Moment,
+    # den Lock-Handle freizugeben — deshalb mehrere kurze Versuche.
+    with suppress(Exception):
         mp.unlink(missing_ok=True)
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        lock.acquire(timeout=max(timeout, 2.0))
-    except Timeout as exc:
-        raise SingleInstanceError(
-            "Jarvis-Lock ist besetzt aber der Halter reagiert nicht."
-        ) from exc
-    return lock
+    last_exc: Timeout | None = None
+    deadline = time.monotonic() + 5.0
+    while True:
+        try:
+            lock.acquire(timeout=max(timeout, 2.0))
+            return lock
+        except Timeout as exc:
+            last_exc = exc
+            if time.monotonic() >= deadline:
+                raise SingleInstanceError(
+                    "Jarvis-Lock ist besetzt aber der Halter reagiert nicht."
+                ) from last_exc
+            time.sleep(0.3)
 
 
 # ---------------------------------------------------------------------------
@@ -1330,12 +1423,33 @@ class DesktopApp:
             # voice/overlay imports and setup ran. The desktop shell waits on
             # that health probe before creating the window, so any slow wake/GUI
             # warm-up inflated visible app startup.
+            def _log_speech_and_orb_done(task: asyncio.Task) -> None:
+                if task.cancelled():
+                    return
+                exc = task.exception()
+                if exc is not None:
+                    from loguru import logger as _slog
+                    _slog.opt(exception=exc).error(
+                        "Voice/orb startup task crashed."
+                    )
+
             def _start_desktop_post_ready_services() -> None:
                 brain = brain_holder["brain"]
                 if brain is None and not brain_ready.is_set():
                     loop.call_later(0.25, _start_desktop_post_ready_services)
                     return
-                self._start_speech_and_orb(loop, server.bus, supervisor, brain, server)
+                # The voice-pipeline build runs heavy, blocking work — most
+                # notably the local wake-Whisper CUDA probe (~30-60 s on a cold
+                # cache). Run it as a loop task that offloads that work to a worker
+                # thread (see _start_speech_and_orb), so the backend event loop is
+                # never frozen during boot; only the voice "STARTING…" badge waits.
+                speech_task = loop.create_task(
+                    self._start_speech_and_orb(
+                        loop, server.bus, supervisor, brain, server
+                    ),
+                    name="speech-and-orb",
+                )
+                speech_task.add_done_callback(_log_speech_and_orb_done)
                 self._start_virtual_cursor()
 
             loop.call_later(0.25, _start_desktop_post_ready_services)
@@ -1656,7 +1770,7 @@ class DesktopApp:
         )
         return True
 
-    def _start_speech_and_orb(
+    async def _start_speech_and_orb(
         self,
         loop: asyncio.AbstractEventLoop,
         bus: Any,
@@ -1877,6 +1991,7 @@ class DesktopApp:
             # build it when the plan asks for it. See
             # docs/local-wakeword/{RESEARCH-AND-DESIGN,CUSTOM-WAKE-WORD-DESIGN}.md.
             stt = None
+            _t_build0 = time.perf_counter()
             if self.cfg.trigger.heavy_local_whisper or wake_plan.needs_local_whisper:
                 # The local wake-match / live-preview Whisper — a SMALL model on
                 # CPU (cfg.stt.wake_*), not the heavy utterance model on the GPU.
@@ -1893,10 +2008,22 @@ class DesktopApp:
                 wake_phrase = (
                     wake_plan.phrase if wake_plan.needs_local_whisper else None
                 )
-                stt = build_wake_whisper(
-                    self.cfg.stt, language=stt_language, wake_phrase=wake_phrase
+                # Build the local wake-Whisper OFF the event loop: it probes CUDA
+                # availability, whose first-call context init JIT-compiles for
+                # ~30-60 s on a Blackwell GPU (cold cache). Offloading keeps the
+                # backend responsive — a desktop app must never freeze its UI
+                # while a subsystem warms up. The persisted probe cache
+                # (jarvis.plugins.stt._wake_cuda_available) makes this near-instant
+                # on every boot after the first.
+                stt = await asyncio.to_thread(
+                    build_wake_whisper,
+                    self.cfg.stt,
+                    language=stt_language,
+                    wake_phrase=wake_phrase,
                 )
+            _t_stt = time.perf_counter()
             tts = build_tts_from_config(self.cfg.tts)
+            _t_tts = time.perf_counter()
             # SpeechPipeline.brain_callback braucht Callable[[str], Awaitable[str]].
             # BrainManager und Echo-/Gemini-Fallback erfüllen das via __call__.
             # MockBrain erfüllt es nicht (hat nur respond()) → eigener Voice-Brain.
@@ -1922,6 +2049,7 @@ class DesktopApp:
             # None. Threaded into the pipeline below.
             from jarvis.brain.factory import build_ack_brain as _bab
             voice_ack_brain = _bab(self.cfg)
+            _t_ack = time.perf_counter()
             _call_hk, _ptt_hk = self.cfg.trigger.resolve_hotkeys()
             pipeline = SpeechPipeline(
                 call_hotkeys=_call_hk,
@@ -2002,6 +2130,20 @@ class DesktopApp:
                 # Resolved custom-wake-word plan: drives the OWW model + the
                 # phrase matcher for the verifier + rolling-whisper.
                 wake_plan=wake_plan,
+            )
+            _t_ctor = time.perf_counter()
+            # Targeted boot-timing breakdown so the log shows exactly which voice
+            # build step costs what (the wake-Whisper CUDA probe was the hidden
+            # ~60 s "VOICE STARTING…" stall before the persisted probe cache).
+            from loguru import logger as _vlog
+            _vlog.info(
+                "Voice setup build timings (ms): wake_stt={:.0f} tts={:.0f} "
+                "ack_brain={:.0f} pipeline_ctor={:.0f} total={:.0f}",
+                (_t_stt - _t_build0) * 1000.0,
+                (_t_tts - _t_stt) * 1000.0,
+                (_t_ack - _t_tts) * 1000.0,
+                (_t_ctor - _t_ack) * 1000.0,
+                (_t_ctor - _t_build0) * 1000.0,
             )
             # Pipeline-Referenz fuer Live-Provider-Switches (TTS) auf app.state
             # legen — der /api/tts/switch-Endpoint baut bei einem UI-Wechsel
