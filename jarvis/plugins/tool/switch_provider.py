@@ -1,8 +1,16 @@
 """``switch-provider`` tool — change the active brain/TTS/STT/subagent provider.
 
-Router-tier, ``ask`` (echo-confirm). This is the voice/chat path for
-"switch from Grok to Gemini", "use OpenAI for the brain", "change TTS to
-Cartesia", etc.
+Router-tier, ``monitor`` (runs immediately, audited — no up-front confirmation).
+This is the voice/chat path for "switch from Grok to Gemini", "use OpenAI for the
+brain", "change TTS to Cartesia", etc.
+
+A provider switch is REVERSIBLE and the tool speaks an honest post-change readback
+(old -> new), so an STT mishear of the provider name is caught *after* the fact —
+there is no need to block on an up-front yes/no, which would violate the
+anti-confirmation-fatigue mandate. Forensic 2026-06-26: with ``ask`` a voice
+"switch the subagent brain to antigravity" asked "really do that?" and the
+two-turn voice-confirm flow then ended the session before the user could answer.
+Irreversible actions (gmail send, place a call) stay ``ask``.
 
 It switches *which provider is active* — it never sets a raw API key. The target
 provider's key must already be stored (Settings tab / wizard); if it is missing
@@ -30,10 +38,12 @@ class SwitchProviderTool:
     """Switch the active provider for one tier (brain/tts/stt/subagent)."""
 
     name: ClassVar[str] = "switch-provider"
-    # ``ask`` → the brain echoes the change ("switching brain from grok to
-    # gemini — confirm?") before it is applied. End-focus echo pattern lets an
-    # STT mishear of the provider name stand out at the end of the sentence.
-    risk_tier: ClassVar[str] = "ask"
+    # ``monitor`` → runs immediately (audited), no up-front confirmation. A
+    # provider switch is reversible and the result already carries an honest
+    # old -> new readback, so an STT mishear is caught after the fact instead of
+    # by nagging the user before every switch (anti-confirmation-fatigue mandate;
+    # ``ask`` is the one tier in ``always_confirm_tiers``). Forensic 2026-06-26.
+    risk_tier: ClassVar[str] = "monitor"
     description: ClassVar[str] = (
         "Switch which AI provider is active for a given tier: 'brain' (the main "
         "assistant model), 'tts' (text-to-speech voice), 'stt' (speech-to-text), or "
