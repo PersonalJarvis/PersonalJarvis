@@ -373,35 +373,58 @@ class WhisperBarOverlay:
             return
         from PIL import ImageTk
 
-        now = time.perf_counter()
-        t = now - self._t0
-        # Sound-driven look: bars while audio is present (mic OR TTS), wave while
-        # silent. The coarse self._mode only decides active-vs-idle; the actual
-        # wave↔bars choice comes from how recently real sound arrived. This makes
-        # the silent TTS-synthesis lead-in render as the thinking wave and real
-        # speech (in or out) render as the equalizer — independent of the
-        # supervisor state's continue-listening flips.
-        from jarvis.audio import level_tap
+        # SELF-HEALING LOOP. This after-loop re-arms ONLY from its own tail, so a
+        # single transient render/Tk error (ImageTk.PhotoImage raising, a TclError
+        # during a window move, a one-off PIL glitch) used to skip the re-arm and
+        # the animation died PERMANENTLY — the Tk mainloop kept running, so the
+        # window stayed visible frozen on its last frame until an app restart
+        # ("JarvisBar stopped moving" forensic). The render body is now wrapped so
+        # one bad frame is dropped, logged, and the next tick is still armed in
+        # `finally`. The loop can no longer be killed by any one exception.
+        try:
+            now = time.perf_counter()
+            t = now - self._t0
+            # Sound-driven look: bars while audio is present (mic OR TTS), wave
+            # while silent. The coarse self._mode only decides active-vs-idle; the
+            # actual wave↔bars choice comes from how recently real sound arrived.
+            # This makes the silent TTS-synthesis lead-in render as the thinking
+            # wave and real speech (in or out) render as the equalizer —
+            # independent of the supervisor state's continue-listening flips.
+            from jarvis.audio import level_tap
 
-        playing = level_tap.playback_active()
-        effective_mode = renderer.visual_mode(
-            self._mode,
-            now - self._last_audible_t,
-            hold_s=AUDIBLE_HOLD_S,
-            playback_active=playing,
-        )
-        # The level is fed live per ~60 ms TTS sub-block (player._write_samples),
-        # so the equalizer reacts to Jarvis's actual loudness — thin and lively,
-        # exactly like it reacts to your mic. No synthetic floor (that made the
-        # bars look uniformly blocky).
-        img = self._renderer.render(t, effective_mode, self._ext_level, hovered=self._hovered)
-        # PhotoImage must be retained on self, else Tk GCs it before drawing.
-        self._photo = ImageTk.PhotoImage(img)
-        if self._image_id is None:
-            self._image_id = self._canvas.create_image(0, 0, anchor="nw", image=self._photo)
-        else:
-            self._canvas.itemconfig(self._image_id, image=self._photo)
-        self._root.after(16, self._schedule_frame)  # ~60 FPS
+            playing = level_tap.playback_active()
+            effective_mode = renderer.visual_mode(
+                self._mode,
+                now - self._last_audible_t,
+                hold_s=AUDIBLE_HOLD_S,
+                playback_active=playing,
+            )
+            # The level is fed live per ~60 ms TTS sub-block (player._write_samples),
+            # so the equalizer reacts to Jarvis's actual loudness — thin and lively,
+            # exactly like it reacts to your mic. No synthetic floor (that made the
+            # bars look uniformly blocky).
+            img = self._renderer.render(
+                t, effective_mode, self._ext_level, hovered=self._hovered
+            )
+            # PhotoImage must be retained on self, else Tk GCs it before drawing.
+            self._photo = ImageTk.PhotoImage(img)
+            if self._image_id is None:
+                self._image_id = self._canvas.create_image(
+                    0, 0, anchor="nw", image=self._photo
+                )
+            else:
+                self._canvas.itemconfig(self._image_id, image=self._photo)
+        except Exception:  # noqa: BLE001 — one bad frame must never freeze the bar
+            log.exception("WhisperBar frame render failed — dropping one frame")
+        finally:
+            # Re-arm unconditionally so the loop is self-healing. Guard the after()
+            # call itself: if the root was torn down mid-frame, swallow the
+            # TclError and stop re-arming (the window is gone — correct to stop).
+            if self._running and self._root is not None:
+                try:
+                    self._root.after(16, self._schedule_frame)  # ~60 FPS
+                except Exception:  # noqa: BLE001
+                    log.debug("WhisperBar frame re-arm skipped", exc_info=True)
 
     # ------------------------------------------------------------------ #
     # Drag (reposition) + click (start a voice session)                 #
