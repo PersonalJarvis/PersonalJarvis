@@ -1,0 +1,49 @@
+#!/bin/sh
+# pre-commit: keep AGENTS.md and CLAUDE.md byte-identical on every commit.
+#
+# CLAUDE.md (the long-standing agent contract) and AGENTS.md (the cross-tool
+# standard name) are intentional twins -- edit one, the other follows. This hook
+# is the hard guarantee: whatever is about to be committed has both files in
+# sync, no matter who edited them (Claude, the maintainer, a parallel session, a
+# plain editor). The sync engine is scripts/ci/sync_agents_md.py.
+#
+# Behaviour:
+#   * already in sync            -> no-op, commit proceeds.
+#   * one side edited            -> the other is rewritten to match and re-staged
+#                                   (so the commit carries both, in sync).
+#   * both edited and they differ-> CONFLICT: the commit is BLOCKED so the two
+#                                   edits can be reconciled by hand.
+#
+# This hook is VERSIONED in .githooks/; git runs it via core.hooksPath=.githooks
+# (set by scripts/ci/install_git_hooks.py on a fresh clone). It never sets that
+# itself.
+#
+# Bypass once:  git commit --no-verify
+#
+# Fail-open when the engine genuinely cannot run (no python) -- a sync miss is
+# caught at the next commit; fail-closed only on a real, confirmed conflict.
+
+# Prefer the known-good interpreter (a bare 'python' may be a deps-less venv on
+# this machine); fall back to whatever 'python'/'python3' resolves to. The sync
+# engine is stdlib + git only, so any Python 3.x works. No Python at all -> skip.
+PY="/c/Program Files/Python311/python.exe"
+[ -x "$PY" ] || PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null)"
+[ -n "$PY" ] || exit 0
+
+sync="scripts/ci/sync_agents_md.py"
+[ -f "$sync" ] || exit 0
+
+"$PY" "$sync" --stage --quiet </dev/null
+rc=$?
+
+# rc 0 = in sync (or just synced + re-staged); rc 2 = unresolvable conflict.
+# Any other rc (setup error) fails open -- never wedge a commit on tooling noise.
+if [ "$rc" -eq 2 ]; then
+    echo ""
+    echo "pre-commit BLOCKED: AGENTS.md and CLAUDE.md were both edited and now differ."
+    echo "  They must stay byte-identical. Reconcile the two by hand, re-stage, retry."
+    echo "  Bypass once with:  git commit --no-verify"
+    exit 1
+fi
+
+exit 0
