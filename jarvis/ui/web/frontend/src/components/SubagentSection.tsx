@@ -168,6 +168,16 @@ export function SubagentSection() {
 
   if (!bridge) return null;
 
+  // Codex + Antigravity are subscription logins (OAuth) rendered as their own
+  // connection cards; their "Set active" control now lives ON those cards, so
+  // exclude them from the generic provider list to avoid a duplicate card per
+  // CLI (the confusing "no select button on the subscription" the user hit).
+  const codexRow = bridge.mapping.find((r) => r.jarvis === "openai-codex");
+  const antigravityRow = bridge.mapping.find((r) => r.jarvis === "antigravity");
+  const providerRows = bridge.mapping.filter(
+    (r) => r.jarvis !== "openai-codex" && r.jarvis !== "antigravity",
+  );
+
   return (
     <section>
       <SectionHeader label={t("apikeys_view.tier_subagent")} />
@@ -192,20 +202,25 @@ export function SubagentSection() {
         <li>
           <SubagentModelCard status={bridge} onSaved={reload} />
         </li>
-        {bridge.mapping.some((row) => row.jarvis === "openai-codex") && (
+        {codexRow && (
           <li>
-            <CodexConnectionCard status={codexStatus} onChanged={reload} />
-          </li>
-        )}
-        {bridge.mapping.some((row) => row.jarvis === "antigravity") && (
-          <li>
-            <AntigravityConnectionCard
-              status={antigravityStatus}
+            <CodexConnectionCard
+              status={codexStatus}
+              row={codexRow}
               onChanged={reload}
             />
           </li>
         )}
-        {bridge.mapping.map((row) => (
+        {antigravityRow && (
+          <li>
+            <AntigravityConnectionCard
+              status={antigravityStatus}
+              row={antigravityRow}
+              onChanged={reload}
+            />
+          </li>
+        )}
+        {providerRows.map((row) => (
           <li key={row.jarvis}>
             <SubagentProviderCard row={row} onSwitched={reload} />
           </li>
@@ -374,15 +389,19 @@ function BridgeCard({ status }: { status: SubagentStatus }) {
 
 function CodexConnectionCard({
   status,
+  row,
   onChanged,
 }: {
   status: CodexStatus | null;
+  row: SubagentMappingRow | undefined;
   onChanged: () => void | Promise<void>;
 }) {
   const pushToast = useEventStore((s) => s.pushToast);
   const [pending, setPending] = useState(false);
+  const { activating, activate } = useSubagentActivate(row, onChanged);
   const connected = Boolean(status?.connected);
   const installed = status?.installed ?? false;
+  const isActive = Boolean(row?.is_active_brain);
   const email =
     status?.user_email ??
     status?.account_label ??
@@ -427,12 +446,19 @@ function CodexConnectionCard({
   }
 
   return (
-    <div className="card-outline space-y-3 p-4">
+    <div
+      className={cn(
+        "card-outline space-y-3 p-4 transition-colors",
+        isActive && "border-primary bg-primary/[0.06] ring-1 ring-primary/30",
+      )}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium">OpenAI Codex ChatGPT login</span>
-            {connected ? (
+            {isActive ? (
+              <span className="chip-yellow">active</span>
+            ) : connected ? (
               <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">
                 ready
               </span>
@@ -452,27 +478,39 @@ function CodexConnectionCard({
             </p>
           )}
         </div>
-        {connected ? (
-          <button
-            type="button"
-            onClick={disconnect}
-            disabled={pending}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
-          >
-            <LogOut className="h-3.5 w-3.5" />
-            Disconnect
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={connect}
-            disabled={pending || !installed}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
-          >
-            <LogIn className="h-3.5 w-3.5" />
-            Connect
-          </button>
-        )}
+        <div className="flex shrink-0 items-center gap-3">
+          {/* When connected, the same "Set active" control as the other
+              provider cards — so this subscription login is selectable right
+              here, not only via a duplicate card further down. */}
+          {connected && row && (
+            <SubagentActiveControl
+              row={row}
+              activating={activating}
+              onActivate={activate}
+            />
+          )}
+          {connected ? (
+            <button
+              type="button"
+              onClick={disconnect}
+              disabled={pending}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Disconnect
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={connect}
+              disabled={pending || !installed}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+            >
+              <LogIn className="h-3.5 w-3.5" />
+              Connect
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -480,15 +518,19 @@ function CodexConnectionCard({
 
 function AntigravityConnectionCard({
   status,
+  row,
   onChanged,
 }: {
   status: AntigravityStatus | null;
+  row: SubagentMappingRow | undefined;
   onChanged: () => void | Promise<void>;
 }) {
   const pushToast = useEventStore((s) => s.pushToast);
   const [pending, setPending] = useState(false);
+  const { activating, activate } = useSubagentActivate(row, onChanged);
   const connected = Boolean(status?.connected);
   const installed = status?.installed ?? false;
+  const isActive = Boolean(row?.is_active_brain);
   const detail = connected
     ? status?.user_email
       ? `Connected as ${status.user_email}`
@@ -527,12 +569,19 @@ function AntigravityConnectionCard({
   }
 
   return (
-    <div className="card-outline space-y-3 p-4">
+    <div
+      className={cn(
+        "card-outline space-y-3 p-4 transition-colors",
+        isActive && "border-primary bg-primary/[0.06] ring-1 ring-primary/30",
+      )}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium">Antigravity Google login</span>
-            {connected ? (
+            {isActive ? (
+              <span className="chip-yellow">active</span>
+            ) : connected ? (
               <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">
                 ready
               </span>
@@ -552,30 +601,83 @@ function AntigravityConnectionCard({
             </p>
           )}
         </div>
-        {connected ? (
-          <button
-            type="button"
-            onClick={disconnect}
-            disabled={pending}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
-          >
-            <LogOut className="h-3.5 w-3.5" />
-            Disconnect
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={connect}
-            disabled={pending || !installed}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
-          >
-            <LogIn className="h-3.5 w-3.5" />
-            Connect
-          </button>
-        )}
+        <div className="flex shrink-0 items-center gap-3">
+          {connected && row && (
+            <SubagentActiveControl
+              row={row}
+              activating={activating}
+              onActivate={activate}
+            />
+          )}
+          {connected ? (
+            <button
+              type="button"
+              onClick={disconnect}
+              disabled={pending}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Disconnect
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={connect}
+              disabled={pending || !installed}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+            >
+              <LogIn className="h-3.5 w-3.5" />
+              Connect
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
+}
+
+/**
+ * Shared "activate this subagent provider" action (POST /api/subagent/switch,
+ * 3-layer persist). Used by the generic provider cards AND the Codex /
+ * Antigravity subscription cards, so every selectable card behaves identically
+ * — including the subscription logins, which previously had no "Set active".
+ */
+function useSubagentActivate(
+  row: SubagentMappingRow | undefined,
+  onSwitched: () => void | Promise<void>,
+) {
+  const [activating, setActivating] = useState(false);
+  const pushToast = useEventStore((s) => s.pushToast);
+
+  const activate = useCallback(async () => {
+    if (!row || row.is_active_brain || activating) return;
+    const label = PROVIDER_LABELS[row.jarvis] ?? row.jarvis;
+    if (!row.key_set) {
+      pushToast(
+        "warning",
+        row.jarvis === "openai-codex"
+          ? `${label}: connect the ChatGPT login first.`
+          : row.jarvis === "antigravity"
+            ? `${label}: connect the Google login first.`
+            : `${label}: set the API key on the brain provider above first.`,
+      );
+      return;
+    }
+    setActivating(true);
+    try {
+      const result = await switchSubagentProvider(row.jarvis);
+      const note = result.restart_required ? " (active from next restart)" : "";
+      pushToast("success", `Subagent → ${label}${note}`);
+      window.dispatchEvent(new CustomEvent("jarvis:subagent-switched"));
+      await onSwitched();
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setActivating(false);
+    }
+  }, [row, activating, pushToast, onSwitched]);
+
+  return { activating, activate };
 }
 
 /**
@@ -594,37 +696,7 @@ function SubagentProviderCard({
   onSwitched: () => void | Promise<void>;
 }) {
   const label = PROVIDER_LABELS[row.jarvis] ?? row.jarvis;
-  const [activating, setActivating] = useState(false);
-  const pushToast = useEventStore((s) => s.pushToast);
-
-  async function activate() {
-    if (row.is_active_brain || activating) return;
-    if (!row.key_set) {
-      pushToast(
-        "warning",
-        row.jarvis === "openai-codex"
-          ? `${label}: connect the ChatGPT login above first.`
-          : row.jarvis === "antigravity"
-            ? `${label}: connect the Google login above first.`
-            : `${label}: set the API key on the brain provider above first.`,
-      );
-      return;
-    }
-    setActivating(true);
-    try {
-      const result = await switchSubagentProvider(row.jarvis);
-      const note = result.restart_required
-        ? " (active from next restart)"
-        : "";
-      pushToast("success", `Subagent → ${label}${note}`);
-      window.dispatchEvent(new CustomEvent("jarvis:subagent-switched"));
-      await onSwitched();
-    } catch (e) {
-      pushToast("error", (e as Error).message);
-    } finally {
-      setActivating(false);
-    }
-  }
+  const { activating, activate } = useSubagentActivate(row, onSwitched);
 
   // Click anywhere on the card activates — except on the radio/label (which
   // has its own handler) so a single user click never fires activate() twice.

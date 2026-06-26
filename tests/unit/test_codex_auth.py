@@ -163,6 +163,74 @@ def test_status_tolerates_corrupt_auth_json(
 
 
 # ----------------------------------------------------------------------
+# version-probe caching — the cold-start latency fix
+# ----------------------------------------------------------------------
+
+
+def test_probe_version_cached_across_status_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`codex --version` is invariant at runtime but is the dominant cold-start
+    cost — /api/providers used to spawn it 2-4x PER request. It must be probed
+    once per binary and cached, so every later status() is a pure auth-file read.
+    """
+    import jarvis.codex_auth as codex_mod
+
+    codex_mod.clear_version_cache()
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    _write_auth(tmp_path, {"tokens": {"access_token": "t"}})
+
+    runs = {"n": 0}
+
+    def _fake_run(_argv, **_kw):  # noqa: ANN001, ANN003
+        runs["n"] += 1
+
+        class _R:
+            stdout = "codex 1.2.3"
+            stderr = ""
+            returncode = 0
+
+        return _R()
+
+    monkeypatch.setattr(codex_mod.subprocess, "run", _fake_run)
+    # Stub on the class so a fresh instance resolves the SAME binary key (and
+    # thus shares the module-level cache).
+    monkeypatch.setattr(CodexAuthService, "_resolve_binary", lambda self: "codex")
+
+    v1 = CodexAuthService("codex").status()
+    v2 = CodexAuthService("codex").status()
+    v3 = CodexAuthService("codex").status()  # a fresh instance shares the cache
+
+    assert v1.version == v2.version == v3.version == "codex 1.2.3"
+    assert runs["n"] == 1, "codex --version must run once, then be cached"
+
+
+def test_probe_version_caches_failure_to_avoid_repeated_timeouts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hanging/absent codex must not pay a 4s subprocess timeout on every
+    status() call — the failed probe is cached too."""
+    import jarvis.codex_auth as codex_mod
+
+    codex_mod.clear_version_cache()
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    _write_auth(tmp_path, {"tokens": {"access_token": "t"}})
+
+    runs = {"n": 0}
+
+    def _fake_run(_argv, **_kw):  # noqa: ANN001, ANN003
+        runs["n"] += 1
+        raise codex_mod.subprocess.TimeoutExpired(cmd="codex", timeout=4.0)
+
+    monkeypatch.setattr(codex_mod.subprocess, "run", _fake_run)
+    monkeypatch.setattr(CodexAuthService, "_resolve_binary", lambda self: "codex")
+
+    assert CodexAuthService("codex").status().version is None
+    assert CodexAuthService("codex").status().version is None
+    assert runs["n"] == 1, "a failed probe must be cached, not retried every call"
+
+
+# ----------------------------------------------------------------------
 # start_login / logout — spawn discipline (cross-platform, AP-1)
 # ----------------------------------------------------------------------
 

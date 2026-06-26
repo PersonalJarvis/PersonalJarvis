@@ -4523,6 +4523,23 @@ class SpeechPipeline:
         self._input_suppressed_until_ns = max(previous, until_ns)
         log.info("TTS-Echo-Sperre aktiv: %.1fs (%s).", seconds, reason)
 
+    def _voice_confirm_pending(self) -> bool:
+        """True while the brain is awaiting a spoken yes/no for a deferred
+        ``ask``-tier tool — keep the session open so the answer is not cut off
+        (analogous to ``_background_mission_in_flight``). Forensic 2026-06-26: an
+        ask-tier tool asked "really do that?" and the session then ended before
+        the user could answer. Defensive: a brain callback without the probe (the
+        echo fake, an older build) reports no pending confirm and never crashes
+        the hangup decision."""
+        brain = getattr(self, "_brain", None)
+        probe = getattr(brain, "has_pending_voice_confirm", None)
+        if not callable(probe):
+            return False
+        try:
+            return bool(probe())
+        except Exception:  # noqa: BLE001 — the hangup decision must never crash
+            return False
+
     async def _finish_after_response(self, *, barged: bool = False) -> bool:
         """Schliesst normale Voice-Turns; Barge-in darf weiterlaufen.
 
@@ -4542,6 +4559,7 @@ class SpeechPipeline:
             barged
             or self._continue_listening_after_response
             or self._background_mission_in_flight()
+            or self._voice_confirm_pending()
         ):
             await self._set_turn_state(TurnTakingState.LISTENING)
             return True

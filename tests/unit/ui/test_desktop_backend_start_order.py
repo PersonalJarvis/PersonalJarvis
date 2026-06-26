@@ -116,7 +116,11 @@ class _FakeLoop:
 
     def create_task(self, coro: Any, **_kwargs: Any) -> SimpleNamespace:
         self.tasks.append(coro)
-        return SimpleNamespace(cancel=lambda: None, done=lambda: True)
+        return SimpleNamespace(
+            cancel=lambda: None,
+            done=lambda: True,
+            add_done_callback=lambda _cb: None,
+        )
 
     def call_soon(self, callback: Any, *args: Any) -> None:
         self.callbacks.append((callback, args))
@@ -265,7 +269,7 @@ def test_desktop_post_ready_warmups_run_after_event_loop_starts(monkeypatch, tmp
     app._conductor_store = None
     app._conductor_scheduler = None
 
-    def _speech(*_args: Any, **_kwargs: Any) -> None:
+    async def _speech(*_args: Any, **_kwargs: Any) -> None:
         events.append("speech")
 
     def _cursor() -> None:
@@ -276,4 +280,8 @@ def test_desktop_post_ready_warmups_run_after_event_loop_starts(monkeypatch, tmp
 
     app._run_backend()
 
-    assert events[:4] == ["run_forever", "build_brain", "speech", "cursor"]
+    # The voice/orb build now runs as a loop task (it offloads its blocking
+    # CUDA probe to a worker thread), so the synchronous cursor start lands
+    # before the deferred speech task drains — both still after the loop +
+    # brain build.
+    assert events[:4] == ["run_forever", "build_brain", "cursor", "speech"]

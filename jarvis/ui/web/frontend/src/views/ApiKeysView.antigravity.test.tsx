@@ -209,16 +209,18 @@ afterEach(() => {
 });
 
 describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
-  it("renders the compact connected badge with the account email", async () => {
+  it("renders the connected subscription card with email AND a Set-active radio", async () => {
     installFetchMock(routesFor(antigravityDescriptor()));
     render(<ApiKeysView />);
 
     await waitFor(() =>
-      expect(screen.getByText("Antigravity (Google subscription)")).toBeTruthy(),
+      expect(screen.getByText("Antigravity Google login")).toBeTruthy(),
     );
 
-    expect(screen.queryByText("Google subscription login")).toBeNull();
-    expect(screen.getByText("Antigravity Google login")).toBeTruthy();
+    // The "Set active" control now lives ON the subscription card, so there is
+    // no longer a separate "Antigravity (Google subscription)" provider card
+    // below it (consolidated — one card per CLI that both connects and selects).
+    expect(screen.queryByText("Antigravity (Google subscription)")).toBeNull();
     expect(screen.getByText(/google-user@example\.com/)).toBeTruthy();
     expect(screen.getByRole("radio")).toBeTruthy();
   });
