@@ -167,11 +167,11 @@ def test_subagent_switch_updates_status_endpoint(monkeypatch: pytest.MonkeyPatch
     cfg.brain.sub_jarvis = BrainTierConfig(provider="claude-api", model="")
     client = _client(cfg)
 
-    client.post("/api/subagent/switch", json={"provider": "grok", "persist": True})
+    client.post("/api/subagent/switch", json={"provider": "openrouter", "persist": True})
 
     data = client.get("/api/openclaw/status").json()
     active = {r["jarvis"]: r["is_active_brain"] for r in data["mapping"]}
-    assert active["grok"] is True
+    assert active["openrouter"] is True
     assert active["claude-api"] is False
 
 
@@ -293,6 +293,81 @@ def test_subagent_switch_409_codex_when_not_connected(
 
     cfg = load_config()
     resp = _client(cfg).post("/api/subagent/switch", json={"provider": "openai-codex"})
+    assert resp.status_code == 409
+    assert persisted == []
+
+
+# --- Claude Max OAuth as a subagent credential (no API key needed) ---------
+# The ClaudeDirectWorker authenticates via the live Claude Max OAuth login in
+# ~/.claude/.credentials.json (read_live_claude_oauth_token), NOT a stored
+# Anthropic API key. A fresh Claude-Max user who only ran `claude login` must
+# therefore see claude-api unlocked + selectable, mirroring the codex/agy OAuth
+# rows above. Source of the worker auth: missions/init.py::_worker_factory.
+
+
+def test_claude_api_row_key_set_via_max_oauth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No API key anywhere, but a live Claude Max OAuth login -> row unlocked."""
+    import jarvis.core.config as cfg_mod
+
+    monkeypatch.setattr(cfg_mod, "get_secret", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "jarvis.missions.isolation.env.read_live_claude_oauth_token",
+        lambda: "sk-ant-oat-live",
+    )
+    cfg = load_config()
+    row = next(r for r in _status(cfg)["mapping"] if r["jarvis"] == "claude-api")
+    assert row["key_set"] is True
+
+
+def test_claude_api_row_locked_without_key_or_oauth(monkeypatch: pytest.MonkeyPatch) -> None:
+    import jarvis.core.config as cfg_mod
+
+    monkeypatch.setattr(cfg_mod, "get_secret", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "jarvis.missions.isolation.env.read_live_claude_oauth_token", lambda: None
+    )
+    cfg = load_config()
+    row = next(r for r in _status(cfg)["mapping"] if r["jarvis"] == "claude-api")
+    assert row["key_set"] is False
+
+
+def test_subagent_switch_accepts_claude_max_oauth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """OAuth login present, no API key -> claude-api selectable as subagent."""
+    import jarvis.core.config as cfg_mod
+    import jarvis.core.config_writer as config_writer
+
+    monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _p: None)
+    monkeypatch.setattr(
+        "jarvis.missions.isolation.env.read_live_claude_oauth_token",
+        lambda: "sk-ant-oat-live",
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: calls.append(n))
+
+    cfg = load_config()
+    resp = _client(cfg).post(
+        "/api/subagent/switch", json={"provider": "claude-api", "persist": True}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["active"] == "claude-api"
+    assert calls == ["claude-api"]
+
+
+def test_subagent_switch_409_claude_api_no_key_no_oauth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import jarvis.core.config as cfg_mod
+    import jarvis.core.config_writer as config_writer
+
+    monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _p: None)
+    monkeypatch.setattr(
+        "jarvis.missions.isolation.env.read_live_claude_oauth_token", lambda: None
+    )
+    persisted: list[str] = []
+    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: persisted.append(n))
+
+    cfg = load_config()
+    resp = _client(cfg).post("/api/subagent/switch", json={"provider": "claude-api"})
     assert resp.status_code == 409
     assert persisted == []
 

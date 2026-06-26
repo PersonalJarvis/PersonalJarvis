@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/x-icon" href="/jarvis.ico" />
+    <title>Jarvis</title>
+    <style>
+      /* Boot splash — painted from index.html the instant the window opens, so
+         there is NO black screen while the (large) JS bundle loads + React
+         mounts. React's createRoot clears #root on its first render, so this is
+         replaced by the real UI automatically. Background matches the pywebview
+         window color (#0a0e14) so there is never a flash. */
+      html, body { margin: 0; height: 100%; background: #0a0e14; }
+      #jarvis-boot-splash {
+        position: fixed; inset: 0; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 18px;
+        background: #0a0e14;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+        color: #e7c46e;
+      }
+      #jarvis-boot-splash .ring {
+        width: 38px; height: 38px; border-radius: 50%;
+        border: 3px solid rgba(231, 196, 110, 0.2);
+        border-top-color: #e7c46e;
+        animation: jbs-spin 0.8s linear infinite;
+      }
+      #jarvis-boot-splash .name {
+        font-size: 15px; font-weight: 600; letter-spacing: 0.04em;
+        color: #e6e6e6;
+      }
+      #jarvis-boot-splash .sub {
+        font-size: 12px; color: #9aa3ad; letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      @keyframes jbs-spin { to { transform: rotate(360deg); } }
+    </style>
+    <script type="module" crossorigin src="/assets/index-DZAnvWDw.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DK8eO9mS.css">
+  </head>
+  <body>
+    <div id="root">
+      <div id="jarvis-boot-splash">
+        <div class="ring"></div>
+        <div class="name">Personal Jarvis</div>
+        <div class="sub">Starting…</div>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,34 @@
+# Personal Jarvis — headless server, the cloud-first / VPS path.
+#
+#   docker compose up --build      # build the image and start the server
+#   # then open http://localhost:8000
+#
+# Bring your own provider keys. Set them below or in a sibling `.env` file
+# (compose loads it automatically). Nothing is bundled.
+
+services:
+  jarvis:
+    build: .
+    image: personal-jarvis:local
+    # Bind to the host loopback only — the published port is NOT exposed to the
+    # LAN. The Control-API key is the security boundary on the container's
+    # 0.0.0.0 bind (JARVIS_BIND_HOST in the image).
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      # The Control-API key authorises the non-loopback (0.0.0.0) bind. Change
+      # this — it is the only boundary protecting the control surface.
+      JARVIS_CONTROL_API_KEY: "jctl_local_sandbox_change_me_before_any_real_use"
+      # Provider keys — set your OWN keys. At least one brain provider is needed
+      # for a real reply; the server still boots and serves the UI without them.
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
+    volumes:
+      # Persist runtime state (config, dbs, flight recorder) across restarts,
+      # isolated from the host — never touches the maintainer's data/ folder.
+      - jarvis-data:/app/data
+
+volumes:
+  jarvis-data:

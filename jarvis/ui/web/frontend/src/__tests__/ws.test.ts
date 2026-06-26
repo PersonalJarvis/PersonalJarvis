@@ -83,4 +83,30 @@ describe("WSClient", () => {
     );
     client.close();
   });
+
+  it("passes the close code to onClose", async () => {
+    const onClose = vi.fn();
+    const client = new WSClient({ onClose });
+    client.connect();
+    await Promise.resolve();
+    MockWebSocket.last!.fire("close", { code: 1013 });
+    expect(onClose).toHaveBeenCalledWith(1013);
+    client.close();
+  });
+
+  it("retries fast (no backoff escalation) after a 1013 warming close", async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new WSClient();
+      client.connect();
+      const first = MockWebSocket.last;
+      // Warming close → must reconnect at MIN_BACKOFF (500ms), not escalate.
+      first!.fire("close", { code: 1013 });
+      vi.advanceTimersByTime(500);
+      expect(MockWebSocket.last).not.toBe(first); // a new socket was opened
+      client.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

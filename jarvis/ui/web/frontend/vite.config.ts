@@ -27,7 +27,12 @@ export default defineConfig({
   build: {
     outDir: "../dist",
     emptyOutDir: true,
-    sourcemap: true,
+    // No source maps in production builds. They bloat the bundle, expose the
+    // full original source, and bake the absolute build path (e.g. a personal
+    // C:\Users\... home dir) into the .map files — none of which belongs in the
+    // prebuilt dist shipped to the public repo. The Vite dev server keeps its
+    // own inline maps, so local debugging is unaffected.
+    sourcemap: false,
   },
   test: {
     environment: "jsdom",

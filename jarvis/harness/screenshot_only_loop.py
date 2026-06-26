@@ -2727,14 +2727,27 @@ async def _dispatch_raw_click(
 def _pick_snap_node(nodes: Any, x: int, y: int, max_dist: int) -> Any | None:
     """Pick the clickable accessibility node to snap a missed click to.
 
-    Preference: the SMALLEST node whose bounds contain ``(x, y)`` (the most
-    specific control under the cursor); otherwise the node whose center is
-    NEAREST ``(x, y)`` within ``max_dist`` pixels. Disabled and zero-area nodes
-    are skipped. Returns the node or ``None`` when nothing is close enough.
+    A snap may only NUDGE a click, never RELOCATE it: the chosen node's CENTER —
+    the point the caller actually clicks — must lie within ``max_dist`` px of the
+    miss ``(x, y)``. Among nodes that BOTH contain ``(x, y)`` AND satisfy that
+    nudge bound, the SMALLEST (most specific control) wins; otherwise the node
+    whose center is NEAREST within ``max_dist``. Disabled and zero-area nodes are
+    skipped. Returns ``None`` when nothing is close enough — the caller then falls
+    through to the LLM refine.
+
+    The nudge bound on the *containing* branch is load-bearing (BUG-CU-UIASNAP,
+    live 2026-06-24): a whole-window / large-container node "contains" almost
+    every point, so without it the picker returned that node and the caller
+    clicked its geometric center (~screen center). The live log showed 6/6
+    verified misses snapped to screen-center window nodes (e.g. a top-left date
+    cell miss at (438,168) snapped to the maximized Chrome window center
+    (1920,1044)), turning every near-miss into a wild click and short-circuiting
+    the refine that used to correct it.
     """
+    max_d2 = max_dist * max_dist
     containing: list[tuple[int, Any]] = []
     nearest: Any | None = None
-    nearest_d2 = max_dist * max_dist
+    nearest_d2 = max_d2
     for n in nodes:
         if not getattr(n, "enabled", True):
             continue
@@ -2744,11 +2757,17 @@ def _pick_snap_node(nodes: Any, x: int, y: int, max_dist: int) -> Any | None:
             continue
         if bw <= 0 or bh <= 0:
             continue
+        cx, cy = bx + bw // 2, by + bh // 2
+        d2 = (cx - x) ** 2 + (cy - y) ** 2
+        if d2 > max_d2:
+            # The click the snap would issue (the node center) is farther than
+            # one nudge from the miss — reject even if the node CONTAINS the
+            # point. A large container contains it but clicking its center
+            # relocates the click across the screen (the BUG-CU-UIASNAP failure).
+            continue
         if bx <= x <= bx + bw and by <= y <= by + bh:
             containing.append((bw * bh, n))
             continue
-        cx, cy = bx + bw // 2, by + bh // 2
-        d2 = (cx - x) ** 2 + (cy - y) ** 2
         if d2 <= nearest_d2:
             nearest_d2 = d2
             nearest = n

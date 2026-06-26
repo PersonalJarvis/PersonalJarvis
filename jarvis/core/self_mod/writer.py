@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import stat
 import tempfile
 import threading
 import time
@@ -416,6 +417,41 @@ class AtomicConfigWriter:
                 parent = existing
         parent[parts[-1]] = value
 
+    @staticmethod
+    def _replace_keep_readonly(tmp_path: Path | str, target: Path | str) -> None:
+        """``os.replace(tmp_path, target)``, robust against a read-only TARGET.
+
+        The config-drift defense (BUG-010) sets ``jarvis.toml`` read-only to stop
+        parallel sessions from silently overwriting it. On Windows ``os.replace``
+        then fails with ``PermissionError`` (``WinError 5`` — Access Denied),
+        because replacing a read-only file requires deleting it. The authorized
+        atomic writer is the ONE legitimate write path and is itself part of that
+        defense, so it clears the read-only attribute for the atomic swap and
+        restores it afterwards — the write goes through while the defense stays
+        in place. A writable target is left writable (state-preserving). Live
+        forensic 2026-06-25: every CLI/voice config write returned "write_failed:
+        [WinError 5] ... jarvis.toml".
+        """
+        # Mirrors the canonical handling in jarvis/core/config_writer.py
+        # (mode-preserving clear + restore-in-finally) so both atomic writers
+        # treat the BUG-010 read-only defense identically.
+        target = Path(target)
+        was_readonly = False
+        if target.exists():
+            mode = target.stat().st_mode
+            was_readonly = not bool(mode & stat.S_IWRITE)
+            if was_readonly:
+                os.chmod(target, mode | stat.S_IWRITE)
+        try:
+            os.replace(tmp_path, target)
+        finally:
+            # On success ``target`` is the freshly swapped file; on failure it is
+            # the still-present old file. Either way re-arm the read-only flag so
+            # the drift defense holds.
+            if was_readonly and target.exists():
+                current = target.stat().st_mode
+                os.chmod(target, current & ~stat.S_IWRITE)
+
     def _atomic_write(self, content: str) -> None:
         """Plan-§7.2 step 7: tempfile + fsync + os.replace.
 
@@ -447,7 +483,7 @@ class AtomicConfigWriter:
                     # fsync can fail on some filesystems (e.g. tmpfs in CI)
                     # but is not critical enough to block the write.
                     _LOG.debug("fsync fehlgeschlagen — ignoriere", exc_info=True)
-            os.replace(tmp_path, self._config_path)
+            self._replace_keep_readonly(tmp_path, self._config_path)
             tmp_path = None  # replace succeeded — no cleanup needed
         except Exception:
             if tmp_path is not None:
@@ -516,7 +552,7 @@ class AtomicConfigWriter:
                     os.fsync(fh.fileno())
                 except OSError:
                     _LOG.debug("Restore-fsync fehlgeschlagen", exc_info=True)
-            os.replace(tmp_path, self._config_path)
+            self._replace_keep_readonly(tmp_path, self._config_path)
         except Exception:
             tmp_path.unlink(missing_ok=True)
             raise

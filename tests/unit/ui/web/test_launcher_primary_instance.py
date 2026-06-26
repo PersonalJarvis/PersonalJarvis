@@ -18,11 +18,15 @@ tests / parallel dev / smoke probes).
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from jarvis.ui.desktop_app import acquire_single_instance_lock
-from jarvis.ui.web.launcher import _acquire_primary_lock_for_headless
+from jarvis.ui.web.launcher import (
+    _acquire_primary_lock_for_headless,
+    _claim_headless_primary_lock,
+)
 
 
 def test_sole_headless_instance_is_primary(
@@ -72,3 +76,32 @@ def test_secondary_headless_instance_is_not_primary(
         assert os.environ["JARVIS_PRIMARY_INSTANCE"] == "0"
     finally:
         held.release()
+
+
+def test_no_lock_headless_instance_is_secondary_and_does_not_hold_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A --no-lock headless/dev/smoke run must not block the desktop app.
+
+    It is explicitly secondary, so it does not run crash recovery and it leaves
+    the single-instance lock free for a real desktop autostart.
+    """
+    monkeypatch.delenv("JARVIS_PRIMARY_INSTANCE", raising=False)
+    lock_path = tmp_path / "jarvis.lock"
+    meta_path = tmp_path / "jarvis.lock.meta"
+
+    lock = _claim_headless_primary_lock(
+        SimpleNamespace(no_lock=True),
+        lock_path=lock_path,
+        meta_path=meta_path,
+    )
+    assert lock is None
+
+    import os
+
+    assert os.environ["JARVIS_PRIMARY_INSTANCE"] == "0"
+
+    desktop_lock = acquire_single_instance_lock(
+        lock_path=lock_path, meta_path=meta_path
+    )
+    desktop_lock.release()

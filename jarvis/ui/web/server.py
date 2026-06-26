@@ -233,6 +233,7 @@ class WebServer:
         from .docs_routes import router as docs_router
         from .federation_proxy_routes import router as federation_proxy_router
         from .friends_routes import router as friends_router
+        from .frontier_routes import router as frontier_router
         from .marketplace_routes import router as marketplace_router
         from .mcp_routes import router as mcp_router
         from .missions_auth import router as missions_auth_router
@@ -250,6 +251,7 @@ class WebServer:
         from .profile_routes import router as profile_router
         from .provider_routes import router as provider_router
         from .review_routes import router as review_router
+        from .self_mod_routes import router as self_mod_router
         from .sessions_routes import router as sessions_router
         from .settings_routes import router as settings_router
         from .setup_routes import router as setup_router
@@ -278,6 +280,12 @@ class WebServer:
         app.include_router(control_router)
         app.include_router(profile_router)
         app.include_router(settings_router)
+        # Frontier auto-switch modal API (GET pending / POST ack) + Self-Mod
+        # read/restore API. Both were the last route modules left unmounted; the
+        # 404 on /api/frontier/pending silently broke the desktop auto-switch
+        # modal too, not just the `jarvis frontier` CLI command.
+        app.include_router(frontier_router)
+        app.include_router(self_mod_router)
         app.include_router(tasks_router)
         app.include_router(skills_router)
         app.include_router(docs_router)
@@ -669,9 +677,18 @@ class WebServer:
             """
             brain = getattr(app.state, "brain", None)
             # BrainManager exposed `active_provider`. MockBrain hat nur `name`.
+            # Fast-boot deferral: the heavy BrainManager build runs in a
+            # background thread, so `app.state.brain` is None for the first
+            # ~850 ms while uvicorn already serves. In that window fall back to
+            # the configured primary provider — it already names the brain that
+            # WILL become active — instead of "unknown", which would freeze the
+            # sidebar footer on a bare "—" until a manual provider switch (the
+            # mount-fetch is one-shot and nothing re-fetches once the build
+            # finishes).
             provider = (
                 getattr(brain, "active_provider", None)
                 or getattr(brain, "name", None)
+                or cfg.brain.primary
                 or "unknown"
             )
             prov_cfg = cfg.brain.providers.get(provider)
@@ -803,6 +820,19 @@ class WebServer:
                     key_set = bool(get_secret(secret_key, mapping.env_var))
                 except Exception:  # noqa: BLE001
                     key_set = False
+                # Claude Max users authenticate the subagent via the LIVE OAuth
+                # login in ~/.claude/.credentials.json (read by ClaudeDirectWorker),
+                # not a stored API key — count that as configured so a fresh
+                # Claude-Max user (only ran `claude login`) is not falsely locked.
+                if not key_set and mapping.jarvis == "claude-api":
+                    try:
+                        from jarvis.missions.isolation.env import (
+                            read_live_claude_oauth_token,
+                        )
+
+                        key_set = bool(read_live_claude_oauth_token())
+                    except Exception:  # noqa: BLE001
+                        key_set = False
                 mapping_rows.append(
                     {
                         "jarvis": mapping.jarvis,
@@ -1893,6 +1923,9 @@ class WebServer:
         self.app.state.kontrollierer = result["kontrollierer"]
         self.app.state.missions_budget = result["budget"]
         self.app.state.mission_announcer = result["mission_announcer"]
+        # Mission-Bus -> global-bus bridge that re-publishes terminal missions
+        # as MissionCompleted so the Tasks scheduler can drive When-Then rules.
+        self.app.state.mission_event_bridge = result["mission_event_bridge"]
         # outputs_routes.py uses this to render the Outputs view; it would
         # otherwise have to re-derive the same WEB_DIR.parent.parent.parent
         # walk and would silently drift if the launcher layout changes.

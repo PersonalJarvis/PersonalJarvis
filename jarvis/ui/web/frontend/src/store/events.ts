@@ -163,6 +163,11 @@ interface EventStore {
   // the sidebar "Voice starting…" indicator.
   voiceReady: boolean;
   connected: boolean;
+  // True while the WS keeps getting closed with code 1013 by the fast-boot
+  // bootstrap (backend still warming up). Distinct from `connected`: drives the
+  // honest "Starting…" indicator instead of "OFFLINE". Defaults true so the
+  // first paint after a restart never flashes "OFFLINE".
+  wsWarming: boolean;
   activeSection: SectionId;
   transcription: string;
   transcriptionFinal: boolean;
@@ -190,6 +195,10 @@ interface EventStore {
   // renders as the collapsible "Thought for Xs" disclosure above the reply.
   thinkingTraces: Record<string, ThinkingTraceSnapshot>;
   brainProvider: string;
+  // The model id the active provider is configured to use (e.g.
+  // "claude-opus-4-8"). Seeded from /api/brain/status on mount and refreshed on
+  // a provider switch. Empty until the first status fetch resolves.
+  brainModel: string;
   // How the assistant refers to itself (resolved name: derived from the wake
   // phrase with its prefix stripped, else the neutral "Assistant" default —
   // [persona].name was removed 2026-06-20). Seeded once at app start by
@@ -218,6 +227,7 @@ interface EventStore {
   setVoice: (v: VoiceState) => void;
   setVoiceReady: (ready: boolean) => void;
   setConnected: (c: boolean) => void;
+  setWarming: (warming: boolean) => void;
   clearEvents: () => void;
   setActiveSection: (s: SectionId) => void;
   setTranscription: (text: string, isFinal: boolean) => void;
@@ -236,6 +246,7 @@ interface EventStore {
   /** Turn ended with an assistant reply: snapshot the trace onto that message. */
   finishThinking: (messageId: string) => void;
   setBrainProvider: (p: string) => void;
+  setBrainModel: (m: string) => void;
   setAssistantName: (name: string) => void;
   setDictating: (b: boolean) => void;
   setDictationInterim: (text: string) => void;
@@ -257,6 +268,7 @@ export const useEventStore = create<EventStore>((set, get) => ({
   voiceState: "idle",
   voiceReady: false,
   connected: false,
+  wsWarming: true,
   activeSection: "chats",
   transcription: "",
   transcriptionFinal: true,
@@ -270,6 +282,7 @@ export const useEventStore = create<EventStore>((set, get) => ({
   thinkingStartedTs: null,
   thinkingTraces: {},
   brainProvider: "unknown",
+  brainModel: "",
   assistantName: "Jarvis",
   dictating: false,
   dictationText: "",
@@ -289,6 +302,7 @@ export const useEventStore = create<EventStore>((set, get) => ({
   setVoice: (v) => set({ voiceState: v }),
   setVoiceReady: (ready) => set({ voiceReady: ready }),
   setConnected: (c) => set({ connected: c }),
+  setWarming: (warming) => set({ wsWarming: warming }),
   clearEvents: () => set({ events: [] }),
   setActiveSection: (s) => set({ activeSection: s }),
 
@@ -393,6 +407,7 @@ export const useEventStore = create<EventStore>((set, get) => ({
   },
 
   setBrainProvider: (p) => set({ brainProvider: p }),
+  setBrainModel: (m) => set({ brainModel: m }),
 
   setAssistantName: (name) => set({ assistantName: name }),
 

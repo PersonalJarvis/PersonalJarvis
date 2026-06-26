@@ -15,6 +15,7 @@ export function ChatInput() {
   const t = useT();
   const [value, setValue] = useState("");
   const connected = useEventStore((s) => s.connected);
+  const wsWarming = useEventStore((s) => s.wsWarming);
   const chatThinking = useEventStore((s) => s.chatThinking);
   const setChatThinking = useEventStore((s) => s.setChatThinking);
   // Most recent live reasoning step — the pill mirrors what the trace card
@@ -169,7 +170,13 @@ export function ChatInput() {
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder={connected ? t("chats_view.input_placeholder") : t("voice_state.offline")}
+          placeholder={
+            connected
+              ? t("chats_view.input_placeholder")
+              : wsWarming
+                ? t("voice_state.booting")
+                : t("voice_state.offline")
+          }
           disabled={!connected}
           rows={2}
           className="flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"

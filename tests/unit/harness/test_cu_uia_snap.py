@@ -62,6 +62,27 @@ def test_pick_snap_node_empty():
     assert sol._pick_snap_node([], 10, 10, 80) is None
 
 
+def test_pick_snap_node_rejects_window_whose_center_is_far():
+    # BUG-CU-UIASNAP (live 2026-06-24): a full-window node "contains" the miss,
+    # but clicking its CENTRE (~screen centre) relocates the click ~1500px. A
+    # snap must only NUDGE, never RELOCATE -> reject -> caller falls to refine.
+    nodes = [_node(0, 0, 3840, 2088, name="(8) Home / X - Google Chrome")]
+    assert sol._pick_snap_node(nodes, 438, 168, 80) is None
+
+
+def test_pick_snap_node_uses_near_control_over_containing_window():
+    # The miss is just OUTSIDE a small control but INSIDE the page window. Old
+    # code returned the window (centre far, ~screen centre); the fix rejects the
+    # window by the nudge bound and snaps to the genuinely near control instead.
+    nodes = [
+        _node(0, 0, 3840, 2088, name="window"),   # contains miss, centre far
+        _node(500, 150, 30, 30, name="button"),   # centre (515,165), near the miss
+    ]
+    picked = sol._pick_snap_node(nodes, 490, 165, 80)  # inside window, just left of button
+    assert picked is not None
+    assert picked.name == "button"
+
+
 # --- snap helper ------------------------------------------------------------
 
 

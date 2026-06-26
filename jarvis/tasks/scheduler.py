@@ -41,7 +41,9 @@ log = logging.getLogger(__name__)
 
 
 class _Dispatchable(Protocol):
-    async def run(self, task_id: str) -> None: ...
+    async def run(
+        self, task_id: str, *, trigger_event: dict[str, Any] | None = None
+    ) -> None: ...
 
 
 def parse_iso_timestamp_to_ns(iso: str) -> int:
@@ -96,6 +98,13 @@ class TaskScheduler:
         # bei 0 fliegt der Task aus dem Index und wird als "completed"
         # markiert.
         self._firings_left: dict[str, int | None] = {}
+        # Fire-once dedup for event-triggered rules: an (task_id, subject) pair
+        # that has already fired is never fired again. ``subject`` is the event's
+        # identifying field (e.g. a MissionCompleted's mission_id), so a standing
+        # rule ("whenever a mission finishes") cannot re-fire for the SAME mission
+        # if a terminal event is somehow re-published. Insertion-ordered dict used
+        # as a bounded FIFO set (see _DEDUP_CAP) to keep memory bounded.
+        self._fired_dedup: dict[tuple[str, str], None] = {}
         # Pending Runner-Tasks, damit wir beim Cancel aufraeumen koennen.
         self._runner_tasks: set[asyncio.Task[Any]] = set()
 
@@ -183,6 +192,9 @@ class TaskScheduler:
         task_ids = self._on_event_index.get(cls_name)
         if not task_ids:
             return
+        # Snapshot the event's flat fields once — handed to the runner as the
+        # ``trigger_event`` template context ({result_uri}, {status}, ...).
+        event_ctx = _event_to_dict(event)
         # Copy, damit der Runner-Loop die Menge modifizieren darf.
         for tid in list(task_ids):
             # Filter-Matching hier vorziehen — das spart einen Runner-
@@ -197,6 +209,15 @@ class TaskScheduler:
                 continue
             if not _match_filter(event, spec.trigger.filter_expr):
                 continue
+            # Fire-once dedup: never run the same rule twice for the same event
+            # subject (e.g. one mission's terminal event). Skips WITHOUT touching
+            # the max_firings counter, so a re-published event cannot drain it.
+            dedup_key = _dedup_key(tid, event)
+            if dedup_key is not None:
+                if dedup_key in self._fired_dedup:
+                    continue
+                self._fired_dedup[dedup_key] = None
+                self._trim_dedup()
             # H10-Fix: max_firings in-memory tracken. Wenn 0 → Task aus
             # Index entfernen, auf "completed" setzen, NICHT dispatchen.
             left = self._firings_left.get(tid)
@@ -206,7 +227,7 @@ class TaskScheduler:
                     self._firings_left.pop(tid, None)
                     continue
                 self._firings_left[tid] = left - 1
-            await self._dispatch_runner(tid)
+            await self._dispatch_runner(tid, trigger_event=event_ctx)
             # Wenn das der letzte Fire war: cleanup.
             if left is not None and left - 1 <= 0:
                 task_ids.discard(tid)
@@ -365,17 +386,33 @@ class TaskScheduler:
         self._known.add(task_id)
         await self._store.set_next_due(task_id, next_due)
 
-    async def _dispatch_runner(self, task_id: str) -> None:
+    def _trim_dedup(self) -> None:
+        """Bound the fire-once dedup map — drop the oldest half on overflow."""
+        if len(self._fired_dedup) <= _DEDUP_CAP:
+            return
+        for key in list(self._fired_dedup)[: _DEDUP_CAP // 2]:
+            del self._fired_dedup[key]
+
+    async def _dispatch_runner(
+        self,
+        task_id: str,
+        *,
+        trigger_event: dict[str, Any] | None = None,
+    ) -> None:
         if self._runner is None:
             log.warning("TaskScheduler.run: kein Runner attached, Task %s faellt durch", task_id)
             return
-        task = asyncio.create_task(self._safe_run(task_id), name=f"task-runner-{task_id}")
+        task = asyncio.create_task(
+            self._safe_run(task_id, trigger_event), name=f"task-runner-{task_id}"
+        )
         self._runner_tasks.add(task)
         task.add_done_callback(self._runner_tasks.discard)
 
-    async def _safe_run(self, task_id: str) -> None:
+    async def _safe_run(
+        self, task_id: str, trigger_event: dict[str, Any] | None = None
+    ) -> None:
         try:
-            await self._runner.run(task_id)  # type: ignore[union-attr]
+            await self._runner.run(task_id, trigger_event=trigger_event)  # type: ignore[union-attr]
         except Exception as exc:  # noqa: BLE001
             log.exception("TaskRunner crashed task=%s: %s", task_id, exc)
 
@@ -386,6 +423,36 @@ class TaskScheduler:
             return
         with contextlib.suppress(Exception):
             await asyncio.wait(tasks, timeout=2.0)
+
+
+# ----------------------------------------------------------------------
+# Event passthrough + fire-once dedup helpers
+# ----------------------------------------------------------------------
+
+# Upper bound on the fire-once dedup map; oldest half is dropped on overflow.
+_DEDUP_CAP = 4096
+
+
+def _event_to_dict(event: Event) -> dict[str, Any]:
+    """Flatten a frozen Event dataclass into a ``{field: value}`` dict.
+
+    Shallow (no recursion) — matches the flat-fields contract that both the
+    ``filter_expr`` evaluator and the runner's ``{field}`` templating rely on.
+    """
+    fields = getattr(event, "__dataclass_fields__", {})
+    return {name: getattr(event, name, None) for name in fields}
+
+
+def _dedup_key(task_id: str, event: Event) -> tuple[str, str] | None:
+    """Identify the event's subject for fire-once dedup, or ``None`` to skip it.
+
+    Today the only subject is a mission (``mission_id``); events without an
+    identifying field are not deduped (every occurrence is a distinct trigger).
+    """
+    subject = getattr(event, "mission_id", None)
+    if subject:
+        return (task_id, str(subject))
+    return None
 
 
 # ----------------------------------------------------------------------

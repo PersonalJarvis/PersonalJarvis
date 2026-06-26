@@ -107,9 +107,19 @@ def render_available_skills_section(
 
     header = "## AVAILABLE SKILLS\n"
     intro = (
-        "The user has these skills installed. When a request matches a "
-        "skill's description, call the `run-skill` tool with its name — "
-        "the tool returns the skill's instructions for you to follow:\n"
+        "These are the user's installed skills — saved preferences for HOW "
+        "recurring tasks should be done. BEFORE you answer from scratch or "
+        "spawn a worker, check this list. If the request plausibly matches a "
+        "skill's description / when-to-use — even loosely, even in new wording "
+        "that is not the exact trigger phrase — you MUST call the `run-skill` "
+        "tool with that skill's name FIRST, then follow the returned "
+        "instructions with your other tools. A matched skill always beats "
+        "answering on your own and always beats spawning a worker; that is "
+        "exactly why the user installed it. When unsure whether a skill "
+        "applies, prefer calling it — a wrong skill is cheap to skip, a missed "
+        "skill defeats its purpose. Do NOT, however, fire a skill for a plain "
+        "question that merely mentions its topic (\"what is Gmail?\" is not the "
+        "gmail skill; \"read my new mail\" is):\n"
     )
     body = "\n".join(bullets)
     outro = (

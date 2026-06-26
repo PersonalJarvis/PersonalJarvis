@@ -27,6 +27,17 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis brain switch <provider> --persist --yes --dry-run` — Switch the ACTIVE main brain provider (e.g. `jarvis brain switch openai`).
 - `jarvis brain test <provider> --dry-run` — Test connectivity + auth for a provider.
 
+## clis
+
+- `jarvis clis check <name> --yes --dry-run` — Probe a CLI's binary + auth (refreshes its status).
+- `jarvis clis connect <name> --json-body --yes --dry-run` — Connect a CLI's auth (oauth_cli flow or api_key).
+- `jarvis clis disconnect <name> --yes --dry-run` — Remove a CLI's stored auth credentials.
+- `jarvis clis install <name> --method --yes --dry-run` — Start an install job for a CLI (output streams in the desktop view).
+- `jarvis clis list` — List all CLIs with status (connected, installed, version, 7-day usage).
+- `jarvis clis show <name>` — Show one CLI (homepage, install methods, auth mode, secrets set).
+- `jarvis clis usage <name>` — Show a CLI's recent usage history.
+- `jarvis clis usage-stats <name>` — Show a CLI's aggregated usage stats (success rate, avg duration, top commands).
+
 ## conductor
 
 - `jarvis conductor add --def --yes --dry-run` — Add a job from a Job JSON document.
@@ -58,6 +69,16 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis docs search <query>` — Search the docs.
 - `jarvis docs show <slug>` — Show one doc page's body.
 - `jarvis docs tree` — Show the Diataxis-grouped doc tree.
+
+## friends
+
+- `jarvis friends add --json-body --yes --dry-run` — Add a friend.
+- `jarvis friends delete <friend_id> --yes --dry-run` — Delete a friend and their channels.
+- `jarvis friends edit <friend_id> --json-body --yes --dry-run` — Edit a friend (partial).
+- `jarvis friends list` — List friends with their channels.
+- `jarvis friends message <friend_id> --text --yes --dry-run` — Send an outbound message to a friend (consequential — needs --yes).
+- `jarvis friends messages <friend_id>` — Show the message thread with a friend.
+- `jarvis friends show <friend_id>` — Show one friend (detail + channels + permission profile).
 
 ## frontier
 
@@ -122,6 +143,13 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis skills list` — List all discovered skills.
 - `jarvis skills reload --yes --dry-run` — Re-scan the skills directory.
 - `jarvis skills show <name>` — Show one skill's detail.
+
+## socials
+
+- `jarvis socials add --json-body --yes --dry-run` — Add a social link.
+- `jarvis socials delete <social_id> --yes --dry-run` — Delete a social link.
+- `jarvis socials edit <social_id> --json-body --yes --dry-run` — Edit a social link (partial).
+- `jarvis socials list` — List social links.
 
 ## system
 

@@ -59,7 +59,11 @@ export function JarvisDock() {
   const [fileArmed, setFileArmed] = useState(false); // a native OS drag is in flight
   const [flash, setFlash] = useState(false); // brief post-drop "absorb" burst
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isBar = config?.style === "whisper_bar";
+  // Mascot ONLY when explicitly selected; the slim bar for "whisper_bar"/"none"
+  // and while the style is still loading (config === null). Defaulting the
+  // unknown/loading state to the bar (the documented default) stops a ghost
+  // mascot from flashing in for a user who picked the bar.
+  const isBar = config?.style !== "mascot";
 
   // Clear the pending "absorb" timer on unmount so it can't setState on a gone
   // component (the source of a stray act() warning and a small leak).

@@ -6,6 +6,7 @@ back; a `revoked` refresh drops the entry so the UI can prompt a reconnect.
 """
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -281,6 +282,35 @@ async def test_scheduler_run_once_delegates() -> None:
     )
     outcomes = await sched.run_once()
     assert outcomes == {"notion": REFRESHED}
+
+
+def test_log_cycle_names_dead_plugins_at_warning(caplog) -> None:  # noqa: ANN001
+    # A revoked connection must be named at WARNING so it doesn't rot unseen
+    # behind an anonymous "revoked=1" count (live: linear sat dead 22 days
+    # unnoticed). A healthy refresh must not appear in the warning.
+    caplog.set_level(logging.WARNING)
+    RefreshScheduler._log_cycle({"gmail": REVOKED, "notion": REFRESHED})
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("gmail" in r.getMessage() for r in warnings)
+    assert not any("notion" in r.getMessage() for r in warnings)
+
+
+def test_log_cycle_lists_every_dead_plugin(caplog) -> None:  # noqa: ANN001
+    caplog.set_level(logging.WARNING)
+    RefreshScheduler._log_cycle({"gmail": REVOKED, "linear": REVOKED, "slack": SKIPPED})
+
+    msg = " ".join(
+        r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
+    )
+    assert "gmail" in msg and "linear" in msg
+
+
+def test_log_cycle_no_warning_when_all_healthy(caplog) -> None:  # noqa: ANN001
+    caplog.set_level(logging.WARNING)
+    RefreshScheduler._log_cycle({"notion": REFRESHED, "slack": SKIPPED})
+
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
 
 
 @pytest.mark.asyncio

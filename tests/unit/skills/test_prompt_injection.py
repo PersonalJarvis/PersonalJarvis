@@ -194,6 +194,32 @@ def test_framing_mentions_instruction_loading() -> None:
     assert "instructions" in out
 
 
+def test_framing_is_imperative_and_skill_first() -> None:
+    """Claude-Code-parity stance (2026-06-24): the listing must push the brain
+    to check skills BEFORE answering/spawning and to prefer calling a skill on
+    a loose match — not a passive "when it matches" note. Locks the framing so a
+    future edit cannot silently revert to the weak wording that made skills
+    never fire.
+    """
+    registry = _FakeRegistry(skills=[
+        _FakeSkill(name="demo", frontmatter=_FakeFrontmatter(description="Does X.")),
+    ])
+
+    out = render_available_skills_section(registry)  # type: ignore[arg-type]
+
+    assert out is not None
+    lowered = out.lower()
+    # Imperative "must call run-skill first", and the before-answer/spawn check.
+    assert "must call" in lowered
+    assert "before you answer" in lowered
+    assert "spawn a worker" in lowered
+    # Loose-match stance ("even loosely" / prefer calling when unsure).
+    assert "even loosely" in lowered
+    assert "prefer calling" in lowered
+    # Over-fire guard is present (a topic mention is not a skill match).
+    assert "what is gmail" in lowered
+
+
 # ----------------------------------------------------------------------
 # AD-S2 L1: total char budget with least-recently-modified eviction
 # ----------------------------------------------------------------------

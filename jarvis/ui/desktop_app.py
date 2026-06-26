@@ -478,9 +478,15 @@ class DesktopApp:
            Event-Loop stoppen, Meta-Sidecar aufraeumen.
     """
 
-    def __init__(self, cfg: JarvisConfig | None = None) -> None:
+    def __init__(
+        self, cfg: JarvisConfig | None = None, *, session_token: str | None = None
+    ) -> None:
         self.cfg = cfg or load_config()
-        self.session_token = _generate_session_token()
+        # The fast-boot launcher generates the token up front (on the main
+        # thread, before this backend-thread construction) so the same token is
+        # used for both the server's TokenAuth env (below) and the window's
+        # _inject_token. When not injected, generate our own (classic path).
+        self.session_token = session_token or _generate_session_token()
         # ENV muss _vor_ dem Start des Backends gesetzt werden: uvicorn-Thread
         # liest sie beim FastAPI-App-Build, um den TokenAuth-Guard zu prime.
         os.environ[self.cfg.ui.auth_token_env] = self.session_token
@@ -495,6 +501,10 @@ class DesktopApp:
         self._backend_thread: threading.Thread | None = None
         self._backend_loop: asyncio.AbstractEventLoop | None = None
         self._server: WebServer | None = None
+        # Serve-first bootstrap: binds the admin port before the heavy build so
+        # /api/health answers immediately and the window can appear (see
+        # _run_backend). The real app is delegated to it once built.
+        self._bootstrap: Any = None
         self._window: Any = None
         self._shutdown_done = False
         self._tray: Any = None
@@ -527,8 +537,13 @@ class DesktopApp:
 
     # ---- Backend-Thread ----------------------------------------------------
 
-    def _run_backend(self) -> None:
+    def _run_backend(self, *, prebound: tuple[Any, Any] | None = None) -> None:
         """Eintrittspunkt des Backend-Threads.
+
+        ``prebound`` (fast-boot launcher path): ``(loop, bootstrap)`` already
+        created + bound BEFORE this heavy module was imported, so the port-bind
+        beat the import floor. When ``None`` (classic path), this creates the
+        loop and binds the bootstrap itself.
 
         Erstellt einen dedizierten asyncio-Loop, startet den ``WebServer``
         (``await server.start()``) und laesst den Loop ewig laufen bis
@@ -550,20 +565,21 @@ class DesktopApp:
         der Chat antwortet mit einer ehrlichen Setup-Anweisung statt mit
         scripted Standard-Phrasen. User-Wunsch: kein "dummer Jarvis" ohne LLM.
         """
-        from jarvis.brain.factory import build_default_brain
-        from jarvis.core.events import (
-            ErrorOccurred,
-            MessageSent,
-            ResponseGenerated,
-            ShowWindowRequested,
-        )
-        from jarvis.mcp import state as mcp_state
-        from jarvis.mcp.registry import MCPRegistry
-        from jarvis.state.chat_store import ChatStore, default_chats_db_path
-        from jarvis.state.supervisor import Supervisor
-        from jarvis.ui.web.server import WebServer  # lazy, vermeidet Circular
-
-        loop = asyncio.new_event_loop()
+        # NOTE: the heavy imports (build_default_brain → the brain graph,
+        # WebServer → fastapi + every route schema, etc.) are DELIBERATELY NOT
+        # done here. They hold the GIL in long C-level blocks, which would
+        # starve the bootstrap loop and delay the UI shell. They are imported
+        # AFTER ``wait_shell_served`` below — i.e. once the window has painted —
+        # so the visible boot is never blocked by the import storm.
+        if prebound is not None:
+            # Fast-boot launcher path: the loop already exists and the bootstrap
+            # is already bound + serving (the launcher did that BEFORE importing
+            # this heavy module, so the bind beat the import floor). Reuse them.
+            loop, _prebound_bootstrap = prebound
+            self._backend_thread = threading.current_thread()
+        else:
+            loop = asyncio.new_event_loop()
+            _prebound_bootstrap = None
         asyncio.set_event_loop(loop)
         self._backend_loop = loop
 
@@ -593,6 +609,30 @@ class DesktopApp:
                     f"BOOT_READY_MS={(time.perf_counter() - _bp_t0) * 1000.0:.1f}",
                     flush=True,
                 )
+
+        # === Serve-first fast boot ===========================================
+        # Bind a tiny bootstrap server on the admin port NOW, before the heavy
+        # WebServer build, so ``/api/health`` answers 200 within ~150 ms. The
+        # desktop shell (``run`` -> ``_wait_for_backend``) gates the pywebview
+        # window on that health poll, so the window appears at bootstrap-bind
+        # time instead of after the full ``server.start()``. The real FastAPI
+        # app is built behind the bootstrap (below) and handed over via
+        # ``set_app``; requests that arrive while it warms are held then
+        # delegated (the "serve first, init behind" contract). Mirrors the
+        # proven headless path (commit 6379222e).
+        if _prebound_bootstrap is not None:
+            # Already bound + BOOT_READY emitted by the launcher — just adopt it.
+            bootstrap = _prebound_bootstrap
+            self._bootstrap = bootstrap
+        else:
+            from jarvis.ui.web.fast_bootstrap import FastBootstrap
+
+            bootstrap = FastBootstrap()
+            loop.run_until_complete(
+                bootstrap.serve("127.0.0.1", self.cfg.ui.admin_api_port)
+            )
+            self._bootstrap = bootstrap
+            _db_boot_ready()  # /api/health is servable now → window can appear
 
         # Fire the heavy OpenWakeWord/onnxruntime import NOW, in a daemon thread,
         # BEFORE the WebServer + brain build + subsystem boot storm grab the
@@ -627,8 +667,39 @@ class DesktopApp:
 
         loop.set_exception_handler(_log_unhandled_async)
 
+        # Let the window OPEN and PAINT (fetch /api/health, then index.html +
+        # the entry JS bundle from the bootstrap) BEFORE the GIL-heavy build
+        # starts. The WebServer ctor + its C-extension imports (fastapi, the
+        # route schemas) hold the GIL in long blocks; if they run first they
+        # starve the loop and the user stares at a blank window. Serving the
+        # shell first means the rendered UI is up before the warm-up storm.
+        # Bounded (2 s) so a headless run with no window never stalls the build.
+        if self._bootstrap is not None:
+            loop.run_until_complete(self._bootstrap.wait_shell_served(timeout=2.0))
+
+        # Heavy imports — done NOW (after the shell has painted) so their
+        # GIL-holding C-level work no longer starves the bootstrap loop while
+        # the window is still rendering. See the note at the top of _run_backend.
+        from jarvis.brain.factory import build_default_brain
+        from jarvis.core.events import (
+            ErrorOccurred,
+            MessageSent,
+            ResponseGenerated,
+            ShowWindowRequested,
+        )
+        from jarvis.mcp import state as mcp_state
+        from jarvis.mcp.registry import MCPRegistry
+        from jarvis.state.chat_store import ChatStore, default_chats_db_path
+        from jarvis.state.supervisor import Supervisor
+        from jarvis.ui.web.server import WebServer  # lazy, vermeidet Circular
+
         _db_mark("pre_webserver")
-        server = WebServer(self.cfg)
+        # Build the FastAPI app + all routes (~1 s, CPU-bound) in a worker thread
+        # via the running loop, so the loop stays free to answer the bootstrap's
+        # /api/health while it builds — that is what lets the window appear at
+        # bind time rather than after the ~1 s ctor. WebServer.__init__ is
+        # loop-agnostic (pure construction + route mounting), so off-loop is safe.
+        server = loop.run_until_complete(asyncio.to_thread(WebServer, self.cfg))
         self._server = server
         _db_mark("webserver_ctor")
 
@@ -1215,13 +1286,14 @@ class DesktopApp:
                 )
 
         try:
-            loop.run_until_complete(server.start())
+            # The bootstrap already owns the listening socket, so build the real
+            # app WITHOUT starting its own uvicorn, then hand it to the bootstrap
+            # which delegates held + new requests to it.
+            loop.run_until_complete(server.start(start_serving=False))
+            bootstrap.set_app(server.app)
             _db_mark("server_start")
             # Erst nach erfolgreichem start() ist der Port wirklich belegt.
             _write_meta(self.cfg.ui.admin_api_port, os.getpid())
-            # The backend is now serving /api/health — the desktop shell's
-            # ``_wait_for_backend`` poll can succeed and the window be created.
-            _db_boot_ready()
             async def _start_overlay_bg() -> None:
                 try:
                     # Phase 9.8: Overlay-Subprocess starten wenn [overlay].enabled=true.
@@ -2024,6 +2096,8 @@ class DesktopApp:
                 desktop._window.restore()
                 desktop._window_visible = True
                 _bring_window_to_front_by_title(WINDOW_TITLE)
+                # Restore the persistent bar if a prior minimise cleared it.
+                desktop._restore_overlay_for_visible_window()
                 return {"ok": True, "focused": True}
             except Exception as exc:  # noqa: BLE001
                 return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
@@ -2087,15 +2161,25 @@ class DesktopApp:
     # ---- Main-Entry --------------------------------------------------------
 
     def run(self) -> int:
-        """Blockt bis der User das Fenster schliesst. Rueckgabe = Exit-Code."""
-        import webview  # type: ignore[import-not-found]
+        """Blockt bis der User das Fenster schliesst. Rueckgabe = Exit-Code.
 
+        Classic boot: start the backend thread here, then run the window. The
+        fast-boot launcher path starts the backend thread itself (so the
+        bootstrap binds BEFORE the heavy imports) and calls ``run_window_only``
+        directly — both share the identical window code below.
+        """
         self._backend_thread = threading.Thread(
             target=self._run_backend,
             name="jarvis-backend",
             daemon=True,
         )
         self._backend_thread.start()
+        return self.run_window_only()
+
+    def run_window_only(self) -> int:
+        """The main-thread pywebview window. Assumes the backend thread is
+        already running (started by :meth:`run` or the fast-boot launcher)."""
+        import webview  # type: ignore[import-not-found]
 
         if not self._wait_for_backend():
             sys.stderr.write("Backend startete nicht in 45s — Abbruch.\n")
@@ -2115,17 +2199,9 @@ class DesktopApp:
 
         # Close-Button = Minimize-to-Tray (User-Entscheidung 2026-04-20).
         # `closing`-Callback gibt False zurueck → pywebview bricht Destroy ab.
-        def _on_closing() -> bool:
-            if self._user_requested_quit:
-                return True
-            try:
-                self._window.hide()
-                self._window_visible = False
-            except Exception:  # noqa: BLE001
-                return True
-            return False
-
-        self._window.events.closing += _on_closing
+        # Extracted to a method so the tray-minimise + overlay-clear contract
+        # is unit-testable (test_desktop_minimize_to_tray_overlay.py).
+        self._window.events.closing += self._on_window_closing
 
         # Tray + Bridge zum Main-Thread-Window starten. Daemon-Thread, damit
         # er beim Hauptprogramm-Exit nicht am Leben bleibt.
@@ -2257,6 +2333,8 @@ class DesktopApp:
             self._window_visible = True
             _bring_window_to_front_by_title(WINDOW_TITLE)
             self._reload_window_if_stale()
+            # Bring the persistent bar back too (it was cleared on minimise).
+            self._restore_overlay_for_visible_window()
         except Exception:  # noqa: BLE001
             pass
 
@@ -2284,6 +2362,94 @@ class DesktopApp:
             self._window.load_url(self._url())
         except Exception:  # noqa: BLE001
             pass
+
+    # ---- Window close (X) = minimise to tray + clear overlay ---------------
+
+    def _on_window_closing(self) -> bool:
+        """pywebview ``closing`` callback: the X minimises to tray, not quit.
+
+        Returns ``True`` to allow the destroy — a genuine tray "Quit", where the
+        real :meth:`shutdown` tears everything down — and ``False`` to veto it
+        and hide the window instead. On a minimise we ALSO take the overlay bar
+        off the screen so the desktop is actually clean; it returns on the next
+        window-show or voice session.
+        """
+        if self._user_requested_quit:
+            return True
+        try:
+            self._window.hide()
+            self._window_visible = False
+            self._suppress_overlay_for_hidden_window()
+        except Exception:  # noqa: BLE001
+            return True
+        return False
+
+    def _suppress_overlay_for_hidden_window(self) -> None:
+        """Take the overlay bar off the screen while the window is minimised.
+
+        The persistent bar would otherwise stay on screen after the X (the app
+        keeps running in the tray for voice), which reads as "the bar won't
+        close". Drive the bar into the non-persistent (hide-at-idle) regime and
+        hide it now, WITHOUT mutating the user's saved ``bar_persistent``
+        preference. Voice activity still surfaces it (the bridge shows it on a
+        session and hides it again at idle); reopening the window restores the
+        configured regime via :meth:`_restore_overlay_for_visible_window`.
+        """
+        bar = getattr(self, "_orb", None)
+        bridge = getattr(self, "_bridge", None)
+        if bar is None or bridge is None:
+            return
+        try:
+            if getattr(bridge, "_boot_reveal_done", True) is False:
+                # The persistent whisper bar starts withdrawn at boot and is
+                # revealed once voice is ready. Before that first reveal there
+                # is no visible surface to suppress; flipping hide-on-idle here
+                # would turn the one-shot startup reveal into a no-op.
+                return
+            bridge._hide_on_idle = True
+            if hasattr(bar, "_persistent"):
+                bar._persistent = False
+            hide = getattr(bar, "hide", None)
+            if callable(hide):
+                hide()
+        except Exception:  # noqa: BLE001
+            from loguru import logger
+
+            logger.debug(
+                "overlay suppress for hidden window failed", exc_info=True
+            )
+
+    def _restore_overlay_for_visible_window(self) -> None:
+        """Reverse of :meth:`_suppress_overlay_for_hidden_window`.
+
+        Put the bar back into the user's configured persistence regime when the
+        window is shown again (tray click / focus / overlay right-click). A
+        persistent user gets the idle pill back immediately; a non-persistent
+        user keeps the hide-at-idle behaviour (the bar pops only on a session).
+        """
+        bar = getattr(self, "_orb", None)
+        bridge = getattr(self, "_bridge", None)
+        if bar is None or bridge is None:
+            return
+        try:
+            # Mirror the boot wiring in ``_start_speech_and_orb``: bar_persistent
+            # only governs the whisper bar; the mascot is always hide-at-idle.
+            orb_style = getattr(self.cfg.ui, "orb_style", "whisper_bar") or "whisper_bar"
+            persistent = bool(getattr(self.cfg.ui, "bar_persistent", True))
+            is_bar = orb_style == "whisper_bar"
+            bridge._hide_on_idle = (not persistent) if is_bar else True
+            if hasattr(bar, "_persistent"):
+                bar._persistent = persistent
+            if is_bar and persistent:
+                show = getattr(bar, "show", None)
+                if callable(show):
+                    show("idle")
+        except Exception:  # noqa: BLE001
+            from loguru import logger
+
+            logger.debug(
+                "overlay restore for visible window failed", exc_info=True
+            )
 
     # ---- Shutdown ----------------------------------------------------------
 
@@ -2410,6 +2576,14 @@ class DesktopApp:
                 asyncio.run_coroutine_threadsafe(stop_overlay(), loop).result(timeout=2.0)
             except Exception:  # noqa: BLE001
                 pass
+            # Stop the serve-first bootstrap (it owns the listening socket).
+            if self._bootstrap is not None:
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        self._bootstrap.stop(), loop
+                    ).result(timeout=3.0)
+                except Exception:  # noqa: BLE001
+                    pass
             try:
                 fut = asyncio.run_coroutine_threadsafe(server.stop(), loop)
                 try:
