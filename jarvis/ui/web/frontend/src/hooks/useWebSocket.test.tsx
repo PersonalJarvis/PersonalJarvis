@@ -103,3 +103,50 @@ describe("useWebSocket VoiceBootStatus handling", () => {
     expect(useEventStore.getState().voiceReady).toBe(false);
   });
 });
+
+describe("useWebSocket connection state (welcome-gated + warming)", () => {
+  const OriginalWS = globalThis.WebSocket;
+
+  beforeEach(() => {
+    (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket =
+      MockWebSocket;
+    (window as unknown as { location: unknown }).location = {
+      protocol: "http:",
+      host: "localhost:5173",
+    };
+    (window as unknown as { __JARVIS_TOKEN?: string }).__JARVIS_TOKEN = undefined;
+    useEventStore.setState({ connected: false, wsWarming: true });
+  });
+
+  afterEach(() => {
+    cleanup();
+    (globalThis as unknown as { WebSocket: typeof WebSocket }).WebSocket =
+      OriginalWS;
+    MockWebSocket.last = null;
+  });
+
+  it("marks connected only when the welcome frame arrives", async () => {
+    render(<Harness />);
+    await Promise.resolve(); // run the queued "open"
+    // Raw socket open alone must NOT mark connected (the bootstrap also opens).
+    expect(useEventStore.getState().connected).toBe(false);
+    MockWebSocket.last!.deliver({
+      type: "welcome",
+      session_id: "s",
+      version: "0.1.0",
+      token: "t",
+    });
+    expect(useEventStore.getState().connected).toBe(true);
+    expect(useEventStore.getState().wsWarming).toBe(false);
+  });
+
+  it("sets wsWarming on a 1013 close and clears it on a non-1013 close", async () => {
+    render(<Harness />);
+    await Promise.resolve();
+    MockWebSocket.last!.fire("close", { code: 1013 });
+    expect(useEventStore.getState().wsWarming).toBe(true);
+    expect(useEventStore.getState().connected).toBe(false);
+    MockWebSocket.last!.fire("close", { code: 1006 });
+    expect(useEventStore.getState().wsWarming).toBe(false);
+  });
+});

@@ -2,17 +2,17 @@
  * SkillCreateDialog — create a new user skill from the desktop app.
  *
  * Two ways in, one robust outcome:
- *  - Fill the form (name + instructions) and hit Create. This goes through the
- *    deterministic POST /api/skills path — no brain, always works, even on a
- *    headless VPS.
- *  - Optionally hit "Draft with AI": the creator endpoint turns a free-text
- *    intent into a pre-filled draft. If a brain is reachable it fills richer
- *    content; if not (or it fails) it returns a deterministic starter template
- *    and the form stays fully editable. Either way the user reviews the fields
- *    and Create persists exactly what they see.
+ *  - "Write the whole skill with AI": you describe what the skill should do and
+ *    the AI writes the COMPLETE skill (name, instructions, voice trigger). It
+ *    lands fully filled in for a quick review, then one click creates it. If a
+ *    brain is reachable it fills rich content; if not it returns a deterministic
+ *    starter template and the form stays editable (headless-VPS safe).
+ *  - Fill the form yourself and hit Create — the deterministic POST /api/skills
+ *    path, no brain needed.
+ * Either way Create persists exactly what you see.
  */
 import { useEffect, useState } from "react";
-import { X, Sparkles, Loader2, Plus, AlertTriangle } from "lucide-react";
+import { X, Sparkles, Loader2, Plus, AlertTriangle, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useT } from "@/i18n";
@@ -51,6 +51,10 @@ export function SkillCreateDialog({
   const [trigger, setTrigger] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [aiNote, setAiNote] = useState<string | null>(null);
+  // True once the AI has written the whole skill into the fields — drives the
+  // "review then create" affordance (success banner + highlighted Create).
+  const [aiDrafted, setAiDrafted] = useState(false);
+  const [aiOk, setAiOk] = useState(false);
 
   // Reset all state whenever the dialog (re)opens, and wire Escape-to-close.
   useEffect(() => {
@@ -63,6 +67,8 @@ export function SkillCreateDialog({
     setTrigger("");
     setError(null);
     setAiNote(null);
+    setAiDrafted(false);
+    setAiOk(false);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
@@ -75,6 +81,7 @@ export function SkillCreateDialog({
   const runDraft = async () => {
     setError(null);
     setAiNote(null);
+    setAiDrafted(false);
     try {
       const res = await draftSkill.mutateAsync({
         intent,
@@ -89,9 +96,11 @@ export function SkillCreateDialog({
       setBody(d.body ?? "");
       const firstVoice = (d.triggers ?? []).find((tr) => tr.type === "voice");
       if (firstVoice?.pattern) setTrigger(firstVoice.pattern);
+      setAiOk(res.brain_used);
+      setAiDrafted(true);
       setAiNote(
         res.brain_used
-          ? t("skill_create_dialog.brain_used")
+          ? t("skill_create_dialog.ai_done_review")
           : t("skill_create_dialog.brain_unavailable"),
       );
     } catch (e) {
@@ -171,9 +180,9 @@ export function SkillCreateDialog({
 
         <ScrollArea className="flex-1">
           <div className="space-y-4 px-6 py-5">
-            {/* Intent + AI draft */}
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+            {/* Describe → let the AI write the whole skill */}
+            <div className="rounded-lg border border-primary/30 bg-primary/[0.04] p-4">
+              <label className="mb-1.5 block text-xs font-medium text-foreground">
                 {t("skill_create_dialog.intent_label")}
               </label>
               <textarea
@@ -183,30 +192,48 @@ export function SkillCreateDialog({
                 placeholder={t("skill_create_dialog.intent_placeholder")}
                 className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
               />
-              <div className="mt-2 flex items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void runDraft()}
-                  disabled={busy || intent.trim().length < 3}
-                  className="gap-1.5"
-                >
-                  {draftSkill.isPending ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Sparkles className="h-3.5 w-3.5" />
-                  )}
-                  {t("skill_create_dialog.draft_with_ai")}
-                </Button>
-                {aiNote && (
-                  <span className="text-[11px] text-muted-foreground">
-                    {aiNote}
-                  </span>
+              <Button
+                onClick={() => void runDraft()}
+                disabled={busy || intent.trim().length < 3}
+                className="mt-2.5 w-full gap-2"
+              >
+                {draftSkill.isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    {t("skill_create_dialog.writing")}
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-4 w-4" />
+                    {t("skill_create_dialog.write_with_ai")}
+                  </>
                 )}
-              </div>
+              </Button>
             </div>
 
-            <div className="h-px bg-border" />
+            {/* AI result banner */}
+            {aiNote && (
+              <div
+                className={
+                  aiOk
+                    ? "flex items-start gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs text-emerald-300"
+                    : "flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-300"
+                }
+              >
+                {aiOk ? (
+                  <Check className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+                ) : (
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+                )}
+                <span>{aiNote}</span>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider text-muted-foreground">
+              <div className="h-px flex-1 bg-border" />
+              {t("skill_create_dialog.or_review_edit")}
+              <div className="h-px flex-1 bg-border" />
+            </div>
 
             {/* Name + Category */}
             <div className="grid grid-cols-[1fr_180px] gap-3">
@@ -293,7 +320,15 @@ export function SkillCreateDialog({
           <Button variant="ghost" onClick={onClose} disabled={busy}>
             {t("common.close")}
           </Button>
-          <Button onClick={() => void runCreate()} disabled={busy} className="gap-1.5">
+          <Button
+            onClick={() => void runCreate()}
+            disabled={busy}
+            className={
+              aiDrafted
+                ? "gap-1.5 ring-2 ring-primary ring-offset-2 ring-offset-card"
+                : "gap-1.5"
+            }
+          >
             {createSkill.isPending ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (

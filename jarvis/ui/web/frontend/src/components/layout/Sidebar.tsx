@@ -23,7 +23,6 @@ import {
 import { useEventStore, type SectionId } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { useMemo } from "react";
-import { MascotGigi } from "@/components/MascotGigi";
 import { useT } from "@/i18n";
 
 interface NavItem {
@@ -128,8 +127,10 @@ export function Sidebar() {
   const transcription = useEventStore((s) => s.transcription);
   const transcriptionFinal = useEventStore((s) => s.transcriptionFinal);
   const connected = useEventStore((s) => s.connected);
+  const wsWarming = useEventStore((s) => s.wsWarming);
   const voiceReady = useEventStore((s) => s.voiceReady);
   const brainProvider = useEventStore((s) => s.brainProvider);
+  const brainModel = useEventStore((s) => s.brainModel);
   const agentsCount = useEventStore((s) =>
     s.events.filter((e) => e.name === "AgentStateChange").length > 0 ? undefined : 0,
   );
@@ -139,9 +140,15 @@ export function Sidebar() {
   // normal idle "Ready" dot (which would falsely imply the mic already works).
   // Disconnected outranks warmup — "Offline" is the honest state with no socket.
   const voiceWarming = connected && !voiceReady;
+  // A disconnected-but-warming socket (fast-boot backend still starting) reads
+  // "Starting…", not the alarming "OFFLINE".
+  const bootWarming = !connected && wsWarming;
+  const showSpinner = voiceWarming || bootWarming;
   const vs = VOICE_STATE_STYLE[voiceState] ?? VOICE_STATE_STYLE.idle;
   const voiceLabel = !connected
-    ? t("voice_state.offline")
+    ? bootWarming
+      ? t("voice_state.booting")
+      : t("voice_state.offline")
     : voiceWarming
       ? t("voice_state.starting")
       : t(`voice_state.${voiceState}`);
@@ -152,13 +159,22 @@ export function Sidebar() {
     <aside className="flex h-full w-[280px] shrink-0 flex-col border-r border-border bg-card/40 backdrop-blur">
       <div className="border-b border-border px-4 py-4">
         <div className="flex items-center gap-3">
-          {/* enableComments={false}: the mascot's floating speech-bubble is
-              anchored beside a free-standing mascot, but here the mascot hugs
-              the window edge — the listening bubble slid off-screen and only
-              its yellow border + glow bled back in (the spurious "yellow
-              frame"). The sidebar already surfaces voice status + the live
-              transcript in its own boxes below, so the bubble is redundant. */}
-          <MascotGigi size={44} enableComments={false} />
+          {/* The original Personal Jarvis logo — the ghost mascot. A snapshot
+              had swapped the header avatar for a bar glyph / gold-spark mark;
+              this is the canonical brand identity (jarvis-gigi). */}
+          <span
+            data-testid="sidebar-style-avatar"
+            data-variant="logo"
+            className="flex h-11 w-11 shrink-0 items-center justify-center"
+          >
+            <img
+              src="/jarvis-logo.png"
+              width={40}
+              height={40}
+              alt="Personal Jarvis"
+              className="shrink-0"
+            />
+          </span>
           <div className="flex min-w-0 flex-1 flex-col">
             <span className="font-display text-sm font-semibold tracking-tight">
               {assistantName}
@@ -167,7 +183,7 @@ export function Sidebar() {
               {voiceLabel}
             </span>
           </div>
-          {voiceWarming ? (
+          {showSpinner ? (
             <Loader2
               className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground"
               data-testid="voice-starting-spinner"
@@ -232,6 +248,17 @@ export function Sidebar() {
               {t("sidebar.brain_label")}
             </div>
             <div className="text-xs font-medium truncate">{providerLabel}</div>
+            {/* The configured model id (e.g. "claude-opus-4-8") — the user asked
+                to see WHICH model is actually in use, not just the provider. */}
+            {brainModel && (
+              <div
+                className="text-[10px] text-muted-foreground/70 truncate"
+                title={brainModel}
+                data-testid="sidebar-brain-model"
+              >
+                {brainModel}
+              </div>
+            )}
           </div>
           <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
         </button>

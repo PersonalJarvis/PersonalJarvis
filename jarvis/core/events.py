@@ -415,6 +415,38 @@ class AnnouncementRequested(Event):
     detail: str | None = None
 
 
+# Mission completion — bridged from the per-mission MissionBus to drive When-Then rules
+
+@dataclass(frozen=True, slots=True)
+class MissionCompleted(Event):
+    """Terminal mission outcome, bridged from the isolated Phase-6 ``MissionBus``
+    onto the global ``EventBus`` by ``MissionEventBridge``.
+
+    Phase-6 mission lifecycle events (``MissionApproved`` / ``MissionFailed`` /
+    ``MissionCancelled`` / ``MissionTimedOut``) live on the per-mission
+    ``MissionBus`` and never reach the global bus. The Tasks scheduler — which
+    drives the When-Then automation rules — is a global-``EventBus`` subscriber,
+    so on its own it can never see a mission finishing. This event is that bridge:
+    one flat, global signal per terminal mission outcome that a ``TriggerOnEvent``
+    rule matches by name (``event_name="MissionCompleted"``) and filters by field
+    (``filter_expr="status == 'approved'"``).
+
+    All fields are flat (no nested dicts) on purpose: the scheduler's safe-AST
+    ``filter_expr`` evaluator builds its namespace from ``__dataclass_fields__``
+    and only compares top-level names. ``result_uri`` is the approved artifact's
+    path (empty for non-approved outcomes); ``reason`` carries the failure/cancel
+    cause. This is the machine-readable trigger signal — distinct from the spoken
+    ``AnnouncementRequested`` readback the ``MissionAnnouncer`` emits for the same
+    mission, so the two never collide.
+    """
+    mission_id: str = ""
+    status: Literal["approved", "failed", "cancelled", "timed_out"] = "approved"  # noqa: UP037
+    summary_de: str = ""
+    summary_en: str = ""
+    result_uri: str = ""
+    reason: str = ""
+
+
 # Voice mute (user-facing toggle, e.g. mascot double-click)
 
 @dataclass(frozen=True, slots=True)

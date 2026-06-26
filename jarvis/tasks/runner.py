@@ -135,8 +135,16 @@ class TaskRunner:
         self,
         task_id: str,
         cancel_token: CancelToken | None = None,
+        *,
+        trigger_event: dict[str, Any] | None = None,
     ) -> None:
-        """Fuehrt einen Task komplett durch. Terminal-State im Store persistiert."""
+        """Fuehrt einen Task komplett durch. Terminal-State im Store persistiert.
+
+        ``trigger_event`` carries the flat fields of the bus event that fired an
+        ``on_event`` task (e.g. a ``MissionCompleted`` with ``result_uri``). Its
+        values are available as ``{field}`` placeholders in the action prompt/text
+        and in the ``announce_on_*`` strings. ``None`` for time-based tasks.
+        """
         spec = await self._store.get_spec(task_id)
         if spec is None:
             log.warning("TaskRunner: task_id %s nicht im Store gefunden", task_id)
@@ -148,6 +156,7 @@ class TaskRunner:
                                            error=cancel_token.reason or "cancelled")
             return
 
+        ctx = _event_context(trigger_event)
         await self._store.update_state(task_id, "running", increment_attempts=True)
         await self._bus.publish(
             TaskStarted(task_id=task_id, source_layer="tasks.runner")
@@ -155,7 +164,7 @@ class TaskRunner:
 
         start = time.perf_counter()
         try:
-            await self._execute_action(task_id, spec, cancel_token)
+            await self._execute_action(task_id, spec, cancel_token, ctx)
         except _Cancelled as exc:
             await self._store.update_state(task_id, "cancelled", error=str(exc))
             return
@@ -174,6 +183,7 @@ class TaskRunner:
                 )
             )
             log.exception("Task %s failed after %dms", task_id, duration_ms)
+            await self._announce(getattr(spec, "announce_on_failure", None), ctx)
             return
 
         duration_ms = int((time.perf_counter() - start) * 1000)
@@ -193,6 +203,29 @@ class TaskRunner:
                 source_layer="tasks.runner",
             )
         )
+        await self._announce(getattr(spec, "announce_on_success", None), ctx)
+
+    async def _announce(self, template: str | None, ctx: dict[str, Any]) -> None:
+        """Emit a When-Then completion announcement (``announce_on_*``).
+
+        Interpolates the triggering event's fields into ``template`` and publishes
+        it as ``AnnouncementRequested(kind="subagent")`` — the readback kind that
+        survives the voice hangup gate and is mirrored to browser tabs, so it
+        reaches the user after "auflegen" and on a headless runtime. No-op when the
+        rule set no announcement.
+        """
+        if not template:
+            return
+        text = _safe_format(template, ctx).strip()
+        if not text:
+            return
+        await self._bus.publish(
+            AnnouncementRequested(
+                text=text,
+                kind="subagent",
+                source_layer="tasks.runner",
+            )
+        )
 
     # ------------------------------------------------------------------
     # Dispatch
@@ -203,19 +236,20 @@ class TaskRunner:
         task_id: str,
         spec: Any,
         cancel_token: CancelToken | None,
+        ctx: dict[str, Any],
     ) -> None:
         action = spec.action
         # Cancel check
         self._check_cancel(cancel_token)
 
         if action.kind == "harness_dispatch":
-            await self._run_harness_dispatch(task_id, action, cancel_token)
+            await self._run_harness_dispatch(task_id, action, cancel_token, ctx)
         elif action.kind == "speak":
-            await self._run_speak(task_id, action, cancel_token)
+            await self._run_speak(task_id, action, cancel_token, ctx)
         elif action.kind == "tool_call":
             await self._run_tool_call(task_id, action, cancel_token)
         elif action.kind == "agent":
-            await self._run_agent(task_id, action, cancel_token)
+            await self._run_agent(task_id, action, cancel_token, ctx)
         else:  # pragma: no cover — schema laesst nichts anderes zu
             raise RuntimeError(f"Unbekannter Action-Kind: {action.kind}")
 
@@ -228,6 +262,7 @@ class TaskRunner:
         task_id: str,
         action: Any,
         cancel_token: CancelToken | None,
+        ctx: dict[str, Any],
     ) -> None:
         if self._harness is None:
             raise RuntimeError("HarnessManager nicht konfiguriert — harness_dispatch geht nicht")
@@ -235,13 +270,17 @@ class TaskRunner:
         # Testumgebungen erzeugen
         from jarvis.core.protocols import HarnessTask
 
+        # Interpolate {field} placeholders from the triggering event so a CU goal
+        # like "open {result_uri} in the browser" resolves to the finished
+        # mission's artifact. No-op for time-based tasks (empty ctx).
+        prompt = _safe_format(action.prompt, ctx)
         task = HarnessTask(
-            prompt=action.prompt,
+            prompt=prompt,
             allow_computer_use=action.allow_computer_use,
         )
         seq = await self._store.append_step(
             task_id, "action",
-            {"kind": "harness_dispatch", "harness": action.harness},
+            {"kind": "harness_dispatch", "harness": action.harness, "prompt": prompt},
         )
         await self._bus.publish(
             TaskStepRecorded(task_id=task_id, seq=seq, kind="action",
@@ -272,10 +311,12 @@ class TaskRunner:
         task_id: str,
         action: Any,
         cancel_token: CancelToken | None,
+        ctx: dict[str, Any],
     ) -> None:
+        text = _safe_format(action.text, ctx)
         seq = await self._store.append_step(
             task_id, "action",
-            {"kind": "speak", "text": action.text},
+            {"kind": "speak", "text": text},
         )
         await self._bus.publish(
             TaskStepRecorded(task_id=task_id, seq=seq, kind="action",
@@ -291,7 +332,7 @@ class TaskRunner:
         # Sprache: action hat optional .language; sonst Default "de".
         from jarvis.brain.output_filter import scrub_for_voice
         speak_lang = getattr(action, "language", None) or "de"
-        scrubbed = scrub_for_voice(action.text, language=speak_lang)
+        scrubbed = scrub_for_voice(text, language=speak_lang)
         if scrubbed.actions:
             log.info(
                 "tasks.runner.speak filter [%s]: %s (fallback=%s)",
@@ -332,6 +373,7 @@ class TaskRunner:
         task_id: str,
         action: Any,
         cancel_token: CancelToken | None,
+        ctx: dict[str, Any],
     ) -> None:
         """Run an agentic brain turn: the prompt is executed with the toggled
         plugins as the tool allowlist. Each grant's scope is forwarded so the
@@ -341,6 +383,7 @@ class TaskRunner:
             raise RuntimeError(
                 "Agent brain not configured — agent action cannot run"
             )
+        prompt = _safe_format(action.prompt, ctx)
         allowed_tools = tuple(g.plugin_id for g in action.plugin_grants)
         # Plugins the user granted write/full are pre-authorized for this
         # unattended run (ask-tier actions auto-approve); read stays gated.
@@ -352,7 +395,7 @@ class TaskRunner:
             task_id, "action",
             {
                 "kind": "agent",
-                "prompt": action.prompt[:200],
+                "prompt": prompt[:200],
                 "tools": list(allowed_tools),
                 "grants": [{"plugin_id": g.plugin_id, "scope": g.scope}
                            for g in action.plugin_grants],
@@ -372,7 +415,7 @@ class TaskRunner:
             )
         try:
             result = await self._brain.run_task(
-                prompt=action.prompt,
+                prompt=prompt,
                 allowed_tools=allowed_tools,
                 model_tier=action.model_tier,
                 trace_id=trace_id,
@@ -465,6 +508,40 @@ class TaskRunner:
 
 class _Cancelled(RuntimeError):
     """Interner Sentinel fuer Cancel-Paths."""
+
+
+class _SafeDict(dict):
+    """``str.format_map`` backing dict that leaves unknown ``{key}`` untouched."""
+
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"
+
+
+def _event_context(trigger_event: dict[str, Any] | None) -> dict[str, Any]:
+    """Normalize the triggering event into a flat string-keyed template context.
+
+    Drops the bus-bookkeeping fields (``trace_id``/``timestamp_ns``/
+    ``source_layer``) so only meaningful event data is exposed as placeholders.
+    """
+    if not trigger_event:
+        return {}
+    drop = {"trace_id", "timestamp_ns", "source_layer"}
+    return {k: v for k, v in trigger_event.items() if k not in drop}
+
+
+def _safe_format(template: str, ctx: dict[str, Any]) -> str:
+    """Interpolate ``{field}`` placeholders from ``ctx``; never raise.
+
+    Unknown placeholders pass through verbatim (``_SafeDict``). A malformed
+    template (stray brace, attribute/format-spec access) returns unchanged rather
+    than crashing the task — the template is user-authored, not trusted input.
+    """
+    if not template or "{" not in template:
+        return template
+    try:
+        return template.format_map(_SafeDict(ctx))
+    except (ValueError, IndexError, KeyError, AttributeError, TypeError):
+        return template
 
 
 def _lookup_tool(registry: Any, name: str) -> Any:

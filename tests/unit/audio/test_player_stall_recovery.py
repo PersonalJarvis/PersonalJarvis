@@ -108,6 +108,24 @@ async def test_play_chunks_resets_progress_at_start() -> None:
 
 
 @pytest.mark.asyncio
+async def test_play_chunks_stamps_progress_owner_at_start() -> None:
+    """The pipeline watchdog can only ignore unrelated playback progress if the
+    real player stamps which ``play_chunks`` task owns the current progress
+    counter."""
+    player = AudioPlayer.__new__(AudioPlayer)
+    player._init_progress()
+    player._device_logged = True
+    player._play_lock = None
+
+    task = asyncio.current_task()
+    assert task is not None
+
+    await player.play_chunks(_no_chunks())
+
+    assert player.last_write_owner_task_id == id(task)
+
+
+@pytest.mark.asyncio
 async def test_play_chunks_resets_progress_before_lock_wait() -> None:
     """The reset must happen BEFORE awaiting the play lock.
 

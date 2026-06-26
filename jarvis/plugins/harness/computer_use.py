@@ -21,6 +21,7 @@ from jarvis.harness.computer_use_context import (
     cu_recently_cancelled,
     get_computer_use_context,
     register_active_cu_token,
+    unregister_active_cu_token,
 )
 from jarvis.harness.screenshot_only_loop import run_cu_loop
 
@@ -87,7 +88,9 @@ class ComputerUseHarness:
         async with CancelScope(ctx.kill_switch, holder="cu_loop") as token:
             self._active_token = token
             # Register CU-scoped so the voice hangup ("auflegen") can cancel
-            # THIS mission without touching OpenClaw (BUG-CU-HANGUP).
+            # THIS mission without touching OpenClaw (BUG-CU-HANGUP). The
+            # registry is a SET — concurrent CU missions each register so a
+            # single hangup cancels them ALL (BUG-CU-CONCURRENT-CANCEL).
             register_active_cu_token(token)
             stream = run_cu_loop(task, ctx, cancel_token=token)
             try:
@@ -117,7 +120,11 @@ class ComputerUseHarness:
             finally:
                 await stream.aclose()
                 self._active_token = None
-                register_active_cu_token(None)
+                # Remove only THIS mission's token — a concurrently-running
+                # sibling stays registered and cancelable (BUG-CU-CONCURRENT-
+                # CANCEL: clearing the whole registry here orphaned the sibling
+                # so a later hangup found no token at all).
+                unregister_active_cu_token(token)
 
     async def cancel(self) -> None:
         """Bricht den laufenden Invoke ab.

@@ -139,7 +139,7 @@ async def test_bind_registers_kill_requested_subscriber():
 
     async with CancelScope(ks, holder="x") as tok:
         await bus.publish(KillRequested(source="hotkey"))
-        # Event-Dispatch ist async; gather um sicsampleugehen
+        # Event-Dispatch ist async; gather um sicherzugehen
         await asyncio.sleep(0)
         assert tok.is_cancelled()
         assert tok.reason is not None

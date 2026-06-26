@@ -55,3 +55,16 @@ def test_section_tells_model_to_self_discover_with_help():
     fake = FakeCliRegistry({"gh": make_spec("gh")}, active=[FakeTool("cli_gh")])
     out = render_connected_clis_section(fake)
     assert "--help" in out
+
+
+def test_section_explains_cli_result_interpretation():
+    from jarvis.clis.prompt_section import render_connected_clis_section
+
+    fake = FakeCliRegistry({"gh": make_spec("gh")}, active=[FakeTool("cli_gh")])
+    out = render_connected_clis_section(fake)
+    # Describes the structured result shape …
+    assert "exit_code" in out
+    assert "stdout" in out
+    # … and tells the model to interpret stdout, not read the envelope aloud.
+    assert "summarize" in out.lower() or "natural" in out.lower()
+    assert "never read" in out.lower()

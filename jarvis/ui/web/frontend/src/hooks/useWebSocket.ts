@@ -29,6 +29,7 @@ export function getWSClient(): WSClient | null {
 export function useWebSocket(): void {
   const mounted = useRef(false);
   const setConnected = useEventStore((s) => s.setConnected);
+  const setWarming = useEventStore((s) => s.setWarming);
   const pushEvent = useEventStore((s) => s.pushEvent);
   const setVoice = useEventStore((s) => s.setVoice);
   const setVoiceReady = useEventStore((s) => s.setVoiceReady);
@@ -44,11 +45,24 @@ export function useWebSocket(): void {
     mounted.current = true;
 
     const client = new WSClient({
-      onOpen: () => setConnected(true),
-      onClose: () => setConnected(false),
+      // `connected` is welcome-gated (see the welcome branch below), so a raw
+      // socket open must NOT mark connected — the fast-boot bootstrap also
+      // opens then closes with 1013 without ever sending a welcome frame.
+      onOpen: () => {},
+      onClose: (code) => {
+        // 1013 = bootstrap "try again later" → backend still warming, not down.
+        setWarming(code === 1013);
+        setConnected(false);
+      },
       onMessage: (raw) => {
         const welcome = WSWelcome.safeParse(raw);
-        if (welcome.success) return;
+        if (welcome.success) {
+          // The real app sends `welcome` immediately after accepting the socket;
+          // this — not the raw open — is the authoritative "connected" signal.
+          setConnected(true);
+          setWarming(false);
+          return;
+        }
 
         const parsed = WSEventEnvelope.safeParse(raw);
         if (!parsed.success) return;
@@ -188,6 +202,10 @@ export function useWebSocket(): void {
           if (typeof p.to_provider === "string") {
             setBrainProvider(p.to_provider);
             pushToast("success", `Brain → ${p.to_provider}`);
+            // The switch payload carries no model, so re-fetch the authoritative
+            // status (provider + model) — keeps the sidebar model line fresh
+            // after a voice/UI provider switch. useBrainStatus listens for this.
+            window.dispatchEvent(new CustomEvent("jarvis:brain-switched"));
           }
         }
 
@@ -253,6 +271,7 @@ export function useWebSocket(): void {
     };
   }, [
     setConnected,
+    setWarming,
     pushEvent,
     setVoice,
     setVoiceReady,

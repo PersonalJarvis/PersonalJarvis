@@ -425,7 +425,14 @@ def _load_tools_for_tier(
             # hot-reload subscriber then applies it to the NEXT turn with no
             # restart. Without the bus the change lands on disk but stays dormant
             # until restart — the exact symptom self-mod "doesn't work".
-            self_mod_tools = build_self_mod_tools(writer_kwargs={"bus": bus})
+            #
+            # auto_apply="all" (Wave 1.3): the brain-driven (voice/chat) config
+            # path applies every non-forbidden change immediately, no confirm
+            # round-trip ("never ask, always now"). REST/CLI keep their own
+            # confirm UX (they build their store on the default "safe_only").
+            self_mod_tools = build_self_mod_tools(
+                writer_kwargs={"bus": bus}, auto_apply="all"
+            )
             for name, inst in self_mod_tools.items():
                 tools[name] = inst
         except Exception as exc:  # noqa: BLE001 — defensive, kein Tool-Block fail-stops das Brain

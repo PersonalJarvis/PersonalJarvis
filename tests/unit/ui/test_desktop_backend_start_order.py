@@ -41,11 +41,31 @@ class _FakeWebServer:
         self.app = _FakeApp()
         self.stopped = False
 
-    async def start(self) -> None:
+    async def start(self, *, start_serving: bool = True) -> None:
+        self.start_serving = start_serving
         return None
 
     async def stop(self) -> None:
         self.stopped = True
+
+
+class _FakeBootstrap:
+    """Stand-in for FastBootstrap: no real socket bind in the unit test."""
+
+    def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+        self.app_set: Any = None
+
+    async def serve(self, _host: str, _port: int) -> None:
+        return None
+
+    def set_app(self, app: Any) -> None:
+        self.app_set = app
+
+    async def wait_shell_served(self, timeout: float = 0.0) -> bool:
+        return True
+
+    async def stop(self) -> None:
+        return None
 
 
 class _FakeChatStore:
@@ -158,6 +178,11 @@ def test_desktop_post_ready_warmups_run_after_event_loop_starts(monkeypatch, tmp
         monkeypatch,
         "jarvis.ui.web.server",
         WebServer=_FakeWebServer,
+    )
+    _install_fake_module(
+        monkeypatch,
+        "jarvis.ui.web.fast_bootstrap",
+        FastBootstrap=_FakeBootstrap,
     )
     _install_fake_module(
         monkeypatch,

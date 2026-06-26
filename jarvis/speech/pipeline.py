@@ -2371,7 +2371,9 @@ class SpeechPipeline:
                 event.text,
             )
             return
-        is_preamble = getattr(event, "kind", None) == "preamble"
+        event_kind = getattr(event, "kind", None)
+        is_preamble = event_kind == "preamble"
+        is_progress = event_kind == "progress"
         # 2026-05-26 cross-surface voice incoherence guard. After an
         # interrupt-priority announcement (typically a MissionFailed
         # readback) the user has just heard a terminal statement; a
@@ -2402,9 +2404,21 @@ class SpeechPipeline:
         # the missing reverse — Jarvis must not start speaking while the USER
         # holds the floor. Only non-interrupt announcements are gated; an
         # interrupt is a deliberate barge and still punches through.
+        current_turn_state = getattr(self, "_turn_state", TurnTakingState.IDLE)
+        if (
+            event.priority != "interrupt"
+            and is_progress
+            and current_turn_state
+            not in {TurnTakingState.IDLE, TurnTakingState.LISTENING}
+        ):
+            log.info(
+                "Progress announcement dropped — foreground turn active (%s): %r",
+                getattr(current_turn_state, "value", current_turn_state),
+                event.text[:80],
+            )
+            return
         if event.priority != "interrupt" and (
-            getattr(self, "_turn_state", TurnTakingState.IDLE)
-            in _USER_HOLDS_FLOOR_STATES
+            current_turn_state in _USER_HOLDS_FLOOR_STATES
         ):
             # A preamble or a "still on it" heartbeat (kind="progress") is only
             # meaningful in the moment — once the user holds the floor it is
@@ -2412,10 +2426,10 @@ class SpeechPipeline:
             # after the mission answer; events.py: progress = "droppable when
             # stale"). Completion/readback below owes the user information and is
             # deferred instead.
-            if is_preamble or getattr(event, "kind", None) == "progress":
+            if is_preamble or is_progress:
                 log.info(
                     "Announcement dropped — user holds the floor (%s): %r",
-                    getattr(event, "kind", None) or "normal",
+                    event_kind or "normal",
                     event.text[:80],
                 )
                 return
@@ -6846,6 +6860,14 @@ class SpeechPipeline:
                 return done
             player = getattr(self, "_player", None)
             last_write = getattr(player, "last_write_ns", 0) if player is not None else 0
+            owner_missing = object()
+            owner_task_id = (
+                getattr(player, "last_write_owner_task_id", owner_missing)
+                if player is not None
+                else owner_missing
+            )
+            if owner_task_id is not owner_missing and owner_task_id != id(play_task):
+                last_write = 0
             if last_write <= 0:
                 # No first frame yet: the synthesize / first-frame window. A slow
                 # TTS provider must NOT be misread as a device wedge — that false

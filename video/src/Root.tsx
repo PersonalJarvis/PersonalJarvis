@@ -1,9 +1,11 @@
 import "./index.css";
 import { AbsoluteFill, Composition } from "remotion";
 import { IntroVideo } from "./intro/IntroVideo";
+import { OnboardingVideo } from "./intro/OnboardingVideo";
 import { Background } from "./intro/components/Background";
 import { MorningOverview } from "./intro/scenes/MorningOverview";
 import { COLORS, TOTAL_FRAMES, VIDEO } from "./intro/theme";
+import { TL } from "./intro/onboarding/timeline";
 
 /**
  * Standalone preview of a single tutorial scene, wrapped with the same backdrop
@@ -20,6 +22,14 @@ const MorningOverviewPreview: React.FC = () => (
 export const RemotionRoot: React.FC = () => {
   return (
     <>
+      <Composition
+        id="OnboardingYT"
+        component={OnboardingVideo}
+        durationInFrames={TL.totalFrames}
+        fps={VIDEO.fps}
+        width={VIDEO.width}
+        height={VIDEO.height}
+      />
       <Composition
         id="IntroVideo"
         component={IntroVideo}

@@ -48,32 +48,65 @@ a browser UI to a full desktop with a tray app, an Orb overlay, and global-hotke
   browser's mic and speakers, or a full voice-and-overlay desktop. Local-hardware features
   are opt-in extras that degrade gracefully when they're absent.
 
-## Quick start
+## Install
 
-```bash
-git clone https://github.com/PersonalJarvis/PersonalJarvis ~/personal-jarvis
-cd ~/personal-jarvis
+One command on **Windows, macOS, or Linux** — no Docker, no Python-version archaeology. It
+builds a Python virtual environment, installs every feature, and runs the first-run wizard.
+**Bring your own keys**; nothing is bundled.
 
-python -m venv .venv
-source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1
+**Windows** — PowerShell
 
-pip install -e . --no-deps          # activates the plugin entry-points
-pip install -r requirements.txt     # runtime dependencies
-
-python -m jarvis --wizard           # interactive first-run setup
+```powershell
+irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.ps1 | iex
 ```
 
-The wizard walks you through hardware detection, API keys (stored in your OS credential
-manager — never in the repo), microphone, and a wake word.
-
-**Run it:**
+**macOS · Linux**
 
 ```bash
-# Full desktop: window + voice + Orb overlay
-python -m jarvis.ui.web.launcher
+curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash
+```
 
-# Headless server: API + WebSocket + browser UI, no local audio needed
-python -m jarvis.ui.web.launcher --headless
+> Open source — read the installer before you run it. It only creates a venv, installs
+> dependencies, and runs the first-run wizard (hardware detection, API keys stored in your OS
+> credential manager — never in the repo, microphone, wake word).
+
+| Install flag | Effect |
+|---|---|
+| `--headless` | API + WebSocket only — no desktop window or local voice (the VPS path) |
+| `--with-voice-local` | Also pull the local STT / TTS / wake models on install (~1.5 GB) |
+| `--no-launch` | Install only; don't start the app |
+| `--no-wizard` | Skip the first-run key wizard |
+
+<details>
+<summary><b>Prefer pipx, or a manual clone?</b></summary>
+
+<br/>
+
+**pipx** — isolated, no clone, any OS:
+
+```bash
+pipx install "git+https://github.com/PersonalJarvis/PersonalJarvis" && jarvis serve
+```
+
+**Manual** — clone it, read every line, then run:
+
+```bash
+git clone https://github.com/PersonalJarvis/PersonalJarvis
+cd PersonalJarvis
+python -m venv .venv && source .venv/bin/activate   # Windows: .\.venv\Scripts\Activate.ps1
+pip install -e .[full]
+jarvis serve
+```
+
+</details>
+
+## Run it
+
+The one-liner launches the app for you. To start it again later:
+
+```bash
+jarvis          # full desktop: window + voice + Orb overlay
+jarvis serve    # headless server: API + WebSocket + browser UI, no local audio needed
 ```
 
 Then open **http://localhost:47821** — the full Router-Brain → Worker-Critic →
@@ -148,7 +181,7 @@ Come build with us — questions, ideas, and showcases all welcome.
 </p>
 
 - **Discord** — [discord.gg/UPu6pFWrJ](https://discord.gg/UPu6pFWrJ)
-- **X** — [@PersonalJarvis](https://x.com/PersonalJarvis) · [@Alex_Sample](https://x.com/Alex_Sample)
+- **X** — [@PersonalJarvis](https://x.com/PersonalJarvis) · [@Ruben_Herz](https://x.com/Ruben_Herz)
 - **Instagram** — [@personaljarvis](https://www.instagram.com/personaljarvis/)
 - **GitHub** — [PersonalJarvis/PersonalJarvis](https://github.com/PersonalJarvis/PersonalJarvis)
 
