@@ -344,6 +344,42 @@ def _search_to_url(query: str) -> str:
     return _SEARCH_URL_PREFIX + quote_plus(query.strip())
 
 
+# A trailing desktop ACTION smuggled into a browser-search query. The search
+# fast-path captures the query non-greedily to the end of the utterance, so
+# "...google das wetter UND SCROLLE runter" / "...google cats THEN CLICK the
+# first result" folds the follow-up action into the Google query string and runs
+# a wrong search (finding 2026-06-26). When the query carries such a follow-up,
+# the search fast-path DECLINES (returns None) so the utterance falls to the
+# compound-open desktop-control routing → the multi-step computer-use loop, which
+# runs BOTH the search and the follow-up action.
+#
+# A connector (und/and/dann/then/danach/…) is REQUIRED immediately before the
+# GUI verb, so a legitimate multi-term search is never mistaken for an action:
+# "katzen UND hunde" (no verb after the connector) and "how TO CLICK a button"
+# (no connector before the verb) both stay clean DIRECT searches. Operates on
+# the pre-``_normalize``'d query (umlauts → ascii), so ascii verb stems match.
+_QUERY_FOLLOWUP_ACTION_RE = re.compile(
+    r"\b(?:und|and|dann|then|danach|anschliessend|afterwards)\b"
+    r"(?:\s+(?:dann|then))?\s+"
+    r"(?:"
+    r"klick|click|doppelklick|rechtsklick|tipp|scroll|"
+    r"markier|kopier|einfueg|waehl|wechsel|drueck|navigier|"
+    r"schliess|minimier|maximier|zieh|drag|verschieb|spiel|play"
+    r")\w*",
+    re.IGNORECASE,
+)
+
+
+def _query_has_followup_action(query: str) -> bool:
+    """True when a browser-search query smuggles a trailing desktop action
+    (a connector + a GUI verb, e.g. "... und scrolle runter", "... then click").
+
+    A connector is REQUIRED before the verb so a legitimate multi-term search
+    ("katzen und hunde", "how to click a button") is never caught. Pure regex,
+    no IO (AP-9 / AP-11)."""
+    return bool(_QUERY_FOLLOWUP_ACTION_RE.search(query))
+
+
 def _match_browser_url_fast_path(normalized: str) -> LocalActionPlan | None:
     """Deterministic browser+URL launch, or None to fall through."""
     if _OPEN_NEGATION_RE.search(normalized):
@@ -372,7 +408,12 @@ def _match_browser_url_fast_path(normalized: str) -> LocalActionPlan | None:
             ),),
         )
     m = _OPEN_BROWSER_SEARCH_RE.match(normalized)
-    if m:
+    # Decline when the query smuggled a trailing desktop action ("...google das
+    # wetter UND SCROLLE runter") — folding it into the Google query would run a
+    # wrong search and drop the follow-up. Returning None lets the compound-open
+    # desktop-control routing send the whole turn to the computer-use loop, which
+    # performs the search AND the action (finding 2026-06-26).
+    if m and not _query_has_followup_action(m.group("query")):
         return LocalActionPlan(
             mode=LocalActionMode.DIRECT,
             tool_calls=(LocalToolCall(
@@ -454,6 +495,42 @@ _APP_ALIASES = {
     "steam": "steam",
     "outlook": "outlook",
 }
+
+# An app name that is the OBJECT of a container preposition ("oeffne meine
+# Bilder IM Explorer", "IN meinen Explorer meine Bilder oeffnen") is NOT the
+# whole goal — the app is a folder/window the user navigates INTO, and the real
+# target (the Bilder/Downloads/Dokumente) lives elsewhere in the utterance. A
+# bare ``open_app`` launch would drop that target and open a blank window (live
+# bug 2026-06-26 voice session: "in meinen Explorer meine Bilder oeffnen"
+# launched explorer.exe empty, the pictures never opened, spoken back as the
+# fast "Gestartet: explorer"). Such navigate-into-app goals belong on the
+# multi-step computer-use loop. Maintainer decision 2026-06-26: ANY target
+# beyond the bare app hands off to computer-use. The alternation is built from
+# the known-app aliases (longest first, so "windows explorer" wins over
+# "explorer"); a leading article/possessive between the preposition and the app
+# is tolerated. Inputs are pre-``_normalize``'d (umlauts → ascii), so the
+# alias keys (already ascii) match directly.
+_APP_ALIAS_ALTERNATION = "|".join(
+    re.escape(alias) for alias in sorted(_APP_ALIASES, key=len, reverse=True)
+)
+_APP_AS_CONTAINER_RE = re.compile(
+    r"\b(?:in|im|ins|innerhalb|inside|within|into)\s+"
+    r"(?:dem\s+|den\s+|der\s+|die\s+|das\s+|meinem\s+|meinen\s+|meiner\s+|"
+    r"mein\s+|the\s+|my\s+)?"
+    r"(?:" + _APP_ALIAS_ALTERNATION + r")\b",
+    re.IGNORECASE,
+)
+
+
+def _app_used_as_container(normalized: str) -> bool:
+    """True when a known app is the object of a container preposition.
+
+    Signals "open <target> in <app>" (the app is a folder/window to navigate
+    INTO), so a bare deterministic launch would silently drop the real target.
+    Such goals route to the computer-use loop, never a single DIRECT open.
+    Pure regex, no IO (AP-9 / AP-11)."""
+    return bool(_APP_AS_CONTAINER_RE.search(normalized))
+
 
 # Filler words / articles voice users sprinkle between the verb and the app
 # name ("oeffne MIR chrome", "starte DEN editor", "mach FUER MICH chrome auf").
@@ -802,6 +879,18 @@ def match_local_action(
             # "...öffnen und <do more>" → multi-step. (A benign "und zwar …" also
             # lands here; acceptable — the CU loop still opens the app and handles
             # the qualifier, at the cost of one screenshot cycle.)
+            return LocalActionPlan(
+                mode=LocalActionMode.COMPUTER_USE,
+                harness=HARNESS_NAME,
+                prompt=original,
+            )
+        # "<target> in/im <app>" — the app is a CONTAINER the user navigates INTO
+        # ("öffne meine Bilder im Explorer", "in meinen Explorer meine Bilder
+        # öffnen"). A bare open_app(<app>) would launch an empty window and drop
+        # the real target, so the whole goal goes to the multi-step computer-use
+        # loop instead (live bug 2026-06-26). Checked BEFORE the bare-app extract
+        # so the dropped-target case never reaches a DIRECT launch.
+        if _app_used_as_container(normalized):
             return LocalActionPlan(
                 mode=LocalActionMode.COMPUTER_USE,
                 harness=HARNESS_NAME,

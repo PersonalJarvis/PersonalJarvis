@@ -7,8 +7,12 @@ detector path keeps working when no cloud provider is registered.
 """
 from __future__ import annotations
 
+import json
+import os
+import time
 from functools import lru_cache
 from importlib import metadata as importlib_metadata
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -122,20 +126,73 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
     )
 
 
+def _wake_cuda_cache_path() -> Path:
+    """Location of the persisted CUDA-availability probe result.
+
+    CUDA presence is a stable hardware fact, so the probe result is cached ACROSS
+    process restarts (not just in-process). Honours the same data-dir env seam the
+    rest of the app uses (``JARVIS__MEMORY__DATA_DIR``); defaults to ``./data``
+    relative to the project-root CWD.
+    """
+    base = os.environ.get("JARVIS__MEMORY__DATA_DIR") or "data"
+    return Path(base) / "wake_cuda_probe.json"
+
+
 @lru_cache(maxsize=1)
 def _wake_cuda_available() -> bool:
     """True iff a CUDA device is usable by the CTranslate2 / faster-whisper backend.
 
-    Cached (the device count is stable per process). Any import/probe error is
-    treated as "no CUDA" so a host without the GPU stack degrades to the
-    cloud-first CPU default. AP-21: gate on the capability, never a hardware name.
+    Cached in-process (``lru_cache``) AND persisted to disk. The FIRST CUDA call
+    in a process (``ctranslate2.get_cuda_device_count``) initializes the CUDA
+    context, which on a Blackwell (sm_120) GPU JIT-compiles kernels and costs
+    ~30-60 s (measured). ``build_wake_whisper`` runs this SYNCHRONOUSLY on the
+    desktop boot path to choose the wake model, so the probe used to freeze voice
+    boot ("VOICE STARTING…") for up to a minute on EVERY launch.
+
+    Persisting the boolean across restarts removes the probe from the boot path on
+    every boot after the first; the (unavoidable, one-time-per-process) CUDA
+    context init then happens later, during the already-backgrounded wake-model
+    load — never on the wake-ready path. Delete ``data/wake_cuda_probe.json`` to
+    force a re-probe after a GPU/driver change. Any import/probe error is treated
+    as "no CUDA" so a host without the GPU stack degrades to the cloud-first CPU
+    default. AP-21: gate on the capability, never a hardware name.
     """
+    cache_path = _wake_cuda_cache_path()
+
+    # 1) Persisted result — skip the expensive probe on every boot after the first.
+    try:
+        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+        if isinstance(cached, dict) and isinstance(cached.get("cuda"), bool):
+            logger.info(
+                "Wake-CUDA probe: cache HIT ({}) — probe skipped.",
+                "available" if cached["cuda"] else "absent",
+            )
+            return cached["cuda"]
+    except FileNotFoundError:
+        pass
+    except Exception as exc:  # noqa: BLE001 — a corrupt cache must never break boot
+        logger.debug("Wake-CUDA probe cache unreadable ({}); re-probing.", exc)
+
+    # 2) Cold path — pay the probe ONCE, log how long it took, then persist it.
+    t0 = time.perf_counter()
     try:
         import ctranslate2
 
-        return ctranslate2.get_cuda_device_count() > 0
+        available = ctranslate2.get_cuda_device_count() > 0
     except Exception:  # noqa: BLE001 - any failure means "treat as no GPU"
-        return False
+        available = False
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+    logger.info(
+        "Wake-CUDA probe: cache MISS — probed in {:.0f} ms -> CUDA {}.",
+        elapsed_ms,
+        "available" if available else "absent",
+    )
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps({"cuda": available}), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001 — caching is best-effort
+        logger.debug("Wake-CUDA probe cache write failed ({}).", exc)
+    return available
 
 
 def build_wake_whisper(

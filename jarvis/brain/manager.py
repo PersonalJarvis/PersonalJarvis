@@ -4307,6 +4307,17 @@ class BrainManager:
             except RuntimeError:
                 log.debug("Curator-Task nicht scheduled (kein Event-Loop)")
 
+    def has_pending_voice_confirm(self) -> bool:
+        """True while a two-turn voice confirmation is awaiting the user's yes/no.
+
+        The speech pipeline consults this in ``_finish_after_response`` to keep
+        the session open until the answer lands — otherwise (in single-turn mode)
+        the turn finalizes and hangs up before the user can say "ja" (forensic
+        2026-06-26). Mirrors how ``_background_mission_in_flight`` keeps a running
+        mission's session alive.
+        """
+        return self._pending_voice_confirm is not None
+
     def _arm_voice_confirm(self, descriptor: dict[str, Any], user_text: str) -> None:
         """Turn N: record a deferred consequential action awaiting yes/no.
 

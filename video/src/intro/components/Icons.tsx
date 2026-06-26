@@ -14,7 +14,8 @@ export const Icon: React.FC<{
     | "cursor"
     | "phone"
     | "calendar"
-    | "mail";
+    | "mail"
+    | "speaker";
   size?: number;
   color?: string;
 }> = ({ name, size = 28, color = COLORS.primary }) => {
@@ -72,6 +73,12 @@ export const Icon: React.FC<{
       <>
         <rect x="3" y="5" width="18" height="14" rx="2" {...p} />
         <path d="M4 8l8 5 8-5" {...p} />
+      </>
+    ),
+    speaker: (
+      <>
+        <path d="M4 9v6h4l5 4V5L8 9H4Z" {...p} />
+        <path d="M16 9a3.5 3.5 0 0 1 0 6M18.5 6.5a7 7 0 0 1 0 11" {...p} />
       </>
     ),
   };

@@ -170,3 +170,107 @@ async def test_shell_served_event_fires_after_js_bundle(tmp_path) -> None:
     assert not await bs.wait_shell_served(timeout=0.05)
     await _drive(bs.app, _http("/assets/app.js"))  # entry bundle → now ready
     assert await bs.wait_shell_served(timeout=0.05)
+
+
+# --- listener self-healing (the lock-zombie root cause) ---------------------
+# Forensic 2026-06-26: a transient Windows socket error (OSError WinError 64,
+# "the network name is no longer available") killed the asyncio proactor accept
+# loop, which closes the LISTENING socket. uvicorn never re-binds it, so the
+# port went dead permanently while the rest of the process (voice, telegram)
+# lived on — a "lock-zombie" that held the single-instance lock with no port and
+# no window, so every restart bounced. The bootstrap owns the socket, so it must
+# notice the dead listener and re-bind itself.
+
+
+def _free_port() -> int:
+    import socket as _socket
+
+    s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+async def _port_open(host: str, port: int, timeout: float = 1.0) -> bool:  # noqa: ASYNC109 — test helper, conventional timeout param
+    from contextlib import suppress
+
+    try:
+        _reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port), timeout=timeout
+        )
+        writer.close()
+        with suppress(Exception):
+            await writer.wait_closed()
+        return True
+    except (TimeoutError, OSError):
+        return False
+
+
+@pytest.mark.asyncio
+async def test_serve_starts_a_listener_that_answers_health() -> None:
+    port = _free_port()
+    bs = FastBootstrap()
+    await bs.serve("127.0.0.1", port, supervise=False)
+    try:
+        assert await _port_open("127.0.0.1", port)
+    finally:
+        await bs.stop()
+
+
+@pytest.mark.asyncio
+async def test_supervisor_rebinds_listener_after_socket_death() -> None:
+    # Reproduce the forensic: while serving, the OS kills the listening socket
+    # (simulated by closing the uvicorn server socket exactly as the proactor's
+    # ``sock.close()`` does on WinError 64). The supervisor must detect the dead
+    # port and re-bind, so the port comes back WITHOUT a process restart.
+    port = _free_port()
+    bs = FastBootstrap()
+    await bs.serve("127.0.0.1", port, supervise=True, supervise_interval=0.2)
+    try:
+        assert await _port_open("127.0.0.1", port), "listener must be up after serve"
+
+        # Kill the listening socket out from under uvicorn (what WinError 64 does).
+        await bs._kill_listener_for_test()
+        assert not await _port_open("127.0.0.1", port), "port must be dead after socket close"
+
+        # The supervisor probes on its interval and re-binds. Give it a few cycles.
+        recovered = False
+        for _ in range(30):
+            await asyncio.sleep(0.2)
+            if await _port_open("127.0.0.1", port):
+                recovered = True
+                break
+        assert recovered, "supervisor must re-bind the dead listener (self-heal)"
+    finally:
+        await bs.stop()
+
+
+@pytest.mark.asyncio
+async def test_rebind_preserves_registered_real_app() -> None:
+    # A re-bind after a socket death must keep delegating to the already
+    # registered real app — the warm-up state survives the listener swap.
+    port = _free_port()
+    bs = FastBootstrap()
+
+    async def real_app(scope: dict, receive: Any, send: Any) -> None:
+        if scope["type"] == "lifespan":
+            await FastBootstrap._handle_lifespan(receive, send)
+            return
+        await send({"type": "http.response.start", "status": 222, "headers": []})
+        await send({"type": "http.response.body", "body": b"real"})
+
+    await bs.serve("127.0.0.1", port, supervise=True, supervise_interval=0.2)
+    try:
+        bs.set_app(real_app)
+        await bs._kill_listener_for_test()
+        # wait for self-heal
+        for _ in range(30):
+            await asyncio.sleep(0.2)
+            if await _port_open("127.0.0.1", port):
+                break
+        # the rebound listener still delegates to the real app
+        sent = await _drive(bs.app, _http("/api/whoami"))
+        assert _status(sent) == 222
+    finally:
+        await bs.stop()
