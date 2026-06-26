@@ -655,6 +655,47 @@ def _is_instructional_question(user_text: str) -> bool:
     return bool(_INSTRUCTIONAL_QUESTION_RE.search(user_text or ""))
 
 
+# Definitional "what IS X" guard for the deterministic skill match. A plugin
+# skill's voice trigger is an un-anchored bare-name pattern (e.g. ``(github|…)``)
+# that fires on ANY mention — including when the app is merely the SUBJECT of a
+# knowledge question ("was ist GitHub?", "what is Stripe?"). Such a turn must be
+# ANSWERED, not captured by the skill (live skill-routing eval 2026-06-24: both
+# negative controls over-fired here). Precision over recall: suppress ONLY when
+# the matched trigger token is the predicate of a copula in a definitional
+# opener — so a real data request that merely starts with "was ist" ("was ist
+# in meinem Posteingang?", token "posteingang") is NOT suppressed, because there
+# the token does not sit directly after the copula (the "in"/"mein" data context
+# breaks the predicate run).
+_DEFINITIONAL_OPENER_RE = re.compile(
+    r"^\s*(?:was\s+(?:ist|sind|bedeutet|war|waren)"
+    r"|wof[üu]r\s+(?:ist|steht|braucht|nutzt|benutzt|verwendet)"
+    r"|erkl[äa]r(?:e|st|en)?\b"
+    r"|what(?:'s|\s+is|\s+are|\s+does)\b"
+    r"|tell\s+me\s+(?:about|what)\b"
+    r")",
+    re.IGNORECASE,
+)
+# Copula → (optional adverb, but NOT a data-context word) → optional article →
+# the matched token. ``%s`` is filled with the re.escape'd trigger token.
+_DEFINITIONAL_PREDICATE_TMPL = (
+    r"\b(?:ist|sind|war|waren|is|are|was|were|bedeutet|means)\s+"
+    r"(?:(?!\b(?:in|auf|an|aus|von|mein|meine|meinem|meinen|my|on|from|of)\b)"
+    r"\w+\s+){0,2}"
+    r"(?:ein(?:e|er|en)?\s+|a\s+|an\s+|the\s+)?%s\b"
+)
+
+
+def _is_definitional_question_about(user_text: str, token: str) -> bool:
+    """True when ``user_text`` is a definitional question whose subject IS the
+    matched trigger ``token`` — so firing that skill would be wrong."""
+    if not user_text or not token:
+        return False
+    if not _DEFINITIONAL_OPENER_RE.match(user_text):
+        return False
+    pat = re.compile(_DEFINITIONAL_PREDICATE_TMPL % re.escape(token), re.IGNORECASE)
+    return bool(pat.search(user_text))
+
+
 # Opinion / advice / recommendation / decision questions, and casual
 # question-openers ("ich hab da mal eine Frage"). These are CONVERSATION, not
 # work: the brain answers them inline — they must NEVER force-spawn a worker,
@@ -3177,6 +3218,17 @@ class BrainManager:
             if res is None:
                 return None
             skill = res[0]
+            # Definitional-question guard: a bare-name plugin trigger must not
+            # capture a "was ist <App>?" knowledge turn (2026-06-24 eval).
+            matched_token = res[1].group(0) if res[1] is not None else ""
+            if _is_definitional_question_about(user_text, matched_token):
+                log.info(
+                    "skill %s matched token %r but the turn is a definitional "
+                    "question about it — not captured (answer it instead)",
+                    getattr(skill, "name", "?"),
+                    matched_token,
+                )
+                return None
             if self._skill_is_blocked(skill):
                 log.info(
                     "skill %s matched but is block-tier — turn not captured",
@@ -3212,6 +3264,24 @@ class BrainManager:
             "clearly wrong."
         )
 
+    def _drop_run_skill_when_inline_injected(self, tools: Any) -> Any:
+        """Hide ``run-skill`` once a matched skill's instructions are already on
+        the turn context (``_skill_injected_inline``).
+
+        With the instructions inline (AD-S4) no tool call is needed; keeping
+        run-skill visible only tempts a weak model into a redundant, garbled
+        run-skill call — the gemini-fast ``<call:tool.run-skill ...>`` text leak
+        (forensic 2026-06-24). Dropping it makes skill execution provider- and
+        model-agnostic: every model just follows the injected instructions, no
+        tool call required. No-op when the skill was not inline-injected, or the
+        tool set is not a dict (intelligent-router lead path).
+        """
+        if not getattr(self, "_skill_injected_inline", False):
+            return tools
+        if not isinstance(tools, dict):
+            return tools
+        return {k: v for k, v in tools.items() if k != "run-skill"}
+
     def _render_skill_turn_injection(self, user_text: str) -> str | None:
         """Render the matched skill's instructions for direct turn injection.
 
@@ -3220,7 +3290,12 @@ class BrainManager:
         them in this very turn (guaranteed invocation). Publishes
         ``SkillInvoked``. Falls back to the steering hint when rendering
         fails (the model can still call run-skill itself).
+
+        Sets ``_skill_injected_inline`` True ONLY when the real instructions
+        were injected (not the hint fallback) so the caller can hide run-skill
+        for the turn (provider-agnostic execution, no tool-call leak).
         """
+        self._skill_injected_inline = False
         skill = self._skill_turn_match
         if skill is None:
             return None
@@ -3246,6 +3321,10 @@ class BrainManager:
             )
             return self._render_skill_turn_hint()
         self._publish_skill_invoked(name, source=self._skill_turn_source)
+        # The real instructions are now inline — the model needs no run-skill
+        # call; the caller drops that tool so a weak model cannot leak a garbled
+        # tool call (provider-agnostic skill execution).
+        self._skill_injected_inline = True
         return (
             f"[Skill instructions for `{name}` — the user's request matched "
             "this installed skill]\n"
@@ -4227,6 +4306,17 @@ class BrainManager:
                 )
             except RuntimeError:
                 log.debug("Curator-Task nicht scheduled (kein Event-Loop)")
+
+    def has_pending_voice_confirm(self) -> bool:
+        """True while a two-turn voice confirmation is awaiting the user's yes/no.
+
+        The speech pipeline consults this in ``_finish_after_response`` to keep
+        the session open until the answer lands — otherwise (in single-turn mode)
+        the turn finalizes and hangs up before the user can say "ja" (forensic
+        2026-06-26). Mirrors how ``_background_mission_in_flight`` keeps a running
+        mission's session alive.
+        """
+        return self._pending_voice_confirm is not None
 
     def _arm_voice_confirm(self, descriptor: dict[str, Any], user_text: str) -> None:
         """Turn N: record a deferred consequential action awaiting yes/no.
@@ -5430,6 +5520,12 @@ class BrainManager:
                     self._apply_plugin_relevance(user_text, self._tools)
                 )
             )
+            # Skill inline-injected (AD-S4): drop run-skill so a weak model
+            # cannot make a redundant, garbled run-skill tool call — the
+            # gemini-fast ``<call:tool.run-skill ...>`` text leak. The
+            # instructions already ride on the turn context, so execution is
+            # provider-/model-agnostic (no tool call needed).
+            _turn_tools = self._drop_run_skill_when_inline_injected(_turn_tools)
             # AI Pointer: on a deictic pointer turn the cursor crop is already the
             # only attached image, so drop the redundant ``inspect-pointer`` PULL
             # tool (calling it produced an empty spoken answer — observed live).

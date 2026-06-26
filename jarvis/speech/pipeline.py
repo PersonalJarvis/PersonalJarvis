@@ -2371,7 +2371,9 @@ class SpeechPipeline:
                 event.text,
             )
             return
-        is_preamble = getattr(event, "kind", None) == "preamble"
+        event_kind = getattr(event, "kind", None)
+        is_preamble = event_kind == "preamble"
+        is_progress = event_kind == "progress"
         # 2026-05-26 cross-surface voice incoherence guard. After an
         # interrupt-priority announcement (typically a MissionFailed
         # readback) the user has just heard a terminal statement; a
@@ -2402,9 +2404,21 @@ class SpeechPipeline:
         # the missing reverse — Jarvis must not start speaking while the USER
         # holds the floor. Only non-interrupt announcements are gated; an
         # interrupt is a deliberate barge and still punches through.
+        current_turn_state = getattr(self, "_turn_state", TurnTakingState.IDLE)
+        if (
+            event.priority != "interrupt"
+            and is_progress
+            and current_turn_state
+            not in {TurnTakingState.IDLE, TurnTakingState.LISTENING}
+        ):
+            log.info(
+                "Progress announcement dropped — foreground turn active (%s): %r",
+                getattr(current_turn_state, "value", current_turn_state),
+                event.text[:80],
+            )
+            return
         if event.priority != "interrupt" and (
-            getattr(self, "_turn_state", TurnTakingState.IDLE)
-            in _USER_HOLDS_FLOOR_STATES
+            current_turn_state in _USER_HOLDS_FLOOR_STATES
         ):
             # A preamble or a "still on it" heartbeat (kind="progress") is only
             # meaningful in the moment — once the user holds the floor it is
@@ -2412,10 +2426,10 @@ class SpeechPipeline:
             # after the mission answer; events.py: progress = "droppable when
             # stale"). Completion/readback below owes the user information and is
             # deferred instead.
-            if is_preamble or getattr(event, "kind", None) == "progress":
+            if is_preamble or is_progress:
                 log.info(
                     "Announcement dropped — user holds the floor (%s): %r",
-                    getattr(event, "kind", None) or "normal",
+                    event_kind or "normal",
                     event.text[:80],
                 )
                 return
@@ -4509,6 +4523,23 @@ class SpeechPipeline:
         self._input_suppressed_until_ns = max(previous, until_ns)
         log.info("TTS-Echo-Sperre aktiv: %.1fs (%s).", seconds, reason)
 
+    def _voice_confirm_pending(self) -> bool:
+        """True while the brain is awaiting a spoken yes/no for a deferred
+        ``ask``-tier tool — keep the session open so the answer is not cut off
+        (analogous to ``_background_mission_in_flight``). Forensic 2026-06-26: an
+        ask-tier tool asked "really do that?" and the session then ended before
+        the user could answer. Defensive: a brain callback without the probe (the
+        echo fake, an older build) reports no pending confirm and never crashes
+        the hangup decision."""
+        brain = getattr(self, "_brain", None)
+        probe = getattr(brain, "has_pending_voice_confirm", None)
+        if not callable(probe):
+            return False
+        try:
+            return bool(probe())
+        except Exception:  # noqa: BLE001 — the hangup decision must never crash
+            return False
+
     async def _finish_after_response(self, *, barged: bool = False) -> bool:
         """Schliesst normale Voice-Turns; Barge-in darf weiterlaufen.
 
@@ -4528,6 +4559,7 @@ class SpeechPipeline:
             barged
             or self._continue_listening_after_response
             or self._background_mission_in_flight()
+            or self._voice_confirm_pending()
         ):
             await self._set_turn_state(TurnTakingState.LISTENING)
             return True
@@ -6846,6 +6878,14 @@ class SpeechPipeline:
                 return done
             player = getattr(self, "_player", None)
             last_write = getattr(player, "last_write_ns", 0) if player is not None else 0
+            owner_missing = object()
+            owner_task_id = (
+                getattr(player, "last_write_owner_task_id", owner_missing)
+                if player is not None
+                else owner_missing
+            )
+            if owner_task_id is not owner_missing and owner_task_id != id(play_task):
+                last_write = 0
             if last_write <= 0:
                 # No first frame yet: the synthesize / first-frame window. A slow
                 # TTS provider must NOT be misread as a device wedge — that false

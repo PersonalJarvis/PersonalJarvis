@@ -67,6 +67,16 @@ def test_arm_records_pending_with_trace_and_language() -> None:
     assert mgr._pending_voice_confirm.tool_name == "gmail"
 
 
+def test_has_pending_voice_confirm_reflects_state() -> None:
+    """The speech pipeline consults this to keep the session open while a
+    yes/no is awaited — otherwise the turn finalizes and (in single-turn mode)
+    the session hangs up before the user can answer (forensic 2026-06-26)."""
+    mgr = _manager(_FakeExecutor())
+    assert mgr.has_pending_voice_confirm() is False
+    _arm(mgr, uuid4())
+    assert mgr.has_pending_voice_confirm() is True
+
+
 @pytest.mark.asyncio
 async def test_resume_confirm_executes_and_reports_done() -> None:
     executor = _FakeExecutor(success=True)
