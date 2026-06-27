@@ -46,6 +46,12 @@ class ComputerUseContext:
     fast_step_model: str = ""  # L9: cheaper model id for trivial steps ("" = off)
     plan_model_override: str | None = None
     verify_after_each_step: bool = True
+    # Proactive zoom-before-click (DEFAULT OFF since 2026-06-27 — see
+    # ComputerUseConfig.zoom_before_click). Internal screenshot crop only.
+    zoom_before_click: bool = False
+    # UIA snap-missed-click-to-element fallback (DEFAULT OFF since 2026-06-27 —
+    # the BUG-CU-UIASNAP wild-snap; see ComputerUseConfig.uia_click_fallback).
+    uia_click_fallback: bool = False
     max_replans: int = 2                    # from ADR-0008; configurable
     # Spoken per-step milestones ("Schritt N von M erledigt."). OFF by default
     # (2026-06-10): the counter counts successful ACTIONS, not verified plan
@@ -205,6 +211,8 @@ _RELOADABLE_FIELDS: tuple[str, ...] = (
     "fast_step_model",
     "max_replans",
     "verify_after_each_step",
+    "zoom_before_click",
+    "uia_click_fallback",
     "announce_progress",
 )
 _subscribed_bus_id: int | None = None

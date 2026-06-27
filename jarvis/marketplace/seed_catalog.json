@@ -328,6 +328,33 @@
       },
       "native_tool": "gmail",
       "post_install_hint_md": "Setup: see docs/marketplace/google-oauth-setup.md (shares the Google client with Drive). In Google 'Testing' status the connection expires every 7 days; publish the app + complete Google's restricted-scope verification to make it permanent."
+    },
+    {
+      "id": "google_calendar",
+      "display_name": "Google Calendar",
+      "description": "See your schedule and create, move or delete events by voice",
+      "category": "Productivity",
+      "logo_slug": "googlecalendar",
+      "logo_color": "F4F4F5",
+      "featured": true,
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "revocation_url": "https://oauth2.googleapis.com/revoke",
+        "client_id": "REPLACE_WITH_JARVIS_GOOGLE_CLIENT_ID",
+        "callback_port": 3122,
+        "callback_path": "",
+        "scopes": [
+          "https://www.googleapis.com/auth/calendar.events"
+        ],
+        "scope_separator": "space",
+        "user_scopes_only": false,
+        "refresh_supported": true,
+        "offline_access": true
+      },
+      "native_tool": "google_calendar",
+      "post_install_hint_md": "Setup: shares the Google OAuth client with Gmail/Drive. Add the calendar.events scope to the OAuth consent screen and publish the app to 'In production' so the refresh token (and thus the connection) never expires — a 'Testing' app drops it after 7 days."
     }
   ]
 }

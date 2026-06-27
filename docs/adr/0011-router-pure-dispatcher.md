@@ -681,3 +681,30 @@ the live `BrainManager.refresh_tools()` consumes to re-expand `mcp-tools`
 - `tests/unit/brain/test_routing.py::test_mcp_tools_is_router_only_not_a_spawn`
 - `tests/unit/brain/test_routing.py::test_router_tools_is_pure_dispatcher_set`
   (exact-match set updated to include `mcp-tools`)
+
+## Amendment — Marketplace native tools `gmail`, `vercel`, `google_calendar`
+
+A connected marketplace plugin that has **no MCP server block** (so the virtual
+`mcp-tools`/`plugin-tools` loaders expand to nothing for it) must be made
+router-visible **directly**, or a voice/chat command can never reach it. Three
+such native tools are in `ROUTER_TOOLS`:
+
+| Tool | Added | Backing | Risk | Recursion guard? |
+|---|---|---|---|---|
+| `gmail` | 2026-06-01 | Gmail REST API via the marketplace OAuth token | `ask` (send is consequential; reads downgrade to `safe` via `risk_tier_for_args`) | n/a — a direct REST call, not a spawn; router-tier only (AP-5/AP-14) |
+| `vercel` | 2026-06-07 | Vercel REST API via the marketplace PAT | `monitor` (read-only) | n/a — direct REST call, never a spawn |
+| `google_calendar` | 2026-06-27 | Google Calendar API v3 via a **Node bot** (`calendar_bot.mjs`); a thin Python bridge reuses the marketplace OAuth token + refresh loop | `monitor` (writes), `safe` (reads) via `risk_tier_for_args` — **full autonomy, never `ask`** (user mandate) | n/a — the bridge runs a short-lived `node` subprocess for one API call, it cannot spawn the supervisor; router-tier only, never enters a worker set (AP-5/AP-14) |
+
+Same spirit as `cli-tools`: a **gated external-system call** with a declared
+risk tier and the marketplace token model — not a generic direct-action like
+`open_app`/`type_text` (those stay off the router by design). The token never
+expires in practice because the bridge self-heals on a 401 (refresh once +
+retry) and the `RefreshScheduler` keeps the refresh token warm.
+
+### Regression guards
+
+- `tests/unit/plugins/tool/test_google_calendar_rest.py` — 13 cases: per-action
+  payloads, 401 → one refresh + retry, no action is ever `ask` (full autonomy),
+  graceful "not connected" / "node missing".
+- `tests/unit/brain/test_routing.py::test_router_tools_is_pure_dispatcher_set`
+  (exact-match set updated to include `google_calendar`).

@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Plus,
   Check,
+  Copy,
   Sparkles,
   X,
   Loader2,
@@ -17,6 +18,8 @@ import { ViewHeader } from "@/views/ChatsView";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { openExternalUrl } from "@/lib/openExternal";
+import { robustCopy } from "@/lib/clipboard";
 
 // Wave hero image restored. The previous "kill image entirely" attempt
 // felt too flat; the CSS-only gradient lacked atmospheric depth. Edge
@@ -109,7 +112,14 @@ function resolveLogoUrl(p: { logoUrl?: string; logoSlug: string; logoColor?: str
 }
 
 async function fetchCatalog(): Promise<CatalogResponse> {
-  const res = await fetch("/api/marketplace/plugins");
+  // `cache: "no-store"` forces the embedded WebView2 (desktop app) to bypass
+  // its HTTP cache on every fetch. The server already sends
+  // `Cache-Control: no-store`, but that only stops NEW caching — it does not
+  // evict an entry WebView2 had already frozen. Result: the desktop window kept
+  // serving a stale plugin list (a freshly-connected plugin still showed as
+  // "not connected") while a normal browser tab showed the truth. Bypassing the
+  // client cache here is the half that actually clears the residual entry.
+  const res = await fetch("/api/marketplace/plugins", { cache: "no-store" });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
@@ -267,7 +277,7 @@ export function PluginsView() {
           // Auto-open the pre-filled verify URL if available; user lands
           // on the consent page with the code already typed in.
           if (verifyUrlComplete) {
-            window.open(verifyUrlComplete, "_blank", "noopener,noreferrer");
+            void openExternalUrl(verifyUrlComplete);
           }
           setDeviceSession({
             flowId: r.flow_id,
@@ -284,7 +294,7 @@ export function PluginsView() {
           alert("Backend returned no open_url — connect aborted.");
           return;
         }
-        window.open(r.open_url, "_blank", "noopener,noreferrer");
+        void openExternalUrl(r.open_url);
         setOauthSession({
           flowId: r.flow_id,
           pluginId: r.plugin_id,
@@ -660,6 +670,13 @@ interface CarouselSlide {
 
 const SLIDES: CarouselSlide[] = [
   {
+    pluginId: "google_calendar",
+    pluginName: "Google Calendar",
+    example: "Schedule a meeting for tomorrow at 3pm",
+    iconUrl: "https://cdn.simpleicons.org/googlecalendar/F4F4F5",
+    accent: "border-blue-400/40",
+  },
+  {
     pluginId: "github",
     pluginName: "GitHub",
     example: "Triage open issues on my main repo",
@@ -1023,6 +1040,47 @@ function ComingSoonStrip({ taken = [] }: { taken?: string[] }) {
 // dialog just shows progress + long-polls the backend.
 // ---------------------------------------------------------------------------
 
+// A read-only URL field + Copy button. The manual fallback for every "open a
+// page in your browser" step: when the auto-open didn't reach a browser (the
+// embedded desktop shell drops window.open, or a popup blocker ate it), the
+// user can copy the exact link and paste it into their browser by hand. Uses
+// robustCopy so the copy is reliable inside WebView2.
+function CopyableUrl({ url, hint }: { url: string; hint?: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    if (await robustCopy(url)) {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    }
+  };
+  return (
+    <div className="w-full text-left">
+      <div className="flex items-stretch gap-2">
+        <input
+          type="text"
+          readOnly
+          value={url}
+          onFocus={(e) => e.currentTarget.select()}
+          aria-label="Authorization link"
+          className="min-w-0 flex-1 rounded-md border border-border bg-background/60 px-2.5 py-1.5 font-mono text-[11px] text-muted-foreground focus:border-primary/40 focus:outline-none"
+        />
+        <button
+          type="button"
+          onClick={copy}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-card px-3 text-[11px] font-medium text-foreground transition-colors hover:border-primary/50 hover:text-primary"
+          title="Copy link"
+        >
+          {copied ? <Check className="h-3 w-3 text-primary" /> : <Copy className="h-3 w-3" />}
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      {hint && (
+        <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground/80">{hint}</p>
+      )}
+    </div>
+  );
+}
+
 function OAuthRedirectDialog({
   flowId,
   pluginId,
@@ -1043,6 +1101,7 @@ function OAuthRedirectDialog({
     queryFn: async () => {
       const res = await fetch(
         `/api/marketplace/plugins/${pluginId}/connect/poll/${flowId}`,
+        { cache: "no-store" },
       );
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
@@ -1124,10 +1183,18 @@ function OAuthRedirectDialog({
                 href={openUrl}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={(e) => {
+                  e.preventDefault();
+                  void openExternalUrl(openUrl);
+                }}
                 className="text-[11px] uppercase tracking-wider text-muted-foreground/80 underline-offset-4 hover:text-primary hover:underline"
               >
                 Tab didn't open? Click here
               </a>
+              <CopyableUrl
+                url={openUrl}
+                hint="Still nothing? Copy this link and paste it into your browser's address bar."
+              />
             </div>
           )}
 
@@ -1207,6 +1274,7 @@ function DeviceCodeDialog({
     queryFn: async () => {
       const res = await fetch(
         `/api/marketplace/plugins/${pluginId}/connect/poll/${flowId}`,
+        { cache: "no-store" },
       );
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
@@ -1311,6 +1379,10 @@ function DeviceCodeDialog({
                   href={verificationUriComplete ?? verificationUri}
                   target="_blank"
                   rel="noopener noreferrer"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    void openExternalUrl(verificationUriComplete ?? verificationUri);
+                  }}
                   className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:shadow-[0_0_16px_rgba(255,214,10,0.4)]"
                 >
                   Open {pluginName}
@@ -1579,6 +1651,10 @@ export function PatConnectDialog({
               href={auth.token_creation_url}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={(e) => {
+                e.preventDefault();
+                void openExternalUrl(auth.token_creation_url);
+              }}
               className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:shadow-[0_0_16px_rgba(255,214,10,0.4)]"
             >
               Open {plugin.name} tokens

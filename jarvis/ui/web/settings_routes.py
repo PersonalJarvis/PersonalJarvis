@@ -1021,6 +1021,38 @@ async def restart_app(request: Request, force: bool = False) -> dict[str, object
     return {"ok": True, "restarting": True}
 
 
+class OpenExternalBody(BaseModel):
+    url: str = Field(min_length=1, max_length=4096)
+
+
+@router.post("/open-external")
+async def open_external(body: OpenExternalBody) -> dict[str, object]:
+    """Open an ``http(s)`` URL in the user's real default browser.
+
+    The desktop shell embeds WebView2, which silently drops ``window.open`` /
+    ``target="_blank"`` — so OAuth-authorize and token-creation pages never
+    reached the browser and plugin connect appeared to "do nothing". The
+    frontend calls this only when it detects the embedded shell (``window
+    .__JARVIS_TOKEN``); a real browser tab opens the URL itself. Returns
+    ``{"opened": false}`` on a headless host (no display) so the caller can
+    fall back to ``window.open``.
+
+    Scheme is validated to ``http``/``https`` here AND in ``open_url`` so no
+    ``file:``/``javascript:``/app-protocol URL can ever be launched.
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(body.url)
+    if parsed.scheme.lower() not in ("http", "https"):
+        raise HTTPException(
+            status_code=400, detail="only http/https URLs may be opened"
+        )
+    from jarvis.platform.open_path import open_url
+
+    opened = await asyncio.to_thread(open_url, body.url)
+    return {"opened": bool(opened)}
+
+
 # ---------------------------------------------------------------------------
 # Taskbar section toggles: "Show bar at all times" (bar_persistent, live) and
 # "Mute music while dictating" (ducking.enabled, live). Both persist to

@@ -235,6 +235,11 @@ Released under the **MIT License** — free to use, modify, and distribute, incl
 commercially, provided the copyright notice is preserved. See [`LICENSE`](LICENSE) for the
 full text, the attribution clause, and the third-party notices.
 
+**Trademarks.** Product, provider, and integration names and logos shown here are
+trademarks of their respective owners and are used only to identify the services they refer
+to. Personal Jarvis is not affiliated with or endorsed by any of them — see
+[`TRADEMARK.md`](TRADEMARK.md).
+
 <br/>
 
 <p align="center">

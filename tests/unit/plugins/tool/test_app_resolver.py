@@ -190,6 +190,12 @@ async def test_open_app_launches_discord_via_start_menu_shortcut(
     expected = str(programs / "Discord Inc" / "Discord.lnk")
     started: list[str] = []
     monkeypatch.setattr(os, "startfile", lambda target: started.append(target), raising=False)
+    # Force the launch path: this test asserts launch resolution, so the
+    # already-running short-circuit must not fire if Discord happens to be open
+    # on the host (the hardened raise now succeeds where the old focus failed).
+    monkeypatch.setattr(
+        "jarvis.plugins.tool.open_app.window_state.is_app_running", lambda n: None
+    )
 
     result = await OpenAppTool().execute({"app_name": "discord"}, _ctx())
 
@@ -204,6 +210,12 @@ async def test_open_app_uses_resolved_startfile_target_before_launch(
     started: list[str] = []
 
     monkeypatch.setattr(os, "startfile", lambda target: started.append(target), raising=False)
+    # Force the launch path (deterministic regardless of whether Spotify is open
+    # on the host): the already-running short-circuit now succeeds via the
+    # hardened raise, which would otherwise skip the launch this test asserts.
+    monkeypatch.setattr(
+        "jarvis.plugins.tool.open_app.window_state.is_app_running", lambda n: None
+    )
 
     result = await OpenAppTool().execute({"app_name": "spotify"}, _ctx())
 

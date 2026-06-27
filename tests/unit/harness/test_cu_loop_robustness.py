@@ -723,6 +723,13 @@ async def test_open_app_waits_for_the_window_before_next_think(
             "Program Manager", "Program Manager", "New Tab - Google Chrome",
         ],
     )
+    # The happy path matches the probe and returns early — the timeout
+    # fallback raise must NOT fire.
+    fallback: list = []
+    monkeypatch.setattr(
+        loop_mod.window_state, "focus_window",
+        lambda t: (fallback.append(t), (True, t))[1],
+    )
     results = await run_loop(ctx, "oeffne chrome")
 
     assert results[-1].exit_code == 0
@@ -731,6 +738,7 @@ async def test_open_app_waits_for_the_window_before_next_think(
     # Still exactly 2 think calls — the settle wait replaced the wasted
     # stale-frame round, it did not add LLM cost.
     assert len(brain.requests) == 2
+    assert fallback == [], "fallback raise fired on the happy path (double-raise)"
 
 
 async def test_open_app_settle_gives_up_when_window_never_appears(
@@ -740,6 +748,13 @@ async def test_open_app_settle_gives_up_when_window_never_appears(
     up after its timeout and the mission continues (and may fail honestly)."""
     monkeypatch.setattr(loop_mod, "_OPEN_APP_SETTLE_POLL_S", 0.005)
     monkeypatch.setattr(loop_mod, "_OPEN_APP_SETTLE_TIMEOUT_S", 0.05)
+    # On timeout the settle probe makes ONE last-ditch raise before observing,
+    # so a backgrounded window still gets a correct next frame. Record it.
+    fallback: list = []
+    monkeypatch.setattr(
+        loop_mod.window_state, "focus_window",
+        lambda t: (fallback.append(t), (False, "no window"))[1],
+    )
     brain = FakeBrain([
         '{"action": "open_app", "name": "spotify"}',
         '{"action": "fail", "reason": "window never appeared"}',
@@ -754,6 +769,7 @@ async def test_open_app_settle_gives_up_when_window_never_appears(
 
     assert time.monotonic() - start < 1.0, "settle probe wedged the loop"
     assert results[-1].is_final
+    assert fallback == ["spotify"], "settle timeout did not attempt the fallback raise"
 
 
 async def test_mission_profile_summary_is_emitted() -> None:
