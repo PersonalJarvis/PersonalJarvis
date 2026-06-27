@@ -1050,6 +1050,7 @@ async def open_external(body: OpenExternalBody) -> dict[str, object]:
     from jarvis.platform.open_path import open_url
 
     opened = await asyncio.to_thread(open_url, body.url)
+    log.info("open-external: opened=%s url=%s", opened, body.url)
     return {"opened": bool(opened)}
 
 

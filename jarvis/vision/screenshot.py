@@ -120,7 +120,21 @@ def select_capture_monitor(
         return monitors[0]
 
     physical = monitors[1:]
-    primary = next((m for m in physical if m.get("is_primary")), physical[0])
+    # The Windows primary monitor ALWAYS has its top-left at virtual (0,0). The
+    # mss monitor dicts carry no ``is_primary`` flag, and mss does NOT order the
+    # primary first — on a two-monitor setup with a screen LEFT of primary, mss
+    # lists that left (negative-X) monitor as physical[0]. The old
+    # ``physical[0]`` fallback therefore treated the LEFT (secondary) monitor as
+    # "primary", so every time the foreground lookup fell back here Computer-Use
+    # captured + acted on the wrong screen (the user's "CU works the whole time
+    # on my non-main monitor" bug). Identify the primary by its (0,0) origin.
+    primary = (
+        next((m for m in physical if m.get("is_primary")), None)
+        or next(
+            (m for m in physical if m.get("left") == 0 and m.get("top") == 0), None
+        )
+        or physical[0]
+    )
 
     if strategy == "primary":
         logger.debug("select_capture_monitor: strategy=primary -> %s", primary.get("name"))

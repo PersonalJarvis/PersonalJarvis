@@ -894,7 +894,15 @@ def _phase2_full_brain(
             try:
                 from jarvis.vision.engine import VisionEngine
 
-                engine = VisionEngine(bus=bus)
+                # Computer-Use captures + acts on ONE monitor per
+                # [computer_use].monitor (default "primary" = main screen only),
+                # so CU never lands on a secondary monitor where negative-X /
+                # mixed-DPI coordinates misfire. "foreground" restores the legacy
+                # follow-the-active-window behaviour.
+                _cu_monitor = getattr(
+                    getattr(config, "computer_use", None), "monitor", "primary",
+                )
+                engine = VisionEngine(bus=bus, monitor_strategy=_cu_monitor)
                 vision_engine_for_cu = engine
                 if per_turn_vision:
                     from jarvis.vision.context_provider import VisionContextProvider

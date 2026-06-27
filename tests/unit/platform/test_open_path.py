@@ -166,12 +166,19 @@ def test_open_url_darwin_uses_open():
         assert popen.call_args.args[0][0] == "open"
 
 
-def test_open_url_windows_uses_startfile():
+def test_open_url_windows_uses_real_subprocess():
+    # NOT os.startfile — that ShellExecute path can be a silent no-op from the
+    # pythonw background process (no browser appears). A real rundll32 subprocess
+    # launches the default browser and takes the URL as a single argv.
+    url = "https://github.com/login/oauth/authorize?a=1&b=2"
     with patch.object(op, "detect_capabilities", return_value=_caps()), \
          patch.object(op, "detect_platform", return_value="win32"), \
-         patch.object(op.os, "startfile", create=True) as startfile:
-        assert op.open_url("https://github.com/login/oauth/authorize") is True
-        startfile.assert_called_once_with("https://github.com/login/oauth/authorize")
+         patch.object(op.subprocess, "Popen") as popen:
+        assert op.open_url(url) is True
+        argv = popen.call_args.args[0]
+        assert argv[0] == "rundll32.exe"
+        assert argv[1] == "url.dll,FileProtocolHandler"
+        assert argv[2] == url  # whole URL as one arg — '&' is safe (no shell)
 
 
 def test_open_url_headless_is_noop():
