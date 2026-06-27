@@ -31,13 +31,50 @@ _MOUSE_FLAGS_UP: dict[str, int] = {
     "middle": 0x0040,  # MOUSEEVENTF_MIDDLEUP
 }
 
+# Absolute virtual-desktop positioning flags. A click positioned this way lands
+# on its exact target on EVERY monitor — including one LEFT of primary (negative
+# virtual-desktop X) — decoupled from SetCursorPos, which returns 0 / lands wrong
+# when the cursor crosses the primary boundary (the "CU clicks void on the left
+# monitor" bug). The coordinates are 0..65535 normalized over the whole virtual
+# desktop, so the negative origin is folded into the normalization.
+_MOUSEEVENTF_MOVE = 0x0001
+_MOUSEEVENTF_ABSOLUTE = 0x8000
+_MOUSEEVENTF_VIRTUALDESK = 0x4000
+_ABS_MOVE_FLAGS = _MOUSEEVENTF_MOVE | _MOUSEEVENTF_ABSOLUTE | _MOUSEEVENTF_VIRTUALDESK
 
-def _send_click(button: str, double: bool) -> None:
-    """Press a mouse button at the *current* cursor position via Win32 SendInput.
 
-    Positioning is done beforehand by :func:`glide_os_cursor`; this only emits
-    the button-down/up events, so the click lands wherever the glide left the
-    cursor.
+def _normalize_virtualdesk(
+    x: int, y: int, vx: int, vy: int, vw: int, vh: int
+) -> tuple[int, int]:
+    """Map an absolute virtual-desktop pixel ``(x, y)`` to the 0..65535 space
+    ``MOUSEEVENTF_ABSOLUTE | VIRTUALDESK`` expects, given the virtual-screen
+    bounds (origin ``vx,vy``, size ``vw x vh`` — ``vx``/``vy`` may be negative).
+    Pure + clamped; the offset by the virtual origin is what makes a monitor left
+    of primary (x < 0) come out as a valid positive coordinate."""
+    dw = max(1, vw - 1)
+    dh = max(1, vh - 1)
+    nx = min(65535, max(0, round((int(x) - vx) * 65535 / dw)))
+    ny = min(65535, max(0, round((int(y) - vy) * 65535 / dh)))
+    return nx, ny
+
+
+def _virtualdesk_abs(x: int, y: int) -> tuple[int, int]:
+    """:func:`_normalize_virtualdesk` against the live virtual-screen metrics."""
+    import ctypes
+
+    gsm = ctypes.windll.user32.GetSystemMetrics
+    # SM_XVIRTUALSCREEN=76, SM_YVIRTUALSCREEN=77, SM_CXVIRTUALSCREEN=78, SM_CYVIRTUALSCREEN=79
+    return _normalize_virtualdesk(x, y, gsm(76), gsm(77), gsm(78), gsm(79))
+
+
+def _send_click(button: str, double: bool, abs_xy: tuple[int, int] | None = None) -> None:
+    """Press a mouse button via Win32 SendInput.
+
+    When ``abs_xy`` is given the input stream is prefixed with an ABSOLUTE
+    virtual-desktop move to that pixel, so the click lands exactly there on any
+    monitor (negative coords included) regardless of where SetCursorPos left the
+    cursor. Without it, the click fires at the current cursor position (the legacy
+    behaviour; positioning done beforehand by :func:`glide_os_cursor`).
     """
     button_l = button.lower()
     if button_l not in _MOUSE_FLAGS_DOWN:
@@ -75,6 +112,14 @@ def _send_click(button: str, double: bool) -> None:
     n_clicks = 2 if double else 1
 
     events: list[INPUT] = []
+    if abs_xy is not None:
+        nx, ny = _virtualdesk_abs(abs_xy[0], abs_xy[1])
+        events.append(
+            INPUT(
+                type=INPUT_MOUSE,
+                union=INPUT_UNION(mi=MOUSEINPUT(nx, ny, 0, _ABS_MOVE_FLAGS, 0, ULONG_PTR(0))),
+            )
+        )
     for _ in range(n_clicks):
         events.append(
             INPUT(
@@ -115,7 +160,10 @@ def _click_windows(x: int, y: int, button: str, double: bool) -> None:
         get_virtual_cursor().show_click(int(x), int(y), button=button_l, double=double)
     except Exception:  # noqa: BLE001 — overlay must never break a real click
         pass
-    _send_click(button_l, double)
+    # Click ABSOLUTELY on the virtual desktop (negative-X monitors included) so a
+    # flaky SetCursorPos during the glide can't make the button-press land on the
+    # wrong screen — the glide is now purely the visible cursor animation.
+    _send_click(button_l, double, abs_xy=(int(x), int(y)))
 
 
 class ClickTool:

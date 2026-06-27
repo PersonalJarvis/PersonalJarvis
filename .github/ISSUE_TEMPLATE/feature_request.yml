@@ -1,0 +1,40 @@
+name: Feature request
+description: Suggest a new capability or an improvement.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea! Tell us what you'd like Jarvis to do and why.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: The use case or frustration behind the request.
+      placeholder: "I'm always trying to ... but today Jarvis can't ..."
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What should it do? A spoken command, a setting, a new view?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other ways you thought about solving this (optional).
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: This fits the cross-platform, provider-agnostic direction (see docs/PHILOSOPHY.md).
+          required: false

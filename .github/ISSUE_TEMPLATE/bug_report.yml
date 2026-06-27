@@ -1,0 +1,82 @@
+name: Bug report
+description: Report something that is broken or behaving unexpectedly.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! Please fill out the fields below
+        so we can reproduce and fix it quickly. Write in English where possible.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear, plain description of the bug and what you expected instead.
+      placeholder: "When I say '...', Jarvis does X, but I expected Y."
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: How can we trigger the bug?
+      placeholder: |
+        1. Start with `jarvis serve`
+        2. Open http://localhost:47821
+        3. Do '...'
+        4. See the error
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Headless server / VPS
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "e.g. 3.11.8 (run: python --version)"
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Active brain provider
+      description: Which model provider was selected when the bug happened?
+      options:
+        - Gemini
+        - Claude (API)
+        - Claude (subscription / CLI)
+        - OpenAI
+        - OpenRouter
+        - Grok
+        - Codex (subscription)
+        - Antigravity (subscription)
+        - Not sure / not applicable
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste any error output. This is automatically formatted as code — do NOT paste API keys or secrets.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I removed any API keys, tokens, or personal data from the logs above.
+          required: true

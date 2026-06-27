@@ -80,6 +80,56 @@ def get_mcp_registry() -> Any | None:
     return _MCP_REGISTRY[0] if _MCP_REGISTRY else None
 
 
+# Wake-model load coordination (boot speed). When a CUSTOM wake phrase boots,
+# the light base/cpu wake model load competes for CPU/disk with non-urgent
+# boot-storm housekeeping (the deferred DocRegistry/SkillRegistry disk scans).
+# Letting that housekeeping yield until the wake model is loaded makes the wake
+# word hear-ready sooner — the user's "window -> Jarvis-Bar -> rest" order. Two
+# flags so the gate is a NO-OP unless a wake model is actually loading (headless
+# / voice-off must never wait): ``_WAKE_MODEL_EXPECTED`` is set the moment voice
+# boot decides it will load a local wake model; ``_WAKE_MODEL_READY`` once it has.
+_WAKE_MODEL_EXPECTED: list[bool] = []
+_WAKE_MODEL_READY: list[bool] = []
+
+
+def signal_wake_model_expected() -> None:
+    """Mark that voice boot WILL load a local wake model (so housekeeping waits)."""
+    _set(_WAKE_MODEL_EXPECTED, True)
+
+
+def signal_wake_model_ready() -> None:
+    """Mark the wake model as loaded — releases any housekeeping gate."""
+    _set(_WAKE_MODEL_READY, True)
+
+
+def is_wake_model_expected() -> bool:
+    return bool(_WAKE_MODEL_EXPECTED and _WAKE_MODEL_EXPECTED[0])
+
+
+def is_wake_model_ready() -> bool:
+    return bool(_WAKE_MODEL_READY and _WAKE_MODEL_READY[0])
+
+
+async def await_wake_model_ready(timeout: float = 12.0) -> bool:
+    """Yield until the wake model is loaded (bounded), so non-urgent boot
+    housekeeping does not steal CPU/disk from the wake-model load.
+
+    NO-OP when no wake model is loading (headless / voice off): returns
+    immediately so those paths never regress. Polling (not an asyncio.Event) so
+    it is safe regardless of which loop set the flag. Returns True if it became
+    ready, False on timeout.
+    """
+    if not is_wake_model_expected():
+        return True
+    waited = 0.0
+    while waited < timeout:
+        if is_wake_model_ready():
+            return True
+        await asyncio.sleep(0.25)
+        waited += 0.25
+    return False
+
+
 def set_active_chat_turn(task: asyncio.Task[Any], loop: asyncio.AbstractEventLoop) -> None:
     """Arm the bar's X for THIS chat turn.
 
@@ -136,3 +186,5 @@ def _reset_for_tests() -> None:
     _SPEECH_PIPELINE.clear()
     _MCP_REGISTRY.clear()
     _ACTIVE_CHAT_TURN.clear()
+    _WAKE_MODEL_EXPECTED.clear()
+    _WAKE_MODEL_READY.clear()

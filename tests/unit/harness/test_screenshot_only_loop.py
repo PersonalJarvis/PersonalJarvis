@@ -872,6 +872,15 @@ def test_execute_type_settles_before_dispatch(monkeypatch) -> None:
 
     monkeypatch.setattr(loop.asyncio, "sleep", _fake_sleep)
 
+    # The type read-back gate (audit 🔴 #1) fetches the a11y tree after dispatch.
+    # Isolate it with an empty tree so this settle-ORDERING test stays deterministic
+    # and never depends on the live desktop's editable fields.
+    class _EmptyTree:
+        async def observe(self, **_kw):
+            return type("_Obs", (), {"nodes": ()})()
+
+    monkeypatch.setattr(loop, "_get_ui_tree_source", lambda: _EmptyTree())
+
     type_tool = object()
     executor = _OrderRecordingExecutor()
     ctx = _FakeCtx(executor=executor, tools={"type_text": type_tool})
