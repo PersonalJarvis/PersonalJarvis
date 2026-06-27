@@ -35,6 +35,10 @@ class _FakeApp:
 
 
 class _FakeWebServer:
+    # The test sets this to the shared events list so ``start`` records when the
+    # heavy ``server.start()`` _init_* chain runs relative to the wake listener.
+    events: list[str] | None = None
+
     def __init__(self, cfg: Any) -> None:
         self.cfg = cfg
         self.bus = _FakeBus()
@@ -42,6 +46,8 @@ class _FakeWebServer:
         self.stopped = False
 
     async def start(self, *, start_serving: bool = True) -> None:
+        if _FakeWebServer.events is not None:
+            _FakeWebServer.events.append("server_start")
         self.start_serving = start_serving
         return None
 
@@ -61,7 +67,7 @@ class _FakeBootstrap:
     def set_app(self, app: Any) -> None:
         self.app_set = app
 
-    async def wait_shell_served(self, timeout: float = 0.0) -> bool:
+    async def wait_shell_served(self, timeout: float = 0.0) -> bool:  # noqa: ASYNC109
         return True
 
     async def stop(self) -> None:
@@ -158,7 +164,7 @@ def _cfg(tmp_path: Path) -> SimpleNamespace:
     )
 
 
-def test_desktop_post_ready_warmups_run_after_event_loop_starts(monkeypatch, tmp_path):
+def test_desktop_voice_start_does_not_wait_for_brain_ready(monkeypatch, tmp_path):
     events: list[str] = []
     monkeypatch.setattr(asyncio, "new_event_loop", lambda: _FakeLoop(events))
     monkeypatch.setattr(asyncio, "set_event_loop", lambda _loop: None)
@@ -277,11 +283,23 @@ def test_desktop_post_ready_warmups_run_after_event_loop_starts(monkeypatch, tmp
 
     monkeypatch.setattr(app, "_start_speech_and_orb", _speech)
     monkeypatch.setattr(app, "_start_virtual_cursor", _cursor)
+    _FakeWebServer.events = events
+    try:
+        app._run_backend()
+    finally:
+        _FakeWebServer.events = None
 
-    app._run_backend()
-
-    # The voice/orb build now runs as a loop task (it offloads its blocking
-    # CUDA probe to a worker thread), so the synchronous cursor start lands
-    # before the deferred speech task drains — both still after the loop +
-    # brain build.
-    assert events[:4] == ["run_forever", "build_brain", "cursor", "speech"]
+    # Serve-WAKE-first contract: the Jarvis-Bar / wake listener must arm as soon
+    # as the backend loop is serving — BEFORE the heavy ``server.start()`` _init_*
+    # chain (mission/wiki/session/channel) AND before the BrainManager build. The
+    # window appears, then the wake word, then the rest, all overlapping. A slow
+    # backend must never keep the wake word deaf after the window is visible.
+    assert events[0] == "run_forever"
+    assert events[1] == "speech"
+    assert "server_start" in events
+    assert events.index("speech") < events.index("server_start"), (
+        f"wake must arm before the heavy server.start() chain; got {events}"
+    )
+    assert events.index("speech") < events.index("build_brain"), (
+        f"wake must arm before the brain build; got {events}"
+    )

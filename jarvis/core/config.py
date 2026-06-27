@@ -1354,6 +1354,24 @@ class ComputerUseConfig(BaseModel):
     model_config = {"extra": "allow"}
 
     enabled: bool = False
+    # Which Computer-Use engine runs (reversible switch). "current" (default) =
+    # the maintained engine; "june13" = the frozen 2026-06-10 / 352a784f snapshot
+    # (jarvis/harness/screenshot_only_loop_june13.py), kept as a known-good
+    # fallback after the maintained engine accumulated ~1700 lines of stacked
+    # click-correction + verifier layers and regressed. The harness reads this
+    # per mission and logs which engine is live, so a flip applies on the next
+    # mission / restart with no code change. Flip back any time with "current".
+    engine: Literal["current", "june13"] = "current"
+    # Which monitor Computer-Use captures + acts on. DEFAULT "primary": CU works
+    # ONLY on the main monitor (the screen at the virtual origin 0,0). This avoids
+    # the multi-monitor coordinate bugs entirely — a secondary monitor LEFT of
+    # primary has negative X where clicks misfire, and a monitor at a different
+    # DPI scale shifts every click target. "foreground" follows the active window
+    # onto whatever screen it is on (the legacy behaviour, multi-monitor-fragile);
+    # "all" captures the whole virtual desktop. Switch to "foreground" only if you
+    # deliberately want CU on a secondary screen and have verified clicks land.
+    # Cross-platform: the primary is identified by its (0,0) origin on every OS.
+    monitor: Literal["primary", "foreground", "all"] = "primary"
     max_steps: int = Field(default=100, ge=1, le=1000)
     # In the Set-of-Marks ReAct loop each cycle plans ONE action, so every
     # successful step also exhausts its one-step plan and counts as a "replan".

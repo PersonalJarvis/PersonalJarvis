@@ -3762,6 +3762,60 @@ class BrainManager:
             log.debug("signalless-turn action-hide gate failed", exc_info=True)
             return tools
 
+    def _hide_spawn_when_plugin_tool_handles_turn(
+        self, tools: dict[str, "Tool"], user_text: str
+    ) -> dict[str, "Tool"]:
+        """Hide the spawn vehicles when a connected plugin tool's usage-card
+        keywords match the turn, so the router-LLM uses that (router-only) plugin
+        tool DIRECTLY instead of delegating to a worker that cannot reach it.
+
+        Forensic 2026-06-27 (voice session 17:44): "Schau mal nach, was in meinem
+        Google Calendar am 29. fuer Termine sind" — the router spawned a worker
+        ("umfangreicheres Stueck Arbeit") which has NO google_calendar tool
+        (plugin tools are router-tier only, AP-5/AP-14) and answered "kann ich
+        nicht". The deterministic force-spawn gate stands down on such a turn, but
+        it never constrains the LLM's own spawn reflex. A plugin-tool turn must
+        never be delegated. Mirrors ``_hide_spawn_on_knowledge_question``: the
+        surest way to stop a wrong spawn is to not offer the spawn tool. The
+        matched plugin tool + ``search_web`` + reads stay visible, so the turn is
+        still answerable inline.
+
+        Narrow on purpose: stands down when the user explicitly named a heavy-work
+        vehicle ("Subagent" / "deep dive") or asked to BUILD an artifact
+        (file / report), both of which legitimately spawn. Pure regex + the
+        usage-card keyword gate (AP-9 cached / AP-11 safe, provider-agnostic).
+        Defensive: any fault returns the tools unchanged so a gate bug can never
+        blind the brain.
+        """
+        if not isinstance(tools, dict):
+            return tools
+        try:
+            t = (user_text or "").strip()
+            if not t:
+                return tools
+            # An explicit heavy-work vehicle or an artifact-build request still
+            # legitimately spawns — never hide the spawn vehicles there.
+            if self._get_force_spawn_pattern().search(t) or self._research_wants_artifact(t):
+                return tools
+            from jarvis.marketplace.usage_cards.loader import load_usage_card
+
+            # A tool in the surface whose usage card matches => this is a
+            # plugin-tool turn. Native tools use their name as the card id
+            # (google_calendar); namespaced plugin tools use the id before "/".
+            for name in tools:
+                pid = name.partition("/")[0]
+                card = load_usage_card(pid)
+                if card is not None and card.matches(t):
+                    return {
+                        n: tool
+                        for n, tool in tools.items()
+                        if n not in _SPAWN_TOOL_NAMES
+                    }
+            return tools
+        except Exception:  # noqa: BLE001 — gate must never blind the brain
+            log.debug("plugin-tool spawn-hide gate failed", exc_info=True)
+            return tools
+
     def _apply_plugin_relevance(
         self, user_text: str, tools: dict[str, "Tool"]
     ) -> dict[str, "Tool"]:
@@ -5875,6 +5929,16 @@ class BrainManager:
             # from the conversation context and fire a wrong desktop action.
             if isinstance(_turn_tools, dict):
                 _turn_tools = self._hide_action_tools_on_signalless_turn(
+                    _turn_tools, user_text
+                )
+            # Plugin-tool spawn-hide (forensic 2026-06-27, voice 17:44): "Schau
+            # mal nach was in meinem Google Calendar am 29. ist" spawned a worker
+            # ("umfangreicheres Stueck Arbeit") that has no google_calendar tool
+            # (plugin tools are router-tier only, AP-5/AP-14) -> "kann ich nicht".
+            # When a connected plugin's usage-card keywords match the turn, drop
+            # the spawn vehicles so the router uses the plugin tool DIRECTLY.
+            if isinstance(_turn_tools, dict):
+                _turn_tools = self._hide_spawn_when_plugin_tool_handles_turn(
                     _turn_tools, user_text
                 )
             # AI Pointer: on a deictic pointer turn the cursor crop is already the

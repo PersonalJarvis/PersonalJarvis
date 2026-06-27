@@ -4041,7 +4041,7 @@ class SpeechPipeline:
         "Sound effects" master switch applies live (no restart). Defensive
         default ``True`` — a missing field must never silence tones.
         """
-        ui = getattr(self._config, "ui", None)
+        ui = getattr(getattr(self, "_config", None), "ui", None)
         return bool(getattr(ui, "sound_effects", True))
 
     async def _play_earcon(

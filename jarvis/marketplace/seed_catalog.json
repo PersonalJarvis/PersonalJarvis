@@ -346,7 +346,7 @@
         "callback_port": 3122,
         "callback_path": "",
         "scopes": [
-          "https://www.googleapis.com/auth/calendar.events"
+          "https://www.googleapis.com/auth/calendar"
         ],
         "scope_separator": "space",
         "user_scopes_only": false,
@@ -354,7 +354,7 @@
         "offline_access": true
       },
       "native_tool": "google_calendar",
-      "post_install_hint_md": "Setup: shares the Google OAuth client with Gmail/Drive. Add the calendar.events scope to the OAuth consent screen and publish the app to 'In production' so the refresh token (and thus the connection) never expires — a 'Testing' app drops it after 7 days."
+      "post_install_hint_md": "Setup: shares the Google OAuth client with Gmail/Drive. Add the full 'calendar' scope to the OAuth consent screen (it reads events across ALL your calendars, not just the primary one) and publish the app to 'In production' so the refresh token (and thus the connection) never expires — a 'Testing' app drops it after 7 days."
     }
   ]
 }
