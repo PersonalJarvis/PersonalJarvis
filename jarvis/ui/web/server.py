@@ -1621,6 +1621,18 @@ class WebServer:
             )
         _boot_mark("screenshot_retention")
 
+        # Flight-recorder audit log: attach the wildcard JSONL event recorder so
+        # there is a replayable audit trail of what Jarvis did (every event,
+        # incl. every Computer-Use action). It was defined but never wired at
+        # boot, so telemetry.flight_recorder=true logged nothing (audit #14).
+        try:
+            await self._init_flight_recorder()
+        except Exception as exc:  # noqa: BLE001
+            logger.opt(exception=exc).warning(
+                "Flight recorder init failed — the audit log will be inactive"
+            )
+        _boot_mark("flight_recorder")
+
         # Phase B5 wiki write-wiring — SessionRollupWorker + WikiCurator.
         # Subscribes to IdleEntered; gracefully disabled when wiki_integration
         # is not configured or enabled is False.
@@ -1780,11 +1792,17 @@ class WebServer:
             self._pending_reloads.clear()
 
             async def _run_deferred_reloads() -> None:
-                # Let BOOT_READY emit and the first requests settle before the
-                # blocking scans start their worker thread — otherwise the scan
-                # CPU contends with the pre-ready window via the start_overlay
-                # yield. The views tolerate an empty registry for this brief gap.
-                await asyncio.sleep(0.3)
+                # Yield until the wake model is loaded before these blocking disk
+                # scans (DocRegistry FTS build ~5 s) start their worker thread —
+                # otherwise they steal CPU/disk from the custom-wake base/cpu
+                # model load and ~double its time (measured: base load 3.2 s
+                # isolated vs ~8 s racing this scan). NO-OP on headless / voice-off
+                # (returns immediately — no regress); bounded so a stuck wake load
+                # never blocks the scans. The views tolerate an empty registry for
+                # this brief gap.
+                from jarvis.core import runtime_refs as _rr
+
+                await _rr.await_wake_model_ready(timeout=12.0)
                 for label, registry in pending:
                     try:
                         await asyncio.to_thread(registry.reload_sync)
@@ -1872,6 +1890,32 @@ class WebServer:
 
         self._screenshot_retention_task = asyncio.create_task(
             _boot_sweep_then_retain()
+        )
+
+    async def _init_flight_recorder(self) -> None:
+        """Attach the flight-recorder audit log to the EventBus (ADR-0007).
+
+        Writes every event as a JSONL line under ``data/flight_recorder/`` — a
+        replayable audit trail of what Jarvis did, including every Computer-Use
+        action. Gated on ``telemetry.flight_recorder`` (default on); the recorder
+        is held on ``app.state`` for later flush/close on shutdown. The recorder
+        auto-flushes every second, and oversized event blobs land under
+        ``blobs/`` which the screenshot-retention task already prunes.
+        """
+        from jarvis.telemetry.recorder import attach_flight_recorder
+
+        rec = attach_flight_recorder(
+            self.bus,
+            enabled=self.cfg.telemetry.flight_recorder,
+            data_dir=Path("data") / "flight_recorder",
+        )
+        if rec is None:
+            logger.info("Flight recorder disabled (telemetry.flight_recorder=false)")
+            return
+        self._flight_recorder = rec
+        self.app.state.flight_recorder = rec
+        logger.info(
+            "Flight recorder attached — events -> data/flight_recorder/*.jsonl"
         )
 
     async def _init_mission_stack(self) -> None:
@@ -2496,6 +2540,17 @@ class WebServer:
                     "retention_task: did not stop within 2s — may be blocking on I/O"
                 )
             self._screenshot_retention_task = None
+
+        # Flush + close the flight-recorder audit log so the last buffered events
+        # reach disk before shutdown (it otherwise auto-flushes every ~1s).
+        recorder = getattr(self, "_flight_recorder", None)
+        if recorder is not None:
+            try:
+                await recorder.flush()
+                await recorder.close()
+            except Exception as exc:  # noqa: BLE001 — shutdown best-effort
+                logger.opt(exception=exc).debug("Flight recorder close: {}", exc)
+            self._flight_recorder = None
 
         # Finalize in-flight missions BEFORE the store closes: a restart used
         # to kill the process with missions still running, leaving them

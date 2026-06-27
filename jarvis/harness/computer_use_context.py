@@ -46,6 +46,10 @@ class ComputerUseContext:
     fast_step_model: str = ""  # L9: cheaper model id for trivial steps ("" = off)
     plan_model_override: str | None = None
     verify_after_each_step: bool = True
+    # Master switch for the per-action read-back verification suite (type read-back,
+    # click_element confirmation, no blind focus->type batching). See
+    # ComputerUseConfig.strict_verify. Default ON.
+    strict_verify: bool = True
     # Proactive zoom-before-click (DEFAULT OFF since 2026-06-27 — see
     # ComputerUseConfig.zoom_before_click). Internal screenshot crop only.
     zoom_before_click: bool = False
@@ -211,6 +215,7 @@ _RELOADABLE_FIELDS: tuple[str, ...] = (
     "fast_step_model",
     "max_replans",
     "verify_after_each_step",
+    "strict_verify",
     "zoom_before_click",
     "uia_click_fallback",
     "announce_progress",

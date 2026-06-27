@@ -303,3 +303,4 @@ tests/unit/ui/test_tray.py
 #     comments/strings are faithful captured history, not new artifacts — exempt
 #     as a frozen reference, same spirit as the forensic deep-dive docs. ---
 jarvis/harness/screenshot_only_loop_june13.py
+jarvis/harness/screenshot_only_loop_stable.py

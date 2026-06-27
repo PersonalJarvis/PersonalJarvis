@@ -673,6 +673,13 @@
     "more_to_learn": "{0} más por aprender",
     "value_yes": "sí",
     "value_no": "no",
+    "field_edit": "Editar",
+    "field_clear": "Borrar",
+    "field_remove_item": "Quitar",
+    "field_add": "Añadir",
+    "field_add_placeholder": "Añadir…",
+    "field_value_placeholder": "Valor…",
+    "field_saved": "Guardado",
     "review_confirm": "Correcto",
     "review_strike": "Tachar",
     "questions": {

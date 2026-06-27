@@ -1534,6 +1534,14 @@ class DesktopApp:
                         "Voice/orb startup task crashed."
                     )
 
+            # Wake-model GIL-priority gate: set by ``_start_speech_and_orb`` once
+            # the (light base/cpu) wake model has finished loading. The heavy
+            # backend (the GIL-heavy brain + MCP build) waits on this so the wake
+            # model load is NOT starved by the import storm — it loads in ~3 s
+            # isolated instead of ~8.8 s racing brain/mcp. Matches the user's
+            # "window -> Jarvis-Bar -> rest" order.
+            self._wake_model_loaded = asyncio.Event()
+
             # === 1) Jarvis-Bar / wake listener FIRST ========================
             # The user's "Jarvis is ready to talk to" gate. Scheduled before the
             # heavy backend so the wake word arms within ~1 s of the window
@@ -1557,6 +1565,27 @@ class DesktopApp:
             # pulled ahead of it. set_app + _write_meta gate API delegation
             # (serve-first), which Voice does not need.
             async def _heavy_backend_bg() -> None:
+                # Wake-model CPU/disk priority: hold the ENTIRE heavy backend
+                # (server.start's mission/wiki/session/channel init + git-prune,
+                # then the brain + MCP build) until the wake model has loaded.
+                # Measured: the light base/cpu wake model loads ~4 s isolated but
+                # ~8 s when it races this boot storm for CPU/disk — gating the
+                # whole storm behind wake roughly halves the custom-wake hear-
+                # ready time. This matches the user's explicit "window ->
+                # Jarvis-Bar -> rest" order: the bootstrap already serves the
+                # static UI shell, so only the API DATA (chat history, missions,
+                # wiki) and background services land a few seconds later. Bounded
+                # so a stuck/absent wake load never blocks the backend forever.
+                try:
+                    await asyncio.wait_for(
+                        self._wake_model_loaded.wait(), timeout=12.0
+                    )
+                except (TimeoutError, asyncio.TimeoutError):
+                    from loguru import logger as _slog
+                    _slog.info(
+                        "Heavy backend: wake-model gate timed out (12 s) — "
+                        "starting the backend anyway."
+                    )
                 try:
                     await server.start(start_serving=False)
                     bootstrap.set_app(server.app)
@@ -2117,6 +2146,11 @@ class DesktopApp:
             # build it when the plan asks for it. See
             # docs/local-wakeword/{RESEARCH-AND-DESIGN,CUSTOM-WAKE-WORD-DESIGN}.md.
             stt = None
+            # Progressive wake-model state: when we build the LIGHT base/cpu wake
+            # model (fast_first), remember the phrase so a background task can
+            # hot-swap in the heavier turbo/cuda model once the pipeline is live.
+            wake_phrase = None
+            _wake_progressive_upgrade = False
             _t_build0 = time.perf_counter()
             if self.cfg.trigger.heavy_local_whisper or wake_plan.needs_local_whisper:
                 # The local wake-match / live-preview Whisper — a SMALL model on
@@ -2125,6 +2159,12 @@ class DesktopApp:
                 # (~71 s vs ~0.45 s for base/cpu, measured); wake matching is
                 # latency-tolerant and does not need the big model.
                 from jarvis.plugins.stt import build_wake_whisper
+
+                # Tell the boot-storm housekeeping (deferred registry disk scans)
+                # that a local wake model is loading, so it yields CPU/disk to the
+                # wake-model load first (no-op for headless / voice-off).
+                from jarvis.core import runtime_refs as _rr_wake
+                _rr_wake.signal_wake_model_expected()
 
                 # Seed the wake Whisper's prompt with the custom phrase ONLY on
                 # the stt_match path (a custom name with no OWW model). The
@@ -2146,7 +2186,16 @@ class DesktopApp:
                     self.cfg.stt,
                     language=stt_language,
                     wake_phrase=wake_phrase,
+                    # Progressive wake model: build the LIGHT base/cpu model now
+                    # (hear-ready in ~3 s, no CUDA JIT) and hot-swap the turbo/cuda
+                    # model in the background after the pipeline is live (see
+                    # ``_upgrade_wake_model_bg`` below). Keeps custom-phrase wake
+                    # fast to come up AND accurate at steady state.
+                    fast_first=True,
                 )
+                # The light base/cpu wake model is up; arm the background
+                # turbo/cuda hot-swap (a no-op on a CPU-only host — see task).
+                _wake_progressive_upgrade = True
             _t_stt = time.perf_counter()
             tts = build_tts_from_config(self.cfg.tts)
             _t_tts = time.perf_counter()
@@ -2314,6 +2363,93 @@ class DesktopApp:
                 print(
                     f"VOICE_READY_MS={(time.perf_counter() - self._bp_t0) * 1000.0:.1f}",
                     flush=True,
+                )
+
+            # Wake-model GIL-priority gate: signal the heavy backend (brain/mcp)
+            # to resume as soon as the LIGHT base/cpu wake model has loaded — or
+            # immediately if there is no local wake model (e.g. the OWW path), so
+            # the backend never waits needlessly.
+            def _wake_model_is_loaded() -> bool:
+                ww = getattr(pipeline, "_whisper_wake", None)
+                base_stt = getattr(ww, "_stt", None) if ww is not None else stt
+                return (
+                    base_stt is not None
+                    and getattr(base_stt, "_model", None) is not None
+                )
+
+            from jarvis.core import runtime_refs as _rr_ready
+            if stt is None:
+                self._wake_model_loaded.set()
+                _rr_ready.signal_wake_model_ready()
+            else:
+                async def _signal_wake_model_loaded() -> None:
+                    for _ in range(40):  # ~20 s cap, then release the gate anyway
+                        if _wake_model_is_loaded():
+                            break
+                        await asyncio.sleep(0.5)
+                    self._wake_model_loaded.set()
+                    # Release the boot-storm housekeeping gate too.
+                    _rr_ready.signal_wake_model_ready()
+
+                loop.create_task(
+                    _signal_wake_model_loaded(), name="wake-model-ready-signal"
+                )
+
+            # Progressive wake model: the pipeline is now live on the LIGHT
+            # base/cpu wake model (hear-ready fast, no CUDA JIT). Hot-swap the
+            # heavier turbo/cuda model in the BACKGROUND for faster steady-state
+            # inference, so a custom phrase comes up fast AND stays accurate. No-op
+            # on a CPU-only host (the build returns base again). Any failure leaves
+            # the working base/cpu model in place — wake never breaks.
+            if _wake_progressive_upgrade:
+                _wake_phrase_for_upgrade = wake_phrase
+                _stt_lang_for_upgrade = stt_language
+
+                async def _upgrade_wake_model_bg() -> None:
+                    try:
+                        from jarvis.plugins.stt import (
+                            build_wake_whisper as _bww,
+                        )
+
+                        ww = getattr(pipeline, "_whisper_wake", None)
+                        # Wait until the base/cpu wake model is loaded (the same
+                        # gate the heavy backend uses) BEFORE loading turbo —
+                        # loading turbo in parallel races the base load on the
+                        # GIL/CUDA-init lock and doubled it (~3 s -> ~20 s,
+                        # measured 2026-06-27). Wake is already live on base while
+                        # we wait, so this costs nothing user-visible.
+                        try:
+                            await asyncio.wait_for(
+                                self._wake_model_loaded.wait(), timeout=120.0
+                            )
+                        except (TimeoutError, asyncio.TimeoutError):
+                            pass
+
+                        turbo = await asyncio.to_thread(
+                            _bww,
+                            self.cfg.stt,
+                            language=_stt_lang_for_upgrade,
+                            wake_phrase=_wake_phrase_for_upgrade,
+                            fast_first=False,
+                        )
+                        if getattr(turbo, "_model_name", "base") == "base":
+                            return  # no GPU upgrade available — keep base/cpu
+                        await asyncio.to_thread(turbo._ensure_model)
+                        if ww is not None:
+                            # Atomic ref swap (GIL); the next transcribe uses turbo.
+                            ww._stt = turbo
+                            logger.info(
+                                "Wake-model upgraded base/cpu -> turbo/cuda "
+                                "(background hot-swap; faster steady-state inference)."
+                            )
+                    except Exception as exc:  # noqa: BLE001 — base/cpu stays; wake never breaks
+                        logger.warning(
+                            "Wake-model turbo upgrade failed (staying on base/cpu): %s",
+                            exc,
+                        )
+
+                self._wake_upgrade_task = loop.create_task(
+                    _upgrade_wake_model_bg(), name="wake-model-turbo-upgrade"
                 )
         except Exception as exc:  # noqa: BLE001
             from loguru import logger
@@ -2801,6 +2937,25 @@ class DesktopApp:
             if self._pipeline_task is not None and not self._pipeline_task.done():
                 try:
                     loop.call_soon_threadsafe(self._pipeline_task.cancel)
+                except Exception:  # noqa: BLE001
+                    pass
+            # Wake-model background tasks + gate: cancel the turbo hot-swap task
+            # and RELEASE the wake-model-loaded gate so any task still parked in
+            # ``await self._wake_model_loaded.wait()`` (the heavy-backend gate)
+            # unblocks instead of sitting pending through shutdown. Left pending,
+            # these log "Task was destroyed but it is pending" and can stall
+            # loop.stop → the self-restart hangs and the old process keeps the
+            # port (forensic 2026-06-27: PID 51240 hung ~30 min on shutdown).
+            _wut = getattr(self, "_wake_upgrade_task", None)
+            if _wut is not None and not _wut.done():
+                try:
+                    loop.call_soon_threadsafe(_wut.cancel)
+                except Exception:  # noqa: BLE001
+                    pass
+            _wml = getattr(self, "_wake_model_loaded", None)
+            if _wml is not None:
+                try:
+                    loop.call_soon_threadsafe(_wml.set)
                 except Exception:  # noqa: BLE001
                     pass
             # Workflow-Scheduler + Store sauber herunterfahren — verhindert

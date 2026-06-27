@@ -3366,13 +3366,29 @@ class SpeechPipeline:
         ``_ensure_*`` is idempotent — a concurrent lazy load on first use is a
         harmless no-op once this has run.
         """
+        # PRIORITY: pre-warm the WAKE model FIRST and ALONE. For a custom wake
+        # phrase (stt_match / rolling-whisper) ``self._stt`` IS the wake model,
+        # and until it is in memory the wake loop cannot transcribe — the wake
+        # word is DEAF. Racing it in one gather against VAD+TTS serialized it on
+        # the Python/GIL + CUDA init lock to 11.8 s (measured: stt-load=11828
+        # while vad-load=5859, tts-init=4297 ran alongside). Loading it on its
+        # own first roughly halves that (~5.9 s) and, more importantly, makes the
+        # wake word hear-ready as early as possible. VAD + the TTS client are
+        # only needed AFTER a wake fires and are lazy-safe (each re-ensures its
+        # model on first use), so they load afterwards and never gate wake-ready.
+        if self._stt is not None:
+            _wake_t0 = time.monotonic()
+            try:
+                await asyncio.to_thread(self._stt._ensure_model)
+                log.info(
+                    "Wake-model pre-warm done in %.0f ms (priority, no GIL race).",
+                    (time.monotonic() - _wake_t0) * 1000.0,
+                )
+            except Exception as exc:  # noqa: BLE001 — lazy load on first use still works
+                log.warning("Wake-model pre-warm failed (will lazy-load): %s", exc)
+
         async def _load_vad() -> None:
             await asyncio.to_thread(self._vad._ensure_model)
-
-        async def _load_stt() -> None:
-            # Lightweight path has no local Whisper to pre-load.
-            if self._stt is not None:
-                await asyncio.to_thread(self._stt._ensure_model)
 
         async def _init_tts() -> None:
             await asyncio.to_thread(self._tts._ensure_client)
@@ -3380,7 +3396,6 @@ class SpeechPipeline:
         timings, results = await _gather_timed(
             [
                 ("vad-load", _load_vad),
-                ("stt-load", _load_stt),
                 ("tts-init", _init_tts),
             ]
         )
@@ -3392,7 +3407,7 @@ class SpeechPipeline:
             ),
         )
         for name, res in zip(
-            ("vad-load", "stt-load", "tts-init"), results, strict=True
+            ("vad-load", "tts-init"), results, strict=True
         ):
             if isinstance(res, Exception):
                 log.warning("Warm-up deferred loader '%s' failed: %s", name, res)
