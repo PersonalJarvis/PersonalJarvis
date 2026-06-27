@@ -1367,12 +1367,19 @@ async def subagent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     if provider in ANTIGRAVITY_SUBAGENT_SLUGS:
         from jarvis.google_cli.auth_service import GoogleCliAuthService
 
-        if not GoogleCliAuthService().status().connected:
+        # Dual billing (mirror of codex): the Google subscription OAuth login OR
+        # a Gemini API key (per token). Either is enough to run the worker.
+        antigravity_connected = GoogleCliAuthService().status().connected
+        antigravity_key = bool(
+            cfg_mod.get_secret("gemini_api_key", env_fallback="GEMINI_API_KEY")
+        )
+        if not (antigravity_connected or antigravity_key):
             raise HTTPException(
                 status_code=409,
                 detail=(
                     "Antigravity is not connected — sign in with Google "
-                    "(install agy or the Gemini CLI and log in), then activate."
+                    "(install agy or the Gemini CLI and log in) or set a Gemini "
+                    "API key, then activate."
                 ),
             )
         persisted = False

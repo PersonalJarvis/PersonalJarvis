@@ -39,6 +39,11 @@ a browser UI to a full desktop with a tray app, an Orb overlay, and global-hotke
   controller decides what gets spoken.
 - **Provider-agnostic.** Gemini, Claude, OpenAI, Grok, OpenRouter — switch the brain by
   voice or config, with a smart, rate-limit-aware fallback chain. No single vendor lock-in.
+- **Subscription or API key — your call.** The heavy sub-agents run on a flat-rate plan
+  login *or* a pay-per-token API key, whichever you connect: Claude Max through the Claude
+  CLI, ChatGPT through the Codex CLI, Google through Antigravity — or classic Anthropic,
+  OpenAI, Gemini, and OpenRouter keys. Run the agents on a subscription you already pay for,
+  with no metered API bill required.
 - **Self-modifying, safely.** It can rewrite its own settings through a 10-step
   validate → backup → atomic-swap → reload → rollback → audit pipeline. Nothing is changed
   that can't be undone.
@@ -197,7 +202,7 @@ straight into provider costs, infrastructure, and development time.
 
 <p align="center">
   <i>This wall is empty — for now.</i><br/>
-  <a href="https://github.com/sponsors/PersonalJarvis"><b>Become the first sponsor →</b></a>
+  Want to be the first? Reach out at <a href="mailto:aethroc@gmail.com">aethroc@gmail.com</a>.
 </p>
 
 | Tier | You get |
@@ -207,7 +212,8 @@ straight into provider costs, infrastructure, and development time.
 | **Sponsor** | The above + your logo on the sponsor wall |
 | **Partner** | The above + a seat at the roadmap table |
 
-> Sponsorship is being set up. Want to talk before the page is live? Reach out on
+> Sponsorship is being set up. Want to talk before the page is live? Email
+> [aethroc@gmail.com](mailto:aethroc@gmail.com), or reach out on
 > [Discord](https://discord.gg/UPu6pFWrJ) or [X](https://x.com/PersonalJarvis).
 
 ## Contributing

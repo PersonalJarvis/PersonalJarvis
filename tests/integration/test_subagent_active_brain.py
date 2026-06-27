@@ -414,7 +414,11 @@ def test_openclaw_status_includes_antigravity_row(monkeypatch: pytest.MonkeyPatc
 
 
 def test_antigravity_row_key_set_reflects_oauth(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No API key — the row is unlocked iff the Google OAuth login is connected."""
+    """With NO Gemini API key, the row is unlocked iff the Google OAuth login is
+    connected. (The Gemini-key path is covered separately below.)"""
+    import jarvis.core.config as cfg_mod
+
+    monkeypatch.setattr(cfg_mod, "get_secret", lambda *_a, **_k: None)
     _patch_antigravity(monkeypatch, connected=True)
     cfg = load_config()
     row = next(r for r in _status(cfg)["mapping"] if r["jarvis"] == "antigravity")
@@ -457,11 +461,12 @@ def test_subagent_switch_accepts_antigravity(monkeypatch: pytest.MonkeyPatch) ->
 def test_subagent_switch_409_antigravity_when_not_connected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Not signed in with Google -> 409, nothing persisted."""
+    """Not signed in with Google AND no Gemini key -> 409, nothing persisted."""
     import jarvis.core.config as cfg_mod
     import jarvis.core.config_writer as config_writer
 
     monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _p: None)
+    monkeypatch.setattr(cfg_mod, "get_secret", lambda *_a, **_k: None)
     _patch_antigravity(monkeypatch, connected=False)
     persisted: list[str] = []
     monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: persisted.append(n))
@@ -470,3 +475,63 @@ def test_subagent_switch_409_antigravity_when_not_connected(
     resp = _client(cfg).post("/api/subagent/switch", json={"provider": "antigravity"})
     assert resp.status_code == 409
     assert persisted == []
+
+
+# --- Antigravity DUAL billing: subscription OAuth OR a Gemini API key ---------
+# Mirror of Codex (subscription_or_api). A user with no Google login but a Gemini
+# API key set can still run the Antigravity subagent, billed per token.
+
+
+def test_antigravity_row_key_set_via_gemini_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No OAuth login, but a Gemini API key is set -> the row unlocks (API billing)."""
+    import jarvis.core.config as cfg_mod
+
+    _patch_antigravity(monkeypatch, connected=False)
+    monkeypatch.setattr(
+        cfg_mod, "get_secret",
+        lambda key, *a, **k: "AIza-fake" if key == "gemini_api_key" else None,
+    )
+    cfg = load_config()
+    row = next(r for r in _status(cfg)["mapping"] if r["jarvis"] == "antigravity")
+    assert row["key_set"] is True
+
+
+def test_antigravity_row_billing_is_subscription_or_api(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The row exposes its billing mode so the UI can badge it."""
+    _patch_antigravity(monkeypatch, connected=True)
+    cfg = load_config()
+    row = next(r for r in _status(cfg)["mapping"] if r["jarvis"] == "antigravity")
+    assert row["billing"] == "subscription_or_api"
+    codex_row = next(r for r in _status(cfg)["mapping"] if r["jarvis"] == "openai-codex")
+    assert codex_row["billing"] == "subscription_or_api"
+    gemini_row = next(r for r in _status(cfg)["mapping"] if r["jarvis"] == "gemini")
+    assert gemini_row["billing"] == "api"
+
+
+def test_subagent_switch_accepts_antigravity_via_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No OAuth, but a Gemini API key -> antigravity selectable (per-token billing)."""
+    import jarvis.core.config as cfg_mod
+    import jarvis.core.config_writer as config_writer
+
+    monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _p: None)
+    monkeypatch.setattr(
+        cfg_mod, "get_secret",
+        lambda key, *a, **k: "AIza-fake" if key == "gemini_api_key" else None,
+    )
+    _patch_antigravity(monkeypatch, connected=False)
+    calls: list[str] = []
+    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: calls.append(n))
+
+    cfg = load_config()
+    resp = _client(cfg).post(
+        "/api/subagent/switch", json={"provider": "antigravity", "persist": True}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["active"] == "antigravity"
+    assert calls == ["antigravity"]

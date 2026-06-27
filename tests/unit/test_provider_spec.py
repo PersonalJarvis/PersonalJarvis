@@ -123,15 +123,28 @@ def test_every_provider_has_credential_help() -> None:
 
 
 def test_provider_billing_is_derived_from_auth_mode() -> None:
-    """Billing is a pure function of auth_mode — never branched on a provider
-    name (multi-provider mandate). API-key → pay-per-token; antigravity →
-    subscription; codex → either; local → no credential."""
+    """Billing is capability-driven, never branched on a provider name
+    (multi-provider mandate). API-key → pay-per-token; a subscription-login
+    provider that ALSO accepts an API key → subscription_or_api; one that does
+    not → subscription; local → no credential. Both Codex and Antigravity now
+    accept an API key (the ChatGPT/Google subscription OR a per-token key), so
+    both are subscription_or_api."""
     by_id = {spec.id: spec for spec in PROVIDERS}
     assert provider_billing(by_id["claude-api"]) == "api"
     assert provider_billing(by_id["gemini"]) == "api"
-    assert provider_billing(by_id["antigravity"]) == "subscription"
+    assert provider_billing(by_id["antigravity"]) == "subscription_or_api"
     assert provider_billing(by_id["codex"]) == "subscription_or_api"
     assert provider_billing(by_id["faster-whisper"]) == "local"
+
+
+def test_antigravity_accepts_api_key_billing() -> None:
+    """Antigravity mirrors Codex: it bills over the Google subscription OAuth OR
+    a Gemini API key (the Google Cloud credential), so it carries a secret key."""
+    antigravity = get_spec("antigravity")
+    assert antigravity is not None
+    assert antigravity.auth_mode == "antigravity"
+    assert "gemini_api_key" in antigravity.secret_keys
+    assert provider_billing(antigravity) == "subscription_or_api"
 
 
 def test_billing_covers_every_provider() -> None:

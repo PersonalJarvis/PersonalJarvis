@@ -202,7 +202,7 @@ describe("ApiKeysView - Codex is subagent-only", () => {
     installFetchMock(routesFor(codexDescriptor()));
     render(<ApiKeysView />);
 
-    await waitFor(() => expect(screen.getByText("OpenAI Codex ChatGPT login")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("OpenAI Codex (Subscription)")).toBeTruthy());
 
     expect(screen.queryByText("ChatGPT / Codex login")).toBeNull();
     expect(screen.getByText(/chatgpt-user@example\.com/)).toBeTruthy();

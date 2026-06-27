@@ -102,6 +102,12 @@ class DispatchToHarnessTool:
         aggregation = args.get("aggregation") or "merge"
         cwd = args.get("cwd") or "."
         timeout_s = float(args.get("timeout_s") or 600)
+        # Optional env passthrough (not in the LLM-facing schema — set
+        # programmatically by internal callers). The computer_use tool /
+        # local-action gate use it to thread the turn's resolved output language
+        # to the in-harness verifier (JARVIS_OUTPUT_LANGUAGE).
+        raw_env = args.get("env")
+        env = dict(raw_env) if isinstance(raw_env, dict) else {}
 
         if not prompt:
             return ToolResult(success=False, output=None, error="prompt fehlt")
@@ -110,6 +116,7 @@ class DispatchToHarnessTool:
             prompt=prompt,
             cwd=cwd,
             timeout_s=timeout_s,
+            env=env,
         )
 
         try:

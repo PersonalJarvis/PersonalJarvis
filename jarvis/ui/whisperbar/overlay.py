@@ -337,6 +337,21 @@ class WhisperBarOverlay:
             self._root.deiconify()
         except Exception:  # noqa: BLE001
             log.debug("whisperbar deiconify failed", exc_info=True)
+        # Re-assert topmost + lift after every reveal. A withdrawn→deiconified
+        # ``overrideredirect`` window comes back on Windows WITHOUT its topmost
+        # z-order (it is remapped as an ordinary window). On the fast-boot path
+        # the boot reveal fires within ~200 ms of window creation — *before* the
+        # desktop main window + tray finish mapping — so those windows map ON TOP
+        # of the just-revealed bar and hide it until the first wake-word happens
+        # to re-show it. Lifting + re-pinning topmost here keeps the bar reliably
+        # on top regardless of boot-window ordering. The mascot orb already does
+        # the same (deiconify + lift); this brings the bar to parity. Guarded
+        # separately so a lift failure never undoes the deiconify.
+        try:
+            self._root.wm_attributes("-topmost", True)
+            self._root.lift()
+        except Exception:  # noqa: BLE001
+            log.debug("whisperbar lift/topmost re-assert failed", exc_info=True)
 
     def _do_hide(self) -> None:
         if self._root is None:

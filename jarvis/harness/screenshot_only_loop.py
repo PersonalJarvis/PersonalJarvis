@@ -74,6 +74,9 @@ from jarvis.core.protocols import (
     Observation,
 )
 from jarvis.platform import window_state
+from jarvis.voice.action_phrases import (
+    OUTPUT_LANGUAGE_ENV_KEY as _OUTPUT_LANGUAGE_ENV_KEY,
+)
 
 if TYPE_CHECKING:
     from .computer_use_context import ComputerUseContext
@@ -1747,6 +1750,32 @@ _READ_DISCIPLINE_BLOCK = (
 _READ_PROOF_MAX: int = 600
 
 
+#: de/en/es -> the English language name used inside the verifier directive.
+_PROOF_LANGUAGE_NAMES: dict[str, str] = {
+    "de": "German",
+    "en": "English",
+    "es": "Spanish",
+}
+
+
+def _proof_language_directive(output_language: str | None) -> str:
+    """One-line instruction telling a verifier which language to write ``proof`` in.
+
+    The verdict's ``proof`` is forwarded verbatim into the spoken completion
+    readback ("Erledigt — {proof}" / "Done — {proof}" / "Listo — {proof}"), so it
+    must match the turn's resolved output language — otherwise a German frame wraps
+    an English body (live bug 2026-06-27). A missing/unknown language yields no
+    directive, preserving the historical (English-default) behaviour for tests /
+    minimal wiring. Pure dict lookup, no LLM (AP-11)."""
+    name = _PROOF_LANGUAGE_NAMES.get((output_language or "").strip().lower())
+    if not name:
+        return ""
+    return (
+        f"\n\nIMPORTANT: write the 'proof' value in {name}, the user's language "
+        "— it is read back to the user verbatim."
+    )
+
+
 # Feasibility judge for the ``fail`` action (completion-enforcement, 2026-06-15).
 # The SYMMETRIC sibling of the completion judge: when the agent wants to GIVE UP,
 # this decides whether the goal is genuinely impossible from HERE — or still
@@ -1932,6 +1961,7 @@ async def _verify_goal_done(
     *,
     observation: Observation,
     user_goal: str,
+    output_language: str | None = None,
 ) -> tuple[bool, str]:
     """Two-frame MOTION verifier (BUG-CU-FALSE-DONE, 2026-05-28).
 
@@ -1945,6 +1975,11 @@ async def _verify_goal_done(
 
     Returns ``(done, proof)``. Never raises -- on any error returns
     ``(False, "")`` so verification can only HELP, never block the loop."""
+    # The verdict's `proof` is spoken back verbatim ("Erledigt — {proof}"), so
+    # steer every judge to write it in the turn's resolved language (de/en/es).
+    # Empty when no language was threaded in (tests / minimal wiring) — then the
+    # judge keeps its historical English default.
+    lang_directive = _proof_language_directive(output_language)
     # Deterministic fast path (2026-06-10 latency plan Task 4): a pure
     # "open <app>" goal is proven by the foreground window title the
     # observation already carries — no vision-LLM judge call (~1.5 s saved
@@ -2008,6 +2043,7 @@ async def _verify_goal_done(
                     user_message=(
                         f"GOAL: {user_goal}\n\n"
                         "Read the calculator result and judge. JSON object only."
+                        + lang_directive
                     ),
                 ),
                 timeout=_think_timeout_s(ctx),
@@ -2034,6 +2070,7 @@ async def _verify_goal_done(
                     user_message=(
                         f"GOAL: {user_goal}\n\n"
                         "Judge the screenshot per the rules. JSON object only."
+                        + lang_directive
                     ),
                 ),
                 timeout=_think_timeout_s(ctx),
@@ -2059,6 +2096,7 @@ async def _verify_goal_done(
                     user_message=(
                         f"GOAL: {user_goal}\n\n"
                         "Judge the screenshot per the rules. JSON object only."
+                        + lang_directive
                     ),
                 ),
                 timeout=_think_timeout_s(ctx),
@@ -2088,6 +2126,7 @@ async def _verify_goal_done(
         f"GOAL: {user_goal}\n\n"
         "Frame A is the first screenshot, Frame B was captured ~1.3s later. "
         "Judge per the rules. Reply with the JSON object only."
+        + lang_directive
     )
     try:
         raw = await asyncio.wait_for(
@@ -3262,6 +3301,14 @@ async def _run_screenshot_loop(
     """
     t_start = time.time_ns()
     task_prompt = task.prompt
+    # The turn's resolved output language (de/en/es), threaded in via the task
+    # env by the computer_use tool / local-action gate. Steers the done-verifier
+    # to write its spoken `proof` in the user's language (live bug 2026-06-27:
+    # a German turn read back an English observation). None = not wired (the
+    # verifier keeps its English default).
+    output_language = (
+        getattr(task, "env", None) or {}
+    ).get(_OUTPUT_LANGUAGE_ENV_KEY) or None
     history: list[str] = []
     # Effective step budget. Floored at 25 so trivial multi-step flows are
     # never cut off, and defaulted high (config ``step_budget`` default 100,
@@ -3644,6 +3691,7 @@ async def _run_screenshot_loop(
                 # which still falls through to the honest failure below.
                 done, proof = await _verify_goal_done(
                     ctx, observation=observation, user_goal=task_prompt,
+                    output_language=output_language,
                 )
                 if done:
                     proof_cap = (
@@ -3788,6 +3836,7 @@ async def _run_screenshot_loop(
             else:
                 done, proof = await _verify_goal_done(
                     ctx, observation=observation, user_goal=task_prompt,
+                    output_language=output_language,
                 )
                 if done:
                     # Read goals carry the full observation out for the readback
@@ -4206,6 +4255,7 @@ async def _run_screenshot_loop(
                     t_verify = time.monotonic()
                     ok, proof = await _verify_goal_done(
                         ctx, observation=verify_obs, user_goal=task_prompt,
+                        output_language=output_language,
                     )
                     await _profile_phase(
                         ctx, phase="verify", step_idx=step_idx, t0=t_verify,
