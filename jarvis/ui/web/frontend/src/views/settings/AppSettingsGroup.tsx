@@ -32,7 +32,7 @@ export function AppSettingsGroup() {
 }
 
 /**
- * Label + description on the left, a toggle on the right (Wispr layout). The
+ * Label + description on the left, a toggle on the right (grouped-card layout). The
  * switch reflects the backend's authoritative ``enabled`` once GET resolves and
  * is disabled while loading/saving or on an unsupported host.
  */

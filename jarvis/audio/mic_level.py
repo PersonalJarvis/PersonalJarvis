@@ -3,7 +3,7 @@
 The VAD frame loop (which already reads every captured frame for STT) feeds the
 raw per-frame RMS via :func:`feed`; a stateful normalizer — adaptive noise
 floor + peak auto-gain + attack/release smoothing — turns it into a reactive
-0..1 level. Subscribers (the orb / whisper-bar, via ``OrbBusBridge``) render it
+0..1 level. Subscribers (the orb / jarvis-bar, via ``OrbBusBridge``) render it
 as live bars that move with your voice.
 
 Why this and not a second mic stream: the old path opened a SECOND

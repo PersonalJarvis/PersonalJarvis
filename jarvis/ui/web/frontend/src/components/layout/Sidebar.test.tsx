@@ -6,13 +6,13 @@ import { useEventStore } from "@/store/events";
 
 // The sidebar header avatar must mirror the chosen on-screen display style:
 // the ghost mascot ONLY when the user explicitly picked "mascot"; the slim bar
-// for "whisper_bar"/"none" and while the style is still loading (config null).
+// for "jarvis_bar"/"none" and while the style is still loading (config null).
 // Mock the overlay-style hook so the test controls the style without a fetch.
-const overlayMock = vi.hoisted(() => ({ style: "whisper_bar" as string | null }));
+const overlayMock = vi.hoisted(() => ({ style: "jarvis_bar" as string | null }));
 vi.mock("@/hooks/useOverlayStyle", () => ({
   useOverlayStyle: () => ({
     config: overlayMock.style
-      ? { style: overlayMock.style, options: ["whisper_bar", "mascot", "none"] }
+      ? { style: overlayMock.style, options: ["jarvis_bar", "mascot", "none"] }
       : null,
     loading: false,
     error: null,
@@ -84,11 +84,11 @@ describe("Sidebar header avatar", () => {
 
   afterEach(() => {
     cleanup();
-    overlayMock.style = "whisper_bar";
+    overlayMock.style = "jarvis_bar";
   });
 
   // NOTE: an earlier change had the header avatar mirror the overlay display
-  // style (bar glyph for "whisper_bar"). A later snapshot reverted it to the
+  // style (bar glyph for "jarvis_bar"). A later snapshot reverted it to the
   // canonical static brand logo (jarvis-logo.png) regardless of style. This
   // test pins the CURRENT behavior; the bar-vs-mascot-vs-logo choice is a
   // product/branding decision tracked separately from the boot-speed work.

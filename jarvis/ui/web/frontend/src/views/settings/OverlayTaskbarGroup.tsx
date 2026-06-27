@@ -49,7 +49,7 @@ export function OverlayTaskbarGroup() {
   );
 }
 
-/** A label + description on the left, a toggle on the right (Wispr layout). */
+/** A label + description on the left, a toggle on the right (grouped-card layout). */
 function ToggleRow({
   icon: Icon,
   title,
@@ -191,7 +191,7 @@ function OverlayStylePanel() {
   const t = useT();
   const { config, loading, error, saveStyle } = useOverlayStyle();
   const pushToast = useEventStore((s) => s.pushToast);
-  const [style, setStyle] = useState<OverlayStyle>("whisper_bar");
+  const [style, setStyle] = useState<OverlayStyle>("jarvis_bar");
   const [saving, setSaving] = useState(false);
   const [needsRestart, setNeedsRestart] = useState(false);
   const [restarting, setRestarting] = useState(false);
@@ -235,7 +235,7 @@ function OverlayStylePanel() {
     }
   }
 
-  const options = config?.options ?? (["whisper_bar", "mascot", "none"] as OverlayStyle[]);
+  const options = config?.options ?? (["jarvis_bar", "mascot", "none"] as OverlayStyle[]);
 
   async function onPick(opt: OverlayStyle) {
     if (saving) return;

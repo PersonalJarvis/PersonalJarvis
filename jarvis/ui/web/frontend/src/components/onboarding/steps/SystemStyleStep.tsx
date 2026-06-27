@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import type { StepProps } from "../OnboardingFlow";
 
 // The Jarvis Bar is the default + recommended on-screen surface.
-const RECOMMENDED: OverlayStyle = "whisper_bar";
+const RECOMMENDED: OverlayStyle = "jarvis_bar";
 
 /**
  * Onboarding step: choose the on-screen "system style" (the Jarvis Bar vs. the
@@ -39,7 +39,7 @@ export function SystemStyleStep({ goNext, skip }: StepProps) {
     if (config) setStyle(config.style);
   }, [config]);
 
-  const options = config?.options ?? (["whisper_bar", "mascot", "none"] as OverlayStyle[]);
+  const options = config?.options ?? (["jarvis_bar", "mascot", "none"] as OverlayStyle[]);
 
   async function onPick(opt: OverlayStyle) {
     if (saving || restarting) return;

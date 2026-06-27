@@ -2,7 +2,7 @@
 
 Deliberately NOT the EventBus: amplitude updates fire several times per second
 and would spam the flight-recorder wildcard subscriber (5 s cap). The
-whisper-bar overlay registers a sink; the audio player publishes the per-flush
+jarvis-bar overlay registers a sink; the audio player publishes the per-flush
 RMS. When no sink is registered, publishing is a cheap no-op (the player also
 skips the RMS computation entirely via ``has_subscribers()``).
 """
@@ -22,7 +22,7 @@ _lock = threading.Lock()
 # device. The player only feeds a level at buffer-write time (a brief instant),
 # then stream.write() BLOCKS for the whole multi-second playback with no further
 # level. So the level alone can't tell the UI "Jarvis is speaking right now".
-# note_playing() records the playback END so the whisper bar can show the
+# note_playing() records the playback END so the jarvis bar can show the
 # speaking equalizer for the ENTIRE sentence, not just the write instant.
 _audible_until = 0.0
 _subscribers: list[Callable[[float], None]] = []

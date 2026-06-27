@@ -1,7 +1,7 @@
 """Closing the window (X) = minimise to tray AND clear the overlay bar.
 
 The X on the main window is wired to "minimise to tray", not "quit" (the app
-keeps running so voice stays live). Previously the persistent whisper-bar stayed
+keeps running so voice stays live). Previously the persistent jarvis-bar stayed
 on screen after the X, which read as "the bar won't go away when I close Jarvis".
 
 Contract:
@@ -122,7 +122,7 @@ def test_restore_is_noop_without_overlay() -> None:
 
 def test_restore_keeps_mascot_hide_on_idle() -> None:
     """The mascot is hide-at-idle regardless of bar_persistent (which only
-    governs the whisper bar). Restoring must not pin the mascot on screen."""
+    governs the jarvis bar). Restoring must not pin the mascot on screen."""
     bar = FakeBar()
     bridge = SimpleNamespace(_hide_on_idle=True)
     app = _app(persistent=True, orb=bar, bridge=bridge)

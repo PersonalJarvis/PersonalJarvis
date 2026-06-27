@@ -1,8 +1,8 @@
-"""Unit tests for whisper-bar click/drag classification + default placement."""
+"""Unit tests for jarvis-bar click/drag classification + default placement."""
 from __future__ import annotations
 
-from jarvis.ui.whisperbar import interaction as I
-from jarvis.ui.whisperbar import renderer as R
+from jarvis.ui.jarvisbar import interaction as I
+from jarvis.ui.jarvisbar import renderer as R
 
 
 def test_is_drag_threshold():
@@ -99,21 +99,21 @@ def test_clamp_to_screen_keeps_bar_visible():
 
 def test_position_round_trip(tmp_path):
     cfg = tmp_path / "jarvis.toml"
-    cfg.write_text("[ui]\norb_style = \"whisper_bar\"\n", encoding="utf-8")
-    assert I.load_whisperbar_position(cfg) is None  # not set yet
-    I.save_whisperbar_position(cfg, 640, 980)
-    assert I.load_whisperbar_position(cfg) == (640, 980)
+    cfg.write_text("[ui]\norb_style = \"jarvis_bar\"\n", encoding="utf-8")
+    assert I.load_jarvisbar_position(cfg) is None  # not set yet
+    I.save_jarvisbar_position(cfg, 640, 980)
+    assert I.load_jarvisbar_position(cfg) == (640, 980)
     # overwrite + preserve the pre-existing [ui] section
-    I.save_whisperbar_position(cfg, 100, 200)
-    assert I.load_whisperbar_position(cfg) == (100, 200)
+    I.save_jarvisbar_position(cfg, 100, 200)
+    assert I.load_jarvisbar_position(cfg) == (100, 200)
     assert "orb_style" in cfg.read_text(encoding="utf-8")
 
 
 def test_load_missing_file_is_none(tmp_path):
-    assert I.load_whisperbar_position(tmp_path / "nope.toml") is None
+    assert I.load_jarvisbar_position(tmp_path / "nope.toml") is None
 
 
 def test_save_missing_file_is_noop(tmp_path):
     missing = tmp_path / "nope.toml"
-    I.save_whisperbar_position(missing, 1, 2)  # must not raise
+    I.save_jarvisbar_position(missing, 1, 2)  # must not raise
     assert not missing.exists()

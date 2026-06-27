@@ -1,4 +1,4 @@
-"""Dev probe: run the real WhisperBarOverlay (Tk window, color-key + alpha)
+"""Dev probe: run the real JarvisBarOverlay (Tk window, color-key + alpha)
 standalone in THINK mode and capture it from the live desktop.
 
 The position loader is patched to None so the probe bar anchors at the
@@ -19,17 +19,17 @@ from PIL import Image, ImageGrab  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from jarvis.ui.whisperbar import interaction, renderer  # noqa: E402
-from jarvis.ui.whisperbar.overlay import WhisperBarOverlay  # noqa: E402
+from jarvis.ui.jarvisbar import interaction, renderer  # noqa: E402
+from jarvis.ui.jarvisbar.overlay import JarvisBarOverlay  # noqa: E402
 
 OUT = Path(__file__).resolve().parents[1] / "screenshots"
 
 # Detach from the persisted drag position — the running app's bar sits there.
-interaction.load_whisperbar_position = lambda *_a, **_k: None  # type: ignore
+interaction.load_jarvisbar_position = lambda *_a, **_k: None  # type: ignore
 
 
 def main() -> None:
-    bar = WhisperBarOverlay(persistent=True)
+    bar = JarvisBarOverlay(persistent=True)
     bar.start_in_thread()
     time.sleep(2.5)  # Tk boot
     bar.show(mode="think")

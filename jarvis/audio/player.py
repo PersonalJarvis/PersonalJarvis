@@ -551,7 +551,7 @@ class AudioPlayer:
         if not arr_f.flags["C_CONTIGUOUS"]:
             arr_f = np.ascontiguousarray(arr_f)
         # Write in ~60 ms sub-blocks, feeding the LIVE output RMS per block, so
-        # the whisper-bar equalizer reacts to Jarvis's voice exactly like it
+        # the jarvis-bar equalizer reacts to Jarvis's voice exactly like it
         # reacts to your mic — moving with the actual loudness instead of one
         # coarse level per sentence that left the bars frozen and blocky. It is
         # the SAME continuous PortAudio stream (no clicks), and the blocking
@@ -716,13 +716,13 @@ class AudioPlayer:
                 # Tell the UI how long this block will be audible BEFORE the
                 # blocking write below. _write_samples blocks for the whole
                 # playback with no further level, so the level tap alone makes
-                # the whisper bar fall back to its "thinking" wave mid-sentence.
+                # the jarvis bar fall back to its "thinking" wave mid-sentence.
                 # note_playing marks the playback window so the bar shows the
                 # speaking equalizer for the entire block (mono samples / rate).
                 if arr.size:
                     level_tap.note_playing(arr.size / pending_rate)
                 # The live TTS output amplitude is now fed PER ~60 ms sub-block
-                # from inside _write_samples (so the whisper-bar equalizer moves
+                # from inside _write_samples (so the jarvis-bar equalizer moves
                 # with Jarvis's voice across the whole sentence, not one coarse
                 # level per flush). Nothing to feed here.
                 self.last_write_owner_task_id = owner_task_id

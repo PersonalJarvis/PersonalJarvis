@@ -1538,35 +1538,38 @@ class DesktopApp:
             logger.opt(exception=exc).warning("Virtual mouse overlay not startable")
             self._virtual_cursor = None
 
-    def _build_overlay_surface(self, style: str, *, boot: bool = False):
+    def _build_overlay_surface(self, style: str):
         """Construct (and start) the overlay surface for a display style.
 
         Returns a ``NullOverlay`` for ``"none"`` (no Tk window, no-op surface),
-        a started ``WhisperBarOverlay`` for ``"whisper_bar"``, or a started
+        a started ``JarvisBarOverlay`` for ``"jarvis_bar"``, or a started
         mascot ``OrbOverlay`` for anything else. Shared by boot wiring and the
         live ``swap_overlay`` path so the two never drift.
 
-        ``boot=True`` (only the first-boot call) builds the persistent bar
-        WITHDRAWN; the boot wiring then schedules its reveal on
-        ``VoiceBootStatus(ready=True)``. A non-boot caller must leave ``boot``
-        False so the bar maps immediately (it has no reveal task to wait on).
+        A persistent ``JarvisBarOverlay`` maps its window immediately, so the
+        bar is visible as soon as it is constructed — at boot AND on a live
+        ``swap_overlay``. Its boot visibility is deliberately decoupled from the
+        voice warm-up / wake path (the sidebar "Voice starting…" badge carries
+        readiness instead). A non-persistent bar / the mascot still starts
+        withdrawn and pops on a real session.
         """
         if style == "none":
-            from jarvis.ui.whisperbar import NullOverlay
+            from jarvis.ui.jarvisbar import NullOverlay
 
             return NullOverlay()
-        if style == "whisper_bar":
-            from jarvis.ui.whisperbar import WhisperBarOverlay
+        if style == "jarvis_bar":
+            from jarvis.ui.jarvisbar import JarvisBarOverlay
 
-            # start_hidden only at boot: a persistent bar must NOT map its window
-            # before the speech pipeline can hear the user — the OrbBusBridge
-            # reveals it on VoiceBootStatus(ready=True). A runtime rebuild
-            # (boot=False) shows immediately; the non-persistent bar starts
-            # hidden regardless (it pops on a session).
-            surface = WhisperBarOverlay(
+            # The persistent bar maps its window immediately — visible at boot,
+            # decoupled from the voice warm-up / wake path. An earlier design
+            # started it withdrawn and revealed it on VoiceBootStatus(ready=True),
+            # which on the serve-first fast-boot path left the bar hidden until
+            # the first wake word re-showed it. A non-persistent bar starts
+            # withdrawn regardless (it pops on a session) — handled by the
+            # overlay's own _should_start_withdrawn(), so no flag is needed here.
+            surface = JarvisBarOverlay(
                 persistent=self.cfg.ui.bar_persistent,
                 accent=self.cfg.ui.bar_accent,
-                start_hidden=boot,
             )
         else:  # "mascot" (and any legacy style value)
             from ui.orb.overlay import OrbOverlay
@@ -1638,8 +1641,8 @@ class DesktopApp:
         """
         from loguru import logger
 
-        style = (style or "whisper_bar").strip()
-        if style not in ("whisper_bar", "mascot", "none"):
+        style = (style or "jarvis_bar").strip()
+        if style not in ("jarvis_bar", "mascot", "none"):
             return {"ok": False, "applied_live": False, "style": style}
         bridge = getattr(self, "_bridge", None)
         if bridge is None:
@@ -1654,7 +1657,7 @@ class DesktopApp:
             if style == "none":
                 new = cache.get("none")
                 if new is None:
-                    from jarvis.ui.whisperbar import NullOverlay  # no Tk root
+                    from jarvis.ui.jarvisbar import NullOverlay  # no Tk root
 
                     new = NullOverlay()
                     cache["none"] = new
@@ -1678,7 +1681,7 @@ class DesktopApp:
                 except Exception:  # noqa: BLE001
                     logger.debug("old overlay hide failed", exc_info=True)
             try:
-                if style == "whisper_bar" and self.cfg.ui.bar_persistent:
+                if style == "jarvis_bar" and self.cfg.ui.bar_persistent:
                     new.show("idle")
             except Exception:  # noqa: BLE001
                 logger.debug("post-swap show failed", exc_info=True)
@@ -1798,14 +1801,14 @@ class DesktopApp:
 
         # On-screen overlay in its own Tk daemon thread — the bus bridge reacts
         # to SystemStateChanged and drives whichever surface is selected.
-        # Style is chosen by [ui].orb_style: "whisper_bar" (slim default),
+        # Style is chosen by [ui].orb_style: "jarvis_bar" (slim default),
         # "mascot" (ghost orb), or "none". Both real surfaces share OrbBusBridge.
         try:
             from loguru import logger
 
             from jarvis.platform.probes import has_overlay
 
-            orb_style = self.cfg.ui.orb_style or "whisper_bar"
+            orb_style = self.cfg.ui.orb_style or "jarvis_bar"
             overlay_ok = has_overlay()
 
             if not overlay_ok:
@@ -1822,24 +1825,25 @@ class DesktopApp:
                 from ui.orb.bus_bridge import OrbBusBridge
 
                 # NullOverlay for "none" still gets a bridge, so a live switch to
-                # bar/mascot works without a restart. boot=True builds the
-                # persistent bar withdrawn — revealed below on voice-ready.
-                surface = self._build_overlay_surface(orb_style, boot=True)
+                # bar/mascot works without a restart. The persistent bar maps its
+                # window immediately — visible at boot, independent of the voice
+                # warm-up (see _build_overlay_surface).
+                surface = self._build_overlay_surface(orb_style)
                 hide_on_idle = (
                     (not self.cfg.ui.bar_persistent)
-                    if orb_style == "whisper_bar"
+                    if orb_style == "jarvis_bar"
                     else True
                 )
                 bridge = OrbBusBridge(bus=bus, orb=surface, hide_on_idle=hide_on_idle)
                 bridge.attach()
-                # Reveal the (start-hidden) persistent bar only once voice is
-                # ready to listen — gated on VoiceBootStatus(ready=True), with a
-                # bounded fallback so a voice-offline host still gets its bar.
-                # loop.create_task works before run_forever (it just schedules);
-                # the boot surface starts withdrawn, so this never flickers.
+                # The persistent bar is already visible from boot (above); this
+                # task only RE-ASSERTS its topmost z-order once voice is ready,
+                # after the main window + tray have finished mapping — a belt-and-
+                # suspenders re-lift, NOT the visibility gate. A non-persistent
+                # bar / the mascot is left untouched (it pops on a real session).
                 loop.create_task(
                     bridge.reveal_bar_when_voice_ready(),
-                    name="overlay-boot-reveal",
+                    name="overlay-boot-relift",
                 )
                 self._orb = surface
                 self._bridge = bridge
@@ -2543,7 +2547,7 @@ class DesktopApp:
             return
         try:
             if getattr(bridge, "_boot_reveal_done", True) is False:
-                # The persistent whisper bar starts withdrawn at boot and is
+                # The persistent jarvis bar starts withdrawn at boot and is
                 # revealed once voice is ready. Before that first reveal there
                 # is no visible surface to suppress; flipping hide-on-idle here
                 # would turn the one-shot startup reveal into a no-op.
@@ -2575,10 +2579,10 @@ class DesktopApp:
             return
         try:
             # Mirror the boot wiring in ``_start_speech_and_orb``: bar_persistent
-            # only governs the whisper bar; the mascot is always hide-at-idle.
-            orb_style = getattr(self.cfg.ui, "orb_style", "whisper_bar") or "whisper_bar"
+            # only governs the jarvis bar; the mascot is always hide-at-idle.
+            orb_style = getattr(self.cfg.ui, "orb_style", "jarvis_bar") or "jarvis_bar"
             persistent = bool(getattr(self.cfg.ui, "bar_persistent", True))
-            is_bar = orb_style == "whisper_bar"
+            is_bar = orb_style == "jarvis_bar"
             bridge._hide_on_idle = (not persistent) if is_bar else True
             if hasattr(bar, "_persistent"):
                 bar._persistent = persistent
@@ -2608,7 +2612,7 @@ class DesktopApp:
         # oben rechts verschwindet bevor der Prozess terminiert.
         if self._orb is not None:
             try:
-                # Prefer stop() when the surface has it (whisper bar:
+                # Prefer stop() when the surface has it (jarvis bar:
                 # unsubscribes its level_tap sink + destroys the window). The
                 # mascot orb has no stop() → fall back to hide().
                 stop = getattr(self._orb, "stop", None)

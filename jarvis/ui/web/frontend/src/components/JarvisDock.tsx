@@ -46,7 +46,7 @@ function isDroppable(dt: DataTransfer | null): boolean {
  * shows the OS "no-drop" sign and a toss *near* Jarvis still lands. A successful
  * drop plays a quiet confirmation chime and an "absorb" burst.
  *
- * It mirrors the chosen on-screen display style: a slim bar for `whisper_bar`,
+ * It mirrors the chosen on-screen display style: a slim bar for `jarvis_bar`,
  * the ghost mascot otherwise. This in-app surface is the cloud-first drop
  * target — it works in any browser, unlike the separate Tk overlay windows.
  */
@@ -59,7 +59,7 @@ export function JarvisDock() {
   const [fileArmed, setFileArmed] = useState(false); // a native OS drag is in flight
   const [flash, setFlash] = useState(false); // brief post-drop "absorb" burst
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Mascot ONLY when explicitly selected; the slim bar for "whisper_bar"/"none"
+  // Mascot ONLY when explicitly selected; the slim bar for "jarvis_bar"/"none"
   // and while the style is still loading (config === null). Defaulting the
   // unknown/loading state to the bar (the documented default) stops a ghost
   // mascot from flashing in for a user who picked the bar.
