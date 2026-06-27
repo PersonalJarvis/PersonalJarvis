@@ -1237,6 +1237,40 @@ def _subagent_switch_failure_phrase(result: dict, display: str, lang: str) -> st
     table = _SUBAGENT_SWITCH_FAIL.get(kind, _SUBAGENT_SWITCH_FAIL["other"])
     return table.get(lang, table["de"]).format(p=display)
 
+
+# Main-brain provider switch — the voice_command_gate "provider_switch" path.
+# Mirrors the subagent tables: routed through the validated apply_provider_switch
+# so the spoken readback is HONEST (audit 2026-06-27: the old path returned ""
+# silently, even when the switch was refused). de/en/es (Runtime Output Language).
+_PROVIDER_SWITCH_CONFIRM: dict[str, str] = {
+    "de": "Erledigt — dein Haupt-Brain läuft jetzt auf {p}.",
+    "en": "Done — your main brain now runs on {p}.",
+    "es": "Listo — tu cerebro principal ahora usa {p}.",
+}
+_PROVIDER_SWITCH_FAIL: dict[str, dict[str, str]] = {
+    "missing_credential": {
+        "de": "{p} ist nicht eingerichtet — hinterlege zuerst den Schlüssel, dann stelle ich um.",
+        "en": "{p} isn't set up — add its key first, then I'll switch.",
+        "es": "{p} no está configurado — añade su clave primero y luego cambio.",
+    },
+    "subagent_only": {
+        "de": "{p} geht nur als Sub-Agent, nicht als Haupt-Brain.",
+        "en": "{p} only works as a sub-agent, not as the main brain.",
+        "es": "{p} solo funciona como sub-agente, no como cerebro principal.",
+    },
+    "other": {
+        "de": "Den Haupt-Brain konnte ich nicht auf {p} umstellen.",
+        "en": "I couldn't switch the main brain to {p}.",
+        "es": "No pude cambiar el cerebro principal a {p}.",
+    },
+}
+
+
+def _provider_switch_failure_phrase(result: dict, display: str, lang: str) -> str:
+    kind = str(result.get("error_kind") or "other")
+    table = _PROVIDER_SWITCH_FAIL.get(kind, _PROVIDER_SWITCH_FAIL["other"])
+    return table.get(lang, table["de"]).format(p=display)
+
 # General self-control (2026-06-22). Not every settings change can have its own
 # deterministic gate — the gates (language, sub-agent) are high-precision
 # guardrails for the common cases; this covers the LONG TAIL generally. When a
@@ -2767,6 +2801,38 @@ class BrainManager:
             return template.format(p=display)
         display = _SUBAGENT_DISPLAY.get(canonical, canonical)
         return _subagent_switch_failure_phrase(result, display, lang)
+
+    async def _apply_main_provider_switch(self, word: str) -> str:
+        """Deterministic main-brain provider switch with an HONEST readback.
+
+        Mirrors ``_apply_subagent_provider_switch``: routes through the one
+        validated ``apply_provider_switch("brain", …)`` (credential / catalog /
+        subagent-only checks + live-apply) and speaks the CHECKED result. The
+        old path (``await self.switch(word); return ""``) was silent even on a
+        refused switch (audit 2026-06-27). Returns ``""`` for an unmappable word
+        so the caller falls through to the brain.
+        """
+        canonical = PROVIDER_ALIASES.get(word.strip().lower())
+        if canonical is None:
+            return ""
+        from jarvis.brain.app_control import (
+            apply_provider_switch,
+            get_spec,
+            resolve_running_cfg,
+        )
+        try:
+            result = await apply_provider_switch("brain", canonical, cfg=resolve_running_cfg())
+        except Exception as exc:  # noqa: BLE001
+            log.warning("main-brain voice switch failed: %s", exc)
+            result = {"ok": False, "error_kind": "other", "error": str(exc)}
+        lang = self._resolve_turn_lang()
+        spec = get_spec(str(result.get("new_provider") or canonical))
+        display = getattr(spec, "label", None) or canonical
+        if result.get("ok"):
+            log.info("main-brain provider switched to %r via deterministic voice gate", canonical)
+            template = _PROVIDER_SWITCH_CONFIRM.get(lang, _PROVIDER_SWITCH_CONFIRM["de"])
+            return template.format(p=display)
+        return _provider_switch_failure_phrase(result, display, lang)
 
     def _detect_cancel_intent(self, text: str) -> bool:
         """True when the user wants to cancel a running OpenClaw task."""
@@ -4995,8 +5061,15 @@ class BrainManager:
 
         switch_target = self._detect_switch_intent(user_text)
         if switch_target:
-            await self.switch(switch_target)
-            return ""
+            confirmation = await self._apply_main_provider_switch(switch_target)
+            if confirmation:
+                await self._record_response_side_effects(
+                    user_text=user_text,
+                    response_text=confirmation,
+                    use_history=use_history,
+                    trace_id=turn_trace_id,
+                )
+                return confirmation
 
         # Deterministic reply-language switch — runs BEFORE the force-spawn
         # heuristic so "stell auf Englisch um" sets brain.reply_language
