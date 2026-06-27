@@ -438,6 +438,25 @@ class GeminiBrain:
             if tools_payload:
                 config_dict["tools"] = tools_payload
 
+        # Jarvis runs its OWN tool-use loop, so Gemini's Automatic Function
+        # Calling (AFC) must be OFF. With AFC on (the SDK default) Gemini makes
+        # its own tool round-trips and, finding no executable Python callable for
+        # a declaration-only tool, leaks the function_call as response TEXT.
+        # Forensic 2026-06-27: a voice "switch the worker from antigravity to
+        # codex" hit AFC ("AFC is enabled with max remote calls: 10"), the call
+        # leaked, the recovery path ran the WRONG tool, and the turn stalled
+        # 108 s into the brain-timeout fallback. ``disable=True`` makes Gemini
+        # return a clean structured function_call the stream loop consumes — fast
+        # and exact. Best-effort: an SDK too old to know the field must not kill
+        # the call (it just keeps the slower legacy behavior).
+        try:
+            from google.genai import types as _genai_types
+            config_dict["automatic_function_calling"] = (
+                _genai_types.AutomaticFunctionCallingConfig(disable=True)
+            )
+        except Exception:  # noqa: BLE001 — never break the brain call over an SDK shape change
+            log.debug("could not disable Gemini automatic_function_calling", exc_info=True)
+
         # Latenz-Sprint-1: Thinking-Budget. Nur wenn explizit gesetzt — sonst
         # ueberlassen wir die Wahl dem SDK-Default (vorheriges Verhalten).
         # ``ThinkingConfig`` ist ab google-genai >= 0.7 verfuegbar; aelteren

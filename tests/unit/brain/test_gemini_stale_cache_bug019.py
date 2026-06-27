@@ -258,3 +258,39 @@ async def test_invalidate_cache_clears_state_so_next_call_can_succeed(
         "stale cache id."
     )
     assert "system_instruction" in only_call
+
+
+# ---------------------------------------------------------------------------
+# Test 3 — Automatic Function Calling must be OFF (Jarvis owns the tool loop).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_automatic_function_calling_is_disabled() -> None:
+    """Gemini's Automatic Function Calling must be disabled on every call.
+
+    Jarvis runs its own tool-use loop. With AFC on (the SDK default) Gemini
+    makes its own tool round-trips and, finding no executable Python callable for
+    a declaration-only tool, leaks the function_call as response TEXT. Live
+    forensic 2026-06-27: a voice "switch the worker from antigravity to codex"
+    triggered AFC ("AFC is enabled with max remote calls: 10"), the call leaked,
+    the recovery path ran the WRONG tool (list_mutable_settings), and the turn
+    stalled 108 s into the brain-timeout fallback ("ich habe die Antwort nicht
+    rechtzeitig fertigbekommen"). disable=True makes Gemini return a clean
+    structured function_call the stream loop consumes directly — fast and exact.
+    """
+    provider = GeminiBrain(model="gemini-3-flash-preview")
+    fake = _FakeGeminiClient()
+    provider._client = fake  # type: ignore[assignment]
+
+    req = BrainRequest(
+        messages=(BrainMessage(role="user", content="ping"),), tools=(),
+    )
+    await _drain(provider.complete(req))
+
+    assert fake.calls, "no generate_content_stream call captured"
+    afc = fake.calls[0].get("automatic_function_calling")
+    assert afc is not None, (
+        "automatic_function_calling not set — Gemini will run its own tool loop"
+    )
+    assert getattr(afc, "disable", None) is True
