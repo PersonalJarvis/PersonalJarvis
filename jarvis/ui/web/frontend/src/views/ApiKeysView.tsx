@@ -94,6 +94,12 @@ export function ApiKeysView() {
             {/* Wiki — dedicated long-term-memory curator provider/model. Own
                 data source (/api/settings/wiki-provider); a thin sibling tier. */}
             <WikiProviderCard />
+            {/* Nominative-use trademark notice: provider/integration names and logos
+                belong to their owners and are shown only to identify what you connect to.
+                Backs the third-party logos used on plugin cards (see TRADEMARK.md). */}
+            <p className="pt-2 text-[11px] leading-relaxed text-muted-foreground">
+              {t("apikeys_view.trademark_notice")}
+            </p>
           </div>
         )}
       </div>
@@ -558,7 +564,7 @@ function ActiveControl({
         disabled={activating || disabled}
         className="accent-primary"
       />
-      {activating ? "Activating…" : "Set active"}
+      {activating ? "Activating…" : descriptor.active ? "Active" : "Set active"}
     </label>
   );
 }

@@ -1,28 +1,34 @@
-# OAuth app setup for the Asana, Gmail and Drive plugins
+# OAuth app setup for the Asana, Gmail, Drive and Calendar plugins
 
-Three marketplace plugins use browser-login OAuth against an app **you** register
-once. This is the providers' security model — no one can do it for you. After
-registering, you paste the resulting **Client ID** into your local
+These marketplace plugins use browser-login OAuth against an app **you** register
+once. This is the providers' security model — no one can do it for you, and there
+is no shared Jarvis-owned client: every user connects their *own* Google account
+through their *own* OAuth client. After registering, you store the resulting
+**Client ID** as a secret (preferred) or paste it into your local
 `data/plugin_catalog.json` (gitignored runtime override) and restart.
 
 | Plugin | App to register | Client ID placeholder to replace |
 |---|---|---|
 | Gmail | one Google Cloud "Desktop" OAuth client | `REPLACE_WITH_JARVIS_GOOGLE_CLIENT_ID` |
 | Google Drive | **the same** Google client (shared) | `REPLACE_WITH_JARVIS_GOOGLE_CLIENT_ID` |
+| Google Calendar | **the same** Google client (shared) | `REPLACE_WITH_JARVIS_GOOGLE_CLIENT_ID` |
 | Asana | an Asana OAuth app | `REPLACE_WITH_JARVIS_ASANA_CLIENT_ID` |
 
 ---
 
-## Part A — Google (covers BOTH Gmail and Drive with one client)
+## Part A — Google (covers Gmail, Drive AND Calendar with one client)
 
 1. Go to <https://console.cloud.google.com> and create (or select) a project.
-2. **APIs & Services → Library** → enable **Gmail API** and **Google Drive API**.
+2. **APIs & Services → Library** → enable **Gmail API**, **Google Drive API**
+   and **Google Calendar API** (enable only the ones whose plugins you want).
 3. **APIs & Services → OAuth consent screen** → User type **External** → Create.
    Fill app name, your support email, and developer contact email → Save.
-4. **Scopes** → add: `.../auth/gmail.readonly`, `.../auth/gmail.send`,
-   `.../auth/drive.file`. (Drive's `drive.file` is non-sensitive; the Gmail
-   scopes are sensitive/restricted — see "Keeping Gmail connected" below.)
-5. **Test users** → add your own Gmail address. In Testing mode only listed
+4. **Scopes** → add the ones you need: `.../auth/gmail.readonly`,
+   `.../auth/gmail.send`, `.../auth/drive.file`, `.../auth/calendar.events`.
+   (Drive's `drive.file` is non-sensitive; the Gmail scopes are
+   sensitive/restricted; `calendar.events` is sensitive — see "Keeping it
+   connected" below.)
+5. **Test users** → add your own Google address. In Testing mode only listed
    users can authorize.
 6. **Credentials → Create credentials → OAuth client ID** → Application type
    **Desktop app** → Create. Copy the **Client ID**
@@ -44,8 +50,9 @@ registering, you paste the resulting **Client ID** into your local
 
    Or store it permanently in the credential manager (service
    `personal-jarvis`), keys `google_oauth_client_id` /
-   `google_oauth_client_secret`. One client covers **both** Gmail and Drive.
-   Then restart Jarvis and **reconnect Gmail** in the Plugins view.
+   `google_oauth_client_secret`. One client covers **Gmail, Drive AND Calendar**
+   (the shared Google family). Then restart Jarvis and **connect the plugin** in
+   the Plugins view.
 
    (Editing `data/plugin_catalog.json` directly still works as a fallback, but
    the secret takes precedence and is the durable option.)
@@ -59,25 +66,35 @@ Plugins view shows **Reconnect** and the voice/chat reply says the Gmail
 authorization expired and needs reconnecting, instead of a cryptic "expired" or
 "timeout". Set a real `google_oauth_client_id` first (above), then reconnect.
 
-### Keeping Gmail connected (the 7-day rule)
+### Keeping it connected (the 7-day rule)
 
 Google issues a refresh token that **expires after 7 days** while your app's
-publishing status is **Testing** and any Gmail scope is requested. To keep Gmail
-connected permanently you must **publish the app to "In production"**:
+publishing status is **Testing** and a sensitive/restricted scope is requested.
+To keep a plugin connected permanently you must **publish the app to "In
+production"** (Audience → Publish app). Even an *unverified* production app keeps
+the refresh token alive for the app owner / test users — you just click through a
+one-time "Google hasn't verified this app" notice when connecting:
 
 - For **`drive.file`** (Drive): non-sensitive — publishing needs no verification,
   so Drive is permanent immediately after you publish (or even in testing it is
   unaffected by the 7-day rule because `drive.file` is non-sensitive… still,
   publish to be safe).
+- For **`calendar.events`** (Calendar): **sensitive but not restricted** — same
+  light path as Gmail send: publishing to production needs OAuth verification for
+  *public* use but **no CASA assessment**. For your own account just publish to
+  production (unverified is fine) and the connection stops expiring; voice
+  commands like "what's on my calendar today" and "schedule a meeting tomorrow at
+  3pm" then work indefinitely.
 - For **Gmail read** (`gmail.readonly`, restricted): publishing to production
   requires Google's OAuth app **verification + a CASA security assessment**
   (several weeks). Until that completes, Gmail works but reconnects ~weekly.
 - For **Gmail send only** (`gmail.send`, sensitive but not restricted): a far
   lighter path — production needs OAuth verification but **no** CASA assessment.
 
-You chose the full-verification path, so: publish the app, start Google's
-verification, and complete the CASA assessment for the restricted Gmail scopes.
-After that, Gmail stays connected like everything else.
+For just Calendar + Drive + Gmail-send, the quick path is: publish the app to
+production and connect — no verification needed for your own use. The heavy
+verification + CASA path is only required for the restricted Gmail read scope, or
+for distributing the app publicly.
 
 ---
 
@@ -109,9 +126,10 @@ Two ways, in precedence order:
    connect-time *and* refresh-time and survive a catalog re-sync. Set them as env
    vars or in the credential manager (service `personal-jarvis`).
 2. **`data/plugin_catalog.json` (fallback).** Your local, gitignored runtime
-   override; edit the `gmail`/`google_drive`/`asana` entries and restart. Note
-   this file is re-synced from the seed, so a real Client ID written here can be
-   reset back to the placeholder — prefer the secret for Google.
+   override; edit the `gmail`/`google_drive`/`google_calendar`/`asana` entries
+   and restart. Note this file is re-synced from the seed, so a real Client ID
+   written here can be reset back to the placeholder — prefer the secret for
+   Google.
 
 After any change, restart Jarvis and reconnect the plugin. The tracked
 `jarvis/marketplace/seed_catalog.json` keeps the placeholders (never commit your

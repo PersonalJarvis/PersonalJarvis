@@ -198,6 +198,123 @@ def test_get_foreground_title_macos_empty_without_tool(monkeypatch):
     assert ws.get_foreground_title() == ""
 
 
+# --- raise_window (raise a known window via the hardened path) ---------------
+
+
+def test_raise_window_windows_uses_handle(monkeypatch):
+    monkeypatch.setattr(ws, "detect_platform", lambda: "win32")
+    forced: list = []
+    monkeypatch.setattr(ws, "_force_foreground_windows", lambda h: forced.append(h) or True)
+    monkeypatch.setattr(ws, "focus_window", lambda t: (_ for _ in ()).throw(AssertionError("title path used")))
+    ok, title = ws.raise_window(WindowInfo("WhatsApp", handle=777))
+    assert ok is True
+    assert title == "WhatsApp"
+    assert forced == [777]
+
+
+def test_raise_window_non_windows_uses_title(monkeypatch):
+    monkeypatch.setattr(ws, "detect_platform", lambda: "linux")
+    seen: list = []
+    monkeypatch.setattr(ws, "focus_window", lambda t: (seen.append(t), (True, t))[1])
+    ok, _title = ws.raise_window(WindowInfo("WhatsApp", handle=None))
+    assert ok is True
+    assert seen == ["WhatsApp"]
+
+
+def test_raise_window_windows_without_handle_falls_back_to_title(monkeypatch):
+    monkeypatch.setattr(ws, "detect_platform", lambda: "win32")
+    seen: list = []
+    monkeypatch.setattr(ws, "focus_window", lambda t: (seen.append(t), (True, t))[1])
+    ok, _title = ws.raise_window(WindowInfo("WhatsApp", handle=None))
+    assert ok is True
+    assert seen == ["WhatsApp"]
+
+
+def test_raise_window_never_raises(monkeypatch):
+    monkeypatch.setattr(ws, "detect_platform", lambda: "win32")
+
+    def boom(_h):
+        raise RuntimeError("foreground blew up")
+
+    monkeypatch.setattr(ws, "_force_foreground_windows", boom)
+    ok, _msg = ws.raise_window(WindowInfo("WhatsApp", handle=5))
+    assert ok is False
+
+
+# --- raise_after_launch (poll for the new window, then actively foreground it) -
+
+
+def test_raise_after_launch_windows_uses_hardened_path(monkeypatch):
+    # The window appears on the 3rd poll; on Windows we raise it by hwnd via the
+    # hardened foreground path, never the title path.
+    monkeypatch.setattr(ws, "detect_platform", lambda: "win32")
+    polls: list[int] = []
+
+    def _list():
+        polls.append(1)
+        if len(polls) < 3:
+            return []
+        return [WindowInfo("New Tab - Google Chrome", handle=4242)]
+
+    monkeypatch.setattr(ws, "list_windows", _list)
+    forced: list[int] = []
+    monkeypatch.setattr(
+        ws, "_force_foreground_windows", lambda h: (forced.append(h), True)[1]
+    )
+    # focus_window (title path) must NOT be used on Windows.
+    monkeypatch.setattr(ws, "focus_window", lambda t: (_ for _ in ()).throw(AssertionError("title path used on win32")))
+
+    ok, title = ws.raise_after_launch("chrome", timeout_s=1.0, poll_s=0.001)
+    assert ok is True
+    assert title == "New Tab - Google Chrome"
+    assert forced == [4242]
+    assert len(polls) >= 3
+
+
+def test_raise_after_launch_macos_uses_title_focus(monkeypatch):
+    monkeypatch.setattr(ws, "detect_platform", lambda: "darwin")
+    monkeypatch.setattr(ws, "list_windows", lambda: [WindowInfo("Spotify Premium")])
+    focused: list[str] = []
+    monkeypatch.setattr(
+        ws, "focus_window", lambda t: (focused.append(t), (True, t))[1]
+    )
+    ok, title = ws.raise_after_launch("spotify", timeout_s=0.1, poll_s=0.001)
+    assert ok is True
+    assert focused == ["Spotify Premium"]
+
+
+def test_raise_after_launch_gives_up_when_window_never_appears(monkeypatch):
+    monkeypatch.setattr(ws, "detect_platform", lambda: "win32")
+    monkeypatch.setattr(ws, "list_windows", lambda: [WindowInfo("Program Manager")])
+    monkeypatch.setattr(ws, "_force_foreground_windows", lambda h: True)
+    import time as _t
+
+    start = _t.monotonic()
+    ok, _msg = ws.raise_after_launch("spotify", timeout_s=0.05, poll_s=0.005)
+    assert ok is False
+    assert _t.monotonic() - start < 1.0  # bounded by timeout, never wedges
+
+
+def test_raise_after_launch_short_token_skips_polling(monkeypatch):
+    # A 1-2 char token must not poll/match arbitrary windows.
+    called: list[int] = []
+    monkeypatch.setattr(ws, "list_windows", lambda: called.append(1) or [])
+    ok, _msg = ws.raise_after_launch("x", timeout_s=1.0, poll_s=0.001)
+    assert ok is False
+    assert called == []  # returned before any enumeration
+
+
+def test_raise_after_launch_never_raises(monkeypatch):
+    monkeypatch.setattr(ws, "detect_platform", lambda: "win32")
+
+    def boom():
+        raise RuntimeError("enum blew up")
+
+    monkeypatch.setattr(ws, "list_windows", boom)
+    ok, _msg = ws.raise_after_launch("chrome", timeout_s=0.1, poll_s=0.001)
+    assert ok is False
+
+
 # --- real smoke on the host platform (non-deterministic, just must not crash)
 
 

@@ -31,6 +31,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
@@ -88,8 +89,6 @@ def _find_and_focus_windows(title_contains: str) -> tuple[bool, str]:
     GetWindowTextW = user32.GetWindowTextW
     GetWindowTextLengthW = user32.GetWindowTextLengthW
     IsWindowVisible = user32.IsWindowVisible
-    SetForegroundWindow = user32.SetForegroundWindow
-    ShowWindow = user32.ShowWindow
 
     needle = title_contains.lower()
     found_hwnd: list[int] = []
@@ -118,16 +117,81 @@ def _find_and_focus_windows(title_contains: str) -> tuple[bool, str]:
     hwnd = found_hwnd[0]
     title = found_title[0]
 
-    # Wenn das Fenster minimiert ist, erst restoren (SW_RESTORE = 9).
-    ShowWindow(hwnd, 9)
-    if not SetForegroundWindow(hwnd):
-        # SetForegroundWindow scheitert manchmal wegen Foreground-Lock-Timeout —
-        # in dem Fall ist das Fenster zwar sichtbar gemacht, aber nicht fokussiert.
+    # Raise through the HARDENED foreground path (restore-if-minimized +
+    # AttachThreadInput) — a plain SetForegroundWindow is refused under the
+    # Windows foreground-lock and left an already-open app behind everything
+    # (the "WhatsApp opened in the background" report). This unifies every
+    # foreground site (switch_window, the CU settle fallback, the open_app
+    # already-running path) on one robust mechanism.
+    if not _force_foreground_windows(hwnd):
         return False, (
             f"Fenster '{title}' gefunden, aber Fokus-Setzen scheiterte "
-            "(Foreground-Lock-Timeout — User muss Alt+Tab manuell drucken)"
+            "(Foreground-Lock — User muss Alt+Tab manuell drücken)"
         )
     return True, title
+
+
+def _force_foreground_windows(hwnd: int) -> bool:
+    """Forcefully bring a window to the foreground on Windows, defeating the
+    foreground-lock-steal restriction.
+
+    ``SetForegroundWindow`` alone is refused for a background process unless
+    Windows currently grants it foreground privilege (recent user input, or it
+    launched the target). When it is refused, a freshly launched app is left in
+    the background — and the Computer-Use foreground-following screenshot then
+    captures the wrong screen. The robust path attaches our input queue to both
+    the current-foreground thread and the target window's thread, raises with
+    ``BringWindowToTop`` + ``SetForegroundWindow`` + ``SetActiveWindow``, and
+    ALWAYS detaches both queues in ``finally`` (a leaked ``AttachThreadInput``
+    deadlocks input routing).
+
+    Returns ``True`` if the foreground was ultimately taken. Best-effort — the
+    caller treats the result as advisory. Lazy ``ctypes`` import (module
+    import-cleanliness, HN-7). Separate from ``_find_and_focus_windows`` so the
+    verbatim ``switch_window`` path (AD-7) stays untouched.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    _SW_RESTORE = 9
+
+    get_thread = user32.GetWindowThreadProcessId
+    get_thread.restype = wintypes.DWORD
+    get_thread.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+
+    # Restore if minimized, then try the cheap plain path first — it succeeds
+    # whenever Jarvis launched the process and input is recent.
+    user32.ShowWindow(hwnd, _SW_RESTORE)
+    if user32.SetForegroundWindow(hwnd):
+        user32.SetActiveWindow(hwnd)
+        return True
+
+    cur_thread = kernel32.GetCurrentThreadId()
+    fg_hwnd = user32.GetForegroundWindow()
+    fg_thread = get_thread(fg_hwnd, None) if fg_hwnd else 0
+    target_thread = get_thread(hwnd, None)
+
+    attached_fg = False
+    attached_target = False
+    try:
+        if fg_thread and fg_thread != cur_thread:
+            attached_fg = bool(user32.AttachThreadInput(cur_thread, fg_thread, True))
+        if target_thread and target_thread not in (cur_thread, fg_thread):
+            attached_target = bool(
+                user32.AttachThreadInput(cur_thread, target_thread, True)
+            )
+        user32.BringWindowToTop(hwnd)
+        user32.ShowWindow(hwnd, _SW_RESTORE)
+        ok = bool(user32.SetForegroundWindow(hwnd))
+        user32.SetActiveWindow(hwnd)
+        return ok
+    finally:
+        if attached_fg:
+            user32.AttachThreadInput(cur_thread, fg_thread, False)
+        if attached_target:
+            user32.AttachThreadInput(cur_thread, target_thread, False)
 
 
 def _list_windows_windows() -> list[WindowInfo]:
@@ -500,10 +564,79 @@ def is_app_running(app_name: str) -> WindowInfo | None:
         return None
 
 
+def raise_window(win: WindowInfo) -> tuple[bool, str]:
+    """Bring a specific already-known window to the foreground via the hardened
+    path. On Windows it raises by the window handle directly (precise, no
+    re-enumeration, and it works even when the title path would match a sibling
+    window); off-Windows it falls back to title-based :func:`focus_window`.
+    Best-effort, never raises.
+
+    This is the already-open sibling of :func:`raise_after_launch`: the open_app
+    "app is already running -> focus it" path and the CU window-switch use it so
+    an already-open-but-backgrounded app (the WhatsApp report) is actually pulled
+    to the front instead of left behind.
+    """
+    try:
+        if detect_platform() == "win32" and win.handle:
+            return _force_foreground_windows(int(win.handle)), win.title
+        return focus_window(win.title)
+    except Exception:  # noqa: BLE001 — best-effort, must never raise into a caller
+        log.debug("raise_window failed", exc_info=True)
+        return False, ""
+
+
+#: Poll budget for raising a freshly launched app's window to the foreground.
+#: A fast-raising app exits on the first poll; only a backgrounded / secondary-
+#: monitor / minimized launch consumes the full budget.
+_RAISE_POLL_TIMEOUT_S = 3.0
+_RAISE_POLL_INTERVAL_S = 0.25
+
+
+def raise_after_launch(
+    app_name: str,
+    *,
+    timeout_s: float = _RAISE_POLL_TIMEOUT_S,
+    poll_s: float = _RAISE_POLL_INTERVAL_S,
+) -> tuple[bool, str]:
+    """Poll until a window matching ``app_name`` appears, then actively bring it
+    to the foreground. Returns ``(raised, title_or_reason)``. Best-effort, never
+    raises — a miss just leaves things as they were.
+
+    A fresh launch (``subprocess.Popen`` / ``os.startfile``) is fire-and-forget:
+    the new window is frequently left in the background (Windows foreground-lock-
+    steal, a secondary monitor, or restored-minimized). The Computer-Use
+    screenshot follows the *foreground* window, so it then captures the wrong
+    screen and the mission fails. This closes that gap. Cross-platform: Windows
+    raises by ``hwnd`` through the hardened :func:`_force_foreground_windows`
+    path; macOS/Linux reuse :func:`focus_window` (by title). Synchronous and
+    blocking by design — an async caller wraps it in ``asyncio.to_thread`` (as
+    the speech/CU paths already do for :func:`focus_window`).
+    """
+    token = _app_token(app_name)
+    if len(token) < _MIN_TOKEN_LEN:
+        return False, ""
+    try:
+        deadline = time.monotonic() + max(0.0, timeout_s)
+        while True:
+            win = _match_window(app_name, list_windows())
+            if win is not None:
+                return raise_window(win)
+            if time.monotonic() >= deadline:
+                return False, (
+                    f"no window matching '{token}' appeared within {timeout_s:.0f}s"
+                )
+            time.sleep(max(0.0, poll_s))
+    except Exception:  # noqa: BLE001 — best-effort, must never raise into a caller
+        log.debug("raise_after_launch failed", exc_info=True)
+        return False, ""
+
+
 __all__ = [
     "WindowInfo",
     "list_windows",
     "get_foreground_title",
     "focus_window",
+    "raise_window",
     "is_app_running",
+    "raise_after_launch",
 ]

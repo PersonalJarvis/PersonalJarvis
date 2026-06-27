@@ -161,13 +161,15 @@ class FakeExecutor:
 
 class FakeCtx:
     def __init__(self, brain: FakeBrain, executor: FakeExecutor, *,
-                 verify: bool = True) -> None:
+                 verify: bool = True, zoom: bool = False) -> None:
         self.brain_manager = brain
         self.tool_executor = executor
         self.tools = {"click": FakeTool()}
         self.bus = None
         self.per_step_timeout_s = 5.0
         self.verify_after_each_step = verify
+        # Opt-in proactive zoom-before-click (default off mirrors production).
+        self.zoom_before_click = zoom
         # These tests isolate the LLM refine path; the Phase-2 UIA snap (which
         # would otherwise fire first on a verified miss and query the real host
         # accessibility tree) is turned off so the refine behaviour is tested in
@@ -427,3 +429,107 @@ async def test_unknown_monitor_geometry_keeps_legacy_click_path(
     assert executor.clicks == [(500, 500)]
     assert brain.requests == []
     assert grab.calls == 0
+
+
+# ---------------------------------------------------------------------------
+# Opt-in proactive zoom-before-click ([computer_use].zoom_before_click)
+# ---------------------------------------------------------------------------
+
+
+async def test_zoom_off_first_click_uses_coarse_point(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Default (flag off): the first attempt clicks the model's coarse point with
+    # no proactive refine call — the trust-first default is preserved.
+    brain = FakeBrain()
+    executor = FakeExecutor()
+    _patch(monkeypatch, GrabQueue([b"pre", b"post-different"]))
+
+    ok, _msg = await _click(
+        FakeCtx(brain, executor, zoom=False),
+        {"action": "click", "x": 500, "y": 500, "target": "skip button"},
+    )
+
+    assert ok is True
+    assert executor.clicks == [(500, 500)]
+    assert brain.requests == []  # no proactive refine on the default path
+
+
+async def test_zoom_on_relocates_target_before_first_click(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Flag on + target: a proactive refine round runs BEFORE the first click and
+    # re-locates the target at crop-norm (250,250) inside the 360px crop at
+    # (320,320) -> abs (410,410). The FIRST click lands on the refined point.
+    brain = FakeBrain(['{"found": true, "x": 250, "y": 250}'])
+    executor = FakeExecutor()
+    # grab order: refine crop, then verify pre, then verify post.
+    _patch(monkeypatch, GrabQueue([b"refine-crop", b"pre", b"post-different"]))
+
+    ok, _msg = await _click(
+        FakeCtx(brain, executor, zoom=True),
+        {"action": "click", "x": 500, "y": 500, "target": "skip button"},
+    )
+
+    assert ok is True
+    assert executor.clicks == [(410, 410)]
+    assert len(brain.requests) == 1  # exactly the proactive refine call
+
+
+async def test_zoom_on_target_not_in_crop_refuses_to_click(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Flag on + target NOT visible in the zoom crop: the loop must NOT click
+    # (the coarse estimate was so far off the named target is not even in the
+    # crop) and returns a re-plan signal — the wrong-element guard.
+    brain = FakeBrain(['{"found": false}'])
+    executor = FakeExecutor()
+    _patch(monkeypatch, GrabQueue([b"refine-crop"]))
+
+    ok, msg = await _click(
+        FakeCtx(brain, executor, zoom=True),
+        {"action": "click", "x": 500, "y": 500, "target": "skip button"},
+    )
+
+    assert ok is False
+    assert executor.clicks == []
+    assert "re-plan" in msg
+
+
+async def test_zoom_on_without_target_uses_coarse_point(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Flag on but the action carries NO target — nothing to confirm against, so
+    # the proactive refine is skipped and the coarse point is clicked directly.
+    brain = FakeBrain()
+    executor = FakeExecutor()
+    _patch(monkeypatch, GrabQueue([b"pre", b"post-different"]))
+
+    ok, _msg = await _click(
+        FakeCtx(brain, executor, zoom=True),
+        {"action": "click", "x": 500, "y": 500},  # no "target"
+    )
+
+    assert ok is True
+    assert executor.clicks == [(500, 500)]
+    assert brain.requests == []
+
+
+async def test_zoom_on_crop_grab_fails_falls_back_to_coarse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Flag on + target, but the live crop grab fails (None): the proactive
+    # refine degrades to None and the loop clicks the coarse point. Fail-safe.
+    brain = FakeBrain()
+    executor = FakeExecutor()
+    # grab 1 (refine crop) -> None; grab 2 pre, grab 3 post.
+    _patch(monkeypatch, GrabQueue([None, b"pre", b"post-different"]))
+
+    ok, _msg = await _click(
+        FakeCtx(brain, executor, zoom=True),
+        {"action": "click", "x": 500, "y": 500, "target": "skip button"},
+    )
+
+    assert ok is True
+    assert executor.clicks == [(500, 500)]
+    assert brain.requests == []  # grab failed before any brain call

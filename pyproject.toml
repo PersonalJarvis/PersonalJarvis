@@ -286,6 +286,14 @@ gmail = "jarvis.plugins.tool.gmail_rest:GmailRestTool"
 # router-tier, risk_tier "monitor" (read-only). A direct gated action, never a
 # spawn (AP-5/AP-14). See docs/superpowers/plans/2026-06-07-plugin-skill-pairing-reachability.md.
 vercel = "jarvis.plugins.tool.vercel_rest:VercelRestTool"
+# Google Calendar (marketplace plugin, 2026-06-27) — read/create/update/delete
+# calendar events. The bot logic is a dependency-free Node script
+# (calendar_bot.mjs); this Python entry point is the OAuth bridge that reuses
+# the marketplace token + refresh loop (so the connection "never expires").
+# Router-tier, full autonomy: writes are "monitor" (audited, no prompt), never a
+# spawn (AP-5/AP-14). Entry-point name matches the catalog native_tool +
+# token-store key "google_calendar".
+google_calendar = "jarvis.plugins.tool.google_calendar_rest:GoogleCalendarRestTool"
 screen-snapshot = "jarvis.plugins.tool.screen_snapshot:ScreenSnapshotTool"
 move-mouse = "jarvis.plugins.tool.move_mouse:MoveMouseTool"
 switch-window = "jarvis.plugins.tool.switch_window:SwitchWindowTool"
@@ -399,6 +407,9 @@ jarvis = [
     "ui/web/dist/**/*",
     "ui/web/dist/*",
     "assets/**/*",
+    # Node bot scripts shipped alongside their Python bridge tools (e.g. the
+    # google_calendar bot). Not Python, so packages.find won't pick them up.
+    "plugins/tool/*.mjs",
 ]
 
 [tool.ruff]

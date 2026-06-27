@@ -936,6 +936,17 @@ async def _settle_after_open_app(ctx: ComputerUseContext, app_token: str) -> Non
             return
         await asyncio.sleep(_OPEN_APP_SETTLE_POLL_S)
 
+    # Timed out — the app never reached the foreground on its own. In the happy
+    # path open_app's active raise already foregrounded it (the probe matched and
+    # we returned above), so reaching here means that raise did not stick. One
+    # best-effort last-ditch raise before the loop observes a frame, so the next
+    # screenshot shows the app instead of a guaranteed-wrong stale screen. Runs
+    # ONLY on this unhappy path, so it never double-fires. Never raises.
+    try:
+        await asyncio.to_thread(window_state.focus_window, app_token)
+    except Exception:  # noqa: BLE001
+        log.debug("[cu] settle fallback focus failed (non-fatal)", exc_info=True)
+
 
 async def _profile_phase(
     ctx: ComputerUseContext, *, phase: str, step_idx: int, t0: float,
@@ -2835,7 +2846,7 @@ async def _uia_snap_click(
     Cross-platform via ``make_ui_tree_source`` (UIA / AX / AT-SPI / Null).
     Disable per context with ``uia_click_fallback = False``.
     """
-    if not getattr(ctx, "uia_click_fallback", True):
+    if not getattr(ctx, "uia_click_fallback", False):
         return None
     try:
         from jarvis.vision.tree_factory import make_ui_tree_source  # noqa: PLC0415
@@ -2890,14 +2901,27 @@ async def _click_with_refine(
     retry_note = ""
     snapped = False  # Phase 2: UIA snap is tried at most once per click action
     for _attempt in range(_CLICK_MAX_ATTEMPTS):
+        # Proactive zoom-before-click ([computer_use].zoom_before_click, opt-in,
+        # default off): run the zoom-refine BEFORE the first click too, not only
+        # after a verified miss. Needs a named target to confirm against;
+        # without one it would only add a round-trip, so it falls through to the
+        # coarse click. Internal screenshot crop only — nothing renders on
+        # screen; on a not-found verdict the loop re-plans instead of clicking
+        # the wrong element (handled below).
+        proactive_zoom = (
+            not clicked
+            and bool(target)
+            and getattr(ctx, "zoom_before_click", False)
+        )
         refined = None
-        if clicked:
+        if clicked or proactive_zoom:
             # Trust-first (2026-06-10 latency plan Task 3): the refine pass is
             # a full LLM round-trip, and on the FIRST attempt it corrected the
             # model's point by <=5 px in live runs — pure cost (the executor
             # and the refiner see the same frame). Reserve it for retries
-            # after a verified miss, where the zoomed live crop genuinely
-            # re-locates the target.
+            # after a verified miss UNLESS the operator opted into proactive
+            # zoom above, where the zoomed live crop re-locates the target and
+            # guards against a wrong-element click.
             refined = await _refine_click_point(
                 ctx, observation, x, y, monitor_geom,
                 user_goal=user_goal, target=target, retry_note=retry_note,

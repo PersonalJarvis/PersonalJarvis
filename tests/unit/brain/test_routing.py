@@ -1556,6 +1556,11 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # rationale as gmail — its rest_wrapper transport produced zero MCP
             # tools, so it must be router-visible directly. Read-only.
             "vercel",
+            # Google Calendar Marketplace plugin (2026-06-27): native bridge tool
+            # whose bot logic is a Node script (calendar_bot.mjs). Same rationale
+            # as gmail — no MCP server block, so it must be router-visible
+            # directly. Full autonomy (writes are monitor, never ask).
+            "google_calendar",
             # Computer-Use (Wave 1, 2026-05-29): first-class tool to drive the
             # live desktop. Router-tier only — a direct safe-gated action (the
             # loop gates each action via ToolExecutor, ADR-0008), never a spawn,
@@ -2929,4 +2934,94 @@ def test_explicit_subagent_question_keeps_spawn_worker() -> None:
     )
     assert "spawn_worker" in gated, (
         "an explicit 'Subagent' trigger must never be hidden, even in question form"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Signalless-turn action-hide (forensic 2026-06-27, voice session): the German
+# smalltalk "Was geht ab?" was mis-transcribed by STT as "Lask it up!" [en]
+# confidence 0.509 — missing BOTH the smalltalk allowlist AND the whisper-junk
+# seed lists — so the action tools stayed visible and gemini, reading a
+# 30k-token context full of the PREVIOUS "open Discord, bridge-mine channel"
+# command, re-ran that exact computer_use plan on a turn that asked for nothing.
+# A short turn with no actionable signal of its own must not reach computer_use
+# / spawn so it cannot inherit the prior turn's desktop action.
+# ---------------------------------------------------------------------------
+
+
+class _FakeCuTool:
+    name = "computer_use"
+    schema: dict[str, Any] = {}
+
+
+def _manager_with_cu_spawn_search() -> BrainManager:
+    executor = _RecordingExecutor()
+    return BrainManager(
+        config=JarvisConfig(),
+        bus=EventBus(),
+        tools={
+            "computer_use": _FakeCuTool(),
+            "spawn_worker": _FakeTool(),
+            "search_web": _FakeSearchTool(),
+        },
+        tool_executor=executor,  # type: ignore[arg-type]
+    )
+
+
+# GENERAL rule (user mandate 2026-06-27 — "this must apply to ALL questions"):
+# ANY turn with no action signal of its own — short or long, with or without a
+# trailing "?" — loses computer_use/spawn so it cannot inherit the previous
+# turn's CU action. Mis-transcriptions, smalltalk, and plain questions all
+# qualify. (The real "Was geht ab?" is ALSO caught upstream by the smalltalk
+# gate; here we prove the filter itself no longer exempts it.)
+NO_ACTION_SIGNAL_TURNS = [
+    "Lask it up!",                                   # the live STT junk
+    "Mask it up.",                                   # sibling STT-junk variant
+    "Was geht ab?",                                  # i18n-allow: the original question
+    "Wie viele Menschen leben in Australien?",       # i18n-allow: long factual question
+    "Which company owns the most data centers in the world right now?",
+    "Erzaehl mir einen Witz",                        # i18n-allow: chit-chat, no action
+]
+
+
+@pytest.mark.parametrize("utterance", NO_ACTION_SIGNAL_TURNS)
+def test_no_action_signal_turn_hides_computer_use_and_spawn(utterance: str) -> None:
+    """ANY turn with no action signal of its own (question, remark, or
+    mis-transcription — regardless of length or a trailing '?') cannot reach
+    computer_use/spawn, so the LLM cannot inherit the previous turn's CU action.
+    The read-only search tool stays visible so the turn is still answerable."""
+    manager = _manager_with_cu_spawn_search()
+    gated = manager._hide_action_tools_on_signalless_turn(
+        dict(manager._tools), utterance
+    )
+    assert "computer_use" not in gated, (
+        f"computer_use must be hidden on a no-action-signal turn: {utterance!r}"
+    )
+    assert "spawn_worker" not in gated, (
+        f"spawn_worker must be hidden on a no-action-signal turn: {utterance!r}"
+    )
+    assert "search_web" in gated, "read-only search_web must stay visible"
+
+
+ACTIONABLE_TURNS = [
+    "Oeffne Discord fuer mich",            # explicit open-app intent
+    "Klick auf den Play-Button",           # PC-control verb
+    "Mach das am Bildschirm",              # names the screen surface
+    "Was siehst du auf meinem Bildschirm?",  # i18n-allow: a VISUAL question keeps CU (Bildschirm)
+    "Bau mir eine HTML-Uebersicht der groessten Cloud-Anbieter",  # artifact build
+]
+
+
+@pytest.mark.parametrize("utterance", ACTIONABLE_TURNS)
+def test_actionable_turn_keeps_computer_use(utterance: str) -> None:
+    """A turn that DOES carry an action signal — an action verb, a named app, the
+    screen surface, or an artifact-build request — keeps computer_use. This holds
+    even for a question ('Was siehst du auf meinem Bildschirm?'): naming the
+    screen is action-intent, so the heavy tools stay available."""
+    manager = _manager_with_cu_spawn_search()
+    gated = manager._hide_action_tools_on_signalless_turn(
+        dict(manager._tools), utterance
+    )
+    assert "computer_use" in gated, (
+        f"computer_use must stay for an actionable turn: {utterance!r}"
     )

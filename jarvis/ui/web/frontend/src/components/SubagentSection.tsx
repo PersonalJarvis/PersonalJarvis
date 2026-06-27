@@ -781,6 +781,7 @@ function ClaudeConnectionCard({
           {connected && row && (
             <SubagentActiveControl
               row={row}
+              active={isActive}
               activating={activating}
               onActivate={activate}
             />
@@ -905,6 +906,7 @@ function ClaudeApiCard({
         {row && (
           <SubagentActiveControl
             row={row}
+            active={isActive}
             activating={activating}
             onActivate={activate}
           />
@@ -1081,12 +1083,22 @@ function SubagentActiveControl({
   row,
   activating,
   onActivate,
+  active,
 }: {
   row: SubagentMappingRow;
   activating: boolean;
   onActivate: () => void;
+  /**
+   * Explicit active state, overriding `row.is_active_brain`. The two Claude
+   * cards share ONE slug (claude-api), so the raw row flag would light BOTH
+   * radios at once. Each Claude card passes its mode-split flag here so only the
+   * card matching the live auth (subscription vs API key) shows "Active". Other
+   * cards omit it and fall back to the row flag.
+   */
+  active?: boolean;
 }) {
-  const labelTitle = row.is_active_brain
+  const isActive = active ?? row.is_active_brain;
+  const labelTitle = isActive
     ? "This subagent provider is active"
     : row.key_set
       ? "Activate this subagent provider"
@@ -1098,7 +1110,7 @@ function SubagentActiveControl({
       onDoubleClick={(e) => e.stopPropagation()}
       className={cn(
         "inline-flex shrink-0 cursor-pointer select-none items-center gap-1.5 text-xs",
-        row.is_active_brain
+        isActive
           ? "font-medium text-primary"
           : row.key_set
             ? "text-muted-foreground hover:text-foreground"
@@ -1109,12 +1121,12 @@ function SubagentActiveControl({
       <input
         type="radio"
         name="active-subagent"
-        checked={row.is_active_brain}
+        checked={isActive}
         onChange={() => onActivate()}
         disabled={activating}
         className="accent-primary"
       />
-      {activating ? "Activating…" : "Set active"}
+      {activating ? "Activating…" : isActive ? "Active" : "Set active"}
     </label>
   );
 }

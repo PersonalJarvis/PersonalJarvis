@@ -124,6 +124,11 @@ ROUTER_TOOLS = frozenset({
     # as gmail — Vercel's catalog rest_wrapper transport produced zero MCP tools,
     # so it must be router-visible directly. Read-only; never a spawn (AP-5/AP-14).
     "vercel",
+    # Google Calendar Marketplace plugin (2026-06-27): native bridge tool whose
+    # bot logic is a Node script (calendar_bot.mjs). Same rationale as gmail — no
+    # MCP server block, so it must be router-visible directly; otherwise a
+    # connected calendar is not callable by voice/chat. Never a spawn (AP-5/AP-14).
+    "google_calendar",
     # Computer-Use (Wave 1, 2026-05-29): first-class, clearly-described tool to
     # drive the user's LIVE desktop (open apps, click, type, scroll, operate
     # any GUI). The router previously had no honest desktop path — spawn-worker
@@ -1007,6 +1012,8 @@ def _phase2_full_brain(
                 fast_step_model=getattr(cu_cfg, "fast_step_model", ""),
                 plan_model_override=cu_cfg.plan_model,
                 verify_after_each_step=cu_cfg.verify_after_each_step,
+                zoom_before_click=getattr(cu_cfg, "zoom_before_click", False),
+                uia_click_fallback=getattr(cu_cfg, "uia_click_fallback", False),
                 max_replans=cu_cfg.max_replans,
                 announce_progress=getattr(cu_cfg, "announce_progress", False),
                 native_cu=native_cu,
@@ -1174,7 +1181,8 @@ def _legacy_full_brain(bus: Any | None = None) -> Any:
 
     tools: dict[str, Any] = {}
     active_tools = {"open-app", "type-text", "run-shell", "search-web", "remember",
-                    "dispatch-to-harness", "whoami", "cli-tools", "gmail", "vercel"}
+                    "dispatch-to-harness", "whoami", "cli-tools", "gmail", "vercel",
+                    "google_calendar"}
     from jarvis.harness.manager import HarnessManager
     harness_manager = HarnessManager(bus=bus)
 

@@ -141,3 +141,67 @@ def test_open_file_with_never_raises_on_error():
          patch.object(op, "detect_platform", return_value="linux"), \
          patch.object(op.subprocess, "Popen", side_effect=OSError("boom")):
         assert op.open_file_with(Path("/x/y.md"), "executable", "/a/b") is False
+
+
+# --- open_url (open an http(s) URL in the OS default browser) -----------------
+# Used by the desktop shell because the embedded WebView2 drops window.open /
+# target=_blank, so OAuth-authorize + token-creation pages never reach a browser.
+
+
+def test_open_url_linux_uses_xdg_open():
+    with patch.object(op, "detect_capabilities", return_value=_caps()), \
+         patch.object(op, "detect_platform", return_value="linux"), \
+         patch.object(op.subprocess, "Popen") as popen:
+        assert op.open_url("https://accounts.google.com/o/oauth2/v2/auth?x=1") is True
+        argv = popen.call_args.args[0]
+        assert argv[0] == "xdg-open"
+        assert argv[1].startswith("https://accounts.google.com")
+
+
+def test_open_url_darwin_uses_open():
+    with patch.object(op, "detect_capabilities", return_value=_caps()), \
+         patch.object(op, "detect_platform", return_value="darwin"), \
+         patch.object(op.subprocess, "Popen") as popen:
+        assert op.open_url("http://127.0.0.1:3118/authorize") is True
+        assert popen.call_args.args[0][0] == "open"
+
+
+def test_open_url_windows_uses_startfile():
+    with patch.object(op, "detect_capabilities", return_value=_caps()), \
+         patch.object(op, "detect_platform", return_value="win32"), \
+         patch.object(op.os, "startfile", create=True) as startfile:
+        assert op.open_url("https://github.com/login/oauth/authorize") is True
+        startfile.assert_called_once_with("https://github.com/login/oauth/authorize")
+
+
+def test_open_url_headless_is_noop():
+    with patch.object(op, "detect_capabilities", return_value=_caps(display=False)), \
+         patch.object(op.subprocess, "Popen") as popen:
+        assert op.open_url("https://example.com") is False
+        popen.assert_not_called()
+
+
+def test_open_url_rejects_non_http_schemes():
+    # A hostile open_url payload must never reach a launcher: file:, javascript:,
+    # an app protocol, or a bare path are all refused before any dispatch.
+    for bad in (
+        "file:///C:/Windows/System32/calc.exe",
+        "javascript:alert(1)",
+        "obsidian://open?vault=x",
+        "/etc/passwd",
+        "ftp://host/x",
+    ):
+        with patch.object(op, "detect_capabilities", return_value=_caps()), \
+             patch.object(op, "detect_platform", return_value="linux"), \
+             patch.object(op.subprocess, "Popen") as popen, \
+             patch.object(op.os, "startfile", create=True) as startfile:
+            assert op.open_url(bad) is False, bad
+            popen.assert_not_called()
+            startfile.assert_not_called()
+
+
+def test_open_url_never_raises_on_error():
+    with patch.object(op, "detect_capabilities", return_value=_caps()), \
+         patch.object(op, "detect_platform", return_value="linux"), \
+         patch.object(op.subprocess, "Popen", side_effect=OSError("boom")):
+        assert op.open_url("https://example.com") is False

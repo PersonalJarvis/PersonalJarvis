@@ -42,7 +42,8 @@ _PROVIDER_ALIASES = (
 # provider alias with a word boundary, so harmless sentences never match.
 # The German imperative paradigm needs two stems: "wechsel" and "wechsle".
 _PROVIDER_PATTERN = re.compile(
-    r"\b(?:wechsel[n]?|wechsle|switch(?:\s+to)?|benutze?|nutze|use|nimm)"
+    r"\b(?:wechsel[n]?|wechsle|änder\w*|aender\w*|setz\w*|stell\w*"
+    r"|switch(?:\s+to)?|benutze?|nutze|use|nimm)"
     r"(?:\s+(?:den|die|das|der|the|deinen|deine|dein|meinen|meine|mein|my))?"
     r"(?:\s+(?:brain[-\s]*provider|provider|anbieter|sprach[-\s]*modell|modell|model))?"
     # Optional "von/from <source>" so "switch FROM gemini TO openai" targets the
@@ -57,7 +58,7 @@ _PROVIDER_PATTERN = re.compile(
 # sentence start OR preceded by "jarvis", to avoid catching harmless phrases
 # like "stopp doch mal kurz".
 _CANCEL_PATTERN = re.compile(
-    r"^(?:jarvis[,\s]+)?(?:stopp?|abbruch|abbrechen|cancel|stop\s+sub)\b",
+    r"^(?:jarvis[,\s]+)?(?:stopp?|abbruch|abbrechen|cancel|stop\s+sub|halt)\b",
     re.IGNORECASE,
 )
 

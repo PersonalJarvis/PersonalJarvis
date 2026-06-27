@@ -43,7 +43,10 @@ interface PluginsResponse {
 }
 
 async function fetchPlugins(): Promise<PluginsResponse> {
-  const res = await fetch("/api/marketplace/plugins");
+  // `cache: "no-store"` bypasses the embedded WebView2 HTTP cache so the
+  // desktop app never shows a stale connection state for plugins (see the
+  // matching note in PluginsView.fetchCatalog).
+  const res = await fetch("/api/marketplace/plugins", { cache: "no-store" });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }

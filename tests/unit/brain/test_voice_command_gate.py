@@ -147,6 +147,31 @@ def test_main_provider_switch_recognizes_anthropic_alias() -> None:
     assert m.target == "anthropic"
 
 
+@pytest.mark.parametrize(
+    "text,target",
+    [
+        ("ändere den Provider auf gemini", "gemini"),       # i18n-allow: German voice fixture
+        ("setze den Brain-Provider auf openai", "openai"),  # i18n-allow: German voice fixture
+        ("stell den Provider auf claude", "claude"),        # i18n-allow: German voice fixture
+    ],
+)
+def test_provider_switch_extra_verbs(text: str, target: str) -> None:
+    m = match_voice_command(text)
+    assert m is not None and m.kind == "provider_switch", f"no match for {text!r}"
+    assert m.target == target
+
+
+def test_cancel_recognizes_halt() -> None:
+    m = match_voice_command("halt")
+    assert m is not None and m.kind == "cancel"
+
+
+def test_halt_midsentence_is_not_cancel() -> None:
+    # "das ist halt so" must NOT cancel — halt only at sentence start / after jarvis
+    m = match_voice_command("das ist halt so")
+    assert m is None or m.kind != "cancel"
+
+
 def test_language_switch_picks_first_language_in_text_not_dict_order() -> None:
     # "deutsch" appears before "englisch" in the sentence, so the reply language
     # must be German — not English just because "englisch" sits earlier in the

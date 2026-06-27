@@ -810,7 +810,8 @@
     "needs_key": "First save API key, then activate",
     "recommended": "Recommended",
     "recommended_tooltip": "Recommended model: {0}",
-    "security_notice": ""
+    "security_notice": "",
+    "trademark_notice": "Provider and service names and logos are trademarks of their respective owners, shown only to identify the integrations you can connect. No affiliation or endorsement is implied."
   },
   "apikeys_test": {
     "button": "Test",
