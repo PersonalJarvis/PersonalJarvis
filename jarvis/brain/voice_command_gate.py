@@ -24,6 +24,8 @@ from typing import Literal
 _PROVIDER_ALIASES = (
     "claude-api",
     "openrouter",
+    "anthropic",
+    "chatgpt",
     "ollama",
     "gemini",
     "claude",

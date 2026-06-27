@@ -132,6 +132,7 @@ def _estimate_usd_from_usage(
 
 PROVIDER_ALIASES = {
     "claude": "claude-api",
+    "anthropic": "claude-api",
     "opus": "claude-api",
     "haiku": "claude-api",
     "sonnet": "claude-api",

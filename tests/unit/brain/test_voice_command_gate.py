@@ -131,3 +131,17 @@ def test_main_provider_switch_plain_still_works() -> None:
     m = match_voice_command("wechsel auf gemini")
     assert m is not None and m.kind == "provider_switch"
     assert m.target == "gemini"
+
+
+def test_main_provider_switch_recognizes_chatgpt_alias() -> None:
+    # "ChatGPT" is the everyday name for the OpenAI brain; the gate must catch it.
+    m = match_voice_command("nutze chatgpt")
+    assert m is not None and m.kind == "provider_switch"
+    assert m.target == "chatgpt"
+
+
+def test_main_provider_switch_recognizes_anthropic_alias() -> None:
+    # "Anthropic" is the everyday name for the claude-api brain.
+    m = match_voice_command("switch to anthropic")
+    assert m is not None and m.kind == "provider_switch"
+    assert m.target == "anthropic"
