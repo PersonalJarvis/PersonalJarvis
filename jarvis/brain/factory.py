@@ -991,6 +991,17 @@ def _phase2_full_brain(
                         cu_tools[_inst.name] = _inst
                 except Exception as _exc:  # noqa: BLE001
                     log.debug("CU extra tool '%s' not loadable: %s", _ep.name, _exc)
+            # The `drag` action has no entry-point plugin (it was historically
+            # handled inline); inject it directly so the CU loop routes drag
+            # through the ToolExecutor for risk-tier / blacklist / audit parity
+            # (audit #13). Best-effort: a load failure leaves the loop's inline
+            # drag fallback in place.
+            try:
+                from jarvis.plugins.tool.drag import DragTool  # noqa: PLC0415
+
+                cu_tools.setdefault("drag", DragTool())
+            except Exception as _exc:  # noqa: BLE001
+                log.debug("CU drag tool not loadable: %s", _exc)
             # Wave 3: optionally build the native Gemini computer_use engine.
             # Returns None unless [computer_use].prefer_native is on AND the
             # active provider is Gemini, so the default (hand-rolled) path is
@@ -1020,6 +1031,7 @@ def _phase2_full_brain(
                 fast_step_model=getattr(cu_cfg, "fast_step_model", ""),
                 plan_model_override=cu_cfg.plan_model,
                 verify_after_each_step=cu_cfg.verify_after_each_step,
+                strict_verify=getattr(cu_cfg, "strict_verify", True),
                 zoom_before_click=getattr(cu_cfg, "zoom_before_click", False),
                 uia_click_fallback=getattr(cu_cfg, "uia_click_fallback", False),
                 max_replans=cu_cfg.max_replans,

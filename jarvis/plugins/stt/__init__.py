@@ -201,6 +201,7 @@ def build_wake_whisper(
     language: str | None = None,
     wake_phrase: str | None = None,
     cuda_available: bool | None = None,
+    fast_first: bool = False,
 ) -> Any:
     """Build the LOCAL wake-match / live-preview Whisper.
 
@@ -263,12 +264,26 @@ def build_wake_whisper(
     # explicit wake_model/wake_device wins (only the base/cpu pair auto-upgrades).
     if cuda_available is None:
         cuda_available = _wake_cuda_available()
-    if model == "base" and device == "cpu" and cuda_available:
+    # ``fast_first`` (progressive wake-model boot, 2026-06-27): when set, SKIP the
+    # GPU turbo upgrade and return the light base/cpu model (with bias). It loads
+    # in ~3 s with NO CUDA JIT (vs large-v3-turbo/cuda ~11 s warm in the boot
+    # storm and ~71 s cold), so a CUSTOM wake phrase becomes hear-ready almost
+    # immediately, even on a cold kernel cache. base/cpu+bias is a validated wake
+    # model (83% recall / ~0% false on the user's real WAVs — see the bias note
+    # above). The caller then hot-swaps in the turbo/cuda model in the background
+    # for faster steady-state inference, so the 2026-06-24 accuracy upgrade is
+    # preserved — only its load is moved off the hear-ready path.
+    if not fast_first and model == "base" and device == "cpu" and cuda_available:
         model, device, compute = "large-v3-turbo", "cuda", "int8_float16"
         bias = None  # strong model needs no bias; the bias is what hallucinates
         logger.info(
             "Wake-Whisper: CUDA present -> GPU turbo (large-v3-turbo/cuda), "
             "bias OFF (fast + no silence hallucination)."
+        )
+    elif fast_first and model == "base" and device == "cpu" and cuda_available:
+        logger.info(
+            "Wake-Whisper: fast-first base/cpu (bias ON) — turbo/cuda upgrade "
+            "deferred to a background hot-swap so wake is hear-ready in ~3 s."
         )
 
     return FasterWhisperProvider(

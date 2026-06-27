@@ -29,11 +29,22 @@ import logging
 import os
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
+
+# Single source of truth for the writable field vocabulary + field shapes,
+# shared with the brain's update_profile tool so the inline editor and the brain
+# can never drift on what is writable (the BUG-008 enum-drift class). The parity
+# with the UI's CLUSTER_FIELD_KEYS is pinned by test_profile_update.py.
+from jarvis.plugins.tool.profile_update import (
+    _BOOL_FIELDS,
+    _CANONICAL_FIELDS,
+    _LIST_FIELDS,
+    _coerce_bool,
+)
 
 log = logging.getLogger(__name__)
 
@@ -475,6 +486,143 @@ async def put_raw(request: Request, body: RawWriteBody) -> dict[str, Any]:
         "size_bytes": size_bytes,
         "reparsed": reparsed,
         "frontmatter_ok": frontmatter_ok,
+    }
+
+
+class FieldEditBody(BaseModel):
+    """Body for PATCH /api/profile/field — edit one structured profile field.
+
+    ``operation`` decides what happens:
+    - ``set``    — overwrite a scalar field (Chef → König). Rejected on list fields.
+    - ``clear``  — empty any field so it reads back as "not known yet".
+    - ``append`` — add one item to a list field (a chip). Rejected on scalars.
+    - ``remove`` — drop one item from a list field (the chip 'x').
+
+    ``value`` is required for set/append/remove, ignored for clear.
+    """
+
+    cluster: str
+    field: str
+    operation: Literal["set", "clear", "append", "remove"]
+    value: Any = None
+
+
+@router.patch("/field")
+async def patch_field(request: Request, body: FieldEditBody) -> dict[str, Any]:
+    """Inline single-field edit for the Profile view (the pencil per field).
+
+    Mutates the SAME live ``UserProfile`` the brain renders from, persists it
+    atomically to USER.md, logs an audit observation, and emits ``ProfileUpdated``
+    so any other open view live-syncs. This is the manual-edit sibling of the
+    brain's ``update_profile`` tool; they share the canonical field allow-list so
+    the editor can never write a field the matrix / brain don't know about.
+    """
+    profile = _require_profile(request)
+
+    cluster = body.cluster.strip().lower()
+    field = body.field.strip().lower()
+    op = body.operation
+    value = body.value
+
+    # Validate against the shared allow-list — never write an unknown field.
+    if cluster not in _CANONICAL_FIELDS:
+        raise HTTPException(status_code=400, detail=f"Unknown cluster {cluster!r}.")
+    if field not in _CANONICAL_FIELDS[cluster]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown field {field!r} for cluster {cluster!r}.",
+        )
+
+    is_list = (cluster, field) in _LIST_FIELDS
+
+    # The operation must match the field shape (a set on a list would clobber it
+    # into a scalar; an append on a scalar makes no sense).
+    if op in ("append", "remove") and not is_list:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{cluster}.{field} is not a list field — use set or clear.",
+        )
+    if op == "set" and is_list:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{cluster}.{field} is a list field — use append or remove.",
+        )
+
+    # value is mandatory except for clear.
+    if op in ("set", "append", "remove"):
+        if value is None or (isinstance(value, str) and not value.strip()):
+            raise HTTPException(status_code=400, detail="Missing 'value'.")
+
+    # Coerce the boolean fields (emoji_ok) from the string the UI may send.
+    if op == "set" and (cluster, field) in _BOOL_FIELDS:
+        coerced = _coerce_bool(value)
+        if coerced is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{cluster}.{field} expects a boolean (true/false).",
+            )
+        value = coerced
+    if isinstance(value, str):
+        value = value.strip()
+
+    try:
+        if op == "set":
+            changed = profile.set(cluster, field, value)
+        elif op == "clear":
+            changed = profile.clear(cluster, field)
+        elif op == "append":
+            changed = profile.append_list(cluster, field, value)
+        else:  # remove
+            changed = profile.remove_list_item(cluster, field, value)
+    except ValueError as exc:  # defensive — allow-list already guards this
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if changed:
+        # Audit trail (best-effort — never block the write) mirroring update_profile.
+        try:
+            label = f"{cluster}.{field}"
+            if op == "clear":
+                obs_value = "(cleared)"
+            elif op == "remove":
+                obs_value = f"(removed {value})"
+            else:
+                obs_value = str(value)
+            profile.append_observation(label, obs_value, "manual edit via profile UI")
+        except Exception:  # noqa: BLE001
+            log.debug("profile field edit: append_observation failed", exc_info=True)
+
+        try:
+            profile.save()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("profile field edit: save failed: %s", exc)
+            raise HTTPException(
+                status_code=500, detail=f"Could not persist profile: {exc}"
+            ) from exc
+
+        # Live-sync any other open view (best-effort — a bus hiccup must never
+        # fail the already-persisted write).
+        bus = getattr(_get_brain(request), "_bus", None)
+        if bus is not None:
+            try:
+                from jarvis.core.events import ProfileUpdated
+
+                await bus.publish(
+                    ProfileUpdated(
+                        subject="user", cluster=cluster, field=field,
+                        operation=op, confidence=1.0,
+                        evidence="manual edit via profile UI",
+                    )
+                )
+            except Exception:  # noqa: BLE001
+                log.debug("profile field edit: ProfileUpdated publish failed", exc_info=True)
+
+    return {
+        "ok": True,
+        "changed": changed,
+        "cluster": cluster,
+        "field": field,
+        "operation": op,
+        "value": profile.get(cluster, field),
     }
 
 

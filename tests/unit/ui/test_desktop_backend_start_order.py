@@ -277,6 +277,10 @@ def test_desktop_voice_start_does_not_wait_for_brain_ready(monkeypatch, tmp_path
 
     async def _speech(*_args: Any, **_kwargs: Any) -> None:
         events.append("speech")
+        # The real _start_speech_and_orb signals this once the wake model has
+        # loaded; the heavy backend gates the brain/mcp build on it (GIL
+        # priority for the wake-model load). Set it so the gate releases.
+        app._wake_model_loaded.set()
 
     def _cursor() -> None:
         events.append("cursor")

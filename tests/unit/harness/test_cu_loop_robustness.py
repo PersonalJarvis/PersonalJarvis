@@ -1626,3 +1626,114 @@ async def test_uac_detected_before_brain_call_skips_blind_step(
     from jarvis.voice.action_phrases import action_phrase
     texts = [getattr(e, "text", "") for e in bus.events]
     assert action_phrase("cu_awaiting_elevation", "en") in texts
+
+
+async def test_focus_click_then_type_is_not_blind_batched() -> None:
+    """Audit 🔴 #2: a [click_element, type] batch must NOT type under the same
+    pre-batch screenshot. The type is held back so it re-observes the focused
+    state first (where the type read-back gate then verifies it) — instead of
+    typing into a possibly-missed focus while Enter still fires."""
+    brain = FakeBrain([
+        '[{"action": "click_element", "name": "search"}, '
+        '{"action": "type", "text": "hello world"}]',
+        '{"action": "done"}',
+    ])
+    ctx = make_ctx(brain, titles=["App"])
+    await run_loop(ctx, "search hello world")
+
+    executed = [name for name, _args in ctx.tool_executor.calls]
+    assert "click_element" in executed       # the focus-click ran
+    assert "type_text" not in executed       # the type was held back, not blind-typed
+    assert len(brain.requests) >= 2          # it re-planned against a fresh observe
+
+
+async def test_loop_refuses_cleanly_on_wayland(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Audit 🔴 #8: a Wayland session can't capture or inject, so the loop refuses
+    with a clear message BEFORE any model call — instead of clicking blind."""
+    monkeypatch.setattr(
+        loop_mod, "_wayland_block_message",
+        lambda: "Computer-Use is unavailable on this Wayland session. Run X11.",
+    )
+    brain = FakeBrain(['{"action": "done"}'])  # must never be reached
+    ctx = make_ctx(brain, titles=["App"])
+    results = await run_loop(ctx, "click the button")
+
+    assert results[-1].is_final
+    assert results[-1].exit_code == loop_mod._OBSERVE_EXIT_CODE
+    assert "wayland" in (results[-1].stderr or "").lower()
+    assert len(brain.requests) == 0          # refused before any model call
+
+
+# ---------------------------------------------------------------------------
+# Audit 🔴 #5 — human-handoff guard wired into the observe phase
+# ---------------------------------------------------------------------------
+
+
+async def test_human_handoff_pauses_then_resumes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A login/2FA/CAPTCHA screen detected from the observation pauses the loop
+    (the brain is NOT asked to act on it), and once the user clears it the loop
+    RESUMES and finishes — far better than mashing wrong clicks at a password box."""
+    calls = {"labels": 0, "clearance": 0}
+
+    async def _labels(timeout_s: float, max_n: int = 28):
+        calls["labels"] += 1
+        # Login screen on the first step; gone after the user signs in.
+        reason = "login / password entry" if calls["labels"] == 1 else None
+        return ([], "", reason)
+
+    async def _clearance(ctx, task_prompt, step_idx, cancel_token, *, reason):
+        calls["clearance"] += 1
+        return "cleared"
+
+    monkeypatch.setattr(loop_mod, "_foreground_clickable_labels", _labels)
+    monkeypatch.setattr(loop_mod, "_await_human_handoff_clearance", _clearance)
+
+    brain = FakeBrain(['{"action": "done"}'])
+    ctx = make_ctx(brain, titles=["App"])
+    results = await run_loop(ctx, "open my mail")
+
+    assert results[-1].exit_code == 0
+    assert calls["clearance"] == 1            # paused exactly once
+    assert len(brain.requests) == 1           # brain NOT asked on the blocked step
+
+
+async def test_human_handoff_timeout_fails_honestly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If the user never completes the handoff, the loop stops with an honest
+    fail naming the screen — it does not silently push through."""
+    async def _labels(timeout_s: float, max_n: int = 28):
+        return ([], "", "captcha challenge")   # never clears
+
+    async def _clearance(ctx, task_prompt, step_idx, cancel_token, *, reason):
+        return "timeout"
+
+    monkeypatch.setattr(loop_mod, "_foreground_clickable_labels", _labels)
+    monkeypatch.setattr(loop_mod, "_await_human_handoff_clearance", _clearance)
+
+    brain = FakeBrain(['{"action": "done"}'])  # must never be reached
+    ctx = make_ctx(brain, titles=["App"])
+    results = await run_loop(ctx, "open my mail")
+
+    assert results[-1].is_final
+    assert results[-1].exit_code == loop_mod._FAIL_EXIT_CODE
+    assert "captcha challenge" in (results[-1].stderr or "")
+    assert len(brain.requests) == 0
+
+
+async def test_human_handoff_cancelled_exits_clean(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cancelling (hangup) while awaiting the user's handoff exits with the
+    cancel code, not a generic failure."""
+    async def _labels(timeout_s: float, max_n: int = 28):
+        return ([], "", "two-factor / one-time code")
+
+    async def _clearance(ctx, task_prompt, step_idx, cancel_token, *, reason):
+        return "cancelled"
+
+    monkeypatch.setattr(loop_mod, "_foreground_clickable_labels", _labels)
+    monkeypatch.setattr(loop_mod, "_await_human_handoff_clearance", _clearance)
+
+    brain = FakeBrain(['{"action": "done"}'])
+    ctx = make_ctx(brain, titles=["App"])
+    results = await run_loop(ctx, "open my mail")
+
+    assert results[-1].exit_code == loop_mod._CANCEL_EXIT_CODE
+    assert len(brain.requests) == 0

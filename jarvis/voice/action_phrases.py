@@ -135,6 +135,19 @@ _PHRASES: dict[str, dict[str, str]] = {
         "es": "Esto requiere permisos de administrador. Confirma el aviso de "
               "seguridad una vez y continúo.",
     },
+    # Computer-use human handoff: a screen only the USER may complete is up — a
+    # login / password entry, a 2FA / one-time-code prompt, or a CAPTCHA. The
+    # agent holds no secrets (AP-2) and must never type them, so it asks the user
+    # to take over, polls until the screen clears, then resumes. Phrased generally
+    # so it fits login, code-entry and captcha alike.
+    "cu_awaiting_human": {
+        "de": "Dieser Schritt braucht dich -- bitte melde dich an oder loese "  # i18n-allow
+              "die Bestaetigung, dann mache ich weiter.",  # i18n-allow
+        "en": "This step needs you — please sign in or complete the "
+              "verification, then I'll keep going.",
+        "es": "Este paso te necesita — inicia sesión o completa la "
+              "verificación y continúo.",
+    },
     # Cost / budget guards on the computer-use branch.
     "cost_cooldown": {
         "de": "Cost-Cooldown aktiv — Tagesbudget erschoepft. "  # i18n-allow

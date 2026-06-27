@@ -15,6 +15,7 @@ import {
   ChevronRight,
   Lock,
   Pencil,
+  Plus,
   Save,
   Camera,
   Trash2,
@@ -37,6 +38,7 @@ import {
   collectOpenQuestions,
   countFilled,
   displayAddress,
+  fieldKind,
   isEmptyValue,
   type ClusterId,
 } from "@/views/profile/ledger";
@@ -473,6 +475,285 @@ function AskCard({ meta }: { meta: Record<string, unknown> }) {
 }
 
 // ----------------------------------------------------------------------
+// Inline field editing — a quiet pencil per field, edited in place
+// ----------------------------------------------------------------------
+
+type FieldOp = "set" | "clear" | "append" | "remove";
+
+/** Shared mutation for PATCH /api/profile/field. Invalidates the profile query
+ *  on success so the card re-renders with the persisted value. */
+function useFieldEdit() {
+  const queryClient = useQueryClient();
+  const pushToast = useEventStore((s) => s.pushToast);
+  return useMutation({
+    mutationFn: async (body: {
+      cluster: ClusterId;
+      field: string;
+      operation: FieldOp;
+      value?: unknown;
+    }) => {
+      const res = await fetch("/api/profile/field", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { detail?: string };
+        throw new Error(data.detail ?? `HTTP ${res.status}`);
+      }
+      return res.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["profile"] }),
+    onError: (err: Error) => pushToast("error", err.message),
+  });
+}
+
+function IconBtn({
+  icon: Icon,
+  onClick,
+  title,
+  tone = "muted",
+  disabled,
+}: {
+  icon: typeof Check;
+  onClick: () => void;
+  title: string;
+  tone?: "muted" | "primary" | "danger";
+  disabled?: boolean;
+}) {
+  const toneCls =
+    tone === "primary"
+      ? "text-primary hover:bg-primary/10"
+      : tone === "danger"
+        ? "text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+        : "text-muted-foreground hover:bg-white/[0.06] hover:text-foreground";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      disabled={disabled}
+      className={cn(
+        "shrink-0 rounded p-1 outline-none transition-colors focus-visible:ring-1 focus-visible:ring-primary/50 disabled:opacity-40",
+        toneCls,
+      )}
+    >
+      <Icon className="h-3.5 w-3.5" />
+    </button>
+  );
+}
+
+/** One field row with inline editing: a hover-revealed pencil opens an in-place
+ *  editor whose shape depends on the field kind (scalar text, yes/no toggle, or
+ *  removable chips for lists). Persists through PATCH /api/profile/field. */
+function EditableFieldRow({
+  cid,
+  fieldKey,
+  value,
+}: {
+  cid: ClusterId;
+  fieldKey: string;
+  value: unknown;
+}) {
+  const t = useT();
+  const pushToast = useEventStore((s) => s.pushToast);
+  const edit = useFieldEdit();
+  const kind = fieldKind(fieldKey);
+  const empty = isEmptyValue(value);
+  const label = t(`profile_view.fields.${fieldKey}`);
+
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (editing) inputRef.current?.focus();
+  }, [editing]);
+
+  const busy = edit.isPending;
+  const toast = () => pushToast("success", t("profile_view.field_saved"));
+
+  const startEdit = () => {
+    setDraft(kind === "scalar" && !empty ? String(value) : "");
+    setEditing(true);
+  };
+  const cancel = () => {
+    setDraft("");
+    setEditing(false);
+  };
+  const mutate = (operation: FieldOp, v?: unknown, opts?: { keepOpen?: boolean; clearDraft?: boolean }) => {
+    edit.mutate(
+      { cluster: cid, field: fieldKey, operation, value: v },
+      {
+        onSuccess: () => {
+          toast();
+          if (opts?.clearDraft) setDraft("");
+          if (opts?.keepOpen) inputRef.current?.focus();
+          else cancel();
+        },
+      },
+    );
+  };
+
+  const saveScalar = () => {
+    const v = draft.trim();
+    if (!v) {
+      mutate("clear");
+    } else {
+      mutate("set", v);
+    }
+  };
+  const addItem = () => {
+    const v = draft.trim();
+    if (v) mutate("append", v, { keepOpen: true, clearDraft: true });
+  };
+
+  // ------------------------------------------------------------------ display
+  if (!editing) {
+    return (
+      <div className="group flex items-baseline justify-between gap-4 border-b border-white/[0.05] py-2 last:border-b-0">
+        <dt className={cn("shrink-0 text-xs", empty ? "text-muted-foreground/60" : "text-muted-foreground")}>
+          {label}
+        </dt>
+        <dd className="flex min-w-0 max-w-[72%] items-center justify-end gap-1">
+          {kind === "list" && !empty ? (
+            <div className="flex flex-wrap justify-end gap-1">
+              {(value as unknown[]).map((item) => (
+                <span
+                  key={String(item)}
+                  className="rounded-full border border-white/[0.08] bg-white/[0.04] px-2 py-0.5 text-xs font-medium"
+                >
+                  {String(item)}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <span
+              className={cn(
+                "leading-snug [overflow-wrap:anywhere]",
+                empty
+                  ? "text-xs italic text-muted-foreground/45"
+                  : "text-sm font-medium",
+              )}
+            >
+              {empty ? t("profile_view.field_unknown") : renderValue(t, value)}
+            </span>
+          )}
+          {/* Quiet pencil — appears on row hover / keyboard focus only. */}
+          <button
+            type="button"
+            onClick={startEdit}
+            title={t("profile_view.field_edit")}
+            aria-label={`${t("profile_view.field_edit")}: ${label}`}
+            className="shrink-0 rounded p-1 text-muted-foreground opacity-0 outline-none transition-opacity hover:text-primary focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-primary/50 group-hover:opacity-100"
+          >
+            <Pencil className="h-3 w-3" />
+          </button>
+        </dd>
+      </div>
+    );
+  }
+
+  // ------------------------------------------------------------------- editing
+  return (
+    <div className="group flex items-baseline justify-between gap-4 border-b border-white/[0.05] py-2 last:border-b-0">
+      <dt className="shrink-0 text-xs text-muted-foreground">{label}</dt>
+      <dd className="flex min-w-0 max-w-[72%] flex-col items-end gap-1.5">
+        {kind === "bool" ? (
+          <div className="flex items-center gap-1">
+            {([true, false] as const).map((b) => (
+              <button
+                key={String(b)}
+                type="button"
+                disabled={busy}
+                onClick={() => mutate("set", b)}
+                className={cn(
+                  "rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors disabled:opacity-40",
+                  value === b
+                    ? "border-primary/50 bg-primary/[0.12] text-primary"
+                    : "border-white/[0.08] bg-white/[0.03] text-muted-foreground hover:border-primary/40",
+                )}
+              >
+                {b ? t("profile_view.value_yes") : t("profile_view.value_no")}
+              </button>
+            ))}
+            <IconBtn icon={X} onClick={cancel} title={t("profile_view.raw_cancel")} disabled={busy} />
+            {!empty && (
+              <IconBtn icon={Trash2} onClick={() => mutate("clear")} title={t("profile_view.field_clear")} tone="danger" disabled={busy} />
+            )}
+          </div>
+        ) : kind === "list" ? (
+          <>
+            {!empty && (
+              <div className="flex flex-wrap justify-end gap-1">
+                {(value as unknown[]).map((item) => (
+                  <span
+                    key={String(item)}
+                    className="inline-flex items-center gap-1 rounded-full border border-white/[0.1] bg-white/[0.05] py-0.5 pl-2 pr-1 text-xs font-medium"
+                  >
+                    {String(item)}
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => mutate("remove", String(item), { keepOpen: true })}
+                      title={t("profile_view.field_remove_item")}
+                      aria-label={`${t("profile_view.field_remove_item")}: ${String(item)}`}
+                      className="rounded-full p-0.5 text-muted-foreground outline-none transition-colors hover:bg-destructive/15 hover:text-destructive focus-visible:ring-1 focus-visible:ring-primary/50 disabled:opacity-40"
+                    >
+                      <X className="h-2.5 w-2.5" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center gap-1">
+              <input
+                ref={inputRef}
+                value={draft}
+                disabled={busy}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") addItem();
+                  if (e.key === "Escape") cancel();
+                }}
+                placeholder={t("profile_view.field_add_placeholder")}
+                className="w-32 min-w-0 rounded border border-primary/40 bg-background/60 px-2 py-1 text-sm outline-none focus:border-primary"
+              />
+              <IconBtn icon={Plus} onClick={addItem} title={t("profile_view.field_add")} tone="primary" disabled={busy} />
+              <IconBtn icon={Check} onClick={cancel} title={t("profile_view.raw_save")} disabled={busy} />
+              {!empty && (
+                <IconBtn icon={Trash2} onClick={() => mutate("clear")} title={t("profile_view.field_clear")} tone="danger" disabled={busy} />
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="flex w-full items-center justify-end gap-1">
+            <input
+              ref={inputRef}
+              value={draft}
+              disabled={busy}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") saveScalar();
+                if (e.key === "Escape") cancel();
+              }}
+              placeholder={t("profile_view.field_value_placeholder")}
+              className="min-w-0 flex-1 rounded border border-primary/40 bg-background/60 px-2 py-1 text-right text-sm outline-none focus:border-primary"
+            />
+            <IconBtn icon={Check} onClick={saveScalar} title={t("profile_view.raw_save")} tone="primary" disabled={busy} />
+            <IconBtn icon={X} onClick={cancel} title={t("profile_view.raw_cancel")} disabled={busy} />
+            {!empty && (
+              <IconBtn icon={Trash2} onClick={() => mutate("clear")} title={t("profile_view.field_clear")} tone="danger" disabled={busy} />
+            )}
+          </div>
+        )}
+      </dd>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------
 // Cluster cards — quiet rows; learned first, blanks capped at two
 // ----------------------------------------------------------------------
 
@@ -509,34 +790,14 @@ function ClusterCard({
         {t(`profile_view.clusters.${cid}.description`)}
       </p>
 
+      {/* Each row carries its own quiet pencil — learned fields can be
+          overwritten or cleared, blank ones filled in, all edited in place. */}
       <dl className="mt-3">
         {known.map((key) => (
-          <div
-            key={key}
-            className="flex items-baseline justify-between gap-4 border-b border-white/[0.05] py-2 last:border-b-0"
-          >
-            <dt className="shrink-0 text-xs text-muted-foreground">
-              {t(`profile_view.fields.${key}`)}
-            </dt>
-            <dd className="max-w-[65%] text-right text-sm font-medium leading-snug [overflow-wrap:anywhere]">
-              {renderValue(t, data[key])}
-            </dd>
-          </div>
+          <EditableFieldRow key={key} cid={cid} fieldKey={key} value={data[key]} />
         ))}
         {blanksShown.map((key) => (
-          <div
-            key={key}
-            className="flex items-baseline justify-between gap-4 border-b border-white/[0.05] py-2 last:border-b-0"
-          >
-            <dt className="shrink-0 text-xs text-muted-foreground/60">
-              {t(`profile_view.fields.${key}`)}
-            </dt>
-            {/* Blank fields stay plainly readable — nothing is concealed,
-                they simply haven't been learned yet. */}
-            <dd className="text-right text-xs italic text-muted-foreground/45">
-              {t("profile_view.field_unknown")}
-            </dd>
-          </div>
+          <EditableFieldRow key={key} cid={cid} fieldKey={key} value={data[key]} />
         ))}
       </dl>
       {blanksHidden > 0 && (

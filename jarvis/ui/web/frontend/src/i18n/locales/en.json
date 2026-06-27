@@ -673,6 +673,13 @@
     "more_to_learn": "{0} more to learn",
     "value_yes": "yes",
     "value_no": "no",
+    "field_edit": "Edit",
+    "field_clear": "Clear",
+    "field_remove_item": "Remove",
+    "field_add": "Add",
+    "field_add_placeholder": "Add…",
+    "field_value_placeholder": "Value…",
+    "field_saved": "Saved",
     "review_confirm": "Confirm",
     "review_strike": "Strike out",
     "questions": {

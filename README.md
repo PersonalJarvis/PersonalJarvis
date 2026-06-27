@@ -143,6 +143,33 @@ L0  OS / Hardware   Mic, speakers, global hotkeys, optional GPU
 A deeper, exhaustive engineering map — anti-pattern register, recurring bug classes,
 phase-by-phase status with `file:line` references — lives in the LLM context drop below.
 
+## Project structure
+
+A quick map of the repository so you know where everything lives:
+
+```text
+PersonalJarvis/
+├── jarvis/          # The application — every core package (brain, speech, missions, memory, UI server…)
+├── ui/              # Orb overlay for the desktop; loaded by jarvis at runtime
+├── OS-Level/        # Edge-glow overlay process — action border, mascot, cursor trail
+├── board-backend/   # Standalone federation service (verifies signed Board aggregates)
+├── conductor/       # YAML-first agentic-workflow canvas, mounted inside the app
+├── wiki/            # Seed knowledge vault (Obsidian-compatible), created on first run
+├── install/         # One-line installers + signed-release verification (cosign / TUF)
+├── tests/           # Unit, integration, contract, and end-to-end suites
+├── docs/            # Architecture docs, ADRs, the philosophy, design specs
+├── assets/          # Brand art, banner, screenshots
+├── .github/         # CI workflows + issue / pull-request templates
+├── scoop-bucket/    # Windows install manifest (Scoop)
+├── homebrew-tap/    # macOS install formula (Homebrew)
+└── README · LICENSE · CODE_OF_CONDUCT · CONTRIBUTING · SECURITY · CHANGELOG
+```
+
+Inside `jarvis/`, the layout mirrors the 8-layer model above — `jarvis/brain/`
+(providers + router), `jarvis/speech/` (wake → VAD → STT → TTS), `jarvis/missions/`
+(the self-healing Worker-Critic), `jarvis/memory/wiki/` (long-term memory), and
+`jarvis/ui/web/` (the FastAPI + React desktop app).
+
 ## A guided tour
 
 - **Missions & the Worker-Critic loop** — ask for something non-trivial and Jarvis spawns a

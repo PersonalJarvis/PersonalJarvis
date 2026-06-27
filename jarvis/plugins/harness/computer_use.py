@@ -55,6 +55,18 @@ def _resolve_run_cu_loop():
             "Revert with [computer_use].engine = current.",
         )
         return _loop
+    if engine == "stable":
+        # Frozen pre-Wave-1 snapshot — the known-good fallback the user flips to if
+        # the new verification work misbehaves. See cu-restore-points/ + the
+        # screenshot_only_loop_stable.py header.
+        from jarvis.harness.screenshot_only_loop_stable import (  # noqa: PLC0415
+            run_cu_loop as _loop,
+        )
+        _log.info(
+            "[cu] ENGINE = stable (frozen pre-Wave-1 snapshot). "
+            "Revert with [computer_use].engine = current.",
+        )
+        return _loop
     from jarvis.harness.screenshot_only_loop import (  # noqa: PLC0415
         run_cu_loop as _loop,
     )

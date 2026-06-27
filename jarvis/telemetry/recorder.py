@@ -200,3 +200,26 @@ class FlightRecorder:
                                 out.append(record)
         out.sort(key=lambda r: r.get("ts_ns", 0))
         return out
+
+
+def attach_flight_recorder(
+    bus: EventBus, *, enabled: bool, data_dir: Path | None = None,
+) -> FlightRecorder | None:
+    """Wire the flight-recorder audit log to the EventBus at boot (ADR-0007).
+
+    The recorder is a wildcard subscriber that writes every event to
+    ``data/flight_recorder/<date>.jsonl`` — a replayable audit trail of what
+    Jarvis did, including every Computer-Use action. It was defined but never
+    attached at boot, so ``telemetry.flight_recorder = true`` promised an audit
+    log that was silently empty (audit #14). This is the single wiring point.
+
+    Returns the attached recorder, or ``None`` when ``enabled`` is False. Caller
+    owns logging + the boot try/except (consistent with the other ``_init_*``
+    boot steps); a genuine setup error propagates so it is logged, never silently
+    swallowed.
+    """
+    if not enabled:
+        return None
+    rec = FlightRecorder(data_dir=data_dir or (Path("data") / "flight_recorder"))
+    rec.attach(bus)
+    return rec
