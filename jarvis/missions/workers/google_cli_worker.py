@@ -35,6 +35,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any, Literal
 
+from jarvis.google_cli.auth_service import _oauth_login_present
 from jarvis.google_cli.isolated_home import (
     ensure_isolated_home,
     iso_home_root,
@@ -137,11 +138,22 @@ class GoogleCliWorker:
             )
             return
 
-        if cli.kind != "agy":
+        # Billing path (Antigravity dual billing, mirror of Codex): agy runs over
+        # the Google subscription OAuth login. If there is NO OAuth login but a
+        # Gemini API key is available, bill per token via the proven Gemini API
+        # worker instead — same outcome the user asked for ("über die API
+        # abrechnen"), on the tested path rather than coercing agy to use a key.
+        use_api_billing = not _oauth_login_present(Path(real_gemini_dir())) and bool(
+            env.get("GEMINI_API_KEY") or env.get("GOOGLE_API_KEY")
+        )
+        if cli.kind != "agy" or use_api_billing:
             # The Gemini CLI writes clean output to a pipe — reuse the proven worker.
             logger.info(
-                "GoogleCliWorker[%s] -> GeminiWorker fallback (resolver kind=%s)",
-                worker_id, cli.kind,
+                "GoogleCliWorker[%s] -> GeminiWorker (%s)",
+                worker_id,
+                "API-key billing, no OAuth login"
+                if use_api_billing
+                else f"resolver kind={cli.kind}",
             )
             async for ev in self._gemini_fallback.spawn(
                 prompt,

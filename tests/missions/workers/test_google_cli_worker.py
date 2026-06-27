@@ -54,6 +54,8 @@ async def test_spawn_agy_uses_pty_and_assigns_job(monkeypatch, tmp_path) -> None
         mod, "resolve_google_cli", lambda: GoogleCli(kind="agy", argv_prefix=["agy.exe"])
     )
     monkeypatch.setattr(mod, "ensure_isolated_home", lambda **k: str(tmp_path / "iso"))
+    # User is signed in (OAuth) → agy runs over the subscription, not the key.
+    monkeypatch.setattr(mod, "_oauth_login_present", lambda *_a: True)
     captured: dict = {}
 
     def _fake_run(argv, *, timeout_s, cwd=None, env=None, on_spawn=None, **kw):
@@ -97,6 +99,7 @@ async def test_spawn_agy_timeout_is_error(monkeypatch, tmp_path) -> None:
         mod, "resolve_google_cli", lambda: GoogleCli(kind="agy", argv_prefix=["agy.exe"])
     )
     monkeypatch.setattr(mod, "ensure_isolated_home", lambda **k: str(tmp_path / "iso"))
+    monkeypatch.setattr(mod, "_oauth_login_present", lambda *_a: True)
     monkeypatch.setattr(
         mod,
         "run_cli_over_pty",
@@ -133,4 +136,44 @@ async def test_spawn_gemini_kind_delegates_to_gemini_worker(monkeypatch, tmp_pat
         )
     ]
     assert called["gemini"] is True  # Gemini CLI uses the pipe path, not the PTY
+    assert "GEMINI_EVENT" in events
+
+
+@pytest.mark.asyncio
+async def test_spawn_agy_with_gemini_key_but_no_oauth_bills_via_gemini(
+    monkeypatch, tmp_path
+) -> None:
+    """Antigravity dual billing: agy is installed, but the user has NO Google
+    OAuth login and a Gemini API key IS set → bill per token via the proven
+    GeminiWorker, NOT the agy PTY path (which would coerce OAuth)."""
+    monkeypatch.setattr(
+        mod, "resolve_google_cli", lambda: GoogleCli(kind="agy", argv_prefix=["agy.exe"])
+    )
+    monkeypatch.setattr(mod, "_oauth_login_present", lambda *_a: False)  # not signed in
+
+    called = {"gemini": False}
+
+    async def _fake_gemini_spawn(self, prompt, **kw):
+        called["gemini"] = True
+        yield "GEMINI_EVENT"
+
+    monkeypatch.setattr(mod.GeminiWorker, "spawn", _fake_gemini_spawn)
+    # run_cli_over_pty must NOT be called on this path — make it explode if it is.
+    monkeypatch.setattr(
+        mod, "run_cli_over_pty",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("agy PTY path must not run")),
+    )
+    worker = GoogleCliWorker()
+    events = [
+        e
+        async for e in worker.spawn(
+            "x",
+            worktree=tmp_path,
+            env={"GEMINI_API_KEY": "AIza-fake", "PATH": "/p"},
+            job=_FakeJob(),
+            worker_id="w",
+            log_dir=tmp_path / "l",
+        )
+    ]
+    assert called["gemini"] is True  # billed via the Gemini API worker
     assert "GEMINI_EVENT" in events

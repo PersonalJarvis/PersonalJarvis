@@ -214,7 +214,7 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
     render(<ApiKeysView />);
 
     await waitFor(() =>
-      expect(screen.getByText("Antigravity Google login")).toBeTruthy(),
+      expect(screen.getByText("Antigravity (Subscription)")).toBeTruthy(),
     );
 
     // The "Set active" control now lives ON the subscription card, so there is

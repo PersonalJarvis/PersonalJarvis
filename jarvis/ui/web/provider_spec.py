@@ -75,19 +75,19 @@ class ProviderSpec:
 
 
 def provider_billing(spec: ProviderSpec) -> Billing:
-    """How using *spec* is billed, derived purely from its ``auth_mode``.
+    """How using *spec* is billed — capability-driven, never name-branched
+    (multi-provider mandate, AP-21).
 
-    Capability-driven, never name-branched (multi-provider mandate, AP-21):
-
-    * ``antigravity`` → ``"subscription"`` — runs over a Google subscription login.
-    * ``codex`` → ``"subscription_or_api"`` — a ChatGPT login OR an OpenAI key.
+    * a subscription-login provider (``codex``/``antigravity``) that ALSO carries
+      an API-key slot → ``"subscription_or_api"`` (a plan login OR per-token key);
+      one with no key slot → ``"subscription"``. The distinction is the presence
+      of ``secret_keys``, not the provider name — so adding a key slot to either
+      flips it without touching this function.
     * ``none`` → ``"local"`` — no credential, runs on-device.
     * everything else (``api_key``) → ``"api"`` — pay per token on an API account.
     """
-    if spec.auth_mode == "antigravity":
-        return "subscription"
-    if spec.auth_mode == "codex":
-        return "subscription_or_api"
+    if spec.auth_mode in ("antigravity", "codex"):
+        return "subscription_or_api" if spec.secret_keys else "subscription"
     if spec.auth_mode == "none":
         return "local"
     return "api"
@@ -179,7 +179,12 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         label="Antigravity (Google subscription)",
         tier="brain",
         auth_mode="antigravity",
-        secret_keys=(),
+        # Dual billing, mirror of Codex: the Google subscription login OR a
+        # Gemini API key (the Google Cloud credential). The key slot reuses the
+        # shared ``gemini_api_key`` — the same key the Gemini provider uses — so
+        # a user who already set it gets per-token Antigravity billing for free.
+        # Carrying a secret_key flips provider_billing → subscription_or_api.
+        secret_keys=("gemini_api_key",),
         dashboard_url="https://antigravity.google",
         # agy has NO `login` subcommand (verified 2026-06-21) — the bare binary
         # drops into the interactive "Sign in with Google" flow. The Connect
@@ -190,9 +195,10 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         brain_switchable=False,
         signup_url="https://antigravity.google",
         credential_help=(
-            "Sign in with your Google account to run the brain over your Google "
-            "subscription via the Antigravity/Gemini CLI — no API key, billed to "
-            "your subscription, not per token."
+            "Sign in with your Google account to run heavy subagent tasks over "
+            "your Google subscription via the Antigravity/Gemini CLI — no API "
+            "key, billed to your subscription. Or set a Gemini API key to bill "
+            "per token instead."
         ),
     ),
     ProviderSpec(

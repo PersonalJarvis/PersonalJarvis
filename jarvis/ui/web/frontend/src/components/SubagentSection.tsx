@@ -11,9 +11,11 @@ import {
   startCodexLogin,
   switchSubagentProvider,
   type AntigravityStatus,
+  type Billing,
   type CodexStatus,
 } from "@/hooks/useProviders";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
+import { ProviderBillingBadge } from "@/components/ProviderBillingBadge";
 
 /**
  * Subagent tier for the API-Keys view.
@@ -40,6 +42,10 @@ interface SubagentMappingRow {
   env_fallback: string | null;
   key_set: boolean;
   is_active_brain: boolean;
+  /** How this subagent is billed — "api" (per token) / "subscription" /
+   * "subscription_or_api". Drives the billing badge so the API-vs-subscription
+   * distinction is visible right on the subagent cards. */
+  billing: Billing;
 }
 
 interface SubagentStatus {
@@ -455,7 +461,7 @@ function CodexConnectionCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">OpenAI Codex ChatGPT login</span>
+            <span className="font-medium">OpenAI Codex (Subscription)</span>
             {isActive ? (
               <span className="chip-yellow">active</span>
             ) : connected ? (
@@ -467,6 +473,7 @@ function CodexConnectionCard({
                 open
               </span>
             )}
+            {row && <ProviderBillingBadge billing={row.billing} />}
           </div>
           <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
             {detail}
@@ -578,7 +585,7 @@ function AntigravityConnectionCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">Antigravity Google login</span>
+            <span className="font-medium">Antigravity (Subscription)</span>
             {isActive ? (
               <span className="chip-yellow">active</span>
             ) : connected ? (
@@ -590,6 +597,7 @@ function AntigravityConnectionCard({
                 open
               </span>
             )}
+            {row && <ProviderBillingBadge billing={row.billing} />}
           </div>
           <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
             {detail}
@@ -733,6 +741,7 @@ function SubagentProviderCard({
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium">{label}</span>
             <SubagentStatusBadge row={row} />
+            <ProviderBillingBadge billing={row.billing} />
           </div>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
             <code className="font-mono">
