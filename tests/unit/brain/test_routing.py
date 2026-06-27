@@ -2850,3 +2850,83 @@ async def test_force_spawn_worker_skips_dropped_mission_recap() -> None:
     )
     assert result is None, "no mission for a dropped-card recap"
     assert executor.calls == [], "zero spawn_worker dispatches for a recap turn"
+
+
+# ---------------------------------------------------------------------------
+# Knowledge-question spawn-hide (forensic 2026-06-27, voice session 08:35):
+# "Welche Unternehmen haben so viel Speicherplatz?" was a pure factual question,
+# yet the router-LLM reflexively CHOSE spawn_worker and announced "ich ziehe
+# einen Experten hinzu". The deterministic force-spawn gate correctly stands
+# down on such a turn (it only FORCES spawns, it never CONSTRAINS the LLM's own
+# spawn reflex). The fix mirrors the smalltalk tool-hide: on a plain knowledge
+# question the spawn tools are removed from the per-turn LLM surface, so the
+# model cannot grab spawn_worker against its own prompt rule. Read/search tools
+# stay visible so the question is still answerable inline.
+# ---------------------------------------------------------------------------
+
+
+class _FakeSearchTool:
+    name = "search_web"
+    schema: dict[str, Any] = {}
+
+
+def _manager_with_spawn_and_search() -> BrainManager:
+    executor = _RecordingExecutor()
+    manager = BrainManager(
+        config=JarvisConfig(),
+        bus=EventBus(),
+        tools={"spawn_worker": _FakeTool(), "search_web": _FakeSearchTool()},
+        tool_executor=executor,  # type: ignore[arg-type]
+    )
+    return manager
+
+
+PLAIN_KNOWLEDGE_QUESTIONS = [
+    "Welche Unternehmen haben so viel Speicherplatz?",
+    "Welche Firmen besitzen so viele Rechenzentren?",
+    "Wie viele Menschen leben in Australien?",
+    "Which companies own that much storage?",
+    "Was ist der groesste Cloud-Anbieter der Welt?",
+]
+
+
+@pytest.mark.parametrize("utterance", PLAIN_KNOWLEDGE_QUESTIONS)
+def test_plain_knowledge_question_hides_spawn_worker(utterance: str) -> None:
+    """A pure factual/knowledge question removes spawn_worker from the per-turn
+    LLM tool surface, while keeping the read/search tools to answer inline."""
+    manager = _manager_with_spawn_and_search()
+    gated = manager._hide_spawn_on_knowledge_question(dict(manager._tools), utterance)
+    assert "spawn_worker" not in gated, (
+        f"spawn_worker must be hidden on a plain knowledge question: {utterance!r}"
+    )
+    assert "search_web" in gated, "search_web must stay visible to answer inline"
+
+
+BUILD_OR_ACTION_REQUESTS = [
+    "Bau mir eine HTML-Uebersicht der groessten Cloud-Anbieter",
+    "Schreib mir einen Bericht ueber Rechenzentren in eine Datei",
+]
+
+
+@pytest.mark.parametrize("utterance", BUILD_OR_ACTION_REQUESTS)
+def test_build_request_keeps_spawn_worker(utterance: str) -> None:
+    """A request that BUILDS a deliverable keeps spawn_worker available — the
+    artifact gate must not be stripped by the knowledge-question hide."""
+    manager = _manager_with_spawn_and_search()
+    gated = manager._hide_spawn_on_knowledge_question(dict(manager._tools), utterance)
+    assert "spawn_worker" in gated, (
+        f"spawn_worker must stay for a build request: {utterance!r}"
+    )
+
+
+def test_explicit_subagent_question_keeps_spawn_worker() -> None:
+    """Even in question form, an explicitly named heavy-work vehicle keeps the
+    spawn tool — the user named the vehicle, respect it (AD-S9)."""
+    manager = _manager_with_spawn_and_search()
+    gated = manager._hide_spawn_on_knowledge_question(
+        dict(manager._tools),
+        "Kannst du einen Subagenten spawnen der die groessten Cloud-Anbieter recherchiert?",
+    )
+    assert "spawn_worker" in gated, (
+        "an explicit 'Subagent' trigger must never be hidden, even in question form"
+    )

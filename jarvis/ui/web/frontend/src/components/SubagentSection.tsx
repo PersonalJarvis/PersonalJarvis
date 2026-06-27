@@ -6,12 +6,15 @@ import { useEventStore } from "@/store/events";
 import {
   codexLogout,
   loginAntigravity,
+  loginClaude,
   logoutAntigravity,
+  logoutClaude,
   saveSubagentModel,
   startCodexLogin,
   switchSubagentProvider,
   type AntigravityStatus,
   type Billing,
+  type ClaudeStatus,
   type CodexStatus,
 } from "@/hooks/useProviders";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
@@ -120,16 +123,18 @@ export function SubagentSection() {
   const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null);
   const [antigravityStatus, setAntigravityStatus] =
     useState<AntigravityStatus | null>(null);
+  const [claudeStatus, setClaudeStatus] = useState<ClaudeStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Re-fetch on brain-switch / subagent-switch / secret-set so the active
   // provider highlight + the per-provider "Key gesetzt" badges track live.
   const reload = useCallback(async () => {
     try {
-      const [res, codexRes, antigravityRes] = await Promise.all([
+      const [res, codexRes, antigravityRes, claudeRes] = await Promise.all([
         fetch("/api/openclaw/status"),
         fetch("/api/codex/status").catch(() => null),
         fetch("/api/antigravity/status").catch(() => null),
+        fetch("/api/claude/status").catch(() => null),
       ]);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: SubagentStatus = await res.json();
@@ -143,6 +148,11 @@ export function SubagentSection() {
         setAntigravityStatus(await antigravityRes.json());
       } else {
         setAntigravityStatus(null);
+      }
+      if (claudeRes?.ok) {
+        setClaudeStatus(await claudeRes.json());
+      } else {
+        setClaudeStatus(null);
       }
       setError(null);
     } catch (e) {
@@ -180,8 +190,15 @@ export function SubagentSection() {
   // CLI (the confusing "no select button on the subscription" the user hit).
   const codexRow = bridge.mapping.find((r) => r.jarvis === "openai-codex");
   const antigravityRow = bridge.mapping.find((r) => r.jarvis === "antigravity");
+  // Claude is dual-billed (Claude Max subscription OR Anthropic API key) — it
+  // gets its own connection card showing the signed-in account, like Codex /
+  // Antigravity, so exclude it from the generic per-key provider list too.
+  const claudeRow = bridge.mapping.find((r) => r.jarvis === "claude-api");
   const providerRows = bridge.mapping.filter(
-    (r) => r.jarvis !== "openai-codex" && r.jarvis !== "antigravity",
+    (r) =>
+      r.jarvis !== "openai-codex" &&
+      r.jarvis !== "antigravity" &&
+      r.jarvis !== "claude-api",
   );
 
   return (
@@ -222,6 +239,15 @@ export function SubagentSection() {
             <AntigravityConnectionCard
               status={antigravityStatus}
               row={antigravityRow}
+              onChanged={reload}
+            />
+          </li>
+        )}
+        {claudeRow && (
+          <li>
+            <ClaudeConnectionCard
+              status={claudeStatus}
+              row={claudeRow}
               onChanged={reload}
             />
           </li>
@@ -606,6 +632,132 @@ function AntigravityConnectionCard({
             <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-600">
               <Terminal className="h-3 w-3 shrink-0" />
               <span>Install Antigravity or the Gemini CLI before connecting.</span>
+            </p>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-3">
+          {connected && row && (
+            <SubagentActiveControl
+              row={row}
+              activating={activating}
+              onActivate={activate}
+            />
+          )}
+          {connected ? (
+            <button
+              type="button"
+              onClick={disconnect}
+              disabled={pending}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Disconnect
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={connect}
+              disabled={pending || !installed}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+            >
+              <LogIn className="h-3.5 w-3.5" />
+              Connect
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ClaudeConnectionCard({
+  status,
+  row,
+  onChanged,
+}: {
+  status: ClaudeStatus | null;
+  row: SubagentMappingRow | undefined;
+  onChanged: () => void | Promise<void>;
+}) {
+  const pushToast = useEventStore((s) => s.pushToast);
+  const [pending, setPending] = useState(false);
+  const { activating, activate } = useSubagentActivate(row, onChanged);
+  const connected = Boolean(status?.connected);
+  const installed = status?.installed ?? false;
+  const isActive = Boolean(row?.is_active_brain);
+  // A subscription login shows the signed-in account + tier ("Connected as
+  // alex@… · Claude Max"); an API-key setup shows the honest "via Anthropic
+  // API key" message instead; not connected shows how to sign in.
+  const detail = connected
+    ? status?.user_email
+      ? `Connected as ${status.user_email}${
+          status.account_label ? ` · ${status.account_label}` : ""
+        }`
+      : status?.message || "Connected"
+    : status?.message || "Claude login not connected";
+
+  async function connect() {
+    setPending(true);
+    try {
+      await loginClaude();
+      pushToast("info", "Claude login started — finish it in the terminal window");
+      await onChanged();
+      // The sign-in finishes asynchronously in the spawned console, so poll
+      // until the CLI reports connected; the card then unlocks on its own.
+      void pollStatusUntilConnected("/api/claude/status", onChanged).then((ok) => {
+        if (ok) pushToast("success", "Claude connected — now selectable as a subagent");
+      });
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function disconnect() {
+    setPending(true);
+    try {
+      await logoutClaude();
+      pushToast("info", "Claude subscription disconnected");
+      await onChanged();
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div
+      className={cn(
+        "card-outline space-y-3 p-4 transition-colors",
+        isActive && "border-primary bg-primary/[0.06] ring-1 ring-primary/30",
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">Anthropic Claude (Subscription)</span>
+            {isActive ? (
+              <span className="chip-yellow">active</span>
+            ) : connected ? (
+              <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">
+                ready
+              </span>
+            ) : (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                open
+              </span>
+            )}
+            {row && <ProviderBillingBadge billing={row.billing} />}
+          </div>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+            {detail}
+          </p>
+          {!installed && (
+            <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-600">
+              <Terminal className="h-3 w-3 shrink-0" />
+              <span>Install the Claude CLI before connecting.</span>
             </p>
           )}
         </div>

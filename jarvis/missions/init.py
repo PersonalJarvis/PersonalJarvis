@@ -546,17 +546,20 @@ async def bootstrap_missions(
                 "authentication_failed", exc,
             )
 
-        # Prefer the LIVE Claude Max OAuth token. `claude` refreshes its access
-        # token in ~/.claude/.credentials.json, but get_secret may return a
-        # STALE oat token from the credential manager / .env. Pre-fix that was
-        # harmless (the worker read the user's config dir directly); now that
-        # every worker is pinned to an isolated CLAUDE_CONFIG_DIR, the env token
-        # is the only auth surface and a stale one 401s. A classic API key
-        # (sk-ant-api03) from get_secret is left untouched.
+        # Subscription-first billing for Claude (mirror of Codex's "OAuth wins,
+        # drop the API key"): a LIVE Claude Max OAuth login in
+        # ~/.claude/.credentials.json bills the plan's included usage, so it wins
+        # over a stored Anthropic API key — the key is the fallback only when no
+        # subscription login is present. (Was API-key-first, which silently
+        # metered a user who had both a Claude Max login AND an API key.)
+        #
+        # Prefer the LIVE file token: `claude` refreshes its access token in
+        # place, but get_secret may return a STALE oat from the credential
+        # manager / .env; pinned to an isolated CLAUDE_CONFIG_DIR the env token is
+        # the only auth surface and a stale one 401s. A classic API key
+        # (sk-ant-api03) is used verbatim when there is no live OAuth login.
         live_oat = read_live_claude_oauth_token()
-        if live_oat and (
-            anthropic_key is None or anthropic_key.startswith("sk-ant-oat")
-        ):
+        if live_oat:
             anthropic_key = live_oat
 
         return build_worker_env(

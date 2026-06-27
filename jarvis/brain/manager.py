@@ -657,6 +657,45 @@ def _is_instructional_question(user_text: str) -> bool:
     return bool(_INSTRUCTIONAL_QUESTION_RE.search(user_text or ""))
 
 
+# Spawn-tool names hidden from a plain knowledge question's tool surface — the
+# vehicles that delegate to a background worker. A read/search/desktop tool is
+# NEVER in here (the question must stay answerable inline).
+_SPAWN_TOOL_NAMES: frozenset[str] = frozenset({"spawn_worker", "multi_spawn"})
+
+# Interrogative opener (DE / EN / ES) — the leading question word of a plain
+# "what/which/who/how/…"-style factual question. Anchored at the start after an
+# optional wake/greeting/politeness run so "Jarvis, welche Firmen …" still
+# matches. A trailing "?" is accepted as an independent signal (STT often drops
+# the question word's leading capital but keeps the rising-intonation "?"), but
+# the real anchor is the opener — STT frequently strips terminal punctuation.
+_QUESTION_OPENER_RE: re.Pattern[str] = re.compile(
+    r"^\s*(?:(?:hey|hallo|hi|hello|ok(?:ay)?|bitte|please|jarvis)[\s,]+){0,3}"
+    r"(?:"
+    # DE interrogatives
+    r"was|welche[rsnm]?|wer|wen|wem|wessen|wie ?viele?|wie|wieso|warum|weshalb|"
+    r"wann|woher|wohin|wo|wof[üu]r|womit|wodurch|"
+    # EN interrogatives
+    r"what|which|who|whom|whose|how|when|where|why|"
+    # ES interrogatives
+    r"qu[ée]|cu[áa]les?|qui[ée]nes?|c[óo]mo|cu[áa]ndo|d[óo]nde|cu[áa]nt[oa]s?"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _is_plain_knowledge_question(user_text: str) -> bool:
+    """True iff the utterance is shaped like a plain factual/knowledge question.
+
+    Pure form check (interrogative opener OR a trailing "?") — it does NOT judge
+    action intent or artifact-build; the caller combines this with the existing
+    deterministic detectors. Pure regex (AP-11 safe), DE/EN/ES.
+    """
+    t = (user_text or "").strip()
+    if not t:
+        return False
+    return bool(_QUESTION_OPENER_RE.search(t) or t.endswith("?"))
+
+
 # Definitional "what IS X" guard for the deterministic skill match. A plugin
 # skill's voice trigger is an un-anchored bare-name pattern (e.g. ``(github|…)``)
 # that fires on ANY mention — including when the app is merely the SUBJECT of a
@@ -3487,6 +3526,49 @@ class BrainManager:
             return tools
         return {n: t for n, t in tools.items() if n != "screenshot"}
 
+    def _hide_spawn_on_knowledge_question(
+        self, tools: dict[str, "Tool"], user_text: str
+    ) -> dict[str, "Tool"]:
+        """Remove the spawn tools from a PLAIN knowledge/factual question's tool
+        surface so the router-LLM cannot reflexively delegate an answerable
+        question to a background worker.
+
+        Forensic 2026-06-27 (voice session 08:35): "Welche Unternehmen haben so
+        viel Speicherplatz?" — a pure factual question — was answered by the LLM
+        *choosing* ``spawn_worker`` ("ich ziehe einen Experten hinzu"), against
+        the router prompt's own rule ("NIEMALS spawn_worker fuer eine Frage, die
+        du mit 1-2 Suchanfragen beantworten kannst"). The deterministic
+        force-spawn gate correctly stands down on such a turn, but it only
+        *forces* spawns — it never *constrains* the LLM's own spawn reflex. This
+        mirrors the smalltalk tool-hide (2026-05-01): the surest way to stop a
+        wrong tool call is to not offer the tool. ``search_web`` / plugin reads /
+        ``computer_use`` stay visible so the question is still answerable inline.
+
+        Narrow on purpose (no collateral spawn loss): fires ONLY on an actual
+        question (interrogative opener or "?") that carries NEITHER action intent
+        NOR an artifact-build request, and NEVER when the user explicitly named a
+        heavy-work vehicle ("Subagent" / "deep dive"). Pure regex + the existing
+        deterministic detectors (AP-11 safe, provider-agnostic). Defensive: any
+        fault returns the tools unchanged so a gate bug can never blind the brain.
+        """
+        if not isinstance(tools, dict):
+            return tools
+        try:
+            t = (user_text or "").strip()
+            if not _is_plain_knowledge_question(t):
+                return tools
+            # User explicitly named the vehicle → respect it, never hide (AD-S9).
+            if self._get_force_spawn_pattern().search(t):
+                return tools
+            # A real desktop/action turn or an artifact-build request still needs
+            # the spawn tools — only a pure ANSWER question loses them.
+            if self._turn_has_action_intent(t) or self._research_wants_artifact(t):
+                return tools
+            return {n: tool for n, tool in tools.items() if n not in _SPAWN_TOOL_NAMES}
+        except Exception:  # noqa: BLE001 — gate must never blind the brain
+            log.debug("knowledge-question spawn-hide gate failed", exc_info=True)
+            return tools
+
     def _apply_plugin_relevance(
         self, user_text: str, tools: dict[str, "Tool"]
     ) -> dict[str, "Tool"]:
@@ -5551,6 +5633,17 @@ class BrainManager:
             # instructions already ride on the turn context, so execution is
             # provider-/model-agnostic (no tool call needed).
             _turn_tools = self._drop_run_skill_when_inline_injected(_turn_tools)
+            # Knowledge-question spawn-hide (forensic 2026-06-27): a plain
+            # factual question ("Welche Unternehmen haben so viel Speicherplatz?")
+            # must not be able to reach spawn_worker — the router-LLM reflexively
+            # delegated it ("ich ziehe einen Experten hinzu") instead of answering
+            # inline. The deterministic force-spawn gate already stood down; this
+            # removes the spawn tools from the LLM surface so the reflex has no
+            # tool to grab. search_web / reads / computer_use stay visible.
+            if isinstance(_turn_tools, dict):
+                _turn_tools = self._hide_spawn_on_knowledge_question(
+                    _turn_tools, user_text
+                )
             # AI Pointer: on a deictic pointer turn the cursor crop is already the
             # only attached image, so drop the redundant ``inspect-pointer`` PULL
             # tool (calling it produced an empty spoken answer — observed live).
