@@ -623,7 +623,14 @@ async def _switch_subagent(
         }
 
     if canon not in JARVIS_TO_OPENCLAW:
-        known = ", ".join(sorted(JARVIS_TO_OPENCLAW))
+        # List EVERY subagent-capable provider, not just the API/OpenClaw ones —
+        # Codex and Antigravity route through their own workers, so omitting them
+        # produced the false "codex is not a valid provider, only claude/gemini/
+        # openai/openrouter" reply (forensic 2026-06-27).
+        known = ", ".join(sorted(
+            set(JARVIS_TO_OPENCLAW)
+            | {CODEX_SUBAGENT_CANONICAL, ANTIGRAVITY_SUBAGENT_CANONICAL}
+        ))
         return {
             "ok": False,
             "error_kind": "unknown_provider",

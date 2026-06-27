@@ -148,21 +148,39 @@ _SUBAGENT_PREP = re.compile(r"\b(?:auf|zu|to)\b", re.IGNORECASE)
 _SUBAGENT_PROVIDER_NOUN = re.compile(r"\b(?:provider|anbieter)\b", re.IGNORECASE)
 
 
+def _first_provider_word(text: str) -> str | None:
+    """First provider alias in ``text``, scanned longest-first so 'openai-codex'
+    wins over its 'openai' / 'codex' substrings."""
+    for word in _SUBAGENT_PROVIDER_WORDS:
+        if re.search(rf"\b{re.escape(word)}\b", text):
+            return word
+    return None
+
+
 def _match_subagent_switch(t: str) -> str | None:
     if not _SUBAGENT_QUALIFIER.search(t):
         return None
-    for word in _SUBAGENT_PROVIDER_WORDS:
-        if re.search(rf"\b{re.escape(word)}\b", t):
-            # An explicit change verb is an unambiguous command. Otherwise accept
-            # only "... provider auf/to <X>" (a noun + preposition) so a STATEMENT
-            # like "der Sub-Agent läuft auf Gemini" (no verb, no 'provider' word)
-            # falls through to the brain instead of silently switching.
-            if _SUBAGENT_SWITCH_VERB.search(t):
-                return word
-            if _SUBAGENT_PREP.search(t) and _SUBAGENT_PROVIDER_NOUN.search(t):
-                return word
-            return None
-    return None
+    # Gate: an explicit change verb is an unambiguous command; otherwise accept
+    # only "... provider auf/to <X>" (a noun + preposition) so a STATEMENT like
+    # "der Sub-Agent läuft auf Gemini" (no verb, no 'provider' word) falls through
+    # to the brain instead of silently switching.
+    if not (
+        _SUBAGENT_SWITCH_VERB.search(t)
+        or (_SUBAGENT_PREP.search(t) and _SUBAGENT_PROVIDER_NOUN.search(t))
+    ):
+        return None
+    # The TARGET provider follows the directional preposition: "switch ... TO
+    # codex", "von Antigravity AUF Codex". Look for a provider word AFTER the last
+    # auf/zu/to first (the target); only then fall back to the whole sentence.
+    # Without this the first word in alias-list ORDER wins, so "von Antigravity
+    # auf Codex" switched to antigravity — the SOURCE, not the target (forensic
+    # 2026-06-27).
+    preps = list(_SUBAGENT_PREP.finditer(t))
+    if preps:
+        after_prep = _first_provider_word(t[preps[-1].end():])
+        if after_prep:
+            return after_prep
+    return _first_provider_word(t)
 
 
 @dataclass(frozen=True)
