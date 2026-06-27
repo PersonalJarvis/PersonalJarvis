@@ -1379,6 +1379,15 @@ class ComputerUseConfig(BaseModel):
     # screenshot_only_loop.py).
     fast_step_model: str = Field(default="")
     verify_after_each_step: bool = True
+    # Proactively zoom-refine each click target BEFORE clicking (default OFF).
+    # When on AND the click action carries a `target`, the loop grabs a live
+    # zoomed crop around the coarse point, re-locates the target inside it, and
+    # only then clicks — and REFUSES to click (re-plans) when the target is not
+    # in the crop, catching wrong-element clicks the pixel-diff verify accepts.
+    # Internal screenshot crop only: nothing is shown on screen. Costs one extra
+    # model call per targeted click, so it stays opt-in to protect the default
+    # latency profile.
+    zoom_before_click: bool = False
     # Spoken per-step milestones ("Schritt N von M erledigt."). Default OFF
     # (2026-06-10): the milestone counter tracks successful actions, not
     # verified plan steps, so it announced "6 von 6 erledigt" on a mission

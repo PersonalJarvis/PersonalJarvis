@@ -1000,6 +1000,7 @@ def _phase2_full_brain(
                 fast_step_model=getattr(cu_cfg, "fast_step_model", ""),
                 plan_model_override=cu_cfg.plan_model,
                 verify_after_each_step=cu_cfg.verify_after_each_step,
+                zoom_before_click=getattr(cu_cfg, "zoom_before_click", False),
                 max_replans=cu_cfg.max_replans,
                 announce_progress=getattr(cu_cfg, "announce_progress", False),
                 native_cu=native_cu,
