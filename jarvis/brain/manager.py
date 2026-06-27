@@ -1190,6 +1190,15 @@ _LANG_SWITCH_CONFIRM: dict[str, str] = {
     "auto": "Erledigt — ich passe meine Sprache ab jetzt automatisch deiner an.",
 }
 
+# Spoken when the live reply-language switch applied but PERSIST failed (read-only
+# / locked jarvis.toml). Honest: scoped to this session, not "from now on", because
+# it reverts on restart (audit 2026-06-27). de/en/es.
+_LANG_SWITCH_CONFIRM_SESSION: dict[str, str] = {
+    "de": "Für diese Sitzung antworte ich auf Deutsch — dauerhaft speichern hat nicht geklappt.",
+    "en": "For this session I'll reply in English — saving it permanently didn't work.",
+    "es": "Por esta sesión responderé en español — no pude guardarlo de forma permanente.",
+}
+
 # Sub-agent (Heavy-Task worker) provider switch — the voice_command_gate
 # "subagent_switch" path. The gate returns the spoken provider word; this maps
 # it to a CANONICAL [brain.sub_jarvis].provider slug (the values are the only
@@ -1270,6 +1279,36 @@ def _provider_switch_failure_phrase(result: dict, display: str, lang: str) -> st
     kind = str(result.get("error_kind") or "other")
     table = _PROVIDER_SWITCH_FAIL.get(kind, _PROVIDER_SWITCH_FAIL["other"])
     return table.get(lang, table["de"]).format(p=display)
+
+
+# Background-task cancel — the voice_command_gate "cancel" path. Honest readback:
+# names the count when something was stopped, says so plainly when nothing ran
+# (audit 2026-06-27: the old path was silent either way). de/en/es.
+_CANCEL_CONFIRM: dict[str, str] = {
+    "de": "Erledigt — {n} laufende Aufgabe(n) gestoppt.",
+    "en": "Done — stopped {n} running task(s).",
+    "es": "Listo — detuve {n} tarea(s) en curso.",
+}
+_CANCEL_NONE: dict[str, str] = {
+    "de": "Es lief gerade nichts, das ich stoppen könnte.",
+    "en": "Nothing was running to stop.",
+    "es": "No había nada en curso que detener.",
+}
+
+# Thinking-depth override — the voice_command_gate "depth_deep"/"depth_fast"
+# path. Confirms the new depth instead of staying silent (audit 2026-06-27).
+_DEPTH_CONFIRM: dict[str, dict[str, str]] = {
+    "deep": {
+        "de": "Alles klar — ich denke ab jetzt gründlicher.",
+        "en": "Got it — I'll think more deeply from now on.",
+        "es": "Entendido — pensaré más a fondo a partir de ahora.",
+    },
+    "fast": {
+        "de": "Alles klar — ich denke ab jetzt schneller.",
+        "en": "Got it — I'll think faster from now on.",
+        "es": "Entendido — pensaré más rápido a partir de ahora.",
+    },
+}
 
 # General self-control (2026-06-22). Not every settings change can have its own
 # deterministic gate — the gates (language, sub-agent) are high-precision
@@ -2723,16 +2762,23 @@ class BrainManager:
             log.debug("in-memory cfg.brain.reply_language update skipped: %s", exc)
         # Persist as boot default — best-effort: a read-only / locked jarvis.toml
         # must not break the live switch that already applied.
+        persisted = True
         try:
             from jarvis.core import config_writer
 
             config_writer.set_reply_language(lang)
         except Exception as exc:  # noqa: BLE001
+            persisted = False
             log.warning(
                 "reply-language persist failed (live switch still applied): %s", exc
             )
-        log.info("reply-language switched to %r via deterministic voice gate", lang)
-        return _LANG_SWITCH_CONFIRM.get(lang, _LANG_SWITCH_CONFIRM["de"])
+        log.info(
+            "reply-language switched to %r via deterministic voice gate (persisted=%s)",
+            lang, persisted,
+        )
+        if persisted:
+            return _LANG_SWITCH_CONFIRM.get(lang, _LANG_SWITCH_CONFIRM["de"])
+        return _LANG_SWITCH_CONFIRM_SESSION.get(lang, _LANG_SWITCH_CONFIRM_SESSION["de"])
 
     def _is_self_control_turn(self, text: str) -> bool:
         """Broad (class-level, NOT per-command) detector for a request to change
@@ -4784,6 +4830,20 @@ class BrainManager:
         log.info("Cancelled %d background openclaw task(s)", cancelled)
         return cancelled
 
+    def _cancel_readback(self, count: int) -> str:
+        """Honest spoken readback for a deterministic cancel: name the count, or
+        say plainly that nothing was running. Never silent (audit 2026-06-27)."""
+        lang = self._resolve_turn_lang()
+        if count > 0:
+            return _CANCEL_CONFIRM.get(lang, _CANCEL_CONFIRM["de"]).format(n=count)
+        return _CANCEL_NONE.get(lang, _CANCEL_NONE["de"])
+
+    def _depth_readback(self, level: str) -> str:
+        """Honest spoken confirmation of a depth override. Never silent."""
+        lang = self._resolve_turn_lang()
+        table = _DEPTH_CONFIRM.get(level, _DEPTH_CONFIRM["deep"])
+        return table.get(lang, table["de"])
+
     # ------------------------------------------------------------------
     # Intent-Router → (provider, model) chain
     # ------------------------------------------------------------------
@@ -5056,8 +5116,14 @@ class BrainManager:
                 return resumed
 
         if self._detect_cancel_intent(user_text):
-            self._cancel_all_background_tasks()
-            return ""
+            confirmation = self._cancel_readback(self._cancel_all_background_tasks())
+            await self._record_response_side_effects(
+                user_text=user_text,
+                response_text=confirmation,
+                use_history=use_history,
+                trace_id=turn_trace_id,
+            )
+            return confirmation
 
         switch_target = self._detect_switch_intent(user_text)
         if switch_target:
@@ -5104,12 +5170,16 @@ class BrainManager:
                 return confirmation
 
         depth_override = self._detect_depth_override(user_text)
-        if depth_override == "deep":
-            self._force_level = "deep"
-            return ""
-        if depth_override == "fast":
-            self._force_level = "fast"
-            return ""
+        if depth_override in ("deep", "fast"):
+            self._force_level = depth_override
+            confirmation = self._depth_readback(depth_override)
+            await self._record_response_side_effects(
+                user_text=user_text,
+                response_text=confirmation,
+                use_history=use_history,
+                trace_id=turn_trace_id,
+            )
+            return confirmation
 
         # AD-12 + AP-OC5 (OpenClaw bridge wave-4 router): intercept status/cancel
         # phrases via pattern match BEFORE the force-spawn heuristic

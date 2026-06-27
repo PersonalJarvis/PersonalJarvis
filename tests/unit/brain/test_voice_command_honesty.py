@@ -87,3 +87,40 @@ async def test_main_switch_subagent_only_is_honest(monkeypatch) -> None:
 async def test_main_switch_unknown_word_falls_through() -> None:
     mgr = _manager()
     assert await mgr._apply_main_provider_switch("flibberprovider") == ""
+
+
+def test_cancel_readback_names_count() -> None:
+    mgr = _manager()
+    phrase = mgr._cancel_readback(2)
+    assert phrase and "2" in phrase
+
+
+def test_cancel_readback_honest_when_nothing_running() -> None:
+    mgr = _manager()
+    phrase = mgr._cancel_readback(0)
+    assert phrase  # never silent
+    assert "2" not in phrase  # does not claim it stopped something
+
+
+@pytest.mark.parametrize("level", ["deep", "fast"])
+def test_depth_readback_confirms(level: str) -> None:
+    mgr = _manager()
+    phrase = mgr._depth_readback(level)
+    assert phrase  # never silent
+
+
+def test_reply_language_persist_failure_is_honest(monkeypatch) -> None:
+    mgr = _manager()
+    # live switch succeeds, persist raises -> readback must NOT promise "from now on"
+    monkeypatch.setattr(mgr, "set_reply_language", lambda code: None)
+
+    def _boom(_lang):
+        raise OSError("jarvis.toml is read-only")
+
+    import jarvis.core.config_writer as cw
+    monkeypatch.setattr(cw, "set_reply_language", _boom)
+
+    out = mgr._apply_reply_language_switch("en")
+    assert out  # never silent
+    low = out.lower()
+    assert "session" in low or "sitzung" in low or "sesión" in low  # scoped, honest
