@@ -1,6 +1,6 @@
 """Mascot orb right-click → show-window gesture.
 
-Parallels the whisper-bar: the orb exposes ``set_on_show_window`` (injected by
+Parallels the jarvis-bar: the orb exposes ``set_on_show_window`` (injected by
 OrbBusBridge) and ``_on_right_click`` fires it. Per the 2026-06-02 spec the
 right-click now raises the main window instead of opening the old Reset/Mute
 context menu; "Reset position" moves to middle-click (``<Button-2>``), and the

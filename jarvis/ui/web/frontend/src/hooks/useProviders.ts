@@ -112,6 +112,9 @@ export interface ClaudeStatus {
   subscription_type?: string | null; // raw tier, e.g. "max"
   binary_path?: string | null;
   error?: string | null;
+  /** True when a classic Anthropic API key (sk-ant-api…) is stored — drives the
+   * API-key field's "configured" state on the subagent card. Never the key. */
+  api_key_present?: boolean;
 }
 
 interface ProvidersResponse {

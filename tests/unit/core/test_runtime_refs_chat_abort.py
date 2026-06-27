@@ -1,6 +1,6 @@
 """The bar's X must abort an in-flight CHAT turn, not just a voice turn.
 
-Live bug 2026-06-19: clicking the whisper-bar X (``request_hangup``) while a
+Live bug 2026-06-19: clicking the jarvis-bar X (``request_hangup``) while a
 chat-originated brain turn was THINKING did nothing — the chat dispatcher
 (``desktop_app._on_user_message``) ran a bare ``await generate(...)`` with no
 task handle and never observed the voice pipeline's ``_hangup_event``. The

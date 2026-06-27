@@ -474,7 +474,7 @@ class ShowWindowRequested(Event):
     """User asked to bring the Jarvis desktop window to the foreground.
 
     Publishers: the overlay right-click gesture for BOTH surfaces — the
-    whisper-bar and the mascot orb — wired through ``OrbBusBridge``
+    jarvis-bar and the mascot orb — wired through ``OrbBusBridge``
     (``ui/orb/bus_bridge.py``). The DesktopApp owns the actual window raise
     in ``_on_show_window_requested`` → ``_safe_window_show`` and is null-safe
     when there is no window (headless / VPS), so an unwired publish is a no-op.

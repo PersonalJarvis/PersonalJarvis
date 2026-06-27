@@ -747,7 +747,7 @@ async def put_autostart(body: AutostartBody, request: Request) -> dict[str, obje
     }
 
 
-_OVERLAY_STYLES = ("whisper_bar", "mascot", "none")
+_OVERLAY_STYLES = ("jarvis_bar", "mascot", "none")
 
 
 class OverlayStyleBody(BaseModel):
@@ -760,19 +760,23 @@ async def get_overlay_style(request: Request) -> dict[str, object]:
     """Current on-screen overlay style + the selectable options."""
     cfg = _config(request)
     ui = getattr(cfg, "ui", None)
-    current = getattr(ui, "orb_style", None) or "whisper_bar"
+    current = getattr(ui, "orb_style", None) or "jarvis_bar"
     return {"style": current, "options": list(_OVERLAY_STYLES)}
 
 
 @router.put("/overlay-style")
 async def put_overlay_style(body: OverlayStyleBody, request: Request) -> dict[str, object]:
-    """Switch the on-screen overlay (whisper_bar / mascot / none).
+    """Switch the on-screen overlay (jarvis_bar / mascot / none).
 
     Persists [ui].orb_style and live-swaps the running surface via the
     DesktopApp (app.state.desktop_app.swap_overlay). When no live app is
     reachable (headless), the choice is persisted and applies on restart.
     """
     style = body.style.strip()
+    # Backwards-compat: accept the legacy "whisper_bar" value (renamed to
+    # "jarvis_bar" to drop a trademarked name) from any not-yet-rebuilt client.
+    if style == "whisper_bar":
+        style = "jarvis_bar"
     if style not in _OVERLAY_STYLES:
         raise HTTPException(status_code=400, detail=f"Unknown overlay style '{style}'")
 

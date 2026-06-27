@@ -964,7 +964,7 @@
       "saved": "Display style switched.",
       "restart_required": "Saved — restart {name} to apply.",
       "options": {
-        "whisper_bar": "Bar (default)",
+        "jarvis_bar": "Bar (default)",
         "mascot": "Mascot orb",
         "none": "None (hidden)"
       }
@@ -1366,12 +1366,12 @@
       "body": "How should your assistant appear on screen? You can change this any time in Settings.",
       "recommended": "Recommended",
       "options": {
-        "whisper_bar": "Jarvis Bar",
+        "jarvis_bar": "Jarvis Bar",
         "mascot": "Orb",
         "none": "No overlay"
       },
       "captions": {
-        "whisper_bar": "A slim floating voice bar, always within reach.",
+        "jarvis_bar": "A slim floating voice bar, always within reach.",
         "mascot": "A floating companion orb that reacts as you talk.",
         "none": "Just the app window — no floating surface on screen."
       },

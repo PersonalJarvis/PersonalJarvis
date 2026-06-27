@@ -964,7 +964,7 @@
       "saved": "Anzeige-Stil gewechselt.",
       "restart_required": "Gespeichert — {name} neu starten zum Übernehmen.",
       "options": {
-        "whisper_bar": "Bar (Standard)",
+        "jarvis_bar": "Bar (Standard)",
         "mascot": "Maskottchen-Orb",
         "none": "Keins (ausgeblendet)"
       }
@@ -1366,12 +1366,12 @@
       "body": "Wie soll dein Assistent auf dem Bildschirm erscheinen? Du kannst das jederzeit in den Einstellungen ändern.",
       "recommended": "Empfohlen",
       "options": {
-        "whisper_bar": "Jarvis-Leiste",
+        "jarvis_bar": "Jarvis-Leiste",
         "mascot": "Orb",
         "none": "Kein Overlay"
       },
       "captions": {
-        "whisper_bar": "Eine schmale schwebende Sprachleiste, immer griffbereit.",
+        "jarvis_bar": "Eine schmale schwebende Sprachleiste, immer griffbereit.",
         "mascot": "Ein schwebender Begleiter-Orb, der auf deine Stimme reagiert.",
         "none": "Nur das App-Fenster — kein schwebendes Element auf dem Bildschirm."
       },

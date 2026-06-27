@@ -1442,7 +1442,7 @@ class OrbOverlay:
         #   <Button-2>       → reset position (moved off the old right-click menu)
         # User spec 2026-05-17: double-click on the orb mutes Jarvis.
         # Spec 2026-06-02: right-click now opens the Jarvis window (same as the
-        # whisper-bar). "Reset position" moved from the old right-click menu to
+        # jarvis-bar). "Reset position" moved from the old right-click menu to
         # middle-click; mute stays on the double-double-click gesture. Drag-start
         # does not commit any geometry change until the threshold is crossed, so
         # a fast double-click stays harmless.

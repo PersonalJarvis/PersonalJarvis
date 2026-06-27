@@ -1,11 +1,11 @@
-"""Headless preview of the whisper-bar THINKING animation (orbital core).
+"""Headless preview of the jarvis-bar THINKING animation (orbital core).
 
 Renders frames straight from the pure renderer (no Tk, no app) and writes:
-- ``screenshots/whisperbar-thinking-sheet.png`` — 8 frames, 4x upscaled,
+- ``screenshots/jarvisbar-thinking-sheet.png`` — 8 frames, 4x upscaled,
   composited on a desktop-dark background for design review.
-- ``screenshots/whisperbar-thinking.gif``       — ~3 s animation at 4x.
+- ``screenshots/jarvisbar-thinking.gif``       — ~3 s animation at 4x.
 
-Usage:  python scripts/whisperbar_thinking_preview.py
+Usage:  python scripts/jarvisbar_thinking_preview.py
 """
 from __future__ import annotations
 
@@ -17,13 +17,13 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from jarvis.core.screenshots import screenshots_dir  # noqa: E402
-from jarvis.ui.whisperbar import renderer as R  # noqa: E402
+from jarvis.ui.jarvisbar import renderer as R  # noqa: E402
 
 DESKTOP_BG = (32, 31, 34)  # neutral dark backdrop standing in for the desktop
 UPSCALE = 4
 
 
-def _frame(rnd: R.WhisperBarRenderer, t: float) -> Image.Image:
+def _frame(rnd: R.JarvisBarRenderer, t: float) -> Image.Image:
     img = rnd.render(t, "think", 0.0)
     # Swap the magenta color-key for a desktop-ish dark grey so the preview
     # shows what the keyed-out window actually looks like in place.
@@ -39,7 +39,7 @@ def _frame(rnd: R.WhisperBarRenderer, t: float) -> Image.Image:
 
 def main() -> None:
     out = screenshots_dir()
-    rnd = R.WhisperBarRenderer()
+    rnd = R.JarvisBarRenderer()
     for _ in range(80):  # settle the pill ease at ACTIVE size
         rnd.render(0.0, "think", 0.0)
 
@@ -52,12 +52,12 @@ def main() -> None:
     for i, fr in enumerate(frames):
         col, row = i % 4, i // 4
         sheet.paste(fr, (pad + col * (fw + pad), pad + row * (fh + pad)))
-    sheet_path = out / "whisperbar-thinking-sheet.png"
+    sheet_path = out / "jarvisbar-thinking-sheet.png"
     sheet.save(sheet_path)
 
     # Animation: 60 frames over ~3 s (50 ms cadence in the GIF).
     anim = [_frame(rnd, 1.0 + k * 0.05) for k in range(60)]
-    gif_path = out / "whisperbar-thinking.gif"
+    gif_path = out / "jarvisbar-thinking.gif"
     anim[0].save(
         gif_path, save_all=True, append_images=anim[1:], duration=50, loop=0
     )

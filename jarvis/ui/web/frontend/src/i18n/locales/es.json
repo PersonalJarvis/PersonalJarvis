@@ -964,7 +964,7 @@
       "saved": "Estilo de visualización cambiado.",
       "restart_required": "Guardado: reinicia {name} para aplicar.",
       "options": {
-        "whisper_bar": "Barra (predeterminado)",
+        "jarvis_bar": "Barra (predeterminado)",
         "mascot": "Orbe mascota",
         "none": "Ninguno (oculto)"
       }
@@ -1366,12 +1366,12 @@
       "body": "¿Cómo debería aparecer tu asistente en pantalla? Puedes cambiarlo cuando quieras en Ajustes.",
       "recommended": "Recomendado",
       "options": {
-        "whisper_bar": "Barra de Jarvis",
+        "jarvis_bar": "Barra de Jarvis",
         "mascot": "Orbe",
         "none": "Sin superposición"
       },
       "captions": {
-        "whisper_bar": "Una barra de voz flotante y delgada, siempre a mano.",
+        "jarvis_bar": "Una barra de voz flotante y delgada, siempre a mano.",
         "mascot": "Un orbe acompañante flotante que reacciona cuando hablas.",
         "none": "Solo la ventana de la app — sin elementos flotantes en pantalla."
       },

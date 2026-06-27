@@ -1047,12 +1047,12 @@ class UIConfig(BaseModel):
     # Default: JARVIS_UI_TOKEN. The token is freshly generated at startup
     # and pywebview injects it via evaluate_js into window.__JARVIS_TOKEN.
     auth_token_env: str = "JARVIS_UI_TOKEN"
-    # On-screen overlay style: "whisper_bar" (slim default), "mascot" (ghost
+    # On-screen overlay style: "jarvis_bar" (slim default), "mascot" (ghost
     # orb), or "none". The mascot remains fully selectable.
-    orb_style: str = "whisper_bar"
+    orb_style: str = "jarvis_bar"
     # Optional explicit path to the mascot PNG. Empty = search for default asset.
     orb_mascot_path: str = ""
-    # Whisper bar: persistent (always-visible dots pill) vs only-when-active.
+    # Jarvis bar: persistent (always-visible dots pill) vs only-when-active.
     bar_persistent: bool = True
     # Hex accent the bar lights up with during activity (gold on-brand).
     bar_accent: str = "#e7c46e"
@@ -1060,6 +1060,18 @@ class UIConfig(BaseModel):
     # ("default" = OS default app, "browser", or an editor key like "code").
     # Empty = ask via the chooser dialog on first open. Desktop-only.
     preferred_opener: str = ""
+
+    @field_validator("orb_style", mode="before")
+    @classmethod
+    def _normalize_orb_style(cls, v: object) -> object:
+        # Backwards-compat: the slim-bar style was historically persisted as
+        # "whisper_bar". It was renamed to "jarvis_bar" to avoid a
+        # trademark. Normalize the legacy value on load so an existing
+        # jarvis.toml keeps showing the bar instead of falling back to the
+        # mascot orb (the unknown-style default in _build_overlay_surface).
+        if isinstance(v, str) and v.strip().lower() == "whisper_bar":
+            return "jarvis_bar"
+        return v
 
 
 class DuckingConfig(BaseModel):
@@ -2225,7 +2237,7 @@ def ensure_project_root_cwd() -> Path:
     ``sys.path``, so the ROOT packages ``ui`` and ``conductor`` — which live
     outside the editable-installed ``jarvis`` package — failed to import
     ("No module named 'ui'"), silently disabling the on-screen overlay
-    (whisper-bar) and the Conductor view. Putting the root on the path makes
+    (jarvis-bar) and the Conductor view. Putting the root on the path makes
     those imports resolve regardless of how the process was started.
 
     Call this once, as early as possible in every process entry point (before
