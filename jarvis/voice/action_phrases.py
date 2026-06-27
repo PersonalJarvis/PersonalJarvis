@@ -21,6 +21,15 @@ from jarvis.core.turn_language import resolve_turn_language
 _DEFAULT = "de"
 _SUPPORTED = ("de", "en", "es")
 
+#: ``HarnessTask.env`` key carrying the turn's resolved output language (de/en/es)
+#: into the computer-use harness, so the in-harness verifier writes its spoken
+#: ``proof`` in the user's language instead of defaulting to English (live bug
+#: 2026-06-27: a German turn read back "Erledigt — The file explorer window is
+#: open ..."). Set by the producers (``computer_use`` tool + local-action gate),
+#: read by ``jarvis.harness.screenshot_only_loop`` — shared here so the three
+#: sites cannot drift apart.
+OUTPUT_LANGUAGE_ENV_KEY = "JARVIS_OUTPUT_LANGUAGE"
+
 # key -> {lang -> template}. Templates may carry named ``{fields}``.
 _PHRASES: dict[str, dict[str, str]] = {
     # Computer-use background offload — outcome readbacks (announcement bus).
@@ -182,6 +191,15 @@ def action_phrase(key: str, lang: str, **fmt: object) -> str:
 # else of substance around it — the opaque string ``dispatch_to_harness`` emits
 # (``f"exit {exit_code}"``). This must never be spoken to the user.
 _BARE_EXIT_RE = re.compile(r"^\s*\(?\s*exit\s*\d+\s*\)?\s*$", re.IGNORECASE)
+#: The harness CANCEL exit code (128 + SIGINT). Emitted ONLY when the
+#: computer-use cancel token is tripped — i.e. the user hung up ("auflegen").
+#: Mirrors ``_CANCEL_EXIT_CODE`` in jarvis/harness/screenshot_only_loop.py.
+#: Exposed publicly so the background-offload path can recognise a
+#: user-initiated abort and stay SILENT: the user just triggered the abort
+#: themselves, so a "the action was cancelled" readback is redundant — and with
+#: N parallel offloaded missions it would spam the phrase N times (live forensic
+#: 2026-06-27). "auflegen" is a hard, immediately-silent kill-switch.
+CU_CANCEL_EXIT_CODE: int = 130
 #: Static map: harness exit code -> generic plain-language phrase key. Keep in
 #: sync with the exit-code legend in jarvis/harness/screenshot_only_loop.py.
 _EXIT_CODE_PHRASE: dict[int, str] = {
@@ -191,7 +209,7 @@ _EXIT_CODE_PHRASE: dict[int, str] = {
     5: "cu_exit_gave_up",
     8: "cu_exit_action_failed",
     9: "cu_exit_needs_elevation",
-    130: "cu_exit_cancelled",
+    CU_CANCEL_EXIT_CODE: "cu_exit_cancelled",
 }
 #: Strip the loop's "[cu] <verb> at <tag>: " prefix so the human reason the
 #: model gave for ``fail`` surfaces clean (the loop writes
@@ -432,6 +450,7 @@ def cu_success_readback(lang: str, *, stdout: str | None) -> str:
 
 
 __all__ = [
+    "CU_CANCEL_EXIT_CODE",
     "action_phrase",
     "cu_failure_readback",
     "cu_success_readback",

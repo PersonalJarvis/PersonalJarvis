@@ -59,6 +59,8 @@ from jarvis.core.turn_language import (
     resolve_turn_language,
 )
 from jarvis.voice.action_phrases import (
+    CU_CANCEL_EXIT_CODE,
+    OUTPUT_LANGUAGE_ENV_KEY,
     action_phrase,
     cu_failure_readback,
     cu_success_readback,
@@ -4215,6 +4217,10 @@ class BrainManager:
                         "harness": harness_name,
                         "prompt": prompt,
                         "timeout_s": timeout_s,
+                        # Thread the turn's language to the in-harness verifier so
+                        # its spoken `proof` matches the frame's language (live bug
+                        # 2026-06-27: a German turn read back an English proof).
+                        "env": {OUTPUT_LANGUAGE_ENV_KEY: lang},
                     },
                     user_utterance=user_text,
                     trace_id=trace_id,
@@ -4241,6 +4247,25 @@ class BrainManager:
                 exit_code, detail = self._cu_failure_detail(
                     getattr(result, "output", None)
                 )
+                # A user-initiated cancel (exit 130 — "auflegen" tripped the CU
+                # cancel token) is NOT an outcome the user is waiting on: it is
+                # the receipt of an abort they just triggered themselves. Speaking
+                # "the action was cancelled" is redundant, and — because the
+                # completion readback punches through the hangup gate (AD-OE5/OE6)
+                # and each offloaded mission cancels independently — it spams the
+                # phrase once per in-flight mission (live forensic 2026-06-27:
+                # three CU missions cancelled by one F1+F2 hangup spoke it three
+                # times). "auflegen" is a hard, immediately-silent kill-switch, so
+                # drop the readback entirely. AD-OE6's zero-silent-drop guards
+                # real outcomes (success / content failure / timeout) — those
+                # still announce below — not a self-triggered abort.
+                if exit_code == CU_CANCEL_EXIT_CODE:
+                    log.info(
+                        "CU background cancelled by user hangup (exit %d) — "
+                        "no readback (auflegen = silent kill-switch)",
+                        CU_CANCEL_EXIT_CODE,
+                    )
+                    return
                 text = cu_failure_readback(
                     lang, error=err, exit_code=exit_code, detail=detail,
                 )

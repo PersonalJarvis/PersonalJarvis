@@ -129,3 +129,81 @@ async def test_computer_use_failure_is_announced_not_dropped(monkeypatch) -> Non
 
     completions = [e for e in bus.published if getattr(e, "kind", None) == "completion"]
     assert completions, "a failed Computer-Use action must still be announced (AD-OE6)"
+
+
+@pytest.mark.asyncio
+async def test_user_cancel_offload_is_silent_not_announced(monkeypatch) -> None:
+    """A user-initiated hangup (cancel token -> harness exit 130) must NOT speak
+    a "the action was cancelled" readback.
+
+    The user just triggered the abort themselves ("auflegen" is a hard,
+    immediately-silent kill-switch), so the cancel readback is redundant — and
+    with N parallel offloaded missions it spams the phrase N times. Live forensic
+    2026-06-27: three CU missions all cancelled by one F1+F2 hangup spoke
+    "Die Aktion am Bildschirm wurde abgebrochen." three times. The cancel is the
+    receipt of an abort the user already made — not a result they are waiting on,
+    so AD-OE6's zero-silent-drop (which protects real outcomes) does not apply.
+    """
+    bus = _FakeBus()
+    # The harness reports a user cancel as exit 130 ("[cu] cancelled mid-batch").
+    output = {
+        "harness": "screenshot",
+        "exit_code": 130,
+        "stdout": "",
+        "stderr": "[cu] cancelled mid-batch\n",
+        "cost_usd": 0.0,
+        "duration_ms": 6200,
+    }
+    executor = _SlowHarnessExecutor(
+        output=output, success=False, error="exit 130", delay=0.1
+    )
+    mgr = _make_manager(executor, bus)
+    plan = LocalActionPlan(
+        mode=LocalActionMode.COMPUTER_USE,
+        harness="computer-use",
+        prompt="screenshot the repo",
+    )
+    monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
+
+    await mgr._run_local_action_fast_path("mach einen screenshot")
+    await asyncio.gather(*getattr(mgr, "_cu_background_tasks", set()))
+
+    assert executor.called
+    completions = [e for e in bus.published if getattr(e, "kind", None) == "completion"]
+    assert not completions, (
+        "a user-initiated cancel (exit 130 / hangup) must not be announced; got "
+        f"{[getattr(e, 'text', '') for e in completions]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_three_parallel_cancels_speak_nothing(monkeypatch) -> None:
+    """The exact 2026-06-27 forensic: three offloaded CU missions, all cancelled
+    by one hangup, must produce ZERO spoken cancel readbacks (not three)."""
+    bus = _FakeBus()
+    output = {
+        "harness": "screenshot",
+        "exit_code": 130,
+        "stdout": "",
+        "stderr": "[cu] cancelled mid-batch\n",
+        "cost_usd": 0.0,
+        "duration_ms": 5100,
+    }
+    plan = LocalActionPlan(
+        mode=LocalActionMode.COMPUTER_USE, harness="computer-use", prompt="do it"
+    )
+    monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
+
+    # Each turn spawns its own background mission off a shared manager.
+    executor = _SlowHarnessExecutor(
+        output=output, success=False, error="exit 130", delay=0.05
+    )
+    mgr = _make_manager(executor, bus)
+    for _ in range(3):
+        await mgr._run_local_action_fast_path("öffentlich, dann screenshot")
+    await asyncio.gather(*getattr(mgr, "_cu_background_tasks", set()))
+
+    completions = [e for e in bus.published if getattr(e, "kind", None) == "completion"]
+    assert not completions, (
+        f"three hangup-cancelled missions must speak nothing; got {len(completions)}"
+    )

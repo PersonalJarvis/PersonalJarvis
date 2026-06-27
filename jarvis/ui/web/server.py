@@ -841,6 +841,8 @@ class WebServer:
                         "env_fallback": mapping.env_fallback,
                         "key_set": key_set,
                         "is_active_brain": mapping.jarvis == primary,
+                        # All MAPPINGS providers bill per token on an API account.
+                        "billing": "api",
                     }
                 )
 
@@ -871,30 +873,38 @@ class WebServer:
                     "env_fallback": "OPENAI_API_KEY",
                     "key_set": codex_connected or codex_key,
                     "is_active_brain": primary == "openai-codex",
+                    # ChatGPT subscription OAuth OR an OpenAI API key.
+                    "billing": "subscription_or_api",
                 }
             )
 
             # Antigravity is a DIRECT worker (GoogleCliWorker over the official
             # agy/Gemini CLI) with no OpenClaw slug, so it is not in MAPPINGS —
-            # the Google sibling of Codex. Surface it as an explicit selectable
-            # subagent row, backed by the Google subscription OAuth login (no API
-            # key): "key_set" is the connected state. Selecting it routes heavy
-            # tasks through agy; selecting any other provider routes through that
-            # one — the choice is never hardcoded (init._select_subagent_worker_kind).
+            # the Google sibling of Codex. Dual billing, mirror of Codex: the
+            # Google subscription OAuth login OR a Gemini API key (per token).
+            # "key_set" is true when either is present.
             try:
                 from jarvis.google_cli.auth_service import GoogleCliAuthService
 
                 antigravity_connected = GoogleCliAuthService().status().connected
             except Exception:  # noqa: BLE001
                 antigravity_connected = False
+            try:
+                antigravity_key = bool(
+                    get_secret("gemini_api_key", env_fallback="GEMINI_API_KEY")
+                )
+            except Exception:  # noqa: BLE001
+                antigravity_key = False
             mapping_rows.append(
                 {
                     "jarvis": "antigravity",
                     "openclaw": "agy-cli (direct)",
                     "env_var": "Google-OAuth",
-                    "env_fallback": None,
-                    "key_set": antigravity_connected,
+                    "env_fallback": "GEMINI_API_KEY",
+                    "key_set": antigravity_connected or antigravity_key,
                     "is_active_brain": primary == "antigravity",
+                    # Google subscription OAuth OR a Gemini API key.
+                    "billing": "subscription_or_api",
                 }
             )
 
