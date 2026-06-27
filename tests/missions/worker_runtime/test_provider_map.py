@@ -216,3 +216,19 @@ def test_antigravity_subagent_slugs_ssot() -> None:
     assert ANTIGRAVITY_SUBAGENT_CANONICAL == "antigravity"
     # Not a MAPPINGS provider (OAuth CLI has no OpenClaw slug, like codex).
     assert "antigravity" not in JARVIS_TO_OPENCLAW
+
+
+def test_codex_subagent_slugs_accept_bare_codex_alias() -> None:
+    """The voice gate emits the bare spoken word "codex"; the acceptance set must
+    accept it. Forensic 2026-06-27: "set the subagent to codex" answered "codex
+    is not a valid provider" because only "openai-codex"/"chatgpt" were accepted.
+    "openai-codex" stays the canonical persisted value."""
+    from jarvis.missions.worker_runtime.provider_map import (
+        CODEX_SUBAGENT_CANONICAL,
+        CODEX_SUBAGENT_SLUGS,
+    )
+
+    assert "codex" in CODEX_SUBAGENT_SLUGS
+    assert "openai-codex" in CODEX_SUBAGENT_SLUGS
+    assert "chatgpt" in CODEX_SUBAGENT_SLUGS
+    assert CODEX_SUBAGENT_CANONICAL == "openai-codex"

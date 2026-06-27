@@ -1310,6 +1310,12 @@
       "cta": "Los geht's",
       "skip_setup": "Einrichtung vorerst überspringen"
     },
+    "tutorial": {
+      "title": "Sieh dir die 2-Minuten-Tour an",
+      "body": "Ein kurzer Überblick, was Personal Jarvis kann und wie die Einrichtung läuft. Du kannst überspringen und sofort loslegen.",
+      "continue": "Weiter",
+      "skip": "Video überspringen"
+    },
     "risk": {
       "title": "Bevor du fortfährst",
       "lead": "Personal Jarvis ist mächtige, experimentelle Software.",

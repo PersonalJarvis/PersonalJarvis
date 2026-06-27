@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
 vi.mock("./OnboardingFlow", () => ({ OnboardingFlow: () => <div data-testid="flow" /> }));
@@ -53,4 +53,22 @@ it("fails open (renders nothing) on a fetch error", async () => {
   stub("error");
   render(<OnboardingGate />);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull(), { timeout: 500 });
+});
+
+it("shows the tutorial video after the risk gate, then the step flow", async () => {
+  stub({ ...base, completed: false });
+  render(<OnboardingGate />);
+  await waitFor(() => expect(screen.getByRole("dialog")).toBeDefined());
+
+  // Accept the risk gate (tick the box, then the proceed button).
+  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+  // Second screen: the YouTube tutorial embed.
+  const frame = screen.getByTitle(/tour/i) as HTMLIFrameElement;
+  expect(frame.src).toContain("youtube-nocookie.com");
+
+  // Continue past the video → the step flow renders.
+  fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+  expect(screen.getByTestId("flow")).toBeDefined();
 });

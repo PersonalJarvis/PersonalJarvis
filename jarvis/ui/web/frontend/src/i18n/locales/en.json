@@ -1310,6 +1310,12 @@
       "cta": "Get started",
       "skip_setup": "Skip setup for now"
     },
+    "tutorial": {
+      "title": "Watch the 2-minute tour",
+      "body": "A quick walkthrough of what Personal Jarvis does and how setup works. You can skip and start right away.",
+      "continue": "Continue",
+      "skip": "Skip the video"
+    },
     "risk": {
       "title": "Before you continue",
       "lead": "Personal Jarvis is powerful, experimental software.",

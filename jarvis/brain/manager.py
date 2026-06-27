@@ -134,6 +134,7 @@ def _estimate_usd_from_usage(
 
 PROVIDER_ALIASES = {
     "claude": "claude-api",
+    "anthropic": "claude-api",
     "opus": "claude-api",
     "haiku": "claude-api",
     "sonnet": "claude-api",
@@ -1255,6 +1256,27 @@ _SUBAGENT_SWITCH_CONFIRM: dict[str, str] = {
     "en": "Done — your sub-agent will run on {p} from your next mission.",
     "es": "Listo — tu sub-agente usará {p} desde tu próxima misión.",
 }
+# Honest spoken failure phrases for a deterministic subagent switch that the
+# validated apply_provider_switch refused (missing credential / unknown). Never
+# a false "done"; always names what failed. de/en/es (Runtime Output Language).
+_SUBAGENT_SWITCH_FAIL: dict[str, dict[str, str]] = {
+    "missing_credential": {
+        "de": "{p} ist nicht verbunden — richte es zuerst ein, dann stelle ich um.",
+        "en": "{p} isn't connected — set it up first, then I'll switch.",
+        "es": "{p} no está conectado — configúralo primero y luego cambio.",
+    },
+    "other": {
+        "de": "Das konnte ich nicht auf {p} umstellen.",
+        "en": "I couldn't switch the sub-agent to {p}.",
+        "es": "No pude cambiar el sub-agente a {p}.",
+    },
+}
+
+
+def _subagent_switch_failure_phrase(result: dict, display: str, lang: str) -> str:
+    kind = str(result.get("error_kind") or "other")
+    table = _SUBAGENT_SWITCH_FAIL.get(kind, _SUBAGENT_SWITCH_FAIL["other"])
+    return table.get(lang, table["de"]).format(p=display)
 
 # General self-control (2026-06-22). Not every settings change can have its own
 # deterministic gate — the gates (language, sub-agent) are high-precision
@@ -2752,47 +2774,40 @@ class BrainManager:
             return None
         return match.target
 
-    def _apply_subagent_provider_switch(self, word: str) -> str:
-        """Execute a recognised sub-agent provider switch deterministically.
-
-        The brain LLM used to escalate "switch the sub-agent provider to X" to a
-        worker mission, because ``brain.sub_jarvis.provider`` has no settable
-        self-mod tool (2026-06-22 forensic). This runs BEFORE the force-spawn /
-        LLM path: map the spoken word to a canonical slug, then persist via the
-        3-layer ``config_writer.set_sub_jarvis_provider`` (TOML + config-soll pin
-        + ENV) so the drift-guard cannot revert it. The running worker re-resolves
-        the provider per mission (``_live_subagent_provider``), so it applies to
-        the NEXT mission without a restart. Returns the spoken confirmation, or
-        "" for an unknown provider word (caller falls through to the brain).
+    async def _apply_subagent_provider_switch(self, word: str) -> str:
+        """Execute a recognised sub-agent provider switch through the ONE
+        validated path (app_control.apply_provider_switch) instead of persisting
+        blindly. Maps the spoken word to a canonical slug, runs the same
+        credential validation the REST endpoint uses (Codex/Antigravity OAuth,
+        key presence), persists across all 3 layers (TOML + config-soll pin + ENV)
+        so the drift-guard cannot revert it, and renders an HONEST readback: the
+        real target on success, a named reason on failure, never a false "done".
+        Returns "" for an unknown word (caller falls through to the brain).
+        Forensic 2026-06-27: the old blind-persist path said "Erledigt" for an
+        unconnected provider and even when the persist threw.
         """
         canonical = _SUBAGENT_VOICE_TO_CANONICAL.get(word.strip().lower())
         if canonical is None:
             return ""
-        # Best-effort in-memory cfg agreement (a frozen model is not an error).
-        try:
-            from jarvis.core.config import BrainTierConfig
+        from jarvis.brain.app_control import apply_provider_switch, resolve_running_cfg
 
-            self._config.brain.sub_jarvis = BrainTierConfig(provider=canonical)
-        except Exception as exc:  # noqa: BLE001
-            log.debug("in-memory cfg.brain.sub_jarvis update skipped: %s", exc)
-        # Persist across all 3 layers (TOML + config-soll drift-pin + ENV) — the
-        # generic TOML-only write would be rolled back by the drift-guard.
         try:
-            from jarvis.core import config_writer
-
-            config_writer.set_sub_jarvis_provider(canonical)
-        except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "sub-agent provider persist failed (in-memory switch applied): %s",
-                exc,
+            result = await apply_provider_switch(
+                "subagent", canonical, cfg=resolve_running_cfg()
             )
-        log.info(
-            "sub-agent provider switched to %r via deterministic voice gate",
-            canonical,
-        )
+        except Exception as exc:  # noqa: BLE001 — never crash the turn
+            log.warning("sub-agent voice switch failed: %s", exc)
+            result = {"ok": False, "error_kind": "other", "error": str(exc)}
+
         lang = self._resolve_turn_lang()
-        template = _SUBAGENT_SWITCH_CONFIRM.get(lang, _SUBAGENT_SWITCH_CONFIRM["de"])
-        return template.format(p=_SUBAGENT_DISPLAY.get(canonical, canonical))
+        if result.get("ok"):
+            new = str(result.get("new_provider") or canonical)
+            display = _SUBAGENT_DISPLAY.get(new, new)
+            log.info("sub-agent provider switched to %r via deterministic voice gate", new)
+            template = _SUBAGENT_SWITCH_CONFIRM.get(lang, _SUBAGENT_SWITCH_CONFIRM["de"])
+            return template.format(p=display)
+        display = _SUBAGENT_DISPLAY.get(canonical, canonical)
+        return _subagent_switch_failure_phrase(result, display, lang)
 
     def _detect_cancel_intent(self, text: str) -> bool:
         """True when the user wants to cancel a running OpenClaw task."""
@@ -5112,7 +5127,7 @@ class BrainManager:
         # directly instead of escalating to a worker mission (2026-06-22 forensic).
         subagent_switch = self._detect_subagent_switch_intent(user_text)
         if subagent_switch:
-            confirmation = self._apply_subagent_provider_switch(subagent_switch)
+            confirmation = await self._apply_subagent_provider_switch(subagent_switch)
             if confirmation:
                 await self._record_response_side_effects(
                     user_text=user_text,

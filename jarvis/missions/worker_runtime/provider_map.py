@@ -50,8 +50,13 @@ __all__ = [
 # (app_control._switch_subagent), the worker selector
 # (init._select_subagent_worker_kind) and the worker-env builder, so the
 # acceptance set can never drift across sites (BUG-008 class). The canonical
-# persisted value is "openai-codex"; "chatgpt" is an accepted alias.
-CODEX_SUBAGENT_SLUGS: Final[frozenset[str]] = frozenset({"openai-codex", "chatgpt"})
+# persisted value is "openai-codex"; "chatgpt" and the bare spoken word "codex"
+# are accepted aliases (the voice gate emits "codex"; forensic 2026-06-27 a
+# "set the subagent to codex" answered "codex is not a valid provider" because
+# the bare alias was missing here).
+CODEX_SUBAGENT_SLUGS: Final[frozenset[str]] = frozenset(
+    {"openai-codex", "chatgpt", "codex"}
+)
 CODEX_SUBAGENT_CANONICAL: Final[str] = "openai-codex"
 
 

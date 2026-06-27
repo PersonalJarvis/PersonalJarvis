@@ -24,6 +24,8 @@ from typing import Literal
 _PROVIDER_ALIASES = (
     "claude-api",
     "openrouter",
+    "anthropic",
+    "chatgpt",
     "ollama",
     "gemini",
     "claude",
@@ -43,6 +45,9 @@ _PROVIDER_PATTERN = re.compile(
     r"\b(?:wechsel[n]?|wechsle|switch(?:\s+to)?|benutze?|nutze|use|nimm)"
     r"(?:\s+(?:den|die|das|der|the|deinen|deine|dein|meinen|meine|mein|my))?"
     r"(?:\s+(?:brain[-\s]*provider|provider|anbieter|sprach[-\s]*modell|modell|model))?"
+    # Optional "von/from <source>" so "switch FROM gemini TO openai" targets the
+    # destination after auf/zu/to, not the source (forensic 2026-06-27).
+    r"(?:\s+(?:von|from)\s+(?:" + "|".join(re.escape(p) for p in _PROVIDER_ALIASES) + r"))?"
     r"(?:\s+(?:auf|zu|to))?\s+"
     r"(?P<provider>" + "|".join(re.escape(p) for p in _PROVIDER_ALIASES) + r")\b",
     re.IGNORECASE,
@@ -109,13 +114,18 @@ _LANG_PREP = re.compile(r"\b(?:auf|zu|to|in|on)\b", re.IGNORECASE)
 
 
 def _match_language_switch(t: str) -> str | None:
-    code: str | None = None
+    # Pick the language that appears EARLIEST in the utterance, not the first
+    # one in alias-dict order. "antworte auf deutsch und englisch" must resolve
+    # to de (the first spoken language), not en just because "englisch" happens
+    # to sit earlier in _LANG_ALIASES (forensic 2026-06-27).
+    best: tuple[int, str] | None = None
     for word, c in _LANG_ALIASES.items():
-        if re.search(rf"\b{re.escape(word)}\b", t):
-            code = c
-            break
-    if code is None:
+        m = re.search(rf"\b{re.escape(word)}\b", t)
+        if m is not None and (best is None or m.start() < best[0]):
+            best = (m.start(), c)
+    if best is None:
         return None
+    code = best[1]
     if _LANG_CHANGE_VERB.search(t):
         return code
     if _LANG_IMPERATIVE_SPEAK.search(t):
@@ -149,21 +159,39 @@ _SUBAGENT_PREP = re.compile(r"\b(?:auf|zu|to)\b", re.IGNORECASE)
 _SUBAGENT_PROVIDER_NOUN = re.compile(r"\b(?:provider|anbieter)\b", re.IGNORECASE)
 
 
+def _first_provider_word(text: str) -> str | None:
+    """First provider alias in ``text``, scanned longest-first so 'openai-codex'
+    wins over its 'openai' / 'codex' substrings."""
+    for word in _SUBAGENT_PROVIDER_WORDS:
+        if re.search(rf"\b{re.escape(word)}\b", text):
+            return word
+    return None
+
+
 def _match_subagent_switch(t: str) -> str | None:
     if not _SUBAGENT_QUALIFIER.search(t):
         return None
-    for word in _SUBAGENT_PROVIDER_WORDS:
-        if re.search(rf"\b{re.escape(word)}\b", t):
-            # An explicit change verb is an unambiguous command. Otherwise accept
-            # only "... provider auf/to <X>" (a noun + preposition) so a STATEMENT
-            # like "der Sub-Agent läuft auf Gemini" (no verb, no 'provider' word)
-            # falls through to the brain instead of silently switching.
-            if _SUBAGENT_SWITCH_VERB.search(t):
-                return word
-            if _SUBAGENT_PREP.search(t) and _SUBAGENT_PROVIDER_NOUN.search(t):
-                return word
-            return None
-    return None
+    # Gate: an explicit change verb is an unambiguous command; otherwise accept
+    # only "... provider auf/to <X>" (a noun + preposition) so a STATEMENT like
+    # "der Sub-Agent läuft auf Gemini" (no verb, no 'provider' word) falls through
+    # to the brain instead of silently switching.
+    if not (
+        _SUBAGENT_SWITCH_VERB.search(t)
+        or (_SUBAGENT_PREP.search(t) and _SUBAGENT_PROVIDER_NOUN.search(t))
+    ):
+        return None
+    # The TARGET provider follows the directional preposition: "switch ... TO
+    # codex", "von Antigravity AUF Codex". Look for a provider word AFTER the last
+    # auf/zu/to first (the target); only then fall back to the whole sentence.
+    # Without this the first word in alias-list ORDER wins, so "von Antigravity
+    # auf Codex" switched to antigravity — the SOURCE, not the target (forensic
+    # 2026-06-27).
+    preps = list(_SUBAGENT_PREP.finditer(t))
+    if preps:
+        after_prep = _first_provider_word(t[preps[-1].end():])
+        if after_prep:
+            return after_prep
+    return _first_provider_word(t)
 
 
 @dataclass(frozen=True)
