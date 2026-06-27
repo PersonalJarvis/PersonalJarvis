@@ -248,6 +248,7 @@ class WebServer:
         from .outputs_routes import router as outputs_router
         from .preview_routes import router as preview_router
         from .antigravity_routes import router as antigravity_router
+        from .claude_routes import router as claude_router
         from .profile_routes import router as profile_router
         from .provider_routes import router as provider_router
         from .review_routes import router as review_router
@@ -277,6 +278,7 @@ class WebServer:
         app.include_router(tools_router)
         app.include_router(provider_router)
         app.include_router(antigravity_router)
+        app.include_router(claude_router)
         app.include_router(control_router)
         app.include_router(profile_router)
         app.include_router(settings_router)
@@ -833,6 +835,14 @@ class WebServer:
                         key_set = bool(read_live_claude_oauth_token())
                     except Exception:  # noqa: BLE001
                         key_set = False
+                # claude-api is dual-billed like Codex/Antigravity: the Claude Max
+                # subscription (claude CLI OAuth login) OR an Anthropic API key.
+                # Every other MAPPINGS provider bills per token on an API account.
+                row_billing = (
+                    "subscription_or_api"
+                    if mapping.jarvis == "claude-api"
+                    else "api"
+                )
                 mapping_rows.append(
                     {
                         "jarvis": mapping.jarvis,
@@ -841,8 +851,7 @@ class WebServer:
                         "env_fallback": mapping.env_fallback,
                         "key_set": key_set,
                         "is_active_brain": mapping.jarvis == primary,
-                        # All MAPPINGS providers bill per token on an API account.
-                        "billing": "api",
+                        "billing": row_billing,
                     }
                 )
 
