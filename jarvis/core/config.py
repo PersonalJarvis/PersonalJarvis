@@ -1391,6 +1391,23 @@ class ComputerUseConfig(BaseModel):
     # screenshot_only_loop.py).
     fast_step_model: str = Field(default="")
     verify_after_each_step: bool = True
+    # Proactively zoom-refine each click target BEFORE clicking. DEFAULT OFF
+    # since 2026-06-27: making it default-on added an extra model call AND a new
+    # re-plan-on-not-found failure path to EVERY targeted click, which degraded
+    # accuracy and latency instead of helping. The known-good pipeline clicks
+    # the coarse point first and only refines AFTER a verified miss. Opt back in
+    # per [computer_use] once a benchmark proves it nets out positive. When on:
+    # the loop grabs a live zoomed crop, re-locates the target, then clicks —
+    # and re-plans when the target is not in the crop. Internal crop only.
+    zoom_before_click: bool = False
+    # UIA fallback that snaps a verified-MISSED pixel click to the nearest
+    # accessibility element. DEFAULT OFF since 2026-06-27: added 2026-06-24, it
+    # snapped almost every near-miss to a large container's center (~screen
+    # centre) — a wild click that also short-circuited the LLM refine that used
+    # to correct misses (BUG-CU-UIASNAP). The pre-snap pipeline (coarse click ->
+    # verify -> LLM refine on miss) is the known-good behaviour; re-enable per
+    # [computer_use] only with a benchmark.
+    uia_click_fallback: bool = False
     # Spoken per-step milestones ("Schritt N von M erledigt."). Default OFF
     # (2026-06-10): the milestone counter tracks successful actions, not
     # verified plan steps, so it announced "6 von 6 erledigt" on a mission

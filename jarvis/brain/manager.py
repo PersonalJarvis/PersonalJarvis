@@ -663,6 +663,20 @@ def _is_instructional_question(user_text: str) -> bool:
 # NEVER in here (the question must stay answerable inline).
 _SPAWN_TOOL_NAMES: frozenset[str] = frozenset({"spawn_worker", "multi_spawn"})
 
+# Consequential action tools a turn with NO action signal of its own must never
+# INHERIT from the conversation context. GENERAL rule (not one phrase): a
+# question, a remark, or a mis-transcription asks for no desktop action, so it
+# must not be able to re-run the PREVIOUS turn's computer_use/spawn pulled from
+# context. Forensic 2026-06-27: the German smalltalk "Was geht ab?" was
+# mis-transcribed as "Lask it up!" [en] conf 0.509, missed every smalltalk /
+# whisper-junk list, and the router-LLM (reading a 30k-token context full of the
+# prior "open Discord, bridge-mine channel" command) re-ran that exact CU plan on
+# a turn that asked for nothing. ``computer_use`` + the spawn vehicles are the
+# heavy, irreversible-looking actions hidden here. Deliberately NOT hidden: the
+# read-only ``screenshot`` tool (so "Was siehst du auf dem Bildschirm?" still
+# works) and ``open_app`` (lighter; naming an app already reads as action-intent).
+_INHERITABLE_ACTION_TOOL_NAMES: frozenset[str] = _SPAWN_TOOL_NAMES | {"computer_use"}
+
 # Interrogative opener (DE / EN / ES) — the leading question word of a plain
 # "what/which/who/how/…"-style factual question. Anchored at the start after an
 # optional wake/greeting/politeness run so "Jarvis, welche Firmen …" still
@@ -1231,6 +1245,15 @@ _LANG_SWITCH_CONFIRM: dict[str, str] = {
     "auto": "Erledigt — ich passe meine Sprache ab jetzt automatisch deiner an.",
 }
 
+# Spoken when the live reply-language switch applied but PERSIST failed (read-only
+# / locked jarvis.toml). Honest: scoped to this session, not "from now on", because
+# it reverts on restart (audit 2026-06-27). de/en/es.
+_LANG_SWITCH_CONFIRM_SESSION: dict[str, str] = {
+    "de": "Für diese Sitzung antworte ich auf Deutsch — dauerhaft speichern hat nicht geklappt.",
+    "en": "For this session I'll reply in English — saving it permanently didn't work.",
+    "es": "Por esta sesión responderé en español — no pude guardarlo de forma permanente.",
+}
+
 # Sub-agent (Heavy-Task worker) provider switch — the voice_command_gate
 # "subagent_switch" path. The gate returns the spoken provider word; this maps
 # it to a CANONICAL [brain.sub_jarvis].provider slug (the values are the only
@@ -1277,6 +1300,70 @@ def _subagent_switch_failure_phrase(result: dict, display: str, lang: str) -> st
     kind = str(result.get("error_kind") or "other")
     table = _SUBAGENT_SWITCH_FAIL.get(kind, _SUBAGENT_SWITCH_FAIL["other"])
     return table.get(lang, table["de"]).format(p=display)
+
+
+# Main-brain provider switch — the voice_command_gate "provider_switch" path.
+# Mirrors the subagent tables: routed through the validated apply_provider_switch
+# so the spoken readback is HONEST (audit 2026-06-27: the old path returned ""
+# silently, even when the switch was refused). de/en/es (Runtime Output Language).
+_PROVIDER_SWITCH_CONFIRM: dict[str, str] = {
+    "de": "Erledigt — dein Haupt-Brain läuft jetzt auf {p}.",
+    "en": "Done — your main brain now runs on {p}.",
+    "es": "Listo — tu cerebro principal ahora usa {p}.",
+}
+_PROVIDER_SWITCH_FAIL: dict[str, dict[str, str]] = {
+    "missing_credential": {
+        "de": "{p} ist nicht eingerichtet — hinterlege zuerst den Schlüssel, dann stelle ich um.",
+        "en": "{p} isn't set up — add its key first, then I'll switch.",
+        "es": "{p} no está configurado — añade su clave primero y luego cambio.",
+    },
+    "subagent_only": {
+        "de": "{p} geht nur als Sub-Agent, nicht als Haupt-Brain.",
+        "en": "{p} only works as a sub-agent, not as the main brain.",
+        "es": "{p} solo funciona como sub-agente, no como cerebro principal.",
+    },
+    "other": {
+        "de": "Den Haupt-Brain konnte ich nicht auf {p} umstellen.",
+        "en": "I couldn't switch the main brain to {p}.",
+        "es": "No pude cambiar el cerebro principal a {p}.",
+    },
+}
+
+
+def _provider_switch_failure_phrase(result: dict, display: str, lang: str) -> str:
+    kind = str(result.get("error_kind") or "other")
+    table = _PROVIDER_SWITCH_FAIL.get(kind, _PROVIDER_SWITCH_FAIL["other"])
+    return table.get(lang, table["de"]).format(p=display)
+
+
+# Background-task cancel — the voice_command_gate "cancel" path. Honest readback:
+# names the count when something was stopped, says so plainly when nothing ran
+# (audit 2026-06-27: the old path was silent either way). de/en/es.
+_CANCEL_CONFIRM: dict[str, str] = {
+    "de": "Erledigt — {n} laufende Aufgabe(n) gestoppt.",
+    "en": "Done — stopped {n} running task(s).",
+    "es": "Listo — detuve {n} tarea(s) en curso.",
+}
+_CANCEL_NONE: dict[str, str] = {
+    "de": "Es lief gerade nichts, das ich stoppen könnte.",
+    "en": "Nothing was running to stop.",
+    "es": "No había nada en curso que detener.",
+}
+
+# Thinking-depth override — the voice_command_gate "depth_deep"/"depth_fast"
+# path. Confirms the new depth instead of staying silent (audit 2026-06-27).
+_DEPTH_CONFIRM: dict[str, dict[str, str]] = {
+    "deep": {
+        "de": "Alles klar — ich denke ab jetzt gründlicher.",
+        "en": "Got it — I'll think more deeply from now on.",
+        "es": "Entendido — pensaré más a fondo a partir de ahora.",
+    },
+    "fast": {
+        "de": "Alles klar — ich denke ab jetzt schneller.",
+        "en": "Got it — I'll think faster from now on.",
+        "es": "Entendido — pensaré más rápido a partir de ahora.",
+    },
+}
 
 # General self-control (2026-06-22). Not every settings change can have its own
 # deterministic gate — the gates (language, sub-agent) are high-precision
@@ -2730,16 +2817,23 @@ class BrainManager:
             log.debug("in-memory cfg.brain.reply_language update skipped: %s", exc)
         # Persist as boot default — best-effort: a read-only / locked jarvis.toml
         # must not break the live switch that already applied.
+        persisted = True
         try:
             from jarvis.core import config_writer
 
             config_writer.set_reply_language(lang)
         except Exception as exc:  # noqa: BLE001
+            persisted = False
             log.warning(
                 "reply-language persist failed (live switch still applied): %s", exc
             )
-        log.info("reply-language switched to %r via deterministic voice gate", lang)
-        return _LANG_SWITCH_CONFIRM.get(lang, _LANG_SWITCH_CONFIRM["de"])
+        log.info(
+            "reply-language switched to %r via deterministic voice gate (persisted=%s)",
+            lang, persisted,
+        )
+        if persisted:
+            return _LANG_SWITCH_CONFIRM.get(lang, _LANG_SWITCH_CONFIRM["de"])
+        return _LANG_SWITCH_CONFIRM_SESSION.get(lang, _LANG_SWITCH_CONFIRM_SESSION["de"])
 
     def _is_self_control_turn(self, text: str) -> bool:
         """Broad (class-level, NOT per-command) detector for a request to change
@@ -2808,6 +2902,38 @@ class BrainManager:
             return template.format(p=display)
         display = _SUBAGENT_DISPLAY.get(canonical, canonical)
         return _subagent_switch_failure_phrase(result, display, lang)
+
+    async def _apply_main_provider_switch(self, word: str) -> str:
+        """Deterministic main-brain provider switch with an HONEST readback.
+
+        Mirrors ``_apply_subagent_provider_switch``: routes through the one
+        validated ``apply_provider_switch("brain", …)`` (credential / catalog /
+        subagent-only checks + live-apply) and speaks the CHECKED result. The
+        old path (``await self.switch(word); return ""``) was silent even on a
+        refused switch (audit 2026-06-27). Returns ``""`` for an unmappable word
+        so the caller falls through to the brain.
+        """
+        canonical = PROVIDER_ALIASES.get(word.strip().lower())
+        if canonical is None:
+            return ""
+        from jarvis.brain.app_control import (
+            apply_provider_switch,
+            get_spec,
+            resolve_running_cfg,
+        )
+        try:
+            result = await apply_provider_switch("brain", canonical, cfg=resolve_running_cfg())
+        except Exception as exc:  # noqa: BLE001
+            log.warning("main-brain voice switch failed: %s", exc)
+            result = {"ok": False, "error_kind": "other", "error": str(exc)}
+        lang = self._resolve_turn_lang()
+        spec = get_spec(str(result.get("new_provider") or canonical))
+        display = getattr(spec, "label", None) or canonical
+        if result.get("ok"):
+            log.info("main-brain provider switched to %r via deterministic voice gate", canonical)
+            template = _PROVIDER_SWITCH_CONFIRM.get(lang, _PROVIDER_SWITCH_CONFIRM["de"])
+            return template.format(p=display)
+        return _provider_switch_failure_phrase(result, display, lang)
 
     def _detect_cancel_intent(self, text: str) -> bool:
         """True when the user wants to cancel a running OpenClaw task."""
@@ -3582,6 +3708,58 @@ class BrainManager:
             return {n: tool for n, tool in tools.items() if n not in _SPAWN_TOOL_NAMES}
         except Exception:  # noqa: BLE001 — gate must never blind the brain
             log.debug("knowledge-question spawn-hide gate failed", exc_info=True)
+            return tools
+
+    def _hide_action_tools_on_signalless_turn(
+        self, tools: dict[str, "Tool"], user_text: str
+    ) -> dict[str, "Tool"]:
+        """Remove computer_use + the spawn vehicles from ANY turn that carries no
+        action signal of its own, so the router-LLM cannot INHERIT the previous
+        turn's desktop action from the conversation context.
+
+        GENERAL rule, not one phrase (user mandate 2026-06-27 — "this must apply
+        to ALL questions, that was only an example"): a question, a remark, or a
+        mis-transcription asks for no desktop action. If the turn names no action
+        of its own, it must not be able to fire ``computer_use``/spawn — whatever
+        the conversation context holds. Length- and ``?``-agnostic: a long
+        question is still a question; a trailing ``?`` no longer keeps the heavy
+        tools (the prior version did, which let a mis-heard question still inherit
+        a CU action). Forensic: "Was geht ab?" → STT "Lask it up!" [en] conf
+        0.509 → the brain re-ran the prior "open Discord, bridge-mine channel" CU
+        plan on a turn that asked for nothing.
+
+        A turn KEEPS the consequential tools only when it carries a real signal:
+        an action-intent (open-app / PC-control / screen-surface / registry), an
+        artifact-build request, or an explicitly named spawn vehicle. The
+        read-only ``screenshot`` tool is never in the hidden set, so a visual
+        question ("Was siehst du auf dem Bildschirm?") is still answered by
+        looking — only the click/type AGENT loop is withheld. Any fault returns
+        the tools unchanged so a gate bug can never blind the brain. Pure regex +
+        the existing deterministic detectors (AP-11 safe, provider-agnostic).
+        """
+        if not isinstance(tools, dict):
+            return tools
+        try:
+            t = (user_text or "").strip()
+            if not t:
+                return tools
+            # Any genuine ACTION signal keeps the consequential tools: an action
+            # intent (open-app / PC-control / names the screen surface / registry
+            # intent), an artifact-build request, or an explicitly named spawn
+            # vehicle. A turn with NONE of these asks for no desktop action.
+            if (
+                self._turn_has_action_intent(t)
+                or self._research_wants_artifact(t)
+                or self._get_force_spawn_pattern().search(t)
+            ):
+                return tools
+            return {
+                n: tool
+                for n, tool in tools.items()
+                if n not in _INHERITABLE_ACTION_TOOL_NAMES
+            }
+        except Exception:  # noqa: BLE001 — gate must never blind the brain
+            log.debug("signalless-turn action-hide gate failed", exc_info=True)
             return tools
 
     def _apply_plugin_relevance(
@@ -4825,6 +5003,20 @@ class BrainManager:
         log.info("Cancelled %d background openclaw task(s)", cancelled)
         return cancelled
 
+    def _cancel_readback(self, count: int) -> str:
+        """Honest spoken readback for a deterministic cancel: name the count, or
+        say plainly that nothing was running. Never silent (audit 2026-06-27)."""
+        lang = self._resolve_turn_lang()
+        if count > 0:
+            return _CANCEL_CONFIRM.get(lang, _CANCEL_CONFIRM["de"]).format(n=count)
+        return _CANCEL_NONE.get(lang, _CANCEL_NONE["de"])
+
+    def _depth_readback(self, level: str) -> str:
+        """Honest spoken confirmation of a depth override. Never silent."""
+        lang = self._resolve_turn_lang()
+        table = _DEPTH_CONFIRM.get(level, _DEPTH_CONFIRM["deep"])
+        return table.get(lang, table["de"])
+
     # ------------------------------------------------------------------
     # Intent-Router → (provider, model) chain
     # ------------------------------------------------------------------
@@ -5097,13 +5289,26 @@ class BrainManager:
                 return resumed
 
         if self._detect_cancel_intent(user_text):
-            self._cancel_all_background_tasks()
-            return ""
+            confirmation = self._cancel_readback(self._cancel_all_background_tasks())
+            await self._record_response_side_effects(
+                user_text=user_text,
+                response_text=confirmation,
+                use_history=use_history,
+                trace_id=turn_trace_id,
+            )
+            return confirmation
 
         switch_target = self._detect_switch_intent(user_text)
         if switch_target:
-            await self.switch(switch_target)
-            return ""
+            confirmation = await self._apply_main_provider_switch(switch_target)
+            if confirmation:
+                await self._record_response_side_effects(
+                    user_text=user_text,
+                    response_text=confirmation,
+                    use_history=use_history,
+                    trace_id=turn_trace_id,
+                )
+                return confirmation
 
         # Deterministic reply-language switch — runs BEFORE the force-spawn
         # heuristic so "stell auf Englisch um" sets brain.reply_language
@@ -5138,12 +5343,16 @@ class BrainManager:
                 return confirmation
 
         depth_override = self._detect_depth_override(user_text)
-        if depth_override == "deep":
-            self._force_level = "deep"
-            return ""
-        if depth_override == "fast":
-            self._force_level = "fast"
-            return ""
+        if depth_override in ("deep", "fast"):
+            self._force_level = depth_override
+            confirmation = self._depth_readback(depth_override)
+            await self._record_response_side_effects(
+                user_text=user_text,
+                response_text=confirmation,
+                use_history=use_history,
+                trace_id=turn_trace_id,
+            )
+            return confirmation
 
         # AD-12 + AP-OC5 (OpenClaw bridge wave-4 router): intercept status/cancel
         # phrases via pattern match BEFORE the force-spawn heuristic
@@ -5657,6 +5866,15 @@ class BrainManager:
             # tool to grab. search_web / reads / computer_use stay visible.
             if isinstance(_turn_tools, dict):
                 _turn_tools = self._hide_spawn_on_knowledge_question(
+                    _turn_tools, user_text
+                )
+            # Signalless-turn action-hide (forensic 2026-06-27): a short turn with
+            # NO actionable signal of its own ("Was geht ab?" mis-heard as "Lask
+            # it up!" conf 0.509) must not be able to reach computer_use/spawn —
+            # the router-LLM would otherwise INHERIT the previous turn's CU action
+            # from the conversation context and fire a wrong desktop action.
+            if isinstance(_turn_tools, dict):
+                _turn_tools = self._hide_action_tools_on_signalless_turn(
                     _turn_tools, user_text
                 )
             # AI Pointer: on a deictic pointer turn the cursor crop is already the

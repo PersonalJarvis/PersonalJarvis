@@ -18,8 +18,11 @@ from jarvis.harness.computer_use_context import ComputerUseContext
 
 
 def _ctx() -> ComputerUseContext:
+    # uia_click_fallback defaults OFF in production (restore-to-good, 2026-06-27);
+    # these tests exercise the snap FEATURE, so they opt it on explicitly.
     return ComputerUseContext(
-        vision_engine=None, brain_manager=None, tool_executor=object(), tools={}
+        vision_engine=None, brain_manager=None, tool_executor=object(), tools={},
+        uia_click_fallback=True,
     )
 
 
@@ -192,6 +195,7 @@ async def test_snap_fires_inside_click_with_refine_on_miss(monkeypatch):
         tool_executor=_RecordingExecutor(),
         tools={"click": _FakeClickTool()},
         verify_after_each_step=True,
+        uia_click_fallback=True,  # snap defaults OFF now; this test exercises it
     )
     ok, msg = await sol._execute_action(
         {"action": "click", "x": 500, "y": 500, "target": "submit"},
@@ -204,3 +208,27 @@ async def test_snap_fires_inside_click_with_refine_on_miss(monkeypatch):
     assert ctx.tool_executor.clicks == [(500, 500), (480, 480)]
     assert "UIA-snapped" in msg
     assert "Submit" in msg
+
+
+# --- restore-to-good guard: the two click-correction layers stay OFF ----------
+
+
+def test_click_correction_layers_default_off():
+    """2026-06-27 restore-to-good: the UIA snap (BUG-CU-UIASNAP wild-snap, added
+    2026-06-24) and proactive zoom-before-click (made default-on then reverted)
+    BOTH default OFF. The known-good click pipeline is coarse click -> verify ->
+    LLM refine on miss; these correction layers stacked and degraded accuracy, so
+    they must not silently re-enable. Re-enable per [computer_use] with a bench."""
+    from jarvis.core.config import ComputerUseConfig
+
+    cfg = ComputerUseConfig()
+    assert cfg.uia_click_fallback is False
+    assert cfg.zoom_before_click is False
+
+    ctx = ComputerUseContext(
+        vision_engine=None, brain_manager=None, tool_executor=object(), tools={}
+    )
+    assert ctx.uia_click_fallback is False
+    assert ctx.zoom_before_click is False
+    # And the snap helper no-ops on a default context (the layer is truly off).
+    assert sol._uia_snap_click is not None  # symbol still present for re-enable
