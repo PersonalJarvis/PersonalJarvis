@@ -43,6 +43,9 @@ _PROVIDER_PATTERN = re.compile(
     r"\b(?:wechsel[n]?|wechsle|switch(?:\s+to)?|benutze?|nutze|use|nimm)"
     r"(?:\s+(?:den|die|das|der|the|deinen|deine|dein|meinen|meine|mein|my))?"
     r"(?:\s+(?:brain[-\s]*provider|provider|anbieter|sprach[-\s]*modell|modell|model))?"
+    # Optional "von/from <source>" so "switch FROM gemini TO openai" targets the
+    # destination after auf/zu/to, not the source (forensic 2026-06-27).
+    r"(?:\s+(?:von|from)\s+(?:" + "|".join(re.escape(p) for p in _PROVIDER_ALIASES) + r"))?"
     r"(?:\s+(?:auf|zu|to))?\s+"
     r"(?P<provider>" + "|".join(re.escape(p) for p in _PROVIDER_ALIASES) + r")\b",
     re.IGNORECASE,

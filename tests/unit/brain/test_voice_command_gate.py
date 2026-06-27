@@ -112,3 +112,22 @@ def test_subagent_switch_plain_target() -> None:
     m = match_voice_command("stell den subagent provider auf gemini")
     assert m is not None and m.kind == "subagent_switch"
     assert m.target == "gemini"
+
+
+def test_main_provider_switch_from_x_to_y_targets_y() -> None:
+    # "von Gemini auf OpenAI" must target OpenAI (the destination), not fall through.
+    m = match_voice_command("wechsel von gemini auf openai")
+    assert m is not None and m.kind == "provider_switch"
+    assert m.target == "openai"
+
+
+def test_main_provider_switch_from_x_to_y_english() -> None:
+    m = match_voice_command("switch from claude to gemini")
+    assert m is not None and m.kind == "provider_switch"
+    assert m.target == "gemini"
+
+
+def test_main_provider_switch_plain_still_works() -> None:
+    m = match_voice_command("wechsel auf gemini")
+    assert m is not None and m.kind == "provider_switch"
+    assert m.target == "gemini"
