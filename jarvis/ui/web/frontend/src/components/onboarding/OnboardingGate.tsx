@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useOnboarding } from "@/hooks/useOnboarding";
 import { OnboardingFlow } from "./OnboardingFlow";
 import { RiskGate } from "./RiskGate";
+import { IntroVideoScreen } from "./IntroVideoScreen";
 
 /**
  * Blocking overlay that shows the onboarding flow until it is completed.
@@ -16,6 +17,11 @@ export function OnboardingGate() {
   // never touching onboarding/completed state, so it shows once per fresh open
   // of an unfinished guide and cannot reintroduce the restart-loop bug.
   const [riskAck, setRiskAck] = useState(false);
+  // The tutorial video is the second screen — shown after the risk gate and
+  // before the step flow. Local-state only (like riskAck), so it never touches
+  // onboarding/completed state and re-shows on a fresh open / ?onboarding=force
+  // replay. A null mutation guarantees it cannot reintroduce the restart-loop.
+  const [videoSeen, setVideoSeen] = useState(false);
   // Set once the user completes the guide (the "Get started" / complete() path
   // dispatches jarvis:onboarding-changed). It dismisses the overlay even under
   // ?onboarding=force, so a dev replay closes on finish exactly like a real
@@ -47,7 +53,11 @@ export function OnboardingGate() {
   if (!show) return null;
 
   // On a terms version bump for an already-completed install, re-open at terms.
-  const initialStep = onb.state.completed && termsOutdated ? "terms" : undefined;
+  const isTermsBumpReopen = Boolean(onb.state.completed && termsOutdated);
+  const initialStep = isTermsBumpReopen ? "terms" : undefined;
+  // Skip the tutorial on a pure terms-bump re-open: that user has already seen
+  // it and is only re-accepting a new Terms version.
+  const showVideo = !videoSeen && !isTermsBumpReopen;
 
   return (
     <div
@@ -55,10 +65,12 @@ export function OnboardingGate() {
       aria-modal="true"
       className="fixed inset-0 z-50 flex items-center justify-center bg-background/90 backdrop-blur-sm"
     >
-      {riskAck ? (
-        <OnboardingFlow onb={onb} initialStep={initialStep} />
-      ) : (
+      {!riskAck ? (
         <RiskGate onAccept={() => setRiskAck(true)} />
+      ) : showVideo ? (
+        <IntroVideoScreen onContinue={() => setVideoSeen(true)} />
+      ) : (
+        <OnboardingFlow onb={onb} initialStep={initialStep} />
       )}
     </div>
   );

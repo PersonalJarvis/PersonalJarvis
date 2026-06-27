@@ -17,7 +17,6 @@ import {
   type ClaudeStatus,
   type CodexStatus,
 } from "@/hooks/useProviders";
-import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
 import { ProviderBillingBadge } from "@/components/ProviderBillingBadge";
 
@@ -247,6 +246,15 @@ export function SubagentSection() {
         {claudeRow && (
           <li>
             <ClaudeConnectionCard
+              status={claudeStatus}
+              row={claudeRow}
+              onChanged={reload}
+            />
+          </li>
+        )}
+        {claudeRow && (
+          <li>
+            <ClaudeApiCard
               status={claudeStatus}
               row={claudeRow}
               onChanged={reload}
@@ -685,10 +693,16 @@ function ClaudeConnectionCard({
   const { activating, activate } = useSubagentActivate(row, onChanged);
   const connected = Boolean(status?.connected);
   const installed = status?.installed ?? false;
-  const isActive = Boolean(row?.is_active_brain);
+  // Claude has ONE subagent slug (claude-api) reached by EITHER the Claude Max
+  // OAuth login OR an Anthropic API key — split into two sibling cards (mirror
+  // of Codex/OpenAI + Antigravity/Gemini). This subscription card lights up only
+  // when claude-api is the active worker AND it is running over the OAuth login
+  // (mode != "api_key"); the API key card owns the api_key mode. So exactly one
+  // of the two ever shows "active".
+  const isActive = Boolean(row?.is_active_brain) && status?.mode !== "api_key";
   // A subscription login shows the signed-in account + tier ("Connected as
-  // alex@… · Claude Max"); an API-key setup shows the honest "via Anthropic
-  // API key" message instead; not connected shows how to sign in.
+  // alex@… · Claude Max"); not connected shows how to sign in. The API-key
+  // alternative now lives on its own card below, not here.
   const detail = connected
     ? status?.user_email
       ? `Connected as ${status.user_email}${
@@ -750,7 +764,8 @@ function ClaudeConnectionCard({
                 open
               </span>
             )}
-            {row && <ProviderBillingBadge billing={row.billing} />}
+            {/* Split card: this one is the subscription login only. */}
+            <ProviderBillingBadge billing="subscription" />
           </div>
           <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
             {detail}
@@ -793,30 +808,118 @@ function ClaudeConnectionCard({
           )}
         </div>
       </div>
+    </div>
+  );
+}
 
-      {/* Dual billing made reachable: besides the Claude Max subscription login
-          above, paste an Anthropic API key to bill the subagent per token —
-          the same key the Claude brain uses (anthropic_api_key). Storing it
-          flips this card's mapping `key_set` true, so Claude becomes selectable
-          as a subagent even without a subscription login. The subscription is
-          billed first when both are present (server-side, mirror of Codex). */}
-      <div className="space-y-2 border-t border-border/60 pt-3">
-        <p className="text-[11px] font-medium text-foreground/80">
-          Or use an Anthropic API key
-        </p>
-        <ApiKeyForm
-          secretKey="anthropic_api_key"
-          dashboardUrl="https://console.anthropic.com/settings/keys"
-          configured={Boolean(status?.api_key_present)}
-          credentialHelp="Anthropic API key (starts with sk-ant-). Billed per token on your Anthropic account — an alternative to the Claude Max subscription login above."
-          onChanged={() => {
-            // Refresh this section AND the brain cards above (they share the
-            // same anthropic_api_key) so the new key reflects everywhere.
-            window.dispatchEvent(new Event("jarvis:secret-configured"));
-            void onChanged();
-          }}
-        />
+/**
+ * The Anthropic Claude (API) card — the per-token sibling of the subscription
+ * card above, built to behave EXACTLY like the OpenAI / Google Gemini subagent
+ * cards (`SubagentProviderCard`): there is NO key field here. The Anthropic API
+ * key is entered ONCE on the "Claude (API-Key)" brain provider above, and this
+ * card just reflects whether that key is set (`row.key_set`) and lets the user
+ * pick Claude-on-the-key as the heavy-task worker — locked with a pointer to the
+ * Brain section until the key exists, exactly like OpenAI/Gemini.
+ *
+ * Claude has ONE subagent slug (claude-api) reached by either auth, so this card
+ * and the subscription card both drive `useSubagentActivate(row)`. To keep only
+ * one of the two lit, "active" here means claude-api is the active worker AND it
+ * is running over the API key (status mode === "api_key"); the subscription card
+ * owns every other mode.
+ */
+function ClaudeApiCard({
+  status,
+  row,
+  onChanged,
+}: {
+  status: ClaudeStatus | null;
+  row: SubagentMappingRow | undefined;
+  onChanged: () => void | Promise<void>;
+}) {
+  const { activating, activate } = useSubagentActivate(row, onChanged);
+  // Mirror the other API cards: ready/locked tracks the stored brain key.
+  const keySet = Boolean(row?.key_set);
+  const isActive = Boolean(row?.is_active_brain) && status?.mode === "api_key";
+
+  // Click anywhere on the card activates — except the radio/label (own handler)
+  // so a single user click never fires activate() twice (mirror of the others).
+  function handleCardActivate(e: React.MouseEvent<HTMLDivElement>) {
+    const target = e.target as HTMLElement | null;
+    if (target && (target.closest("input") || target.closest("label"))) {
+      return;
+    }
+    void activate();
+  }
+
+  return (
+    <div
+      onClick={handleCardActivate}
+      onDoubleClick={handleCardActivate}
+      title={
+        isActive
+          ? "This subagent provider is active"
+          : keySet
+            ? "Activate this subagent provider"
+            : "Add the Claude API key in the Brain section first"
+      }
+      className={cn(
+        "card-outline space-y-2 p-4 transition-colors",
+        isActive
+          ? "border-primary bg-primary/[0.06] ring-1 ring-primary/30"
+          : keySet
+            ? "cursor-pointer hover:border-primary/40 hover:bg-primary/[0.02]"
+            : "opacity-95",
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">Anthropic Claude (API)</span>
+            {isActive ? (
+              <span className="chip-yellow">active</span>
+            ) : keySet ? (
+              <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-emerald-600">
+                ready
+              </span>
+            ) : (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                open
+              </span>
+            )}
+            <ProviderBillingBadge billing="api" />
+          </div>
+          {row && (
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              <code className="font-mono">
+                {row.jarvis} → {row.openclaw}
+              </code>
+              {" · "}
+              <span className="font-mono">
+                {row.env_var}
+                {row.env_fallback && ` / ${row.env_fallback}`}
+              </span>
+            </p>
+          )}
+        </div>
+
+        {row && (
+          <SubagentActiveControl
+            row={row}
+            activating={activating}
+            onActivate={activate}
+          />
+        )}
       </div>
+
+      {!keySet && (
+        <p className="flex items-center gap-1.5 text-[11px] text-amber-600">
+          <Lock className="h-3 w-3 shrink-0" />
+          <span>
+            Locked &mdash; add the <strong>Claude (API-Key)</strong> key in the
+            Brain section above to unlock it.
+          </span>
+        </p>
+      )}
     </div>
   );
 }

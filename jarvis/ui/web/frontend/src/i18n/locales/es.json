@@ -1310,6 +1310,12 @@
       "cta": "Empezar",
       "skip_setup": "Omitir la configuración por ahora"
     },
+    "tutorial": {
+      "title": "Mira el recorrido de 2 minutos",
+      "body": "Un repaso rápido de lo que hace Personal Jarvis y cómo es la configuración. Puedes omitirlo y empezar enseguida.",
+      "continue": "Continuar",
+      "skip": "Omitir el vídeo"
+    },
     "risk": {
       "title": "Antes de continuar",
       "lead": "Personal Jarvis es un software potente y experimental.",

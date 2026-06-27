@@ -87,3 +87,76 @@ def test_cancel_and_depth_still_work() -> None:
     assert match_voice_command("jarvis stopp").kind == "cancel"
     assert match_voice_command("denk gründlich").kind == "depth_deep"
     assert match_voice_command("nimm haiku").kind == "depth_fast"
+
+
+def test_subagent_switch_picks_target_after_preposition_not_source() -> None:
+    """ "von Antigravity auf Codex" must resolve to the TARGET (codex), not the
+    mentioned SOURCE (antigravity). Forensic 2026-06-27: the alias-list-ORDER
+    scan returned antigravity (it sits earlier in the list) so the worker was
+    switched to the source the user was switching AWAY from."""
+    m = match_voice_command(
+        "stell den subagent provider von antigravity auf codex um"
+    )
+    assert m is not None and m.kind == "subagent_switch"
+    assert m.target == "codex"
+
+
+def test_subagent_switch_longest_alias_after_preposition() -> None:
+    # "openai-codex" must win over its "openai"/"codex" substrings after the prep.
+    m = match_voice_command("wechsel den subagent von gemini auf openai-codex")
+    assert m is not None and m.kind == "subagent_switch"
+    assert m.target == "openai-codex"
+
+
+def test_subagent_switch_plain_target() -> None:
+    m = match_voice_command("stell den subagent provider auf gemini")
+    assert m is not None and m.kind == "subagent_switch"
+    assert m.target == "gemini"
+
+
+def test_main_provider_switch_from_x_to_y_targets_y() -> None:
+    # "von Gemini auf OpenAI" must target OpenAI (the destination), not fall through.
+    m = match_voice_command("wechsel von gemini auf openai")
+    assert m is not None and m.kind == "provider_switch"
+    assert m.target == "openai"
+
+
+def test_main_provider_switch_from_x_to_y_english() -> None:
+    m = match_voice_command("switch from claude to gemini")
+    assert m is not None and m.kind == "provider_switch"
+    assert m.target == "gemini"
+
+
+def test_main_provider_switch_plain_still_works() -> None:
+    m = match_voice_command("wechsel auf gemini")
+    assert m is not None and m.kind == "provider_switch"
+    assert m.target == "gemini"
+
+
+def test_main_provider_switch_recognizes_chatgpt_alias() -> None:
+    # "ChatGPT" is the everyday name for the OpenAI brain; the gate must catch it.
+    m = match_voice_command("nutze chatgpt")
+    assert m is not None and m.kind == "provider_switch"
+    assert m.target == "chatgpt"
+
+
+def test_main_provider_switch_recognizes_anthropic_alias() -> None:
+    # "Anthropic" is the everyday name for the claude-api brain.
+    m = match_voice_command("switch to anthropic")
+    assert m is not None and m.kind == "provider_switch"
+    assert m.target == "anthropic"
+
+
+def test_language_switch_picks_first_language_in_text_not_dict_order() -> None:
+    # "deutsch" appears before "englisch" in the sentence, so the reply language
+    # must be German — not English just because "englisch" sits earlier in the
+    # alias dict (forensic 2026-06-27).
+    m = match_voice_command("antworte auf deutsch und englisch")
+    assert m is not None and m.kind == "language_switch"
+    assert m.target == "de"
+
+
+def test_language_switch_single_language_unaffected() -> None:
+    m = match_voice_command("antworte auf englisch")
+    assert m is not None and m.kind == "language_switch"
+    assert m.target == "en"
