@@ -2832,14 +2832,27 @@ async def _click_with_refine(
     retry_note = ""
     snapped = False  # Phase 2: UIA snap is tried at most once per click action
     for _attempt in range(_CLICK_MAX_ATTEMPTS):
+        # Proactive zoom-before-click ([computer_use].zoom_before_click, opt-in,
+        # default off): run the zoom-refine BEFORE the first click too, not only
+        # after a verified miss. Needs a named target to confirm against;
+        # without one it would only add a round-trip, so it falls through to the
+        # coarse click. Internal screenshot crop only — nothing renders on
+        # screen; on a not-found verdict the loop re-plans instead of clicking
+        # the wrong element (handled below).
+        proactive_zoom = (
+            not clicked
+            and bool(target)
+            and getattr(ctx, "zoom_before_click", False)
+        )
         refined = None
-        if clicked:
+        if clicked or proactive_zoom:
             # Trust-first (2026-06-10 latency plan Task 3): the refine pass is
             # a full LLM round-trip, and on the FIRST attempt it corrected the
             # model's point by <=5 px in live runs — pure cost (the executor
             # and the refiner see the same frame). Reserve it for retries
-            # after a verified miss, where the zoomed live crop genuinely
-            # re-locates the target.
+            # after a verified miss UNLESS the operator opted into proactive
+            # zoom above, where the zoomed live crop re-locates the target and
+            # guards against a wrong-element click.
             refined = await _refine_click_point(
                 ctx, observation, x, y, monitor_geom,
                 user_goal=user_goal, target=target, retry_note=retry_note,
