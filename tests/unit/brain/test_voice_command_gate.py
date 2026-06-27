@@ -145,3 +145,18 @@ def test_main_provider_switch_recognizes_anthropic_alias() -> None:
     m = match_voice_command("switch to anthropic")
     assert m is not None and m.kind == "provider_switch"
     assert m.target == "anthropic"
+
+
+def test_language_switch_picks_first_language_in_text_not_dict_order() -> None:
+    # "deutsch" appears before "englisch" in the sentence, so the reply language
+    # must be German — not English just because "englisch" sits earlier in the
+    # alias dict (forensic 2026-06-27).
+    m = match_voice_command("antworte auf deutsch und englisch")
+    assert m is not None and m.kind == "language_switch"
+    assert m.target == "de"
+
+
+def test_language_switch_single_language_unaffected() -> None:
+    m = match_voice_command("antworte auf englisch")
+    assert m is not None and m.kind == "language_switch"
+    assert m.target == "en"

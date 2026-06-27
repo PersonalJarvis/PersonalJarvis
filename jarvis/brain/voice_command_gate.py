@@ -114,13 +114,18 @@ _LANG_PREP = re.compile(r"\b(?:auf|zu|to|in|on)\b", re.IGNORECASE)
 
 
 def _match_language_switch(t: str) -> str | None:
-    code: str | None = None
+    # Pick the language that appears EARLIEST in the utterance, not the first
+    # one in alias-dict order. "antworte auf deutsch und englisch" must resolve
+    # to de (the first spoken language), not en just because "englisch" happens
+    # to sit earlier in _LANG_ALIASES (forensic 2026-06-27).
+    best: tuple[int, str] | None = None
     for word, c in _LANG_ALIASES.items():
-        if re.search(rf"\b{re.escape(word)}\b", t):
-            code = c
-            break
-    if code is None:
+        m = re.search(rf"\b{re.escape(word)}\b", t)
+        if m is not None and (best is None or m.start() < best[0]):
+            best = (m.start(), c)
+    if best is None:
         return None
+    code = best[1]
     if _LANG_CHANGE_VERB.search(t):
         return code
     if _LANG_IMPERATIVE_SPEAK.search(t):
