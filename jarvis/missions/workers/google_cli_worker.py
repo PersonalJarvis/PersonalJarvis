@@ -63,12 +63,36 @@ _DROP_ENV: tuple[str, ...] = (
 _WORKER_TIMEOUT_S: float = 1200.0
 
 
-def _build_agy_worker_argv(exe: str, prompt: str) -> list[str]:
+def _build_agy_worker_argv(exe: str, prompt: str, worktree: Path) -> list[str]:
     """agy worker argv: one non-interactive prompt with auto-approved tools so it
-    can write files in the worktree. Newlines are collapsed to spaces — agy takes
-    the whole prompt as a single ``--print`` argument."""
+    can write files in the worktree.
+
+    ``--add-dir <worktree>`` makes agy treat the per-mission git worktree as its
+    active workspace, so deliverables land there (and show up in the Critic's
+    ``git diff HEAD``). Without it agy has no active workspace in ``--print`` mode
+    and writes every file into its home-relative
+    ``.gemini/antigravity-cli/brain/<session>/`` (or ``scratch/<project>/``) dir —
+    the worktree then stays empty, the Critic sees an empty diff, and EVERY
+    antigravity mission fails ``critic_loop_exhausted`` even though agy did the
+    work (live forensic 2026-06-27: mission_019f07cb wrote
+    ``…/brain/<session>/datenmenge_150_petabyte.md`` and was failed for an empty
+    diff; agy itself reported "kein aktives Workspace-Verzeichnis geöffnet").
+
+    ``--print-timeout`` is widened from agy's 5-minute default to the worker's own
+    time budget so a long "production-quality" task is not cut short by agy before
+    our :data:`_WORKER_TIMEOUT_S` cap.
+
+    Newlines are collapsed to spaces — agy takes the whole prompt as a single
+    ``--print`` argument.
+    """
     safe_prompt = " ".join(prompt.split())
-    return [exe, "--print", safe_prompt, "--dangerously-skip-permissions"]
+    return [
+        exe,
+        "--print", safe_prompt,
+        "--add-dir", str(worktree),
+        "--print-timeout", f"{int(_WORKER_TIMEOUT_S)}s",
+        "--dangerously-skip-permissions",
+    ]
 
 
 def _build_agy_worker_env(base_env: dict[str, str]) -> dict[str, str]:
@@ -178,7 +202,7 @@ class GoogleCliWorker:
         # agy path: PTY + write-mode + isolated hook/mcp-free home.
         exe = cli.argv_prefix[0]
         log_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240 — trivial sync mkdir (mirrors GeminiWorker)
-        argv = _build_agy_worker_argv(exe, prompt)
+        argv = _build_agy_worker_argv(exe, prompt, worktree)
         agy_env = _build_agy_worker_env(env)
 
         yield ClaudeSystemInit(

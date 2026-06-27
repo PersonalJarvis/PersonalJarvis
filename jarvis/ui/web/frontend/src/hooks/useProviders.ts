@@ -94,6 +94,26 @@ export interface AntigravityStatus {
   error: string | null;
 }
 
+/**
+ * Mirror of `jarvis/claude_auth.py::ClaudeAuthStatus.to_dict()`. The Anthropic
+ * sibling of `CodexStatus` / `AntigravityStatus`: whether the `claude` CLI is
+ * installed and whether the subagent runs over the Claude Max subscription
+ * (the OAuth login) or an Anthropic API key, plus the connected account email +
+ * subscription tier so the card can show "Connected as <email>".
+ */
+export interface ClaudeStatus {
+  installed: boolean;
+  connected: boolean;
+  mode: string; // "subscription" | "api_key" | "unknown"
+  message: string;
+  version?: string | null;
+  account_label?: string | null;
+  user_email?: string | null;
+  subscription_type?: string | null; // raw tier, e.g. "max"
+  binary_path?: string | null;
+  error?: string | null;
+}
+
 interface ProvidersResponse {
   providers: ProviderDescriptor[];
 }
@@ -224,6 +244,34 @@ export async function loginAntigravity(): Promise<void> {
 /** Disconnects the Google login (POST /api/antigravity/logout). */
 export async function logoutAntigravity(): Promise<void> {
   const res = await fetch("/api/antigravity/logout", { method: "POST" });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+}
+
+/**
+ * Starts the interactive Claude sign-in by driving the `claude` CLI as a
+ * subprocess (POST /api/claude/login). The Anthropic sibling of
+ * `startCodexLogin` — a 409 means no Claude CLI is installed (the detail carries
+ * an install_command).
+ */
+export async function loginClaude(): Promise<void> {
+  const res = await fetch("/api/claude/login", { method: "POST" });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const detail = body.detail;
+    throw new Error(
+      typeof detail === "object" && detail?.message
+        ? detail.message
+        : detail ?? `HTTP ${res.status}`,
+    );
+  }
+}
+
+/** Disconnects the Claude subscription login (POST /api/claude/logout). */
+export async function logoutClaude(): Promise<void> {
+  const res = await fetch("/api/claude/logout", { method: "POST" });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(body.detail ?? `HTTP ${res.status}`);
