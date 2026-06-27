@@ -1265,6 +1265,17 @@ class SpeechPipeline:
         # window while within this grace. Bounded — one full window's worth.
         self._last_announcement_spoken_monotonic: float | None = None
         self._post_readback_grace_s: float = idle_timeout_s
+        # Monotonic timestamp of the moment Jarvis last STOPPED speaking an
+        # inline answer (SPEAKING -> LISTENING). A long turn dispatched OFF the
+        # ``_active_session`` loop — the delegation grace / completion timer buffers
+        # a complete-looking command and answers it ~24 s later — leaves the idle
+        # window that was armed at the user's utterance still ticking through the
+        # whole turn, so it expires seconds after the answer lands and hangs up on
+        # a user who never asked to (forensic 2026-06-27 08:49: a "switch the
+        # worker" command answered after ~24 s; the 30 s window armed at the
+        # utterance expired 6 s later). The idle-expiry branch grants ONE fresh
+        # window while within this grace (== one idle window).
+        self._last_answer_floor_monotonic: float | None = None
         self._post_tts_listen_suppression_s = post_tts_listen_suppression_s
         self._input_suppressed_until_ns: int = 0
         self._continue_listening_after_response = continue_listening_after_response
@@ -1665,6 +1676,15 @@ class SpeechPipeline:
         previous = getattr(self, "_turn_state", TurnTakingState.IDLE)
         if previous != new_state:
             log.info("turn-state: %s -> %s", previous.value, new_state.value)
+        # Jarvis just STOPPED speaking → the floor goes back to the user. Stamp it
+        # so the idle loop can grant a fresh listening window even when the turn
+        # ran off the main loop (delegation grace / completion timer) and left the
+        # original idle window ticking (forensic 2026-06-27 08:49).
+        if (
+            previous == TurnTakingState.JARVIS_SPEAKING
+            and new_state == TurnTakingState.LISTENING
+        ):
+            self._last_answer_floor_monotonic = time.monotonic()
         self._turn_state = new_state
         await self._transition(self._supervisor_state_for_turn(new_state))
         # Turn-boundary: the floor has cleared → flush any announcements that
@@ -1682,6 +1702,15 @@ class SpeechPipeline:
                 asyncio.create_task(
                     self._on_announcement(event), name="deferred-announcement"
                 )
+
+    def _within_post_answer_grace(self) -> bool:
+        """True if Jarvis stopped speaking within the last idle window. The idle
+        loop grants ONE fresh listening window so a slow answer dispatched off
+        this loop is not hung up on seconds after it lands (forensic 2026-06-27).
+        Bounded: after the re-armed window elapses the stamp is older than one
+        idle window and normal idle-timeout resumes."""
+        last = self._last_answer_floor_monotonic
+        return last is not None and (time.monotonic() - last) < self._idle_timeout_s
 
     @staticmethod
     def _supervisor_state_for_turn(state: TurnTakingState) -> str:
@@ -4064,6 +4093,7 @@ class SpeechPipeline:
         self._last_endpoint_reason = None
         # A fresh session never inherits a previous session's readback grace.
         self._last_announcement_spoken_monotonic = None
+        self._last_answer_floor_monotonic = None
         if self._ptt_mode:
             return await self._ptt_session()
         async with MicrophoneCapture(device=self._input_device) as mic:
@@ -4143,6 +4173,20 @@ class SpeechPipeline:
                                 "readback - keeping the voice session open so the "
                                 "user can respond."
                             )
+                            continue
+                        # A normal/inline answer — or one dispatched OFF this loop
+                        # via the delegation grace / completion timer — just handed
+                        # the floor back to the user. The idle window armed at the
+                        # user's utterance ticked down DURING the (slow) turn, so
+                        # re-arm one fresh window instead of hanging up seconds after
+                        # the answer lands (forensic 2026-06-27 08:49). Bounded: the
+                        # stamp is cleared, so the next idle window hangs up normally.
+                        if self._within_post_answer_grace():
+                            log.info(
+                                "Idle-Timeout reached right after Jarvis answered - "
+                                "re-arming a fresh window so the user can respond."
+                            )
+                            self._last_answer_floor_monotonic = None
                             continue
                         log.info("⏲ Idle-Timeout — lege auf.")
                         next_task.cancel()
