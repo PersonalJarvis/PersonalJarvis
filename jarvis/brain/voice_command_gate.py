@@ -101,12 +101,13 @@ _LANG_CHANGE_VERB = re.compile(
 # "sprich Englisch", "speak English". German "spreche/spricht" (statements) are
 # intentionally NOT matched.
 _LANG_IMPERATIVE_SPEAK = re.compile(r"\b(?:sprich|speak\w*)\b", re.IGNORECASE)
-# (c) Output / request verbs — need a directional preposition to anchor the
-# language as the OUTPUT target. "respond in X", "antworte auf X", "rede auf X",
-# "set/stell … auf/to X", "mach … auf X".
+# (c) Reply / speech verbs — need a directional preposition to anchor the
+# language as Jarvis's reply target. Broad creation verbs such as "mach(en)" are
+# intentionally excluded: "make an HTML file about what comes up in English" is
+# an artifact request, not a persistent reply-language switch.
 _LANG_OUTPUT_VERB = re.compile(
     r"\b(?:antwort\w*|respond\w*|repl(?:y|ies)|answer\w*|rede|reden|set|stell\w*"
-    r"|mach\w*)\b",
+    r")\b",
     re.IGNORECASE,
 )
 _LANG_PREP = re.compile(r"\b(?:auf|zu|to|in|on)\b", re.IGNORECASE)
