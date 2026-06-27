@@ -8,14 +8,14 @@ vi.mock("@/components/MascotGigi", () => ({ MascotGigi: () => <div data-testid="
 // step must persist the pick through this hook's saveStyle and NEVER restart.
 const saveStyle = vi.fn().mockResolvedValue({
   ok: true,
-  style: "whisper_bar",
+  style: "jarvis_bar",
   persisted: true,
   applied_live: false, // even when a restart would be "required", onboarding must not restart
   restart_required: true,
 });
 vi.mock("@/hooks/useOverlayStyle", () => ({
   useOverlayStyle: () => ({
-    config: { style: "whisper_bar", options: ["whisper_bar", "mascot", "none"] },
+    config: { style: "jarvis_bar", options: ["jarvis_bar", "mascot", "none"] },
     loading: false,
     error: null,
     refetch: vi.fn(),
@@ -49,7 +49,7 @@ function renderStep() {
 it("renders all three overlay-style options", () => {
   renderStep();
   expect(
-    screen.getByRole("button", { name: "onboarding.system_style.options.whisper_bar" }),
+    screen.getByRole("button", { name: "onboarding.system_style.options.jarvis_bar" }),
   ).toBeDefined();
   expect(
     screen.getByRole("button", { name: "onboarding.system_style.options.mascot" }),
@@ -65,7 +65,7 @@ it("pre-selects the Jarvis Bar and labels it Recommended", () => {
   expect(screen.getByText("onboarding.system_style.recommended")).toBeDefined();
   // The bar card is the pressed/selected one.
   const bar = screen.getByRole("button", {
-    name: "onboarding.system_style.options.whisper_bar",
+    name: "onboarding.system_style.options.jarvis_bar",
   });
   expect(bar.getAttribute("aria-pressed")).toBe("true");
 });
@@ -125,11 +125,11 @@ it("reverts the optimistic selection when the save fails", async () => {
   );
   await waitFor(() => expect(saveStyle).toHaveBeenCalledWith("mascot"));
   // The pick was not persisted, so the highlighted card snaps back to the
-  // last-known persisted value (whisper_bar) and an error is shown.
+  // last-known persisted value (jarvis_bar) and an error is shown.
   await waitFor(() =>
     expect(
       screen
-        .getByRole("button", { name: "onboarding.system_style.options.whisper_bar" })
+        .getByRole("button", { name: "onboarding.system_style.options.jarvis_bar" })
         .getAttribute("aria-pressed"),
     ).toBe("true"),
   );

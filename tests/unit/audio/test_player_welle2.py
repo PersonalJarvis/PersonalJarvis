@@ -140,7 +140,7 @@ def test_write_samples_logs_warning_on_underflow(monkeypatch, caplog) -> None:
     with caplog.at_level(logging.WARNING, logger="jarvis.audio.player"):
         player._write_samples(stream, arr, source_rate=24000, device_rate=24000)
 
-    # Audio is written in ~60 ms sub-blocks (so the whisper-bar equalizer can
+    # Audio is written in ~60 ms sub-blocks (so the jarvis-bar equalizer can
     # follow Jarvis's voice), so 2400 frames @ 24 kHz become 1440 + 960 = two
     # writes; each underflowing sub-block logs a warning. The behaviour under
     # test is "an underflow is never silently discarded", not the block count.

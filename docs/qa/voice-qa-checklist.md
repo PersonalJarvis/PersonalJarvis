@@ -22,7 +22,7 @@ bug history says is most likely to quietly come back.
 
 - [ ] Restart the app cleanly via `POST /api/settings/restart-app`
       (`Stop-Process` returns *Access Denied* — the in-app endpoint is the reliable path).
-- [ ] Wake word triggers; the orb / whisper-bar reacts.
+- [ ] Wake word triggers; the orb / jarvis-bar reacts.
 - [ ] App log or chat transcript is visible — language, beheaded-turn and
       leaked-tool-output bugs are only obvious when you compare *what you said*
       against *what came back*.

@@ -8,10 +8,10 @@ from jarvis.core.config import UIConfig
 from ui.orb.overlay import OrbOverlay
 
 
-def test_ui_config_default_is_whisper_bar_not_legacy_orb() -> None:
-    # Default flipped to the slim whisper bar; the legacy procedural "orb" is
+def test_ui_config_default_is_jarvis_bar_not_legacy_orb() -> None:
+    # Default flipped to the slim jarvis bar; the legacy procedural "orb" is
     # still never the default. The mascot stays explicitly selectable.
-    assert UIConfig().orb_style == "whisper_bar"
+    assert UIConfig().orb_style == "jarvis_bar"
     assert UIConfig().orb_style != "orb"
     assert UIConfig(orb_style="mascot").orb_style == "mascot"
 

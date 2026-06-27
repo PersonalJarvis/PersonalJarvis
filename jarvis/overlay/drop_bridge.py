@@ -1,6 +1,6 @@
 """Process-global bridge from the Tk overlay drop to the app's brain intake.
 
-The floating overlay (``ui/orb/overlay.py``, ``jarvis/ui/whisperbar/overlay.py``)
+The floating overlay (``ui/orb/overlay.py``, ``jarvis/ui/jarvisbar/overlay.py``)
 runs its Tk mainloop in a daemon thread and must stay ignorant of the asyncio
 loop, the EventBus and the brain. When a file/text is dropped on it, the overlay
 calls :func:`dispatch_drop` from the Tk thread; the desktop bridge

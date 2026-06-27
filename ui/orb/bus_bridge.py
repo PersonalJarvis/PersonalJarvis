@@ -203,12 +203,12 @@ class OrbBusBridge:
         # drives _on_state without publishing VoiceSession events (and the
         # very first session before any end-event) behaves exactly as before.
         self._suppress_show_until_session: bool = False
-        # Boot-readiness gate. The persistent bar must not appear before the
-        # speech pipeline can actually hear the user — otherwise the user sees
-        # the bar on boot and assumes Jarvis is listening when warm-up is still
-        # running. ``reveal_bar_when_voice_ready`` waits for this event (set on
-        # VoiceBootStatus(ready=True)) and then reveals the persistent bar once.
-        # ``_boot_reveal_done`` makes the reveal idempotent across the ready
+        # Boot z-order re-lift latch. The persistent bar is now visible from
+        # boot (the overlay maps its window immediately — see
+        # DesktopApp._build_overlay_surface), so this is NO LONGER a visibility
+        # gate. Once voice is ready, ``reveal_bar_when_voice_ready`` re-asserts
+        # the bar's topmost (after the main window + tray have finished mapping).
+        # ``_boot_reveal_done`` makes the re-lift idempotent across the ready
         # signal and the fallback timeout. asyncio.Event() is loop-agnostic at
         # construction (Py3.10+ dropped the loop param; project minimum is
         # 3.11), so it is safe to build off the running loop.
@@ -232,8 +232,8 @@ class OrbBusBridge:
             self._bus.subscribe(ResponseGenerated, self._on_response_generated)
             self._bus.subscribe(OpenClawBackgroundCompleted, self._on_background_completed)
             self._bus.subscribe(AudioOutFirst, self._on_audio_out_first)
-            # Boot-readiness gate: the persistent bar is revealed only once the
-            # speech pipeline signals it can actually hear the user.
+            # Boot z-order re-lift: once the speech pipeline signals voice is
+            # ready, re-assert the (already-visible) persistent bar's topmost.
             self._bus.subscribe(VoiceBootStatus, self._on_voice_boot_status)
             # ADR-0016 L2 — voice-driven recovery from "orb lost on screen".
             # The local_action_gate publishes OrbResetRequested when the
@@ -466,22 +466,24 @@ class OrbBusBridge:
         """Track the speech-pipeline boot readiness.
 
         ``ready=True`` (emitted once Phase A of warm-up is live — audio + VAD +
-        wake + STT + TTS client) releases the boot gate so the persistent bar is
-        revealed. ``ready=False`` (warm-up start) is ignored — the bar stays
-        hidden until voice can genuinely hear the user.
+        wake + STT + TTS client) releases the latch so the persistent bar's
+        topmost z-order is re-asserted (the bar is already visible from boot).
+        ``ready=False`` (warm-up start) is ignored.
         """
         if event.ready:
             self._voice_ready_event.set()
 
     async def reveal_bar_when_voice_ready(self, *, timeout_s: float = 30.0) -> None:
-        """Keep the persistent bar hidden until voice is ready, then reveal it.
+        """Re-assert the persistent bar's topmost z-order once voice is ready.
 
-        Scheduled once on the event loop at boot. Waits for
-        ``VoiceBootStatus(ready=True)``; if it never arrives within ``timeout_s``
-        (voice offline / pipeline crashed at startup), the bar is revealed anyway
-        so a degraded host is not left with no bar at all — a few seconds late
-        instead of never. A non-persistent bar / the mascot (``hide_on_idle``)
-        is left untouched: it pops on a real session, not at boot.
+        The persistent bar is already visible from boot (the overlay maps its
+        window immediately — see DesktopApp._build_overlay_surface), so this is
+        NOT the visibility gate. Scheduled once on the event loop at boot, it
+        waits for ``VoiceBootStatus(ready=True)`` (or a bounded ``timeout_s``
+        fallback) and then re-shows the idle pill, which re-lifts the bar above
+        the main window + tray after they have finished mapping. A non-persistent
+        bar / the mascot (``hide_on_idle``) is left untouched: it pops on a real
+        session, not at boot.
         """
         reason = "timeout-fallback"
         try:
@@ -492,7 +494,10 @@ class OrbBusBridge:
         self._reveal_persistent_bar(reason)
 
     def _reveal_persistent_bar(self, reason: str) -> None:
-        """Show the persistent bar's idle pill exactly once. Idempotent."""
+        """Re-show the persistent bar's idle pill exactly once (z-order re-lift).
+
+        Idempotent. The bar is already mapped at boot; this only re-lifts it.
+        """
         if self._boot_reveal_done:
             return
         self._boot_reveal_done = True

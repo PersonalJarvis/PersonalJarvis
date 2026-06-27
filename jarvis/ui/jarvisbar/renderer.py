@@ -1,7 +1,7 @@
-"""Pure rendering math + drawing for the whisper bar.
+"""Pure rendering math + drawing for the jarvis bar.
 
 No tkinter, no I/O — every function is deterministic given its inputs, so the
-visual behaviour is unit-testable. ``WhisperBarRenderer.render`` returns a PIL
+visual behaviour is unit-testable. ``JarvisBarRenderer.render`` returns a PIL
 image with a magenta color-key background that the Tk surface keys out.
 
 State → look:
@@ -34,7 +34,7 @@ CLOSE_X = (228, 110, 96)
 # Size factors. ``_SCALE`` is the overall shrink (1.0 was the original, far too
 # big). ``_W`` / ``_H`` then stretch width / height independently on top of it:
 # _W < 1 narrows, _H > 1 makes it taller. Tune these three numbers to resize.
-_SCALE = 0.30  # overall size (was 0.336; -10% per Wispr feedback)
+_SCALE = 0.30  # overall size (was 0.336; -10% per design feedback)
 _W = 0.8       # 20% narrower than the uniform _SCALE
 _H = 1.2       # taller than the uniform _SCALE (was 1.5; -20% per feedback)
 _IDLE_W = 1.2  # standby pill length — a touch longer so the standby dots fit
@@ -72,18 +72,18 @@ _BOTTOM_PAD = 10
 WIN_W = ACTIVE_W + 12
 WIN_H = ACTIVE_H + _BOTTOM_PAD + 4
 
-N_BARS = 10  # slim strokes, count matched to Wispr (was 15 = too many)
+N_BARS = 10  # slim strokes, count matched to the slim-bar reference (was 15 = too many)
 # Inner animation geometry is expressed as fractions of the LIVE pill size, so
 # the equalizer bars / wave grow together with the pill instead of staying a
 # fixed size and looking lost in the big active bar.
 _BAR_MAX_FRAC = 0.66  # equalizer max height / pill height
 _BAR_MIN_FRAC = 0.10
 _BARS_SPAN_FRAC = 0.62  # equalizer span / pill width (wider → room for more bars)
-_BAR_HALF_W_FRAC = 0.008  # half bar thickness / pill width (slim Wispr strokes)
+_BAR_HALF_W_FRAC = 0.008  # half bar thickness / pill width (slim strokes)
 _STROKE_W = max(2, round(3.0 * _SCALE))  # control stroke thickness (px)
 
 # Standby dots: when nothing is said the pill shows a quiet row of dots
-# (Wispr-style) instead of an empty pill. Muted so they read as "at rest".
+# (slim-bar style) instead of an empty pill. Muted so they read as "at rest".
 DOT_COLOR = (150, 140, 120)
 _N_DOTS = 7  # dots in the standby row
 _DOT_R_FRAC = 0.16  # dot radius / pill height (small round dots, not chunky)
@@ -384,7 +384,7 @@ class _RenderState:
     ph: float = float(COLLAPSED_H)  # live pill height, eased toward the target
 
 
-class WhisperBarRenderer:
+class JarvisBarRenderer:
     def __init__(self, accent: str = "#e7c46e") -> None:
         self._accent = _hex_to_rgb(accent)
         self._st = _RenderState()

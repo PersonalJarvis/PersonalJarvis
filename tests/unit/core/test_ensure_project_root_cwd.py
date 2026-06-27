@@ -43,7 +43,7 @@ def test_ensure_project_root_cwd_adds_root_to_sys_path(monkeypatch, tmp_path):
     ``sys.path``. ``python -m`` seeds ``sys.path[0]`` from the *start-time* CWD;
     a later ``os.chdir`` does NOT fix it. A manual start / restart-app inheriting
     the user home therefore left ``ui`` unimportable, and the on-screen overlay
-    (whisper-bar) silently failed to start ("No module named 'ui'"). Pinning the
+    (jarvis-bar) silently failed to start ("No module named 'ui'"). Pinning the
     CWD is not enough — the root must be put on the import path too.
     """
     root = str(config.PROJECT_ROOT)

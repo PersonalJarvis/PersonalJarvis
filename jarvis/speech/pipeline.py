@@ -3604,7 +3604,7 @@ class SpeechPipeline:
     def request_hangup(self) -> None:
         """End the live voice session from outside the audio path.
 
-        The whisper-bar's hover-to-close cross calls this (and any future UI
+        The jarvis-bar's hover-to-close cross calls this (and any future UI
         close affordance). Thread-safe like ``request_voice_session``: it routes
         through the single hangup chokepoint, whose primitives (``Event.set``,
         player stop, CU-cancel) are safe to invoke from the Tk thread. A no-op
@@ -3615,7 +3615,7 @@ class SpeechPipeline:
         self._trigger_voice_hangup()
 
     def request_ptt_toggle(self) -> None:
-        """Toggle endpoint-free dictation — the whisper-bar's square button.
+        """Toggle endpoint-free dictation — the jarvis-bar's square button.
 
         First call opens a mic with NO silence-endpoint (speak as long as you
         want, pauses included); the second call submits. Thread-safe like the

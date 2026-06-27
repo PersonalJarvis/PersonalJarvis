@@ -11,10 +11,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from jarvis.ui.desktop_app import DesktopApp
-from jarvis.ui.whisperbar.null_overlay import NullOverlay
+from jarvis.ui.jarvisbar.null_overlay import NullOverlay
 
 
-def _app(*, orb_style="whisper_bar", bridge=..., orb=None):
+def _app(*, orb_style="jarvis_bar", bridge=..., orb=None):
     app = DesktopApp.__new__(DesktopApp)  # bypass heavy __init__
     app.cfg = SimpleNamespace(
         ui=SimpleNamespace(
@@ -47,7 +47,7 @@ class FakeOld:
 
 def test_swap_to_none_uses_nulloverlay_and_hides_old():
     bridge, old = FakeBridge(), FakeOld()
-    app = _app(orb_style="whisper_bar", bridge=bridge, orb=old)
+    app = _app(orb_style="jarvis_bar", bridge=bridge, orb=old)
     result = app.swap_overlay("none")
     assert result == {"ok": True, "applied_live": True, "style": "none"}
     assert isinstance(bridge.surface, NullOverlay)
@@ -75,17 +75,17 @@ def test_swap_to_uncached_real_style_needs_restart():
     bridge = FakeBridge()
     app = _app(orb_style="mascot", bridge=bridge, orb=FakeOld())
     app._surfaces = {}  # nothing cached for the bar
-    result = app.swap_overlay("whisper_bar")
-    assert result == {"ok": True, "applied_live": False, "style": "whisper_bar"}
+    result = app.swap_overlay("jarvis_bar")
+    assert result == {"ok": True, "applied_live": False, "style": "jarvis_bar"}
     assert bridge.surface is None  # bridge NOT repointed (no live apply)
 
 
 def test_swap_without_bridge_is_persisted_only():
     app = _app(orb_style="mascot", bridge=None, orb=None)
-    assert app.swap_overlay("whisper_bar") == {
+    assert app.swap_overlay("jarvis_bar") == {
         "ok": True,
         "applied_live": False,
-        "style": "whisper_bar",
+        "style": "jarvis_bar",
     }
 
 

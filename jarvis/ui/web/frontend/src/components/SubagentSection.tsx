@@ -17,6 +17,7 @@ import {
   type ClaudeStatus,
   type CodexStatus,
 } from "@/hooks/useProviders";
+import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
 import { ProviderBillingBadge } from "@/components/ProviderBillingBadge";
 
@@ -791,6 +792,30 @@ function ClaudeConnectionCard({
             </button>
           )}
         </div>
+      </div>
+
+      {/* Dual billing made reachable: besides the Claude Max subscription login
+          above, paste an Anthropic API key to bill the subagent per token —
+          the same key the Claude brain uses (anthropic_api_key). Storing it
+          flips this card's mapping `key_set` true, so Claude becomes selectable
+          as a subagent even without a subscription login. The subscription is
+          billed first when both are present (server-side, mirror of Codex). */}
+      <div className="space-y-2 border-t border-border/60 pt-3">
+        <p className="text-[11px] font-medium text-foreground/80">
+          Or use an Anthropic API key
+        </p>
+        <ApiKeyForm
+          secretKey="anthropic_api_key"
+          dashboardUrl="https://console.anthropic.com/settings/keys"
+          configured={Boolean(status?.api_key_present)}
+          credentialHelp="Anthropic API key (starts with sk-ant-). Billed per token on your Anthropic account — an alternative to the Claude Max subscription login above."
+          onChanged={() => {
+            // Refresh this section AND the brain cards above (they share the
+            // same anthropic_api_key) so the new key reflects everywhere.
+            window.dispatchEvent(new Event("jarvis:secret-configured"));
+            void onChanged();
+          }}
+        />
       </div>
     </div>
   );

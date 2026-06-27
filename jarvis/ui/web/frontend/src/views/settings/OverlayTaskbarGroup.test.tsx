@@ -20,7 +20,7 @@ vi.mock("@/components/MascotGigi", () => ({
 // The three data hooks resolve to safe, loaded defaults.
 vi.mock("@/hooks/useOverlayStyle", () => ({
   useOverlayStyle: () => ({
-    config: { style: "whisper_bar", options: ["whisper_bar", "mascot", "none"] },
+    config: { style: "jarvis_bar", options: ["jarvis_bar", "mascot", "none"] },
     loading: false,
     error: null,
     saveStyle: vi.fn(),
@@ -78,7 +78,7 @@ describe("OverlayTaskbarGroup", () => {
   it("offers the three overlay-style options", () => {
     render(<OverlayTaskbarGroup />);
     expect(
-      screen.getByText("settings_view.overlay_style.options.whisper_bar"),
+      screen.getByText("settings_view.overlay_style.options.jarvis_bar"),
     ).toBeDefined();
     expect(
       screen.getByText("settings_view.overlay_style.options.mascot"),

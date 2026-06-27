@@ -17,16 +17,16 @@ def test_ducking_config_defaults():
 
 def test_set_mute_music_round_trip(tmp_path):
     cfg = tmp_path / "jarvis.toml"
-    cfg.write_text('[ui]\norb_style = "whisper_bar"\n', encoding="utf-8")
+    cfg.write_text('[ui]\norb_style = "jarvis_bar"\n', encoding="utf-8")
     config_writer.set_mute_music(True, path=cfg)
     data = tomllib.loads(cfg.read_text(encoding="utf-8"))
     assert data["ducking"]["enabled"] is True
-    assert data["ui"]["orb_style"] == "whisper_bar"  # sibling preserved
+    assert data["ui"]["orb_style"] == "jarvis_bar"  # sibling preserved
 
 
 def test_set_bar_persistent_round_trip(tmp_path):
     cfg = tmp_path / "jarvis.toml"
-    cfg.write_text('[ui]\norb_style = "whisper_bar"\n', encoding="utf-8")
+    cfg.write_text('[ui]\norb_style = "jarvis_bar"\n', encoding="utf-8")
     config_writer.set_bar_persistent(False, path=cfg)
     data = tomllib.loads(cfg.read_text(encoding="utf-8"))
     assert data["ui"]["bar_persistent"] is False
