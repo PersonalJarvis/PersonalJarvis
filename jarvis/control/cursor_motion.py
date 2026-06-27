@@ -47,13 +47,33 @@ def _win_get_pos() -> tuple[int, int]:
     return int(pt.x), int(pt.y)
 
 
-def _win_set_pos(x: int, y: int) -> None:
+def _raw_set_cursor(x: int, y: int) -> int:
+    """Call Win32 ``SetCursorPos`` once, returning its (unreliable) BOOL.
+
+    Extracted so the no-raise policy in :func:`_win_set_pos` is unit-testable
+    off-Windows (the test injects a fake that returns 0).
+    """
     import ctypes
 
     user32 = ctypes.windll.user32
     user32.SetCursorPos.argtypes = (ctypes.c_int, ctypes.c_int)
-    if not user32.SetCursorPos(int(x), int(y)):
-        raise ctypes.WinError(ctypes.get_last_error())
+    return int(user32.SetCursorPos(int(x), int(y)))
+
+
+def _win_set_pos(x: int, y: int) -> None:
+    """Move the OS cursor to absolute ``(x, y)`` — best-effort, multi-monitor safe.
+
+    ``SetCursorPos``'s BOOL return is UNRELIABLE across a multi-monitor / negative
+    virtual desktop: when the move crosses into a monitor positioned LEFT of the
+    primary (negative virtual-desktop X) it returns 0 yet STILL moves the cursor.
+    The old ``if not SetCursorPos(): raise`` turned that spurious 0 into a hard
+    error that aborted EVERY click on the left monitor (the "CU clicks void on the
+    left monitor" bug — a two-monitor user's whole left screen was unclickable).
+    Mirror pyautogui: fire the move and trust it; the following RELATIVE click
+    lands wherever the cursor ends up, and the CU loop's post-click pixel-verify
+    is the real backstop against a genuine miss. Never raises on the boolean.
+    """
+    _raw_set_cursor(int(x), int(y))
 
 
 def _resolve_glide_ms() -> int:

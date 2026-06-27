@@ -68,8 +68,15 @@ class VisionEngine:
         uia_source: UIATreeSource | None = None,
         cache: VisionCache | None = None,
         bus: EventBus | None = None,
+        monitor_strategy: Literal["foreground", "primary", "all"] = "foreground",
     ) -> None:
-        self._screenshot_source = screenshot_source or ScreenshotSource()
+        # ``monitor_strategy`` selects which screen the screenshot source captures.
+        # Default "foreground" preserves behaviour for non-CU callers; the factory
+        # builds the Computer-Use engine with "primary" so CU stays on the main
+        # monitor (multi-monitor-safe). Ignored when an explicit source is injected.
+        self._screenshot_source = screenshot_source or ScreenshotSource(
+            monitor_strategy=monitor_strategy
+        )
         # AD-10: per-OS UI-tree source (UIA on Windows, AX on macOS, AT-SPI on
         # Linux, null elsewhere) selected by the factory; the explicit
         # ``uia_source`` DI argument still overrides it for tests.

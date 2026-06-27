@@ -82,3 +82,23 @@ def test_glide_os_cursor_zero_duration_is_instant() -> None:
         duration_ms=0,
     )
     assert moves == [(42, 42)]
+
+
+def test_win_set_pos_does_not_raise_on_unreliable_zero_return(monkeypatch) -> None:
+    """Regression (CU clicks void on the LEFT monitor): SetCursorPos returns 0
+    (reports failure) yet STILL moves the cursor when crossing into a monitor
+    positioned left of primary — negative virtual-desktop X. The old
+    ``if not SetCursorPos(): raise`` turned that spurious 0 into a hard error that
+    aborted every left-monitor click. _win_set_pos must trust the move and NOT
+    raise on the boolean."""
+    from jarvis.control import cursor_motion
+
+    calls: list[tuple[int, int]] = []
+
+    def _fake_raw(x: int, y: int) -> int:
+        calls.append((x, y))
+        return 0  # SetCursorPos "failure" return — must be ignored
+
+    monkeypatch.setattr(cursor_motion, "_raw_set_cursor", _fake_raw)
+    cursor_motion._win_set_pos(-1280, 720)  # negative X, must not raise
+    assert calls == [(-1280, 720)]

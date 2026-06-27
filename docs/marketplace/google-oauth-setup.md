@@ -24,10 +24,11 @@ through their *own* OAuth client. After registering, you store the resulting
 3. **APIs & Services → OAuth consent screen** → User type **External** → Create.
    Fill app name, your support email, and developer contact email → Save.
 4. **Scopes** → add the ones you need: `.../auth/gmail.readonly`,
-   `.../auth/gmail.send`, `.../auth/drive.file`, `.../auth/calendar.events`.
+   `.../auth/gmail.send`, `.../auth/drive.file`, `.../auth/calendar`.
    (Drive's `drive.file` is non-sensitive; the Gmail scopes are
-   sensitive/restricted; `calendar.events` is sensitive — see "Keeping it
-   connected" below.)
+   sensitive/restricted; the full `calendar` scope is sensitive — it lets Jarvis
+   read events across ALL your calendars, not just the primary one, so a lesson
+   on a secondary "School" calendar isn't missed. See "Keeping it connected".)
 5. **Test users** → add your own Google address. In Testing mode only listed
    users can authorize.
 6. **Credentials → Create credentials → OAuth client ID** → Application type
@@ -79,12 +80,15 @@ one-time "Google hasn't verified this app" notice when connecting:
   so Drive is permanent immediately after you publish (or even in testing it is
   unaffected by the 7-day rule because `drive.file` is non-sensitive… still,
   publish to be safe).
-- For **`calendar.events`** (Calendar): **sensitive but not restricted** — same
-  light path as Gmail send: publishing to production needs OAuth verification for
-  *public* use but **no CASA assessment**. For your own account just publish to
-  production (unverified is fine) and the connection stops expiring; voice
-  commands like "what's on my calendar today" and "schedule a meeting tomorrow at
-  3pm" then work indefinitely.
+- For **`calendar`** (Calendar, full read/write across all calendars):
+  **sensitive but not restricted** — same light path as Gmail send: publishing to
+  production needs OAuth verification for *public* use but **no CASA assessment**.
+  For your own account just publish to production (unverified is fine) and the
+  connection stops expiring; voice commands like "what's on my calendar today" and
+  "schedule a meeting tomorrow at 3pm" then work indefinitely. (The narrower
+  `calendar.events` scope also works for create/read/delete but **cannot list your
+  other calendars**, so events on a secondary calendar would be invisible — use
+  the full `calendar` scope.)
 - For **Gmail read** (`gmail.readonly`, restricted): publishing to production
   requires Google's OAuth app **verification + a CASA security assessment**
   (several weeks). Until that completes, Gmail works but reconnects ~weekly.

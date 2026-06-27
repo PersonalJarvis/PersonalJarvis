@@ -399,6 +399,19 @@ def set_overlay_style(style: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _patch_table(path, "ui", "orb_style", style)
 
 
+def set_computer_use_engine(engine: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist the active Computer-Use engine to ``[computer_use] engine``.
+
+    ``engine`` is ``"current"`` (the maintained engine) or ``"june13"`` (the
+    frozen 2026-06-10 / 352a784f snapshot kept as a reversible fallback).
+    TOML-only by design: ``computer_use.engine`` is NOT in the drift-guard's
+    reference snapshot, so it is never reverted (same rationale as
+    :func:`set_overlay_style`). The harness reads the value per mission, so the
+    switch applies on the next mission / restart without a code change.
+    """
+    _patch_table(path, "computer_use", "engine", engine)
+
+
 def set_silence_window_ms(ms: int, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the voice silence window to ``[speech] vad_silence_ms`` in jarvis.toml.
 

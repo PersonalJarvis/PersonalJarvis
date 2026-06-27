@@ -165,12 +165,23 @@ def open_url(url: str) -> bool:
     plat = detect_platform()
     try:
         if plat == "win32":
-            os.startfile(url)  # type: ignore[attr-defined]  # noqa: S606
-            return True
-        cmd = ["open", url] if plat == "darwin" else ["xdg-open", url]
-        subprocess.Popen(  # noqa: S603
-            cmd, creationflags=NO_WINDOW_CREATIONFLAGS, close_fds=True
-        )
+            # A REAL subprocess, NOT os.startfile. ShellExecute from the pythonw
+            # background process (the desktop tray app) can be a silent no-op —
+            # the same trap open_file_with documents — so a returned "success"
+            # may open no browser at all. rundll32 FileProtocolHandler launches
+            # the default browser as a real process and takes the URL as a single
+            # argv (CreateProcess, no shell), so '&' in OAuth URLs is safe.
+            subprocess.Popen(  # noqa: S603
+                ["rundll32.exe", "url.dll,FileProtocolHandler", url],
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+                close_fds=True,
+            )
+        else:
+            cmd = ["open", url] if plat == "darwin" else ["xdg-open", url]
+            subprocess.Popen(  # noqa: S603
+                cmd, creationflags=NO_WINDOW_CREATIONFLAGS, close_fds=True
+            )
+        log.info("open_url: launched default browser for %s", url)
         return True
     except OSError as exc:
         log.warning("open_url failed for %s: %s", url, exc)

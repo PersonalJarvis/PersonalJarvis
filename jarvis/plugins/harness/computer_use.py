@@ -11,6 +11,7 @@ This module only provides the protocol binding (health/invoke/cancel).
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections.abc import AsyncIterator
 
@@ -23,10 +24,42 @@ from jarvis.harness.computer_use_context import (
     register_active_cu_token,
     unregister_active_cu_token,
 )
-from jarvis.harness.screenshot_only_loop import run_cu_loop
-
+_log = logging.getLogger(__name__)
 
 _TIMEOUT_EXIT_CODE = 124
+
+
+def _resolve_run_cu_loop():
+    """Select the Computer-Use engine per ``[computer_use].engine`` (reversible).
+
+    ``"current"`` (default) -> the maintained engine; ``"june13"`` -> the frozen
+    2026-06-10 / 352a784f snapshot kept as a known-good fallback. Read PER
+    MISSION so a config flip applies on the next mission (no restart needed).
+    Logs the live engine — INFO for ``june13`` (the unusual state) so it is never
+    ambiguous which version is running. Never raises: a config-read problem falls
+    back to the maintained engine.
+    """
+    try:
+        from jarvis.core.config import load_config  # noqa: PLC0415
+
+        cu = getattr(load_config(), "computer_use", None)
+        engine = str(getattr(cu, "engine", "current") or "current")
+    except Exception:  # noqa: BLE001 — a config read must never break a mission
+        engine = "current"
+    if engine == "june13":
+        from jarvis.harness.screenshot_only_loop_june13 import (  # noqa: PLC0415
+            run_cu_loop as _loop,
+        )
+        _log.info(
+            "[cu] ENGINE = june13 (frozen 2026-06-10 / 352a784f). "
+            "Revert with [computer_use].engine = current.",
+        )
+        return _loop
+    from jarvis.harness.screenshot_only_loop import (  # noqa: PLC0415
+        run_cu_loop as _loop,
+    )
+    _log.debug("[cu] ENGINE = current")
+    return _loop
 
 
 class ComputerUseHarness:
@@ -92,6 +125,7 @@ class ComputerUseHarness:
             # registry is a SET — concurrent CU missions each register so a
             # single hangup cancels them ALL (BUG-CU-CONCURRENT-CANCEL).
             register_active_cu_token(token)
+            run_cu_loop = _resolve_run_cu_loop()
             stream = run_cu_loop(task, ctx, cancel_token=token)
             try:
                 while True:

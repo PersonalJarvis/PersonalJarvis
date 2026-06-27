@@ -20,9 +20,10 @@ import secrets
 import sys
 import threading
 import time
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 # Windows-UTF8-Fix (analog zu jarvis.__main__)
 if sys.platform == "win32":
@@ -685,6 +686,14 @@ class DesktopApp:
         _bp = os.environ.get("JARVIS_BOOT_PROFILE") == "1"
         _bp_t0 = time.perf_counter()
         _bp_last = _bp_t0
+        # Expose the boot t0 so ``_start_speech_and_orb`` can emit an honest
+        # ``VOICE_READY_MS`` anchor (wake loop armed) on the SAME clock as
+        # ``BOOT_READY_MS`` (window appears). The gap between the two is the
+        # wake-boot cost the user actually feels ("the window is fast but
+        # talking to it takes forever"). Gated identically; production stdout
+        # unchanged.
+        self._bp_t0 = _bp_t0
+        self._bp = _bp
 
         def _db_mark(_name: str) -> None:
             nonlocal _bp_last
@@ -976,6 +985,106 @@ class DesktopApp:
                 except TimeoutError:
                     pass
             return brain_holder["brain"]
+
+        desktop_cfg = self.cfg
+
+        class _DeferredVoiceBrain:
+            """Callable brain facade that lets the wake listener boot first.
+
+            The voice pipeline only needs a callable brain once a user utterance
+            has been captured. Wake detection itself must not wait for the
+            BrainManager build. This proxy waits at turn dispatch time and
+            delegates to the real shared brain as soon as it is ready.
+            """
+
+            def __init__(self) -> None:
+                self._pending_skill_notes: list[
+                    tuple[tuple[Any, ...], dict[str, Any]]
+                ] = []
+
+            @property
+            def active_provider(self) -> str:
+                brain = brain_holder["brain"]
+                return str(getattr(brain, "active_provider", "starting"))
+
+            @property
+            def reply_language(self) -> str:
+                brain = brain_holder["brain"]
+                if brain is not None:
+                    return str(getattr(brain, "reply_language", "auto"))
+                return str(
+                    getattr(getattr(desktop_cfg, "brain", None), "reply_language", "auto")
+                )
+
+            @property
+            def conversation_language(self) -> str:
+                brain = brain_holder["brain"]
+                return str(getattr(brain, "conversation_language", "")) if brain else ""
+
+            def _brain_unavailable_message(self) -> str:
+                detail = brain_holder["error"] or "BrainManager not initialized"
+                return f"Brain unavailable: {detail}"
+
+            def _drain_skill_notes(self, brain: Any) -> None:
+                note = getattr(brain, "note_skill_trigger", None)
+                if not callable(note) or not self._pending_skill_notes:
+                    return
+                pending = list(self._pending_skill_notes)
+                self._pending_skill_notes.clear()
+                for args, kwargs in pending:
+                    note(*args, **kwargs)
+
+            async def _resolve(self) -> Any | None:
+                brain = await _await_brain_ready()
+                if brain is not None:
+                    self._drain_skill_notes(brain)
+                return brain
+
+            def note_skill_trigger(self, *args: Any, **kwargs: Any) -> None:
+                brain = brain_holder["brain"]
+                note = getattr(brain, "note_skill_trigger", None)
+                if callable(note):
+                    note(*args, **kwargs)
+                    return
+                if len(self._pending_skill_notes) < 16:
+                    self._pending_skill_notes.append((args, dict(kwargs)))
+
+            async def __call__(self, text: str) -> str:
+                brain = await self._resolve()
+                if brain is None:
+                    return self._brain_unavailable_message()
+                return await brain(text)
+
+            async def generate(self, text: str, *args: Any, **kwargs: Any) -> str:
+                brain = await self._resolve()
+                if brain is None:
+                    return self._brain_unavailable_message()
+                generate = getattr(brain, "generate", None)
+                if callable(generate):
+                    return await generate(text, *args, **kwargs)
+                return await brain(text)
+
+            async def generate_stream(self, text: str, **kwargs: Any):
+                brain = await self._resolve()
+                if brain is None:
+                    yield self._brain_unavailable_message()
+                    return
+                stream = getattr(brain, "generate_stream", None)
+                if not callable(stream):
+                    yield await self.generate(text)
+                    return
+                call_kwargs = dict(kwargs)
+                try:
+                    iterator = stream(text, **call_kwargs)
+                except TypeError:
+                    call_kwargs.pop("allow_voice_confirm", None)
+                    try:
+                        iterator = stream(text, **call_kwargs)
+                    except TypeError:
+                        call_kwargs.pop("on_progress", None)
+                        iterator = stream(text, **call_kwargs)
+                async for chunk in iterator:
+                    yield chunk
 
         async def _on_user_message(evt: MessageSent) -> None:
             """Brain-Dispatcher: jedes user-turned MessageSent triggert generate.
@@ -1382,11 +1491,16 @@ class DesktopApp:
             # The bootstrap already owns the listening socket, so build the real
             # app WITHOUT starting its own uvicorn, then hand it to the bootstrap
             # which delegates held + new requests to it.
-            loop.run_until_complete(server.start(start_serving=False))
-            bootstrap.set_app(server.app)
-            _db_mark("server_start")
-            # Erst nach erfolgreichem start() ist der Port wirklich belegt.
-            _write_meta(self.cfg.ui.admin_api_port, os.getpid())
+            # Serve-WAKE-first ordering (2026-06-27): the heavy ``server.start()``
+            # _init_* chain (mission stack incl. git-worktree-prune, wiki,
+            # sessions, tasks, channels) is NO LONGER awaited here before voice
+            # starts. It is moved into ``_heavy_backend_bg`` below so it runs
+            # BEHIND the live Jarvis-Bar / wake listener. ``_start_speech_and_orb``
+            # needs only ``server.bus`` + ``server.app.state`` (skill_registry,
+            # set in the WebServer ctor — already done above) + ``supervisor`` +
+            # the deferred brain proxy — NONE of that chain. The user-perceived
+            # "ready to talk to Jarvis" gate is the wake listener, not the full
+            # backend, so it must not wait ~15-20 s for subsystems it never uses.
             async def _start_overlay_bg() -> None:
                 try:
                     # Phase 9.8: Overlay-Subprocess starten wenn [overlay].enabled=true.
@@ -1410,19 +1524,6 @@ class DesktopApp:
                         "Overlay-Bootstrap fehlgeschlagen."
                     )
 
-            loop.create_task(_start_overlay_bg(), name="overlay-bootstrap")
-            loop.create_task(_build_brain_bg(), name="brain-build")
-            # MCP-Autostart als Fire-and-Forget-Task — blockt Backend-Ready nicht.
-            loop.create_task(_start_enabled_mcps())
-            loop.create_task(_bootstrap_workflows(), name="workflow-bootstrap")
-            loop.create_task(_bootstrap_conductor(), name="conductor-bootstrap")
-
-            # Speech-Pipeline + Orb-Overlay: after the backend is serving. This
-            # used to run synchronously before ``run_forever()``, which meant the
-            # already-started uvicorn task could not answer ``/api/health`` while
-            # voice/overlay imports and setup ran. The desktop shell waits on
-            # that health probe before creating the window, so any slow wake/GUI
-            # warm-up inflated visible app startup.
             def _log_speech_and_orb_done(task: asyncio.Task) -> None:
                 if task.cancelled():
                     return
@@ -1433,26 +1534,48 @@ class DesktopApp:
                         "Voice/orb startup task crashed."
                     )
 
-            def _start_desktop_post_ready_services() -> None:
-                brain = brain_holder["brain"]
-                if brain is None and not brain_ready.is_set():
-                    loop.call_later(0.25, _start_desktop_post_ready_services)
-                    return
-                # The voice-pipeline build runs heavy, blocking work — most
-                # notably the local wake-Whisper CUDA probe (~30-60 s on a cold
-                # cache). Run it as a loop task that offloads that work to a worker
-                # thread (see _start_speech_and_orb), so the backend event loop is
-                # never frozen during boot; only the voice "STARTING…" badge waits.
-                speech_task = loop.create_task(
-                    self._start_speech_and_orb(
-                        loop, server.bus, supervisor, brain, server
-                    ),
-                    name="speech-and-orb",
-                )
-                speech_task.add_done_callback(_log_speech_and_orb_done)
-                self._start_virtual_cursor()
+            # === 1) Jarvis-Bar / wake listener FIRST ========================
+            # The user's "Jarvis is ready to talk to" gate. Scheduled before the
+            # heavy backend so the wake word arms within ~1 s of the window
+            # appearing, not after the whole _init_* chain. Wake detection only
+            # needs a callable for later turn dispatch, so the deferred proxy
+            # waits for the real shared brain at answer time instead of keeping
+            # the wake word deaf while the app is visibly open.
+            speech_task = loop.create_task(
+                self._start_speech_and_orb(
+                    loop, server.bus, supervisor, _DeferredVoiceBrain(), server
+                ),
+                name="speech-and-orb",
+            )
+            speech_task.add_done_callback(_log_speech_and_orb_done)
+            loop.create_task(_start_overlay_bg(), name="overlay-bootstrap")
 
-            loop.call_later(0.25, _start_desktop_post_ready_services)
+            # === 2) Everything else, BEHIND the live wake listener ==========
+            # The heavy backend keeps its original internal order (server.start()
+            # before brain/mcp/workflows/conductor) so no task that depended on a
+            # fully-initialised app.state regresses — only the wake path was
+            # pulled ahead of it. set_app + _write_meta gate API delegation
+            # (serve-first), which Voice does not need.
+            async def _heavy_backend_bg() -> None:
+                try:
+                    await server.start(start_serving=False)
+                    bootstrap.set_app(server.app)
+                    _db_mark("server_start")
+                    # Erst nach erfolgreichem start() ist der Port wirklich belegt.
+                    _write_meta(self.cfg.ui.admin_api_port, os.getpid())
+                except Exception as exc:  # noqa: BLE001 — never kill the backend loop
+                    from loguru import logger as _slog
+                    _slog.opt(exception=exc).error(
+                        "Heavy backend init (server.start) failed."
+                    )
+                loop.create_task(_build_brain_bg(), name="brain-build")
+                # MCP-Autostart als Fire-and-Forget-Task — blockt Backend-Ready nicht.
+                loop.create_task(_start_enabled_mcps())
+                loop.create_task(_bootstrap_workflows(), name="workflow-bootstrap")
+                loop.create_task(_bootstrap_conductor(), name="conductor-bootstrap")
+
+            loop.create_task(_heavy_backend_bg(), name="heavy-backend")
+            loop.call_soon(self._start_virtual_cursor)
             loop.run_forever()
         finally:
             try:
@@ -1948,7 +2071,6 @@ class DesktopApp:
         # Wenn brain ein MockBrain ist (Fallback), funktioniert Voice-TTS auch,
         # aber ohne echten LLM-Output → erkennbar an scripted Replies.
         try:
-            from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
             from jarvis.plugins.tts import build_tts_from_config
             from jarvis.plugins.wake.openwakeword_provider import (
                 PRODUCTION_WAKE_THRESHOLD,
@@ -2187,6 +2309,12 @@ class DesktopApp:
 
             self._pipeline_task.add_done_callback(_on_pipeline_done)
             logger.info("Speech-Pipeline gestartet — Wake: 'Hey Jarvis'.")
+            if getattr(self, "_bp", False):
+                # Honest wake-armed anchor on the same clock as BOOT_READY_MS.
+                print(
+                    f"VOICE_READY_MS={(time.perf_counter() - self._bp_t0) * 1000.0:.1f}",
+                    flush=True,
+                )
         except Exception as exc:  # noqa: BLE001
             from loguru import logger
             # FAIL-LOUD (2026-05-28 "Hey Jarvis silently dead" incident): a

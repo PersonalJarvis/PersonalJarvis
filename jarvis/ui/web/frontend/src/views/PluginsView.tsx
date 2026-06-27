@@ -1388,10 +1388,12 @@ function DeviceCodeDialog({
                   Open {pluginName}
                   <ExternalLink className="h-3 w-3" />
                 </a>
-                <p className="mt-1.5 text-[11px] text-muted-foreground/80">
-                  Or visit{" "}
-                  <span className="font-mono">{verificationUri}</span> manually.
-                </p>
+                <div className="mt-2">
+                  <CopyableUrl
+                    url={verificationUri}
+                    hint="Or copy this link, open it in your browser, and enter the code above."
+                  />
+                </div>
               </div>
 
               <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
@@ -1660,6 +1662,12 @@ export function PatConnectDialog({
               Open {plugin.name} tokens
               <ExternalLink className="h-3 w-3" />
             </a>
+            <div className="mt-2">
+              <CopyableUrl
+                url={auth.token_creation_url}
+                hint="Or copy this link and open it in your browser yourself."
+              />
+            </div>
           </Step>
 
           <Step num={2} title="Paste the token below">
