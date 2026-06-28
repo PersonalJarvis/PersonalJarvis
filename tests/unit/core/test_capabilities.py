@@ -315,7 +315,8 @@ class TestSeedRegistry:
         for tool in (
             "tool.run-shell",
             "tool.screen-snapshot",
-            "tool.dispatch-to-harness",
+            # NB: tool.dispatch-to-harness removed 2026-06-28 (no longer an
+            # LLM-visible router tool — phantom-openclaw routing fix).
             "tool.multi-spawn",
             "tool.spawn-worker",
             "tool.dispatch-with-review",
@@ -327,6 +328,11 @@ class TestSeedRegistry:
             "tool.wiki-ingest",
         ):
             assert tool in ids, f"{tool!r} missing from seed"
+
+    def test_dispatch_to_harness_capability_removed(self) -> None:
+        """The dead dispatch-to-harness capability must not reappear (2026-06-28)."""
+        ids = {c.id for c in self.reg.all()}
+        assert "tool.dispatch-to-harness" not in ids
 
     def test_local_actions_present(self) -> None:
         ids = {c.id for c in self.reg.all()}
@@ -341,21 +347,38 @@ class TestSeedRegistry:
 
     def test_harness_adapters_present(self) -> None:
         ids = {c.id for c in self.reg.all()}
+        # NB: harness.openclaw removed 2026-06-28 — OpenClaw is not a registered
+        # harness (Welle-4 removal); seeding it advertised a phantom vehicle.
         for ha in (
-            "harness.openclaw",
             "harness.mcp-remote",
             "harness.computer-use",
             "harness.python-script",
             "harness.open-interpreter",
         ):
             assert ha in ids, f"{ha!r} missing from seed"
+        assert "harness.openclaw" not in ids
+
+    def test_no_capability_advertises_openclaw(self) -> None:
+        """No seeded capability may advertise the phantom 'openclaw' vehicle.
+
+        OpenClaw is unregistered (Welle-4 removal). Advertising it in a router
+        tool's verbs/objects/description mis-routed "start a subagent" turns
+        toward a vehicle that cannot run (forensic 2026-06-28). Heavy sub-agent
+        work is tool.spawn-worker.
+        """
+        for cap in self.reg.all():
+            haystack = " ".join(
+                (cap.description, *cap.verbs, *cap.objects)
+            ).lower()
+            assert "openclaw" not in haystack, (
+                f"capability {cap.id!r} still advertises 'openclaw'"
+            )
 
     def test_requires_evidence_true_for_action_tools(self) -> None:
         """Action tools must have requires_evidence=True."""
         action_ids = {
             "tool.run-shell",
             "tool.screen-snapshot",
-            "tool.dispatch-to-harness",
             "tool.multi-spawn",
             "tool.spawn-worker",
             "tool.dispatch-with-review",

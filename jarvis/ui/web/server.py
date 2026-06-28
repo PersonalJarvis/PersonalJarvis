@@ -258,6 +258,7 @@ class WebServer:
         from .setup_routes import router as setup_router
         from .onboarding_routes import router as onboarding_router
         from .skills_routes import router as skills_router
+        from .feedback_routes import router as feedback_router
         from .socials_routes import router as socials_router
         from .sub_agents_routes import router as sub_agents_router
         from .tasks_routes import router as tasks_router
@@ -313,6 +314,8 @@ class WebServer:
         app.include_router(outputs_router)
         # Socials section — project social-media links (pure file store, no Brain dep).
         app.include_router(socials_router)
+        # In-app feedback / bug-report form → Discord webhook.
+        app.include_router(feedback_router)
         # Contacts section — user-curated address book (pure file store, no Brain dep).
         app.include_router(contacts_router)
         app.include_router(workflows_router)

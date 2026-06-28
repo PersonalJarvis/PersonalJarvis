@@ -16,12 +16,12 @@ def test_classify_release():
     assert I.classify_release(moved=True) == "drag"
 
 
-def test_resolve_click_idle_and_dictate_zones():
+def test_resolve_click_idle_and_mute_zones():
     W = 100
-    # right zone → the square → dictate (non-destructive), regardless of state
-    assert I.resolve_click(90, W, "idle") == "dictate"
-    assert I.resolve_click(90, W, "listen") == "dictate"
-    # idle → a click anywhere starts a normal session
+    # right zone → the microphone → mute toggle (non-destructive), any state
+    assert I.resolve_click(90, W, "idle") == "mute"
+    assert I.resolve_click(90, W, "listen") == "mute"
+    # idle → a click anywhere else starts a normal session
     assert I.resolve_click(10, W, "idle") == "talk"  # idle left → start normal session
     assert I.resolve_click(50, W, "idle") == "talk"
     # active middle (no control there) → nothing
@@ -32,41 +32,41 @@ def test_active_bar_body_click_does_not_hang_up():
     """REGRESSION — the silent-hangup trap (live bug 2026-06-19).
 
     A low-intent click on the BODY of an active bar — where the user sees only
-    the equalizer / orbital-core and NO close-X (the X is drawn only on hover,
+    the equalizer / orbital-core and NO End button (it is drawn only on hover,
     renderer.py) — must NOT end the session. The old code treated the whole
     left 40% of the bar as the hang-up X, so any such click silently hung up
     ("Jarvis legt von selbst auf, ich hab nichts von Auflegen gesagt").
     """
     W, PW = 100, 100
-    # Left-of-centre body, past the X glyph (centre ≈ cx - 0.42*pw = 8) → none,
+    # Right-of-the-End-button body (centre ≈ cx - 0.32*pw = 18, hit ≈ ±16) → none,
     # even with the controls shown and across every active state.
-    assert I.resolve_click(35, W, "speak", hovered=True, pill_w=PW) == "none"
-    assert I.resolve_click(35, W, "listen", hovered=True, pill_w=PW) == "none"
-    assert I.resolve_click(35, W, "think", hovered=True, pill_w=PW) == "none"
+    assert I.resolve_click(40, W, "speak", hovered=True, pill_w=PW) == "none"
+    assert I.resolve_click(40, W, "listen", hovered=True, pill_w=PW) == "none"
+    assert I.resolve_click(40, W, "think", hovered=True, pill_w=PW) == "none"
 
 
-def test_hangup_requires_visible_close_x():
-    """A hang-up fires only when the close-X is actually shown (hovered) AND the
-    click lands on the X glyph — so behaviour matches the visible affordance."""
+def test_hangup_requires_visible_end_button():
+    """A hang-up fires only when the End button is actually shown (hovered) AND
+    the click lands on it — so behaviour matches the visible affordance."""
     W, PW = 100, 100
-    # X glyph centre ≈ cx - 0.42*pw = 8 for these dimensions.
-    # On the X, controls visible → hang up (the deliberate gesture still works).
-    assert I.resolve_click(8, W, "speak", hovered=True, pill_w=PW) == "hangup"
+    # End-button centre ≈ cx - 0.32*pw = 18 for these dimensions.
+    # On the button, controls visible → hang up (the deliberate gesture works).
+    assert I.resolve_click(18, W, "speak", hovered=True, pill_w=PW) == "hangup"
     # Same spot, but the controls are NOT shown (not hovered) → no hang up.
-    assert I.resolve_click(8, W, "speak", hovered=False, pill_w=PW) == "none"
-    # Hovered, but the click is far from the X (centre of the bar) → no hang up.
+    assert I.resolve_click(18, W, "speak", hovered=False, pill_w=PW) == "none"
+    # Hovered, but the click is far from the button (centre of the bar) → none.
     assert I.resolve_click(50, W, "speak", hovered=True, pill_w=PW) == "none"
 
 
 def test_hangup_hitbox_at_real_bar_geometry():
     """Anchor the contract to the ACTUAL deployed pill, not just W=PW=100.
 
-    At the real dims the close-X glyph sits at WIN_W/2 - 0.42*ACTIVE_W, the
+    At the real dims the End button sits at WIN_W/2 - 0.32*ACTIVE_W, the
     equalizer bars start ~24px in, and the bar window is only ~107px wide — so a
-    centre click (over the bars) must NOT hang up while a click on the X does.
+    centre click (over the bars) must NOT hang up while a click on the End does.
     """
     W, PW = R.WIN_W, R.ACTIVE_W
-    x_glyph = round(W / 2.0 - 0.42 * PW)  # mirror renderer._draw_close_x centre
+    x_glyph = round(W / 2.0 - 0.32 * PW)  # mirror renderer x_left (End button)
     # Deliberate click on the visible X glyph, controls shown → hang up.
     assert I.resolve_click(x_glyph, W, "speak", hovered=True, pill_w=PW) == "hangup"
     # The bar's centre (where the live equalizer is drawn) → never a hang up.

@@ -1,11 +1,12 @@
 """Static seed map for the built-in Jarvis capability surface.
 
 Covers:
-  - All 11 ROUTER_TOOLS from ``jarvis/brain/factory.py``
+  - The ROUTER_TOOLS from ``jarvis/brain/factory.py``
   - 5 local-action-gate patterns (open_app, type_text, hotkey,
     reset_orb_position, terminal_count)
-  - 5 harness adapters (openclaw, mcp-remote, computer-use,
-    python-script, open-interpreter)
+  - 4 harness adapters (mcp-remote, computer-use, python-script,
+    open-interpreter) — OpenClaw is intentionally NOT seeded (not a
+    registered harness; see the HARNESS ADAPTERS block below)
 
 Action verbs mirror ``BrainRoutingConfig.spawn_verbs`` so that
 ``CapabilityRegistry.has_action_intent`` and the manager's
@@ -96,18 +97,10 @@ _SEED_CAPABILITIES: list[Capability] = [
         risk_tier="monitor",
         requires_evidence=True,
     ),
-    Capability(
-        id="tool.dispatch-to-harness",
-        source="router_tool",
-        verbs=_ACTION_VERBS,
-        objects=(
-            "harness", "computer", "desktop", "app", "anwendung", "fenster",
-            "window", "click", "klick", "klicke",
-        ),
-        description="Dispatch a computer-use / desktop-control task to the active harness.",
-        risk_tier="ask",
-        requires_evidence=True,
-    ),
+    # NB: ``tool.dispatch-to-harness`` deliberately removed (2026-06-28). It is
+    # no longer an LLM-visible router tool (see jarvis/brain/factory.py header).
+    # Desktop-control intent is carried by ``harness.computer-use`` + the shared
+    # _ACTION_VERBS; heavy sub-agent intent by ``tool.spawn-worker``.
     Capability(
         id="tool.multi-spawn",
         source="router_tool",
@@ -122,13 +115,13 @@ _SEED_CAPABILITIES: list[Capability] = [
         source="router_tool",
         verbs=(
             "spawn", "spawne", "spawnen", "delegier", "delegiere",
-            "delegate", "openclaw", "subagent",
+            "delegate", "subagent",
         ),
         objects=(
-            "openclaw", "open-claw", "open claw", "subagent", "sub-agent",
+            "subagent", "sub-agent", "sub agent",
             "worker", "code", "datei", "file", "repo", "repository",
         ),
-        description="Spawn an OpenClaw sub-agent for heavy code or file tasks.",
+        description="Spawn a background worker sub-agent for heavy code or file tasks.",
         risk_tier="ask",
         requires_evidence=True,
     ),
@@ -281,23 +274,13 @@ _SEED_CAPABILITIES: list[Capability] = [
         requires_evidence=True,
     ),
     # ------------------------------------------------------------------ #
-    # HARNESS ADAPTERS (5)
+    # HARNESS ADAPTERS (4)
     # ------------------------------------------------------------------ #
-    Capability(
-        id="harness.openclaw",
-        source="harness",
-        verbs=_ACTION_VERBS + (
-            "openclaw", "open-claw",
-            "delegier", "delegiere", "delegate",
-        ),
-        objects=(
-            "code", "datei", "file", "repo", "repository", "projekt",
-            "project", "script", "skript",
-        ),
-        description="OpenClaw subprocess harness for heavy code/file tasks.",
-        risk_tier="ask",
-        requires_evidence=True,
-    ),
+    # NB: ``harness.openclaw`` deliberately removed (2026-06-28). OpenClaw is
+    # not a registered harness (Welle-4 removal; pyproject.toml registers only
+    # open-interpreter / mcp-remote / python-script / screenshot). Advertising a
+    # phantom harness in the capability surface mis-routed "start a subagent"
+    # turns toward a vehicle that cannot run — heavy work is ``tool.spawn-worker``.
     Capability(
         id="harness.mcp-remote",
         source="harness",

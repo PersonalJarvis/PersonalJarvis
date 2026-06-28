@@ -30,16 +30,17 @@ def classify_release(*, moved: bool) -> str:
 
 # NOTE: there is intentionally no coarse `click_action(mode)` helper. A bar
 # click is resolved ONLY through `resolve_click`, which gates the destructive
-# hang-up on the close-X hit-box. A "any active click = hangup" shortcut was
-# exactly the silent-hangup bug (2026-06-19) and must not be re-introduced.
+# hang-up on the "End" button hit-box. A "any active click = hangup" shortcut
+# was exactly the silent-hangup bug (2026-06-19) and must not be re-introduced.
 
-# Minimum tap radius (px) around the close-X glyph, so the hit-box stays
-# fingertip-tappable even when the pill is tiny. The effective radius also
-# scales with the pill width (``_CLOSE_X_HIT_FRAC``) so it tracks the glyph the
-# renderer actually draws (``renderer._draw_close_x`` at ``cx - 0.42*pw``).
-_CLOSE_X_HIT_PX: float = 10.0
-_CLOSE_X_HIT_FRAC: float = 0.14
-_CLOSE_X_CENTRE_FRAC: float = 0.42  # X centre offset from pill centre (mirror of renderer)
+# Minimum tap radius (px) around the "End" (hang-up) button, so the hit-box
+# stays fingertip-tappable even when the pill is tiny. The effective radius also
+# scales with the pill width (``_END_BTN_HIT_FRAC``) so it tracks the glyph the
+# renderer actually draws (the End button at ``cx - 0.32*pw``). Keep
+# ``_END_BTN_CENTRE_FRAC`` in lock-step with the renderer's ``x_left`` offset.
+_END_BTN_HIT_PX: float = 10.0
+_END_BTN_HIT_FRAC: float = 0.16
+_END_BTN_CENTRE_FRAC: float = 0.32  # End-button centre offset (mirror of renderer)
 
 
 def resolve_click(
@@ -52,40 +53,53 @@ def resolve_click(
 ) -> str:
     """Resolve a click on the bar into an action by its horizontal zone + state.
 
-    Returns one of ``"hangup"`` / ``"dictate"`` / ``"talk"`` / ``"none"``.
+    Returns one of ``"hangup"`` / ``"mute"`` / ``"talk"`` / ``"none"``.
 
-    The RIGHT zone is the square (toggle endpoint-free dictation — non-
+    The RIGHT zone is the microphone (toggle the global voice mute — non-
     destructive, so it keeps a generous zone). When IDLE, a click anywhere
-    starts a normal session.
+    else starts a normal session.
 
-    The hang-up X is different: it ENDS the session, so its hit-box is
-    deliberately narrow and must match what the user can see. The renderer draws
-    the close-X ONLY while the bar is ``hovered`` (and as a small glyph at
-    ``cx - 0.42*pw``), so a hang-up fires ONLY when (a) the controls are shown
-    (``hovered``) AND (b) the click lands on the X glyph itself. A low-intent
-    click on the active bar's body — where no X is visible — returns ``"none"``
+    The hang-up "End" button is different: it ENDS the session, so its hit-box
+    is deliberately narrow and must match what the user can see. The renderer
+    draws the End button ONLY while the bar is ``hovered`` (at ``cx - 0.32*pw``),
+    so a hang-up fires ONLY when (a) the controls are shown (``hovered``) AND
+    (b) the click lands on the End button itself. A low-intent click on the
+    active bar's body — where no End button is visible — returns ``"none"``
     instead of silently hanging up. This closes the "Jarvis hangs up by itself"
     trap (live bug 2026-06-19): the old code hung up on ANY click in the left
     40% of the bar, decoupled from the visible affordance.
     """
     frac = x / max(1, width)
     active = mode in ("listen", "think", "speak")
-    if frac >= 0.60:            # right zone → the square (non-destructive)
-        return "dictate"
+    if frac >= 0.60:            # right zone → the microphone (non-destructive)
+        return "mute"
     if not active:             # idle middle/left → start a normal session
         return "talk"
-    # Active session: the ONLY destructive bar action is the close-X hang-up,
-    # which must be a deliberate click ON the visible X glyph.
+    # Active session: the ONLY destructive bar action is the End-button hang-up,
+    # which must be a deliberate click ON the visible End button.
     if hovered:
         # In production `pill_w` is always the active pill width (ACTIVE_W); the
         # caller only passes None for idle mode, which returns above before this
         # branch. The `width` fallback is just a sane default for direct callers.
         pw = float(pill_w) if pill_w is not None else float(width)
-        x_glyph = width / 2.0 - _CLOSE_X_CENTRE_FRAC * pw  # mirror renderer._draw_close_x
-        hit = max(_CLOSE_X_HIT_PX, _CLOSE_X_HIT_FRAC * pw)
+        x_glyph = width / 2.0 - _END_BTN_CENTRE_FRAC * pw  # mirror renderer x_left
+        hit = max(_END_BTN_HIT_PX, _END_BTN_HIT_FRAC * pw)
         if abs(x - x_glyph) <= hit:
             return "hangup"
-    return "none"              # active body / no visible X → nothing
+    return "none"              # active body / no visible End button → nothing
+
+
+def pointer_in_window(px: int, py: int, x: int, y: int, w: int, h: int) -> bool:
+    """True when the global pointer ``(px, py)`` is inside the bar's window rect.
+
+    Used to decide a hover collapse from the REAL pointer position instead of the
+    raw Tk ``<Leave>`` — on the color-keyed bar a ``<Leave>`` fires whenever the
+    pointer crosses off the tiny opaque pill, even while it is still over the
+    (mostly transparent) window footprint, which made the idle pill flicker
+    open/shut. Half-open box ``[x, x+w) x [y, y+h)`` so adjacent windows don't
+    both claim the shared edge.
+    """
+    return x <= px < x + w and y <= py < y + h
 
 
 def default_bottom_center(

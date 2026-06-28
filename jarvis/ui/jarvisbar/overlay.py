@@ -71,6 +71,17 @@ AUDIBLE_HOLD_S = 0.5
 WATCHDOG_INTERVAL_MS = 1000
 FRAME_STALL_THRESHOLD_NS = 2_000_000_000  # 2 s of silence ⇒ the loop is dead
 
+# Idle hover-collapse debounce. A Tk ``<Leave>`` on this color-keyed window fires
+# whenever the pointer crosses off the small OPAQUE pill — including the constant
+# antialiased-edge flicker while the pointer is still over the bar. Collapsing
+# the idle pill straight off that ``<Leave>`` made it "open briefly and snap
+# shut" (BUG: the idle pill SIZE is bound to the hover state). So a leave instead
+# starts a poll of the REAL pointer position; the idle pill collapses only once
+# the pointer has genuinely left the window rect. This many ms between polls — a
+# tick or two of grace that absorbs the edge flicker yet still collapses promptly
+# once the pointer is really gone.
+HOVER_COLLAPSE_POLL_MS = 120
+
 
 def _primary_work_area() -> tuple[int, int, int, int] | None:
     """Primary-monitor work area (left, top, right, bottom) EXCLUDING the
@@ -139,7 +150,21 @@ class JarvisBarOverlay:
         self._on_mute_toggle: Callable[[], None] | None = None
         self._feedback_publisher: Callable[[str, dict], None] | None = None
         self._on_show_window: Callable[[], None] | None = None
-        self._hovered = False  # mouse over the bar → reveal the close cross
+        # Instantaneous "pointer is on the opaque pill" flag — set on <Enter>,
+        # cleared on <Leave>. Drives the ACTIVE bar's hover controls (the "End"
+        # button + the mic mute toggle), so the active state is unchanged.
+        self._hovered = False
+        # Debounced "expand the idle pill" flag — sticky across the color-key edge
+        # flicker, cleared only once a poll confirms the pointer left the window
+        # rect. Drives the IDLE pill SIZE so it stays open while hovered. Separate
+        # from _hovered precisely so the active state keeps its instantaneous flag.
+        self._hover_expanded = False
+        self._hover_collapse_id: Any = None  # pending after() id for the collapse poll
+        # Mirror of the pipeline's authoritative global voice-mute flag, kept in
+        # sync by ``set_muted`` (the bridge forwards ``VoiceMuteChanged``). Drives
+        # the right control's slashed-mic look. Optimistically flipped on a mute
+        # click for instant feedback, then reconciled by the authoritative event.
+        self._muted = False
 
     # ------------------------------------------------------------------ #
     # Surface API consumed by OrbBusBridge                               #
@@ -175,6 +200,14 @@ class JarvisBarOverlay:
         # _ext_level — safe from the audio/VAD threads with no lock.
         if lv >= AUDIBLE_LEVEL:
             self._last_audible_t = time.perf_counter()
+
+    def set_muted(self, muted: bool) -> None:
+        """Mirror the pipeline's authoritative global voice-mute state so the
+        right control renders the slashed-mic look. Atomic bool write (like
+        ``set_level``), safe from the bus thread; the frame loop reads it. The
+        bridge forwards ``VoiceMuteChanged`` here, so a mute from ANY source
+        (this bar, the mascot, a voice command) keeps the icon in lock-step."""
+        self._muted = bool(muted)
 
     # The bar has no text bubble and no mouth — these stay no-ops so the
     # bridge's duck-typed calls remain safe.
@@ -446,8 +479,16 @@ class JarvisBarOverlay:
             # so the equalizer reacts to Jarvis's actual loudness — thin and lively,
             # exactly like it reacts to your mic. No synthetic floor (that made the
             # bars look uniformly blocky).
+            # Idle pill size follows the DEBOUNCED hover (flicker-free expand);
+            # the active bar keeps the instantaneous flag for its hover controls,
+            # so its behaviour is unchanged. effective_mode == "idle" iff the
+            # coarse mode is idle (see renderer.visual_mode).
+            render_hovered = (
+                self._hover_expanded if effective_mode == "idle" else self._hovered
+            )
             img = self._renderer.render(
-                t, effective_mode, self._ext_level, hovered=self._hovered
+                t, effective_mode, self._ext_level,
+                hovered=render_hovered, muted=self._muted,
             )
             # PhotoImage must be retained on self, else Tk GCs it before drawing.
             self._photo = ImageTk.PhotoImage(img)
@@ -523,6 +564,8 @@ class JarvisBarOverlay:
         # still gates the hang-up on the X-glyph hit-box, so this only makes a
         # DELIBERATE X-click reliable; it never widens the accidental-hangup zone.
         self._hovered = True
+        self._hover_expanded = True
+        self._cancel_hover_collapse()
         self._drag = {
             "sx": event.x_root,
             "sy": event.y_root,
@@ -575,10 +618,77 @@ class JarvisBarOverlay:
             log.debug("jarvisbar position persist failed", exc_info=True)
 
     def _on_enter(self, _event: Any = None) -> None:
+        # Pointer is on the opaque pill: expand the idle bar and (re)show the
+        # active controls. Cancel any pending collapse poll — the pointer is back.
         self._hovered = True
+        self._hover_expanded = True
+        self._cancel_hover_collapse()
 
     def _on_leave(self, _event: Any = None) -> None:
+        # The active controls hide instantly (unchanged). The idle EXPAND does
+        # NOT collapse here — a <Leave> on this color-keyed window fires on every
+        # antialiased-edge flicker while the pointer is still over the bar. Defer
+        # to a poll of the real pointer position so the idle pill collapses only
+        # once the pointer has genuinely left the window rect.
         self._hovered = False
+        self._schedule_hover_collapse()
+
+    def _schedule_hover_collapse(self) -> None:
+        """Arm the deferred idle-collapse poll (idempotent)."""
+        if self._root is None:
+            # No Tk root (headless / pre-start): no poll loop to clear the flag,
+            # so collapse immediately rather than letting it stick open.
+            self._hover_expanded = False
+            return
+        if self._hover_collapse_id is not None:
+            return  # a poll is already pending
+        try:
+            self._hover_collapse_id = self._root.after(
+                HOVER_COLLAPSE_POLL_MS, self._maybe_collapse_hover
+            )
+        except Exception:  # noqa: BLE001 — scheduling failed → fail toward closing
+            self._hover_collapse_id = None
+            self._hover_expanded = False
+
+    def _cancel_hover_collapse(self) -> None:
+        cid = self._hover_collapse_id
+        self._hover_collapse_id = None
+        if cid is not None and self._root is not None:
+            try:
+                self._root.after_cancel(cid)
+            except Exception:  # noqa: BLE001
+                log.debug("jarvisbar hover-collapse cancel failed", exc_info=True)
+
+    def _maybe_collapse_hover(self) -> None:
+        """Poll the real pointer: keep the idle bar expanded while the pointer is
+        still over the window rect; collapse + stop polling once it has left."""
+        self._hover_collapse_id = None
+        if self._root is None:
+            self._hover_expanded = False
+            return
+        try:
+            px, py = self._root.winfo_pointerxy()
+            # Use the LIVE on-screen geometry (winfo_*), NOT the cached _x/_y +
+            # WIN_W/H. The cached values live in the geometry-string space, which
+            # disagrees with winfo_pointerxy under display scaling / a
+            # window-manager nudge — then the pointer reads as "outside" and the
+            # bar collapses while still hovered. winfo_rootx/rooty/width/height
+            # and winfo_pointerxy share one coordinate space, so the test is exact.
+            wx, wy = self._root.winfo_rootx(), self._root.winfo_rooty()
+            ww, wh = self._root.winfo_width(), self._root.winfo_height()
+            inside = interaction.pointer_in_window(
+                int(px), int(py), int(wx), int(wy), int(ww), int(wh)
+            )
+        except Exception:  # noqa: BLE001 — cannot read the pointer → fail toward closing
+            self._hover_expanded = False
+            return
+        if inside:
+            # A spurious / edge <Leave>: the pointer is still over the bar. Stay
+            # expanded and keep polling until it truly leaves.
+            self._hover_expanded = True
+            self._schedule_hover_collapse()
+        else:
+            self._hover_expanded = False
 
     def _on_right_click(self, _event: Any = None) -> None:
         """Right-click → raise the main desktop window via the injected
@@ -593,9 +703,9 @@ class JarvisBarOverlay:
             log.debug("jarvisbar show-window callback failed", exc_info=True)
 
     def _on_click(self, click_x: float | None = None, *, hovered: bool = False) -> None:
-        # Zone-routed: LEFT X → hang up (active only), RIGHT square → toggle
-        # endpoint-free dictation, MIDDLE (idle) → start a normal session. All
-        # entries are thread-safe from the Tk thread.
+        # Zone-routed: LEFT "End" → hang up (active only), RIGHT microphone →
+        # toggle the global voice mute, MIDDLE (idle) → start a normal session.
+        # All entries are thread-safe from the Tk thread.
         if click_x is None:
             click_x = renderer.WIN_W / 2
         try:
@@ -633,10 +743,17 @@ class JarvisBarOverlay:
                 click_x, renderer.WIN_W, click_mode,
                 hovered=hovered, pill_w=pill_w,
             )
-            if action == "dictate":
-                toggle = getattr(pipeline, "request_ptt_toggle", None)
-                if callable(toggle):
-                    toggle()
+            if action == "mute":
+                # Fire the wired bridge callback (publishes VoiceMuteToggleRequested
+                # → the pipeline flips the authoritative flag → VoiceMuteChanged
+                # comes back via set_muted). Optimistically flip the local mirror
+                # too, so the slashed-mic shows on the very next frame instead of
+                # waiting for the bus round-trip. No callback wired (boot race) →
+                # leave the state untouched (the click was a genuine no-op).
+                cb = self._on_mute_toggle
+                if cb is not None:
+                    self._muted = not self._muted
+                    cb()
             elif action == "hangup":
                 hangup = getattr(pipeline, "request_hangup", None)
                 if callable(hangup):
