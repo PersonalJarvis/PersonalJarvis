@@ -41,6 +41,7 @@
     "socials": "Redes",
     "taskbar": "Barra",
     "contacts": "Contactos",
+    "feedback": "Comentarios",
     "agent_instructions": "{name}.md"
   },
   "agent_instructions": {
@@ -2083,5 +2084,25 @@
   },
   "friends_view": {
     "subtitle": "Bot de Telegram + registro local de amigos. Tú decides qué ven los amigos."
+  },
+  "feedback": {
+    "subtitle": "Reporta un error, comparte una idea o haz una pregunta — va directo a nuestro Discord.",
+    "type_label": "Tipo",
+    "type_bug": "Error",
+    "type_idea": "Idea",
+    "type_question": "Pregunta",
+    "title_label": "Título",
+    "title_placeholder": "Resumen breve de tus comentarios",
+    "description_label": "Descripción",
+    "description_placeholder": "Cuéntanos más — pasos para reproducir, contexto, comportamiento esperado vs. real…",
+    "screenshot_label": "Captura de pantalla (opcional)",
+    "screenshot_pick": "Haz clic para adjuntar una captura",
+    "screenshot_preview_alt": "Vista previa de la captura",
+    "screenshot_remove": "Eliminar captura",
+    "submit": "Enviar",
+    "sending": "Enviando…",
+    "result_sent": "¡Gracias — enviado a nuestro Discord!",
+    "result_not_configured": "El canal de comentarios aún no está configurado — no se envió nada.",
+    "result_error": "No se pudo llegar a Discord, inténtalo de nuevo más tarde."
   }
 }

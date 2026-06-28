@@ -9,6 +9,7 @@ REQUIRED = [
     "show",
     "hide",
     "set_level",
+    "set_muted",
     "play_animation",
     "stop_animation",
     "show_listening_transcript",
@@ -59,6 +60,11 @@ def test_methods_safe_without_tk_window():
     assert bar._ext_level == 1.0
     bar.set_level(-2.0)
     assert bar._ext_level == 0.0
+
+    bar.set_muted(True)  # _root None → safe atomic write
+    assert bar._muted is True
+    bar.set_muted(False)
+    assert bar._muted is False
 
     bar.hide()  # _root None → safe no-op
     bar.play_animation("wave", x=1)

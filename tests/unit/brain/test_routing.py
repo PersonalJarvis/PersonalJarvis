@@ -891,6 +891,45 @@ def test_router_tools_stays_frozenset() -> None:
     assert isinstance(ROUTER_TOOLS, frozenset)
 
 
+def test_dispatch_to_harness_not_in_router_tools() -> None:
+    """``dispatch-to-harness`` must NOT be an LLM-visible router tool.
+
+    Phantom-openclaw regression (forensic 2026-06-28): the tool's raw ``harness``
+    parameter let the brain request ``harness="openclaw"`` — an unregistered
+    harness (Welle-4 removal) — which surfaced a raw "Harness not available"
+    KeyError to voice. Heavy sub-agent work is ``spawn-worker``; live desktop
+    work is ``computer-use``. The tool class still exists for the INTERNAL
+    local-action fast path, but it must never be router-selectable again.
+    """
+    from jarvis.brain.factory import ROUTER_TOOLS
+
+    assert "dispatch-to-harness" not in ROUTER_TOOLS
+
+
+@pytest.mark.asyncio
+async def test_subagent_request_forces_spawn_worker() -> None:
+    """An explicit "start a subagent" request forces spawn_worker, never a harness.
+
+    Structural guarantee #2 (the #1 guarantee is that dispatch-to-harness is no
+    longer router-visible): a cleanly recognised subagent trigger must route to
+    spawn_worker deterministically, before any free LLM tool choice.
+    """
+    manager, executor = _manager_with_spawn()
+    utterance = "Starte einen Subagenten, der mir einen Lernzettel schreibt"
+
+    assert manager._should_force_spawn(utterance), (
+        "explicit subagent request did not trigger the force-spawn heuristic"
+    )
+    result = await manager._force_spawn_worker(utterance)
+    assert result is not None
+    assert len(executor.calls) == 1, (
+        f"expected exactly one spawn call, got {len(executor.calls)}"
+    )
+    tool, _args, user_utterance = executor.calls[0]
+    assert tool.name == "spawn_worker"
+    assert user_utterance == utterance  # verbatim, never paraphrased
+
+
 def test_no_spawn_tool_leaked_into_worker_set() -> None:
     """No spawn/dispatch/run-skill tool may appear in a worker tool-set.
 
@@ -1514,8 +1553,14 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             "screen-snapshot",
             "multi-spawn",
             "spawn-worker",
-            # Phase-5-Endstand (ADR-0011 + Re-Introduction Begruendung im Code)
-            "dispatch-to-harness",
+            # NB: ``dispatch-to-harness`` was REMOVED from the LLM-visible router
+            # set on 2026-06-28 (ADR-0011 amendment "dispatch-to-harness removal").
+            # Its raw ``harness`` param let the brain request a phantom
+            # ``harness="openclaw"`` (unregistered, Welle-4 removal), surfacing a
+            # raw "Harness not available" KeyError to voice. Heavy work →
+            # spawn-worker, desktop → computer-use. It must NOT reappear here;
+            # the negative guard ``test_dispatch_to_harness_not_in_router_tools``
+            # pins that.
             # Phase 8.4 (Quality-Gate, Recursion-geschuetzt analog spawn-worker)
             "dispatch-with-review",
             # AI Pointer (pull path): resolve the element under the mouse cursor

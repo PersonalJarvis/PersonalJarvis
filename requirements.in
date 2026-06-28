@@ -44,7 +44,8 @@ google-cloud-texttospeech>=2.21
 elevenlabs>=1.5
 
 # Memory
-chromadb>=0.5
+# chromadb removed 2026-06-28 — unused in jarvis/ (legacy-curator vestige),
+# critical advisory with no fixed release. See pyproject.toml note.
 sentence-transformers>=3.3
 
 # Cross-platform desktop helpers (Linux-clean subset of pyproject)

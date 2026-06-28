@@ -940,6 +940,16 @@ class OpenClawNotificationConfig(BaseModel):
 class OpenClawConfig(BaseModel):
     """Top-level ``[harness.openclaw]`` config for the OpenClaw bridge.
 
+    ⚠️ INERT TODAY (2026-06-28): OpenClaw is NOT a registered harness — there is
+    no ``openclaw`` entry-point in pyproject.toml (Welle-4 removed the subprocess
+    worker, ~92% hang; see docs/BUGS.md). This block is a Wave-2 schema stub:
+    setting ``enabled = true`` has NO effect — the harness cannot be dispatched
+    and "start a subagent" routes to ``spawn_worker`` regardless. The boot path
+    logs a warning when ``enabled`` is true but the harness is unregistered
+    (see ``warn_if_phantom_openclaw`` in jarvis/brain/factory.py). Heavy
+    sub-agent work runs through the Mission-Manager (ClaudeDirectWorker), not
+    here, until Wave 3 actually wires the bridge.
+
     Schema matches ``docs/openclaw-bridge.md §4.2`` post-Wave-1
     (with AD-22..AD-24 findings incorporated). Wave 2 delivers only
     the schema + default block in jarvis.toml; Wave 3 wires the bridge.
@@ -1362,16 +1372,18 @@ class ComputerUseConfig(BaseModel):
     # per mission and logs which engine is live, so a flip applies on the next
     # mission / restart with no code change. Flip back any time with "current".
     engine: Literal["current", "june13", "stable"] = "current"
-    # Which monitor Computer-Use captures + acts on. DEFAULT "primary": CU works
-    # ONLY on the main monitor (the screen at the virtual origin 0,0). This avoids
-    # the multi-monitor coordinate bugs entirely — a secondary monitor LEFT of
-    # primary has negative X where clicks misfire, and a monitor at a different
-    # DPI scale shifts every click target. "foreground" follows the active window
-    # onto whatever screen it is on (the legacy behaviour, multi-monitor-fragile);
-    # "all" captures the whole virtual desktop. Switch to "foreground" only if you
-    # deliberately want CU on a secondary screen and have verified clicks land.
-    # Cross-platform: the primary is identified natively (Win MONITORINFOF_PRIMARY,
-    # macOS CGMainDisplayID, X11 XRRGetOutputPrimary), NOT by assuming origin (0,0).
+    # How Computer-Use relates to multiple monitors. DEFAULT "primary": CU brings
+    # the target window onto the MAIN monitor (the G8 move-to-primary hook) AND
+    # the screenshot FOLLOWS that window — so the normal case lands on the main
+    # screen, while a window that genuinely cannot be moved (Wayland / owned /
+    # fixed-placement) is still captured + clicked WHERE IT IS instead of CU
+    # filming an empty primary and doing nothing (Problem 1, 2026-06-28). The
+    # negative-X absolute-click fix makes secondary clicks land. "foreground" =
+    # follow the active window without moving it; "all" = capture the whole
+    # virtual desktop. Cross-platform: the primary is identified natively (Win
+    # MONITORINFOF_PRIMARY, macOS CGMainDisplayID, X11 XRRGetOutputPrimary), NOT
+    # by assuming origin (0,0). The capture STRATEGY is derived via
+    # jarvis.vision.screenshot.cu_capture_strategy (primary/foreground -> follow).
     monitor: Literal["primary", "foreground", "all"] = "primary"
     # Which screen counts as "the main monitor" when monitor="primary" (audit G8a).
     # "primary" (default) = the OS primary; "largest" = the biggest-area screen;

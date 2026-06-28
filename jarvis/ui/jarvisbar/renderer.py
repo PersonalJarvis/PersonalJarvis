@@ -28,8 +28,18 @@ PILL_BG = (14, 13, 12)
 # Bright gold rim: the only thing that reads when the pill is slim AND
 # semi-transparent (window -alpha). Dark fill + glowing gold edge = glass look.
 PILL_BORDER = (215, 182, 105)
-# Hover-to-hang-up close cross (soft red = "close").
-CLOSE_X = (228, 110, 96)
+
+# Hover controls — Teams-style. LEFT = "End" (hang-up), a soft-red round button
+# with a white decline-handset glyph. RIGHT = microphone (mute toggle): a light
+# mic on a subtle dark disc when live, on a soft-red disc with a white slash
+# when muted. Replaced the old close-cross + dictation square per maintainer
+# request (2026-06-28) so the bar's two controls read like a call UI.
+END_BG = (196, 67, 62)       # soft-red "End" button fill
+END_FG = (245, 242, 240)     # near-white decline handset
+MIC_FG = (228, 223, 214)     # light-grey microphone glyph
+MIC_BG_IDLE = (58, 56, 53)   # subtle dark disc behind the live mic
+MIC_BG_MUTED = (178, 66, 61)  # soft-red disc when muted
+MIC_SLASH = (245, 242, 240)  # white mute slash across the mic
 
 # Size factors. ``_SCALE`` is the overall shrink (1.0 was the original, far too
 # big). ``_W`` / ``_H`` then stretch width / height independently on top of it:
@@ -390,7 +400,12 @@ class JarvisBarRenderer:
         self._st = _RenderState()
 
     def render(
-        self, t: float, mode: str, ext_level: float, hovered: bool = False
+        self,
+        t: float,
+        mode: str,
+        ext_level: float,
+        hovered: bool = False,
+        muted: bool = False,
     ) -> Image.Image:
         active = mode in ("listen", "speak")
         # Ease the pill toward its target size: ACTIVE (2x) while a session is
@@ -421,19 +436,26 @@ class JarvisBarRenderer:
             width=2,
         )
 
-        # Hover splits the bar into controls: LEFT X (hang up, only while a
-        # session is live) + RIGHT square (toggle endpoint-free dictation).
+        # Hover splits the bar into controls: LEFT "End" (hang up, only while a
+        # session is live) + RIGHT microphone (mute toggle, always on hover).
+        # Both offsets are symmetric (±0.35*pw) so the round buttons sit fully
+        # inside the pill; the LEFT offset is mirrored by interaction._END_BTN_
+        # CENTRE_FRAC for the hang-up hit-box (keep them in lock-step).
         if hovered:
-            x_left = cx - 0.42 * pw
-            x_right = cx + 0.35 * pw  # pulled left off the right edge (no clip)
+            # ±0.32*pw ≈ the pill's rounded-cap CENTRE (0.5 - ph/(2*pw) for the
+            # active pill), so a button of radius < ph/2 sits fully inside the
+            # rounded end with no poke past the gold rim.
+            x_left = cx - 0.32 * pw
+            x_right = cx + 0.32 * pw
             active_sess = mode in ("listen", "speak", "think")
             # Keep the speech indicator VISIBLE while interacting — narrow bars
             # in the centre so you can see the voice is live, controls flanking.
             if mode in ("listen", "speak"):
                 self._draw_bars(d, t, cx, cy, pw, ph, span=bars_span_for(pw) * 0.5, n=5)
-            if active_sess:
-                self._draw_close_x(d, x_left, cy, ph)
-            self._draw_square(d, x_right, cy, ph)
+            self._draw_controls(
+                img, cy, ph, x_left=x_left, x_right=x_right,
+                show_end=active_sess, muted=muted,
+            )
         elif mode == "think":
             self._draw_thinking(img, t, cx, cy, pw, ph)
         elif mode in ("listen", "speak"):
@@ -458,19 +480,113 @@ class JarvisBarRenderer:
         small = layer.resize(img.size, Image.Resampling.LANCZOS)
         img.paste(small, (0, 0), small)
 
-    def _draw_close_x(self, d: ImageDraw.ImageDraw, cx: float, cy: float, ph: float) -> None:
-        r = max(3.0, ph * 0.26)  # half-diagonal of the cross
-        w = max(2, _STROKE_W)
-        d.line([(cx - r, cy - r), (cx + r, cy + r)], fill=CLOSE_X, width=w)
-        d.line([(cx - r, cy + r), (cx + r, cy - r)], fill=CLOSE_X, width=w)
+    def _draw_controls(
+        self,
+        img: Image.Image,
+        cy: float,
+        ph: float,
+        *,
+        x_left: float,
+        x_right: float,
+        show_end: bool,
+        muted: bool,
+    ) -> None:
+        """Draw the hover controls — LEFT "End" (hang-up, only while a session is
+        live) and RIGHT microphone (mute toggle) — Teams-style.
 
-    def _draw_square(self, d: ImageDraw.ImageDraw, cx: float, cy: float, ph: float) -> None:
-        r = max(2.5, ph * 0.21)  # half-side of the dictation square
-        w = max(2, _STROKE_W)
-        d.rounded_rectangle(
-            [cx - r, cy - r, cx + r, cy + r], radius=max(1.0, r * 0.25),
-            outline=self._accent, width=w,
+        Supersampled on an RGBA layer (the same crisp-glyph trick as the standby
+        dots / orbital core), then composited once over the pill + centre bars.
+        The round buttons sit at ±0.35*pw, fully inside the pill.
+        """
+        ss = 4
+        layer = Image.new("RGBA", (img.width * ss, img.height * ss), (0, 0, 0, 0))
+        ld = ImageDraw.Draw(layer)
+        r = max(5.0, ph * 0.38)  # button radius (px, pre-SS) — < ph/2 to fit the cap
+        if show_end:
+            self._paint_end_button(layer, ld, x_left, cy, r, ss)
+        self._paint_mic_button(layer, ld, x_right, cy, r, ss, muted=muted)
+        small = layer.resize(img.size, Image.Resampling.LANCZOS)
+        img.paste(small, (0, 0), small)
+
+    def _paint_end_button(
+        self,
+        layer: Image.Image,
+        ld: ImageDraw.ImageDraw,
+        cx: float,
+        cy: float,
+        r: float,
+        ss: int,
+    ) -> None:
+        """Soft-red round button + a white decline handset (rotated 135°)."""
+        X, Y, R = cx * ss, cy * ss, r * ss
+        ld.ellipse([X - R, Y - R, X + R, Y + R], fill=(*END_BG, 255))
+        tile = self._handset_tile(R * 1.95)
+        layer.paste(
+            tile, (int(round(X - tile.width / 2)), int(round(Y - tile.height / 2))), tile
         )
+
+    def _handset_tile(self, size: float) -> Image.Image:
+        """A telephone-receiver glyph — a curved grip (arc) with an ear bulb and
+        a mouth bulb at its tips — rotated 135° so it reads as the universal
+        "end call" handset. Returned as its own RGBA tile so the rotation
+        antialiases cleanly before compositing."""
+        s = max(6, int(round(size)))
+        tile = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+        td = ImageDraw.Draw(tile)
+        c = s / 2.0
+        rr = s * 0.30                       # curvature radius of the grip
+        band = max(2, int(round(s * 0.17)))  # grip thickness
+        bulb = s * 0.17                     # ear / mouth bulb radius
+        fg = (*END_FG, 255)
+        # The grip is the lower arc of a circle (a shallow "smile"); the ear and
+        # mouth bulbs cap its two tips → the classic receiver silhouette.
+        td.arc([c - rr, c - rr, c + rr, c + rr], start=22, end=158, fill=fg, width=band)
+        for deg in (22, 158):
+            a = math.radians(deg)
+            bx, by = c + rr * math.cos(a), c + rr * math.sin(a)
+            td.ellipse([bx - bulb, by - bulb, bx + bulb, by + bulb], fill=fg)
+        return tile.rotate(135, resample=Image.Resampling.BICUBIC, expand=False)
+
+    def _paint_mic_button(
+        self,
+        layer: Image.Image,
+        ld: ImageDraw.ImageDraw,
+        cx: float,
+        cy: float,
+        r: float,
+        ss: int,
+        *,
+        muted: bool,
+    ) -> None:
+        """Microphone glyph on a disc; a white slash + red disc when muted."""
+        X, Y, R = cx * ss, cy * ss, r * ss
+        bg = MIC_BG_MUTED if muted else MIC_BG_IDLE
+        ld.ellipse([X - R, Y - R, X + R, Y + R], fill=(*bg, 235 if muted else 200))
+        fg = (*MIC_FG, 255)
+        stroke = max(1, int(round(R * 0.14)))
+        # Head (capsule), upper portion of the button.
+        hw, hh = R * 0.52, R * 0.92
+        head_top = Y - R * 0.64
+        ld.rounded_rectangle(
+            [X - hw / 2, head_top, X + hw / 2, head_top + hh], radius=hw / 2, fill=fg
+        )
+        # Bracket (the downward "U" cupping the head) + stem + base.
+        bw = R * 0.94
+        ld.arc(
+            [X - bw / 2, Y - R * 0.30, X + bw / 2, Y + R * 0.64],
+            start=25, end=155, fill=fg, width=stroke,
+        )
+        ld.line([(X, Y + R * 0.48), (X, Y + R * 0.82)], fill=fg, width=stroke)
+        ld.line(
+            [(X - R * 0.30, Y + R * 0.82), (X + R * 0.30, Y + R * 0.82)],
+            fill=fg, width=stroke,
+        )
+        if muted:
+            sl = R * 0.80  # kept inside the disc so it never pokes the pill edge
+            ld.line(
+                [(X - sl, Y - sl), (X + sl, Y + sl)],
+                fill=(*MIC_SLASH, 255), width=max(2, int(round(R * 0.20))),
+            )
 
     def _draw_bars(
         self,

@@ -279,8 +279,9 @@ def test_entry_point_registered() -> None:
 
 def test_router_tools_includes_dispatch_with_review() -> None:
     """Plan-§AD-14 / Phase 8.4: ROUTER_TOOLS enthält dispatch-with-review."""
-    from jarvis.brain.factory import ROUTER_TOOLS, SUB_TOOLS
+    # NB: ``SUB_TOOLS`` was deleted in Welle 4 (the Sub-Jarvis tier no longer
+    # exists — only "router" remains). The former recursion-guard assertion
+    # against SUB_TOOLS is obsolete; updated 2026-06-28.
+    from jarvis.brain.factory import ROUTER_TOOLS
 
     assert "dispatch-with-review" in ROUTER_TOOLS
-    # Recursion-Schutz: Sub-Jarvis darf das Tool NICHT haben
-    assert "dispatch-with-review" not in SUB_TOOLS
