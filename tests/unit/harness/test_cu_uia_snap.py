@@ -104,7 +104,7 @@ async def test_uia_snap_clicks_element_center(monkeypatch):
     )
     clicks: list = []
 
-    async def fake_dispatch(executor, tool, cx, cy, tid):
+    async def fake_dispatch(executor, tool, cx, cy, tid, *, button="left", double=False):
         clicks.append((cx, cy))
         return True, "clicked"
 

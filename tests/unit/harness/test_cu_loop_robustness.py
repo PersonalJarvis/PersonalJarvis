@@ -1737,3 +1737,42 @@ async def test_human_handoff_cancelled_exits_clean(monkeypatch: pytest.MonkeyPat
 
     assert results[-1].exit_code == loop_mod._CANCEL_EXIT_CODE
     assert len(brain.requests) == 0
+
+
+# ---------------------------------------------------------------------------
+# Audit 🟠 #15 — modal/banner "handle the dialog first" note injection
+# ---------------------------------------------------------------------------
+
+
+async def test_modal_banner_note_injected_into_brain_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the foreground labels look like a cookie/consent banner, the loop
+    injects a 'handle the dialog first' note into the model's context before the
+    next decision."""
+    async def _cookie_labels(timeout_s: float, max_n: int = 28):
+        return (["Accept all", "Reject all", "Manage preferences"], "", None)
+
+    monkeypatch.setattr(loop_mod, "_foreground_clickable_labels", _cookie_labels)
+
+    brain = FakeBrain(['{"action": "click_element", "name": "Accept all"}',
+                       '{"action": "done"}'])
+    ctx = make_ctx(brain, titles=["Site"])
+    await run_loop(ctx, "accept the cookies")
+
+    # The very first decision must already carry the modal note.
+    assert brain.requests, "brain was never called"
+    _system, first_user = brain.requests[0]
+    assert "modal dialog or banner" in first_user
+
+
+async def test_no_modal_note_on_ordinary_screen(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _plain_labels(timeout_s: float, max_n: int = 28):
+        return (["File", "Edit", "View", "Settings"], "", None)
+
+    monkeypatch.setattr(loop_mod, "_foreground_clickable_labels", _plain_labels)
+
+    brain = FakeBrain(['{"action": "done"}'])
+    ctx = make_ctx(brain, titles=["App"])
+    await run_loop(ctx, "do the thing")
+
+    _system, first_user = brain.requests[0]
+    assert "modal dialog or banner" not in first_user

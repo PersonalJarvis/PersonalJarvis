@@ -19,9 +19,11 @@ User — siehe ``docs/persona-audit-report.md`` F-AUDIT-2.
 from __future__ import annotations
 
 import logging
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
 
 from jarvis.brain.output_filter import scrub_for_voice
+from jarvis.voice.contextual_readback import render_readback
 
 from ..event_bus import MissionBus
 from ..event_store import MissionEventStore
@@ -36,6 +38,9 @@ from ..events import (
     WorkerKilled,
 )
 from .readback import Lang, MissionReadback
+
+if TYPE_CHECKING:
+    from jarvis.voice.contextual_readback import ReadbackComposer
 
 
 logger = logging.getLogger(__name__)
@@ -59,6 +64,7 @@ class MissionVoiceListener:
         tts_speak_fn: TTSSpeakFn,
         announce_critic_loop: bool = False,
         language_default: Lang = "de",
+        readback_composer: ReadbackComposer | None = None,
     ) -> None:
         self._bus = bus
         self._store = store
@@ -66,6 +72,11 @@ class MissionVoiceListener:
         self._tts = tts_speak_fn
         self._announce_critic_loop = announce_critic_loop
         self._lang_default = language_default
+        # Context-aware readbacks (maintainer mandate: no fixed stock phrases).
+        # The signed/canned line from _render is the ground truth; the composer
+        # rephrases it, honesty-bound for the signed MissionApproved summary
+        # (ADR-0009). None => canned line spoken unchanged (risk-free).
+        self._readback_composer = readback_composer
         # Cache: mission_id -> (is_voice, language). Fuellung lazy beim ersten
         # Event pro Mission. None = noch nicht aufgeloest.
         self._mission_voice_cache: dict[str, tuple[bool, Lang]] = {}
@@ -92,6 +103,24 @@ class MissionVoiceListener:
         if not text:
             return
 
+        # Context-aware rephrasing of the signed/canned line (maintainer mandate).
+        # honesty_bound only for the signed success summary (ADR-0009 — rephrase,
+        # never invent); other statuses phrase more freely. Falls back to the
+        # exact canned line on any miss (AD-OE6).
+        instruction, honesty_bound = self._situation(env.payload)
+        canned_line = text
+        text = await render_readback(
+            self._readback_composer,
+            instruction=instruction,
+            language=lang,
+            canned=lambda: canned_line,
+            facts={"result": canned_line},
+            honesty_bound=honesty_bound,
+            latency_budget_ms=2500,
+        )
+        if not text:
+            return
+
         # Audit F-AUDIT-2: Mission-Readback durch Output-Filter schicken,
         # bevor wir an TTS uebergeben. Sonst leakten Mission-Outputs mit
         # Tool-Use-Markup / "Sir"-Anrede / Engineering-Jargon ungefiltert
@@ -108,6 +137,38 @@ class MissionVoiceListener:
             return
 
         await self._tts(scrubbed.cleaned, lang)
+
+    @staticmethod
+    def _situation(payload: object) -> tuple[str, bool]:
+        """English (instruction, honesty_bound) for a mission event.
+
+        ``honesty_bound`` is True ONLY for the signed success summary, so its
+        spoken surface stays a faithful rephrasing (ADR-0009). Everything else is
+        status, not an observation, so it phrases freely.
+        """
+        if isinstance(payload, MissionApproved):
+            return (
+                "A background task the user asked for has finished successfully; "
+                "tell them naturally, keeping the reported result faithfully.",
+                True,
+            )
+        if isinstance(payload, MissionFailed):
+            return (
+                "A background task the user asked for did not succeed; tell them "
+                "plainly and kindly, keeping any reason given.",
+                False,
+            )
+        if isinstance(payload, MissionTimedOut):
+            return ("A background task the user asked for ran out of time.", False)
+        if isinstance(payload, MissionCancelled):
+            return ("A background task the user asked for was cancelled.", False)
+        if isinstance(payload, MissionBudgetWarning):
+            return ("A background task is approaching its budget limit.", False)
+        if isinstance(payload, WorkerKilled):
+            return ("A background task was stopped for a safety reason.", False)
+        if isinstance(payload, WorkerCorrectionRequired):
+            return ("A background task is still being worked on.", False)
+        return ("A background task the user asked for has an update.", False)
 
     def _render(self, env: EventEnvelope, lang: Lang) -> str:
         """Map Event-Payload -> Voice-Text. Empty string wenn der Event-Type

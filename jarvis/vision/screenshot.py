@@ -95,6 +95,7 @@ def select_capture_monitor(
     monitors: list[dict],
     *,
     strategy: MonitorStrategy = "foreground",
+    primary_override: str = "primary",
 ) -> dict:
     """Waehlt den Monitor, von dem ein Screenshot gegrabbt werden soll.
 
@@ -120,21 +121,16 @@ def select_capture_monitor(
         return monitors[0]
 
     physical = monitors[1:]
-    # The Windows primary monitor ALWAYS has its top-left at virtual (0,0). The
-    # mss monitor dicts carry no ``is_primary`` flag, and mss does NOT order the
-    # primary first — on a two-monitor setup with a screen LEFT of primary, mss
-    # lists that left (negative-X) monitor as physical[0]. The old
-    # ``physical[0]`` fallback therefore treated the LEFT (secondary) monitor as
-    # "primary", so every time the foreground lookup fell back here Computer-Use
-    # captured + acted on the wrong screen (the user's "CU works the whole time
-    # on my non-main monitor" bug). Identify the primary by its (0,0) origin.
-    primary = (
-        next((m for m in physical if m.get("is_primary")), None)
-        or next(
-            (m for m in physical if m.get("left") == 0 and m.get("top") == 0), None
-        )
-        or physical[0]
-    )
+    # Identify the primary ROBUSTLY (audit G8a) -- not by assuming origin (0,0).
+    # mss dicts carry no ``is_primary`` flag and do NOT order the primary first
+    # (a screen LEFT of primary is listed as physical[0] with negative X), so the
+    # old ``physical[0]`` fallback acted on the wrong screen (the "CU works on my
+    # non-main monitor" bug). ``resolve_primary_monitor`` asks the OS natively
+    # (Win MONITORINFOF_PRIMARY / macOS CGMainDisplayID / X11 XRRGetOutputPrimary)
+    # and honours the ``main_monitor`` override (primary | largest | explicit id).
+    from jarvis.platform.monitors import resolve_primary_monitor  # noqa: PLC0415
+
+    primary = resolve_primary_monitor(monitors, override=primary_override)
 
     if strategy == "primary":
         logger.debug("select_capture_monitor: strategy=primary -> %s", primary.get("name"))

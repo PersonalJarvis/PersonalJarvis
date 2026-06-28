@@ -631,6 +631,183 @@ def raise_after_launch(
         return False, ""
 
 
+# ----------------------------------------------------------------------
+# G8b — move a window onto the primary monitor
+# ----------------------------------------------------------------------
+
+
+def window_is_on_monitor(rect: tuple[int, int, int, int], monitor: dict) -> bool:
+    """True when the window's CENTER lies within ``monitor`` (an mss-style dict
+    with left/top/width/height). Center-based, so a window straddling two screens
+    counts as being on the one showing most of it. Pure; never raises."""
+    left, top, width, height = rect
+    cx, cy = left + width // 2, top + height // 2
+    ml, mt = int(monitor.get("left", 0)), int(monitor.get("top", 0))
+    mw, mh = int(monitor.get("width", 0)), int(monitor.get("height", 0))
+    return ml <= cx < ml + mw and mt <= cy < mt + mh
+
+
+def window_rect(win: WindowInfo) -> tuple[int, int, int, int] | None:
+    """A window's ``(left, top, width, height)`` in virtual-desktop coordinates,
+    or ``None`` when it cannot be read. Windows: ``GetWindowRect`` by hwnd.
+    macOS/Linux: not read today (the move path queries position differently).
+    Best-effort; never raises."""
+    try:
+        if detect_platform() == "win32" and win.handle:
+            return _window_rect_windows(int(win.handle))
+        return None
+    except Exception:  # noqa: BLE001
+        log.debug("window_rect failed", exc_info=True)
+        return None
+
+
+def foreground_window() -> WindowInfo | None:
+    """The current foreground window as a :class:`WindowInfo` (carrying the hwnd
+    on Windows), or ``None``. Best-effort; never raises. macOS/Linux return a
+    title-only WindowInfo (no handle), which the move path treats as "can't move"
+    rather than acting blind."""
+    try:
+        if detect_platform() == "win32":
+            return _foreground_window_windows()
+        title = get_foreground_title()
+        return WindowInfo(title=title) if title else None
+    except Exception:  # noqa: BLE001
+        log.debug("foreground_window failed", exc_info=True)
+        return None
+
+
+def _foreground_window_windows() -> WindowInfo | None:
+    import ctypes  # noqa: PLC0415
+
+    user32 = ctypes.windll.user32
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return None
+    length = int(user32.GetWindowTextLengthW(hwnd))
+    buf = ctypes.create_unicode_buffer(length + 1)
+    user32.GetWindowTextW(hwnd, buf, length + 1)
+    return WindowInfo(title=buf.value or "", handle=int(hwnd))
+
+
+def move_window_to_primary(
+    win: WindowInfo, primary: dict
+) -> tuple[bool, str]:
+    """Bring ``win`` onto the primary monitor ``primary`` (mss-style geometry
+    dict) so Computer-Use acts on the main screen (audit G8b).
+
+    Returns ``(moved, message)``. Windows restores a maximized window, moves it
+    onto the primary, then re-maximizes there. macOS/Linux-X11 are best-effort;
+    Wayland and headless sessions REFUSE honestly with a clear message rather
+    than acting on the wrong screen blind. Never raises."""
+    try:
+        plat = detect_platform()
+        if plat == "win32":
+            return _move_to_primary_windows(win, primary)
+        if plat == "darwin":
+            # AX kAXPositionAttribute needs pyobjc + Accessibility permission; the
+            # real impl is a tracked follow-up. Honest refusal, no fake pass.
+            return False, (
+                "Moving a window to the main screen is not supported on macOS yet "
+                "— please drag it to your main display, then retry."
+            )
+        if plat == "linux":
+            if is_wayland():
+                return False, (
+                    "Cannot move the window on Wayland (no global window "
+                    "positioning by OS design) — drag it to your main screen "
+                    "manually, then retry."
+                )
+            if not display_present():
+                return False, (
+                    "Cannot move the window: this looks like a headless session "
+                    "with no display."
+                )
+            return _move_to_primary_linux(win, primary)
+        return False, f"Moving windows is not supported on this platform ({plat})."
+    except Exception as exc:  # noqa: BLE001
+        log.debug("move_window_to_primary failed", exc_info=True)
+        return False, f"Window move failed: {exc}"
+
+
+def _window_rect_windows(hwnd: int) -> tuple[int, int, int, int] | None:
+    import ctypes  # noqa: PLC0415
+    from ctypes import wintypes  # noqa: PLC0415
+
+    rect = wintypes.RECT()
+    if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return None
+    return (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+
+
+def _move_to_primary_windows(win: WindowInfo, primary: dict) -> tuple[bool, str]:
+    """Restore-if-maximized → SetWindowPos onto the primary → re-maximize there."""
+    if not win.handle:
+        return False, "no window handle to move"
+    import ctypes  # noqa: PLC0415
+    from ctypes import wintypes  # noqa: PLC0415
+
+    user32 = ctypes.windll.user32
+    hwnd = int(win.handle)
+
+    class _WINDOWPLACEMENT(ctypes.Structure):
+        _fields_ = [
+            ("length", wintypes.UINT), ("flags", wintypes.UINT),
+            ("showCmd", wintypes.UINT), ("ptMinPosition", wintypes.POINT),
+            ("ptMaxPosition", wintypes.POINT), ("rcNormalPosition", wintypes.RECT),
+        ]
+
+    _SW_RESTORE, _SW_MAXIMIZE, _SW_SHOWMAXIMIZED = 9, 3, 3
+    _SWP_NOSIZE, _SWP_NOZORDER, _SWP_NOACTIVATE = 0x0001, 0x0004, 0x0010
+
+    wp = _WINDOWPLACEMENT()
+    wp.length = ctypes.sizeof(_WINDOWPLACEMENT)
+    was_maximized = False
+    if user32.GetWindowPlacement(hwnd, ctypes.byref(wp)):
+        was_maximized = wp.showCmd == _SW_SHOWMAXIMIZED
+    if was_maximized:
+        user32.ShowWindow(hwnd, _SW_RESTORE)
+    # Inset a little so the title bar is fully on the primary (never off-screen).
+    px = int(primary.get("left", 0)) + 40
+    py = int(primary.get("top", 0)) + 40
+    moved = bool(user32.SetWindowPos(
+        hwnd, 0, px, py, 0, 0, _SWP_NOSIZE | _SWP_NOZORDER | _SWP_NOACTIVATE,
+    ))
+    if was_maximized:
+        user32.ShowWindow(hwnd, _SW_MAXIMIZE)  # re-maximizes on the primary now
+    if not moved:
+        return False, "SetWindowPos failed"
+    return True, f"moved '{(win.title or 'window')[:40]}' onto the primary monitor"
+
+
+def _move_to_primary_linux(win: WindowInfo, primary: dict) -> tuple[bool, str]:
+    """Best-effort X11 move via ``wmctrl`` (un-maximize, then reposition by title).
+    Unverified on a real desktop; returns honest status."""
+    import subprocess  # noqa: PLC0415
+
+    from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # noqa: PLC0415
+
+    title = (win.title or "").strip()
+    if not title:
+        return False, "no window title to target"
+    px, py = int(primary.get("left", 0)), int(primary.get("top", 0))
+    try:
+        subprocess.run(
+            ["wmctrl", "-r", title, "-b", "remove,maximized_vert,maximized_horz"],
+            capture_output=True, timeout=3.0, creationflags=NO_WINDOW_CREATIONFLAGS,
+        )
+        res = subprocess.run(
+            ["wmctrl", "-r", title, "-e", f"0,{px},{py},-1,-1"],
+            capture_output=True, timeout=3.0, creationflags=NO_WINDOW_CREATIONFLAGS,
+        )
+    except FileNotFoundError:
+        return False, "wmctrl not installed — cannot move the window on X11"
+    except Exception as exc:  # noqa: BLE001
+        return False, f"wmctrl move failed: {exc}"
+    if res.returncode != 0:
+        return False, f"wmctrl could not find/move a window titled '{title[:40]}'"
+    return True, f"moved '{title[:40]}' onto the primary monitor (X11/wmctrl)"
+
+
 __all__ = [
     "WindowInfo",
     "list_windows",
@@ -639,4 +816,8 @@ __all__ = [
     "raise_window",
     "is_app_running",
     "raise_after_launch",
+    "window_is_on_monitor",
+    "window_rect",
+    "foreground_window",
+    "move_window_to_primary",
 ]

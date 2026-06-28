@@ -156,7 +156,10 @@
     "error": "Fehler",
     "offline": "Offline",
     "booting": "Startet…",
-    "starting": "Sprachmodul startet…"
+    "starting": "Sprachmodul startet…",
+    "warming_title": "Jarvis fährt hoch",
+    "warming_hint": "Das Zuhören wird vorbereitet – einen Moment, gleich kannst du sprechen.",
+    "ready_title": "Bereit – du kannst jetzt sprechen"
   },
   "sidebar": {
     "wake_hint": "Sag dein Wake-Word…",

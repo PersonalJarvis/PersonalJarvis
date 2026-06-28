@@ -8,7 +8,6 @@
       "description": "Repos, issues, pull requests and Actions runs",
       "category": "Developer",
       "logo_slug": "github",
-      "logo_color": "F4F4F5",
       "featured": true,
       "auth": {
         "mode": "pat_paste",
@@ -36,7 +35,6 @@
       "description": "Deployments, runtime logs, domains and env-vars",
       "category": "Developer",
       "logo_slug": "vercel",
-      "logo_color": "F4F4F5",
       "featured": true,
       "auth": {
         "mode": "pat_paste",
@@ -79,7 +77,6 @@
       "description": "Pages, databases and comments — multi-workspace",
       "category": "Productivity",
       "logo_slug": "notion",
-      "logo_color": "F4F4F5",
       "featured": true,
       "auth": {
         "mode": "hosted_mcp_oauth_dcr",
@@ -148,7 +145,6 @@
       "description": "Issues, projects, cycles and roadmap for software teams",
       "category": "Developer",
       "logo_slug": "linear",
-      "logo_color": "F4F4F5",
       "featured": true,
       "auth": {
         "mode": "hosted_mcp_oauth_dcr",
@@ -168,7 +164,6 @@
       "description": "Payments, customers, invoices and balance — read-first",
       "category": "Developer",
       "logo_slug": "stripe",
-      "logo_color": "F4F4F5",
       "featured": false,
       "auth": {
         "mode": "pat_paste",
@@ -190,7 +185,6 @@
       "description": "Workers, observability logs, analytics and Radar insights",
       "category": "Developer",
       "logo_slug": "cloudflare",
-      "logo_color": "F4F4F5",
       "featured": false,
       "auth": {
         "mode": "hosted_mcp_oauth_dcr",
@@ -216,7 +210,6 @@
       "description": "Chat with Jarvis from Discord (your bot)",
       "category": "Communication",
       "logo_slug": "discord",
-      "logo_color": "F4F4F5",
       "featured": false,
       "auth": {
         "mode": "pat_paste",
@@ -234,7 +227,6 @@
       "description": "Chat with Jarvis from Telegram (your bot)",
       "category": "Communication",
       "logo_slug": "telegram",
-      "logo_color": "F4F4F5",
       "featured": false,
       "auth": {
         "mode": "pat_paste",
@@ -252,7 +244,6 @@
       "description": "Tasks, projects and workspaces",
       "category": "Productivity",
       "logo_slug": "asana",
-      "logo_color": "F4F4F5",
       "featured": false,
       "auth": {
         "mode": "oauth_pkce_loopback",
@@ -278,7 +269,6 @@
       "description": "Files Jarvis creates or you share with it (drive.file)",
       "category": "Productivity",
       "logo_slug": "googledrive",
-      "logo_color": "F4F4F5",
       "featured": false,
       "auth": {
         "mode": "oauth_pkce_loopback",
@@ -307,7 +297,6 @@
       "description": "Read and send mail from your inbox",
       "category": "Communication",
       "logo_slug": "gmail",
-      "logo_color": "F4F4F5",
       "featured": false,
       "auth": {
         "mode": "oauth_pkce_loopback",
@@ -335,7 +324,6 @@
       "description": "See your schedule and create, move or delete events by voice",
       "category": "Productivity",
       "logo_slug": "googlecalendar",
-      "logo_color": "F4F4F5",
       "featured": true,
       "auth": {
         "mode": "oauth_pkce_loopback",

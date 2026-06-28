@@ -156,7 +156,10 @@
     "error": "Error",
     "offline": "Sin conexión",
     "booting": "Iniciando…",
-    "starting": "Iniciando voz…"
+    "starting": "Iniciando voz…",
+    "warming_title": "Jarvis se está iniciando",
+    "warming_hint": "Preparando la escucha – un momento, podrás hablar en breve.",
+    "ready_title": "Listo – ya puedes hablar"
   },
   "sidebar": {
     "wake_hint": "Di tu palabra de activación…",

@@ -850,6 +850,15 @@ def _phase2_full_brain(
         contacts=contact_store,
     )
 
+    # Context-aware readbacks (maintainer mandate: no fixed stock phrases). The
+    # composer is built in fallback-only mode when the flash path is disabled, so
+    # this never changes behavior unless [ack_brain] is on. Router tier only —
+    # the CU/local-action readbacks all originate on this manager.
+    try:
+        manager._readback_composer = build_readback_composer(config)
+    except Exception as exc:  # noqa: BLE001 — never block brain wiring on this
+        log.warning("Readback-Composer wiring skipped: %s", exc)
+
     # Live-reload marker: refresh_tools() uses these attributes to reconstruct
     # a factory call identical to this one.
     manager._tier = tier
@@ -1037,6 +1046,8 @@ def _phase2_full_brain(
                 max_replans=cu_cfg.max_replans,
                 announce_progress=getattr(cu_cfg, "announce_progress", False),
                 native_cu=native_cu,
+                monitor=getattr(cu_cfg, "monitor", "primary"),
+                main_monitor=getattr(cu_cfg, "main_monitor", "primary"),
             ))
             # Hot-reload: refresh the live context's step_budget / timeout /
             # replan knobs on ConfigReloaded so a voice-tunable change
@@ -1747,3 +1758,66 @@ def build_spawn_announcer(jcfg: Any | None = None) -> Any:
             "build_spawn_announcer() failed: %s — fallback pool only.", exc
         )
         return SpawnAnnouncementComposer()
+
+
+def build_readback_composer(jcfg: Any | None = None) -> Any:
+    """Build the ``ReadbackComposer`` for the deterministic action-path readbacks.
+
+    The engine behind the maintainer's "no fixed stock phrases" mandate: the CU
+    outcome/dispatch readbacks, budget guards, and tool-failed line are phrased
+    fresh for the situation by a bounded flash call, with the EXISTING canned
+    line as the instant fallback.
+
+    Never raises and never returns ``None``: when the flash path is unavailable
+    (``[ack_brain].enabled = false``, ``readback_generation = false``, missing
+    adapter, construction error) the composer is returned in fallback-only mode,
+    so the call sites still emit the canned line (AD-OE6, zero behavior change).
+    Mirrors :func:`build_spawn_announcer` — own provider + breaker plus a
+    separate-provider failover so a dead primary degrades to the live secondary,
+    not straight to the canned table.
+    """
+    from jarvis.voice.contextual_readback import ReadbackComposer
+
+    try:
+        if jcfg is None:
+            from jarvis.core.config import load_config
+            jcfg = load_config()
+        ack_cfg = getattr(jcfg, "ack_brain", None)
+        if (
+            ack_cfg is None
+            or not getattr(ack_cfg, "enabled", False)
+            or not getattr(ack_cfg, "readback_generation", True)
+        ):
+            log.info("Readback-Composer: flash path disabled — fallback-only mode.")
+            return ReadbackComposer()
+
+        from jarvis.brain.ack_brain import CircuitBreaker
+
+        provider = _build_flash_provider(jcfg, ack_cfg)
+        if provider is None:
+            return ReadbackComposer()
+        breaker = CircuitBreaker(
+            threshold=ack_cfg.circuit_breaker_threshold,
+            cooldown_s=ack_cfg.circuit_breaker_cooldown_s,
+        )
+        # Failover on a separate provider/key (built AFTER _build_flash_provider
+        # so ack_cfg.provider is the resolved primary). Reuses the spawn-path
+        # bare-provider failover builder — the composer owns its validate logic.
+        fb_provider, fb_breaker = _build_spawn_fallback(ack_cfg)
+        log.info(
+            "Readback-Composer: LLM composition wired (provider=%s).",
+            ack_cfg.provider,
+        )
+        return ReadbackComposer(
+            provider=provider,
+            config=ack_cfg,
+            breaker=breaker,
+            fallback_provider=fb_provider,
+            fallback_breaker=fb_breaker,
+            preferences_provider=_flash_preferences_provider(jcfg),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "build_readback_composer() failed: %s — fallback-only mode.", exc
+        )
+        return ReadbackComposer()

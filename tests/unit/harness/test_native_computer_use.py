@@ -294,7 +294,10 @@ async def test_decide_native_batch_uses_and_validates_native_actions(monkeypatch
         _SeamCtx(native=native), _Obs(), "click login", ["step1"], 2
     )
 
-    assert result == [{"action": "click", "x": 100, "y": 200}]
+    # button/double normalized onto every validated click (audit #21) — additive.
+    assert result == [
+        {"action": "click", "x": 100, "y": 200, "button": "left", "double": False}
+    ]
     assert native.calls and native.calls[0][0] == "click login"
 
 

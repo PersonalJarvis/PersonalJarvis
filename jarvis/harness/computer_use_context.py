@@ -69,6 +69,13 @@ class ComputerUseContext:
     # hand-rolled vision+JSON path on any failure. None = hand-rolled only
     # (the default, since [computer_use].prefer_native defaults False).
     native_cu: Any = None
+    # Which monitor CU captures + acts on ([computer_use].monitor): "primary"
+    # (default), "foreground", or "all". When "primary", the loop brings the
+    # target window onto the main monitor before acting (audit G8c).
+    monitor: str = "primary"
+    # Which screen is "the main monitor" when monitor="primary"
+    # ([computer_use].main_monitor): "primary" | "largest" | explicit id.
+    main_monitor: str = "primary"
 
 
 _CONTEXT: ComputerUseContext | None = None

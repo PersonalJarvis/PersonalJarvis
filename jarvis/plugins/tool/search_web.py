@@ -39,6 +39,24 @@ _WEATHER_CALL_TIMEOUT_S: Final[float] = _TIMEOUT_S / 2
 _GEOCODE_URL: Final[str] = "https://geocoding-api.open-meteo.com/v1/search"
 _FORECAST_URL: Final[str] = "https://api.open-meteo.com/v1/forecast"
 
+# How the brain must consume a non-empty result set. Live forensic 2026-06-28
+# (voice session, Turn 4 "wie viele Punkte brauche ich fuer eine 1"): the brain
+# (Gemini) concatenated the raw DuckDuckGo hits — titles, snippets, dates, URLs,
+# "Weitere Ergebnisse von www.gutefrage.net", a truncated "...Ma" — and read the
+# whole list aloud instead of answering. The results array carries NO consume
+# instruction, so the model is free to dump it. This instruction rides on every
+# ok result so the brain synthesizes a short spoken answer and never voices a
+# title / URL / source name / date. (The voice path also strips URLs + SERP
+# footers as a fail-closed defense in jarvis/brain/output_filter.py.)
+_ANSWER_INSTRUCTION: Final[str] = (
+    "These 'results' are RAW web hits (title/snippet/url) for retrieval only. "
+    "Answer ONLY the user's actual question, in one or two short spoken "
+    "sentences, using just the relevant facts from them. NEVER read out a "
+    "title, a url, a domain/source name, a date, or a 'more results from ...' "
+    "line, and never enumerate the hits as a list. If the hits do not actually "
+    "answer the question, say that briefly instead of reciting them."
+)
+
 _WEATHER_INTENT_RE = re.compile(
     r"\b(weather|forecast|wetter\w*|wettervorhersage|vorhersage|"
     r"temperatur\w*|temperature|tiempo|clima)\b",
@@ -248,7 +266,11 @@ class SearchWebTool:
             if weather:
                 return ToolResult(
                     success=True,
-                    output={"query": query, "results": weather},
+                    output={
+                        "query": query,
+                        "results": weather,
+                        "answer_instruction": _ANSWER_INSTRUCTION,
+                    },
                 )
 
         # General web search: real DuckDuckGo web search, with the DDG
@@ -284,4 +306,8 @@ class SearchWebTool:
                 "backend could not be reached right now and offer to try again — "
                 "do not claim there are no results."
             )
+        elif outcome.status == "ok" and outcome.results:
+            # Steer the brain to synthesize a short spoken answer rather than
+            # reading the raw hits aloud (live forensic 2026-06-28, Turn 4).
+            output["answer_instruction"] = _ANSWER_INSTRUCTION
         return ToolResult(success=True, output=output)
