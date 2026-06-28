@@ -91,6 +91,22 @@ from jarvis.core.win32_dpi import ensure_dpi_awareness as _ensure_dpi_awareness 
 MonitorStrategy = Literal["foreground", "primary", "all"]
 
 
+def cu_capture_strategy(monitor_policy: str) -> MonitorStrategy:
+    """Map the ``[computer_use].monitor`` policy to the screenshot CAPTURE
+    strategy (Problem 1, 2026-06-28).
+
+    Both ``"primary"`` and ``"foreground"`` FOLLOW the foreground/target window,
+    so the screenshot is never a pinned EMPTY monitor while the target sits on
+    another screen — consistent with ``_capture_monitor_geometry`` (the click
+    resolver), which already follows the foreground window. The difference is the
+    *move*: the ``"primary"`` policy additionally brings the target onto the main
+    monitor via the G8 ensure-on-primary hook (so the normal case lands on the
+    main screen and the user sees it there), while a window that genuinely cannot
+    be moved is still captured + clicked where it is instead of CU freezing on an
+    empty primary. ``"all"`` captures the whole virtual desktop."""
+    return "all" if monitor_policy == "all" else "foreground"
+
+
 def select_capture_monitor(
     monitors: list[dict],
     *,

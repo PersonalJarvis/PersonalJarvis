@@ -708,3 +708,54 @@ retry) and the `RefreshScheduler` keeps the refresh token warm.
   graceful "not connected" / "node missing".
 - `tests/unit/brain/test_routing.py::test_router_tools_is_pure_dispatcher_set`
   (exact-match set updated to include `google_calendar`).
+
+## Amendment — `dispatch-to-harness` removed from the LLM-visible router set (2026-06-28)
+
+**Forensic.** A user said by voice, in effect, *"start a subagent that writes me
+a study sheet."* Jarvis replied: *"the harness 'openclaw' is not available;
+active are only mcp-remote, open-interpreter, python-script and screenshot."*
+The brain had chosen `dispatch_to_harness(harness="openclaw", …)` instead of
+`spawn_worker`. `HarnessManager.get("openclaw")` raised a `KeyError`, and its raw
+message — including the internal active/failed harness inventory — was read
+aloud.
+
+**Root cause.** `dispatch-to-harness` exposed a free-form `harness` string
+parameter and its description advertised *"OpenClaw, Codex, Python-Script, MCP"*
+as sub-agent vehicles. But OpenClaw is **not a registered harness** — it was
+removed in Welle 4 (~92% nested-claude hang; see `docs/BUGS.md`), and
+`pyproject.toml` registers only `open-interpreter`, `mcp-remote`,
+`python-script`, `screenshot`. So a "subagent" turn could name a phantom harness
+that can never run. The capability surface compounded it: `tool.spawn-worker`
+was described as *"Spawn an OpenClaw sub-agent"* and a separate
+`harness.openclaw` capability advertised the dead vehicle.
+
+**Decision.** `dispatch-to-harness` is **removed from `ROUTER_TOOLS`** — it is no
+longer an LLM-selectable tool. The two legitimate paths are unchanged and
+sufficient:
+
+- **heavy sub-agent work → `spawn-worker`** (Mission-Manager → `ClaudeDirectWorker`);
+- **live desktop control → `computer-use`**.
+
+The `DispatchToHarnessTool` class is **retained** for the internal, non-LLM
+local-action / computer-use fast path (`_load_local_action_tools`, invoked
+programmatically with a registered harness name). It is just not router-visible.
+Do **not** re-add it to `ROUTER_TOOLS` — that resurrects the phantom-openclaw
+routing bug.
+
+Companion changes: the dead `tool.dispatch-to-harness` and `harness.openclaw`
+capabilities are deleted from the seed; `tool.spawn-worker` is re-described
+(*"Spawn a background worker sub-agent"*) with its `openclaw` verbs/objects
+removed; the `HarnessManager.get()` / `dispatch_to_harness` error paths no longer
+leak the raw harness inventory into a message that can reach voice; and the boot
+path logs a warning when an inert `[harness.openclaw].enabled = true` block is
+present (`warn_if_phantom_openclaw`).
+
+### Regression guards
+
+- `tests/unit/brain/test_routing.py::test_dispatch_to_harness_not_in_router_tools`
+- `tests/unit/brain/test_routing.py::test_subagent_request_forces_spawn_worker`
+- `tests/unit/brain/test_routing.py::test_router_tools_is_pure_dispatcher_set`
+  (exact-match set updated — `dispatch-to-harness` removed)
+- `tests/unit/core/test_capabilities.py::test_dispatch_to_harness_capability_removed`
+  / `::test_no_capability_advertises_openclaw` / `::test_harness_adapters_present`
+- `tests/integration/test_dispatch_to_harness.py::test_unknown_harness_returns_neutral_error_no_inventory_leak`

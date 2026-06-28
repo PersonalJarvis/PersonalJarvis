@@ -1776,3 +1776,63 @@ async def test_no_modal_note_on_ordinary_screen(monkeypatch: pytest.MonkeyPatch)
 
     _system, first_user = brain.requests[0]
     assert "modal dialog or banner" not in first_user
+
+
+# ---------------------------------------------------------------------------
+# G8c Part 1 — re-ensure-on-primary AFTER a mid-mission open_app launch
+# ---------------------------------------------------------------------------
+
+
+async def test_ensure_on_primary_reruns_after_mid_mission_open_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A mission-start ensure-on-primary cannot cover an app launched LATER. After
+    a mid-mission open_app the loop must re-bring the (now foreground) window onto
+    the main monitor, or CU keeps operating on the secondary (live bug 2026-06-28:
+    CU launched Chrome on the secondary and worked there)."""
+    calls = {"n": 0}
+
+    def _spy(_ctx):
+        calls["n"] += 1
+        return None
+
+    # Overrides the conftest autouse no-op stub for this test.
+    monkeypatch.setattr(loop_mod, "_ensure_target_on_primary", _spy)
+
+    brain = FakeBrain([
+        '{"action": "open_app", "name": "chrome"}',
+        '{"action": "done"}',
+    ])
+    ctx = make_ctx(brain, titles=["Chrome"])
+    await run_loop(ctx, "open chrome")
+
+    # Once at mission start + once after the open_app action.
+    assert calls["n"] >= 2, f"ensure-on-primary ran {calls['n']}x, want >= 2"
+
+
+# ---------------------------------------------------------------------------
+# Problem 2 — a guard-BLOCKED repeated click must TELL the model (or it spins to
+# the no-progress abort: "macht nicht weiter", live 2026-06-28).
+# ---------------------------------------------------------------------------
+
+
+async def test_toggle_stop_tells_the_model_its_click_was_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The model keeps clicking the SAME point; the toggle-stop guard blocks it.
+    Unlike the open_app suppression, the click guard injected NO history note, so
+    the model never learned WHY nothing happened and kept repeating until the
+    no-progress abort. It must now be told its click was blocked + to try a
+    different element/approach."""
+    brain = FakeBrain([
+        '{"action": "click", "x": 500, "y": 500, "target": "thing"}',
+        '{"action": "click", "x": 500, "y": 500, "target": "thing"}',
+        '{"action": "click", "x": 500, "y": 500, "target": "thing"}',
+        '{"action": "done"}',
+    ])
+    ctx = make_ctx(brain, titles=["App"], verify=False)
+    await run_loop(ctx, "do the thing")
+
+    joined = " ".join(user for _sys, user in brain.requests).lower()
+    assert "blocked" in joined
+    assert "stop clicking" in joined or "different" in joined

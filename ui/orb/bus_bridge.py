@@ -47,6 +47,7 @@ from jarvis.core.events import (
     UserVisibleFeedback,
     WakeWordDetected,
     VoiceBootStatus,
+    VoiceMuteChanged,
     VoiceMuteToggleRequested,
     VoiceSessionEnded,
     VoiceSessionStarted,
@@ -235,6 +236,13 @@ class OrbBusBridge:
             # Boot z-order re-lift: once the speech pipeline signals voice is
             # ready, re-assert the (already-visible) persistent bar's topmost.
             self._bus.subscribe(VoiceBootStatus, self._on_voice_boot_status)
+            # Authoritative mute mirror: the pipeline owns the global voice-mute
+            # flag and broadcasts VoiceMuteChanged whenever it flips (from this
+            # bar, the mascot, or a voice command). Forward it to the current
+            # surface's ``set_muted`` so the slashed-mic icon stays in lock-step
+            # with the real state — defensive getattr keeps surfaces without the
+            # method (the mascot orb) working unchanged.
+            self._bus.subscribe(VoiceMuteChanged, self._on_voice_mute_changed)
             # ADR-0016 L2 — voice-driven recovery from "orb lost on screen".
             # The local_action_gate publishes OrbResetRequested when the
             # user says "Orb zurück" / "wo bist du" / "reset orb".
@@ -311,6 +319,20 @@ class OrbBusBridge:
             root.after(0, lambda: reset_fn(None))
         except Exception:  # noqa: BLE001
             log.exception("OrbBridge.reset dispatch failed")
+
+    async def _on_voice_mute_changed(self, event: VoiceMuteChanged) -> None:
+        """Forward the pipeline's authoritative mute state to the current surface
+        so its slashed-mic icon mirrors reality. Defensive getattr: a surface
+        without ``set_muted`` (the mascot orb) is simply skipped — the call is a
+        no-op, never an error. The write is a quick atomic flag set on the
+        surface; no Tk marshal needed (the bar reads it on its own frame loop)."""
+        setter = getattr(self._orb, "set_muted", None)
+        if not callable(setter):
+            return
+        try:
+            setter(bool(event.muted))
+        except Exception:  # noqa: BLE001 — a mirror update must never break the bus
+            log.debug("surface set_muted failed", exc_info=True)
 
     def _publish_visible_feedback(self, mode: str, observed: dict) -> None:
         """Called from the orb's Tk thread after a deiconify. Builds and

@@ -41,6 +41,7 @@
     "socials": "Socials",
     "taskbar": "Taskbar",
     "contacts": "Contacts",
+    "feedback": "Feedback",
     "agent_instructions": "{name}.md"
   },
   "agent_instructions": {
@@ -2084,5 +2085,25 @@
   },
   "friends_view": {
     "subtitle": "Telegram bot + local friend registry. You decide what friends see."
+  },
+  "feedback": {
+    "subtitle": "Report a bug, share an idea, or ask a question — sent straight to our Discord.",
+    "type_label": "Type",
+    "type_bug": "Bug",
+    "type_idea": "Idea",
+    "type_question": "Question",
+    "title_label": "Title",
+    "title_placeholder": "Short summary of your feedback",
+    "description_label": "Description",
+    "description_placeholder": "Tell us more — steps to reproduce, context, expected vs. actual behaviour…",
+    "screenshot_label": "Screenshot (optional)",
+    "screenshot_pick": "Click to attach a screenshot",
+    "screenshot_preview_alt": "Screenshot preview",
+    "screenshot_remove": "Remove screenshot",
+    "submit": "Submit",
+    "sending": "Sending…",
+    "result_sent": "Thanks — sent to our Discord!",
+    "result_not_configured": "Feedback channel isn't set up yet — nothing was sent.",
+    "result_error": "Couldn't reach Discord, please try again later."
   }
 }

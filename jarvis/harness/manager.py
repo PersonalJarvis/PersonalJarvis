@@ -56,10 +56,15 @@ class HarnessManager:
         self._load_classes()
         if name not in self._instances:
             if name not in self._classes:
-                raise KeyError(
-                    f"Harness '{name}' nicht verfügbar. "
-                    f"Aktiv: {self.available()}. Failed: {list(self._failed)}."
+                # The raw active/failed inventory belongs in the log ONLY — it
+                # must not ride along in the exception message, which can reach
+                # the voice path (a harness name + the internal list was read
+                # aloud, forensic 2026-06-28). Keep the message short + neutral.
+                log.warning(
+                    "Harness %r not registered. Active: %s. Failed: %s.",
+                    name, self.available(), list(self._failed),
                 )
+                raise KeyError(f"harness {name!r} not registered")
             self._instances[name] = self._classes[name]()
         return self._instances[name]
 

@@ -41,6 +41,7 @@
     "socials": "Socials",
     "taskbar": "Taskbar",
     "contacts": "Kontakte",
+    "feedback": "Feedback",
     "agent_instructions": "{name}.md"
   },
   "agent_instructions": {
@@ -2083,5 +2084,25 @@
   },
   "friends_view": {
     "subtitle": "Telegram-Bot + lokaler Friend-Registry. Du entscheidest, was Friends sehen."
+  },
+  "feedback": {
+    "subtitle": "Fehler melden, Ideen teilen oder eine Frage stellen — geht direkt in unseren Discord.",
+    "type_label": "Typ",
+    "type_bug": "Bug",
+    "type_idea": "Idee",
+    "type_question": "Frage",
+    "title_label": "Titel",
+    "title_placeholder": "Kurze Zusammenfassung deines Feedbacks",
+    "description_label": "Beschreibung",
+    "description_placeholder": "Beschreib es genauer — Schritte zur Reproduktion, Kontext, Erwartetes vs. Tatsächliches Verhalten…",
+    "screenshot_label": "Screenshot (optional)",
+    "screenshot_pick": "Klicken, um einen Screenshot anzuhängen",
+    "screenshot_preview_alt": "Screenshot-Vorschau",
+    "screenshot_remove": "Screenshot entfernen",
+    "submit": "Senden",
+    "sending": "Sende…",
+    "result_sent": "Danke — wurde an unseren Discord gesendet!",
+    "result_not_configured": "Feedback-Kanal ist noch nicht eingerichtet — es wurde nichts gesendet.",
+    "result_error": "Discord nicht erreichbar, bitte später erneut versuchen."
   }
 }

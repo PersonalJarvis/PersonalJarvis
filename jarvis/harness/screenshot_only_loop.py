@@ -3795,8 +3795,20 @@ def _ensure_target_on_primary(ctx: ComputerUseContext) -> str | None:
                 f"Moved the target window '{(win.title or 'window')[:40]}' onto the "
                 "main monitor before acting — re-read the screen before clicking."
             )
-        log.info("[cu] G8 ensure-on-primary: could not move (%s)", msg)
-        return None
+        # G8c Part 3: the window is on a SECONDARY monitor (checked above) and
+        # genuinely could NOT be moved (Wayland, an owned / UWP fixed-placement
+        # window). With the follow-the-foreground capture strategy (Problem 1) CU
+        # now SEES + acts on the secondary screen where the window actually is, so
+        # this is no longer a dead end — just tell the model where it is and let it
+        # continue there (and the user can drag it over if they prefer).
+        title = (win.title or "window")[:40]
+        log.info("[cu] G8 ensure-on-primary: could NOT move '%s' (%s)", title, msg)
+        return (
+            f"Could NOT move the target window '{title}' onto the main monitor — it "
+            "is on a secondary screen, so you are now seeing and acting on THAT "
+            "screen. Continue there; the user can drag it to the main monitor if "
+            "they prefer."
+        )
     except Exception:  # noqa: BLE001 — never block a mission on the move probe
         log.debug("[cu] G8 ensure-on-primary failed", exc_info=True)
         return None
@@ -4785,6 +4797,20 @@ async def _run_screenshot_loop(
                         "[cu] %s repeated click ~(%d,%d) x%d — toggle-stop "
                         "(not executed)", tag, _tx, _ty, _near,
                     )
+                    # Problem 2 (2026-06-28): TELL the model its click was BLOCKED
+                    # and to do something DIFFERENT. Without this note the click
+                    # guard was silent — the model never learned why nothing
+                    # happened and kept clicking the same dead spot until the
+                    # no-progress abort ("macht nicht weiter"). Mirrors the
+                    # open_app-suppression note above so the model can break out.
+                    history.append(
+                        f"{tag}: your click at ~({_tx},{_ty}) was BLOCKED — you "
+                        f"already clicked that exact spot {_near}x and it did not "
+                        "work. STOP clicking there. Do something DIFFERENT: pick "
+                        "ANOTHER element by its EXACT name from AVAILABLE CONTROLS, "
+                        "scroll to reveal more of the page, or re-read the screen "
+                        "for a different way to reach the goal."
+                    )
                     guard_hits += 1
                     if guard_hits >= _MAX_GUARD_HITS:
                         yield _final(
@@ -5091,6 +5117,23 @@ async def _run_screenshot_loop(
                 await _settle_after_open_app(
                     ctx, str(action_obj.get("name", "")).strip().lower(),
                 )
+                # G8c Part 1: a MID-mission launch can land on a SECONDARY monitor
+                # — the mission-start ensure-on-primary ran before this app even
+                # existed. Re-bring the just-launched (now foreground) window onto
+                # the main monitor so CU never keeps grounding/clicking on the
+                # wrong screen (live bug 2026-06-28: CU launched Chrome on the
+                # secondary and worked there). Best-effort; off the loop.
+                try:
+                    _g8_note = await asyncio.to_thread(
+                        _ensure_target_on_primary, ctx,
+                    )
+                    if _g8_note:
+                        history.append(_g8_note)
+                        yield _progress(f"[cu] {_g8_note}")
+                except Exception:  # noqa: BLE001 — never end a mission on the probe
+                    log.debug(
+                        "[cu] G8 re-ensure after open_app failed", exc_info=True,
+                    )
             # Remember the last state-changing action for the next turn's
             # VERIFY FIRST directive (wait is a pure pause, never state).
             if action != "wait":

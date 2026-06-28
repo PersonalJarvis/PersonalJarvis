@@ -15,6 +15,7 @@ import {
   Terminal,
   Share2,
   Contact,
+  MessageSquareWarning,
   ScrollText,
   Loader2,
   type LucideIcon,
@@ -106,8 +107,11 @@ const NAV_GROUPS: NavItem[][] = [
     },
     { id: "outputs", labelKey: "nav.outputs", icon: FolderOpen },
   ],
-  // 4) Social links — pinned to the bottom group.
-  [{ id: "socials", labelKey: "nav.socials", icon: Share2 }],
+  // 4) Social links + in-app feedback — pinned to the bottom group.
+  [
+    { id: "socials", labelKey: "nav.socials", icon: Share2 },
+    { id: "feedback", labelKey: "nav.feedback", icon: MessageSquareWarning },
+  ],
 ];
 
 const VOICE_STATE_STYLE: Record<string, { dot: string; pulse: boolean }> = {

@@ -30,13 +30,26 @@ BrainCallback = Callable[[str], Awaitable[str]]
 # Master-Plan §22 / Persona-Mandate Phase 3.
 #
 # Baseline (Mandate-Phase-3): run-shell, screen-snapshot, multi-spawn,
-# spawn-worker. Phase 5 re-introduced dispatch-to-harness; Phase 8.4
-# (Plan §6.4 Quality-Gate) added dispatch-with-review — both legitimately
-# extend the set without breaking the pure-dispatcher spirit.
+# spawn-worker. Phase 8.4 (Plan §6.4 Quality-Gate) added dispatch-with-review,
+# which legitimately extends the set without breaking the pure-dispatcher
+# spirit.
+#
+# REMOVED 2026-06-28 — ``dispatch-to-harness`` is intentionally NOT a
+# LLM-visible router tool. Its raw ``harness`` parameter let the brain request
+# a sub-agent vehicle by NAME (``harness="openclaw"``), but OpenClaw is not a
+# registered harness (Welle-4 removal, ~92% hang; pyproject.toml registers only
+# open-interpreter / mcp-remote / python-script / screenshot). A "start a
+# subagent" turn then dispatched to a phantom harness and surfaced the raw
+# "Harness 'openclaw' nicht verfügbar" KeyError to voice. Heavy sub-agent work
+# is ``spawn-worker`` (Mission-Manager → ClaudeDirectWorker); live desktop work
+# is ``computer-use``. The tool class itself still exists for the INTERNAL,
+# non-LLM local-action fast path (see ``_load_local_action_tools``, called
+# programmatically with harness="screenshot"); it is just not router-selectable.
+# Do NOT re-add it here — that resurrects the phantom-openclaw routing bug.
 #
 # Rationale: Hauptjarvis is a pure dispatcher. Direct actions outside this
-# list (open_app, type_text, remember, whoami …) belong to the OpenClaw
-# bridge — the router delegates them via ``spawn_worker``. Read-only lookups
+# list (open_app, type_text, remember, whoami …) are delegated to a background
+# worker — the router delegates them via ``spawn_worker``. Read-only lookups
 # (search-web, wiki-recall, awareness-recall) and safe-gated direct actions
 # (computer-use, cli-tools, plugin-tools) are router-tier by design — see the
 # ADR-0011 amendments (2026-05-24 CLI, 2026-05-29 Computer-Use, 2026-06-01
@@ -46,7 +59,9 @@ BrainCallback = Callable[[str], Awaitable[str]]
 ROUTER_TOOLS = frozenset({
     "run-shell",
     "screen-snapshot",
-    "dispatch-to-harness",
+    # NB: ``dispatch-to-harness`` deliberately absent (removed 2026-06-28) —
+    # see the header comment above. Heavy work → spawn-worker; desktop →
+    # computer-use. The tool remains for the internal local-action fast path.
     "multi-spawn",
     "spawn-worker",
     # Phase 8.4 (Plan §6.4) — Hauptjarvis calls the quality-gate pipeline
@@ -199,6 +214,34 @@ SELF_MOD_TOOL_NAMES_ROUTER = frozenset({
 })
 
 
+def warn_if_phantom_openclaw(config: Any, harness_manager: Any) -> bool:
+    """Log a warning when ``[harness.openclaw].enabled`` is true but unregistered.
+
+    OpenClaw was removed in Welle 4 and has no entry-point, so an
+    ``enabled = true`` block is INERT (config honesty, 2026-06-28). This probe is
+    advisory only: it never raises, never changes routing, and "start a subagent"
+    routes to ``spawn_worker`` regardless. Returns True when a phantom config was
+    detected (consumed by the regression guard in tests).
+    """
+    oc = getattr(getattr(config, "harness", None), "openclaw", None)
+    if oc is None or not getattr(oc, "enabled", False):
+        return False
+    try:
+        available = harness_manager.available()
+    except Exception:  # noqa: BLE001 — an advisory probe must never break boot
+        return False
+    if "openclaw" in available:
+        return False
+    log.warning(
+        "[harness.openclaw].enabled is true but 'openclaw' is not a registered "
+        "harness (available: %s) — the block is inert. Heavy sub-agent work runs "
+        "through spawn_worker; set [harness.openclaw].enabled = false to silence "
+        "this.",
+        available,
+    )
+    return True
+
+
 def _per_turn_vision_active(vision_cfg: Any) -> bool:
     """True when ``[brain.router.vision]`` requests the per-turn screenshot feed.
 
@@ -315,12 +358,6 @@ def _load_tools_for_tier(
                     manager_resolver=_resolve_mission_manager,
                     kontrollierer_resolver=_resolve_kontrollierer,
                     announcer=build_spawn_announcer(config),
-                )
-            elif ep.name == "dispatch-to-harness":
-                inst = cls(
-                    bus=bus,
-                    manager=harness_manager,
-                    max_output_chars=config.harness.max_output_chars,
                 )
             elif ep.name == "computer-use":
                 # Wave 1: wraps the harness-dispatch plumbing with a fixed
@@ -656,9 +693,14 @@ def _phase2_full_brain(
     approval = ApprovalWorkflow(bus)
     executor = ToolExecutor(bus, evaluator, approval)
 
-    # HarnessManager for dispatch-to-harness + multi-spawn
+    # HarnessManager for the internal harness fast path (computer-use /
+    # local-action) + multi-spawn. NB: dispatch-to-harness is no longer an
+    # LLM-visible router tool (removed 2026-06-28) — see the ROUTER_TOOLS header.
     from jarvis.harness.manager import HarnessManager
     harness_manager = HarnessManager(bus=bus)
+    # Config honesty: warn (don't fail) if a [harness.openclaw] block is enabled
+    # but the harness is unregistered — that block is inert (Welle-4 removal).
+    warn_if_phantom_openclaw(config, harness_manager)
 
     # Phase A1: build the AwarenessManager (DI for the awareness-snapshot tool).
     # Do NOT start it here — start()/stop() is the responsibility of the app layer
@@ -903,15 +945,25 @@ def _phase2_full_brain(
             try:
                 from jarvis.vision.engine import VisionEngine
 
-                # Computer-Use captures + acts on ONE monitor per
-                # [computer_use].monitor (default "primary" = main screen only),
-                # so CU never lands on a secondary monitor where negative-X /
-                # mixed-DPI coordinates misfire. "foreground" restores the legacy
-                # follow-the-active-window behaviour.
+                # Computer-Use capture strategy (Problem 1, 2026-06-28). The
+                # [computer_use].monitor policy ("primary" default) drives the G8
+                # MOVE-to-primary hook (ctx.monitor), but the screenshot CAPTURE
+                # must FOLLOW the foreground/target window — pinning it to the
+                # primary made CU film an EMPTY primary and "do nothing" whenever
+                # the target app sat on a secondary monitor. Following the window
+                # (consistent with _capture_monitor_geometry, which already does)
+                # means CU works on main when the target is moved there and on the
+                # secondary when a window can't be moved, instead of freezing. The
+                # negative-X absolute-click fix makes secondary clicks land. "all"
+                # still captures the whole virtual desktop.
+                from jarvis.vision.screenshot import cu_capture_strategy  # noqa: PLC0415
+
                 _cu_monitor = getattr(
                     getattr(config, "computer_use", None), "monitor", "primary",
                 )
-                engine = VisionEngine(bus=bus, monitor_strategy=_cu_monitor)
+                engine = VisionEngine(
+                    bus=bus, monitor_strategy=cu_capture_strategy(_cu_monitor),
+                )
                 vision_engine_for_cu = engine
                 if per_turn_vision:
                     from jarvis.vision.context_provider import VisionContextProvider

@@ -32,9 +32,11 @@ dependencies = [
     # Local STT removed 2026-05-18 — Groq Whisper API is the new default.
     "google-cloud-texttospeech>=2.21",
     "elevenlabs>=1.5",  # cloud TTS (pure-Python HTTP SDK) — safe in base
-    "chromadb>=0.5",  # vector store; ships its own onnxruntime MiniLM embedder
-    # sentence-transformers (another torch puller, no direct importer in jarvis/)
-    # lives in [local-voice]; chromadb's default embedder does not require it.
+    # chromadb removed 2026-06-28: it had ZERO importers in jarvis/ (vestige of the
+    # soft-disabled legacy curator), pulled a large transitive tree, and carried a
+    # critical advisory with no fixed release. The Wiki is the live memory tier.
+    # sentence-transformers (a torch puller, no direct importer in jarvis/) lives
+    # in [local-voice].
     # Desktop-only packages (global-hotkeys, pywinauto, pywin32, pystray,
     # pywebview, pywinpty, win10toast-click, pyautogui, mss) live in the [desktop]
     # extras group per the cloud-first doctrine (CLAUDE.md). The base install must
