@@ -604,14 +604,33 @@ class JarvisBarOverlay:
             pipeline = get_speech_pipeline()
             if pipeline is None:
                 return
+            # Ground truth over a possibly-stale ``_mode``: the bridge pops the
+            # bar into the active "listen" look on the earliest wake signal, but
+            # a wake-lock-rejected wake starts no session and emits no IDLE
+            # state, leaving the bar STUCK "active" with nothing live (freeze
+            # forensic 2026-06-28). In that state resolve_click would read the
+            # close-X as a hang-up → a no-op ``request_hangup()`` that just traps
+            # the user ("frozen, nothing works"). So gate the destructive action
+            # on a real session: with none live, resolve the click as if IDLE,
+            # which can never hang up and instead starts a session — the escape
+            # hatch. Fail-safe: an older pipeline without the accessor keeps the
+            # legacy behaviour (trust ``_mode``).
+            session_live = True
+            checker = getattr(pipeline, "is_session_active", None)
+            if callable(checker):
+                try:
+                    session_live = bool(checker())
+                except Exception:  # noqa: BLE001 — a probe error must not break the click
+                    session_live = True
             # Hang-up must be a deliberate click on the VISIBLE close-X glyph
             # (the X is only drawn while hovered), never the wide left dead-zone
             # — see interaction.resolve_click + the silent-hangup forensic. The
             # active pill is ACTIVE_W, so the X glyph sits at WIN_W/2-0.42*pw.
-            active = self._mode in ("listen", "think", "speak")
+            click_mode = self._mode if session_live else "idle"
+            active = click_mode in ("listen", "think", "speak")
             pill_w = renderer.ACTIVE_W if active else None
             action = interaction.resolve_click(
-                click_x, renderer.WIN_W, self._mode,
+                click_x, renderer.WIN_W, click_mode,
                 hovered=hovered, pill_w=pill_w,
             )
             if action == "dictate":

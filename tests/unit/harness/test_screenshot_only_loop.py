@@ -219,7 +219,11 @@ def test_parse_actions_wraps_single_object_in_list() -> None:
     # plural parser treats it as a one-element batch so the executor can
     # iterate uniformly.
     actions = _parse_actions('{"action": "click", "x": 10, "y": 20}')
-    assert actions == [{"action": "click", "x": 10, "y": 20}]
+    # button/double are normalized onto every click (audit #21): default
+    # left single-click — additive, the coordinates are unchanged.
+    assert actions == [
+        {"action": "click", "x": 10, "y": 20, "button": "left", "double": False}
+    ]
 
 
 def test_parse_actions_accepts_list_of_actions() -> None:
@@ -231,7 +235,9 @@ def test_parse_actions_accepts_list_of_actions() -> None:
     assert len(actions) == 3
     assert actions[0] == {"action": "open_app", "name": "calc"}
     assert actions[1] == {"action": "wait", "ms": 500}
-    assert actions[2] == {"action": "click", "x": 100, "y": 200}
+    assert actions[2] == {
+        "action": "click", "x": 100, "y": 200, "button": "left", "double": False
+    }
 
 
 def test_parse_actions_rejects_empty_list() -> None:

@@ -65,6 +65,7 @@ from jarvis.voice.action_phrases import (
     cu_failure_readback,
     cu_success_readback,
 )
+from jarvis.voice.contextual_readback import render_readback
 from jarvis.memory import CoreMemory, PersonStore, RecallStore, Soul, UserProfile
 from jarvis.memory.curator import Curator
 from jarvis.safety.tool_executor import ToolExecutor
@@ -98,6 +99,7 @@ if TYPE_CHECKING:
     from jarvis.awareness.manager import AwarenessManager
     from jarvis.brain.wiki_context import WikiContextInjector
     from jarvis.control.cost import CostMeter as CostMeterLike
+    from jarvis.voice.contextual_readback import ReadbackComposer
 
 log = logging.getLogger(__name__)
 
@@ -1488,6 +1490,7 @@ class BrainManager:
         awareness_manager: "AwarenessManager | None" = None,  # noqa: UP037
         wiki_injector: "WikiContextInjector | None" = None,  # noqa: UP037
         contacts: Any = None,
+        readback_composer: "ReadbackComposer | None" = None,  # noqa: UP037
     ) -> None:
         self._config = config
         self._bus = bus
@@ -1520,6 +1523,13 @@ class BrainManager:
         # (names + relationship only; details on demand via contact-lookup).
         # None until Chunk A is merged — the block is simply omitted (graceful).
         self._contacts = contacts
+        # Context-aware spoken readbacks (maintainer mandate: no fixed stock
+        # phrases). When wired (router tier, via factory.build_readback_composer)
+        # the deterministic action-path readbacks — CU outcome/dispatch, budget,
+        # tool-failed — are phrased fresh for the situation by a bounded flash
+        # call, with the EXISTING canned line as the instant fallback. None on the
+        # bare/CLI managers and in tests => unchanged canned behavior (risk-free).
+        self._readback_composer = readback_composer
         # Phase A1: optional AwarenessManager. When set, _build_system_prompt()
         # injects a compact live snapshot (window/idle) as a fallback in case
         # the LLM does NOT call the awareness-snapshot tool. Plan §5 "Files to Modify".
@@ -4376,8 +4386,17 @@ class BrainManager:
                     ))
                     return f"{call.name} timeout after {timeout_s:.3g}s"
                 if not result.success:
-                    return result.error or action_phrase(
-                        "tool_failed", ack_lang, tool=call.name
+                    if result.error:
+                        return result.error
+                    tool_name = call.name
+                    return await render_readback(
+                        getattr(self, "_readback_composer", None),
+                        instruction=f"The local action '{tool_name}' failed.",
+                        language=ack_lang,
+                        canned=lambda: action_phrase(
+                            "tool_failed", ack_lang, tool=tool_name
+                        ),
+                        facts={"tool": tool_name},
                     )
                 if result.output is not None:
                     outputs.append(
@@ -4412,11 +4431,31 @@ class BrainManager:
                 )
             if self._cost_meter is not None:
                 if self._cost_meter.is_in_cooldown():
-                    return action_phrase("cost_cooldown", cu_lang)
+                    return await render_readback(
+                        getattr(self, "_readback_composer", None),
+                        instruction=(
+                            "A cost cooldown is active: the daily budget is used "
+                            "up, so new requests resume only after the cooldown ends."
+                        ),
+                        language=cu_lang,
+                        canned=lambda: action_phrase("cost_cooldown", cu_lang),
+                    )
                 if self._cost_meter.over_task_budget(tid):
-                    return action_phrase("task_budget", cu_lang)
+                    return await render_readback(
+                        getattr(self, "_readback_composer", None),
+                        instruction=(
+                            "The task budget for this conversation has been exceeded."
+                        ),
+                        language=cu_lang,
+                        canned=lambda: action_phrase("task_budget", cu_lang),
+                    )
                 if self._cost_meter.over_daily_budget():
-                    return action_phrase("daily_budget", cu_lang)
+                    return await render_readback(
+                        getattr(self, "_readback_composer", None),
+                        instruction="The daily budget has been exceeded.",
+                        language=cu_lang,
+                        canned=lambda: action_phrase("daily_budget", cu_lang),
+                    )
             # Wave-4 latency fix: Computer-Use is OFFLOADED off the voice turn.
             # Previously the harness was awaited inline for up to ~31 s, so a
             # "do it on screen" command froze the spoken turn the whole time.
@@ -4459,7 +4498,22 @@ class BrainManager:
             # mid-flight, and drop it on completion.
             bg_tasks.add(task)
             task.add_done_callback(bg_tasks.discard)
-            return action_phrase("cu_dispatch_ack", cu_lang)
+            # Optimistic ACK (AD-OE1). On the turn-critical path, so a TIGHT
+            # latency budget with the canned line as the instant fallback keeps
+            # intent->ACK well under SLO. in_progress=True: the work has not
+            # started, so a completion claim is rejected.
+            return await render_readback(
+                getattr(self, "_readback_composer", None),
+                instruction=(
+                    "You are about to carry out the user's request directly on "
+                    "the screen, in the background, and will report back when done."
+                ),
+                language=cu_lang,
+                canned=lambda: action_phrase("cu_dispatch_ack", cu_lang),
+                facts={"user_request": user_text},
+                in_progress=True,
+                latency_budget_ms=900,
+            )
 
         return None
 
@@ -4570,7 +4624,25 @@ class BrainManager:
                 # static parse as the ``computer_use`` tool path — no LLM (AP-11).
                 output = getattr(result, "output", None)
                 stdout = output.get("stdout") if isinstance(output, dict) else None
-                text = cu_success_readback(lang, stdout=stdout)
+                # The canned success line ALREADY forwards the verifier's signed
+                # on-screen observation (or a plain "Done."). Use it as the
+                # deterministic ground truth and let the composer only make it
+                # sound natural — honesty_bound so it can rephrase but never
+                # invent a detail the verifier did not report (ADR-0009). Off the
+                # turn path, so a generous budget; instant canned fallback.
+                canned_success = cu_success_readback(lang, stdout=stdout)
+                text = await render_readback(
+                    getattr(self, "_readback_composer", None),
+                    instruction=(
+                        "The user's on-screen request just succeeded; tell them "
+                        "naturally, keeping any on-screen detail that was observed."
+                    ),
+                    language=lang,
+                    canned=lambda: canned_success,
+                    facts={"user_request": user_text, "result": canned_success},
+                    honesty_bound=True,
+                    latency_budget_ms=2500,
+                )
             else:
                 err = getattr(result, "error", None)
                 exit_code, detail = self._cu_failure_detail(
@@ -4595,14 +4667,44 @@ class BrainManager:
                         CU_CANCEL_EXIT_CODE,
                     )
                     return
-                text = cu_failure_readback(
+                canned_failure = cu_failure_readback(
                     lang, error=err, exit_code=exit_code, detail=detail,
+                )
+                # The canned failure line is already humanized + scrubbed (no raw
+                # exit code, only a speakable reason). Rephrase it naturally,
+                # honesty_bound so the spoken reason stays faithful to what the
+                # harness actually reported. Instant canned fallback.
+                text = await render_readback(
+                    getattr(self, "_readback_composer", None),
+                    instruction=(
+                        "The user's on-screen request did not work; tell them "
+                        "plainly and kindly, keeping any reason that was given."
+                    ),
+                    language=lang,
+                    canned=lambda: canned_failure,
+                    facts={"user_request": user_text, "what_happened": canned_failure},
+                    # Not a signed observation (ADR-0009 binds success readbacks);
+                    # the digit + forbidden-vocab guards + strict persona keep it
+                    # honest while allowing a natural failure phrasing.
+                    honesty_bound=False,
+                    latency_budget_ms=2500,
                 )
                 diag = self._cu_failure_diagnostic(
                     error=err, exit_code=exit_code, detail=detail,
                 )
         except TimeoutError:
-            text = action_phrase("cu_timeout", lang, secs=f"{timeout_s:.0f}")
+            _secs = f"{timeout_s:.0f}"
+            text = await render_readback(
+                getattr(self, "_readback_composer", None),
+                instruction=(
+                    "The on-screen task took too long and was stopped after "
+                    f"{_secs} seconds."
+                ),
+                language=lang,
+                canned=lambda: action_phrase("cu_timeout", lang, secs=_secs),
+                facts={"seconds": _secs},
+                latency_budget_ms=2000,
+            )
             try:
                 await self._bus.publish(ActionExecuted(
                     trace_id=trace_id,
@@ -4615,7 +4717,13 @@ class BrainManager:
                 log.debug("CU-background ActionExecuted publish failed", exc_info=True)
         except Exception as exc:  # noqa: BLE001 — a background crash must not leak
             log.error("Computer-Use background task failed: %r", exc, exc_info=True)
-            text = action_phrase("cu_crashed", lang)
+            text = await render_readback(
+                getattr(self, "_readback_composer", None),
+                instruction="Something went wrong while doing the task on screen.",
+                language=lang,
+                canned=lambda: action_phrase("cu_crashed", lang),
+                latency_budget_ms=2000,
+            )
         # AD-OE6 zero silent drops: ALWAYS speak the outcome at the next turn
         # boundary (announcement -> scrub_for_voice -> TTS).
         try:
@@ -6547,7 +6655,15 @@ class BrainManager:
                 if final and not _looks_like_tool_use_leak(final):
                     yield final
                 elif leaked:
-                    yield self._action_failed_phrase(user_text)
+                    yield await render_readback(
+                        getattr(self, "_readback_composer", None),
+                        instruction=(
+                            "A tool action was recognized but could not be "
+                            "carried out; tell the user plainly."
+                        ),
+                        language=self._direct_ack_language(user_text),
+                        canned=lambda: self._action_failed_phrase(user_text),
+                    )
         finally:
             if not task.done():
                 task.cancel()

@@ -62,8 +62,15 @@ it("advancing persists the next step and shows it", () => {
   expect(screen.getByTestId("step-terms")).toBeDefined();
 });
 
-it("resumes from current_step", () => {
-  render(<OnboardingFlow onb={makeOnb({ current_step: "terms" })} />);
+it("always starts at the first step, ignoring a saved current_step", () => {
+  // Every run must walk each step in order. A current_step saved by an earlier
+  // (already completed) run must NOT auto-skip the user ahead to the end.
+  render(<OnboardingFlow onb={makeOnb({ current_step: "finish" })} />);
+  expect(screen.getByTestId("step-welcome")).toBeDefined();
+});
+
+it("honors an explicit initialStep (the terms-version-bump re-open)", () => {
+  render(<OnboardingFlow onb={makeOnb({ current_step: "finish" })} initialStep="terms" />);
   expect(screen.getByTestId("step-terms")).toBeDefined();
 });
 

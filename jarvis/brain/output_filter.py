@@ -109,6 +109,28 @@ REPR_SIGNATURE_RE = re.compile(
     r"|\b\w+\s*=\s*['\"]"            # key='…'          (Python kwargs/obj repr)
 )
 
+# Raw shell / PowerShell / .NET command guard (live bug 2026-06-28). The fast
+# tier, on a garbled "navigate Discord" turn, emitted a SendKeys PowerShell
+# command as its REPLY TEXT and TTS read it aloud "mit Sonderzeichen und allem"
+# (Add-Type … [System.Windows.Forms.SendKeys]::SendWait('^(g)')). The tool-leak
+# rules above only catch tool NAMES / JSON / XML — a bare command string has
+# none of those, so it slipped through to TTS. Each alternative below is a
+# code-ONLY signature that never appears in spoken German/English, so matching is
+# fail-closed to the standard phrase (like a stacktrace) without touching prose:
+#   * a [Namespace.Type]::Method static call (pure .NET/PowerShell)
+#   * Add-Type / -AssemblyName / SendKeys (PowerShell-isms / Win32 API names)
+#   * a $env:VAR reference
+#   * an explicit shell invocation (cmd /c …, powershell -…, bash -c …)
+SHELL_COMMAND_RE = re.compile(
+    r"\[[\w.]+\]::\w+"
+    r"|\bAdd-Type\b"
+    r"|\b-AssemblyName\b"
+    r"|\bSendKeys\b"
+    r"|\$env:\w+"
+    r"|\b(?:cmd\s+/c\b|powershell(?:\.exe)?\s+-[A-Za-z]|bash\s+-c\b)",
+    re.IGNORECASE,
+)
+
 # Tool-call patterns:
 #   1) tool_name({"...": "..."})       — function-call form (OpenAI)
 #   2) tool_name{"...": "..."}         — Anthropic tool-use inline
@@ -219,6 +241,29 @@ LONG_BASE64_RE = re.compile(
     r"[A-Za-z0-9+/=]{200,}",
 )
 
+# Web-search / SERP source artefacts (live forensic 2026-06-28, voice Turn 4).
+# The brain occasionally reads a raw search hit verbatim — a title, a snippet,
+# a URL, a bare domain, or the "Weitere Ergebnisse von <domain>" / "more results
+# from <domain>" SERP footer — instead of synthesizing an answer (the whole
+# DuckDuckGo result list incl. "26.06.2017 · …Weitere Ergebnisse von
+# www.gutefrage.net" was spoken). The search_web tool result now instructs the
+# brain to synthesize (primary fix); these patterns are the fail-closed defense
+# so a source URL / domain / footer can never reach TTS. Real spoken prose has
+# no http(s):// or bare www. token, so this does not touch a clean answer.
+URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+# The SERP "more results from <source>" footer (de/en/es). Cut it before the
+# bare-www pass so "Weitere Ergebnisse von www.x.de" goes as one unit.
+MORE_RESULTS_RE = re.compile(
+    r"\b(?:weitere|mehr)\s+ergebnisse\s+(?:von|auf|bei)\s+\S+"  # de  # i18n-allow
+    r"|more\s+results\s+(?:from|on|for)\s+\S+"                  # en
+    r"|m[aá]s\s+resultados\s+(?:de|en|para)\s+\S+",             # es
+    re.IGNORECASE,
+)
+# A bare www-prefixed domain reference ("www.gutefrage.net"). Anchored on the
+# "www." token so a normal sentence is never touched (no false positive on a
+# plain word that happens to contain a dot).
+BARE_WWW_RE = re.compile(r"\bwww\.\S+", re.IGNORECASE)
+
 # Markdown
 MARKDOWN_BOLD_RE = re.compile(r"\*\*")
 MARKDOWN_HEADER_RE = re.compile(r"^\s*#{1,6}\s+", re.MULTILINE)
@@ -231,6 +276,44 @@ SELF_REF_RE = re.compile(
     r"\b("
     r"Als KI|Als Sprachmodell|Ich bin nur|Ich bin lediglich|"
     r"As an AI|I'?m just a language model|I am a language model"
+    r")\b[^.!?]*[.!?]?\s*",
+    re.IGNORECASE,
+)
+
+# Background-action narration (DE+EN+ES). The maintainer finds it annoying when
+# Jarvis ANNOUNCES internal bookkeeping it does silently in the background —
+# "I'm noting that", "let me look at the last transcription", "ich notiere mir
+# das", "ich schaue mir die letzte Transkription an", "tomo nota". The action
+# still happens; it is just never spoken. Cuts the whole narration clause incl.
+# its sentence punctuation (same shape as SELF_REF_RE). Applies in BOTH normal
+# and ack mode. The "look at the previous transcript/answer" alternatives are
+# gated on a leading intent verb ("let me / I'll / ich schaue") so a content
+# lead-in like "Looking at the data, the answer is X" is NOT stripped.
+BACKGROUND_ACTION_RE = re.compile(
+    r"\b("
+    # --- noting / saving down (DE) ---
+    r"ich notiere(?:\s+mir)?|"
+    r"ich merke\s+mir|"
+    r"ich halte\s+(?:das|es|alles)\s+fest|"
+    # --- reviewing the previous transcript / answer (DE) ---
+    r"ich (?:schaue|sehe|gucke)(?:\s+mir)?\b[^.!?]*?\b"
+    r"(?:transkription|transkript|aufzeichnung|aufnahme|"
+    r"(?:letzte|vorherige|bisherige)[ns]?\s+antwort)|"
+    # --- noting (EN) — kept narrow ("noting/jotting", not "saving/recording",
+    #     so a legit "I'm saving the file" confirmation is NOT stripped) ---
+    r"(?:I'?m|I am)\s+(?:noting|jotting)\b(?:[^.!?]*?\bdown)?|"
+    r"(?:I'?ll|I will)\s+(?:note|jot)\b|"
+    r"(?:let me|I'?ll)\s+make\s+a\s+note|"
+    # --- reviewing the previous transcript / answer (EN) ---
+    r"(?:let me|I'?ll|I'?m going to|I will)\s+"
+    r"(?:look at|check|review|pull up|go through)\b[^.!?]*?\b"
+    r"(?:transcript(?:ion)?|recording|(?:last|previous|earlier|prior)\s+"
+    r"(?:answer|response|conversation))|"
+    # --- noting / reviewing (ES) — "anoto/apunto", not "guardo" (= save) ---
+    r"tomo nota|"
+    r"(?:lo|eso|esto)\s+(?:anoto|apunto)|"
+    r"(?:voy a|d[eé]jame)\s+(?:revisar|mirar|ver|consultar)\b[^.!?]*?\b"
+    r"(?:transcripci[oó]n|grabaci[oó]n|(?:[uú]ltima|anterior)\s+respuesta)"
     r")\b[^.!?]*[.!?]?\s*",
     re.IGNORECASE,
 )
@@ -406,6 +489,20 @@ def scrub_for_voice(
             fallback_used=True,
         )
 
+    # 1c. Raw shell / PowerShell / .NET command: Early-Return mit Standard-Phrase.
+    #     A code-only signature (a [Type]::Method call, Add-Type/-AssemblyName/
+    #     SendKeys, $env:, an explicit shell invocation) is never a spoken
+    #     sentence, so the whole text is replaced rather than partially stripped
+    #     (a half-spoken command is worse than the generic phrase). Live bug
+    #     2026-06-28: TTS read a SendKeys PowerShell command aloud verbatim.
+    if SHELL_COMMAND_RE.search(text):
+        fallback = FALLBACK_PHRASES.get(language, FALLBACK_PHRASES["de"])
+        return ScrubResult(
+            cleaned=fallback,
+            actions=["replaced_shell_command"],
+            fallback_used=True,
+        )
+
     out = text
 
     # 0. Hang-up control sentinel: the brain appends END_CALL_SIGNAL to signal
@@ -456,10 +553,33 @@ def scrub_for_voice(
         actions.append("removed_tool_json")
         out = new
 
+    # 3b. Web-search source artefacts — URLs, bare www-domains, and the
+    #     "Weitere Ergebnisse von <domain>" / "more results from <domain>" SERP
+    #     footer. The brain may read a raw search hit aloud instead of answering
+    #     (live forensic 2026-06-28, Turn 4). The footer is cut BEFORE the bare
+    #     www-domain so "von www.x.de" goes as one unit. Fail-closed defense; the
+    #     real fix is the search_web answer_instruction that tells the brain to
+    #     synthesize. Real spoken prose carries no http:// or www. token.
+    new = URL_RE.sub("", out)
+    new = MORE_RESULTS_RE.sub("", new)
+    new = BARE_WWW_RE.sub("", new)
+    if new != out:
+        actions.append("removed_source_artifacts")
+        out = new
+
     # 4. Self-Reference (ganze Klausel inkl. Satzpunkt entfernen)
     new = SELF_REF_RE.sub("", out)
     if new != out:
         actions.append("removed_self_reference")
+        out = new
+
+    # 4b. Background-action narration — the user never wants to HEAR that Jarvis
+    # is noting/saving something or reviewing the last transcription/answer; it
+    # happens silently in the background (maintainer mandate 2026-06-28). Cut the
+    # whole narration clause (DE/EN/ES). Runs in both normal + ack mode.
+    new = BACKGROUND_ACTION_RE.sub("", out)
+    if new != out:
+        actions.append("removed_background_action_narration")
         out = new
 
     # 5. Echo-Paraphrase NUR Opener (<=OPENER_BUDGET Zeichen).

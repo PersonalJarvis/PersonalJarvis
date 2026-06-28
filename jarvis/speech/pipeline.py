@@ -3271,7 +3271,21 @@ class SpeechPipeline:
         await self._warmup_phase_a()
         phase_a_ms = (time.monotonic() - phase_a_start) * 1000.0
         log.info("Warm-up Phase A (critical listening path) done in %.0f ms.", phase_a_ms)
-        await self._emit_boot_status(ready=True, detail="phase_a_done")
+        # Honest readiness (2026-06-27): Phase A only starts the wake LOOP. For a
+        # CUSTOM wake phrase (rolling-whisper) the wake Whisper model (self._stt)
+        # is still loading in _warmup_deferred_loaders below, so wake is DEAF
+        # until that finishes (~3 s warm, longer cold). Signalling ready=True here
+        # made the UI flip to "you can speak" while Jarvis could not yet hear —
+        # the "I talked, nothing happened, is it broken?" confusion. Only the
+        # lightweight openWakeWord path is genuinely ready now; the rolling-
+        # whisper path emits ready=True AFTER its model loads (see
+        # _warmup_deferred_loaders). Until then we report ready=False so the UI
+        # shows an honest "starting up / preparing to listen" state.
+        _wake_needs_model = bool(self._whisper_wake_enabled and self._stt is not None)
+        await self._emit_boot_status(
+            ready=not _wake_needs_model,
+            detail="listening" if not _wake_needs_model else "preparing_wake",
+        )
 
         # Audible "ready" cue: tells the user exactly when listening starts
         # after a (cold) boot. It is intentionally fire-and-forget: a slow or
@@ -3384,8 +3398,25 @@ class SpeechPipeline:
                     "Wake-model pre-warm done in %.0f ms (priority, no GIL race).",
                     (time.monotonic() - _wake_t0) * 1000.0,
                 )
+                # Honest readiness (2026-06-27): the custom-phrase wake model is
+                # now in memory, so the rolling-whisper wake loop can ACTUALLY
+                # hear. Phase A reported ready=False ("preparing_wake") for this
+                # path; flip it to ready=True now so the UI's "starting up" state
+                # becomes "you can speak now" exactly when it's true. No-op for
+                # the openWakeWord path (it already reported ready in Phase A).
+                if self._whisper_wake_enabled:
+                    await self._emit_boot_status(
+                        ready=True, detail="wake_model_loaded"
+                    )
             except Exception as exc:  # noqa: BLE001 — lazy load on first use still works
                 log.warning("Wake-model pre-warm failed (will lazy-load): %s", exc)
+                # Don't strand the UI in "preparing" forever: the model will
+                # lazy-load on first transcribe, so report ready so the user can
+                # try speaking (honest-ish — better than a stuck "starting up").
+                if self._whisper_wake_enabled:
+                    await self._emit_boot_status(
+                        ready=True, detail="wake_model_lazy"
+                    )
 
         async def _load_vad() -> None:
             await asyncio.to_thread(self._vad._ensure_model)
@@ -3644,6 +3675,22 @@ class SpeechPipeline:
             self._on_ptt_release()  # submit what was dictated
         else:
             self._on_ptt_press()    # open an endpoint-free mic
+
+    def is_session_active(self) -> bool:
+        """Ground truth for "a live voice session is in progress right now".
+
+        The jarvis-bar uses this to decide whether a close-X click is a real
+        hang-up or a useless no-op. The bar's visual mode can get stuck in the
+        active "listen" look when a wake popped it but the post-hangup wake-lock
+        cooldown rejected the session — no ``VoiceSessionStarted`` is published
+        and no ``IDLE`` state follows, so nothing resets the bar (freeze
+        forensic 2026-06-28). The turn-state is the authoritative signal: it is
+        ``IDLE`` iff no ``_active_session`` loop is running.
+        """
+        return (
+            getattr(self, "_turn_state", TurnTakingState.IDLE)
+            is not TurnTakingState.IDLE
+        )
 
     def _trigger_voice_hangup(self, *, stop_player: bool = True) -> None:
         """Hard-stop the voice channel — the single hangup chokepoint.

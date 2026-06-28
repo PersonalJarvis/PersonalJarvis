@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { PluginsView } from "@/views/PluginsView";
+import { ConnectIconButton, PluginsView } from "@/views/PluginsView";
 
 const CATALOG = {
   version: 1,
@@ -108,5 +108,62 @@ describe("PluginsView live badge", () => {
 
     // GitHub is connected + live_callable: true → the Live badge must appear
     expect(screen.getByText("· Live")).toBeDefined();
+  });
+});
+
+// Regression: `/connect/start` takes ~0.6s with no other feedback, so a user
+// clicked the "+" several times and EACH click launched its own OAuth flow — a
+// burst of browser tabs + multiple DCR client registrations. The button must
+// lock itself (and show a spinner) while a connect is in flight, ignoring the
+// extra clicks, then re-enable so a genuine retry still works.
+describe("ConnectIconButton click-lock", () => {
+  it("ignores extra clicks while a connect is in flight", async () => {
+    let release: () => void = () => {};
+    const onConnect = vi.fn(
+      () => new Promise<void>((resolve) => { release = resolve; }),
+    );
+    render(
+      <ConnectIconButton
+        status="not_connected"
+        onConnect={onConnect}
+        onDisconnect={() => {}}
+      />,
+    );
+    const btn = screen.getByRole("button", { name: "Connect plugin" });
+
+    fireEvent.click(btn);
+    fireEvent.click(btn); // second click while the first is still pending
+    fireEvent.click(btn); // third
+
+    // Only the first click started a flow; the rest were swallowed by the lock.
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect((btn as HTMLButtonElement).disabled).toBe(true));
+
+    await act(async () => {
+      release();
+    });
+    expect((btn as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("re-enables after the connect resolves so a retry still works", async () => {
+    const onConnect = vi.fn(() => Promise.resolve());
+    render(
+      <ConnectIconButton
+        status="not_connected"
+        onConnect={onConnect}
+        onDisconnect={() => {}}
+      />,
+    );
+    const btn = screen.getByRole("button", { name: "Connect plugin" });
+
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    expect((btn as HTMLButtonElement).disabled).toBe(false);
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+
+    expect(onConnect).toHaveBeenCalledTimes(2);
   });
 });

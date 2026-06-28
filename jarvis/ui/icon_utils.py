@@ -341,6 +341,52 @@ def set_window_icon_by_title(
     return _apply_icon_to_hwnd(int(hwnd), ico_path)
 
 
+def set_window_icon_for_pid(pid: int, ico_path: Path) -> bool:
+    """Set the icon on the largest visible top-level window owned by ``pid``.
+
+    A title-independent companion to :func:`set_window_icon_by_title`. pywebview's
+    WebView2 host window does not reliably carry ``WINDOW_TITLE`` at the moment the
+    icon-setter polls (the title is applied late, and ``FindWindowW`` only matches
+    an *exact* title), so we also locate the window by *our own* process id and pick
+    its biggest top-level window. Returns True when an icon was applied.
+    """
+    if sys.platform != "win32":
+        return False
+    if not ico_path.is_file():
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except Exception as exc:  # noqa: BLE001
+        logger.opt(exception=exc).warning("ctypes nicht verfügbar")
+        return False
+
+    user32 = ctypes.windll.user32
+    user32.GetWindowThreadProcessId.argtypes = [
+        wintypes.HWND, ctypes.POINTER(wintypes.DWORD)
+    ]
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+
+    best = [0, 0]  # [hwnd, area]
+    EnumProc = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+
+    def _cb(hwnd, _lparam):  # noqa: ANN001
+        wp = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(wp))
+        if wp.value == pid and user32.IsWindowVisible(hwnd):
+            rect = wintypes.RECT()
+            user32.GetWindowRect(hwnd, ctypes.byref(rect))
+            area = (rect.right - rect.left) * (rect.bottom - rect.top)
+            if area > best[1]:
+                best[0], best[1] = int(hwnd), area
+        return True
+
+    user32.EnumWindows(EnumProc(_cb), 0)
+    if not best[0]:
+        return False
+    return _apply_icon_to_hwnd(best[0], ico_path)
+
+
 def load_ico_as_pil_image(ico_path: Path, size: int = 64) -> Any | None:
     """Lädt ``.ico`` als ``PIL.Image`` für pystray-Tray-Icon.
 

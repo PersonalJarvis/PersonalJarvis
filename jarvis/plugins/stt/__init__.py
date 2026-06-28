@@ -176,7 +176,12 @@ def _wake_cuda_available() -> bool:
     # 2) Cold path — pay the probe ONCE, log how long it took, then persist it.
     t0 = time.perf_counter()
     try:
-        import ctranslate2
+        # Shield the ctranslate2 import from its transformers+torch converter
+        # stack (inference/probe needs neither) — ~2.9 s warm / ~14 s cold saved.
+        from jarvis.plugins.stt.fwhisper import inference_only_import_shield
+
+        with inference_only_import_shield():
+            import ctranslate2
 
         available = ctranslate2.get_cuda_device_count() > 0
     except Exception:  # noqa: BLE001 - any failure means "treat as no GPU"

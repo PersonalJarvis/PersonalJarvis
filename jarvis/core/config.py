@@ -1370,8 +1370,14 @@ class ComputerUseConfig(BaseModel):
     # onto whatever screen it is on (the legacy behaviour, multi-monitor-fragile);
     # "all" captures the whole virtual desktop. Switch to "foreground" only if you
     # deliberately want CU on a secondary screen and have verified clicks land.
-    # Cross-platform: the primary is identified by its (0,0) origin on every OS.
+    # Cross-platform: the primary is identified natively (Win MONITORINFOF_PRIMARY,
+    # macOS CGMainDisplayID, X11 XRRGetOutputPrimary), NOT by assuming origin (0,0).
     monitor: Literal["primary", "foreground", "all"] = "primary"
+    # Which screen counts as "the main monitor" when monitor="primary" (audit G8a).
+    # "primary" (default) = the OS primary; "largest" = the biggest-area screen;
+    # or an explicit id (a monitor-name substring, or a 1-based index "1"/"2").
+    # An unknown id falls back to the OS primary (never a silent wrong screen).
+    main_monitor: str = "primary"
     # Master switch for the per-action read-back verification suite (claude-in-
     # chrome parity): after a type, confirm the text landed in the field; after a
     # click_element, confirm the intended state changed; don't blind-batch a

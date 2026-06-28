@@ -154,13 +154,14 @@ _ANTI_SILENCE_PHRASES: dict[str, str] = {
     "es": "Ahora mismo no puedo hacerlo — me falta la herramienta adecuada.",
 }
 
+# Meta-/debug feedback acknowledgement. Must NOT narrate background bookkeeping
+# (the maintainer finds "ich notiere das Feedback" / "I'm noting that" / "tomo
+# nota" annoying — that work happens silently, BACKGROUND_ACTION_RE strips it
+# anyway). A brief, neutral acknowledgement that invites the actual correction.
 _META_DEBUG_ACK_PHRASES: dict[str, str] = {
-    "de": (
-        "Verstanden, ich notiere das Feedback. "  # i18n-allow: spoken German TTS
-        "Soll ich es genauer untersuchen?"  # i18n-allow: spoken German TTS
-    ),
-    "en": "Understood, I'm noting that feedback. Want me to look into it?",
-    "es": "Entendido, tomo nota. ¿Quieres que lo investigue más a fondo?",
+    "de": "Verstanden. Was genau hätte anders sein sollen?",  # i18n-allow: spoken German TTS
+    "en": "Understood. What exactly should have been different?",
+    "es": "Entendido. ¿Qué debería haber sido diferente?",
 }
 
 

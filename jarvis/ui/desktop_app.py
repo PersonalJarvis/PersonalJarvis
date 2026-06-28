@@ -2357,7 +2357,12 @@ class DesktopApp:
                     )
 
             self._pipeline_task.add_done_callback(_on_pipeline_done)
-            logger.info("Speech-Pipeline gestartet — Wake: 'Hey Jarvis'.")
+            # Log the ACTUAL configured wake word, not a hardcoded "Hey Jarvis"
+            # (the custom phrase, e.g. "Luca", or the openWakeWord keyword).
+            logger.info(
+                "Speech-Pipeline gestartet — Wake: {!r}.",
+                wake_plan.phrase or wake_plan.oww_keyword or "?",
+            )
             if getattr(self, "_bp", False):
                 # Honest wake-armed anchor on the same clock as BOOT_READY_MS.
                 print(
@@ -2656,25 +2661,46 @@ class DesktopApp:
         from jarvis.ui.icon_utils import (
             project_icon_path,
             set_window_icon_by_title,
+            set_window_icon_for_pid,
         )
 
         ico = project_icon_path()
         if not ico.is_file():
             return
 
+        own_pid = os.getpid()
+
         def _poll() -> None:
             from loguru import logger
 
-            deadline = time.monotonic() + 5.0
+            # 30s window (was 5s): a voice-loaded boot delays the WebView2 host
+            # window past the old 5s deadline, so the icon was never set and the
+            # titlebar kept the pythonw.exe Python logo (forensic 2026-06-28).
+            # Match by title OR by our own process id (the WebView2 host title is
+            # applied late, so an exact-title FindWindowW alone is racy), and keep
+            # re-applying for a few seconds after the first success — WebView2
+            # re-assigns the process icon once its control finishes initialising,
+            # so a single WM_SETICON does not stick.
+            deadline = time.monotonic() + 30.0
+            first_set_at: float | None = None
             while time.monotonic() < deadline:
-                if set_window_icon_by_title(WINDOW_TITLE, ico, quiet=True):
-                    logger.debug("Taskbar-Icon fruehzeitig gesetzt.")
-                    return
-                time.sleep(0.05)
-            logger.warning(
-                "Taskbar-Icon-Setter Timeout — Fenster '{}' nicht gefunden.",
-                WINDOW_TITLE,
-            )
+                ok = set_window_icon_by_title(WINDOW_TITLE, ico, quiet=True)
+                if not ok:
+                    ok = set_window_icon_for_pid(own_pid, ico)
+                if ok:
+                    if first_set_at is None:
+                        first_set_at = time.monotonic()
+                        logger.debug(
+                            "Taskbar-Icon gesetzt; re-arming gegen WebView2-Override."
+                        )
+                    elif time.monotonic() - first_set_at > 8.0:
+                        return
+                time.sleep(0.3)
+            if first_set_at is None:
+                logger.warning(
+                    "Taskbar-Icon-Setter Timeout — Fenster '{}' nicht gefunden.",
+                    WINDOW_TITLE,
+                )
 
         threading.Thread(
             target=_poll, name="jarvis-icon-setter", daemon=True

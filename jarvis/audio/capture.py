@@ -56,10 +56,27 @@ _BLOCKED_INPUT_SUBSTRINGS = (
 )
 
 _INPUT_PRIORITY = (
-    "Logitech PRO X", "Logitech",
+    "Logitech PRO X", "PRO X", "Logitech",
     "Jabra", "Sennheiser", "SteelSeries", "Corsair", "HyperX", "Razer",
     "USB Audio", "Headset", "Microphone", "Mikrofon",
     "Realtek HD Audio", "Realtek",
+)
+
+# Virtual / AI microphones (NVIDIA Broadcast, voice changers, virtual cables)
+# enumerate like a normal mic but only carry audio while their companion app is
+# running; when that app is closed they deliver DIGITAL SILENCE (rms 0 /
+# -96 dBFS), which silently kills always-on wake detection ("nothing happens",
+# no error). Deprioritize them so a real hardware mic is always preferred — they
+# stay a last-resort fallback (better silence-capable than no device). Forensic
+# 2026-06-27: on a localized Windows both the real and the virtual mic showed up
+# as "Mikrofon (PRO X)" / "Mikrofon (NVIDIA Broadcast)", matched "Mikrofon"
+# equally, so the lower index (NVIDIA Broadcast) won and fed pure silence to the
+# wake loop. Cross-platform: the same trap exists with VB-Audio/VoiceMeeter
+# (Win), BlackHole/Loopback (macOS), and pulse/pipewire virtual sources (Linux).
+_INPUT_DEPRIORITIZE = (
+    "NVIDIA Broadcast", "Voice Changer", "VoiceMod", "Virtual",
+    "VB-Audio", "VoiceMeeter", "CABLE Output", "Steam Streaming",
+    "BlackHole", "Loopback Audio", "Monitor of",
 )
 
 # Host API preference order for 16 kHz mic capture (Whisper native).
@@ -192,10 +209,19 @@ def _resolve_input_device(device: int | str | None) -> int | str | None:
 
     def _name_rank(entry: tuple[int, dict]) -> int:
         name = str(entry[1].get("name", ""))
-        for rank, sub in enumerate(_INPUT_PRIORITY):
+        rank = len(_INPUT_PRIORITY)
+        for r, sub in enumerate(_INPUT_PRIORITY):
             if sub.lower() in name.lower():
-                return rank
-        return len(_INPUT_PRIORITY)
+                rank = r
+                break
+        # Push virtual / AI mics (NVIDIA Broadcast, voice changers, virtual
+        # cables) BEHIND every real hardware mic — they often deliver silence
+        # when their companion app is closed (see _INPUT_DEPRIORITIZE). They are
+        # not blocked, only ranked last, so they still serve as a fallback when
+        # no real mic exists.
+        if any(v.lower() in name.lower() for v in _INPUT_DEPRIORITIZE):
+            rank += 1000
+        return rank
 
     candidates.sort(key=lambda entry: (_name_rank(entry), _hostapi_rank(entry)))
     if candidates:
