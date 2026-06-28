@@ -245,6 +245,8 @@ class UIATreeSource:
                 enabled=n.enabled,
                 parent_index=n.parent_index,
                 value=n.value,
+                is_password=n.is_password,
+                focused=n.focused,
             )
             for n in raw
         ]
@@ -321,6 +323,22 @@ def _flatten(
     except Exception:  # noqa: BLE001
         value = ""
 
+    # Accessibility state (audit #5/#16/#1B), best-effort via the underlying UIA
+    # automation element. CurrentIsPassword marks a secure edit (redact before
+    # upload, never read its value); CurrentHasKeyboardFocus proves a
+    # click_element actually focused the control. Any access failure (non-Windows,
+    # COM error, missing attribute) leaves both False — the safe default.
+    is_password = False
+    focused = False
+    try:
+        raw_el = getattr(element, "element", None)
+        if raw_el is not None:
+            is_password = bool(getattr(raw_el, "CurrentIsPassword", False))
+            focused = bool(getattr(raw_el, "CurrentHasKeyboardFocus", False))
+    except Exception:  # noqa: BLE001 — state read is best-effort, never skips the node
+        is_password = False
+        focused = False
+
     my_index = len(out)
     out.append(RawNode(
         role=role,
@@ -332,6 +350,8 @@ def _flatten(
         depth=depth,
         parent_index=parent_index,
         value=value,
+        is_password=is_password,
+        focused=focused,
     ))
 
     if depth >= max_depth:

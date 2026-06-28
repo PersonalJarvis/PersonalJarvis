@@ -415,6 +415,8 @@ class UIANode:
     enabled: bool = True
     parent_index: int = -1           # Index in der flachen Nodes-Liste
     value: str = ""                  # L3: current text of an editable control
+    is_password: bool = False        # secure/password edit -> redact, never read
+    focused: bool = False            # holds keyboard focus (post-click verify)
 
 
 @dataclass(frozen=True, slots=True)

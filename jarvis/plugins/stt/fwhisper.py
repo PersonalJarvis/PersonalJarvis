@@ -9,8 +9,10 @@ Auf RTX 5070 Ti liefert distil-large-v3 für eine 5-Sekunden-Utterance
 """
 from __future__ import annotations
 
+import contextlib
 import logging
-from collections.abc import AsyncIterator
+import sys
+from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
 import numpy as np
@@ -19,6 +21,44 @@ from jarvis.audio.capture import pcm_bytes_to_np
 from jarvis.core.protocols import AudioChunk, Transcript
 
 log = logging.getLogger(__name__)
+
+
+@contextlib.contextmanager
+def inference_only_import_shield() -> Iterator[None]:
+    """Block ``transformers`` + ``torch`` ONLY while ctranslate2 imports.
+
+    ``import ctranslate2`` (pulled in transitively by ``faster_whisper``) eagerly
+    runs ``from ctranslate2 import converters`` at the bottom of its ``__init__``,
+    and ``ctranslate2.converters.transformers`` imports the full **transformers**
+    (~1.5 s) → **torch** (~1.3 s) stack. Those are model-*conversion* code paths
+    (HuggingFace → CTranslate2 format) that the inference engine (wake match +
+    utterance STT) NEVER touches. Stubbing both modules as un-importable for the
+    duration of the import makes the converter shim's guarded import skip them,
+    cutting the faster_whisper/ctranslate2 import from **~2.9 s warm / ~14 s cold
+    to ~0.17 s** (measured 2026-06-28) — the single biggest cost on the wake
+    "ready to talk" path. Cross-platform (pure ``sys.modules`` manipulation).
+
+    Safety: only stubs a module that is **not already really imported** (so it can
+    never clobber a torch loaded first by Silero-VAD), and on exit removes ONLY
+    the stub it set — leaving any real module another thread imported meanwhile.
+    Inference was verified to still work and a later real ``import torch`` to
+    succeed after the shield (the VAD path). This relies on the wake-model load
+    being serialized before the VAD/TTS loads (pipeline ``_warmup_deferred_loaders``
+    pre-warms the wake model first and alone) so there is no concurrent real
+    torch import racing the stub.
+    """
+    saved: list[str] = []
+    for name in ("transformers", "torch"):
+        if name not in sys.modules:
+            sys.modules[name] = None  # type: ignore[assignment]
+            saved.append(name)
+    try:
+        yield
+    finally:
+        for name in saved:
+            # Remove ONLY our stub; if real code imported it meanwhile, keep it.
+            if sys.modules.get(name) is None:
+                sys.modules.pop(name, None)
 
 
 def _normalize_model_name(model: str) -> str:
@@ -53,9 +93,12 @@ def _new_whisper_model(model_name: str, device: str, compute_type: str) -> Any:
 
     The heavy ``faster_whisper`` import stays lazy here so importing this module
     on a host without it is cheap; tests monkeypatch this function to avoid the
-    import + a real model build.
+    import + a real model build. The import shield skips ctranslate2's
+    transformers+torch converter stack (inference doesn't need it) — see
+    :func:`inference_only_import_shield`.
     """
-    from faster_whisper import WhisperModel
+    with inference_only_import_shield():
+        from faster_whisper import WhisperModel
 
     return WhisperModel(model_name, device=device, compute_type=compute_type)
 

@@ -39,6 +39,12 @@ class RawNode:
     depth: int = 0
     parent_index: int = -1
     value: str = ""  # L3: current text of an editable control (address bar, ...)
+    # Accessibility state (audit #5/#16/#1B). is_password: a secure/password edit
+    # field (redact before screenshot upload, never read its value). focused: the
+    # control currently holds keyboard focus (a click_element that gives a field
+    # focus is verifiable post-hoc). Best-effort per OS; default False.
+    is_password: bool = False
+    focused: bool = False
     # Kinder-Indizes werden waehrend der Traversal im Tree-Builder verwaltet.
     children: list[int] = field(default_factory=list)
 

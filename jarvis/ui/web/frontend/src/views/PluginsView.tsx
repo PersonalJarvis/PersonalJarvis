@@ -486,7 +486,10 @@ export function PluginsView() {
 // ---------------------------------------------------------------------------
 
 interface ConnectHandlers {
-  onConnect: (p: Plugin) => void;
+  // Returns a promise for the in-flight connect so the per-row button can lock
+  // itself (spinner + disabled) until the flow has launched — see
+  // ConnectIconButton. A void return (e.g. pat_paste opening a modal) is fine.
+  onConnect: (p: Plugin) => void | Promise<void>;
   onDisconnect: (id: string) => void;
 }
 
@@ -904,7 +907,7 @@ function PluginRow({
           : "border-border hover:border-primary/40 hover:bg-card/70",
       )}
     >
-      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border/60 bg-background/60">
+      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border/60 bg-white">
         <img
           src={resolveLogoUrl(plugin)}
           alt=""
@@ -948,15 +951,23 @@ function PluginRow({
   );
 }
 
-function ConnectIconButton({
+export function ConnectIconButton({
   status,
   onConnect,
   onDisconnect,
 }: {
   status: PluginStatus;
-  onConnect: () => void;
+  onConnect: () => void | Promise<void>;
   onDisconnect: () => void;
 }) {
+  // `/connect/start` (DCR registration) takes ~0.6s with no other feedback, so
+  // without a lock the user re-clicks and each click launches its OWN OAuth flow
+  // — a burst of browser tabs and stray client registrations. `busyRef` is the
+  // SYNCHRONOUS guard (React state is async and would let a fast double-click
+  // through before the re-render disables the button); `busy` drives the UI.
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+
   if (status === "connected") {
     return (
       <button
@@ -970,14 +981,36 @@ function ConnectIconButton({
       </button>
     );
   }
+
+  const handleClick = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      await onConnect();
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  };
+
   return (
     <button
       type="button"
-      onClick={onConnect}
-      className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-border bg-background/60 text-muted-foreground transition-all hover:border-primary/50 hover:bg-primary/10 hover:text-primary group-hover:scale-105"
+      onClick={handleClick}
+      disabled={busy}
+      aria-busy={busy}
+      className={cn(
+        "grid h-7 w-7 shrink-0 place-items-center rounded-full border border-border bg-background/60 text-muted-foreground transition-all hover:border-primary/50 hover:bg-primary/10 hover:text-primary group-hover:scale-105",
+        busy && "cursor-not-allowed opacity-60 hover:bg-background/60 hover:text-muted-foreground group-hover:scale-100",
+      )}
       aria-label="Connect plugin"
     >
-      <Plus className="h-3.5 w-3.5" />
+      {busy ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <Plus className="h-3.5 w-3.5" />
+      )}
     </button>
   );
 }
@@ -1482,7 +1515,7 @@ function DisconnectConfirmDialog({
       <div className="relative w-full max-w-sm overflow-hidden rounded-2xl border border-border bg-card shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
         <header className="flex items-center justify-between border-b border-border px-5 py-4">
           <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border/60 bg-background/60">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border/60 bg-white">
               <img
                 src={resolveLogoUrl(plugin)}
                 alt=""
@@ -1613,7 +1646,7 @@ export function PatConnectDialog({
       <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
         <header className="flex items-center justify-between border-b border-border px-5 py-4">
           <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border/60 bg-background/60">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border/60 bg-white">
               <img
                 src={resolveLogoUrl(plugin)}
                 alt=""

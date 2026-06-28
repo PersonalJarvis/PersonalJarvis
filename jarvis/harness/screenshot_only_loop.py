@@ -255,7 +255,10 @@ _SYSTEM_PROMPT = (
     "Allowed action shapes:\n"
     "  {\"action\": \"click_element\", \"name\": \"<UI element label>\"}\n"
     "  {\"action\": \"click\",         \"x\": <int>, \"y\": <int>, "
-    "\"target\": \"<2-6 words: the element you aim at>\"}\n"
+    "\"target\": \"<2-6 words: the element you aim at>\", "
+    "\"button\": \"<left|right|middle, optional, default left>\", "
+    "\"double\": <true|false, optional>}   (right = context menu; "
+    "double = open/expand)\n"
     "  {\"action\": \"type\",          \"text\": \"<string>\", "
     "\"clear_first\": <true|false, optional>}\n"
     "  {\"action\": \"key\",           \"key\": \"<enter|tab|esc|...>\"}\n"
@@ -429,6 +432,26 @@ def _normalize_click_target(obj: dict[str, Any]) -> None:
         obj.pop("target", None)
 
 
+#: Mouse buttons a click action may use (audit #21). The actuation tool already
+#: supports all three + double-click; this exposes them to the CU model.
+_CLICK_BUTTONS = frozenset({"left", "right", "middle"})
+
+
+def _normalize_click_button(obj: dict[str, Any]) -> None:
+    """Normalize the optional ``button`` + ``double`` flags on a click in place
+    (audit #21). Absent => a left single-click (today's exact behavior, so this
+    is purely additive). An invalid button RAISES so the model is corrected
+    rather than silently issuing the wrong action."""
+    button = obj.get("button", "left")
+    if not isinstance(button, str) or button.strip().lower() not in _CLICK_BUTTONS:
+        raise CULoopError(
+            "click 'button' must be one of left/right/middle "
+            "(e.g. {\"action\":\"click\",\"x\":10,\"y\":20,\"button\":\"right\"})"
+        )
+    obj["button"] = button.strip().lower()
+    obj["double"] = bool(obj.get("double", False))
+
+
 def _parse_action(raw: str) -> dict[str, Any]:
     """Parse a single-action JSON response and validate the schema.
 
@@ -477,6 +500,7 @@ def _parse_action(raw: str) -> dict[str, Any]:
             raise CULoopError("click action requires integer x and y")
         obj["x"], obj["y"] = int(x), int(y)
         _normalize_click_target(obj)
+        _normalize_click_button(obj)
     elif action == "type":
         text = obj.get("text")
         if not isinstance(text, str):
@@ -661,6 +685,7 @@ def _validate_action_dict(obj: Any) -> dict[str, Any]:
             raise CULoopError("click action requires integer x and y")
         obj["x"], obj["y"] = int(x), int(y)
         _normalize_click_target(obj)
+        _normalize_click_button(obj)
     elif action == "type":
         text = obj.get("text")
         if not isinstance(text, str):
@@ -2607,6 +2632,13 @@ def _human_handoff_reason(nodes: tuple) -> str | None:
     reason, or ``None`` when nothing matches."""
     captcha = twofactor = has_password_field = False
     for node in nodes or ():
+        # The accessibility secure-edit flag is the MOST reliable login signal --
+        # it catches an unlabeled or oddly-named password field that the name
+        # heuristic below would miss. Checked regardless of the node name (a
+        # secure field often has an empty UIA Name). Populated on Windows; False
+        # elsewhere, where the name heuristic still applies.
+        if getattr(node, "is_password", False):
+            has_password_field = True
         nm = (getattr(node, "name", "") or "").strip().lower()
         if nm:
             if any(c in nm for c in _CAPTCHA_CUES):
@@ -2623,6 +2655,63 @@ def _human_handoff_reason(nodes: tuple) -> str | None:
         return "two-factor / one-time code"
     if has_password_field:
         return "login / password entry"
+    return None
+
+
+# Modal / banner detection (audit #15). A cookie/consent banner, a "save
+# changes?" prompt, or a small confirm dialog in front swallows the agent's
+# clicks until it is handled. We detect it from the foreground control LABELS
+# (no role needed -> cross-platform) and nudge the model to deal with it first.
+# Phrase clusters are distinctive so an ordinary page does not trip it.
+_COOKIE_CUES = (
+    "accept all", "reject all", "accept cookies", "reject cookies",
+    "manage cookies", "manage preferences", "cookie preferences",
+    "we use cookies", "accept all cookies", "only necessary",
+)
+_SAVE_PROMPT_CUES = (
+    "save changes", "don't save", "dont save", "unsaved changes",
+    "save before", "discard changes", "keep editing",
+)
+#: Exact button labels of a focused confirm dialog (membership, not substring,
+#: so "okay" / a window's close-X do not false-trip).
+_CONFIRM_POSITIVE = frozenset({"ok", "yes", "allow", "confirm"})
+_CONFIRM_NEGATIVE = frozenset({"cancel", "no", "deny", "don't allow", "dont allow"})
+#: A confirm dialog has FEW controls; above this a positive+negative pair is far
+#: more likely a normal app window than a focused modal.
+_CONFIRM_MAX_CONTROLS = 8
+
+_MODAL_NOTE = (
+    "NOTE: a modal dialog or banner appears to be in front ({kind}). Deal with "
+    "it FIRST -- accept, dismiss, or answer it as the goal requires -- before "
+    "anything else, or your next clicks may be swallowed by it."
+)
+
+
+def _modal_dialog_hint(labels: list[str]) -> str | None:
+    """Detect a modal dialog / banner in front from the foreground control labels
+    (audit #15): a cookie/consent banner, a save/unsaved-changes prompt, or a
+    small confirm dialog (a positive+negative button pair on a short control
+    set). Returns a one-time note telling the model to handle it first, or
+    ``None``. Pure, cross-platform (labels only), conservative -- an ordinary
+    page with a lone OK button does not trip it. Priority save > cookie > confirm."""
+    lowered = [
+        (lab or "").strip().lower() for lab in (labels or []) if (lab or "").strip()
+    ]
+    if not lowered:
+        return None
+
+    def _has(cues: tuple[str, ...]) -> bool:
+        return any(any(c in lab for c in cues) for lab in lowered)
+
+    if _has(_SAVE_PROMPT_CUES):
+        return _MODAL_NOTE.format(kind="a save / unsaved-changes prompt")
+    if _has(_COOKIE_CUES):
+        return _MODAL_NOTE.format(kind="a cookie / consent banner")
+    if len(lowered) <= _CONFIRM_MAX_CONTROLS:
+        pos = any(lab in _CONFIRM_POSITIVE for lab in lowered)
+        neg = any(lab in _CONFIRM_NEGATIVE for lab in lowered)
+        if pos and neg:
+            return _MODAL_NOTE.format(kind="a confirmation dialog")
     return None
 
 
@@ -2669,6 +2758,45 @@ async def _verify_typed_text(ctx: Any, typed: str) -> bool | None:
     except Exception:  # noqa: BLE001 — best-effort, never raises into the loop
         return None
     return _typed_text_landed(tuple(getattr(obs, "nodes", ()) or ()), typed)
+
+
+def _element_is_focused(nodes: tuple, name: str) -> bool | None:
+    """Did a ``click_element`` on ``name`` leave that element focused? (audit #1B
+    -- the post-click state check the click_element path lacked.)
+
+    DELIBERATELY positive-only (returns ``True`` or ``None``, never ``False``):
+    keyboard focus is a RELIABLE POSITIVE signal -- an input/control that took
+    focus proves the click landed on it -- but the ABSENCE of focus is NOT a
+    reliable failure signal, because a button / menu item / checkbox legitimately
+    may not retain focus after it is clicked. So we only ever CONFIRM, never flip
+    a click to a false failure (contrast the type read-back, where a missing
+    value IS a reliable miss). Pure; never raises.
+      True -> a node matching ``name`` now holds keyboard focus
+      None -> no focused match / name too short / nothing readable
+    """
+    target = (name or "").strip().lower()
+    if len(target) < 2:
+        return None
+    for node in nodes or ():
+        if not getattr(node, "focused", False):
+            continue
+        nm = (getattr(node, "name", "") or "").strip().lower()
+        if nm and (nm == target or target in nm or nm in target):
+            return True
+    return None
+
+
+async def _verify_click_focus(ctx: Any, name: str) -> bool | None:
+    """Re-observe the accessibility tree and check whether the just-clicked
+    element is focused (see :func:`_element_is_focused`). Best-effort: any
+    error/timeout -> ``None`` ("can't confirm"). Deterministic -- no LLM call."""
+    try:
+        obs = await asyncio.wait_for(
+            _get_ui_tree_source().observe(), timeout=_UIA_TIMEOUT_S,
+        )
+    except Exception:  # noqa: BLE001 — best-effort, never raises into the loop
+        return None
+    return _element_is_focused(tuple(getattr(obs, "nodes", ()) or ()), name)
 
 
 def _value_satisfies_goal(nodes: tuple, goal_text: str) -> bool:
@@ -2982,11 +3110,14 @@ async def _refine_click_point(
 
 async def _dispatch_raw_click(
     executor: Any, tool: Any, x: int, y: int, trace_id: Any,
+    *, button: str = "left", double: bool = False,
 ) -> tuple[bool, str]:
     """The plain click-tool dispatch (extracted unchanged from the old click
-    branch). TimeoutError propagates — the outer loop turns it into the
-    mission timeout exactly as before."""
-    args = {"x": x, "y": y, "button": "left", "double": False}
+    branch). ``button``/``double`` default to a left single-click — the exact
+    legacy behavior — so callers that omit them are unchanged (audit #21).
+    TimeoutError propagates — the outer loop turns it into the mission timeout
+    exactly as before."""
+    args = {"x": x, "y": y, "button": button, "double": double}
     try:
         res = await asyncio.wait_for(
             executor.execute(
@@ -3064,6 +3195,8 @@ async def _uia_snap_click(
     x: int,
     y: int,
     trace_id: Any,
+    button: str = "left",
+    double: bool = False,
 ) -> tuple[bool, str] | None:
     """Snap a verified-missed pixel click to the nearest clickable UIA element.
 
@@ -3093,7 +3226,9 @@ async def _uia_snap_click(
     try:
         bx, by, bw, bh = node.bounds
         cx, cy = bx + bw // 2, by + bh // 2
-        ok, msg = await _dispatch_raw_click(executor, tool, cx, cy, trace_id)
+        ok, msg = await _dispatch_raw_click(
+            executor, tool, cx, cy, trace_id, button=button, double=double,
+        )
     except Exception:  # noqa: BLE001
         return None
     label = (getattr(node, "name", "") or "element").strip() or "element"
@@ -3115,6 +3250,10 @@ async def _click_with_refine(
     abs_x, abs_y = _resolve_click_pixel(obj, monitor_geom)
     left, top, width, height = monitor_geom
     target = str(obj.get("target") or "").strip()
+    # Optional right/middle button + double-click (audit #21). Validated upstream
+    # (_normalize_click_button); default left single-click = unchanged behavior.
+    button = str(obj.get("button", "left")).lower()
+    double = bool(obj.get("double", False))
     refine_enabled = (
         width > 0
         and height > 0
@@ -3122,7 +3261,9 @@ async def _click_with_refine(
         and bool(getattr(observation, "screenshot_path", None))
     )
     if not refine_enabled:
-        return await _dispatch_raw_click(executor, tool, abs_x, abs_y, trace_id)
+        return await _dispatch_raw_click(
+            executor, tool, abs_x, abs_y, trace_id, button=button, double=double,
+        )
     verify_enabled = bool(getattr(ctx, "verify_after_each_step", True))
 
     x, y = abs_x, abs_y
@@ -3198,7 +3339,9 @@ async def _click_with_refine(
                 virtual_bounds=(left, top, width, height),
             )
             pre = await asyncio.to_thread(_grab_region_jpeg, verify_bbox)
-        ok, last_msg = await _dispatch_raw_click(executor, tool, x, y, trace_id)
+        ok, last_msg = await _dispatch_raw_click(
+            executor, tool, x, y, trace_id, button=button, double=double,
+        )
         if not ok:
             return ok, last_msg
         clicked.append((x, y))
@@ -3219,6 +3362,7 @@ async def _click_with_refine(
             snapped = True
             snap = await _uia_snap_click(
                 ctx, executor=executor, tool=tool, x=x, y=y, trace_id=trace_id,
+                button=button, double=double,
             )
             if snap is not None:
                 log.info(
@@ -3406,10 +3550,20 @@ async def _execute_action(
             raise
         except Exception as exc:  # noqa: BLE001
             return False, f"click_element crash: {type(exc).__name__}: {exc}"
-        return (
-            bool(getattr(res, "success", False)),
-            str(getattr(res, "output", "") or getattr(res, "error", "") or ""),
-        )
+        success = bool(getattr(res, "success", False))
+        output = str(getattr(res, "output", "") or getattr(res, "error", "") or "")
+        # Post-click state check (audit #1B): re-read the tree and CONFIRM the
+        # element took focus. Positive-only -- a confirmed focus strengthens the
+        # readback, but absence of focus never flips a button/menu click to a
+        # false failure (see _element_is_focused). Gated by strict_verify like the
+        # type read-back; deterministic, no LLM call.
+        name = str(obj.get("name", "")).strip()
+        if success and getattr(ctx, "strict_verify", True) and len(name) >= 2:
+            if await _verify_click_focus(ctx, name) is True:
+                return True, (
+                    f"{output} — confirmed: {name[:40]!r} now has focus"
+                ).strip(" —")
+        return success, output
 
     if action == "wait":
         # In-loop pause — no tool, no screenshot, no LLM round-trip. Lets
@@ -3603,6 +3757,51 @@ async def run_cu_loop(
             yield chunk
 
 
+def _ensure_target_on_primary(ctx: ComputerUseContext) -> str | None:
+    """When ``monitor="primary"``, bring the foreground window onto the main
+    monitor before CU acts, so it never works on a secondary screen (audit G8c).
+
+    Returns a short note when it actually moved a window (injected into the
+    model's history + logged), else ``None``. Best-effort and honest: a window
+    already on primary, a window whose rect can't be read (macOS/Linux today), or
+    a refused move (Wayland) all yield ``None`` and the loop proceeds — capture is
+    pinned to the primary either way, so CU never grounds on the wrong screen.
+    Never raises. Sync (the caller runs it via ``asyncio.to_thread``)."""
+    if getattr(ctx, "monitor", "primary") != "primary":
+        return None
+    try:
+        import mss  # noqa: PLC0415
+
+        from jarvis.platform import window_state as ws  # noqa: PLC0415
+        from jarvis.platform.monitors import resolve_primary_monitor  # noqa: PLC0415
+
+        win = ws.foreground_window()
+        if win is None:
+            return None
+        rect = ws.window_rect(win)
+        if rect is None:
+            return None  # can't tell where it is (non-Windows today) -> skip
+        with mss.mss() as sct:
+            monitors = list(sct.monitors)
+        primary = resolve_primary_monitor(
+            monitors, override=getattr(ctx, "main_monitor", "primary"),
+        )
+        if ws.window_is_on_monitor(rect, primary):
+            return None  # already on the main monitor
+        moved, msg = ws.move_window_to_primary(win, primary)
+        if moved:
+            log.info("[cu] G8 ensure-on-primary: %s", msg)
+            return (
+                f"Moved the target window '{(win.title or 'window')[:40]}' onto the "
+                "main monitor before acting — re-read the screen before clicking."
+            )
+        log.info("[cu] G8 ensure-on-primary: could not move (%s)", msg)
+        return None
+    except Exception:  # noqa: BLE001 — never block a mission on the move probe
+        log.debug("[cu] G8 ensure-on-primary failed", exc_info=True)
+        return None
+
+
 async def _run_screenshot_loop(
     task: HarnessTask,
     ctx: ComputerUseContext,
@@ -3736,6 +3935,10 @@ async def _run_screenshot_loop(
     #     screenshot+keyboard+mouse (user mandate 2026-06-22 -- not a per-example
     #     patch).
     last_stall_nudge_hash = ""
+    #   * last_modal_hint_hash: the screenshot hash we last warned the model a
+    #     modal dialog / banner is in front (audit #15), so the "handle the
+    #     dialog first" note is injected ONCE per distinct screen, not every step.
+    last_modal_hint_hash = ""
     # Cumulative guard-blocked actions this mission (see _MAX_GUARD_HITS).
     guard_hits = 0
     # On-demand done-verifier: set when a state-change click lands and the goal
@@ -3824,6 +4027,20 @@ async def _run_screenshot_loop(
             "[cu] screenshot fast path unavailable (capture returned None) — "
             "falling through to the interactive loop",
         )
+
+    # G8c — work on the MAIN monitor: when monitor="primary", bring the target
+    # (foreground) window onto the primary screen ONCE before the first observe,
+    # so CU never grounds/clicks on a secondary monitor (where negative-X /
+    # mixed-DPI coordinates misfire). Best-effort + honest (no-op on already-
+    # primary / non-Windows / Wayland); the moved-window note steers the model to
+    # re-read the freshly-captured primary screen. Off the loop via to_thread.
+    try:
+        _g8_note = await asyncio.to_thread(_ensure_target_on_primary, ctx)
+        if _g8_note:
+            history.append(_g8_note)
+            yield _progress(f"[cu] {_g8_note}")
+    except Exception:  # noqa: BLE001 — the move probe must never end a mission
+        log.debug("[cu] G8 ensure-on-primary call failed", exc_info=True)
 
     # Loop-internal mission deadline (Wave 0): end cleanly with an explicit
     # budget result BEFORE the harness wait_for guillotines the stream
@@ -4042,6 +4259,18 @@ async def _run_screenshot_loop(
                 log.info(
                     "[cu] step %d: screen unchanged since last step — injected "
                     "re-target nudge (no visible effect)", step_idx,
+                )
+            # Modal / banner nudge (audit #15): a cookie/consent banner, a save
+            # prompt, or a small confirm dialog in front swallows clicks until
+            # handled. Detect it from the foreground labels and tell the model
+            # ONCE per distinct screen to deal with it first.
+            _modal_hint = _modal_dialog_hint(control_labels)
+            if _modal_hint and last_modal_hint_hash != observation.screenshot_hash:
+                last_modal_hint_hash = observation.screenshot_hash
+                history.append(_modal_hint)
+                log.info(
+                    "[cu] step %d: modal/banner detected — injected "
+                    "handle-dialog-first note", step_idx,
                 )
             if (
                 len(recent_hashes) == _STUCK_LIMIT

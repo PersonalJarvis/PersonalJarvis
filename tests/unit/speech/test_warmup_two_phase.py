@@ -93,6 +93,11 @@ def _new_pipe(monkeypatch, *, bus=None, ack_phrase: str = "Ja?") -> SpeechPipeli
     pipe._player = FakePlayer()
     pipe._bus = bus
     pipe._stt = None
+    # Honest-ready anchor (2026-06-27): _warmup reads _whisper_wake_enabled to
+    # decide whether wake is hear-ready at Phase A (openWakeWord) or only after
+    # the wake model loads (custom rolling-whisper). With _stt=None this is the
+    # openWakeWord path, exactly as the real __init__ computes it.
+    pipe._whisper_wake_enabled = False
     pipe._vad = FakeVad()
     pipe._tts = FakeTts()
     pipe._wake = FakeWake()

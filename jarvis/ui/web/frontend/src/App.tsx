@@ -4,6 +4,7 @@ import { useVoiceStatus } from "@/hooks/useVoiceStatus";
 import { useAssistantNameSeed } from "@/hooks/useAssistantNameSeed";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopBar } from "@/components/layout/TopBar";
+import { VoiceWarmingBanner } from "@/components/layout/VoiceWarmingBanner";
 import { MainView } from "@/components/layout/MainView";
 import { ToastLayer } from "@/components/ToastLayer";
 import { JarvisDock } from "@/components/JarvisDock";
@@ -28,6 +29,7 @@ export default function App() {
 
       <main className="relative z-10 flex min-w-0 flex-1 flex-col">
         <TopBar />
+        <VoiceWarmingBanner />
         <div className="min-h-0 flex-1">
           <MainView />
         </div>

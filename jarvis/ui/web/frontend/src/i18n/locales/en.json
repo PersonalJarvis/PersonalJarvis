@@ -156,7 +156,10 @@
     "error": "Error",
     "offline": "Offline",
     "booting": "Starting…",
-    "starting": "Voice starting…"
+    "starting": "Voice starting…",
+    "warming_title": "Jarvis is starting up",
+    "warming_hint": "Getting ready to listen – one moment, you'll be able to speak shortly.",
+    "ready_title": "Ready – you can speak now"
   },
   "sidebar": {
     "wake_hint": "Say your wake word…",

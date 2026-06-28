@@ -41,7 +41,11 @@ export function OnboardingFlow({
 }) {
   const t = useT();
   const steps = onb.state?.steps ?? ["welcome", "finish"];
-  const initialIdx = Math.max(0, steps.indexOf(initialStep ?? onb.state?.current_step ?? "welcome"));
+  // Always begin at the first step so every run walks each step in order. We do
+  // NOT resume to a saved current_step: a user who already finished once would
+  // otherwise be auto-jumped to the last step, which feels like the flow skipped
+  // itself. An explicit initialStep (the terms-version-bump re-open) still wins.
+  const initialIdx = initialStep ? Math.max(0, steps.indexOf(initialStep)) : 0;
   const [idx, setIdx] = useState(initialIdx);
   const [skipped, setSkipped] = useState<string[]>(onb.state?.skipped_steps ?? []);
 
