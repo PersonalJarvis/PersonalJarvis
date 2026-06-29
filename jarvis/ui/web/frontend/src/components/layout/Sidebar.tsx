@@ -13,7 +13,6 @@ import {
   Sparkles,
   Mic,
   Terminal,
-  Wand2,
   Share2,
   Contact,
   MessageSquareWarning,
@@ -70,7 +69,6 @@ const NAV_GROUPS: NavItem[][] = [
     },
     // CLIs — the CLIs list + the CLI Test Hub behind one tab switch (CLIs first).
     { id: "clis", labelKey: "nav.clis_hub", icon: Terminal, matchIds: ["clis", "cli-test-hub"] },
-    { id: "personalize", labelKey: "nav.personalize", icon: Wand2, fallbackLabel: "Make It Yours" },
   ],
   // 2) Content & data — things the user reads, edits, or browses.
   [

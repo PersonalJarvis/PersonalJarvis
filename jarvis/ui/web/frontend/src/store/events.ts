@@ -34,7 +34,6 @@ export type SectionId =
   | "taskbar"
   | "contacts"
   | "feedback"
-  | "personalize"
   | "agent-instructions";
 
 export const SECTION_IDS = [
@@ -62,7 +61,6 @@ export const SECTION_IDS = [
   "taskbar",
   "contacts",
   "feedback",
-  "personalize",
   "agent-instructions",
 ] as const satisfies readonly SectionId[];
 
@@ -95,7 +93,6 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   taskbar: "Taskbar",
   contacts: "Contacts",
   feedback: "Feedback",
-  personalize: "Make It Yours",
   "agent-instructions": "Agent Instructions",
 };
 

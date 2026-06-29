@@ -19,7 +19,6 @@ import { ContactsView } from "@/views/contacts/ContactsView";
 import { FeedbackView } from "@/views/feedback/FeedbackView";
 import { AgentInstructionsView } from "@/views/AgentInstructionsView";
 import { TelephonySetupView } from "@/views/TelephonyView";
-import { MakeItYoursView } from "@/views/MakeItYoursView";
 
 /**
  * Main area to the right of the sidebar. All views are switched the classic
@@ -103,8 +102,6 @@ function SwitchOnActiveSection({ active }: { active: string }) {
       return <FeedbackView />;
     case "agent-instructions":
       return <AgentInstructionsView />;
-    case "personalize":
-      return <MakeItYoursView />;
     default:
       return <ChatsView />;
   }
