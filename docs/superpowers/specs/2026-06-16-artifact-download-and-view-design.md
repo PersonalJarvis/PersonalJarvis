@@ -12,7 +12,7 @@ headless VPS-browser runtime).
 
 The Outputs view (`jarvis/ui/web/frontend/src/views/OutputsView.tsx`, component `ArtifactRow`,
 ~lines 505–577) renders deliverable artifact files such as
-`tasks/<task_id>/artifacts/files/umzug-deutschland-melbourne.md` **only as an in-app text preview**.
+`tasks/<task_id>/artifacts/files/market-research-summary.md` **only as an in-app text preview**.
 There is no way to get the file out except manually selecting and copying the text and pasting it
 into another app (Google Docs/Sheets, etc.).
 

@@ -1259,7 +1259,7 @@ the tray `pythonw.exe`). If the app is not running, launch it: `run.bat`.
 
 - [ ] **Step 4: Live-verify download + view (the pywebview unknown)**
 
-In the Outputs view, open a session with a `.md` artifact (e.g. the `umzug-deutschland-melbourne.md`
+In the Outputs view, open a session with a `.md` artifact (e.g. the `market-research-summary.md`
 deliverable). Verify, recording the result in the SIGNOFF notes:
 1. **Download** button → file lands in the browser's Downloads folder. In the **desktop pywebview**
    window specifically, confirm the `<a download>` actually saves the file. If pywebview swallows it

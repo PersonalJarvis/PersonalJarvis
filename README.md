@@ -39,6 +39,11 @@ a browser UI to a full desktop with a tray app, an Orb overlay, and global-hotke
   controller decides what gets spoken.
 - **Provider-agnostic.** Gemini, Claude, OpenAI, Grok, OpenRouter — switch the brain by
   voice or config, with a smart, rate-limit-aware fallback chain. No single vendor lock-in.
+- **Subscription or API key — your call.** The heavy sub-agents run on a flat-rate plan
+  login *or* a pay-per-token API key, whichever you connect: Claude Max through the Claude
+  CLI, ChatGPT through the Codex CLI, Google through Antigravity — or classic Anthropic,
+  OpenAI, Gemini, and OpenRouter keys. Run the agents on a subscription you already pay for,
+  with no metered API bill required.
 - **Self-modifying, safely.** It can rewrite its own settings through a 10-step
   validate → backup → atomic-swap → reload → rollback → audit pipeline. Nothing is changed
   that can't be undone.
@@ -48,32 +53,65 @@ a browser UI to a full desktop with a tray app, an Orb overlay, and global-hotke
   browser's mic and speakers, or a full voice-and-overlay desktop. Local-hardware features
   are opt-in extras that degrade gracefully when they're absent.
 
-## Quick start
+## Install
 
-```bash
-git clone https://github.com/PersonalJarvis/PersonalJarvis ~/personal-jarvis
-cd ~/personal-jarvis
+One command on **Windows, macOS, or Linux** — no Docker, no Python-version archaeology. It
+builds a Python virtual environment, installs every feature, and runs the first-run wizard.
+**Bring your own keys**; nothing is bundled.
 
-python -m venv .venv
-source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1
+**Windows** — PowerShell
 
-pip install -e . --no-deps          # activates the plugin entry-points
-pip install -r requirements.txt     # runtime dependencies
-
-python -m jarvis --wizard           # interactive first-run setup
+```powershell
+irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.ps1 | iex
 ```
 
-The wizard walks you through hardware detection, API keys (stored in your OS credential
-manager — never in the repo), microphone, and a wake word.
-
-**Run it:**
+**macOS · Linux**
 
 ```bash
-# Full desktop: window + voice + Orb overlay
-python -m jarvis.ui.web.launcher
+curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash
+```
 
-# Headless server: API + WebSocket + browser UI, no local audio needed
-python -m jarvis.ui.web.launcher --headless
+> Open source — read the installer before you run it. It only creates a venv, installs
+> dependencies, and runs the first-run wizard (hardware detection, API keys stored in your OS
+> credential manager — never in the repo, microphone, wake word).
+
+| Install flag | Effect |
+|---|---|
+| `--headless` | API + WebSocket only — no desktop window or local voice (the VPS path) |
+| `--with-voice-local` | Also pull the local STT / TTS / wake models on install (~1.5 GB) |
+| `--no-launch` | Install only; don't start the app |
+| `--no-wizard` | Skip the first-run key wizard |
+
+<details>
+<summary><b>Prefer pipx, or a manual clone?</b></summary>
+
+<br/>
+
+**pipx** — isolated, no clone, any OS:
+
+```bash
+pipx install "git+https://github.com/PersonalJarvis/PersonalJarvis" && jarvis serve
+```
+
+**Manual** — clone it, read every line, then run:
+
+```bash
+git clone https://github.com/PersonalJarvis/PersonalJarvis
+cd PersonalJarvis
+python -m venv .venv && source .venv/bin/activate   # Windows: .\.venv\Scripts\Activate.ps1
+pip install -e .[full]
+jarvis serve
+```
+
+</details>
+
+## Run it
+
+The one-liner launches the app for you. To start it again later:
+
+```bash
+jarvis          # full desktop: window + voice + Orb overlay
+jarvis serve    # headless server: API + WebSocket + browser UI, no local audio needed
 ```
 
 Then open **http://localhost:47821** — the full Router-Brain → Worker-Critic →
@@ -105,6 +143,33 @@ L0  OS / Hardware   Mic, speakers, global hotkeys, optional GPU
 A deeper, exhaustive engineering map — anti-pattern register, recurring bug classes,
 phase-by-phase status with `file:line` references — lives in the LLM context drop below.
 
+## Project structure
+
+A quick map of the repository so you know where everything lives:
+
+```text
+PersonalJarvis/
+├── jarvis/          # The application — every core package (brain, speech, missions, memory, UI server…)
+├── ui/              # Orb overlay for the desktop; loaded by jarvis at runtime
+├── OS-Level/        # Edge-glow overlay process — action border, mascot, cursor trail
+├── board-backend/   # Standalone federation service (verifies signed Board aggregates)
+├── conductor/       # YAML-first agentic-workflow canvas, mounted inside the app
+├── wiki/            # Seed knowledge vault (Obsidian-compatible), created on first run
+├── install/         # One-line installers + signed-release verification (cosign / TUF)
+├── tests/           # Unit, integration, contract, and end-to-end suites
+├── docs/            # Architecture docs, ADRs, the philosophy, design specs
+├── assets/          # Brand art, banner, screenshots
+├── .github/         # CI workflows + issue / pull-request templates
+├── scoop-bucket/    # Windows install manifest (Scoop)
+├── homebrew-tap/    # macOS install formula (Homebrew)
+└── README · LICENSE · CODE_OF_CONDUCT · CONTRIBUTING · SECURITY · CHANGELOG
+```
+
+Inside `jarvis/`, the layout mirrors the 8-layer model above — `jarvis/brain/`
+(providers + router), `jarvis/speech/` (wake → VAD → STT → TTS), `jarvis/missions/`
+(the self-healing Worker-Critic), `jarvis/memory/wiki/` (long-term memory), and
+`jarvis/ui/web/` (the FastAPI + React desktop app).
+
 ## A guided tour
 
 - **Missions & the Worker-Critic loop** — ask for something non-trivial and Jarvis spawns a
@@ -130,7 +195,6 @@ phase-by-phase status with `file:line` references — lives in the LLM context d
 | [`CLAUDE.md`](CLAUDE.md) | Binding contributor guide — conventions, doctrine, anti-patterns |
 | [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md) | Cross-platform, provider-agnostic design doctrine |
 | [`docs/BRAND.md`](docs/BRAND.md) | Brand guidelines — colors, typography, the wordmark |
-| [`docs/openclaw-bridge.md`](docs/openclaw-bridge.md) | The agent-harness contract |
 | [`docs/adr/`](docs/adr/) | Architecture Decision Records |
 | [`docs/BUGS.md`](docs/BUGS.md) | The recurring-bug register |
 
@@ -164,7 +228,7 @@ straight into provider costs, infrastructure, and development time.
 
 <p align="center">
   <i>This wall is empty — for now.</i><br/>
-  <a href="https://github.com/sponsors/PersonalJarvis"><b>Become the first sponsor →</b></a>
+  Want to be the first? Reach out at <a href="mailto:aethroc@gmail.com">aethroc@gmail.com</a>.
 </p>
 
 | Tier | You get |
@@ -174,7 +238,8 @@ straight into provider costs, infrastructure, and development time.
 | **Sponsor** | The above + your logo on the sponsor wall |
 | **Partner** | The above + a seat at the roadmap table |
 
-> Sponsorship is being set up. Want to talk before the page is live? Reach out on
+> Sponsorship is being set up. Want to talk before the page is live? Email
+> [aethroc@gmail.com](mailto:aethroc@gmail.com), or reach out on
 > [Discord](https://discord.gg/UPu6pFWrJ) or [X](https://x.com/PersonalJarvis).
 
 ## Contributing
@@ -195,6 +260,11 @@ short version:
 Released under the **MIT License** — free to use, modify, and distribute, including
 commercially, provided the copyright notice is preserved. See [`LICENSE`](LICENSE) for the
 full text, the attribution clause, and the third-party notices.
+
+**Trademarks.** Product, provider, and integration names and logos shown here are
+trademarks of their respective owners and are used only to identify the services they refer
+to. Personal Jarvis is not affiliated with or endorsed by any of them — see
+[`TRADEMARK.md`](TRADEMARK.md).
 
 <br/>
 

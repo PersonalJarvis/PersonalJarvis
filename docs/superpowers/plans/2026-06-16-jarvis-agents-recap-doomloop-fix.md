@@ -28,8 +28,8 @@ Queried `data/missions.db` directly. Findings:
     recap as a worker mission).
   - `019ed04e/051` → `source_actor=ui`, `parent_mission_id` set (the **"Restart"
     button re-ran** a failed recap-mission, re-dispatching the doomed prompt).
-- A genuine **comparison control**: the last working mission (16:45, "write a USA
-  migration research report") had the **same** `cli: codex, model: '', pid: 0,
+- A genuine **comparison control**: the last working mission (16:45, "write a
+  market analysis research report") had the **same** `cli: codex, model: '', pid: 0,
   tokens: 0` — and produced a real `.md` diff and was APPROVED. So **the worker
   and codex are fine**; the differentiator is the *prompt*, not the model.
 
@@ -105,7 +105,7 @@ landed **2026-06-15 19:47–20:05** (`71accabf`/`9353f10f`/`d99a119d`), right af
 the last 16:45 success.
 
 **Root cause #2 — the codex worker's Node.js runtime was missing** (Facet C; the
-genuine "Melbourne→Sydney research" task, `019ecc5a`). **Disk-proven:** both
+genuine "renewable-energy market research" task, `019ecc5a`). **Disk-proven:** both
 worktrees' `logs/stderr.log` read *"node … konnte nicht gefunden werden"* and the
 diff patches are **0 bytes**. `codex.cmd` is a Node app; with `node` absent from
 the worker subprocess's inherited PATH it exited code 1 with no stdout → empty
@@ -142,7 +142,7 @@ tests) confirms the exemption IS present in the current working tree.
 
 | # | Item | Owner | Status |
 |---|------|-------|--------|
-| 1 | Confirm the genuine "Melbourne→Sydney research" task (Facet C) — did codex truly execute, or no-op? Does the critic net now approve it? | Worker-Backend agent | confirming |
+| 1 | Confirm the genuine "renewable-energy market research" task (Facet C) — did codex truly execute, or no-op? Does the critic net now approve it? | Worker-Backend agent | confirming |
 | 2 | Confirm the 16:45→failure cutover commit + any banned-model pin (the "Fable 5" angle) | Cutover-Config agent | confirming |
 | 3 | Make the fix live: hunk-isolated commit of the doom-loop changes (do NOT sweep parallel sessions' unrelated hunks), then restart the app | — | pending |
 | 4 | Live re-drive: drag a finished + a failed card onto the dock → expect a spoken/chat recap and **no new mission row** | — | pending |
