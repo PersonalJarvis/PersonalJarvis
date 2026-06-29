@@ -17,9 +17,19 @@
 # features (e.g. jarvis/state/*, jarvis/plugins/tts/fallback_tts.py). So those
 # are intentionally ABSENT from this list and ship normally.
 
-# --- This skill itself (CRITICAL self-reference guard) ----------------------
-# Its references/ carry the maintainer's name + emails as scrub *patterns*;
-# shipping them would leak exactly what they exist to remove.
+# --- .claude/ contributor toolchain: SHIP it (like OpenClaw), minus the
+#     maintainer's own release skill (2026-06-27, revised) ----------------------
+# REVISED: .claude/ is Claude-Code CONTRIBUTOR tooling — subagent definitions,
+# slash-commands, dev skills — exactly what a fork needs to keep developing with
+# the same AI workflow. The reference project openclaw/openclaw (380k+ stars)
+# ships .agents/ + AGENTS.md + CLAUDE.md publicly; this is a professionalism
+# signal, not clutter. NOTHING in the runtime jarvis/ package loads it, so it is
+# product-safe. Of 31 files only ONE subtree is personal: THIS skill, whose
+# references/ (pii-scrub.tsv, secret-allowlist.tsv) carry the maintainer's real
+# name + emails as scrub *patterns* — shipping them would leak exactly what they
+# exist to remove, and a fork generates its own. So withhold ONLY this subtree;
+# the rest of .claude/ ships. (The single personal path in
+# phase6-adr-update/SKILL.md is depersonalized by the PII scrub, not withheld.)
 .claude/skills/ship-public-release/**
 
 # --- .mailmap: full-depersonalization decision (2026-06-01) ------------------
@@ -71,8 +81,21 @@ docs/plans/**
 docs/phase-b1-wiki-curator/**
 docs/diagnostics/**
 
+# --- Contributor doctrine now SHIPS (2026-06-27, revised) -------------------
+# CLAUDE.md + CLOUD.md are the binding contributor doctrine. AGENTS.md is the
+# byte-twin of CLAUDE.md and ALREADY ships, so withholding CLAUDE.md was
+# inconsistent — its content was public via AGENTS.md regardless. OpenClaw ships
+# CLAUDE.md + VISION.md publicly; matching that is the professional move. Both
+# are depersonalized by the PII scrub on the way out. (docs/BUGS.md stays
+# withheld below — that is the internal bug log, not contributor doctrine.)
+
+# --- BUGS.md now SHIPS (2026-06-27): the recurring-bug "journey" log is strong
+# --- contributor/reader material. VERIFIED — applying the PII scrub to it leaves
+# --- 0 personal paths (5 -> <USER_HOME>), 0 real name, 0 private mail; only
+# --- 127.0.0.1 (loopback) + hardware names (RTX / headset) remain, which are
+# --- non-identifying. The fail-closed scrub+scan re-checks on every ship. -----
+
 # --- Internal dev-process docs: individual files ----------------------------
-docs/BUGS.md
 docs/adr/0009-self-healing-worker-critic.md
 docs/agents-self-verification.md
 docs/deepgram-stt-research-2026-05-20.md
@@ -89,3 +112,42 @@ docs/spike-results-openclaw.md
 docs/voice-acceptance-brief.md
 docs/bug-019-spawn-failure-report.html
 docs/jarvis-board/PHASE_A_DONE.md
+
+# --- The whole video/ Remotion build project (2026-06-27) -------------------
+# video/ is the Remotion source project used to RENDER the YouTube onboarding
+# film; it is a generator tool, not a runtime asset. The frontend embeds the
+# finished film straight from youtube-nocookie.com (IntroVideoScreen.tsx) and
+# loads nothing from this dir; .dockerignore already excludes video/. This
+# subsumes the earlier video/analysis/** entry: those frames are review/debug
+# artifacts that can carry personalized demo text in pixels (caught by semantic
+# image scanners, not file-text scanners), so the whole tree stays out.
+video/**
+
+# --- Standalone side-projects: ship in their OWN repos, not the flagship (2026-06-27) ---
+# Self-contained projects that merely co-live in this monorepo. The runtime
+# jarvis/ package imports NOTHING from them (verified 2026-06-27 — 0 import
+# sites). Patterns are ^-anchored, so each hits ONLY the top-level dir, never a
+# same-named subdir (e.g. src/** does not touch jarvis/ui/web/frontend/src/).
+#   - skillbook/ : independent decentralized agent-memory research project
+#                  (own CLAUDE.md / ADRs / tests; unrelated to the product)
+#   - keyproxy/  : standalone LLM-key reverse proxy ("zero dependency on jarvis")
+#   - src/       : orphaned duplicate of the web-search skill; the LIVE tool is
+#                  jarvis/plugins/tool/search_web.py (no sys.path/loader points here)
+# DELIBERATELY KEPT (verified load-bearing, do NOT add): board-backend/
+# (jarvis/board/sync.py + federation_proxy_routes.py import board_backend.crypto),
+# OS-Level/ (jarvis/overlay/schema.py re-exports OS-Level/src/overlay), ui/
+# (the Orb overlay is imported at runtime), conductor/ (3 import sites).
+skillbook/**
+keyproxy/**
+src/**
+
+# --- Internal maintainer demo / perf scripts (2026-06-27) -------------------
+# tools/ holds board_demo.py / board_pentest.py / board_perf.py — internal
+# bring-up & perf probes for the Board, not product code. A fork has no use for
+# them (the product's own tooling lives inside the jarvis/ package).
+tools/**
+
+# --- Internal QA protocols (2026-06-27) -------------------------------------
+# docs/qa/ is the maintainer's internal voice-QA checklist — same internal-
+# process class as docs/superpowers/** / docs/plans/** already withheld above.
+docs/qa/**

@@ -150,6 +150,30 @@ removes the distribution denylist (internal docs, scratch scripts, signing keys,
 **and this skill itself**), and applies the deterministic PII scrub. Read the
 report; note the scrubbed-file counts for the review.
 
+### 2b. Build and inject the frontend UI (prebuilt dist)
+
+The built React UI (`jarvis/ui/web/dist`) is `.gitignore`'d in the working repo
+(cloud-first: no build-artifact bloat locally), so the tracked-files-only export
+in step 2 does **not** include it. A clone with no `dist/` serves a broken UI
+(`server.py` needs `dist/index.html`), and the `pipx install git+…` path on the
+website never clones at all — it can only ship a UI that travels inside the
+package. So build the UI fresh and inject it into the staging tree: every public
+install path (pipx, `pip install`, manual clone) then serves a working UI without
+Node. `pyproject.toml` already declares `ui/web/dist/**` as `package-data`, so the
+wheel/sdist pick it up once it is in the shipped tree.
+
+```bash
+( cd "$REPO/jarvis/ui/web/frontend" && npm ci && npm run build )   # -> $REPO/jarvis/ui/web/dist
+rm -rf "$WORK/staging/jarvis/ui/web/dist"
+cp -r "$REPO/jarvis/ui/web/dist" "$WORK/staging/jarvis/ui/web/dist"
+```
+
+The build is deterministic from the already-public frontend source, so the dist
+carries no personal data the source did not. It is injected **before** the scan
+(step 3), so the blocking secret/PII scan covers the built bundle too — it is not
+a scrub-exempt blind spot. (The deterministic name-scrub in step 2 runs on the
+git export only; the built bundle is guarded by the scan instead.)
+
 ### 3. Scan the staging tree (gate layer D, fail-closed)
 
 ```bash
