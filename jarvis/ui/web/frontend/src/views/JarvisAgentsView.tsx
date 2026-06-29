@@ -10,14 +10,14 @@
 import { Trash2, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { useSubAgentStore, type SubAgentTreeSnapshot } from "@/store/subAgents";
+import { useSubAgentStore, type SubAgentTreeSnapshot } from "@/store/jarvisAgents";
 import { DepartureBoard } from "./sub-agents/DepartureBoard";
 import { selectTaskRows } from "./sub-agents/rows";
 import { useMissionWebSocket } from "@/components/missions/useMissionWebSocket";
 import { useMissionsStore } from "@/components/missions/store";
 import { useT } from "@/i18n";
 
-export function SubAgentsView() {
+export function JarvisAgentsView() {
   const t = useT();
   const subAgents = useSubAgentStore((s) => s.subAgents);
   const sweepExpired = useSubAgentStore((s) => s.sweepExpired);

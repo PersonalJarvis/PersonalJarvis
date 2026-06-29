@@ -445,7 +445,7 @@ export async function switchSttProvider(
 export async function switchSubagentProvider(
   providerId: string,
 ): Promise<PipelineSwitchResult> {
-  const res = await fetch("/api/subagent/switch", {
+  const res = await fetch("/api/jarvis-agent/switch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ provider: providerId, persist: true }),
@@ -465,7 +465,7 @@ export async function switchSubagentProvider(
 export async function saveSubagentModel(
   model: string,
 ): Promise<PipelineSwitchResult> {
-  const res = await fetch("/api/subagent/model", {
+  const res = await fetch("/api/jarvis-agent/model", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model, persist: true }),

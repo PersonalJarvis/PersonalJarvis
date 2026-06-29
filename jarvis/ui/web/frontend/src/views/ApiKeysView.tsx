@@ -6,7 +6,7 @@ import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
 import { CuModelSelector } from "@/components/CuModelSelector";
 import { ProviderBillingBadge } from "@/components/ProviderBillingBadge";
-import { SubagentSection } from "@/components/SubagentSection";
+import { JarvisAgentSection } from "@/components/JarvisAgentSection";
 import { TelephonyPanel } from "@/views/TelephonyView";
 import { WikiProviderCard } from "@/views/settings/WikiProviderCard";
 import { JarvisApiGroup } from "@/views/settings/JarvisApiGroup";
@@ -359,7 +359,7 @@ function SubagentCategory() {
         title={t("apikeys_view.cat_subagents_title")}
         description={t("apikeys_view.cat_subagents_desc")}
       />
-      <SubagentSection hideHeader />
+      <JarvisAgentSection hideHeader />
     </div>
   );
 }

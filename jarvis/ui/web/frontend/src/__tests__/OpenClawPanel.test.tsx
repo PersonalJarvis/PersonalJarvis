@@ -1,16 +1,16 @@
 /**
- * Vitest+RTL-Tests fuer OpenClawPanel (Phase 9 Welle 4 UI).
+ * Vitest+RTL tests for JarvisAgentPanel (Phase 9 Wave 4 UI).
  *
- * Deckt:
- *  - Empty-State wenn keine Mission ausgewaehlt
- *  - Empty-State wenn ausgewaehlte Mission keine OpenClaw-Worker hat
- *  - Render aller Spalten (Modell, Cost, State-Dir, Logfile, Reattach-Status)
- *  - Reattach-Status-Badge zeigt korrekten data-attribute (live/killed/ended)
+ * Covers:
+ *  - Empty-state when no mission is selected
+ *  - Empty-state when the selected mission has no worker snapshots
+ *  - Renders all columns (Model, Cost, State-Dir, Logfile, Reattach-Status)
+ *  - Reattach-status badge shows correct data-attribute (live/killed/ended)
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 
-import { OpenClawPanel } from "@/components/missions/OpenClawPanel";
+import { JarvisAgentPanel } from "@/components/missions/JarvisAgentPanel";
 import { useMissionsStore } from "@/components/missions/store";
 import type { OpenClawWorkerSnapshot } from "@/types/missions";
 
@@ -38,9 +38,9 @@ function makeWorker(overrides: Partial<OpenClawWorkerSnapshot> = {}): OpenClawWo
   };
 }
 
-describe("OpenClawPanel", () => {
+describe("JarvisAgentPanel", () => {
   it("zeigt Empty-State wenn keine Mission ausgewaehlt ist", () => {
-    render(<OpenClawPanel />);
+    render(<JarvisAgentPanel />);
     expect(
       screen.getByText("Mission auswaehlen, um OpenClaw-Worker zu sehen."),
     ).toBeDefined();
@@ -49,9 +49,9 @@ describe("OpenClawPanel", () => {
   it("zeigt Empty-State wenn Mission keine OpenClaw-Worker hat", () => {
     useMissionsStore.setState({
       selectedMissionId: "mid-1",
-      openclawWorkersByMission: { "mid-1": [] },
+      workerSnapshotsByMission: { "mid-1": [] },
     });
-    render(<OpenClawPanel />);
+    render(<JarvisAgentPanel />);
     expect(
       screen.getByText("Keine OpenClaw-Worker in dieser Mission."),
     ).toBeDefined();
@@ -60,9 +60,9 @@ describe("OpenClawPanel", () => {
   it("rendert alle Spalten fuer einen live OpenClaw-Worker", () => {
     useMissionsStore.setState({
       selectedMissionId: "mid-1",
-      openclawWorkersByMission: { "mid-1": [makeWorker()] },
+      workerSnapshotsByMission: { "mid-1": [makeWorker()] },
     });
-    render(<OpenClawPanel />);
+    render(<JarvisAgentPanel />);
 
     // Modell
     const model = screen.getByTestId("openclaw-model");
@@ -92,7 +92,7 @@ describe("OpenClawPanel", () => {
   it("zeigt killed-Badge mit ended-reason wenn Worker explicit gekillt wurde", () => {
     useMissionsStore.setState({
       selectedMissionId: "mid-1",
-      openclawWorkersByMission: {
+      workerSnapshotsByMission: {
         "mid-1": [
           makeWorker({
             reattach_status: "killed",
@@ -102,7 +102,7 @@ describe("OpenClawPanel", () => {
         ],
       },
     });
-    render(<OpenClawPanel />);
+    render(<JarvisAgentPanel />);
 
     const badge = screen.getByTestId("openclaw-reattach-badge");
     expect(badge.getAttribute("data-reattach-status")).toBe("killed");
@@ -115,7 +115,7 @@ describe("OpenClawPanel", () => {
   it("zeigt mehrere Worker in der Reihenfolge der Aggregator-Liste", () => {
     useMissionsStore.setState({
       selectedMissionId: "mid-1",
-      openclawWorkersByMission: {
+      workerSnapshotsByMission: {
         "mid-1": [
           makeWorker({ worker_id: "w-aaa", model: "gemini/g1" }),
           makeWorker({
@@ -127,7 +127,7 @@ describe("OpenClawPanel", () => {
         ],
       },
     });
-    render(<OpenClawPanel />);
+    render(<JarvisAgentPanel />);
 
     const rows = screen.getAllByTestId("openclaw-worker-row");
     expect(rows).toHaveLength(2);

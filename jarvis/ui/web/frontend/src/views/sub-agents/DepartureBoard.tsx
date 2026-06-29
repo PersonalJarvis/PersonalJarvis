@@ -12,7 +12,7 @@ import {
   Wrench,
 } from "lucide-react";
 
-import type { SubAgentNode, ToolCallEntry } from "@/store/subAgents";
+import type { SubAgentNode, ToolCallEntry } from "@/store/jarvisAgents";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 

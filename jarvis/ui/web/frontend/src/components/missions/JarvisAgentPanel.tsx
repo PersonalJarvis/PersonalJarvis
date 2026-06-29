@@ -1,13 +1,13 @@
 /**
- * Phase 9 — OpenClaw-Tab in der MissionsView.
+ * Phase 9 — Jarvis-Agent worker tab in the MissionsView.
  *
- * Listet pro OpenClaw-Worker einer Mission die Spalten Modell / Cost /
- * State-Dir / Logfile / Reattach-Status. Daten kommen aus
- * ``missions_routes::extract_openclaw_workers`` (Backend) und werden im
- * Mission-Store unter ``openclawWorkersByMission`` gehalten.
+ * Lists per-worker columns (Model / Cost / State-Dir / Logfile /
+ * Reattach-Status) for all workers of the selected mission. Data comes from
+ * ``missions_routes::extract_worker_missions`` (backend) and is held in the
+ * mission store under ``workerSnapshotsByMission``.
  *
- * Empty-State: wenn die ausgewaehlte Mission keine OpenClaw-Worker hat
- * (z.B. reine Claude-/Codex-Mission), zeige Hinweis statt leere Tabelle.
+ * Empty-state: when the selected mission has no workers (e.g. a pure
+ * Claude-/Codex-mission), show a hint instead of an empty table.
  */
 import { CircleSlash, Cpu, Copy, ExternalLink } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
@@ -54,12 +54,12 @@ async function copyToClipboard(value: string): Promise<void> {
   }
 }
 
-export function OpenClawPanel() {
+export function JarvisAgentPanel() {
   const t = useT();
   const workers = useMissionsStore(
     useShallow((s) => {
       if (!s.selectedMissionId) return [];
-      return s.openclawWorkersByMission[s.selectedMissionId] ?? [];
+      return s.workerSnapshotsByMission[s.selectedMissionId] ?? [];
     }),
   );
   const selectedMissionId = useMissionsStore((s) => s.selectedMissionId);

@@ -7,7 +7,7 @@ import {
   type ChatMessage,
   type VoiceState,
 } from "@/store/events";
-import { useSubAgentStore, SUB_AGENT_EVENT_NAMES } from "@/store/subAgents";
+import { useSubAgentStore, SUB_AGENT_EVENT_NAMES } from "@/store/jarvisAgents";
 import { WSEventEnvelope, WSWelcome } from "@/schema/ws";
 import { useI18nStore, hydrateUiLanguage, hydrateReplyLanguage, translate } from "@/i18n";
 

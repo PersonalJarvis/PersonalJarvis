@@ -39,8 +39,8 @@ import { ProviderBillingBadge } from "@/components/ProviderBillingBadge";
 
 interface SubagentMappingRow {
   jarvis: string;
-  /** Server contract: the engine-side provider slug (e.g. "google"). */
-  openclaw: string;
+  /** Server contract: the worker-harness provider slug (e.g. "google"). */
+  worker_slug: string;
   env_var: string;
   env_fallback: string | null;
   key_set: boolean;
@@ -117,7 +117,7 @@ async function pollStatusUntilConnected(
   return false;
 }
 
-export function SubagentSection({
+export function JarvisAgentSection({
   hideHeader = false,
 }: {
   /** Suppress the section header — used inside the API-Keys "Subagents" tab,
@@ -137,7 +137,7 @@ export function SubagentSection({
   const reload = useCallback(async () => {
     try {
       const [res, codexRes, antigravityRes, claudeRes] = await Promise.all([
-        fetch("/api/openclaw/status"),
+        fetch("/api/jarvis-agent/status"),
         fetch("/api/codex/status").catch(() => null),
         fetch("/api/antigravity/status").catch(() => null),
         fetch("/api/claude/status").catch(() => null),
@@ -170,11 +170,11 @@ export function SubagentSection({
     void reload();
     const onChange = () => void reload();
     window.addEventListener("jarvis:brain-switched", onChange);
-    window.addEventListener("jarvis:subagent-switched", onChange);
+    window.addEventListener("jarvis:agent-switched", onChange);
     window.addEventListener("jarvis:secret-configured", onChange);
     return () => {
       window.removeEventListener("jarvis:brain-switched", onChange);
-      window.removeEventListener("jarvis:subagent-switched", onChange);
+      window.removeEventListener("jarvis:agent-switched", onChange);
       window.removeEventListener("jarvis:secret-configured", onChange);
     };
   }, [reload]);
@@ -313,7 +313,7 @@ function SubagentModelCard({
           currentModel={status.sub_model_override ?? ""}
           onSave={async (model) => {
             const r = await saveSubagentModel(model);
-            window.dispatchEvent(new Event("jarvis:subagent-switched"));
+            window.dispatchEvent(new Event("jarvis:agent-switched"));
             onSaved();
             return {
               ok: true,
@@ -898,7 +898,7 @@ function ClaudeApiCard({
           {row && (
             <p className="mt-0.5 text-[11px] text-muted-foreground">
               <code className="font-mono">
-                {row.jarvis} → {row.openclaw}
+                {row.jarvis} → {row.worker_slug}
               </code>
               {" · "}
               <span className="font-mono">
@@ -964,7 +964,7 @@ function useSubagentActivate(
       const result = await switchSubagentProvider(row.jarvis);
       const note = result.restart_required ? " (active from next restart)" : "";
       pushToast("success", `Subagent → ${label}${note}`);
-      window.dispatchEvent(new CustomEvent("jarvis:subagent-switched"));
+      window.dispatchEvent(new CustomEvent("jarvis:agent-switched"));
       await onSwitched();
     } catch (e) {
       pushToast("error", (e as Error).message);
@@ -1033,7 +1033,7 @@ function SubagentProviderCard({
           </div>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
             <code className="font-mono">
-              {row.jarvis} → {row.openclaw}
+              {row.jarvis} → {row.worker_slug}
             </code>
             {" · "}
             <span className="font-mono">

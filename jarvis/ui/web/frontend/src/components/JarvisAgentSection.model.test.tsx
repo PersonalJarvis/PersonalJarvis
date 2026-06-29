@@ -11,7 +11,7 @@ vi.mock("@/store/events", () => ({
     selector({ pushToast: vi.fn() }),
 }));
 
-import { SubagentSection } from "./SubagentSection";
+import { JarvisAgentSection } from "./JarvisAgentSection";
 
 const STATUS = {
   configured: true,
@@ -67,10 +67,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("SubagentSection — dedicated subagent LLM dropdown", () => {
+describe("JarvisAgentSection — dedicated subagent LLM dropdown", () => {
   it("opens a model dropdown for the active subagent provider", async () => {
     vi.stubGlobal("fetch", mockFetch());
-    render(<SubagentSection />);
+    render(<JarvisAgentSection />);
     const trigger = (await screen.findByLabelText(
       "apikeys_model.model_label",
     )) as HTMLElement;
@@ -81,7 +81,7 @@ describe("SubagentSection — dedicated subagent LLM dropdown", () => {
   it("saves a picked model via POST /api/subagent/model", async () => {
     const fetchMock = mockFetch();
     vi.stubGlobal("fetch", fetchMock);
-    render(<SubagentSection />);
+    render(<JarvisAgentSection />);
     const trigger = (await screen.findByLabelText(
       "apikeys_model.model_label",
     )) as HTMLElement;

@@ -1,13 +1,13 @@
 /**
- * Sub-Agent-Store — Live-Tree aller aktiven Jarvis-Sub-Agents.
+ * Jarvis-Agent Store — live tree of all active Jarvis-Agents.
  *
- * Wird vom WebSocket-Hook gespeist (9 Event-Typen: OpenClawTaskStarted/Review/
+ * Fed by the WebSocket hook (9 event types: JarvisAgentTaskStarted/Review/
  * Completed, BrainTurnStarted/Completed, ToolCallStarted/Completed, Harness-
- * Dispatched/Completed) und rendert in <SubAgentsView /> als Live-Tabelle.
+ * Dispatched/Completed) and rendered in <JarvisAgentsView /> as a live table.
  */
 import { create } from "zustand";
 
-export type NodeKind = "router" | "openclaw" | "harness" | "tool_call";
+export type NodeKind = "router" | "jarvis_agent" | "harness" | "tool_call";
 export type NodeStatus = "running" | "completed" | "failed";
 
 export interface ToolCallEntry {
@@ -159,13 +159,13 @@ export const useSubAgentStore = create<SubAgentStore>((set, get) => ({
       };
 
       switch (eventName) {
-        case "OpenClawTaskStarted": {
+        case "JarvisAgentTaskStarted": {
           if (!traceId) break;
           const provider = safeString(payloadObj.provider);
           const model = safeString(payloadObj.model);
           upsert(traceId, {
-            kind: "openclaw",
-            name: `OpenClaw (${model || provider || "unknown"})`,
+            kind: "jarvis_agent",
+            name: `Jarvis-Agent (${model || provider || "unknown"})`,
             status: "running",
             parent_trace_id: parentTraceId,
             provider: provider || null,
@@ -178,7 +178,7 @@ export const useSubAgentStore = create<SubAgentStore>((set, get) => ({
           linkToParent(parentTraceId, traceId);
           break;
         }
-        case "OpenClawReviewTriggered": {
+        case "JarvisAgentReviewTriggered": {
           if (!traceId || !nodes[traceId]) break;
           const iter = safeNumber(payloadObj.iteration);
           nodes[traceId] = {
@@ -187,7 +187,7 @@ export const useSubAgentStore = create<SubAgentStore>((set, get) => ({
           };
           break;
         }
-        case "OpenClawTaskCompleted": {
+        case "JarvisAgentTaskCompleted": {
           if (!traceId) break;
           const success = Boolean(payloadObj.success);
           const summary = safeString(payloadObj.summary);
@@ -221,11 +221,11 @@ export const useSubAgentStore = create<SubAgentStore>((set, get) => ({
         }
         case "BrainTurnCompleted": {
           // If parent_trace_id is missing we fall back to a "newest running
-          // sub_jarvis" heuristic. With multi-spawn (>=2 concurrent nodes)
+          // jarvis_agent" heuristic. With multi-spawn (>=2 concurrent nodes)
           // that pick is ambiguous, so we only attribute usage when exactly
           // one running node is unambiguous.
           const running = Object.values(nodes).filter(
-            (n) => n.kind === "openclaw" && n.status === "running",
+            (n) => n.kind === "jarvis_agent" && n.status === "running",
           );
           if (running.length !== 1) break;
           const newest = running[0];
@@ -278,7 +278,7 @@ export const useSubAgentStore = create<SubAgentStore>((set, get) => ({
         case "HarnessDispatched": {
           if (!traceId) break;
           const running = Object.values(nodes).filter(
-            (n) => n.kind === "openclaw" && n.status === "running",
+            (n) => n.kind === "jarvis_agent" && n.status === "running",
           );
           const parent =
             running.length > 0
@@ -366,9 +366,9 @@ export const useSubAgentStore = create<SubAgentStore>((set, get) => ({
 }));
 
 export const SUB_AGENT_EVENT_NAMES = new Set<string>([
-  "OpenClawTaskStarted",
-  "OpenClawReviewTriggered",
-  "OpenClawTaskCompleted",
+  "JarvisAgentTaskStarted",
+  "JarvisAgentReviewTriggered",
+  "JarvisAgentTaskCompleted",
   "BrainTurnStarted",
   "BrainTurnCompleted",
   "ToolCallStarted",
