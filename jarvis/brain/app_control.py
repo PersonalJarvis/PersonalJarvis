@@ -183,6 +183,10 @@ def is_credential_present(spec: ProviderSpec, binary_path: str | None = None) ->
         except Exception:  # noqa: BLE001 — codex CLI absent is just "not present"
             return False
     if spec.auth_mode == "antigravity":
+        # Dual-billing (subscription OAuth OR an API key): mirror the codex branch
+        # and count a stored key first, so a key-only user shows as configured.
+        if any(bool(cfg_mod.get_secret(k)) for k in spec.secret_keys):
+            return True
         try:
             from jarvis.google_cli.auth_service import GoogleCliAuthService
 

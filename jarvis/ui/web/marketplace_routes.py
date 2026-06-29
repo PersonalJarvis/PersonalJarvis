@@ -144,6 +144,28 @@ _validate_token = _make_validator()
 # ----------------------------------------------------------------------
 
 
+def _mcp_live(mcp: dict[str, Any]) -> tuple[bool, str | None]:
+    """``(is_live, runtime_missing)`` for an MCP plugin's transport.
+
+    M2 (honest status): a stdio plugin (GitHub=docker, Supabase=npx) is only LIVE if
+    its launcher binary is on PATH — else connecting saves the token but the tools
+    never appear, so a green "Connected · Live" badge is a lie. http transports are
+    always live; ``runtime_missing`` is the absent launcher name for an honest UI hint.
+    """
+    transport = str(mcp.get("transport", "")).lower()
+    if transport == "http":
+        return True, None
+    if transport == "stdio":
+        import shutil
+
+        install = mcp.get("install") or []
+        launcher = str(install[0]) if install else ""
+        if launcher and shutil.which(launcher):
+            return True, None
+        return False, (launcher or None)
+    return False, None
+
+
 @router.get("/plugins")
 async def list_plugins(response: Response) -> dict[str, Any]:
     # Never let an embedded webview (pywebview/WebView2) serve a stale cached
@@ -161,7 +183,9 @@ async def list_plugins(response: Response) -> dict[str, Any]:
         status = _plugin_status(spec.id, store)
         item["status"] = status
         mcp = spec.mcp_server or {}
-        mcp_live = str(mcp.get("transport", "")).lower() in ("http", "stdio")
+        mcp_live, runtime_missing = _mcp_live(mcp)
+        if runtime_missing:
+            item["runtime_missing"] = runtime_missing
         native_live = False
         if spec.native_tool:
             try:
@@ -264,12 +288,22 @@ async def connect_pat(plugin_id: str, body: PatConnectBody, request: Request) ->
     live_applied = False
     if plugin_id in _CHANNEL_PLUGIN_IDS:
         live_applied = await apply_channel_live(request.app.state, plugin_id)
-    return {
+    result: dict[str, Any] = {
         "ok": True,
         "plugin_id": plugin_id,
         "status": "connected",
         "live_applied": live_applied,
     }
+    if plugin_id in _CHANNEL_PLUGIN_IDS and not live_applied:
+        # M8 (honest status): the token saved but the channel did NOT start live —
+        # commonly the optional extra is missing (e.g. discord.py for Discord) or an
+        # app restart is needed. Surface it so the UI never implies a working message
+        # path with a green "Live" badge.
+        result["live_note"] = (
+            "Saved, but the channel did not start live. It may need its optional "
+            "extra (pip install '.[channels]' for Discord) or an app restart."
+        )
+    return result
 
 
 # ----------------------------------------------------------------------

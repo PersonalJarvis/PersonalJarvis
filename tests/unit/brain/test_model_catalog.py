@@ -148,6 +148,30 @@ class TestParseModelsResponse:
         ) in models
         assert ModelInfo(id="openai/gpt-5.5", label="openai/gpt-5.5") in models
 
+    def test_openrouter_extracts_output_modalities(self) -> None:
+        payload = {
+            "data": [
+                {
+                    "id": "openai/gpt-5.5",
+                    "name": "GPT-5.5",
+                    "architecture": {"output_modalities": ["text"]},
+                },
+                {
+                    "id": "openai/gpt-5-image",
+                    "name": "Image",
+                    "architecture": {"output_modalities": ["image", "text"]},
+                },
+            ]
+        }
+        by_id = {m.id: m for m in parse_models_response("openrouter", payload)}
+        assert by_id["openai/gpt-5.5"].output_modalities == ("text",)
+        assert by_id["openai/gpt-5-image"].output_modalities == ("image", "text")
+
+    def test_missing_architecture_yields_none_modalities(self) -> None:
+        # Direct providers (Anthropic/OpenAI /v1/models) return no architecture.
+        payload = {"data": [{"id": "gpt-5.5"}]}
+        assert parse_models_response("openai", payload)[0].output_modalities is None
+
     def test_empty_payload_yields_empty_list(self) -> None:
         assert parse_models_response("openai", {}) == []
         assert parse_models_response("gemini", {}) == []
@@ -179,6 +203,118 @@ class TestSortModels:
         ordered = sort_models("openrouter", models)
         assert ordered[0].id == "openai/gpt-5.5"
         assert ordered[-1].id == "openai/gpt-4o"
+
+    def test_frontier_families_rank_above_obscure_models(self) -> None:
+        # The user's exact complaint: with OpenRouter's namespaced ids, plain
+        # reverse-alphabetical sorting buried GPT/Claude/Gemini below
+        # z-ai/qwen/community fine-tunes (whose vendor prefix sorts after "o").
+        # The flagship families must come first.
+        models = [
+            ModelInfo(id="sao10k/l3.3-euryale-70b", label="Euryale"),
+            ModelInfo(id="thedrummer/rocinante-12b", label="Rocinante"),
+            ModelInfo(id="z-ai/glm-4.5v", label="GLM 4.5V"),
+            ModelInfo(id="openai/gpt-5.5", label="GPT-5.5"),
+            ModelInfo(id="anthropic/claude-opus-4.8", label="Opus 4.8"),
+            ModelInfo(id="google/gemini-3-pro-preview", label="Gemini 3 Pro"),
+        ]
+        ordered = [m.id for m in sort_models("openrouter", models)]
+        assert ordered.index("openai/gpt-5.5") < ordered.index("sao10k/l3.3-euryale-70b")
+        assert ordered.index("anthropic/claude-opus-4.8") < ordered.index(
+            "thedrummer/rocinante-12b"
+        )
+        assert ordered.index("google/gemini-3-pro-preview") < ordered.index(
+            "z-ai/glm-4.5v"
+        )
+
+    def test_newer_version_ranks_above_older_in_same_family(self) -> None:
+        models = [
+            ModelInfo(id="openai/gpt-5.1", label="x"),
+            ModelInfo(id="openai/gpt-5.5", label="y"),
+            ModelInfo(id="openai/gpt-5.4", label="z"),
+        ]
+        ordered = [m.id for m in sort_models("openrouter", models)]
+        assert ordered == ["openai/gpt-5.5", "openai/gpt-5.4", "openai/gpt-5.1"]
+
+    def test_main_variant_ranks_above_mini_nano_and_free(self) -> None:
+        models = [
+            ModelInfo(id="openai/gpt-5.5-mini", label="mini"),
+            ModelInfo(id="openai/gpt-5.5", label="main"),
+            ModelInfo(id="openai/gpt-5.5-nano", label="nano"),
+            ModelInfo(id="openai/gpt-5.5:free", label="free"),
+        ]
+        ordered = [m.id for m in sort_models("openrouter", models)]
+        assert ordered[0] == "openai/gpt-5.5"
+
+    def test_popular_value_family_outranks_unknown_vendor(self) -> None:
+        # "Bang per token" families people actually run (DeepSeek, GLM, Qwen,
+        # Kimi) rank above an unknown vendor whose prefix sorts high alphabetically.
+        models = [
+            ModelInfo(id="zzz-vendor/mystery-70b", label="Mystery"),
+            ModelInfo(id="deepseek/deepseek-v3.2", label="DeepSeek V3.2"),
+            ModelInfo(id="moonshotai/kimi-k2", label="Kimi K2"),
+        ]
+        ordered = [m.id for m in sort_models("openrouter", models)]
+        assert ordered[-1] == "zzz-vendor/mystery-70b"
+
+    def test_superseded_version_sinks_below_other_families_flagship(self) -> None:
+        # The "wall of old Claude versions before GPT" fix: only the NEWEST of a
+        # product line stays in the top band; older same-line versions drop
+        # below every OTHER family's current flagship, so the leading rows show
+        # different providers' flagships instead of one provider's back-catalog.
+        models = [
+            ModelInfo(id="anthropic/claude-opus-4.8", label="Opus 4.8"),
+            ModelInfo(id="anthropic/claude-opus-4.7", label="Opus 4.7"),
+            ModelInfo(id="anthropic/claude-opus-4.6", label="Opus 4.6"),
+            ModelInfo(id="openai/gpt-5.5", label="GPT-5.5"),
+        ]
+        ordered = [m.id for m in sort_models("openrouter", models)]
+        assert ordered[0] == "anthropic/claude-opus-4.8"  # newest Claude = flagship
+        assert ordered.index("openai/gpt-5.5") < ordered.index("anthropic/claude-opus-4.7")
+        assert ordered.index("openai/gpt-5.5") < ordered.index("anthropic/claude-opus-4.6")
+        # The superseded Claude versions still rank above an unknown vendor.
+        # (they keep their family relevance in the second band).
+
+    def test_distinct_product_tiers_are_not_treated_as_one_line(self) -> None:
+        # gemini flash and pro are different product lines even though the
+        # version number sits in the middle — neither must "supersede" the other.
+        models = [
+            ModelInfo(id="google/gemini-3.5-flash", label="Flash"),
+            ModelInfo(id="google/gemini-3.1-pro-preview", label="Pro"),
+        ]
+        ordered = [m.id for m in sort_models("openrouter", models)]
+        # Both are their line's newest → both stay flagship (top band); neither
+        # is demoted as "an older version of the other".
+        assert set(ordered[:2]) == {"google/gemini-3.5-flash", "google/gemini-3.1-pro-preview"}
+
+    def test_special_purpose_variants_rank_below_the_plain_model(self) -> None:
+        # Deep-research / multi-agent / custom-tools are special-purpose siblings,
+        # not the default chat brain — the plain model leads each of them.
+        models = [
+            ModelInfo(id="openai/o3-deep-research", label="o3 DR"),
+            ModelInfo(id="openai/o3", label="o3"),
+            ModelInfo(id="x-ai/grok-4.3-multi-agent", label="Grok MA"),
+            ModelInfo(id="x-ai/grok-4.3", label="Grok"),
+            ModelInfo(id="google/gemini-3.1-pro-customtools", label="Gem CT"),
+            ModelInfo(id="google/gemini-3.1-pro", label="Gem"),
+        ]
+        ordered = [m.id for m in sort_models("openrouter", models)]
+        assert ordered.index("openai/o3") < ordered.index("openai/o3-deep-research")
+        assert ordered.index("x-ai/grok-4.3") < ordered.index("x-ai/grok-4.3-multi-agent")
+        assert ordered.index("google/gemini-3.1-pro") < ordered.index(
+            "google/gemini-3.1-pro-customtools"
+        )
+
+    def test_gpt_5_5_lands_in_leading_slice_against_full_catalog(self) -> None:
+        # End-to-end: a realistic mixed catalog (lots of obscure high-alpha
+        # vendors) must surface GPT-5.5 within the first handful — the dropdown
+        # only shows the leading slice, so rank ~130 (the old bug) hid it.
+        obscure = [
+            ModelInfo(id=f"zzz-vendor-{i}/model-{i}", label=str(i))
+            for i in range(60)
+        ]
+        models = obscure + [ModelInfo(id="openai/gpt-5.5", label="GPT-5.5")]
+        ordered = [m.id for m in sort_models("openrouter", models)]
+        assert ordered.index("openai/gpt-5.5") < 10
 
 
 # ----------------------------------------------------------------------
@@ -235,6 +371,47 @@ class TestFilterBrainModels:
             ModelInfo(id="openai/gpt-5.5", label="gpt"),
         ]
         assert len(filter_brain_models(models)) == 2
+
+    def test_excludes_image_output_model_even_without_name_marker(self) -> None:
+        # openrouter/auto outputs text OR image but its id has NO blocklist
+        # marker — the old substring filter let it slip through. Modality wins.
+        models = [
+            ModelInfo(id="openrouter/auto", label="Auto", output_modalities=("text", "image")),
+            ModelInfo(id="openai/gpt-5.5", label="GPT", output_modalities=("text",)),
+        ]
+        assert {m.id for m in filter_brain_models(models)} == {"openai/gpt-5.5"}
+
+    def test_keeps_vision_input_text_output_model(self) -> None:
+        # A model that ACCEPTS image input but OUTPUTS text is a valid brain
+        # (Computer-Use needs vision-input). It must be kept.
+        models = [ModelInfo(id="vendor/vision-llm", label="V", output_modalities=("text",))]
+        assert len(filter_brain_models(models)) == 1
+
+    def test_excludes_audio_output_model_by_modality(self) -> None:
+        models = [ModelInfo(id="vendor/voice", label="X", output_modalities=("text", "audio"))]
+        assert filter_brain_models(models) == []
+
+    def test_excludes_classifier_and_embedding_even_with_text_output(self) -> None:
+        # Safety-classifiers (llama-guard) and embedding/rerank/moderation models
+        # OUTPUT text but are NOT chat brains. The name blocklist must apply EVEN
+        # WHEN modality data is present (regression: modality-only filtering let
+        # llama-guard-4-12b / gpt-oss-safeguard-20b slip through with output text).
+        models = [
+            ModelInfo(id="meta-llama/llama-guard-4-12b", label="Guard", output_modalities=("text",)),
+            ModelInfo(id="openai/gpt-oss-safeguard-20b", label="Safeguard", output_modalities=("text",)),
+            ModelInfo(id="openai/text-embedding-3-large", label="Embed", output_modalities=("text",)),
+            ModelInfo(id="cohere/rerank-3.5", label="Rerank", output_modalities=("text",)),
+            ModelInfo(id="openai/gpt-5.5", label="GPT", output_modalities=("text",)),
+        ]
+        assert {m.id for m in filter_brain_models(models)} == {"openai/gpt-5.5"}
+
+    def test_falls_back_to_substring_when_modalities_absent(self) -> None:
+        # No modality data (direct provider /v1/models) → substring blocklist.
+        models = [
+            ModelInfo(id="veo-3.1-generate", label="Veo"),  # None modalities
+            ModelInfo(id="gpt-5.5", label="gpt"),            # None modalities
+        ]
+        assert {m.id for m in filter_brain_models(models)} == {"gpt-5.5"}
 
 
 # ----------------------------------------------------------------------

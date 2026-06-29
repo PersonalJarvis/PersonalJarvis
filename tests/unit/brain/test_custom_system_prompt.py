@@ -29,8 +29,8 @@ def test_effective_prompt_is_default_when_no_custom_file() -> None:
 def test_default_persona_prompt_is_the_packaged_block() -> None:
     default = persona_loader.default_persona_prompt()
     assert default == persona_loader.load_persona_prompt()
-    # Sanity: it is the real JARVIS persona, not an empty fallback.
-    assert "JARVIS" in default
+    # Sanity: it is the real (name-neutral) voice persona, not an empty fallback.
+    assert "voice companion" in default
 
 
 def test_save_custom_then_effective_returns_custom() -> None:

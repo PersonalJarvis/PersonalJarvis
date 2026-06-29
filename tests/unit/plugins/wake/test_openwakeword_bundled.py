@@ -15,7 +15,9 @@ def test_model_kwargs_uses_bundled_onnx_paths() -> None:
 
     assert kw["inference_framework"] == "onnx"
     assert len(kw["wakeword_models"]) == 1
-    assert kw["wakeword_models"][0].endswith("hey_jarvis_v0.1.onnx")
+    # Neutral shipped default is the bundled hey_rhasspy model (no branded/
+    # trademarked default wake word). See jarvis.assets.bundled_wakeword_models.
+    assert kw["wakeword_models"][0].endswith("hey_rhasspy_v0.1.onnx")
     assert kw["melspec_model_path"].endswith("melspectrogram.onnx")
     assert kw["embedding_model_path"].endswith("embedding_model.onnx")
 

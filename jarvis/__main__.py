@@ -51,6 +51,12 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Dry-run-Diagnose: wo würde der Orb spawnen? "
                              "Liest jarvis.toml + EnumDisplayMonitors, ohne ein "
                              "Tk-Fenster zu öffnen (BUG-027 / ADR-0016).")
+    parser.add_argument("--doctor", action="store_true", dest="doctor",
+                        help="Completeness self-check: honestly report what is "
+                             "registered & ready vs. advertised but missing "
+                             "(phantom tools, dead harness config, sub-agent "
+                             "worker CLI, brain provider). Exits non-zero on a "
+                             "hard failure.")
     parser.add_argument(
         "--reset-onboarding",
         action="store_true",
@@ -152,6 +158,45 @@ def _cmd_phase5_doctor() -> int:
     _ = config  # suppress unused
     print("\n".join(lines))
     return 0
+
+
+def _cmd_doctor() -> int:
+    """Completeness self-check — what is registered & ready vs. advertised but
+    missing. Generalises the phantom-openclaw forensic (2026-06-28): a fresh
+    download can *look* complete while one dead reference makes a working feature
+    appear "not installed". Exits non-zero only on a hard failure.
+    """
+    from jarvis.diagnostics.doctor import has_failures, run_doctor
+
+    _ICON = {"ok": "[ OK ]", "warn": "[WARN]", "fail": "[FAIL]", "info": "[ -- ]"}
+
+    config = cfg.load_config()
+    findings = run_doctor(config)
+
+    lines: list[str] = [f"Jarvis {__version__} — Doctor (completeness self-check)",
+                        "=" * 64]
+    last_cat: str | None = None
+    for f in findings:
+        if f.category != last_cat:
+            lines.append(f"\n{f.category}:")
+            last_cat = f.category
+        lines.append(f"  {_ICON.get(f.status, '[ ?? ]')} {f.message}")
+        if f.hint:
+            lines.append(f"         → {f.hint}")
+
+    fail = has_failures(findings)
+    warn = any(f.status == "warn" for f in findings)
+    lines.append("\n" + "=" * 64)
+    if fail:
+        lines.append("RESULT: FAIL — something advertised cannot work (see above).")
+    elif warn:
+        lines.append("RESULT: OK with warnings — works, but some config/prereqs "
+                     "are incomplete.")
+    else:
+        lines.append("RESULT: OK — everything advertised is registered and ready.")
+
+    print("\n".join(lines))
+    return 1 if fail else 0
 
 
 def _cmd_orb_doctor() -> int:
@@ -392,6 +437,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_phase5_doctor()
     if args.orb_doctor:
         return _cmd_orb_doctor()
+    if args.doctor:
+        return _cmd_doctor()
     if args.install_admin_helper:
         return _cmd_install_admin_helper()
     if args.reset_onboarding:

@@ -11,7 +11,12 @@ vi.mock("@/store/events", () => ({
     selector({ pushToast: vi.fn() }),
 }));
 
+vi.mock("@/lib/openExternal", () => ({
+  openExternalUrl: vi.fn(),
+}));
+
 import { BrainModelSelector } from "./BrainModelSelector";
+import { openExternalUrl } from "@/lib/openExternal";
 
 const MODELS = {
   provider: "gemini",
@@ -78,6 +83,160 @@ describe("BrainModelSelector", () => {
     fireEvent.change(search, { target: { value: "pro" } });
     expect(await screen.findByText("gemini-3.1-pro-preview")).toBeTruthy();
     expect(screen.queryByText("gemini-3-flash-preview")).toBeNull();
+  });
+
+  it("matches a hyphenated id when the user types spaces (gpt 5.5)", async () => {
+    // OpenRouter ids use hyphens (openai/gpt-5.5); users naturally type
+    // "gpt 5.5". A naive substring search found nothing — the 2026-06-28 report.
+    const OR_MODELS = {
+      provider: "openrouter",
+      current_model: "",
+      models: [
+        { id: "openai/gpt-5.5", label: "OpenAI: GPT-5.5" },
+        { id: "openai/gpt-5.5-pro", label: "OpenAI: GPT-5.5 Pro" },
+        { id: "z-ai/glm-5.2", label: "Z.AI: GLM 5.2" },
+      ],
+      source: "live",
+      fetched_at: 1,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(async (url: string) => {
+        if (String(url).includes("/models")) return { ok: true, json: async () => OR_MODELS };
+        return { ok: true, json: async () => ({}) };
+      }),
+    );
+    render(<BrainModelSelector providerId="openrouter" currentModel="" />);
+    await openDropdown();
+    const search = (await screen.findByLabelText(
+      "apikeys_model.search_placeholder",
+    )) as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "gpt 5.5" } });
+    expect(await screen.findByText("OpenAI: GPT-5.5")).toBeTruthy();
+    // Unrelated model is filtered out.
+    expect(screen.queryByText("Z.AI: GLM 5.2")).toBeNull();
+  });
+
+  it("matches with no separators at all (gpt5.5pro)", async () => {
+    const OR_MODELS = {
+      provider: "openrouter",
+      current_model: "",
+      models: [
+        { id: "openai/gpt-5.5", label: "OpenAI: GPT-5.5" },
+        { id: "openai/gpt-5.5-pro", label: "OpenAI: GPT-5.5 Pro" },
+      ],
+      source: "live",
+      fetched_at: 1,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(async (url: string) => {
+        if (String(url).includes("/models")) return { ok: true, json: async () => OR_MODELS };
+        return { ok: true, json: async () => ({}) };
+      }),
+    );
+    render(<BrainModelSelector providerId="openrouter" currentModel="" />);
+    await openDropdown();
+    const search = (await screen.findByLabelText(
+      "apikeys_model.search_placeholder",
+    )) as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "gpt5.5pro" } });
+    expect(await screen.findByText("OpenAI: GPT-5.5 Pro")).toBeTruthy();
+    expect(screen.queryByText("OpenAI: GPT-5.5")).toBeNull();
+  });
+
+  it("shows ALL search hits, not just the first 80", async () => {
+    // A search must reach EVERY matching model — the old 80-row display cap hid
+    // the rest of a large OpenRouter catalog (user report: "can't search all
+    // models"). 120 models sharing a token; searching surfaces all of them.
+    const many = Array.from({ length: 120 }, (_, i) => ({
+      id: `vendor/model-${i}`,
+      label: `Vendor Model ${i}`,
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(async (url: string) => {
+        if (String(url).includes("/models"))
+          return {
+            ok: true,
+            json: async () => ({
+              provider: "openrouter",
+              current_model: "",
+              models: many,
+              source: "live",
+              fetched_at: 1,
+            }),
+          };
+        return { ok: true, json: async () => ({}) };
+      }),
+    );
+    render(<BrainModelSelector providerId="openrouter" currentModel="" />);
+    await openDropdown();
+    const search = (await screen.findByLabelText(
+      "apikeys_model.search_placeholder",
+    )) as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "vendor" } });
+    // The 119th match (well past the old 80-row cap) must be rendered.
+    expect(await screen.findByText("Vendor Model 119")).toBeTruthy();
+  });
+
+  it("shows the COMPLETE catalog on open, without typing (no display cap)", async () => {
+    // User mandate: the whole catalog must be visible/scrollable on open, not a
+    // truncated slice. 250 models; the 249th must render without any search.
+    const many = Array.from({ length: 250 }, (_, i) => ({
+      id: `vendor/model-${i}`,
+      label: `Vendor Model ${i}`,
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(async (url: string) => {
+        if (String(url).includes("/models"))
+          return {
+            ok: true,
+            json: async () => ({
+              provider: "openrouter",
+              current_model: "",
+              models: many,
+              source: "live",
+              fetched_at: 1,
+            }),
+          };
+        return { ok: true, json: async () => ({}) };
+      }),
+    );
+    render(<BrainModelSelector providerId="openrouter" currentModel="" />);
+    await openDropdown();
+    expect(await screen.findByText("Vendor Model 249")).toBeTruthy();
+  });
+
+  it("links each OpenRouter model to its page via the external-link bridge", async () => {
+    const OR_MODELS = {
+      provider: "openrouter",
+      current_model: "",
+      models: [{ id: "openai/gpt-5.5", label: "OpenAI: GPT-5.5" }],
+      source: "live",
+      fetched_at: 1,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(async (url: string) => {
+        if (String(url).includes("/models")) return { ok: true, json: async () => OR_MODELS };
+        return { ok: true, json: async () => ({}) };
+      }),
+    );
+    render(<BrainModelSelector providerId="openrouter" currentModel="" />);
+    await openDropdown();
+    const link = await screen.findByLabelText("apikeys_model.open_on_provider");
+    fireEvent.click(link);
+    expect(openExternalUrl).toHaveBeenCalledWith("https://openrouter.ai/openai/gpt-5.5");
+  });
+
+  it("shows no provider link for a direct provider (no per-model page)", async () => {
+    vi.stubGlobal("fetch", mockFetch());
+    render(<BrainModelSelector providerId="gemini" currentModel="" />);
+    await openDropdown();
+    await screen.findByText("gemini-3.1-pro-preview");
+    expect(screen.queryByLabelText("apikeys_model.open_on_provider")).toBeNull();
   });
 
   it("saves a model picked from the list via PUT", async () => {

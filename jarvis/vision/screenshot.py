@@ -402,6 +402,9 @@ class ScreenshotSource:
             active_pid=0,
             source="screenshot_only",
             pruning_stats={"nodes_before": 0, "nodes_after": 0, "depth_used": 0},
+            # Thread the EXACT captured monitor so clicks map back to THIS screen
+            # (mixed-DPI / multi-monitor consistency, live bug 2026-06-28).
+            monitor_geom=getattr(self, "_last_capture_monitor", (0, 0, 0, 0)),
         )
 
     async def close(self) -> None:
@@ -457,6 +460,14 @@ class ScreenshotSource:
                 monitor_id = (
                     f"left={target.get('left', '?')},top={target.get('top', '?')},"
                     f"{target.get('width', '?')}x{target.get('height', '?')}"
+                )
+                # Record the EXACT monitor this frame was captured from so the
+                # click-coordinate resolver maps the model's 0-1000 coords back to
+                # THIS screen — not a separately-derived monitor that can diverge
+                # on a mixed-DPI / multi-monitor desktop (live bug 2026-06-28).
+                self._last_capture_monitor = (
+                    int(target.get("left", 0)), int(target.get("top", 0)),
+                    int(target.get("width", 0)), int(target.get("height", 0)),
                 )
                 raw = sct.grab(target)
 

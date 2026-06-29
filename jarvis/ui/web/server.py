@@ -245,6 +245,7 @@ class WebServer:
         from .missions_ws_routes import (
             router as missions_ws_router,
         )
+        from .downloads_routes import router as downloads_router
         from .outputs_routes import router as outputs_router
         from .preview_routes import router as preview_router
         from .antigravity_routes import router as antigravity_router
@@ -267,6 +268,7 @@ class WebServer:
         from .wiki_routes import router as wiki_router
         from .wiki_ws import router as wiki_ws_router
         from .workflows_routes import router as workflows_router
+        from .workspace_routes import router as workspace_router
         # Conductor ist ein externes Package im selben Monorepo. Import
         # defensiv — wer das Repo ohne conductor checkt aus, kriegt sonst
         # hier einen ImportError beim Server-Boot.
@@ -312,6 +314,7 @@ class WebServer:
         app.include_router(browser_voice_router)
         app.include_router(sub_agents_router)
         app.include_router(outputs_router)
+        app.include_router(downloads_router)
         # Socials section — project social-media links (pure file store, no Brain dep).
         app.include_router(socials_router)
         # In-app feedback / bug-report form → Discord webhook.
@@ -319,6 +322,7 @@ class WebServer:
         # Contacts section — user-curated address book (pure file store, no Brain dep).
         app.include_router(contacts_router)
         app.include_router(workflows_router)
+        app.include_router(workspace_router)
         if conductor_router is not None:
             app.include_router(conductor_router)
         app.include_router(preview_router)
@@ -393,7 +397,18 @@ class WebServer:
         # Persist the latest state on this (long-lived) server instance for
         # GET /api/voice/status to read — deliberately NOT on app.state, whose
         # ASGI lifecycle could outrace the bus subscriber on shutdown.
-        self._voice_ready = False
+        #
+        # When the local voice stack is disabled (JARVIS_VOICE=0 — headless,
+        # VPS, browser-mic-only), there is nothing to warm up and the pipeline
+        # never emits VoiceBootStatus, so seed ready=True. Otherwise the
+        # frontend's "starting up" banner would hang forever even though the
+        # user can already type (and use browser voice). A real voice pipeline
+        # starts at ready=False (warmup_start) and flips True via the subscriber
+        # below, so this seed only ever sticks when voice is genuinely off.
+        _voice_disabled = (
+            os.environ.get("JARVIS_VOICE", "").strip().lower() in ("0", "off", "false")
+        )
+        self._voice_ready = _voice_disabled
 
         async def _track_voice_ready(event: VoiceBootStatus) -> None:
             # A bus subscriber must never raise (AP-18); setting a plain

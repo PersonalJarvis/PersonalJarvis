@@ -42,15 +42,30 @@ def test_build_wake_whisper_uses_wake_fields_not_utterance_model() -> None:
     assert p._compute_type == "int8"
 
 
-def test_build_wake_whisper_gpu_turbo_drops_bias_when_cuda() -> None:
-    # Capability-gated upgrade (forensic 2026-06-24): on a CUDA box the wake runs
-    # the fast turbo model AND drops the bias — the strong model hears the name
-    # without it, and the bias on a strong model is what hallucinated the wake
-    # onto silence (the false-wake source). Offline-validated 0 false-wakes.
+def test_build_wake_whisper_custom_phrase_keeps_base_cpu_bias_on_cuda() -> None:
+    # Forensic 2026-06-29: turbo WITHOUT the phrase bias MANGLES a short custom
+    # wake phrase ("Hey Nico" -> "cuf ich" -> the wake never fired). The strong
+    # turbo model is still unbiased there, and unbiased recall on a custom proper
+    # noun is poor (2-13% vs 83% with the initial_prompt bias). So a CUSTOM wake
+    # phrase stays on the validated base/cpu + bias config even on a CUDA box; it
+    # does NOT upgrade to turbo-without-bias (which is why the background hot-swap
+    # is a no-op for it — the rebuilt model stays "base"). Supersedes the
+    # 2026-06-24 "turbo drops bias" decision, which only validated false-wakes (0)
+    # and missed that turbo-without-bias also wrecks custom-phrase recall.
     p = build_wake_whisper(STTConfig(), wake_phrase="Hey Alex", cuda_available=True)
+    assert p._model_name == "base"
+    assert p._device == "cpu"
+    assert p._initial_prompt == "Hey Alex"  # bias KEPT — needed to hear the name
+
+
+def test_build_wake_whisper_default_phrase_gets_turbo_no_bias_on_cuda() -> None:
+    # The default "Hey Jarvis" / OWW path carries NO custom bias, so on a CUDA
+    # box it still gets the fast turbo upgrade (no bias means nothing to
+    # hallucinate the wake onto silence).
+    p = build_wake_whisper(STTConfig(), wake_phrase=None, cuda_available=True)
     assert p._model_name == "large-v3-turbo"
     assert p._device == "cuda"
-    assert p._initial_prompt is None  # bias OFF on turbo
+    assert p._initial_prompt is None  # bias OFF on turbo (no custom phrase)
 
 
 def test_build_wake_whisper_cpu_keeps_bias() -> None:

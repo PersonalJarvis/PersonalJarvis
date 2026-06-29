@@ -1,9 +1,14 @@
 """The configurable assistant name must flow into the brain system prompt.
 
 User mandate 2026-05-29: renaming the assistant (e.g. to "Micron") must make it
-call itself Micron instead of the hardcoded "Jarvis". These lock that the name
-reaches ``_build_system_prompt`` — both the base prompt and, for a non-default
-name, the prominent identity directive that overrides the persona files.
+call itself Micron instead of a hardcoded name. These lock that the name reaches
+``_build_system_prompt`` — both the base prompt and the prominent identity
+directive.
+
+2026-06-29: the persona files were made name-neutral (no baked-in "Jarvis"), so
+the identity directive is now emitted for EVERY resolved name except the neutral
+``Assistant`` fallback, and it no longer carries the old self-contradictory
+"nicht Jarvis" anchor.
 """
 from __future__ import annotations
 
@@ -29,26 +34,26 @@ def _manager_with_name(*, wake_phrase: str = "Hey Jarvis") -> BrainManager:
     return m
 
 
-def test_default_name_keeps_jarvis_and_no_identity_directive() -> None:
+def test_wake_jarvis_gets_identity_directive_without_contradiction() -> None:
     prompt = _manager_with_name(wake_phrase="Hey Jarvis")._build_system_prompt()
     assert "Du bist Jarvis" in prompt
-    # "Jarvis" is the persona-file baseline (SOUL.md / JARVIS_PERSONA.md already
-    # say "Jarvis"), so no identity-override directive is needed — emitting one
-    # would produce the self-contradictory "Du heisst Jarvis — nicht Jarvis".
-    assert "DEIN NAME IST" not in prompt
+    # The persona is now name-neutral, so even a user-chosen "Jarvis" wake word
+    # gets a clean identity directive — never the old "Du heisst Jarvis — nicht
+    # Jarvis" self-contradiction.
+    assert "DEIN NAME IST JARVIS" in prompt
+    assert "nicht Jarvis" not in prompt
 
 
 def test_wake_phrase_micron_makes_assistant_micron() -> None:
     prompt = _manager_with_name(wake_phrase="Micron")._build_system_prompt()
     assert "Du bist Micron" in prompt
-    # The prominent identity directive overrides the persona files' "Jarvis".
     assert "DEIN NAME IST MICRON" in prompt
-    assert "nicht Jarvis" in prompt
+    assert "nicht Jarvis" not in prompt
 
 
 def test_wake_phrase_is_the_only_name_source() -> None:
-    # "Hey Computer" wake → the assistant is "Computer"; there is no override.
+    # "Hey Computer" wake → the assistant is "Computer".
     prompt = _manager_with_name(wake_phrase="Hey Computer")._build_system_prompt()
     assert "Du bist Computer" in prompt
     assert "DEIN NAME IST COMPUTER" in prompt
-    assert "nicht Jarvis" in prompt
+    assert "nicht Jarvis" not in prompt

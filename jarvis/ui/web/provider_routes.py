@@ -977,6 +977,16 @@ async def codex_logout(request: Request) -> dict[str, Any]:
     return {"ok": True, "message": "Codex wurde getrennt"}
 
 
+# M6: STT/TTS engines build ONCE at voice-pipeline bootstrap, so a key feeding them
+# is unused until the next voice start. Surface restart_required so the UI shows the
+# "active from next voice start" hint instead of implying the new key is live now.
+# (Brain provider keys hot-reload, so they are deliberately NOT listed here.)
+_RESTART_REQUIRED_SECRET_KEYS: frozenset[str] = frozenset({
+    "groq_api_key", "deepgram_api_key",        # STT
+    "cartesia_api_key", "elevenlabs_api_key",  # TTS
+})
+
+
 @router.post("/secrets/{key}")
 async def set_secret_value(key: str, body: SecretBody, request: Request) -> dict[str, Any]:
     if key not in ALLOWED_SECRET_KEYS:
@@ -984,7 +994,11 @@ async def set_secret_value(key: str, body: SecretBody, request: Request) -> dict
     if not cfg_mod.set_secret(key, body.value):
         raise HTTPException(status_code=500, detail="Keyring-Write fehlgeschlagen")
     await _emit(request, SecretConfigured(key=key, action="set"))
-    return {"ok": True, "key": key}
+    return {
+        "ok": True,
+        "key": key,
+        "restart_required": key in _RESTART_REQUIRED_SECRET_KEYS,
+    }
 
 
 @router.delete("/secrets/{key}")

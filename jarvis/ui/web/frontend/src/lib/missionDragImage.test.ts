@@ -48,4 +48,23 @@ describe("applyMissionDragImage", () => {
       applyMissionDragImage({} as unknown as DataTransfer, "t"),
     ).not.toThrow();
   });
+
+  it("keeps the chip's layout box at the origin (dpr-safe, not -9999px)", () => {
+    // Regression for the 150%-scaled-display bug: a large negative left/top is
+    // multiplied by devicePixelRatio by Chromium/WebView2, detaching the drag
+    // ghost from the cursor by ~5000px. The chip must hide via `transform`
+    // while its layout offset stays at 0, so the error is zero on every dpr.
+    const setDragImage = vi.fn();
+    const dt = { setDragImage } as unknown as DataTransfer;
+
+    applyMissionDragImage(dt, "Build the landing page");
+
+    const node = setDragImage.mock.calls[0][0] as HTMLElement;
+    expect(node.style.left).toBe("0px");
+    expect(node.style.top).toBe("0px");
+    expect(node.style.transform).not.toBe("");
+    // Guard the exact failure mode: no huge negative offset anywhere.
+    expect(node.style.left).not.toContain("-9999");
+    expect(node.style.top).not.toContain("-9999");
+  });
 });

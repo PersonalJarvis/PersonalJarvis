@@ -172,18 +172,27 @@ async def test_non_claude_provider_critic_uses_claude_model_not_foreign(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
     provider: str, foreign_model: str,
 ) -> None:
-    """Regression (2026-06-08): with a non-claude [brain.sub_jarvis].provider the
-    critic correctly falls back to the direct claude critic — but it MUST pass a
-    claude model to ``claude --model``, never the foreign provider model
-    (e.g. ``grok-4.3``), which the claude CLI rejects with returncode=1. That
-    failed the critic twice -> ``critic_unavailable`` and the whole mission
-    FAILED even though the worker had delivered real work (the sibling of the
-    ClaudeDirectWorker provider-refusal bug, same root cause in the critic path).
+    """Regression (2026-06-08): with a non-claude [brain.sub_jarvis].provider AND
+    no usable API key (so the in-process API critic cannot run, B2), the critic
+    falls back to the direct claude critic — but it MUST pass a claude model to
+    ``claude --model``, never the foreign provider model (e.g. ``grok-4.3``), which
+    the claude CLI rejects with returncode=1. That failed the critic twice ->
+    ``critic_unavailable`` and the whole mission FAILED even though the worker had
+    delivered real work.
+
+    B2 (2026-06-29): a keyed API provider now grades IN-PROCESS first; this test
+    pins the NO-API-KEY fallback path, so the in-process resolver is forced empty.
     """
     captured: dict[str, Any] = {}
     monkeypatch.setattr(
         "jarvis.missions.critic.runner._resolve_critic_provider_model",
         lambda: (provider, foreign_model),
+    )
+    # No API key available → the in-process API critic is skipped and the flow
+    # falls through to the claude-direct critic this test pins.
+    monkeypatch.setattr(
+        "jarvis.missions.critic.runner._resolve_api_critic_provider",
+        lambda *a, **k: (None, None),
     )
     monkeypatch.setattr(
         "jarvis.missions.workers.claude_direct_worker."

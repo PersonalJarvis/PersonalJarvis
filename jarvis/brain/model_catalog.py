@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -69,10 +70,26 @@ _ENDPOINTS: dict[str, tuple[str, str]] = {
 
 @dataclass(frozen=True, slots=True)
 class ModelInfo:
-    """One selectable model: the wire ``id`` plus a human ``label``."""
+    """One selectable model: the wire ``id`` plus a human ``label``.
+
+    ``output_modalities`` carries the provider's declared output kinds (e.g.
+    ``("text",)`` or ``("text", "image")``) when available — OpenRouter returns
+    it under ``architecture.output_modalities``; direct provider ``/v1/models``
+    endpoints do not, so it stays ``None`` there. A tuple (not a list) keeps the
+    dataclass frozen/hashable. Used by :func:`filter_brain_models` to exclude
+    image/audio/video GENERATION models that a name-substring blocklist misses
+    (e.g. ``openrouter/auto``)."""
 
     id: str
     label: str
+    output_modalities: tuple[str, ...] | None = None
+    # H4/H5: per-model capability hints from OpenRouter's /v1/models
+    # (``architecture.input_modalities`` + ``supported_parameters``). ``None`` when
+    # the provider endpoint doesn't expose them → callers default to "capable" (no
+    # regression). ``"image" in input_modalities`` ⇒ vision; ``"tools" in
+    # supported_parameters`` ⇒ tool-calling.
+    input_modalities: tuple[str, ...] | None = None
+    supported_parameters: tuple[str, ...] | None = None
 
 
 def _curated(pairs: list[tuple[str, str]]) -> list[ModelInfo]:
@@ -178,7 +195,8 @@ class CatalogSpec:
 
 def _build_provider_catalog() -> dict[str, CatalogSpec]:
     cat: dict[str, CatalogSpec] = {}
-    # The 5 live-fetchable API brains.
+    # The live-fetchable API brains (CATALOG_PROVIDERS). Codex + antigravity are
+    # added below as curated-only — no /v1/models over their OAuth logins.
     for p in CATALOG_PROVIDERS:
         cat[p] = CatalogSpec("brain", "model", tuple(CURATED_MODELS.get(p, ())), live=True)
     # Codex — subagent model catalog for the ChatGPT-login worker; no /v1/models
@@ -225,7 +243,8 @@ def parse_models_response(provider: str, payload: dict) -> list[ModelInfo]:
 
     Anthropic / OpenAI / Grok share the OpenAI-compatible ``data[].id`` shape.
     Gemini lists ``models[].name`` (``models/<id>``) with an optional
-    ``displayName``. OpenRouter adds a human ``name`` we surface as the label.
+    ``displayName``. OpenRouter adds a human ``name`` we surface as the label and
+    an ``architecture.output_modalities`` we carry through for the brain filter.
     Entries without a usable id are dropped.
     """
     out: list[ModelInfo] = []
@@ -235,7 +254,7 @@ def parse_models_response(provider: str, payload: dict) -> list[ModelInfo]:
             if not raw:
                 continue
             label = (m.get("displayName") or "").strip() or raw
-            out.append(ModelInfo(id=raw, label=label))
+            out.append(ModelInfo(id=raw, label=label, output_modalities=_output_modalities(m)))
         return out
 
     # OpenAI-compatible shape (OpenAI / Anthropic / Grok / OpenRouter).
@@ -244,8 +263,78 @@ def parse_models_response(provider: str, payload: dict) -> list[ModelInfo]:
         if not raw:
             continue
         label = (m.get("name") or "").strip() or raw  # OpenRouter has a name
-        out.append(ModelInfo(id=raw, label=label))
+        out.append(ModelInfo(
+            id=raw,
+            label=label,
+            output_modalities=_output_modalities(m),
+            input_modalities=_input_modalities(m),
+            supported_parameters=_supported_parameters(m),
+        ))
     return out
+
+
+def _input_modalities(entry: dict) -> tuple[str, ...] | None:
+    """``architecture.input_modalities`` (e.g. ``("text","image")``) or None."""
+    arch = entry.get("architecture")
+    if not isinstance(arch, dict):
+        return None
+    mods = arch.get("input_modalities")
+    if not isinstance(mods, list):
+        return None
+    return tuple(str(x) for x in mods)
+
+
+def _supported_parameters(entry: dict) -> tuple[str, ...] | None:
+    """OpenRouter's top-level ``supported_parameters`` (includes ``"tools"`` when
+    the model can tool-call) or None when the endpoint doesn't expose it."""
+    params = entry.get("supported_parameters")
+    if not isinstance(params, list):
+        return None
+    return tuple(str(x) for x in params)
+
+
+def model_capabilities(provider: str, model_id: str) -> dict[str, bool | None]:
+    """Per-model ``{vision, tools}`` hints, read SYNCHRONOUSLY from the cached
+    ``/v1/models`` data (``data/model_catalog_cache.json``).
+
+    ``None`` for a field means "unknown" — the caller defaults to capable, so there
+    is NO regression for providers/models that don't expose the data. Used by the
+    OpenRouter brain (H4/H5): a text-only or non-tool model the user picked degrades
+    honestly (delegate / skip Computer-Use) instead of 400-ing the provider.
+    """
+    from jarvis.core import config as _cfg
+
+    cache_path = _cfg.DATA_DIR / "model_catalog_cache.json"
+    mid = (model_id or "").strip()
+    try:
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        for m in data.get(provider, {}).get("models", []):
+            if m.get("id") == mid:
+                inp = m.get("input_modalities")
+                params = m.get("supported_parameters")
+                return {
+                    "vision": ("image" in inp) if isinstance(inp, list) else None,
+                    "tools": ("tools" in params) if isinstance(params, list) else None,
+                }
+    except Exception:  # noqa: BLE001 — missing/corrupt cache → unknown (capable)
+        pass
+    return {"vision": None, "tools": None}
+
+
+def _output_modalities(entry: dict) -> tuple[str, ...] | None:
+    """Pull ``architecture.output_modalities`` from a model entry as a tuple.
+
+    Returns ``None`` when the field is absent (direct provider ``/v1/models``
+    endpoints don't return ``architecture``) so the filter knows to fall back to
+    the substring blocklist rather than treat "no data" as "no output".
+    """
+    arch = entry.get("architecture")
+    if not isinstance(arch, dict):
+        return None
+    mods = arch.get("output_modalities")
+    if not isinstance(mods, list):
+        return None
+    return tuple(str(x) for x in mods)
 
 
 # Substrings (case-insensitive on the id) that mark a model as NOT a usable
@@ -261,18 +350,44 @@ _NON_BRAIN_MARKERS: tuple[str, ...] = (
 )
 
 
+# Output modalities that disqualify a model as a chat/reasoning brain — a model
+# that GENERATES image/audio/video can't back the text brain (the probe 400s and
+# it is pure noise in the picker). NOTE: this is about OUTPUT only; a model that
+# ACCEPTS image INPUT (vision) but outputs text is a valid — even required —
+# brain (Computer-Use needs vision-input), so input modalities are NOT filtered.
+_GENERATION_OUTPUT_MODALITIES: frozenset[str] = frozenset({
+    "image", "audio", "video", "music", "speech",
+})
+
+
 def filter_brain_models(models: list[ModelInfo]) -> list[ModelInfo]:
     """Keep only models that can plausibly serve as a chat/reasoning brain.
 
-    Drops generative-media, audio, speech, embedding and safety-classifier models
-    by an id-substring blocklist (:data:`_NON_BRAIN_MARKERS`). Conservative on
-    purpose — anything not clearly non-text stays, and the UI's free-text entry
-    covers the rest.
+    BOTH checks always apply (a model is dropped if EITHER fires):
+
+    1. **Name blocklist** (:data:`_NON_BRAIN_MARKERS`) — drops embedding / rerank
+       / moderation / safety-classifier (e.g. ``llama-guard``) and known media
+       families. These OUTPUT text yet are not chat brains, so modality alone
+       can't catch them — the name signal must always run.
+    2. **Output modality** (:data:`_GENERATION_OUTPUT_MODALITIES`, when declared)
+       — drops anything that GENERATES image/audio/video/music. Robust where the
+       name blocklist isn't: e.g. ``openrouter/auto`` outputs text OR image yet
+       has no marker in its id. Absent on direct provider ``/v1/models`` (no
+       ``architecture`` field) → check 1 carries those.
+
+    Vision-INPUT models (image in, text out) are KEPT — Computer-Use needs them;
+    only OUTPUT modalities gate. Capability-based, never provider-name-based
+    (AP-21). The UI's free-text entry still reaches anything dropped.
     """
     out: list[ModelInfo] = []
     for m in models:
+        # 1. Name blocklist — always, even when text is the output (classifiers).
         low = m.id.lower()
         if any(mark in low for mark in _NON_BRAIN_MARKERS):
+            continue
+        # 2. Output-modality exclusion when the provider declares it.
+        mods = m.output_modalities
+        if mods is not None and any(x in _GENERATION_OUTPUT_MODALITIES for x in mods):
             continue
         out.append(m)
     return out
@@ -294,17 +409,148 @@ def _is_stale(provider: str, model_id: str) -> bool:
     return False
 
 
-def sort_models(provider: str, models: list[ModelInfo]) -> list[ModelInfo]:
-    """Order newest/frontier first, EOL models last.
+# Family relevance ranking — PRESENTATION ORDER ONLY (never gates behavior,
+# AP-21; the analogue of provider_spec's ``recommended`` badge). Higher rank =
+# listed first. Without this, OpenRouter's namespaced ids (``z-ai/…``,
+# ``qwen/…``, ``sao10k/…``) sort reverse-alphabetically and bury the flagship
+# families below the 80-row display cap — the exact "I search GPT 5.5 and get
+# nothing, only obscure models show" report (2026-06-28).
+#
+# Two bands, mirroring the user mandate "the best models people really use —
+# top performance AND bang-per-token":
+#   30s — flagship frontier families everyone reaches for first.
+#   20s — very popular, strong price/performance ("value") families.
+#   10s — older-but-mainstream known families.
+# Matched as a lowercase substring of the id; the FIRST hit wins, so entries are
+# ordered most- to least-specific. Unknown families (incl. community fine-tunes
+# like sao10k/undi95/thedrummer) get rank 0 and sink below every known family
+# but stay above stale/EOL models. The free-text custom entry still reaches
+# anything, so this is a sensible default order, not a hard curation.
+_FAMILY_RANK: tuple[tuple[str, int], ...] = (
+    # Flagship frontier
+    ("claude-opus", 39), ("claude-fable", 39), ("claude-sonnet", 38),
+    ("gpt-5", 37), ("gemini-3", 36), ("grok-4", 35), ("claude-haiku", 33),
+    # Popular / strong value
+    ("deepseek", 29), ("kimi", 28), ("glm-5", 27), ("qwen3", 26),
+    ("qwen-3", 26), ("glm-4", 25), ("llama-4", 24), ("mistral-large", 23),
+    ("mistral-medium", 22), ("gpt-oss", 21), ("command-r", 20),
+    # Older-but-mainstream
+    ("gpt-4", 15), ("gemini-2", 14), ("grok-3", 13), ("llama-3", 12),
+    ("mistral", 11), ("qwen", 10), ("glm", 10), ("command", 9),
+)
 
-    Sort key: non-stale before stale, then id descending — version strings sort
-    so the newer one wins (``gpt-5.5`` > ``gpt-4o``, ``gemini-3`` > ``gemini-2``).
-    Search is the real discovery tool (esp. for OpenRouter), so this is only a
-    sensible default ordering, not a curation.
+
+def _family_rank(model_id: str) -> int:
+    """Presentation-only relevance band for ``model_id`` (higher = first)."""
+    low = model_id.lower()
+    # OpenAI o-series (``o3``/``o4``): bare id for the direct provider,
+    # namespaced (``openai/o3``) on OpenRouter. Matched on the tail's prefix to
+    # avoid an "o3" substring false-positive elsewhere in the id.
+    tail = low.rsplit("/", 1)[-1]
+    if tail.startswith(("o3", "o4")):
+        return 34
+    for needle, rank in _FAMILY_RANK:
+        if needle in low:
+            return rank
+    return 0
+
+
+# Variant markers that demote a model WITHIN its family — smaller/cheaper or
+# special-purpose siblings rarely wanted as the default pick. The full flagship
+# (incl. ``-pro``) is NOT demoted.
+_SPECIALIZED_MARKERS: tuple[str, ...] = (
+    "-mini", "-nano", "-lite", ":free", "-codex", "-chat",
+    "-search", "-air", "-flash-lite",
+    # Special-purpose siblings — not the default chat brain, so they rank below
+    # the plain model of the same family. (Image/audio variants are already
+    # dropped upstream by filter_brain_models, so they need no marker here.)
+    "-deep-research", "-multi-agent", "-customtools",
+)
+
+
+def _is_specialized(model_id: str) -> bool:
+    """True for a smaller/special sibling that should sit below the flagship."""
+    low = model_id.lower()
+    if any(mark in low for mark in _SPECIALIZED_MARKERS):
+        return True
+    # Dated snapshot (``-2024-08-06`` / ``-20260423``) → demote vs. the clean
+    # alias, mirroring frontier_resolver's clean-over-dated preference.
+    return bool(re.search(r"-\d{4}-\d{2}-\d{2}$", low) or re.search(r"-\d{6,}$", low))
+
+
+def _version_key(model_id: str) -> tuple[int, ...]:
+    """Numeric version tuple from the id tail (newer sorts higher).
+
+    ``openai/gpt-5.5`` → ``(5, 5)``, ``z-ai/glm-4.5v`` → ``(4, 5)``. Date-like
+    runs of 6+ digits are dropped so a snapshot can't beat a semantic version.
     """
+    tail = model_id.lower().rsplit("/", 1)[-1]
+    return tuple(int(n) for n in re.findall(r"\d+", tail) if len(n) < 6)
+
+
+def _model_line(model_id: str) -> str:
+    """Group sibling models of the same product line (different versions).
+
+    Strips the version numbers and normalises separators, so
+    ``anthropic/claude-opus-4.8`` and ``…-4.7`` share the line
+    ``anthropic-claude-opus`` — while distinct product tiers keep their tier
+    word and stay separate (``google/gemini-3.5-flash`` → ``google-gemini-flash``
+    vs ``google/gemini-3.1-pro-preview`` → ``google-gemini-pro-preview``).
+    """
+    no_ver = re.sub(r"\d+(?:\.\d+)*", " ", model_id.lower())
+    return re.sub(r"[^a-z]+", "-", no_ver).strip("-")
+
+
+def sort_models(provider: str, models: list[ModelInfo]) -> list[ModelInfo]:
+    """Order by relevance: known frontier/value families first, newest version
+    first within a family, smaller/special variants and EOL models last.
+
+    Sort key (all compared ``reverse=True`` so "more" wins):
+      1. non-stale before stale (EOL models always at the very bottom);
+      2. family flagship before the rest (:func:`_model_line` pre-pass) — only
+         the NEWEST non-special model of each known product line leads, so the
+         top rows show different providers' current flagships instead of one
+         provider's whole back-catalogue (e.g. Opus 4.7/4.6/4.5 no longer wall
+         off GPT-5.5);
+      3. main variant before mini/nano/free/dated (:func:`_is_specialized`);
+      4. family relevance band (:func:`_family_rank` — flagship > value > known
+         > unknown), so GPT/Claude/Gemini/Grok and the popular value families
+         (DeepSeek/GLM/Qwen/Kimi) lead instead of whatever vendor prefix sorts
+         highest alphabetically;
+      5. newer version first (:func:`_version_key`);
+      6. id, as a stable final tiebreaker.
+
+    Search is still the real discovery tool for the long tail (esp. OpenRouter),
+    so this is a sensible default order, not a hard curation.
+    """
+    # Pre-pass: the newest version per product line, among non-stale / non-
+    # special / known-family models. A model that matches its line's newest
+    # version is the "flagship" and rides the top band; older same-line versions
+    # fall to the second band.
+    best_version: dict[str, tuple[int, ...]] = {}
+    for m in models:
+        if _is_stale(provider, m.id) or _is_specialized(m.id) or _family_rank(m.id) == 0:
+            continue
+        line = _model_line(m.id)
+        ver = _version_key(m.id)
+        if ver > best_version.get(line, ()):
+            best_version[line] = ver
+
+    def _is_flagship(m: ModelInfo) -> bool:
+        if _is_stale(provider, m.id) or _is_specialized(m.id) or _family_rank(m.id) == 0:
+            return False
+        return _version_key(m.id) == best_version.get(_model_line(m.id))
+
     return sorted(
         models,
-        key=lambda m: (not _is_stale(provider, m.id), m.id),
+        key=lambda m: (
+            not _is_stale(provider, m.id),
+            _is_flagship(m),
+            not _is_specialized(m.id),
+            _family_rank(m.id),
+            _version_key(m.id),
+            m.id,
+        ),
         reverse=True,
     )
 
@@ -322,7 +568,9 @@ class ModelCatalog:
         ttl_hours: int = DEFAULT_TTL_HOURS,
         http_client_factory: object | None = None,
     ) -> None:
-        self._cache_path = cache_path or Path("data/model_catalog_cache.json")
+        # Anchor the cache to the app data dir (PROJECT_ROOT/data), not the CWD,
+        # so a headless Linux VPS started from any directory still caches.
+        self._cache_path = cache_path or (cfg.DATA_DIR / "model_catalog_cache.json")
         self._ttl_seconds = ttl_hours * 3600
         # provider -> (fetched_at, models)
         self._cache: dict[str, tuple[float, list[ModelInfo]]] = {}
@@ -339,7 +587,27 @@ class ModelCatalog:
             data = json.loads(self._cache_path.read_text(encoding="utf-8"))
             for prov, entry in data.items():
                 models = [
-                    ModelInfo(id=m["id"], label=m.get("label") or m["id"])
+                    ModelInfo(
+                        id=m["id"],
+                        label=m.get("label") or m["id"],
+                        # Preserve modality so the brain filter stays consistent
+                        # on a cache hit (else openrouter/auto would slip back in).
+                        output_modalities=(
+                            tuple(m["output_modalities"])
+                            if isinstance(m.get("output_modalities"), list)
+                            else None
+                        ),
+                        input_modalities=(
+                            tuple(m["input_modalities"])
+                            if isinstance(m.get("input_modalities"), list)
+                            else None
+                        ),
+                        supported_parameters=(
+                            tuple(m["supported_parameters"])
+                            if isinstance(m.get("supported_parameters"), list)
+                            else None
+                        ),
+                    )
                     for m in entry.get("models", [])
                 ]
                 self._cache[prov] = (float(entry.get("fetched_at", 0.0)), models)
@@ -352,7 +620,28 @@ class ModelCatalog:
         data = {
             prov: {
                 "fetched_at": ts,
-                "models": [{"id": m.id, "label": m.label} for m in models],
+                "models": [
+                    {
+                        "id": m.id,
+                        "label": m.label,
+                        **(
+                            {"output_modalities": list(m.output_modalities)}
+                            if m.output_modalities is not None
+                            else {}
+                        ),
+                        **(
+                            {"input_modalities": list(m.input_modalities)}
+                            if m.input_modalities is not None
+                            else {}
+                        ),
+                        **(
+                            {"supported_parameters": list(m.supported_parameters)}
+                            if m.supported_parameters is not None
+                            else {}
+                        ),
+                    }
+                    for m in models
+                ],
             }
             for prov, (ts, models) in self._cache.items()
         }

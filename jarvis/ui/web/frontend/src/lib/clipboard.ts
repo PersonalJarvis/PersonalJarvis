@@ -75,11 +75,16 @@ function execCommandCopy(text: string): boolean {
 }
 
 /**
- * Triggert einen Datei-Download via Blob + temporaeres ``<a download>``.
+ * Trigger a file download via a Blob + a temporary ``<a download>``.
  *
- * Funktioniert in WebView2 (pywebview) — dort wird die Datei in den
- * Default-Downloads-Ordner gelegt (Edge-Verhalten). Im Vite-Dev-Server
- * popt der Browser den Save-Dialog.
+ * WARNING: inside the desktop shell (pywebview/WebView2) such a browser
+ * download is **silently dropped** by default — pywebview ships with
+ * ``settings['ALLOW_DOWNLOADS']=False`` and its EdgeChromium handler aborts
+ * with ``args.Cancel=True`` (no file, no error). On the desktop the save must
+ * therefore go through ``saveOrDownload`` to the backend
+ * (``/api/downloads/save`` → ~/Downloads). This path is correct only in a real
+ * browser (Vite dev / headless VPS), where the browser itself drops the file
+ * into the user's Downloads folder.
  */
 export function downloadAs(
   filename: string,
@@ -169,4 +174,71 @@ export function mimeFor(format: "markdown" | "plain" | "json"): string {
   if (format === "json") return "application/json;charset=utf-8";
   if (format === "markdown") return "text/markdown;charset=utf-8";
   return "text/plain;charset=utf-8";
+}
+
+// --- Save-to-Downloads (desktop) vs. browser download ---------------------
+
+/** Base64-encode a Blob's bytes (no data-URL prefix). FileReader handles
+ *  binary correctly and avoids large-array `String.fromCharCode` pitfalls. */
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const res = String(reader.result);
+      const comma = res.indexOf(",");
+      resolve(comma >= 0 ? res.slice(comma + 1) : res);
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+export interface SaveOrDownloadArgs {
+  filename: string;
+  /** Text payload (use this OR `blob`). */
+  text?: string;
+  /** Binary payload (use this OR `text`). */
+  blob?: Blob;
+  /** MIME type for the text/browser path. */
+  mime?: string;
+  /** True in the desktop shell — route the save through the backend. */
+  native: boolean;
+}
+
+/**
+ * Save a file so it actually lands in the user's Downloads folder, everywhere.
+ *
+ * - Desktop (`native`): POST the bytes to ``/api/downloads/save``; the backend
+ *   writes them into ``~/Downloads`` (pywebview silently cancels browser
+ *   downloads, so this is the only path that works there). Returns the saved
+ *   absolute path. On any failure it falls back to the browser download — never
+ *   worse than before.
+ * - Browser / VPS (`!native`): the normal blob ``<a download>`` — the real
+ *   browser saves into the user's own Downloads. Returns null.
+ */
+export async function saveOrDownload(
+  args: SaveOrDownloadArgs,
+): Promise<string | null> {
+  const { filename, native, mime } = args;
+  const mimeType = mime ?? "text/plain;charset=utf-8";
+  if (native) {
+    try {
+      const payload =
+        args.blob ?? new Blob([args.text ?? ""], { type: mimeType });
+      const contentB64 = await blobToBase64(payload);
+      const res = await fetch("/api/downloads/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename, content_b64: contentB64 }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { saved_path?: string };
+      return data.saved_path ?? filename;
+    } catch {
+      // Fall through to the browser download — never worse than today.
+    }
+  }
+  if (args.blob) downloadBlob(filename, args.blob);
+  else downloadAs(filename, args.text ?? "", mimeType);
+  return null;
 }

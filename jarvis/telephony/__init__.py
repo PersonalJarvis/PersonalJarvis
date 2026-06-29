@@ -20,21 +20,32 @@ of crashing (AD-T8).
 from __future__ import annotations
 
 import importlib.util
+import sys
 
 from .constants import CALL_STATUSES, CallStatusLiteral
 
+# L7: Python 3.13 removed the stdlib ``audioop`` module, which the media transcode
+# path (session.py / audio.py) imports. On 3.13+ it needs the ``audioop-lts``
+# backport (which re-provides the ``audioop`` name). Probed in is_available() so the
+# feature reports honestly instead of 500-ing on the first media socket.
+_PY313_PLUS: bool = sys.version_info >= (3, 13)
+
 
 def is_available() -> bool:
-    """Return ``True`` when the optional ``twilio`` SDK is importable.
+    """Return ``True`` when telephony can actually run on this host.
 
     Used by the routes for graceful degradation: when this is ``False`` the
     Twilio-facing endpoints (webhook, REST credential test, provisioning)
-    cannot work, so they return a clear feature-disabled response rather than
-    raising an ImportError 500. The in-process media path (audio transcode,
-    session loop) does NOT need the SDK — only signature validation and the
-    REST provisioning client do.
+    return a clear feature-disabled response rather than raising an ImportError
+    500. Requires the optional ``twilio`` SDK AND — on Python 3.13+ — the
+    ``audioop`` module (stdlib pre-3.13, else the ``audioop-lts`` backport), which
+    the in-process media transcode path needs.
     """
-    return importlib.util.find_spec("twilio") is not None
+    if importlib.util.find_spec("twilio") is None:
+        return False
+    if _PY313_PLUS and importlib.util.find_spec("audioop") is None:
+        return False
+    return True
 
 
 __all__ = [

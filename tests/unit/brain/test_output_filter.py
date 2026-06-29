@@ -318,6 +318,41 @@ def test_echo_paraphrase_mid_sentence_is_kept() -> None:
     assert "rephrased_echo" not in result.actions
 
 
+# ---------------------------------------------------------------------------
+# Em-dash / en-dash scrub (2026-06-29 "choppy voice" forensic): a parenthetical
+# dash renders as a hard TTS pause. Collapse it to a comma; hyphen compounds
+# (plain ASCII '-', no surrounding spaces) must survive.
+# ---------------------------------------------------------------------------
+
+
+def test_em_dash_becomes_comma() -> None:
+    text = "Kurz nach drei — Viertel nach, genau genommen."
+    result = scrub_for_voice(text)
+    assert "—" not in result.cleaned
+    assert "Kurz nach drei, Viertel nach" in result.cleaned
+
+
+def test_en_dash_becomes_comma() -> None:
+    text = "Alles bereit – wir können sofort loslegen."
+    result = scrub_for_voice(text)
+    assert "–" not in result.cleaned
+    assert "Alles bereit, wir können" in result.cleaned
+
+
+def test_hyphen_compound_survives_em_dash_filter() -> None:
+    """A plain ASCII hyphen compound has no surrounding spaces and must stay."""
+    text = "Dein T-Shirt liegt im Schrank."
+    result = scrub_for_voice(text)
+    assert "T-Shirt" in result.cleaned
+
+
+def test_trailing_em_dash_leaves_no_dangling_comma() -> None:
+    text = "Im Hintergrund laufen mehrere Programme —"
+    result = scrub_for_voice(text)
+    assert "—" not in result.cleaned
+    assert not result.cleaned.endswith(",")
+
+
 def test_fallback_used_true_only_for_stacktrace() -> None:
     """``fallback_used`` nur ``True`` wenn der gesamte Text durch Standard-
     Phrase ersetzt wurde (Stacktrace), nicht bei Teil-Scrub."""

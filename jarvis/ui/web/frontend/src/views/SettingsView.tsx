@@ -11,9 +11,7 @@ import { OverlayTaskbarGroup } from "@/views/settings/OverlayTaskbarGroup";
 import { LanguagesGroup } from "@/views/settings/LanguagesGroup";
 import { AppSettingsGroup } from "@/views/settings/AppSettingsGroup";
 import { SilenceWindowGroup } from "@/views/settings/SilenceWindowGroup";
-import { JarvisApiGroup } from "@/views/settings/JarvisApiGroup";
 import { SystemPromptGroup } from "@/views/settings/SystemPromptGroup";
-import { TeamProxyGroup } from "@/views/settings/TeamProxyGroup";
 import { useWakeWord, type WakeWordSaveResult } from "@/hooks/useWakeWord";
 import {
   useKeybinds,
@@ -64,8 +62,6 @@ export function SettingsView() {
       <div className="flex-1 overflow-y-auto scrollbar-jarvis p-6">
         <LanguagesGroup />
         <AppSettingsGroup />
-        <JarvisApiGroup />
-        <TeamProxyGroup />
         <SystemPromptGroup />
         <WakeWordPanel />
         <SilenceWindowGroup />

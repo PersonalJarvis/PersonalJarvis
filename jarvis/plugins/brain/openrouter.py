@@ -20,12 +20,33 @@ BASE_URL = "https://openrouter.ai/api/v1"
 class OpenRouterBrain:
     name: str = "openrouter"
     context_window: int = 200_000
+    # Class-attr DEFAULTS (capable). The instance overrides them per SELECTED model
+    # in __init__ — OpenRouter gateways ~325 models and a text-only or non-tool
+    # model must not be sent screenshots / a tools payload (the provider 400s).
     supports_tools: bool = True
     supports_vision: bool = True
 
     def __init__(self, model: str | None = None) -> None:
         self._model = model or DEFAULT_MODEL
         self._client: Any = None
+        # H4/H5: resolve per-model vision/tool capability from the cached catalog.
+        # Default to capable when unknown (no cache yet / field absent) → no
+        # regression; the CU planner gates on supports_vision and the brain manager
+        # on can_call_tools(), so an honest False makes them delegate/skip instead
+        # of erroring on an incapable model the user picked.
+        try:
+            from jarvis.brain.model_catalog import model_capabilities
+
+            caps = model_capabilities("openrouter", self._model)
+            self.supports_vision = True if caps["vision"] is None else bool(caps["vision"])
+            self.supports_tools = True if caps["tools"] is None else bool(caps["tools"])
+        except Exception:  # noqa: BLE001 — capability probe must never break construction
+            self.supports_vision = True
+            self.supports_tools = True
+
+    def can_call_tools(self) -> bool:
+        """Runtime tool-capability for the SELECTED model (H5)."""
+        return self.supports_tools
 
     def _ensure_client(self) -> Any:
         if self._client is None:

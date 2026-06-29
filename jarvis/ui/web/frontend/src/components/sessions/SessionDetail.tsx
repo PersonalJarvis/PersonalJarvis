@@ -5,6 +5,7 @@
  * Lade-/Empty-/Error-States werden inline gerendert — kein Modal.
  */
 import {
+  Code2,
   Copy,
   Download,
   FileCode2,
@@ -12,21 +13,28 @@ import {
   FileText,
   Loader2,
 } from "lucide-react";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { OpenWithDialog } from "@/components/OpenWithDialog";
 import { useEventStore } from "@/store/events";
 import {
   buildSessionFilename,
-  downloadAs,
   mimeFor,
   robustCopy,
+  saveOrDownload,
 } from "@/lib/clipboard";
+import { useCapabilities } from "@/hooks/useCapabilities";
+import {
+  useOpeners,
+  usePreferredOpener,
+  useSetPreferredOpener,
+} from "@/hooks/useOutputs";
 import { useT } from "@/i18n";
 
-import { fetchSessionExport } from "./api";
+import { fetchSessionExport, openSessionWith, sessionExportUrl } from "./api";
 import { TurnCard } from "./TurnCard";
 import type {
   SessionDetail as SessionDetailModel,
@@ -50,6 +58,17 @@ interface Props {
 export function SessionDetail({ detail, loading, error }: Props) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
+  // Desktop shell? Then save straight to ~/Downloads (browser downloads are
+  // silently dropped by pywebview); otherwise use the normal browser download.
+  const caps = useCapabilities();
+  const native = caps.data?.native_file_actions ?? false;
+  // "Open in editor" — reuses the Outputs view's opener list + remembered
+  // default (shared `[ui] preferred_opener`), so the chosen editor is the same
+  // everywhere. The chooser tracks which format row triggered it.
+  const openers = useOpeners();
+  const preferred = usePreferredOpener();
+  const setPreferred = useSetPreferredOpener();
+  const [editorFormat, setEditorFormat] = useState<ExportFormat | null>(null);
 
   // Group the SpeechSpoken raw events under their turn so each TurnCard can
   // render the "Spoken output" track (every voiced non-reply phrase). Hook
@@ -116,8 +135,18 @@ export function SessionDetail({ detail, loading, error }: Props) {
         const preview =
           detail.turns.find((t) => t.user_text)?.user_text ?? "";
         const filename = buildSessionFilename(detail.session, preview, format);
-        downloadAs(filename, text, mimeFor(format));
-        pushToast("success", `${t("session_detail.downloaded_as")} ${filename}`);
+        const savedPath = await saveOrDownload({
+          filename,
+          text,
+          mime: mimeFor(format),
+          native,
+        });
+        pushToast(
+          "success",
+          savedPath
+            ? `${t("session_detail.saved_to_downloads")} ${savedPath}`
+            : `${t("session_detail.downloaded_as")} ${filename}`,
+        );
       } catch (e) {
         pushToast(
           "error",
@@ -125,7 +154,60 @@ export function SessionDetail({ detail, loading, error }: Props) {
         );
       }
     },
-    [detail, pushToast],
+    [detail, pushToast, native],
+  );
+
+  // Launch the transcript in a local app (editor / default / browser).
+  const launchInEditor = useCallback(
+    async (format: ExportFormat, opener: string) => {
+      if (!detail) return;
+      try {
+        const opened = await openSessionWith(detail.session.id, format, opener);
+        pushToast(
+          opened ? "success" : "error",
+          opened
+            ? t("session_detail.opened_in_editor")
+            : t("session_detail.open_failed"),
+        );
+      } catch (e) {
+        pushToast(
+          "error",
+          e instanceof Error ? e.message : t("session_detail.open_failed"),
+        );
+      }
+    },
+    [detail, pushToast, t],
+  );
+
+  const openInEditor = useCallback(
+    (format: ExportFormat) => {
+      if (!detail) return;
+      if (!native) {
+        // Headless VPS / browser: no local apps — open the export in a new tab.
+        window.open(
+          sessionExportUrl(detail.session.id, format),
+          "_blank",
+          "noopener,noreferrer",
+        );
+        return;
+      }
+      const pref = preferred.data ?? "";
+      if (pref) {
+        void launchInEditor(format, pref);
+      } else {
+        setEditorFormat(format); // first time: ask which app via the chooser
+      }
+    },
+    [detail, native, preferred.data, launchInEditor],
+  );
+
+  const pickOpener = useCallback(
+    (opener: string, remember: boolean) => {
+      if (editorFormat) void launchInEditor(editorFormat, opener);
+      if (remember) setPreferred.mutate(opener);
+      setEditorFormat(null);
+    },
+    [editorFormat, launchInEditor, setPreferred],
   );
 
   if (loading) {
@@ -207,6 +289,7 @@ export function SessionDetail({ detail, loading, error }: Props) {
               label="Text"
               onCopy={() => copyAs("plain")}
               onDownload={() => downloadAsFormat("plain")}
+              onOpenEditor={() => openInEditor("plain")}
               variant="primary"
             />
             <ExportRow
@@ -214,6 +297,7 @@ export function SessionDetail({ detail, loading, error }: Props) {
               label="Markdown"
               onCopy={() => copyAs("markdown")}
               onDownload={() => downloadAsFormat("markdown")}
+              onOpenEditor={() => openInEditor("markdown")}
               variant="outline"
             />
             <ExportRow
@@ -221,11 +305,22 @@ export function SessionDetail({ detail, loading, error }: Props) {
               label="JSON"
               onCopy={() => copyAs("json")}
               onDownload={() => downloadAsFormat("json")}
+              onOpenEditor={() => openInEditor("json")}
               variant="outline"
             />
           </div>
         </div>
       </div>
+
+      {/* "Open with…" chooser — only on the desktop, where local apps exist.
+          editorFormat carries which format row opened it. */}
+      {editorFormat && (
+        <OpenWithDialog
+          openers={openers.data ?? []}
+          onPick={pickOpener}
+          onClose={() => setEditorFormat(null)}
+        />
+      )}
 
       {/* Turns */}
       <ScrollArea className="min-h-0 flex-1">
@@ -256,18 +351,20 @@ interface ExportRowProps {
   label: string;
   onCopy: () => void;
   onDownload: () => void;
+  onOpenEditor: () => void;
   variant: "primary" | "outline";
 }
 
 /**
  * Eine Zeile pro Export-Format: links das Format-Label (mit Icon),
- * rechts zwei kompakte Action-Buttons (Kopieren / Herunterladen).
+ * rechts drei kompakte Action-Buttons (Kopieren / Herunterladen / In Editor).
  */
 function ExportRow({
   icon,
   label,
   onCopy,
   onDownload,
+  onOpenEditor,
   variant,
 }: ExportRowProps) {
   const t = useT();
@@ -301,6 +398,16 @@ function ExportRow({
         title={`${t("session_detail.download_file_action")} ${label}`}
       >
         <Download className="h-3.5 w-3.5" />
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        onClick={onOpenEditor}
+        className="h-7 w-7 shrink-0 p-0"
+        title={`${t("session_detail.open_editor_action")} ${label}`}
+      >
+        <Code2 className="h-3.5 w-3.5" />
       </Button>
     </div>
   );

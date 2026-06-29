@@ -114,12 +114,29 @@ def test_arbitrary_phrase_tolerates_diacritic_transcription_drift() -> None:
     assert m.search("hey rubén") is not None
 
 
-def test_prefix_phrase_requires_prefix_before_core_word() -> None:
-    # "Hey Athena" must not fire on bare "athena". Otherwise a name mention in
-    # ambient speech or Jarvis output re-triggers the listener without wake-up.
+def test_prefix_phrase_also_fires_on_bare_core() -> None:
+    # Mission 2026-06-29 ("trigger super easily" / "I say it ten times"): the
+    # leading wake prefix is OPTIONAL. The slow rolling-whisper poll routinely
+    # splits a short "Hey Nico" so one window holds only "Hey" and the next only
+    # "…nico"; requiring "hey"+"athena" ADJACENT drops both halves. Firing on the
+    # distinctive CORE ("athena"/"nico") alone catches the partial windows — the
+    # accepted easy-trigger trade. Still matches the full phrase too.
     m = compile_wake_matcher("Hey Athena")
-    assert m.search("athena") is None
-    assert m.search("hey athena") is not None
+    assert m.search("hey athena") is not None   # full phrase still fires
+    assert m.search("athena") is not None        # bare core now fires (easy trigger)
+    assert m.search("the weather is nice") is None  # unrelated still rejected
+
+
+def test_hey_nico_fires_on_partial_and_drifted_windows() -> None:
+    # The user's real phrase. The prefix-split windows + STT drift that made it
+    # "need ten tries" must now all wake: full phrase, bare name, name-only tail,
+    # and a one-char mishearing — while unrelated speech is still rejected.
+    m = compile_wake_matcher("Hey Nico")
+    assert m.search("hey nico") is not None       # full phrase
+    assert m.search("nico") is not None            # prefix split — name-only window
+    assert m.search("ja nico komm") is not None    # name mid-utterance
+    assert m.search("niko") is not None            # STT drift (one char)
+    assert m.search("wie spät ist es") is None     # unrelated -> no wake
 
 
 def test_multi_word_core_phrase_matches_in_order() -> None:
@@ -133,6 +150,35 @@ def test_fuzzy_ratio_is_configurable() -> None:
     loose = compile_wake_matcher("Athena", fuzzy_ratio=0.6)
     assert strict.search("athene") is None      # too strict for the drift
     assert loose.search("athene") is not None
+
+
+def test_short_custom_name_tolerates_one_char_pronunciation_drift() -> None:
+    # Mission 2026-06-29: short proper-noun wake words ("Neko") are penalised
+    # hardest by SequenceMatcher — a single STT mishearing ("Neko" -> "Niko")
+    # drops a 4-char word to ratio 0.75, just under the 0.8 default, so the word
+    # "never works". The matcher must allow ~one character of drift for short
+    # cores so a normal pronunciation variance still wakes.
+    m = compile_wake_matcher("Neko")
+    assert m.search("niko") is not None
+    assert m.search("neeko") is not None
+    assert m.search("hey neko") is not None
+
+
+def test_short_custom_name_still_rejects_unrelated_words() -> None:
+    # The short-name relaxation must NOT become a hair-trigger: an unrelated
+    # word (even a short one) must still be rejected (false-positive guard).
+    m = compile_wake_matcher("Neko")
+    assert m.search("taco") is None
+    assert m.search("hello there") is None
+    assert m.search("the cat sat down") is None
+
+
+def test_long_phrase_keeps_strict_ratio_for_short_name_relaxation() -> None:
+    # The relaxation is length-aware: it only loosens SHORT cores. A long core
+    # word keeps the configured ratio, so an explicit strict matcher on a long
+    # word still rejects its drift (the configurable-ratio contract is intact).
+    strict = compile_wake_matcher("Athena", fuzzy_ratio=0.99)
+    assert strict.search("athene") is None
 
 
 # --------------------------------------------------------------------------

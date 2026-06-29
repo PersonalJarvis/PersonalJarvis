@@ -64,6 +64,7 @@ from jarvis.voice.action_phrases import (
     action_phrase,
     cu_failure_readback,
     cu_success_readback,
+    extract_speakable_reason,
 )
 from jarvis.voice.contextual_readback import render_readback
 from jarvis.memory import CoreMemory, PersonStore, RecallStore, Soul, UserProfile
@@ -86,7 +87,6 @@ from .local_action_gate import _normalize as _gate_normalize
 from .mission_command_gate import match_mission_command
 from .assistant_name import (
     DEFAULT_ASSISTANT_NAME,
-    PERSONA_BASELINE_NAME,
     resolve_assistant_name,
 )
 from .persona_loader import load_effective_persona_prompt
@@ -1873,6 +1873,15 @@ class BrainManager:
             except Exception:  # noqa: BLE001
                 key_value = None
             if not key_value:
+                # An OAuth-login brain (codex via ChatGPT) has no API key but a
+                # usable on-disk login — don't dead-list it (open-source AP-22).
+                if _keyless_provider_is_rescued_by_oauth(provider_name):
+                    log.info(
+                        "Pre-Boot-Key-Check: '%s' ohne API-Key, aber verbundene "
+                        "OAuth-Anmeldung -> NICHT deaktiviert.",
+                        provider_name,
+                    )
+                    continue
                 manager._dead_providers.add(provider_name)
                 log.info(
                     "Pre-Boot-Key-Check: kein Key in %s -> Provider '%s' deaktiviert.",
@@ -2233,17 +2242,16 @@ class BrainManager:
 
         # Configurable assistant identity. Derived solely from the wake phrase
         # (so a custom wake word "Micron" makes the assistant call itself
-        # Micron). When the name is neither the neutral fallback nor the
-        # historical "Jarvis" baseline, a prominent identity directive overrides
-        # the "Jarvis" mentions baked into the persona files (SOUL.md /
-        # JARVIS_PERSONA.md), which are static and cannot be parameterised.
+        # Micron). The persona files are name-neutral as of 2026-06-29 (no baked-in
+        # "Jarvis" to override anymore), so this simply states the resolved name
+        # prominently and early. Skipped only for the neutral pre-onboarding
+        # fallback ("Assistant"), where the product imposes no name at all.
         # Placed first so it frames everything.
         name = resolve_assistant_name(getattr(self, "_config", None))
-        if name not in (DEFAULT_ASSISTANT_NAME, PERSONA_BASELINE_NAME):
+        if name != DEFAULT_ASSISTANT_NAME:
             parts.append(
-                f"DEIN NAME IST {name.upper()}. Du heisst {name} — nicht Jarvis. "
-                f"Wo die folgende Persona-Beschreibung 'Jarvis' sagt, gilt {name}. "
-                f"Stell dich als {name} vor und unterschreibe, wenn ueberhaupt, als {name}."
+                f"DEIN NAME IST {name.upper()}. Du heisst {name}. Stell dich, "
+                f"wenn ueberhaupt, als {name} vor und unterschreibe als {name}."
             )
 
         if self._soul is not None:
@@ -2365,7 +2373,11 @@ class BrainManager:
             try:
                 snap = self._awareness_manager.state.snapshot_for_prompt(max_chars=600)
                 if snap:
-                    parts.append(f"AKTUELLER KONTEXT (auto-injected):\n{snap}")
+                    parts.append(
+                        "AKTUELLER KONTEXT (Hintergrund, nur zur Orientierung, "
+                        "NICHT vorlesen oder aufzaehlen, ausser der User fragt "
+                        f"direkt danach):\n{snap}"
+                    )
             except Exception:  # noqa: BLE001
                 pass
 
@@ -2432,21 +2444,23 @@ class BrainManager:
         if self._system_prompt_extra:
             parts.append(self._system_prompt_extra)
 
+        # Structural-only base block (2026-06-29 consolidation): the editable
+        # persona above now OWNS voice / tone / length / anti-filler /
+        # screen-context rules. They used to be duplicated AND contradicted here
+        # (this block said "KEINE Ein-Satz-Pflicht" while the old persona said
+        # "one or two sentences, never paragraphs" — the mixed signal that made
+        # replies choppy). This block keeps ONLY the non-editable structural
+        # truths: the runtime name stitch + the action/tool routing pointer.
+        # Platform-neutral (no "Windows 11" — cloud-first doctrine).
         base = (
-            f"Du bist {name}, der persoenliche Meta-Orchestrator dieses Users auf Windows 11. "
-            "Stil: trocken, praezise, ein Hauch britischer Butler "
-            "— nie servil, nie beflissen, nie speichelleckerisch. "
-            "Sprich kurz (1 Satz), natuerlich, KEIN Markdown. "
-            "STRENG VERBOTEN — generische Greeter-/Smalltalk-Phrasen, jede einzelne. Beispiele: "
-            "'Hallo. Was brauchst du?', 'Was kann ich fuer dich tun?', 'Wie kann ich helfen?', "
-            "'Womit kann ich dienen?', 'Mir gehts gut.', 'Schoen von dir zu hoeren.', "
-            "'Gerne!', 'Grossartige Frage!', 'Selbstverstaendlich, Sir.' und alle Varianten davon. "
-            "Diese Phrasen sind LEERLAUF — sie tragen null Information und sind explizit nicht erwuenscht. "
-            f"Wenn der User gruesst ('Hallo', 'Hey', '{name}'), antworte SUBSTANZIELL: "
-            "z.B. mit aktuellem Status, einer relevanten Beobachtung, oder einer trockenen Replik "
-            "— NIE mit einer Greeter-Phrase. Wenn dir nichts substanzielles einfaellt, schweige (leerer Output). "
-            "Bei Aktionen: Tools sofort aufrufen, mehrere im selben Turn wenn noetig. "
-            "Bei Coding/Research/Deep-Reasoning: dispatch_to_harness mit openclaw oder python-script."
+            f"Du bist {name}, der persoenliche Meta-Orchestrator dieses Users. "
+            "Deine Stimme, dein Ton und deine Antwortlaenge richten sich nach der "
+            "Persona-Beschreibung weiter oben in diesem Prompt; halte dich an sie "
+            "und erfinde keine eigenen Stil- oder Laengen-Regeln. "
+            "Bei Aktionen: passende Tools sofort aufrufen, mehrere im selben Turn "
+            "wenn noetig. Bei echten Brocken (Code bauen/refactoren, langer Bericht, "
+            "Multi-Step-Aufgabe): spawn_worker mit der User-Utterance. "
+            "Bildschirm/Apps bedienen: computer_use."
         )
         parts.append(base)
 
@@ -2488,14 +2502,15 @@ class BrainManager:
                 "TOOL-SELECTION-REGELN (strikt):\n"
                 "1) RECHERCHIEREN/ANALYSIEREN/ERKLÄREN/VERGLEICHEN/ZUSAMMENFASSEN "
                 "(Info *über* ein Thema, nicht Aktion darauf):\n"
-                "   → NUTZE: search_web (Primary). Fallback: dispatch_to_harness.\n"
+                "   → NUTZE: search_web (Primary). Tiefe Multi-Source-Recherche MIT "
+                "Bericht: spawn_worker.\n"
                 "   → NIEMALS: cli_* Tools, MCP-Action-Tools.\n"
                 "   → Bsp: 'recherchiere zu Supabase' → search_web('Supabase'), NICHT cli_supabase.\n"
                 "2) AKTION auf verbundenem System (öffne, starte, deploye, migrate, liste MEINE X):\n"
-                "   → NUTZE: cli_* / MCP-Tools / dispatch_to_harness.\n"
+                "   → NUTZE: cli_* / MCP-Tools. Bildschirm/App bedienen: computer_use.\n"
                 "   → Bsp: 'liste meine Supabase-Projekte' → cli_supabase 'supabase projects list'.\n"
-                "3) CODE SCHREIBEN/REFACTOREN/DEBUGGEN:\n"
-                "   → NUTZE: dispatch_to_harness (openclaw).\n"
+                "3) CODE SCHREIBEN/REFACTOREN/DEBUGGEN (echter Brocken):\n"
+                "   → NUTZE: spawn_worker mit der User-Utterance.\n"
                 "4) Unklar? → search_web (Read-only, kein Schaden) oder Rückfrage an User.\n"
                 "Der Unterschied zwischen (1) und (2) liegt am Intent, nicht am Thema: "
                 "'über X' = Search, 'mit X tun' = Action.\n\n"
@@ -2622,7 +2637,11 @@ class BrainManager:
             try:
                 snap = self._awareness_manager.state.snapshot_for_prompt(max_chars=600)
                 if snap:
-                    parts.append(f"AKTUELLER KONTEXT (auto-injected):\n{snap}")
+                    parts.append(
+                        "AKTUELLER KONTEXT (Hintergrund, nur zur Orientierung, "
+                        "NICHT vorlesen oder aufzaehlen, ausser der User fragt "
+                        f"direkt danach):\n{snap}"
+                    )
             except Exception:  # noqa: BLE001
                 pass
         if self._wiki_context_suffix:
@@ -4187,8 +4206,13 @@ class BrainManager:
         # request that merely mentions the screen ("bau mir eine Website und zeig
         # sie am Bildschirm") must still spawn the mission, so the artifact build
         # wins over this stand-down (mirrors the open-app guard above).
+        # Proxy for "the brain can drive the desktop directly": this used to
+        # check ``dispatch_to_harness`` (removed from the router set 2026-06-28),
+        # so it now checks the live desktop tool ``computer_use``. Without the
+        # update the guard would never fire and a pure pc-control request could
+        # wrongly force a sub-agent spawn.
         if (
-            "dispatch_to_harness" in self._tools
+            "computer_use" in self._tools
             and _looks_like_pc_control(t)
             and not self._research_wants_artifact(t)
         ):
@@ -4325,6 +4349,60 @@ class BrainManager:
             primary = ""
         return primary in ("claude-api", "gemini")
 
+    async def _honest_failure_readback(
+        self,
+        result: Any,
+        *,
+        user_text: str,
+        situation: str,
+        generic_key: str,
+        reason_key: str,
+        lang: str | None = None,
+    ) -> str:
+        """Honest, localized, opaque-token-free spoken readback for a FAILURE.
+
+        The single place every deterministic failure path (the DIRECT local
+        action, the force-spawn, the leaked-spawn / leaked-tool recovery) turns a
+        failed ``ToolResult`` into something speakable. It guarantees the user
+        NEVER hears the raw ``ToolResult.error`` — which is routinely the opaque
+        ``"exit N"`` token (``dispatch_to_harness`` → ``f"exit {code}"``) that was
+        read out verbatim before (live forensic 2026-06-28: a harness failure was
+        spoken as the bare "exit 1").
+
+        It mirrors the Computer-Use path (:func:`cu_failure_readback`):
+
+        1. Pull a *human* reason from the result (stderr/stdout/error) via
+           :func:`extract_speakable_reason` — a bare ``exit N`` / numeric /
+           diagnostic token yields ``None``.
+        2. Route through the context-aware readback composer so the spoken line
+           reacts to THIS situation (no stock phrasing, the maintainer's
+           standing requirement) — handing it ONLY the clean reason as a fact,
+           never the opaque token.
+        3. Fall back to a localized canned phrase (de/en/es) — the reason
+           variant when a clean reason exists, the generic one otherwise — so an
+           en/es turn never gets a hardcoded German string and a failure is
+           never silently dropped.
+        """
+        lang = lang or self._direct_ack_language(user_text)
+        reason = extract_speakable_reason(
+            getattr(result, "error", None), getattr(result, "output", None)
+        )
+        if reason:
+            facts: dict[str, object] | None = {"reason": reason}
+            instruction = f"{situation} The reason given was: {reason}"
+            canned = lambda: action_phrase(reason_key, lang, reason=reason)  # noqa: E731
+        else:
+            facts = None
+            instruction = situation
+            canned = lambda: action_phrase(generic_key, lang)  # noqa: E731
+        return await render_readback(
+            getattr(self, "_readback_composer", None),
+            instruction=instruction,
+            language=lang,
+            canned=canned,
+            facts=facts,
+        )
+
     async def _run_local_action_fast_path(
         self,
         user_text: str,
@@ -4384,19 +4462,31 @@ class BrainManager:
                         duration_ms=int(timeout_s * 1000),
                         error=f"timeout after {timeout_s:.3g}s",
                     ))
-                    return f"{call.name} timeout after {timeout_s:.3g}s"
-                if not result.success:
-                    if result.error:
-                        return result.error
-                    tool_name = call.name
+                    # Never speak the internal tool name + machine "timeout after
+                    # 3s" string; a plain, localized line via the composer instead.
                     return await render_readback(
                         getattr(self, "_readback_composer", None),
-                        instruction=f"The local action '{tool_name}' failed.",
-                        language=ack_lang,
-                        canned=lambda: action_phrase(
-                            "tool_failed", ack_lang, tool=tool_name
+                        instruction=(
+                            "The action the user asked for took too long and was "
+                            "stopped before it finished."
                         ),
-                        facts={"tool": tool_name},
+                        language=ack_lang,
+                        canned=lambda: action_phrase("action_timeout", ack_lang),
+                    )
+                if not result.success:
+                    # NEVER return ``result.error`` verbatim — it is routinely the
+                    # opaque ``exit N`` token (live forensic 2026-06-28: a harness
+                    # failure was spoken as the bare "exit 1"). Route through the
+                    # honest, localized, composer-backed readback instead.
+                    return await self._honest_failure_readback(
+                        result,
+                        user_text=user_text,
+                        situation=(
+                            "An action the user asked for could not be completed."
+                        ),
+                        generic_key="action_failed_generic",
+                        reason_key="action_failed_reason",
+                        lang=ack_lang,
                     )
                 if result.output is not None:
                     outputs.append(
@@ -4999,7 +5089,14 @@ class BrainManager:
             trace_id=tid,
         )
         if not result.success:
-            return result.error or "OpenClaw konnte nicht gestartet werden."
+            return await self._honest_failure_readback(
+                result,
+                user_text=user_text,
+                situation="The background helper the user asked for could not be started.",
+                generic_key="spawn_failed_generic",
+                reason_key="spawn_failed_reason",
+                lang=out_lang,
+            )
         return str(result.output or "")
 
     async def _recover_leaked_spawn(
@@ -5070,8 +5167,13 @@ class BrainManager:
             trace_id=trace_id,
         )
         if not result.success:
-            return result.error or (
-                "Der Hintergrund-Worker konnte nicht gestartet werden."
+            return await self._honest_failure_readback(
+                result,
+                user_text=user_text,
+                situation="The background helper the user asked for could not be started.",
+                generic_key="spawn_failed_generic",
+                reason_key="spawn_failed_reason",
+                lang=out_lang,
             )
         return str(result.output or "")
 
@@ -5124,8 +5226,12 @@ class BrainManager:
                 return _cli_failure_reason(
                     result.output, result.error, german=_looks_german(user_text),
                 )
-            return result.error or (
-                f"Die Aktion '{name}' konnte nicht ausgefuehrt werden."
+            return await self._honest_failure_readback(
+                result,
+                user_text=user_text,
+                situation="An action the user asked for could not be carried out.",
+                generic_key="action_failed_generic",
+                reason_key="action_failed_reason",
             )
         # A read tool (search_web, wiki-recall, …) returns STRUCTURED data, not
         # a spoken sentence. Render it to speakable text — ``str(result.output)``
@@ -6247,20 +6353,29 @@ class BrainManager:
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
                 msg = str(exc)
-                # 429 Rate-Limit: markieren für 30s
-                if _is_rate_limit_exc(exc):
+                # Classify FIRST so a terminal-billing 429 ("credits depleted",
+                # "insufficient_quota") is treated as a DEAD provider, not a
+                # transient rate-limit that keeps the empty provider leading the
+                # chain every turn (live forensic 2026-06-28: a depleted Gemini
+                # router bricked the whole turn even though OpenRouter was funded
+                # — AP-22). Only a genuinely transient 429 takes the cooldown path.
+                kind = _classify_provider_error(msg, default="call_fail")
+                if kind == "rate_limit":
                     self._rate_tracker.mark_rate_limited(prov_name, model)
                     log.warning("Rate-Limited %s(%s) — 30s Cooldown aktiviert", prov_name, model)
                     provider_errors.append(
                         (prov_name, model, "rate_limit", "HTTP 429"))
                 else:
                     log.warning("Brain %s(%s) fehlgeschlagen: %s", prov_name, model, exc)
-                    kind = _classify_provider_error(msg, default="call_fail")
-                    if kind == "missing_key" and prov_name not in self._dead_providers:
+                    if (
+                        kind in ("missing_key", "account_blocked")
+                        and prov_name not in self._dead_providers
+                    ):
                         self._dead_providers.add(prov_name)
                         log.warning(
-                            "Provider %s ohne API-Key — fuer diese Session deaktiviert. "
-                            "Setup: Sidebar -> API-Keys.", prov_name)
+                            "Provider %s fuer diese Session deaktiviert (%s) — die Kette "
+                            "weicht auf einen anderen verfuegbaren Anbieter aus. "
+                            "Setup: Sidebar -> API-Keys.", prov_name, kind)
                     provider_errors.append((prov_name, model, kind, msg[:200]))
                 # NOTE BUG-019 (2026-05-11): this generic ``continue`` does
                 # not touch the failing provider's *internal* state. For
@@ -7164,10 +7279,23 @@ def _is_account_blocked_exc(msg: str) -> bool:
         "upgrade plan",
         "upgrade your plan",
         "exceeded your quota",  # Gemini-style, terminal vs. 429
+        "exceeded your current quota",  # OpenAI insufficient_quota wording
         "quota exceeded for",
+        "insufficient_quota",
+        "insufficient quota",
         "billing not active",
         "payment required",
         "account is suspended",
+        # Terminal-billing 429s that carry "429" in the message and would
+        # otherwise be mis-read as a transient rate-limit (live forensic
+        # 2026-06-28: depleted Gemini bricked the whole chain — AP-22).
+        "credits are depleted",
+        "credits depleted",
+        "prepayment credits",
+        "out of credits",
+        "no credits remaining",
+        "check your plan and billing",
+        "plan and billing",
     ))
 
 
@@ -7214,6 +7342,26 @@ def _classify_provider_error(msg: str, *, default: str) -> str:
                              "rate limit", "too many requests")):
         return "rate_limit"
     return default
+
+
+def _keyless_provider_is_rescued_by_oauth(provider_name: str) -> bool:
+    """True when a keyless provider must NOT be dead-listed at the pre-boot key
+    check because it authenticates via an OAuth login ON DISK, not an API key.
+
+    The subscription-CLI brains (codex over the ChatGPT login at ``~/.codex/auth.json``)
+    carry no entry in ``PROVIDER_SECRET_CANDIDATES``, so a ChatGPT-only user would
+    otherwise see ``codex`` pushed into ``_dead_providers`` → empty chain → every
+    chat AND voice turn bricks with the provider-down apology. The OAuth login IS a
+    usable credential. Open-source single-provider mandate (AP-22). Any import/probe
+    failure is treated as "not rescued" (fail-safe → dead-list).
+    """
+    if provider_name == "codex":
+        try:
+            from jarvis.plugins.brain.codex import _codex_oauth_connected
+            return bool(_codex_oauth_connected())
+        except Exception:  # noqa: BLE001
+            return False
+    return False
 
 
 _PROVIDER_SETUP_HINTS: dict[str, str] = {

@@ -61,6 +61,21 @@ export function useWebSocket(): void {
           // this — not the raw open — is the authoritative "connected" signal.
           setConnected(true);
           setWarming(false);
+          // Re-seed voiceReady on EVERY (re)connect. VoiceBootStatus is a
+          // one-shot bus event, so a socket that (re)connects after readiness
+          // already flipped — e.g. the fast-boot 1013 reconnect — or whose
+          // one-time mount-seed (useVoiceStatus) failed would otherwise keep a
+          // stale value and leave the banner stuck on "starting up". This makes
+          // the REST mirror the authoritative source on each connect.
+          void fetch("/api/voice/status")
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data) => {
+              if (data && typeof data.ready === "boolean") setVoiceReady(data.ready);
+            })
+            .catch(() => {
+              // Offline / headless: keep the current value; the live
+              // VoiceBootStatus event still updates it if/when it arrives.
+            });
           return;
         }
 

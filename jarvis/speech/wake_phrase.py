@@ -57,8 +57,10 @@ def sensitivity_to_threshold(sensitivity: float) -> float:
     """
     s = max(0.0, min(1.0, float(sensitivity)))
     if s <= 0.5:
-        return _THRESHOLD_CEILING + (PRODUCTION_WAKE_THRESHOLD - _THRESHOLD_CEILING) * (s / 0.5)
-    return PRODUCTION_WAKE_THRESHOLD + (_THRESHOLD_FLOOR - PRODUCTION_WAKE_THRESHOLD) * ((s - 0.5) / 0.5)
+        span = PRODUCTION_WAKE_THRESHOLD - _THRESHOLD_CEILING
+        return _THRESHOLD_CEILING + span * (s / 0.5)
+    span = _THRESHOLD_FLOOR - PRODUCTION_WAKE_THRESHOLD
+    return PRODUCTION_WAKE_THRESHOLD + span * ((s - 0.5) / 0.5)
 
 
 class _FuzzyMatch:
@@ -105,6 +107,26 @@ class WakeMatcher:
     def is_jarvis_default(self) -> bool:
         return self._is_jarvis
 
+    def _effective_ratio(self, core_token: str) -> float:
+        """The match ratio required for one core token.
+
+        Short proper-noun wake words ("Neko", "Mia", "Leo") are penalised
+        hardest by ``SequenceMatcher``: a single STT mishearing ("Neko" ->
+        "Niko") is a one-character substitution, which on a 4-char token drops
+        the ratio to ~0.75 — just under the 0.8 default, so the word "never
+        works". For short cores we therefore relax the bar to allow ~one
+        character of drift (never below an absolute 0.6 floor so it cannot
+        become a hair-trigger). A core of 6+ chars keeps the configured ratio
+        unchanged, so a longer word — or an explicitly strict matcher on one —
+        stays as strict as before (the configurable-ratio contract is intact).
+        """
+        n = len(core_token)
+        if n >= 6:
+            return self._ratio
+        # ratio of an n-char token vs the same token with one char substituted.
+        one_sub_ratio = (n - 1) / n if n else 1.0
+        return min(self._ratio, max(0.6, one_sub_ratio - 0.01))
+
     def search(self, text: str) -> Any | None:
         """Return a match object (``.group(0)``) or ``None``. Never raises."""
         if not text:
@@ -115,12 +137,17 @@ class WakeMatcher:
         n = len(self._core)
         if n == 0 or len(tokens) < n:
             return None
+        # Length-aware threshold: average the per-core-token required ratios so a
+        # short name tolerates a little pronunciation drift while a longer one
+        # (or a multi-word phrase with long tokens) keeps the strict bar.
+        threshold = sum(self._effective_ratio(c) for c in self._core) / n
         for i in range(0, len(tokens) - n + 1):
             window = tokens[i : i + n]
             score = sum(
-                SequenceMatcher(None, c, w).ratio() for c, w in zip(self._core, window)
+                SequenceMatcher(None, c, w).ratio()
+                for c, w in zip(self._core, window, strict=False)
             ) / n
-            if score >= self._ratio:
+            if score >= threshold:
                 return _FuzzyMatch(" ".join(window))
         return None
 
@@ -129,16 +156,28 @@ def compile_wake_matcher(phrase: str, *, fuzzy_ratio: float = 0.8) -> WakeMatche
     """Build a :class:`WakeMatcher` for ``phrase``.
 
     The default "Hey Jarvis" (and any jarvis-only phrase) is matched by the
-    strict legacy pattern. Other phrases are fuzzy-matched on their core tokens
-    unless the user explicitly included a wake prefix ("Hey", "Hallo", "Ok",
-    ...), in which case the prefix is part of the match contract.
+    strict legacy pattern. Every other phrase fuzzy-matches on its CORE tokens —
+    the distinctive word(s) after any leading wake prefix ("Hey", "Hallo", "Ok",
+    ...). So "Hey Nico" fires on "nico", whether or not the "Hey" prefix made it
+    into the transcript.
+
+    Why the prefix is OPTIONAL, not required (live forensic 2026-06-29, custom
+    wake "Hey Nico"): the rolling-whisper poll transcribes ~1.8 s windows, and on
+    a slow local model the effective cadence (~1.7 s) is close to the window
+    length, so a short spoken "Hey Nico" routinely lands SPLIT across snapshots —
+    one window catches only "Hey", the next only "…nico". Requiring "hey"+"nico"
+    ADJACENT then drops both halves and the user has to repeat the wake many
+    times ("I have to say it ten times"). Matching the distinctive core alone
+    catches the "…nico" / "nico" windows too, which is exactly the user's
+    "trigger super easily" mandate. The cost is that the bare name spoken in
+    ambient speech while IDLE can wake the listener — an accepted trade ("lieber
+    leichter triggern als schwer"); the no_speech / RMS / fuzzy guards still
+    reject silence and unrelated words, and the wake loop only listens when IDLE.
     """
-    tokens = normalize_phrase_for_match(phrase)
     core = phrase_core_for_match(phrase)
     if core == ["jarvis"]:
         return WakeMatcher(pattern=JARVIS_WAKE_PATTERN, is_jarvis_default=True)
-    match_tokens = tokens if tokens and core and len(core) < len(tokens) else core
-    return WakeMatcher(core_tokens=match_tokens, fuzzy_ratio=fuzzy_ratio)
+    return WakeMatcher(core_tokens=core, fuzzy_ratio=fuzzy_ratio)
 
 
 def _canonical_keyword(phrase: str) -> str:

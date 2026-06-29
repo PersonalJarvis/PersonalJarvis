@@ -13,6 +13,7 @@ import { ThinkingTrace, ThoughtTraceDisclosure } from "@/components/ThinkingTrac
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { useResizablePane } from "@/hooks/useResizablePane";
+import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import {
   ChatsApiError,
   deleteTextConversation,
@@ -489,6 +490,11 @@ function MessageBubble({ message }: { message: ChatMessage }) {
  */
 function EmptyState() {
   const t = useT();
+  // Honest readiness: while the voice stack is still warming, the centre of the
+  // screen must NOT claim "Ready for commands" while the banner says "starting
+  // up". Both now read the same useVoiceReadiness source. Typing already works
+  // (the input is connected-gated, not voice-gated), so the warming copy says so.
+  const { warming } = useVoiceReadiness();
 
   return (
     <div className="flex h-full flex-col items-center justify-center px-6 py-10 text-center">
@@ -499,13 +505,13 @@ function EmptyState() {
         className="profile-rise font-display text-3xl font-semibold tracking-tight text-foreground sm:text-4xl"
         style={{ animationDelay: "80ms" }}
       >
-        {t("chats_view.empty_title")}
+        {warming ? t("chats_view.warming_title") : t("chats_view.empty_title")}
       </h3>
       <p
         className="profile-rise mt-3 max-w-md text-sm leading-relaxed text-muted-foreground sm:text-base"
         style={{ animationDelay: "160ms" }}
       >
-        {t("chats_view.empty_subtitle")}
+        {warming ? t("chats_view.warming_subtitle") : t("chats_view.empty_subtitle")}
       </p>
     </div>
   );

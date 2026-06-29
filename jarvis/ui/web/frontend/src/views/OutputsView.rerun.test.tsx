@@ -127,6 +127,45 @@ describe("OutputsView rerun button gating", () => {
     expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
   });
 
+  it("replaces Continue with a live continuation chip and jumps to the child", async () => {
+    // Forensic 2026-06-28: a cancelled mission that was already "continued"
+    // kept showing a Continue button next to its own running child — the two
+    // cards looked identical, so the user could not tell whether it was
+    // running. With a live child the card shows a "running" chip instead, and
+    // clicking it jumps to the child.
+    installFetchMock([
+      session({
+        slug: "mission_019f0fa6-4ff6",
+        utterance: "Parent task",
+        status: "cancelled",
+        mission_id: "m-parent",
+        active_child_id: "019f0fac-26a3-7c59",
+        active_child_slug: "mission_019f0fac-26a3",
+      }),
+      session({
+        slug: "mission_019f0fac-26a3",
+        utterance: "Child task",
+        status: "running",
+        mission_id: "m-child",
+      }),
+    ]);
+    renderView();
+    await waitFor(() =>
+      expect(
+        screen.getAllByTestId("continuation-chip").length,
+      ).toBeGreaterThan(0),
+    );
+    // The redundant Continue button is gone while the continuation is live.
+    expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
+    // Clicking the chip selects the running child card.
+    fireEvent.click(screen.getAllByTestId("continuation-chip")[0]);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Child task" }),
+      ).toBeDefined(),
+    );
+  });
+
   it("shows neither for running or successful missions", async () => {
     installFetchMock([
       session({ slug: "run-slug", status: "running", mission_id: "m-r" }),

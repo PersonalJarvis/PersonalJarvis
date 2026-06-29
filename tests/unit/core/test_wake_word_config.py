@@ -10,9 +10,12 @@ from jarvis.core.config import TriggerConfig, WakeWordConfig
 from jarvis.speech import wake_constants
 
 
-def test_defaults_are_hey_jarvis_auto() -> None:
+def test_defaults_are_neutral_empty_auto() -> None:
+    # Shipped default is a BLANK phrase (neutral pre-onboarding; the user must
+    # opt in to a wake word — no trademarked/branded default). See
+    # wake_constants.DEFAULT_WAKE_PHRASE and test_default_wake_phrase_is_empty.
     c = WakeWordConfig()
-    assert c.phrase == "Hey Jarvis"
+    assert c.phrase == ""
     assert c.engine == "auto"
     assert c.sensitivity == 0.5
     assert c.fuzzy_match_ratio == 0.8
@@ -37,13 +40,13 @@ def test_legacy_porcupine_keys_still_load() -> None:
     c = WakeWordConfig(
         provider="porcupine", keyword="jarvis", custom_keyword_file=""
     )
-    assert c.phrase == "Hey Jarvis"  # new SoT default, unaffected
+    assert c.phrase == ""  # new SoT default (neutral blank), unaffected by legacy keys
 
 
 def test_trigger_config_embeds_wake_word() -> None:
     t = TriggerConfig()
     assert isinstance(t.wake_word, WakeWordConfig)
-    assert t.wake_word.phrase == "Hey Jarvis"
+    assert t.wake_word.phrase == ""  # neutral blank default (no branded wake word)
 
 
 def test_phrase_round_trips_arbitrary_value() -> None:

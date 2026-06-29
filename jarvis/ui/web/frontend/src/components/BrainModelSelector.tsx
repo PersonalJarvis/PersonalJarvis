@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Check, ChevronDown, Loader2, RefreshCw, Search, XCircle } from "lucide-react";
+import {
+  AlertCircle,
+  Check,
+  ChevronDown,
+  ExternalLink,
+  Loader2,
+  RefreshCw,
+  Search,
+  XCircle,
+} from "lucide-react";
 import {
   getBrainProviderModels,
   saveBrainProviderModel,
@@ -9,10 +18,24 @@ import {
   type ProviderTestStatus,
 } from "@/hooks/useProviders";
 import { useEventStore } from "@/store/events";
+import { openExternalUrl } from "@/lib/openExternal";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
-const MAX_VISIBLE = 80;
+/**
+ * The provider's own page for a model, so the user can see its details/pricing.
+ * Only OpenRouter exposes a stable per-model URL whose path IS the model id
+ * (`openrouter.ai/anthropic/claude-opus-4.8`). Direct providers (claude-api /
+ * openai / gemini) have no clean per-model page → no link (better than a dead
+ * or guessed one). Returns null when there is no reliable URL.
+ */
+function modelProviderUrl(providerId: string, modelId: string): string | null {
+  if (providerId === "openrouter" && modelId) {
+    return `https://openrouter.ai/${modelId}`;
+  }
+  return null;
+}
+
 
 // Mirrors TEST_STATUS_TONE in ApiKeysView (kept local to avoid a circular import).
 const STATUS_TONE: Record<ProviderTestStatus, string> = {
@@ -142,16 +165,31 @@ export function BrainModelSelector({
   const matched = useMemo(() => {
     const list = Array.isArray(models) ? models : [];
     const q = query.trim().toLowerCase();
-    return q
-      ? list.filter(
-          (m) => m.id.toLowerCase().includes(q) || m.label.toLowerCase().includes(q),
-        )
-      : list;
+    if (!q) return list;
+    // Separator-insensitive match: model ids use hyphens/slashes/dots
+    // (openai/gpt-5.5) but users type spaces ("gpt 5.5") or nothing
+    // ("gpt5.5"). Strip every non-alphanumeric char from both sides so the
+    // query matches regardless of separators, while still honouring a plain
+    // substring hit (e.g. searching a literal "/").
+    const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const sq = squash(query);
+    return list.filter((m) => {
+      const id = m.id.toLowerCase();
+      const label = m.label.toLowerCase();
+      return (
+        id.includes(q) ||
+        label.includes(q) ||
+        (sq.length > 0 && (squash(m.id).includes(sq) || squash(m.label).includes(sq)))
+      );
+    });
   }, [models, query]);
 
   const trimmed = query.trim();
   const exactMatch = matched.some((m) => m.id === trimmed);
-  const visible = matched.slice(0, MAX_VISIBLE);
+  // Show the COMPLETE catalog — every model is visible on open and every search
+  // hit is shown. The list lives in a scrollable container, so even OpenRouter's
+  // full ~340-model catalog is fully reachable without a display cap.
+  const visible = matched;
   const pinnedLabel = models.find((m) => m.id === pinned)?.label ?? pinned;
 
   async function save(value: string) {
@@ -254,30 +292,59 @@ export function BrainModelSelector({
           </div>
 
           <ul className="max-h-56 overflow-y-auto p-1 scrollbar-jarvis">
-            {visible.map((m) => (
-              <li key={m.id}>
-                <button
-                  type="button"
-                  onClick={() => void save(m.id)}
-                  className={cn(
-                    "flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left hover:bg-accent",
-                    m.id === pinned && "bg-primary/10",
-                  )}
-                >
-                  <span className="flex min-w-0 items-center gap-1.5 truncate text-xs">
-                    {m.label}
-                    {recommendedModel && m.id === recommendedModel && (
-                      <span className="shrink-0 rounded-full bg-primary/15 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-primary">
-                        {t("apikeys_model.recommended_tag")}
-                      </span>
+            {visible.map((m) => {
+              const link = modelProviderUrl(providerId, m.id);
+              const isPinned = m.id === pinned;
+              return (
+                <li key={m.id}>
+                  {/* Row is a <div> (not a button) so the external-link button can
+                      sit beside the select button without nesting <button>s. The
+                      hover/selected highlight lives on the row. Hover uses a soft
+                      gold TINT (not the loud full-gold accent) so light text stays
+                      readable — the maintainer's "too bright" complaint. */}
+                  <div
+                    className={cn(
+                      "flex items-center rounded hover:bg-primary/10",
+                      isPinned && "bg-primary/20",
                     )}
-                  </span>
-                  <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
-                    {m.id}
-                  </span>
-                </button>
-              </li>
-            ))}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => void save(m.id)}
+                      className="flex min-w-0 flex-1 items-center justify-between gap-2 px-2 py-1.5 text-left"
+                    >
+                      <span
+                        className={cn(
+                          "flex min-w-0 items-center gap-1.5 truncate text-xs",
+                          isPinned && "font-medium text-primary",
+                        )}
+                      >
+                        {m.label}
+                        {recommendedModel && m.id === recommendedModel && (
+                          <span className="shrink-0 rounded-full bg-primary px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-primary-foreground">
+                            {t("apikeys_model.recommended_tag")}
+                          </span>
+                        )}
+                      </span>
+                      <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+                        {m.id}
+                      </span>
+                    </button>
+                    {link && (
+                      <button
+                        type="button"
+                        onClick={() => void openExternalUrl(link)}
+                        aria-label={t("apikeys_model.open_on_provider")}
+                        title={t("apikeys_model.open_on_provider")}
+                        className="mr-1 shrink-0 rounded p-1 text-muted-foreground transition-colors hover:text-primary"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
 
             {trimmed && !exactMatch && (
               <li>
@@ -285,7 +352,7 @@ export function BrainModelSelector({
                   type="button"
                   data-testid="use-custom-row"
                   onClick={() => void save(trimmed)}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent"
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-primary/10"
                 >
                   <Check className="h-3 w-3 shrink-0 text-primary" />
                   {t("apikeys_model.use_custom").replace("{0}", trimmed)}
@@ -300,9 +367,9 @@ export function BrainModelSelector({
             )}
           </ul>
 
-          {matched.length > MAX_VISIBLE && (
+          {matched.length > 0 && (
             <div className="border-t border-border px-2.5 py-1 text-[10px] text-muted-foreground">
-              {t("apikeys_model.more_hint").replace("{0}", String(matched.length - MAX_VISIBLE))}
+              {t("apikeys_model.count_hint").replace("{0}", String(matched.length))}
             </div>
           )}
         </div>

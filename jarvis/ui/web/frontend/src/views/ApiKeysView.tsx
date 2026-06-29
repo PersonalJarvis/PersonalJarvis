@@ -1,5 +1,5 @@
 ﻿import { useState } from "react";
-import { Brain, Check, Copy, KeyRound, LogIn, LogOut, Mic, Phone, PlugZap, Terminal, Volume2, Loader2, AlertCircle, XCircle } from "lucide-react";
+import { AlertCircle, Bot, Brain, Check, Copy, KeyRound, Loader2, LogIn, LogOut, Mic, Phone, PlugZap, SlidersHorizontal, Terminal, Volume2, XCircle } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { AltCredentialNote } from "@/components/AltCredentialNote";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
@@ -9,6 +9,8 @@ import { ProviderBillingBadge } from "@/components/ProviderBillingBadge";
 import { SubagentSection } from "@/components/SubagentSection";
 import { TelephonyPanel } from "@/views/TelephonyView";
 import { WikiProviderCard } from "@/views/settings/WikiProviderCard";
+import { JarvisApiGroup } from "@/views/settings/JarvisApiGroup";
+import { TeamProxyGroup } from "@/views/settings/TeamProxyGroup";
 import { Button } from "@/components/ui/button";
 import {
   codexLogout,
@@ -29,18 +31,57 @@ import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
-function makeTierMeta(t: (k: string) => string): Record<ProviderTier, { label: string; icon: React.ReactNode }> {
+// The view is organised around exactly four primary categories — Brain, Voice
+// Output (TTS), Voice Input (STT) and Subagents — surfaced as a segmented tab
+// bar. Everything else (Control-API key, team key proxy, telephony, Wiki) lives
+// in a clearly separated, de-emphasized "Advanced" tab so it never competes with
+// the four core categories.
+type CategoryKey = ProviderTier | "subagents" | "advanced";
+
+type LucideIcon = typeof Brain;
+
+interface CategoryMeta {
+  /** Short label for the segmented tab. */
+  tab: string;
+  /** Full heading shown in the category hero band. */
+  title: string;
+  /** One-line plain-language description under the heading. */
+  description: string;
+  icon: LucideIcon;
+}
+
+// Meta for the three provider tiers (brain/tts/stt). Subagents and Advanced are
+// composed separately because they own their own data sources / sub-sections.
+function makeProviderCategories(
+  t: (k: string) => string,
+): Record<ProviderTier, CategoryMeta> {
   return {
-    brain: { label: t("apikeys_view.tier_brain"), icon: <Brain className="h-3.5 w-3.5" /> },
-    tts: { label: t("apikeys_view.tier_tts"), icon: <Volume2 className="h-3.5 w-3.5" /> },
-    stt: { label: t("apikeys_view.tier_stt"), icon: <Mic className="h-3.5 w-3.5" /> },
+    brain: {
+      tab: t("apikeys_view.tab_brain"),
+      title: t("apikeys_view.tier_brain"),
+      description: t("apikeys_view.cat_brain_desc"),
+      icon: Brain,
+    },
+    tts: {
+      tab: t("apikeys_view.tab_tts"),
+      title: t("apikeys_view.tier_tts"),
+      description: t("apikeys_view.cat_tts_desc"),
+      icon: Volume2,
+    },
+    stt: {
+      tab: t("apikeys_view.tab_stt"),
+      title: t("apikeys_view.tier_stt"),
+      description: t("apikeys_view.cat_stt_desc"),
+      icon: Mic,
+    },
   };
 }
 
 export function ApiKeysView() {
   const t = useT();
-  const TIER_META = makeTierMeta(t);
   const { providers, loading, error, refetch, setActiveOptimistic } = useProviders();
+  const categories = makeProviderCategories(t);
+  const [active, setActive] = useState<CategoryKey>("brain");
 
   return (
     <div className="flex h-full flex-col">
@@ -50,58 +91,264 @@ export function ApiKeysView() {
         subtitle={t("apikeys_view.subtitle")}
       />
 
+      <CategoryTabs active={active} onSelect={setActive} />
+
       <div className="flex-1 overflow-y-auto scrollbar-jarvis p-6">
-        {loading && (
-          <div className="mt-6 flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> {t("apikeys_view.loading_providers")}
-          </div>
+        {(active === "brain" || active === "tts" || active === "stt") && (
+          <ProviderCategory
+            meta={categories[active]}
+            tier={active}
+            providers={providers}
+            loading={loading}
+            error={error}
+            onChanged={refetch}
+            onActivateOptimistic={setActiveOptimistic}
+          />
         )}
+        {active === "subagents" && <SubagentCategory />}
+        {active === "advanced" && <AdvancedCategory />}
+      </div>
+    </div>
+  );
+}
 
-        {error && (
-          <div className="mt-6 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-            <AlertCircle className="mt-0.5 h-4 w-4" />
-            <div>
-              {t("apikeys_view.load_error")} ({error}).
-              <button onClick={() => refetch()} className="ml-2 underline">{t("apikeys_view.retry")}</button>
-            </div>
-          </div>
-        )}
+/**
+ * The segmented category navigation. The four core categories are grouped in one
+ * pill container; the de-emphasized "Advanced" tab is set apart by a divider and
+ * neutral (non-gold) styling so it reads as secondary, never competing with the
+ * four primary categories.
+ */
+function CategoryTabs({
+  active,
+  onSelect,
+}: {
+  active: CategoryKey;
+  onSelect: (key: CategoryKey) => void;
+}) {
+  const t = useT();
+  const coreTabs: { key: CategoryKey; label: string; icon: LucideIcon }[] = [
+    { key: "brain", label: t("apikeys_view.tab_brain"), icon: Brain },
+    { key: "tts", label: t("apikeys_view.tab_tts"), icon: Volume2 },
+    { key: "stt", label: t("apikeys_view.tab_stt"), icon: Mic },
+    { key: "subagents", label: t("apikeys_view.tab_subagents"), icon: Bot },
+  ];
+  return (
+    <div className="border-b border-border px-6 py-3">
+      <div role="tablist" className="flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1 rounded-xl border border-border bg-card/40 p-1">
+          {coreTabs.map((tab) => (
+            <TabButton
+              key={tab.key}
+              icon={tab.icon}
+              label={tab.label}
+              selected={active === tab.key}
+              onClick={() => onSelect(tab.key)}
+            />
+          ))}
+        </div>
+        <span
+          className="mx-1 hidden h-6 w-px bg-border/70 sm:block"
+          aria-hidden="true"
+        />
+        <TabButton
+          icon={SlidersHorizontal}
+          label={t("apikeys_view.tab_advanced")}
+          selected={active === "advanced"}
+          onClick={() => onSelect("advanced")}
+          muted
+        />
+      </div>
+    </div>
+  );
+}
 
-        {!loading && providers.length > 0 && (
-          <div className="mt-6 space-y-8">
-            {(Object.keys(TIER_META) as ProviderTier[]).map((tier) => {
-              const tierProviders = providers.filter(
-                (p) => p.tier === tier && p.brain_switchable !== false,
-              );
-              if (!tierProviders.length) return null;
-              return (
-                <TierSection
-                  key={tier}
-                  tier={tier}
-                  providers={tierProviders}
-                  onChanged={refetch}
-                  onActivateOptimistic={setActiveOptimistic}
-                />
-              );
-            })}
-            {/* Subagent (OpenClaw) — own data source (/api/openclaw/status),
-                rendered as a sibling tier so it shares the card system. */}
-            <SubagentSection />
-            {/* Telephony — the former standalone "Telephony" screen, folded in
-                here as another tier section (own data source /api/telephony/*).
-                Same header style as the tiers above; always expanded. */}
-            <TelephonySection />
-            {/* Wiki — dedicated long-term-memory curator provider/model. Own
-                data source (/api/settings/wiki-provider); a thin sibling tier. */}
-            <WikiProviderCard />
-            {/* Nominative-use trademark notice: provider/integration names and logos
-                belong to their owners and are shown only to identify what you connect to.
-                Backs the third-party logos used on plugin cards (see TRADEMARK.md). */}
-            <p className="pt-2 text-[11px] leading-relaxed text-muted-foreground">
-              {t("apikeys_view.trademark_notice")}
-            </p>
+function TabButton({
+  icon: Icon,
+  label,
+  selected,
+  onClick,
+  muted = false,
+}: {
+  icon: LucideIcon;
+  label: string;
+  selected: boolean;
+  onClick: () => void;
+  /** The de-emphasized "Advanced" tab: neutral fill instead of the gold accent. */
+  muted?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={selected}
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
+        muted
+          ? selected
+            ? "bg-secondary text-foreground ring-1 ring-border"
+            : "text-muted-foreground/70 hover:bg-secondary/50 hover:text-foreground"
+          : selected
+            ? "bg-primary/10 text-primary ring-1 ring-primary/30"
+            : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+      )}
+    >
+      <Icon className="h-4 w-4" />
+      {label}
+    </button>
+  );
+}
+
+/**
+ * The header band atop each category panel: an icon chip, the full category
+ * title (display font), and a one-line plain-language description. Mirrors the
+ * app's `ViewHeader` icon treatment so the screen reads as one system.
+ */
+function CategoryHero({
+  icon: Icon,
+  title,
+  description,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="mb-6 flex items-start gap-3">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-secondary/40 text-primary">
+        <Icon className="h-5 w-5" />
+      </div>
+      <div className="min-w-0 pt-0.5">
+        <h3 className="font-display text-base font-semibold tracking-tight">
+          {title}
+        </h3>
+        <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One of the three provider tiers (brain/tts/stt): the hero band plus the
+ * loading / error / empty / card states. The card list itself is `TierSection`,
+ * reused unchanged from the original layout.
+ */
+function ProviderCategory({
+  meta,
+  tier,
+  providers,
+  loading,
+  error,
+  onChanged,
+  onActivateOptimistic,
+}: {
+  meta: CategoryMeta;
+  tier: ProviderTier;
+  providers: ProviderDescriptor[];
+  loading: boolean;
+  error: string | null;
+  onChanged: () => void;
+  onActivateOptimistic: (tier: ProviderTier, id: string) => void;
+}) {
+  const t = useT();
+  const tierProviders = providers.filter(
+    (p) => p.tier === tier && p.brain_switchable !== false,
+  );
+
+  return (
+    <div role="tabpanel">
+      <CategoryHero icon={meta.icon} title={meta.title} description={meta.description} />
+
+      {loading && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" /> {t("apikeys_view.loading_providers")}
+        </div>
+      )}
+
+      {error && (
+        <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+          <AlertCircle className="mt-0.5 h-4 w-4" />
+          <div>
+            {t("apikeys_view.load_error")} ({error}).
+            <button onClick={() => onChanged()} className="ml-2 underline">
+              {t("apikeys_view.retry")}
+            </button>
           </div>
-        )}
+        </div>
+      )}
+
+      {!loading && !error && tierProviders.length === 0 && (
+        <p className="text-sm text-muted-foreground">
+          {t("apikeys_view.no_providers_in_tier")}
+        </p>
+      )}
+
+      {!loading && !error && tierProviders.length > 0 && (
+        <TierSection
+          providers={tierProviders}
+          onChanged={onChanged}
+          onActivateOptimistic={onActivateOptimistic}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * The Subagents category — the heavy-task worker selection. `SubagentSection`
+ * owns its own data source (/api/openclaw/status) and card system; the hero band
+ * just frames it consistently with the provider tiers.
+ */
+function SubagentCategory() {
+  const t = useT();
+  return (
+    <div role="tabpanel">
+      <CategoryHero
+        icon={Bot}
+        title={t("apikeys_view.cat_subagents_title")}
+        description={t("apikeys_view.cat_subagents_desc")}
+      />
+      <SubagentSection hideHeader />
+    </div>
+  );
+}
+
+/**
+ * The de-emphasized "Advanced" category — everything that is NOT one of the four
+ * core provider categories: the local Control-API key, the team key proxy,
+ * telephony, and the knowledge-Wiki provider. Each block keeps its own labelled
+ * sub-section header, so the zone reads as a clearly separated list of optional
+ * integrations rather than competing with the four primary categories.
+ */
+function AdvancedCategory() {
+  const t = useT();
+  return (
+    <div role="tabpanel">
+      <CategoryHero
+        icon={SlidersHorizontal}
+        title={t("apikeys_view.advanced_title")}
+        description={t("apikeys_view.advanced_desc")}
+      />
+      <div className="space-y-8">
+        {/* Jarvis access — the local Control-API key (lets local coding agents
+            drive Jarvis over HTTP) and the optional Team key proxy. Both are
+            credential / key-routing management, so they live with the provider
+            keys rather than in the behaviour-focused Settings view. */}
+        <JarvisApiGroup />
+        <TeamProxyGroup />
+        {/* Telephony — the former standalone screen, embedded as a section (own
+            data source /api/telephony/*). */}
+        <TelephonySection />
+        {/* Wiki — dedicated long-term-memory curator provider/model. Own data
+            source (/api/settings/wiki-provider). */}
+        <WikiProviderCard />
+        {/* Nominative-use trademark notice: provider/integration names and logos
+            belong to their owners and are shown only to identify what you connect
+            to. Backs the third-party logos used on plugin cards (see
+            TRADEMARK.md). */}
+        <p className="pt-2 text-[11px] leading-relaxed text-muted-foreground">
+          {t("apikeys_view.trademark_notice")}
+        </p>
       </div>
     </div>
   );
@@ -128,40 +375,33 @@ function TelephonySection() {
   );
 }
 
+// The card list for a single provider tier. The category label now lives in the
+// tab bar + the `CategoryHero` above, so this renders only the cards. If nobody
+// in the tier is active yet, a freshly saved key auto-activates itself — the
+// first configured provider wins automatically (`autoActivateOnSave`).
 function TierSection({
-  tier,
   providers,
   onChanged,
   onActivateOptimistic,
 }: {
-  tier: ProviderTier;
   providers: ProviderDescriptor[];
   onChanged: () => void;
   onActivateOptimistic: (tier: ProviderTier, id: string) => void;
 }) {
-  const t = useT();
-  const meta = makeTierMeta(t)[tier];
-  // Wenn niemand in dieser Tier aktiv ist, soll ein frisch gesetzter Key sich
-  // selbst aktivieren — der erste konfigurierte Provider gewinnt automatisch.
   const tierHasActive = providers.some((p) => p.active);
   return (
-    <section>
-      <h3 className="mb-3 inline-flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
-        {meta.icon} {meta.label}
-      </h3>
-      <ul className="space-y-3">
-        {providers.map((p) => (
-          <li key={p.id}>
-            <ProviderCard
-              descriptor={p}
-              onChanged={onChanged}
-              onActivateOptimistic={onActivateOptimistic}
-              autoActivateOnSave={!tierHasActive}
-            />
-          </li>
-        ))}
-      </ul>
-    </section>
+    <ul className="space-y-3">
+      {providers.map((p) => (
+        <li key={p.id}>
+          <ProviderCard
+            descriptor={p}
+            onChanged={onChanged}
+            onActivateOptimistic={onActivateOptimistic}
+            autoActivateOnSave={!tierHasActive}
+          />
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -372,11 +612,13 @@ function ProviderCard({
         </p>
       )}
 
-      {/* Model / voice picker. Switchable brain providers
-          pick a model from their own live catalog. TTS/STT share a single global
-          [tts]/[stt] block, so the picker only appears on the ACTIVE one and sets
-          the voice (Grok/Gemini/OpenAI/Google) or model (Cartesia/STT). */}
-      {((descriptor.tier === "brain" && descriptor.configured && isBrainSwitchable) ||
+      {/* Model / voice picker. Every switchable brain provider shows its model
+          picker — even before a key is set — because the catalog falls back to
+          the provider's curated family without a key (no network, no error), so
+          a model can be pre-picked. TTS/STT share a single global [tts]/[stt]
+          block, so the picker only WRITES from the ACTIVE provider and sets the
+          voice (Grok/Gemini/OpenAI/Google) or model (Cartesia/STT). */}
+      {((descriptor.tier === "brain" && isBrainSwitchable) ||
         ((descriptor.tier === "tts" || descriptor.tier === "stt") &&
           descriptor.active &&
           descriptor.configured)) && (
@@ -385,6 +627,17 @@ function ProviderCard({
           recommendedModel={descriptor.recommended_model}
         />
       )}
+
+      {/* TTS/STT model/voice is a single global value, so a configured-but-
+          inactive provider can't own it — make the capability discoverable with
+          a hint instead of silently hiding the picker. */}
+      {(descriptor.tier === "tts" || descriptor.tier === "stt") &&
+        descriptor.configured &&
+        !descriptor.active && (
+          <p className="text-[11px] text-muted-foreground">
+            {t("apikeys_view.model_picker_activate_hint")}
+          </p>
+        )}
 
       {/* Phase 3: a dedicated Computer-Use model, selectable per brain provider
           (defaults to the provider's main model — no automatic escalation). */}

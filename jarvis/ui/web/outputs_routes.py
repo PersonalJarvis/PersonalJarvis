@@ -13,6 +13,7 @@ even when the mission row is gone (DB pruned, recovery cleanup).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import mimetypes
 import os
@@ -30,6 +31,7 @@ from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.missions.kontrollierer.deliverable_paths import (
     is_nondeliverable_scratch,
 )
+from jarvis.missions.state_machine import MissionState, is_terminal
 from jarvis.platform import detect_platform
 from jarvis.ui.web.artifact_view import VIEW_CSP, render_artifact_html
 
@@ -243,6 +245,67 @@ _STATE_TO_STATUS: dict[str, str] = {
 }
 
 
+# Terminal mission-state *values* (string form). A re-run child counts as a
+# "live" continuation only while its state is NOT in this set. Single source of
+# truth = the state machine (mirrors ``missions_routes._TERMINAL_STATE_VALUES``).
+_TERMINAL_STATE_VALUES: frozenset[str] = frozenset(
+    s.value for s in MissionState if is_terminal(s)
+)
+
+
+async def _live_continuation_map(request: Request) -> dict[str, str]:
+    """Map a terminal parent-mission-id → its still-running re-run child id.
+
+    The Outputs "Continue"/"Restart" buttons re-dispatch a terminal mission's
+    prompt as a NEW mission linked back via ``parent_mission_id`` (stored only
+    in the child's ``MissionDispatched`` event payload — the ``missions`` header
+    has no parent column). A terminal source card stays re-runnable forever, so
+    without this signal it keeps offering "Continue" even after it has already
+    been continued and that child is actively running. The user then sees a
+    cancelled card sitting next to its own live continuation — both showing the
+    identical stored prompt — and cannot tell whether "the mission" is running
+    (forensic 2026-06-28, missions 019f0fa6 → 019f0fac).
+
+    Returns ``{parent_id: child_id}`` for every parent whose NEWEST re-run child
+    is still non-terminal (live). Best-effort: ``{}`` on a missing manager, an
+    absent ``mission_events`` table, or any DB error — the Outputs view stays
+    functional (mirrors ``_mission_status_lookup``). This is the read-side twin
+    of the rerun endpoint's own ``find_child_missions`` liveness guard.
+    """
+    mgr = getattr(request.app.state, "mission_manager", None)
+    if mgr is None:
+        return {}
+    try:
+        cur = await mgr.store.conn.execute(
+            """
+            SELECT e.mission_id, m.state, e.payload_json
+            FROM mission_events e
+            JOIN missions m ON m.id = e.mission_id
+            WHERE e.event_type = 'MissionDispatched'
+            ORDER BY m.created_ms DESC
+            """
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("outputs: continuation lookup failed: %s", exc)
+        return {}
+
+    out: dict[str, str] = {}
+    for child_id, child_state, payload_json in rows:
+        if str(child_state) in _TERMINAL_STATE_VALUES:
+            continue  # only a LIVE child resolves the run/not-run ambiguity
+        try:
+            parent = json.loads(payload_json or "{}").get("parent_mission_id")
+        except (ValueError, TypeError):
+            parent = None
+        if not parent:
+            continue
+        # Rows are newest-first; keep the first (newest) live child per parent.
+        out.setdefault(str(parent), str(child_id))
+    return out
+
+
 @router.get("")
 async def list_outputs(request: Request) -> dict[str, Any]:
     """List output directories newest-first.
@@ -286,6 +349,10 @@ async def list_outputs(request: Request) -> dict[str, Any]:
             all_mission_prefixes.append(prefix)
 
     mission_status = await _mission_status_lookup(request, all_mission_prefixes)
+    # Resolve, in one pass, which terminal missions already have a still-running
+    # re-run child — so a "Continue"/"Restart" card can be shown as live instead
+    # of lying with an idle, re-runnable affordance (forensic 2026-06-28).
+    continuation = await _live_continuation_map(request)
 
     for entry in entries:
         # Skip worktree-slug-only dirs (``<ts>__<utterance>__<short>``). Their
@@ -325,11 +392,21 @@ async def list_outputs(request: Request) -> dict[str, Any]:
             "duration_s": None,
             "github_url": None,
             "error": None,
+            # When this (terminal) mission has already been continued/restarted
+            # and that re-run is still live, the full id + slug of the running
+            # child — so the UI shows "running", not a redundant "Continue".
+            "active_child_id": None,
+            "active_child_slug": None,
         }
         if mission_row is not None:
             status = _STATE_TO_STATUS.get(str(mission_row["state"]), "unknown")
             summary["status"] = status
             summary["mission_id"] = mission_row.get("full_id")
+            full_id = mission_row.get("full_id")
+            child_id = continuation.get(str(full_id)) if full_id else None
+            if child_id:
+                summary["active_child_id"] = child_id
+                summary["active_child_slug"] = f"mission_{child_id[:13]}"
             summary["utterance"] = (
                 summary["utterance"] or mission_row.get("prompt")
             )

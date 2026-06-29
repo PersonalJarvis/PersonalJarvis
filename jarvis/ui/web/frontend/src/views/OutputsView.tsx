@@ -56,6 +56,47 @@ function PulseDot() {
   );
 }
 
+/**
+ * Shown on a terminal (cancelled / errored) card whose re-run continuation is
+ * still running. Replaces the "Continue"/"Restart" button so the card stops
+ * implying the work is idle and re-runnable — the truth is that it is alive in
+ * a linked child mission. Clicking jumps the selection to that live child card
+ * (forensic 2026-06-28: a cancelled card and its running continuation looked
+ * identical, so the user could not tell whether the mission was running).
+ */
+function ContinuationChip({
+  onJump,
+  size = "sm",
+}: {
+  onJump: () => void;
+  size?: "sm" | "md";
+}) {
+  const t = useT();
+  const sizing =
+    size === "sm" ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-1 text-[11px]";
+  const label = t("outputs_view.continuation_running");
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      data-testid="continuation-chip"
+      onClick={(e) => {
+        e.stopPropagation();
+        onJump();
+      }}
+      className={cn(
+        "inline-flex shrink-0 select-none items-center gap-1 rounded border font-semibold uppercase tracking-wide transition-colors",
+        "border-primary/40 bg-primary/10 text-primary hover:bg-primary/20",
+        sizing,
+      )}
+    >
+      <PulseDot />
+      <span>{label}</span>
+    </button>
+  );
+}
+
 const URL_REGEX = /(https?:\/\/[^\s)]+[^\s.,;:!?)])/g;
 
 /** MIME type carrying a mission reference between a card and the Jarvis dock.
@@ -152,6 +193,7 @@ export function OutputsView() {
                       isSelected={effectiveSlug === s.slug}
                       onSelect={() => setSelectedSlug(s.slug)}
                       onOpenDesktop={() => openOnDesktop(s.slug)}
+                      onJumpToSlug={setSelectedSlug}
                     />
                   </li>
                 ))}
@@ -162,7 +204,10 @@ export function OutputsView() {
 
         <section className="flex min-w-0 flex-1 flex-col">
           {effectiveSelected ? (
-            <SessionDetail meta={effectiveSelected} />
+            <SessionDetail
+              meta={effectiveSelected}
+              onJumpToSlug={setSelectedSlug}
+            />
           ) : (
             <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground">
               {t("outputs_view.select_session")}
@@ -179,11 +224,13 @@ function SessionRow({
   isSelected,
   onSelect,
   onOpenDesktop,
+  onJumpToSlug,
 }: {
   meta: OutputSummary;
   isSelected: boolean;
   onSelect: () => void;
   onOpenDesktop: () => void;
+  onJumpToSlug?: (slug: string) => void;
 }) {
   const t = useT();
   const cancel = useCancelMission();
@@ -192,6 +239,12 @@ function SessionRow({
   const ts = meta.completed_at ?? meta.started_at;
   const tsLabel = ts ? new Date(ts * 1000).toLocaleString() : "--";
   const canAbort = statusKey === "running" && !!meta.mission_id;
+  // A cancelled/errored card whose re-run continuation is still running: show
+  // a live "running" chip (jumps to the child) instead of a "Continue" button.
+  const liveChildSlug =
+    statusKey === "cancelled" || statusKey === "error"
+      ? meta.active_child_slug ?? null
+      : null;
 
   return (
     <button
@@ -232,19 +285,28 @@ function SessionRow({
                 }
               />
             )}
-            {statusKey === "cancelled" && meta.mission_id && (
-              <RerunButton
-                missionId={meta.mission_id}
-                action="continue"
+            {liveChildSlug ? (
+              <ContinuationChip
                 size="sm"
+                onJump={() => onJumpToSlug?.(liveChildSlug)}
               />
-            )}
-            {statusKey === "error" && meta.mission_id && (
-              <RerunButton
-                missionId={meta.mission_id}
-                action="restart"
-                size="sm"
-              />
+            ) : (
+              <>
+                {statusKey === "cancelled" && meta.mission_id && (
+                  <RerunButton
+                    missionId={meta.mission_id}
+                    action="continue"
+                    size="sm"
+                  />
+                )}
+                {statusKey === "error" && meta.mission_id && (
+                  <RerunButton
+                    missionId={meta.mission_id}
+                    action="restart"
+                    size="sm"
+                  />
+                )}
+              </>
             )}
             <span
               className={cn(
@@ -299,13 +361,23 @@ function SessionRow({
   );
 }
 
-function SessionDetail({ meta }: { meta: OutputSummary }) {
+function SessionDetail({
+  meta,
+  onJumpToSlug,
+}: {
+  meta: OutputSummary;
+  onJumpToSlug?: (slug: string) => void;
+}) {
   const t = useT();
   const cancel = useCancelMission();
   const plan = usePlanForOutput(meta.slug);
   const statusKey = meta.status ?? "unknown";
   const badgeClass = STATUS_BADGE[statusKey] ?? STATUS_BADGE.unknown;
   const canAbort = statusKey === "running" && !!meta.mission_id;
+  const liveChildSlug =
+    statusKey === "cancelled" || statusKey === "error"
+      ? meta.active_child_slug ?? null
+      : null;
   const hasPlan =
     !plan.isLoading && plan.data && plan.data.plan !== null;
   const isSingleShot =
@@ -354,19 +426,28 @@ function SessionDetail({ meta }: { meta: OutputSummary }) {
                 </span>
               </span>
             )}
-            {statusKey === "cancelled" && meta.mission_id && (
-              <RerunButton
-                missionId={meta.mission_id}
-                action="continue"
+            {liveChildSlug ? (
+              <ContinuationChip
                 size="md"
+                onJump={() => onJumpToSlug?.(liveChildSlug)}
               />
-            )}
-            {statusKey === "error" && meta.mission_id && (
-              <RerunButton
-                missionId={meta.mission_id}
-                action="restart"
-                size="md"
-              />
+            ) : (
+              <>
+                {statusKey === "cancelled" && meta.mission_id && (
+                  <RerunButton
+                    missionId={meta.mission_id}
+                    action="continue"
+                    size="md"
+                  />
+                )}
+                {statusKey === "error" && meta.mission_id && (
+                  <RerunButton
+                    missionId={meta.mission_id}
+                    action="restart"
+                    size="md"
+                  />
+                )}
+              </>
             )}
             {meta.github_url && (
               <a

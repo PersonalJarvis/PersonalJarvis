@@ -81,7 +81,15 @@ class SileroEndpointer:
         # a noisy room and the turn drags to the max_utterance hard cap.
         # See test_brief_speaker_bleed_spikes_do_not_reset_silence_timer.
         self._cancel_hysteresis_frames = max(1, cancel_hysteresis_ms // 32)
-        self._model = None  # lazy — PyTorch import deferred until needed
+        # Torch-free Silero VAD: the bundled ONNX model is run directly via
+        # onnxruntime (already warm from the wake model) with numpy-managed
+        # recurrent state, so the VAD load NEVER imports torch. The torch
+        # ``silero_vad`` package import was the dominant voice-boot cost
+        # (vad-load 6-16 s — torch starved in the boot storm); an onnxruntime
+        # session create is ~0.1-0.5 s. Lazy — created on first use.
+        self._session = None
+        self._vad_state = None  # np.ndarray [2,1,128] float32, carried per frame
+        self._vad_context = None  # np.ndarray [1,64] float32, carried per frame
 
         self._min_speech_rms = min_speech_rms
         self._relative_silence_rms_ratio = relative_silence_rms_ratio
@@ -165,17 +173,58 @@ class SileroEndpointer:
         return self._silence_frames + self._extra_silence_frames
 
     def _ensure_model(self) -> None:
-        if self._model is None:
-            from silero_vad import load_silero_vad
-            self._model = load_silero_vad()
+        if self._session is not None:
+            return
+        # Locate the bundled Silero ONNX model WITHOUT importing the silero_vad
+        # package (its __init__ -> model.py does ``import torch`` at module
+        # level, which is exactly the multi-second cost we are avoiding).
+        # ``find_spec`` resolves the install path without executing the package.
+        import importlib.util
+        import os
+
+        import onnxruntime  # already warm: the wake model imported it
+
+        spec = importlib.util.find_spec("silero_vad")
+        if spec is None or spec.origin is None:
+            raise RuntimeError("silero_vad package not installed")
+        model_path = os.path.join(
+            os.path.dirname(spec.origin), "data", "silero_vad.onnx"
+        )
+        opts = onnxruntime.SessionOptions()
+        opts.inter_op_num_threads = 1
+        opts.intra_op_num_threads = 1
+        self._session = onnxruntime.InferenceSession(
+            model_path, providers=["CPUExecutionProvider"], sess_options=opts
+        )
+        # Recurrent state + 64-sample context, mirroring silero_vad.OnnxWrapper.
+        self._vad_state = np.zeros((2, 1, 128), dtype=np.float32)
+        self._vad_context = np.zeros((1, 64), dtype=np.float32)
 
     def _prob(self, frame: np.ndarray) -> float:
-        """Per-frame speech probability (must be exactly 512 float32 samples)."""
-        import torch
+        """Per-frame speech probability (must be exactly 512 float32 samples).
+
+        Torch-free: runs the bundled Silero ONNX model via onnxruntime with
+        numpy-managed recurrent state + 64-sample context. This mirrors
+        ``silero_vad.OnnxWrapper.__call__`` exactly (concat context, run, keep
+        the last 64 samples as the next context, carry the returned state), so
+        the probabilities match the torch model bit-for-bit within float
+        tolerance while never importing torch on the voice-boot path.
+        """
         self._ensure_model()
-        assert self._model is not None
-        t = torch.from_numpy(frame).unsqueeze(0)
-        return float(self._model(t, VAD_SAMPLE_RATE).item())
+        assert self._session is not None
+        x = np.ascontiguousarray(frame, dtype=np.float32).reshape(1, -1)  # [1,512]
+        x_full = np.concatenate([self._vad_context, x], axis=1)  # [1,576]
+        out, new_state = self._session.run(
+            None,
+            {
+                "input": x_full,
+                "state": self._vad_state,
+                "sr": np.array(VAD_SAMPLE_RATE, dtype=np.int64),
+            },
+        )
+        self._vad_state = new_state
+        self._vad_context = x_full[:, -64:]
+        return float(np.asarray(out).reshape(-1)[0])
 
     async def utterances(
         self, chunks: AsyncIterator[AudioChunk]

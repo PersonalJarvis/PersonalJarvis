@@ -316,6 +316,15 @@ async def run_provider_test(
     builder = make_stt or _default_make_stt
     try:
         inst = builder(cfg, provider)
+    except (ImportError, ModuleNotFoundError):
+        # M5: the local faster-whisper STT needs the [desktop] extra. On a headless
+        # base install the import raises — that is "not installed", an actionable
+        # amber chip, NOT a red "integration bug".
+        return ProviderTestResult(
+            provider,
+            NOT_CONFIGURED,
+            "Local STT not installed — add the [desktop] extra (pip install -e '.[desktop]').",
+        )
     except Exception as exc:  # noqa: BLE001
         detail = f"{type(exc).__name__}: {exc}"
         return ProviderTestResult(provider, classify_provider_error(detail), str(exc))
