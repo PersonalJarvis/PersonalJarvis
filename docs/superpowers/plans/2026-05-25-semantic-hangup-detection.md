@@ -15,7 +15,7 @@
 - **Two voice surfaces.** Microphone: `jarvis/speech/pipeline.py`. Telephony: `jarvis/telephony/session.py`. Both consume the *same* brain (`build_default_brain(tier="router")`), which loads `jarvis/brain/JARVIS_PERSONA.md` into its system prompt via `jarvis/brain/persona_loader.py:load_persona_prompt()`. Only the **fenced code block** after the `## System-Prompt` line in that `.md` is injected — edits outside the fence are documentation only.
 - **Today's hang-up paths.**
   1. Pre-brain regex `HANGUP_RE` matched against the transcript (`pipeline.py:2224`, telephony `session.py:231`). Literal only.
-  2. Post-brain exact-string match against `"goodbye, ruben"` / `"auf wiedersehen, ruben"` (`pipeline.py:2351` streamed, `pipeline.py:2432` non-streamed). Fragile — any paraphrase breaks it. Telephony has no brain-signal path.
+  2. Post-brain exact-string match against `"goodbye, alex"` / `"auf wiedersehen, alex"` (`pipeline.py:2351` streamed, `pipeline.py:2432` non-streamed). Fragile — any paraphrase breaks it. Telephony has no brain-signal path.
 - **`scrub_for_voice`** (`jarvis/brain/output_filter.py:334`) is the regex-only TTS sanitizer every spoken path runs through. Adding the sentinel-strip here is defense-in-depth so the token can never be spoken even if a detection site is missed. **It runs BEFORE we read the hang-up signal in some paths — so hang-up detection must read the RAW brain response, before scrub.**
 - **Hang-up reason:** reuse `HANGUP_VOICE_PATTERN` (`jarvis/sessions/constants.py:33`) for the mic path (its docstring already covers "inferred from a closing intent") and the existing `"hangup_phrase"` for telephony. **No new enum value** → the five-layer parity test (`tests/unit/sessions/test_hangup_reason_parity.py`) stays untouched and green.
 - **Test harnesses to reuse:** `tests/unit/speech/test_turn_taking.py` has `_make_pipeline(...)` (builds a `SpeechPipeline` via `__new__` with stubbed `_brain_with_ack` + `_speak`, `_config=None` so `_streaming_enabled()` is False → the non-streaming path runs), `FakeSTT`, `SlowPlayer`. `tests/unit/telephony/test_session.py` has `_make_session(...)`, `_drive_one_utterance(...)`, `_Sink`. Fakes `FakeBrain`/`FakeTTS` are in `tests/fakes/fake_telephony_stack.py` (`FakeTTS.calls` records every `(text, language_code)` synthesized — use it to prove the sentinel never reaches TTS).
@@ -119,14 +119,14 @@ def test_hangup_re_ignores_ambiguous_and_normal_speech(phrase: str) -> None:
 
 
 def test_contains_end_signal_detects_token() -> None:
-    assert contains_end_signal("Bis später, Ruben. [[END_CALL]]") is True
-    assert contains_end_signal("Bis später, Ruben.") is False
+    assert contains_end_signal("Bis später, Alex. [[END_CALL]]") is True
+    assert contains_end_signal("Bis später, Alex.") is False
     assert contains_end_signal("") is False
     assert contains_end_signal(None) is False  # type: ignore[arg-type]
 
 
 def test_strip_end_signal_removes_token_and_trims() -> None:
-    assert strip_end_signal("Bis später, Ruben. [[END_CALL]]") == "Bis später, Ruben."
+    assert strip_end_signal("Bis später, Alex. [[END_CALL]]") == "Bis später, Alex."
     assert strip_end_signal("[[END_CALL]]") == ""
     assert strip_end_signal("Auf Wiedersehen.") == "Auf Wiedersehen."
 
@@ -138,10 +138,10 @@ def test_end_call_signal_is_the_documented_token() -> None:
 @pytest.mark.parametrize(
     "phrase",
     [
-        "goodbye, ruben",
-        "goodbye ruben",
-        "auf wiedersehen, ruben",
-        "auf wiedersehen ruben",
+        "goodbye, alex",
+        "goodbye alex",
+        "auf wiedersehen, alex",
+        "auf wiedersehen alex",
         "goodbye, sir",
         "goodbye sir",
     ],
@@ -151,8 +151,8 @@ def test_is_legacy_farewell_matches_old_exact_phrases(phrase: str) -> None:
 
 
 def test_is_legacy_farewell_rejects_other_text() -> None:
-    assert is_legacy_farewell("auf wiedersehen ruben war mir ein vergnügen") is False
-    assert is_legacy_farewell("hallo ruben") is False
+    assert is_legacy_farewell("auf wiedersehen alex war mir ein vergnügen") is False
+    assert is_legacy_farewell("hallo alex") is False
     assert is_legacy_farewell("") is False
 ```
 
@@ -188,7 +188,7 @@ This module unifies both:
    may phrase the farewell naturally instead of emitting a magic string.
 
 3. ``is_legacy_farewell`` — backward compatibility for the old exact phrases
-   ("auf wiedersehen, ruben" / "goodbye, ruben"), so a brain instance still
+   ("auf wiedersehen, alex" / "goodbye, alex"), so a brain instance still
    running the previous persona contract continues to hang up during rollout.
 
 Standard-library only (``re``). It must stay free of ``sounddevice`` and any
@@ -281,10 +281,10 @@ def strip_end_signal(text: str | None) -> str:
 # --- Legacy exact-farewell fallback (backward compatibility) --------------
 LEGACY_FAREWELL_PHRASES: Final[frozenset[str]] = frozenset(
     {
-        "goodbye, ruben",
-        "goodbye ruben",
-        "auf wiedersehen, ruben",
-        "auf wiedersehen ruben",
+        "goodbye, alex",
+        "goodbye alex",
+        "auf wiedersehen, alex",
+        "auf wiedersehen alex",
         "goodbye, sir",
         "goodbye sir",
     }
@@ -338,9 +338,9 @@ Append to `tests/unit/brain/test_output_filter.py` (module already imports `scru
 def test_scrub_strips_end_call_sentinel() -> None:
     from jarvis.speech.hangup import END_CALL_SIGNAL
 
-    result = scrub_for_voice(f"Bis später, Ruben. {END_CALL_SIGNAL}", language="de")
+    result = scrub_for_voice(f"Bis später, Alex. {END_CALL_SIGNAL}", language="de")
     assert END_CALL_SIGNAL not in result.cleaned
-    assert result.cleaned.strip() == "Bis später, Ruben."
+    assert result.cleaned.strip() == "Bis später, Alex."
     assert "stripped_end_signal" in result.actions
 
 
@@ -428,22 +428,22 @@ Expected: FAIL — `[[END_CALL]]` not yet in the persona.
 In `jarvis/brain/JARVIS_PERSONA.md`, **inside the fenced `## System-Prompt` block**, replace this exact text (currently lines 95-98):
 
 ```
-- When the conversation ends or Ruben dismisses you, reply with
+- When the conversation ends or Alex dismisses you, reply with
   EXACTLY one of (depending on his language):
-  EN: Goodbye, Ruben.
-  DE: Auf Wiedersehen, Ruben.
+  EN: Goodbye, Alex.
+  DE: Auf Wiedersehen, Alex.
 ```
 
 with:
 
 ```
-- ENDING THE CALL — only when Ruben clearly wants to end the conversation
+- ENDING THE CALL — only when Alex clearly wants to end the conversation
   (an explicit goodbye, a dismissal such as "you can go now" / "kannst du
   jetzt gehen" / "das war's für heute", or telling you to hang up): say a
   short, natural farewell in HIS language AND append the control token
   [[END_CALL]] as the very last characters of your reply.
-    EN: "Goodbye, Ruben. [[END_CALL]]" / "Until next time, Ruben. [[END_CALL]]"
-    DE: "Auf Wiedersehen, Ruben. [[END_CALL]]" / "Bis später, Ruben. [[END_CALL]]"
+    EN: "Goodbye, Alex. [[END_CALL]]" / "Until next time, Alex. [[END_CALL]]"
+    DE: "Auf Wiedersehen, Alex. [[END_CALL]]" / "Bis später, Alex. [[END_CALL]]"
   The token is silent — it is stripped before anything is spoken and only
   tells the system to hang up. If you are NOT sure he wants to end (he merely
   paused, is thinking, or just thanked you), do NOT append the token and do
@@ -456,8 +456,8 @@ Then update the documentation prose **outside** the fence so it stays accurate. 
 ## Hangup-Signal (Pipeline-Contract)
 
 Die Pipeline erkennt Hangup wenn die Brain-Antwort (normalisiert) equals einer von:
-- `"goodbye, ruben"` (englisch)
-- `"auf wiedersehen, ruben"` (deutsch)
+- `"goodbye, alex"` (englisch)
+- `"auf wiedersehen, alex"` (deutsch)
 
 Der Brain MUSS exakt eine dieser beiden Phrasen ausgeben um aufzulegen — sprachabhängig
 entsprechend der User-Sprache.
@@ -473,14 +473,14 @@ The pipeline hangs up when the brain response contains the control sentinel
 speaks a natural farewell and appends the token; `scrub_for_voice` strips it
 before TTS. Conservative bias: emit the token only on a clear intent to end.
 
-Backward compatibility: the old exact phrases `"goodbye, ruben"` /
-`"auf wiedersehen, ruben"` still trigger a hangup via `is_legacy_farewell`.
+Backward compatibility: the old exact phrases `"goodbye, alex"` /
+`"auf wiedersehen, alex"` still trigger a hangup via `is_legacy_farewell`.
 ```
 
 And update the cross-reference line (currently line 133):
 
 ```
-- Hangup-Matcher: `pipeline.py` — normalized equals gegen `"goodbye, ruben"` oder `"auf wiedersehen, ruben"`
+- Hangup-Matcher: `pipeline.py` — normalized equals gegen `"goodbye, alex"` oder `"auf wiedersehen, alex"`
 ```
 
 to:
@@ -520,14 +520,14 @@ async def test_brain_end_call_sentinel_hangs_up_and_is_not_spoken() -> None:
     # command, so the brain decides — and signals end via the sentinel.
     pipe = _make_pipeline(
         FakeSTT(text="Ich glaube wir sind durch"),
-        brain_response="Bis später, Ruben. [[END_CALL]]",
+        brain_response="Bis später, Alex. [[END_CALL]]",
         continue_listening_after_response=True,  # prove hangup overrides stay-open
     )
 
     keep_session = await pipe._handle_utterance(b"\x01\x00" * 1024)
 
     assert keep_session is False
-    assert pipe._spoken == [("Bis später, Ruben.", "de")]  # sentinel stripped
+    assert pipe._spoken == [("Bis später, Alex.", "de")]  # sentinel stripped
     assert pipe._session_end_reason == "voice_pattern"
     assert pipe._hangup_event.is_set()
 
@@ -539,7 +539,7 @@ async def test_polite_thanks_no_longer_auto_hangs_up() -> None:
     # sentinel) keeps the conversation open. Realizes "stay on when unsure".
     pipe = _make_pipeline(
         FakeSTT(text="Vielen Dank"),
-        brain_response="Gern geschehen, Ruben.",
+        brain_response="Gern geschehen, Alex.",
         continue_listening_after_response=True,
     )
 
@@ -569,7 +569,7 @@ async def test_brain_streaming_strips_sentinel_but_keeps_it_in_full_text() -> No
 
     class _StreamBrain:
         async def generate_stream(self, _text: str, **_kw):
-            for ch in ["Alles erledigt. ", "Bis später, Ruben. ", "[[END_CALL]]"]:
+            for ch in ["Alles erledigt. ", "Bis später, Alex. ", "[[END_CALL]]"]:
                 yield ch
 
     pipe._brain = _StreamBrain()
@@ -616,8 +616,8 @@ In `_handle_utterance`, replace this exact block (currently `pipeline.py:2350-23
 ```python
             normalized = response.strip().rstrip("!.").strip().lower()
             is_hangup = normalized in (
-                "goodbye, ruben", "goodbye ruben",
-                "auf wiedersehen, ruben", "auf wiedersehen ruben",
+                "goodbye, alex", "goodbye alex",
+                "auf wiedersehen, alex", "auf wiedersehen alex",
                 "goodbye, sir", "goodbye sir",
             )
 ```
@@ -654,11 +654,11 @@ Then remove the now-redundant recomputation. Replace this exact block (currently
 
 ```python
         # Brain-basiertes Hangup: Claude antwortet bei Hangup-Intent mit exakt
-        # "Goodbye, Ruben." (EN) oder "Auf Wiedersehen, Ruben." (DE).
+        # "Goodbye, Alex." (EN) oder "Auf Wiedersehen, Alex." (DE).
         normalized = response.strip().rstrip("!.").strip().lower()
         is_hangup = normalized in (
-            "goodbye, ruben", "goodbye ruben",
-            "auf wiedersehen, ruben", "auf wiedersehen ruben",
+            "goodbye, alex", "goodbye alex",
+            "auf wiedersehen, alex", "auf wiedersehen alex",
             "goodbye, sir", "goodbye sir",  # Backward-Compat
         )
         # Jarvis spricht — Orb-Mode wechselt zur Speak-Wellenform
@@ -699,7 +699,7 @@ Append to `tests/unit/telephony/test_session.py` (reuses `_make_session`, `_driv
 ```python
 async def test_brain_end_call_sentinel_ends_call_after_speaking():
     sink = _Sink()
-    brain = FakeBrain("Auf Wiedersehen, Ruben. [[END_CALL]]")
+    brain = FakeBrain("Auf Wiedersehen, Alex. [[END_CALL]]")
     tts = FakeTTS(ms_per_char=2)
     session = _make_session(
         sink,

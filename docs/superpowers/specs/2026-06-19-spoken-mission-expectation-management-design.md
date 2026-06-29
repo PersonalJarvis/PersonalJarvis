@@ -6,8 +6,8 @@
 
 ## Problem
 
-When a voice/chat turn force-spawns a background sub-agent mission (`spawn_worker`
-/ OpenClaw), the user hears exactly one tailored opening line and then **silence**.
+When a voice/chat turn force-spawns a background Jarvis-Agent mission (`spawn_worker`
+/ Jarvis-Agents), the user hears exactly one tailored opening line and then **silence**.
 The only follow-up is a single hard-coded German phrase `"Bin noch dran."` emitted
 once at 90 s; otherwise nothing until the result. To a voice-first user talking to
 Jarvis like a voice assistant ("Hey Google" style), that long silence reads as a

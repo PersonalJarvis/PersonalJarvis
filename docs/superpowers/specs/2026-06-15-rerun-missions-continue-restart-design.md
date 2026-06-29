@@ -1,4 +1,4 @@
-# Re-run sub-agent missions — Continue (cancelled) / Restart (failed)
+# Re-run Jarvis-Agent missions — Continue (cancelled) / Restart (failed)
 
 **Date:** 2026-06-15
 **Status:** Design approved, pending spec review
@@ -6,7 +6,7 @@
 
 ## Problem
 
-The sub-agent **Outputs** view shows each mission as a card with a status badge
+The Jarvis-Agent **Outputs** view shows each mission as a card with a status badge
 (`CANCELLED`, `error`, `success`, `running`). Once a mission is cancelled by the
 user or fails (critic-loop exhaustion, crash recovery, task error, timeout),
 there is no way to run it again. The user must re-type the original request from

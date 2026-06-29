@@ -4,7 +4,7 @@ slug: adr-021-web-search
 diataxis: adr
 status: active
 date: 2026-05-27
-owner: harald
+owner: sam
 phase: skills
 audience: developer
 y_statement: >
@@ -33,7 +33,7 @@ y_statement: >
 
 The router-tier brain needs a cheap, cloud-only way to answer factual
 "what is X / who is Y / when did Z happen" questions without spawning a
-full OpenClaw mission. A dedicated `web_search` skill — backed by
+full Jarvis-Agent mission. A dedicated `web_search` skill — backed by
 Gemini's grounded-search mode — fills that gap.
 
 Two architectural pressures shaped the design:

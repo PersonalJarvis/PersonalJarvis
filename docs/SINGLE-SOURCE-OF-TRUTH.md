@@ -6,7 +6,7 @@
 > presentation, or explainer). Synthesized from `CLAUDE.md`, the cloud-first charter, the
 > architecture contracts, and the bug register.
 >
-> **Status:** Phases 0–7 live, plus Awareness (A0–A5), Knowledge Wiki, OpenClaw bridge
+> **Status:** Phases 0–7 live, plus Awareness (A0–A5), Knowledge Wiki, Jarvis-Agents bridge
 > (waves 1+4), Ack-Brain, and the CLI catalog. Cross-platform (Linux/macOS/Windows)
 > migration in progress.
 
@@ -18,7 +18,7 @@ Personal Jarvis is a **voice-driven meta-orchestrator**. It is *not* a classical
 assistant that answers questions from a fixed skill list. The core pattern is a
 **Supervisor–Agent architecture**: a lightweight, fast "Talker" brain holds the
 conversation, and the moment real work appears, it dispatches that work to interchangeable
-**harnesses** — an OpenClaw subprocess, a Codex CLI, Open Interpreter, a Python script, or
+**harnesses** — a Jarvis-Agents subprocess, a Codex CLI, Open Interpreter, a Python script, or
 a remote MCP server — which execute in the background.
 
 The voice layer is just the interface. The intelligence is in the orchestration: deciding
@@ -156,7 +156,7 @@ checks. Bypassing it skips all three.
 ## 7. Router Discipline (a pure dispatcher)
 
 The router-tier brain is a **pure dispatcher**, not an actor. Its entire tool surface is the
-`ROUTER_TOOLS` frozenset. Anything outside that set is delegated to OpenClaw via
+`ROUTER_TOOLS` frozenset. Anything outside that set is delegated to Jarvis-Agents via
 `spawn_openclaw`.
 
 A force-spawn heuristic decides when to dispatch heavy work:
@@ -165,7 +165,7 @@ A force-spawn heuristic decides when to dispatch heavy work:
 - **Action verb** (read/build/install/open/do/show + repair words) → spawn.
 - **External-system marker** (PR / repo / GitHub / issue) → spawn.
 
-**The Sub-Jarvis tier was deleted (Welle 4).** Only `"router"` remains. Re-introducing a
+**The Jarvis-Agent tier was deleted (Welle 4).** Only `"router"` remains. Re-introducing a
 `SUB_TOOLS` set, or putting any spawn tool (`spawn-openclaw`, `dispatch-with-review`,
 `run-skill`) into a *worker* tool set, breaks the recursion guard — a worker would be able to
 spawn its own supervisor, causing an infinite loop. This is anti-pattern AP-5/AP-14.
@@ -183,7 +183,7 @@ Termin, Kalender. Hyphenated compounds are preserved (`Browser-Provider` stays i
 
 Two TTS paths are wired through the scrubber: the main utterance path
 (`_handle_utterance → _speak → tts.synthesize`) and the announcement path
-(`_on_announcement` — skill/sub-agent announcements and the OpenClaw `summary_de` readback).
+(`_on_announcement` — skill/Jarvis-Agent announcements and the Jarvis-Agents `summary_de` readback).
 
 ---
 
@@ -219,7 +219,7 @@ Latency budgets are SLO-gated and regressions fail CI: p95 wake→ACK < 1.2 s, i
 | **7 Self-Mod** | Live | Config audit/writer/registry + three router tools (`list_mutable_settings`, `get_config_value`, `set_config_value`). Skill-author spawn pending registration. |
 | **Awareness A0–A5** | Live | State, story, salience, working-set, episode, recall-store, watchers, probes. Tools `awareness-snapshot`, `awareness-recall`. Hard rule: never on the voice critical path. |
 | **Knowledge Wiki** | Live | Curator, atomic writer, page repository, session rollup, voice bridge, scheduler. Tools `wiki-recall`, `wiki-page-read`, `wiki-ingest`. Long-term memory tier. |
-| **OpenClaw bridge** | Waves 1+4 | Harness contract (AD-1..21). Live-bridge-as-default (Welle 2) + full live mode (Welle 3) open. |
+| **Jarvis-Agents bridge** | Waves 1+4 | Harness contract (AD-1..21). Live-bridge-as-default (Welle 2) + full live mode (Welle 3) open. |
 | **Ack-Brain** | Live | Sub-second butler ACK before the deep brain replies. |
 | **CLI catalog + terminal** | Live | CLI discovery/install/probe + ConPTY terminal view. Tools `cli-tools`, `spawn-cli-worker`. |
 
@@ -301,7 +301,7 @@ A condensed selection of the codified "if you do X you get bug Y" rules:
 - **Hardcode a Claude/Anthropic client** → breaks `cfg.brain.primary` (AP-6).
 - **Write `jarvis.toml` without lock + tempfile + BOM handling** → corrupted TOML, boot fails (AP-7).
 - **Add an LLM call inside `scrub_for_voice`** → TTS latency tank (AP-11).
-- **Re-add a Sub-Jarvis tier** → breaks the OpenClaw-bridge contract (AP-14).
+- **Re-add a Jarvis-Agent tier** → breaks the Jarvis-Agents-bridge contract (AP-14).
 - **Auto-activate generated skills** → lateral-movement vector; skills must stay `draft` (AP-15).
 - **Run Jarvis as a Windows Service** → the SYSTEM user has no mic/headset access (AP-17).
 - **Propagate a subscriber exception from the EventBus** → one handler kills the pipeline (AP-18).

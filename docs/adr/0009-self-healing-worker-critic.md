@@ -3,7 +3,7 @@ title: "ADR-0009: Self-Healing Worker-Critic"
 slug: adr-0009-self-healing-worker-critic
 diataxis: adr
 status: active
-owner: harald
+owner: sam
 last_reviewed: 2026-04-29
 phase: 6
 audience: developer
@@ -16,7 +16,7 @@ audience: developer
 
 ## Context
 
-Phases 0-5 deliver Voice→Brain→Tool/Harness, but every tool call is a single shot: if it fails, the user hears an error message and has to try again. The master-plan goal "Sub-Jarvis as Kontrollierer with critic loop" (see `Jarvis-Behavior/persona-delegation-mandate.md`) cannot be fulfilled with the current `SubJarvisManager` (Phase 5) — it spawns a sub-brain, but without verification, without retry, without worktree isolation, and writes directly into the user's working tree.
+Phases 0-5 deliver Voice→Brain→Tool/Harness, but every tool call is a single shot: if it fails, the user hears an error message and has to try again. The master-plan goal "Jarvis-Agent as Kontrollierer with critic loop" (see `Jarvis-Behavior/persona-delegation-mandate.md`) cannot be fulfilled with the current `SubJarvisManager` (Phase 5) — it spawns a sub-brain, but without verification, without retry, without worktree isolation, and writes directly into the user's working tree.
 
 The research document `SubAgentenSt/Unbenanntes Dokument (4).md` (to be moved to `docs/research/self-healing-architecture.md`) distills six converging pattern lines (Reflexion, Self-Refine, CRITIC, Constitutional AI, Aider Architect/Editor, OpenHands Action/Observation) into a single viable architecture for a single-user Windows orchestrator. Phase 6 implements this architecture.
 
@@ -34,6 +34,24 @@ Every worker step is a pair `(Action, Observation)`:
 - **Observation** = typed Pydantic response produced by the runtime (`CommandOutput`, `FileEdit`, `Error`).
 
 The LLM may **never formulate an Observation itself** — only the runtime module that executed the Action signs the Observation. The voice-readback path (the main Jarvis telling the user the result) reads back **only Observations**, never LLM narrative ("I did X…"). Violating this rule = BLOCKER in code review.
+
+> **Amendment 2026-06-28 — natural surface form of a signed Observation.**
+> The invariant binds the *content* of an Observation, not its exact spoken
+> wording. A bounded flash-LLM (`jarvis/voice/contextual_readback.py`) MAY render
+> the already-signed `summary_de`/`summary_en` into a more natural spoken sentence
+> on the readback path, under two hard guards: (a) it is given ONLY the signed
+> line as ground truth and instructed to rephrase, never invent; (b) an
+> `honesty_bound` check rejects any output whose content words do not sufficiently
+> overlap the signed line (no new noun/number/claim), with the signed line as the
+> instant fallback on any miss. The Observation is still authored and signed by
+> the runtime/Kontrollierer; the LLM only chooses words for an existing,
+> verified fact. It may NOT author a failure/timeout Observation's *facts*, and
+> it never sees `correction_instruction`. This satisfies the maintainer's
+> "no fixed stock phrases" mandate without weakening the no-hallucinated-execution
+> guarantee. Wiring: `MissionAnnouncer`/`MissionVoiceListener` (production +
+> fallback readback paths). Regression guards in
+> `tests/missions/test_voice_announcer.py` (rephrase-faithful + fallback-to-signed)
+> and `tests/unit/voice/test_contextual_readback.py`.
 
 ### 2. Worker-Critic-Loop with MAX_CRITIC_LOOPS=3
 
@@ -89,9 +107,9 @@ Heuristic: a mission is Phase-6-eligible if the router classifier returns `code`
 - **MAX_CRITIC_LOOPS as config:** abused forever as a tuning knob ("just bump it to 5 briefly for this one problem"). Cost discipline requires hardcoding. **Rejected.**
 - **Single-critic pass (no loop):** the Self-Refine paper shows that even one iteration yields ~20%; the Reflexion paper shows 3 iterations are the cost/value optimum. A single-pass critic is throwaway money. **Rejected.**
 - **Docker-per-worker (OpenHands pattern):** 30-60s cold start destroys the voice UX. Single-tenant, no security gain over Job Object + worktree. **Rejected.**
-- **Redis Streams / NATS / Temporal as the event backbone:** an additional daemon lifecycle that Ruben would have to maintain. SQLite WAL delivers 95% of the value at 0% ops cost. Escape hatch documented: if the main Jarvis and the Kontrollierer ever move into separate processes, swap `EventBus.publish` -> `redis.xadd`. **Rejected for now.**
+- **Redis Streams / NATS / Temporal as the event backbone:** an additional daemon lifecycle that Alex would have to maintain. SQLite WAL delivers 95% of the value at 0% ops cost. Escape hatch documented: if the main Jarvis and the Kontrollierer ever move into separate processes, swap `EventBus.publish` -> `redis.xadd`. **Rejected for now.**
 - **Cross-model critic as default** (Worker = Claude, Critic = Codex/GPT): the multi-agent-debate literature supports it, but it doubles auth flows + cost trackers. **Optional via config flag, not default.**
-- **Phase 6 overrides Phase 5:** unnecessary risk concentration. Phase 5 works for the smalltalk-tier Sub-Jarvis (see ADR-0011); Phase 6 is additive for multi-step missions. **Rejected.**
+- **Phase 6 overrides Phase 5:** unnecessary risk concentration. Phase 5 works for the smalltalk-tier Jarvis-Agent (see ADR-0011); Phase 6 is additive for multi-step missions. **Rejected.**
 
 ## References
 
@@ -99,7 +117,7 @@ Heuristic: a mission is Phase-6-eligible if the router classifier returns `code`
 - Phase-6 plan: `docs/phase6-plan.md` (TBD).
 - Prompt chain: `docs/phase6-prompt-chain.md` (skeleton created).
 - Persona mandate: `Jarvis-Behavior/persona-delegation-mandate.md` §"Phase 4 — Multi-Step-Missions".
-- Master plan: `C:\Users\Administrator\.claude\plans\also-er-muss-auch-lexical-pond.md` §"Phase 6 — Self-Healing".
+- Master plan: `<USER_HOME>\.claude\plans\also-er-muss-auch-lexical-pond.md` §"Phase 6 — Self-Healing".
 - Existing code (NOT to be changed): `jarvis/brain/sub_jarvis.py:SubJarvisManager`.
 - Planned new modules: `jarvis/missions/{manager,state_machine,kontrollierer,workers,critic,isolation}/*`.
 - Subagents for the Phase-6 implementation: `.claude/agents/jarvis-{architect-explorer,test-runner,critic-design-reviewer}.md`.

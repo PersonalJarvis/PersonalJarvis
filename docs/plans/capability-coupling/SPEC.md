@@ -3,7 +3,7 @@
 **Status:** draft — 2026-05-20
 **Goal:** Jarvis must only confirm what it can actually do. Unknown tasks → deterministic "I cannot (yet) do that." Solution must be extensible: registering a new capability (tool, MCP, harness) must extend the truthful surface with zero touches to brain / gate / filter logic.
 
-**Doctrine reference:** PHILOSOPHY.md graceful-no-op rule; AD-4 (Critic validates Risk-Tier before OpenClaw); new ADR-0017 to be authored by Agent E.
+**Doctrine reference:** PHILOSOPHY.md graceful-no-op rule; AD-4 (Critic validates Risk-Tier before Jarvis-Agents); new ADR-0017 to be authored by Agent E.
 
 ---
 
@@ -65,7 +65,7 @@ if registry.has_action_intent(normalized) and registry.resolve_intent(normalized
 New mode `UNSUPPORTED` is added to `LocalActionMode`; manager.py routes it directly to TTS, skipping brain dispatch.
 
 **(b) Mirror gate in `jarvis/brain/manager.py`** — `_should_force_openclaw` already runs verb-classification. Add a sibling `_capability_resolves(text) -> bool` check. If `has_action_intent AND not _capability_resolves AND not _is_smalltalk`:
-- Skip both brain and openclaw spawn.
+- Skip both brain and Jarvis-Agents spawn.
 - Emit `_unsupported_response(text)` via the same TTS path as a normal short reply.
 
 Response phrasing (deterministic, no LLM):
@@ -89,7 +89,7 @@ The Ack-Brain is allowed only: (a) acoustic acknowledgment ("mhm", "verstanden" 
 - The Worker output is parsed for tool-call evidence (`tool_calls` array or equivalent harness signal).
 - If the mission's resolved capability has `requires_evidence=True` and no tool-call evidence is present → `CriticVerdict.success=False`, `reason="capability_not_executed"`.
 - `summary_de` must be derived from the **tool-call evidence**, not the worker's text claim. New helper `summarise_from_tool_calls(calls) -> str` in `jarvis/missions/critic/summary.py`.
-- For OpenClaw missions that lack tool-call telemetry (current Wave 2 mock state), Critic must default to `success=False` for `requires_evidence=True` capabilities until Wave 3 lands proper tool-call streaming.
+- For Jarvis-Agents missions that lack tool-call telemetry (current Wave 2 mock state), Critic must default to `success=False` for `requires_evidence=True` capabilities until Wave 3 lands proper tool-call streaming.
 
 ---
 
@@ -121,7 +121,7 @@ Adding a new capability later (e.g. an MCP server for Gmail):
 ## Hard negatives (acceptance criteria for Agent E)
 
 Each of these utterances must trigger the UNSUPPORTED path AND no fake confirmation reaches TTS:
-1. "Schick eine Email an harald@example.com mit dem Betreff Hallo" ("Send an email to harald@example.com with subject Hello") → "Das kann ich noch nicht. (...)" ("I can't do that yet.") <!-- i18n-allow: example user voice query with English inline -->
+1. "Schick eine Email an sam@example.com mit dem Betreff Hallo" ("Send an email to sam@example.com with subject Hello") → "Das kann ich noch nicht. (...)" ("I can't do that yet.") <!-- i18n-allow: example user voice query with English inline -->
 2. "Trag einen Termin morgen 10 Uhr ein" ("Add an appointment tomorrow at 10 AM") → unsupported
 3. "Sende eine WhatsApp an Mama" ("Send a WhatsApp to Mum") → unsupported
 4. "Bestelle eine Pizza" ("Order a pizza") → unsupported
@@ -129,7 +129,7 @@ Each of these utterances must trigger the UNSUPPORTED path AND no fake confirmat
 
 Each of these utterances must STILL work (no false negatives):
 6. "Öffne Chrome" ("Open Chrome") → local-action open_app
-7. "Lies die Datei foo.txt" ("Read the file foo.txt") → openclaw spawn (file ops registered)
+7. "Lies die Datei foo.txt" ("Read the file foo.txt") → Jarvis-Agents spawn (file ops registered)
 8. "Wie spät ist es?" ("What time is it?") → smalltalk, brain answers directly
 9. "Such im Web nach Python 3.13" ("Search the web for Python 3.13") → only works if a web-search capability is actually registered; otherwise unsupported (this catches the search_web prompt-claim drift)
 
@@ -138,5 +138,5 @@ Each of these utterances must STILL work (no false negatives):
 ## Out of scope (for this wave)
 
 - Auto-learning verb/object lists (LLM-based capability description parsing) — manual seed map first.
-- Live OpenClaw subprocess tool-call telemetry (Wave 3) — Critic will conservative-fail until that lands.
+- Live Jarvis-Agents subprocess tool-call telemetry (Wave 3) — Critic will conservative-fail until that lands.
 - Replacing every phantom-confirmation site in `pipeline.py:1278/1283/1384/2048` — Agent C only fixes the source of the lies (Ack-Brain + system prompt). The pipeline-level "Fertig./Das hat nicht geklappt." ("Done." / "That didn't work.") remains as it reflects the Critic's verdict, which is now honest.

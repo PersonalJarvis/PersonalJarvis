@@ -16,8 +16,8 @@ The assistant currently has two independent identity controls:
 These were deliberately decoupled on 2026-06-19 so a user could wake "Hey
 Computer" while the assistant called itself "Friday". The maintainer has decided
 to reverse that: the assistant name should be **derived solely from the wake
-word**, with no separate name control anywhere. "Hey Ruben" → the assistant is
-called "Ruben". Setting the wake word is the single act that names the assistant.
+word**, with no separate name control anywhere. "Hey Alex" → the assistant is
+called "Alex". Setting the wake word is the single act that names the assistant.
 
 ## Goal
 
@@ -66,7 +66,7 @@ Override entry points to be removed:
 The single source of the assistant name is the wake phrase. `resolve_assistant_name`
 becomes two stages:
 
-1. Wake phrase with prefix stripped, title-cased ("Hey Ruben" → "Ruben",
+1. Wake phrase with prefix stripped, title-cased ("Hey Alex" → "Alex",
    "micron" → "Micron", "Hey Computer" → "Computer").
 2. `DEFAULT_ASSISTANT_NAME` ("Assistant") when there is no usable wake phrase
    (pre-onboarding / empty).
@@ -123,7 +123,7 @@ name are intentionally identical.
 10. **Wake-word live preview (the new visibility)** — In the wake-word surfaces,
     show a live, derived-name hint as the user types:
     - Onboarding `steps/WakeWordStep.tsx`: below the "Hey ___" input, render
-      e.g. "Your assistant will be called: **Ruben**". The derivation mirrors
+      e.g. "Your assistant will be called: **Alex**". The derivation mirrors
       the backend (`phrase_core` prefix-strip + title-case); since the onboarding
       input is the bare word with a fixed "Hey " prefix, the preview is the
       title-cased trimmed input (empty input → no hint / the neutral fallback).

@@ -20,7 +20,7 @@
 
 **Skill execution contract (Agent 2, `skill-pairing-architect`).** In production the `SkillRunner` is built WITHOUT a `tool_registry` (D9 recursion guard) — so `TOOL:` lines in a skill body silently no-op (`runner.py` resolves them to None). **Therefore a plugin-paired skill must NOT contain executing `TOOL:` lines.** Its body is GUIDANCE PROSE returned to the brain via Path B (`render_available_skills_section` at `manager.py:1168-1179` injects name+description; `run-skill` returns the rendered body, and the brain then issues the plugin tool-call itself). This path works today with no wiring change.
 
-**The hard-negative trap (Agent 1, Risk 1).** "implementier eine Email-Validation" must STAY generic sub-agent work, never become a Gmail call. `\bemail\b` matches "Email-Validation", so `intent_objects` must use inbox-specific nouns (`postfach`, `inbox`, `gmail`) and MUST NOT contain bare `email`/`e-mail`. `intent_verbs` must exclude coding verbs (`implementier`/`baue`/`schreib`). Guarded by `tests/integration/test_capability_coupling_e2e.py` (hard-negatives at ~46-87). The four non-Gmail hard-negatives (Termin/WhatsApp/Pizza/X-posting) have no backing tool and MUST remain `UNSUPPORTED`.
+**The hard-negative trap (Agent 1, Risk 1).** "implementier eine Email-Validation" must STAY generic Jarvis-Agent work, never become a Gmail call. `\bemail\b` matches "Email-Validation", so `intent_objects` must use inbox-specific nouns (`postfach`, `inbox`, `gmail`) and MUST NOT contain bare `email`/`e-mail`. `intent_verbs` must exclude coding verbs (`implementier`/`baue`/`schreib`). Guarded by `tests/integration/test_capability_coupling_e2e.py` (hard-negatives at ~46-87). The four non-Gmail hard-negatives (Termin/WhatsApp/Pizza/X-posting) have no backing tool and MUST remain `UNSUPPORTED`.
 
 ---
 
@@ -406,7 +406,7 @@ def test_boot_registers_paired_gmail_capability():
     )
     n = register_paired_capabilities(reg, [gmail])
     assert n == 1
-    assert reg.resolve_intent("schick eine Mail an Harald aus meinem Postfach") is not None
+    assert reg.resolve_intent("schick eine Mail an Sam aus meinem Postfach") is not None
 ```
 
 - [ ] **Step 3: Run test to verify it fails / passes**
@@ -609,7 +609,7 @@ def _reg_with_gmail() -> CapabilityRegistry:
 def test_gmail_request_with_domain_noun_resolves_to_gmail():
     reg = _reg_with_gmail()
     for utt in [
-        "Schick eine Email an harald@example.com mit dem Betreff Hallo",  # i18n-allow
+        "Schick eine Email an sam@example.com mit dem Betreff Hallo",  # i18n-allow
         "lies meine letzte Mail aus dem Postfach",  # i18n-allow
         "check mein Postfach",  # i18n-allow
     ]:
@@ -713,7 +713,7 @@ def test_gmail_request_resolves_when_paired():
     reg = CapabilityRegistry()
     register_paired_capabilities(reg, [_gmail_skill()])
     # The gate must NOT return UNSUPPORTED — resolve_intent is non-None now.
-    plan = match_local_action("schick eine Mail an Harald aus meinem Postfach", _registry=reg)  # i18n-allow
+    plan = match_local_action("schick eine Mail an Sam aus meinem Postfach", _registry=reg)  # i18n-allow
     assert plan is None or plan.mode != LocalActionMode.UNSUPPORTED
 
 
@@ -759,7 +759,7 @@ git commit -m "test(reachability): paired Gmail resolves; 4 non-tool hard-negati
 
 > Author `jarvis/skills/builtin/plugin-<id>/SKILL.md` — the canonical paired skill for the `<id>` marketplace plugin. READ FIRST: `jarvis/marketplace/seed_catalog.json` (the `<id>` entry), `jarvis/marketplace/usage_cards/<id>.md` if present, `jarvis/skills/schema.py` (frontmatter contract), and `jarvis/skills/builtin/<any existing>/SKILL.md` for format. Then write the SKILL.md with this frontmatter:
 > - `name: plugin-<id>`, `plugin_id: <id>`, `description:` ONE English sentence the brain sees in AVAILABLE SKILLS.
-> - `intent_verbs:` curated DE+EN action verbs for THIS plugin's real use (e.g. for stripe: `zeig, lies, erstatt, refund, charge`). **THIS IS THE PRIMARY HARD-NEGATIVE GUARD: EXCLUDE coding verbs** (`implementier`, `baue`, `schreib`, `entwickel`, `refactor`, `debug`) — they belong to generic sub-agent work. (Per Task 5.5, a paired-skill cap only matches when BOTH a verb AND a domain object hit; so excluding coding verbs is what keeps "implementier eine Email-Validation" off the gmail cap, even though `email` IS an allowed object — see next line.)
+> - `intent_verbs:` curated DE+EN action verbs for THIS plugin's real use (e.g. for stripe: `zeig, lies, erstatt, refund, charge`). **THIS IS THE PRIMARY HARD-NEGATIVE GUARD: EXCLUDE coding verbs** (`implementier`, `baue`, `schreib`, `entwickel`, `refactor`, `debug`) — they belong to generic Jarvis-Agent work. (Per Task 5.5, a paired-skill cap only matches when BOTH a verb AND a domain object hit; so excluding coding verbs is what keeps "implementier eine Email-Validation" off the gmail cap, even though `email` IS an allowed object — see next line.)
 > - `intent_objects:` domain-SPECIFIC nouns — the words a user says when they mean THIS product's data. The plugin cap requires an object hit (Task 5.5), so these must be rich enough to cover real phrasings: for gmail use `postfach, inbox, gmail, posteingang, mail, email, mails, nachrichten`. Bare `email`/`mail` IS allowed and needed (so "Schick eine Email" matches) — the coding-task guard lives in the verb list, NOT here. AVOID nouns that belong to a DIFFERENT domain (don't put `nachricht` alone on gmail if it would steal WhatsApp/SMS requests — prefer `mail`/`postfach`).
 > - `triggers:` ONE `voice` trigger with a permissive `pattern` regex matching natural phrasing.
 > - `requires_tools:` the plugin's namespaced tools (e.g. `stripe/list_customers`) for documentation — these are advisory.
@@ -838,7 +838,7 @@ def test_paired_skills_exclude_coding_verbs():
     only matches when a verb AND a domain object both hit, so the hard-negative
     guard lives in the VERB list — no paired skill may carry a coding verb, or
     'implementier eine Email-Validation' (a coding task that names the domain)
-    would resolve to the plugin instead of staying generic sub-agent work."""
+    would resolve to the plugin instead of staying generic Jarvis-Agent work."""
     skills = discover_skills(_BUILTIN)
     offenders = []
     for s in skills:
@@ -851,7 +851,7 @@ def test_paired_skills_exclude_coding_verbs():
     assert not offenders, (
         f"paired skills carrying coding verbs (would hijack coding tasks that "
         f"merely name the domain): {offenders}. Remove coding verbs from "
-        f"intent_verbs — they belong to generic sub-agent work."
+        f"intent_verbs — they belong to generic Jarvis-Agent work."
     )
 ```
 
@@ -882,7 +882,7 @@ These are surfaced by the deep-dive but are independent fixes. File them; fix af
 
 ## Risks / Hard-Negatives (must not regress)
 
-1. **"implementier eine Email-Validation" → must stay generic sub-agent work.** Guarded by `test_plugin_coupling.py::test_gmail_objects_do_not_match_email_validation`, `test_resolve_intent_skill_precision.py`, and `test_plugin_skill_parity.py::test_paired_skills_exclude_coding_verbs`. **Corrected mechanism (Task 5.5):** the guard is VERB-based — paired-skill `intent_verbs` must EXCLUDE coding verbs (`implementier`/`baue`/`schreib`/`entwickel`/`refactor`/`debug`). The object `email`/`mail` IS allowed (and required for "Schick eine Email" to match), because a paired-skill cap only matches when a verb AND an object both hit; with no coding verb in the list, "implementier eine Email-Validation" never gets a verb hit on the gmail cap.
+1. **"implementier eine Email-Validation" → must stay generic Jarvis-Agent work.** Guarded by `test_plugin_coupling.py::test_gmail_objects_do_not_match_email_validation`, `test_resolve_intent_skill_precision.py`, and `test_plugin_skill_parity.py::test_paired_skills_exclude_coding_verbs`. **Corrected mechanism (Task 5.5):** the guard is VERB-based — paired-skill `intent_verbs` must EXCLUDE coding verbs (`implementier`/`baue`/`schreib`/`entwickel`/`refactor`/`debug`). The object `email`/`mail` IS allowed (and required for "Schick eine Email" to match), because a paired-skill cap only matches when a verb AND an object both hit; with no coding verb in the list, "implementier eine Email-Validation" never gets a verb hit on the gmail cap.
 2. **The four non-tool hard-negatives (Termin/WhatsApp/Pizza/X-posting) must stay UNSUPPORTED.** They have no backing plugin/tool, so no paired skill exists → no capability → `resolve_intent` stays None → refusal holds. Guarded by the untouched entries in `test_capability_coupling_e2e.py`.
 3. **Skill bodies must not contain executing `TOOL:` lines.** Production SkillRunner has no tool_registry (D9 guard) → they no-op silently. Enforced by the Phase 1 reviewer brief; consider a follow-up lint in `test_plugin_skill_parity.py` scanning bodies for `^TOOL:`.
 4. **Disconnect teardown.** A disconnected plugin must lose its capability (Task 5 `_deregister`), else a disconnected Gmail still resolves and the brain calls a tool that returns "not connected". Guarded by `test_plugin_capability_lifecycle.py`.

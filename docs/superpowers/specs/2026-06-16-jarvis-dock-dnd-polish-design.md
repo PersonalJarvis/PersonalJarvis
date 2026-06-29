@@ -6,7 +6,7 @@ Scope: frontend-only (`jarvis/ui/web/frontend/`). No server, schema, or WS contr
 
 ## Problem (from the bridgespace recording + code)
 
-Dragging a sub-agent mission/output card onto the `JarvisDock` "works" — the WS
+Dragging a Jarvis-Agent mission/output card onto the `JarvisDock` "works" — the WS
 `mission.inject` command fires and Jarvis recaps the task — but the *feel* is
 broken:
 

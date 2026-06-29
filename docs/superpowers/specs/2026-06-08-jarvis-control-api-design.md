@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-08
 **Status:** Approved-by-directive (maintainer `/goal`: "deep-dive, plan, just build it; cross-platform").
-**Author:** OpenClaw (deep-dive synthesis of 8 parallel explorers).
+**Author:** Jarvis-Agents (deep-dive synthesis of 8 parallel explorers).
 
 ---
 
@@ -22,7 +22,7 @@ Three independently fatal breaks for the headline "switch language" voice comman
 
 1. **Wrong key in the allowlist.** Reply language is pinned by `brain.reply_language` (`manager.py:1018-1043` `_reply_language_directive`). The self-mod allowlist (`registry.py:37-124`) contains `profile.language` — a field nothing reads at runtime (`app_control.py:278` exposes it read-only). `set_config_value("brain.reply_language", …)` raises `AllowlistViolationError`.
 2. **The pending-confirmation loop is never wired.** `build_self_mod_tools()` (`factory.py:347`) constructs an orphan `PendingMutationStore`; `SelfModFlowController` (`jarvis/voice/self_mod_flow.py`) is referenced nowhere in `jarvis/speech/`. An `ask`-tier mutation returns JSON the pipeline cannot action → dies silently.
-3. **Force-spawn interception.** "wechsel auf / switch to" is an action verb → `_should_force_openclaw` may route the utterance to a contextless OpenClaw worker instead of the tool → silent no-op.
+3. **Force-spawn interception.** "wechsel auf / switch to" is an action verb → `_should_force_openclaw` may route the utterance to a contextless Jarvis-Agent worker instead of the tool → silent no-op.
 
 ---
 

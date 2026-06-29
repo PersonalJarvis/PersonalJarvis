@@ -123,7 +123,7 @@ The installer returns to the user's shell as soon as the App is spawned.
 ## End-user UX
 
 ```powershell
-PS> irm https://raw.githubusercontent.com/personal-jarvis/personal-jarvis/main/install/install.ps1 | iex
+PS> irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.ps1 | iex
 
   Personal Jarvis — Quick install (Windows)
 

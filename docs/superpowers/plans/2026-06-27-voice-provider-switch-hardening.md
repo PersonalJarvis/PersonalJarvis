@@ -1,10 +1,10 @@
-# Voice Provider/Subagent Switch Hardening Implementation Plan
+# Voice Provider/Jarvis-Agent Switch Hardening Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make every spoken provider / subagent / reply-language switch resolve to the RIGHT target and either execute-and-confirm honestly or fail-and-say-so — never a silent or false "done".
+**Goal:** Make every spoken provider / Jarvis-Agent / reply-language switch resolve to the RIGHT target and either execute-and-confirm honestly or fail-and-say-so — never a silent or false "done".
 
-**Architecture:** The deterministic voice gate (`jarvis/brain/voice_command_gate.py`) recognises the command + target; the `BrainManager` handlers execute it. The root cause of "sometimes it isn't recognised / silently does the wrong thing" is that the SUBAGENT voice handler is a THIRD switch implementation that skips the credential validation the REST endpoint and `app_control._switch_subagent` both have. Task 1 routes it through the one validated function and renders an honest readback. Tasks 2–4 fix three recognition bugs in the gate.
+**Architecture:** The deterministic voice gate (`jarvis/brain/voice_command_gate.py`) recognises the command + target; the `BrainManager` handlers execute it. The root cause of "sometimes it isn't recognised / silently does the wrong thing" is that the Jarvis-Agent voice handler is a THIRD switch implementation that skips the credential validation the REST endpoint and `app_control._switch_subagent` both have. Task 1 routes it through the one validated function and renders an honest readback. Tasks 2–4 fix three recognition bugs in the gate.
 
 **Tech Stack:** Python 3.11, `re`, pytest. Run tests with `C:\Program Files\Python311\python.exe -m pytest` (the real CPython, not the uv shim).
 
@@ -22,7 +22,7 @@ Tasks are independent and committed separately. Do them in order (Task 1 is the 
 
 ---
 
-## Task 1: Subagent voice switch routes through the validated path + honest readback
+## Task 1: Jarvis-Agent voice switch routes through the validated path + honest readback
 
 **Why:** `_apply_subagent_provider_switch` maps the word then calls `config_writer.set_sub_jarvis_provider` BLINDLY — no credential check, and it returns "Erledigt" even when the persist throws. So "switch the subagent to OpenAI" (no key) says done, then the next mission fails; and a read-only-TOML persist failure is spoken as success. The validated `app_control.apply_provider_switch("subagent", ...)` already does the Codex-OAuth / Antigravity-OAuth / key-presence checks and returns a structured result — route through it.
 
@@ -219,7 +219,7 @@ git commit -m "fix(voice): subagent voice switch validates via apply_provider_sw
 
 ## Task 2: Main-brain provider switch recognises "from X to Y"
 
-**Why:** `_PROVIDER_PATTERN` has no "von/from" branch, so "wechsel von Gemini auf OpenAI" matches nothing and falls through to the brain LLM (which may refuse or force-spawn). The subagent matcher was already fixed for this; the main-brain regex wasn't.
+**Why:** `_PROVIDER_PATTERN` has no "von/from" branch, so "wechsel von Gemini auf OpenAI" matches nothing and falls through to the brain LLM (which may refuse or force-spawn). The Jarvis-Agent matcher was already fixed for this; the main-brain regex wasn't.
 
 **Files:**
 - Modify: `jarvis/brain/voice_command_gate.py` (`_PROVIDER_PATTERN` ~42-49)

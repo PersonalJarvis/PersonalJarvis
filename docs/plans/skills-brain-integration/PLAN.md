@@ -1,6 +1,6 @@
 # Skills-Brain-Integration — Phase Plan
 
-**Master-plan source:** `C:\Users\Administrator\.claude\plans\okay-ich-w-re-bereit-jolly-gem.md`
+**Master-plan source:** `<USER_HOME>\.claude\plans\okay-ich-w-re-bereit-jolly-gem.md`
 
 ## Phase Skills-1 — Pre-Brain-Hook MVP (2.0 days)
 

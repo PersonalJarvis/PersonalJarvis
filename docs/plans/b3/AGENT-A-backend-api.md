@@ -90,13 +90,13 @@ Minimum 12 cases:
 
 ### 5.2 Integration test (`tests/integration/ui/wiki/test_wiki_routes_e2e.py`)
 
-Mounts the *full* server (`jarvis.ui.web.server:create_app`), populates `wiki/obsidian-vault/` in a `tmp_path` fixture with `ruben.md`, `harald.md`, `pixel-art-editor.md`, and walks the same flow the live walk-through covers in `00-OVERVIEW.md §7`:
+Mounts the *full* server (`jarvis.ui.web.server:create_app`), populates `wiki/obsidian-vault/` in a `tmp_path` fixture with `alex.md`, `sam.md`, `pixel-art-editor.md`, and walks the same flow the live walk-through covers in `00-OVERVIEW.md §7`:
 
 1. `GET /api/wiki/tree` → 3 files across 2 folders.
-2. `GET /api/wiki/page/harald` → body contains "1976".
+2. `GET /api/wiki/page/sam` → body contains "1976".
 3. `GET /api/wiki/graph` → ≥ 2 edges.
-4. `GET /api/wiki/search?q=pizza` → 1 hit on ruben.
-5. `GET /api/wiki/backlinks/harald` → 1 hit (ruben).
+4. `GET /api/wiki/search?q=pizza` → 1 hit on alex.
+5. `GET /api/wiki/backlinks/sam` → 1 hit (alex).
 
 ---
 

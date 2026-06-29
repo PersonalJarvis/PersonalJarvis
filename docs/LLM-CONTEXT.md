@@ -9,14 +9,14 @@
 > **Looking for the human-facing overview?** See [`../README.md`](../README.md).
 > **Binding source-of-truth:** [`../CLAUDE.md`](../CLAUDE.md) + the docs linked at the bottom.
 
-**Personal Jarvis** is a voice-driven **Supervisor-Agent meta-orchestrator** — not a classical voice assistant. The core pattern is a fast **Router-Brain** that dispatches work to interchangeable harnesses (OpenClaw subprocess, Codex CLI, Open Interpreter, MCP servers, raw computer-use loops). The voice layer is just the I/O surface; the soul is the dispatcher discipline that keeps the Router-Brain lean and delegates heavy reasoning to specialized subagents under critic-loop + worktree-isolation guard rails. The project is **provider-agnostic by mandate** — the user has no Anthropic API account (Claude Max OAuth is used only inside workers) — and **self-modifying** via an atomic config-writer with a 10-step validate-backup-tempfile-replace-rollback-audit pipeline.
+**Personal Jarvis** is a voice-driven **Supervisor-Agent meta-orchestrator** — not a classical voice assistant. The core pattern is a fast **Router-Brain** that dispatches work to interchangeable harnesses (Jarvis-Agents subprocess, Codex CLI, Open Interpreter, MCP servers, raw computer-use loops). The voice layer is just the I/O surface; the soul is the dispatcher discipline that keeps the Router-Brain lean and delegates heavy reasoning to specialized Jarvis-Agents under critic-loop + worktree-isolation guard rails. The project is **provider-agnostic by mandate** — the user has no Anthropic API account (Claude Max OAuth is used only inside workers) — and **self-modifying** via an atomic config-writer with a 10-step validate-backup-tempfile-replace-rollback-audit pipeline.
 
 > ### Cloud-First — Read This Before The Install Section
 > **Target runtime is any €5 / month VPS or low-spec laptop** with a modern browser. **The maintainer's RTX 5070 Ti / Windows 11 Pro workstation is not a requirement** — it represents fewer than 0.1 % of the install base this project is being designed for. All Brain / STT / TTS / Vision / Wake providers default to cloud APIs; no GPU, no local models, no Windows APIs, no microphone are required in the base install. Windows-desktop features (tray app, Orb overlay, global hotkey wake, local Whisper, Silero-VAD-in-process, Computer-Use harness, PowerShell drift-guard daemon) are **opt-in `[desktop]` extras**, not requirements. **Binding doctrine: [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md)**. On conflict between this README and `PHILOSOPHY.md`, the doctrine wins.
 
 - **Base runtime:** Linux / macOS / Windows with Python 3.11+ and a network connection. Headless VPS + browser UI is a first-class deployment target.
 - **Maintainer's reference machine** (the project is developed on, but **does not require**, this hardware): RTX 5070 Ti, 32 GB RAM, CUDA 12.8, Windows 11 Pro — unlocks the optional `[desktop]` extras.
-- **Repo root** (maintainer's workstation; not relevant to consumers): `C:\Users\Administrator\Desktop\Personal Jarvis`
+- **Repo root** (maintainer's workstation; not relevant to consumers): `<USER_HOME>\Desktop\Personal Jarvis`
 - **Binding plan:** `~/.claude/plans/also-er-muss-auch-lexical-pond.md` (plan wins on plan-vs-code conflict).
 - **Binding doctrine:** [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md) (cloud-first; wins over the binding plan when the two disagree on hardware assumptions).
 
@@ -306,7 +306,7 @@ Force-spawn heuristic in `BrainManager._should_force_openclaw`:
 - Action verb (`lies/baue/installiere/öffne/mach/zeig` + repair words) → spawn.
 - External-system marker (PR/Repo/GitHub/Issue) → spawn.
 
-**The sub-jarvis tier was deleted in Welle 4** — only `"router"` remains (`factory.py:119-123` raises on unknown tiers). Resurrecting `SUB_TOOLS` or adding `spawn-openclaw`/`dispatch-with-review`/`run-skill` to any worker set breaks the D9 recursion guard (AP-14).
+**The Jarvis-Agent tier was deleted in Welle 4** — only `"router"` remains (`factory.py:119-123` raises on unknown tiers). Resurrecting `SUB_TOOLS` or adding `spawn-openclaw`/`dispatch-with-review`/`run-skill` to any worker set breaks the D9 recursion guard (AP-14).
 
 ---
 
@@ -318,7 +318,7 @@ Force-spawn heuristic in `BrainManager._should_force_openclaw`:
 
 Wired into TTS at two sites:
 - `pipeline.py:1330` — `_handle_utterance` → `_speak()` → `tts.synthesize`
-- `pipeline.py:647` — `_on_announcement` (skill/sub-agent announcements, OpenClaw `summary_de` readback)
+- `pipeline.py:647` — `_on_announcement` (skill/Jarvis-Agent announcements, Jarvis-Agents `summary_de` readback)
 
 40-case test suite at `tests/unit/brain/test_output_filter.py`. ADR-0010 (Output-Filter Pattern-Based).
 
@@ -388,9 +388,9 @@ Verified against the actual file tree (not just CLAUDE.md claims):
 | Wiki B0/B1/B2/B3/B5/B7/B8/B9 | live | `jarvis/memory/wiki/` (curator, atomic_writer, page, integration, scheduler, session_rollup, voice_bridge, telemetry, vault_index, watcher, search). 3 router tools |
 | Wiki B4 (legacy Curator) | soft-disabled | `factory.py:736-757` gates on `cfg.memory.legacy_curator.enabled` (default `false` since 2026-05-17). `data/workspace/` snapshot stays on disk for 35 reader sites |
 | Wiki B6 | not started | — |
-| OpenClaw bridge Welle 1+4 | done | `jarvis/plugins/harness/openclaw.py` (Mock-Mode), `jarvis/missions/openclaw/` (provider_map, workspace, mcp, setup) |
-| OpenClaw bridge Welle 2 (live default) | open | Mock-Mode in plugin file; live subprocess factory pending |
-| OpenClaw bridge Welle 3 (full live mode) | open | — |
+| Jarvis-Agents bridge Welle 1+4 | done | `jarvis/plugins/harness/openclaw.py` (Mock-Mode), `jarvis/missions/openclaw/` (provider_map, workspace, mcp, setup) |
+| Jarvis-Agents bridge Welle 2 (live default) | open | Mock-Mode in plugin file; live subprocess factory pending |
+| Jarvis-Agents bridge Welle 3 (full live mode) | open | — |
 | Ack-Brain (pre-thinking) | live | `jarvis/brain/ack_brain/` + factory hook (`factory.py:1034`) |
 | CLI catalog + terminal view | live | `jarvis/clis/` (catalog, installer, loader, prober, registry, risk_integration, usage_log) + `jarvis/terminal/` (ConPTY via `pywinpty`). Tools `cli-tools` + `spawn-cli-worker` |
 
@@ -438,7 +438,7 @@ The single most important table for an LLM joining cold:
 | AP-11 | Add an LLM call inside `scrub_for_voice` | TTS latency tank |
 | AP-12 | Encode API keys in `jarvis.toml` or commit `.env` | Credential leak; bypasses `keyring` audit trail |
 | AP-13 | Block on watchdog reload for atomic-write verification | Race: file half-applied, no sync rollback |
-| AP-14 | Re-add a Sub-Jarvis tier or `SUB_TOOLS` set | Welle 4 deleted it; resurrection breaks the OpenClaw-bridge contract |
+| AP-14 | Re-add a Jarvis-Agent tier or `SUB_TOOLS` set | Welle 4 deleted it; resurrection breaks the Jarvis-Agents bridge contract |
 | AP-15 | Auto-activate generated skills (`state` ≠ `draft`) | Lateral-movement vector; skills run without review |
 | AP-16 | Add `[phase6.*]`/`[memory.wiki.*]` keys without `ConfigDict(extra="allow")` | Pre-validate rejects → boot fails after self-mod |
 | AP-17 | Run Jarvis as a Windows Service | SYSTEM has no mic/headset access |
@@ -524,7 +524,7 @@ Line length 100. Target `py311`. One per-file `E501` exception (`jarvis/awarenes
 ## 19. Scripts inventory (`scripts/`)
 
 **Cron daemons (production):**
-- `auto-push-eod.ps1` — nightly tag+push safety net. Skips worktrees with active OpenClaw session (`<30 min` modify time).
+- `auto-push-eod.ps1` — nightly tag+push safety net. Skips worktrees with active Jarvis-Agent session (`<30 min` modify time).
 - `install-auto-push-task.ps1 -Time "22:00"` — register Task Scheduler job.
 - `drift-guard-daemon.ps1` — 5-min config drift defense. Singleton-locked, hidden, started via `shell:startup` shortcut.
 - `install-config-drift-guard-task.ps1` — install variant.
@@ -612,7 +612,7 @@ Self-mod writeup: [`docs/self_mod.md`](docs/self_mod.md) — 8 mutable settings 
 
 - **`run.bat` pre-boot:** `scripts/check-working-tree.ps1` auto-invoked. Always exits 0; surfaces any restored file via banner + rotating log.
 - **Drift-guard daemon:** every 5 min via `shell:startup` shortcut, Userland (no UAC). Singleton-locked.
-- **Auto-push-EOD:** Task Scheduler 22:00 default. Tags `safety/eod-*` per branch, skips active OpenClaw worktrees (modified within last 30 min).
+- **Auto-push-EOD:** Task Scheduler 22:00 default. Tags `safety/eod-*` per branch, skips active Jarvis-Agent worktrees (modified within last 30 min).
 - **Wiki triggers** (ADR-0014 contract — all classified silent vs loud):
   - `WikiContextInjector` (silent) — runs before every brain turn
   - `VoiceFactBridge` ack path (loud) — `ResponseGenerated` with ack keyword, async via `asyncio.create_task`
@@ -625,7 +625,7 @@ Self-mod writeup: [`docs/self_mod.md`](docs/self_mod.md) — 8 mutable settings 
 ## 23. Repo hygiene & contribution
 
 - **Output Language Policy (highest priority):** every artifact in the repo is **English** — code, comments, docstrings, Markdown, commit messages, PR titles/bodies, tests, CLI help, REST descriptions, error responses, audit logs, telemetry, UI i18n source. German stays only for the assistant's user-facing chat reply, TTS at runtime, and already-committed German content.
-- **Plan vs. code:** on conflict, plan wins. Master plan binds: `~/.claude/plans/also-er-muss-auch-lexical-pond.md`. Architecture contracts: [`docs/openclaw-bridge.md`](docs/openclaw-bridge.md), [`docs/anti-drift-three-layer.md`](docs/anti-drift-three-layer.md).
+- **Plan vs. code:** on conflict, plan wins. Master plan binds: `~/.claude/plans/also-er-muss-auch-lexical-pond.md`. Architecture contracts: [`docs/jarvis-agents-bridge.md`](docs/jarvis-agents-bridge.md), [`docs/anti-drift-three-layer.md`](docs/anti-drift-three-layer.md).
 - **Worktree activation checklist:** **`pwsh scripts/preflight.ps1`** before code in any new worktree. If exit non-zero, fix before proceeding (BUG-006/014, AD-UF23).
 - **Before larger edits:** read [`docs/BUGS.md`](docs/BUGS.md) — every recurring bug class catalogued there.
 - **Plugin contract:** plugin modules MUST NOT import from `jarvis.*` — structural compatibility with Protocol only. After edit: `pip install -e . --no-deps`.
@@ -657,7 +657,7 @@ Self-mod writeup: [`docs/self_mod.md`](docs/self_mod.md) — 8 mutable settings 
 | `jarvis/missions/critic/runner.py:50` | `MAX_CRITIC_LOOPS = 3` hardcoded. |
 | `jarvis/missions/workers/{base,claude_direct_worker,codex_worker,gemini_worker,subjarvis_worker,supervisor}.py` | Worker variants — `WorkerProtocol` structural contract. |
 | `jarvis/missions/isolation/{worktree,job_object,env}.py` | Git-worktree manager + Windows Job Object kill-on-close. |
-| `jarvis/plugins/harness/openclaw.py` | OpenClaw bridge plugin (Welle-2 Mock-Mode). |
+| `jarvis/plugins/harness/openclaw.py` | Jarvis-Agents bridge plugin (Welle-2 Mock-Mode). |
 | `jarvis/harness/screenshot_only_loop.py` | Screenshot-only POAV loop — the sole `computer_use` engine (vision picks pixel targets; cross-platform `mss` + `pyautogui`). |
 | `jarvis/awareness/manager.py` | `AwarenessManager` — state holder; **never on voice critical path** (AP-9). |
 | `jarvis/memory/wiki/integration.py` | `bootstrap_wiki_integration` — wires SessionRollupWorker (B7) + WikiCurator (B1). |
@@ -674,7 +674,7 @@ Two drifts surfaced during the agent audit; flag them before quoting CLAUDE.md t
 
 1. **`spawn-skill-author` IS registered in `pyproject.toml:208`** as `spawn-skill-author = "jarvis.brain.tools.skill_authoring:SpawnSkillAuthorTool"` (landed 2026-05-17 per inline comment). CLAUDE.md still says "7.5 `spawn_skill_author` not yet registered in `pyproject.toml`" — outdated. The Phase-7.5 self-modifying skill-authoring tool is wired.
 
-2. **`jarvis/sub_jarvis/` directory still exists** as an **empty placeholder** (no `__init__.py`, no files) despite CLAUDE.md and `docs/openclaw-bridge.md §11` declaring it deleted in Welle 4. Cleanup is structurally complete (no code references), but the empty dir itself is leftover.
+2. **`jarvis/sub_jarvis/` directory still exists** as an **empty placeholder** (no `__init__.py`, no files) despite CLAUDE.md and `docs/jarvis-agents-bridge.md §11` declaring it deleted in Welle 4. Cleanup is structurally complete (no code references), but the empty dir itself is leftover.
 
 Neither blocks anything — but a fresh chat parroting CLAUDE.md verbatim will be wrong on point 1, and confused by `ls jarvis/` on point 2.
 
@@ -684,12 +684,12 @@ Neither blocks anything — but a fresh chat parroting CLAUDE.md verbatim will b
 
 - [`CLAUDE.md`](CLAUDE.md) — project guidance (highest priority for any agent working in this repo)
 - [`docs/BUGS.md`](docs/BUGS.md) — 26-entry bug register with regression-test pointers
-- [`docs/openclaw-bridge.md`](docs/openclaw-bridge.md) — AD-1..AD-21 OpenClaw harness contract
+- [`docs/jarvis-agents-bridge.md`](docs/jarvis-agents-bridge.md) — AD-1..AD-21 Jarvis-Agents harness contract
 - [`docs/anti-drift-three-layer.md`](docs/anti-drift-three-layer.md) — five-layer enum pattern (mandatory for any new wire-format string)
 - [`docs/self_mod.md`](docs/self_mod.md) — Phase 7 self-mod user guide
 - [`docs/obsidian-setup.md`](docs/obsidian-setup.md) — Wiki vault registration walkthrough
 - `~/.claude/plans/also-er-muss-auch-lexical-pond.md` — binding master plan
-- `~/.claude/projects/C--Users-Administrator-Desktop-Personal-Jarvis/memory/MEMORY.md` — auto-memory with stable user preferences (multi-provider brain, no-Anthropic-API, bilingual, anti-confirmation-fatigue, frontier-quality-before-cost)
+- `~/.claude/projects/<your-claude-project-dir>/memory/MEMORY.md` — auto-memory with stable user preferences (multi-provider brain, no-Anthropic-API, bilingual, anti-confirmation-fatigue, frontier-quality-before-cost)
 
 ---
 

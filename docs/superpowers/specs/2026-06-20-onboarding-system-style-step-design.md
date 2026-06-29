@@ -26,11 +26,11 @@ need a new vocabulary:
 
 - **Backend:** `GET/PUT /api/settings/overlay-style` (`jarvis/ui/web/settings_routes.py`),
   persisted via `config_writer.set_overlay_style` to `ui.orb_style` in `jarvis.toml`. The
-  config default is already `ui.orb_style = "whisper_bar"` (`jarvis/core/config.py:1009`).
+  config default is already `ui.orb_style = "jarvis_bar"` (`jarvis/core/config.py:1009`).
 - **Frontend:** the `useOverlayStyle` hook (`hooks/useOverlayStyle.ts`) and the 3-card
   picker with preview graphics in `views/settings/OverlayTaskbarGroup.tsx`
   (`BarPreview`, `MascotGigi`, `NonePreview`).
-- **Values:** `whisper_bar` (the Jarvis Bar), `mascot` (the Orb / Gigi ghost), `none`
+- **Values:** `jarvis_bar` (the Jarvis Bar), `mascot` (the Orb / Gigi ghost), `none`
   (no overlay — just the app window / browser tab).
 
 This step **surfaces that existing axis inside onboarding**; it adds no new enum and no
@@ -40,12 +40,12 @@ launcher changes.
 
 1. On the onboarding flow, a new `system-style` step appears after `persona-theme` and
    before `finish`.
-2. The step shows all three options as preview cards; **`whisper_bar` is pre-selected and
+2. The step shows all three options as preview cards; **`jarvis_bar` is pre-selected and
    carries a visible "Recommended" badge**.
 3. Picking an option persists it (`PUT /api/settings/overlay-style`, `persist: true`) and
    live-applies it when possible; when a restart is required it offers an explicit
    **"Restart now"** action (a pick alone never auto-restarts) (see §4).
-4. The step is skippable; "Next" / "Skip" both leave the persisted default (`whisper_bar`)
+4. The step is skippable; "Next" / "Skip" both leave the persisted default (`jarvis_bar`)
    in place.
 5. The backend `ONBOARDING_STEPS` and the frontend `REGISTRY` stay in sync (the existing
    cross-layer parity test covers the new key).
@@ -69,7 +69,7 @@ launcher changes.
 
 A new step component (`SystemStyleStep.tsx`) renders the same three-option picker as the
 Settings panel, reusing `useOverlayStyle` and the preview graphics, pre-selected on
-`whisper_bar` with a "Recommended" badge. It registers as a new step key `system-style` in
+`jarvis_bar` with a "Recommended" badge. It registers as a new step key `system-style` in
 both the backend step list and the frontend registry.
 
 ### Rejected alternatives
@@ -102,7 +102,7 @@ Settings view, with both call sites importing from there. The `StylePreview` dis
 ### Data flow
 
 The step calls `useOverlayStyle()` → `GET /api/settings/overlay-style` to read the current
-style and options, pre-selects `whisper_bar`, and on a card click calls `saveStyle(opt)` →
+style and options, pre-selects `jarvis_bar`, and on a card click calls `saveStyle(opt)` →
 `PUT /api/settings/overlay-style` with `persist: true`. The onboarding stepper's existing
 `goNext` / `skip` advance the flow. The onboarding step pointer persists through the normal
 `/api/onboarding/step` path (unchanged).
@@ -115,14 +115,14 @@ style and options, pre-selects `whisper_bar`, and on a card click calls `saveSty
 |---|---|
 | Step key | `system-style` |
 | Position | after `persona-theme`, before `finish` |
-| Mandatory? | No — skippable; default (`whisper_bar`) stands if skipped |
+| Mandatory? | No — skippable; default (`jarvis_bar`) stands if skipped |
 | Reuses | `useOverlayStyle`, `/api/settings/overlay-style`, overlay preview graphics |
 
 ### Options (all three, matching the existing axis)
 
 | Card | `overlay-style` value | Onboarding framing |
 |---|---|---|
-| **Jarvis Bar** | `whisper_bar` | Pre-selected + **"Recommended"** badge. "The slim floating voice bar — always within reach." |
+| **Jarvis Bar** | `jarvis_bar` | Pre-selected + **"Recommended"** badge. "The slim floating voice bar — always within reach." |
 | **Orb** | `mascot` | "A floating companion orb (Gigi)." |
 | **No overlay** | `none` | "Just the app window / browser tab — no floating surface." |
 
@@ -147,7 +147,7 @@ action. Maintainer feedback (2026-06-20): a selection must actually take effect,
 manual relaunch. So the step now mirrors the Settings `OverlayStylePanel`:
 
 - **On a pick:** persist + attempt live-apply. If `applied_live` → done, no prompt (the
-  common case — keeping `whisper_bar`, the maintainer's current state, is a no-op).
+  common case — keeping `jarvis_bar`, the maintainer's current state, is a no-op).
 - **If `restart_required`:** show a **"Restart now to apply"** button that POSTs
   `/api/settings/restart-app` → the existing `request_restart` relauncher cleanly self-
   restarts the app so the chosen style is live. The same **409 → force-arm** path as the
@@ -176,7 +176,7 @@ ONBOARDING_STEPS = [
 ```
 
 No new route, no new config key, no new enum. The overlay-style endpoint, config writer,
-and `ui.orb_style` default (`"whisper_bar"`) already exist and are unchanged.
+and `ui.orb_style` default (`"jarvis_bar"`) already exist and are unchanged.
 
 ---
 
@@ -185,7 +185,7 @@ and `ui.orb_style` default (`"whisper_bar"`) already exist and are unchanged.
 - **Registry:** add `"system-style": SystemStyleStep` to `REGISTRY` in `OnboardingFlow.tsx`
   (between `persona-theme` and `finish`). `STEP_KEYS` then matches the backend list.
 - **New component:** `steps/SystemStyleStep.tsx` consuming `StepProps`, using
-  `useOverlayStyle`, pre-selecting `whisper_bar`, rendering the Recommended badge, persisting
+  `useOverlayStyle`, pre-selecting `jarvis_bar`, rendering the Recommended badge, persisting
   on pick, advancing via `goNext` / `skip`.
 - **Shared previews:** lift `BarPreview` + `NonePreview` + the `StylePreview` dispatcher into
   `components/overlay/OverlayStylePreviews.tsx` (`MascotGigi` already lives in
@@ -205,7 +205,7 @@ and `ui.orb_style` default (`"whisper_bar"`) already exist and are unchanged.
 ### Automated (TDD)
 
 - **Frontend (vitest)** — `SystemStyleStep.test.tsx`:
-  - Renders three options; `whisper_bar` is pre-selected and shows the "Recommended" badge.
+  - Renders three options; `jarvis_bar` is pre-selected and shows the "Recommended" badge.
   - Clicking a card calls `saveStyle` with the right value (mock `useOverlayStyle`).
   - "Next" advances; "Skip" advances and leaves the default.
   - A **pick alone** never calls `/api/settings/restart-app` (restart is an explicit,
@@ -230,11 +230,11 @@ and `ui.orb_style` default (`"whisper_bar"`) already exist and are unchanged.
 
 1. A `system-style` step renders after `persona-theme` and before `finish`; the parity test
    passes (backend + frontend lists agree).
-2. The step shows all three overlay styles as cards; `whisper_bar` is pre-selected and
+2. The step shows all three overlay styles as cards; `jarvis_bar` is pre-selected and
    visibly "Recommended".
 3. Selecting an option persists it via `PUT /api/settings/overlay-style` (`persist: true`);
    no app restart is triggered from onboarding.
-4. The step is skippable; the default (`whisper_bar`) stands when skipped.
+4. The step is skippable; the default (`jarvis_bar`) stands when skipped.
 5. The maintainer's configured localhost install is never re-onboarded by this work
    (verification uses `?onboarding=force` only).
 6. `ruff` clean; vitest + the CI language-policy gate pass (English source strings).

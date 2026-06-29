@@ -3,7 +3,7 @@ title: "ADR-0008: Computer-Use in-process"
 slug: adr-0008-computer-use-harness-in-process
 diataxis: adr
 status: active
-owner: harald
+owner: sam
 last_reviewed: 2026-04-29
 phase: 5
 audience: developer
@@ -27,7 +27,7 @@ The new Computer-Use harness deliberately breaks this pattern — see the decisi
 **`jarvis/plugins/harness/computer_use.py` runs in-process** (in the Jarvis main process), while the other five harnesses remain subprocesses.
 
 ### Rationale
-By its nature, Computer-Use is **not an external sub-agent framework** (as OpenClaw or Codex are), but an internal plan-observe-act-verify loop that:
+By its nature, Computer-Use is **not an external Jarvis-Agent framework** (as Jarvis-Agents or Codex are), but an internal plan-observe-act-verify loop that:
 
 1. Uses the existing `BrainManager` directly (Opus plans, Sonnet observes, Haiku steps — cost tracking via ADR-0006 applies automatically)
 2. Consumes the `VisionEngine` directly (no screenshot serialization over pipes)
@@ -37,7 +37,7 @@ By its nature, Computer-Use is **not an external sub-agent framework** (as OpenC
 Architecturally this is closer to the `BrainManager` or `HarnessManager` (both in-process) than to the `OpenClawHarness` (which wraps an external binary).
 
 ### Position relative to the CLAUDE.md rule
-The rule targets **third-party agent code** (OpenClaw, Codex, Open Interpreter), which could potentially read/write arbitrarily. The Computer-Use harness is not third-party code — it is our own orchestrator code, whose tools run through the existing risk-tier/whitelist system. The secret-isolation clause is therefore not violated, because no foreign binary is started.
+The rule targets **third-party agent code** (Jarvis-Agents, Codex, Open Interpreter), which could potentially read/write arbitrarily. The Computer-Use harness is not third-party code — it is our own orchestrator code, whose tools run through the existing risk-tier/whitelist system. The secret-isolation clause is therefore not violated, because no foreign binary is started.
 
 ### Security mitigation
 - All individual actions (click, type, screenshot) run through the `ToolExecutor` including the blacklist check.

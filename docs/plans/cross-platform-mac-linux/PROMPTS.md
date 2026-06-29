@@ -51,7 +51,7 @@ DONE means all of the following are true and demonstrated with command output:
 </required-reading>
 
 <environment-setup>
-Run exactly, in the repo root `C:\Users\Administrator\Desktop\Personal Jarvis`:
+Run exactly, in the repo root `<USER_HOME>\Desktop\Personal Jarvis`:
 1. `git fetch origin`
 2. `git switch -c feat/crossplatform-port origin/main`
 3. `git push -u origin feat/crossplatform-port`
@@ -3150,7 +3150,7 @@ DONE means: the cause of the rate-limit is identified (which provider/tool, conc
 <required-reading>
 - `docs/plans/cross-platform-mac-linux/HARD-NEGATIVES.md` HN-17 (never force-push; never bypass hooks).
 - The sub-task prompt that was running (its `<done-signal>` defines what "resume here" means).
-- MEMORY: the mission mass-failure root cause was OAuth-concurrency saturation (fix = First-Output-Gate + max_concurrent 1) — relevant if the rate-limit is on the worker/sub-agent path.
+- MEMORY: the mission mass-failure root cause was OAuth-concurrency saturation (fix = First-Output-Gate + max_concurrent 1) — relevant if the rate-limit is on the worker/Jarvis-Agent path.
 </required-reading>
 
 <environment-setup>
@@ -3165,7 +3165,7 @@ Modify: only what is needed to reduce concurrency (e.g. a worker `max_concurrent
 <primary-path>
 1. Diagnose: read the error — identify the provider/tool and whether it is a quota cap or concurrency saturation.
 2. Preserve: `git add -A && git commit -m "wip: <sub-task> checkpoint before rate-limit recovery"` on the sub-task branch (NEVER on a shared branch directly; NEVER `git add .` blindly — review the diff first).
-3. Reduce concurrency: if it is OAuth-concurrency (sub-agent/worker path), set the relevant `max_concurrent` to 1; if it is a per-provider quota, switch provider via ENV (e.g. `brain.primary`→an alternate) per the project's drift-safe config path (ENV override, not a raw toml edit).
+3. Reduce concurrency: if it is OAuth-concurrency (Jarvis-Agent/worker path), set the relevant `max_concurrent` to 1; if it is a per-provider quota, switch provider via ENV (e.g. `brain.primary`→an alternate) per the project's drift-safe config path (ENV override, not a raw toml edit).
 4. Wait for the limit window to clear (do not hammer-retry in a tight loop), then re-run the sub-task's acceptance commands to confirm the resumable state.
 5. Record a "resume here" note (which acceptance commands still need to pass).
 </primary-path>

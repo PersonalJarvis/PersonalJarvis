@@ -11,7 +11,7 @@
 
 Build a first-class **Jarvis CLI**: a command-line interface that drives Jarvis
 itself, exposing every action a user can perform in the WebUI as a CLI command.
-It is usable by the maintainer, by Jarvis's own sub-agents, and — the primary
+It is usable by the maintainer, by Jarvis's own Jarvis-Agents, and — the primary
 driver — by **external coding agents (Claude Code, Codex)** that need to control
 a running Jarvis programmatically. This is the same relationship `gcloud` / `aws`
 / `az` have with their cloud platforms: a CLI that surfaces the full capability

@@ -4,7 +4,7 @@
 
 **This document is the single source of truth for B3.** All four parallel coding agents read this first, then their own `AGENT-X-*.md` briefing.
 
-Mockup reference (visual contract for the final UI): `C:\Users\Administrator\Desktop\b3-wiki-view-mockup.html`.
+Mockup reference (visual contract for the final UI): `<USER_HOME>\Desktop\b3-wiki-view-mockup.html`.
 
 ---
 
@@ -81,8 +81,8 @@ These shapes are **non-negotiable**. Any agent that deviates breaks the merge.
       "kind": "entity",
       "count": 2,
       "files": [
-        {"slug": "ruben",  "title": "Ruben",  "mtime": 1715600000.0, "size": 412},
-        {"slug": "harald", "title": "Harald", "mtime": 1715590000.0, "size": 289}
+        {"slug": "alex",  "title": "Alex",  "mtime": 1715600000.0, "size": 412},
+        {"slug": "sam", "title": "Sam", "mtime": 1715590000.0, "size": 289}
       ]
     },
     {"name": "concepts", "kind": "concept", "count": 0, "files": []},
@@ -92,19 +92,19 @@ These shapes are **non-negotiable**. Any agent that deviates breaks the merge.
   "stats": {"total_pages": 3, "total_links": 8, "last_curator_run": "2026-05-13T13:59:00"}
 }
 
-# GET /api/wiki/page/{slug}    e.g. /api/wiki/page/harald
+# GET /api/wiki/page/{slug}    e.g. /api/wiki/page/sam
 {
   "ok": true,
-  "slug": "harald",
+  "slug": "sam",
   "kind": "entity",
-  "title": "Harald",
-  "path": "entities/harald.md",
+  "title": "Sam",
+  "path": "entities/sam.md",
   "frontmatter": {
-    "type": "entity", "entity_kind": "person", "slug": "harald",
+    "type": "entity", "entity_kind": "person", "slug": "sam",
     "aliases": [], "created": "2026-05-13", "updated": "2026-05-13"
   },
-  "body_md": "# Harald\n\n## Summary\nHarald is a person born in 1976.\n\n## Facts\n- Born in 1976.\n…",
-  "wikilinks": ["ruben"],
+  "body_md": "# Sam\n\n## Summary\nSam is a person born in 1976.\n\n## Facts\n- Born in 1976.\n…",
+  "wikilinks": ["alex"],
   "stats": {"words": 17, "bytes": 289, "mtime": 1715590000.0}
 }
 
@@ -112,13 +112,13 @@ These shapes are **non-negotiable**. Any agent that deviates breaks the merge.
 {
   "ok": true,
   "nodes": [
-    {"id": "harald",           "kind": "entity",  "title": "Harald"},
-    {"id": "ruben",            "kind": "entity",  "title": "Ruben"},
+    {"id": "sam",           "kind": "entity",  "title": "Sam"},
+    {"id": "alex",            "kind": "entity",  "title": "Alex"},
     {"id": "pixel-art-editor", "kind": "project", "title": "Pixel Art Editor"}
   ],
   "edges": [
-    {"source": "ruben", "target": "harald",           "context": "Father is [[harald]]"},
-    {"source": "ruben", "target": "pixel-art-editor", "context": "Working on [[pixel-art-editor]]"}
+    {"source": "alex", "target": "sam",           "context": "Father is [[sam]]"},
+    {"source": "alex", "target": "pixel-art-editor", "context": "Working on [[pixel-art-editor]]"}
   ],
   "broken": []   // list of {source, target} where target page does not exist
 }
@@ -126,9 +126,9 @@ These shapes are **non-negotiable**. Any agent that deviates breaks the merge.
 # GET /api/wiki/backlinks/{slug}
 {
   "ok": true,
-  "slug": "harald",
+  "slug": "sam",
   "backlinks": [
-    {"slug": "ruben", "title": "Ruben", "snippet": "...father is [[harald]] — born 1976..."}
+    {"slug": "alex", "title": "Alex", "snippet": "...father is [[sam]] — born 1976..."}
   ]
 }
 
@@ -137,7 +137,7 @@ These shapes are **non-negotiable**. Any agent that deviates breaks the merge.
   "ok": true,
   "query": "pizza",
   "hits": [
-    {"slug": "ruben", "title": "Ruben", "path": "entities/ruben.md",
+    {"slug": "alex", "title": "Alex", "path": "entities/alex.md",
      "snippet": "...Favorite food is Pizza (source: voice-fact:...)...",
      "score": 0.92}
   ]
@@ -155,7 +155,7 @@ All endpoints return HTTP 200 even on logical errors; clients read `ok`. HTTP 40
 WS /api/wiki/live
 
 Server → Client messages (JSON, one per file event, debounced 500 ms):
-{"type": "page_changed", "slug": "harald", "path": "entities/harald.md", "kind": "modified"}
+{"type": "page_changed", "slug": "sam", "path": "entities/sam.md", "kind": "modified"}
 {"type": "page_changed", "slug": "new-thing", "path": "entities/new-thing.md", "kind": "created"}
 {"type": "page_changed", "slug": "old", "path": "entities/old.md", "kind": "deleted"}
 
@@ -195,7 +195,7 @@ interface WikiSearchProps {
 
 // ObsidianButton (Agent D)
 interface ObsidianButtonProps {
-  vaultRelPath: string;   // e.g. "entities/harald.md"
+  vaultRelPath: string;   // e.g. "entities/sam.md"
 }
 
 // useWikiLive (Agent D)
@@ -228,10 +228,10 @@ export function useWikiLive(): { connected: boolean; lastEventAt: number | null 
 Each agent works in **its own git worktree**, branched off `impl/b3-base`:
 
 ```
-C:\Users\Administrator\Desktop\jarvis-b3-agent-A\
-C:\Users\Administrator\Desktop\jarvis-b3-agent-B\
-C:\Users\Administrator\Desktop\jarvis-b3-agent-C\
-C:\Users\Administrator\Desktop\jarvis-b3-agent-D\
+<USER_HOME>\Desktop\jarvis-b3-agent-A\
+<USER_HOME>\Desktop\jarvis-b3-agent-B\
+<USER_HOME>\Desktop\jarvis-b3-agent-C\
+<USER_HOME>\Desktop\jarvis-b3-agent-D\
 ```
 
 Worktree branch names: `impl/b3-agent-A`, `…B`, `…C`, `…D`.
@@ -319,12 +319,12 @@ After all four agents commit and report, the review agent:
 6. Runs the live walk-through:
    - Launch desktop app: `Start-Process pythonw -ArgumentList "-m","jarvis.ui.web.launcher"`
    - Click sidebar tab where "Notizen" used to be — sees the new Wiki view.
-   - Lands on the graph view, sees 3 nodes (harald, ruben, pixel-art-editor).
-   - Clicks the `harald` node → page loads, frontmatter pills visible, body rendered.
-   - Clicks the `[[ruben]]` wikilink in the body → navigates to ruben.md.
-   - Clicks "In Obsidian öffnen" — either Obsidian launches the file (if installed) or a toast says "Obsidian nicht verfügbar — Datei: entities/ruben.md".
+   - Lands on the graph view, sees 3 nodes (sam, alex, pixel-art-editor).
+   - Clicks the `sam` node → page loads, frontmatter pills visible, body rendered.
+   - Clicks the `[[alex]]` wikilink in the body → navigates to alex.md.
+   - Clicks "In Obsidian öffnen" — either Obsidian launches the file (if installed) or a toast says "Obsidian nicht verfügbar — Datei: entities/alex.md".
    - Triggers a live test: manually adds a file `entities/test-live.md` via the terminal. Within ~1 s the tree updates, the new file appears, the graph re-fetches.
-   - Voice command: "Hey Jarvis, schreib in dein Wiki: meine Lieblingsfarbe ist Blau" — wait ~10 s — the Wiki tab auto-refreshes, ruben.md shows the new fact.
+   - Voice command: "Hey Jarvis, schreib in dein Wiki: meine Lieblingsfarbe ist Blau" — wait ~10 s — the Wiki tab auto-refreshes, alex.md shows the new fact.
 
 If the walk-through passes, B3 is done.
 

@@ -2,7 +2,7 @@
 
 You are working in the Personal Jarvis repository at:
 
-`C:\Users\Administrator\Desktop\Personal Jarvis`
+`<USER_HOME>\Desktop\Personal Jarvis`
 
 Your task is to fix an intermittent voice bug: while the user is speaking a prompt to Jarvis, a very brief thinking or breathing pause, roughly 0.5 seconds, sometimes causes Jarvis to finalize and submit the prompt even though the user clearly has not finished the sentence. This is annoying because the brain receives a half-prompt and the conversation flow breaks.
 

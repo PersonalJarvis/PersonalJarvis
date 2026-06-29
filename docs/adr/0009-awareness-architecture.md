@@ -7,7 +7,7 @@
 
 Plan vision (see `JARVIS_AWARENESS_PLAN.md`): on the wake word, Master-Jarvis should know the thread of the last hour — which window is active, which file is open in the IDE, what the user has done in the last ~30 minutes. This context must be readable synchronously (critical-path protection: <50ms p95), but must never block the voice pipeline or trigger new brain roundtrips on the wake path.
 
-Until now context was rebuilt anew on every Sub-Jarvis spawn (`vision_context` with UIA-tree lookup, ~200-400ms per spawn) or was missing entirely. The user phrases the missing capability like this: "When I say 'change that', Jarvis should know what 'that' is." Awareness delivers exactly this background state without costing a brain call per wake word.
+Until now context was rebuilt anew on every Jarvis-Agent spawn (`vision_context` with UIA-tree lookup, ~200-400ms per spawn) or was missing entirely. The user phrases the missing capability like this: "When I say 'change that', Jarvis should know what 'that' is." Awareness delivers exactly this background state without costing a brain call per wake word.
 
 ## Decision
 
@@ -16,8 +16,8 @@ Four-layer architecture (plan §1):
 | Layer | Lifetime | Component | Storage | Consumer |
 |---------|-----------|-----------|---------|-------------|
 | L1 Live Frame | Seconds | `AwarenessManager` + watchers | RAM (dataclass) | Master-Jarvis (sync read <50ms) |
-| L2 Story | 30min rolling | `StoryTracker` + `Verdichter` (Haiku) | RAM ring buffer + SQLite | Master-/Sub-Jarvis (episode snippet in the system prompt) |
-| L3 Session | 24h-7d | `SessionRecall` (FTS5) | SQLite (`jarvis.db`) | Sub-Jarvis (`awareness-recall` tool) |
+| L2 Story | 30min rolling | `StoryTracker` + `Verdichter` (Haiku) | RAM ring buffer + SQLite | Master-/Jarvis-Agent (episode snippet in the system prompt) |
+| L3 Session | 24h-7d | `SessionRecall` (FTS5) | SQLite (`jarvis.db`) | Jarvis-Agent (`awareness-recall` tool) |
 | L4 Long-Term | persistent | `Curator` (existing) | `USER.md` / `MEMORY.md` | Curator is fed, not replaced |
 
 Architecture principles (non-negotiable, plan §1):
@@ -34,21 +34,21 @@ Architecture principles (non-negotiable, plan §1):
 
 **FTS5 vs embeddings (D-A2):** ChromaDB/embeddings for L3 were deferred to Phase A6. FTS5 (BM25 ranking, 200ms p95 for 1000 episodes) is the simpler start. If recall metrics show FTS5 to be insufficient, a vector re-rank in A6 is additively possible — no schema-migration block.
 
-**Direct brain call vs Sub-Jarvis spawn (D-A4):** the episode condenser runs as a direct brain call against Haiku via `BrainProviderRegistry`, NOT as `spawn_sub_jarvis`. Sub-Jarvis is for user tasks; internal condensation would trigger the JARVIS_DEPTH guard and make latency/cost explode (hard negative, plan §10).
+**Direct brain call vs Jarvis-Agent spawn (D-A4):** the episode condenser runs as a direct brain call against Haiku via `BrainProviderRegistry`, NOT as `spawn_sub_jarvis`. Jarvis-Agent is for user tasks; internal condensation would trigger the JARVIS_DEPTH guard and make latency/cost explode (hard negative, plan §10).
 
 **Hybrid privacy default (D-A1):** coding apps (`code.exe`, `cursor.exe`, etc.) are explicitly allowlisted; browsers are blocked by default because they carry high PII risk (URLs, tabs, password fields); everything else unknown is allowed (productivity tools like Notepad, Office). The user can additively block via `preferences.toml` — system defaults are hard, not removable.
 
 ## Position relative to existing plans
 
-- **`JARVIS_REFACTOR_PLAN.md` (routing bug)**: hard-sequential — routing must be completed before A2, otherwise every episode trigger accidentally spawns a Sub-Jarvis instead of a Haiku condenser call. A0 itself does not touch any routing code.
+- **`JARVIS_REFACTOR_PLAN.md` (routing bug)**: hard-sequential — routing must be completed before A2, otherwise every episode trigger accidentally spawns a Jarvis-Agent instead of a Haiku condenser call. A0 itself does not touch any routing code.
 - **`PLAN_B_CURATOR.md`**: Awareness L2 *feeds* the Curator. From Phase A2 onward, `EpisodeRecorded` is optionally routed to a second Curator subscriber (wiring in `jarvis/brain/factory.py`). Additive, no conflict.
-- **Phase 5 Sub-Jarvis**: Awareness is router-tier-only for the state read. Sub-Jarvis gets `awareness-recall` (Phase A3). `AwarenessManager` is NOT passed to Sub-Jarvis spawns (Sub is stateless).
+- **Phase 5 Jarvis-Agent**: Awareness is router-tier-only for the state read. Jarvis-Agent gets `awareness-recall` (Phase A3). `AwarenessManager` is NOT passed to Jarvis-Agent spawns (Sub is stateless).
 - **Phase 6 tool roster (Browser-Use, Computer-Use)**: Computer-Use actions trigger frame updates → Awareness sees these as "self-induced activity". The probe layer (A5) must distinguish between user and bot activity via `frame.source = "user" | "bot"`.
 
 ## Consequences
 
 + Master-Jarvis has a synchronous context read <50ms — no brain roundtrip for "What am I doing right now?".
-+ Sub-Jarvis can semantically search the last 24h of activity via `awareness-recall` — without Master-Jarvis sending the whole history every time.
++ Jarvis-Agent can semantically search the last 24h of activity via `awareness-recall` — without Master-Jarvis sending the whole history every time.
 + The existing Curator pipeline gets additional inputs without breakage.
 + Hot-disable: `[awareness].enabled = false` shuts down the entire subsystem (plan §15 rollback plan).
 - Win32 hooks need disciplined lifecycle handling (`UnhookWinEvent`, thread joins with a 2s timeout). Memory/handle-leak risk on a faulty `stop()` implementation. Mitigation: test mandatory in A1.
@@ -61,7 +61,7 @@ Architecture principles (non-negotiable, plan §1):
 - **Polling-only (every 500ms `GetForegroundWindow`)**: ~0.5-2% CPU permanently + higher latency + lost switches shorter than the polling interval. Discarded.
 - **Own SQLite file for Awareness**: extra connection pool, separate schema migration, separate backups. Discarded — `jarvis.db` already has FTS5 and is asynchronous via `aiosqlite`.
 - **ChromaDB from day 1**: ~200MB container overhead, embedding latency ~50ms per episode, vector-DB operational complexity. Discarded for A0-A5; additively extensible in A6 if FTS5 proves too weak.
-- **Sub-Jarvis for condensation**: would overload the depth guard and emit additional bus events. Discarded — a direct Haiku brain call via `BrainProviderRegistry` is more efficient.
+- **Jarvis-Agent for condensation**: would overload the depth guard and emit additional bus events. Discarded — a direct Haiku brain call via `BrainProviderRegistry` is more efficient.
 - **Extend `vision_context` (UIA-tree lookup) instead of an Awareness subsystem**: would make the 200-400ms spawn-latency cost permanent. The Awareness RAM state is a <50ms read and persists across spawns. Discarded.
 
 ## Update: Phase A2 — L2 condensation procedure (2026-04-26)

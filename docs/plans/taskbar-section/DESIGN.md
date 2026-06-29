@@ -1,17 +1,17 @@
-# Taskbar Section + Wispr Features — Design Spec
+# Taskbar Section + Dictation Features — Design Spec
 
 **Date:** 2026-06-02
 **Status:** Approved (design), implementation pending
-**Author:** OpenClaw (brainstormed with the maintainer)
+**Author:** Jarvis-Agents (brainstormed with the maintainer)
 
 ---
 
 ## 1. Goal
 
 Add a dedicated **"Taskbar"** sidebar section to the desktop app (sibling to Socials/Chats)
-that owns the on-screen overlay settings, plus two Wispr-Flow-style features:
+that owns the on-screen overlay settings, plus two dictation-style features:
 
-1. **Show bar at all times** — toggle the whisper-bar's persistent/standby behaviour
+1. **Show bar at all times** — toggle the jarvis-bar's persistent/standby behaviour
    (`[ui].bar_persistent`). OFF = no standby; the bar only pops up on "Hey Jarvis".
 2. **Mute music while dictating** — while Jarvis is in a voice session, mute every OTHER
    app's audio (Spotify, browser music…) and restore it when the session ends.
@@ -25,7 +25,7 @@ The existing Bar/Mascot/None style selector **moves** from Settings into this ne
 - "Mute music while dictating" mutes for the **whole voice session** (start→end), not per
   sub-state.
 - It **fully mutes** other apps (not duck-to-20%).
-- Design: brand guidelines (Charcoal card + Gold accents), Wispr layout (grouped cards, label +
+- Design: brand guidelines (Charcoal card + Gold accents), grouped-card layout (grouped cards, label +
   toggle rows). No black/white, no AI slop.
 
 ## 3. Architecture
@@ -138,5 +138,5 @@ Live sign-off (maintainer):
 - The exact `restore_delay_ms` (start 400 ms; tune for TTS tail).
 - Name allowlist for never-mute apps (Discord/Zoom/Teams) — config `[ducking].never_mute = []`,
   empty default; wire but not surfaced in UI for v1.
-- Whether "Show bar at all times" should be disabled in the UI when style != whisper_bar (it only
+- Whether "Show bar at all times" should be disabled in the UI when style != jarvis_bar (it only
   affects the bar). v1: always shown, applies to the bar.

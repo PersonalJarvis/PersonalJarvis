@@ -3,7 +3,7 @@
 - **Status:** Draft (approved direction, pending spec review)
 - **Date:** 2026-06-17
 - **Type:** Additive UI section + read-only analytics layer
-- **Sibling spec:** `2026-05-27-subagent-section-design.md` (same "new section" wiring pattern), `2026-05-30-chats-conversation-manager-design.md` (Sessions/Chats data sources)
+- **Sibling spec:** `2026-05-27-jarvis-agents-section-design.md` (same "new section" wiring pattern), `2026-05-30-chats-conversation-manager-design.md` (Sessions/Chats data sources)
 
 ---
 
@@ -33,7 +33,7 @@ from data that already exists:
   defined `LatencyPhase` vocabulary and SLO budgets.
 - Tool/CLI invocations live in `cli_usage.db` (`cli_invocations`: name,
   exit code, duration, risk-tier, `trace_id`, caller).
-- Sub-agent missions live in `missions.db`, optionally linked to a session via
+- Jarvis-Agent missions live in `missions.db`, optionally linked to a session via
   `session_id` on `WorkerSpawned` / `WorkerDraftReady`.
 
 This is therefore primarily an **aggregation + UI** task, not a telemetry

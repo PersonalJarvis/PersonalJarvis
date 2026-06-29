@@ -3,7 +3,7 @@ title: "ADR-0001: IPC via Named Pipe + HMAC"
 slug: adr-0001-ipc-named-pipe-hmac
 diataxis: adr
 status: active
-owner: harald
+owner: sam
 last_reviewed: 2026-04-29
 phase: 5
 audience: developer

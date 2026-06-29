@@ -35,8 +35,8 @@ Two layers:
    false-fire.
 2. **Brain signal, post-brain** — the persona prompt
    (`jarvis/brain/JARVIS_PERSONA.md:95-98`) instructs the brain: *"When the
-   conversation ends or Ruben dismisses you, reply with EXACTLY one of: EN:
-   Goodbye, Ruben. / DE: Auf Wiedersehen, Ruben."* The pipeline then does an
+   conversation ends or Alex dismisses you, reply with EXACTLY one of: EN:
+   Goodbye, Alex. / DE: Auf Wiedersehen, Alex."* The pipeline then does an
    **exact normalized string compare** of the brain's response
    (`pipeline.py:2351` streamed, `pipeline.py:2432` non-streamed) and triggers
    hang-up on a match.
@@ -51,7 +51,7 @@ Matched pre-brain at `session.py:231`. **No brain-signal path.**
 
 The semantic mechanism (layer 2) is the right idea — an LLM is the correct tool
 to understand "Kannst du jetzt bitte gehen" — but it is coupled to an **exact
-magic string**. If the brain paraphrases ("Auf Wiedersehen, Ruben! War mir ein
+magic string**. If the brain paraphrases ("Auf Wiedersehen, Alex! War mir ein
 Vergnügen."), the exact match fails and no hang-up occurs. The fix is to make
 that path **robust**, not to add a new classifier.
 
@@ -119,8 +119,8 @@ Exports:
 - `strip_end_signal(text: str) -> str` — removes the sentinel and trailing
   whitespace, safe to call on partial stream chunks and the full response.
 - `LEGACY_FAREWELL_PHRASES` + `is_legacy_farewell(text: str) -> bool` — backward
-  compatibility for the old exact phrases ("auf wiedersehen, ruben", "goodbye,
-  ruben", …) so older brain behavior still hangs up during rollout.
+  compatibility for the old exact phrases ("auf wiedersehen, alex", "goodbye,
+  alex", …) so older brain behavior still hangs up during rollout.
 - `BRAIN_HANGUP_INSTRUCTION` — the canonical instruction text (DE + EN) that the
   persona references, keeping the contract in one place.
 

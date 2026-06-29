@@ -1,10 +1,10 @@
-# Whisper-Bar Overlay Implementation Plan
+# Jarvis-Bar Overlay Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (inline, chosen by maintainer goal) to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship a slim Wispr-Flow-style pill bar as the default on-screen representation of Jarvis (idle dots / mic-driven listening bars / synthetic thinking wave / TTS-driven speaking bars), keeping the mascot orb selectable.
+**Goal:** Ship a slim dictation-style pill bar as the default on-screen representation of Jarvis (idle dots / mic-driven listening bars / synthetic thinking wave / TTS-driven speaking bars), keeping the mascot orb selectable.
 
-**Architecture:** A new `WhisperBarOverlay` Tk surface implements the same duck-typed API `OrbBusBridge` already drives, so the bridge is reused unchanged. State transitions arrive via `SystemStateChanged` (bus, low-freq). Mic level during LISTENING is fed by the bridge's existing `MicListener → set_level` (free). TTS level during SPEAKING is the one new signal: a throttle-free RMS computed in `player._flush_pending`, published out-of-band (NOT the EventBus) via a tiny `level_tap` module → `set_level`. The thinking wave is synthetic (time-driven). Selection via `[ui].orb_style = "whisper_bar" | "mascot" | "none"`, default `whisper_bar`.
+**Architecture:** A new `JarvisBarOverlay` Tk surface implements the same duck-typed API `OrbBusBridge` already drives, so the bridge is reused unchanged. State transitions arrive via `SystemStateChanged` (bus, low-freq). Mic level during LISTENING is fed by the bridge's existing `MicListener → set_level` (free). TTS level during SPEAKING is the one new signal: a throttle-free RMS computed in `player._flush_pending`, published out-of-band (NOT the EventBus) via a tiny `level_tap` module → `set_level`. The thinking wave is synthetic (time-driven). Selection via `[ui].orb_style = "jarvis_bar" | "mascot" | "none"`, default `jarvis_bar`.
 
 **Tech Stack:** Python 3.11, tkinter (color-key transparency), numpy + PIL (per-frame draw), pydantic v2 (config), pytest.
 
@@ -27,18 +27,18 @@
 
 | File | Responsibility |
 |---|---|
-| `jarvis/ui/whisperbar/__init__.py` | Package marker + exports (`WhisperBarOverlay`) |
+| `jarvis/ui/jarvisbar/__init__.py` | Package marker + exports (`JarvisBarOverlay`) |
 | `jarvis/audio/level_tap.py` | Process-local pub/sub for the TTS output level (out-of-band, NOT EventBus); zero-cost when no subscriber |
-| `jarvis/ui/whisperbar/renderer.py` | Pure draw math: `ease`, `bar_heights`, `wave_points`, `WhisperBarRenderer.render(t,mode,level)->PIL.Image`. No Tk/IO. |
-| `jarvis/ui/whisperbar/interaction.py` | `is_drag(dx,dy,threshold)`, `classify_release(moved)`, `resolve_bar_placement(...)`, position persistence wrapper |
-| `jarvis/ui/whisperbar/overlay.py` | `WhisperBarOverlay` Tk window/thread; implements the surface API; drag+click-to-talk; registers `set_level` as TTS level sink |
-| `jarvis/core/config.py` *(modify)* | `orb_style` default → `"whisper_bar"`; add `bar_persistent: bool=True`, `bar_accent: str="#e7c46e"` |
+| `jarvis/ui/jarvisbar/renderer.py` | Pure draw math: `ease`, `bar_heights`, `wave_points`, `JarvisBarRenderer.render(t,mode,level)->PIL.Image`. No Tk/IO. |
+| `jarvis/ui/jarvisbar/interaction.py` | `is_drag(dx,dy,threshold)`, `classify_release(moved)`, `resolve_bar_placement(...)`, position persistence wrapper |
+| `jarvis/ui/jarvisbar/overlay.py` | `JarvisBarOverlay` Tk window/thread; implements the surface API; drag+click-to-talk; registers `set_level` as TTS level sink |
+| `jarvis/core/config.py` *(modify)* | `orb_style` default → `"jarvis_bar"`; add `bar_persistent: bool=True`, `bar_accent: str="#e7c46e"` |
 | `jarvis/audio/player.py` *(modify)* | RMS in `_flush_pending` → `level_tap.publish` (gated on subscribers) |
 | `jarvis/ui/desktop_app.py` *(modify)* | branch `_start_speech_and_orb` on `orb_style`; `hide_on_idle=not bar_persistent` |
-| `tests/unit/ui/whisperbar/test_renderer.py` | renderer math + render smoke |
-| `tests/unit/ui/whisperbar/test_interaction.py` | click/drag classification + placement |
+| `tests/unit/ui/jarvisbar/test_renderer.py` | renderer math + render smoke |
+| `tests/unit/ui/jarvisbar/test_interaction.py` | click/drag classification + placement |
 | `tests/unit/audio/test_level_tap.py` | pub/sub + no-subscriber no-op |
-| `tests/unit/ui/whisperbar/test_surface_contract.py` | WhisperBarOverlay exposes every method the bridge calls |
+| `tests/unit/ui/jarvisbar/test_surface_contract.py` | JarvisBarOverlay exposes every method the bridge calls |
 | `tests/unit/audio/test_player_level_tap.py` | player publishes RMS through level_tap |
 
 ---
@@ -84,7 +84,7 @@ def test_failing_subscriber_is_swallowed():
 """Process-local, out-of-band level channel for the TTS output amplitude.
 
 Deliberately NOT the EventBus: amplitude updates fire ~8x/second and would
-spam the flight-recorder wildcard subscriber (5s cap). The whisper-bar
+spam the flight-recorder wildcard subscriber (5s cap). The jarvis-bar
 overlay registers a sink; the audio player publishes the per-flush RMS. When
 no sink is registered, publishing is a cheap no-op (the player skips the RMS
 computation entirely via has_subscribers()).
@@ -142,13 +142,13 @@ def reset() -> None:
 
 ## Task 2: `renderer` — pure draw math
 
-**Files:** Create `jarvis/ui/whisperbar/renderer.py`, `jarvis/ui/whisperbar/__init__.py`; Test `tests/unit/ui/whisperbar/test_renderer.py`
+**Files:** Create `jarvis/ui/jarvisbar/renderer.py`, `jarvis/ui/jarvisbar/__init__.py`; Test `tests/unit/ui/jarvisbar/test_renderer.py`
 
 - [ ] **Step 1 — failing tests**
 ```python
-# tests/unit/ui/whisperbar/test_renderer.py
+# tests/unit/ui/jarvisbar/test_renderer.py
 import math
-from jarvis.ui.whisperbar import renderer as R
+from jarvis.ui.jarvisbar import renderer as R
 
 def test_ease_moves_toward_target():
     assert R.ease(0.0, 1.0, 0.5) == 0.5
@@ -174,14 +174,14 @@ def test_wave_points_bounded_inside_pill():
         assert 36 - 26 <= y <= 36 + 26  # within ±height*0.5
 
 def test_render_returns_image_for_every_mode():
-    rnd = R.WhisperBarRenderer(accent="#e7c46e")
+    rnd = R.JarvisBarRenderer(accent="#e7c46e")
     for mode in ("idle", "listen", "speak", "think"):
         img = rnd.render(0.1, mode, 0.5)
         assert img.size == (R.WIN_W, R.WIN_H)
         assert img.mode == "RGB"
 
 def test_idle_collapses_expansion_over_frames():
-    rnd = R.WhisperBarRenderer()
+    rnd = R.JarvisBarRenderer()
     for _ in range(40):
         rnd.render(0.0, "listen", 0.5)
     expanded = rnd._st.expand
@@ -191,23 +191,23 @@ def test_idle_collapses_expansion_over_frames():
     assert rnd._st.expand < 0.1
 ```
 - [ ] **Step 2 — run, expect fail**
-- [ ] **Step 3 — implement** (full module — `__init__.py` exports `WhisperBarOverlay` lazily to stay headless-safe)
+- [ ] **Step 3 — implement** (full module — `__init__.py` exports `JarvisBarOverlay` lazily to stay headless-safe)
 ```python
-# jarvis/ui/whisperbar/__init__.py
-"""Whisper-bar overlay package (slim default on-screen representation)."""
+# jarvis/ui/jarvisbar/__init__.py
+"""Jarvis-bar overlay package (slim default on-screen representation)."""
 from __future__ import annotations
 
-__all__ = ["WhisperBarOverlay"]
+__all__ = ["JarvisBarOverlay"]
 
 
 def __getattr__(name: str):  # lazy: avoid importing tkinter on headless import
-    if name == "WhisperBarOverlay":
-        from jarvis.ui.whisperbar.overlay import WhisperBarOverlay
-        return WhisperBarOverlay
+    if name == "JarvisBarOverlay":
+        from jarvis.ui.jarvisbar.overlay import JarvisBarOverlay
+        return JarvisBarOverlay
     raise AttributeError(name)
 ```
 ```python
-# jarvis/ui/whisperbar/renderer.py  (numpy/PIL — desktop only, imported lazily by overlay)
+# jarvis/ui/jarvisbar/renderer.py  (numpy/PIL — desktop only, imported lazily by overlay)
 from __future__ import annotations
 
 import math
@@ -279,7 +279,7 @@ class _RenderState:
     expand: float = 0.0  # 0 collapsed .. 1 expanded
 
 
-class WhisperBarRenderer:
+class JarvisBarRenderer:
     def __init__(self, accent: str = "#e7c46e") -> None:
         self._accent = _hex_to_rgb(accent)
         self._st = _RenderState()
@@ -333,16 +333,16 @@ class WhisperBarRenderer:
         d.line(pts, fill=self._accent, width=3, joint="curve")
 ```
 - [ ] **Step 4 — run, expect PASS**
-- [ ] **Step 5 — commit** `feat(ui): whisper-bar pure renderer (dots/bars/wave)`
+- [ ] **Step 5 — commit** `feat(ui): jarvis-bar pure renderer (dots/bars/wave)`
 
 ## Task 3: `interaction` — click vs drag + placement
 
-**Files:** Create `jarvis/ui/whisperbar/interaction.py`; Test `tests/unit/ui/whisperbar/test_interaction.py`
+**Files:** Create `jarvis/ui/jarvisbar/interaction.py`; Test `tests/unit/ui/jarvisbar/test_interaction.py`
 
 - [ ] **Step 1 — failing tests**
 ```python
-# tests/unit/ui/whisperbar/test_interaction.py
-from jarvis.ui.whisperbar import interaction as I
+# tests/unit/ui/jarvisbar/test_interaction.py
+from jarvis.ui.jarvisbar import interaction as I
 
 def test_is_drag_threshold():
     assert I.is_drag(10, 5, 16) is False   # 15 < 16
@@ -361,8 +361,8 @@ def test_default_bottom_center_placement():
 - [ ] **Step 2 — run, expect fail**
 - [ ] **Step 3 — implement**
 ```python
-# jarvis/ui/whisperbar/interaction.py
-"""Click/drag classification + default placement for the whisper bar.
+# jarvis/ui/jarvisbar/interaction.py
+"""Click/drag classification + default placement for the jarvis bar.
 
 Mirrors the orb's proven movement-threshold model (overlay.py:1604): a press
 that never moves past the threshold is a CLICK (→ start a voice session); a
@@ -388,19 +388,19 @@ def default_bottom_center(*, screen_w: int, screen_h: int, bar_w: int, bar_h: in
     return x, y
 ```
 - [ ] **Step 4 — run, expect PASS**
-- [ ] **Step 5 — commit** `feat(ui): whisper-bar interaction (click vs drag, placement)`
+- [ ] **Step 5 — commit** `feat(ui): jarvis-bar interaction (click vs drag, placement)`
 
-## Task 4: `WhisperBarOverlay` — Tk surface
+## Task 4: `JarvisBarOverlay` — Tk surface
 
-**Files:** Create `jarvis/ui/whisperbar/overlay.py`; Test `tests/unit/ui/whisperbar/test_surface_contract.py`
+**Files:** Create `jarvis/ui/jarvisbar/overlay.py`; Test `tests/unit/ui/jarvisbar/test_surface_contract.py`
 
 Implements the bridge's surface API. `show(mode)` maps to renderer mode; `set_level` writes `_ext_level` directly (atomic, like the orb). Text/mouth methods are no-ops. On `start()`, subscribes `self.set_level` to `level_tap` (TTS amplitude). Click on release-without-move → `runtime_refs.get_speech_pipeline().request_voice_session()`. Drag persists position via `drag_persistence` (reuses `[overlay.mascot]` section — shared pin acceptable for v1). Color-key transparency identical to the orb; NO `SetWindowLong` calls → no BUG-030 exposure.
 
 - [ ] **Step 1 — failing contract test**
 ```python
-# tests/unit/ui/whisperbar/test_surface_contract.py
+# tests/unit/ui/jarvisbar/test_surface_contract.py
 import inspect
-from jarvis.ui.whisperbar.overlay import WhisperBarOverlay
+from jarvis.ui.jarvisbar.overlay import JarvisBarOverlay
 
 REQUIRED = [
     "show", "hide", "set_level", "play_animation", "stop_animation",
@@ -411,10 +411,10 @@ REQUIRED = [
 
 def test_surface_exposes_every_method_the_bridge_calls():
     for name in REQUIRED:
-        assert callable(getattr(WhisperBarOverlay, name, None)), name
+        assert callable(getattr(JarvisBarOverlay, name, None)), name
 
 def test_show_accepts_bridge_modes_without_tk():
-    bar = WhisperBarOverlay.__new__(WhisperBarOverlay)  # no Tk window
+    bar = JarvisBarOverlay.__new__(JarvisBarOverlay)  # no Tk window
     bar._mode = "idle"; bar._root = None; bar._ui_queue = None
     bar._tk_thread_id = None
     import threading; bar._tk_thread_id = threading.get_ident()
@@ -440,7 +440,7 @@ def test_show_accepts_bridge_modes_without_tk():
   - `_on_click()`: `from jarvis.core.runtime_refs import get_speech_pipeline; p=get_speech_pipeline(); p and p.request_voice_session()` (guarded try/except).
   - `stop()`: `_running=False`, call `_level_unsub()` if set, destroy root.
 - [ ] **Step 4 — run, expect PASS** (contract test runs without opening a window)
-- [ ] **Step 5 — commit** `feat(ui): WhisperBarOverlay Tk surface (bridge-compatible)`
+- [ ] **Step 5 — commit** `feat(ui): JarvisBarOverlay Tk surface (bridge-compatible)`
 
 ## Task 5: config — selection + persistence flags
 
@@ -451,9 +451,9 @@ def test_show_accepts_bridge_modes_without_tk():
 # tests/unit/core/test_ui_config_bar.py
 from jarvis.core.config import UIConfig
 
-def test_defaults_select_whisper_bar():
+def test_defaults_select_jarvis_bar():
     c = UIConfig()
-    assert c.orb_style == "whisper_bar"
+    assert c.orb_style == "jarvis_bar"
     assert c.bar_persistent is True
     assert c.bar_accent == "#e7c46e"
 
@@ -462,9 +462,9 @@ def test_legacy_mascot_still_accepted():
     assert UIConfig(orb_style="none").orb_style == "none"
 ```
 - [ ] **Step 2 — run, expect fail**
-- [ ] **Step 3 — implement**: in `UIConfig`, change `orb_style: str = "mascot"` → `orb_style: str = "whisper_bar"`; add after `orb_mascot_path`:
+- [ ] **Step 3 — implement**: in `UIConfig`, change `orb_style: str = "mascot"` → `orb_style: str = "jarvis_bar"`; add after `orb_mascot_path`:
 ```python
-    # Whisper-bar: persistent (always-visible) vs only-when-active.
+    # Jarvis-bar: persistent (always-visible) vs only-when-active.
     bar_persistent: bool = True
     # Hex accent that lights up during activity.
     bar_accent: str = "#e7c46e"
@@ -498,7 +498,7 @@ async def test_player_publishes_rms_when_subscribed(monkeypatch):
 - [ ] **Step 2 — run, expect fail**
 - [ ] **Step 3 — implement**: inside `_flush_pending`, immediately after `await asyncio.to_thread(self._write_samples, stm, arr, pending_rate, dev_rate)` (`player.py:594-596`), add:
 ```python
-                # Out-of-band TTS amplitude for the whisper-bar (never the bus).
+                # Out-of-band TTS amplitude for the jarvis-bar (never the bus).
                 if level_tap.has_subscribers() and arr.size:
                     rms = float(np.sqrt(np.mean(np.square(arr.astype(np.float32) * (1.0 / 32768.0)))))
                     level_tap.publish(rms)
@@ -513,14 +513,14 @@ and `from jarvis.audio import level_tap` at the top of `player.py`.
 
 - [ ] **Step 1** — replace the orb construction block with a branch:
 ```python
-        orb_style = self.cfg.ui.orb_style or "whisper_bar"
+        orb_style = self.cfg.ui.orb_style or "jarvis_bar"
         orb_mascot_path = self.cfg.ui.orb_mascot_path or None
         if orb_style == "none":
             self._orb = None
-        elif orb_style == "whisper_bar":
-            from jarvis.ui.whisperbar import WhisperBarOverlay
+        elif orb_style == "jarvis_bar":
+            from jarvis.ui.jarvisbar import JarvisBarOverlay
             from ui.orb.bus_bridge import OrbBusBridge
-            bar = WhisperBarOverlay(
+            bar = JarvisBarOverlay(
                 persistent=self.cfg.ui.bar_persistent,
                 accent=self.cfg.ui.bar_accent,
             )
@@ -542,9 +542,9 @@ and `from jarvis.audio import level_tap` at the top of `player.py`.
 ## Task 8: full validation pass
 
 - [ ] Run the whole new suite + adjacent:
-`& "C:\Program Files\Python311\python.exe" -m pytest tests/unit/ui/whisperbar tests/unit/audio/test_level_tap.py tests/unit/audio/test_player_level_tap.py tests/unit/core/test_ui_config_bar.py -v`
-- [ ] `ruff check jarvis/ui/whisperbar jarvis/audio/level_tap.py`
-- [ ] Headless boot guard: `& "C:\Program Files\Python311\python.exe" -c "import jarvis.ui.whisperbar; print('ok')"` (must NOT import tkinter).
+`& "C:\Program Files\Python311\python.exe" -m pytest tests/unit/ui/jarvisbar tests/unit/audio/test_level_tap.py tests/unit/audio/test_player_level_tap.py tests/unit/core/test_ui_config_bar.py -v`
+- [ ] `ruff check jarvis/ui/jarvisbar jarvis/audio/level_tap.py`
+- [ ] Headless boot guard: `& "C:\Program Files\Python311\python.exe" -c "import jarvis.ui.jarvisbar; print('ok')"` (must NOT import tkinter).
 - [ ] Regression: `& "C:\Program Files\Python311\python.exe" -m pytest tests/unit/audio -q` (player untouched paths still green).
 - [ ] Dispatch `code-reviewer` over the new files + the two touch hunks.
 - [ ] Adversarial verify (workflow) of the risky claims: color-key transparency, click-vs-drag, level_tap zero-cost-when-idle, hide_on_idle persistence.
@@ -552,6 +552,6 @@ and `from jarvis.audio import level_tap` at the top of `player.py`.
 ## Execution Notes (binding)
 
 - **Two touch-files carry uncommitted parallel-session edits** (`config.py` +66, `desktop_app.py` +38). Edit them additively; **never `git add` them** — leave uncommitted (repo norm: feature lands uncommitted, maintainer restarts). Commit only the new isolated files.
-- **Live default for the maintainer:** the code default flips to `whisper_bar`, but if the live `jarvis.toml` pins `[ui].orb_style = "mascot"`, the maintainer must unset it (or set `whisper_bar`) to see the bar — do NOT edit `jarvis.toml` (drift-guard). Report this in the handoff.
+- **Live default for the maintainer:** the code default flips to `jarvis_bar`, but if the live `jarvis.toml` pins `[ui].orb_style = "mascot"`, the maintainer must unset it (or set `jarvis_bar`) to see the bar — do NOT edit `jarvis.toml` (drift-guard). Report this in the handoff.
 - **Restart required** for live effect (pythonw holds the RAM bundle / pipeline).
 - Live GUI behavior (transparency, four animations, drag, click-to-talk) is **maintainer sign-off**, not CI.

@@ -69,7 +69,7 @@ Grouped by responsibility. Bold = directly relevant for board Phase A/B.
 **Harness dispatch**
 - `HarnessDispatched(harness: str, task: HarnessTask | None)`
 - `HarnessProgress(harness, result)`
-- **`HarnessCompleted(harness: str, result: HarnessResult | None)`** — signal for MCP/Code-CLI/Sub-Jarvis completion. `harness` is e.g. `"mcp-remote"`, `"openclaw"`, `"codex"`, `"open-interpreter"`.
+- **`HarnessCompleted(harness: str, result: HarnessResult | None)`** — signal for MCP/Code-CLI/Jarvis-Agent completion. `harness` is e.g. `"mcp-remote"`, `"openclaw"`, `"codex"`, `"open-interpreter"`.
 
 **Response + Memory**
 - `ResponseGenerated(text, language, audio_ref)`
@@ -115,7 +115,7 @@ Grouped by responsibility. Bold = directly relevant for board Phase A/B.
 **Workflows (Phase 6)**
 - `WorkflowScheduled/Started/StepStarted/StepCompleted/Completed(workflow_id, run_id, ...)`
 
-**Sub-Agent Dashboard (Phase 5.5)** — central to board achievements:
+**Jarvis-Agent Dashboard (Phase 5.5)** — central to board achievements:
 - **`SubJarvisStarted(parent_trace_id, utterance, context_hints, provider, model, max_duration_s, depth)`** — `utterance` is user text, PII.
 - `SubJarvisReviewTriggered(iteration)`
 - **`SubJarvisCompleted(success, summary, full_log_len, duration_s, cost_estimate_usd, error)`** — `summary` is plaintext, may contain PII.
@@ -352,7 +352,7 @@ Reference: Plan §4, `AchievementEvaluator` from §5-B. Assumption: the aggregat
 | `triple_combo` | **Yes (with a session definition)** | Group per `trace_id` → `COUNT(DISTINCT tool_name) >= 3`. | "Session" ≠ `trace_id` in the strict sense — but `trace_id` is the correlation key per turn intended by the plan. If the plan means "session" as a window (e.g. 10 min), additional heuristics are needed. Assumption: `trace_id` suffices as a "session". |
 | `sub_jarvis_summoner` | **Yes** | `SubJarvisCompleted.success == True` min(`ts_ns`). | None. |
 | `clear_speaker` (95 % voice first-try over 100) | **Partially — critical gap** | Per voice command one would need to know: "was that a retry?". Today there is no event `VoiceRetryDetected` or `UserRephrased`. `ActionExecuted.success` combined with `TranscriptFinal` only gives "the tool action worked", not "the user didn't have to speak again". | **A new event is needed**, e.g. `VoiceAttemptResult(attempt_idx: int, first_try: bool, …)` — or the aggregator derives retries heuristically (two `TranscriptFinal` events within X seconds on the same thread without `ActionExecuted.success=True` in between = retry). The heuristic is fragile. Recommendation: **introduce a new event in Phase B**, in parallel with the achievement-implementation PR. |
-| `ten_x_engineer` (10+ Sub-Jarvis hours saved/week) | **Yes (with an assumption)** | `SUM(SubJarvisCompleted.duration_s) WHERE ts_ns ∈ last 7 days >= 10*3600`. | "Saved" ≠ "ran". Assumption: when Sub-Jarvis runs in the background, its wall-clock time counts as saved user time. The plan text implies this ("via Sub-Jarvis duration tracking" in daily_stats.hours_saved_estimate). |
+| `ten_x_engineer` (10+ Jarvis-Agent hours saved/week) | **Yes (with an assumption)** | `SUM(SubJarvisCompleted.duration_s) WHERE ts_ns ∈ last 7 days >= 10*3600`. | "Saved" ≠ "ran". Assumption: when the Jarvis-Agent runs in the background, its wall-clock time counts as saved user time. The plan text implies this ("via Jarvis-Agent duration tracking" in daily_stats.hours_saved_estimate). |
 
 ### 6.2 Reflection tier
 

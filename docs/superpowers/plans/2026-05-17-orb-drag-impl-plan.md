@@ -1408,7 +1408,7 @@ Use `bh` (browser-harness) or direct mouse via PowerShell/`SendInput` to:
 - [ ] **Step 3: Persistence verification**
 
 ```
-Get-Content "C:/Users/Administrator/Desktop/Personal Jarvis/jarvis.toml" | Select-String "overlay.mascot" -Context 0,5
+Get-Content "<USER_HOME>/Desktop/Personal Jarvis/jarvis.toml" | Select-String "overlay.mascot" -Context 0,5
 ```
 
 Expected: section present with the dragged coordinates.
@@ -1428,7 +1428,7 @@ Wait. Orb must reappear at the **dragged** position, not the tray edge.
 Double-click the orb. Orb must jump back to the bottom-right tray position.
 
 ```
-Get-Content "C:/Users/Administrator/Desktop/Personal Jarvis/jarvis.toml" | Select-String "overlay.mascot" -Context 0,5
+Get-Content "<USER_HOME>/Desktop/Personal Jarvis/jarvis.toml" | Select-String "overlay.mascot" -Context 0,5
 ```
 
 Expected: section header may remain but the three position_* keys are gone.

@@ -148,7 +148,7 @@ complete questions. So the obvious "just add more patterns" fix is exactly what 
 | 05-25 | `939eeb932` | **(today)** Probe refactor: `_probe_stt` can be cloud Groq; `_probe_generation` cross-turn-leak guard; dropped polite-thanks hangup regex. |
 
 ### Corrected agent finding (verified false)
-A sub-agent flagged commit `17296d5e3` ("accumulate long dictation across VAD max-utterance
+A Jarvis-Agent flagged commit `17296d5e3` ("accumulate long dictation across VAD max-utterance
 cuts") with a `FORCED_CUT_REASONS` enum in `jarvis/audio/vad_reasons.py`. **The commit
 exists, but that file and those symbols do NOT exist in the current tree** (`grep` finds
 zero `FORCED_CUT_REASONS` / `_last_endpoint_reason`; `jarvis/audio/vad_reasons.py` is

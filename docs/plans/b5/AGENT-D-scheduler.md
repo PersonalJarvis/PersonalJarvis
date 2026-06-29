@@ -195,7 +195,7 @@ class CuratorScheduler:
 ## 9. Pre-flight test gate
 
 ```powershell
-cd C:\Users\Administrator\Desktop\jarvis-b5-agent-D
+cd <USER_HOME>\Desktop\jarvis-b5-agent-D
 pip install -e . --no-deps
 python -m pytest tests/unit/ -q --tb=no > pre-flight.log
 ```
@@ -238,9 +238,9 @@ Recommended sections: Files changed · What I did · Assumptions made · Verific
 ## 12. Worktree setup recap
 
 ```powershell
-cd C:\Users\Administrator\Desktop\Personal Jarvis
-git worktree add -b impl/b5-agent-D C:\Users\Administrator\Desktop\jarvis-b5-agent-D impl/b5-base
-cd C:\Users\Administrator\Desktop\jarvis-b5-agent-D
+cd <USER_HOME>\Desktop\Personal Jarvis
+git worktree add -b impl/b5-agent-D <USER_HOME>\Desktop\jarvis-b5-agent-D impl/b5-base
+cd <USER_HOME>\Desktop\jarvis-b5-agent-D
 pip install -e . --no-deps
 ```
 

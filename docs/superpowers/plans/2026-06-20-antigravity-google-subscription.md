@@ -1,10 +1,10 @@
-# Antigravity / Google-subscription Brain + Subagent — Implementation Plan
+# Antigravity / Google-subscription Brain + Jarvis-Agent — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let Jarvis run its Brain and Subagents against the user's Google subscription by driving the official Antigravity/Gemini CLI as a subprocess over the existing OAuth login — selectable from the API-Keys section, no API key.
+**Goal:** Let Jarvis run its Brain and Jarvis-Agents against the user's Google subscription by driving the official Antigravity/Gemini CLI as a subprocess over the existing OAuth login — selectable from the API-Keys section, no API key.
 
-**Architecture:** A new `antigravity` brain provider mirrors the existing Codex provider (one provider, subscription-OAuth backend, drives an external CLI). A binary-agnostic resolver prefers `agy` and falls back to the installed Gemini CLI. An auth service reports login status from `~/.gemini/`. The provider is OAuth-only (no API key slot) and excluded from the live model catalog. A heavy-worker variant reuses the resolver for subagents.
+**Architecture:** A new `antigravity` brain provider mirrors the existing Codex provider (one provider, subscription-OAuth backend, drives an external CLI). A binary-agnostic resolver prefers `agy` and falls back to the installed Gemini CLI. An auth service reports login status from `~/.gemini/`. The provider is OAuth-only (no API key slot) and excluded from the live model catalog. A heavy-worker variant reuses the resolver for Jarvis-Agents.
 
 **Tech Stack:** Python 3.11 (stdlib `asyncio`/`subprocess`/`pathlib`), FastAPI routes, React/TS frontend, pytest + vitest.
 
@@ -460,13 +460,13 @@ antigravity = "jarvis.plugins.brain.antigravity:AntigravityBrain"
 
 ---
 
-## Phase 3 — Subagent worker
+## Phase 3 — Jarvis-Agent worker
 
 ### Task 7: Heavy worker backend
 
 **Files:**
 - Create: `jarvis/missions/workers/google_cli_worker.py`
-- Modify: subagent mapping source (the `/api/openclaw/status` mapping rows) to add an `antigravity` row whose `key_set` = `GoogleCliAuthService().status().connected`
+- Modify: Jarvis-Agent mapping source (the `/api/openclaw/status` mapping rows) to add an `antigravity` row whose `key_set` = `GoogleCliAuthService().status().connected`
 - Modify: `jarvis/ui/web/frontend/src/components/SubagentSection.tsx` (`PROVIDER_LABELS`: `"antigravity" → "Antigravity (Google subscription)"`)
 - Test: `tests/missions/test_google_cli_worker.py`
 
@@ -487,5 +487,5 @@ antigravity = "jarvis.plugins.brain.antigravity:AntigravityBrain"
 
 ## Self-review notes
 
-- Spec coverage: resolver (§5.1)→T1, auth (§5.2)→T2, brain (§5.3)→T3, spec/config/catalog (§5.5/5.6)→T4, routes (§5.7)→T5, UI (§5.8)→T6, subagent (§5.4)→T7. All covered.
+- Spec coverage: resolver (§5.1)→T1, auth (§5.2)→T2, brain (§5.3)→T3, spec/config/catalog (§5.5/5.6)→T4, routes (§5.7)→T5, UI (§5.8)→T6, Jarvis-Agent (§5.4)→T7. All covered.
 - Open points carried from spec §10: live billed verification + browser tier-check deferred; `agy` Windows install unconfirmed (resolver falls back to Gemini CLI).

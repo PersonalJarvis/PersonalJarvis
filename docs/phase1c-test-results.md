@@ -59,7 +59,7 @@ ImportError: cannot import name 'ClientSession' from 'mcp'
 ```
 **Root cause**: `tests/integration/` is missing `__init__.py`, but `tests/integration/mcp/` has one.
 Pytest therefore imports `tests/integration/mcp/` as the top-level module `mcp` and shadows the
-installed MCP SDK (`C:\Users\Administrator\AppData\Roaming\Python\Python311\site-packages\mcp`).
+installed MCP SDK (`<USER_HOME>\AppData\Roaming\Python\Python311\site-packages\mcp`).
 `jarvis.mcp.client.start()` does `from mcp import ClientSession` and then gets the test package
 instead of the SDK.
 

@@ -2,7 +2,7 @@
 
 - **Date:** 2026-05-30
 - **Status:** Approved (brainstorming) → ready for implementation plan
-- **Author:** OpenClaw agent (brainstorming session)
+- **Author:** Jarvis-Agent (brainstorming session)
 - **Scope:** Make Jarvis start automatically at login on Windows, macOS, and
   Linux; default ON; user-toggleable in Settings; self-healing against stale
   paths. Headless/VPS = graceful no-op.

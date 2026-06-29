@@ -3,7 +3,7 @@ title: "ADR-0020: Cross-platform privileged execution (AdminTransport + Elevator
 slug: adr-0020-cross-platform-elevation
 diataxis: adr
 status: active
-owner: harald
+owner: sam
 last_reviewed: 2026-05-29
 phase: 5
 audience: developer

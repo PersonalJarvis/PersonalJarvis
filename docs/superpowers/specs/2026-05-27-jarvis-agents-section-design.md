@@ -1,16 +1,16 @@
-# Subagent Section in API-Keys-View — Design
+# Jarvis-Agents Section in API-Keys-View — Design
 
 **Author:** brainstorming session 2026-05-27
 **Status:** approved-for-implementation pending user spec review
-**Related:** `docs/openclaw-bridge.md`, `jarvis/missions/workers/`, `jarvis/ui/web/frontend/src/views/ApiKeysView.tsx`
+**Related:** `docs/jarvis-agents-bridge.md`, `jarvis/missions/workers/`, `jarvis/ui/web/frontend/src/views/ApiKeysView.tsx`
 
 ---
 
 ## 1. Motivation
 
-Today every sub-agent mission (`spawn_openclaw`) runs hardcoded on Claude Opus 4.7 via Max-subscription OAuth (`ClaudeDirectWorker`). The user wants to switch the underlying worker LLM at runtime through the UI — same way TTS providers are switched today — without having to edit `jarvis.toml` by hand.
+Today every Jarvis-Agent mission (`spawn_openclaw`) runs hardcoded on Claude Opus 4.7 via Max-subscription OAuth (`ClaudeDirectWorker`). The user wants to switch the underlying worker LLM at runtime through the UI — same way TTS providers are switched today — without having to edit `jarvis.toml` by hand.
 
-The new section makes this explicit: *one* active worker provider, configurable in the UI, with a per-card health-test that proves the provider can actually run a real sub-agent mission end-to-end.
+The new section makes this explicit: *one* active worker provider, configurable in the UI, with a per-card health-test that proves the provider can actually run a real Jarvis-Agent mission end-to-end.
 
 ## 2. Scope
 
@@ -19,7 +19,7 @@ The new section makes this explicit: *one* active worker provider, configurable 
 - A new fourth tier `subagent` in the existing `ApiKeysView.tsx` with four provider cards: **Anthropic Claude**, **OpenAI Codex**, **Google Gemini**, **xAI Grok**.
 - Two auth modes for Anthropic and Codex (both shown simultaneously on the card, one bears an `[active]` badge): subscription OAuth (preferred) OR API-Key (fallback).
 - One auth mode for Gemini and Grok: API-Key only.
-- A "Test" button per card that fires a real mini sub-agent mission ("write `ok.txt` with content `OK`"), streams status into the card, and reports ✓/✗ with a 60-second cooldown.
+- A "Test" button per card that fires a real mini Jarvis-Agent mission ("write `ok.txt` with content `OK`"), streams status into the card, and reports ✓/✗ with a 60-second cooldown.
 - Worker-dispatch routing through a single switch in `kontrollierer/dispatch.py` keyed off `cfg.subagent.active_provider`.
 - A new `GrokWorker` analogous to the existing `GeminiWorker`.
 - Frontier-model constants pinned in **one** file (`jarvis/missions/workers/_models.py`).
@@ -132,7 +132,7 @@ The `worker_override` field is plumbed through `Mission` and read inside `_make_
 
 **`ApiKeysView.tsx`**:
 - `TIER_META` gains `subagent: { label: t("apikeys_view.tier_subagent"), icon: <Users/> }`.
-- Tier render order: brain, tts, stt, **subagent** (last — sub-agents are operationally a sibling of brain, not above it).
+- Tier render order: brain, tts, stt, **subagent** (last — Jarvis-Agents are operationally a sibling of brain, not above it).
 
 **`SubagentProviderCard.tsx`** (new):
 - Inherits the visual shell of the existing `ProviderCard` (header, "Set active" radio).
@@ -226,9 +226,9 @@ User clicks "Log in" on Claude card (subscription block)
 ### 6.3 Integration (manual smoke)
 
 After implementation:
-1. Boot Jarvis, open ApiKeysView, see the four cards in the Subagent tier.
+1. Boot Jarvis, open ApiKeysView, see the four cards in the Jarvis-Agents tier.
 2. Switch active to Gemini, click Test — mission spawns, ok.txt appears, chip turns ✓.
-3. Switch back to Claude, voice-spawn a real sub-agent — uses `ClaudeDirectWorker`.
+3. Switch back to Claude, voice-spawn a real Jarvis-Agent — uses `ClaudeDirectWorker`.
 
 ## 7. Files Touched
 
@@ -270,7 +270,7 @@ After implementation:
 | `tests/unit/web/test_subagent_test_endpoint.py` | **new** |
 | `tests/unit/web/test_subagent_routes_activate.py` | **new** |
 | `tests/unit/workers/test_grok_worker.py` | **new** |
-| `jarvis/ui/web/frontend/src/views/ApiKeysView.test.tsx` | extend with subagent-tier cases |
+| `jarvis/ui/web/frontend/src/views/ApiKeysView.test.tsx` | extend with Jarvis-Agents-tier cases |
 | `jarvis/ui/web/frontend/src/components/SubagentProviderCard.test.tsx` | **new** |
 
 ## 8. Phases
@@ -298,7 +298,7 @@ Three sequential phases, each independently shippable, each with green tests at 
 
 **Shippable state**: `curl POST /api/subagent/test/gemini-subagent` triggers a real mission; cooldown enforced.
 
-### Phase 3 — Frontend Subagent Tier
+### Phase 3 — Frontend Jarvis-Agents Tier
 
 1. `useProviders.ts` Tier-type extension + `switchSubagentProvider`.
 2. `AbonementBlock` component.
@@ -322,7 +322,7 @@ Three sequential phases, each independently shippable, each with green tests at 
 
 ## 10. Non-Goals
 
-- This design does **not** change anything about the brain-tier router. The brain still runs on whatever `[brain].primary` says (today: Gemini). Subagent is its own tier.
+- This design does **not** change anything about the brain-tier router. The brain still runs on whatever `[brain].primary` says (today: Gemini). Jarvis-Agents is its own tier.
 - It does **not** introduce a new harness; the four workers are all existing-pattern subprocess workers (or in the case of Grok, the standard streaming HTTP pattern from `gemini_worker.py`).
 - It does **not** change the existing 30s spawn-cooldown in `spawn_openclaw.py`. That is a separate gate for the voice path.
 

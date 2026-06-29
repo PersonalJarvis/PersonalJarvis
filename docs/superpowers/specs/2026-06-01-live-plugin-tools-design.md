@@ -3,7 +3,7 @@
 - **Date:** 2026-06-01
 - **Status:** Design approved, pending spec review → implementation plan
 - **Topic owner:** maintainer
-- **Related:** ADR-0011 (router discipline), `docs/openclaw-bridge.md` (AD-OE1..OE6),
+- **Related:** ADR-0011 (router discipline), `docs/jarvis-agents-bridge.md` (AD-OE1..OE6),
   CLI-Integration spec (`docs/superpowers/specs/2026-05-24-cli-integration-design.md`),
   `docs/anti-drift-three-layer.md`.
 

@@ -2,7 +2,7 @@
 
 **Purpose:** Consolidated source of truth for anti-patterns, conventions, and hard negatives that subagents check against. This file is read as mandatory reading by `code-reviewer`, `jarvis-reviewer`, `openclaw-bridge-reviewer`, `phase7-selfmod-auditor`, and all verifiers.
 
-**Maintenance:** When a new anti-pattern arises from a bug, ADR, or plan update, it belongs here. Existing sources (CLAUDE.md, BUGS.md, ADR collection, Awareness Plan §10, OpenClaw bridge doc §5, Phase-7 doc §6) remain canonical — this file mirrors them for subagent consumption.
+**Maintenance:** When a new anti-pattern arises from a bug, ADR, or plan update, it belongs here. Existing sources (CLAUDE.md, BUGS.md, ADR collection, Awareness Plan §10, Jarvis-Agents bridge doc §5, Phase-7 doc §6) remain canonical — this file mirrors them for subagent consumption.
 
 ---
 
@@ -59,9 +59,9 @@
 
 ---
 
-## 5. OpenClaw Bridge Anti-Patterns
+## 5. Jarvis-Agents Bridge Anti-Patterns
 
-From `docs/openclaw-bridge.md` §5 (full justifications there). OpenClaw fully replaces the Phase-5 Sub-Jarvis tier (see AP-OC14). The Welle-1 spike (2026-05-09) added AP-OC15 for the system-prompt auto-injection risk.
+From `docs/jarvis-agents-bridge.md` §5 (full justifications there). OpenClaw fully replaces the Phase-5 Jarvis-Agent tier (see AP-OC14). The Welle-1 spike (2026-05-09) added AP-OC15 for the system-prompt auto-injection risk.
 
 | ID | Anti-Pattern | Fix |
 |---|---|---|
@@ -76,7 +76,7 @@ From `docs/openclaw-bridge.md` §5 (full justifications there). OpenClaw fully r
 | AP-OC9 | MCP tool filter in the OpenClaw subprocess | Upstream: deliberate MCP selection at the wizard |
 | AP-OC10 | Mapping Stop to "Auflegen" (hang up) | Hanging up lets the mission keep running — Stop is explicit |
 
-**Plus from the lessons learned of the old Sub-Jarvis attempts (Phase-5 tier, fully deleted in Welle 4):**
+**Plus from the lessons learned of the old Jarvis-Agent attempts (Phase-5 tier, fully deleted in Welle 4):**
 
 | ID | Anti-Pattern | Source | Fix |
 |---|---|---|---|
@@ -121,7 +121,7 @@ From `JARVIS_AWARENESS_PLAN.md` §10 (full there):
 | AP-AW2 | Awareness snapshot with an LLM call | State read only, regex/heuristic |
 | AP-AW3 | Story-tracker lock holding across an LLM call | Release the lock before the LLM call (Codex adversarial review B1) |
 | AP-AW4 | Event payload with cleartext PII | PrivacyFilter before bus publish (B2) |
-| AP-AW5 | FTS5 recall in the voice critical path | The A3 tool is OpenClaw-only (subagent), never the Personal Jarvis brain |
+| AP-AW5 | FTS5 recall in the voice critical path | The A3 tool is Jarvis-Agent-only (worker), never the Personal Jarvis brain |
 | AP-AW6 | Drafts in story episodes with full text | Salience scorer + Verdichter, never raw storage |
 
 ---
@@ -131,7 +131,7 @@ From `JARVIS_AWARENESS_PLAN.md` §10 (full there):
 This is where false positives land that reviewers repeatedly flag incorrectly as AP:
 
 - **`jarvis/vision/screenshot.py:_ensure_dpi_awareness` lazy-imports `ctypes`** — not AP-A4 (hardcoded), this is the correct DPI-awareness pattern for Win32 (see `win32-specialist` mandatory reading).
-- **`pipeline.py:_on_announcement` calls `synthesize` directly** — not AP-A2 (lateral-direct), this is the deliberate bus bypass for subagent/skill announcements, used by the OpenClaw bridge for `summary_de` voice readback (CLAUDE.md §Output-Filter).
+- **`pipeline.py:_on_announcement` calls `synthesize` directly** — not AP-A2 (lateral-direct), this is the deliberate bus bypass for Jarvis-Agent/skill announcements, used by the Jarvis-Agents bridge for `summary_de` voice readback (CLAUDE.md §Output-Filter).
 - **`output_filter.py` regex-only without LLM** — not an AP-V4-style lazy filter, latency mandate (CLAUDE.md §Output-Filter).
 - **`build_default_brain()` creates its own `EventBus`** — a known open item, not an AP, until the two-bus bridge refactor happens (CLAUDE.md §Desktop-App open items).
 
@@ -156,10 +156,10 @@ This is where false positives land that reviewers repeatedly flag incorrectly as
 | CLAUDE.md | Repo root | Architecture, plugin system, streaming, event bus, Windows specifics, conventions |
 | BUGS.md | `docs/BUGS.md` | Bug register and lessons learned |
 | ADR collection | `docs/adr/0001-0011*` | Architecture decisions with justification |
-| OpenClaw bridge doc | `docs/openclaw-bridge.md` | AD-1..AD-21, AP-OC1..OC13, test strategy |
+| Jarvis-Agents bridge doc | `docs/jarvis-agents-bridge.md` | AD-1..AD-21, AP-OC1..OC13, test strategy |
 | Phase-7 doc | `docsplansphase-7-self-mod/PROJEKT_KONTEXT.md` | AD-1..AD-10, AP-SM1..SM14, EK-1..EK-4 |
 | Awareness Plan | `Jarvis  Long-Term Memory/Unbenanntes Dokument (3).md` | A0–A5 specification, §10 anti-pattern register |
-| Master plan | `C:\Users\Administrator\.claude\plans\also-er-muss-auch-lexical-pond.md` | Binding architecture document |
+| Master plan | `<USER_HOME>\.claude\plans\also-er-muss-auch-lexical-pond.md` | Binding architecture document |
 
 ---
 

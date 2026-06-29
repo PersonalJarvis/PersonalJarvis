@@ -17,7 +17,7 @@ user's Windows 11 machine. It is **not** a classical voice assistant
 and dispatches work to other agents. The voice layer is the interface,
 but the brain underneath is what matters.
 
-The user is **Ruben Lütke** (Rubén). He is not a software developer. He
+The user is **Personal Jarvis Maintainer** (Rubén). He is not a software developer. He
 talks to Jarvis in German with English code/identifier mixed in. He
 operates Personal Jarvis autonomously and trusts the agents he spawns to
 make sensible technical choices. He reads structured German prose; he
@@ -639,7 +639,7 @@ SYSTEM:
 
   Your task: ingest a source. Touch 10-15 pages typically. Return JSON
   matching this schema:
-    [{"target": "entities/ruben.md",
+    [{"target": "entities/alex.md",
       "operation": "create" | "update" | "rename" | "archive",
       "new_body": "<full markdown body>",
       "rename_from": null | "entities/old-slug.md",
@@ -660,7 +660,7 @@ USER:
   <verbatim source_content>
 
   Most likely affected pages (top 10 by keyword overlap):
-    - entities/ruben.md
+    - entities/alex.md
     - concepts/awareness-layer.md
     …
 
@@ -740,7 +740,7 @@ I (the orchestrator) will:
 - **Vault** — the folder `data/workspace/` containing the wiki.
 - **Page** — one markdown file inside the vault. Has a YAML
   frontmatter header and a markdown body.
-- **Slug** — the kebab-case ASCII filename of a page (`ruben-luetke`).
+- **Slug** — the kebab-case ASCII filename of a page (`personal-jarvis-maintainer`).
 - **Wikilink** — a `[[some-slug]]` reference inside one page pointing
   to another page. Like a Wikipedia internal link.
 - **Backlink** — the reverse view: pages that link *to* a given page.

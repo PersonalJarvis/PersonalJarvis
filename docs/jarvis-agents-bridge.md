@@ -1,9 +1,9 @@
-# OpenClaw-Bridge — Architecture Doc
+# Jarvis-Agents-Bridge — Architecture Doc
 
 **Status:** Draft — Wave 1 (Spike) complete, Wave 2 (Implementation) next
-**Date:** 2026-05-06 (Sub-Jarvis cleanup 2026-05-09, Wave-1 spike findings 2026-05-09)
+**Date:** 2026-05-06 (Jarvis-Agent cleanup 2026-05-09, Wave-1 spike findings 2026-05-09)
 **Branch:** `claude/improve-subagents-structure-5094K`
-**Reference:** Fully replaces the Phase-5 Sub-Jarvis tier with a subprocess bridge to OpenClaw (github.com/openclaw/openclaw, Peter Steinberger). The Phase-6 skeleton (Mission-Manager, Critic-Loop, worktree isolation, Kontrollierer) is retained and used as a shell around the bridge.
+**Reference:** Fully replaces the Phase-5 Jarvis-Agent tier with a subprocess bridge to OpenClaw (github.com/openclaw/openclaw, Peter Steinberger). The Phase-6 skeleton (Mission-Manager, Critic-Loop, worktree isolation, Kontrollierer) is retained and used as a shell around the bridge.
 **Conflict resolution:** This doc may deviate from ADR-0009 (Self-Healing-Worker-Critic) as far as the inner worker implementation is concerned. Mission-Manager, Critic-Loop, Kontrollierer, and worktree isolation from ADR-0009 stay unchanged.
 
 ---
@@ -31,15 +31,15 @@ So that this doc, the code, and the subagent files consistently speak the same l
 
 ## 1. Context and Motivation
 
-Phase 5 (master plan §22) introduced the **Sub-Jarvis tier** — a second Opus-4.7 brain instance in the same Python process, dispatched via the `spawn_sub_jarvis` tool in the Router-Brain. In parallel, Phase 6 delivered a Mission-Manager skeleton (worktree, Critic-Loop, Kontrollierer) that was, however, not wired into the default voice path. In practice, three classes of pain points emerged:
+Phase 5 (master plan §22) introduced the **Jarvis-Agent tier** — a second Opus-4.7 brain instance in the same Python process, dispatched via the `spawn_sub_jarvis` tool in the Router-Brain. In parallel, Phase 6 delivered a Mission-Manager skeleton (worktree, Critic-Loop, Kontrollierer) that was, however, not wired into the default voice path. In practice, three classes of pain points emerged:
 
-1. **"Who is answering?" bug** — the user could not reliably tell whether the Router-Brain (Haiku) directly or the Sub-Jarvis tier (Opus) had produced a result. Output quality was often so weak that it raised suspicion that the wrong tier had executed the task.
+1. **"Who is answering?" bug** — the user could not reliably tell whether the Router-Brain (Haiku) directly or the Jarvis-Agent tier (Opus) had produced a result. Output quality was often so weak that it raised suspicion that the wrong tier had executed the task.
 2. **Output-folder drift** — outputs did not reliably land in the designated per-task folder. Mission-reattach paths after a crash were fragile.
-3. **Worker-output weakness** — even when the Sub-Jarvis tier was routed correctly, the code/reasoning quality lagged behind what established open-source agent loops (OpenClaw, Codex, Aider, OpenClaw) achieve with comparable models.
+3. **Worker-output weakness** — even when the Jarvis-Agent tier was routed correctly, the code/reasoning quality lagged behind what established open-source agent loops (OpenClaw, Codex, Aider, OpenClaw) achieve with comparable models.
 
-Instead of evolving these loops ourselves, **we replace the Sub-Jarvis tier entirely with OpenClaw**. OpenClaw is a TypeScript/Node-based local-first agent gateway with a tested tool-use loop, MCP support, and a CLI one-shot mode (`openclaw agent --message "..."`). We install it as an external subprocess and dock it on via the plugin layer and the Mission-Manager shell.
+Instead of evolving these loops ourselves, **we replace the Jarvis-Agent tier entirely with OpenClaw**. OpenClaw is a TypeScript/Node-based local-first agent gateway with a tested tool-use loop, MCP support, and a CLI one-shot mode (`openclaw agent --message "..."`). We install it as an external subprocess and dock it on via the plugin layer and the Mission-Manager shell.
 
-**Goal:** the Phase-6 skeleton (Mission-Manager, Critic, worktree, Job-Object, Kontrollierer, cost tracker) is **activated** and wired into the default voice path. The Phase-5 Sub-Jarvis tier is **deleted entirely** — no backwards compatibility, no parallel operation.
+**Goal:** the Phase-6 skeleton (Mission-Manager, Critic, worktree, Job-Object, Kontrollierer, cost tracker) is **activated** and wired into the default voice path. The Phase-5 Jarvis-Agent tier is **deleted entirely** — no backwards compatibility, no parallel operation.
 
 ---
 
@@ -51,19 +51,19 @@ Instead of evolving these loops ourselves, **we replace the Sub-Jarvis tier enti
 | AD-2 | OpenClaw runs **natively on Windows Node**, no WSL2 | Jarvis is native Windows (WASAPI, Win32, Credential Manager). A WSL2 layer would bring in a path-mapping + performance layer. **Needs a spike**: the README says WSL2 for Windows — we verify native operability as a pre-condition. |
 | AD-3 | **Black-box model** — OpenClaw's own skills, channels, UI, voice-wake are ignored entirely | Jarvis already has all of these layers. OpenClaw is used as a pure brain engine. Duplicate state and trigger conflicts are avoided. No fork — we use upstream unchanged. |
 | AD-4 | The bridge lives as a new plugin in `jarvis/plugins/harness/openclaw.py` | Fits into the existing `jarvis.harness` plugin schema alongside OpenClaw/Codex/Open-Interpreter. The Phase-6 worker calls the harness instead of an LLM client directly. Clean layer separation. |
-| AD-5 | **OpenClaw is the only subagent.** The Phase-5 Sub-Jarvis tier (`SubJarvisManager` module, `BrainManager.from_tier_config("sub_jarvis")`, `_should_force_sub_jarvis`, `_force_spawn_sub_jarvis`, `spawn_sub_jarvis` tool) is deleted entirely in Wave 4. | No parallel operation, no backwards compatibility. All spawn requests from the Router-Brain run through the renamed `spawn_openclaw` tool → Mission-Manager → OpenClaw-Bridge. **Not affected:** the OpenClaw/Codex/Open-Interpreter harness plugins stay registered, because `dispatch-to-harness` is an orthogonal mechanism (direct harness call without a subagent tier). Skill authoring (Phase 7.5) must be switched from SubJarvisManager to Mission-Manager spawn — see R-6. |
+| AD-5 | **OpenClaw is the only Jarvis-Agent.** The Phase-5 Jarvis-Agent tier (`SubJarvisManager` module, `BrainManager.from_tier_config("sub_jarvis")`, `_should_force_sub_jarvis`, `_force_spawn_sub_jarvis`, `spawn_sub_jarvis` tool) is deleted entirely in Wave 4. | No parallel operation, no backwards compatibility. All spawn requests from the Router-Brain run through the renamed `spawn_openclaw` tool → Mission-Manager → Jarvis-Agents-Bridge. **Not affected:** the OpenClaw/Codex/Open-Interpreter harness plugins stay registered, because `dispatch-to-harness` is an orthogonal mechanism (direct harness call without a Jarvis-Agent tier). Skill authoring (Phase 7.5) must be switched from SubJarvisManager to Mission-Manager spawn — see R-6. |
 | AD-6 | API keys come from the Windows Credential Manager via a **new wizard section** | Single source of truth for secrets. Wizard and Desktop-App extend the `SECRETS` list with `OPENCLAW_<PROVIDER>_API_KEY`. The bridge passes those to the subprocess as ENV. |
 | AD-7 | Model choice is **static in `[harness.openclaw].model`**, hot-reload via watchdog | "Everyone should be able to pick their own model." A config edit switches the frontier model without a code change. A voice switch is deliberately not added (Phase-7 self-mod dependency, can be retrofitted later). |
-| AD-8 | **All registered MCPs** are passed through to OpenClaw | Convenience mode. Consequence: at registration, the MCP wizard must display "this MCP is also passed on to sub-agents". User awareness instead of an engineering filter. |
+| AD-8 | **All registered MCPs** are passed through to OpenClaw | Convenience mode. Consequence: at registration, the MCP wizard must display "this MCP is also passed on to Jarvis-Agents". User awareness instead of an engineering filter. |
 | AD-9 | **Full trust for tool calls** inside OpenClaw, no bridge intercept | The safety valves are: (a) worktree isolation, (b) Job-Object hard kill, (c) the Critic-Loop in front of it, (d) MCP selection (placed upstream). Tool latency stays low; the risk-tier policy does not apply to OpenClaw-internal calls. |
 | AD-10 | OpenClaw runs **async / fire-and-forget** | "Auflegen" (hanging up) ends the voice session; OpenClaw keeps running in the background. Personal Jarvis says immediately "okay, mache ich" (okay, will do) and releases the voice mic. |
 | AD-11 | **Stop is explicitly separated** from hang-up — voice + UI + auto-stop on time-cap | Voice patterns "brich ab", "stop OpenClaw", "abbrechen" (cancel/abort) + UI button + automatic abort when the 30-min limit is exceeded. |
 | AD-12 | **Status read** via voice ("läuft das noch?", "Status?" — is it still running? / status?) plus a UI live view | The Router-Brain recognizes status phrases via pattern match and calls a Mission-Manager read instead of a spawn. The UI Mission-Control view shows everything in parallel. |
-| AD-13 | **Concurrency cap 3** — up to 3 OpenClaw missions in parallel | Configurable via `[harness.openclaw].concurrency`. A fourth request goes into the Mission-Manager queue. |
+| AD-13 | **Concurrency cap 3** — up to 3 Jarvis-Agent missions in parallel | Configurable via `[harness.openclaw].concurrency`. A fourth request goes into the Mission-Manager queue. |
 | AD-14 | **Crash persistence via SQLite**, reattach on restart | Phase 6 already has this. On a Jarvis restart, live OpenClaw subprocesses are reattached via PID + worktree state. Orphans (mission deleted, subprocess alive) are killed. |
 | AD-15 | **Stateless per spawn** — no conversation memory between spawns | Multi-step tasks via Mission-Manager composition. OpenClaw always gets atomic assignments. |
 | AD-16 | **Retry on 429, otherwise hard fail** | The Phase-5 RateLimitTracker provides backoff logic (max 3x). Crash, hallucination, worktree corruption → mission failure, the Critic sees an empty result. |
-| AD-17 | **Notifications via the existing `_on_announcement` bus** | pipeline.py:647 is the bus bypass for subagent/skill announcements. The OpenClaw-Bridge pipes the `summary_de` in there, scrubbed via `scrub_for_voice`. Reuse of existing, tested infrastructure. |
+| AD-17 | **Notifications via the existing `_on_announcement` bus** | pipeline.py:647 is the bus bypass for Jarvis-Agent/skill announcements. The Jarvis-Agents-Bridge pipes the `summary_de` in there, scrubbed via `scrub_for_voice`. Reuse of existing, tested infrastructure. |
 | AD-18 | **Telemetry minimal**: only start/end events on the bus | `OpenClawTaskStarted(task_id, model)` and `OpenClawTaskCompleted(task_id, cost, ms, success)`. Enough to fix the "who is answering" bug (clear identification) without bus-traffic bloat. |
 | AD-19 | **Time cap fixed at 30 min**, no per-task override | Carried over from Phase 5. Auto-stop on exceeding via the Mission-Manager. |
 | AD-20 | **No cost cap** in v1, the schema leaves room for retrofitting | The time cap acts as an implicit brake (~$5–15 per mission worst case). `[harness.openclaw].cost_cap_eur` stays reserved in the schema for later retrofitting. |
@@ -71,7 +71,7 @@ Instead of evolving these loops ourselves, **we replace the Sub-Jarvis tier enti
 
 ### Amendments from the Wave-1 spike (2026-05-09)
 
-The following ADs are **refined** by empirical findings from `docs/spike-results-openclaw.md` (B-1..B-12). The architecture remains sound; only the mechanics and assumptions are sharpened. Old table entries remain as history.
+The following ADs are **refined** by empirical findings from `docs/spike-results-jarvis-agents.md` (B-1..B-12). The architecture remains sound; only the mechanics and assumptions are sharpened. Old table entries remain as history.
 
 - **Amendment AD-1 (spawn pattern)** — see B-1, B-5. Against the assumption "one-shot with `openclaw agent --message ...`", three mandatory flags have been added, without which the call fails with `Error: Pass --to <E.164>, --session-id, or --agent to choose a session`:
   - `--local` (embedded agent without channel routing to Telegram/WhatsApp/etc.)
@@ -209,7 +209,7 @@ Implements the `jarvis.harness` protocol (see `jarvis/core/protocols.py`). Expec
 - Job-Object (Windows) for process-tree kill via `taskkill /F /T /PID <node-PID>` (B-7: `openclaw` is a `.ps1` wrapper, not a direct Win32 binary; reference the `.cmd` variant on spawn).
 - Emit bus events (`OpenClawTaskStarted/Completed`).
 - Write logfile to `agent/<task-id>/openclaw.log`.
-- JSON result parsing (B-6, schema in `docs/spike-results-openclaw.md` SP-2): `payloads[0].text` as the voice-readback source, `meta.usage.*` as the CostMeter input, `meta.aborted` as the cancellation confirmation, `meta.agentMeta.sessionId/provider/model` as telemetry.
+- JSON result parsing (B-6, schema in `docs/spike-results-jarvis-agents.md` SP-2): `payloads[0].text` as the voice-readback source, `meta.usage.*` as the CostMeter input, `meta.aborted` as the cancellation confirmation, `meta.agentMeta.sessionId/provider/model` as telemetry.
 
 **Not responsible for:**
 - Worktree creation (the Mission-Manager does that before the call).
@@ -240,7 +240,7 @@ voice_when_active = true                       # Voice-Announcement nur wenn Voi
 
 **Amendment 2026-05-09 (via B-2):** **No new `OPENCLAW_*` secrets** are created in the Credential Manager. OpenClaw reads the standard provider ENV vars (`GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, etc.). The Personal-Jarvis wizard `SECRETS` list in `jarvis/setup/wizard.py` already contains all needed keys (`gemini_api_key`, `anthropic_api_key`, `openai_api_key`, `openrouter_api_key`). The bridge fetches them via `get_secret(...)` and sets the ENV var OpenClaw expects in the subprocess spawn. See the full mapping table at the AD-6 amendment above.
 
-The Desktop-App `SettingsView` gets a new section **"OpenClaw (Subagent)"** with:
+The Desktop-App `SettingsView` gets a new section **"Jarvis-Agents"** with:
 - Model dropdown (extensible via config; the default is the frontier-Pro configured in `jarvis.toml [brain.providers.<primary>].deep_model`)
 - **NO** per-provider API-key input field — the existing API-key fields under "Brain-Provider" are reused
 - Hint text: *"All registered MCP servers are passed on to OpenClaw — via pre-boot `openclaw mcp add` with a mission-isolated state dir."*
@@ -279,7 +279,7 @@ The following components stay unchanged and are used by the bridge:
 
 | Asset | Path | Provides |
 |---|---|---|
-| Announcement-Bus | `jarvis/speech/pipeline.py:647` | Voice bypass for subagent/skill announcements |
+| Announcement-Bus | `jarvis/speech/pipeline.py:647` | Voice bypass for Jarvis-Agent/skill announcements |
 | `scrub_for_voice` | `jarvis/brain/output_filter.py:193` | Tool-use-leak protection, markdown strip |
 | Router-Brain | `jarvis/brain/manager.py` (tier `"router"`) | Spawn-verb recognition, status-phrase recognition (NEW for AD-12) |
 
@@ -302,19 +302,19 @@ Forbidden when building / extending the bridge — this list is also mirrored in
 - **AP-OC11 Output folder does not exist before spawn** — `git worktree add agent/<id>` is a pre-condition for the spawn, not a downstream `os.makedirs`.
 - **AP-OC12 "Who is answering?" confusion** — the bus events `OpenClawTaskStarted/Completed` must be fired with `task_id` AND `model`. Otherwise the Phase-5 bug comes back.
 - **AP-OC13 Leaving the model to default** — the spawn args MUST contain `--model <value-from-config>`. If missing, OpenClaw uses its own default — cost and quality drift.
-- **AP-OC14 Leaving Sub-Jarvis code alongside OpenClaw** — the Phase-5 Sub-Jarvis tier (SubJarvisManager module, force-spawn methods, `spawn_sub_jarvis` tool, tier configuration) is deleted entirely in Wave 4 (see AD-5). Backwards-compatibility attempts ("let's just leave it in case…") are a violation of AD-5 — the only subagent is OpenClaw.
+- **AP-OC14 Leaving Sub-Jarvis code alongside OpenClaw** — the Phase-5 Sub-Jarvis tier (SubJarvisManager module, force-spawn methods, `spawn_sub_jarvis` tool, tier configuration) is deleted entirely in Wave 4 (see AD-5). Backwards-compatibility attempts ("let's just leave it in case…") are a violation of AD-5 — the only Jarvis-Agent is OpenClaw.
 - **AP-OC15 Not isolating the OpenClaw workspace per mission** *(new from the Wave-1 spike, B-9)* — OpenClaw automatically injects ~35.4k chars of system prompt from `~/.openclaw/workspace/{AGENTS,SOUL,TOOLS,IDENTITY,USER}.md`. Without `OPENCLAW_STATE_DIR=<mission_dir>/openclaw_state` plus a minimal workspace profile in the mission dir, OpenClaw's default persona (e.g. SOUL.md with "I am OpenClaw, an automation assistant…") leaks into the prompt — overriding the Personal-Jarvis persona mandate from `jarvis/brain/persona.py` and potentially surfacing via voice readback. Pre-spawn obligation of the bridge: workspace isolation per mission + audit via `meta.systemPromptReport.injectedWorkspaceFiles[]` from the JSON output.
 
 ---
 
 ## 6. Spike questions — Wave 1 completed 2026-05-09
 
-Empirical findings fully documented in `docs/spike-results-openclaw.md` (B-1..B-12). Summary of the SP status:
+Empirical findings fully documented in `docs/spike-results-jarvis-agents.md` (B-1..B-12). Summary of the SP status:
 
 | ID | Question | Status | Finding (short) |
 |----|---|---|---|
 | SP-1 | Does `openclaw agent --message` run natively on Windows Node 24, without WSL2? | **RESOLVED ✅** | Yes, `OpenClaw 2026.5.7` runs natively via `npm i -g openclaw`. No WSL2 plan B needed. R-5 is dropped. |
-| SP-2 | What stdout format does OpenClaw produce? | **RESOLVED ✅** | JSON document with the `--json` flag. Schema: `payloads[].text` + `meta.{durationMs,usage,aborted,agentMeta,systemPromptReport}`. Fully in spike-results-openclaw.md SP-2. |
+| SP-2 | What stdout format does OpenClaw produce? | **RESOLVED ✅** | JSON document with the `--json` flag. Schema: `payloads[].text` + `meta.{durationMs,usage,aborted,agentMeta,systemPromptReport}`. Fully in spike-results-jarvis-agents.md SP-2. |
 | SP-3 | Streaming behavior | **RESOLVED ✅** | `--verbose on` (the value is mandatory!) yields bracketed-prefix lines `[<source>] <event>: <kv>`, ~92 lines per run. Pattern-parseable, mid-mission bus events possible. |
 | SP-4 | Model config | **RESOLVED ✅** | CLI flag `--model <provider>/<model>`. Default override does NOT work — `--local` and `--session-id` are mandatory (see AD-1 amendment). |
 | SP-5 | MCP handover | **RESOLVED ✅** | NO `--mcp` flag. Instead: a separate top-level subcommand `openclaw mcp <add\|set\|...>` plus state in `~/.openclaw/` (or `OPENCLAW_STATE_DIR`). The bridge must do pre-boot setup per mission. See AD-8 amendment. |
@@ -322,7 +322,7 @@ Empirical findings fully documented in `docs/spike-results-openclaw.md` (B-1..B-
 | SP-7 | Cancellation | **PARTIALLY RESOLVED 🟡** | Mechanics documented (taskkill /F /T on node PIDs, plus `meta.aborted: true` as an indicator). Live test with Gemini Flash (8s) and Pro (idle timeout) inconclusive — Wave-2 validation with an Anthropic-Opus long task recommended. |
 | SP-8 | Worktree path | **RESOLVED ✅ (negative)** | No workdir flags (`--workdir`, `--cwd`, `--working-directory` all rejected). The spawner must set `cwd=<worktree>`, plus `OPENCLAW_STATE_DIR=<mission_dir>/openclaw_state` for state isolation (AD-23). |
 
-**Plus 12 bridge-architecture findings (B-1..B-12)** in `docs/spike-results-openclaw.md` — the three findings not in the SP scope (B-8 provider idle timeout, B-9 system-prompt auto-injection, B-12 config-schema trap) are documented as new ADs AD-22..AD-24 in §2 above.
+**Plus 12 bridge-architecture findings (B-1..B-12)** in `docs/spike-results-jarvis-agents.md` — the three findings not in the SP scope (B-8 provider idle timeout, B-9 system-prompt auto-injection, B-12 config-schema trap) are documented as new ADs AD-22..AD-24 in §2 above.
 
 **Spike script:** `scripts/spikes/openclaw_probe.ps1` (provider-agnostic via the `Resolve-ProviderEnv` helper, default model `google/gemini-3.1-pro-preview` matches `jarvis.toml [brain.providers.gemini].deep_model`). Re-run with a different model: `-Model "anthropic/claude-opus-4-7"` (for SP-7 long-task cancellation validation).
 
@@ -334,7 +334,7 @@ Three test layers, all with fakes instead of `unittest.mock` (CLAUDE.md conventi
 
 ### 7.1 Contract tests (`tests/contract/test_harness_protocol.py`)
 
-The OpenClaw-Bridge is hooked into the parametrized harness contract test — the same catalog as OpenClaw, Codex, Open-Interpreter. Verifies: `dispatch` returns an AsyncIterator, `cancel` throws no exception for an unknown task_id, etc.
+The Jarvis-Agents-Bridge is hooked into the parametrized harness contract test — the same catalog as OpenClaw, Codex, Open-Interpreter. Verifies: `dispatch` returns an AsyncIterator, `cancel` throws no exception for an unknown task_id, etc.
 
 ### 7.2 Unit tests (`tests/unit/harness/test_openclaw_bridge.py`)
 
@@ -368,7 +368,7 @@ Phases for the implementation, each testably completed before the next starts:
 
 | # | Phase | Provides | Acceptance criterion |
 |---|---|---|---|
-| 1 | **Spike** | `docs/spike-results-openclaw.md` with empirical findings on SP-1..SP-8 | Native Windows run confirmed, stdout format documented |
+| 1 | **Spike** | `docs/spike-results-jarvis-agents.md` with empirical findings on SP-1..SP-8 | Native Windows run confirmed, stdout format documented |
 | 2 | **Pydantic schema + config** | `OpenClawConfig` in `jarvis/core/config.py`, `[harness.openclaw]` in `jarvis.toml` | Hot-reload takes effect, validation throws on an invalid model spec |
 | 3 | **Wizard extension** | `OPENCLAW_*_API_KEY` entries in `SECRETS`, new settings section in the Desktop-App | The setup wizard populates the Credential Manager, read via `get_secret` works |
 | 4 | **Bridge plugin (mock mode)** | `jarvis/plugins/harness/openclaw.py` with `FakeOpenClawProcess` | Contract + unit tests green without real OpenClaw |
@@ -387,8 +387,8 @@ Phases for the implementation, each testably completed before the next starts:
 This doc replaces **no** ADR. When bridge implementation starts, two new ADRs are created and two existing ones are amended:
 
 **New ADRs:**
-- **ADR-0012 OpenClaw-Bridge: subprocess model** — formalizes AD-1 through AD-9 (technical architecture).
-- **ADR-0013 OpenClaw-Bridge: user surface** — formalizes AD-10 through AD-21 (UX / control surface).
+- **ADR-0012 Jarvis-Agents-Bridge: subprocess model** — formalizes AD-1 through AD-9 (technical architecture).
+- **ADR-0013 Jarvis-Agents-Bridge: user surface** — formalizes AD-10 through AD-21 (UX / control surface).
 
 **Existing ADRs that get amended:**
 - **ADR-0009 Self-Healing-Worker-Critic** — worker internals may now be an external subprocess. The Action/Observation invariant stays unchanged (`summary_de` from the Kontrollierer source is still the only permissible voice-readback source).
@@ -403,7 +403,7 @@ This doc replaces **no** ADR. When bridge implementation starts, two new ADRs ar
 - **R-3 MCP side effects outside the worktree** — e.g. filesystem MCP with absolute paths, GitHub-MCP push, Drive-MCP upload. The safety valve is the deliberate MCP selection at the wizard. A UI hint at registration becomes mandatory.
 - **R-4 Async-mode confusion** — the user forgets a mission is still running, closes the app, expects a result. Mitigated by toast + voice announcement on completion + Mission-Control-view persistence.
 - **R-5 OpenClaw runs on Windows only via WSL2** — ~~fallback strategy: WSL2 path with path mapping~~ **DROPPED (2026-05-09):** Wave-1 spike SP-1 empirically confirmed that `OpenClaw 2026.5.7` runs natively on Windows Node 24 (`npm i -g openclaw` + `openclaw --version` responds, no WSL2 needed). Risk closed.
-- **R-6 Skill authoring (Phase 7.5) hangs on the SubJarvisManager** — `jarvis/skills/authoring/runner.py` today calls SubJarvisManager directly to generate code for new skills. If Wave 4 deletes the Sub-Jarvis components without migrating the authoring path along, skill authoring breaks. Mitigation: the skill-authoring migration is a mandatory sub-phase of Phase 10 (see §8) — `runner.py` calls the Mission-Manager with task type `"skill_author"`, the Mission-Manager spawns the OpenClaw-Bridge with a constrained tool set (only `file-write` in `~/.jarvis/skills/staging/`). `draft_writer.py` stays unchanged (forces `state=draft` regardless of what Sub-Jarvis produces).
+- **R-6 Skill authoring (Phase 7.5) hangs on the SubJarvisManager** — `jarvis/skills/authoring/runner.py` today calls SubJarvisManager directly to generate code for new skills. If Wave 4 deletes the Sub-Jarvis components without migrating the authoring path along, skill authoring breaks. Mitigation: the skill-authoring migration is a mandatory sub-phase of Phase 10 (see §8) — `runner.py` calls the Mission-Manager with task type `"skill_author"`, the Mission-Manager spawns the Jarvis-Agents-Bridge with a constrained tool set (only `file-write` in `~/.jarvis/skills/staging/`). `draft_writer.py` stays unchanged (forces `state=draft` regardless of what Sub-Jarvis produces).
 - **R-7 OpenClaw workspace persona leak** *(new from the Wave-1 spike, B-9, AP-OC15)* — OpenClaw automatically injects ~35.4k chars of system prompt from `~/.openclaw/workspace/` into every `agent --local` run. Risk: persona override (OpenClaw's SOUL.md/IDENTITY.md overrides the Personal-Jarvis persona mandate), cross-mission state leak (shared default path), voice-readback drift ("I am OpenClaw"). Mitigation see AD-23: workspace isolation per mission via `OPENCLAW_STATE_DIR=<mission_dir>/openclaw_state` plus a minimal mission-workspace profile plus an audit loop via `meta.systemPromptReport.injectedWorkspaceFiles[]` from the JSON output.
 
 ---
@@ -449,11 +449,11 @@ Full list of all code paths that are migrated or deleted in Wave 4 (phases 6-10 
 - OpenClaw repo: https://github.com/openclaw/openclaw
 - OpenClaw website: https://openclaw.ai/
 - Peter Steinberger's blog post: https://steipete.me/posts/2026/openclaw
-- Jarvis plan: `C:\Users\Administrator\.claude\plans\also-er-muss-auch-lexical-pond.md` §22 (historical Sub-Jarvis-tier plan, superseded by this doc)
+- Jarvis plan: `<USER_HOME>\.claude\plans\also-er-muss-auch-lexical-pond.md` §22 (historical Sub-Jarvis-tier plan, superseded by this doc)
 - ADR-0009 Self-Healing-Worker-Critic
 - ADR-0011 Router-Discipline (amended in Wave 4)
 - CLAUDE.md (Phase-5/6 status, plugin system, streaming, event bus — the Phase-5 Sub-Jarvis section is rewritten in Drift-Edit #2)
-- `docs/spike-results-openclaw.md` (Wave-1 spike findings B-1..B-12, empirical basis for AD-22..AD-24 + AD-1/AD-6/AD-8 amendments)
+- `docs/spike-results-jarvis-agents.md` (Wave-1 spike findings B-1..B-12, empirical basis for AD-22..AD-24 + AD-1/AD-6/AD-8 amendments)
 
 ---
 

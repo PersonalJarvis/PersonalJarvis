@@ -37,7 +37,7 @@
 
 ## Task 1: Main-brain voice switch speaks an honest result
 
-The HIGH-risk finding. `generate()` runs `await self.switch(target); return ""` (manager.py:5103-5106) — completely silent, even when `switch()` swallows an unknown / subagent-only / unloadable provider (manager.py:2555-2576). The subagent path already routes through the validated `apply_provider_switch` with an honest readback; this makes the main brain do the same.
+The HIGH-risk finding. `generate()` runs `await self.switch(target); return ""` (manager.py:5103-5106) — completely silent, even when `switch()` swallows an unknown / Jarvis-Agent-only / unloadable provider (manager.py:2555-2576). The Jarvis-Agent path already routes through the validated `apply_provider_switch` with an honest readback; this makes the main brain do the same.
 
 **Files:**
 - Modify: `jarvis/brain/manager.py` (phrase tables near line 1279; new method near `_apply_subagent_provider_switch` ~2777; intercept at 5103-5106)

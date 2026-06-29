@@ -45,7 +45,7 @@ Final review (all waves): 0 BLOCKER, 3 MAJOR (all fixed: empty-`task_outcomes` v
 
 ## WAVE 4 — Provider-coupling instant-fail (2026-06-08) — FIXED
 
-> **The bug reopened the moment the user switched the Heavy-Worker provider.** Waves 1–3.1 were all forensically measured while `[brain.sub_jarvis].provider = claude-api`. The instant the user set the sub-agent provider to anything else (live config on 06-08: `grok`, with a `gemini` fallback), **every single mission failed in ~3 s** — a brand-new root cause the earlier waves never exercised.
+> **The bug reopened the moment the user switched the Heavy-Worker provider.** Waves 1–3.1 were all forensically measured while `[brain.sub_jarvis].provider = claude-api`. The instant the user set the Jarvis-Agent provider to anything else (live config on 06-08: `grok`, with a `gemini` fallback), **every single mission failed in ~3 s** — a brand-new root cause the earlier waves never exercised.
 
 **Forensic ground truth (`data/missions.db`, 06-08):** missions `019ea82e-3fac`, `019ea82e-8cc5`, `019ea830-072f` each: `WorkerSpawned pid=0` → `WorkerKilled reason=user` (~0.3 s) → `MissionFailed reason=task_error partial_artifacts=[]` (~3 s total, `cost_usd=0.0`). The verbatim worker error in `data/jarvis_desktop.log`:
 
@@ -58,12 +58,12 @@ ClaudeDirectWorker: primary provider is openai-codex, expected claude-api
 
 ### Root cause — the same provider-coupling defect in TWO paths
 
-Post-Welle-4 the OpenClaw-backed `SubJarvisWorker` was removed (the ~92% nested-claude hang). So `jarvis/missions/init.py::_worker_factory` now routes **every** `[brain.sub_jarvis].provider` that is not `openai-codex`/`chatgpt` (grok, gemini, openai, openrouter, openclaw-claude, **and the unset default** — whose `_resolve_provider_chain` last-ditch stub is `("grok", "grok-4.3")`) to `ClaudeDirectWorker` (the "proven direct Opus worker", `init.py:476`). But both the worker **and** the critic still carried a guard that assumed a *fall-through to a worker that no longer exists*:
+Post-Welle-4 the Jarvis-Agents-backed `SubJarvisWorker` was removed (the ~92% nested-claude hang). So `jarvis/missions/init.py::_worker_factory` now routes **every** `[brain.sub_jarvis].provider` that is not `openai-codex`/`chatgpt` (grok, gemini, openai, openrouter, openclaw-claude, **and the unset default** — whose `_resolve_provider_chain` last-ditch stub is `("grok", "grok-4.3")`) to `ClaudeDirectWorker` (the "proven direct Opus worker", `init.py:476`). But both the worker **and** the critic still carried a guard that assumed a *fall-through to a worker that no longer exists*:
 
 1. **`jarvis/missions/workers/claude_direct_worker.py`** (`spawn`, ex-line 218-241): refused with `"primary provider is <x>, expected claude-api"` unless the resolved chain primary was `claude-api`. → every non-claude/non-codex mission died instantly.
 2. **`jarvis/missions/critic/runner.py`** (`_invoke_once`, ex-line 931-938): the "fall back to the direct claude critic" branch passed `model=primary_model or model` — i.e. the **foreign** provider model (`grok-4.3`) — to `claude --model`, which the claude CLI rejects with `returncode=1`. The critic failed twice → `critic_unavailable`, failing the mission **even after the worker delivered real work** (surfaced the moment fix #1 let the worker run).
 
-Both are the same class: *a heavy-worker/critic path that hard-couples its ability to run to a configured provider slug it no longer has a dedicated backend for.* The OpenClaw escape hatch the guards assumed is gone.
+Both are the same class: *a heavy-worker/critic path that hard-couples its ability to run to a configured provider slug it no longer has a dedicated backend for.* The Jarvis-Agents escape hatch the guards assumed is gone.
 
 ### The fix — `ClaudeDirectWorker`/`CriticRunner` are the universal Claude-Max fallback
 
@@ -76,11 +76,11 @@ This honours the dedicated workers exactly (`claude-api` → ClaudeDirectWorker,
 - **Unit (TDD red→green):** `tests/missions/workers/test_claude_direct_provider_fallback.py` (5) + `tests/missions/critic/test_runner_claude_direct.py::test_non_claude_provider_critic_uses_claude_model_not_foreign` (3). Both watched fail first ("worker refused…", "foreign model leaked into claude argv"). Full `tests/missions/` suite: **796 passed, 2 skipped**; ruff clean on changed code.
 - **Real end-to-end (GREEN, 2026-06-08):** `scripts/verify_submission_provider_fix.py` drove the REAL `manager.dispatch → kontrollierer.run_mission` pipeline against an **isolated temp DB** with the **live grok config** (the exact bug condition), spawning real `claude` Max-OAuth `claude-opus-4-8` workers + critics. Result: **3/3 rounds APPROVED, zero provider-refusal failures, exit 0** (missions `019ea847`/`019ea848`). Before the fix the same harness reproduced the bug: every round died with `ClaudeDirectWorker: primary provider is grok, expected claude-api` (worker) → then, after fix #1, `Critic lieferte zweimal keinen schema-validen JSON-Output` (critic foreign-model rejection).
 
-**REQUIRES AN APP RESTART to take effect** (AP-8 restore-trap — `pythonw.exe` holds old code). After restart, missions dispatched under the grok sub-agent reach APPROVED instead of dying in 3 s.
+**REQUIRES AN APP RESTART to take effect** (AP-8 restore-trap — `pythonw.exe` holds old code). After restart, missions dispatched under the grok Jarvis-Agent reach APPROVED instead of dying in 3 s.
 
-### WAVE 4b — Codex sub-agent: expired ChatGPT login (2026-06-08, same evening)
+### WAVE 4b — Codex Jarvis-Agent: expired ChatGPT login (2026-06-08, same evening)
 
-> After the grok fix went live (confirmed: the Wave-4 warning string appears in `data/jarvis_desktop.log` at 20:58 / 21:11 — **no restore-trap**), the user switched the sub-agent to **Codex** and missions failed again — now running for **minutes**, not 3 s. Different root cause, surfaced *because* the worker now runs.
+> After the grok fix went live (confirmed: the Wave-4 warning string appears in `data/jarvis_desktop.log` at 20:58 / 21:11 — **no restore-trap**), the user switched the Jarvis-Agent to **Codex** and missions failed again — now running for **minutes**, not 3 s. Different root cause, surfaced *because* the worker now runs.
 
 **Forensic ground truth (`data/missions.db` + log, 06-08):**
 - Mission `019ea8db` (codex worker, 153 s, 3 iters → `task_error`): the codex subprocess emitted an error event whose `message` was a **dict** `{'message': 'Failed to refresh token. … Please log in again.'}`. `CodexDirectWorker` (`codex_direct_worker.py:423`) fed it into `ClaudeResult(result=…)` (a `str` field) → **Pydantic `ValidationError` → worker crash → opaque `task_error`**, hiding the real cause.
@@ -94,7 +94,7 @@ This honours the dedicated workers exactly (`claude-api` → ClaudeDirectWorker,
 2. **Codex auth-expiry → Claude Max fallback (worker):** when the codex terminal error matches `_CODEX_AUTH_EXPIRED_MARKERS` (refresh token / log in again / 401 / …) AND codex did no real work, the worker delegates the task to `ClaudeDirectWorker` (the codex error event is *not* yielded, so `_spawn_worker_collect`'s `worker_error` stays unset and the claude result drives the outcome). The mission COMPLETES on Claude Max.
 3. **Codex critic → Claude critic fallback:** when the codex critic yields no verdict, fall back to `_invoke_via_claude_direct` instead of `critic_unavailable`.
 
-Same philosophy as the grok fix: every sub-agent option now works — codex-with-good-token → codex; codex-with-dead-token → Claude Max fallback (legible warning, `run codex login` to restore codex); grok/gemini/openai/openrouter/unset → Claude Max. `codex status`-lies and the boot key-check vs ChatGPT-mode mismatch remain a **follow-up** (cosmetic; missions now succeed regardless).
+Same philosophy as the grok fix: every Jarvis-Agent option now works — codex-with-good-token → codex; codex-with-dead-token → Claude Max fallback (legible warning, `run codex login` to restore codex); grok/gemini/openai/openrouter/unset → Claude Max. `codex status`-lies and the boot key-check vs ChatGPT-mode mismatch remain a **follow-up** (cosmetic; missions now succeed regardless).
 
 **Verification:** unit TDD `tests/missions/workers/test_codex_auth_fallback.py` (5: coerce helper, auth-marker detect, dict-error-no-crash, **auth-expiry → claude fallback**). Full `tests/missions/`: **801 passed, 2 skipped**; ruff clean on changed code. Real end-to-end (GREEN, 2026-06-08): `scripts/verify_submission_provider_fix.py` re-run with `JARVIS__BRAIN__SUB_JARVIS__PROVIDER=openai-codex` against the live dead token — every round logged `codex ChatGPT login expired ('400 … Your session has ended')` → worker falls back to Claude Max, then `codex critic produced no verdict (401 … token invalidated) → falling back to the claude critic` → **3/3 APPROVED, exit 0** (missions `019ea8f8`/`019ea8fa`/`019ea8fb`). The grok path is unbroken by these changes: **3/3 APPROVED** in the same run. The Wave-4 grok fix had already proven live earlier (warning string in `jarvis_desktop.log` 20:58/21:11 — no restore-trap), so a single restart picks up these codex fixes too.
 

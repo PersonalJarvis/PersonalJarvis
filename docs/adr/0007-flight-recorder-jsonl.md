@@ -3,7 +3,7 @@ title: "ADR-0007: Flight-Recorder JSONL"
 slug: adr-0007-flight-recorder-jsonl
 diataxis: adr
 status: active
-owner: harald
+owner: sam
 last_reviewed: 2026-04-29
 phase: 5
 audience: developer

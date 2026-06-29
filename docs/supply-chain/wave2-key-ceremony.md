@@ -2,7 +2,7 @@
 
 > Status: **foundation (Wave-2-SA-1).** The keypair + TUF root metadata are
 > generated and committed. Workflow + verifier integration is built by
-> follow-up sub-agents (Wave-2-SA-2 through SA-5).
+> follow-up Jarvis-Agents (Wave-2-SA-2 through SA-5).
 >
 > Companion documents:
 > - `install/TRUST_ROOT.md` §3 — the user-facing trust-root explanation,
@@ -20,7 +20,7 @@ GitHub Actions OIDC. The verifier accepts a signature iff a cosign
 
 - OIDC issuer = `https://token.actions.githubusercontent.com`
 - Certificate identity regex pinned to
-  `^https://github\.com/personal-jarvis/personal-jarvis/\.github/workflows/sign-installer\.yml@refs/tags/v[0-9].*$`
+  `^https://github\.com/PersonalJarvis/PersonalJarvis/\.github/workflows/sign-installer\.yml@refs/tags/v[0-9].*$`
 
 That is **one trust axis**: an attacker who controls the GitHub repo (or
 the maintainer's account) can run the signing workflow and produce a
@@ -51,7 +51,7 @@ independent organisations / two independent custody chains."
 ## 2. What was generated, exactly
 
 Every command below was executed inside the worktree
-`C:\Users\Administrator\Desktop\quick-install-wt` on 2026-05-26 against the
+`<USER_HOME>\Desktop\quick-install-wt` on 2026-05-26 against the
 branch `feat/wave2-foundation`.
 
 ### 2.1 Tooling versions
@@ -175,7 +175,7 @@ detached Ed25519 signature using stock `cryptography` or `nacl`.
 
 ## 3. The verifier contract (built by Wave-2-SA-2)
 
-This document specifies the contract the follow-up sub-agents must
+This document specifies the contract the follow-up Jarvis-Agents must
 implement. Reproduced here so the foundation is self-contained.
 
 For each released artefact `<asset>`, the Wave 2 install-verify script
@@ -237,10 +237,10 @@ Ideally:
 
 ```bash
 gh secret set WAVE2_CEREMONY_PASSPHRASE \
-    --repo personal-jarvis/personal-jarvis \
+    --repo PersonalJarvis/PersonalJarvis \
     --body "<new passphrase from openssl rand -base64 18>"
 # Verify:
-gh secret list --repo personal-jarvis/personal-jarvis
+gh secret list --repo PersonalJarvis/PersonalJarvis
 # WAVE2_CEREMONY_PASSPHRASE  Updated 2026-MM-DD HH:MM:SS
 ```
 
@@ -344,7 +344,7 @@ FULCIO_INTERMEDIATE_V1_PEM = (
 )
 OFFLINE_PUB_HEX = "c90e099a2b2ef76fdff763acf034662306f037fae33ae2ec45361368798d9cdd"
 FULCIO_IDENTITY_REGEX = (
-    r"^https://github\.com/personal-jarvis/personal-jarvis/"
+    r"^https://github\.com/PersonalJarvis/PersonalJarvis/"
     r"\.github/workflows/sign-installer\.yml@refs/tags/v[0-9].*$"
 )
 
@@ -423,7 +423,7 @@ own offline ceremony.
 
 This document, the keypair, and the TUF root together satisfy these
 checks (all run inside this branch's HEAD before commit — the next
-sub-agent should re-run them as sanity checks):
+Jarvis-Agent should re-run them as sanity checks):
 
 ```bash
 # 1. Public key committed as a blob

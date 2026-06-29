@@ -1,6 +1,6 @@
 # Persona + Delegation Refactor — Research Report (Step 0)
 
-**Mandate:** `persona-delegation-mandate (1).md` (correction window: A1 = "Ruben" form of address is binding)
+**Mandate:** `persona-delegation-mandate (1).md` (correction window: A1 = "Alex" form of address is binding)
 **Branch:** `phase-8-review-pipeline` (working-tree state 2026-04-28)
 **Probe run:** 2026-04-28, ~16:00 local
 **Predecessor reports:** `docs/persona-audit-report.md`, `docs/persona-refactor-results.md` (phases 1+2+3 already carried out 2026-04-25)
@@ -19,13 +19,13 @@
 
 **Material inspection of the verbatim outputs:** ⚠️ **several drift classes visible** that the probe heuristic does not catch:
 1. **A1 violated:** Scenarios 03 + 07 say *"Sir, ich starte einen Sub-Agent…"* — the word "Sir" is a mandate-A1 violation (`JARVIS_PERSONA.md:32-33` forbids it explicitly).
-2. **Tool-output leak:** Scenario 03 leaks the Sub-Jarvis args (`utterance`, `context_hints`, `action`, `target`) verbatim to the user.
-3. **Sub-Jarvis echo opener:** *"Sir, ich starte einen Sub-Agent, der die Beschleunigung einer unklaren Aufgabe analysiert."* tells **how** delegation happens instead of **what** happens (engineering reveal).
+2. **Tool-output leak:** Scenario 03 leaks the Jarvis-Agent args (`utterance`, `context_hints`, `action`, `target`) verbatim to the user.
+3. **Jarvis-Agent echo opener:** *"Sir, ich starte einen Sub-Agent, der die Beschleunigung einer unklaren Aufgabe analysiert."* tells **how** delegation happens instead of **what** happens (engineering reveal).
 4. **Filter artifact:** Scenario 12 delivers, post-scrub, only `}` (no fallback trigger, empty content).
 5. **Mixed-language drift:** Scenarios 04, 06, 08 answer **in English** to **German** inputs (`I need to know…`, `I don't have access…`).
 6. **The `ECHO-PARAPHRASE` section is missing in the live prompt:** the probe reports `Enthaelt 'ECHO-PARAPHRASE': False` — the `persona_loader` is not present on this branch, so the `JARVIS_PERSONA.md` section never lands in the brain system prompt at all.
 
-**Recommendation:** the STOP condition is *not* trivially satisfied. The heuristic checks pass, but **new drift classes** are visible that appeared after 2026-04-25 (previous refactor completion), either through the provider switch (`gemini` → `claude-sonnet-4-6`) or through branch drift (`router-permanent-vision` → `phase-8-review-pipeline`). **Ruben must decide** whether the formal pass is sufficient or whether the materially visible drift gets addressed.
+**Recommendation:** the STOP condition is *not* trivially satisfied. The heuristic checks pass, but **new drift classes** are visible that appeared after 2026-04-25 (previous refactor completion), either through the provider switch (`gemini` → `claude-sonnet-4-6`) or through branch drift (`router-permanent-vision` → `phase-8-review-pipeline`). **Alex must decide** whether the formal pass is sufficient or whether the materially visible drift gets addressed.
 
 ---
 
@@ -51,7 +51,7 @@ System-Prompt: 12172 chars
 | ID | Lang | User | Jarvis (verbatim, post-scrub) | Pattern match? |
 |---|---|---|---|---|
 | 01 | de | "Ist die Datei gespeichert?" (Is the file saved?) | "Ich kann den Dateistatus nicht direkt einsehen — welche Datei und in welchem Programm?" ("I can't directly see the file status — which file and in which program?") | ◐ clarifying question, no name (P1+P2) — OK |
-| 02 | de | "Guten Morgen." (Good morning.) | "Guten Morgen, Ruben. Es ist kurz nach 16 Uhr — eher ein guter Nachmittag." ("Good morning, Ruben. It's just past 4 PM — more of a good afternoon.") | ☑ formal, with name, dry wit (P2) |
+| 02 | de | "Guten Morgen." (Good morning.) | "Guten Morgen, Alex. Es ist kurz nach 16 Uhr — eher ein guter Nachmittag." ("Good morning, Alex. It's just past 4 PM — more of a good afternoon.") | ☑ formal, with name, dry wit (P2) |
 | 03 | de | "Wie kann ich das beschleunigen?" (How can I speed this up?) | "Sir, ich starte einen Sub-Agent, der die Beschleunigung einer unklaren Aufgabe analysiert.\n\"Wie kann ich das beschleunigen?\"\ncontext_hints:\nUnklar, was beschleunigt werden soll.\nBenötigt Kontext zur aktuellen Aufgabe oder zum System.\nSub-Jarvis muss nachfragen, um den Intent zu präzisieren.\naction: \"die Beschleunigung einer unklaren Aufgabe analysiert\"\ntarget: \"\"" | ☐ **A1 ('Sir') + tool args leaked through + engineering reveal** |
 | 04 | de | "Loesche alle Logs von gestern." (Delete all logs from yesterday.) | "I need to know where to look. Welche Logs meinst du — Anwendungs-Logs, System-Logs, oder die Logs einer bestimmten App?" ("Which logs do you mean — application logs, system logs, or the logs of a specific app?") | ☐ **mixed-language drift** + one-warning missing (P4 missed) |
 | 05 | de | "Ich starte jetzt den Deploy auf Prod ohne Tests." (I'm starting the prod deploy now without tests.) | "Verstanden. Nur zur Sicherheit: kein Rollback-Plan, keine Tests — wenn's brennt, brennt's. Soll ich den Deploy trotzdem anstoßen?" ("Understood. Just to be safe: no rollback plan, no tests — if it burns, it burns. Should I start the deploy anyway?") | ☑ dry anchor (P5) |
@@ -59,7 +59,7 @@ System-Prompt: 12172 chars
 | 07 | de | "Analysiere das gesamte Projektverzeichnis." (Analyse the entire project directory.) | "Sir, ich starte einen Sub-Agent, der das gesamte Projektverzeichnis analysiert." ("Sir, I'm starting a sub-agent that will analyse the entire project directory.") | ☐ **A1 ('Sir') + engineering reveal** instead of P7 ("initiative announcement in 3 parts") |
 | 08 | de | "Hat der Build funktioniert?" (Did the build succeed?) | "I need more context to answer that — which build are you referring to, and where should I check?" | ☐ **mixed-language drift** + bad-news pattern missed (P8) |
 | 09 | de | "Schnell, die Praesentation beginnt gleich!" (Quick, the presentation is about to start!) | "Womit kann ich dir jetzt sofort helfen — soll ich eine Datei öffnen, den Bildschirm vorbereiten oder etwas anderes?" ("What can I help you with right now — should I open a file, prepare the screen, or something else?") | ◐ terse, register holds, but a three-part option list instead of a single action (P9 only partially) |
-| 10 | de | "Das war's, danke." (That's it, thanks.) | "Auf Wiedersehen, Ruben." ("Goodbye, Ruben.") | ☑ hangup contract satisfied |
+| 10 | de | "Das war's, danke." (That's it, thanks.) | "Auf Wiedersehen, Alex." ("Goodbye, Alex.") | ☑ hangup contract satisfied |
 | 11 | de | "Ich möchte wissen, wie spät es ist." (I want to know what time it is.) | "Es ist 16 Uhr 01." ("It is 4:01 PM.") | ☑ direct time answer, **no echo opener** |
 | 11 | en | I want to know what time it is. | "It's 4:01 PM." | ☑ direct, no echo opener |
 | 12 | de | "Lies die Datei jarvis.toml und sag mir was drin steht." (Read the file jarvis.toml and tell me what's in it.) | `}` *(filter artifact: the `removed_tool_json` action ran but left `}` behind)* | ☐ **filter shredded the output without a fallback** |
@@ -124,7 +124,7 @@ Suspected cause hierarchy:
 | D9 recursion (`spawn-sub-jarvis` ∉ `SUB_TOOLS`) | mandatory | ✅ `factory.py:61-70` does not contain `spawn-sub-jarvis` |
 
 **Drift against the mandate / ADR-0011:** the tool set has **5 tools more** than specified. Justification in the code:
-- `dispatch-to-harness` re-introduction: not documented in an ADR — probably re-added in a later phase. Sub-Jarvis is the authentic path, but main-Jarvis can respond to stubborn use cases (screen-observe + immediate dispatch) without a sub-spawn.
+- `dispatch-to-harness` re-introduction: not documented in an ADR — probably re-added in a later phase. Jarvis-Agent is the authentic path, but main-Jarvis can respond to stubborn use cases (screen-observe + immediate dispatch) without a sub-spawn.
 - `dispatch-with-review` (Phase 8.4 / plan §6.4 quality-gate pipeline): explicitly not in `SUB_TOOLS` (recursion vector).
 - Self-mod tools (Phase 7.3 / `factory.py:50`): plan §AD-2 hardcodes main-Jarvis-only access for setting mutation.
 
@@ -132,13 +132,13 @@ Suspected cause hierarchy:
 
 ### 2.2 Spawn Reflex via `psutil` Not Directly Reproducible
 
-The probe itself spawns **no** real Sub-Jarvis subprocess (it fails in the factory at the Unicode bug and continues with `tools={}`). The `psutil`-based spawn-count replay over 5 consecutively spoken smalltalk turns required by the mandate is therefore not feasible with the existing probe. Indirect evidence from the outputs:
+The probe itself spawns **no** real Jarvis-Agent subprocess (it fails in the factory at the Unicode bug and continues with `tools={}`). The `psutil`-based spawn-count replay over 5 consecutively spoken smalltalk turns required by the mandate is therefore not feasible with the existing probe. Indirect evidence from the outputs:
 
-- **5 smalltalk inputs** (01, 02, 06 old, 09, 10): outputs show **no** Sub-Jarvis spawn markers (`"Sir, ich starte…"` ("Sir, I'm starting…")/`context_hints:`/`utterance:`). The force-spawn heuristic does not trigger for these inputs — as expected.
-- **2 spawn inputs** (03, 07): outputs show **unambiguous Sub-Jarvis spawn markers** (`"Sir, ich starte einen Sub-Agent…"` — "Sir, I'm starting a sub-agent…"). The force-spawn heuristic **triggers** for `"Wie kann ich das beschleunigen?"` ("How can I speed this up?") (the verb `beschleunig` is in `spawn_verbs`) and `"Analysiere das gesamte Projektverzeichnis"` ("Analyse the entire project directory") (the verb `analysier`). This is intended behavior of the heuristic.
+- **5 smalltalk inputs** (01, 02, 06 old, 09, 10): outputs show **no** Jarvis-Agent spawn markers (`"Sir, ich starte…"` ("Sir, I'm starting…")/`context_hints:`/`utterance:`). The force-spawn heuristic does not trigger for these inputs — as expected.
+- **2 spawn inputs** (03, 07): outputs show **unambiguous Jarvis-Agent spawn markers** (`"Sir, ich starte einen Sub-Agent…"` — "Sir, I'm starting a sub-agent…"). The force-spawn heuristic **triggers** for `"Wie kann ich das beschleunigen?"` ("How can I speed this up?") (the verb `beschleunig` is in `spawn_verbs`) and `"Analysiere das gesamte Projektverzeichnis"` ("Analyse the entire project directory") (the verb `analysier`). This is intended behavior of the heuristic.
 - **Three smalltalk triggers without a spawn** (04, 06, 08): outputs show **no** spawn marker. But: 04 contains the verb `lösch` ("delete") (in `spawn_verbs`!) — the heuristic **should** trigger, but does not. Presumably a `_looks_like_pc_control` or `screen-observe` bypass logic engages earlier (e.g., the verb match is swallowed by the `dispatch_to_harness` path). Needs deeper code inspection in a later phase.
 
-**Routing-bug repro status:** the original bug ("every Hello command spawns a subprocess") is **fixed** after the 2026-04-25 refactor. Today's drift is of a different nature: the **force-spawn trigger**, when it fires, leaks tool args and says "Sir" instead of "Ruben".
+**Routing-bug repro status:** the original bug ("every Hello command spawns a subprocess") is **fixed** after the 2026-04-25 refactor. Today's drift is of a different nature: the **force-spawn trigger**, when it fires, leaks tool args and says "Sir" instead of "Alex".
 
 ### 2.3 Evidence from the Code (path)
 
@@ -186,14 +186,14 @@ BrainManager.generate (manager.py:869)
 | 6 | `_on_background_completed` (`SubJarvisBackgroundCompleted` event) | ❌ bypass with `"Erledigt, Sir."` / `"Erledigt, Sir. {summary}"` ("Done, Sir." / "Done, Sir. {summary}") | **dead code** (`return` on line 686 before the synth block) | `pipeline.py:670-719` |
 | 7 | `_on_spawn_announcement` (`SubJarvisAnnouncement` event) | ❌ bypass with `"Kuemmere mich drum, Sir."` ("I'll handle it, Sir.") | **dead code** (`return` on line 740 before the synth block) | `pipeline.py:721-764` |
 
-**Assessment:** paths 6+7 are deactivated by an early `return` — not active for the user. But they are an A1 risk if someone removes the `return`. **Recommendation:** either delete the dead code or at least change `"Sir"` → `"Ruben"` and add `scrub_for_voice` in case they are reactivated.
+**Assessment:** paths 6+7 are deactivated by an early `return` — not active for the user. But they are an A1 risk if someone removes the `return`. **Recommendation:** either delete the dead code or at least change `"Sir"` → `"Alex"` and add `scrub_for_voice` in case they are reactivated.
 
-### 3.4 Sub-Jarvis Output Path
+### 3.4 Jarvis-Agent Output Path
 
-`SubJarvisManager.run` (`sub_jarvis/manager.py`) calls `BrainManager.summarize` on the Sub-Jarvis output → the summary goes back to the `spawn_sub_jarvis` tool → `BrainDispatcher.execute_tool` → `BrainManager.generate` returns the tool-output string → `_handle_utterance` → `scrub_for_voice` (path #1).
+`SubJarvisManager.run` (`sub_jarvis/manager.py`) calls `BrainManager.summarize` on the Jarvis-Agent output → the summary goes back to the `spawn_sub_jarvis` tool → `BrainDispatcher.execute_tool` → `BrainManager.generate` returns the tool-output string → `_handle_utterance` → `scrub_for_voice` (path #1).
 
-**Finding:** Sub-Jarvis output **does** run through the filter. The problem in scenario 03 is not a TTS bypass, but that:
-1. The Sub-Jarvis itself says `"Sir, ich starte…"` ("Sir, I'm starting…") as the lead-in of its summary, because the Sub-Jarvis system prompt (`factory.py:78-118`) knows no A1 rule.
+**Finding:** Jarvis-Agent output **does** run through the filter. The problem in scenario 03 is not a TTS bypass, but that:
+1. The Jarvis-Agent itself says `"Sir, ich starte…"` ("Sir, I'm starting…") as the lead-in of its summary, because the Jarvis-Agent system prompt (`factory.py:78-118`) knows no A1 rule.
 2. The filter does not have "Sir" in its blacklist.
 
 ---
@@ -250,7 +250,7 @@ The mandate-phase-4 spec requires:
 | Point | Master plan §22 (`also-er-muss-auch-lexical-pond.md:1604+`) | Code state 2026-04-28 |
 |---|---|---|
 | Four router tools | `screen_snapshot`, `multi_spawn`, `spawn_sub_jarvis`, `run_shell` (l. 1617) | **6 tools** + 3 self-mod tools (Phase 7.3) → 9 effective in the router tier |
-| Sub-Jarvis stateless, hard cap 30 min | l. 1616 | ✅ implemented (`sub_jarvis/manager.py`) |
+| Jarvis-Agent stateless, hard cap 30 min | l. 1616 | ✅ implemented (`sub_jarvis/manager.py`) |
 | `JARVIS_DEPTH` guard | l. 1616 | ✅ implemented (`sub_jarvis/manager.py:DEPTH_ENV`) |
 | Router = Haiku 4.5, Sub = Opus 4.7 | l. 1615-1616 | ✅ implemented (`manager.py:TIER_DEFAULTS_BY_PROVIDER`) |
 | `BrainHealthChecker` fail-fast | l. 1619 | ✅ present (`brain/healthcheck.py`) |
@@ -278,7 +278,7 @@ Both documents address the same bug (every Hello command spawns a subprocess), b
 
 → **`JARVIS_REFACTOR_PLAN.md` phase 3 stage 2 is obsolete.** ADR-0011 is the current truth. The deterministic `BrainRoutingConfig` heuristic is in the code (`manager.py:_should_force_sub_jarvis`).
 
-#### 5.2.2 Conflict 2 — Sub-Jarvis file location
+#### 5.2.2 Conflict 2 — Jarvis-Agent file location
 
 | Aspect | `JARVIS_REFACTOR_PLAN.md` §4.2 | Code reality |
 |---|---|---|
@@ -288,20 +288,20 @@ Both documents address the same bug (every Hello command spawns a subprocess), b
 
 → **`JARVIS_REFACTOR_PLAN.md` is outdated.** The code reality matches master plan §22 (a dedicated `jarvis/sub_jarvis/` module).
 
-#### 5.2.3 Conflict 3 — Sub-Jarvis persona file
+#### 5.2.3 Conflict 3 — Jarvis-Agent persona file
 
 | Aspect | `JARVIS_REFACTOR_PLAN.md` §4.4 | Code reality |
 |---|---|---|
 | Persona source | `jarvis/brain/SUB_JARVIS_PERSONA.md` (external) | `factory.py:SUB_JARVIS_SYSTEM_PROMPT` (inline constant) |
 
-→ The code inline is legitimate (the Sub-Jarvis prompt is extended at runtime with vision hints, plan-pipeline hints, etc.). The **`JARVIS_REFACTOR_PLAN.md` proposal** is to be deviated from.
+→ The code inline is legitimate (the Jarvis-Agent prompt is extended at runtime with vision hints, plan-pipeline hints, etc.). The **`JARVIS_REFACTOR_PLAN.md` proposal** is to be deviated from.
 
 #### 5.2.4 Conflict 4 — order of the refactor phases
 
 | Aspect | `JARVIS_REFACTOR_PLAN.md` | Mandate |
 |---|---|---|
 | First | Phase 1 (direct-brain fix) | Phase 3 (routing fix) |
-| Then | Phase 2 (Sub-Jarvis spawn) in parallel with Phase 3 (heavy detection) | Phase 1 (output filter) → Phase 2 (persona) → Phase 4 (plausibility) → Phase 5 (vision) → Phase 6 (docs) |
+| Then | Phase 2 (Jarvis-Agent spawn) in parallel with Phase 3 (heavy detection) | Phase 1 (output filter) → Phase 2 (persona) → Phase 4 (plausibility) → Phase 5 (vision) → Phase 6 (docs) |
 | Codex/Browser-Use | Phase 4-5 as their own phases | outside the mandate scope |
 
 → The mandate is newer (2026-04-25), more focused, and more explicit about its assumptions (A1-A6). **`JARVIS_REFACTOR_PLAN.md` is superseded** as a refactor order; its phase 4 (Codex login) and phase 5 (Browser-Use) are separate workstreams, no conflict.
@@ -310,20 +310,20 @@ Both documents address the same bug (every Hello command spawns a subprocess), b
 
 | Mandate point | Master plan | Conflict? |
 |---|---|---|
-| A1 (Ruben instead of Sir) | the master-plan path `also-er-muss-auch-lexical-pond.md` references no "Sir/Ruben" requirement; `JARVIS_PERSONA.md:33` says "never 'Sir'" explicitly. | ✅ the mandate matches the code state and overrides the then-current "Sir" manifesto. |
+| A1 (Alex instead of Sir) | the master-plan path `also-er-muss-auch-lexical-pond.md` references no "Sir/Alex" requirement; `JARVIS_PERSONA.md:33` says "never 'Sir'" explicitly. | ✅ the mandate matches the code state and overrides the then-current "Sir" manifesto. |
 | Phase 3: EXACTLY four router tools | master plan §22 l. 1617 says **four tools**. | ✅ the original requirement; later phases 7+8 extend it deliberately. |
 | Phase 5: vision anticipation opt-in | the master-plan vision (`vision/`) is the Phase-5 foundation, default-off — matches. | ✅ no conflict. |
 
 **Summary conflict resolution:**
 
-1. **`JARVIS_REFACTOR_PLAN.md` is superseded as a roadmap** — the two important points (routing-bug-fix diagnosis + Sub-Jarvis-as-a-second-brain-instance) are already implemented through ADR-0011 + master plan §22 + the code state. The stage-2 LLM-routing recommendation is **rejected** (ADR-0011).
+1. **`JARVIS_REFACTOR_PLAN.md` is superseded as a roadmap** — the two important points (routing-bug-fix diagnosis + Jarvis-Agent-as-a-second-brain-instance) are already implemented through ADR-0011 + master plan §22 + the code state. The stage-2 LLM-routing recommendation is **rejected** (ADR-0011).
 2. **Mandate-phase-3 4-tool requirement** is inconsistent with the code state (6+3 tools in code), but **legitimately extended by phases 7+8**. **Recommendation:** amend ADR-0011, understand mandate phase 3 as the "Phase-5 baseline".
-3. **A1 ("Ruben" form of address)** is anchored in the code (`JARVIS_PERSONA.md:33`), tested in `voice_e2e_probe.py`, but today **violated again** through provider drift (Sonnet-4-6 without `persona_loader` says "Sir"). Phase 1 (output filter) must take "Sir" up as an anti-pattern, or the persona must actually reach the brain.
+3. **A1 ("Alex" form of address)** is anchored in the code (`JARVIS_PERSONA.md:33`), tested in `voice_e2e_probe.py`, but today **violated again** through provider drift (Sonnet-4-6 without `persona_loader` says "Sir"). Phase 1 (output filter) must take "Sir" up as an anti-pattern, or the persona must actually reach the brain.
 4. **`persona_loader.py` is missing on branch `phase-8-review-pipeline`** (`HAS_PERSONA_LOADER=False`). The `JARVIS_PERSONA.md` ECHO-PARAPHRASE section and the A1 rule therefore never reach the brain. **This is the most likely single point of failure** for the drift visible today.
 
 ---
 
-## 6. Recommendation to Ruben
+## 6. Recommendation to Alex
 
 **Formal:** the mandate's STOP condition *could* be triggered (anti-pattern hits = 0, hangup OK, name ratio 12 %). If you read the mandate definition *strictly*, the persona "is not the problem".
 
@@ -365,7 +365,7 @@ C) **Full mandate:** you decide the mandate should run despite the formal pass. 
 | 11 | `docs/adr/0010-output-filter-pattern-based.md` + `0011-router-pure-dispatcher.md` | ✅ full (two ADRs, ~70 lines each) |
 
 **Additionally read for the conflict analysis:**
-- `C:\Users\Administrator\.claude\plans\also-er-muss-auch-lexical-pond.md` §22 (l. 1602-1644)
+- `<USER_HOME>\.claude\plans\also-er-muss-auch-lexical-pond.md` §22 (l. 1602-1644)
 - `jarvis/core/config.py` `BrainRoutingConfig` (l. 138-195)
 - `docs/persona-refactor-results.md` (for the before state of 2026-04-25)
 
@@ -374,4 +374,4 @@ C) **Full mandate:** you decide the mandate should run despite the formal pass. 
 
 ---
 
-**End of Step 0.** Phase 1+ only after Ruben's green light.
+**End of Step 0.** Phase 1+ only after Alex's green light.

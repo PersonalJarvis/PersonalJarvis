@@ -114,8 +114,8 @@ python -m jarvis
 
 Expectation:
 - Mission starts, worker spawn, first cost accumulates
-- At 50% (0.025): Voice "Ruben, halbes Budget verbraucht."
-- At 80% (0.04): Voice "Ruben, achtzig Prozent vom Budget weg."
+- At 50% (0.025): Voice "Alex, halbes Budget verbraucht."
+- At 80% (0.04): Voice "Alex, achtzig Prozent vom Budget weg."
 - At 100% (0.05): WorkerKilled with reason="budget" + MissionFailed("budget_exceeded") + Voice "Sir, Budget aufgebraucht. Mission abgebrochen."
 
 ### S5 — Injection (already covered by unit tests)

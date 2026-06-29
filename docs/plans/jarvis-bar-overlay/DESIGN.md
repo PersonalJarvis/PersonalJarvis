@@ -1,15 +1,15 @@
-# Whisper-Bar Overlay — Design Spec
+# Jarvis-Bar Overlay — Design Spec
 
 **Date:** 2026-06-01
 **Status:** Approved (design), implementation pending
-**Author:** OpenClaw (brainstormed with the maintainer)
+**Author:** Jarvis-Agents (brainstormed with the maintainer)
 
 ---
 
 ## 1. Goal
 
 Replace the bulky mascot "ghost" orb as the **default** on-screen representation of Jarvis
-with a slim, Wispr-Flow-style pill bar that lives at the bottom-center of the screen and
+with a slim, dictation-style pill bar that lives at the bottom-center of the screen and
 encodes Jarvis's state purely through animation (no text). The existing mascot orb stays
 fully intact and remains selectable.
 
@@ -27,7 +27,7 @@ calm at rest.
 
 ## 2. Confirmed product decisions
 
-- **Default style:** `whisper_bar`. Mascot orb (`mascot`) and `none` remain selectable.
+- **Default style:** `jarvis_bar`. Mascot orb (`mascot`) and `none` remain selectable.
 - **Position:** bottom-center by default. **Hold-left-mouse + drag** repositions it; the position
   is persisted (same UX as the current draggable orb).
 - **Single left-click:** starts a voice session — the same entry point as the wake word / the
@@ -49,7 +49,7 @@ the `EventBus` and calls a small duck-typed surface API on `OrbOverlay`
 `stop_animation()`, `show_listening_transcript(...)`, `hide_comment()`,
 `start_mouth_animation(...)`, `stop_mouth_animation(...)`.
 
-We add a new `WhisperBarOverlay` that implements the **same surface API** (no-op for the
+We add a new `JarvisBarOverlay` that implements the **same surface API** (no-op for the
 text/mouth methods, since the bar has no text or mouth). `desktop_app._start_speech_and_orb`
 selects which surface to construct based on `[ui].orb_style`. The bridge is reused **unchanged**.
 
@@ -63,20 +63,20 @@ Rejected alternatives:
 
 | File | Purpose |
 |---|---|
-| `jarvis/ui/whisperbar/__init__.py` | Package marker + public exports |
-| `jarvis/ui/whisperbar/renderer.py` | Pure rendering math + drawing of pill / dots / bars / wave. State-and-level → frame. No Tk, no I/O — unit-testable. |
-| `jarvis/ui/whisperbar/overlay.py` | `WhisperBarOverlay` — Tk window, daemon thread, thread-safe `_enqueue_ui` queue, ~60 FPS loop, color-key transparency, implements the surface API |
-| `jarvis/ui/whisperbar/interaction.py` | Click-vs-hold-drag discrimination (duration + movement threshold) + position persistence helpers |
+| `jarvis/ui/jarvisbar/__init__.py` | Package marker + public exports |
+| `jarvis/ui/jarvisbar/renderer.py` | Pure rendering math + drawing of pill / dots / bars / wave. State-and-level → frame. No Tk, no I/O — unit-testable. |
+| `jarvis/ui/jarvisbar/overlay.py` | `JarvisBarOverlay` — Tk window, daemon thread, thread-safe `_enqueue_ui` queue, ~60 FPS loop, color-key transparency, implements the surface API |
+| `jarvis/ui/jarvisbar/interaction.py` | Click-vs-hold-drag discrimination (duration + movement threshold) + position persistence helpers |
 | `jarvis/audio/level_tap.py` | Tiny throttled RMS helper + a process-local pub/sub for the TTS output level (out-of-band, NOT the EventBus) |
 
 ### 3.2 Touched files (additive)
 
 | File | Change |
 |---|---|
-| `jarvis/core/config.py` | Extend `UIConfig.orb_style` accepted values to include `"whisper_bar"` and `"none"`; default becomes `"whisper_bar"`. Add `UIConfig.bar_persistent: bool = True`, `UIConfig.bar_accent: str = "active_only"`. |
-| `jarvis/ui/desktop_app.py` | In `_start_speech_and_orb`, branch on `orb_style`: build `WhisperBarOverlay`, `OrbOverlay`, or nothing. Wire the same `OrbBusBridge`. |
+| `jarvis/core/config.py` | Extend `UIConfig.orb_style` accepted values to include `"jarvis_bar"` and `"none"`; default becomes `"jarvis_bar"`. Add `UIConfig.bar_persistent: bool = True`, `UIConfig.bar_accent: str = "active_only"`. |
+| `jarvis/ui/desktop_app.py` | In `_start_speech_and_orb`, branch on `orb_style`: build `JarvisBarOverlay`, `OrbOverlay`, or nothing. Wire the same `OrbBusBridge`. |
 | `jarvis/audio/player.py` | In the `_write_samples` flush (already off the hot path, inside `asyncio.to_thread`), compute a throttled RMS on the already-materialized float32 array and publish it via `level_tap` (process-local, ~25 Hz max). Guarded so it is a no-op when nobody is subscribed. |
-| `jarvis/overlay/surface.py` *(optional, seam parity)* | Teach `make_overlay_surface` about `whisper_bar` for the `OverlaySurface` protocol seam. |
+| `jarvis/overlay/surface.py` *(optional, seam parity)* | Teach `make_overlay_surface` about `jarvis_bar` for the `OverlaySurface` protocol seam. |
 | React settings *(optional, later wave)* | A "Display style: Bar / Mascot / Off" selector. Config-only is acceptable for the first cut. |
 
 ## 4. Data flow
@@ -161,7 +161,7 @@ CI-provable (no GUI required):
 - `interaction.py` unit tests: click vs drag classification across duration/movement matrices.
 - `level_tap.py` unit tests: throttling cap, no-subscriber no-op, RMS correctness on known PCM.
 - `config.py`: `orb_style` accepts the three values + coerces legacy; defaults are correct.
-- Surface API contract: `WhisperBarOverlay` exposes the same methods `OrbBusBridge` calls
+- Surface API contract: `JarvisBarOverlay` exposes the same methods `OrbBusBridge` calls
   (duck-typed parity test against the bridge's call sites).
 - Headless import/boot: importing the package and constructing the bridge with a fake surface on
   a no-display environment does not raise.

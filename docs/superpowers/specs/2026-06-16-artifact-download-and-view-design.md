@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-16
 **Status:** Approved (design phase) — ready for implementation plan
-**Topic:** Let the user get a Jarvis/sub-agent output file *out* of the app — download it to the
+**Topic:** Let the user get a Jarvis/Jarvis-Agent output file *out* of the app — download it to the
 Downloads folder and open/view it in the browser — cross-platform (Windows, macOS, Linux, and the
 headless VPS-browser runtime).
 

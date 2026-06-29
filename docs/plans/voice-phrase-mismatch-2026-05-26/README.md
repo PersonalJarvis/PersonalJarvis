@@ -243,7 +243,7 @@ If H3 is the cause, the suppress-if-fast gate
 reply, so the ack survived to TTS even though the user had not asked a
 question that warranted an "I'll look it up" preamble.
 
-### 4.4 H4 — Sub-Agent / skill announcement
+### 4.4 H4 — Jarvis-Agent / skill announcement
 
 Any subscriber that publishes `AnnouncementRequested` can send arbitrary
 text. The Ack-Brain coordinator and skill announcers both have that

@@ -3,13 +3,13 @@
 **Branch:** `skills-brain-integration` (from `main`)
 **Plan owner:** Claude Opus 4.7
 **Status:** 2026-04-30
-**Master plan (private):** `C:\Users\Administrator\.claude\plans\okay-ich-w-re-bereit-jolly-gem.md`
+**Master plan (private):** `<USER_HOME>\.claude\plans\okay-ich-w-re-bereit-jolly-gem.md`
 
 ## Problem
 
 The skill system (Phase 1c) is fully built (`SkillRegistry`, `TriggerMatcher`, `SkillRunner`, lifecycle, validator, five builtin skills, 22 UI endpoints), but **dead** in the production path:
 - `TriggerMatcher` is not invoked in any production file — only tests, CLI, UI listing.
-- The brain (main Jarvis Haiku 4.5 + Sub-Jarvis Opus 4.7) has no skills awareness — neither in `ROUTER_TOOLS`/`SUB_TOOLS` nor in the system prompt.
+- The brain (main Jarvis Haiku 4.5 + Jarvis-Agent Opus 4.7) has no skills awareness — neither in `ROUTER_TOOLS`/`SUB_TOOLS` nor in the system prompt.
 - Skills can currently only be started via CLI or manual UI buttons.
 
 ## Solution (hybrid Anthropic pattern)

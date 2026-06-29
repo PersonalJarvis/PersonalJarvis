@@ -4,7 +4,7 @@ Status: 2026-05-14. ADR: [0008](adr/0008-computer-use-harness-in-process.md).
 
 This page documents the current routing model for desktop actions. The main
 goal is to keep simple local actions deterministic and fast, while preserving
-POAV Computer-Use and OpenClaw for the work that actually needs them.
+POAV Computer-Use and Jarvis-Agents for the work that actually needs them.
 
 ## Routing Model
 
@@ -13,9 +13,9 @@ Jarvis now has four distinct routes for commands that may touch the desktop.
 | Route | Use for | Must not do |
 | --- | --- | --- |
 | Direct Fast Path | One local action such as open an app, type into the active window, send a hotkey, move/click explicit coordinates | Call a provider, collect vision, infer visual targets |
-| Scripted Fast Path | Known deterministic multi-step local workflows such as opening several terminals or starting OpenClaw in a terminal | Invent coordinates, ask a provider to plan, run shell commands for vague UI goals |
+| Scripted Fast Path | Known deterministic multi-step local workflows such as opening several terminals or starting a Jarvis-Agent in a terminal | Invent coordinates, ask a provider to plan, run shell commands for vague UI goals |
 | POAV Computer-Use | Visual or ambiguous UI navigation such as "click Send", "write this into the ChatGPT input", or "find the settings button" | Handle heavy coding/research delegation or long-running autonomous work |
-| OpenClaw | Heavy code, repo, research, worker, or long-running delegated tasks | Execute simple desktop controls that the local fast path can do directly |
+| Jarvis-Agents | Heavy code, repo, research, worker, or long-running delegated tasks | Execute simple desktop controls that the local fast path can do directly |
 
 The fast paths run before normal provider routing. If the local action gate
 matches, BrainManager executes hidden local tools through the existing
@@ -60,7 +60,7 @@ one step. Examples:
 
 - Open three terminals.
 - Open Windows Terminal, type `claude`, press Enter.
-- Start OpenClaw and pass a bounded prompt in the terminal.
+- Start a Jarvis-Agent and pass a bounded prompt in the terminal.
 
 Latency target:
 
@@ -97,11 +97,11 @@ Boundary:
 - POAV should stay bounded by `[computer_use]` step, replan, and timeout
   settings.
 
-## OpenClaw
+## Jarvis-Agents
 
-OpenClaw is for delegated agent work, not low-latency desktop control.
+Jarvis-Agents is for delegated agent work, not low-latency desktop control.
 
-Use OpenClaw for:
+Use Jarvis-Agents for:
 
 - Codebase changes and reviews.
 - Multi-file research or investigation.
@@ -111,8 +111,8 @@ Use OpenClaw for:
 Boundary:
 
 - Do not route simple "open app", "type this", or "press this hotkey" commands
-  to OpenClaw.
-- Do not route visual UI control to OpenClaw when the POAV Computer-Use harness
+  to Jarvis-Agents.
+- Do not route visual UI control to Jarvis-Agents when the POAV Computer-Use harness
   is the intended desktop-control mechanism.
 
 ## Configuration

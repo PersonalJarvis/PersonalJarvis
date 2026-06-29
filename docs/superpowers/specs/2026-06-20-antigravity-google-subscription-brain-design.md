@@ -1,14 +1,14 @@
-# Antigravity / Gemini-CLI over Google subscription — Brain + Subagent provider
+# Antigravity / Gemini-CLI over Google subscription — Brain + Jarvis-Agent provider
 
 **Date:** 2026-06-20
 **Status:** Design — awaiting maintainer review before implementation
-**Author:** Jarvis dev session (goal: bill Antigravity over the Google subscription, in the API-Keys section, for Brain Provider and Subagents)
+**Author:** Jarvis dev session (goal: bill Antigravity over the Google subscription, in the API-Keys section, for Brain Provider and Jarvis-Agents)
 
 ---
 
 ## 1. Problem
 
-The user wants Jarvis to run its conversational **Brain** and its **Subagents** against their **Google subscription** (the "Sign in with Google" / Google AI Pro/Ultra path), **without a paid Gemini API key** — and to select that path from the API-Keys section, the same way they pick any other provider.
+The user wants Jarvis to run its conversational **Brain** and its **Jarvis-Agents** against their **Google subscription** (the "Sign in with Google" / Google AI Pro/Ultra path), **without a paid Gemini API key** — and to select that path from the API-Keys section, the same way they pick any other provider.
 
 Today the only Google brain provider is `gemini`, which is **API-key only** (`GeminiBrain` raises if no `gemini_api_key` is set). There is no way to use the Google-account OAuth login that Antigravity / the Gemini CLI already use.
 
@@ -25,7 +25,7 @@ Today the only Google brain provider is `gemini`, which is **API-key only** (`Ge
 
 ## 3. Findings that shape the design (verified on this machine + web research, 2026-06-20)
 
-1. **The user is already logged in via Google OAuth.** `~/.gemini/oauth_creds.json` holds a valid, refresh-capable token (`access_token`, `refresh_token`, `expiry_date`, scope `…/auth/cloud-platform`), `~/.gemini/settings.json` has `selectedType: "oauth-personal"` and `model: "gemini-3.1-pro-preview"`, active account `ruben.luetke10@gmail.com`. **No API key is involved.**
+1. **The user is already logged in via Google OAuth.** `~/.gemini/oauth_creds.json` holds a valid, refresh-capable token (`access_token`, `refresh_token`, `expiry_date`, scope `…/auth/cloud-platform`), `~/.gemini/settings.json` has `selectedType: "oauth-personal"` and `model: "gemini-3.1-pro-preview"`, active account `maintainer@example.com`. **No API key is involved.**
 2. **The Gemini CLI is installed** (`@google/gemini-cli@0.47.0`) with a real headless mode: `-p/--prompt`, `-m/--model`, `--approval-mode {default,auto_edit,yolo,plan}`, `-o/--output-format {text,json,stream-json}`. (Its PATH shims are currently broken npm temp files — `.gemini.cmd-XXedit` etc. — so it must be invoked via `node <bundle>/gemini.js` or after a shim repair.)
 3. **Antigravity is installed as an IDE** (Electron/VS Code fork under `%APPDATA%\Antigravity`) and shares the same `~/.gemini/` store, but the IDE itself has **no scriptable headless CLI**.
 4. **The landscape changed on 2026-06-18 (two days ago).** Google sunset the Gemini CLI's *consumer* OAuth path for individual Pro/Ultra/free accounts and replaced it with the **Antigravity CLI `agy`** (a Go binary, `agy -p "…"`, "Sign in with Google", honors Pro/Ultra quota, credentials in the OS keyring). The installed Gemini CLI may still serve this account but is on a shrinking runway. `agy` is **not installed** on this machine yet.
@@ -93,10 +93,10 @@ The email is read from `~/.gemini/google_accounts.json.active` (already confirme
 * `--approval-mode plan` = read-only: the conversational brain cannot write files or run commands.
 * Default model: `gemini-3.1-pro-preview` (matches the user's settings; overridable via `[brain.providers.antigravity].model`).
 
-### 5.4 Subagent (heavy worker) backend
+### 5.4 Jarvis-Agent (heavy worker) backend
 
-The subagent path wants a CLI that *can act* (write files, run commands), so it uses **`--approval-mode yolo`** (or `auto_edit`) instead of `plan`, inside the existing Phase-6 worktree + Job-Object isolation (no change to isolation invariants). Wiring:
-* Add an `antigravity` row to the subagent provider mapping (`/api/openclaw/status` → `SubagentMappingRow`), `key_set` driven by `GoogleCliAuthService.status().connected` (not by an API-key slot).
+The Jarvis-Agent path wants a CLI that *can act* (write files, run commands), so it uses **`--approval-mode yolo`** (or `auto_edit`) instead of `plan`, inside the existing Phase-6 worktree + Job-Object isolation (no change to isolation invariants). Wiring:
+* Add an `antigravity` row to the Jarvis-Agent provider mapping (`/api/openclaw/status` → `SubagentMappingRow`), `key_set` driven by `GoogleCliAuthService.status().connected` (not by an API-key slot).
 * A `GoogleCliWorker` (mirror of `CodexWorker`, `jarvis/missions/workers/`) drives `<argv_prefix> -p … --approval-mode yolo -o stream-json` and streams `WorkerProgress`.
 * `PROVIDER_LABELS` in `SubagentSection.tsx` gets `"antigravity" → "Antigravity (Google-Abo)"`.
 
@@ -117,7 +117,7 @@ Like Codex, `antigravity` is **excluded from `CATALOG_PROVIDERS`** (`model_catal
 * `POST /api/antigravity/login` → `start_login()` (spawns the official CLI login in a visible console).
 * `POST /api/antigravity/logout` → `logout_blocking()`.
 * `POST /api/antigravity/binary-path` → optional manual path override.
-* The existing brain/subagent switch routes (`/api/brain/switch`, `/api/subagent/switch`) work unchanged once `antigravity` is a registered provider.
+* The existing brain/Jarvis-Agent switch routes (`/api/brain/switch`, `/api/subagent/switch`) work unchanged once `antigravity` is a registered provider.
 
 ### 5.8 Frontend (mirror `CodexAuthWidget` + reuse the CLI-connect coach)
 
@@ -129,7 +129,7 @@ Like Codex, `antigravity` is **excluded from `CATALOG_PROVIDERS`** (`model_catal
 
 **Brain turn:** voice/chat → `BrainManager` (active provider `antigravity`) → `AntigravityBrain.complete` → resolve CLI → `agy/gemini -p … --approval-mode plan -o json` subprocess → parse JSON → `BrainDelta` stream → TTS/chat. Billed against the Google subscription; no API key.
 
-**Subagent turn:** mission dispatch → `GoogleCliWorker` → `agy/gemini -p … --approval-mode yolo` inside the worktree → streamed `WorkerProgress` → Critic/Kontrollierer → deliverable.
+**Jarvis-Agent turn:** mission dispatch → `GoogleCliWorker` → `agy/gemini -p … --approval-mode yolo` inside the worktree → streamed `WorkerProgress` → Critic/Kontrollierer → deliverable.
 
 ## 7. Error handling & honesty
 
@@ -181,7 +181,7 @@ Branch `feat/antigravity-google-subscription`. TDD throughout; 114 tests green.
 * `jarvis/missions/init.py` — selector hard-lock + factory branch + env force-OAuth.
 * `jarvis/missions/workers/gemini_worker.py` — hardened binary resolution (same Windows fix).
 
-**Live-verified (read-only, no billed call):** `resolve_google_cli()` → `node <bundle>`; `status()` → installed=True, connected=True, mode=oauth-personal, account `ruben.luetke10@gmail.com`. The brain registers in the plugin registry; the subagent worker resolves the CLI.
+**Live-verified (read-only, no billed call):** `resolve_google_cli()` → `node <bundle>`; `status()` → installed=True, connected=True, mode=oauth-personal, account `maintainer@example.com`. The brain registers in the plugin registry; the Jarvis-Agent worker resolves the CLI.
 
 **Uncommitted riders** (functional live via the editable install; they live in files a parallel session is actively rewriting — the per-provider model picker — so committing them would sweep that foreign work):
 * `server.py` — mount of the antigravity router.

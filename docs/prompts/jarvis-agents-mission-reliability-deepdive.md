@@ -1,7 +1,7 @@
-# Deep-dive prompt — make sub-agent missions fast AND reliable, for good
+# Deep-dive prompt — make Jarvis-Agent missions fast AND reliable, for good
 
 > Paste everything inside the fenced block below into a **fresh Claude Code session**
-> opened in `C:\Users\Administrator\Desktop\Personal Jarvis`. It is self-contained:
+> opened in `<USER_HOME>\Desktop\Personal Jarvis`. It is self-contained:
 > all ground truth is inlined so the new session does not waste runs re-deriving it.
 
 ---
@@ -192,7 +192,7 @@ PHASE 4 — PROVE IT (this is the stop condition; do not declare success without
       Report the measured distribution. If you cannot hit it, say so honestly with
       the measured numbers and the reason — do not hand-wave.
    5. Update the relevant memory file(s) under
-      ~/.claude/projects/C--Users-Administrator-Desktop-Personal-Jarvis/memory/
+      ~/.claude/projects/<your-claude-project-dir>/memory/
       with the confirmed root cause and the durable fix, and correct any stale note.
 
 DELIVERABLE

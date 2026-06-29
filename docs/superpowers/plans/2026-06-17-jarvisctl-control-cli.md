@@ -10,7 +10,7 @@
 
 ---
 
-## Approach Comparison (the two sub-agent–researched options)
+## Approach Comparison (the two Jarvis-Agent–researched options)
 
 The single most consequential design axis is **how the auto-layer (every-endpoint coverage) is produced**. Two approaches were researched independently.
 
@@ -2055,7 +2055,7 @@ git commit -m "ci(cli): run jarvisctl unit suite on win/mac/linux matrix"
 
 ## Self-Review (author checklist — completed)
 
-1. **Spec coverage:** full control of tasks (Task 7) + whole API via auto-layer (Tasks 8–10) ✓; UI/lifecycle control (Task 6) ✓; self-control (Task 11) ✓; extensibility = auto-layer, zero per-endpoint work ✓; cross-platform (paths/encoding/perms + CI matrix) ✓; two sub-agent approaches compared with a decision ✓.
+1. **Spec coverage:** full control of tasks (Task 7) + whole API via auto-layer (Tasks 8–10) ✓; UI/lifecycle control (Task 6) ✓; self-control (Task 11) ✓; extensibility = auto-layer, zero per-endpoint work ✓; cross-platform (paths/encoding/perms + CI matrix) ✓; two Jarvis-Agent approaches compared with a decision ✓.
 2. **Placeholder scan:** no TBD/TODO; every code step carries complete code.
 3. **Type consistency:** `JarvisClient.request(method, path, *, params, json)`, `ApiError(message, status_code, payload)`, `render.emit(payload, *, as_json)`, `build_api_group(spec, runner)`, `Runner = (method, path, params, body)`, `make_client(url, key)`, `as_json()` used consistently across Tasks 3–10.
 4. **Ambiguity:** `tasks create` is `--json-body` (drift-robust) not flag-per-field — stated explicitly. Catalog top-level shape must be confirmed against the file before editing (noted in Task 11).

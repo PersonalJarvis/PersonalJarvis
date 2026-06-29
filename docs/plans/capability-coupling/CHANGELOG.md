@@ -51,7 +51,7 @@ Agent E done.
 
 Agent D done.
 - `jarvis/missions/critic/runner.py`: added `CapabilityHonestyCheck` dataclass,
-  `_extract_tool_call_evidence()` (parses OpenClaw stream.jsonl ``tool_use``
+  `_extract_tool_call_evidence()` (parses Jarvis-Agents stream.jsonl ``tool_use``
   frames + ``[TOOL_USE]`` CLI markers + ``dispatch-result`` events),
   `_resolve_capability_requires_evidence()` (uses `CapabilityRegistry` when
   available, falls back to action-verb + external-system-noun heuristic),

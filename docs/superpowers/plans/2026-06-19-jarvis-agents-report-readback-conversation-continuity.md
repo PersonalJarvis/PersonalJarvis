@@ -1,4 +1,4 @@
-# Subagent / Mission Report Readback — Conversation Continuity, Speaking Indicator, Transcript Attribution — Implementation Plan
+# Jarvis-Agent / Mission Report Readback — Conversation Continuity, Speaking Indicator, Transcript Attribution — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.11 (asyncio), pytest (fakes, asyncio_mode=auto), React/TypeScript + vitest frontend.
 
-**Spec:** `docs/superpowers/specs/2026-06-19-subagent-report-readback-conversation-continuity-design.md`
+**Spec:** `docs/superpowers/specs/2026-06-19-jarvis-agents-report-readback-conversation-continuity-design.md`
 
 **Working tree note:** Execute in the MAIN working tree, NOT a fresh worktree — the live app's editable install imports from this tree, and a worktree would not be loaded on restart (BUG-006/014/015 restore-trap). Commit hunk-isolated (contested shared tree). Test python: `C:\Program Files\Python311\python.exe`.
 
@@ -16,7 +16,7 @@
 
 ## Current reality (verified 2026-06-19, before any change)
 
-- **Part 1 (keep listening) — mostly already built.** `_active_session` (`pipeline.py:3767`) keeps the session open while `_background_mission_in_flight()` is true (`:3825`) and for one full idle window after any spoken announcement via `_post_readback_grace_s` (`:3843-3854`), because `_on_announcement` stamps `_last_announcement_spoken_monotonic` before playback (`:2386`). The only gap: the OpenClaw-background DIRECT path (`_on_background_completed`, plays at `:2657-2668`) does NOT stamp that timestamp, so a readback delivered through it does not re-arm the grace window. The user's "hangs up after report" is most likely the pre-restart state; this plan closes the one real gap and verifies live.
+- **Part 1 (keep listening) — mostly already built.** `_active_session` (`pipeline.py:3767`) keeps the session open while `_background_mission_in_flight()` is true (`:3825`) and for one full idle window after any spoken announcement via `_post_readback_grace_s` (`:3843-3854`), because `_on_announcement` stamps `_last_announcement_spoken_monotonic` before playback (`:2386`). The only gap: the Jarvis-Agents-background DIRECT path (`_on_background_completed`, plays at `:2657-2668`) does NOT stamp that timestamp, so a readback delivered through it does not re-arm the grace window. The user's "hangs up after report" is most likely the pre-restart state; this plan closes the one real gap and verifies live.
 - **Part 2 (mascot speaking) — confirmed gap.** `_on_announcement` (`:2238`) never calls `_transition("SPEAKING")`, so no `SystemStateChanged` is published and the avatar/orb stay in their previous state during the readback. The normal path animates via `_set_turn_state` → `_transition` (`:1609/1599`). Supervisor `set_state` is idempotent (`jarvis/state/supervisor.py:47`).
 - **Part 3 (transcript) — afterglow already records it; needs a distinct kind.** `recorder.py` afterglow attaches a post-hangup `spoken_kind==completion` readback to the originating session (`:650-671`). BUT `completion` is overloaded — it also tags a normal buffered inline reply (`pipeline.py:5552`) and a CU readback (`computer_use_tool.py:233`), so relabeling `completion` would mislabel normal answers. → introduce a dedicated `subagent` kind.
 - **Part 4 (mid-sentence cut) — already fixed + committed** (`e60f6fd4`, `stream_evidence.py::summarize_answers` boundary truncation). Verify only.
@@ -65,7 +65,7 @@ Expected: PASS. If the test hardcodes an expected list, add `"subagent"` there. 
 ## Task 2 — Part 3b: route the readback into the `subagent` kind (and keep every guard intact)
 
 **Files:**
-- Modify: `jarvis/speech/pipeline.py` — `_announcement_spoken_kind` (`:220`), punch-through + heartbeat guards (`:2264/2274`), OpenClaw-bg direct emit (`:2657`) + deferred (`:2646`)
+- Modify: `jarvis/speech/pipeline.py` — `_announcement_spoken_kind` (`:220`), punch-through + heartbeat guards (`:2264/2274`), Jarvis-Agents-bg direct emit (`:2657`) + deferred (`:2646`)
 - Modify: `jarvis/missions/voice/announcer.py:153` (mission readback)
 - Modify: `jarvis/brain/manager.py:3467` (worker readback)
 - Modify: `jarvis/tasks/runner.py:400` (scheduled task readback)
@@ -93,13 +93,13 @@ Replace `is_completion = getattr(event, "kind", None) == "completion"` (`:2264`)
 `is_readback = getattr(event, "kind", None) in _READBACK_KINDS` and use `is_readback` at `:2265` and `:2274`.
 In `_announcement_spoken_kind` (`:228`), add `SPOKEN_KIND_SUBAGENT` to the pass-through tuple so `"subagent"` maps to itself (import it at `:85`).
 
-- [ ] **Step 4: Point the real sub-agent emit sites at the new kind**
+- [ ] **Step 4: Point the real Jarvis-Agent emit sites at the new kind**
   - `announcer.py:153`: `kind="completion"` → `kind="subagent"`.
   - `manager.py:3467`: `kind="completion"` → `kind="subagent"`.
   - `tasks/runner.py:400`: `kind="completion"` → `kind="subagent"`.
-  - `pipeline.py:2646` (deferred OpenClaw-bg `AnnouncementRequested`): `kind="completion"` → `kind="subagent"`.
-  - `pipeline.py:2657` (direct OpenClaw-bg emit): `SPOKEN_KIND_COMPLETION` → `SPOKEN_KIND_SUBAGENT`.
-  - LEAVE unchanged: `pipeline.py:5552` (normal buffered inline reply) and `computer_use_tool.py:233` (foreground CU action readback) — these are NOT sub-agent/mission output.
+  - `pipeline.py:2646` (deferred Jarvis-Agents-bg `AnnouncementRequested`): `kind="completion"` → `kind="subagent"`.
+  - `pipeline.py:2657` (direct Jarvis-Agents-bg emit): `SPOKEN_KIND_COMPLETION` → `SPOKEN_KIND_SUBAGENT`.
+  - LEAVE unchanged: `pipeline.py:5552` (normal buffered inline reply) and `computer_use_tool.py:233` (foreground CU action readback) — these are NOT Jarvis-Agent/mission output.
   - Add `AnnouncementRequested.kind` Literal value `"subagent"` in `jarvis/core/events.py:410`.
 
 - [ ] **Step 5: Widen the afterglow guard**
@@ -151,7 +151,7 @@ Defensive: `_transition` already swallows supervisor errors; never let a restore
 
 ---
 
-## Task 4 — Part 1: close the OpenClaw-background grace gap
+## Task 4 — Part 1: close the Jarvis-Agents-background grace gap
 
 **Files:**
 - Modify: `jarvis/speech/pipeline.py` — `_on_background_completed` direct-play path (`:2657`, before `play_chunks` at `:2668`)
@@ -172,7 +172,7 @@ self._last_announcement_spoken_monotonic = time.monotonic()
 
 ---
 
-## Task 5 — Frontend: distinct colour for the sub-agent readback block
+## Task 5 — Frontend: distinct colour for the Jarvis-Agent readback block
 
 **Files:**
 - Modify: `jarvis/ui/web/frontend/src/components/sessions/TurnCard.tsx` (`:209-248` spoken-output block)
@@ -182,7 +182,7 @@ self._last_announcement_spoken_monotonic = time.monotonic()
 
 - [ ] **Step 2: Run it — fail.** (`npm run test` in `jarvis/ui/web/frontend`)
 
-- [ ] **Step 3: Style the subagent line.** In the spoken-line map, pick the per-line colour by `spoken_kind`: keep sky for the others, use a clearly different hue (violet/purple — reads as "agent") for `subagent`. E.g. a small `const isSubagent = s.spoken_kind === "subagent"` and conditional border/bg classes (`border-violet-400/30 bg-violet-400/10` vs the existing sky classes), plus the badge label from `SPOKEN_KIND_LABEL`.
+- [ ] **Step 3: Style the Jarvis-Agent line.** In the spoken-line map, pick the per-line colour by `spoken_kind`: keep sky for the others, use a clearly different hue (violet/purple — reads as "agent") for `subagent`. E.g. a small `const isSubagent = s.spoken_kind === "subagent"` and conditional border/bg classes (`border-violet-400/30 bg-violet-400/10` vs the existing sky classes), plus the badge label from `SPOKEN_KIND_LABEL`.
 
 - [ ] **Step 4: Run vitest — pass. Then `npm run build`** to confirm the production bundle compiles.
 
@@ -193,14 +193,14 @@ self._last_announcement_spoken_monotonic = time.monotonic()
 ## Task 6 — Verify live (Parts 1 & 4) + full regression
 
 - [ ] **Step 1: Confirm the live import points at this tree.**
-Run: `& "C:\Program Files\Python311\python.exe" -c "import jarvis, pathlib; print(pathlib.Path(jarvis.__file__))"` — must be under `C:\Users\Administrator\Desktop\Personal Jarvis`.
+Run: `& "C:\Program Files\Python311\python.exe" -c "import jarvis, pathlib; print(pathlib.Path(jarvis.__file__))"` — must be under `<USER_HOME>\Desktop\Personal Jarvis`.
 
 - [ ] **Step 2: Run the affected buckets.**
 Run: `& "C:\Program Files\Python311\python.exe" -m pytest tests/unit/speech/ tests/unit/sessions/ tests/missions/ -q` and `ruff check` on the touched files.
 
 - [ ] **Step 3: Restart the app** via `POST /api/settings/restart-app` so the editable-install code goes live.
 
-- [ ] **Step 4: Live-verify** a voice (or `/ws` headless) sub-agent mission: the report plays in full (no mid-word cut — Part 4), the avatar animates "speaking" during it (Part 2), the session keeps listening afterward when present (Part 1), and the transcript shows the report attributed to the start session with the "Jarvis Sub-Agent / Output" label in its own colour (Part 3). Headless `/ws` harness: see `reference_headless_voice_qa_via_ws`.
+- [ ] **Step 4: Live-verify** a voice (or `/ws` headless) Jarvis-Agent mission: the report plays in full (no mid-word cut — Part 4), the avatar animates "speaking" during it (Part 2), the session keeps listening afterward when present (Part 1), and the transcript shows the report attributed to the start session with the "Jarvis Sub-Agent / Output" label in its own colour (Part 3). Headless `/ws` harness: see `reference_headless_voice_qa_via_ws`.
 
 - [ ] **Step 5: Code review** via the `code-reviewer` agent against the CLAUDE.md anti-patterns (AP-9/11/19, AD-OE5/OE6, five-layer parity, shared-tree discipline). Fix findings.
 
@@ -209,7 +209,7 @@ Run: `& "C:\Program Files\Python311\python.exe" -m pytest tests/unit/speech/ tes
 ## Self-review (plan vs. spec)
 
 - Spec Part A (mid-sentence) → Task 6 verify (already fixed). ✓
-- Spec Part B (keep listening, present-only) → Task 4 (close OpenClaw-bg gap) + existing grace logic; hung-up case unchanged by design. ✓
+- Spec Part B (keep listening, present-only) → Task 4 (close Jarvis-Agents-bg gap) + existing grace logic; hung-up case unchanged by design. ✓
 - Spec Part C (transcript attribution + distinct colour/label) → Tasks 1, 2, 5; afterglow attribution already live, widened to the new kind in Task 2 Step 5. ✓
 - Spec Part D (speaking indicator) → Task 3. ✓
 - Invariants: punch-through preserved via `_READBACK_KINDS` + explicit test (Task 2 Step 1); no LLM/blocking added; no watchdog counter introduced (Part 1 reuses the existing bounded grace); language doctrine unaffected (no new spoken phrase). ✓

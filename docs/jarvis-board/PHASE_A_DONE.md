@@ -99,7 +99,7 @@ $ python -m pytest tests/board/ -v
 
 ============================= test session starts =============================
 platform win32 -- Python 3.11.9, pytest-9.0.2, pluggy-1.6.0 -- Python 3.11.9
-rootdir: C:\Users\Administrator\Desktop\Personal Jarvis
+rootdir: <USER_HOME>\Desktop\Personal Jarvis
 configfile: pyproject.toml
 plugins: anyio-4.12.1, flaky-3.8.1, hydra-core-1.3.2, langsmith-0.6.6,
          asyncio-1.3.0, mock-3.15.1, typeguard-4.4.4

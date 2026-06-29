@@ -25,7 +25,7 @@ Exit code 5 is `_FAIL_EXIT_CODE` — the model voluntarily emitted
 Snipping capture overlay (`Snipping Tool Ueberlagerung`): the goal was nearly
 achieved and the model quit one action short.
 
-This was **not** a sub-agent mission (no mission row created after 17:02). It
+This was **not** a Jarvis-Agent mission (no mission row created after 17:02). It
 was the Computer-Use loop in `jarvis/harness/screenshot_only_loop.py`.
 
 ## Root cause
@@ -139,7 +139,7 @@ the backstop, then honors it — no infinite loop, and still no free early quit.
 
 ## Out of scope (YAGNI)
 
-- The sub-agent Worker-Critic mission loop (`jarvis/missions/`) — its give-up
+- The Jarvis-Agent Worker-Critic mission loop (`jarvis/missions/`) — its give-up
   paths differ; deferred per scoping decision.
 - Model-tier change for the CU planner/judge — adds latency/cost, violating the
   no-slowdown constraint; the structural gate is model-agnostic. Possible

@@ -7,7 +7,7 @@
 
 The Contacts section (`jarvis/contacts/` + `ContactsView`) and the Knowledge Wiki
 (`jarvis/memory/wiki/`) are two disconnected person memories. Creating a contact
-(e.g. "Christoph Meyer") leaves the wiki blind: `wiki-recall`, sub-agents, and the
+(e.g. "Christoph Meyer") leaves the wiki blind: `wiki-recall`, Jarvis-Agents, and the
 conversation curator know nothing about the person. Conversely, facts the wiki
 learns about a person never join up with the user-curated contact.
 

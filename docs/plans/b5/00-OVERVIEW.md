@@ -241,10 +241,10 @@ Each entry is a hard rule plus a one-line why. Violations are the most common re
 Each agent works in **its own git worktree**, branched off `b5-base` (set up by the review agent before spawning — see §6). Path convention:
 
 ```
-C:\Users\Administrator\Desktop\jarvis-b5-agent-A\
-C:\Users\Administrator\Desktop\jarvis-b5-agent-B\
-C:\Users\Administrator\Desktop\jarvis-b5-agent-C\
-C:\Users\Administrator\Desktop\jarvis-b5-agent-D\
+<USER_HOME>\Desktop\jarvis-b5-agent-A\
+<USER_HOME>\Desktop\jarvis-b5-agent-B\
+<USER_HOME>\Desktop\jarvis-b5-agent-C\
+<USER_HOME>\Desktop\jarvis-b5-agent-D\
 ```
 
 Worktree branch names: `impl/b5-agent-A`, `…B`, `…C`, `…D`.

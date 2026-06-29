@@ -5,7 +5,7 @@
 1. Is Deepgram's **token / auth flow** different from Groq's simple static API key?
 2. Is Deepgram **agent-friendly** — does it deliver transcript tokens *while* the user is speaking (streaming / interim), not only after the utterance finishes?
 
-Produced by 4 parallel read-only research sub-agents (Auth, Streaming, Repo-State, Decision-Context).
+Produced by 4 parallel read-only research Jarvis-Agents (Auth, Streaming, Repo-State, Decision-Context).
 
 ---
 
@@ -74,22 +74,22 @@ Produced by 4 parallel read-only research sub-agents (Auth, Streaming, Repo-Stat
 
 ## The Repo Reality Check (most important finding)
 
-The sub-agent that read the actual codebase found that **Deepgram has zero source code in the repo**:
+The Jarvis-Agent that read the actual codebase found that **Deepgram has zero source code in the repo**:
 
 - `pyproject.toml` (lines ~109-115) registers `deepgram`, `deepgram-flux`, `deepgram-nova3` (plus `openai-api`) — **all point to Python modules that do not exist on disk.**
-- The contract test [`tests/contract/test_stt_protocol.py:44-47`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/tests/contract/test_stt_protocol.py) literally documents them as ghost registrations and excludes them from `EXPECTED_PROVIDERS = {"groq-api"}`.
+- The contract test [`tests/contract/test_stt_protocol.py:44-47`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/tests/contract/test_stt_protocol.py) literally documents them as ghost registrations and excludes them from `EXPECTED_PROVIDERS = {"groq-api"}`.
 - The `jarvis.toml` comments (`[turn] provider = "flux_integrated"`, the `deepgram-flux`/`deepgram-nova3` mentions) describe an **intended** architecture that was never built. `flux_integrated` is currently a NoOp plugin.
-- The wizard ([`wizard.py:87`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/jarvis/setup/wizard.py)) and provider-spec UI already know the credential key name `deepgram_api_key` (ENV `DEEPGRAM_API_KEY`) — so the secret plumbing is ready, only the plugin module is missing.
+- The wizard ([`wizard.py:87`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/setup/wizard.py)) and provider-spec UI already know the credential key name `deepgram_api_key` (ENV `DEEPGRAM_API_KEY`) — so the secret plumbing is ready, only the plugin module is missing.
 
 **And the pipeline is batch-only:**
-- `_handle_utterance` ([`pipeline.py:~1929`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/jarvis/speech/pipeline.py)) calls `self._utterance_stt.transcribe_pcm(full_pcm, ...)` — one call, one final transcript, after the mic closes.
+- `_handle_utterance` ([`pipeline.py:~1929`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/speech/pipeline.py)) calls `self._utterance_stt.transcribe_pcm(full_pcm, ...)` — one call, one final transcript, after the mic closes.
 - `stream_transcribe` exists in the protocol + Groq's shim but is **never called**.
 - There is no code path that reads interim transcripts during speech, regardless of provider.
 
 ### Groq = the parity target (what a finished Deepgram plugin needs)
-The working [`groq_api.py`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/jarvis/plugins/stt/groq_api.py) has: 3-tier auth (ctor → ENV → keyring `groq_api_key`), `transcribe`, `stream_transcribe` shim, `transcribe_pcm`, `_ensure_model` no-op, `aclose`, `supports_streaming` class attr, name matching the entry-point, no `jarvis.*` imports, wizard + provider-spec UI entries, and 8 contract tests.
+The working [`groq_api.py`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/plugins/stt/groq_api.py) has: 3-tier auth (ctor → ENV → keyring `groq_api_key`), `transcribe`, `stream_transcribe` shim, `transcribe_pcm`, `_ensure_model` no-op, `aclose`, `supports_streaming` class attr, name matching the entry-point, no `jarvis.*` imports, wizard + provider-spec UI entries, and 8 contract tests.
 
-### STT protocol contract ([`protocols.py:220-235`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/jarvis/core/protocols.py))
+### STT protocol contract ([`protocols.py:220-235`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/core/protocols.py))
 Required: `name: str`, `supports_streaming: bool`, `async transcribe(AsyncIterator[AudioChunk]) -> Transcript`, `async stream_transcribe(...) -> AsyncIterator[Transcript]`. Plus the pipeline-practical `transcribe_pcm(...)` + `_ensure_model()`.
 
 ---

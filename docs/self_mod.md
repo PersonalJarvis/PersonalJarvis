@@ -95,33 +95,51 @@ restore itself is also audited.
 at most 50 (FIFO cap). Backups older than 30 days are checked, but not
 removed below the floor.
 
-## 5. Extending the allowlist (for developers)
+## 5. The mutable set — schema-derived (Voice-First Config Control, Wave 1.1)
 
-The allowlist is hardcoded in
-`jarvis/core/self_mod/registry.py:SelfModRegistry.ALLOWED`. Plan §AD-1
-+ Plan §AP-11: no configuration file, because otherwise the model could
-edit the allowlist itself (constraint self-bypass).
+The mutable set is **no longer a hand-maintained list**. It is computed once
+(lazily, then cached) by walking the `JarvisConfig` schema: every leaf primitive
+field (str/int/float/bool, incl. `Optional`/`Literal`) becomes voice-mutable,
+minus `FORBIDDEN_PATTERNS`. See `jarvis/core/self_mod/schema_introspect.py`
+(`introspect_mutable_specs`) and the curated `overrides.OVERRIDES` table.
 
-Steps:
+**AD-1 / AP-11 are preserved (reinterpreted):** the set is still fixed by *code*
+(the schema + overrides) and is computed at first use, NOT a runtime
+`register()` the model could call. A new mutable field appears only by editing
+`JarvisConfig` (which is code-reviewed). We only moved from "explicit list" to
+"whole schema minus the deny layer". The model still cannot widen the set.
 
-1. Add a new `MutableSpec(...)` to `SelfModRegistry.ALLOWED`.
-   Fields: `path`, `pydantic_model_name`, `field_name`, `risk_tier`,
-   `needs_restart`, `description`, `sensitive` (default `False`).
-2. Ensure the path has a Pydantic field in `JarvisConfig`
-   (`jarvis/core/config.py`) — otherwise pre-validate would silently
-   ignore it.
-3. Add a test in `tests/unit/self_mod/test_registry.py`.
-4. PR with a plan update in `docsplansphase-7-self-mod/JARVIS_SELFMOD_PLAN.md`
-   §7.1 allowlist table.
+Adding/refining a setting:
 
-**Sensitive paths** (API keys, tokens): NEVER in the allowlist. Phase 7.7
-(UI keyring editing) is the intended path for API-key mutations.
+1. A new leaf field on a `JarvisConfig` section is mutable **automatically** —
+   no registry edit needed.
+2. To refine it (a SAFE risk-tier so REST/CLI auto-applies it, a hot-reload
+   `needs_restart=False`, a nicer spoken `description`), add a `SpecOverride`
+   for its path in `jarvis/core/self_mod/overrides.py`.
+3. For an **undeclared** `extra="allow"` key the schema walk can't see (e.g.
+   `ui.theme`), the override must carry `pydantic_model_name` + `field_name` to
+   force-include it.
+4. The parity guard (`tests/unit/self_mod/test_registry.py::TestAllowlistField
+   Parity`) checks every emitted spec against the real schema automatically.
+
+**Forbidden paths** (`jarvis/core/self_mod/forbidden.py`): secrets / API keys /
+privileged sections (`security.*`, `safety.*`, `harness.*`, `mcp_server.*`,
+`*_api_key`, …) are NEVER in the set — read or write. They surface as an honest
+voice *refusal*, not a confirmation. The "self-lockout" class is mostly closed
+by architecture (no STT/TTS enable flags exist; the provider `enabled` list is a
+`list`, which the walk skips; a broken config is rolled back) — see the module
+docstring before adding any path there.
+
+**Voice vs. REST/CLI confirmation:** the brain (voice/chat) wiring uses
+`auto_apply="all"` (apply immediately, then an honest deterministic readback —
+`jarvis/voice/config_readback.py`); REST/CLI keep the SAFE-auto / ASK-confirm
+split (`auto_apply="safe_only"`).
 
 ## 6. Skill authoring (Plan §7.5)
 
 A voice command like "Erstelle einen Skill, der Spotify pausiert wenn ich
 rede" (Create a skill that pauses Spotify when I speak) → main Jarvis
-calls the `spawn_skill_author` tool → sub-Jarvis (Opus 4.7) generates
+calls the `spawn_skill_author` tool → a Jarvis-Agent (Opus 4.7) generates
 SKILL.md → forces `state=draft`. The draft lands in
 `~/.jarvis/skills/<slug>/` and is visible in the hot-reload pool, but is
 **not active**.

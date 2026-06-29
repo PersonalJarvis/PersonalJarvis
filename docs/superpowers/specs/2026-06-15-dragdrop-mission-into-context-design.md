@@ -5,23 +5,23 @@
 
 ## 1. Goal & user intent
 
-The maintainer wants to grab a sub-agent **mission / output card** (currently
+The maintainer wants to grab a Jarvis-Agent **mission / output card** (currently
 click-selectable in the Outputs view) and **drag-and-drop it onto the "Jarvis
 bar" / the active display style / the "Jarvis ghost"**. On drop, Jarvis should:
 
 1. **Speak about the dropped mission** conversationally, and
 2. **Pull the mission into the live conversation context window**, so the user
-   can keep talking about that sub-agent task ("what did it find?", "continue
+   can keep talking about that Jarvis-Agent task ("what did it find?", "continue
    this", "summarise the risks") and the brain has the content in `_history`.
 
-In the maintainer's words: *"bring your sub-agent task back into the context
+In the maintainer's words: *"bring your Jarvis-Agent task back into the context
 window."*
 
 ## 2. Key decision — the drop surface
 
 The on-screen "Jarvis bar" and "Jarvis ghost/mascot" are **separate Tk overlay
-windows** (`jarvis/ui/whisperbar/overlay.py`, the Orb/mascot surface), driven by
-`[ui].orb_style ∈ {whisper_bar, mascot, none}`. They are **not** part of the
+windows** (`jarvis/ui/jarvisbar/overlay.py`, the Orb/mascot surface), driven by
+`[ui].orb_style ∈ {jarvis_bar, mascot, none}`. They are **not** part of the
 React DOM and **do not exist on a headless VPS**.
 
 Per the **cloud-first doctrine (CLAUDE.md RULE #1)** the feature must work in any
@@ -34,7 +34,7 @@ inside the React tree (mounted globally in `App.tsx`, next to `ToastLayer`, so i
 is visible across *every* view including Outputs). It visually **mirrors the
 active display style**:
 
-- `whisper_bar` → a slim bar dock
+- `jarvis_bar` → a slim bar dock
 - `mascot` (and `none`) → the existing `MascotGigi` ghost component
 
 This is the universal, testable, doctrine-compliant surface and still *feels*
@@ -90,7 +90,7 @@ existing _on_user_message  (launcher.py / desktop_app.py)
 
 Human-readable, language-aware (mirror the mission language), e.g.:
 
-> Pull the sub-agent task "<utterance>" (status: <status>) into our
+> Pull the Jarvis-Agent task "<utterance>" (status: <status>) into our
 > conversation. Here is what it produced:
 >
 > <bounded summary / output excerpt>

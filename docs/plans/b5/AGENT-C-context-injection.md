@@ -146,7 +146,7 @@ If `jarvis.memory.wiki.search` doesn't import (Agent B's branch not merged), the
 ## 8. Pre-flight test gate
 
 ```powershell
-cd C:\Users\Administrator\Desktop\jarvis-b5-agent-C
+cd <USER_HOME>\Desktop\jarvis-b5-agent-C
 pip install -e . --no-deps
 python -m pytest tests/unit/ -q --tb=no > pre-flight.log
 ```
@@ -186,9 +186,9 @@ Recommended sections: Files changed · What I did · Assumptions made (especiall
 ## 11. Worktree setup recap
 
 ```powershell
-cd C:\Users\Administrator\Desktop\Personal Jarvis
-git worktree add -b impl/b5-agent-C C:\Users\Administrator\Desktop\jarvis-b5-agent-C impl/b5-base
-cd C:\Users\Administrator\Desktop\jarvis-b5-agent-C
+cd <USER_HOME>\Desktop\Personal Jarvis
+git worktree add -b impl/b5-agent-C <USER_HOME>\Desktop\jarvis-b5-agent-C impl/b5-base
+cd <USER_HOME>\Desktop\jarvis-b5-agent-C
 pip install -e . --no-deps
 ```
 

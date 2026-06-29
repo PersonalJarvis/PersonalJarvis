@@ -2,7 +2,7 @@
 
 You are Agent B on Phase B3 of Personal Jarvis. **Read `00-OVERVIEW.md` first**, then this. You replace the legacy `MemoryView.tsx` (`data/core_memory.json` flat memory) with a new `WikiView.tsx` backed by the on-disk Obsidian vault. You own the tree + page-render half of the tab. You do **not** own the graph (Agent C), the search bar (Agent C), the live-reload hook (Agent D), or the Obsidian button (Agent D) — your tab integrates their components but does not build them.
 
-The visual contract is `C:\Users\Administrator\Desktop\b3-wiki-view-mockup.html`. Open it; match it.
+The visual contract is `<USER_HOME>\Desktop\b3-wiki-view-mockup.html`. Open it; match it.
 
 ---
 
@@ -94,9 +94,9 @@ When `selectedSlug` becomes non-null, switch the centre tab to "Page" automatica
 `PageRenderer` receives `body_md` from the API. Wikilinks appear as `[[slug]]` or `[[entities/slug]]`. Before passing to `react-markdown`, run a pre-processor that converts each `[[X]]` into a marker `react-markdown` will recognise:
 
 ```
-[[harald]]     → [harald](#wiki:harald)
-[[entities/harald]] → [harald](#wiki:harald)
-[[harald|the father]] → [the father](#wiki:harald)
+[[sam]]     → [sam](#wiki:sam)
+[[entities/sam]] → [sam](#wiki:sam)
+[[sam|the father]] → [the father](#wiki:sam)
 ```
 
 Then in `react-markdown`'s `components.a` override, detect `href.startsWith("#wiki:")`, render as a custom `<a class="wikilink">…</a>`, and on click call `props.onWikilinkClick(href.slice(6))` — do not navigate.

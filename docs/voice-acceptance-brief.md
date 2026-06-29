@@ -1,7 +1,7 @@
 # Voice Acceptance Brief — Persona+Delegation Refactor
 
 **Mandate:** `Jarvis-Behavior/persona-delegation-mandate.md` §"Phase 6 — Voice-Acceptance"
-**Tester:** Ruben (manual)
+**Tester:** Alex (manual)
 **Setup:** `run.bat --debug` (console + verbose logging) in the repo root
 **Status:** 2026-04-29 — all 6 mandate phases ☑ verified; F-9 fixed (`persona_loader` reactivated, JARVIS_PERSONA takes effect in the prompt); F-11 fixed (Anthropic `<function_calls>` markup in the filter).
 **Prerequisite:** Branch bug **F-10** (`jarvis.clis.risk_integration` missing) must be resolved first — either via `git stash pop` of the prior work or a targeted module restore. Otherwise the voice pipeline does not start.
@@ -46,35 +46,35 @@ Say **"Hey Jarvis"** as the wake word **before every turn**. Note briefly after 
 
 ### Block A — 5 smalltalk turns (expectation: 0 subprocesses, <1 s per turn)
 
-| # | You say | Expectation | Ruben's note: perceived | Subprocess? | Tone |
+| # | You say | Expectation | Alex's note: perceived | Subprocess? | Tone |
 |---|---|---|---|---|---|
-| 1 | "Hallo." ("Hello.") | Short greeting with "Ruben". | _____ | _____ | _____ |
+| 1 | "Hallo." ("Hello.") | Short greeting with "Alex". | _____ | _____ | _____ |
 | 2 | "Wie geht's dir?" ("How are you?") | Smalltalk answer, no "Ich bin einsatzbereit" ("I am ready for deployment"). | _____ | _____ | _____ |
 | 3 | "Was ist die Hauptstadt von Frankreich?" ("What is the capital of France?") | "Paris." directly. | _____ | _____ | _____ |
 | 4 | "Danke." ("Thank you.") | Dry acknowledgement. | _____ | _____ | _____ |
-| 5 | "Auf Wiedersehen." ("Goodbye.") | "Auf Wiedersehen, Ruben." (hangup contract). | _____ | _____ | _____ |
+| 5 | "Auf Wiedersehen." ("Goodbye.") | "Auf Wiedersehen, Alex." (hangup contract). | _____ | _____ | _____ |
 
 ### Block B — 3 spawn turns (expectation: exactly 1 spawn per turn)
 
-| # | You say | Expectation | Ruben's note: perceived | Subprocess? | Tone |
+| # | You say | Expectation | Alex's note: perceived | Subprocess? | Tone |
 |---|---|---|---|---|---|
-| 6 | "Lies die Datei jarvis.toml und sag mir was drin steht." ("Read the file jarvis.toml and tell me what's in it.") | Spawn → Sub-Jarvis reads → short summary, **no tool JSON in the voice output**. | _____ | _____ | _____ |
-| 7 | "Such im Web nach dem aktuellen Wetter in Berlin." ("Search the web for the current weather in Berlin.") | Spawn → Sub-Jarvis → weather info. | _____ | _____ | _____ |
+| 6 | "Lies die Datei jarvis.toml und sag mir was drin steht." ("Read the file jarvis.toml and tell me what's in it.") | Spawn → Jarvis-Agent reads → short summary, **no tool JSON in the voice output**. | _____ | _____ | _____ |
+| 7 | "Such im Web nach dem aktuellen Wetter in Berlin." ("Search the web for the current weather in Berlin.") | Spawn → Jarvis-Agent → weather info. | _____ | _____ | _____ |
 | 8 | "Mach einen Screenshot und sag mir was du siehst." ("Take a screenshot and tell me what you see.") | Spawn → Computer-Use → description. | _____ | _____ | _____ |
 
 ### Block C — 2 bad-news turns (provoke errors — expectation: no cushioning, no "Es tut mir leid, aber" ("I'm sorry, but"))
 
-| # | You say | Expectation | Ruben's note: perceived | Tone |
+| # | You say | Expectation | Alex's note: perceived | Tone |
 |---|---|---|---|---|
 | 9 | "Lies die Datei /nicht/existent.txt." ("Read the file /not/existent.txt.") | Dry error message, no "Es tut mir leid, aber leider" ("I'm sorry, but unfortunately"). | _____ | _____ |
 | 10 | "Verbinde dich mit dem Server xyz123.invalid." ("Connect to the server xyz123.invalid.") | Direct error notice. | _____ | _____ |
 
 ### Block D — 2 echo-trap turns (expectation: NO "Du möchtest also …" ("So you want to …"))
 
-| # | You say | Expectation | Ruben's note: perceived | Tone |
+| # | You say | Expectation | Alex's note: perceived | Tone |
 |---|---|---|---|---|
 | 11 | "Ich möchte wissen, wie spät es ist." ("I'd like to know what time it is.") | Direct time answer, NO "Du möchtest also wissen, wie spät es ist" ("So you want to know what time it is"). | _____ | _____ |
-| 12 | "Ich brauche ein neues Notepad-Fenster." ("I need a new Notepad window.") | "Öffne ich, Ruben." ("Opening it, Ruben.") or direct spawn — NO "Du möchtest also ein neues Notepad-Fenster" ("So you want a new Notepad window"). | _____ | _____ |
+| 12 | "Ich brauche ein neues Notepad-Fenster." ("I need a new Notepad window.") | "Öffne ich, Alex." ("Opening it, Alex.") or direct spawn — NO "Du möchtest also ein neues Notepad-Fenster" ("So you want a new Notepad window"). | _____ | _____ |
 
 ---
 
@@ -85,10 +85,10 @@ Say **"Hey Jarvis"** as the wake word **before every turn**. Note briefly after 
 - [ ] **Voice output contains no tool JSON/XML leak** (Block B, no "spawn_sub_jarvis(…)" / "<spawn_sub_jarvis>" audible).
 - [ ] **Echo trap (11+12) delivers a direct answer** without a "Du möchtest also …" ("So you want to …") opener.
 - [ ] **Bad news (9+10) without cushioning** ("Es tut mir leid, aber" ("I'm sorry, but") audible = ❌).
-- [ ] **The form of address is "Ruben"** (NEVER "Sir"/"Mr. Stark"/"Tony"/"boss" audible).
-- [ ] **Hangup contract** (turn 5): exactly "Auf Wiedersehen, Ruben." ("Goodbye, Ruben.") — not "Gern. Bis dann." ("Sure. See you then.").
+- [ ] **The form of address is "Alex"** (NEVER "Sir"/"Mr. Stark"/"Tony"/"boss" audible).
+- [ ] **Hangup contract** (turn 5): exactly "Auf Wiedersehen, Alex." ("Goodbye, Alex.") — not "Gern. Bis dann." ("Sure. See you then.").
 
-## Ruben's overall assessment
+## Alex's overall assessment
 
 **Tone verdict (check one of these):**
 

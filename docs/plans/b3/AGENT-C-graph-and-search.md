@@ -2,7 +2,7 @@
 
 You are Agent C on Phase B3 of Personal Jarvis. **Read `00-OVERVIEW.md` first**, then this. You build the Memory Map (force-directed graph) and the Ctrl-K full-text search bar that plug into Agent B's `WikiView.tsx`. You do not touch the tree, the page renderer, the backend, or live-reload — those are A, B, and D's areas.
 
-The visual contract is `C:\Users\Administrator\Desktop\b3-wiki-view-mockup.html`. Graph node colours and search bar styling there are binding.
+The visual contract is `<USER_HOME>\Desktop\b3-wiki-view-mockup.html`. Graph node colours and search bar styling there are binding.
 
 ---
 

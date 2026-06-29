@@ -42,8 +42,8 @@ Plus two test files:
 ### 1. Frontmatter is `dict[str, str]` — literal strings, no YAML round-trip
 
 `WikiPage.frontmatter` keeps values as the raw literal after the first
-colon. `aliases: [Rubén, Ruben Lütke]` becomes
-`{"aliases": "[Rubén, Ruben Lütke]"}` (note: the string, not a list).
+colon. `aliases: [Rubén, Personal Jarvis Maintainer]` becomes
+`{"aliases": "[Rubén, Personal Jarvis Maintainer]"}` (note: the string, not a list).
 
 **Why:** PyYAML round-trips list-shaped values inconsistently (it may
 quote, reorder keys, or change whitespace). A trivial `key: value`
@@ -139,8 +139,8 @@ None of substance. Two clarifications worth recording:
   shape as authoritative and exposed `parse_sections` as a separate
   helper. (See decision 3 above.)
 - The README example wikilink list in extraction includes
-  `[[entities/ruben]]` as a "canonical form". I kept the directory
-  prefix as part of the canonical form (`"entities/ruben"`), not the
+  `[[entities/alex]]` as a "canonical form". I kept the directory
+  prefix as part of the canonical form (`"entities/alex"`), not the
   bare slug. This matches the schema's discussion of explicit-prefix
   wikilinks and is the form Instance B will need to render `index.md`
   with stable groupings.

@@ -3,7 +3,7 @@ title: "Design: webui docs readability pass (Claude-Code-style jargon glossing)"
 slug: webui-docs-readability-design
 diataxis: explanation
 status: draft
-owner: harald
+owner: sam
 date: 2026-06-17
 ---
 

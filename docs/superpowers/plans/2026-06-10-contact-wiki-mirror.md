@@ -527,7 +527,7 @@ owners, separated by HTML-comment markers:
 
 Privacy rule (spec §Non-Goals): phone numbers, e-mail addresses and street
 addresses are deliberately NOT mirrored. The vault is broadly searched and
-handed to sub-agents; base data stays in ``data/contacts/`` and is fetched on
+handed to Jarvis-Agents; base data stays in ``data/contacts/`` and is fetched on
 demand via the ``contact-lookup`` tool.
 
 Writes go through the shared :class:`~jarvis.memory.wiki.atomic_writer.AtomicWriter`

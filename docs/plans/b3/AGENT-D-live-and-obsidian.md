@@ -82,7 +82,7 @@ class WikiPageChanged:
     trace_id: UUID
     timestamp_ns: int
     slug: str
-    path: str           # vault-relative POSIX path, e.g. "entities/harald.md"
+    path: str           # vault-relative POSIX path, e.g. "entities/sam.md"
     kind: str           # "created" | "modified" | "deleted"
 ```
 
@@ -197,7 +197,7 @@ The hook is mounted **once** at `WikiView` level (not deeper) so we have a singl
 // jarvis/ui/web/frontend/src/components/wiki/ObsidianButton.tsx
 
 interface ObsidianButtonProps {
-  vaultRelPath: string;     // e.g. "entities/harald.md"
+  vaultRelPath: string;     // e.g. "entities/sam.md"
 }
 
 export function ObsidianButton({ vaultRelPath }: ObsidianButtonProps): JSX.Element {
@@ -270,7 +270,7 @@ One end-to-end test:
 ### 5.4 Frontend tests
 
 `obsidian.test.ts`:
-1. `buildObsidianUrl("entities/harald.md")` → exact expected URL with proper URL encoding.
+1. `buildObsidianUrl("entities/sam.md")` → exact expected URL with proper URL encoding.
 2. Empty path → URL ends with `vault=obsidian-vault` (no `&file=`).
 3. Path with spaces → space → `%20`.
 

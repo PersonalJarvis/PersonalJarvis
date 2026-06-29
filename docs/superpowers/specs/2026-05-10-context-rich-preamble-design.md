@@ -2,9 +2,9 @@
 
 **Date:** 2026-05-10
 **Status:** Brainstorm complete, awaiting plan
-**Owner:** RubenLütke (driver) + Claude (architect)
+**Owner:** AlexMaintainer (driver) + Claude (architect)
 **Supersedes:** Implicit "perceived-latency-reduction pattern" from `jarvis/brain/ack_generator.py:1-29` (template-based)
-**Cross-references:** ADR-0011 (Router-Discipline), AD-7 anti-pattern (constraint enforcement in code), `docs/openclaw-bridge.md` (MissionAnnouncer pattern)
+**Cross-references:** ADR-0011 (Router-Discipline), AD-7 anti-pattern (constraint enforcement in code), `docs/jarvis-agents-bridge.md` (MissionAnnouncer pattern)
 
 ---
 
@@ -43,16 +43,16 @@ Goal (context-rich):
 ## 2. User Stories
 
 **US-1 (heavy task, the core motivating case):**
-> As Ruben, when I ask Jarvis to research a non-trivial topic, I want to hear within a second that he started the right kind of work, with the topic explicitly named — so the 5-30 second gap until the real answer feels like deliberate work, not silent confusion.
+> As Alex, when I ask Jarvis to research a non-trivial topic, I want to hear within a second that he started the right kind of work, with the topic explicitly named — so the 5-30 second gap until the real answer feels like deliberate work, not silent confusion.
 
 **US-2 (direct action):**
-> As Ruben, when I ask Jarvis to open an app or look up a quick fact, I want a one-sentence confirmation that names the action — so even fast operations feel grounded and confirmed, not robotic.
+> As Alex, when I ask Jarvis to open an app or look up a quick fact, I want a one-sentence confirmation that names the action — so even fast operations feel grounded and confirmed, not robotic.
 
 **US-3 (silence is golden):**
-> As Ruben, when I just say "Hallo" or tell Jarvis to be quiet, I do **not** want any preamble — those interactions are too lightweight to deserve a multi-stage response.
+> As Alex, when I just say "Hallo" or tell Jarvis to be quiet, I do **not** want any preamble — those interactions are too lightweight to deserve a multi-stage response.
 
 **US-4 (failure is silence):**
-> As Ruben, when the smart preamble can't be generated cleanly (hallucination, timeout, content-filter strip), I prefer Jarvis to stay silent and go straight to the real answer over hearing a generic filler. "Verstanden, ich kümmere mich darum." ("Understood, I'll take care of it.") across every request was exactly the failure mode of the previous attempt.
+> As Alex, when the smart preamble can't be generated cleanly (hallucination, timeout, content-filter strip), I prefer Jarvis to stay silent and go straight to the real answer over hearing a generic filler. "Verstanden, ich kümmere mich darum." ("Understood, I'll take care of it.") across every request was exactly the failure mode of the previous attempt.
 
 ---
 
@@ -335,7 +335,7 @@ Five scripted utterances per language replayed via simulated STT-final, audio re
 
 ## 9. Open Questions / Future Work
 
-- **Q1.** Should preamble emission also be wired into the `phase6` mission system (Worker subagents under `jarvis/missions/`)? Initial scope says no — those have their own `MissionAnnouncer` for completion announcements. Pre-thinking acks on internal mission steps would chatter.
+- **Q1.** Should preamble emission also be wired into the `phase6` mission system (Worker Jarvis-Agents under `jarvis/missions/`)? Initial scope says no — those have their own `MissionAnnouncer` for completion announcements. Pre-thinking acks on internal mission steps would chatter.
 - **Q2.** Should the user be able to disable preambles globally via a config flag (`[speech].pre_thinking_ack = false`)? Probably yes, but YAGNI for the first ship.
 - **Q3.** Telemetry: do we want the preamble counters to roll up into a Grafana / dashboard view, or is the in-memory bus + JSON-Lines flight recorder enough for now? Defer to operations.
 - **Q4.** Persona variation: today the prompt rule says "open with 'Ja Chef' in ~30 % of cases". After two weeks of usage we should sample the actual distribution and tune. Initial value is a guess.

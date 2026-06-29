@@ -1,7 +1,7 @@
 # Phase B1 — Instance D Handoff (Curator LLM)
 
 **Branch:** `impl/wiki-memory-b1-curator` (forked from `impl/wiki-memory` @ `ef041608`)
-**Worktree:** `C:/Users/Administrator/Desktop/jarvis-wiki-b1-curator/`
+**Worktree:** `<USER_HOME>/Desktop/jarvis-wiki-b1-curator/`
 **Owner:** Instance D
 **Status:** Done. 46 tests green, regression-checked against existing config tests.
 
@@ -87,14 +87,14 @@ This is stricter than the briefing example. `_parse_updates` is still tolerant o
 
 ### 6. Isolated worktree
 
-I created a separate worktree at `C:/Users/Administrator/Desktop/jarvis-wiki-b1-curator/` because Instance B / C were actively branch-switching the shared `jarvis-wiki-memory/` worktree, which kept losing my edits. Wave 2 can prune this worktree after merging via `git worktree remove`.
+I created a separate worktree at `<USER_HOME>/Desktop/jarvis-wiki-b1-curator/` because Instance B / C were actively branch-switching the shared `jarvis-wiki-memory/` worktree, which kept losing my edits. Wave 2 can prune this worktree after merging via `git worktree remove`.
 
 ---
 
 ## How to run
 
 ```powershell
-cd 'C:/Users/Administrator/Desktop/jarvis-wiki-b1-curator'
+cd '<USER_HOME>/Desktop/jarvis-wiki-b1-curator'
 python -m pytest tests/unit/memory/wiki/test_curator_llm.py `
                  tests/unit/memory/wiki/test_prompt.py -v
 ```

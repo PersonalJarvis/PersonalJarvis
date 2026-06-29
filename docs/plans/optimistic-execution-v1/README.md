@@ -21,7 +21,7 @@ v1.0 promise, end-to-end, measured".
 | Heavy-Duty Worker ("4.6") | Mission-Manager + Worker-Critic + `claude-cli` Sonnet (OAuth) | live | success-rate telemetry |
 | Event-Bus / Task-Queue | `jarvis/core/bus.py` + mission event store | live | latency spans on the bus |
 | Optimistic Execution | Force-spawn ACK + `BrainManager._should_force_openclaw` | partial | make it the guaranteed default path |
-| Smart Tools (Gmail/MCP) | `jarvis/mcp/adapter.py` + OpenClaw worker | Welle 2/3 open | worker-makes-the-call, end-to-end |
+| Smart Tools (Gmail/MCP) | `jarvis/mcp/adapter.py` + Jarvis-Agent worker | Welle 2/3 open | worker-makes-the-call, end-to-end |
 | Dumb Tools (local scripts) | `jarvis/brain/local_action_gate.py` | gaps (BUG-020) | allowlist coverage + zero false-spawn |
 | Oops protocol / VAD / organic correction | Always-speak guards (BUG-020) + announcement path + Silero VAD | **no closed loop** | the full error→inject→VAD-gated→correct loop |
 | Latency < 3s | AsyncIterator streaming + `voice_latency` marker | **no SLO gate** | p95 budgets enforced in CI |
@@ -54,7 +54,7 @@ v1.0 promise, end-to-end, measured".
 
 ### 1.3 MCP & Tooling Specialist
 - Spec-correct invariant: the **worker** (not the talker) issues the MCP call. Gmail is
-  the canonical Smart-Tool path via `jarvis/mcp/adapter.py` + OpenClaw worker; it is
+  the canonical Smart-Tool path via `jarvis/mcp/adapter.py` + Jarvis-Agent worker; it is
   live-testable through the `gws` CLI / Gmail MCP.
 - Dumb tools (local scripts: "mach die Adjusties", "spiel X ab") resolve in-process via
   `jarvis/brain/local_action_gate.py` — no worker wakeup, milliseconds.

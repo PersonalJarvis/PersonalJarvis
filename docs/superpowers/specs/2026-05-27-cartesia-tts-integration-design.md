@@ -1,7 +1,7 @@
 # Cartesia TTS Integration — Design
 
 **Date:** 2026-05-27
-**Author:** OpenClaw (background session)
+**Author:** Jarvis-Agents (background session)
 **Status:** Pending user review
 **Related plan:** `~/.claude/plans/also-er-muss-auch-lexical-pond.md` (Phase L.4 — Streaming TTS)
 **Related code-pattern:** `jarvis/plugins/tts/grok_voice_tts.py` (template)

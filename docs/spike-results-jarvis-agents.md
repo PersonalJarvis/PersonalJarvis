@@ -1,8 +1,8 @@
-# OpenClaw Bridge Spike — empirical findings (SP-1..SP-8)
+# Jarvis-Agents Bridge Spike — empirical findings (SP-1..SP-8)
 
 **Status:** Done — Wave 1 completed on 2026-05-09
 **Script:** `scripts/spikes/openclaw_probe.ps1`
-**Reference:** `docs/openclaw-bridge.md` §6 Open spike questions
+**Reference:** `docs/jarvis-agents-bridge.md` §6 Open spike questions
 **OpenClaw version tested:** 2026.5.7 (eeef486), via `npm i -g openclaw`
 **Models tested:**
 - `google/gemini-3-flash-preview` (matches `jarvis.toml [brain.providers.gemini].model` — Personal Jarvis hot path)
@@ -15,7 +15,7 @@
 ## Preparation on the Windows box (validated)
 
 1. **Node 24 LTS** — `node --version` answers `v24.13.0` (Windows-native, no WSL2 needed).
-2. **Install OpenClaw** via `npm i -g openclaw` — installs 559 packages in ~2 min, produces `C:\Users\Administrator\AppData\Roaming\npm\openclaw{.cmd, .ps1}` (see B-7 on the wrapper mechanics).
+2. **Install OpenClaw** via `npm i -g openclaw` — installs 559 packages in ~2 min, produces `<USER_HOME>\AppData\Roaming\npm\openclaw{.cmd, .ps1}` (see B-7 on the wrapper mechanics).
 3. **API key** from the Personal Jarvis Credential Manager via `get_secret(...)` into the provider-specific ENV var — see B-2 for the mapping table.
 4. **Run the spike:**
    ```powershell
@@ -40,7 +40,7 @@
 - `runtime: Native Windows`, `node-version: v24.13.0`, `pnpm-version: 10.33.2`
 - `openclaw-version: OpenClaw 2026.5.7 (eeef486)`
 - Installation via `npm i -g openclaw` builds 559 packages without native-build errors
-- Path: `C:\Users\Administrator\AppData\Roaming\npm\openclaw{.cmd, .ps1}`
+- Path: `<USER_HOME>\AppData\Roaming\npm\openclaw{.cmd, .ps1}`
 
 **Assessment:** Architecture OK — no WSL2 plan B needed.
 
@@ -246,7 +246,7 @@ The same for `--cwd` and `--working-directory`. All three flags were rejected wi
 
 ## Bridge architecture findings (B-1..B-12)
 
-These findings are the condensed architecture implications from the SP tests. They belong in `docs/openclaw-bridge.md` (Wave-2 update via `/skill openclaw-doc-update`).
+These findings are the condensed architecture implications from the SP tests. They belong in `docs/jarvis-agents-bridge.md` (Wave-2 update via `/skill openclaw-doc-update`).
 
 ### B-1: Spawn pattern (corrected)
 
@@ -284,7 +284,7 @@ OpenClaw knows **46 providers** in total (`openclaw models list --all` shows 112
 Pre-spawn requirement in the bridge:
 1. Read `cfg.brain.primary` (e.g. `"gemini"`)
 2. Map → OpenClaw slug `"google"`
-3. Model from `cfg.brain.providers.gemini.model` (hot path) or `.deep_model` (sub-Jarvis tier)
+3. Model from `cfg.brain.providers.gemini.model` (hot path) or `.deep_model` (Jarvis-Agent tier)
 4. Secret from Credential Manager → set the ENV var in the spawn subprocess
 5. `openclaw agent --local --model google/<model> ...`
 

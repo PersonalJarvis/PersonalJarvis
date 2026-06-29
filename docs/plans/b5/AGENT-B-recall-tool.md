@@ -178,7 +178,7 @@ If `cfg.wiki_integration` is missing at construction time, default to `Path("wik
 ## 8. Pre-flight test gate
 
 ```powershell
-cd C:\Users\Administrator\Desktop\jarvis-b5-agent-B
+cd <USER_HOME>\Desktop\jarvis-b5-agent-B
 pip install -e . --no-deps
 python -m pytest tests/unit/ -q --tb=no > pre-flight.log
 ```
@@ -222,9 +222,9 @@ Recommended sections (order is yours): Files changed · What I did · Assumption
 ## 11. Worktree setup recap
 
 ```powershell
-cd C:\Users\Administrator\Desktop\Personal Jarvis
-git worktree add -b impl/b5-agent-B C:\Users\Administrator\Desktop\jarvis-b5-agent-B impl/b5-base
-cd C:\Users\Administrator\Desktop\jarvis-b5-agent-B
+cd <USER_HOME>\Desktop\Personal Jarvis
+git worktree add -b impl/b5-agent-B <USER_HOME>\Desktop\jarvis-b5-agent-B impl/b5-base
+cd <USER_HOME>\Desktop\jarvis-b5-agent-B
 pip install -e . --no-deps
 ```
 

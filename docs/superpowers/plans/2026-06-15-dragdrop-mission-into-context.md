@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let the user drag a sub-agent mission/output card onto an in-app "Jarvis presence dock"; on drop, Jarvis pulls the mission into the live conversation context and speaks a contextual recap.
+**Goal:** Let the user drag a Jarvis-Agent mission/output card onto an in-app "Jarvis presence dock"; on drop, Jarvis pulls the mission into the live conversation context and speaks a contextual recap.
 
 **Architecture:** A dropped card fires a new WS command `mission.inject`. The server composes a clean, bounded, human-readable directive from the card's own data and publishes `MessageSent(role="user", source_layer="ui.web.ws.mission_inject")`. That reuses the existing brain-turn pipeline — the reply is spoken on the voice build and shown in chat, and the mission text lands in `BrainManager._history` (the context window). The drop target is a global React dock mounted in `App.tsx` that mirrors the active overlay style (bar vs. `MascotGigi` ghost), so it works in any browser on any OS (cloud-first), unlike the separate Tk overlay windows.
 
@@ -517,7 +517,7 @@ export const MISSION_DND_MIME = "application/x-jarvis-mission";
  * Drop a mission/output card on it to pull that sub-agent task into the live
  * conversation (Jarvis speaks about it + it enters the context window).
  *
- * It mirrors the chosen on-screen display style: a slim bar for `whisper_bar`,
+ * It mirrors the chosen on-screen display style: a slim bar for `jarvis_bar`,
  * the ghost mascot otherwise. This in-app surface is the cloud-first drop
  * target — it works in any browser, unlike the separate Tk overlay windows.
  */
@@ -526,7 +526,7 @@ export function JarvisDock() {
   const { config } = useOverlayStyle();
   const [armed, setArmed] = useState(false); // a card is hovering
   const [flash, setFlash] = useState(false); // brief post-drop confirmation
-  const isBar = config?.style === "whisper_bar";
+  const isBar = config?.style === "jarvis_bar";
 
   function hasMission(dt: DataTransfer | null): boolean {
     if (!dt) return false;

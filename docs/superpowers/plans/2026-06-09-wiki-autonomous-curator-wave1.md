@@ -696,7 +696,7 @@ No `server.py` change is needed: `settings_router` is already mounted (`jarvis/u
 - [ ] **Step 6: Run the new tests + the existing settings/config-writer suites; confirm green.**
 
   ```bash
-  cd "C:/Users/Administrator/Desktop/Personal Jarvis"
+  cd "<USER_HOME>/Desktop/Personal Jarvis"
   py -3.11 -m pytest tests/integration/test_wiki_provider_route.py tests/integration/test_settings_routes.py tests/unit/test_config_writer.py -q
   ```
 
@@ -715,7 +715,7 @@ No `server.py` change is needed: `settings_router` is already mounted (`jarvis/u
 - [ ] **Step 7: Commit.**
 
   ```bash
-  cd "C:/Users/Administrator/Desktop/Personal Jarvis"
+  cd "<USER_HOME>/Desktop/Personal Jarvis"
   git add jarvis/ui/web/settings_routes.py jarvis/core/config_writer.py tests/integration/test_wiki_provider_route.py
   git commit -m "feat(wiki): user-selectable curator model via GET/PUT /api/settings/wiki-provider
 
@@ -1218,7 +1218,7 @@ git commit -m "feat(ui): Wiki provider/model card in API Keys & Providers" -m "A
   Open `jarvis/core/config.py`. The class ends with `user_entity_slug` at line 618. Insert the new field directly after it (append-only; `ConfigDict(extra="allow")` is already present on line 608, so AP-16 holds):
 
   ```python
-      user_entity_slug: str = "ruben"
+      user_entity_slug: str = "alex"
       # D2 (2026-06): the awareness-episode -> durable session-page feed is
       # retired. The worker still READS awareness episodes and still produces
       # the rollup paragraph (live awareness is unaffected), but the durable
@@ -2375,8 +2375,8 @@ The vault schema (`wiki/obsidian-vault/schema.md:148`) is binding: *"A broken wi
       (vault_root / "log.md").write_text("# Wiki Log\n", encoding="utf-8")
 
       # A durable page that a resolvable link can point at.
-      (vault_root / "entities" / "ruben.md").write_text(
-          _entity_body("ruben", "Profile body for Ruben."),
+      (vault_root / "entities" / "alex.md").write_text(
+          _entity_body("alex", "Profile body for Alex."),
           encoding="utf-8",
       )
 
@@ -2470,7 +2470,7 @@ The vault schema (`wiki/obsidian-vault/schema.md:148`) is binding: *"A broken wi
                   "\n"
                   "## Summary\n"
                   "\n"
-                  "This concept concerns [[ruben]] directly.\n"
+                  "This concept concerns [[alex]] directly.\n"
               ),
               reason="concept linking the existing user entity",
           ),
@@ -2487,7 +2487,7 @@ The vault schema (`wiki/obsidian-vault/schema.md:148`) is binding: *"A broken wi
           encoding="utf-8"
       )
       # Resolvable link is canonicalised to the typed form, never demoted.
-      assert "[[entities/ruben]]" in content
+      assert "[[entities/alex]]" in content
       assert telemetry.get("wiki_links_refused_dangling") == before
   ```
 
@@ -2838,7 +2838,7 @@ A new **pure-function** regex detector (`secret_guard.py`) plus a hook in the At
   @pytest.mark.parametrize(
       "body",
       [
-          "Ruben prefers a multi-provider brain and bilingual replies.",
+          "Alex prefers a multi-provider brain and bilingual replies.",
           "The project shipped v0.2.0 on 2026-06-09 to the public repo.",
           "Note: the password is written on a sticky note in the drawer.",
           "He uses GPT and Gemini; the API design favours streaming.",
@@ -2913,7 +2913,7 @@ A new **pure-function** regex detector (`secret_guard.py`) plus a hook in the At
           target_path=target,
           operation="create",
           new_body=_valid_entity_body(
-              "clean", body="Ruben prefers a multi-provider brain."
+              "clean", body="Alex prefers a multi-provider brain."
           ),
           reason="normal write",
       )
@@ -3350,9 +3350,9 @@ path only as a last resort. Add regression tests."
       vault.mkdir(parents=True)
       _write_page(
           vault,
-          "entities/ruben.md",
-          "---\naliases: [Ruben, boss]\n---\n# Ruben\n\n"
-          "Ruben drives a turquoise sailboat named Albatross.\n",
+          "entities/alex.md",
+          "---\naliases: [Alex, boss]\n---\n# Alex\n\n"
+          "Alex drives a turquoise sailboat named Albatross.\n",
       )
       _write_page(
           vault,
@@ -3388,7 +3388,7 @@ path only as a last resort. Add regression tests."
           hits = search.search("Albatross")
           assert hits, "expected at least one hit after boot index"
           titles = {h.title for h in hits}
-          assert "Ruben" in titles or "Sailing" in titles
+          assert "Alex" in titles or "Sailing" in titles
       finally:
           search.close()
 
@@ -3430,7 +3430,7 @@ path only as a last resort. Add regression tests."
 
 - [ ] **Step 5: Run the new test and prove it passes.**
   ```bash
-  cd "C:/Users/Administrator/Desktop/Personal Jarvis" && py -3.11 -m pytest tests/integration/test_wiki_boot_index.py -v
+  cd "<USER_HOME>/Desktop/Personal Jarvis" && py -3.11 -m pytest tests/integration/test_wiki_boot_index.py -v
   ```
   Expected output (3 passed):
   ```
@@ -3441,19 +3441,19 @@ path only as a last resort. Add regression tests."
 
 - [ ] **Step 6: Run the existing wiki FTS/search suites to confirm no regression.**
   ```bash
-  cd "C:/Users/Administrator/Desktop/Personal Jarvis" && py -3.11 -m pytest tests/unit/memory/wiki/test_fts_index.py tests/unit/memory/wiki/test_search_fts.py -q
+  cd "<USER_HOME>/Desktop/Personal Jarvis" && py -3.11 -m pytest tests/unit/memory/wiki/test_fts_index.py tests/unit/memory/wiki/test_search_fts.py -q
   ```
   Expected: all pass, `0 failed`.
 
 - [ ] **Step 7: Lint the touched Python files.**
   ```bash
-  cd "C:/Users/Administrator/Desktop/Personal Jarvis" && py -3.11 -m ruff check jarvis/ui/web/server.py jarvis/memory/wiki/cli.py tests/integration/test_wiki_boot_index.py
+  cd "<USER_HOME>/Desktop/Personal Jarvis" && py -3.11 -m ruff check jarvis/ui/web/server.py jarvis/memory/wiki/cli.py tests/integration/test_wiki_boot_index.py
   ```
   Expected: `All checks passed!`
 
 - [ ] **Step 8: Commit.**
   ```bash
-  cd "C:/Users/Administrator/Desktop/Personal Jarvis" && git add jarvis/ui/web/server.py jarvis/memory/wiki/cli.py tests/integration/test_wiki_boot_index.py && git commit -m "feat(wiki): build FTS5 index at boot when empty; fix CLI --vault default to wiki/obsidian-vault
+  cd "<USER_HOME>/Desktop/Personal Jarvis" && git add jarvis/ui/web/server.py jarvis/memory/wiki/cli.py tests/integration/test_wiki_boot_index.py && git commit -m "feat(wiki): build FTS5 index at boot when empty; fix CLI --vault default to wiki/obsidian-vault
 
 A pre-existing or restored vault returned zero search hits because wiki_fts
 was only populated incrementally by AtomicWriter writes. WebServer now runs
@@ -3486,7 +3486,7 @@ One-time, idempotent, dry-run-by-default maintenance pass that removes the junk 
 
 - [ ] **Step 1: Create the `cleanup.py` module with the pure-classification helpers.**
 
-  Create `jarvis/memory/wiki/cleanup.py` with the truncation + dangling-link classification logic. These are regex/string-only, no I/O, no LLM (same discipline as `session_links.py`). The truncation check operates on the **prose body between the H1 and the `## Related` heading** — every session file ends with `## Related\n\n- [[entities/ruben]]\n`, so a tail-of-file check would wrongly pass every page.
+  Create `jarvis/memory/wiki/cleanup.py` with the truncation + dangling-link classification logic. These are regex/string-only, no I/O, no LLM (same discipline as `session_links.py`). The truncation check operates on the **prose body between the H1 and the `## Related` heading** — every session file ends with `## Related\n\n- [[entities/alex]]\n`, so a tail-of-file check would wrongly pass every page.
 
   ```python
   """One-time, idempotent maintenance pass over the wiki vault.
@@ -3579,7 +3579,7 @@ One-time, idempotent, dry-run-by-default maintenance pass that removes the junk 
   def dangling_link_targets(raw: str, vault_root: Path) -> list[str]:
       """Return the wikilink targets in ``raw`` that resolve to no vault page.
 
-      Uses the real on-disk resolver: ``[[entities/ruben]]`` resolves and is
+      Uses the real on-disk resolver: ``[[entities/alex]]`` resolves and is
       kept; bare app names like ``[[Snipping Tool]]`` resolve to nothing and are
       flagged. Operates on the CLOSED-link body after a dangling-fragment strip,
       so an unclosed ``[[PickerHost.`` never reaches the resolver.
@@ -3825,7 +3825,7 @@ One-time, idempotent, dry-run-by-default maintenance pass that removes the junk 
       is_truncated_body,
   )
 
-  RELATED = "\n## Related\n\n- [[entities/ruben]]\n"
+  RELATED = "\n## Related\n\n- [[entities/alex]]\n"
 
 
   def _session(date_id: str, body: str, *, related: bool = True) -> str:
@@ -3847,9 +3847,9 @@ One-time, idempotent, dry-run-by-default maintenance pass that removes the junk 
       for sub in ("entities", "concepts", "projects", "sessions",
                   "_archive/sessions", "attachments"):
           (root / sub).mkdir(parents=True)
-      # A real entity page so [[entities/ruben]] resolves.
-      (root / "entities" / "ruben.md").write_text(
-          "---\ntype: entity\nslug: ruben\n---\n\n# Ruben\n\nThe user.\n",
+      # A real entity page so [[entities/alex]] resolves.
+      (root / "entities" / "alex.md").write_text(
+          "---\ntype: entity\nslug: alex\n---\n\n# Alex\n\nThe user.\n",
           encoding="utf-8",
       )
       return root
@@ -3867,7 +3867,7 @@ One-time, idempotent, dry-run-by-default maintenance pass that removes the junk 
   def test_dangling_targets_flag_apps_keep_entities(vault: Path) -> None:
       raw = _session(
           "2026-05-27-tzqvlsv",
-          "He used [[Snipping Tool]] and pinged [[entities/ruben]].",
+          "He used [[Snipping Tool]] and pinged [[entities/alex]].",
       )
       assert dangling_link_targets(raw, vault) == ["Snipping Tool"]
 
@@ -3910,7 +3910,7 @@ One-time, idempotent, dry-run-by-default maintenance pass that removes the junk 
       assert clean.exists()
       assert "[[Snipping Tool]]" not in surviving
       assert "Snipping Tool" in surviving
-      assert "[[entities/ruben]]" in surviving  # real link untouched
+      assert "[[entities/alex]]" in surviving  # real link untouched
       # A backup was written and contains the now-deleted leak page.
       assert report.backup_path and report.backup_path.is_file()
       with tarfile.open(report.backup_path, "r:gz") as tar:
@@ -4092,7 +4092,7 @@ One-time, idempotent, dry-run-by-default maintenance pass that removes the junk 
 #### Gotchas
 
 - **`BackupManager.snapshot()` excludes `_archive/`** (`EXCLUDED_VAULT_DIRS` at `backup.py:47` = `{"_archive", "attachments"}`). Because this script deletes files inside `_archive/sessions/` (the leak page lives there), reusing that snapshot would leave the removals **irreversible**. The script therefore takes its own full `tarfile` snapshot via `_full_snapshot` (walks the whole vault, skips only hidden dirs). The test asserts the deleted leak page is present in the backup tar.
-- **Truncation is measured on the prose body, not the file tail.** Every session page ends with `## Related\n\n- [[entities/ruben]]\n`, so a tail-of-file terminator check would mark every page as "complete". `_split_body` slices out the frontmatter, the H1, and the `## Related` footer first. Verified on real files: `2026-05-28-5cg256wj` ends `Spanning from`, `2026-05-28-fsgdwl5a` ends `[[PickerHost.` — both flagged; `2026-05-27-tzqvlsv` ends `...subsequent sessions.` — kept.
+- **Truncation is measured on the prose body, not the file tail.** Every session page ends with `## Related\n\n- [[entities/alex]]\n`, so a tail-of-file terminator check would mark every page as "complete". `_split_body` slices out the frontmatter, the H1, and the `## Related` footer first. Verified on real files: `2026-05-28-5cg256wj` ends `Spanning from`, `2026-05-28-fsgdwl5a` ends `[[PickerHost.` — both flagged; `2026-05-27-tzqvlsv` ends `...subsequent sessions.` — kept.
 - **Dedupe keeps the `_archive/` copy, removes the live `sessions/` copy.** The session-rollup rolling-window archiver moves files *into* `_archive/sessions/`; a same-ID file still in `sessions/` is a stale leftover. Two of the six duplicates (`5cg256wj`, `fsgdwl5a`) are truncated in **both** copies — the truncation pass runs **after** dedupe and then removes the surviving archive copy too.
 - **FTS purge reuses `AtomicWriter.forget_paths`** (`atomic_writer.py:638`) — the exact "moved/deleted outside `apply()`" purge path. It calls `remove_page` per file, best-effort, never raises. Without it, `wiki-recall` keeps returning ghost hits at the deleted paths.
 - **Dangling-link demotion handles both `[[X]]` and `[[X|Display]]`** alias forms; the alias form keeps the display text. The unclosed `[[PickerHost.` fragment is removed first by `strip_dangling_wikilinks` so it never reaches the resolver.

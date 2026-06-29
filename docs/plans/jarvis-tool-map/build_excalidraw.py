@@ -16,7 +16,7 @@ Layout philosophy (overlap-free by construction):
     40-arrow fan-out hairball).
 
 Run:  python build_excalidraw.py
-Out:  C:/Users/Administrator/OneDrive/Ex/2026-05-24/jarvis-tool-architecture.excalidraw
+Out:  <USER_HOME>/OneDrive/Ex/2026-05-24/jarvis-tool-architecture.excalidraw
 """
 from __future__ import annotations
 
@@ -868,7 +868,7 @@ def build():
         "appState": {"viewBackgroundColor": "#ffffff", "gridSize": 20},
         "files": {},
     }
-    out_dir = "C:/Users/Administrator/OneDrive/Ex/2026-05-24"
+    out_dir = "<USER_HOME>/OneDrive/Ex/2026-05-24"
     os.makedirs(out_dir, exist_ok=True)
     out = os.path.join(out_dir, "jarvis-tool-architecture.excalidraw")
     with open(out, "w", encoding="utf-8") as f:

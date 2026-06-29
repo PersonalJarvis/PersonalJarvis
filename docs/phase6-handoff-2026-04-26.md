@@ -82,7 +82,7 @@ The prompt chain is **complete** — all 5 prompts implemented. The next steps a
 - Research: `SubAgentenSt/Unbenanntes Dokument (4).md` (== `docs/research/self-healing-architecture.md` final)
 - Test report: `docs/phase6-test-report.md`
 - Plan files:
-  - `C:\Users\Administrator\.claude\plans\glistening-wobbling-owl.md` (Phase 6 tooling bootstrap)
-  - `C:\Users\Administrator\.claude\plans\phase6-critic-loop-plan.md` (Prompt 3)
-  - `C:\Users\Administrator\.claude\plans\phase6-safety-voice-cleanup-plan.md` (Prompt 5)
-- Master plan: `C:\Users\Administrator\.claude\plans\also-er-muss-auch-lexical-pond.md`
+  - `<USER_HOME>\.claude\plans\glistening-wobbling-owl.md` (Phase 6 tooling bootstrap)
+  - `<USER_HOME>\.claude\plans\phase6-critic-loop-plan.md` (Prompt 3)
+  - `<USER_HOME>\.claude\plans\phase6-safety-voice-cleanup-plan.md` (Prompt 5)
+- Master plan: `<USER_HOME>\.claude\plans\also-er-muss-auch-lexical-pond.md`

@@ -109,7 +109,7 @@ have been, but at least audible.
   reasoning turns the user now waits ~2.7 s for the ack instead
   of ~0.7 s. Still well under the empirical "did Jarvis hear me?"
   threshold (~5 s) the driver reports.
-- **OpenClaw delegation skipped on grok / openai / openrouter /
+- **Jarvis-Agent delegation skipped on grok / openai / openrouter /
   ollama primaries.** Until a non-Gemini worker exists, every
   action-utterance is handled inline by the Router-Brain. This
   is slower for genuine multi-step tasks (no parallelism with the

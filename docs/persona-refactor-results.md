@@ -21,8 +21,8 @@ with the filter extension). Both runs against the same provider stack
 | ID | Tag | Before (verbatim) | After (verbatim) | Success? |
 |---|---|---|---|---|
 | 01 | routine-status | *(empty output — spawn reflex)* | "Ich sehe keinen Bildschirmkontext, um das zu prüfen. Welche Datei meinst du, und in welcher Anwendung?" | ◐ clarifying question instead of silence |
-| 02 | formal-greeting | *(empty output)* | "Morgen, Ruben. Bildschirm zeigt noch Schlafmodus — oder ist das absichtlich?" | ☑ short, with name, pattern 2 |
-| 03 | open-question | "Was genau möchten Sie beschleunigen?" *(uses formal "Sie"!)* | "Was möchtest du beschleunigen, Ruben?" | ☑ **A1 violation fixed** (informal "du" instead of "Sie") + tool leak gone |
+| 02 | formal-greeting | *(empty output)* | "Morgen, Alex. Bildschirm zeigt noch Schlafmodus — oder ist das absichtlich?" | ☑ short, with name, pattern 2 |
+| 03 | open-question | "Was genau möchten Sie beschleunigen?" *(uses formal "Sie"!)* | "Was möchtest du beschleunigen, Alex?" | ☑ **A1 violation fixed** (informal "du" instead of "Sie") + tool leak gone |
 | 04 | risky-command | *(empty output)* | "Welche Logs meinst du — Windows-Eventlog, eine spezifische Anwendung, oder Dateien in einem bestimmten Ordner?" | ◐ clarifying question instead of silence |
 | 05 | reckless-action | "Ein Deploy auf Produktion ohne vorherige Tests birgt erhebliche Risiken." | "Das ist eine schlechte Idee. Ohne Tests gehst du blind ins Prod, und wenn es crasht, brennt die Bude. Willst du wirklich, oder brauchst du nur schnell einen Quick-Check?" | ☑ dry anchor, no hedging |
 | 06 | proactive-context | "Es liegen keine Informationen zur Außentemperatur vor." | "Das kann ich dir nicht sagen — ich habe keinen Zugriff auf Echtzeit-Wetterdaten und keine aktuelle Standortermittlung. Schau auf weather.com…" | ◐ honest answer, slightly too long |
@@ -37,7 +37,7 @@ with the filter extension). Both runs against the same provider stack
 **Summary:**
 
 - **6 of 10 previously empty smalltalk outputs** (scenarios 01, 02, 04, 07, 08, 09) now return substantial text. The Phase-3 force-spawn heuristic plus the ROUTER-DISCIPLINE prompt prevent the spawn reflex.
-- **A1 violation in scenario 03 fixed:** formal "Sie" → informal "du, Ruben."
+- **A1 violation in scenario 03 fixed:** formal "Sie" → informal "du, Alex."
 - **Phase-2 persona hardening works** in the three new scenarios (11/13 with a pattern-fulfilling answer).
 
 ---
@@ -204,7 +204,7 @@ Source: mandate § "Definition of Done."
 | 12 | Output-filter path logged in the FlightRecorder (pre+post scrub) | ◐ | Filter `actions` are logged via `log.info` (logger `jarvis.speech.pipeline`). A FlightRecorder subscription was explicitly not built in, but is covered by the wildcard-subscriber pattern (master plan §10). |
 | 13 | CLAUDE.md has a "Router-Discipline" + "Output-Filter" section | ☑ | Phase 6 (this task). |
 | 14 | Vision anticipation default-OFF, opt-in documented in the README | ☑ | `[vision].context_hint_on_spawn = false` in jarvis.toml; ENV `JARVIS_VISION_CONTEXT=1` as an alternative. The README status section mentions "Phase 5 opt-in." |
-| 15 | Manual voice acceptance passed | ☐ | `docs/voice-acceptance-brief.md` (Phase 6) is prepared. The test is with Ruben. Precondition: F-10 fix. |
+| 15 | Manual voice acceptance passed | ☐ | `docs/voice-acceptance-brief.md` (Phase 6) is prepared. The test is with Alex. Precondition: F-10 fix. |
 
 **Summary:** 9 ☑, 3 ◐, 3 ☐. The three hard ☐ (items 2, 5, 10, 15) all hang on the same branch bug F-10 — as soon as `jarvis.clis.risk_integration` is available (stash pop or a targeted fix), 2/5/10/15 become testable.
 
@@ -352,7 +352,7 @@ State 2026-04-28 after this session's eight commits.
 | 1 | `pytest -v` passes | ☑ | 160/160 in `tests/unit/brain/`. The whole suite is still blocked by pre-existing F-10 + branch state (24 fail / 13 errors from other modules, NOT caused by the refactor). |
 | 2 | `python -m jarvis` starts without error | ☐ | F-10 still open. **Note:** two working-tree hunks (claude-opus-4-7 snapshot-ID fix + Agent2 token tracking) remained unstaged — separate commits by the Phase-8-hook owner. |
 | 3 | `voice_e2e_probe`: 0 anti-pattern hits | ☑ | Final probe 19:17 — `Anti-Pattern-Treffer: 0`. |
-| 4 | `voice_e2e_probe`: name ratio ≤ 33 % | ☐ | 44 % — a new trade-off of the persona_loader reactivation. JARVIS_PERSONA.md explicitly says "Always address him as Ruben"; the brain follows. Do NOT rewrite JARVIS_PERSONA.md (mandate prohibition) → accepted consequence. |
+| 4 | `voice_e2e_probe`: name ratio ≤ 33 % | ☐ | 44 % — a new trade-off of the persona_loader reactivation. JARVIS_PERSONA.md explicitly says "Always address him as Alex"; the brain follows. Do NOT rewrite JARVIS_PERSONA.md (mandate prohibition) → accepted consequence. |
 | 5 | `voice_e2e_probe`: hangup contract green | ☑ | **F-9 FIXED.** Final probe: `Hangup-Contract DE: OK`. |
 | 6 | All 13 scenarios show the expected pattern | ◐ | 12/13 clean. Scenario 12 still has a filler-as-opener detection hit (probe-heuristic edge case, not brain drift). |
 | 7 | `tests/unit/brain/test_output_filter.py` green (at least 15 cases) | ☑ | 40 cases green. |
@@ -363,7 +363,7 @@ State 2026-04-28 after this session's eight commits.
 | 12 | Output-filter path logged in the FlightRecorder | ◐ | Filter actions are logged via `log.info("🧹 Output-Filter [%s]: %s")` in `pipeline.py:1332` and `:649`. A FlightRecorder event-schema extension is pending. |
 | 13 | CLAUDE.md has a "Router-Discipline" + "Output-Filter" section | ☑ | Both present in CLAUDE.md. |
 | 14 | Vision anticipation default-OFF, opt-in documented | ☑ | `is_enabled()` in `vision_context.py:42`, default OFF, ENV flag + config flag. |
-| 15 | Manual voice acceptance passed | ☐ | F-10 + no mic access. With Ruben. |
+| 15 | Manual voice acceptance passed | ☐ | F-10 + no mic access. With Alex. |
 
 **Summary 2026-04-28:** 9 ☑, 2 ◐, 4 ☐. The four ☐ break down as:
 - **F-10** (items 2, 10, 15): external branch bug, to be fixed by the Phase-8-hook owner.
@@ -441,7 +441,7 @@ Three data points: **step-0 probe (2026-04-28 ~16:00)** before today's work, **r
 | ID | Tag | Step 0 (before) | Final (after) | Success? |
 |---|---|---|---|---|
 | 01 | routine-status | "Ich kann den Dateistatus nicht direkt einsehen — welche Datei und in welchem Programm?" | "Das Bild zeigt mir, was auf deinem Bildschirm zu sehen ist — ich benötige einen Screenshot, um den Speicherstatus der aktiven Datei zu prüfen." | ◐ answer substantial, no "Sir", no tool-JSON leak |
-| 02 | formal-greeting | "Guten Morgen, Ruben. Es ist kurz nach 16 Uhr — eher ein guter Nachmittag." | "Guten Morgen — was liegt an?" | ☑ formal, terse |
+| 02 | formal-greeting | "Guten Morgen, Alex. Es ist kurz nach 16 Uhr — eher ein guter Nachmittag." | "Guten Morgen — was liegt an?" | ☑ formal, terse |
 | 03 | open-question | **"Sir, ich starte einen Sub-Agent, der die Beschleunigung … analysiert.**\nutterance:…\ncontext_hints:…\naction:…\ntarget:…" | "Was möchtest du beschleunigen?" | ☑ **A1 + tool-args leak completely fixed** |
 | 04 | risky-command | "I need to know where to look. Welche Logs meinst du …" (mixed-language) | "Welche Logs meinst du — Windows Event Logs, eine bestimmte App, oder Logdateien in einem Ordner?" | ☑ single-language, clear clarifying question |
 | 05 | reckless-action | "Verstanden. Nur zur Sicherheit: kein Rollback-Plan, keine Tests …" | "Tapfer." | ☑ dry anchor (P5) |
@@ -449,13 +449,13 @@ Three data points: **step-0 probe (2026-04-28 ~16:00)** before today's work, **r
 | 07 | long-task-start | **"Sir, ich starte einen Sub-Agent, der das gesamte Projektverzeichnis analysiert."** | (brain empty content → filter fallback) "Es trat ein Fehler auf." | ◐ filter fallback instead of an initiative announcement; A1 fixed |
 | 08 | bad-news | "I need more context to answer that …" (mixed-language) | "screen_snapshot" | ☐ tool name as a bare answer — new drift symptom |
 | 09 | high-pressure | "Womit kann ich dir jetzt sofort helfen — soll ich eine Datei öffnen, den Bildschirm vorbereiten oder etwas anderes?" | "Was soll ich tun — aufmachen, aufräumen, auf Vollbild schalten?" | ☑ terser, register holds |
-| 10 | hangup | "Auf Wiedersehen, Ruben." | "Bis dann." (in the 18:54 run), **"Auf Wiedersehen, Ruben."** in the 19:17 run | ☑ **hangup contract fixed via persona_loader reactivation** |
+| 10 | hangup | "Auf Wiedersehen, Alex." | "Bis dann." (in the 18:54 run), **"Auf Wiedersehen, Alex."** in the 19:17 run | ☑ **hangup contract fixed via persona_loader reactivation** |
 | 11 | echo-trap (DE) | "Es ist 16 Uhr 01." | "Es ist 19:47 Uhr (MEZ)." | ☑ direct, no echo opener |
 | 11 | echo-trap (EN) | "It's 4:01 PM." | "It's whatever time your system clock shows; I don't have direct access …" | ◐ no echo opener, but hedging |
 | 12 | tool-spawn-output-leak (DE) | post-filter `}` (filter garbage) | `read_file {"path": "jarvis.toml"}` tool call leaked through | ◐ no YAML body leak anymore, but the tool name `read_file` is not in `TOOL_NAMES` |
 | 12 | tool-spawn-output-leak (EN) | post-filter `}` | "jarvis.toml ist auf dem System nicht auffindbar … Hast du den genauen Pfad?" | ☑ direct answer without tool args |
 | 13 | self-reference-trap (DE) | "Dein persönlicher **Supervisor-Agent** — ich erledige Aufgaben …" | "Jarvis. Dein Meta-Orchestrator auf diesem Rechner — ich route, delegiere, und halte dir den Kram vom Hals." | ☑ **engineering compound scrubbed** (filter action: removed_engineering_jargon) |
-| 13 | self-reference-trap (EN) | "A voice-driven personal assistant running on your Windows 11 machine. Think Alfred, but with a terminal." | "I'm JARVIS, your meta-orchestrator, Ruben — voice interface, screen awareness, and a roster of tools and sub-agents at your disposal." | ☑ persona identity, no language-model reveal |
+| 13 | self-reference-trap (EN) | "A voice-driven personal assistant running on your Windows 11 machine. Think Alfred, but with a terminal." | "I'm JARVIS, your meta-orchestrator, Alex — voice interface, screen awareness, and a roster of tools and sub-agents at your disposal." | ☑ persona identity, no language-model reveal |
 
 **Outputs summary:** A1 fixed (Sir → none), tool-args body leak gone, engineering compounds scrubbed, hangup green. The remaining ☐/◐ are no longer mandate drifts, but brain volatility (mixed-language mitigated; the tool name `read_file` as a new edge case not in the blacklist).
 
@@ -497,7 +497,7 @@ Three data points: **step-0 probe (2026-04-28 ~16:00)** before today's work, **r
 | 5 | Persona tests are subjective | yes — the heuristic formally passed, but verbatim outputs showed drift | re-probe iteration + voice-acceptance-brief.md |
 | 6 | Echo detection vs. legitimate confirmation | covered in the test (`test_echo_paraphrase_mid_sentence_is_kept`) | filter ONLY the opener (≤ 60 chars) |
 | 7 | Routing fix breaks tool-call tests | no — 0 tests broken by the refactor, 1 outdated repaired | see 12.4 |
-| 8 | `scrub_for_voice` in the sub-Jarvis reasoning path | no — the filter only takes effect at the TTS output | `pipeline.py:1330` (path #1) + `:647` (path #2) |
+| 8 | `scrub_for_voice` in the Jarvis-Agent reasoning path | no — the filter only takes effect at the TTS output | `pipeline.py:1330` (path #1) + `:647` (path #2) |
 
 **Additional failure modes hit today:**
 
@@ -527,12 +527,12 @@ Mandate wording from `Jarvis-Behavior/persona-delegation-mandate.md` § "Definit
 | 7 | `tests/unit/brain/test_output_filter.py` green (at least 15 cases) | ☑ | **40 cases green** |
 | 8 | `tests/unit/brain/test_routing.py` green (5+5+consistency) | ☑ | 26 cases green, incl. the new `test_recursive_tools_only_in_router` |
 | 9 | `tests/unit/brain/test_plausibility.py` green (5 cases) | ☑ | 12 cases green (all 5 mandate cases + Failure-Mode-3 + config + edge cases) |
-| 10 | Manual voice test: 5 smalltalk → 0 subprocesses | ☐ | F-10 + mic access missing in agent mode. **Indirectly verified** through `test_smalltalk_dispatches_zero_spawn_calls` × 5. Ruben test with `voice-acceptance-brief.md`. |
+| 10 | Manual voice test: 5 smalltalk → 0 subprocesses | ☐ | F-10 + mic access missing in agent mode. **Indirectly verified** through `test_smalltalk_dispatches_zero_spawn_calls` × 5. Alex test with `voice-acceptance-brief.md`. |
 | 11 | `docs/persona-refactor-results.md` with before/after | ☑ | Sections 1, 10, 11, **12** (this one) |
 | 12 | Output-filter path logged in the FlightRecorder (pre+post scrub) | ◐ | Filter actions in `pipeline.py:1332` and `:649` as `log.info("🧹 Output-Filter [%s]: %s")`. A structured FlightRecorder event-schema update would be a separate small change. |
 | 13 | CLAUDE.md has a "Router-Discipline" + "Output-Filter Discipline" section | ☑ | CLAUDE.md lines 137 + 150 (updated today with current tool/test counts) |
 | 14 | Vision anticipation default-OFF, opt-in documented in the README | ☑ | README.md lines 46-48; `is_enabled()` returns False without an ENV/config flag |
-| 15 | Manual voice acceptance passed | ☐ | with Ruben — `docs/voice-acceptance-brief.md` is finally updated (F-9/F-11 marked as fixed, F-10 marked as open) |
+| 15 | Manual voice acceptance passed | ☐ | with Alex — `docs/voice-acceptance-brief.md` is finally updated (F-9/F-11 marked as fixed, F-10 marked as open) |
 
 **Summary 2026-04-29:** **9 ☑, 2 ◐, 4 ☐**.
 
@@ -558,7 +558,7 @@ f7d751a7 feat(filter): phase 1 extension 3 — filler-self-reference in opener  
 
 (Plus a parallel Phase-8.7-hook commit `c3768c23`, not from this session.)
 
-### 12.8 Handover to Ruben
+### 12.8 Handover to Alex
 
 **What you have to do now:**
 

@@ -1,7 +1,7 @@
-# OpenClaw Sub-Edge Spawn-Failure Analysis — 2026-05-18
+# Jarvis-Agents Spawn-Failure Analysis — 2026-05-18
 
 **Status:** Diagnose-only document. No code changes performed.
-**Trigger:** User reported multiple OpenClaw sub-edge spawns failing after the Welle-6 ChatGPT-OAuth switch.
+**Trigger:** User reported multiple Jarvis-Agent spawns failing after the Welle-6 ChatGPT-OAuth switch.
 **User's hypothesis:** "Liegt an der ChatGPT-Authentifizierung." (It's down to the ChatGPT authentication.)
 
 ---
@@ -30,13 +30,13 @@ Read-first, then hypothesis. Source per finding:
 
 | Source | What was checked |
 |---|---|
-| [`../sub-agents-outputs/mission_019e3c52-0acd/`](file:///C:/Users/Administrator/Desktop/sub-agents-outputs/mission_019e3c52-0acd/) | Last failed mission, stream.jsonl + stderr |
-| [`../sub-agents-outputs/mission_019e3c51-d4f4/`](file:///C:/Users/Administrator/Desktop/sub-agents-outputs/mission_019e3c51-d4f4/) | Previous failed mission, identical pattern |
+| [`../sub-agents-outputs/mission_019e3c52-0acd/`](file:///<USER_HOME>/Desktop/sub-agents-outputs/mission_019e3c52-0acd/) | Last failed mission, stream.jsonl + stderr |
+| [`../sub-agents-outputs/mission_019e3c51-d4f4/`](file:///<USER_HOME>/Desktop/sub-agents-outputs/mission_019e3c51-d4f4/) | Previous failed mission, identical pattern |
 | `codex login status` | Live-CLI auth check |
 | `jarvis/core/config.load_config()` | Which provider is currently configured |
-| [`scripts/config-soll.json`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/scripts/config-soll.json) | Drift-Guard target value |
-| [`jarvis/missions/kontrollierer/decomposer.py`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/jarvis/missions/kontrollierer/decomposer.py) | Decomposer defaults |
-| [`jarvis/missions/workers/codex_direct_worker.py`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/jarvis/missions/workers/codex_direct_worker.py) | Worker model routing |
+| [`scripts/config-soll.json`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/scripts/config-soll.json) | Drift-Guard target value |
+| [`jarvis/missions/kontrollierer/decomposer.py`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/missions/kontrollierer/decomposer.py) | Decomposer defaults |
+| [`jarvis/missions/workers/codex_direct_worker.py`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/missions/workers/codex_direct_worker.py) | Worker model routing |
 
 ---
 
@@ -54,7 +54,7 @@ Read-first, then hypothesis. Source per finding:
 
 ### Bug 1 (CONFIRMED, HIGH): Decomposer hardcodes `model="sonnet"`
 
-**File:** [`jarvis/missions/kontrollierer/decomposer.py:57`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/jarvis/missions/kontrollierer/decomposer.py) + line 138 + 167
+**File:** [`jarvis/missions/kontrollierer/decomposer.py:57`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/missions/kontrollierer/decomposer.py) + line 138 + 167
 
 ```python
 # decomposer.py:57
@@ -79,7 +79,7 @@ if model:
 
 `CodexDirectWorker` reads `step.model` blindly and passes it through. With `step.model="sonnet"` → `codex exec --model sonnet` → HTTP 400.
 
-**Asymmetry with the Critic path:** we deliberately forced the Critic to an empty model earlier (`primary_model or ""` in [`runner.py:594`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/jarvis/missions/critic/runner.py)). The same protective logic is missing in the worker path.
+**Asymmetry with the Critic path:** we deliberately forced the Critic to an empty model earlier (`primary_model or ""` in [`runner.py:594`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/missions/critic/runner.py)). The same protective logic is missing in the worker path.
 
 ---
 
@@ -91,27 +91,27 @@ Categorized by evidence level. File + line + evidence snippet.
 
 | # | Source | File | Evidence |
 |---|---|---|---|
-| **C1** | Decomposer passes `"sonnet"` through | [`decomposer.py:57,138,167`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/jarvis/missions/kontrollierer/decomposer.py) | HTTP 400 in 2 of 2 last missions |
-| **C2** | Worker does not adapt the model slug to the provider | [`codex_direct_worker.py:103-104`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/jarvis/missions/workers/codex_direct_worker.py) | Passes `step.model` 1:1 to `codex --model` |
+| **C1** | Decomposer passes `"sonnet"` through | [`decomposer.py:57,138,167`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/missions/kontrollierer/decomposer.py) | HTTP 400 in 2 of 2 last missions |
+| **C2** | Worker does not adapt the model slug to the provider | [`codex_direct_worker.py:103-104`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/missions/workers/codex_direct_worker.py) | Passes `step.model` 1:1 to `codex --model` |
 
 ### LIKELY — structurally plausible, but not seen in the current log
 
 | # | Source | File | Evidence |
 |---|---|---|---|
-| **L1** | `step.allowed_tools` is Claude-formatted | [`decomposer.py`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/jarvis/missions/kontrollierer/decomposer.py) | The Decomposer can emit tool whitelists that contain Claude tool names (Write/Edit/Read); Codex expects different names. Not relevant in the current log because the model reject comes first. |
-| **L2** | Critic path with the wrong model when primary_model is set | [`runner.py:594`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/jarvis/missions/critic/runner.py) | We use `primary_model or ""` — if someone sets `[brain.sub_jarvis].model = "sonnet"`, Codex would also return 400 here. |
-| **L3** | `choose_critic_model` emits Claude slugs | [`escalation.py:23`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/jarvis/missions/critic/escalation.py) | Function returns e.g. `"claude-sonnet-4-6"`. In the Codex path this is emptied out by our `or ""` hack, but that is a workaround, not a clean fix. |
-| **L4** | Mission prompt templates reference Anthropic tools | [`prompts.py`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/jarvis/missions/critic/prompts.py) | Prompts can contain instructions like "use the Write tool" — Codex calls its tools by different names. Not observed because the worker dies before that. |
-| **L5** | Worker stream parser misinterprets the Codex `error` frame | [`codex_direct_worker.py:340-344`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/jarvis/missions/workers/codex_direct_worker.py) | Codex emits `type=error` + `type=turn.failed` → our parser sets `terminal_kind="error"` but **`terminal_message` may stay empty**, because the error frame's `obj.get("message") or obj.get("error")` does not necessarily match. ClaudeResult.result then becomes generic. |
+| **L1** | `step.allowed_tools` is Claude-formatted | [`decomposer.py`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/missions/kontrollierer/decomposer.py) | The Decomposer can emit tool whitelists that contain Claude tool names (Write/Edit/Read); Codex expects different names. Not relevant in the current log because the model reject comes first. |
+| **L2** | Critic path with the wrong model when primary_model is set | [`runner.py:594`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/missions/critic/runner.py) | We use `primary_model or ""` — if someone sets `[brain.sub_jarvis].model = "sonnet"`, Codex would also return 400 here. |
+| **L3** | `choose_critic_model` emits Claude slugs | [`escalation.py:23`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/missions/critic/escalation.py) | Function returns e.g. `"claude-sonnet-4-6"`. In the Codex path this is emptied out by our `or ""` hack, but that is a workaround, not a clean fix. |
+| **L4** | Mission prompt templates reference Anthropic tools | [`prompts.py`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/missions/critic/prompts.py) | Prompts can contain instructions like "use the Write tool" — Codex calls its tools by different names. Not observed because the worker dies before that. |
+| **L5** | Worker stream parser misinterprets the Codex `error` frame | [`codex_direct_worker.py:340-344`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/missions/workers/codex_direct_worker.py) | Codex emits `type=error` + `type=turn.failed` → our parser sets `terminal_kind="error"` but **`terminal_message` may stay empty**, because the error frame's `obj.get("message") or obj.get("error")` does not necessarily match. ClaudeResult.result then becomes generic. |
 
 ### POSSIBLE — could happen once the model problem is fixed
 
 | # | Area | Note |
 |---|---|---|
-| **P1** | OpenClaw slug mapping does not know `chatgpt` | [`provider_map.py`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/jarvis/missions/openclaw/provider_map.py) lists only claude-api/gemini/grok/openai/openrouter. If someone accidentally calls `spawn_openclaw` directly instead of using CodexDirectWorker → `UnknownJarvisProviderError`. |
-| **P2** | Drift-Guard rolls the provider back | [`scripts/jarvis-config-drift-guard.ps1`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/scripts/jarvis-config-drift-guard.ps1) + [`scripts/config-soll.json`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/scripts/config-soll.json) | Both are now in sync on `chatgpt` — BUT if a Drift-Guard runs on ANOTHER machine with an old target value, it could roll back. Not currently observed. |
-| **P3** | CODEX_HOME env leak | [`env.py:89`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/jarvis/missions/isolation/env.py) | `build_worker_env` sets `CODEX_HOME=<run_dir>/.codex` but `CodexDirectWorker` strips it (Welle 6 fix). If someone uses the old `CodexWorker` (non-Direct), the bug comes back. |
-| **P4** | Sandbox mode wrong for Codex-Codex | [`codex_direct_worker.py:50`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/jarvis/missions/workers/codex_direct_worker.py) default `sandbox="workspace-write"` | Works, but if the worker step sets `step.allowed_tools` that contains `Write` AND the `step.sandbox` override says Read-Only somewhere, it fails silently with "workspace is currently mounted read-only" (already seen once live today). |
+| **P1** | OpenClaw slug mapping does not know `chatgpt` | [`provider_map.py`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/missions/openclaw/provider_map.py) lists only claude-api/gemini/grok/openai/openrouter. If someone accidentally calls `spawn_openclaw` directly instead of using CodexDirectWorker → `UnknownJarvisProviderError`. |
+| **P2** | Drift-Guard rolls the provider back | [`scripts/jarvis-config-drift-guard.ps1`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/scripts/jarvis-config-drift-guard.ps1) + [`scripts/config-soll.json`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/scripts/config-soll.json) | Both are now in sync on `chatgpt` — BUT if a Drift-Guard runs on ANOTHER machine with an old target value, it could roll back. Not currently observed. |
+| **P3** | CODEX_HOME env leak | [`env.py:89`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/missions/isolation/env.py) | `build_worker_env` sets `CODEX_HOME=<run_dir>/.codex` but `CodexDirectWorker` strips it (Welle 6 fix). If someone uses the old `CodexWorker` (non-Direct), the bug comes back. |
+| **P4** | Sandbox mode wrong for Codex-Codex | [`codex_direct_worker.py:50`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/missions/workers/codex_direct_worker.py) default `sandbox="workspace-write"` | Works, but if the worker step sets `step.allowed_tools` that contains `Write` AND the `step.sandbox` override says Read-Only somewhere, it fails silently with "workspace is currently mounted read-only" (already seen once live today). |
 | **P5** | MCP-plugin Cloudflare OAuth expired | `~/.codex/config.toml` | If the user config is loaded (the worker does that), and the Cloudflare plugin's OAuth token is expired → stderr spam but the worker still runs through. The Critic strips the user config, so no issue there. |
 | **P6** | `step.allowed_tools="..."` is empty / malformed | Step construction in the Decomposer | If the LLM Decomposer emits an empty tool string → `--allowedTools ""` as argv → Codex ignores it or chokes. Not relevant as long as the worker does not pass `allowed_tools` on (our CodexDirectWorker currently ignores it). |
 
@@ -120,10 +120,10 @@ Categorized by evidence level. File + line + evidence snippet.
 | # | Point | How verified |
 |---|---|---|
 | **R1** | OAuth token expired | `codex login status` → "Logged in using ChatGPT" |
-| **R2** | OPENAI_API_KEY ENV overrides OAuth | Explicitly stripped in worker code ([`codex_direct_worker.py:179-184`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/jarvis/missions/workers/codex_direct_worker.py)) |
+| **R2** | OPENAI_API_KEY ENV overrides OAuth | Explicitly stripped in worker code ([`codex_direct_worker.py:179-184`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/missions/workers/codex_direct_worker.py)) |
 | **R3** | ANTHROPIC_API_KEY hits Codex | Worker ENV contains no Anthropic key (build_worker_env only sets explicitly) |
 | **R4** | `[brain.sub_jarvis].provider` wrong | TOML + config-soll.json both on `chatgpt` — Drift-Guard accepts |
-| **R5** | `chatgpt` provider is not recognized as Codex | [`init.py`](file:///C:/Users/Administrator/Desktop/Personal%20Jarvis/jarvis/missions/init.py) routes `chatgpt → CodexDirectWorker` correctly; in the logs we see Codex frames, so the worker choice is OK |
+| **R5** | `chatgpt` provider is not recognized as Codex | [`init.py`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/jarvis/missions/init.py) routes `chatgpt → CodexDirectWorker` correctly; in the logs we see Codex frames, so the worker choice is OK |
 | **R6** | Codex CLI not installed | `codex --version` → `codex-cli 0.130.0` |
 | **R7** | Worker tool-use detection broken | Not relevant — the bug fires BEFORE any tool use |
 | **R8** | Critic loop swallows the error | Not relevant — the worker dies BEFORE the Critic starts, the mission ends with `worker_error` |

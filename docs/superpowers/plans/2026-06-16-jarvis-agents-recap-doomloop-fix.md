@@ -1,4 +1,4 @@
-# Sub-Agents "all messages failing" — root-cause review & completion plan
+# Jarvis-Agents "all messages failing" — root-cause review & completion plan
 
 **Date:** 2026-06-16
 **Status:** root cause confirmed; fix already present in the working tree (parallel
@@ -46,14 +46,14 @@ self-perpetuating failure factory:
    router (`BrainManager._should_force_spawn`) force-spawned a *new* worker
    mission instead of answering inline. The 2026-06-15 "when I say subagent it
    MUST spawn" mandate hoisted the trigger check to the top, so any mention of
-   "sub-agent" spawned — including recaps and questions *about* a sub-agent.
+   "sub-agent" spawned — including recaps and questions *about* a Jarvis-Agent.
 
 2. **The new mission has no possible deliverable.** Its prompt literally says
    "no new work is needed, just give me a recap." The worker correctly writes
    nothing → empty diff → the Critic's deterministic empty-diff veto → 3 revise
    loops → `critic_loop_exhausted` → FAILED.
 
-3. **The failure is recursive.** The failed card shows up in the Sub-Agents view;
+3. **The failure is recursive.** The failed card shows up in the Jarvis-Agents view;
    dragging it again (or hitting "Restart") re-injects/re-dispatches a directive
    that again contains "sub-agent" → another failed mission. Hence "*all*
    sub-agent messages are failing."

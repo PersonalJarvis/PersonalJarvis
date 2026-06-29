@@ -31,7 +31,7 @@
 
 ```bash
 cd "$TMPDIR" 2>/dev/null || cd /tmp
-gh repo clone rubenluetke10-beep/personal-jarvis-webui webui-docs-work
+gh repo clone octocat/personal-jarvis-webui webui-docs-work
 cd webui-docs-work
 ```
 
@@ -68,7 +68,7 @@ Expected: `architecture.md brain-providers.md cli.md computer-use.md configurati
 - [ ] **Step 2: Apply the canon.** Concrete edits for this doc:
   - Gloss `meta-orchestrator` on first use, e.g.: *"a voice-driven **meta-orchestrator** — it doesn't answer you itself; it works out **which** tool should do the job and hands the work off, then reports back."*
   - Gloss `Supervisor-Agent` → *"a supervisor that classifies every spoken command and routes it"*.
-  - Gloss `harness` on first use → *"an interchangeable **harness** (the engine that actually does the work — OpenClaw, the Codex CLI, an MCP server, …)"*.
+  - Gloss `harness` on first use → *"an interchangeable **harness** (the engine that actually does the work — Jarvis-Agents, the Codex CLI, an MCP server, …)"*.
   - Gloss `Mission` → *"runs as a **Mission**: an isolated, self-checking background job"*; `Critic` → *"a **Critic** (a second pass that reviews the result and retries before answering you)"*; `git worktree` → *"an isolated **git worktree** (a throwaway copy of the project, so your real files are never touched)"*.
   - Gloss `MCP` on first use → *"MCP servers (a standard way to plug external tools into an AI)"*.
   - Keep the "three things that make it different" list, the blockquote, and "Who it is for" — only add the inline glosses.

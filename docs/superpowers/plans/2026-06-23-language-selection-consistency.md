@@ -42,7 +42,7 @@ This is not one bug; it is a **family** of bugs around a sound central design th
 | BCP-47 map duplication (4 sites, `:3379` missing `es`) | `jarvis/speech/pipeline.py:2488,3379,5916,6949` | T2 |
 | Cartesia English-voice fallback | `jarvis/plugins/tts/cartesia_tts.py:112-139` | T2 |
 | Hardcoded `language_code="de-DE"` background readback | `jarvis/speech/pipeline.py:2790` | T3 |
-| OpenClaw background-completed readback | `jarvis/speech/pipeline.py:2728,2755` | T3 |
+| Jarvis-Agents background-completed readback | `jarvis/speech/pipeline.py:2728,2755` | T3 |
 | Cron-skill announcement (omits language) | `jarvis/speech/pipeline.py:2283-2288` | T3 |
 | Tasks-runner agent-result announcement (omits language) | `jarvis/tasks/runner.py:398-404`, `:293` | T3 |
 | CU progress "Schritt X von Y" hardcoded German | `jarvis/harness/screenshot_only_loop.py:4202-4208` | T3 |
@@ -330,7 +330,7 @@ git commit -m "fix(tts): one BCP-47 map (incl. es) + Cartesia stops defaulting t
 T1 makes the *voice* consistent; this task fixes the *text* — the screenshot's announcement was English because the emitting brain turn (a scheduled skill) ran with no language directive. Every emitter that produces spoken text must pass the current `conversation_language` down to the brain call/composer and onto the event, instead of hardcoding/omitting `"de"`.
 
 **Files:**
-- Modify: `jarvis/speech/pipeline.py:2790` (hardcoded `de-DE`), `:2728,2755` (OpenClaw-bg), `:2283-2288` (cron-skill)
+- Modify: `jarvis/speech/pipeline.py:2790` (hardcoded `de-DE`), `:2728,2755` (Jarvis-Agents-bg), `:2283-2288` (cron-skill)
 - Modify: `jarvis/tasks/runner.py:398-404,293`
 - Modify: `jarvis/harness/screenshot_only_loop.py:4202-4208,828`
 - Test: extend `tests/unit/speech/test_announcement_language.py`; add `tests/unit/tasks/test_runner_announcement_language.py`
@@ -357,7 +357,7 @@ async def test_agent_result_announcement_carries_conversation_language(fake_bus,
     assert ann.language == "de"
 ```
 
-For the pipeline-side hardcodes, add to `test_announcement_language.py` a test that the background sub-agent readback (`:2790`) and the OpenClaw background-completed readback (`:2728`) stamp the conversation language rather than a fixed `"de"`.
+For the pipeline-side hardcodes, add to `test_announcement_language.py` a test that the background Jarvis-Agent readback (`:2790`) and the Jarvis-Agents background-completed readback (`:2728`) stamp the conversation language rather than a fixed `"de"`.
 
 - [ ] **Step 2: Run to verify they fail**
 

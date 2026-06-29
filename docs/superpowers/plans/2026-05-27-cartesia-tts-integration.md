@@ -721,7 +721,7 @@ JARVIS_VOICE=0 python -m jarvis.ui.web.launcher --no-lock
 Once the window is up, navigate to **API Keys** in the sidebar. Take a screenshot showing the Cartesia card under the TTS section. Save the screenshot to:
 
 ```
-C:\Users\Administrator\Downloads\cartesia-tts\cartesia-api-keys-card.png
+<USER_HOME>\Downloads\cartesia-tts\cartesia-api-keys-card.png
 ```
 
 - [ ] **Step 5.4: Commit (no code changes; this task is verification-only)**

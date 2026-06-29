@@ -34,7 +34,7 @@ Token cost per failed spawn: ~40k tokens × 4 providers ≈ $0.13.
 
 - **File**: `jarvis/core/config.py:156-168` (BrainRoutingConfig.spawn_verbs)
 - **Symptom**: User says "Spawn sub-agents.", Router-Brain responds
-  "Hallo Ruben, was kann ich für dich tun?" ("Hello Ruben, what can I do for you?") — no action.
+  "Hallo Alex, was kann ich für dich tun?" ("Hello Alex, what can I do for you?") — no action.
 - **Root cause**: The `_should_force_sub_jarvis` heuristic matches against the
   `spawn_verbs` list (DE+EN). The list contained `umsetz`, `bau`, `oeffne`,
   `deploy`, `read`, `write`, `build`, `open`, `install` — but not
@@ -187,7 +187,7 @@ Token cost per failed spawn: ~40k tokens × 4 providers ≈ $0.13.
 - **Symptom**: 50% of voice sessions on 2026-04-29 had single-word
   hallucinations ("Ding." — "Thing.", "Began.", "Fliegen." — "Flying.", "Let's get up.",
   "Hier geht's dir." — "Here it's going well for you."). Confidence < 0.65. Brain responds politely
-  ("Was gibt's, Ruben?" — "What's up, Ruben?") — burns ~7k tokens per phantom session.
+  ("Was gibt's, Alex?" — "What's up, Alex?") — burns ~7k tokens per phantom session.
 - **Root cause**: faster-whisper configuration too permissive, wake-word
   threshold matches on background noise.
 - **Fix status**: fixed on 2026-04-29 in the voice hot path. For details see
@@ -203,7 +203,7 @@ Token cost per failed spawn: ~40k tokens × 4 providers ≈ $0.13.
 - **Symptom**: User says "Auflegen". Jarvis does not hang up immediately, but
   waits a long time, shows the final transcript only late, and replies with
   random content such as: "I'd recommend saving the current version to GitHub
-  first, Ruben."
+  first, Alex."
 - **Repro from production log** (`data/jarvis_desktop.log`, 2026-04-29):
   1. Wake is correctly detected: `WAKE erkannt ueber whisper:Hey JARVIS` (WAKE detected via whisper:Hey JARVIS).
   2. User says "Auflegen"; but the final STT text becomes:
@@ -555,7 +555,7 @@ desktop app must be restarted so the WebView does not cache the old bundle.
   desktop app). Confusion: "the restore didn't work".
 - **Root cause** (three layers, each separate):
   1. **Second worktree stale** — `git worktree list` showed
-     `C:/Users/Administrator/Desktop/jarvis-a0` on `awareness/phase-a5` (4 days
+     `<USER_HOME>/Desktop/jarvis-a0` on `awareness/phase-a5` (4 days
      old). When the user opened this folder instead of `Personal Jarvis/`, they saw
      the old state. Worktrees are **not** updated alongside a `git switch`/`reset`
      in the main folder.
@@ -589,7 +589,7 @@ desktop app must be restarted so the WebView does not cache the old bundle.
 - **Audit trail**:
   - `recovery-report.md` (diagnosis, top-3 candidates)
   - `restore-report.md` (phases 0–4 + desktop-app restart)
-  - Plan: `C:/Users/Administrator/.claude/plans/shimmering-zooming-pixel.md`
+  - Plan: `<USER_HOME>/.claude/plans/shimmering-zooming-pixel.md`
 
 ---
 
@@ -1158,7 +1158,7 @@ carrying the same `System.AppUserModel.ID`, then using that shortcut's **file
 name** + **icon**. There was no such shortcut under
 `%APPDATA%\…\Start Menu\Programs\` (only a Desktop shortcut — not scanned — and
 a `Startup\Disabled\` one tagged with a stale *personalised* AUMID
-`HaraldHerz.PersonalJarvis`). With no AUMID-matched shortcut, Explorer fell back
+`SamHerz.PersonalJarvis`). With no AUMID-matched shortcut, Explorer fell back
 to the process `FileDescription` → "Python".
 
 **Fix (`jarvis/ui/icon_utils.py`):** new `ensure_start_menu_shortcut()` creates
@@ -1714,9 +1714,9 @@ See also: `docs/anti-drift-three-layer.md` for the general pattern.
 - **Root cause (third encounter of BUG-006 layer four — editable install
   pin to a stale clone):**
   `pip show overlay` reported the project location as
-  `C:\Users\Administrator\Desktop\Personal Jarvis-main\OS-Level`.
+  `<USER_HOME>\Desktop\Personal Jarvis-main\OS-Level`.
   That directory had been deleted earlier; only the active repo at
-  `C:\Users\Administrator\Desktop\Personal Jarvis\OS-Level` exists now.
+  `<USER_HOME>\Desktop\Personal Jarvis\OS-Level` exists now.
   The `__editable__.overlay-0.1.0.pth` shim therefore pointed at a path
   that does not exist, so `import overlay.schema` raised
   `ModuleNotFoundError: No module named 'overlay'`. The Welle-4 import
@@ -1748,7 +1748,7 @@ See also: `docs/anti-drift-three-layer.md` for the general pattern.
 - **Fix:**
   ```
   pip uninstall overlay -y
-  pip install -e "C:/Users/Administrator/Desktop/Personal Jarvis/OS-Level" --no-deps
+  pip install -e "<USER_HOME>/Desktop/Personal Jarvis/OS-Level" --no-deps
   ```
   Verification: `cat
   ~/AppData/Roaming/Python/Python311/site-packages/__editable__.overlay-0.1.0.pth`
@@ -2170,7 +2170,7 @@ media, and other actions it has no registered capability for. The Ack-Brain
 says "wird erledigt" ("will be done"), the brain returns a phantom success response, and the TTS
 reads a confirmation to the user. The action never happens. The user is deceived.
 
-Classic trigger example: "Schick eine Email an Harald" ("Send an email to Harald") → TTS plays "Die Email wurde gesendet." ("The email has been sent.") → No email was sent. No error was raised. No log entry indicates a failure.
+Classic trigger example: "Schick eine Email an Sam" ("Send an email to Sam") → TTS plays "Die Email wurde gesendet." ("The email has been sent.") → No email was sent. No error was raised. No log entry indicates a failure.
 
 This is not a single-site regression — it is a structural coupling gap: the
 brain layer and the critic layer are both decoupled from the actual executable

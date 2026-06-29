@@ -36,11 +36,11 @@
 
 #### F-AUDIT-1 — A1 spec conflict between mandate and prompt layer
 
-- **Description:** Mandate A1: "Ruben instead of Sir, never Sir." This requirement is correctly entered in `JARVIS_PERSONA.md:33` ("never 'Sir,' never 'Mr. Stark,' never 'Tony,' never 'boss.'"). **But the same file** contains, in lines 136-148, the "SIR / RUBEN HYBRID RULE," which explicitly prescribes "Sir" for sub-agent ceremonies:
+- **Description:** Mandate A1: "Alex instead of Sir, never Sir." This requirement is correctly entered in `JARVIS_PERSONA.md:33` ("never 'Sir,' never 'Mr. Stark,' never 'Tony,' never 'boss.'"). **But the same file** contains, in lines 136-148, the "SIR / ALEX HYBRID RULE," which explicitly prescribes "Sir" for Jarvis-Agent ceremonies:
 
   ```
   jarvis/brain/JARVIS_PERSONA.md:139-143
-    Default-Anrede ist "Ruben" (wie oben). Ausnahme: bei bestimmten
+    Default-Anrede ist "Alex" (wie oben). Ausnahme: bei bestimmten
     Zeremonien nutze "Sir" — das macht die Delegations-Momente besonders:
     - Sub-Agent-Spawn: "Sir, ich starte einen Sub-Agent, der ..."
     - Sub-Agent-Completion: "Sir, fertig. {summary}"
@@ -59,7 +59,7 @@
 
 - **Evidence:** `grep -n '\bSir\b' jarvis/brain/`.
 - **Effect:** The LLM sees **contradictory instructions** in the system prompt — sometimes "never Sir," sometimes "use Sir on spawn." The fact that the probe of 2026-04-28 returned scenario 03 + 07 literally as "Sir, ich starte einen Sub-Agent" ("Sir, I am starting a sub-agent") is **not a brain bug**, but a direct consequence of the prompt content. The output filter (`SIR_OPENER_RE`/`SIR_TAIL_RE`) scrubs the symptom but does not fix the root cause.
-- **Recommended fix:** (a) **delete** the `JARVIS_PERSONA.md:136-148` HYBRID RULE section; (b) change the `router.py:200-202` example to "Einen Augenblick, Ruben" ("One moment, Ruben"); (c) migrate the `gemini_test_brain.py` "Sir" hangup signal to a "Ruben" variant, or mark the test brain as deprecated.
+- **Recommended fix:** (a) **delete** the `JARVIS_PERSONA.md:136-148` HYBRID RULE section; (b) change the `router.py:200-202` example to "Einen Augenblick, Alex" ("One moment, Alex"); (c) migrate the `gemini_test_brain.py` "Sir" hangup signal to a "Alex" variant, or mark the test brain as deprecated.
 - **Effort:** small (3 files, ~10 lines).
 
 #### F-AUDIT-2 — Mission-voice listener bypasses `scrub_for_voice` entirely
@@ -199,7 +199,7 @@
 - 13 scenarios × 1-2 languages = 16 runs.
 - Anti-pattern hits: 0 (probe heuristic marker, but **irrelevant** — see F-AUDIT-6).
 - Name ratio: 1/16 (6 %) — irrelevant, since the brain is unreachable.
-- Hangup contract DE: **MISS** — the brain answered `"claude-api, gemini, grok unerreichbar. Netzwerk pruefen."` ("claude-api, gemini, grok unreachable. Check network.") instead of `"Auf Wiedersehen, Ruben."` ("Goodbye, Ruben.") (brain failure, not persona bug).
+- Hangup contract DE: **MISS** — the brain answered `"claude-api, gemini, grok unerreichbar. Netzwerk pruefen."` ("claude-api, gemini, grok unreachable. Check network.") instead of `"Auf Wiedersehen, Alex."` ("Goodbye, Alex.") (brain failure, not persona bug).
 - Substantial brain output only in scenarios 03 + 07. Scenario 07 shows a **NEW drift class** (F-AUDIT-4): prose-style tool args.
 
 ### Manual smoke test (subprocess spawn count)
@@ -238,7 +238,7 @@
 | 7 | `tests/unit/brain/test_output_filter.py` green (≥15 cases) | ☑ | 41/41 green |
 | 8 | `tests/unit/brain/test_routing.py` green | ☑ | 32/32 green |
 | 9 | `tests/unit/brain/test_plausibility.py` green (5 cases) | ☑ | 13/13 green |
-| 10 | Manual voice test 5 smalltalk → 0 subprocesses | ⚠️ | Echo-mode smoke test ✅; production test with Ruben (manual) |
+| 10 | Manual voice test 5 smalltalk → 0 subprocesses | ⚠️ | Echo-mode smoke test ✅; production test with Alex (manual) |
 | 11 | `docs/persona-refactor-results.md` with before/after | ⚠️ | Exists (569 lines). Before/after in sections 1 + 12 — partly verbatim, partly paraphrased. The mandate requires "verbatim." |
 | 12 | Output-filter path logged in the FlightRecorder | ☐ | `pipeline.py:1332+649` have `log.info("🧹 Output-Filter [%s]: %s")` — plain logging, **no FlightRecorder event schema** |
 
@@ -246,7 +246,7 @@
 
 ---
 
-## 7. Recommendation to Ruben
+## 7. Recommendation to Alex
 
 **Status: FIX FIRST.** Before manual voice acceptance, at least **F-AUDIT-1** and **F-AUDIT-2** should be fixed — otherwise you will hear "Sir, ich starte einen Sub-Agent" ("Sir, I am starting a sub-agent") despite the filter (if the mission-voice-listener path triggers), or you leave the LLM with a contradictory prompt (HYBRID RULE vs. "never Sir").
 
@@ -298,15 +298,15 @@ After the audit was cleared, a separate implementation session worked through th
 
 | Commit | Finding | Severity | Effort |
 |---|---|---|---|
-| `1ba2a061 fix(persona): F-AUDIT-1` | A1 spec conflict in the prompt layer (HYBRID RULE deleted, router.py example migrated, gemini_test_brain.py to "Ruben") | CRITICAL | small |
-| `8c5dfadb fix(missions): F-AUDIT-2` | Mission-voice listener through `scrub_for_voice` + readback templates strict A1 (all 30+ templates to "Ruben") | CRITICAL | small |
+| `1ba2a061 fix(persona): F-AUDIT-1` | A1 spec conflict in the prompt layer (HYBRID RULE deleted, router.py example migrated, gemini_test_brain.py to "Alex") | CRITICAL | small |
+| `8c5dfadb fix(missions): F-AUDIT-2` | Mission-voice listener through `scrub_for_voice` + readback templates strict A1 (all 30+ templates to "Alex") | CRITICAL | small |
 | `c613021f fix(test): F-AUDIT-5` | announcement-bridge × 3 migrated to neutral test strings | HIGH | small |
 | `02026be0 fix(tasks): F-AUDIT-3` | runner._run_speak protected by `scrub_for_voice` (defense-in-depth) | HIGH | small |
 | `20bf8037 fix(filter): F-AUDIT-4` | Filter pattern for prose-style tool args (`X with utterance is Y`) | HIGH | small |
 
 ### 9.2 Spec-consistency wins
 
-- **A1 is now homogeneous:** `JARVIS_PERSONA.md` no longer contradicts itself (HYBRID RULE gone). The router prompt example says "Einen Augenblick, Ruben." ("One moment, Ruben.") instead of "Sir, ich starte einen Sub-Agent" ("Sir, I am starting a sub-agent"). `gemini_test_brain.py` HANGUP_SIGNAL is `"Goodbye, Ruben."`. Mission readback all 30+ templates to "Ruben." The output filter scrubs "Sir" as additional defense-in-depth.
+- **A1 is now homogeneous:** `JARVIS_PERSONA.md` no longer contradicts itself (HYBRID RULE gone). The router prompt example says "Einen Augenblick, Alex." ("One moment, Alex.") instead of "Sir, ich starte einen Sub-Agent" ("Sir, I am starting a sub-agent"). `gemini_test_brain.py` HANGUP_SIGNAL is `"Goodbye, Alex."`. Mission readback all 30+ templates to "Alex." The output filter scrubs "Sir" as additional defense-in-depth.
 - **TTS paths are consistently filtered:** `pipeline.py` (path #1+#2) already had `scrub_for_voice`; `missions/voice/listener.py:88` and `tasks/runner.py:254` now too. Three TTS-bypass paths closed.
 - **The test suite is mandate-A1-consistent:** no tests expect "Sir" as output anymore. `test_no_template_contains_sir_anywhere` as a strict guard against regression.
 
@@ -316,7 +316,7 @@ After the audit was cleared, a separate implementation session worked through th
 |---|---|---|
 | `tests/unit/brain/` | 187 green | see final run below |
 | `tests/missions/test_voice_listener.py` | 11 / 2 fail (Sir expectation) | 14 green (+ new scrub test) |
-| `tests/missions/test_voice_readback.py` | 5 expected Sir | green on Ruben + strict-A1 guard |
+| `tests/missions/test_voice_readback.py` | 5 expected Sir | green on Alex + strict-A1 guard |
 | `tests/unit/speech/test_announcement_bridge.py` | 8 / 3 fail (Sir/sub-agent strings) | 11 green |
 | Pytest total | 11 fail | see final run below |
 
@@ -329,7 +329,7 @@ After the audit was cleared, a separate implementation session worked through th
 | F-AUDIT-8 | LOW | tier-default models — separate brain-provider audit |
 | F-AUDIT-9 | LOW | trivially resolved together with F-AUDIT-1 |
 
-### 9.5 Recommendation to Ruben (revised)
+### 9.5 Recommendation to Alex (revised)
 
 **Status: GREEN for manual voice acceptance.** Both CRITICAL findings (F-AUDIT-1, F-AUDIT-2) are fixed, as are three HIGH findings (F-AUDIT-3, F-AUDIT-4, F-AUDIT-5). The two remaining MEDIUM/LOW findings are outside the refactor scope (provider setup, brain-default audit).
 

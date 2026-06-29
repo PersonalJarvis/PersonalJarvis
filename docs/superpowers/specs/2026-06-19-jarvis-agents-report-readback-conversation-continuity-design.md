@@ -1,4 +1,4 @@
-# Subagent / Mission Report Readback — Conversation Continuity, Speaking Indicator, Transcript Attribution
+# Jarvis-Agent / Mission Report Readback — Conversation Continuity, Speaking Indicator, Transcript Attribution
 
 **Date:** 2026-06-19
 **Status:** Design — approved in brainstorming, pending spec review
@@ -117,7 +117,7 @@ missing, wire `emit_state` off the same transition or record it as a known follo
   live in the running app (restart) and verify the report reaches every transcript surface the
   maintainer looks at — the per-session Sessions detail view is covered; check whether a separate
   live "Transcription" panel also needs the entry (and extend it if so).
-- **Distinct colour + label:** give the mission/subagent readback its own visual identity in the
+- **Distinct colour + label:** give the mission/Jarvis-Agent readback its own visual identity in the
   transcript — a colour clearly different from a normal answer, and a label like
   "Jarvis Sub-Agent / Output".
 
@@ -129,7 +129,7 @@ missing, wire `emit_state` off the same transition or record it as a known follo
   risk to the just-fixed post-hangup-drop guards.
 
   **Pre-condition to verify:** confirm `SPOKEN_KIND_COMPLETION` is emitted **only** for
-  background-mission / subagent readbacks. If it is shared with a non-subagent surface that should
+  background-mission / Jarvis-Agent readbacks. If it is shared with a non-Jarvis-Agent surface that should
   not carry the "Sub-Agent" label, fall back to introducing a dedicated `spoken_kind` (e.g.
   `subagent`) through all five enum layers (`constants.py` → `models.py` → `schema.sql` payload →
   `types.ts` → `TurnCard.tsx`) **and** update the three completion-keyed guards to treat the new kind
@@ -151,7 +151,7 @@ an audio cut but is DB-provable).
 | Announcement handler | `jarvis/speech/pipeline.py` `_on_announcement` (≈2223–2255) | Emit SPEAKING around readback playback; on finish transition to LISTENING (open) or IDLE (hung up) |
 | Supervisor | `jarvis/state/supervisor.py` (≈47–63) | Reuse `set_state` — no change expected unless a new transition helper is cleaner |
 | Transcript styling | `jarvis/ui/web/frontend/src/components/sessions/TurnCard.tsx` (≈28–45, 209–248) | Distinct colour for the mission readback block; relabel `completion` → "Jarvis Sub-Agent / Output" |
-| (Conditional) spoken_kind enum | `constants.py`, `models.py`, `schema.sql`, `types.ts`, `TurnCard.tsx` + parity test | Only if `completion` proves shared with non-subagent surfaces |
+| (Conditional) spoken_kind enum | `constants.py`, `models.py`, `schema.sql`, `types.ts`, `TurnCard.tsx` + parity test | Only if `completion` proves shared with non-Jarvis-Agent surfaces |
 | Orb wiring (verify) | `jarvis/ui/web/launcher.py`, `jarvis/overlay/bridge.py` | Confirm/append `emit_state` off the speaking transition |
 
 ## 5. Testing (TDD, repo convention — fakes not mocks)

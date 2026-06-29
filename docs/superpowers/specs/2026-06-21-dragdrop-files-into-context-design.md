@@ -128,7 +128,7 @@ directive language (same as mission-drop).
 - `jarvis/brain/manager.py` — `inject_images_for_turn` + the pop in
   `_collect_vision_images`; add `"ui.drop"` to `_NON_SPAWN_SOURCE_LAYERS`.
 - `jarvis/ui/web/server.py` / route registration — mount `drop_routes`.
-- `ui/orb/overlay.py` + `jarvis/ui/whisperbar/overlay.py` — attach the drop
+- `ui/orb/overlay.py` + `jarvis/ui/jarvisbar/overlay.py` — attach the drop
   target after the Tk root is built (additive; color-key rendering untouched, AD-7).
 - `jarvis/ui/desktop_app.py` — wire the overlay drop callback → marshal → ingest.
 - `pyproject.toml` — `tkinterdnd2` in the `[desktop]` extra.

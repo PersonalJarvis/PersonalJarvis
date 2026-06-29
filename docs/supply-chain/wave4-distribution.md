@@ -10,7 +10,7 @@
 > security record; the **package-manager delivery mechanism** it recommends is
 > no longer the plan.
 
-**Status:** Foundation complete (SA-1). Integration into the CI/CD workflow + verifier + signing pipeline is the work of SA-W4-2..SA-W4-5 follow-up sub-agents.
+**Status:** Foundation complete (SA-1). Integration into the CI/CD workflow + verifier + signing pipeline is the work of SA-W4-2..SA-W4-5 follow-up Jarvis-Agents.
 
 **Branch:** `feat/wave4-foundation`.
 
@@ -21,7 +21,7 @@
 Wave 1 (cosign keyless), Wave 2 (offline Ed25519), and Wave 3 (SLSA L3 + in-toto) hardened **what** the installer signs and **how** signatures are verified. But all three waves still depend on the user running:
 
 ```bash
-curl -fsSL https://github.com/personal-jarvis/personal-jarvis/releases/download/<TAG>/install-verify.sh | bash
+curl -fsSL https://github.com/PersonalJarvis/PersonalJarvis/releases/download/<TAG>/install-verify.sh | bash
 ```
 
 or the equivalent `irm | iex` on Windows. That bootstrap line trusts:
@@ -51,10 +51,10 @@ The two channels root the trust in **different ecosystems** — Homebrew's tap-s
 
 ```bash
 # macOS / Linux
-curl -fsSL https://github.com/personal-jarvis/personal-jarvis/releases/download/<TAG>/install-verify.sh | bash
+curl -fsSL https://github.com/PersonalJarvis/PersonalJarvis/releases/download/<TAG>/install-verify.sh | bash
 
 # Windows
-irm https://github.com/personal-jarvis/personal-jarvis/releases/download/<TAG>/install-verify.ps1 | iex
+irm https://github.com/PersonalJarvis/PersonalJarvis/releases/download/<TAG>/install-verify.ps1 | iex
 ```
 
 These remain supported. The 12-stage verifier (Wave 1+2+3) still runs. They are now the **fallback path** for users on platforms without Homebrew or Scoop.
@@ -117,7 +117,7 @@ Scenarios S-1..S-3 are the Wave 1-3 axes; Wave 4 leaves them as-is (the 12-stage
 - It does **not** add an "axis D (post-quantum)" verification stage to `install-verify.sh` / `install-verify.ps1`.
 - It does **not** rotate the existing Ed25519 ceremony key.
 
-**What Wave 4.1 (follow-up sub-agents) MUST do:**
+**What Wave 4.1 (follow-up Jarvis-Agents) MUST do:**
 
 - SA-W4-2: Add ML-DSA-65 signing step to the GitHub Actions workflow, gated by a GitHub Actions secret `PQ_MLDSA65_PASSPHRASE` (identical pattern to Wave 2's offline-ceremony secret).
 - SA-W4-3: Add `install-verify.sh.pqsig` and `install-verify.ps1.pqsig` to every release asset bundle.

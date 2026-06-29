@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-17
 **Status:** Approved (autonomous shipping run)
-**Owner:** Ruben (product) · Claude (implementation)
+**Owner:** Alex (product) · Claude (implementation)
 **Tracking issue / branch:** TBD on first commit
 
 ---

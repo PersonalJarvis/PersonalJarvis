@@ -97,7 +97,7 @@
 
 ### Task 1.3: Fix the system-prompt vision lie
 **Files:** `jarvis/brain/router.py` (`SYSTEM_PROMPT` line ~62).
-- [ ] Make the "Du siehst Rubens Bildschirm permanent als Bild" instruction conditional/softened so the model does not hallucinate a screen when no image was attached (e.g. move to a per-turn note appended only when an image is present, or reword to "wenn ein Screenshot anhängt").
+- [ ] Make the "Du siehst Alexs Bildschirm permanent als Bild" instruction conditional/softened so the model does not hallucinate a screen when no image was attached (e.g. move to a per-turn note appended only when an image is present, or reword to "wenn ein Screenshot anhängt").
 
 **Wave 1 verification:** `pytest tests/unit/brain/test_vision_gate.py tests/unit/brain/test_routing.py -v`; bench shows lower TTFT on smalltalk turns, unchanged on screen-ref turns. Commit. Flag `[performance].conditional_vision = true`.
 

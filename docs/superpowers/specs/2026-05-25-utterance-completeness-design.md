@@ -3,7 +3,7 @@
 **Date:** 2026-05-25
 **Branch:** `feat/semantic-hangup-detection`
 **Status:** Approved (design), implementation in progress
-**Author:** Jarvis / Ruben (brainstorming session)
+**Author:** Jarvis / Alex (brainstorming session)
 
 ---
 

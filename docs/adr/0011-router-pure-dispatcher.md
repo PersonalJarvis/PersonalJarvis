@@ -3,7 +3,7 @@ title: "ADR-0011: Pure Dispatcher (4 Tools)"
 slug: adr-0011-router-pure-dispatcher
 diataxis: adr
 status: active
-owner: harald
+owner: sam
 last_reviewed: 2026-04-29
 phase: 5
 audience: developer
@@ -41,7 +41,7 @@ ROUTER_TOOLS = frozenset({
 })
 ```
 
-Direct actions outside these four (`open_app`, `type_text`, `search_web`, `remember`, `whoami`) belong in the Sub-Jarvis tier — the router delegates them via `spawn_sub_jarvis`.
+Direct actions outside these four (`open_app`, `type_text`, `search_web`, `remember`, `whoami`) belong in the Jarvis-Agent tier — the router delegates them via `spawn_sub_jarvis`.
 
 ### 2. Deterministic force-spawn heuristic
 
@@ -78,7 +78,7 @@ DO-NOT-SPAWN — antworte direkt, WENN:
 
 ### 4. D9 recursion guard (unchanged, now explicitly tested)
 
-`spawn-sub-jarvis` must NEVER land in `SUB_TOOLS` — a Sub-Jarvis cannot recursively spawn new Sub-Jarvis instances. Master plan §6 D9. Test: `test_spawn_sub_jarvis_only_in_router_tools`.
+`spawn-sub-jarvis` must NEVER land in `SUB_TOOLS` — a Jarvis-Agent cannot recursively spawn new Jarvis-Agent instances. Master plan §6 D9. Test: `test_spawn_sub_jarvis_only_in_router_tools`.
 
 ## Consequences
 
@@ -129,9 +129,9 @@ SELF_MOD_TOOL_NAMES_ROUTER = frozenset({
 
 | Tool | Phase | Rationale | Recursion guard? |
 |---|---|---|---|
-| `dispatch-to-harness` | 5 (final state) | Main Jarvis needs the direct harness path without Sub-Jarvis spawn latency. Use case: the user asks "What do you see on the screen?" → Main Jarvis calls `screen-snapshot` and immediately `dispatch-to-harness` with the observation output to a coding harness, without triggering the 30-min-hard-cap Sub-Jarvis spawn. | n/a — the tool is not self-recursive. |
-| `dispatch-with-review` | 8.4 (Plan §6.4 quality-gate pipeline) | Main Jarvis calls the review pipeline explicitly. The pipeline worker IS itself a Sub-Jarvis-equivalent construct; if a Sub-Jarvis could in turn call `dispatch-with-review`, it would spawn the pipeline worker, which is again a Sub-Jarvis → a recursion vector analogous to `spawn-sub-jarvis`. | **Yes** — `SUB_TOOLS` does **not** contain the tool. Test: `test_recursive_tools_only_in_router` (`tests/unit/brain/test_routing.py`). |
-| `list_mutable_settings`, `get_config_value`, `set_config_value` | 7.3 (Plan §AD-2 self-mod) | Setting mutation may only be triggered by the main-Jarvis tier. A Sub-Jarvis worker (Opus 4.7) would carry too high a privilege-escalation potential. The tools are registered directly in the loader (not via entry_points), so an accidental sub-tier activation through entry_points discovery is ruled out. | **Yes** — the tools are hardcoded main-Jarvis-only. |
+| `dispatch-to-harness` | 5 (final state) | Main Jarvis needs the direct harness path without Jarvis-Agent spawn latency. Use case: the user asks "What do you see on the screen?" → Main Jarvis calls `screen-snapshot` and immediately `dispatch-to-harness` with the observation output to a coding harness, without triggering the 30-min-hard-cap Jarvis-Agent spawn. | n/a — the tool is not self-recursive. |
+| `dispatch-with-review` | 8.4 (Plan §6.4 quality-gate pipeline) | Main Jarvis calls the review pipeline explicitly. The pipeline worker IS itself a Jarvis-Agent-equivalent construct; if a Jarvis-Agent could in turn call `dispatch-with-review`, it would spawn the pipeline worker, which is again a Jarvis-Agent → a recursion vector analogous to `spawn-sub-jarvis`. | **Yes** — `SUB_TOOLS` does **not** contain the tool. Test: `test_recursive_tools_only_in_router` (`tests/unit/brain/test_routing.py`). |
+| `list_mutable_settings`, `get_config_value`, `set_config_value` | 7.3 (Plan §AD-2 self-mod) | Setting mutation may only be triggered by the main-Jarvis tier. A Jarvis-Agent worker (Opus 4.7) would carry too high a privilege-escalation potential. The tools are registered directly in the loader (not via entry_points), so an accidental sub-tier activation through entry_points discovery is ruled out. | **Yes** — the tools are hardcoded main-Jarvis-only. |
 
 ### What does NOT break the mandate-spirit guarantees
 
@@ -143,7 +143,7 @@ SELF_MOD_TOOL_NAMES_ROUTER = frozenset({
 ### When the appearance of drift becomes a real violation
 
 - A **direct action** migrates into `ROUTER_TOOLS` (e.g. `open-app`). → Mandate violation; the ROUTER would again know direct actions, which we already had on 2026-04-23.
-- A **recursion-vector** tool migrates into `SUB_TOOLS`. → D9 violation; a Sub-Jarvis could recursively spawn.
+- A **recursion-vector** tool migrates into `SUB_TOOLS`. → D9 violation; a Jarvis-Agent could recursively spawn.
 - `_should_force_sub_jarvis` is replaced by an LLM pre-classifier. → ADR-0011 "Alternatives Considered" explicitly rejected this; a code re-introduction would be worth a new ADR.
 
 If none of these three points occurs, the extension of the tool set is by definition within the pure-dispatcher corridor.
@@ -183,7 +183,7 @@ single `cli_<name>` tool. Adding `cli-tools` to `ROUTER_TOOLS` is the fix.
 
 | Tool | Phase | Rationale | Recursion guard? |
 |---|---|---|---|
-| `cli-tools` | CLI integration | Each expanded `cli_<name>` tool is a **direct, safety-gated action** (the user wants "list my GCP projects" answered, not delegated to a 30-min worker spawn). It is the MCP/plugin model for command-line tools. Per-CLI risk patterns (`spec.risk.{whitelist,blacklist}_patterns`) flow into the `RiskTierEvaluator` via `make_cli_patterns_fn`. | **n/a as a recursion vector** — a `cli_<name>` tool runs a subprocess, it cannot spawn the supervisor. It is router-tier only and never enters any worker tool-set (AP-5/AP-14); the deleted Sub-Jarvis tier / `SUB_TOOLS` cannot re-acquire it. |
+| `cli-tools` | CLI integration | Each expanded `cli_<name>` tool is a **direct, safety-gated action** (the user wants "list my GCP projects" answered, not delegated to a 30-min worker spawn). It is the MCP/plugin model for command-line tools. Per-CLI risk patterns (`spec.risk.{whitelist,blacklist}_patterns`) flow into the `RiskTierEvaluator` via `make_cli_patterns_fn`. | **n/a as a recursion vector** — a `cli_<name>` tool runs a subprocess, it cannot spawn the supervisor. It is router-tier only and never enters any worker tool-set (AP-5/AP-14); the deleted Jarvis-Agent tier / `SUB_TOOLS` cannot re-acquire it. |
 
 ### Pure-Dispatcher spirit is preserved
 
@@ -191,7 +191,7 @@ A `cli_<name>` tool is not a generic direct-action like `open_app`/`type_text`
 (those stay off the router by design). It is a **gated external-system call**
 with a declared binary, declared risk tier, and per-CLI allow/deny patterns —
 architecturally the same shape as the existing `dispatch-to-harness`
-meta-action: the router calls it directly instead of forcing a Sub-Jarvis spawn,
+meta-action: the router calls it directly instead of forcing a Jarvis-Agent spawn,
 avoiding the spawn-latency tax for read-only CLI queries.
 
 ### Live-reload contract
@@ -255,7 +255,7 @@ desktop.
 type / key inside the loop is gated through the `ToolExecutor` risk tiers
 (ADR-0008). It is **not** a spawn — it cannot re-enter the supervisor, so it
 carries no D9 recursion risk and never enters a worker tool-set (AP-5/AP-14).
-It is router-tier only; the deleted Sub-Jarvis tier / `SUB_TOOLS` cannot
+It is router-tier only; the deleted Jarvis-Agent tier / `SUB_TOOLS` cannot
 re-acquire it.
 
 ### Regression guards
@@ -394,7 +394,7 @@ Three tools join the router set so the brain has a complete grip on the Desktop
 App configuration by voice/chat:
 
 - `describe-app-settings` (safe, read-only) - a complete, secret-free snapshot:
-  the active brain/TTS/STT/subagent provider (and which have a stored key), the
+  the active brain/TTS/STT/Jarvis-Agent provider (and which have a stored key), the
   key settings, and the configured MCP servers. The "full overview" capability.
 - `switch-provider` (ask, echo-confirm) - switch *which* provider is active for a
   tier ("switch from Grok to Gemini"). Reuses the exact 3-layer persist +
@@ -681,3 +681,81 @@ the live `BrainManager.refresh_tools()` consumes to re-expand `mcp-tools`
 - `tests/unit/brain/test_routing.py::test_mcp_tools_is_router_only_not_a_spawn`
 - `tests/unit/brain/test_routing.py::test_router_tools_is_pure_dispatcher_set`
   (exact-match set updated to include `mcp-tools`)
+
+## Amendment — Marketplace native tools `gmail`, `vercel`, `google_calendar`
+
+A connected marketplace plugin that has **no MCP server block** (so the virtual
+`mcp-tools`/`plugin-tools` loaders expand to nothing for it) must be made
+router-visible **directly**, or a voice/chat command can never reach it. Three
+such native tools are in `ROUTER_TOOLS`:
+
+| Tool | Added | Backing | Risk | Recursion guard? |
+|---|---|---|---|---|
+| `gmail` | 2026-06-01 | Gmail REST API via the marketplace OAuth token | `ask` (send is consequential; reads downgrade to `safe` via `risk_tier_for_args`) | n/a — a direct REST call, not a spawn; router-tier only (AP-5/AP-14) |
+| `vercel` | 2026-06-07 | Vercel REST API via the marketplace PAT | `monitor` (read-only) | n/a — direct REST call, never a spawn |
+| `google_calendar` | 2026-06-27 | Google Calendar API v3 via a **Node bot** (`calendar_bot.mjs`); a thin Python bridge reuses the marketplace OAuth token + refresh loop | `monitor` (writes), `safe` (reads) via `risk_tier_for_args` — **full autonomy, never `ask`** (user mandate) | n/a — the bridge runs a short-lived `node` subprocess for one API call, it cannot spawn the supervisor; router-tier only, never enters a worker set (AP-5/AP-14) |
+
+Same spirit as `cli-tools`: a **gated external-system call** with a declared
+risk tier and the marketplace token model — not a generic direct-action like
+`open_app`/`type_text` (those stay off the router by design). The token never
+expires in practice because the bridge self-heals on a 401 (refresh once +
+retry) and the `RefreshScheduler` keeps the refresh token warm.
+
+### Regression guards
+
+- `tests/unit/plugins/tool/test_google_calendar_rest.py` — 13 cases: per-action
+  payloads, 401 → one refresh + retry, no action is ever `ask` (full autonomy),
+  graceful "not connected" / "node missing".
+- `tests/unit/brain/test_routing.py::test_router_tools_is_pure_dispatcher_set`
+  (exact-match set updated to include `google_calendar`).
+
+## Amendment — `dispatch-to-harness` removed from the LLM-visible router set (2026-06-28)
+
+**Forensic.** A user said by voice, in effect, *"start a subagent that writes me
+a study sheet."* Jarvis replied: *"the harness 'openclaw' is not available;
+active are only mcp-remote, open-interpreter, python-script and screenshot."*
+The brain had chosen `dispatch_to_harness(harness="openclaw", …)` instead of
+`spawn_worker`. `HarnessManager.get("openclaw")` raised a `KeyError`, and its raw
+message — including the internal active/failed harness inventory — was read
+aloud.
+
+**Root cause.** `dispatch-to-harness` exposed a free-form `harness` string
+parameter and its description advertised *"OpenClaw, Codex, Python-Script, MCP"*
+as Jarvis-Agent vehicles. But OpenClaw is **not a registered harness** — it was
+removed in Welle 4 (~92% nested-claude hang; see `docs/BUGS.md`), and
+`pyproject.toml` registers only `open-interpreter`, `mcp-remote`,
+`python-script`, `screenshot`. So a "Jarvis-Agent" turn could name a phantom harness
+that can never run. The capability surface compounded it: `tool.spawn-worker`
+was described as *"Spawn an OpenClaw sub-agent"* and a separate
+`harness.openclaw` capability advertised the dead vehicle.
+
+**Decision.** `dispatch-to-harness` is **removed from `ROUTER_TOOLS`** — it is no
+longer an LLM-selectable tool. The two legitimate paths are unchanged and
+sufficient:
+
+- **heavy Jarvis-Agent work → `spawn-worker`** (Mission-Manager → `ClaudeDirectWorker`);
+- **live desktop control → `computer-use`**.
+
+The `DispatchToHarnessTool` class is **retained** for the internal, non-LLM
+local-action / computer-use fast path (`_load_local_action_tools`, invoked
+programmatically with a registered harness name). It is just not router-visible.
+Do **not** re-add it to `ROUTER_TOOLS` — that resurrects the phantom-openclaw
+routing bug.
+
+Companion changes: the dead `tool.dispatch-to-harness` and `harness.openclaw`
+capabilities are deleted from the seed; `tool.spawn-worker` is re-described
+(*"Spawn a background worker sub-agent"*) with its `openclaw` verbs/objects
+removed; the `HarnessManager.get()` / `dispatch_to_harness` error paths no longer
+leak the raw harness inventory into a message that can reach voice; and the boot
+path logs a warning when an inert `[harness.openclaw].enabled = true` block is
+present (`warn_if_phantom_openclaw`).
+
+### Regression guards
+
+- `tests/unit/brain/test_routing.py::test_dispatch_to_harness_not_in_router_tools`
+- `tests/unit/brain/test_routing.py::test_subagent_request_forces_spawn_worker`
+- `tests/unit/brain/test_routing.py::test_router_tools_is_pure_dispatcher_set`
+  (exact-match set updated — `dispatch-to-harness` removed)
+- `tests/unit/core/test_capabilities.py::test_dispatch_to_harness_capability_removed`
+  / `::test_no_capability_advertises_openclaw` / `::test_harness_adapters_present`
+- `tests/integration/test_dispatch_to_harness.py::test_unknown_harness_returns_neutral_error_no_inventory_leak`

@@ -24,7 +24,7 @@ Two read-only deep-dive agents (code-path tracer + runtime forensics on the live
 
 **Root cause #3 — latent landmines (not currently firing):** `_collect_vision_images` is awaited with **no timeout** (`manager.py:2682`); `openai`/`grok`/`openrouter` clients use the SDK default **600 s** read timeout (`openai.py:31`, `grok.py:39`, `openrouter.py:36`) — a hung backup provider could hold a turn for up to 90 s (stall ceiling) today and far longer if the stall guard were ever bypassed.
 
-**Root cause #4 — structural (aligns with user intent):** Computer-Use is awaited INLINE on the voice path for up to 31 s (`manager.py:2086`, `harness_timeout_s + 1.0`). The user's stated design is "complex → sub-agents / Computer-Use in the background." It should ACK + offload, never block the spoken turn.
+**Root cause #4 — structural (aligns with user intent):** Computer-Use is awaited INLINE on the voice path for up to 31 s (`manager.py:2086`, `harness_timeout_s + 1.0`). The user's stated design is "complex → Jarvis-Agents / Computer-Use in the background." It should ACK + offload, never block the spoken turn.
 
 ---
 

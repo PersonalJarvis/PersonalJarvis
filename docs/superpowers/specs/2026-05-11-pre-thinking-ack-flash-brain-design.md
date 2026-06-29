@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-11, persona-prompt section revised 2026-05-13
 **Status:** Brainstorm complete, persona prompts v2
-**Owner:** RubenLütke (driver) + Claude (architect)
+**Owner:** AlexMaintainer (driver) + Claude (architect)
 **Supersedes:** `docs/superpowers/specs/2026-05-10-context-rich-preamble-design.md` (Router-Extended approach — explicitly rejected by driver in favor of a separate, provider-pluggable Flash-Brain)
 **Revision history:**
 - 2026-05-13: §1 example, §4 persona-prompts, and §5 behavior matrix rewritten. The original §4 used 8 few-shot examples per language; in practice this caused mode-collapse: the LLM reproduced the example phrases ("Lass mich kurz nachschauen", "Mache ich") regardless of whether they fit the actual user utterance. Driver explicitly identified two failure cases ("Wann wurde Einstein geboren?" → "Jawohl Sir", "Wann ist Montag?" → "Mache ich") as evidence that few-shot priming defeats the contextual-acknowledgment goal. The revised §4 uses rules + negative examples only, no positive template phrases, and adds an explicit "stay silent" branch for smalltalk and quick factual questions.
@@ -54,22 +54,22 @@ Counter-example for the same kind of question that should NOT trigger an ack:
 ## 2. User Stories
 
 **US-1 (the Albel case — knowledge questions must not get action-acks):**
-> As Ruben, when I ask Jarvis a factual question, I want the acknowledgment to match the question shape ("Lass mich kurz nachschauen") and not the tool that the router happens to dispatch behind the scenes. The acknowledgment's tonality must come from my utterance, not from the router's tool choice.
+> As Alex, when I ask Jarvis a factual question, I want the acknowledgment to match the question shape ("Lass mich kurz nachschauen") and not the tool that the router happens to dispatch behind the scenes. The acknowledgment's tonality must come from my utterance, not from the router's tool choice.
 
 **US-2 (heavy task — the motivating long-latency case):**
-> As Ruben, when I ask for a long research or build task, I want to hear within ~1 second that Jarvis understood and started, with the topic named if reasonable. The 5-30 s gap until the real answer must feel like deliberate work, not silent confusion.
+> As Alex, when I ask for a long research or build task, I want to hear within ~1 second that Jarvis understood and started, with the topic named if reasonable. The 5-30 s gap until the real answer must feel like deliberate work, not silent confusion.
 
 **US-3 (smalltalk and short interactions):**
-> As Ruben, when I say "Hallo Jarvis" or "wie geht's", I want a brief, natural acknowledgment from Jarvis — same persona, same voice — without it sounding like a robotic preamble. The Flash-Brain is the only entity that speaks on every turn.
+> As Alex, when I say "Hallo Jarvis" or "wie geht's", I want a brief, natural acknowledgment from Jarvis — same persona, same voice — without it sounding like a robotic preamble. The Flash-Brain is the only entity that speaks on every turn.
 
 **US-4 (silence is golden on failure):**
-> As Ruben, when the Flash-Brain hits a timeout, provider error, scrub-empty, or any other failure, I want nothing to be spoken from the ack path. The main brain still answers. A generic "Verstanden, ich kümmere mich darum." across all my requests was exactly the failure mode of the previous template-based attempt; it must never come back.
+> As Alex, when the Flash-Brain hits a timeout, provider error, scrub-empty, or any other failure, I want nothing to be spoken from the ack path. The main brain still answers. A generic "Verstanden, ich kümmere mich darum." across all my requests was exactly the failure mode of the previous template-based attempt; it must never come back.
 
 **US-5 (provider flexibility):**
-> As Ruben, when a new fast LLM (Grok-4-Flash, Gemini 3.1 Flash, GPT-5-mini, Groq-Llama) comes out, I want to be able to switch the Flash-Brain to it through configuration alone, without touching the rest of Jarvis. Default should never be on a deprecated model (Gemini 2.5 Flash is out as of today).
+> As Alex, when a new fast LLM (Grok-4-Flash, Gemini 3.1 Flash, GPT-5-mini, Groq-Llama) comes out, I want to be able to switch the Flash-Brain to it through configuration alone, without touching the rest of Jarvis. Default should never be on a deprecated model (Gemini 2.5 Flash is out as of today).
 
 **US-6 (TTS-agnostic):**
-> As Ruben, whichever TTS provider I have configured (Gemini-TTS, Grok-Voice, ElevenLabs, etc.), the Flash-Brain's spoken output must use **that same provider and same voice** — never a hardcoded different one. The user-perceived voice identity must remain constant across ack and main response.
+> As Alex, whichever TTS provider I have configured (Gemini-TTS, Grok-Voice, ElevenLabs, etc.), the Flash-Brain's spoken output must use **that same provider and same voice** — never a hardcoded different one. The user-perceived voice identity must remain constant across ack and main response.
 
 ---
 
@@ -420,7 +420,7 @@ A 10-utterance smoke battery against the v2.1 prompt (Grok-4-Fast-Non-Reasoning 
 | Pattern | Cases | v2.1 outcome |
 |---|---|---|
 | Smalltalk → silent | "Wie geht's dir?" | PASS (`""`) |
-| Smalltalk → silent | "Hallo Jarvis" | FAIL — got `"Hallo Ruben."` (greeting echo) |
+| Smalltalk → silent | "Hallo Jarvis" | FAIL — got `"Hallo Alex."` (greeting echo) |
 | Quick factual → silent | Einstein, Italy capital | PASS for both (`""`) |
 | Quick factual → silent | "Wann ist Montag?" | FAIL — got next-Monday date |
 | Voice control → silent | "Sei still" | PASS (`""`) |
@@ -642,5 +642,41 @@ Five scripted utterances per language replayed via simulated STT-final, audio re
 - **ADR-0011 (Router-Discipline)** — `docs/adr/0011-router-pure-dispatcher.md`. The Flash-Brain is **outside** the Router's responsibility. The Router stays a pure dispatcher; the Flash-Brain handles persona narration. Clean separation of concerns.
 - **`jarvis/brain/output_filter.py:scrub_for_voice`** — 40-case blacklist applies to every Flash-Brain output. "OpenClaw" is allowed; "Subagent" / "Worker" / "Sir" / "Sehr wohl" are blocked.
 - **`jarvis/missions/voice/announcer.py`** — MissionAnnouncer is the sibling pattern. It also publishes `AnnouncementRequested` events; the Flash-Brain reuses the same bus event + handler. Two producers, one consumer.
+
+---
+
+## 11. Amendment 2026-06-29 — name-neutral persona, em-dash removal, Spanish
+
+Part of the voice-response-behaviour rework (plan: *Jarvis Voice Response
+Behaviour: a single, natural, editable system prompt*). The persona constants in
+`persona_prompt.py` and `spawn_announcement.py` are amended; this section is the
+authoritative record so the file-vs-spec invariant in `persona_prompt.py`'s
+module docstring still holds.
+
+1. **Name-neutral.** The opener "Du bist JARVIS" / "You are JARVIS" is replaced
+   by "Du bist der persönliche Assistent des Nutzers" / "You are the user's
+   personal assistant". The assistant's own name is runtime-derived from the wake
+   word (`assistant_name.py`) and owned by the deep brain; the Flash-Brain
+   preamble no longer bakes in a product name. The `ALLOWED` list's literal
+   "Jarvis" becomes "dein eigener Name" / "your own name". This aligns the
+   Flash-Brain with the project-wide name-neutrality change (the persona files
+   `SOUL.md` / `JARVIS_PERSONA.md` are also name-neutral as of this date).
+
+2. **Em dashes removed.** Every "—" in the persona constants is replaced by a
+   comma or a full stop, matching the new spoken-output rule (an em dash renders
+   as a hard TTS pause). `scrub_for_voice` also strips stray em dashes as a
+   backstop.
+
+3. **Spanish preamble added.** `PERSONA_PROMPT_ES` is added to `persona_prompt.py`
+   and `_normalise_language` / `get_persona_prompt` now resolve `es` natively,
+   closing the documented de/en-only gap for the pre-thinking preamble. The
+   **spawn-announcement** persona stays de/en (its `es` path is still served by
+   the curated deterministic fallback pool, unchanged); a native
+   `SPAWN_PERSONA_ES` remains a tracked follow-up.
+
+4. **Unchanged.** The functional contract is untouched: never answer on
+   substance, the forbidden-vocabulary and forbidden-action-promise lists
+   (verbatim, asserted by `tests/unit/brain/test_routing.py`), the "stay silent"
+   branches, and the one-sentence / max-12-words ceiling.
 - **Previous spec — `docs/superpowers/specs/2026-05-10-context-rich-preamble-design.md`** — Router-Extended approach, superseded by this one at driver's explicit request. Retained for design-history context.
 - **BUG-006 / BUG-014** — When deploying, remember the four-layer restore trap (`docs/BUGS.md`). The editable install can pin to a stale clone, in which case the feature ships in code but not at runtime. Verify with `python -c "import jarvis; print(jarvis.__file__)"` after install.

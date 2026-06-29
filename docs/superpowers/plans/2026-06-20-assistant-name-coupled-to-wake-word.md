@@ -245,10 +245,10 @@ def test_set_wake_word_strips_legacy_persona_name(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    config_writer.set_wake_word("Hey Ruben", path=toml)
+    config_writer.set_wake_word("Hey Alex", path=toml)
 
     text = toml.read_text(encoding="utf-8")
-    assert "Hey Ruben" in text
+    assert "Hey Alex" in text
     # The stale identity override is gone; the wake word is now the single source.
     assert "Josef" not in text
 
@@ -433,7 +433,7 @@ import { deriveAssistantName } from "./deriveAssistantName";
 
 describe("deriveAssistantName", () => {
   it("strips a wake prefix and title-cases", () => {
-    expect(deriveAssistantName("Hey Ruben")).toBe("Ruben");
+    expect(deriveAssistantName("Hey Alex")).toBe("Alex");
     expect(deriveAssistantName("hey computer")).toBe("Computer");
     expect(deriveAssistantName("ok friday")).toBe("Friday");
     expect(deriveAssistantName("Micron")).toBe("Micron");
@@ -798,7 +798,7 @@ Expected: both green — `ONBOARDING_STEPS` (8 steps, no `persona-theme`) matche
 
 After a `POST /api/settings/restart-app`:
 1. Settings → the "Assistant Name" panel is gone; the Wake-Word panel shows "Your assistant will be called: X" live as the phrase is edited.
-2. Set the wake word to "Hey Ruben"; confirm the Sidebar header / chat byline read "Ruben" after the change propagates.
+2. Set the wake word to "Hey Alex"; confirm the Sidebar header / chat byline read "Alex" after the change propagates.
 3. Replay onboarding via `?onboarding=force`; confirm there is no separate name step and the wake-word step shows the derived-name preview.
 
 ---

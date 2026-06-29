@@ -6,11 +6,11 @@
 
 ## Problem
 
-A user wants to chat with the assistant — and through it, OpenClaw workers — from
+A user wants to chat with the assistant — and through it, Jarvis-Agent workers — from
 Discord and Telegram. The bidirectional channel adapters that make this possible
 already exist (`jarvis/channels/{discord,telegram}.py`) and are fully wired into
 the brain/worker pipeline through `ChannelChatBridge` → `MessageSent` →
-`BrainManager.generate` (force-spawn → OpenClaw) → `ResponseGenerated` → channel
+`BrainManager.generate` (force-spawn → Jarvis-Agents) → `ResponseGenerated` → channel
 outbound. But the feature is hard to reach and inconsistent:
 
 1. **Telegram** is wired into the Plugins UI: pasting a bot token calls
@@ -23,7 +23,7 @@ outbound. But the feature is hard to reach and inconsistent:
    gateway — two systems fighting over one bot token.
 3. There is no way, from the UI, to lock either bot to the owner only. The channel
    default is trust-on-first-contact (`pair_on_first_dm` / `pair_on_first_private_message`),
-   which is unsafe for a bot that can trigger real OpenClaw actions.
+   which is unsafe for a bot that can trigger real Jarvis-Agents actions.
 
 ## Goal
 
@@ -43,7 +43,7 @@ and disconnecting should reverse all of it (stop the live bot + disable + clear 
 - No new "send an arbitrary Discord message" tool. Discord becomes a chat channel
   exactly like Telegram; the `mcp-discord` server is removed to avoid the
   double-gateway conflict (AD-3).
-- No change to the brain/worker/OpenClaw path. Everything routes through the existing
+- No change to the brain/worker/Jarvis-Agents path. Everything routes through the existing
   EventBus; we only turn the channel on/off.
 
 ## Approach (A — targeted single-channel live restart)

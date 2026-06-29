@@ -3,18 +3,18 @@
 **Status:** Draft
 **Date:** 2026-04-21
 **Scope:** L7 UI/UX layer for Personal Jarvis (desktop app)
-**Related:** Master plan `C:\Users\Administrator\.claude\plans\also-er-muss-auch-lexical-pond.md`
+**Related:** Master plan `<USER_HOME>\.claude\plans\also-er-muss-auch-lexical-pond.md`
 
 ---
 
 ## 1. Overview & Philosophy
 
-Jarvis becomes a Windows desktop app — **voice-first, but fully observable and operable visually**. It is not a classic chat client with a microphone button, but a *conductor interface*: the user talks to a single persona that orchestrates multiple sub-agents and CLI tools (OpenClaw, Codex, Open Interpreter, MCP servers) in the background. The UI makes the invisible visible — without overwhelming.
+Jarvis becomes a Windows desktop app — **voice-first, but fully observable and operable visually**. It is not a classic chat client with a microphone button, but a *conductor interface*: the user talks to a single persona that orchestrates multiple Jarvis-Agents and CLI tools (OpenClaw, Codex, Open Interpreter, MCP servers) in the background. The UI makes the invisible visible — without overwhelming.
 
 **Core principles:**
 
 1. **Voice-first, visual-always-available** — every voice action has a visual counterpart (transcription, agent status, decisions visible live). The user *does not have to* look, but *can* at any time.
-2. **One-mouth-many-hands** — only Jarvis speaks (one voice, one persona). Sub-agents communicate exclusively visually.
+2. **One-mouth-many-hands** — only Jarvis speaks (one voice, one persona). Jarvis-Agents communicate exclusively visually.
 3. **Autopilot with override** — Jarvis can open/edit any UI section by voice (*"Wechsel Brain auf Gemini"* (switch Brain to Gemini) → sidebar navigation + quick-swap run automatically). Manual operation remains possible at any time.
 4. **Global default, project-sticky on demand** — a tray service always runs. *"Jarvis, arbeite in Ordner X"* (Jarvis, work in folder X) pins the context until the user releases it.
 5. **The frontend is a privileged client, not a monolith** — the core engine (Python + FastAPI) and the desktop app (pywebview + React) communicate via WebSocket. The same protocol can later serve a TUI, a mobile app, or other clients; the desktop app is the primary, but not the only possible, client.
@@ -104,7 +104,7 @@ All sections can be invoked by voice via the `NavigateSidebar(section=...)` even
 | # | Icon | Section | Content |
 |---|------|---------|--------|
 | 1 | 💬 | **Chats** | Conversation list (like Claude Desktop), searchable. Voice and text turns mixed. Each chat has a title (auto-generated), date, pin option. Main view: message list + ChatInput at the bottom. First view on app start. |
-| 2 | 👥 | **Agents** | Live tiles of the currently active sub-agents. Per agent: role (Planner/Coder/Researcher), status (running/waiting/done/error), streaming output (last lines), kill/pause button. Count of active agents as a badge on the sidebar entry. |
+| 2 | 👥 | **Agents** | Live tiles of the currently active Jarvis-Agents. Per agent: role (Planner/Coder/Researcher), status (running/waiting/done/error), streaming output (last lines), kill/pause button. Count of active agents as a badge on the sidebar entry. |
 | 3 | 🧩 | **Skills** | Plugin registry from `importlib.metadata` entry-points. Grouped by `jarvis.wakeword` / `.stt` / `.tts` / `.brain` / `.harness` / `.tool`. Per plugin: name, version, active toggle, config button. Default tier (`safe`/`monitor`/`ask`/`block`) visible. |
 | 4 | 🔌 | **MCPs** | MCP server list (configured via `jarvis.toml`). Per server: name, status (connected/disconnected/error), start/stop/restart, discovered tools list, health-check button. |
 | 5 | 🌍 | **Languages** | Bilingual config. DE/EN auto-detect is the default (per memory). Per-session override (*"Jarvis, answer in English"*). Configured default language visible. Voice language separate from UI language. |
@@ -131,7 +131,7 @@ All events in `jarvis.core.events`, mirrored as TypeScript interfaces in the fro
 
 - `NavigateSidebar(section: str)` — switch the sidebar selection
 - `SwapBrainProvider(name: str)` — switch the active Brain provider
-- `AgentCommand(agent_id: str, cmd: "kill" | "pause" | "resume")` — control a sub-agent
+- `AgentCommand(agent_id: str, cmd: "kill" | "pause" | "resume")` — control a Jarvis-Agent
 - `PinProjectScope(path: str | None)` — pin/release the project context (None = global)
 - `TranscriptionUpdate(text: str, is_final: bool)` — live STT results
 - `AgentStateChange(agent_id: str, state: AgentState)` — status updates
@@ -149,7 +149,7 @@ Every autopilot action shows a subtle toast notification (*"Jarvis: Skills geöf
 
 - **Sidebar top** — voice-status badge (Idle / Listening / Thinking / Speaking), color-animated
 - **Sidebar top** — last transcription as a single line (live, 2s auto-fade after the end)
-- **Sidebar agents** — badge with the count of active sub-agents
+- **Sidebar agents** — badge with the count of active Jarvis-Agents
 - **Sidebar bottom** — current Brain provider (name + colored dot), click → quick-swap
 - **Toast layer** (top right) — autopilot notifications, errors, approval requests
 

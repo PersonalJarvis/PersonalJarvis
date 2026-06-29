@@ -1,4 +1,4 @@
-# Codex Connector — Brain-Provider Card + Subagent Activation
+# Codex Connector — Brain-Provider Card + Jarvis-Agent Activation
 
 **Date:** 2026-06-07
 **Status:** Implemented + reviewed (APPROVE). See Amendment A1.
@@ -6,10 +6,10 @@
 
 ---
 
-## Amendment A1 (2026-06-07, post-approval) — full Brain×Subagent matrix
+## Amendment A1 (2026-06-07, post-approval) — full Brain×Jarvis-Agent matrix
 
 After the design was approved, the maintainer extended the requirement: Brain
-and Subagent must be **independently selectable in all combinations**, including
+and Jarvis-Agent must be **independently selectable in all combinations**, including
 **Codex as a Brain provider** (e.g. brain=Codex + subagent=Gemini). This
 **reverses decision D2** ("upper card = connection only"): Codex is now a
 **first-class brain provider**, not connection-only.
@@ -23,22 +23,22 @@ Auth split (validated live against the maintainer's real Codex):
 - **Codex-as-Brain** uses an **OpenAI API key** (`codex_openai_api_key`). A chat
   brain cannot use the ChatGPT OAuth. `/api/brain/switch` requires the key for
   codex (clear 409 otherwise) — no silent first-turn failure.
-- **Codex-as-Subagent** uses the **ChatGPT subscription (OAuth)** OR an API key.
+- **Codex-as-Jarvis-Agent** uses the **ChatGPT subscription (OAuth)** OR an API key.
 
 New work beyond the original spec:
 - `jarvis/plugins/brain/codex.py` rebuilt (OpenAI chat brain on the codex key);
   the `!= "codex"` bypass in `brain_switch` removed (codex is a real plugin now).
 - Codex brain card keeps its "Activate" radio (it IS a brain) — the planned
   radio-removal in §4.2 is **dropped**.
-- Single source of truth for the codex subagent slugs:
+- Single source of truth for the codex Jarvis-Agent slugs:
   `provider_map.CODEX_SUBAGENT_SLUGS` / `CODEX_SUBAGENT_CANONICAL`, imported by
   all four sites (switch endpoint, app_control, worker selector, env builder)
   + an object-identity parity test (BUG-008 hardening).
 
 Verification: 949 backend tests + 128 vitest green; ruff clean on new code; live
-API smoke confirms the brain card, subagent row, and subagent switch all work
+API smoke confirms the brain card, Jarvis-Agent row, and Jarvis-Agent switch all work
 against the maintainer's real `codex login` (mode=chatgpt). Remaining hands-on:
-restart the app, activate Codex as subagent in the UI, run one real mission.
+restart the app, activate Codex as Jarvis-Agent in the UI, run one real mission.
 
 ---
 
@@ -51,12 +51,12 @@ ChatGPT/Codex agent CLI). Two distinct symptoms, two distinct root causes:
    dead. The card permanently shows *"Loading Codex status"* and clicking
    *Activate* raises a never-ending toast: *"OpenAI Codex: first connect Codex or
    save API key, then activate."*
-2. **Subagent list (lower list).** Codex does not appear at all — it cannot be
+2. **Jarvis-Agents list (lower list).** Codex does not appear at all — it cannot be
    selected as the heavy-task worker.
 
 The maintainer's goal: connect Codex **both** ways (login **and** API key), with
 the upper card used only to *connect*, and Codex doing real work **as the
-subagent**. The result must be **verified live**, not just in tests.
+Jarvis-Agent**. The result must be **verified live**, not just in tests.
 
 ## 2. Root-cause analysis (verified in code)
 
@@ -83,17 +83,17 @@ Because `jarvis/brain/app_control.py::is_credential_present` resolves the
 `False`, the card reports `configured == False` whenever the user relies on the
 login flow — which is exactly the repeated activation toast.
 
-### 2.2 Codex is absent from the subagent surface
+### 2.2 Codex is absent from the Jarvis-Agents surface
 
-The subagent section (`components/SubagentSection.tsx`) is rendered from
+The Jarvis-Agents section (`components/SubagentSection.tsx`) is rendered from
 `GET /api/openclaw/status` → `mapping_rows`, which is built by iterating
 `jarvis/missions/worker_runtime/provider_map.py::MAPPINGS`. `MAPPINGS` contains
 only `gemini, claude-api, openai, openrouter, grok`. **Codex has no row**, so no
 card is shown. `POST /api/subagent/switch` likewise validates against
 `JARVIS_TO_OPENCLAW` (derived from `MAPPINGS`) and rejects Codex with HTTP 404.
 
-This is *correct* in spirit: Codex is **not** an OpenClaw-routed provider — it has
-no OpenClaw provider slug and no shared ENV-var mapping. It is a **direct
+This is *correct* in spirit: Codex is **not** a Jarvis-Agents-routed provider — it has
+no Jarvis-Agents provider slug and no shared ENV-var mapping. It is a **direct
 worker**.
 
 ### 2.3 The Codex worker already exists and is OAuth-ready
@@ -117,18 +117,18 @@ endpoint key-check + persist) is missing. The worker currently **always strips**
 - **D2 — Upper card = connection only.** Codex is **not** a conversational router
   brain (no backend exists and it is the wrong tool — it is a coding agent). The
   upper card manages login + key + an honest status. Its misleading "Activate as
-  router brain" radio is removed and replaced by a hint pointing to the subagent
+  router brain" radio is removed and replaced by a hint pointing to the Jarvis-Agents
   section.
-- **D3 — Codex as subagent.** Codex becomes a selectable heavy-task worker in the
-  subagent list, reusing the connection/key from the upper card (no second key
+- **D3 — Codex as Jarvis-Agent.** Codex becomes a selectable heavy-task worker in the
+  Jarvis-Agents list, reusing the connection/key from the upper card (no second key
   input), with the same "Activate" radio as the other providers.
 - **D4 — Codex is a special case, not a `MAPPINGS` row** (rejected approach B).
-  Adding Codex to `MAPPINGS` would break the OpenClaw bridge contract
+  Adding Codex to `MAPPINGS` would break the Jarvis-Agents bridge contract
   (`to_provider_slug`, `validate_configured_providers`, env-var logic). Codex is
   surfaced as an explicit, additive special case in the status + switch
   endpoints.
 - **D5 — Live verification is part of "done".** A real `codex login` + a real
-  mini-mission executed by the Codex subagent must be observed.
+  mini-mission executed by the Codex Jarvis-Agent must be observed.
 
 ### Non-goals
 
@@ -206,8 +206,8 @@ service — they need **no signature change**, only the real service behind them
 
 - For `auth_mode === "codex"`, **do not render** the brain-tier "Activate" radio
   (`ActiveControl`). Replace with a one-line hint (new i18n key):
-  *"Codex runs as a subagent — activate it below."* / DE: *"Codex arbeitet als
-  Subagent — unten aktivieren."*
+  *"Codex runs as a Jarvis-Agent — activate it below."* / DE: *"Codex arbeitet als
+  Jarvis-Agent — unten aktivieren."*
 - The card keeps: status line (now populated by the real `message`/`version`/
   `mode`), the install hint + copy button (when not installed), the
   "Connect with ChatGPT" / "Disconnect" buttons, and the `codex_openai_api_key`
@@ -218,7 +218,7 @@ service — they need **no signature change**, only the real service behind them
 This removes the dead "activate as router brain" path entirely, so the
 never-ending toast cannot recur.
 
-### 4.3 Surface Codex in the subagent list
+### 4.3 Surface Codex in the Jarvis-Agents list
 
 **Canonical slug.** Store/display Codex as `"openai-codex"` (the value
 `_select_subagent_worker_kind` already accepts, alongside the alias `"chatgpt"`).
@@ -283,14 +283,14 @@ The worker env (`jarvis/missions/init.py::_env_builder` →
 `OPENAI_API_KEY`.
 
 > Primary verification target is the **OAuth/subscription** path (the maintainer's
-> "my Codex"). The API-key subagent path is supported but secondary.
+> "my Codex"). The API-key Jarvis-Agent path is supported but secondary.
 
 ## 5. Data & config touch-points (no new wire-format enum)
 
 - Secret slot: `codex_openai_api_key` (already in `wizard.SECRETS` / provider
   spec). Unchanged.
 - Config: `[codex].binary_path` (read by `_codex_binary_path`), and
-  `[brain.sub_jarvis].provider = "openai-codex"` for the subagent selection.
+  `[brain.sub_jarvis].provider = "openai-codex"` for the Jarvis-Agent selection.
   Both already exist; this change writes a new *value* (`"openai-codex"`), not a
   new key — so the five-layer enum parity scaffolding is **not** required (the
   set of accepted values lives in `_select_subagent_worker_kind` +
@@ -324,7 +324,7 @@ The worker env (`jarvis/missions/init.py::_env_builder` →
 5. `CodexDirectWorker` env — strips `OPENAI_API_KEY` when OAuth present, keeps it
    when only the API key is configured (parametrized).
 6. Frontend (vitest) — codex brain card renders **no** brain "Activate" radio +
-   shows the subagent hint; subagent list renders the Codex card.
+   shows the Jarvis-Agents hint; the Jarvis-Agents list renders the Codex card.
 7. Parity test pinning `CODEX_SUBAGENT_SLUGS` ↔ the slugs
    `_select_subagent_worker_kind` routes to `codex_direct`.
 
@@ -332,9 +332,9 @@ The worker env (`jarvis/missions/init.py::_env_builder` →
 - Open API Keys: Codex brain card shows real status (not "Loading…").
 - Click "Connect with ChatGPT" → complete `codex login` → card flips to
   "connected / ChatGPT".
-- Subagent list shows a Codex card → click "Activate" → success toast.
+- Jarvis-Agents list shows a Codex card → click "Activate" → success toast.
 - Restart voice/app, run a small mission ("create a file X with content Y") and
-  confirm the Codex subagent executes it (mission completes, file written).
+  confirm the Codex Jarvis-Agent executes it (mission completes, file written).
 - Record the outcome (this is required for "done" per D5).
 
 ## 8. Anti-patterns explicitly respected
@@ -344,7 +344,7 @@ The worker env (`jarvis/missions/init.py::_env_builder` →
   logs a full key.
 - **AP-7** config writes go through `config_writer` (`set_sub_jarvis_provider`,
   `set_codex_binary_path`).
-- **BUG-008 class** the two subagent-switch sites (`provider_routes` +
+- **BUG-008 class** the two Jarvis-Agent-switch sites (`provider_routes` +
   `app_control`) gain the codex branch together + a parity test.
 - **CLOUD.md Rule #1** cross-platform, graceful no-op when codex absent.
 
@@ -355,7 +355,7 @@ The worker env (`jarvis/missions/init.py::_env_builder` →
   `unknown`, never a crash.
 - **`codex login` under `pythonw.exe`** (no console): mitigated by spawning a new
   console; final spawn flags settled during the live test.
-- **API-key subagent path** depends on `codex exec` honoring `OPENAI_API_KEY`
+- **API-key Jarvis-Agent path** depends on `codex exec` honoring `OPENAI_API_KEY`
   when no OAuth is present — verified during the live test; the OAuth path is the
   primary target.
 - **Codex binary not installed** on the test machine → blocks live verification;

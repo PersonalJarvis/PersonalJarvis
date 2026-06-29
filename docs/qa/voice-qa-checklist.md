@@ -22,7 +22,7 @@ bug history says is most likely to quietly come back.
 
 - [ ] Restart the app cleanly via `POST /api/settings/restart-app`
       (`Stop-Process` returns *Access Denied* — the in-app endpoint is the reliable path).
-- [ ] Wake word triggers; the orb / whisper-bar reacts.
+- [ ] Wake word triggers; the orb / jarvis-bar reacts.
 - [ ] App log or chat transcript is visible — language, beheaded-turn and
       leaked-tool-output bugs are only obvious when you compare *what you said*
       against *what came back*.
@@ -65,7 +65,7 @@ bug history says is most likely to quietly come back.
 | D3 | "Open Discord." | Opens, English confirmation | Conjugation/alias + EN path | |
 | D4 | "Öffne den Rechner und tippe 5 mal 5." | Multi-step goal completes | CU planner for compound goals | |
 
-## E — Sub-agent missions (heavy work)
+## E — Jarvis-Agent missions (heavy work)
 
 | # | Say this | Pass criteria | Probes / red flag | Result |
 |---|----------|---------------|-------------------|--------|
@@ -124,7 +124,7 @@ Chain the subsystems the way real use does — the single best "is the whole thi
 - [ ] 3. "Okay, und merk dir bitte, dass ich morgen früh joggen gehen will." → memory write
 - [ ] 4. "Öffne Chrome und such nach Laufschuhen." → computer-use + navigate
 - [ ] 5. "Switch to English. Summarize what we just did." → language switch + context-aware recall
-- [ ] 6. "Schreib mir dazu ein kurzes Notiz-Skript." → heavy sub-agent mission
+- [ ] 6. "Schreib mir dazu ein kurzes Notiz-Skript." → heavy Jarvis-Agent mission
 - [ ] 7. *(while it runs)* hold-to-abort it → cancel
 
 A clean pass means greeting, search, memory, computer-use, mid-conversation language
