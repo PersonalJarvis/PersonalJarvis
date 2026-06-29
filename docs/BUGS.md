@@ -1,10 +1,10 @@
 ---
-title: Bug Register Sub-Agent Pipeline
+title: Bug Register Jarvis-Agent Pipeline
 date: 2026-04-29
-scope: Voice → Router → Sub-Jarvis-Spawn → Harness-Dispatch
+scope: Voice → Router → Jarvis-Agent-Spawn → Harness-Dispatch
 ---
 
-# Bug Register: Sub-Agent Pipeline (2026-04-29)
+# Bug Register: Jarvis-Agent Pipeline (2026-04-29)
 
 This register documents every root cause found and fixed around the
 "Spawn sub-agents." voice failures. Per bug: symptom (what the user hears),
@@ -805,7 +805,7 @@ Expected: speech unit suite green; a normal response ends with
       `speak`/`tool_call` actions terminate with `failed` + a clear
       error message. `after_delay`/`at_time` triggers work; the
       tasks view is fully functional. Voice/tool wiring comes in the
-      Phase-5 brain-tool step (`schedule_task` as a Sub-Jarvis tool).
+      Phase-5 brain-tool step (`schedule_task` as a Jarvis-Agent tool).
     - **Brain tool to create one is missing** — the voice command "Erinner mich in 2h" ("Remind me in 2 hours")
       does not work yet; tasks can currently only be created via REST
       (or a future form UI).
@@ -1468,7 +1468,7 @@ See also: `docs/anti-drift-three-layer.md` for the general pattern.
      additions.
   2. Closed two new gaps that grew in after the original fix:
      - `jarvis/core/paths.py:141` — `subprocess.run([...mklink...])` ran
-       without `creationflags` for every Sub-Agent-output session.
+       without `creationflags` for every Jarvis-Agent-output session.
      - `jarvis/missions/kontrollierer/orchestrator.py:517` —
        `subprocess.run(["git", "diff", "HEAD"])` ran without
        `creationflags` on every mission completion.
@@ -1770,7 +1770,7 @@ See also: `docs/anti-drift-three-layer.md` for the general pattern.
      to fail. A defensive `try/except ImportError` plus a fallback
      would have downgraded this to a soft warning instead of a backend
      crash. Worth considering for AD-15 in
-     `docs/openclaw-bridge.md` or its overlay equivalent.
+     `docs/jarvis-agents-bridge.md` or its overlay equivalent.
   3. **Server-hangs need lifecycle checks.** Inside
      `_run_backend`, the import of `start_overlay` happens between two
      `loop.run_until_complete` calls. Any exception there silently
@@ -1893,7 +1893,7 @@ have caught it.
   ``jarvis/sessions/recorder.py::_on_transcript_final`` always wrote
   ``current_turn.user_text = event.transcript.text`` and never closed
   the turn. Turn boundaries are normally drawn by ``_on_system_state``
-  on the SPEAKING→LISTENING transition, but in OpenClaw-routed turns
+  on the SPEAKING→LISTENING transition, but in Jarvis-Agents-routed turns
   the brain returns ``finish_reason="suppress_response"`` and the
   state goes THINKING→LISTENING (no SPEAKING). The auto-turn therefore
   stays open across every utterance in the session, and the text
@@ -2194,7 +2194,7 @@ Three decoupled layers each contribute independently:
    deep brain even runs.
 
 3. **Critic layer:** The Critic currently ratifies empty diffs for non-file
-   tasks (AD-9 in `docs/openclaw-bridge.md`). An OpenClaw worker can produce
+   tasks (AD-9 in `docs/jarvis-agents-bridge.md`). A Jarvis-Agent worker can produce
    `success=True` with no tool-call evidence, purely from a text claim. The
    Critic reads the worker's unverified assertion and signs it off.
 
@@ -2213,7 +2213,7 @@ analysis and the three-layer fix.
      with the deterministic response. The brain is never called.
    - `jarvis/brain/manager.py` — sibling `_capability_resolves(text)` check
      alongside `_should_force_openclaw`. If action-intent and no matching
-     capability and not smalltalk: skip brain + OpenClaw, emit UNSUPPORTED.
+     capability and not smalltalk: skip brain + Jarvis-Agent, emit UNSUPPORTED.
 
 3. **Dynamic system prompt.** The hardcoded `NUTZE: search_web` block is
    replaced with `registry.render_for_prompt(lang)`. If a capability is not
@@ -2227,7 +2227,7 @@ analysis and the three-layer fix.
 5. **Critic capability-honesty gate.** For capabilities with
    `requires_evidence=True`, `CriticVerdict.success=False` when no tool-call
    evidence is present. `summary_de` is derived from tool-call evidence, not
-   from the worker's unverified text claim. For Welle-2 mock OpenClaw (no
+   from the worker's unverified text claim. For Welle-2 mock Jarvis-Agents (no
    telemetry), the Critic defaults conservative-fail.
 
 ### Regression Test
@@ -2256,7 +2256,7 @@ pytest tests/integration/test_capability_coupling_e2e.py -v
 - [docs/plans/capability-coupling/EXTENSIBILITY.md](plans/capability-coupling/EXTENSIBILITY.md) — contributor guide for adding new capabilities.
 - `docs/anti-drift-three-layer.md` — cross-reference section comparing this
   pattern to the anti-drift and visible-feedback patterns.
-- AD-9 in `docs/openclaw-bridge.md` — Critic + risk-tier preconditions that
+- AD-9 in `docs/jarvis-agents-bridge.md` — Critic + risk-tier preconditions that
   BUG-028 exposes as insufficient for non-file tasks.
 
 ## BUG-029: Long dictation truncated — VAD 8 s max-utterance cut + no downstream accumulation (HIGH, 2026-05-24)
@@ -2341,9 +2341,9 @@ sometimes "succeeded" (`applied_live=true`); the second swap reliably crashed.
 
 ### Root cause
 
-Each overlay surface (`WhisperBarOverlay`, mascot `OrbOverlay`) owns its own
+Each overlay surface (`JarvisBarOverlay`, mascot `OrbOverlay`) owns its own
 `tk.Tk()` root, created on a short-lived named daemon thread
-(`whisperbar-tk-mainloop` / `orb-tk-mainloop`). A "live swap" tried to tear the
+(`jarvisbar-tk-mainloop` / `orb-tk-mainloop`). A "live swap" tried to tear the
 old root down (`stop()` → `root.after(0, root.destroy)` + thread join) and build
 a new one. Tkinter / `_tkinter` keeps **process-global, per-thread** Tcl
 interpreter state. When the destroyed root's Python wrapper object is later
@@ -2523,7 +2523,7 @@ not just that the artifact is present — and prefer the scheduler subsystem
 (Task Scheduler / launchd / systemd-user) over the desktop-shell startup queue
 when promptness matters. Guards: `tests/unit/autostart/test_windows_task.py`.
 
-## BUG-035: "Listens forever" #4 — explicit Sub-Agent command hijacked by a topical skill match, then a beheaded mute turn ends in silence (HIGH, 2026-06-10)
+## BUG-035: "Listens forever" #4 — explicit Jarvis-Agent command hijacked by a topical skill match, then a beheaded mute turn ends in silence (HIGH, 2026-06-10)
 
 ### Symptom
 
@@ -2635,3 +2635,77 @@ test_forced_cut_then_false_start_blip_still_flushes_tail,
 test_forced_cut_then_user_resumes_no_extra_tail_flush}` +
 `tests/unit/speech/test_long_dictation_accumulation.py::{test_empty_tail_flush_finalizes_carry,
 test_empty_flush_without_carry_skips_stt}`.
+
+---
+
+## BUG-036: Custom wake word permanently dead — wedged ctranslate2 transcription (2026-06-29)
+
+- **Date:** 2026-06-29 · **Scope:** `jarvis/plugins/stt/fwhisper.py`,
+  `jarvis/speech/rolling_whisper_wake.py` (custom-phrase `stt_match` wake path)
+
+### Symptom (what the user experiences)
+
+A custom wake word ("Hey Nico", any name on the `stt_match` / `RollingWhisperWake`
+path) stops working **entirely**: no orb, no bar, no reaction — for HOURS — no
+matter how loud or how often the word is spoken, and **even an app restart does
+not clear it**. User report: "I have to shout it ten times", then "I restarted and
+it's still dead, it doesn't work at all, with any wake word".
+
+### Root cause (code path)
+
+The local faster-whisper wake model (`FasterWhisperProvider`, ctranslate2 backend)
+is shared by TWO callers — the `RollingWhisperWake` poll loop AND the VAD
+"listening bubble" probe (`pipeline._probe_stt = self._stt` for a custom phrase).
+Both call `transcribe_pcm`, which runs `model.transcribe` in a worker thread
+(`asyncio.to_thread`). **ctranslate2's `WhisperModel` is NOT thread-safe for
+concurrent `transcribe` on one model object** — two overlapping calls corrupt its
+internal state and the call HANGS forever. An `asyncio.to_thread` worker cannot be
+cancelled, so:
+
+1. Every later `transcribe_pcm` times out at 8 s, is abandoned, re-polled, and
+   hangs again — an infinite `Transkription nach 8.0s abgebrochen (hung STT)` loop.
+   The heartbeat `transcribed`/`matched` counters FREEZE while `windows` keeps
+   climbing. Live forensic (`data/jarvis_desktop.log`): `transcribed=10 matched=2`
+   frozen for ~2 h while `windows` climbed to 20889; zero wakes the whole time.
+2. The hung, un-killable threads **exhaust the default thread pool**, which also
+   starves the in-app Restart endpoint's own `asyncio.to_thread` — so the Restart
+   button hangs "Restarting…" forever. That is why a soft restart did NOT clear it;
+   only a HARD process kill (Task Manager → end `pythonw.exe`) + relaunch worked.
+
+The 8 s timeout (added earlier) only BOUNDED each hang (re-poll the SAME wedged
+engine) — it never RECOVERED the model, so the wake stayed permanently dead.
+
+### Fix (file:line + test)
+
+1. **Prevent the corruption** — `jarvis/plugins/stt/fwhisper.py`
+   `FasterWhisperProvider._transcribe_sync`: a NON-BLOCKING per-instance inference
+   lock. A second concurrent call raises `TranscribeBusy` and is skipped (the
+   caller re-polls) instead of running `model.transcribe` concurrently or piling
+   worker threads up behind a hung call.
+2. **Self-heal the wedge** — `FasterWhisperProvider.recover()` drops the (possibly
+   hung) model + its lock so the next `transcribe_pcm` rebuilds a FRESH engine; the
+   hung thread keeps the OLD object/lock alive (orphaned, never blocks the fresh
+   path). `RollingWhisperWake.detect` counts consecutive transcribe failures and
+   calls `recover()` after `_WEDGE_RECOVER_AFTER_FAILS = 5` (resets on any success)
+   — a wedge now self-heals in seconds, NO restart needed.
+3. **Unwedge the Restart button** (parallel fix) — the restart endpoint runs on a
+   dedicated thread (`_run_off_pool`) so hung wake threads can no longer starve it.
+   A hard kill is still required for an ALREADY-wedged old process.
+
+Tests: `tests/unit/plugins/stt/test_fwhisper_concurrency.py`
+(`test_concurrent_transcribe_calls_never_overlap`, `test_busy_lock_raises_transcribe_busy`,
+`test_recover_drops_model_and_swaps_in_a_fresh_lock`) +
+`tests/unit/speech/test_rolling_whisper_wake.py::test_wake_self_heals_a_wedged_model_via_recover`.
+
+### Defense (bug class) — see AP-24
+
+Any shared single-threaded NATIVE inference engine (ctranslate2 / faster-whisper,
+and most ONNX / torch sessions) must NEVER be called concurrently — serialize with
+a NON-BLOCKING guard (concurrent call → skip, never overlap). And because a hung
+native `to_thread` call cannot be cancelled, a wedge must be RECOVERABLE (rebuild a
+fresh object), not merely timeout-bounded. **A timeout that re-polls the SAME
+wedged engine is a permanent-dead-state in disguise.** Signal: `transcribed` /
+`matched` heartbeat counters frozen while `windows` climbs; "hung STT" every
+timeout; a restart that does not help (the un-killable threads can even starve
+other thread pools, including the Restart button). Production restart after this
+fix: required (a HARD kill for an already-wedged old process).
