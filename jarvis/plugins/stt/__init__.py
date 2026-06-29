@@ -7,13 +7,49 @@ detector path keeps working when no cloud provider is registered.
 """
 from __future__ import annotations
 
+import json
+import os
+import time
 from functools import lru_cache
 from importlib import metadata as importlib_metadata
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
 ENTRY_POINT_GROUP = "jarvis.stt"
+
+# Credential candidates per CLOUD STT provider — the (keyring_key, env_var) pairs
+# that hold a usable key. A fresh downloader's single key is rarely Groq, so the
+# factory must consult this before constructing a cloud STT and cross over to the
+# key-free local faster-whisper when the configured cloud provider has no key
+# (open-source single-provider resilience, AP-22). Providers NOT listed here are
+# left untouched (unknown / third-party entry-points cannot be probed).
+_STT_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
+    "groq-api": (("groq_api_key", "GROQ_API_KEY"),),
+    "openai-api": (("openai_api_key", "OPENAI_API_KEY"),),
+    "deepgram": (("deepgram_api_key", "DEEPGRAM_API_KEY"),),
+    "deepgram-flux": (("deepgram_api_key", "DEEPGRAM_API_KEY"),),
+    "deepgram-nova3": (("deepgram_api_key", "DEEPGRAM_API_KEY"),),
+}
+
+
+def _stt_has_credential(provider_name: str, kwargs: dict[str, Any]) -> bool:
+    """Whether the configured cloud STT has a usable key (else: fall to local).
+
+    True when a key is injected (team-proxy token / explicit ``api_key``) or a
+    keyring/env credential resolves. Providers with no entry in
+    ``_STT_SECRET_CANDIDATES`` (unknown / third-party) return True so their
+    construction path is unchanged — only known cloud providers are gated.
+    """
+    if kwargs.get("api_key"):
+        return True
+    candidates = _STT_SECRET_CANDIDATES.get(provider_name)
+    if candidates is None:
+        return True
+    from jarvis.core import config as _cfg
+
+    return _cfg.get_secret_any(candidates) is not None
 
 
 def _load_provider_class(name: str) -> type | None:
@@ -68,6 +104,14 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
                 kwargs["endpoint"] = ep.base_url.rstrip("/") + "/audio/transcriptions"
                 if ep.credential:
                     kwargs["api_key"] = ep.credential
+        if not _stt_has_credential(provider_name, kwargs):
+            logger.warning(
+                "STT provider {!r} has no usable credential; falling back to the "
+                "key-free local faster-whisper so voice input still works for a "
+                "single-key user (AP-22).",
+                provider_name,
+            )
+            return _build_local_fallback(stt_cfg, language)
         try:
             instance = cls(**kwargs) if kwargs else cls()
             logger.info(
@@ -112,6 +156,11 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
             )
 
     # Local fallback (also the explicit "faster-whisper" path).
+    return _build_local_fallback(stt_cfg, language)
+
+
+def _build_local_fallback(stt_cfg: Any, language: str | None) -> Any:
+    """Construct the key-free local faster-whisper provider (the universal floor)."""
     from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
 
     return FasterWhisperProvider(
@@ -122,20 +171,78 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
     )
 
 
+def _wake_cuda_cache_path() -> Path:
+    """Location of the persisted CUDA-availability probe result.
+
+    CUDA presence is a stable hardware fact, so the probe result is cached ACROSS
+    process restarts (not just in-process). Honours the same data-dir env seam the
+    rest of the app uses (``JARVIS__MEMORY__DATA_DIR``); defaults to ``./data``
+    relative to the project-root CWD.
+    """
+    base = os.environ.get("JARVIS__MEMORY__DATA_DIR") or "data"
+    return Path(base) / "wake_cuda_probe.json"
+
+
 @lru_cache(maxsize=1)
 def _wake_cuda_available() -> bool:
     """True iff a CUDA device is usable by the CTranslate2 / faster-whisper backend.
 
-    Cached (the device count is stable per process). Any import/probe error is
-    treated as "no CUDA" so a host without the GPU stack degrades to the
-    cloud-first CPU default. AP-21: gate on the capability, never a hardware name.
-    """
-    try:
-        import ctranslate2
+    Cached in-process (``lru_cache``) AND persisted to disk. The FIRST CUDA call
+    in a process (``ctranslate2.get_cuda_device_count``) initializes the CUDA
+    context, which on a Blackwell (sm_120) GPU JIT-compiles kernels and costs
+    ~30-60 s (measured). ``build_wake_whisper`` runs this SYNCHRONOUSLY on the
+    desktop boot path to choose the wake model, so the probe used to freeze voice
+    boot ("VOICE STARTING…") for up to a minute on EVERY launch.
 
-        return ctranslate2.get_cuda_device_count() > 0
+    Persisting the boolean across restarts removes the probe from the boot path on
+    every boot after the first; the (unavoidable, one-time-per-process) CUDA
+    context init then happens later, during the already-backgrounded wake-model
+    load — never on the wake-ready path. Delete ``data/wake_cuda_probe.json`` to
+    force a re-probe after a GPU/driver change. Any import/probe error is treated
+    as "no CUDA" so a host without the GPU stack degrades to the cloud-first CPU
+    default. AP-21: gate on the capability, never a hardware name.
+    """
+    cache_path = _wake_cuda_cache_path()
+
+    # 1) Persisted result — skip the expensive probe on every boot after the first.
+    try:
+        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+        if isinstance(cached, dict) and isinstance(cached.get("cuda"), bool):
+            logger.info(
+                "Wake-CUDA probe: cache HIT ({}) — probe skipped.",
+                "available" if cached["cuda"] else "absent",
+            )
+            return cached["cuda"]
+    except FileNotFoundError:
+        pass
+    except Exception as exc:  # noqa: BLE001 — a corrupt cache must never break boot
+        logger.debug("Wake-CUDA probe cache unreadable ({}); re-probing.", exc)
+
+    # 2) Cold path — pay the probe ONCE, log how long it took, then persist it.
+    t0 = time.perf_counter()
+    try:
+        # Shield the ctranslate2 import from its transformers+torch converter
+        # stack (inference/probe needs neither) — ~2.9 s warm / ~14 s cold saved.
+        from jarvis.plugins.stt.fwhisper import inference_only_import_shield
+
+        with inference_only_import_shield():
+            import ctranslate2
+
+        available = ctranslate2.get_cuda_device_count() > 0
     except Exception:  # noqa: BLE001 - any failure means "treat as no GPU"
-        return False
+        available = False
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+    logger.info(
+        "Wake-CUDA probe: cache MISS — probed in {:.0f} ms -> CUDA {}.",
+        elapsed_ms,
+        "available" if available else "absent",
+    )
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps({"cuda": available}), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001 — caching is best-effort
+        logger.debug("Wake-CUDA probe cache write failed ({}).", exc)
+    return available
 
 
 def build_wake_whisper(
@@ -144,6 +251,7 @@ def build_wake_whisper(
     language: str | None = None,
     wake_phrase: str | None = None,
     cuda_available: bool | None = None,
+    fast_first: bool = False,
 ) -> Any:
     """Build the LOCAL wake-match / live-preview Whisper.
 
@@ -206,12 +314,53 @@ def build_wake_whisper(
     # explicit wake_model/wake_device wins (only the base/cpu pair auto-upgrades).
     if cuda_available is None:
         cuda_available = _wake_cuda_available()
-    if model == "base" and device == "cpu" and cuda_available:
+    # ``fast_first`` (progressive wake-model boot, 2026-06-27): when set, SKIP the
+    # GPU turbo upgrade and return the light base/cpu model (with bias). It loads
+    # in ~3 s with NO CUDA JIT (vs large-v3-turbo/cuda ~11 s warm in the boot
+    # storm and ~71 s cold), so a CUSTOM wake phrase becomes hear-ready almost
+    # immediately, even on a cold kernel cache. base/cpu+bias is a validated wake
+    # model (83% recall / ~0% false on the user's real WAVs — see the bias note
+    # above). The caller then hot-swaps in the turbo/cuda model in the background
+    # for faster steady-state inference, so the 2026-06-24 accuracy upgrade is
+    # preserved — only its load is moved off the hear-ready path.
+    if (
+        not fast_first
+        and not bias
+        and model == "base"
+        and device == "cpu"
+        and cuda_available
+    ):
         model, device, compute = "large-v3-turbo", "cuda", "int8_float16"
         bias = None  # strong model needs no bias; the bias is what hallucinates
         logger.info(
             "Wake-Whisper: CUDA present -> GPU turbo (large-v3-turbo/cuda), "
             "bias OFF (fast + no silence hallucination)."
+        )
+    elif (
+        not fast_first
+        and bias
+        and model == "base"
+        and device == "cpu"
+        and cuda_available
+    ):
+        # CUSTOM WAKE PHRASE: keep the validated base/cpu + phrase-bias config;
+        # do NOT upgrade to the turbo model. The strong turbo runs WITHOUT the
+        # initial_prompt bias (the bias hallucinates on silence on the strong
+        # model), but without that bias it MANGLES a short custom phrase — live
+        # forensic 2026-06-29: "Hey Nico" -> "cuf ich" -> the wake never fired.
+        # base/cpu+bias is the validated custom-phrase config (83% recall / ~0%
+        # false on real WAVs), so a user-set custom wake word stays on it.
+        # (Default "Hey Jarvis" / OWW paths carry no bias and still get the fast
+        # turbo upgrade above.) This makes the background hot-swap a no-op for a
+        # custom phrase: the rebuilt model stays "base", so the caller keeps it.
+        logger.info(
+            "Wake-Whisper: custom phrase -> staying on base/cpu (bias ON); turbo "
+            "upgrade skipped (turbo-without-bias mangles short custom phrases)."
+        )
+    elif fast_first and model == "base" and device == "cpu" and cuda_available:
+        logger.info(
+            "Wake-Whisper: fast-first base/cpu (bias ON) — turbo/cuda upgrade "
+            "deferred to a background hot-swap so wake is hear-ready in ~3 s."
         )
 
     return FasterWhisperProvider(

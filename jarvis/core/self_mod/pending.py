@@ -20,7 +20,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -86,11 +86,17 @@ class PendingMutationStore:
         writer: AtomicConfigWriter,
         ttl_seconds: float = DEFAULT_TTL_SECONDS,
         auto_confirm_safe: bool = True,
+        auto_apply: Literal["safe_only", "all"] = "safe_only",
         audit: SelfModAudit | None = None,
     ) -> None:
         self._writer = writer
         self._ttl_seconds = ttl_seconds
         self._auto_confirm_safe = auto_confirm_safe
+        # Voice-First Config Control (Wave 1.3): "all" applies every non-forbidden
+        # tier immediately (the voice "never ask, always now" path); "safe_only"
+        # keeps the SAFE-auto / ASK-confirm split (REST/CLI, the historical
+        # behaviour). Forbidden paths still raise from require_spec either way.
+        self._auto_apply = auto_apply
         # Audit only for `reject()` — mutate audit comes from the writer.
         self._audit = audit if audit is not None else writer._audit  # noqa: SLF001
         self._entries: dict[UUID, _PendingEntry] = {}
@@ -111,8 +117,13 @@ class PendingMutationStore:
         spec: MutableSpec = SelfModRegistry.require_spec(request.path)
         old_value = self._read_old_value(request.path)
 
-        if self._auto_confirm_safe and spec.risk_tier == "safe":
-            # Plan-§AD-10 + §7.4 SAFE-tier path
+        apply_now = self._auto_apply == "all" or (
+            self._auto_confirm_safe and spec.risk_tier == "safe"
+        )
+        if apply_now:
+            # SAFE bypass (Plan-§AD-10) OR the voice "apply everything now" policy
+            # (Wave 1.3). Either way the write goes through the full atomic
+            # pipeline, so a defect is still pre-validated / rolled back / audited.
             result: MutationResult = self._writer.mutate(request)
             return PendingMutation(
                 id=request.correlation_id,

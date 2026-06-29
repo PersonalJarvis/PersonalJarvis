@@ -33,6 +33,7 @@ from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.harness.manager import HarnessManager
 from jarvis.plugins.tool.dispatch_to_harness import DispatchToHarnessTool
 from jarvis.voice.action_phrases import (
+    OUTPUT_LANGUAGE_ENV_KEY,
     action_phrase,
     cu_failure_readback,
     cu_success_readback,
@@ -165,6 +166,8 @@ class ComputerUseTool:
                     "harness": HARNESS_NAME,
                     "prompt": goal,
                     "timeout_s": self._timeout_s,
+                    # Thread the turn's language to the verifier (proof readback).
+                    "env": {OUTPUT_LANGUAGE_ENV_KEY: _ctx_output_language(ctx)},
                 },
                 ctx,
             )
@@ -204,6 +207,10 @@ class ComputerUseTool:
                     "harness": HARNESS_NAME,
                     "prompt": goal,
                     "timeout_s": self._timeout_s,
+                    # Thread the turn's resolved language to the in-harness
+                    # verifier so its `proof` is spoken back in the user's
+                    # language, matching the frame (live bug 2026-06-27).
+                    "env": {OUTPUT_LANGUAGE_ENV_KEY: lang},
                 },
                 ctx,
             )

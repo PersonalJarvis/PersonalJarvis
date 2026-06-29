@@ -11,6 +11,7 @@ aggregiert zurückgeben.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Any
 
@@ -18,6 +19,7 @@ from jarvis.core.bus import EventBus
 from jarvis.core.protocols import ExecutionContext, HarnessTask, ToolResult
 from jarvis.harness.manager import HarnessManager
 
+log = logging.getLogger(__name__)
 
 _TIMEOUT_EXIT_CODE = 124
 
@@ -25,18 +27,25 @@ _TIMEOUT_EXIT_CODE = 124
 class DispatchToHarnessTool:
     name: str = "dispatch_to_harness"
     risk_tier: str = "monitor"
+    # NOT an LLM-visible router tool (removed from ROUTER_TOOLS 2026-06-28). This
+    # class powers the INTERNAL local-action / computer-use fast path, called
+    # programmatically with a registered harness name. The description lists only
+    # harnesses that actually exist as entry-points — there is no ``openclaw``
+    # or ``codex`` harness (heavy sub-agent work is the spawn_worker tool).
     description: str = (
-        "Ruft einen Sub-Agent-Harness (OpenClaw, Codex, Python-Script, MCP) "
-        "mit einem Task-Prompt auf. Output wird zusammenfassend zurückgegeben. "
-        "Nutze das wenn die Aufgabe Code-Editieren, längere Research oder "
-        "Tool-Use in einer anderen Umgebung verlangt."
+        "Internal: invoke a registered sub-agent harness "
+        "(open-interpreter, python-script, mcp-remote, screenshot) with a task "
+        "prompt and return a trimmed summary of its output."
     )
     schema: dict[str, Any] = {
         "type": "object",
         "properties": {
             "harness": {
                 "type": "string",
-                "description": "Name des Harness (z.B. 'openclaw', 'codex', 'python-script', 'mcp-remote').",
+                "description": (
+                    "Name of a registered harness "
+                    "('open-interpreter', 'python-script', 'mcp-remote', 'screenshot')."
+                ),
             },
             "prompt": {
                 "type": "string",
@@ -102,6 +111,12 @@ class DispatchToHarnessTool:
         aggregation = args.get("aggregation") or "merge"
         cwd = args.get("cwd") or "."
         timeout_s = float(args.get("timeout_s") or 600)
+        # Optional env passthrough (not in the LLM-facing schema — set
+        # programmatically by internal callers). The computer_use tool /
+        # local-action gate use it to thread the turn's resolved output language
+        # to the in-harness verifier (JARVIS_OUTPUT_LANGUAGE).
+        raw_env = args.get("env")
+        env = dict(raw_env) if isinstance(raw_env, dict) else {}
 
         if not prompt:
             return ToolResult(success=False, output=None, error="prompt fehlt")
@@ -110,6 +125,7 @@ class DispatchToHarnessTool:
             prompt=prompt,
             cwd=cwd,
             timeout_s=timeout_s,
+            env=env,
         )
 
         try:
@@ -151,7 +167,16 @@ class DispatchToHarnessTool:
                 if result.cost_usd:
                     cost_usd += result.cost_usd
         except KeyError as exc:
-            return ToolResult(success=False, output=None, error=str(exc))
+            # A missing harness must NOT leak the raw HarnessManager.get()
+            # message — it embeds the internal active/failed harness lists, and
+            # this error can reach the voice path. Log the detail; return a
+            # neutral, scrub-safe error (no internal harness inventory).
+            log.warning("dispatch_to_harness: unknown harness %r — %s", name, exc)
+            return ToolResult(
+                success=False,
+                output=None,
+                error=f"harness {name!r} is not set up here",
+            )
         except asyncio.TimeoutError:
             duration_ms = (time.time_ns() - started_ns) // 1_000_000
             combined_stdout = self._trim("".join(stdout_buf).strip())

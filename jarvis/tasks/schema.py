@@ -194,3 +194,12 @@ class TaskSpec(BaseModel):
     created_at_ns: int = 0
     created_by: str = "user"                 # "user" | "skill" | "brain"
     tags: tuple[str, ...] = Field(default_factory=tuple)
+    # When-Then notify: a spoken confirmation emitted after the action's
+    # terminal outcome, action-agnostic (the `harness_dispatch`/CU path does not
+    # self-announce, unlike `agent`). Published as AnnouncementRequested(
+    # kind="subagent"), which punches through the voice hangup gate and is
+    # mirrored to browser tabs — so "say Bescheid" works post-hangup and headless.
+    # Both support {field} placeholders interpolated from the triggering event
+    # (e.g. "Done — opened {result_uri}."). None = stay silent (legacy behaviour).
+    announce_on_success: str | None = Field(default=None, max_length=2048)
+    announce_on_failure: str | None = Field(default=None, max_length=2048)

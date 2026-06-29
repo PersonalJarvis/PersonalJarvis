@@ -58,8 +58,26 @@ def _npm_global_roots() -> list[str]:
         roots += [
             "/usr/local/lib/node_modules",
             "/usr/lib/node_modules",
+            "/opt/homebrew/lib/node_modules",  # Homebrew on Apple Silicon
             os.path.join(home, ".npm-global", "lib", "node_modules"),
         ]
+        # Version managers (nvm/fnm/volta) install the global bundle under a
+        # per-version dir — glob the newest. Only bites when the PATH shim is
+        # broken (else `npm root -g` / `which gemini` already resolve), but a
+        # fresh Mac/Linux user on nvm/Homebrew is the common case.
+        import glob
+
+        for pattern in (
+            os.path.join(home, ".nvm", "versions", "node", "*", "lib", "node_modules"),
+            os.path.join(
+                home, ".local", "share", "fnm", "node-versions", "*",
+                "installation", "lib", "node_modules",
+            ),
+            os.path.join(
+                home, ".volta", "tools", "image", "node", "*", "lib", "node_modules"
+            ),
+        ):
+            roots += sorted(glob.glob(pattern), reverse=True)
     return roots
 
 

@@ -1,13 +1,18 @@
 """Config loading with layers: TOML → YAML profiles → Env → Runtime.
 
-Secrets do NOT come from the config file; they come from the Windows Credential
-Manager via `keyring`. The `get_secret()` getter is the single access point.
+Secrets do NOT come from the config file. They resolve through the OS credential
+store via `keyring` (Windows Credential Manager / macOS Keychain / Linux Secret
+Service), then an ENV-variable fallback, then `.env`, and — on a headless host with
+no OS keyring (e.g. python:3.11-slim) — a local 0600 file (see
+`_ensure_keyring_backend`). The `get_secret()` getter is the single access point.
 
 Hot-reload: watchdog monitors the config file and dispatches `ConfigReloaded`
 on change. Subscribers decide whether to reinitialise themselves.
 """
 from __future__ import annotations
 
+import json
+import logging
 import os
 import sys
 import tomllib
@@ -217,12 +222,15 @@ class TriggerConfig(BaseModel):
 
 class STTConfig(BaseModel):
     provider: str = "groq-api"
-    # NOTE: ``model`` is consumed by the local FasterWhisperProvider for the
-    # Wake-Detector's rolling-whisper instance even when the post-wake STT
-    # provider is set to a cloud one. Must remain a faster-whisper-compatible
-    # name (see faster_whisper/utils.py for the allowlist). The Groq plugin
-    # hardcodes its own model name internally.
-    model: str = "distil-large-v3"
+    # ``model`` is the local FasterWhisperProvider's post-wake utterance model
+    # (used whenever ``provider = "faster-whisper"``; the Groq cloud plugin
+    # hardcodes its own multilingual model and ignores this). Must be a
+    # faster-whisper-compatible name (see faster_whisper/utils.py). It MUST be
+    # multilingual for the bilingual default: ``distil-large-v3`` is ENGLISH-ONLY
+    # and mangles German/Spanish speech into English words. ``large-v3-turbo`` is
+    # the fast multilingual checkpoint. (FasterWhisperProvider also guards this at
+    # runtime: an English-only model + a non-"en" language auto-upgrades.)
+    model: str = "large-v3-turbo"
     # Cloud-first default: "cpu". A fresh clone on a VPS or a laptop must never
     # assume a local GPU. Set to "cuda" in jarvis.toml on a CUDA box; the local
     # faster-whisper path also tolerates "cuda" with a no-CUDA runtime fallback.
@@ -898,7 +906,10 @@ class LegacyCuratorConfig(BaseModel):
 
 class MemoryConfig(BaseModel):
     recall_store: str = "sqlite"
-    archival_store: str = "chroma"
+    # chromadb was removed (2026-06-28); there is no chroma backend in
+    # jarvis/memory/. Default to the sqlite store so a fresh install does not
+    # point the archival tier at a backend that no longer exists.
+    archival_store: str = "sqlite"
     embedding_model: str = "bge-m3"
     retention_days_recall: int = 90
     data_dir: str = "./data"
@@ -922,8 +933,8 @@ class SafetyConfig(BaseModel):
     blacklist: SafetyBlacklistConfig = Field(default_factory=SafetyBlacklistConfig)
 
 
-class OpenClawNotificationConfig(BaseModel):
-    """Notification behaviour of the OpenClaw bridge (bridge docs §4.2).
+class JarvisAgentNotificationConfig(BaseModel):
+    """Notification behaviour of the Jarvis-Agent worker harness (bridge docs §4.2).
 
     Mandate AD-17: the bridge pipes ``summary_de`` from the Kontrollierer
     signature into the existing ``_on_announcement`` bus (pipeline.py:647).
@@ -937,8 +948,18 @@ class OpenClawNotificationConfig(BaseModel):
     voice_when_active: bool = True
 
 
-class OpenClawConfig(BaseModel):
-    """Top-level ``[harness.openclaw]`` config for the OpenClaw bridge.
+class JarvisAgentHarnessConfig(BaseModel):
+    """Top-level ``[harness.openclaw]`` config for the Jarvis-Agent worker harness.
+
+    ⚠️ INERT TODAY (2026-06-28): OpenClaw is NOT a registered harness — there is
+    no ``openclaw`` entry-point in pyproject.toml (Welle-4 removed the subprocess
+    worker, ~92% hang; see docs/BUGS.md). This block is a Wave-2 schema stub:
+    setting ``enabled = true`` has NO effect — the harness cannot be dispatched
+    and "start a subagent" routes to ``spawn_worker`` regardless. The boot path
+    logs a warning when ``enabled`` is true but the harness is unregistered
+    (see ``warn_if_phantom_openclaw`` in jarvis/brain/factory.py). Heavy
+    sub-agent work runs through the Mission-Manager (ClaudeDirectWorker), not
+    here, until Wave 3 actually wires the bridge.
 
     Schema matches ``docs/openclaw-bridge.md §4.2`` post-Wave-1
     (with AD-22..AD-24 findings incorporated). Wave 2 delivers only
@@ -981,8 +1002,8 @@ class OpenClawConfig(BaseModel):
     # ~/.openclaw/workspace/ cannot leak (AP-OC15).
     state_dir_root: str = "data/openclaw_state"
 
-    notification: OpenClawNotificationConfig = Field(
-        default_factory=OpenClawNotificationConfig,
+    notification: JarvisAgentNotificationConfig = Field(
+        default_factory=JarvisAgentNotificationConfig,
     )
 
 
@@ -998,9 +1019,9 @@ class HarnessConfig(BaseModel):
     max_output_chars: int = 4000
     # Per-harness overrides: e.g. {"openclaw": {"model": "opus", "max_turns": 10}}
     per_harness: dict[str, dict[str, object]] = Field(default_factory=dict)
-    # OpenClaw bridge (Wave 2). None = block missing in jarvis.toml,
+    # Jarvis-Agent worker harness (Wave 2). None = block missing in jarvis.toml,
     # bridge stays inactive. When the block is present, ``version`` is required.
-    openclaw: OpenClawConfig | None = None
+    openclaw: JarvisAgentHarnessConfig | None = None
 
 
 class MCPServerConfig(BaseModel):
@@ -1047,12 +1068,12 @@ class UIConfig(BaseModel):
     # Default: JARVIS_UI_TOKEN. The token is freshly generated at startup
     # and pywebview injects it via evaluate_js into window.__JARVIS_TOKEN.
     auth_token_env: str = "JARVIS_UI_TOKEN"
-    # On-screen overlay style: "whisper_bar" (slim default), "mascot" (ghost
+    # On-screen overlay style: "jarvis_bar" (slim default), "mascot" (ghost
     # orb), or "none". The mascot remains fully selectable.
-    orb_style: str = "whisper_bar"
+    orb_style: str = "jarvis_bar"
     # Optional explicit path to the mascot PNG. Empty = search for default asset.
     orb_mascot_path: str = ""
-    # Whisper bar: persistent (always-visible dots pill) vs only-when-active.
+    # Jarvis bar: persistent (always-visible dots pill) vs only-when-active.
     bar_persistent: bool = True
     # Hex accent the bar lights up with during activity (gold on-brand).
     bar_accent: str = "#e7c46e"
@@ -1060,6 +1081,18 @@ class UIConfig(BaseModel):
     # ("default" = OS default app, "browser", or an editor key like "code").
     # Empty = ask via the chooser dialog on first open. Desktop-only.
     preferred_opener: str = ""
+
+    @field_validator("orb_style", mode="before")
+    @classmethod
+    def _normalize_orb_style(cls, v: object) -> object:
+        # Backwards-compat: the slim-bar style was historically persisted as
+        # "whisper_bar". It was renamed to "jarvis_bar" to avoid a
+        # trademark. Normalize the legacy value on load so an existing
+        # jarvis.toml keeps showing the bar instead of falling back to the
+        # mascot orb (the unknown-style default in _build_overlay_surface).
+        if isinstance(v, str) and v.strip().lower() == "whisper_bar":
+            return "jarvis_bar"
+        return v
 
 
 class DuckingConfig(BaseModel):
@@ -1121,8 +1154,8 @@ class TelemetryConfig(BaseModel):
     log_level: str = "INFO"
 
 
-class SubAgentsConfig(BaseModel):
-    """Config for sub-agent output management, GitHub push, and verification."""
+class JarvisAgentsOutputConfig(BaseModel):
+    """Config for Jarvis-Agent output management, GitHub push, and verification."""
     github_auto_push: bool = False
     github_repo_url: str = ""
     max_verification_iterations: int = 3
@@ -1342,6 +1375,39 @@ class ComputerUseConfig(BaseModel):
     model_config = {"extra": "allow"}
 
     enabled: bool = False
+    # Which Computer-Use engine runs (reversible switch). "current" (default) =
+    # the maintained engine; "june13" = the frozen 2026-06-10 / 352a784f snapshot
+    # (jarvis/harness/screenshot_only_loop_june13.py), kept as a known-good
+    # fallback after the maintained engine accumulated ~1700 lines of stacked
+    # click-correction + verifier layers and regressed. The harness reads this
+    # per mission and logs which engine is live, so a flip applies on the next
+    # mission / restart with no code change. Flip back any time with "current".
+    engine: Literal["current", "june13", "stable"] = "current"
+    # How Computer-Use relates to multiple monitors. DEFAULT "primary": CU brings
+    # the target window onto the MAIN monitor (the G8 move-to-primary hook) AND
+    # the screenshot FOLLOWS that window — so the normal case lands on the main
+    # screen, while a window that genuinely cannot be moved (Wayland / owned /
+    # fixed-placement) is still captured + clicked WHERE IT IS instead of CU
+    # filming an empty primary and doing nothing (Problem 1, 2026-06-28). The
+    # negative-X absolute-click fix makes secondary clicks land. "foreground" =
+    # follow the active window without moving it; "all" = capture the whole
+    # virtual desktop. Cross-platform: the primary is identified natively (Win
+    # MONITORINFOF_PRIMARY, macOS CGMainDisplayID, X11 XRRGetOutputPrimary), NOT
+    # by assuming origin (0,0). The capture STRATEGY is derived via
+    # jarvis.vision.screenshot.cu_capture_strategy (primary/foreground -> follow).
+    monitor: Literal["primary", "foreground", "all"] = "primary"
+    # Which screen counts as "the main monitor" when monitor="primary" (audit G8a).
+    # "primary" (default) = the OS primary; "largest" = the biggest-area screen;
+    # or an explicit id (a monitor-name substring, or a 1-based index "1"/"2").
+    # An unknown id falls back to the OS primary (never a silent wrong screen).
+    main_monitor: str = "primary"
+    # Master switch for the per-action read-back verification suite (claude-in-
+    # chrome parity): after a type, confirm the text landed in the field; after a
+    # click_element, confirm the intended state changed; don't blind-batch a
+    # type/Enter behind a focus-click. Deterministic accessibility-tree read-back
+    # (no extra model call), so it makes CU more reliable without making it slower.
+    # Default ON; set false to fall back to the legacy dispatch-and-hope behaviour.
+    strict_verify: bool = True
     max_steps: int = Field(default=100, ge=1, le=1000)
     # In the Set-of-Marks ReAct loop each cycle plans ONE action, so every
     # successful step also exhausts its one-step plan and counts as a "replan".
@@ -1379,15 +1445,23 @@ class ComputerUseConfig(BaseModel):
     # screenshot_only_loop.py).
     fast_step_model: str = Field(default="")
     verify_after_each_step: bool = True
-    # Proactively zoom-refine each click target BEFORE clicking (default ON, so
-    # Computer-Use is accurate out-of-the-box with no opt-in). When the click
-    # action carries a `target`, the loop grabs a live zoomed crop around the
-    # coarse point, re-locates the target inside it, and only then clicks — and
-    # REFUSES to click (re-plans) when the target is not in the crop, catching
-    # wrong-element clicks the pixel-diff verify accepts. Internal screenshot
-    # crop only: nothing is shown on screen. Costs one extra model call per
-    # targeted click; set false to prioritize click latency over accuracy.
-    zoom_before_click: bool = True
+    # Proactively zoom-refine each click target BEFORE clicking. DEFAULT OFF
+    # since 2026-06-27: making it default-on added an extra model call AND a new
+    # re-plan-on-not-found failure path to EVERY targeted click, which degraded
+    # accuracy and latency instead of helping. The known-good pipeline clicks
+    # the coarse point first and only refines AFTER a verified miss. Opt back in
+    # per [computer_use] once a benchmark proves it nets out positive. When on:
+    # the loop grabs a live zoomed crop, re-locates the target, then clicks —
+    # and re-plans when the target is not in the crop. Internal crop only.
+    zoom_before_click: bool = False
+    # UIA fallback that snaps a verified-MISSED pixel click to the nearest
+    # accessibility element. DEFAULT OFF since 2026-06-27: added 2026-06-24, it
+    # snapped almost every near-miss to a large container's center (~screen
+    # centre) — a wild click that also short-circuited the LLM refine that used
+    # to correct misses (BUG-CU-UIASNAP). The pre-snap pipeline (coarse click ->
+    # verify -> LLM refine on miss) is the known-good behaviour; re-enable per
+    # [computer_use] only with a benchmark.
+    uia_click_fallback: bool = False
     # Spoken per-step milestones ("Schritt N von M erledigt."). Default OFF
     # (2026-06-10): the milestone counter tracks successful actions, not
     # verified plan steps, so it announced "6 von 6 erledigt" on a mission
@@ -1841,7 +1915,7 @@ class JarvisConfig(BaseModel):
     autostart: AutostartConfig = Field(default_factory=AutostartConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
-    sub_agents: SubAgentsConfig = Field(default_factory=SubAgentsConfig)
+    sub_agents: JarvisAgentsOutputConfig = Field(default_factory=JarvisAgentsOutputConfig)
     integrations: IntegrationsConfig = Field(default_factory=IntegrationsConfig)
     # Wave 2 — plugin-marketplace OAuth connect (hosted vs loopback callback).
     marketplace: MarketplaceConfig = Field(default_factory=MarketplaceConfig)
@@ -2085,6 +2159,108 @@ def load_config(
 # Secrets (Windows Credential Manager via keyring)
 # ----------------------------------------------------------------------
 
+# ----------------------------------------------------------------------
+# Headless credential store (C1, open-source AP-22)
+# ----------------------------------------------------------------------
+# On a headless Linux/VPS (python:3.11-slim — no D-Bus Secret Service / gnome-
+# keyring / KWallet) the platform keyring resolves to ``fail.Keyring`` and every
+# in-app key save / channel-connect / plugin-connect raises → the whole API-Keys
+# section is unusable. We fall back to a local 0600 JSON file so a bare-VPS user
+# can paste a key in the UI and have it persist. NOT a security feature; the OS
+# keyring stays the secure path whenever it is functional (the file backend is
+# installed ONLY when the current backend is the no-op fail.Keyring).
+_KEYRING_BACKEND_READY: bool = False
+
+
+class _FileCredStore:
+    """Minimal 0600 JSON credential store keyed by ``(service, username)``."""
+
+    def __init__(self, path: Path | None = None) -> None:
+        self._explicit = path
+
+    def _file(self) -> Path:
+        p = self._explicit if self._explicit is not None else (DATA_DIR / "credentials.json")
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
+
+    def _load(self) -> dict[str, str]:
+        try:
+            f = self._file()
+            return json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+        except Exception:  # noqa: BLE001 — a corrupt store must never crash a read
+            return {}
+
+    def _save(self, data: dict[str, str]) -> None:
+        f = self._file()
+        tmp = f.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data), encoding="utf-8")
+        try:
+            os.chmod(tmp, 0o600)
+        except Exception:  # noqa: BLE001 — chmod is a no-op on Windows
+            pass
+        os.replace(tmp, f)
+
+    @staticmethod
+    def _k(service: str, username: str) -> str:
+        return f"{service}\x00{username}"
+
+    def get(self, service: str, username: str) -> str | None:
+        return self._load().get(self._k(service, username))
+
+    def set(self, service: str, username: str, password: str) -> None:
+        data = self._load()
+        data[self._k(service, username)] = password
+        self._save(data)
+
+    def delete(self, service: str, username: str) -> None:
+        data = self._load()
+        data.pop(self._k(service, username), None)
+        self._save(data)
+
+
+def _ensure_keyring_backend() -> None:
+    """Install the local-file credential store when the OS keyring is non-functional.
+
+    Runs once. Installs the file backend ONLY when the current backend is the no-op
+    ``fail.Keyring`` (so a working Windows/macOS/Linux OS keyring is never replaced).
+    Any error is swallowed — a missing keyring must never break boot.
+    """
+    global _KEYRING_BACKEND_READY
+    if _KEYRING_BACKEND_READY:
+        return
+    _KEYRING_BACKEND_READY = True
+    try:
+        import keyring
+        import keyring.backend
+        from keyring.backends import fail
+
+        if not isinstance(keyring.get_keyring(), fail.Keyring):
+            return
+
+        _store = _FileCredStore()
+
+        class _FileKeyringBackend(keyring.backend.KeyringBackend):
+            priority = 0.1  # type: ignore[assignment]  # below any real OS backend
+
+            def get_password(self, service: str, username: str) -> str | None:
+                return _store.get(service, username)
+
+            def set_password(self, service: str, username: str, password: str) -> None:
+                _store.set(service, username, password)
+
+            def delete_password(self, service: str, username: str) -> None:
+                _store.delete(service, username)
+
+        keyring.set_keyring(_FileKeyringBackend())
+        logging.getLogger(__name__).warning(
+            "No OS credential store available (headless host) — API keys are stored "
+            "in a local 0600 file under %s. Configure a Secret Service / Keychain "
+            "for OS-encrypted storage.", DATA_DIR / "credentials.json",
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def get_secret(key: str, env_fallback: str | None = None) -> str | None:
     """Retrieve a secret value. Priority: keyring → ENV fallback → .env.
 
@@ -2092,6 +2268,15 @@ def get_secret(key: str, env_fallback: str | None = None) -> str | None:
         key: Secret name in the Credential Manager (e.g. "anthropic_api_key").
         env_fallback: ENV variable checked when keyring is empty (e.g. "ANTHROPIC_API_KEY").
     """
+    _ensure_keyring_backend()
+    # H2 (open-source AP-22 / headless VPS): when the caller passes no explicit ENV
+    # var, derive it from the slot name (``groq_api_key`` → ``GROQ_API_KEY``) so the
+    # documented keyring → ENV → .env hierarchy holds for EVERY slot — not only the
+    # brain providers whose callers happen to pass one. On a host with no OS keyring
+    # (python:3.11-slim) the ENV path is the only credential input until C1 lands.
+    if env_fallback is None:
+        env_fallback = key.upper()
+
     # Lazy import — keyring requires pywin32 on Windows
     try:
         import keyring
@@ -2188,7 +2373,12 @@ def resolve_provider_endpoint(
 
 
 def set_secret(key: str, value: str) -> bool:
-    """Store a secret in the Credential Manager. Returns True on success."""
+    """Store a secret in the OS keyring (or the headless 0600 file fallback).
+
+    Returns True on success. C1: the in-app API-Keys section writes through here,
+    so the headless file fallback is what makes a fresh VPS user able to save a key.
+    """
+    _ensure_keyring_backend()
     try:
         import keyring
 
@@ -2199,7 +2389,8 @@ def set_secret(key: str, value: str) -> bool:
 
 
 def delete_secret(key: str) -> bool:
-    """Remove a secret from the Credential Manager."""
+    """Remove a secret from the OS keyring (or the headless file fallback)."""
+    _ensure_keyring_backend()
     try:
         import keyring
 
@@ -2234,7 +2425,7 @@ def ensure_project_root_cwd() -> Path:
     ``sys.path``, so the ROOT packages ``ui`` and ``conductor`` — which live
     outside the editable-installed ``jarvis`` package — failed to import
     ("No module named 'ui'"), silently disabling the on-screen overlay
-    (whisper-bar) and the Conductor view. Putting the root on the path makes
+    (jarvis-bar) and the Conductor view. Putting the root on the path makes
     those imports resolve regardless of how the process was started.
 
     Call this once, as early as possible in every process entry point (before

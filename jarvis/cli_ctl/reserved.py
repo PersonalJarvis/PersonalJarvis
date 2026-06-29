@@ -38,6 +38,7 @@ RESERVED_CONTROL_NAMES: frozenset[str] = frozenset(
         "conductor",
         "contacts",
         "friends",
+        "socials",
         "telephony",
         "clis",
         "mcps",

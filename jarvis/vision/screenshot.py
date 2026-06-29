@@ -91,10 +91,27 @@ from jarvis.core.win32_dpi import ensure_dpi_awareness as _ensure_dpi_awareness 
 MonitorStrategy = Literal["foreground", "primary", "all"]
 
 
+def cu_capture_strategy(monitor_policy: str) -> MonitorStrategy:
+    """Map the ``[computer_use].monitor`` policy to the screenshot CAPTURE
+    strategy (Problem 1, 2026-06-28).
+
+    Both ``"primary"`` and ``"foreground"`` FOLLOW the foreground/target window,
+    so the screenshot is never a pinned EMPTY monitor while the target sits on
+    another screen — consistent with ``_capture_monitor_geometry`` (the click
+    resolver), which already follows the foreground window. The difference is the
+    *move*: the ``"primary"`` policy additionally brings the target onto the main
+    monitor via the G8 ensure-on-primary hook (so the normal case lands on the
+    main screen and the user sees it there), while a window that genuinely cannot
+    be moved is still captured + clicked where it is instead of CU freezing on an
+    empty primary. ``"all"`` captures the whole virtual desktop."""
+    return "all" if monitor_policy == "all" else "foreground"
+
+
 def select_capture_monitor(
     monitors: list[dict],
     *,
     strategy: MonitorStrategy = "foreground",
+    primary_override: str = "primary",
 ) -> dict:
     """Waehlt den Monitor, von dem ein Screenshot gegrabbt werden soll.
 
@@ -120,7 +137,16 @@ def select_capture_monitor(
         return monitors[0]
 
     physical = monitors[1:]
-    primary = next((m for m in physical if m.get("is_primary")), physical[0])
+    # Identify the primary ROBUSTLY (audit G8a) -- not by assuming origin (0,0).
+    # mss dicts carry no ``is_primary`` flag and do NOT order the primary first
+    # (a screen LEFT of primary is listed as physical[0] with negative X), so the
+    # old ``physical[0]`` fallback acted on the wrong screen (the "CU works on my
+    # non-main monitor" bug). ``resolve_primary_monitor`` asks the OS natively
+    # (Win MONITORINFOF_PRIMARY / macOS CGMainDisplayID / X11 XRRGetOutputPrimary)
+    # and honours the ``main_monitor`` override (primary | largest | explicit id).
+    from jarvis.platform.monitors import resolve_primary_monitor  # noqa: PLC0415
+
+    primary = resolve_primary_monitor(monitors, override=primary_override)
 
     if strategy == "primary":
         logger.debug("select_capture_monitor: strategy=primary -> %s", primary.get("name"))
@@ -376,6 +402,9 @@ class ScreenshotSource:
             active_pid=0,
             source="screenshot_only",
             pruning_stats={"nodes_before": 0, "nodes_after": 0, "depth_used": 0},
+            # Thread the EXACT captured monitor so clicks map back to THIS screen
+            # (mixed-DPI / multi-monitor consistency, live bug 2026-06-28).
+            monitor_geom=getattr(self, "_last_capture_monitor", (0, 0, 0, 0)),
         )
 
     async def close(self) -> None:
@@ -431,6 +460,14 @@ class ScreenshotSource:
                 monitor_id = (
                     f"left={target.get('left', '?')},top={target.get('top', '?')},"
                     f"{target.get('width', '?')}x{target.get('height', '?')}"
+                )
+                # Record the EXACT monitor this frame was captured from so the
+                # click-coordinate resolver maps the model's 0-1000 coords back to
+                # THIS screen — not a separately-derived monitor that can diverge
+                # on a mixed-DPI / multi-monitor desktop (live bug 2026-06-28).
+                self._last_capture_monitor = (
+                    int(target.get("left", 0)), int(target.get("top", 0)),
+                    int(target.get("width", 0)), int(target.get("height", 0)),
                 )
                 raw = sct.grab(target)
 

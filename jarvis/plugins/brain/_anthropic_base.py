@@ -12,6 +12,12 @@ from typing import Any
 
 from jarvis.core.protocols import BrainDelta, BrainMessage, BrainRequest
 
+# Reuse the tested tool-name sanitizer/map (regex [^A-Za-z0-9_-] + dedup). Its
+# 64-char cap is stricter than Anthropic's 128 but still valid, so a slash/dot/
+# colon MCP name (jarvis/mcp/adapter.py) no longer trips Anthropic's
+# ``tools.N.custom.name`` 400 on the direct claude-api path.
+from ._openai_base import _openai_tool_name_map
+
 # Latenz-Sprint-2: Beta-Header fuer 1h-Cache-TTL. Der Default ist 5 min;
 # 1h verlaengert die effektive Cache-Dauer und schluckt mehr Voice-Sessions.
 # Konstante zentral, damit beide Provider-Klassen denselben Header setzen.
@@ -96,13 +102,18 @@ def _extract_system(messages: tuple[BrainMessage, ...], extra_system: str | None
     return "\n\n".join(parts) if parts else None
 
 
-def _tools_anthropic_format(tools: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
-    """Normalisiert Tool-Schemas auf Anthropic-Format."""
+def _tools_anthropic_format(
+    tools: tuple[dict[str, Any], ...],
+    name_map: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Normalisiert Tool-Schemas auf Anthropic-Format (Namen sanitisiert)."""
+    name_map = name_map if name_map is not None else _openai_tool_name_map(tools)
     out: list[dict[str, Any]] = []
     for t in tools:
         schema = t.get("input_schema") or t.get("parameters") or t.get("schema") or {}
+        original = t.get("name", "")
         out.append({
-            "name": t["name"],
+            "name": name_map.get(original, original),
             "description": t.get("description", ""),
             "input_schema": schema if schema else {"type": "object", "properties": {}},
         })
@@ -123,7 +134,11 @@ async def stream_complete(
     """Führt ein streamendes messages.create aus und yielded BrainDeltas."""
     messages = _to_anthropic_messages(req.messages)
     system = _extract_system(req.messages, req.system)
-    tools_payload = _tools_anthropic_format(req.tools) if req.tools else None
+    # Sanitize tool names + keep a reverse map so the inbound tool_use name maps
+    # back to the ORIGINAL tool the executor knows (e.g. the "server/tool" MCP name).
+    name_map = _openai_tool_name_map(req.tools) if req.tools else {}
+    reverse_name_map = {safe: original for original, safe in name_map.items()}
+    tools_payload = _tools_anthropic_format(req.tools, name_map) if req.tools else None
 
     # Latenz-Sprint-2: Prompt-Caching wenn aktiviert. Wandelt System-Prompt
     # in einen Block-Array mit ``cache_control`` und markiert das letzte
@@ -194,9 +209,10 @@ async def stream_complete(
             elif etype == "content_block_start":
                 block = getattr(event, "content_block", None)
                 if block is not None and getattr(block, "type", None) == "tool_use":
+                    _raw_name = getattr(block, "name", "")
                     current_tool = {
                         "id": getattr(block, "id", ""),
-                        "name": getattr(block, "name", ""),
+                        "name": reverse_name_map.get(_raw_name, _raw_name),
                     }
                     current_tool_json = ""
 

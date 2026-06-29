@@ -1,0 +1,198 @@
+"""Cross-platform primary-monitor resolution (audit G8a).
+
+Computer-Use works on ONE monitor (the "main" one) by default. Picking it
+robustly matters: a secondary screen LEFT of primary has negative virtual-X where
+clicks misfire, so capturing/acting on the wrong screen breaks every mission.
+
+The hard part is identifying the primary WITHOUT assuming it sits at virtual
+origin (0,0): on Windows it always does, but on macOS/Linux the primary can be
+anywhere in the virtual desktop. ``native_primary_origin`` asks the OS for the
+true primary's top-left (Win ``MONITORINFOF_PRIMARY``, macOS ``CGMainDisplayID``,
+X11 ``XRRGetOutputPrimary``); ``resolve_primary_monitor`` matches that against the
+enumerated monitor list, with config overrides for ``largest`` or an explicit id.
+
+Everything is best-effort and never raises: an unavailable native query degrades
+to the (0,0)-origin heuristic, and an unknown override falls back to primary
+rather than silently picking a wrong screen.
+"""
+from __future__ import annotations
+
+import sys
+from typing import Any
+
+# Override tokens that mean "the OS primary" (the default).
+_PRIMARY_TOKENS = frozenset({"", "primary", "auto", "os", "os-primary", "main"})
+
+
+def _area(m: dict) -> int:
+    return int(m.get("width", 0)) * int(m.get("height", 0))
+
+
+def resolve_primary_monitor(
+    monitors: list[dict], *, override: str = "primary"
+) -> dict:
+    """Pick the monitor Jarvis treats as "main" from an mss-style ``monitors``
+    list (``[0]`` = virtual bounding box, ``[1:]`` = physical screens).
+
+    ``override``:
+      * ``"primary"`` (default) — the OS primary: an ``is_primary`` flag if the
+        enumerator set one, else the screen whose origin matches
+        :func:`native_primary_origin`, else the screen at virtual (0,0), else the
+        first physical screen.
+      * ``"largest"`` — the screen with the biggest area.
+      * an explicit id — a case-insensitive substring of a monitor ``name``, or a
+        1-based physical index (``"1"``, ``"2"``). An unmatched id falls back to
+        primary (never a silent wrong pick).
+
+    Pure logic; the only side input is :func:`native_primary_origin`, which is
+    monkeypatched in tests. Never raises."""
+    if not monitors:
+        raise ValueError("monitors is empty")
+    if len(monitors) <= 1:
+        return monitors[0]
+    physical = monitors[1:]
+    ov = (override or "primary").strip().lower()
+
+    if ov == "largest":
+        return max(physical, key=_area)
+
+    if ov not in _PRIMARY_TOKENS:
+        # Explicit id: name substring, then 1-based index. Unmatched -> primary.
+        by_name = next(
+            (m for m in physical if ov in str(m.get("name", "")).strip().lower()),
+            None,
+        )
+        if by_name is not None:
+            return by_name
+        if ov.isdigit():
+            idx = int(ov)
+            if 1 <= idx <= len(physical):
+                return physical[idx - 1]
+        # fall through to primary resolution
+
+    # Default: OS primary.
+    flagged = next((m for m in physical if m.get("is_primary")), None)
+    if flagged is not None:
+        return flagged
+    origin = native_primary_origin()
+    if origin is not None:
+        ox, oy = origin
+        at_native = next(
+            (m for m in physical
+             if int(m.get("left", 0)) == ox and int(m.get("top", 0)) == oy),
+            None,
+        )
+        if at_native is not None:
+            return at_native
+    at_zero = next(
+        (m for m in physical
+         if int(m.get("left", 0)) == 0 and int(m.get("top", 0)) == 0),
+        None,
+    )
+    if at_zero is not None:
+        return at_zero
+    return physical[0]
+
+
+def native_primary_origin() -> tuple[int, int] | None:
+    """Best-effort virtual-desktop top-left ``(x, y)`` of the OS primary monitor,
+    or ``None`` when it cannot be determined (headless / Wayland / missing libs).
+
+    Per-OS: Windows ``MONITORINFOF_PRIMARY``; macOS ``CGMainDisplayID`` bounds;
+    X11 ``XRRGetOutputPrimary``. Never raises."""
+    try:
+        if sys.platform == "win32":
+            return _win_primary_origin()
+        if sys.platform == "darwin":
+            return _macos_primary_origin()
+        # Linux / other POSIX.
+        from jarvis.platform.probes import is_wayland  # noqa: PLC0415
+
+        if is_wayland():
+            return None  # no reliable global monitor geometry under Wayland
+        return _x11_primary_origin()
+    except Exception:  # noqa: BLE001 — best-effort; a probe failure is never fatal
+        return None
+
+
+def _win_primary_origin() -> tuple[int, int] | None:
+    """Origin of the monitor flagged ``MONITORINFOF_PRIMARY`` (always (0,0) on
+    Windows by definition, but queried natively rather than assumed)."""
+    import ctypes  # noqa: PLC0415
+    from ctypes import wintypes  # noqa: PLC0415
+
+    user32 = ctypes.windll.user32
+
+    class _RECT(ctypes.Structure):
+        _fields_ = [
+            ("left", ctypes.c_long), ("top", ctypes.c_long),
+            ("right", ctypes.c_long), ("bottom", ctypes.c_long),
+        ]
+
+    class _MONITORINFO(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wintypes.DWORD), ("rcMonitor", _RECT),
+            ("rcWork", _RECT), ("dwFlags", wintypes.DWORD),
+        ]
+
+    _MONITORINFOF_PRIMARY = 0x1
+    found: dict[str, tuple[int, int]] = {}
+
+    MonitorEnumProc = ctypes.WINFUNCTYPE(
+        ctypes.c_int, wintypes.HMONITOR, wintypes.HDC,
+        ctypes.POINTER(_RECT), wintypes.LPARAM,
+    )
+
+    def _cb(hmon: Any, _hdc: Any, _lprc: Any, _data: Any) -> int:
+        info = _MONITORINFO()
+        info.cbSize = ctypes.sizeof(_MONITORINFO)
+        if user32.GetMonitorInfoW(hmon, ctypes.byref(info)):
+            if info.dwFlags & _MONITORINFOF_PRIMARY:
+                found["origin"] = (int(info.rcMonitor.left), int(info.rcMonitor.top))
+                return 0  # stop enumeration
+        return 1
+
+    user32.EnumDisplayMonitors(0, 0, MonitorEnumProc(_cb), 0)
+    return found.get("origin")
+
+
+def _macos_primary_origin() -> tuple[int, int] | None:
+    """Origin of ``CGMainDisplayID``. Needs Quartz (``[desktop-macos]`` extra);
+    returns ``None`` when absent (e.g. headless)."""
+    try:
+        from Quartz import (  # noqa: PLC0415
+            CGDisplayBounds,
+            CGMainDisplayID,
+        )
+    except Exception:  # noqa: BLE001 — pyobjc not installed
+        return None
+    bounds = CGDisplayBounds(CGMainDisplayID())
+    return (int(bounds.origin.x), int(bounds.origin.y))
+
+
+def _x11_primary_origin() -> tuple[int, int] | None:
+    """Origin of the XRandR primary output. Uses ``xrandr`` if present; returns
+    ``None`` when unavailable. Avoids a hard Xlib dependency (cloud-first base)."""
+    import subprocess  # noqa: PLC0415
+
+    from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # noqa: PLC0415
+
+    try:
+        out = subprocess.run(
+            ["xrandr", "--query"], capture_output=True, text=True, timeout=3.0,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+        ).stdout
+    except Exception:  # noqa: BLE001 — xrandr missing / no display
+        return None
+    # A primary line looks like: "DP-1 connected primary 3840x2160+1920+0 ..."
+    for line in out.splitlines():
+        if " connected primary " not in line:
+            continue
+        for tok in line.split():
+            if "+" in tok and "x" in tok:
+                try:
+                    geom = tok.split("+")
+                    return (int(geom[1]), int(geom[2]))
+                except (IndexError, ValueError):
+                    return None
+    return None

@@ -194,9 +194,16 @@ def _resolve_chain(config: JarvisConfig) -> list[tuple[str, str | None]]:
             )
             chain.append((sub_tier.fallback_provider_2, fb2_model or None))
 
-    # Stage 3 — primary provider (with frontier default lookup)
+    # Stage 3 — primary provider. Honor the user's PICKED model
+    # ([brain.providers[primary]].model) before the hardcoded deep TIER default —
+    # otherwise an OpenRouter user who chose a free model has skill-creation /
+    # board-bio resolve onto the paid anthropic/claude-opus default and bills the
+    # gateway key (§3/AP-21). The default only applies when nothing is pinned.
     primary = brain_cfg.primary or "claude-api"
-    primary_model = _default_for("deep", primary)
+    primary_pc = (brain_cfg.providers or {}).get(primary)
+    primary_model = (getattr(primary_pc, "model", "") or "").strip() or _default_for(
+        "deep", primary,
+    )
     chain.append((primary, primary_model or None))
 
     # Stage 4 — local fallback (Ollama local or similar, last resort)

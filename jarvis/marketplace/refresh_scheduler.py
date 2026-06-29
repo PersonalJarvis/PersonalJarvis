@@ -219,6 +219,17 @@ class RefreshScheduler:
         changed = any(counts.get(k) for k in (REFRESHED, REVOKED, FAILED))
         (log.info if changed else log.debug)("token refresh cycle: %s", summary)
 
+        # Name dead connections explicitly at WARNING. An anonymous "revoked=1"
+        # count let a revoked plugin rot unseen (live: linear sat dead ~22 days,
+        # gmail ~16 days, unnoticed until next use). Only a user reconnect heals
+        # a revoked refresh token, so surface exactly which plugin needs it.
+        dead = sorted(pid for pid, outcome in outcomes.items() if outcome == REVOKED)
+        if dead:
+            log.warning(
+                "marketplace plugin(s) need reconnect — refresh token revoked: %s",
+                ", ".join(dead),
+            )
+
     def start(self) -> None:
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._loop(), name="marketplace-refresh")

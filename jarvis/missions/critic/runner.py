@@ -1236,6 +1236,29 @@ class CriticRunner:
         # twice -> `critic_unavailable` and the whole mission FAILED even though
         # the worker delivered real work (sibling of the ClaudeDirectWorker
         # provider-refusal bug; forensic 2026-06-08 verify run, grok sub-agent).
+        # B2 (open-source AP-22): grade IN-PROCESS via a keyed API brain BEFORE the
+        # legacy claude-CLI critic, so openrouter/openai/gemini/antigravity/unset
+        # missions are reviewed with the user's OWN key instead of the absent
+        # `claude` binary. Falls through to claude-direct only when NO API key exists.
+        api_provider, api_model = _resolve_api_critic_provider(primary_provider, primary_model)
+        if api_provider:
+            logger.info(
+                "CriticRunner: grading in-process via the %r API brain "
+                "(worker provider=%r).", api_provider, primary_provider,
+            )
+            api_verdict = await self._invoke_via_api_critic(
+                prompt=prompt_for_subprocess,
+                model=api_model,
+                provider=api_provider,
+                iteration=iteration,
+                adversarial_reframe=adversarial_reframe,
+            )
+            if api_verdict is not None:
+                return api_verdict
+            logger.warning(
+                "CriticRunner: in-process API critic (%r) produced no verdict — "
+                "falling back to the claude-direct critic.", api_provider,
+            )
         if primary_provider:
             logger.info(
                 "CriticRunner: sub_jarvis provider %r has no direct critic — "
@@ -1418,6 +1441,64 @@ class CriticRunner:
         return None
 
     # --- Internal: direct codex exec path (Welle 6, 2026-05-18) ---
+
+    async def _invoke_via_api_critic(
+        self,
+        *,
+        prompt: str,
+        model: str | None,
+        provider: str,
+        iteration: int,
+        adversarial_reframe: bool,
+    ) -> CriticVerdict | None:
+        """Grade the mission IN-PROCESS via the provider's own BrainProvider.
+
+        No external CLI. Used for API-key providers with no native CLI critic
+        backend so a mission's review never requires the absent `claude` binary
+        (open-source AP-22, B2). Returns ``None`` on any failure so the caller's
+        claude-direct fallback / adversarial retry still runs.
+        """
+        try:
+            from jarvis.brain.provider_registry import BrainProviderRegistry
+            from jarvis.core.protocols import BrainMessage, BrainRequest
+
+            cls = BrainProviderRegistry().get_class(provider)
+            try:
+                brain = cls(model) if model else cls()  # type: ignore[call-arg]
+            except TypeError:
+                brain = cls()  # type: ignore[call-arg]
+
+            req = BrainRequest(
+                messages=(BrainMessage(role="user", content=prompt),),
+                system=(
+                    "You are a strict, adversarial code-review critic. Return "
+                    "EXACTLY one JSON object matching the schema in the prompt — "
+                    "no prose and no markdown fences before or after it."
+                ),
+                temperature=0.0,
+                max_tokens=2048,
+            )
+            parts: list[str] = []
+            async with asyncio.timeout(self._timeout):
+                async for delta in brain.complete(req):
+                    chunk = getattr(delta, "content", None)
+                    if chunk:
+                        parts.append(chunk)
+            return _parse_verdict_from_text(
+                "".join(parts), iteration=iteration, adversarial_reframe=adversarial_reframe,
+            )
+        except TimeoutError:
+            logger.warning(
+                "CriticRunner: API critic (%s) timed out after %.0fs.",
+                provider, self._timeout,
+            )
+            return None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "CriticRunner: API critic (%s) failed (%s) — falling back.",
+                provider, exc,
+            )
+            return None
 
     async def _invoke_via_codex_direct(
         self,
@@ -1632,6 +1713,90 @@ def _resolve_critic_provider_model() -> tuple[str | None, str | None]:
         return (primary.provider, primary.model)
     except Exception:  # noqa: BLE001
         return (None, None)
+
+
+# API-key brain providers that can grade IN-PROCESS via their own BrainProvider
+# (no external CLI). Order = the cross-family fallback preference.
+_API_CRITIC_PROVIDERS: tuple[str, ...] = ("openrouter", "openai", "gemini", "claude-api")
+
+
+def _provider_picked_model(provider: str) -> str | None:
+    """The user's configured model for ``provider`` ([brain.providers[p]].model).
+
+    Used so a cross-family critic reuses the user's PICK instead of falling to the
+    plugin's hardcoded ``DEFAULT_MODEL`` (OpenRouter = a paid Anthropic id). Returns
+    ``None`` when nothing is configured — the plugin default then applies, which is
+    free for the gateway (§3/AP-22).
+    """
+    try:
+        from jarvis.core.config import load_config
+
+        pc = (load_config().brain.providers or {}).get(provider)
+        picked = (getattr(pc, "model", "") or "").strip()
+        return picked or None
+    except Exception:  # noqa: BLE001 — config read must never break critic resolution
+        return None
+
+
+def _resolve_api_critic_provider(
+    primary_provider: str | None, primary_model: str | None
+) -> tuple[str | None, str | None]:
+    """Pick a keyed API brain provider to grade the mission IN-PROCESS (B2, AP-22).
+
+    Prefer the active sub-agent provider when it is itself a keyed API provider;
+    otherwise the first API provider that actually has a usable key at runtime. So
+    a mission whose worker ran on antigravity/openrouter/gemini is still reviewed
+    with the user's OWN key instead of the absent `claude` CLI binary. Returns
+    ``(None, None)`` when no API key is available → the caller keeps the legacy
+    claude-direct critic as the last resort.
+    """
+    from jarvis.core.config import get_provider_secret
+
+    order: list[str] = []
+    if primary_provider in _API_CRITIC_PROVIDERS:
+        order.append(primary_provider)  # type: ignore[arg-type]
+    order += [p for p in _API_CRITIC_PROVIDERS if p not in order]
+    for prov in order:
+        try:
+            if get_provider_secret(prov):
+                # Same provider as the worker → reuse its model. Cross-family →
+                # the user's PICK for that provider, never None (which would let
+                # the in-process critic fall to the plugin's hardcoded DEFAULT_MODEL
+                # = a paid Anthropic id on the OpenRouter gateway). §3/AP-21/AP-22.
+                model = (
+                    primary_model
+                    if prov == primary_provider
+                    else _provider_picked_model(prov)
+                )
+                return prov, model
+        except Exception:  # noqa: BLE001
+            continue
+    return None, None
+
+
+def _parse_verdict_from_text(
+    stdout_text: str, *, iteration: int, adversarial_reframe: bool
+) -> CriticVerdict | None:
+    """Parse a CriticVerdict from raw model output — clean JSON, ```json-fenced, or
+    embedded in narration. Shared by the claude-direct and in-process API paths.
+    Returns ``None`` when no valid verdict object is present.
+    """
+    cleaned = _strip_json_fences(stdout_text.strip())
+    try:
+        return _validate_verdict_tolerant(cleaned)
+    except (json.JSONDecodeError, ValueError, ValidationError):
+        pass
+    for candidate in reversed(_iter_balanced_json_objects(stdout_text)):
+        try:
+            return _validate_verdict_tolerant(_strip_json_fences(candidate))
+        except (json.JSONDecodeError, ValueError, ValidationError):
+            continue
+    logger.warning(
+        "CriticRunner: JSON-parse failed (no valid verdict object) iter=%d adv=%s "
+        "output[:300]=%r",
+        iteration, adversarial_reframe, stdout_text[:300],
+    )
+    return None
 
 
 class _suppress:

@@ -46,10 +46,16 @@ class ComputerUseContext:
     fast_step_model: str = ""  # L9: cheaper model id for trivial steps ("" = off)
     plan_model_override: str | None = None
     verify_after_each_step: bool = True
-    # Proactive zoom-before-click (default ON). See
-    # ComputerUseConfig.zoom_before_click. Internal screenshot crop only —
-    # nothing renders on screen.
-    zoom_before_click: bool = True
+    # Master switch for the per-action read-back verification suite (type read-back,
+    # click_element confirmation, no blind focus->type batching). See
+    # ComputerUseConfig.strict_verify. Default ON.
+    strict_verify: bool = True
+    # Proactive zoom-before-click (DEFAULT OFF since 2026-06-27 — see
+    # ComputerUseConfig.zoom_before_click). Internal screenshot crop only.
+    zoom_before_click: bool = False
+    # UIA snap-missed-click-to-element fallback (DEFAULT OFF since 2026-06-27 —
+    # the BUG-CU-UIASNAP wild-snap; see ComputerUseConfig.uia_click_fallback).
+    uia_click_fallback: bool = False
     max_replans: int = 2                    # from ADR-0008; configurable
     # Spoken per-step milestones ("Schritt N von M erledigt."). OFF by default
     # (2026-06-10): the counter counts successful ACTIONS, not verified plan
@@ -63,25 +69,60 @@ class ComputerUseContext:
     # hand-rolled vision+JSON path on any failure. None = hand-rolled only
     # (the default, since [computer_use].prefer_native defaults False).
     native_cu: Any = None
+    # Which monitor CU captures + acts on ([computer_use].monitor): "primary"
+    # (default), "foreground", or "all". When "primary", the loop brings the
+    # target window onto the main monitor before acting (audit G8c).
+    monitor: str = "primary"
+    # Which screen is "the main monitor" when monitor="primary"
+    # ([computer_use].main_monitor): "primary" | "largest" | explicit id.
+    main_monitor: str = "primary"
 
 
 _CONTEXT: ComputerUseContext | None = None
 
 # Active Computer-Use cancel token registry (BUG-CU-HANGUP, 2026-05-28).
 # ``ComputerUseHarness.invoke`` registers its CancelScope token here for the
-# duration of a mission and clears it in the finally block. The voice hangup
+# duration of a mission and removes it in the finally block. The voice hangup
 # handler ("auflegen") calls ``cancel_active_cu()`` to stop ONLY the running
-# Computer-Use mission -- it must NOT use ``KillSwitch.trip()``, which is
+# Computer-Use mission(s) -- it must NOT use ``KillSwitch.trip()``, which is
 # global and would also kill OpenClaw background missions (the documented
 # hangup contract keeps those alive; only their voice readback is muted).
-_ACTIVE_CU_TOKEN: Any = None
+#
+# This is a SET, not a single slot (BUG-CU-CONCURRENT-CANCEL, 2026-06-24): CU
+# runs as a detached background task, and two missions can overlap (the same
+# voice request dispatched twice, or a follow-up before the first finished).
+# A single slot only remembered the last registration, so a hangup cancelled
+# ONE mission while the other kept clicking the screen for ~22 s after the user
+# hung up (live: data/jarvis_desktop.log 20:45:17 + 20:45:28 both active ->
+# 20:45:54 hangup -> the sibling ran on to 20:46:16). Every active mission
+# registers; a hangup cancels them ALL; each mission removes only its OWN token.
+_ACTIVE_CU_TOKENS: set[Any] = set()
 
 
 def register_active_cu_token(token: Any) -> None:
-    """Register (or clear, with ``None``) the cancel token of the running CU
-    mission so the voice hangup path can cancel it CU-scoped."""
-    global _ACTIVE_CU_TOKEN
-    _ACTIVE_CU_TOKEN = token
+    """Register the cancel token of a running CU mission so the voice hangup
+    path can cancel it CU-scoped.
+
+    Concurrency-safe: multiple overlapping missions may each register, and a
+    single ``cancel_active_cu()`` cancels every one. Passing ``None`` CLEARS
+    the whole registry -- a global reset used only by tests / teardown; the
+    harness never clears this way (it removes its own token via
+    ``unregister_active_cu_token`` so a sibling mission stays cancelable).
+    """
+    if token is None:
+        _ACTIVE_CU_TOKENS.clear()
+        return
+    _ACTIVE_CU_TOKENS.add(token)
+
+
+def unregister_active_cu_token(token: Any) -> None:
+    """Remove a finished mission's token from the active registry.
+
+    Called from ``ComputerUseHarness.invoke``'s finally block. Removes ONLY the
+    given token, leaving any concurrently-running sibling mission registered and
+    still cancelable. A no-op (never raises) if the token was already removed.
+    """
+    _ACTIVE_CU_TOKENS.discard(token)
 
 
 # Post-hangup suppression window (BUG-CU-HANGUP-RACE, 2026-05-28). There is a
@@ -97,25 +138,28 @@ _CU_SUPPRESS_GRACE_S = 8.0
 
 
 def cancel_active_cu(reason: str = "voice_hangup") -> bool:
-    """Cancel the active Computer-Use mission AND open the post-hangup
+    """Cancel EVERY active Computer-Use mission AND open the post-hangup
     suppression window so a mission starting moments later is aborted too.
 
-    Returns True if a live token was cancelled. Never raises (the hangup path
-    must never crash)."""
+    Cancels ALL registered tokens (overlapping missions are common — CU runs as
+    a detached background task), not just the most recent. Returns True if at
+    least one live token was cancelled. Never raises (the hangup path must never
+    crash) — a token whose ``cancel`` raises is skipped, the rest still cancel.
+    """
     global _CU_SUPPRESS_UNTIL
     try:
         import time  # noqa: PLC0415
         _CU_SUPPRESS_UNTIL = time.monotonic() + _CU_SUPPRESS_GRACE_S
     except Exception:  # noqa: BLE001
         pass
-    tok = _ACTIVE_CU_TOKEN
-    if tok is None:
-        return False
-    try:
-        tok.cancel(reason)
-        return True
-    except Exception:  # noqa: BLE001
-        return False
+    cancelled_any = False
+    for tok in list(_ACTIVE_CU_TOKENS):
+        try:
+            tok.cancel(reason)
+            cancelled_any = True
+        except Exception:  # noqa: BLE001 — one bad token must not block the rest
+            continue
+    return cancelled_any
 
 
 def cu_mission_active() -> bool:
@@ -132,13 +176,13 @@ def cu_mission_active() -> bool:
     token in its ``finally`` and every mission has a hard deadline, so this
     can never wedge the session open forever. Never raises.
     """
-    tok = _ACTIVE_CU_TOKEN
-    if tok is None:
-        return False
-    try:
-        return not bool(tok.is_cancelled())
-    except Exception:  # noqa: BLE001 — unknown token shape: assume live
-        return True
+    for tok in list(_ACTIVE_CU_TOKENS):
+        try:
+            if not bool(tok.is_cancelled()):
+                return True
+        except Exception:  # noqa: BLE001 — unknown token shape: assume live
+            return True
+    return False
 
 
 def cu_recently_cancelled() -> bool:
@@ -178,7 +222,9 @@ _RELOADABLE_FIELDS: tuple[str, ...] = (
     "fast_step_model",
     "max_replans",
     "verify_after_each_step",
+    "strict_verify",
     "zoom_before_click",
+    "uia_click_fallback",
     "announce_progress",
 )
 _subscribed_bus_id: int | None = None

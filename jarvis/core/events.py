@@ -52,6 +52,27 @@ class WakeWordDetected(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class WakeCandidateDetected(Event):
+    """Optimistic, VISUAL-ONLY wake hint — the overlay bar pops on this the
+    instant OpenWakeWord fires, *before* the slow STT prefix-verification that
+    gates the authoritative ``WakeWordDetected``.
+
+    Carries no session semantics: only the overlay bridge consumes it. It never
+    reaches the session recorder, the telemetry turn count, or the brain — so a
+    rejected candidate (an OWW false positive) costs only a brief bar flash, not
+    a phantom session record. Publishing ``WakeWordDetected`` early instead would
+    open a session turn on every false positive; this lightweight sibling exists
+    precisely so the *visual* feedback can be instant without that cost.
+
+    ``active=True``  → show the listening bar now (candidate detected).
+    ``active=False`` → retract: the prefix-verifier rejected the candidate, so
+    hide the bar again unless a real session has meanwhile begun.
+    """
+    active: bool = True
+    keyword: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class ListeningStarted(Event):
     """Jarvis opens the microphone for an utterance."""
     pass
@@ -415,6 +436,38 @@ class AnnouncementRequested(Event):
     detail: str | None = None
 
 
+# Mission completion — bridged from the per-mission MissionBus to drive When-Then rules
+
+@dataclass(frozen=True, slots=True)
+class MissionCompleted(Event):
+    """Terminal mission outcome, bridged from the isolated Phase-6 ``MissionBus``
+    onto the global ``EventBus`` by ``MissionEventBridge``.
+
+    Phase-6 mission lifecycle events (``MissionApproved`` / ``MissionFailed`` /
+    ``MissionCancelled`` / ``MissionTimedOut``) live on the per-mission
+    ``MissionBus`` and never reach the global bus. The Tasks scheduler — which
+    drives the When-Then automation rules — is a global-``EventBus`` subscriber,
+    so on its own it can never see a mission finishing. This event is that bridge:
+    one flat, global signal per terminal mission outcome that a ``TriggerOnEvent``
+    rule matches by name (``event_name="MissionCompleted"``) and filters by field
+    (``filter_expr="status == 'approved'"``).
+
+    All fields are flat (no nested dicts) on purpose: the scheduler's safe-AST
+    ``filter_expr`` evaluator builds its namespace from ``__dataclass_fields__``
+    and only compares top-level names. ``result_uri`` is the approved artifact's
+    path (empty for non-approved outcomes); ``reason`` carries the failure/cancel
+    cause. This is the machine-readable trigger signal — distinct from the spoken
+    ``AnnouncementRequested`` readback the ``MissionAnnouncer`` emits for the same
+    mission, so the two never collide.
+    """
+    mission_id: str = ""
+    status: Literal["approved", "failed", "cancelled", "timed_out"] = "approved"  # noqa: UP037
+    summary_de: str = ""
+    summary_en: str = ""
+    result_uri: str = ""
+    reason: str = ""
+
+
 # Voice mute (user-facing toggle, e.g. mascot double-click)
 
 @dataclass(frozen=True, slots=True)
@@ -442,7 +495,7 @@ class ShowWindowRequested(Event):
     """User asked to bring the Jarvis desktop window to the foreground.
 
     Publishers: the overlay right-click gesture for BOTH surfaces — the
-    whisper-bar and the mascot orb — wired through ``OrbBusBridge``
+    jarvis-bar and the mascot orb — wired through ``OrbBusBridge``
     (``ui/orb/bus_bridge.py``). The DesktopApp owns the actual window raise
     in ``_on_show_window_requested`` → ``_safe_window_show`` and is null-safe
     when there is no window (headless / VPS), so an unwired publish is a no-op.
@@ -792,14 +845,11 @@ class WorkflowCompleted(Event):
 
 
 # ----------------------------------------------------------------------
-# OpenClaw Task Dashboard (Welle-4-Migration aus Phase 5.5 Sub-Jarvis)
+# Jarvis-Agent Task Dashboard (formerly OpenClaw / Sub-Jarvis)
 # ----------------------------------------------------------------------
-# Wave 4 Sub-Jarvis cleanup (see docs/openclaw-bridge.md §11):
-# The Sub-Jarvis tier was replaced by the OpenClaw bridge. Event schemas are
-# preserved 1:1 — only the class names changed to OpenClaw*.
 
 @dataclass(frozen=True, slots=True)
-class OpenClawTaskStarted(Event):
+class JarvisAgentTaskStarted(Event):
     parent_trace_id: UUID | None = None
     utterance: str = ""
     context_hints: list[str] = field(default_factory=list)
@@ -810,12 +860,12 @@ class OpenClawTaskStarted(Event):
 
 
 @dataclass(frozen=True, slots=True)
-class OpenClawReviewTriggered(Event):
+class JarvisAgentReviewTriggered(Event):
     iteration: int = 0
 
 
 @dataclass(frozen=True, slots=True)
-class OpenClawTaskCompleted(Event):
+class JarvisAgentTaskCompleted(Event):
     success: bool = False
     summary: str = ""
     full_log_len: int = 0
@@ -1013,10 +1063,10 @@ class ToolCallCompleted(Event):
 
 
 @dataclass(frozen=True, slots=True)
-class OpenClawBackgroundCompleted(Event):
-    """A background OpenClaw task finished — TTS should speak proactively.
+class JarvisAgentBackgroundCompleted(Event):
+    """A background Jarvis-Agent task finished — TTS should speak proactively.
 
-    Separate from ``OpenClawTaskCompleted`` for pipeline/UI feedback without
+    Separate from ``JarvisAgentTaskCompleted`` for pipeline/UI feedback without
     a standardised voice announcement.
     """
     success: bool = False
@@ -1027,8 +1077,8 @@ class OpenClawBackgroundCompleted(Event):
 
 
 @dataclass(frozen=True, slots=True)
-class OpenClawAnnouncement(Event):
-    """OpenClaw spawn start signal for UI/telemetry, without a voice ACK."""
+class JarvisAgentAnnouncement(Event):
+    """Jarvis-Agent spawn start signal for UI/telemetry, without a voice ACK."""
     action: str = ""   # z.B. "eine Flask-App baut"
     target: str = ""   # z.B. "auf Port 8000"
 

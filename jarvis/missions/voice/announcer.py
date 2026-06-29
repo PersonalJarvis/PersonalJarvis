@@ -31,12 +31,16 @@ activating both simultaneously results in a double announcement.
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from jarvis.brain.output_filter import scrub_for_voice
 from jarvis.core.bus import EventBus
 from jarvis.core.events import AnnouncementRequested
 from jarvis.missions.voice.readback import FAILURE_REASON_PHRASES
+from jarvis.voice.contextual_readback import render_readback
+
+if TYPE_CHECKING:
+    from jarvis.voice.contextual_readback import ReadbackComposer
 
 from ..event_bus import MissionBus
 from ..event_store import MissionEventStore
@@ -89,6 +93,7 @@ class MissionAnnouncer:
         scrub: bool = True,
         announce_critic_loop: bool = False,
         language_default: _Lang = "de",
+        readback_composer: ReadbackComposer | None = None,
     ) -> None:
         self._bus = bus
         self._store = store
@@ -96,6 +101,12 @@ class MissionAnnouncer:
         self._scrub = scrub
         self._announce_critic_loop = announce_critic_loop
         self._lang_default: _Lang = language_default
+        # Context-aware readbacks (maintainer mandate: no fixed stock phrases).
+        # The signed/canned line from _render is the deterministic ground truth;
+        # the composer only rephrases it naturally, honesty-bound for the signed
+        # MissionApproved summary (ADR-0009 — rephrase, never invent). None =>
+        # the canned line is spoken unchanged (risk-free when unwired).
+        self._readback_composer = readback_composer
         # Cache (mission_id -> (is_voice_source, language))
         self._mission_voice_cache: dict[str, tuple[bool, _Lang]] = {}
         self._unsubscribe = None  # set by start()
@@ -128,6 +139,26 @@ class MissionAnnouncer:
         if not text:
             return
 
+        # Context-aware rephrasing of the signed/canned line. honesty_bound for
+        # the MissionApproved summary so the spoken surface stays a faithful
+        # rephrasing of the Kontrollierer-signed observation (ADR-0009); failure/
+        # timeout/cancel are status, not observations, so they phrase more freely
+        # (digit + vocab guards + strict persona still apply). Falls back to the
+        # exact canned line on any miss (AD-OE6, zero silent drops).
+        instruction, honesty_bound = self._situation(env.payload)
+        canned_line = text
+        text = await render_readback(
+            self._readback_composer,
+            instruction=instruction,
+            language=lang,
+            canned=lambda: canned_line,
+            facts={"result": canned_line},
+            honesty_bound=honesty_bound,
+            latency_budget_ms=2500,
+        )
+        if not text:
+            return
+
         if self._scrub:
             scrubbed = scrub_for_voice(text, language=lang)
             if scrubbed.actions:
@@ -156,6 +187,32 @@ class MissionAnnouncer:
                 kind="subagent",
             )
         )
+
+    @staticmethod
+    def _situation(payload: object) -> tuple[str, bool]:
+        """English (instruction, honesty_bound) for a terminal mission event.
+
+        ``honesty_bound`` is True ONLY for the signed success summary, so its
+        spoken surface stays a faithful rephrasing (ADR-0009). Failure / timeout
+        / cancel are status lines, not observations, so they phrase freely.
+        """
+        if isinstance(payload, MissionApproved):
+            return (
+                "A background task the user asked for has finished successfully; "
+                "tell them naturally, keeping the reported result faithfully.",
+                True,
+            )
+        if isinstance(payload, MissionFailed):
+            return (
+                "A background task the user asked for did not succeed; tell them "
+                "plainly and kindly, keeping any reason given.",
+                False,
+            )
+        if isinstance(payload, MissionTimedOut):
+            return ("A background task the user asked for ran out of time.", False)
+        if isinstance(payload, MissionCancelled):
+            return ("A background task the user asked for was cancelled.", False)
+        return ("A background task the user asked for has an update.", False)
 
     def _render(
         self, env: EventEnvelope, lang: _Lang,

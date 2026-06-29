@@ -125,6 +125,42 @@ class UserProfile:
         sec[field_name] = current
         return True
 
+    def clear(self, cluster: str, field_name: str) -> bool:
+        """Removes a field entirely (the user 'forgets' it via the Profile UI).
+
+        Drops the key so the field reads back as unset (``get`` → None) and the
+        Knowledge matrix shows it as "not known yet" again. Returns True only if
+        a real (non-empty) value was actually removed — clearing an already-empty
+        field is a no-op (mirrors ``set``'s changed-or-not contract).
+        """
+        if cluster not in CLUSTERS:
+            raise ValueError(f"Unbekannter Cluster: {cluster}")
+        sec = self._meta.get(cluster)
+        if not isinstance(sec, dict):
+            return False
+        old = sec.get(field_name)
+        had_value = old is not None and old != "" and old != []
+        sec.pop(field_name, None)
+        return had_value
+
+    def remove_list_item(self, cluster: str, field_name: str, value: Any) -> bool:
+        """Removes a single item from a list field (the chip 'x').
+
+        Returns True if the value was present and got removed. An emptied list is
+        left as ``[]`` — which the UI renders as "not known yet" just like an
+        unset field.
+        """
+        if cluster not in CLUSTERS:
+            raise ValueError(f"Unbekannter Cluster: {cluster}")
+        sec = self._meta.get(cluster)
+        if not isinstance(sec, dict):
+            return False
+        current = sec.get(field_name)
+        if not isinstance(current, list) or value not in current:
+            return False
+        sec[field_name] = [item for item in current if item != value]
+        return True
+
     @property
     def meta(self) -> dict[str, Any]:
         return dict(self._meta)

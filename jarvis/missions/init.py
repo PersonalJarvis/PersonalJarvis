@@ -41,6 +41,7 @@ from .isolation.worktree import WorktreeManager
 from .kontrollierer.decomposer import MissionDecomposer
 from .kontrollierer.orchestrator import Kontrollierer
 from .manager import MissionManager
+from .task_bridge import MissionEventBridge
 from .voice.announcer import MissionAnnouncer
 from .voice.listener import MissionVoiceListener
 from .voice.readback import MissionReadback
@@ -291,6 +292,14 @@ def _live_subagent_provider(boot_snapshot: str | None) -> str | None:
             resolved = str(raw).strip().lower()
             if resolved:
                 return resolved
+        # B6 (open-source AP-22): no explicit [brain.sub_jarvis].provider → run the
+        # heavy worker on the user's ACTIVE brain provider, not the legacy Claude
+        # CLI. A fresh openrouter/gemini/codex install never sets sub_jarvis, so
+        # without this the default ClaudeDirectWorker spawns the absent `claude`
+        # binary and every mission fails.
+        primary = (getattr(cfg.brain, "primary", None) or "").strip().lower()
+        if primary:
+            return primary
     except Exception as exc:  # noqa: BLE001
         logger.debug(
             "missions: live subagent re-resolve failed (%s) — using boot "
@@ -477,6 +486,12 @@ async def bootstrap_missions(
             "openclaw-backed worker routing", exc,
         )
 
+    # B6 (open-source AP-22): no explicit sub-agent provider → default to the
+    # active brain provider so the boot snapshot, env_builder, and the per-mission
+    # _live_subagent_provider all agree (and never silently route to the Claude CLI).
+    if not sub_jarvis_provider:
+        sub_jarvis_provider = brain_primary
+
     # 7. Kontrollierer
     def _env_builder(mission_dir: Path) -> dict[str, str]:
         # Each worker CLI reads its own API-key env
@@ -545,17 +560,20 @@ async def bootstrap_missions(
                 "authentication_failed", exc,
             )
 
-        # Prefer the LIVE Claude Max OAuth token. `claude` refreshes its access
-        # token in ~/.claude/.credentials.json, but get_secret may return a
-        # STALE oat token from the credential manager / .env. Pre-fix that was
-        # harmless (the worker read the user's config dir directly); now that
-        # every worker is pinned to an isolated CLAUDE_CONFIG_DIR, the env token
-        # is the only auth surface and a stale one 401s. A classic API key
-        # (sk-ant-api03) from get_secret is left untouched.
+        # Subscription-first billing for Claude (mirror of Codex's "OAuth wins,
+        # drop the API key"): a LIVE Claude Max OAuth login in
+        # ~/.claude/.credentials.json bills the plan's included usage, so it wins
+        # over a stored Anthropic API key — the key is the fallback only when no
+        # subscription login is present. (Was API-key-first, which silently
+        # metered a user who had both a Claude Max login AND an API key.)
+        #
+        # Prefer the LIVE file token: `claude` refreshes its access token in
+        # place, but get_secret may return a STALE oat from the credential
+        # manager / .env; pinned to an isolated CLAUDE_CONFIG_DIR the env token is
+        # the only auth surface and a stale one 401s. A classic API key
+        # (sk-ant-api03) is used verbatim when there is no live OAuth login.
         live_oat = read_live_claude_oauth_token()
-        if live_oat and (
-            anthropic_key is None or anthropic_key.startswith("sk-ant-oat")
-        ):
+        if live_oat:
             anthropic_key = live_oat
 
         return build_worker_env(
@@ -624,6 +642,20 @@ async def bootstrap_missions(
             live_provider, getattr(step, "model", "") or ""
         )
         if kind == "claude_direct":
+            # B3 (open-source AP-22): an Anthropic-API-key-only user has NO `claude`
+            # CLI binary — run the heavy worker IN-PROCESS via ApiAgentWorker on the
+            # API key instead of failing on the missing binary. The CLI stays
+            # preferred (subscription-first) whenever the binary IS present.
+            from jarvis.core.config import get_provider_secret
+            from jarvis.missions.workers.claude_direct_worker import (
+                _resolve_claude_binary,
+            )
+            if _resolve_claude_binary() is None and get_provider_secret("claude-api"):
+                logger.info(
+                    "Mission worker -> ApiAgentWorker('claude-api'): no `claude` CLI "
+                    "binary, running in-process on the Anthropic API key."
+                )
+                return ApiAgentWorker("claude-api")
             # Proactive quota routing (mirror of the codex_needs_reauth branch
             # below): if a Claude worker already proved the Max window exhausted
             # this session, route STRAIGHT to codex (a separate ChatGPT
@@ -710,6 +742,18 @@ async def bootstrap_missions(
             )
             return ClaudeDirectWorker(mcp_servers=_assemble_worker_mcp_servers())
         if kind == "gemini":
+            # B4 (open-source AP-22): no Gemini CLI but a Gemini API key → run the
+            # heavy worker IN-PROCESS via ApiAgentWorker instead of failing on the
+            # missing npm `gemini` CLI binary.
+            import shutil
+
+            from jarvis.core.config import get_provider_secret
+            if not (shutil.which("gemini") or shutil.which("gemini.cmd")) and get_provider_secret("gemini"):
+                logger.info(
+                    "Mission worker -> ApiAgentWorker('gemini'): no Gemini CLI, "
+                    "running in-process on the Gemini API key."
+                )
+                return ApiAgentWorker("gemini")
             # Reached when [brain.sub_jarvis].provider == "gemini" was selected
             # (the user's "selected provider must run" mandate) OR, legacy, when
             # no provider is configured but the step model is a gemini model.
@@ -751,6 +795,18 @@ async def bootstrap_missions(
         tts_speak_fn=tts_speak_fn, speech_bus=speech_bus
     )
 
+    # Context-aware readback composer (maintainer mandate: no fixed stock
+    # phrases). One instance shared by whichever readback path is active. Built
+    # in fallback-only mode when the flash path is off, so the spoken line is the
+    # existing canned/signed text unless [ack_brain] is enabled. Lazy import +
+    # best-effort so an import cycle / wiring fault never blocks the bootstrap.
+    _readback_composer = None
+    try:
+        from jarvis.brain.factory import build_readback_composer
+        _readback_composer = build_readback_composer()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Mission readback composer wiring skipped: %s", exc)
+
     voice_listener: MissionVoiceListener | None = None
     if _readback_mode == "listener":
         voice_listener = MissionVoiceListener(
@@ -760,6 +816,7 @@ async def bootstrap_missions(
             tts_speak_fn=tts_speak_fn,
             announce_critic_loop=voice_announce_critic_loop,
             language_default=voice_language_default,  # type: ignore[arg-type]
+            readback_composer=_readback_composer,
         )
         await voice_listener.start()
         logger.info("Phase-6 voice listener active (direct-TTS readback)")
@@ -783,11 +840,29 @@ async def bootstrap_missions(
             speech_bus=speech_bus,
             announce_critic_loop=voice_announce_critic_loop,
             language_default=voice_language_default,  # type: ignore[arg-type]
+            readback_composer=_readback_composer,
         )
         await mission_announcer.start()
         logger.info("Phase-6 mission-announcer active (mission-bus -> speech-bus)")
     else:
         logger.info("Phase-6 mission-announcer disabled (no speech_bus provided)")
+
+    # 8c. MissionEventBridge: Mission-Bus -> global-bus MissionCompleted signal
+    # that drives the When-Then Tasks rules (on_event triggers). Independent of
+    # the announcer (different event class — no double announcement). Activates
+    # whenever a global bus is present (speech_bus IS the global EventBus the
+    # Tasks scheduler binds to). The bridge only emits a machine-readable signal;
+    # it never speaks.
+    mission_event_bridge: MissionEventBridge | None = None
+    if speech_bus is not None:
+        mission_event_bridge = MissionEventBridge(
+            bus=manager.bus,
+            global_bus=speech_bus,
+        )
+        await mission_event_bridge.start()
+        logger.info("Phase-6 mission-event-bridge active (mission-bus -> global MissionCompleted)")
+    else:
+        logger.info("Phase-6 mission-event-bridge disabled (no global bus provided)")
 
     # 9. Daily cleanup task (opt-in)
     cleanup_task: asyncio.Task[None] | None = None
@@ -808,6 +883,7 @@ async def bootstrap_missions(
         "budget": budget,
         "voice_listener": voice_listener,
         "mission_announcer": mission_announcer,
+        "mission_event_bridge": mission_event_bridge,
         "cleanup_task": cleanup_task,
         "sweep_stats": sweep_stats,
         "recovered_mission_ids": recovered,
@@ -828,6 +904,14 @@ async def shutdown_missions(bootstrap_result: dict[str, Any]) -> None:
             await cleanup_task
         except asyncio.CancelledError:
             pass
+
+    bridge = bootstrap_result.get("mission_event_bridge")
+    if bridge is not None:
+        bridge.stop()
+
+    announcer = bootstrap_result.get("mission_announcer")
+    if announcer is not None:
+        announcer.stop()
 
     manager = bootstrap_result.get("manager")
     if manager is not None:

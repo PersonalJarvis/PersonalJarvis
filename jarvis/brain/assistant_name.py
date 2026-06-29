@@ -19,12 +19,12 @@ from typing import Any
 
 DEFAULT_ASSISTANT_NAME = "Assistant"
 
-# The name baked into the static persona files (SOUL.md / JARVIS_PERSONA.md).
-# When the resolved name equals this, the system prompt needs no identity-override
-# directive — the persona files already say "Jarvis". Used by
-# ``BrainManager._build_system_prompt`` so it never emits the self-contradictory
-# "Du heisst Jarvis — nicht Jarvis" for the default wake word.
-PERSONA_BASELINE_NAME = "Jarvis"
+# NOTE: there is no longer a "PERSONA_BASELINE_NAME". The persona files
+# (SOUL.md / JARVIS_PERSONA.md) were made name-neutral on 2026-06-29, so the
+# system prompt no longer bakes in "Jarvis" anywhere. ``_build_system_prompt``
+# now emits the identity directive for every resolved name except the neutral
+# ``DEFAULT_ASSISTANT_NAME`` fallback, and there is no "Jarvis" baseline to
+# special-case or contradict.
 
 
 def resolve_assistant_name(config: Any) -> str:

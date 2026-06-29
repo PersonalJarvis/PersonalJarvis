@@ -30,13 +30,26 @@ BrainCallback = Callable[[str], Awaitable[str]]
 # Master-Plan §22 / Persona-Mandate Phase 3.
 #
 # Baseline (Mandate-Phase-3): run-shell, screen-snapshot, multi-spawn,
-# spawn-worker. Phase 5 re-introduced dispatch-to-harness; Phase 8.4
-# (Plan §6.4 Quality-Gate) added dispatch-with-review — both legitimately
-# extend the set without breaking the pure-dispatcher spirit.
+# spawn-worker. Phase 8.4 (Plan §6.4 Quality-Gate) added dispatch-with-review,
+# which legitimately extends the set without breaking the pure-dispatcher
+# spirit.
+#
+# REMOVED 2026-06-28 — ``dispatch-to-harness`` is intentionally NOT a
+# LLM-visible router tool. Its raw ``harness`` parameter let the brain request
+# a sub-agent vehicle by NAME (``harness="openclaw"``), but OpenClaw is not a
+# registered harness (Welle-4 removal, ~92% hang; pyproject.toml registers only
+# open-interpreter / mcp-remote / python-script / screenshot). A "start a
+# subagent" turn then dispatched to a phantom harness and surfaced the raw
+# "Harness 'openclaw' nicht verfügbar" KeyError to voice. Heavy sub-agent work
+# is ``spawn-worker`` (Mission-Manager → ClaudeDirectWorker); live desktop work
+# is ``computer-use``. The tool class itself still exists for the INTERNAL,
+# non-LLM local-action fast path (see ``_load_local_action_tools``, called
+# programmatically with harness="screenshot"); it is just not router-selectable.
+# Do NOT re-add it here — that resurrects the phantom-openclaw routing bug.
 #
 # Rationale: Hauptjarvis is a pure dispatcher. Direct actions outside this
-# list (open_app, type_text, remember, whoami …) belong to the OpenClaw
-# bridge — the router delegates them via ``spawn_worker``. Read-only lookups
+# list (open_app, type_text, remember, whoami …) are delegated to a background
+# worker — the router delegates them via ``spawn_worker``. Read-only lookups
 # (search-web, wiki-recall, awareness-recall) and safe-gated direct actions
 # (computer-use, cli-tools, plugin-tools) are router-tier by design — see the
 # ADR-0011 amendments (2026-05-24 CLI, 2026-05-29 Computer-Use, 2026-06-01
@@ -46,7 +59,9 @@ BrainCallback = Callable[[str], Awaitable[str]]
 ROUTER_TOOLS = frozenset({
     "run-shell",
     "screen-snapshot",
-    "dispatch-to-harness",
+    # NB: ``dispatch-to-harness`` deliberately absent (removed 2026-06-28) —
+    # see the header comment above. Heavy work → spawn-worker; desktop →
+    # computer-use. The tool remains for the internal local-action fast path.
     "multi-spawn",
     "spawn-worker",
     # Phase 8.4 (Plan §6.4) — Hauptjarvis calls the quality-gate pipeline
@@ -124,6 +139,11 @@ ROUTER_TOOLS = frozenset({
     # as gmail — Vercel's catalog rest_wrapper transport produced zero MCP tools,
     # so it must be router-visible directly. Read-only; never a spawn (AP-5/AP-14).
     "vercel",
+    # Google Calendar Marketplace plugin (2026-06-27): native bridge tool whose
+    # bot logic is a Node script (calendar_bot.mjs). Same rationale as gmail — no
+    # MCP server block, so it must be router-visible directly; otherwise a
+    # connected calendar is not callable by voice/chat. Never a spawn (AP-5/AP-14).
+    "google_calendar",
     # Computer-Use (Wave 1, 2026-05-29): first-class, clearly-described tool to
     # drive the user's LIVE desktop (open apps, click, type, scroll, operate
     # any GUI). The router previously had no honest desktop path — spawn-worker
@@ -192,6 +212,34 @@ SELF_MOD_TOOL_NAMES_ROUTER = frozenset({
     "get_config_value",
     "set_config_value",
 })
+
+
+def warn_if_phantom_openclaw(config: Any, harness_manager: Any) -> bool:
+    """Log a warning when ``[harness.openclaw].enabled`` is true but unregistered.
+
+    OpenClaw was removed in Welle 4 and has no entry-point, so an
+    ``enabled = true`` block is INERT (config honesty, 2026-06-28). This probe is
+    advisory only: it never raises, never changes routing, and "start a subagent"
+    routes to ``spawn_worker`` regardless. Returns True when a phantom config was
+    detected (consumed by the regression guard in tests).
+    """
+    oc = getattr(getattr(config, "harness", None), "openclaw", None)
+    if oc is None or not getattr(oc, "enabled", False):
+        return False
+    try:
+        available = harness_manager.available()
+    except Exception:  # noqa: BLE001 — an advisory probe must never break boot
+        return False
+    if "openclaw" in available:
+        return False
+    log.warning(
+        "[harness.openclaw].enabled is true but 'openclaw' is not a registered "
+        "harness (available: %s) — the block is inert. Heavy sub-agent work runs "
+        "through spawn_worker; set [harness.openclaw].enabled = false to silence "
+        "this.",
+        available,
+    )
+    return True
 
 
 def _per_turn_vision_active(vision_cfg: Any) -> bool:
@@ -311,12 +359,6 @@ def _load_tools_for_tier(
                     kontrollierer_resolver=_resolve_kontrollierer,
                     announcer=build_spawn_announcer(config),
                 )
-            elif ep.name == "dispatch-to-harness":
-                inst = cls(
-                    bus=bus,
-                    manager=harness_manager,
-                    max_output_chars=config.harness.max_output_chars,
-                )
             elif ep.name == "computer-use":
                 # Wave 1: wraps the harness-dispatch plumbing with a fixed
                 # computer-use harness identity (see computer_use_tool.py).
@@ -425,7 +467,14 @@ def _load_tools_for_tier(
             # hot-reload subscriber then applies it to the NEXT turn with no
             # restart. Without the bus the change lands on disk but stays dormant
             # until restart — the exact symptom self-mod "doesn't work".
-            self_mod_tools = build_self_mod_tools(writer_kwargs={"bus": bus})
+            #
+            # auto_apply="all" (Wave 1.3): the brain-driven (voice/chat) config
+            # path applies every non-forbidden change immediately, no confirm
+            # round-trip ("never ask, always now"). REST/CLI keep their own
+            # confirm UX (they build their store on the default "safe_only").
+            self_mod_tools = build_self_mod_tools(
+                writer_kwargs={"bus": bus}, auto_apply="all"
+            )
             for name, inst in self_mod_tools.items():
                 tools[name] = inst
         except Exception as exc:  # noqa: BLE001 — defensive, kein Tool-Block fail-stops das Brain
@@ -644,9 +693,14 @@ def _phase2_full_brain(
     approval = ApprovalWorkflow(bus)
     executor = ToolExecutor(bus, evaluator, approval)
 
-    # HarnessManager for dispatch-to-harness + multi-spawn
+    # HarnessManager for the internal harness fast path (computer-use /
+    # local-action) + multi-spawn. NB: dispatch-to-harness is no longer an
+    # LLM-visible router tool (removed 2026-06-28) — see the ROUTER_TOOLS header.
     from jarvis.harness.manager import HarnessManager
     harness_manager = HarnessManager(bus=bus)
+    # Config honesty: warn (don't fail) if a [harness.openclaw] block is enabled
+    # but the harness is unregistered — that block is inert (Welle-4 removal).
+    warn_if_phantom_openclaw(config, harness_manager)
 
     # Phase A1: build the AwarenessManager (DI for the awareness-snapshot tool).
     # Do NOT start it here — start()/stop() is the responsibility of the app layer
@@ -838,6 +892,15 @@ def _phase2_full_brain(
         contacts=contact_store,
     )
 
+    # Context-aware readbacks (maintainer mandate: no fixed stock phrases). The
+    # composer is built in fallback-only mode when the flash path is disabled, so
+    # this never changes behavior unless [ack_brain] is on. Router tier only —
+    # the CU/local-action readbacks all originate on this manager.
+    try:
+        manager._readback_composer = build_readback_composer(config)
+    except Exception as exc:  # noqa: BLE001 — never block brain wiring on this
+        log.warning("Readback-Composer wiring skipped: %s", exc)
+
     # Live-reload marker: refresh_tools() uses these attributes to reconstruct
     # a factory call identical to this one.
     manager._tier = tier
@@ -882,7 +945,25 @@ def _phase2_full_brain(
             try:
                 from jarvis.vision.engine import VisionEngine
 
-                engine = VisionEngine(bus=bus)
+                # Computer-Use capture strategy (Problem 1, 2026-06-28). The
+                # [computer_use].monitor policy ("primary" default) drives the G8
+                # MOVE-to-primary hook (ctx.monitor), but the screenshot CAPTURE
+                # must FOLLOW the foreground/target window — pinning it to the
+                # primary made CU film an EMPTY primary and "do nothing" whenever
+                # the target app sat on a secondary monitor. Following the window
+                # (consistent with _capture_monitor_geometry, which already does)
+                # means CU works on main when the target is moved there and on the
+                # secondary when a window can't be moved, instead of freezing. The
+                # negative-X absolute-click fix makes secondary clicks land. "all"
+                # still captures the whole virtual desktop.
+                from jarvis.vision.screenshot import cu_capture_strategy  # noqa: PLC0415
+
+                _cu_monitor = getattr(
+                    getattr(config, "computer_use", None), "monitor", "primary",
+                )
+                engine = VisionEngine(
+                    bus=bus, monitor_strategy=cu_capture_strategy(_cu_monitor),
+                )
                 vision_engine_for_cu = engine
                 if per_turn_vision:
                     from jarvis.vision.context_provider import VisionContextProvider
@@ -971,6 +1052,17 @@ def _phase2_full_brain(
                         cu_tools[_inst.name] = _inst
                 except Exception as _exc:  # noqa: BLE001
                     log.debug("CU extra tool '%s' not loadable: %s", _ep.name, _exc)
+            # The `drag` action has no entry-point plugin (it was historically
+            # handled inline); inject it directly so the CU loop routes drag
+            # through the ToolExecutor for risk-tier / blacklist / audit parity
+            # (audit #13). Best-effort: a load failure leaves the loop's inline
+            # drag fallback in place.
+            try:
+                from jarvis.plugins.tool.drag import DragTool  # noqa: PLC0415
+
+                cu_tools.setdefault("drag", DragTool())
+            except Exception as _exc:  # noqa: BLE001
+                log.debug("CU drag tool not loadable: %s", _exc)
             # Wave 3: optionally build the native Gemini computer_use engine.
             # Returns None unless [computer_use].prefer_native is on AND the
             # active provider is Gemini, so the default (hand-rolled) path is
@@ -1000,10 +1092,14 @@ def _phase2_full_brain(
                 fast_step_model=getattr(cu_cfg, "fast_step_model", ""),
                 plan_model_override=cu_cfg.plan_model,
                 verify_after_each_step=cu_cfg.verify_after_each_step,
+                strict_verify=getattr(cu_cfg, "strict_verify", True),
                 zoom_before_click=getattr(cu_cfg, "zoom_before_click", False),
+                uia_click_fallback=getattr(cu_cfg, "uia_click_fallback", False),
                 max_replans=cu_cfg.max_replans,
                 announce_progress=getattr(cu_cfg, "announce_progress", False),
                 native_cu=native_cu,
+                monitor=getattr(cu_cfg, "monitor", "primary"),
+                main_monitor=getattr(cu_cfg, "main_monitor", "primary"),
             ))
             # Hot-reload: refresh the live context's step_budget / timeout /
             # replan knobs on ConfigReloaded so a voice-tunable change
@@ -1168,7 +1264,8 @@ def _legacy_full_brain(bus: Any | None = None) -> Any:
 
     tools: dict[str, Any] = {}
     active_tools = {"open-app", "type-text", "run-shell", "search-web", "remember",
-                    "dispatch-to-harness", "whoami", "cli-tools", "gmail", "vercel"}
+                    "dispatch-to-harness", "whoami", "cli-tools", "gmail", "vercel",
+                    "google_calendar"}
     from jarvis.harness.manager import HarnessManager
     harness_manager = HarnessManager(bus=bus)
 
@@ -1713,3 +1810,66 @@ def build_spawn_announcer(jcfg: Any | None = None) -> Any:
             "build_spawn_announcer() failed: %s — fallback pool only.", exc
         )
         return SpawnAnnouncementComposer()
+
+
+def build_readback_composer(jcfg: Any | None = None) -> Any:
+    """Build the ``ReadbackComposer`` for the deterministic action-path readbacks.
+
+    The engine behind the maintainer's "no fixed stock phrases" mandate: the CU
+    outcome/dispatch readbacks, budget guards, and tool-failed line are phrased
+    fresh for the situation by a bounded flash call, with the EXISTING canned
+    line as the instant fallback.
+
+    Never raises and never returns ``None``: when the flash path is unavailable
+    (``[ack_brain].enabled = false``, ``readback_generation = false``, missing
+    adapter, construction error) the composer is returned in fallback-only mode,
+    so the call sites still emit the canned line (AD-OE6, zero behavior change).
+    Mirrors :func:`build_spawn_announcer` — own provider + breaker plus a
+    separate-provider failover so a dead primary degrades to the live secondary,
+    not straight to the canned table.
+    """
+    from jarvis.voice.contextual_readback import ReadbackComposer
+
+    try:
+        if jcfg is None:
+            from jarvis.core.config import load_config
+            jcfg = load_config()
+        ack_cfg = getattr(jcfg, "ack_brain", None)
+        if (
+            ack_cfg is None
+            or not getattr(ack_cfg, "enabled", False)
+            or not getattr(ack_cfg, "readback_generation", True)
+        ):
+            log.info("Readback-Composer: flash path disabled — fallback-only mode.")
+            return ReadbackComposer()
+
+        from jarvis.brain.ack_brain import CircuitBreaker
+
+        provider = _build_flash_provider(jcfg, ack_cfg)
+        if provider is None:
+            return ReadbackComposer()
+        breaker = CircuitBreaker(
+            threshold=ack_cfg.circuit_breaker_threshold,
+            cooldown_s=ack_cfg.circuit_breaker_cooldown_s,
+        )
+        # Failover on a separate provider/key (built AFTER _build_flash_provider
+        # so ack_cfg.provider is the resolved primary). Reuses the spawn-path
+        # bare-provider failover builder — the composer owns its validate logic.
+        fb_provider, fb_breaker = _build_spawn_fallback(ack_cfg)
+        log.info(
+            "Readback-Composer: LLM composition wired (provider=%s).",
+            ack_cfg.provider,
+        )
+        return ReadbackComposer(
+            provider=provider,
+            config=ack_cfg,
+            breaker=breaker,
+            fallback_provider=fb_provider,
+            fallback_breaker=fb_breaker,
+            preferences_provider=_flash_preferences_provider(jcfg),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "build_readback_composer() failed: %s — fallback-only mode.", exc
+        )
+        return ReadbackComposer()

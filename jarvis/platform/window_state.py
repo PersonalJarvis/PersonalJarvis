@@ -31,6 +31,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
@@ -88,8 +89,6 @@ def _find_and_focus_windows(title_contains: str) -> tuple[bool, str]:
     GetWindowTextW = user32.GetWindowTextW
     GetWindowTextLengthW = user32.GetWindowTextLengthW
     IsWindowVisible = user32.IsWindowVisible
-    SetForegroundWindow = user32.SetForegroundWindow
-    ShowWindow = user32.ShowWindow
 
     needle = title_contains.lower()
     found_hwnd: list[int] = []
@@ -118,16 +117,81 @@ def _find_and_focus_windows(title_contains: str) -> tuple[bool, str]:
     hwnd = found_hwnd[0]
     title = found_title[0]
 
-    # Wenn das Fenster minimiert ist, erst restoren (SW_RESTORE = 9).
-    ShowWindow(hwnd, 9)
-    if not SetForegroundWindow(hwnd):
-        # SetForegroundWindow scheitert manchmal wegen Foreground-Lock-Timeout —
-        # in dem Fall ist das Fenster zwar sichtbar gemacht, aber nicht fokussiert.
+    # Raise through the HARDENED foreground path (restore-if-minimized +
+    # AttachThreadInput) — a plain SetForegroundWindow is refused under the
+    # Windows foreground-lock and left an already-open app behind everything
+    # (the "WhatsApp opened in the background" report). This unifies every
+    # foreground site (switch_window, the CU settle fallback, the open_app
+    # already-running path) on one robust mechanism.
+    if not _force_foreground_windows(hwnd):
         return False, (
             f"Fenster '{title}' gefunden, aber Fokus-Setzen scheiterte "
-            "(Foreground-Lock-Timeout — User muss Alt+Tab manuell drucken)"
+            "(Foreground-Lock — User muss Alt+Tab manuell drücken)"
         )
     return True, title
+
+
+def _force_foreground_windows(hwnd: int) -> bool:
+    """Forcefully bring a window to the foreground on Windows, defeating the
+    foreground-lock-steal restriction.
+
+    ``SetForegroundWindow`` alone is refused for a background process unless
+    Windows currently grants it foreground privilege (recent user input, or it
+    launched the target). When it is refused, a freshly launched app is left in
+    the background — and the Computer-Use foreground-following screenshot then
+    captures the wrong screen. The robust path attaches our input queue to both
+    the current-foreground thread and the target window's thread, raises with
+    ``BringWindowToTop`` + ``SetForegroundWindow`` + ``SetActiveWindow``, and
+    ALWAYS detaches both queues in ``finally`` (a leaked ``AttachThreadInput``
+    deadlocks input routing).
+
+    Returns ``True`` if the foreground was ultimately taken. Best-effort — the
+    caller treats the result as advisory. Lazy ``ctypes`` import (module
+    import-cleanliness, HN-7). Separate from ``_find_and_focus_windows`` so the
+    verbatim ``switch_window`` path (AD-7) stays untouched.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    _SW_RESTORE = 9
+
+    get_thread = user32.GetWindowThreadProcessId
+    get_thread.restype = wintypes.DWORD
+    get_thread.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+
+    # Restore if minimized, then try the cheap plain path first — it succeeds
+    # whenever Jarvis launched the process and input is recent.
+    user32.ShowWindow(hwnd, _SW_RESTORE)
+    if user32.SetForegroundWindow(hwnd):
+        user32.SetActiveWindow(hwnd)
+        return True
+
+    cur_thread = kernel32.GetCurrentThreadId()
+    fg_hwnd = user32.GetForegroundWindow()
+    fg_thread = get_thread(fg_hwnd, None) if fg_hwnd else 0
+    target_thread = get_thread(hwnd, None)
+
+    attached_fg = False
+    attached_target = False
+    try:
+        if fg_thread and fg_thread != cur_thread:
+            attached_fg = bool(user32.AttachThreadInput(cur_thread, fg_thread, True))
+        if target_thread and target_thread not in (cur_thread, fg_thread):
+            attached_target = bool(
+                user32.AttachThreadInput(cur_thread, target_thread, True)
+            )
+        user32.BringWindowToTop(hwnd)
+        user32.ShowWindow(hwnd, _SW_RESTORE)
+        ok = bool(user32.SetForegroundWindow(hwnd))
+        user32.SetActiveWindow(hwnd)
+        return ok
+    finally:
+        if attached_fg:
+            user32.AttachThreadInput(cur_thread, fg_thread, False)
+        if attached_target:
+            user32.AttachThreadInput(cur_thread, target_thread, False)
 
 
 def _list_windows_windows() -> list[WindowInfo]:
@@ -500,10 +564,260 @@ def is_app_running(app_name: str) -> WindowInfo | None:
         return None
 
 
+def raise_window(win: WindowInfo) -> tuple[bool, str]:
+    """Bring a specific already-known window to the foreground via the hardened
+    path. On Windows it raises by the window handle directly (precise, no
+    re-enumeration, and it works even when the title path would match a sibling
+    window); off-Windows it falls back to title-based :func:`focus_window`.
+    Best-effort, never raises.
+
+    This is the already-open sibling of :func:`raise_after_launch`: the open_app
+    "app is already running -> focus it" path and the CU window-switch use it so
+    an already-open-but-backgrounded app (the WhatsApp report) is actually pulled
+    to the front instead of left behind.
+    """
+    try:
+        if detect_platform() == "win32" and win.handle:
+            return _force_foreground_windows(int(win.handle)), win.title
+        return focus_window(win.title)
+    except Exception:  # noqa: BLE001 — best-effort, must never raise into a caller
+        log.debug("raise_window failed", exc_info=True)
+        return False, ""
+
+
+#: Poll budget for raising a freshly launched app's window to the foreground.
+#: A fast-raising app exits on the first poll; only a backgrounded / secondary-
+#: monitor / minimized launch consumes the full budget.
+_RAISE_POLL_TIMEOUT_S = 3.0
+_RAISE_POLL_INTERVAL_S = 0.25
+
+
+def raise_after_launch(
+    app_name: str,
+    *,
+    timeout_s: float = _RAISE_POLL_TIMEOUT_S,
+    poll_s: float = _RAISE_POLL_INTERVAL_S,
+) -> tuple[bool, str]:
+    """Poll until a window matching ``app_name`` appears, then actively bring it
+    to the foreground. Returns ``(raised, title_or_reason)``. Best-effort, never
+    raises — a miss just leaves things as they were.
+
+    A fresh launch (``subprocess.Popen`` / ``os.startfile``) is fire-and-forget:
+    the new window is frequently left in the background (Windows foreground-lock-
+    steal, a secondary monitor, or restored-minimized). The Computer-Use
+    screenshot follows the *foreground* window, so it then captures the wrong
+    screen and the mission fails. This closes that gap. Cross-platform: Windows
+    raises by ``hwnd`` through the hardened :func:`_force_foreground_windows`
+    path; macOS/Linux reuse :func:`focus_window` (by title). Synchronous and
+    blocking by design — an async caller wraps it in ``asyncio.to_thread`` (as
+    the speech/CU paths already do for :func:`focus_window`).
+    """
+    token = _app_token(app_name)
+    if len(token) < _MIN_TOKEN_LEN:
+        return False, ""
+    try:
+        deadline = time.monotonic() + max(0.0, timeout_s)
+        while True:
+            win = _match_window(app_name, list_windows())
+            if win is not None:
+                return raise_window(win)
+            if time.monotonic() >= deadline:
+                return False, (
+                    f"no window matching '{token}' appeared within {timeout_s:.0f}s"
+                )
+            time.sleep(max(0.0, poll_s))
+    except Exception:  # noqa: BLE001 — best-effort, must never raise into a caller
+        log.debug("raise_after_launch failed", exc_info=True)
+        return False, ""
+
+
+# ----------------------------------------------------------------------
+# G8b — move a window onto the primary monitor
+# ----------------------------------------------------------------------
+
+
+def window_is_on_monitor(rect: tuple[int, int, int, int], monitor: dict) -> bool:
+    """True when the window's CENTER lies within ``monitor`` (an mss-style dict
+    with left/top/width/height). Center-based, so a window straddling two screens
+    counts as being on the one showing most of it. Pure; never raises."""
+    left, top, width, height = rect
+    cx, cy = left + width // 2, top + height // 2
+    ml, mt = int(monitor.get("left", 0)), int(monitor.get("top", 0))
+    mw, mh = int(monitor.get("width", 0)), int(monitor.get("height", 0))
+    return ml <= cx < ml + mw and mt <= cy < mt + mh
+
+
+def window_rect(win: WindowInfo) -> tuple[int, int, int, int] | None:
+    """A window's ``(left, top, width, height)`` in virtual-desktop coordinates,
+    or ``None`` when it cannot be read. Windows: ``GetWindowRect`` by hwnd.
+    macOS/Linux: not read today (the move path queries position differently).
+    Best-effort; never raises."""
+    try:
+        if detect_platform() == "win32" and win.handle:
+            return _window_rect_windows(int(win.handle))
+        return None
+    except Exception:  # noqa: BLE001
+        log.debug("window_rect failed", exc_info=True)
+        return None
+
+
+def foreground_window() -> WindowInfo | None:
+    """The current foreground window as a :class:`WindowInfo` (carrying the hwnd
+    on Windows), or ``None``. Best-effort; never raises. macOS/Linux return a
+    title-only WindowInfo (no handle), which the move path treats as "can't move"
+    rather than acting blind."""
+    try:
+        if detect_platform() == "win32":
+            return _foreground_window_windows()
+        title = get_foreground_title()
+        return WindowInfo(title=title) if title else None
+    except Exception:  # noqa: BLE001
+        log.debug("foreground_window failed", exc_info=True)
+        return None
+
+
+def _foreground_window_windows() -> WindowInfo | None:
+    import ctypes  # noqa: PLC0415
+
+    user32 = ctypes.windll.user32
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return None
+    length = int(user32.GetWindowTextLengthW(hwnd))
+    buf = ctypes.create_unicode_buffer(length + 1)
+    user32.GetWindowTextW(hwnd, buf, length + 1)
+    return WindowInfo(title=buf.value or "", handle=int(hwnd))
+
+
+def move_window_to_primary(
+    win: WindowInfo, primary: dict
+) -> tuple[bool, str]:
+    """Bring ``win`` onto the primary monitor ``primary`` (mss-style geometry
+    dict) so Computer-Use acts on the main screen (audit G8b).
+
+    Returns ``(moved, message)``. Windows restores a maximized window, moves it
+    onto the primary, then re-maximizes there. macOS/Linux-X11 are best-effort;
+    Wayland and headless sessions REFUSE honestly with a clear message rather
+    than acting on the wrong screen blind. Never raises."""
+    try:
+        plat = detect_platform()
+        if plat == "win32":
+            return _move_to_primary_windows(win, primary)
+        if plat == "darwin":
+            # AX kAXPositionAttribute needs pyobjc + Accessibility permission; the
+            # real impl is a tracked follow-up. Honest refusal, no fake pass.
+            return False, (
+                "Moving a window to the main screen is not supported on macOS yet "
+                "— please drag it to your main display, then retry."
+            )
+        if plat == "linux":
+            if is_wayland():
+                return False, (
+                    "Cannot move the window on Wayland (no global window "
+                    "positioning by OS design) — drag it to your main screen "
+                    "manually, then retry."
+                )
+            if not display_present():
+                return False, (
+                    "Cannot move the window: this looks like a headless session "
+                    "with no display."
+                )
+            return _move_to_primary_linux(win, primary)
+        return False, f"Moving windows is not supported on this platform ({plat})."
+    except Exception as exc:  # noqa: BLE001
+        log.debug("move_window_to_primary failed", exc_info=True)
+        return False, f"Window move failed: {exc}"
+
+
+def _window_rect_windows(hwnd: int) -> tuple[int, int, int, int] | None:
+    import ctypes  # noqa: PLC0415
+    from ctypes import wintypes  # noqa: PLC0415
+
+    rect = wintypes.RECT()
+    if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return None
+    return (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+
+
+def _move_to_primary_windows(win: WindowInfo, primary: dict) -> tuple[bool, str]:
+    """Restore-if-maximized → SetWindowPos onto the primary → re-maximize there."""
+    if not win.handle:
+        return False, "no window handle to move"
+    import ctypes  # noqa: PLC0415
+    from ctypes import wintypes  # noqa: PLC0415
+
+    user32 = ctypes.windll.user32
+    hwnd = int(win.handle)
+
+    class _WINDOWPLACEMENT(ctypes.Structure):
+        _fields_ = [
+            ("length", wintypes.UINT), ("flags", wintypes.UINT),
+            ("showCmd", wintypes.UINT), ("ptMinPosition", wintypes.POINT),
+            ("ptMaxPosition", wintypes.POINT), ("rcNormalPosition", wintypes.RECT),
+        ]
+
+    _SW_RESTORE, _SW_MAXIMIZE, _SW_SHOWMAXIMIZED = 9, 3, 3
+    _SWP_NOSIZE, _SWP_NOZORDER, _SWP_NOACTIVATE = 0x0001, 0x0004, 0x0010
+
+    wp = _WINDOWPLACEMENT()
+    wp.length = ctypes.sizeof(_WINDOWPLACEMENT)
+    was_maximized = False
+    if user32.GetWindowPlacement(hwnd, ctypes.byref(wp)):
+        was_maximized = wp.showCmd == _SW_SHOWMAXIMIZED
+    if was_maximized:
+        user32.ShowWindow(hwnd, _SW_RESTORE)
+    # Inset a little so the title bar is fully on the primary (never off-screen).
+    px = int(primary.get("left", 0)) + 40
+    py = int(primary.get("top", 0)) + 40
+    moved = bool(user32.SetWindowPos(
+        hwnd, 0, px, py, 0, 0, _SWP_NOSIZE | _SWP_NOZORDER | _SWP_NOACTIVATE,
+    ))
+    if was_maximized:
+        user32.ShowWindow(hwnd, _SW_MAXIMIZE)  # re-maximizes on the primary now
+    if not moved:
+        return False, "SetWindowPos failed"
+    return True, f"moved '{(win.title or 'window')[:40]}' onto the primary monitor"
+
+
+def _move_to_primary_linux(win: WindowInfo, primary: dict) -> tuple[bool, str]:
+    """Best-effort X11 move via ``wmctrl`` (un-maximize, then reposition by title).
+    Unverified on a real desktop; returns honest status."""
+    import subprocess  # noqa: PLC0415
+
+    from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # noqa: PLC0415
+
+    title = (win.title or "").strip()
+    if not title:
+        return False, "no window title to target"
+    px, py = int(primary.get("left", 0)), int(primary.get("top", 0))
+    try:
+        subprocess.run(
+            ["wmctrl", "-r", title, "-b", "remove,maximized_vert,maximized_horz"],
+            capture_output=True, timeout=3.0, creationflags=NO_WINDOW_CREATIONFLAGS,
+        )
+        res = subprocess.run(
+            ["wmctrl", "-r", title, "-e", f"0,{px},{py},-1,-1"],
+            capture_output=True, timeout=3.0, creationflags=NO_WINDOW_CREATIONFLAGS,
+        )
+    except FileNotFoundError:
+        return False, "wmctrl not installed — cannot move the window on X11"
+    except Exception as exc:  # noqa: BLE001
+        return False, f"wmctrl move failed: {exc}"
+    if res.returncode != 0:
+        return False, f"wmctrl could not find/move a window titled '{title[:40]}'"
+    return True, f"moved '{title[:40]}' onto the primary monitor (X11/wmctrl)"
+
+
 __all__ = [
     "WindowInfo",
     "list_windows",
     "get_foreground_title",
     "focus_window",
+    "raise_window",
     "is_app_running",
+    "raise_after_launch",
+    "window_is_on_monitor",
+    "window_rect",
+    "foreground_window",
+    "move_window_to_primary",
 ]

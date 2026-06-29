@@ -39,6 +39,39 @@ def _gemini_home() -> Path:
     return Path(override) if override else (Path.home() / ".gemini")
 
 
+# Known on-disk OAuth login files, relative to ``~/.gemini``. The Gemini CLI
+# writes ``oauth_creds.json``; the Antigravity ``agy`` CLI (the official
+# successor) writes its token under a dedicated subdir instead — verified live
+# 2026-06-26 with agy 1.0.12: ``~/.gemini/antigravity-cli/antigravity-oauth-token``
+# (JSON ``{auth_method, token}``). Reading only ``oauth_creds.json`` made a
+# fully-logged-in agy report "Installed but not logged in". Presence + non-empty
+# only — the token VALUE is never read into business logic (Google ToS).
+_OAUTH_LOGIN_FILES: tuple[tuple[str, ...], ...] = (
+    ("oauth_creds.json",),
+    ("antigravity-cli", "antigravity-oauth-token"),
+)
+
+
+def _oauth_login_paths(home: Path) -> tuple[Path, ...]:
+    """Absolute paths of every known Google CLI OAuth login file under ``home``."""
+    return tuple(home.joinpath(*rel) for rel in _OAUTH_LOGIN_FILES)
+
+
+def _oauth_login_present(home: Path) -> bool:
+    """True when ANY known OAuth login file exists and is non-empty.
+
+    Covers both the Gemini CLI and the Antigravity ``agy`` CLI token locations.
+    A zero-byte file (interrupted login) does not count as connected.
+    """
+    for path in _oauth_login_paths(home):
+        try:
+            if path.is_file() and path.stat().st_size > 0:
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def _derive_google_auth(
     *, creds_present: bool, settings: dict[str, Any]
 ) -> tuple[bool, str]:
@@ -126,7 +159,7 @@ class GoogleCliAuthService:
                 error="no google cli binary",
             )
 
-        creds_present = (_gemini_home() / "oauth_creds.json").is_file()
+        creds_present = _oauth_login_present(_gemini_home())
         connected, mode = _derive_google_auth(
             creds_present=creds_present, settings=self._read_json("settings.json")
         )
@@ -190,17 +223,20 @@ class GoogleCliAuthService:
         return subprocess.Popen(argv, **kwargs)  # noqa: S603 — fixed argv, shell=False
 
     def logout_blocking(self) -> tuple[bool, str | None]:
-        """Disconnect by removing the on-disk OAuth creds.
+        """Disconnect by removing every on-disk OAuth login file.
 
         Neither CLI has a ``logout`` subcommand (verified 2026-06-21) — ``agy
-        logout`` would hang like ``agy login``. Removing ``~/.gemini/oauth_creds
-        .json`` IS the disconnect; the isolated brain home re-syncs to the absent
-        creds on the next turn (see ``isolated_home``), so agy logs out there too.
+        logout`` would hang like ``agy login``. Removing the OAuth login files IS
+        the disconnect; this clears BOTH the Gemini CLI's ``oauth_creds.json`` and
+        the agy token under ``antigravity-cli/`` (else Disconnect is a no-op for an
+        agy login). The isolated brain home re-syncs to the absent login on the
+        next turn (see ``isolated_home``), so agy logs out there too.
 
-        Returns ``(ok, error)``; ``ok`` is True when the creds are gone.
+        Returns ``(ok, error)``; ``ok`` is True when the login files are gone.
         """
         try:
-            (_gemini_home() / "oauth_creds.json").unlink(missing_ok=True)
+            for path in _oauth_login_paths(_gemini_home()):
+                path.unlink(missing_ok=True)
             return True, None
         except OSError as exc:
             return False, str(exc)

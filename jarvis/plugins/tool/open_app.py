@@ -9,6 +9,7 @@ os.startfile landen wuerden.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import shutil
@@ -272,7 +273,11 @@ class OpenAppTool:
         if reuse_existing and not is_url and not is_path and low not in _MULTI_INSTANCE_APPS:
             running = window_state.is_app_running(app_name)
             if running is not None:
-                focused, _msg = window_state.focus_window(running.title)
+                # Raise by the known window handle through the HARDENED path —
+                # a plain focus is refused under the Windows foreground-lock, so
+                # an already-open-but-backgrounded app (the WhatsApp report)
+                # stayed behind everything. raise_window defeats that lock.
+                focused, _msg = window_state.raise_window(running)
                 if focused:
                     return ToolResult(
                         success=True,
@@ -329,7 +334,29 @@ class OpenAppTool:
                     # Hand it to the OS opener instead (browser+URL fast-path).
                     opener = "open" if detect_platform() == "darwin" else "xdg-open"
                     subprocess.Popen([opener, value], shell=False)  # noqa: ASYNC220, S606
-            return ToolResult(success=True, output=f"Gestartet: {app_name}")
+            # Actively bring the freshly launched window to the foreground. A
+            # bare Popen / os.startfile is fire-and-forget: the new window is
+            # frequently left in the background (Windows foreground-lock-steal,
+            # a secondary monitor, or restored-minimized), which makes the
+            # foreground-following Computer-Use screenshot capture the WRONG
+            # screen and the mission fail. Best-effort — the launch already
+            # succeeded, so a raise miss never flips the result, it only softens
+            # the readback. Skipped for URLs/paths (the OS opener reuses an
+            # existing browser window; the app-name match would not apply).
+            raised = False
+            if not is_url and not is_path:
+                try:
+                    raised, _ = await asyncio.to_thread(
+                        window_state.raise_after_launch, app_name
+                    )
+                except Exception:  # noqa: BLE001 — never fail a successful launch
+                    raised = False
+            output = (
+                f"Gestartet und nach vorn geholt: {app_name}"
+                if raised
+                else f"Gestartet: {app_name}"
+            )
+            return ToolResult(success=True, output=output)
         except FileNotFoundError:
             return ToolResult(
                 success=False,

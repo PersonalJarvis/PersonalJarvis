@@ -59,10 +59,14 @@ from jarvis.core.turn_language import (
     resolve_turn_language,
 )
 from jarvis.voice.action_phrases import (
+    CU_CANCEL_EXIT_CODE,
+    OUTPUT_LANGUAGE_ENV_KEY,
     action_phrase,
     cu_failure_readback,
     cu_success_readback,
+    extract_speakable_reason,
 )
+from jarvis.voice.contextual_readback import render_readback
 from jarvis.memory import CoreMemory, PersonStore, RecallStore, Soul, UserProfile
 from jarvis.memory.curator import Curator
 from jarvis.safety.tool_executor import ToolExecutor
@@ -83,7 +87,6 @@ from .local_action_gate import _normalize as _gate_normalize
 from .mission_command_gate import match_mission_command
 from .assistant_name import (
     DEFAULT_ASSISTANT_NAME,
-    PERSONA_BASELINE_NAME,
     resolve_assistant_name,
 )
 from .persona_loader import load_effective_persona_prompt
@@ -96,6 +99,7 @@ if TYPE_CHECKING:
     from jarvis.awareness.manager import AwarenessManager
     from jarvis.brain.wiki_context import WikiContextInjector
     from jarvis.control.cost import CostMeter as CostMeterLike
+    from jarvis.voice.contextual_readback import ReadbackComposer
 
 log = logging.getLogger(__name__)
 
@@ -276,7 +280,11 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         "gemini": "gemini-3-flash-preview",
         "openai": "gpt-5.5",
         "deepseek": "deepseek-chat",
-        "openrouter": "anthropic/claude-haiku-4.5",
+        # Gateway: a model-less OpenRouter user must NEVER default to a paid
+        # Anthropic id (that billed Opus/Haiku on a free key — §3/AP-22). A free
+        # general-purpose model degrades with a clean 404 if ever retired, instead
+        # of silently billing the most expensive model in the catalog.
+        "openrouter": "nvidia/nemotron-3-ultra-550b-a55b:free",
         "mistral": "mistral-small-3.1",
     },
     "deep": {
@@ -290,7 +298,9 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         "gemini": "gemini-3.1-pro-preview",
         "openai": "gpt-5.5-pro",
         "deepseek": "deepseek-reasoner",
-        "openrouter": "anthropic/claude-opus-4.8",
+        # Gateway: never a paid Anthropic default for a model-less OpenRouter
+        # user (§3/AP-22) — see the router-tier note above.
+        "openrouter": "nvidia/nemotron-3-ultra-550b-a55b:free",
         "mistral": "mistral-large-3",
     },
 }
@@ -654,6 +664,59 @@ def _trigger_names_vehicle(matched_trigger: str) -> bool:
 def _is_instructional_question(user_text: str) -> bool:
     """True for how-to / explanatory questions that should be answered directly."""
     return bool(_INSTRUCTIONAL_QUESTION_RE.search(user_text or ""))
+
+
+# Spawn-tool names hidden from a plain knowledge question's tool surface — the
+# vehicles that delegate to a background worker. A read/search/desktop tool is
+# NEVER in here (the question must stay answerable inline).
+_SPAWN_TOOL_NAMES: frozenset[str] = frozenset({"spawn_worker", "multi_spawn"})
+
+# Consequential action tools a turn with NO action signal of its own must never
+# INHERIT from the conversation context. GENERAL rule (not one phrase): a
+# question, a remark, or a mis-transcription asks for no desktop action, so it
+# must not be able to re-run the PREVIOUS turn's computer_use/spawn pulled from
+# context. Forensic 2026-06-27: the German smalltalk "Was geht ab?" was
+# mis-transcribed as "Lask it up!" [en] conf 0.509, missed every smalltalk /
+# whisper-junk list, and the router-LLM (reading a 30k-token context full of the
+# prior "open Discord, bridge-mine channel" command) re-ran that exact CU plan on
+# a turn that asked for nothing. ``computer_use`` + the spawn vehicles are the
+# heavy, irreversible-looking actions hidden here. Deliberately NOT hidden: the
+# read-only ``screenshot`` tool (so "Was siehst du auf dem Bildschirm?" still
+# works) and ``open_app`` (lighter; naming an app already reads as action-intent).
+_INHERITABLE_ACTION_TOOL_NAMES: frozenset[str] = _SPAWN_TOOL_NAMES | {"computer_use"}
+
+# Interrogative opener (DE / EN / ES) — the leading question word of a plain
+# "what/which/who/how/…"-style factual question. Anchored at the start after an
+# optional wake/greeting/politeness run so "Jarvis, welche Firmen …" still
+# matches. A trailing "?" is accepted as an independent signal (STT often drops
+# the question word's leading capital but keeps the rising-intonation "?"), but
+# the real anchor is the opener — STT frequently strips terminal punctuation.
+_QUESTION_OPENER_RE: re.Pattern[str] = re.compile(
+    r"^\s*(?:(?:hey|hallo|hi|hello|ok(?:ay)?|bitte|please|jarvis)[\s,]+){0,3}"
+    r"(?:"
+    # DE interrogatives
+    r"was|welche[rsnm]?|wer|wen|wem|wessen|wie ?viele?|wie|wieso|warum|weshalb|"
+    r"wann|woher|wohin|wo|wof[üu]r|womit|wodurch|"
+    # EN interrogatives
+    r"what|which|who|whom|whose|how|when|where|why|"
+    # ES interrogatives
+    r"qu[ée]|cu[áa]les?|qui[ée]nes?|c[óo]mo|cu[áa]ndo|d[óo]nde|cu[áa]nt[oa]s?"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _is_plain_knowledge_question(user_text: str) -> bool:
+    """True iff the utterance is shaped like a plain factual/knowledge question.
+
+    Pure form check (interrogative opener OR a trailing "?") — it does NOT judge
+    action intent or artifact-build; the caller combines this with the existing
+    deterministic detectors. Pure regex (AP-11 safe), DE/EN/ES.
+    """
+    t = (user_text or "").strip()
+    if not t:
+        return False
+    return bool(_QUESTION_OPENER_RE.search(t) or t.endswith("?"))
 
 
 # Definitional "what IS X" guard for the deterministic skill match. A plugin
@@ -1433,6 +1496,7 @@ class BrainManager:
         awareness_manager: "AwarenessManager | None" = None,  # noqa: UP037
         wiki_injector: "WikiContextInjector | None" = None,  # noqa: UP037
         contacts: Any = None,
+        readback_composer: "ReadbackComposer | None" = None,  # noqa: UP037
     ) -> None:
         self._config = config
         self._bus = bus
@@ -1465,6 +1529,13 @@ class BrainManager:
         # (names + relationship only; details on demand via contact-lookup).
         # None until Chunk A is merged — the block is simply omitted (graceful).
         self._contacts = contacts
+        # Context-aware spoken readbacks (maintainer mandate: no fixed stock
+        # phrases). When wired (router tier, via factory.build_readback_composer)
+        # the deterministic action-path readbacks — CU outcome/dispatch, budget,
+        # tool-failed — are phrased fresh for the situation by a bounded flash
+        # call, with the EXISTING canned line as the instant fallback. None on the
+        # bare/CLI managers and in tests => unchanged canned behavior (risk-free).
+        self._readback_composer = readback_composer
         # Phase A1: optional AwarenessManager. When set, _build_system_prompt()
         # injects a compact live snapshot (window/idle) as a fallback in case
         # the LLM does NOT call the awareness-snapshot tool. Plan §5 "Files to Modify".
@@ -1715,10 +1786,23 @@ class BrainManager:
         local_config.brain.deep_brain = deep_provider
 
         # Tier model resolver:
-        # - If a live override is active: ignore tier_cfg.model (it was for
-        #   the old provider). The default from TIER_DEFAULTS applies.
+        # - If a live override is active: ignore tier_cfg.model (it belonged to
+        #   the ORIGINAL tier provider, e.g. [brain.router].model="gemini-3.5-flash").
+        #   BUT the override provider's OWN picked model
+        #   ([brain.providers.<override>].model) IS the user's selection and MUST
+        #   win over the hardcoded TIER default. Without this, an OpenRouter user
+        #   who picked a free model silently ran — and was billed for — the
+        #   hardcoded paid anthropic/claude default (router=haiku-4.5, deep=opus-4.8)
+        #   on EVERY boot, because this very assignment clobbered the picked model
+        #   in the in-memory config before _fast_model/_deep_model could read it
+        #   (live forensic 2026-06-29: ~5€ OpenRouter key drained on Opus + Haiku).
+        #   AP-21/AP-22, open-source single-key §3.
         # - If no override: respect tier_cfg.model, then fall back to the default.
-        explicit_model = None if provider_override else tier_cfg.model
+        if provider_override:
+            override_pc = (local_config.brain.providers or {}).get(effective_provider)
+            explicit_model = getattr(override_pc, "model", None) or None
+        else:
+            explicit_model = tier_cfg.model
         resolved_model = _resolve_tier_model(tier, effective_provider, explicit_model)
         if resolved_model and effective_provider in (local_config.brain.providers or {}):
             local_config.brain.providers[effective_provider].model = resolved_model
@@ -1808,6 +1892,15 @@ class BrainManager:
             except Exception:  # noqa: BLE001
                 key_value = None
             if not key_value:
+                # An OAuth-login brain (codex via ChatGPT) has no API key but a
+                # usable on-disk login — don't dead-list it (open-source AP-22).
+                if _keyless_provider_is_rescued_by_oauth(provider_name):
+                    log.info(
+                        "Pre-Boot-Key-Check: '%s' ohne API-Key, aber verbundene "
+                        "OAuth-Anmeldung -> NICHT deaktiviert.",
+                        provider_name,
+                    )
+                    continue
                 manager._dead_providers.add(provider_name)
                 log.info(
                     "Pre-Boot-Key-Check: kein Key in %s -> Provider '%s' deaktiviert.",
@@ -1839,8 +1932,19 @@ class BrainManager:
         cfg = self._provider_cfg(name)
         if cfg is None:
             return get_tier_default_model("deep", name)
+        # Precedence: explicit deep_model → the user's CHOSEN model → hardcoded
+        # tier default. The chosen model MUST outrank the hardcoded default:
+        # otherwise a provider with a `model` set but no `deep_model` (e.g.
+        # openrouter = "nvidia/nemotron-...:free") silently runs the deep slot on
+        # a foreign-family default (anthropic/claude-opus-4.8). Live forensic
+        # 2026-06-29: that default is a PAID model 403-blocked by the user's
+        # OpenRouter key spend-limit, while the chosen FREE model answered fine —
+        # so the turn bricked despite a healthy, user-selected brain. Respect the
+        # selected model; never hijack a turn onto the most expensive Anthropic
+        # model the user never picked (AP-21/AP-22, open-source single-key §3).
         return (
             getattr(cfg, "deep_model", None)
+            or getattr(cfg, "model", None)
             or get_tier_default_model("deep", name)
         )
 
@@ -1896,7 +2000,39 @@ class BrainManager:
         try:
             inst = self._registry.instantiate(name, **kwargs)
         except TypeError:
-            inst = self._registry.instantiate(name)
+            # A plugin __init__ rejected an OPTIONAL kwarg (base_url /
+            # thinking_budget — not every brain accepts them). Retry, but NEVER
+            # drop ``model``: the old fallback re-instantiated with NO kwargs at
+            # all, so the brain fell back to its hardcoded DEFAULT_MODEL. For the
+            # OpenRouter gateway that default is anthropic/claude-opus-4.8 — the
+            # exact PAID model a spend-limited key 403s on, while the user's
+            # chosen FREE model would have answered (live forensic 2026-06-29:
+            # the wire carried opus though the chain logged nemotron:free). The
+            # endpoint/budget are re-resolved from config inside the plugin's
+            # _ensure_client, so dropping them here is safe; the model is
+            # essential and must survive (AP-21/AP-22, open-source single-key §3).
+            retry_kwargs: dict[str, Any] = {"model": model} if model else {}
+            try:
+                inst = self._registry.instantiate(name, **retry_kwargs)
+            except TypeError:
+                inst = self._registry.instantiate(name)
+        # Anti-drift guarantee (user mandate 2026-06-29): the model on the wire
+        # MUST be the SELECTED model. A brain silently running its hardcoded
+        # DEFAULT_MODEL — user picks GPT-5.5 but Opus runs, while the UI still
+        # shows GPT-5.5 — is the exact "wrong model used, shown right" defect.
+        # Every brain plugin stores its resolved model as ``self._model``; if a
+        # requested model did NOT survive construction, log it LOUDLY so the drift
+        # is visible instead of silent. Provider-agnostic (no provider/model
+        # special-case); the chosen-model contract tests lock this in.
+        if model:
+            actual = getattr(inst, "_model", None)
+            if actual is not None and actual != model:
+                log.error(
+                    "MODEL DRIFT %s: requested model %r but the constructed brain "
+                    "runs %r — the SELECTED model is not the one being used. This "
+                    "is a bug (a silent DEFAULT_MODEL fallback), not expected.",
+                    name, model, actual,
+                )
         self._brain_cache[key] = inst
         return inst
 
@@ -2168,17 +2304,16 @@ class BrainManager:
 
         # Configurable assistant identity. Derived solely from the wake phrase
         # (so a custom wake word "Micron" makes the assistant call itself
-        # Micron). When the name is neither the neutral fallback nor the
-        # historical "Jarvis" baseline, a prominent identity directive overrides
-        # the "Jarvis" mentions baked into the persona files (SOUL.md /
-        # JARVIS_PERSONA.md), which are static and cannot be parameterised.
+        # Micron). The persona files are name-neutral as of 2026-06-29 (no baked-in
+        # "Jarvis" to override anymore), so this simply states the resolved name
+        # prominently and early. Skipped only for the neutral pre-onboarding
+        # fallback ("Assistant"), where the product imposes no name at all.
         # Placed first so it frames everything.
         name = resolve_assistant_name(getattr(self, "_config", None))
-        if name not in (DEFAULT_ASSISTANT_NAME, PERSONA_BASELINE_NAME):
+        if name != DEFAULT_ASSISTANT_NAME:
             parts.append(
-                f"DEIN NAME IST {name.upper()}. Du heisst {name} — nicht Jarvis. "
-                f"Wo die folgende Persona-Beschreibung 'Jarvis' sagt, gilt {name}. "
-                f"Stell dich als {name} vor und unterschreibe, wenn ueberhaupt, als {name}."
+                f"DEIN NAME IST {name.upper()}. Du heisst {name}. Stell dich, "
+                f"wenn ueberhaupt, als {name} vor und unterschreibe als {name}."
             )
 
         if self._soul is not None:
@@ -2300,7 +2435,11 @@ class BrainManager:
             try:
                 snap = self._awareness_manager.state.snapshot_for_prompt(max_chars=600)
                 if snap:
-                    parts.append(f"AKTUELLER KONTEXT (auto-injected):\n{snap}")
+                    parts.append(
+                        "AKTUELLER KONTEXT (Hintergrund, nur zur Orientierung, "
+                        "NICHT vorlesen oder aufzaehlen, ausser der User fragt "
+                        f"direkt danach):\n{snap}"
+                    )
             except Exception:  # noqa: BLE001
                 pass
 
@@ -2367,21 +2506,23 @@ class BrainManager:
         if self._system_prompt_extra:
             parts.append(self._system_prompt_extra)
 
+        # Structural-only base block (2026-06-29 consolidation): the editable
+        # persona above now OWNS voice / tone / length / anti-filler /
+        # screen-context rules. They used to be duplicated AND contradicted here
+        # (this block said "KEINE Ein-Satz-Pflicht" while the old persona said
+        # "one or two sentences, never paragraphs" — the mixed signal that made
+        # replies choppy). This block keeps ONLY the non-editable structural
+        # truths: the runtime name stitch + the action/tool routing pointer.
+        # Platform-neutral (no "Windows 11" — cloud-first doctrine).
         base = (
-            f"Du bist {name}, der persoenliche Meta-Orchestrator dieses Users auf Windows 11. "
-            "Stil: trocken, praezise, ein Hauch britischer Butler "
-            "— nie servil, nie beflissen, nie speichelleckerisch. "
-            "Sprich kurz (1 Satz), natuerlich, KEIN Markdown. "
-            "STRENG VERBOTEN — generische Greeter-/Smalltalk-Phrasen, jede einzelne. Beispiele: "
-            "'Hallo. Was brauchst du?', 'Was kann ich fuer dich tun?', 'Wie kann ich helfen?', "
-            "'Womit kann ich dienen?', 'Mir gehts gut.', 'Schoen von dir zu hoeren.', "
-            "'Gerne!', 'Grossartige Frage!', 'Selbstverstaendlich, Sir.' und alle Varianten davon. "
-            "Diese Phrasen sind LEERLAUF — sie tragen null Information und sind explizit nicht erwuenscht. "
-            f"Wenn der User gruesst ('Hallo', 'Hey', '{name}'), antworte SUBSTANZIELL: "
-            "z.B. mit aktuellem Status, einer relevanten Beobachtung, oder einer trockenen Replik "
-            "— NIE mit einer Greeter-Phrase. Wenn dir nichts substanzielles einfaellt, schweige (leerer Output). "
-            "Bei Aktionen: Tools sofort aufrufen, mehrere im selben Turn wenn noetig. "
-            "Bei Coding/Research/Deep-Reasoning: dispatch_to_harness mit openclaw oder python-script."
+            f"Du bist {name}, der persoenliche Meta-Orchestrator dieses Users. "
+            "Deine Stimme, dein Ton und deine Antwortlaenge richten sich nach der "
+            "Persona-Beschreibung weiter oben in diesem Prompt; halte dich an sie "
+            "und erfinde keine eigenen Stil- oder Laengen-Regeln. "
+            "Bei Aktionen: passende Tools sofort aufrufen, mehrere im selben Turn "
+            "wenn noetig. Bei echten Brocken (Code bauen/refactoren, langer Bericht, "
+            "Multi-Step-Aufgabe): spawn_worker mit der User-Utterance. "
+            "Bildschirm/Apps bedienen: computer_use."
         )
         parts.append(base)
 
@@ -2423,14 +2564,15 @@ class BrainManager:
                 "TOOL-SELECTION-REGELN (strikt):\n"
                 "1) RECHERCHIEREN/ANALYSIEREN/ERKLÄREN/VERGLEICHEN/ZUSAMMENFASSEN "
                 "(Info *über* ein Thema, nicht Aktion darauf):\n"
-                "   → NUTZE: search_web (Primary). Fallback: dispatch_to_harness.\n"
+                "   → NUTZE: search_web (Primary). Tiefe Multi-Source-Recherche MIT "
+                "Bericht: spawn_worker.\n"
                 "   → NIEMALS: cli_* Tools, MCP-Action-Tools.\n"
                 "   → Bsp: 'recherchiere zu Supabase' → search_web('Supabase'), NICHT cli_supabase.\n"
                 "2) AKTION auf verbundenem System (öffne, starte, deploye, migrate, liste MEINE X):\n"
-                "   → NUTZE: cli_* / MCP-Tools / dispatch_to_harness.\n"
+                "   → NUTZE: cli_* / MCP-Tools. Bildschirm/App bedienen: computer_use.\n"
                 "   → Bsp: 'liste meine Supabase-Projekte' → cli_supabase 'supabase projects list'.\n"
-                "3) CODE SCHREIBEN/REFACTOREN/DEBUGGEN:\n"
-                "   → NUTZE: dispatch_to_harness (openclaw).\n"
+                "3) CODE SCHREIBEN/REFACTOREN/DEBUGGEN (echter Brocken):\n"
+                "   → NUTZE: spawn_worker mit der User-Utterance.\n"
                 "4) Unklar? → search_web (Read-only, kein Schaden) oder Rückfrage an User.\n"
                 "Der Unterschied zwischen (1) und (2) liegt am Intent, nicht am Thema: "
                 "'über X' = Search, 'mit X tun' = Action.\n\n"
@@ -2557,7 +2699,11 @@ class BrainManager:
             try:
                 snap = self._awareness_manager.state.snapshot_for_prompt(max_chars=600)
                 if snap:
-                    parts.append(f"AKTUELLER KONTEXT (auto-injected):\n{snap}")
+                    parts.append(
+                        "AKTUELLER KONTEXT (Hintergrund, nur zur Orientierung, "
+                        "NICHT vorlesen oder aufzaehlen, ausser der User fragt "
+                        f"direkt danach):\n{snap}"
+                    )
             except Exception:  # noqa: BLE001
                 pass
         if self._wiki_context_suffix:
@@ -3612,6 +3758,155 @@ class BrainManager:
             return tools
         return {n: t for n, t in tools.items() if n != "screenshot"}
 
+    def _hide_spawn_on_knowledge_question(
+        self, tools: dict[str, "Tool"], user_text: str
+    ) -> dict[str, "Tool"]:
+        """Remove the spawn tools from a PLAIN knowledge/factual question's tool
+        surface so the router-LLM cannot reflexively delegate an answerable
+        question to a background worker.
+
+        Forensic 2026-06-27 (voice session 08:35): "Welche Unternehmen haben so
+        viel Speicherplatz?" — a pure factual question — was answered by the LLM
+        *choosing* ``spawn_worker`` ("ich ziehe einen Experten hinzu"), against
+        the router prompt's own rule ("NIEMALS spawn_worker fuer eine Frage, die
+        du mit 1-2 Suchanfragen beantworten kannst"). The deterministic
+        force-spawn gate correctly stands down on such a turn, but it only
+        *forces* spawns — it never *constrains* the LLM's own spawn reflex. This
+        mirrors the smalltalk tool-hide (2026-05-01): the surest way to stop a
+        wrong tool call is to not offer the tool. ``search_web`` / plugin reads /
+        ``computer_use`` stay visible so the question is still answerable inline.
+
+        Narrow on purpose (no collateral spawn loss): fires ONLY on an actual
+        question (interrogative opener or "?") that carries NEITHER action intent
+        NOR an artifact-build request, and NEVER when the user explicitly named a
+        heavy-work vehicle ("Subagent" / "deep dive"). Pure regex + the existing
+        deterministic detectors (AP-11 safe, provider-agnostic). Defensive: any
+        fault returns the tools unchanged so a gate bug can never blind the brain.
+        """
+        if not isinstance(tools, dict):
+            return tools
+        try:
+            t = (user_text or "").strip()
+            if not _is_plain_knowledge_question(t):
+                return tools
+            # User explicitly named the vehicle → respect it, never hide (AD-S9).
+            if self._get_force_spawn_pattern().search(t):
+                return tools
+            # A real desktop/action turn or an artifact-build request still needs
+            # the spawn tools — only a pure ANSWER question loses them.
+            if self._turn_has_action_intent(t) or self._research_wants_artifact(t):
+                return tools
+            return {n: tool for n, tool in tools.items() if n not in _SPAWN_TOOL_NAMES}
+        except Exception:  # noqa: BLE001 — gate must never blind the brain
+            log.debug("knowledge-question spawn-hide gate failed", exc_info=True)
+            return tools
+
+    def _hide_action_tools_on_signalless_turn(
+        self, tools: dict[str, "Tool"], user_text: str
+    ) -> dict[str, "Tool"]:
+        """Remove computer_use + the spawn vehicles from ANY turn that carries no
+        action signal of its own, so the router-LLM cannot INHERIT the previous
+        turn's desktop action from the conversation context.
+
+        GENERAL rule, not one phrase (user mandate 2026-06-27 — "this must apply
+        to ALL questions, that was only an example"): a question, a remark, or a
+        mis-transcription asks for no desktop action. If the turn names no action
+        of its own, it must not be able to fire ``computer_use``/spawn — whatever
+        the conversation context holds. Length- and ``?``-agnostic: a long
+        question is still a question; a trailing ``?`` no longer keeps the heavy
+        tools (the prior version did, which let a mis-heard question still inherit
+        a CU action). Forensic: "Was geht ab?" → STT "Lask it up!" [en] conf
+        0.509 → the brain re-ran the prior "open Discord, bridge-mine channel" CU
+        plan on a turn that asked for nothing.
+
+        A turn KEEPS the consequential tools only when it carries a real signal:
+        an action-intent (open-app / PC-control / screen-surface / registry), an
+        artifact-build request, or an explicitly named spawn vehicle. The
+        read-only ``screenshot`` tool is never in the hidden set, so a visual
+        question ("Was siehst du auf dem Bildschirm?") is still answered by
+        looking — only the click/type AGENT loop is withheld. Any fault returns
+        the tools unchanged so a gate bug can never blind the brain. Pure regex +
+        the existing deterministic detectors (AP-11 safe, provider-agnostic).
+        """
+        if not isinstance(tools, dict):
+            return tools
+        try:
+            t = (user_text or "").strip()
+            if not t:
+                return tools
+            # Any genuine ACTION signal keeps the consequential tools: an action
+            # intent (open-app / PC-control / names the screen surface / registry
+            # intent), an artifact-build request, or an explicitly named spawn
+            # vehicle. A turn with NONE of these asks for no desktop action.
+            if (
+                self._turn_has_action_intent(t)
+                or self._research_wants_artifact(t)
+                or self._get_force_spawn_pattern().search(t)
+            ):
+                return tools
+            return {
+                n: tool
+                for n, tool in tools.items()
+                if n not in _INHERITABLE_ACTION_TOOL_NAMES
+            }
+        except Exception:  # noqa: BLE001 — gate must never blind the brain
+            log.debug("signalless-turn action-hide gate failed", exc_info=True)
+            return tools
+
+    def _hide_spawn_when_plugin_tool_handles_turn(
+        self, tools: dict[str, "Tool"], user_text: str
+    ) -> dict[str, "Tool"]:
+        """Hide the spawn vehicles when a connected plugin tool's usage-card
+        keywords match the turn, so the router-LLM uses that (router-only) plugin
+        tool DIRECTLY instead of delegating to a worker that cannot reach it.
+
+        Forensic 2026-06-27 (voice session 17:44): "Schau mal nach, was in meinem
+        Google Calendar am 29. fuer Termine sind" — the router spawned a worker
+        ("umfangreicheres Stueck Arbeit") which has NO google_calendar tool
+        (plugin tools are router-tier only, AP-5/AP-14) and answered "kann ich
+        nicht". The deterministic force-spawn gate stands down on such a turn, but
+        it never constrains the LLM's own spawn reflex. A plugin-tool turn must
+        never be delegated. Mirrors ``_hide_spawn_on_knowledge_question``: the
+        surest way to stop a wrong spawn is to not offer the spawn tool. The
+        matched plugin tool + ``search_web`` + reads stay visible, so the turn is
+        still answerable inline.
+
+        Narrow on purpose: stands down when the user explicitly named a heavy-work
+        vehicle ("Subagent" / "deep dive") or asked to BUILD an artifact
+        (file / report), both of which legitimately spawn. Pure regex + the
+        usage-card keyword gate (AP-9 cached / AP-11 safe, provider-agnostic).
+        Defensive: any fault returns the tools unchanged so a gate bug can never
+        blind the brain.
+        """
+        if not isinstance(tools, dict):
+            return tools
+        try:
+            t = (user_text or "").strip()
+            if not t:
+                return tools
+            # An explicit heavy-work vehicle or an artifact-build request still
+            # legitimately spawns — never hide the spawn vehicles there.
+            if self._get_force_spawn_pattern().search(t) or self._research_wants_artifact(t):
+                return tools
+            from jarvis.marketplace.usage_cards.loader import load_usage_card
+
+            # A tool in the surface whose usage card matches => this is a
+            # plugin-tool turn. Native tools use their name as the card id
+            # (google_calendar); namespaced plugin tools use the id before "/".
+            for name in tools:
+                pid = name.partition("/")[0]
+                card = load_usage_card(pid)
+                if card is not None and card.matches(t):
+                    return {
+                        n: tool
+                        for n, tool in tools.items()
+                        if n not in _SPAWN_TOOL_NAMES
+                    }
+            return tools
+        except Exception:  # noqa: BLE001 — gate must never blind the brain
+            log.debug("plugin-tool spawn-hide gate failed", exc_info=True)
+            return tools
+
     def _apply_plugin_relevance(
         self, user_text: str, tools: dict[str, "Tool"]
     ) -> dict[str, "Tool"]:
@@ -3973,8 +4268,13 @@ class BrainManager:
         # request that merely mentions the screen ("bau mir eine Website und zeig
         # sie am Bildschirm") must still spawn the mission, so the artifact build
         # wins over this stand-down (mirrors the open-app guard above).
+        # Proxy for "the brain can drive the desktop directly": this used to
+        # check ``dispatch_to_harness`` (removed from the router set 2026-06-28),
+        # so it now checks the live desktop tool ``computer_use``. Without the
+        # update the guard would never fire and a pure pc-control request could
+        # wrongly force a sub-agent spawn.
         if (
-            "dispatch_to_harness" in self._tools
+            "computer_use" in self._tools
             and _looks_like_pc_control(t)
             and not self._research_wants_artifact(t)
         ):
@@ -4111,6 +4411,60 @@ class BrainManager:
             primary = ""
         return primary in ("claude-api", "gemini")
 
+    async def _honest_failure_readback(
+        self,
+        result: Any,
+        *,
+        user_text: str,
+        situation: str,
+        generic_key: str,
+        reason_key: str,
+        lang: str | None = None,
+    ) -> str:
+        """Honest, localized, opaque-token-free spoken readback for a FAILURE.
+
+        The single place every deterministic failure path (the DIRECT local
+        action, the force-spawn, the leaked-spawn / leaked-tool recovery) turns a
+        failed ``ToolResult`` into something speakable. It guarantees the user
+        NEVER hears the raw ``ToolResult.error`` — which is routinely the opaque
+        ``"exit N"`` token (``dispatch_to_harness`` → ``f"exit {code}"``) that was
+        read out verbatim before (live forensic 2026-06-28: a harness failure was
+        spoken as the bare "exit 1").
+
+        It mirrors the Computer-Use path (:func:`cu_failure_readback`):
+
+        1. Pull a *human* reason from the result (stderr/stdout/error) via
+           :func:`extract_speakable_reason` — a bare ``exit N`` / numeric /
+           diagnostic token yields ``None``.
+        2. Route through the context-aware readback composer so the spoken line
+           reacts to THIS situation (no stock phrasing, the maintainer's
+           standing requirement) — handing it ONLY the clean reason as a fact,
+           never the opaque token.
+        3. Fall back to a localized canned phrase (de/en/es) — the reason
+           variant when a clean reason exists, the generic one otherwise — so an
+           en/es turn never gets a hardcoded German string and a failure is
+           never silently dropped.
+        """
+        lang = lang or self._direct_ack_language(user_text)
+        reason = extract_speakable_reason(
+            getattr(result, "error", None), getattr(result, "output", None)
+        )
+        if reason:
+            facts: dict[str, object] | None = {"reason": reason}
+            instruction = f"{situation} The reason given was: {reason}"
+            canned = lambda: action_phrase(reason_key, lang, reason=reason)  # noqa: E731
+        else:
+            facts = None
+            instruction = situation
+            canned = lambda: action_phrase(generic_key, lang)  # noqa: E731
+        return await render_readback(
+            getattr(self, "_readback_composer", None),
+            instruction=instruction,
+            language=lang,
+            canned=canned,
+            facts=facts,
+        )
+
     async def _run_local_action_fast_path(
         self,
         user_text: str,
@@ -4170,10 +4524,31 @@ class BrainManager:
                         duration_ms=int(timeout_s * 1000),
                         error=f"timeout after {timeout_s:.3g}s",
                     ))
-                    return f"{call.name} timeout after {timeout_s:.3g}s"
+                    # Never speak the internal tool name + machine "timeout after
+                    # 3s" string; a plain, localized line via the composer instead.
+                    return await render_readback(
+                        getattr(self, "_readback_composer", None),
+                        instruction=(
+                            "The action the user asked for took too long and was "
+                            "stopped before it finished."
+                        ),
+                        language=ack_lang,
+                        canned=lambda: action_phrase("action_timeout", ack_lang),
+                    )
                 if not result.success:
-                    return result.error or action_phrase(
-                        "tool_failed", ack_lang, tool=call.name
+                    # NEVER return ``result.error`` verbatim — it is routinely the
+                    # opaque ``exit N`` token (live forensic 2026-06-28: a harness
+                    # failure was spoken as the bare "exit 1"). Route through the
+                    # honest, localized, composer-backed readback instead.
+                    return await self._honest_failure_readback(
+                        result,
+                        user_text=user_text,
+                        situation=(
+                            "An action the user asked for could not be completed."
+                        ),
+                        generic_key="action_failed_generic",
+                        reason_key="action_failed_reason",
+                        lang=ack_lang,
                     )
                 if result.output is not None:
                     outputs.append(
@@ -4208,11 +4583,31 @@ class BrainManager:
                 )
             if self._cost_meter is not None:
                 if self._cost_meter.is_in_cooldown():
-                    return action_phrase("cost_cooldown", cu_lang)
+                    return await render_readback(
+                        getattr(self, "_readback_composer", None),
+                        instruction=(
+                            "A cost cooldown is active: the daily budget is used "
+                            "up, so new requests resume only after the cooldown ends."
+                        ),
+                        language=cu_lang,
+                        canned=lambda: action_phrase("cost_cooldown", cu_lang),
+                    )
                 if self._cost_meter.over_task_budget(tid):
-                    return action_phrase("task_budget", cu_lang)
+                    return await render_readback(
+                        getattr(self, "_readback_composer", None),
+                        instruction=(
+                            "The task budget for this conversation has been exceeded."
+                        ),
+                        language=cu_lang,
+                        canned=lambda: action_phrase("task_budget", cu_lang),
+                    )
                 if self._cost_meter.over_daily_budget():
-                    return action_phrase("daily_budget", cu_lang)
+                    return await render_readback(
+                        getattr(self, "_readback_composer", None),
+                        instruction="The daily budget has been exceeded.",
+                        language=cu_lang,
+                        canned=lambda: action_phrase("daily_budget", cu_lang),
+                    )
             # Wave-4 latency fix: Computer-Use is OFFLOADED off the voice turn.
             # Previously the harness was awaited inline for up to ~31 s, so a
             # "do it on screen" command froze the spoken turn the whole time.
@@ -4255,7 +4650,22 @@ class BrainManager:
             # mid-flight, and drop it on completion.
             bg_tasks.add(task)
             task.add_done_callback(bg_tasks.discard)
-            return action_phrase("cu_dispatch_ack", cu_lang)
+            # Optimistic ACK (AD-OE1). On the turn-critical path, so a TIGHT
+            # latency budget with the canned line as the instant fallback keeps
+            # intent->ACK well under SLO. in_progress=True: the work has not
+            # started, so a completion claim is rejected.
+            return await render_readback(
+                getattr(self, "_readback_composer", None),
+                instruction=(
+                    "You are about to carry out the user's request directly on "
+                    "the screen, in the background, and will report back when done."
+                ),
+                language=cu_lang,
+                canned=lambda: action_phrase("cu_dispatch_ack", cu_lang),
+                facts={"user_request": user_text},
+                in_progress=True,
+                latency_budget_ms=900,
+            )
 
         return None
 
@@ -4342,6 +4752,10 @@ class BrainManager:
                         "harness": harness_name,
                         "prompt": prompt,
                         "timeout_s": timeout_s,
+                        # Thread the turn's language to the in-harness verifier so
+                        # its spoken `proof` matches the frame's language (live bug
+                        # 2026-06-27: a German turn read back an English proof).
+                        "env": {OUTPUT_LANGUAGE_ENV_KEY: lang},
                     },
                     user_utterance=user_text,
                     trace_id=trace_id,
@@ -4362,20 +4776,87 @@ class BrainManager:
                 # static parse as the ``computer_use`` tool path — no LLM (AP-11).
                 output = getattr(result, "output", None)
                 stdout = output.get("stdout") if isinstance(output, dict) else None
-                text = cu_success_readback(lang, stdout=stdout)
+                # The canned success line ALREADY forwards the verifier's signed
+                # on-screen observation (or a plain "Done."). Use it as the
+                # deterministic ground truth and let the composer only make it
+                # sound natural — honesty_bound so it can rephrase but never
+                # invent a detail the verifier did not report (ADR-0009). Off the
+                # turn path, so a generous budget; instant canned fallback.
+                canned_success = cu_success_readback(lang, stdout=stdout)
+                text = await render_readback(
+                    getattr(self, "_readback_composer", None),
+                    instruction=(
+                        "The user's on-screen request just succeeded; tell them "
+                        "naturally, keeping any on-screen detail that was observed."
+                    ),
+                    language=lang,
+                    canned=lambda: canned_success,
+                    facts={"user_request": user_text, "result": canned_success},
+                    honesty_bound=True,
+                    latency_budget_ms=2500,
+                )
             else:
                 err = getattr(result, "error", None)
                 exit_code, detail = self._cu_failure_detail(
                     getattr(result, "output", None)
                 )
-                text = cu_failure_readback(
+                # A user-initiated cancel (exit 130 — "auflegen" tripped the CU
+                # cancel token) is NOT an outcome the user is waiting on: it is
+                # the receipt of an abort they just triggered themselves. Speaking
+                # "the action was cancelled" is redundant, and — because the
+                # completion readback punches through the hangup gate (AD-OE5/OE6)
+                # and each offloaded mission cancels independently — it spams the
+                # phrase once per in-flight mission (live forensic 2026-06-27:
+                # three CU missions cancelled by one F1+F2 hangup spoke it three
+                # times). "auflegen" is a hard, immediately-silent kill-switch, so
+                # drop the readback entirely. AD-OE6's zero-silent-drop guards
+                # real outcomes (success / content failure / timeout) — those
+                # still announce below — not a self-triggered abort.
+                if exit_code == CU_CANCEL_EXIT_CODE:
+                    log.info(
+                        "CU background cancelled by user hangup (exit %d) — "
+                        "no readback (auflegen = silent kill-switch)",
+                        CU_CANCEL_EXIT_CODE,
+                    )
+                    return
+                canned_failure = cu_failure_readback(
                     lang, error=err, exit_code=exit_code, detail=detail,
+                )
+                # The canned failure line is already humanized + scrubbed (no raw
+                # exit code, only a speakable reason). Rephrase it naturally,
+                # honesty_bound so the spoken reason stays faithful to what the
+                # harness actually reported. Instant canned fallback.
+                text = await render_readback(
+                    getattr(self, "_readback_composer", None),
+                    instruction=(
+                        "The user's on-screen request did not work; tell them "
+                        "plainly and kindly, keeping any reason that was given."
+                    ),
+                    language=lang,
+                    canned=lambda: canned_failure,
+                    facts={"user_request": user_text, "what_happened": canned_failure},
+                    # Not a signed observation (ADR-0009 binds success readbacks);
+                    # the digit + forbidden-vocab guards + strict persona keep it
+                    # honest while allowing a natural failure phrasing.
+                    honesty_bound=False,
+                    latency_budget_ms=2500,
                 )
                 diag = self._cu_failure_diagnostic(
                     error=err, exit_code=exit_code, detail=detail,
                 )
         except TimeoutError:
-            text = action_phrase("cu_timeout", lang, secs=f"{timeout_s:.0f}")
+            _secs = f"{timeout_s:.0f}"
+            text = await render_readback(
+                getattr(self, "_readback_composer", None),
+                instruction=(
+                    "The on-screen task took too long and was stopped after "
+                    f"{_secs} seconds."
+                ),
+                language=lang,
+                canned=lambda: action_phrase("cu_timeout", lang, secs=_secs),
+                facts={"seconds": _secs},
+                latency_budget_ms=2000,
+            )
             try:
                 await self._bus.publish(ActionExecuted(
                     trace_id=trace_id,
@@ -4388,7 +4869,13 @@ class BrainManager:
                 log.debug("CU-background ActionExecuted publish failed", exc_info=True)
         except Exception as exc:  # noqa: BLE001 — a background crash must not leak
             log.error("Computer-Use background task failed: %r", exc, exc_info=True)
-            text = action_phrase("cu_crashed", lang)
+            text = await render_readback(
+                getattr(self, "_readback_composer", None),
+                instruction="Something went wrong while doing the task on screen.",
+                language=lang,
+                canned=lambda: action_phrase("cu_crashed", lang),
+                latency_budget_ms=2000,
+            )
         # AD-OE6 zero silent drops: ALWAYS speak the outcome at the next turn
         # boundary (announcement -> scrub_for_voice -> TTS).
         try:
@@ -4664,7 +5151,14 @@ class BrainManager:
             trace_id=tid,
         )
         if not result.success:
-            return result.error or "OpenClaw konnte nicht gestartet werden."
+            return await self._honest_failure_readback(
+                result,
+                user_text=user_text,
+                situation="The background helper the user asked for could not be started.",
+                generic_key="spawn_failed_generic",
+                reason_key="spawn_failed_reason",
+                lang=out_lang,
+            )
         return str(result.output or "")
 
     async def _recover_leaked_spawn(
@@ -4735,8 +5229,13 @@ class BrainManager:
             trace_id=trace_id,
         )
         if not result.success:
-            return result.error or (
-                "Der Hintergrund-Worker konnte nicht gestartet werden."
+            return await self._honest_failure_readback(
+                result,
+                user_text=user_text,
+                situation="The background helper the user asked for could not be started.",
+                generic_key="spawn_failed_generic",
+                reason_key="spawn_failed_reason",
+                lang=out_lang,
             )
         return str(result.output or "")
 
@@ -4789,8 +5288,12 @@ class BrainManager:
                 return _cli_failure_reason(
                     result.output, result.error, german=_looks_german(user_text),
                 )
-            return result.error or (
-                f"Die Aktion '{name}' konnte nicht ausgefuehrt werden."
+            return await self._honest_failure_readback(
+                result,
+                user_text=user_text,
+                situation="An action the user asked for could not be carried out.",
+                generic_key="action_failed_generic",
+                reason_key="action_failed_reason",
             )
         # A read tool (search_web, wiki-recall, …) returns STRUCTURED data, not
         # a spoken sentence. Render it to speakable text — ``str(result.output)``
@@ -5684,6 +6187,36 @@ class BrainManager:
             # instructions already ride on the turn context, so execution is
             # provider-/model-agnostic (no tool call needed).
             _turn_tools = self._drop_run_skill_when_inline_injected(_turn_tools)
+            # Knowledge-question spawn-hide (forensic 2026-06-27): a plain
+            # factual question ("Welche Unternehmen haben so viel Speicherplatz?")
+            # must not be able to reach spawn_worker — the router-LLM reflexively
+            # delegated it ("ich ziehe einen Experten hinzu") instead of answering
+            # inline. The deterministic force-spawn gate already stood down; this
+            # removes the spawn tools from the LLM surface so the reflex has no
+            # tool to grab. search_web / reads / computer_use stay visible.
+            if isinstance(_turn_tools, dict):
+                _turn_tools = self._hide_spawn_on_knowledge_question(
+                    _turn_tools, user_text
+                )
+            # Signalless-turn action-hide (forensic 2026-06-27): a short turn with
+            # NO actionable signal of its own ("Was geht ab?" mis-heard as "Lask
+            # it up!" conf 0.509) must not be able to reach computer_use/spawn —
+            # the router-LLM would otherwise INHERIT the previous turn's CU action
+            # from the conversation context and fire a wrong desktop action.
+            if isinstance(_turn_tools, dict):
+                _turn_tools = self._hide_action_tools_on_signalless_turn(
+                    _turn_tools, user_text
+                )
+            # Plugin-tool spawn-hide (forensic 2026-06-27, voice 17:44): "Schau
+            # mal nach was in meinem Google Calendar am 29. ist" spawned a worker
+            # ("umfangreicheres Stueck Arbeit") that has no google_calendar tool
+            # (plugin tools are router-tier only, AP-5/AP-14) -> "kann ich nicht".
+            # When a connected plugin's usage-card keywords match the turn, drop
+            # the spawn vehicles so the router uses the plugin tool DIRECTLY.
+            if isinstance(_turn_tools, dict):
+                _turn_tools = self._hide_spawn_when_plugin_tool_handles_turn(
+                    _turn_tools, user_text
+                )
             # AI Pointer: on a deictic pointer turn the cursor crop is already the
             # only attached image, so drop the redundant ``inspect-pointer`` PULL
             # tool (calling it produced an empty spoken answer — observed live).
@@ -5882,20 +6415,29 @@ class BrainManager:
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
                 msg = str(exc)
-                # 429 Rate-Limit: markieren für 30s
-                if _is_rate_limit_exc(exc):
+                # Classify FIRST so a terminal-billing 429 ("credits depleted",
+                # "insufficient_quota") is treated as a DEAD provider, not a
+                # transient rate-limit that keeps the empty provider leading the
+                # chain every turn (live forensic 2026-06-28: a depleted Gemini
+                # router bricked the whole turn even though OpenRouter was funded
+                # — AP-22). Only a genuinely transient 429 takes the cooldown path.
+                kind = _classify_provider_error(msg, default="call_fail")
+                if kind == "rate_limit":
                     self._rate_tracker.mark_rate_limited(prov_name, model)
                     log.warning("Rate-Limited %s(%s) — 30s Cooldown aktiviert", prov_name, model)
                     provider_errors.append(
                         (prov_name, model, "rate_limit", "HTTP 429"))
                 else:
                     log.warning("Brain %s(%s) fehlgeschlagen: %s", prov_name, model, exc)
-                    kind = _classify_provider_error(msg, default="call_fail")
-                    if kind == "missing_key" and prov_name not in self._dead_providers:
+                    if (
+                        kind in ("missing_key", "account_blocked")
+                        and prov_name not in self._dead_providers
+                    ):
                         self._dead_providers.add(prov_name)
                         log.warning(
-                            "Provider %s ohne API-Key — fuer diese Session deaktiviert. "
-                            "Setup: Sidebar -> API-Keys.", prov_name)
+                            "Provider %s fuer diese Session deaktiviert (%s) — die Kette "
+                            "weicht auf einen anderen verfuegbaren Anbieter aus. "
+                            "Setup: Sidebar -> API-Keys.", prov_name, kind)
                     provider_errors.append((prov_name, model, kind, msg[:200]))
                 # NOTE BUG-019 (2026-05-11): this generic ``continue`` does
                 # not touch the failing provider's *internal* state. For
@@ -6290,7 +6832,15 @@ class BrainManager:
                 if final and not _looks_like_tool_use_leak(final):
                     yield final
                 elif leaked:
-                    yield self._action_failed_phrase(user_text)
+                    yield await render_readback(
+                        getattr(self, "_readback_composer", None),
+                        instruction=(
+                            "A tool action was recognized but could not be "
+                            "carried out; tell the user plainly."
+                        ),
+                        language=self._direct_ack_language(user_text),
+                        canned=lambda: self._action_failed_phrase(user_text),
+                    )
         finally:
             if not task.done():
                 task.cancel()
@@ -6791,10 +7341,23 @@ def _is_account_blocked_exc(msg: str) -> bool:
         "upgrade plan",
         "upgrade your plan",
         "exceeded your quota",  # Gemini-style, terminal vs. 429
+        "exceeded your current quota",  # OpenAI insufficient_quota wording
         "quota exceeded for",
+        "insufficient_quota",
+        "insufficient quota",
         "billing not active",
         "payment required",
         "account is suspended",
+        # Terminal-billing 429s that carry "429" in the message and would
+        # otherwise be mis-read as a transient rate-limit (live forensic
+        # 2026-06-28: depleted Gemini bricked the whole chain — AP-22).
+        "credits are depleted",
+        "credits depleted",
+        "prepayment credits",
+        "out of credits",
+        "no credits remaining",
+        "check your plan and billing",
+        "plan and billing",
     ))
 
 
@@ -6841,6 +7404,26 @@ def _classify_provider_error(msg: str, *, default: str) -> str:
                              "rate limit", "too many requests")):
         return "rate_limit"
     return default
+
+
+def _keyless_provider_is_rescued_by_oauth(provider_name: str) -> bool:
+    """True when a keyless provider must NOT be dead-listed at the pre-boot key
+    check because it authenticates via an OAuth login ON DISK, not an API key.
+
+    The subscription-CLI brains (codex over the ChatGPT login at ``~/.codex/auth.json``)
+    carry no entry in ``PROVIDER_SECRET_CANDIDATES``, so a ChatGPT-only user would
+    otherwise see ``codex`` pushed into ``_dead_providers`` → empty chain → every
+    chat AND voice turn bricks with the provider-down apology. The OAuth login IS a
+    usable credential. Open-source single-provider mandate (AP-22). Any import/probe
+    failure is treated as "not rescued" (fail-safe → dead-list).
+    """
+    if provider_name == "codex":
+        try:
+            from jarvis.plugins.brain.codex import _codex_oauth_connected
+            return bool(_codex_oauth_connected())
+        except Exception:  # noqa: BLE001
+            return False
+    return False
 
 
 _PROVIDER_SETUP_HINTS: dict[str, str] = {

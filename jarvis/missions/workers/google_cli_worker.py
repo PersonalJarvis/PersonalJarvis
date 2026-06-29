@@ -35,6 +35,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any, Literal
 
+from jarvis.google_cli.auth_service import _oauth_login_present
 from jarvis.google_cli.isolated_home import (
     ensure_isolated_home,
     iso_home_root,
@@ -62,12 +63,36 @@ _DROP_ENV: tuple[str, ...] = (
 _WORKER_TIMEOUT_S: float = 1200.0
 
 
-def _build_agy_worker_argv(exe: str, prompt: str) -> list[str]:
+def _build_agy_worker_argv(exe: str, prompt: str, worktree: Path) -> list[str]:
     """agy worker argv: one non-interactive prompt with auto-approved tools so it
-    can write files in the worktree. Newlines are collapsed to spaces — agy takes
-    the whole prompt as a single ``--print`` argument."""
+    can write files in the worktree.
+
+    ``--add-dir <worktree>`` makes agy treat the per-mission git worktree as its
+    active workspace, so deliverables land there (and show up in the Critic's
+    ``git diff HEAD``). Without it agy has no active workspace in ``--print`` mode
+    and writes every file into its home-relative
+    ``.gemini/antigravity-cli/brain/<session>/`` (or ``scratch/<project>/``) dir —
+    the worktree then stays empty, the Critic sees an empty diff, and EVERY
+    antigravity mission fails ``critic_loop_exhausted`` even though agy did the
+    work (live forensic 2026-06-27: mission_019f07cb wrote
+    ``…/brain/<session>/datenmenge_150_petabyte.md`` and was failed for an empty
+    diff; agy itself reported "kein aktives Workspace-Verzeichnis geöffnet").
+
+    ``--print-timeout`` is widened from agy's 5-minute default to the worker's own
+    time budget so a long "production-quality" task is not cut short by agy before
+    our :data:`_WORKER_TIMEOUT_S` cap.
+
+    Newlines are collapsed to spaces — agy takes the whole prompt as a single
+    ``--print`` argument.
+    """
     safe_prompt = " ".join(prompt.split())
-    return [exe, "--print", safe_prompt, "--dangerously-skip-permissions"]
+    return [
+        exe,
+        "--print", safe_prompt,
+        "--add-dir", str(worktree),
+        "--print-timeout", f"{int(_WORKER_TIMEOUT_S)}s",
+        "--dangerously-skip-permissions",
+    ]
 
 
 def _build_agy_worker_env(base_env: dict[str, str]) -> dict[str, str]:
@@ -137,11 +162,22 @@ class GoogleCliWorker:
             )
             return
 
-        if cli.kind != "agy":
+        # Billing path (Antigravity dual billing, mirror of Codex): agy runs over
+        # the Google subscription OAuth login. If there is NO OAuth login but a
+        # Gemini API key is available, bill per token via the proven Gemini API
+        # worker instead — same outcome the user asked for ("über die API
+        # abrechnen"), on the tested path rather than coercing agy to use a key.
+        use_api_billing = not _oauth_login_present(Path(real_gemini_dir())) and bool(
+            env.get("GEMINI_API_KEY") or env.get("GOOGLE_API_KEY")
+        )
+        if cli.kind != "agy" or use_api_billing:
             # The Gemini CLI writes clean output to a pipe — reuse the proven worker.
             logger.info(
-                "GoogleCliWorker[%s] -> GeminiWorker fallback (resolver kind=%s)",
-                worker_id, cli.kind,
+                "GoogleCliWorker[%s] -> GeminiWorker (%s)",
+                worker_id,
+                "API-key billing, no OAuth login"
+                if use_api_billing
+                else f"resolver kind={cli.kind}",
             )
             async for ev in self._gemini_fallback.spawn(
                 prompt,
@@ -166,7 +202,7 @@ class GoogleCliWorker:
         # agy path: PTY + write-mode + isolated hook/mcp-free home.
         exe = cli.argv_prefix[0]
         log_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240 — trivial sync mkdir (mirrors GeminiWorker)
-        argv = _build_agy_worker_argv(exe, prompt)
+        argv = _build_agy_worker_argv(exe, prompt, worktree)
         agy_env = _build_agy_worker_env(env)
 
         yield ClaudeSystemInit(

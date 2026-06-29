@@ -43,6 +43,26 @@ log = logging.getLogger(__name__)
 # suspenders for installs where only ``codex.cmd`` is on PATH.
 _BINARY_CANDIDATES: tuple[str, ...] = ("codex", "codex.cmd", "codex.exe")
 
+# Process-lifetime cache of ``codex --version`` keyed by resolved binary path.
+# The version is invariant while the app runs, but this subprocess is the single
+# most expensive part of ``status()`` — a cold ``codex.cmd`` Node-shim spawn
+# costs ~1-3 s, and ``/api/providers`` used to pay it 2-4x PER request, on the
+# asyncio event loop, serializing every other section's calls behind it. Caching
+# it makes every status() after the first a pure ``auth.json`` read, so the live
+# connect/disconnect state stays fresh while the latency disappears. A failed
+# probe is cached too, so a hanging/absent codex never re-pays the 4 s timeout.
+_VERSION_CACHE: dict[str, str | None] = {}
+
+
+def clear_version_cache() -> None:
+    """Drop all cached ``codex --version`` results.
+
+    The version is process-stable, so this is only needed in tests and after an
+    explicit re-install/update of the codex CLI (none of the in-app flows change
+    it, so they don't call this).
+    """
+    _VERSION_CACHE.clear()
+
 # Visible-console flag for the interactive login (Windows only). The desktop app
 # runs under pythonw.exe (no console); without a fresh console the user could
 # not see ``codex login``'s device URL if the auto browser-open fails.
@@ -165,7 +185,15 @@ class CodexAuthService:
         return None
 
     def _probe_version(self, binary: str) -> str | None:
-        """``codex --version`` output (stripped), or ``None`` on any failure."""
+        """``codex --version`` (stripped), or ``None`` on any failure.
+
+        Cached process-lifetime per binary (see ``_VERSION_CACHE``): the version
+        is invariant while the app runs, and this subprocess is the dominant
+        cold-start cost of every ``status()`` call. The first probe pays the
+        Node-shim spawn; every later one is a dict lookup.
+        """
+        if binary in _VERSION_CACHE:
+            return _VERSION_CACHE[binary]
         try:
             proc = subprocess.run(
                 [binary, "--version"],
@@ -175,9 +203,12 @@ class CodexAuthService:
                 creationflags=NO_WINDOW_CREATIONFLAGS,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            _VERSION_CACHE[binary] = None
             return None
         out = (proc.stdout or proc.stderr or "").strip()
-        return out or None
+        version = out or None
+        _VERSION_CACHE[binary] = version
+        return version
 
     # -- auth file -------------------------------------------------------
 
