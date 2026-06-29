@@ -38,15 +38,17 @@ from typing import TYPE_CHECKING, Any
 from jarvis.core.events import (
     AudioOutFirst,
     ListeningStarted,
-    OpenClawBackgroundCompleted,
+    JarvisAgentBackgroundCompleted,
     OrbResetRequested,
     ResponseGenerated,
     ShowWindowRequested,
     SystemStateChanged,
     TranscriptionUpdate,
     UserVisibleFeedback,
+    WakeCandidateDetected,
     WakeWordDetected,
     VoiceBootStatus,
+    VoiceMuteChanged,
     VoiceMuteToggleRequested,
     VoiceSessionEnded,
     VoiceSessionStarted,
@@ -203,25 +205,78 @@ class OrbBusBridge:
         # drives _on_state without publishing VoiceSession events (and the
         # very first session before any end-event) behaves exactly as before.
         self._suppress_show_until_session: bool = False
-        # Boot-readiness gate. The persistent bar must not appear before the
-        # speech pipeline can actually hear the user — otherwise the user sees
-        # the bar on boot and assumes Jarvis is listening when warm-up is still
-        # running. ``reveal_bar_when_voice_ready`` waits for this event (set on
-        # VoiceBootStatus(ready=True)) and then reveals the persistent bar once.
-        # ``_boot_reveal_done`` makes the reveal idempotent across the ready
+        # Boot z-order re-lift latch. The persistent bar is now visible from
+        # boot (the overlay maps its window immediately — see
+        # DesktopApp._build_overlay_surface), so this is NO LONGER a visibility
+        # gate. Once voice is ready, ``reveal_bar_when_voice_ready`` re-asserts
+        # the bar's topmost (after the main window + tray have finished mapping).
+        # ``_boot_reveal_done`` makes the re-lift idempotent across the ready
         # signal and the fallback timeout. asyncio.Event() is loop-agnostic at
         # construction (Py3.10+ dropped the loop param; project minimum is
         # 3.11), so it is safe to build off the running loop.
         self._voice_ready_event = asyncio.Event()
         self._boot_reveal_done: bool = False
+        # Backend asyncio loop the bridge's bus handlers run on. The Tk gesture
+        # callbacks (_publish_mute_toggle / _publish_show_window /
+        # _publish_visible_feedback) fire on the overlay's *Tk thread*, which has
+        # no asyncio loop of its own. They must marshal bus.publish onto THIS
+        # loop via run_coroutine_threadsafe — never asyncio.run(), which spins a
+        # throwaway loop and then explodes when a subscriber (the per-WS-client
+        # _forward) acquires an asyncio.Lock bound to the real loop
+        # ("RuntimeError: bound to a different event loop"). 2026-06-28 forensic:
+        # an orb double-click mute did exactly that → mute publish failed, mic
+        # stayed muted, voice stuck in LISTENING, WS-forward log storm,
+        # session reason=error. Captured lazily in attach()/_on_state (both run
+        # on the backend loop, well before the orb is ever clickable).
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def _remember_loop(self) -> None:
+        """Capture the running backend loop (idempotent). Called from async bus
+        handlers, which always run on that loop."""
+        if self._loop is not None and self._loop.is_running():
+            return
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+
+    def _marshal_publish(self, coro, *, label: str) -> None:
+        """Schedule a ``bus.publish`` coroutine on the captured backend loop from
+        the Tk thread. Fire-and-forget; never blocks the Tk mainloop.
+
+        Falls back to a one-shot ``asyncio.run`` ONLY when no backend loop was
+        ever captured (the Tk-only test harness). In the live app a state event
+        always fires before the orb is clickable, so the captured-loop path is
+        the one that runs — and the throwaway-loop cross-event-loop crash that
+        froze the mic (2026-06-28) cannot recur."""
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            try:
+                asyncio.run_coroutine_threadsafe(coro, loop)
+            except RuntimeError as exc:
+                log.warning("%s publish dropped: %s", label, exc)
+            return
+        # No backend loop reachable — last resort so the gesture is not silently
+        # swallowed in a Tk-only harness. Never the live-app path.
+        try:
+            asyncio.run(coro)
+        except RuntimeError as exc:
+            log.warning("%s publish dropped (no backend loop): %s", label, exc)
 
     def attach(self) -> None:
         """Subscribt die Bridge auf SystemStateChanged. Idempotent."""
+        # If attach() runs on the backend loop (the live async-startup path),
+        # capture it now so the very first gesture already marshals correctly.
+        self._remember_loop()
         try:
             self._bus.subscribe(SystemStateChanged, self._on_state)
             # Earliest safe visual wake cue: WakeWordDetected is emitted only
             # after wake verification, before the later session/state events.
             self._bus.subscribe(WakeWordDetected, self._on_wake_word_detected)
+            # Optimistic VISUAL-ONLY reveal: pops the bar on the OWW candidate,
+            # before the slow STT prefix-verify gates WakeWordDetected (so the
+            # bar feels instant on "Hey Jarvis"). Retracted on a rejected hit.
+            self._bus.subscribe(WakeCandidateDetected, self._on_wake_candidate)
             # Voice-session lifecycle: the orb tracks SESSION boundaries, not
             # just raw turn-states, so a late in-flight turn after a hangup
             # cannot resurrect the mascot (orb-resurrection bug 2026-05-29).
@@ -230,11 +285,18 @@ class OrbBusBridge:
             self._bus.subscribe(ListeningStarted, self._on_listening_started)
             self._bus.subscribe(TranscriptionUpdate, self._on_transcription_update)
             self._bus.subscribe(ResponseGenerated, self._on_response_generated)
-            self._bus.subscribe(OpenClawBackgroundCompleted, self._on_background_completed)
+            self._bus.subscribe(JarvisAgentBackgroundCompleted, self._on_background_completed)
             self._bus.subscribe(AudioOutFirst, self._on_audio_out_first)
-            # Boot-readiness gate: the persistent bar is revealed only once the
-            # speech pipeline signals it can actually hear the user.
+            # Boot z-order re-lift: once the speech pipeline signals voice is
+            # ready, re-assert the (already-visible) persistent bar's topmost.
             self._bus.subscribe(VoiceBootStatus, self._on_voice_boot_status)
+            # Authoritative mute mirror: the pipeline owns the global voice-mute
+            # flag and broadcasts VoiceMuteChanged whenever it flips (from this
+            # bar, the mascot, or a voice command). Forward it to the current
+            # surface's ``set_muted`` so the slashed-mic icon stays in lock-step
+            # with the real state — defensive getattr keeps surfaces without the
+            # method (the mascot orb) working unchanged.
+            self._bus.subscribe(VoiceMuteChanged, self._on_voice_mute_changed)
             # ADR-0016 L2 — voice-driven recovery from "orb lost on screen".
             # The local_action_gate publishes OrbResetRequested when the
             # user says "Orb zurück" / "wo bist du" / "reset orb".
@@ -312,6 +374,20 @@ class OrbBusBridge:
         except Exception:  # noqa: BLE001
             log.exception("OrbBridge.reset dispatch failed")
 
+    async def _on_voice_mute_changed(self, event: VoiceMuteChanged) -> None:
+        """Forward the pipeline's authoritative mute state to the current surface
+        so its slashed-mic icon mirrors reality. Defensive getattr: a surface
+        without ``set_muted`` (the mascot orb) is simply skipped — the call is a
+        no-op, never an error. The write is a quick atomic flag set on the
+        surface; no Tk marshal needed (the bar reads it on its own frame loop)."""
+        setter = getattr(self._orb, "set_muted", None)
+        if not callable(setter):
+            return
+        try:
+            setter(bool(event.muted))
+        except Exception:  # noqa: BLE001 — a mirror update must never break the bus
+            log.debug("surface set_muted failed", exc_info=True)
+
     def _publish_visible_feedback(self, mode: str, observed: dict) -> None:
         """Called from the orb's Tk thread after a deiconify. Builds and
         publishes ``UserVisibleFeedback`` onto the asyncio bus.
@@ -327,45 +403,23 @@ class OrbBusBridge:
                 correlation_id=self._last_state_trace_id,
             )
         )
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.run_coroutine_threadsafe(coro, loop)
-                return
-        except RuntimeError:
-            pass
-        try:
-            asyncio.run(coro)
-        except RuntimeError as exc:
-            log.debug("UserVisibleFeedback publish dropped: %s", exc)
+        self._marshal_publish(coro, label="UserVisibleFeedback")
 
     def _publish_mute_toggle(self) -> None:
         """Called from the Tk main-thread when the orb detects a double
-        double-click. We hop onto the asyncio loop to publish, because
+        double-click. We hop onto the captured backend loop to publish, because
         EventBus.publish is a coroutine and Tk is sync.
 
-        If no event loop is reachable from this thread (Tk-only test
-        harness), we fall back to ``asyncio.run`` for a one-shot publish
-        so the gesture is not silently swallowed.
+        Marshals via the shared ``_marshal_publish`` helper: scheduling on the
+        backend loop is mandatory — a throwaway ``asyncio.run`` loop dispatches
+        the per-WS-client ``_forward`` subscriber whose ``send_lock`` is bound to
+        the real loop, raising "bound to a different event loop" and leaving the
+        mic muted with the voice session frozen in LISTENING (2026-06-28).
         """
         coro = self._bus.publish(
             VoiceMuteToggleRequested(source="orb_dblclick_double")
         )
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.run_coroutine_threadsafe(coro, loop)
-                return
-        except RuntimeError:
-            pass
-        # No running loop reachable — spawn a one-shot loop. Acceptable
-        # because the publish itself is cheap; the heavy work (mute flag
-        # flip + downstream broadcast) happens in subscribers on whatever
-        # loop they own.
-        try:
-            asyncio.run(coro)
-        except RuntimeError as exc:
-            log.warning("mute-toggle publish dropped: %s", exc)
+        self._marshal_publish(coro, label="mute-toggle")
 
     def _publish_show_window(self) -> None:
         """Called from the surface's Tk main-thread on a right-click. Publishes
@@ -376,17 +430,38 @@ class OrbBusBridge:
         gesture is never silently swallowed.
         """
         coro = self._bus.publish(ShowWindowRequested(source="overlay_rightclick"))
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.run_coroutine_threadsafe(coro, loop)
-                return
-        except RuntimeError:
-            pass
-        try:
-            asyncio.run(coro)
-        except RuntimeError as exc:
-            log.warning("show-window publish dropped: %s", exc)
+        self._marshal_publish(coro, label="show-window")
+
+    async def _on_wake_candidate(self, event: WakeCandidateDetected) -> None:
+        """Optimistic, visual-only bar reveal — pops the bar the instant OWW
+        fires, BEFORE the slow STT prefix-verify gates the authoritative
+        ``WakeWordDetected``. This is the latency fix for "the bar appears ~1 s
+        after 'Hey Jarvis'" (the reveal used to wait for the STT round-trip).
+
+        ``active=True``  → show the listening bar now.
+        ``active=False`` → the prefix-verifier rejected the candidate (a false
+        positive): retract. Hide a non-persistent bar; restore the idle pill for
+        a persistent one. If a real session has meanwhile begun (``_last_state``
+        is an active voice state) the retract is a no-op — the session owns it.
+
+        Deliberately does NOT mutate ``_last_state`` on show: the authoritative
+        ``_on_wake_word_detected`` that follows a confirmed wake must still see
+        the IDLE→LISTENING edge so it plays the greet 'wave' and sets the state
+        cleanly. Until that fires the equalizer mic-feed stays gated off (<1 s).
+        """
+        if event.active:
+            # Incoming speech candidate — cancel any pending idle hide and pop
+            # the bar. _last_state untouched (see docstring).
+            self._cancel_idle_scheduler()
+            self._orb.show(mode="listen")
+            return
+        # Retract a rejected candidate. A real session owns the bar → leave it.
+        if self._last_state in _ACTIVE_VOICE_STATES:
+            return
+        if self._hide_on_idle:
+            self._orb.hide()
+        else:
+            self._orb.show(mode="idle")
 
     async def _on_wake_word_detected(self, event: WakeWordDetected) -> None:
         """Pop the orb on the earliest confirmed wake signal."""
@@ -466,22 +541,25 @@ class OrbBusBridge:
         """Track the speech-pipeline boot readiness.
 
         ``ready=True`` (emitted once Phase A of warm-up is live — audio + VAD +
-        wake + STT + TTS client) releases the boot gate so the persistent bar is
-        revealed. ``ready=False`` (warm-up start) is ignored — the bar stays
-        hidden until voice can genuinely hear the user.
+        wake + STT + TTS client) releases the latch so the persistent bar's
+        topmost z-order is re-asserted (the bar is already visible from boot).
+        ``ready=False`` (warm-up start) is ignored.
         """
         if event.ready:
             self._voice_ready_event.set()
 
     async def reveal_bar_when_voice_ready(self, *, timeout_s: float = 30.0) -> None:
-        """Keep the persistent bar hidden until voice is ready, then reveal it.
+        """Show the persistent bar once the voice stack is genuinely ready.
 
-        Scheduled once on the event loop at boot. Waits for
-        ``VoiceBootStatus(ready=True)``; if it never arrives within ``timeout_s``
-        (voice offline / pipeline crashed at startup), the bar is revealed anyway
-        so a degraded host is not left with no bar at all — a few seconds late
-        instead of never. A non-persistent bar / the mascot (``hide_on_idle``)
-        is left untouched: it pops on a real session, not at boot.
+        Synchronized appearance (2026-06-29): the persistent bar is now started
+        WITHDRAWN (``start_hidden=True`` — see DesktopApp._build_overlay_surface),
+        so THIS is the visibility gate. Scheduled once on the event loop at boot,
+        it waits for ``VoiceBootStatus(ready=True)`` (emitted after the deferred
+        loaders bring up wake+VAD+TTS) — or a bounded ``timeout_s`` fallback so
+        the bar can never be stuck hidden — and then shows the idle pill, which
+        maps + lifts the bar exactly when the user can actually talk. A
+        non-persistent bar / the mascot (``hide_on_idle``) is left untouched: it
+        pops on a real session, not at boot.
         """
         reason = "timeout-fallback"
         try:
@@ -492,7 +570,12 @@ class OrbBusBridge:
         self._reveal_persistent_bar(reason)
 
     def _reveal_persistent_bar(self, reason: str) -> None:
-        """Show the persistent bar's idle pill exactly once. Idempotent."""
+        """Show the persistent bar's idle pill exactly once (the boot reveal).
+
+        Idempotent (``_boot_reveal_done``). The bar starts withdrawn
+        (start_hidden), so ``show("idle")`` here maps + lifts it — this is the
+        moment the bar first becomes visible, synchronized with voice-ready.
+        """
         if self._boot_reveal_done:
             return
         self._boot_reveal_done = True
@@ -506,6 +589,10 @@ class OrbBusBridge:
             log.debug("persistent bar boot reveal failed", exc_info=True)
 
     async def _on_state(self, event: SystemStateChanged) -> None:
+        # Lazily pin the backend loop (idempotent) so Tk-thread gestures can
+        # marshal onto it. _on_state fires on every transition, long before the
+        # orb is clickable, so the loop is always captured in time.
+        self._remember_loop()
         state = event.new_state
         # ADR-0016: remember the trace_id so the next visibility snapshot
         # can correlate back to the state-transition that triggered it.
@@ -768,7 +855,7 @@ class OrbBusBridge:
         except asyncio.CancelledError:
             pass
 
-    async def _on_background_completed(self, _event: OpenClawBackgroundCompleted) -> None:
+    async def _on_background_completed(self, _event: JarvisAgentBackgroundCompleted) -> None:
         """Briefly surface the mascot when an async task finishes.
 
         This is UI-only. It does not start or end the speech session, so the
