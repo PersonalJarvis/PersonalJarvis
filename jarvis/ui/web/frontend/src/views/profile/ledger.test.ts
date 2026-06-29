@@ -9,14 +9,19 @@ import { describe, expect, it } from "vitest";
 
 import {
   ASK_PRIORITY,
+  BOOL_FIELD_KEYS,
   CLUSTER_FIELD_KEYS,
   CLUSTER_ORDER,
+  LIST_FIELD_KEYS,
   TOTAL_FIELDS,
   acquaintanceStage,
   collectOpenQuestions,
   countFilled,
   displayAddress,
+  fieldKind,
+  isBoolField,
   isEmptyValue,
+  isListField,
 } from "@/views/profile/ledger";
 
 // ----------------------------------------------------------------------
@@ -64,6 +69,50 @@ describe("ledger field vocabulary", () => {
     const all = CLUSTER_ORDER.flatMap((cid) => CLUSTER_FIELD_KEYS[cid]);
     expect([...ASK_PRIORITY].sort()).toEqual([...all].sort());
     expect(new Set(ASK_PRIORITY).size).toBe(ASK_PRIORITY.length);
+  });
+});
+
+// ----------------------------------------------------------------------
+// Field kinds — drives the inline editor (text vs. toggle vs. chips)
+// ----------------------------------------------------------------------
+
+describe("field kinds", () => {
+  const allFields = CLUSTER_ORDER.flatMap((cid) => CLUSTER_FIELD_KEYS[cid]);
+
+  it("every list/bool field is part of the known vocabulary", () => {
+    for (const key of LIST_FIELD_KEYS) expect(allFields).toContain(key);
+    for (const key of BOOL_FIELD_KEYS) expect(allFields).toContain(key);
+  });
+
+  it("list and bool field sets do not overlap", () => {
+    for (const key of LIST_FIELD_KEYS) expect(BOOL_FIELD_KEYS.has(key)).toBe(false);
+  });
+
+  it("classifies the six list fields", () => {
+    for (const key of [
+      "languages",
+      "devices",
+      "humor_types",
+      "top_values",
+      "pet_peeves",
+      "motivations",
+    ]) {
+      expect(isListField(key)).toBe(true);
+      expect(fieldKind(key)).toBe("list");
+    }
+  });
+
+  it("classifies emoji_ok as a boolean", () => {
+    expect(isBoolField("emoji_ok")).toBe(true);
+    expect(fieldKind("emoji_ok")).toBe("bool");
+  });
+
+  it("classifies everything else as scalar", () => {
+    for (const key of ["name", "preferred_address", "timezone", "feedback_pref"]) {
+      expect(isListField(key)).toBe(false);
+      expect(isBoolField(key)).toBe(false);
+      expect(fieldKind(key)).toBe("scalar");
+    }
   });
 });
 

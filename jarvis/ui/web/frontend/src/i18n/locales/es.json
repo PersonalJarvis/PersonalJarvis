@@ -17,7 +17,7 @@
   },
   "nav": {
     "chats": "Chats",
-    "agents": "Agentes",
+    "agents": "Jarvis-Agents",
     "extensions": "Skills, Plugins & MCPs",
     "skills": "Habilidades",
     "plugins": "Plugins",
@@ -41,7 +41,37 @@
     "socials": "Redes",
     "taskbar": "Barra",
     "contacts": "Contactos",
+    "feedback": "Comentarios",
+    "personalize": "Hazlo tuyo",
     "agent_instructions": "{name}.md"
+  },
+  "make_it_yours": {
+    "title": "Hazlo tuyo",
+    "subtitle": "Abre agentes de programación dentro de tu carpeta de Jarvis y personalízalo.",
+    "step_layout": "¿Cuántas terminales?",
+    "step_layout_hint": "Elige un diseño — una casilla por número de terminales.",
+    "step_agents": "¿Qué agentes?",
+    "step_agents_hint": "Decide cuántos de cada agente llenan tus terminales. Solo Claude Code y Codex.",
+    "quick_fill": "Relleno rápido",
+    "split_evenly": "Dividir en partes iguales",
+    "all_claude": "Todo Claude Code",
+    "all_codex": "Todo Codex",
+    "installed": "Instalado",
+    "not_installed": "No instalado",
+    "install": "Instalar en la terminal",
+    "installing": "Abriendo el instalador en una terminal…",
+    "step_confirm": "Listo para lanzar",
+    "folder": "Carpeta",
+    "launch": "Lanzar",
+    "launching": "Lanzando…",
+    "back": "Atrás",
+    "next": "Siguiente",
+    "no_terminal": "Este host no puede ejecutar una terminal (sin shell ni backend PTY), así que los agentes no se pueden lanzar aquí.",
+    "launched_ok": "Terminales abiertas",
+    "launch_failed": "Algunas terminales no se pudieron abrir.",
+    "terminals": "terminales",
+    "end_session": "Terminar sesión",
+    "install_done": "Listo — volver a comprobar"
   },
   "agent_instructions": {
     "subtitle": "Tus preferencias personales sobre cómo el asistente trabaja contigo — tono, idioma, valores por defecto, hechos permanentes. Separado del System Prompt y nunca anula la seguridad ni las confirmaciones.",
@@ -155,7 +185,11 @@
     "speaking": "Hablando",
     "error": "Error",
     "offline": "Sin conexión",
-    "starting": "Iniciando voz…"
+    "booting": "Iniciando…",
+    "starting": "Iniciando voz…",
+    "warming_title": "Jarvis se está iniciando",
+    "warming_hint": "Preparando la escucha – un momento, podrás hablar en breve.",
+    "ready_title": "Listo – ya puedes hablar"
   },
   "sidebar": {
     "wake_hint": "Di tu palabra de activación…",
@@ -169,6 +203,8 @@
     "thinking_label": "pensando…",
     "empty_title": "Listo para órdenes",
     "empty_subtitle": "Di tu palabra de activación o escribe tu mensaje abajo. Tu asistente dirige sub-agentes, llama a herramientas y te devuelve voz.",
+    "warming_title": "Preparándose",
+    "warming_subtitle": "Tu asistente está arrancando. Podrás hablar en un momento, y ya puedes escribir abajo.",
     "examples": {
       "0": "Muestra los agentes",
       "1": "Cambia el cerebro a Gemini",
@@ -212,7 +248,7 @@
     "step_cu_settle": "Esperando la pantalla"
   },
   "subagents_view": {
-    "title": "Sub-Agentes",
+    "title": "Jarvis-Agents",
     "stat_active": "activos",
     "stat_total": "total",
     "clear": "Limpiar",
@@ -220,11 +256,11 @@
     "board_title": "Tablero de Salidas",
     "active_label": "Activo",
     "standby_label": "En espera",
-    "col_agent": "Agente",
+    "col_agent": "Jarvis-Agent",
     "col_target": "Destino",
     "col_status": "Estado",
     "col_cost": "Coste",
-    "agents_traveling": "Agente(s) en camino",
+    "agents_traveling": "Jarvis-Agent(s) en camino",
     "last_departure": "última salida",
     "last_departure_ago": "última salida hace {0}",
     "status": {
@@ -302,6 +338,23 @@
       "tier_fast": "Rápido",
       "tier_auto": "Auto",
       "tier_deep": "Potente",
+      "trigger_mode_label": "Disparador",
+      "mode_schedule": "Programado",
+      "mode_event": "Si-Entonces",
+      "when_label": "Cuando",
+      "when_mission_succeeded": "Una misión termina",
+      "when_mission_failed": "Una misión falla",
+      "when_mission_cancelled": "Una misión se cancela",
+      "then_label": "Entonces",
+      "then_computer_use": "Computer-Use",
+      "then_agent": "Tarea de agente",
+      "then_notify": "Solo avísame",
+      "cu_goal_label": "¿Qué debe hacer Computer-Use?",
+      "cu_goal_placeholder": "p. ej. Abre {result_uri} en el navegador.",
+      "announce_label": "Avisar al terminar (opcional)",
+      "notify_text_label": "¿Qué debe decir?",
+      "announce_placeholder": "p. ej. Tu misión está lista — la abrí en el navegador.",
+      "when_then_hint": "Se activa cada vez que ocurre. Puedes usar {result_uri}, {summary_en} o {mission_id} como variables en el texto de arriba.",
       "cancel": "Cancelar",
       "save": "Crear tarea",
       "save_error": "No se pudo crear la tarea."
@@ -655,6 +708,13 @@
     "more_to_learn": "{0} más por aprender",
     "value_yes": "sí",
     "value_no": "no",
+    "field_edit": "Editar",
+    "field_clear": "Borrar",
+    "field_remove_item": "Quitar",
+    "field_add": "Añadir",
+    "field_add_placeholder": "Añadir…",
+    "field_value_placeholder": "Valor…",
+    "field_saved": "Guardado",
     "review_confirm": "Correcto",
     "review_strike": "Tachar",
     "questions": {
@@ -772,7 +832,7 @@
   },
   "apikeys_view": {
     "title": "Claves API y Proveedores",
-    "subtitle": "Codex usa el login oficial de ChatGPT/Codex.",
+    "subtitle": "Conecta proveedores y elige qué impulsa cada parte de Jarvis.",
     "save": "Guardar",
     "saved": "Guardado",
     "missing": "Falta",
@@ -785,6 +845,20 @@
     "tier_stt": "Entrada de voz (STT)",
     "tier_subagent": "Subagente (tareas pesadas)",
     "tier_telephony": "Telefonía",
+    "tab_brain": "IA",
+    "tab_tts": "Salida de voz",
+    "tab_stt": "Entrada de voz",
+    "tab_subagents": "Jarvis-Agents",
+    "tab_advanced": "Avanzado",
+    "cat_brain_desc": "El modelo que impulsa el chat, el enrutamiento y Computer-Use.",
+    "cat_tts_desc": "La voz con la que habla Jarvis.",
+    "cat_stt_desc": "Cómo convierte Jarvis tu voz en texto.",
+    "cat_subagents_title": "Jarvis-Agents",
+    "cat_subagents_desc": "Elige qué proveedor ejecuta las tareas pesadas en segundo plano.",
+    "advanced_title": "Acceso e integraciones",
+    "advanced_desc": "Extras opcionales: acceso a la API de control, el proxy de claves de equipo, telefonía y el proveedor del Wiki de conocimiento.",
+    "no_providers_in_tier": "No hay proveedores disponibles en esta categoría.",
+    "model_picker_activate_hint": "Activa este proveedor para elegir su voz o modelo.",
     "active_tooltip": "Ya activo",
     "click_to_activate": "Clic para activar este proveedor",
     "needs_codex": "Primero conecta Codex o guarda la clave API",
@@ -792,6 +866,9 @@
     "needs_key": "Primero guarda la clave API, luego se puede activar",
     "recommended": "Recomendado",
     "recommended_tooltip": "Modelo recomendado: {0}",
+    "health_needs_setup": "Falta configurar",
+    "health_error": "No funciona",
+    "health_ok": "Funciona",
     "security_notice": ""
   },
   "apikeys_test": {
@@ -822,7 +899,8 @@
     "load_failed": "No se pudieron cargar los modelos",
     "source_static": "lista predeterminada",
     "source_static_note": "Catálogo en vivo no disponible — mostrando la selección predeterminada.",
-    "more_hint": "{0} más — refina tu búsqueda",
+    "count_hint": "{0} modelos en el catálogo",
+    "open_on_provider": "Ver en OpenRouter",
     "choose_placeholder": "Elige un modelo…",
     "heading_voice": "Voz",
     "choose_voice": "Elige una voz…",
@@ -946,7 +1024,7 @@
       "saved": "Estilo de visualización cambiado.",
       "restart_required": "Guardado: reinicia {name} para aplicar.",
       "options": {
-        "whisper_bar": "Barra (predeterminado)",
+        "jarvis_bar": "Barra (predeterminado)",
         "mascot": "Orbe mascota",
         "none": "Ninguno (oculto)"
       }
@@ -1123,6 +1201,7 @@
     "restart_label": "Reiniciar",
     "rerun_starting": "Iniciando…",
     "rerun_confirm": "Confirmar reejecución",
+    "continuation_running": "Continuado · en curso",
     "list_load_error": "No se pudieron cargar las salidas",
     "empty_sessions": "Aún no hay sesiones de subagentes. Inicia una tarea de OpenClaw.",
     "select_session": "Selecciona una sesión.",
@@ -1292,6 +1371,13 @@
       "cta": "Empezar",
       "skip_setup": "Omitir la configuración por ahora"
     },
+    "tutorial": {
+      "title": "Mira el recorrido de 2 minutos",
+      "body": "Un repaso rápido de lo que hace Personal Jarvis y cómo es la configuración. Puedes omitirlo y empezar enseguida.",
+      "continue": "Continuar",
+      "skip": "Omitir el vídeo",
+      "play": "Reproducir el vídeo del tutorial"
+    },
     "risk": {
       "title": "Antes de continuar",
       "lead": "Personal Jarvis es un software potente y experimental.",
@@ -1348,12 +1434,12 @@
       "body": "¿Cómo debería aparecer tu asistente en pantalla? Puedes cambiarlo cuando quieras en Ajustes.",
       "recommended": "Recomendado",
       "options": {
-        "whisper_bar": "Barra de Jarvis",
+        "jarvis_bar": "Barra de Jarvis",
         "mascot": "Orbe",
         "none": "Sin superposición"
       },
       "captions": {
-        "whisper_bar": "Una barra de voz flotante y delgada, siempre a mano.",
+        "jarvis_bar": "Una barra de voz flotante y delgada, siempre a mano.",
         "mascot": "Un orbe acompañante flotante que reacciona cuando hablas.",
         "none": "Solo la ventana de la app — sin elementos flotantes en pantalla."
       },
@@ -1378,6 +1464,8 @@
     "ui_hint": "Afecta cada etiqueta, botón y mensaje en la aplicación.",
     "reply_section": "Idioma de Respuesta",
     "reply_hint": "En qué idioma habla {name} al responderte. Nombres propios, identificadores de código y términos técnicos se mantienen en su forma original.",
+    "stt_section": "Idioma de Reconocimiento (Voz)",
+    "stt_hint": "En qué idioma se reconoce tu voz hablada y se convierte en texto. Automático detecta por sí solo el idioma que hablas.",
     "options": {
       "auto": {
         "label": "Automático",
@@ -1401,6 +1489,12 @@
       "en": "{name} responde en inglés.",
       "de": "{name} responde en alemán.",
       "es": "{name} responde en español."
+    },
+    "stt_options": {
+      "auto": "Detecta automáticamente el idioma que hablas.",
+      "en": "Reconoce tu voz siempre como inglés.",
+      "de": "Reconoce tu voz siempre como alemán.",
+      "es": "Reconoce tu voz siempre como español."
     }
   },
   "cli_connect_poller": {
@@ -1489,6 +1583,7 @@
     "copy_failed_clipboard": "Error al copiar — ¿acceso al portapapeles bloqueado?",
     "copy_failed": "Error al copiar",
     "downloaded_as": "Descargado como",
+    "saved_to_downloads": "Guardado en Descargas:",
     "download_failed": "Error al descargar",
     "loading": "Cargando sesión…",
     "load_error": "Error al cargar",
@@ -1496,13 +1591,17 @@
     "turns": "turnos",
     "no_turns_suffix": "sin una intervención posterior.",
     "copy_action": "Copiar",
-    "download_file_action": "Descargar como archivo:"
+    "download_file_action": "Descargar como archivo:",
+    "open_editor_action": "Abrir en el editor:",
+    "opened_in_editor": "Abierto en el editor",
+    "open_failed": "No se pudo abrir en el editor"
   },
   "turn_card": {
     "turn": "Turno",
     "copied": "copiado",
     "copy_failed": "Error al copiar",
     "downloaded_as": "Descargado como",
+    "saved_to_downloads": "Guardado en Descargas:",
     "copy_turn": "Copiar este turno",
     "copy": "Copiar",
     "download_turn": "Descargar este turno como archivo",
@@ -1950,7 +2049,12 @@
     "trigger_placeholder": "p. ej. inicia la rutina matutina",
     "create": "Crear habilidad",
     "create_error": "No se pudo crear la habilidad",
-    "name_required": "Introduce un nombre con al menos 3 caracteres."
+    "name_required": "Introduce un nombre con al menos 3 caracteres.",
+    "needs_instructions": "Describe qué debe hacer la habilidad: escríbelo en el campo de arriba o en las instrucciones de abajo.",
+    "write_with_ai": "Que la IA escriba toda la habilidad",
+    "writing": "La IA está escribiendo tu habilidad…",
+    "ai_done_review": "Listo: la IA escribió toda la habilidad abajo. Revísala y pulsa Crear habilidad.",
+    "or_review_edit": "o revisa y edita"
   },
   "missions_view": {
     "active": "activas",
@@ -2044,5 +2148,29 @@
   },
   "friends_view": {
     "subtitle": "Bot de Telegram + registro local de amigos. Tú decides qué ven los amigos."
+  },
+  "feedback": {
+    "discord_cta_title": "Repórtalo en nuestro Discord",
+    "discord_cta_subtitle": "Únete a #bug-reports y publica tu error, idea o pregunta directamente.",
+    "discord_cta_button": "Abrir Discord",
+    "or_send_here": "o envíalo desde aquí",
+    "subtitle": "Reporta un error, comparte una idea o haz una pregunta — va directo a nuestro Discord.",
+    "type_label": "Tipo",
+    "type_bug": "Error",
+    "type_idea": "Idea",
+    "type_question": "Pregunta",
+    "title_label": "Título",
+    "title_placeholder": "Resumen breve de tus comentarios",
+    "description_label": "Descripción",
+    "description_placeholder": "Cuéntanos más — pasos para reproducir, contexto, comportamiento esperado vs. real…",
+    "screenshot_label": "Captura de pantalla (opcional)",
+    "screenshot_pick": "Haz clic para adjuntar una captura",
+    "screenshot_preview_alt": "Vista previa de la captura",
+    "screenshot_remove": "Eliminar captura",
+    "submit": "Enviar",
+    "sending": "Enviando…",
+    "result_sent": "¡Gracias — enviado a nuestro Discord!",
+    "result_not_configured": "El canal de comentarios aún no está configurado — no se envió nada.",
+    "result_error": "No se pudo llegar a Discord, inténtalo de nuevo más tarde."
   }
 }

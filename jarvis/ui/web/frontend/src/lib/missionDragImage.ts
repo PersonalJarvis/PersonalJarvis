@@ -6,9 +6,18 @@
  * large, opaque ghost that looks broken. `setDragImage` swaps that for a small
  * "📎 <title>" pill that reads as an intentional, liftable token.
  *
- * The chip is appended off-screen (the browser still snapshots it), used as the
- * drag image, then removed on the next frame — by which point the snapshot has
- * been taken.
+ * The chip is appended at the viewport ORIGIN (0,0) and pushed out of sight with
+ * a CSS `transform`, then removed on the next frame — by which point the browser
+ * has snapshotted it.
+ *
+ * Why not the usual `left: -9999px` off-screen trick: Chromium/WebView2 anchor
+ * the drag image from the element's LAYOUT position, multiplied by
+ * `devicePixelRatio`. At a Windows display scale of 150% (dpr 1.5) a -9999px
+ * layout offset becomes a ~5000px error, so the ghost detaches far from the
+ * cursor (forensic 2026-06-28: 150%-scaled desktop, chip stuck top-left while
+ * the cursor was bottom-right). Keeping the layout box at the origin makes that
+ * error zero on every dpr; a `transform` moves only the painted pixels (which
+ * the snapshot still captures), so the chip never flashes on screen.
  */
 
 const ACCENT = "#FFD60A"; // --primary signal-yellow
@@ -32,8 +41,11 @@ export function applyMissionDragImage(dt: DataTransfer, title: string): void {
     chip.textContent = `📎 ${truncate(title)}`;
     Object.assign(chip.style, {
       position: "fixed",
-      top: "-9999px",
-      left: "-9999px",
+      // Layout box stays at the origin (dpr-safe); `transform` hides it. Never
+      // use a large negative `left`/`top` here — see the file header.
+      top: "0",
+      left: "0",
+      transform: "translateY(-200%)",
       display: "inline-flex",
       alignItems: "center",
       maxWidth: "320px",

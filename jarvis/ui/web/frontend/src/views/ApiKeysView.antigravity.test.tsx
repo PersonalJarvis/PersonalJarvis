@@ -209,16 +209,20 @@ afterEach(() => {
 });
 
 describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
-  it("renders the compact connected badge with the account email", async () => {
+  it("renders the connected subscription card with email AND a Set-active radio", async () => {
     installFetchMock(routesFor(antigravityDescriptor()));
     render(<ApiKeysView />);
+    // Antigravity lives in the "Subagents" category tab now; open it first.
+    fireEvent.click(screen.getByRole("tab", { name: /subagents/i }));
 
     await waitFor(() =>
-      expect(screen.getByText("Antigravity (Google subscription)")).toBeTruthy(),
+      expect(screen.getByText("Antigravity (Subscription)")).toBeTruthy(),
     );
 
-    expect(screen.queryByText("Google subscription login")).toBeNull();
-    expect(screen.getByText("Antigravity Google login")).toBeTruthy();
+    // The "Set active" control now lives ON the subscription card, so there is
+    // no longer a separate "Antigravity (Google subscription)" provider card
+    // below it (consolidated — one card per CLI that both connects and selects).
+    expect(screen.queryByText("Antigravity (Google subscription)")).toBeNull();
     expect(screen.getByText(/google-user@example\.com/)).toBeTruthy();
     expect(screen.getByRole("radio")).toBeTruthy();
   });
@@ -226,6 +230,8 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
   it("switches the subagent to Antigravity when connected", async () => {
     const { calls } = installFetchMock(routesFor(antigravityDescriptor()));
     render(<ApiKeysView />);
+    // Antigravity lives in the "Subagents" category tab now; open it first.
+    fireEvent.click(screen.getByRole("tab", { name: /subagents/i }));
 
     await waitFor(() => screen.getByRole("radio"));
     fireEvent.click(screen.getByRole("radio"));
@@ -245,6 +251,8 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
   it("shows the Connect button while not logged in and starts login", async () => {
     const { calls } = installFetchMock(routesFor(antigravityNotConnected()));
     render(<ApiKeysView />);
+    // Antigravity lives in the "Subagents" category tab now; open it first.
+    fireEvent.click(screen.getByRole("tab", { name: /subagents/i }));
 
     await waitFor(() =>
       expect(screen.getByText("Connect")).toBeTruthy(),
@@ -264,6 +272,8 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
   it("disables the Connect button and shows the install hint when no CLI is installed", async () => {
     installFetchMock(routesFor(antigravityMissing()));
     render(<ApiKeysView />);
+    // Antigravity lives in the "Subagents" category tab now; open it first.
+    fireEvent.click(screen.getByRole("tab", { name: /subagents/i }));
 
     const connectBtn = await waitFor(() =>
       screen.getByText("Connect"),
@@ -277,6 +287,8 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
   it("disconnects via POST /api/antigravity/logout", async () => {
     const { calls } = installFetchMock(routesFor(antigravityDescriptor()));
     render(<ApiKeysView />);
+    // Antigravity lives in the "Subagents" category tab now; open it first.
+    fireEvent.click(screen.getByRole("tab", { name: /subagents/i }));
 
     const disconnect = await waitFor(() => screen.getByText("Disconnect"));
     fireEvent.click(disconnect);

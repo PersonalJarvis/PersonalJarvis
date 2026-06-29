@@ -9,16 +9,25 @@ import {
   Plug,
   Sparkles,
   AlertTriangle,
+  CalendarDays,
+  Zap,
+  MonitorPlay,
+  Bot,
+  Bell,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import { useT } from "@/i18n";
+import { useT, useUiLanguage } from "@/i18n";
 import {
   buildTaskSpec,
+  defaultAtTimeLocal,
+  formatWatermarkDate,
   type ModelTier,
   type ScopeValue,
   type TaskDraft,
+  type ThenKind,
+  type WhenKey,
 } from "./taskSpec";
 
 interface PluginItem {
@@ -34,7 +43,10 @@ interface PluginsResponse {
 }
 
 async function fetchPlugins(): Promise<PluginsResponse> {
-  const res = await fetch("/api/marketplace/plugins");
+  // `cache: "no-store"` bypasses the embedded WebView2 HTTP cache so the
+  // desktop app never shows a stale connection state for plugins (see the
+  // matching note in PluginsView.fetchCatalog).
+  const res = await fetch("/api/marketplace/plugins", { cache: "no-store" });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
@@ -108,15 +120,23 @@ const inputCls =
 
 export function TaskCreateDialog({ onClose }: { onClose: () => void }) {
   const t = useT();
+  const uiLang = useUiLanguage();
   const qc = useQueryClient();
 
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
+  const [triggerMode, setTriggerMode] = useState<"schedule" | "event">("schedule");
+  const [whenKey, setWhenKey] = useState<WhenKey>("mission_succeeded");
+  const [thenKind, setThenKind] = useState<ThenKind>("computer_use");
+  const [cuPrompt, setCuPrompt] = useState("");
+  const [announceText, setAnnounceText] = useState("");
   const [scheduleMode, setScheduleMode] = useState<"once" | "recurring">("recurring");
   const [onceMode, setOnceMode] = useState<"delay" | "at_time">("at_time");
   const [delayValue, setDelayValue] = useState(1);
   const [delayUnit, setDelayUnit] = useState<"minutes" | "hours">("hours");
-  const [atTimeLocal, setAtTimeLocal] = useState("");
+  // Pre-fill with a real, editable value (now + 1h) so the native picker never
+  // shows the browser's raw, locale-ugly "TT.mm.jjjj --:--" empty placeholder.
+  const [atTimeLocal, setAtTimeLocal] = useState(() => defaultAtTimeLocal());
   const [recurringMode, setRecurringMode] = useState<"hourly" | "daily" | "custom">("daily");
   const [dailyTime, setDailyTime] = useState("07:00");
   const [customValue, setCustomValue] = useState(30);
@@ -139,6 +159,7 @@ export function TaskCreateDialog({ onClose }: { onClose: () => void }) {
     () => ({
       title,
       prompt,
+      triggerMode,
       scheduleMode,
       onceMode,
       delaySeconds: delayValue * (delayUnit === "hours" ? 3600 : 60),
@@ -148,9 +169,14 @@ export function TaskCreateDialog({ onClose }: { onClose: () => void }) {
       dailyTime,
       modelTier,
       grants: Object.entries(grants).map(([plugin_id, scope]) => ({ plugin_id, scope })),
+      whenKey,
+      thenKind,
+      cuPrompt,
+      announceText,
     }),
-    [title, prompt, scheduleMode, onceMode, delayValue, delayUnit, atTimeLocal,
-     recurringMode, customValue, customUnit, dailyTime, modelTier, grants],
+    [title, prompt, triggerMode, scheduleMode, onceMode, delayValue, delayUnit, atTimeLocal,
+     recurringMode, customValue, customUnit, dailyTime, modelTier, grants,
+     whenKey, thenKind, cuPrompt, announceText],
   );
 
   const createMut = useMutation({
@@ -161,10 +187,20 @@ export function TaskCreateDialog({ onClose }: { onClose: () => void }) {
     },
   });
 
+  // The agent prompt + plugins + model picker only apply to an agentic action:
+  // every time-based task, and an event rule whose "then" is an agent turn.
+  const showAgentConfig = triggerMode === "schedule" || thenKind === "agent";
+
   const valid =
     title.trim().length > 0 &&
-    prompt.trim().length > 0 &&
-    (scheduleMode !== "once" || onceMode !== "at_time" || atTimeLocal !== "");
+    (triggerMode === "event"
+      ? thenKind === "computer_use"
+        ? cuPrompt.trim().length > 0
+        : thenKind === "agent"
+          ? prompt.trim().length > 0
+          : announceText.trim().length > 0 // notify
+      : prompt.trim().length > 0 &&
+        (scheduleMode !== "once" || onceMode !== "at_time" || atTimeLocal !== ""));
 
   const hasElevatedGrant = Object.values(grants).some(
     (s) => s === "write" || s === "full",
@@ -227,17 +263,94 @@ export function TaskCreateDialog({ onClose }: { onClose: () => void }) {
               />
             </Field>
 
-            <Field label={t("tasks_view.create.prompt_label")}>
-              <textarea
-                className={cn(inputCls, "min-h-[96px] resize-y leading-relaxed")}
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder={t("tasks_view.create.prompt_placeholder")}
-                maxLength={16384}
+            {/* Trigger mode: a time-based schedule vs. an event-driven
+                "When-Then" rule (e.g. when a mission finishes → do X). */}
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                {t("tasks_view.create.trigger_mode_label")}
+              </span>
+              <Segmented
+                value={triggerMode}
+                onChange={setTriggerMode}
+                options={[
+                  { id: "schedule", label: t("tasks_view.create.mode_schedule"), icon: CalendarDays },
+                  { id: "event", label: t("tasks_view.create.mode_event"), icon: Zap },
+                ]}
               />
-            </Field>
+            </div>
+
+            {/* When-Then rule: curated "when" event + "then" action */}
+            {triggerMode === "event" && (
+              <div className="space-y-4 rounded-xl border border-border/70 bg-background/30 p-4">
+                <div className="space-y-2">
+                  <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                    {t("tasks_view.create.when_label")}
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    <Segmented
+                      size="sm"
+                      value={whenKey}
+                      onChange={setWhenKey}
+                      options={[
+                        { id: "mission_succeeded", label: t("tasks_view.create.when_mission_succeeded") },
+                        { id: "mission_failed", label: t("tasks_view.create.when_mission_failed") },
+                        { id: "mission_cancelled", label: t("tasks_view.create.when_mission_cancelled") },
+                      ]}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                    {t("tasks_view.create.then_label")}
+                  </span>
+                  <Segmented
+                    size="sm"
+                    value={thenKind}
+                    onChange={setThenKind}
+                    options={[
+                      { id: "computer_use", label: t("tasks_view.create.then_computer_use"), icon: MonitorPlay },
+                      { id: "agent", label: t("tasks_view.create.then_agent"), icon: Bot },
+                      { id: "notify", label: t("tasks_view.create.then_notify"), icon: Bell },
+                    ]}
+                  />
+                </div>
+
+                {thenKind === "computer_use" && (
+                  <Field label={t("tasks_view.create.cu_goal_label")}>
+                    <textarea
+                      className={cn(inputCls, "min-h-[72px] resize-y leading-relaxed")}
+                      value={cuPrompt}
+                      onChange={(e) => setCuPrompt(e.target.value)}
+                      placeholder={t("tasks_view.create.cu_goal_placeholder")}
+                      maxLength={16384}
+                    />
+                  </Field>
+                )}
+
+                <Field
+                  label={
+                    thenKind === "notify"
+                      ? t("tasks_view.create.notify_text_label")
+                      : t("tasks_view.create.announce_label")
+                  }
+                >
+                  <input
+                    className={inputCls}
+                    value={announceText}
+                    onChange={(e) => setAnnounceText(e.target.value)}
+                    placeholder={t("tasks_view.create.announce_placeholder")}
+                    maxLength={2048}
+                  />
+                </Field>
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  {t("tasks_view.create.when_then_hint")}
+                </p>
+              </div>
+            )}
 
             {/* Schedule */}
+            {triggerMode === "schedule" && (
             <div className="space-y-3 rounded-xl border border-border/70 bg-background/30 p-4">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
@@ -265,12 +378,27 @@ export function TaskCreateDialog({ onClose }: { onClose: () => void }) {
                     ]}
                   />
                   {onceMode === "at_time" ? (
-                    <input
-                      type="datetime-local"
-                      className={inputCls}
-                      value={atTimeLocal}
-                      onChange={(e) => setAtTimeLocal(e.target.value)}
-                    />
+                    <div className="relative overflow-hidden rounded-lg">
+                      {/* The selected date, written out long-form and very faint,
+                          sitting behind the picker — "the current date, but a
+                          little in the background". It tracks whatever value the
+                          picker holds and is purely decorative (no pointer
+                          events), so the native control stays fully usable. */}
+                      <div
+                        aria-hidden
+                        className="pointer-events-none absolute inset-y-0 left-3 right-11 flex items-center justify-end"
+                      >
+                        <span className="truncate text-lg font-semibold leading-none text-foreground/[0.06]">
+                          {formatWatermarkDate(atTimeLocal, uiLang)}
+                        </span>
+                      </div>
+                      <input
+                        type="datetime-local"
+                        className={cn(inputCls, "relative bg-transparent [color-scheme:dark]")}
+                        value={atTimeLocal}
+                        onChange={(e) => setAtTimeLocal(e.target.value)}
+                      />
+                    </div>
                   ) : (
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-muted-foreground">
@@ -346,7 +474,22 @@ export function TaskCreateDialog({ onClose }: { onClose: () => void }) {
                 </div>
               )}
             </div>
+            )}
 
+            {showAgentConfig && (
+              <Field label={t("tasks_view.create.prompt_label")}>
+                <textarea
+                  className={cn(inputCls, "min-h-[96px] resize-y leading-relaxed")}
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder={t("tasks_view.create.prompt_placeholder")}
+                  maxLength={16384}
+                />
+              </Field>
+            )}
+
+            {showAgentConfig && (
+            <>
             {/* Plugins */}
             <div className="space-y-2.5 rounded-xl border border-border/70 bg-background/30 p-4">
               <div className="flex items-center gap-2">
@@ -417,6 +560,8 @@ export function TaskCreateDialog({ onClose }: { onClose: () => void }) {
                 }))}
               />
             </div>
+            </>
+            )}
           </div>
         </div>
 

@@ -1,5 +1,5 @@
 /**
- * SubAgentsView — Live-Tafel aller aktiven Jarvis-Sub-Agents.
+ * SubAgentsView — Live-Tafel aller aktiven Jarvis-Agents.
  *
  * Statt einer ReactFlow-Canvas mit Karten rendert die View jetzt eine
  * Bahnhofs-Abfahrtstafel (DepartureBoard), die sich kontinuierlich vom

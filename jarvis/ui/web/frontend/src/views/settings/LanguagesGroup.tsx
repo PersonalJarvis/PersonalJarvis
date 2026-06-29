@@ -5,16 +5,21 @@ import {
   useT,
   useUiLanguage,
   useReplyLanguage,
+  useSttLanguage,
   setUiLanguage,
   setReplyLanguage,
+  setSttLanguage,
   hydrateReplyLanguage,
   hydrateUiLanguage,
+  hydrateSttLanguage,
   type UiLanguage,
   type ReplyLanguage,
+  type SttLanguage,
 } from "@/i18n";
 
 const UI_OPTIONS: UiLanguage[] = ["en", "de", "es"];
 const REPLY_OPTIONS: ReplyLanguage[] = ["auto", "en", "de", "es"];
+const STT_OPTIONS: SttLanguage[] = ["auto", "en", "de", "es"];
 
 /**
  * "Languages" group inside the Settings view — the interface-language and
@@ -27,12 +32,14 @@ export function LanguagesGroup() {
   const t = useT();
   const ui = useUiLanguage();
   const reply = useReplyLanguage();
+  const stt = useSttLanguage();
 
-  // Reflect the backend's persisted languages on open (both are backend-backed
+  // Reflect the backend's persisted languages on open (all are backend-backed
   // now, so a voice/Control-API change is shown and the choice survives restart).
   useEffect(() => {
     void hydrateReplyLanguage();
     void hydrateUiLanguage();
+    void hydrateSttLanguage();
   }, []);
 
   return (
@@ -52,6 +59,21 @@ export function LanguagesGroup() {
             label={t(`languages_view.options.${code}.label`)}
             description={t(`languages_view.options.${code}.description`)}
             onClick={() => setUiLanguage(code)}
+          />
+        ))}
+      </Section>
+
+      <Section
+        title={t("languages_view.stt_section")}
+        hint={t("languages_view.stt_hint")}
+      >
+        {STT_OPTIONS.map((code) => (
+          <LanguageRow
+            key={`stt-${code}`}
+            active={stt === code}
+            label={t(`languages_view.options.${code}.label`)}
+            description={t(`languages_view.stt_options.${code}`)}
+            onClick={() => setSttLanguage(code)}
           />
         ))}
       </Section>

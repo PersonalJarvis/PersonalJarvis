@@ -233,6 +233,7 @@ class WebServer:
         from .docs_routes import router as docs_router
         from .federation_proxy_routes import router as federation_proxy_router
         from .friends_routes import router as friends_router
+        from .frontier_routes import router as frontier_router
         from .marketplace_routes import router as marketplace_router
         from .mcp_routes import router as mcp_router
         from .missions_auth import router as missions_auth_router
@@ -244,17 +245,21 @@ class WebServer:
         from .missions_ws_routes import (
             router as missions_ws_router,
         )
+        from .downloads_routes import router as downloads_router
         from .outputs_routes import router as outputs_router
         from .preview_routes import router as preview_router
         from .antigravity_routes import router as antigravity_router
+        from .claude_routes import router as claude_router
         from .profile_routes import router as profile_router
         from .provider_routes import router as provider_router
         from .review_routes import router as review_router
+        from .self_mod_routes import router as self_mod_router
         from .sessions_routes import router as sessions_router
         from .settings_routes import router as settings_router
         from .setup_routes import router as setup_router
         from .onboarding_routes import router as onboarding_router
         from .skills_routes import router as skills_router
+        from .feedback_routes import router as feedback_router
         from .socials_routes import router as socials_router
         from .sub_agents_routes import router as sub_agents_router
         from .tasks_routes import router as tasks_router
@@ -263,6 +268,7 @@ class WebServer:
         from .wiki_routes import router as wiki_router
         from .wiki_ws import router as wiki_ws_router
         from .workflows_routes import router as workflows_router
+        from .workspace_routes import router as workspace_router
         # Conductor ist ein externes Package im selben Monorepo. Import
         # defensiv — wer das Repo ohne conductor checkt aus, kriegt sonst
         # hier einen ImportError beim Server-Boot.
@@ -275,9 +281,16 @@ class WebServer:
         app.include_router(tools_router)
         app.include_router(provider_router)
         app.include_router(antigravity_router)
+        app.include_router(claude_router)
         app.include_router(control_router)
         app.include_router(profile_router)
         app.include_router(settings_router)
+        # Frontier auto-switch modal API (GET pending / POST ack) + Self-Mod
+        # read/restore API. Both were the last route modules left unmounted; the
+        # 404 on /api/frontier/pending silently broke the desktop auto-switch
+        # modal too, not just the `jarvis frontier` CLI command.
+        app.include_router(frontier_router)
+        app.include_router(self_mod_router)
         app.include_router(tasks_router)
         app.include_router(skills_router)
         app.include_router(docs_router)
@@ -301,11 +314,15 @@ class WebServer:
         app.include_router(browser_voice_router)
         app.include_router(sub_agents_router)
         app.include_router(outputs_router)
+        app.include_router(downloads_router)
         # Socials section — project social-media links (pure file store, no Brain dep).
         app.include_router(socials_router)
+        # In-app feedback / bug-report form → Discord webhook.
+        app.include_router(feedback_router)
         # Contacts section — user-curated address book (pure file store, no Brain dep).
         app.include_router(contacts_router)
         app.include_router(workflows_router)
+        app.include_router(workspace_router)
         if conductor_router is not None:
             app.include_router(conductor_router)
         app.include_router(preview_router)
@@ -332,6 +349,15 @@ class WebServer:
         # Phase-6 Mission-Stack — Auth-Token vor allen anderen, damit der
         # Browser ihn ueberhaupt holen kann; danach REST + WS + PTY.
         app.include_router(missions_auth_router)
+        # Seed the desktop session token (injected as window.__JARVIS_TOKEN by
+        # the fast-boot path) into the token store. The fast-boot token is a RAW
+        # secrets.token_urlsafe that is never issued via GET /token, so without
+        # this it fails validate_token → 4401 on every token-gated WebSocket —
+        # which hung the "Make It Yours" workspace PTY terminals forever on
+        # "connecting" (missions survive via the unauthenticated main /ws).
+        from .missions_auth import register_session_token_from_env
+
+        register_session_token_from_env(self.cfg.ui.auth_token_env)
         app.include_router(missions_router)
         app.include_router(missions_ws_router)
         app.include_router(missions_pty_router)
@@ -380,7 +406,18 @@ class WebServer:
         # Persist the latest state on this (long-lived) server instance for
         # GET /api/voice/status to read — deliberately NOT on app.state, whose
         # ASGI lifecycle could outrace the bus subscriber on shutdown.
-        self._voice_ready = False
+        #
+        # When the local voice stack is disabled (JARVIS_VOICE=0 — headless,
+        # VPS, browser-mic-only), there is nothing to warm up and the pipeline
+        # never emits VoiceBootStatus, so seed ready=True. Otherwise the
+        # frontend's "starting up" banner would hang forever even though the
+        # user can already type (and use browser voice). A real voice pipeline
+        # starts at ready=False (warmup_start) and flips True via the subscriber
+        # below, so this seed only ever sticks when voice is genuinely off.
+        _voice_disabled = (
+            os.environ.get("JARVIS_VOICE", "").strip().lower() in ("0", "off", "false")
+        )
+        self._voice_ready = _voice_disabled
 
         async def _track_voice_ready(event: VoiceBootStatus) -> None:
             # A bus subscriber must never raise (AP-18); setting a plain
@@ -669,9 +706,18 @@ class WebServer:
             """
             brain = getattr(app.state, "brain", None)
             # BrainManager exposed `active_provider`. MockBrain hat nur `name`.
+            # Fast-boot deferral: the heavy BrainManager build runs in a
+            # background thread, so `app.state.brain` is None for the first
+            # ~850 ms while uvicorn already serves. In that window fall back to
+            # the configured primary provider — it already names the brain that
+            # WILL become active — instead of "unknown", which would freeze the
+            # sidebar footer on a bare "—" until a manual provider switch (the
+            # mount-fetch is one-shot and nothing re-fetches once the build
+            # finishes).
             provider = (
                 getattr(brain, "active_provider", None)
                 or getattr(brain, "name", None)
+                or cfg.brain.primary
                 or "unknown"
             )
             prov_cfg = cfg.brain.providers.get(provider)
@@ -803,6 +849,27 @@ class WebServer:
                     key_set = bool(get_secret(secret_key, mapping.env_var))
                 except Exception:  # noqa: BLE001
                     key_set = False
+                # Claude Max users authenticate the subagent via the LIVE OAuth
+                # login in ~/.claude/.credentials.json (read by ClaudeDirectWorker),
+                # not a stored API key — count that as configured so a fresh
+                # Claude-Max user (only ran `claude login`) is not falsely locked.
+                if not key_set and mapping.jarvis == "claude-api":
+                    try:
+                        from jarvis.missions.isolation.env import (
+                            read_live_claude_oauth_token,
+                        )
+
+                        key_set = bool(read_live_claude_oauth_token())
+                    except Exception:  # noqa: BLE001
+                        key_set = False
+                # claude-api is dual-billed like Codex/Antigravity: the Claude Max
+                # subscription (claude CLI OAuth login) OR an Anthropic API key.
+                # Every other MAPPINGS provider bills per token on an API account.
+                row_billing = (
+                    "subscription_or_api"
+                    if mapping.jarvis == "claude-api"
+                    else "api"
+                )
                 mapping_rows.append(
                     {
                         "jarvis": mapping.jarvis,
@@ -811,6 +878,7 @@ class WebServer:
                         "env_fallback": mapping.env_fallback,
                         "key_set": key_set,
                         "is_active_brain": mapping.jarvis == primary,
+                        "billing": row_billing,
                     }
                 )
 
@@ -841,30 +909,38 @@ class WebServer:
                     "env_fallback": "OPENAI_API_KEY",
                     "key_set": codex_connected or codex_key,
                     "is_active_brain": primary == "openai-codex",
+                    # ChatGPT subscription OAuth OR an OpenAI API key.
+                    "billing": "subscription_or_api",
                 }
             )
 
             # Antigravity is a DIRECT worker (GoogleCliWorker over the official
             # agy/Gemini CLI) with no OpenClaw slug, so it is not in MAPPINGS —
-            # the Google sibling of Codex. Surface it as an explicit selectable
-            # subagent row, backed by the Google subscription OAuth login (no API
-            # key): "key_set" is the connected state. Selecting it routes heavy
-            # tasks through agy; selecting any other provider routes through that
-            # one — the choice is never hardcoded (init._select_subagent_worker_kind).
+            # the Google sibling of Codex. Dual billing, mirror of Codex: the
+            # Google subscription OAuth login OR a Gemini API key (per token).
+            # "key_set" is true when either is present.
             try:
                 from jarvis.google_cli.auth_service import GoogleCliAuthService
 
                 antigravity_connected = GoogleCliAuthService().status().connected
             except Exception:  # noqa: BLE001
                 antigravity_connected = False
+            try:
+                antigravity_key = bool(
+                    get_secret("gemini_api_key", env_fallback="GEMINI_API_KEY")
+                )
+            except Exception:  # noqa: BLE001
+                antigravity_key = False
             mapping_rows.append(
                 {
                     "jarvis": "antigravity",
                     "openclaw": "agy-cli (direct)",
                     "env_var": "Google-OAuth",
-                    "env_fallback": None,
-                    "key_set": antigravity_connected,
+                    "env_fallback": "GEMINI_API_KEY",
+                    "key_set": antigravity_connected or antigravity_key,
                     "is_active_brain": primary == "antigravity",
+                    # Google subscription OAuth OR a Gemini API key.
+                    "billing": "subscription_or_api",
                 }
             )
 
@@ -1572,6 +1648,18 @@ class WebServer:
             )
         _boot_mark("screenshot_retention")
 
+        # Flight-recorder audit log: attach the wildcard JSONL event recorder so
+        # there is a replayable audit trail of what Jarvis did (every event,
+        # incl. every Computer-Use action). It was defined but never wired at
+        # boot, so telemetry.flight_recorder=true logged nothing (audit #14).
+        try:
+            await self._init_flight_recorder()
+        except Exception as exc:  # noqa: BLE001
+            logger.opt(exception=exc).warning(
+                "Flight recorder init failed — the audit log will be inactive"
+            )
+        _boot_mark("flight_recorder")
+
         # Phase B5 wiki write-wiring — SessionRollupWorker + WikiCurator.
         # Subscribes to IdleEntered; gracefully disabled when wiki_integration
         # is not configured or enabled is False.
@@ -1731,11 +1819,17 @@ class WebServer:
             self._pending_reloads.clear()
 
             async def _run_deferred_reloads() -> None:
-                # Let BOOT_READY emit and the first requests settle before the
-                # blocking scans start their worker thread — otherwise the scan
-                # CPU contends with the pre-ready window via the start_overlay
-                # yield. The views tolerate an empty registry for this brief gap.
-                await asyncio.sleep(0.3)
+                # Yield until the wake model is loaded before these blocking disk
+                # scans (DocRegistry FTS build ~5 s) start their worker thread —
+                # otherwise they steal CPU/disk from the custom-wake base/cpu
+                # model load and ~double its time (measured: base load 3.2 s
+                # isolated vs ~8 s racing this scan). NO-OP on headless / voice-off
+                # (returns immediately — no regress); bounded so a stuck wake load
+                # never blocks the scans. The views tolerate an empty registry for
+                # this brief gap.
+                from jarvis.core import runtime_refs as _rr
+
+                await _rr.await_wake_model_ready(timeout=12.0)
                 for label, registry in pending:
                     try:
                         await asyncio.to_thread(registry.reload_sync)
@@ -1825,6 +1919,32 @@ class WebServer:
             _boot_sweep_then_retain()
         )
 
+    async def _init_flight_recorder(self) -> None:
+        """Attach the flight-recorder audit log to the EventBus (ADR-0007).
+
+        Writes every event as a JSONL line under ``data/flight_recorder/`` — a
+        replayable audit trail of what Jarvis did, including every Computer-Use
+        action. Gated on ``telemetry.flight_recorder`` (default on); the recorder
+        is held on ``app.state`` for later flush/close on shutdown. The recorder
+        auto-flushes every second, and oversized event blobs land under
+        ``blobs/`` which the screenshot-retention task already prunes.
+        """
+        from jarvis.telemetry.recorder import attach_flight_recorder
+
+        rec = attach_flight_recorder(
+            self.bus,
+            enabled=self.cfg.telemetry.flight_recorder,
+            data_dir=Path("data") / "flight_recorder",
+        )
+        if rec is None:
+            logger.info("Flight recorder disabled (telemetry.flight_recorder=false)")
+            return
+        self._flight_recorder = rec
+        self.app.state.flight_recorder = rec
+        logger.info(
+            "Flight recorder attached — events -> data/flight_recorder/*.jsonl"
+        )
+
     async def _init_mission_stack(self) -> None:
         """Phase-6 Production-Wiring: bootstrap_missions() liefert den
         kompletten Stack (Manager, Kontrollierer, Budget, Voice-Listener,
@@ -1893,6 +2013,9 @@ class WebServer:
         self.app.state.kontrollierer = result["kontrollierer"]
         self.app.state.missions_budget = result["budget"]
         self.app.state.mission_announcer = result["mission_announcer"]
+        # Mission-Bus -> global-bus bridge that re-publishes terminal missions
+        # as MissionCompleted so the Tasks scheduler can drive When-Then rules.
+        self.app.state.mission_event_bridge = result["mission_event_bridge"]
         # outputs_routes.py uses this to render the Outputs view; it would
         # otherwise have to re-derive the same WEB_DIR.parent.parent.parent
         # walk and would silently drift if the launcher layout changes.
@@ -2444,6 +2567,17 @@ class WebServer:
                     "retention_task: did not stop within 2s — may be blocking on I/O"
                 )
             self._screenshot_retention_task = None
+
+        # Flush + close the flight-recorder audit log so the last buffered events
+        # reach disk before shutdown (it otherwise auto-flushes every ~1s).
+        recorder = getattr(self, "_flight_recorder", None)
+        if recorder is not None:
+            try:
+                await recorder.flush()
+                await recorder.close()
+            except Exception as exc:  # noqa: BLE001 — shutdown best-effort
+                logger.opt(exception=exc).debug("Flight recorder close: {}", exc)
+            self._flight_recorder = None
 
         # Finalize in-flight missions BEFORE the store closes: a restart used
         # to kill the process with missions still running, leaving them

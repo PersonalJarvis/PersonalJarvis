@@ -20,7 +20,8 @@ import { useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { downloadAs, robustCopy } from "@/lib/clipboard";
+import { robustCopy, saveOrDownload } from "@/lib/clipboard";
+import { useCapabilities } from "@/hooks/useCapabilities";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
 
@@ -37,7 +38,7 @@ export const SPOKEN_KIND_LABEL: Record<string, string> = {
   stt_unavailable: "Couldn't hear you",
   privacy: "Privacy",
   completion: "Background result",
-  subagent: "Jarvis Sub-Agent / Output",
+  subagent: "Jarvis-Agent / Output",
   action_done: "Action confirmed",
   backchannel: "Backchannel",
   announcement: "Announcement",
@@ -55,10 +56,14 @@ export function TurnCard({ turn, spoken = [] }: Props) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
   const assistantName = useEventStore((s) => s.assistantName);
-  // Override the subagent label so it follows the configured assistant name.
+  // Desktop shell → save to ~/Downloads via the backend; browser → blob download.
+  const caps = useCapabilities();
+  const native = caps.data?.native_file_actions ?? false;
+  // The Jarvis-Agents brand label is fixed: it names the system, not the
+  // configured assistant, so it does not follow the assistant name.
   const kindLabel: Record<string, string> = {
     ...SPOKEN_KIND_LABEL,
-    subagent: `${assistantName} Sub-Agent / Output`,
+    subagent: "Jarvis-Agent / Output",
   };
 
   const copyTurn = useCallback(async () => {
@@ -70,16 +75,26 @@ export function TurnCard({ turn, spoken = [] }: Props) {
     );
   }, [turn, spoken, pushToast, t]);
 
-  const downloadTurn = useCallback(() => {
+  const downloadTurn = useCallback(async () => {
     const text = formatTurnPlain(turn, spoken);
     const stamp = new Date(turn.started_ms);
     const pad = (n: number): string => String(n).padStart(2, "0");
     const filename =
       `voice-turn-${stamp.getFullYear()}-${pad(stamp.getMonth() + 1)}-${pad(stamp.getDate())}` +
       `_${pad(stamp.getHours())}-${pad(stamp.getMinutes())}-${pad(stamp.getSeconds())}.txt`;
-    downloadAs(filename, text, "text/plain;charset=utf-8");
-    pushToast("success", `${t("turn_card.downloaded_as")} ${filename}`);
-  }, [turn, spoken, pushToast, t]);
+    const savedPath = await saveOrDownload({
+      filename,
+      text,
+      mime: "text/plain;charset=utf-8",
+      native,
+    });
+    pushToast(
+      "success",
+      savedPath
+        ? `${t("turn_card.saved_to_downloads")} ${savedPath}`
+        : `${t("turn_card.downloaded_as")} ${filename}`,
+    );
+  }, [turn, spoken, pushToast, t, native]);
 
   const startedAt = new Date(turn.started_ms).toLocaleTimeString("de", {
     hour: "2-digit",

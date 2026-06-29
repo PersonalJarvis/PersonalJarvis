@@ -64,6 +64,18 @@ describe("voice boot readiness (voiceReady / setVoiceReady)", () => {
   });
 });
 
+describe("ws warming state (wsWarming / setWarming)", () => {
+  it("tracks wsWarming and defaults it to true", () => {
+    // Fresh store: warming until proven connected/offline so the first paint
+    // after a restart reads "Starting…", never a scary "OFFLINE".
+    expect(useEventStore.getState().wsWarming).toBe(true);
+    useEventStore.getState().setWarming(false);
+    expect(useEventStore.getState().wsWarming).toBe(false);
+    useEventStore.getState().setWarming(true);
+    expect(useEventStore.getState().wsWarming).toBe(true);
+  });
+});
+
 describe("reasoning trace (thinkingSteps / thinkingTraces)", () => {
   beforeEach(() => {
     useEventStore.setState({

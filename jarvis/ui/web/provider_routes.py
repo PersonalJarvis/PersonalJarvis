@@ -15,13 +15,16 @@ Wird vom WebServer in `_build_app()` eingehängt:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from typing import Any, Literal, get_args
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from jarvis.brain import provider_test as _provider_test
+from jarvis.brain import section_health as _section_health
 from jarvis.brain.model_catalog import catalog_spec
 from jarvis.codex_auth import CodexAuthService
 from jarvis.core import config as cfg_mod
@@ -486,6 +489,236 @@ async def test_provider_connection(
         latency_ms=round(result.latency_ms, 1),
         integration_ok=result.status in _provider_test.INTEGRATION_OK_STATUSES,
     )
+
+
+# ----------------------------------------------------------------------
+# Section health — the at-a-glance API-Keys tab indicators
+# ----------------------------------------------------------------------
+
+# Section-health status vocabulary. ``SectionHealthStatusLiteral`` MUST mirror the
+# SSOT in ``jarvis.brain.section_health`` — the runtime assert is the five-layer
+# anti-drift guard (BUG-008 class) and the TS ``SectionHealthStatus`` union in
+# ``useProviders.ts`` is the UI mirror.
+SectionHealthStatusLiteral = Literal["ok", "needs_setup", "error", "unknown"]
+assert set(get_args(SectionHealthStatusLiteral)) == set(
+    _section_health.SECTION_HEALTH_STATUSES
+), "section-health status vocabulary drift (Pydantic Literal vs SSOT)"
+
+# Cache the rollup briefly so opening the API-Keys page / switching tabs does not
+# re-run the REAL connectivity tests on every render. ``?refresh=true`` (used by
+# the UI after a key save / provider switch) bypasses it.
+_SECTION_HEALTH_TTL_S = 45.0
+
+
+class SectionHealth(BaseModel):
+    """One tab's rolled-up health. Only ``needs_setup`` (amber) and ``error``
+    (red) draw a dot in the UI; ``ok`` / ``unknown`` stay silent."""
+
+    status: SectionHealthStatusLiteral = "unknown"
+    # Machine-readable cause for the UI tooltip + debugging: the underlying
+    # provider-test status ("bad_key"/"no_credits"/…), "not_configured",
+    # "no_active", "local", "ok", or "unknown". Not shown verbatim to the user.
+    reason: str = "unknown"
+    # Plain-English one-liner for the hover tooltip (provider label + detail).
+    detail: str = ""
+
+
+class SectionHealthResponse(BaseModel):
+    sections: dict[str, SectionHealth]
+    checked_at: float = 0.0
+    cached: bool = False
+
+
+async def _tier_section_health(cfg: Any, spec: ProviderSpec | None) -> SectionHealth:
+    """Health of one provider tier, derived from its ACTIVE provider only.
+
+    A tier is only as healthy as the single provider currently powering it —
+    deliberately NOT "does any provider here lack a key" (that would paint every
+    tab red, since unused providers are normally left empty).
+    """
+    if spec is None:
+        return SectionHealth(
+            status=_section_health.NEEDS_SETUP,
+            reason="no_active",
+            detail="No active provider selected",
+        )
+    # Local providers (faster-whisper, SAPI) have no key to be invalid; if one is
+    # the active provider it is usable. Skip the real test — it could force a heavy
+    # model load on page open for no signal we don't already have.
+    if getattr(spec, "auth_mode", None) == "none":
+        return SectionHealth(
+            status=_section_health.OK,
+            reason="local",
+            detail=f"{spec.label}: local, no key needed",
+        )
+    try:
+        configured = _is_credential_present(
+            spec, _codex_binary_path() if spec.id == "codex" else None
+        )
+    except Exception:  # noqa: BLE001 — a probe failure is "not set up", not a crash
+        configured = False
+    if not configured:
+        return SectionHealth(
+            status=_section_health.NEEDS_SETUP,
+            reason="not_configured",
+            detail=f"{spec.label}: no key set",
+        )
+    try:
+        result = await _provider_test.run_provider_test(spec, cfg)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("section-health test for %s failed: %s", spec.id, exc)
+        return SectionHealth(
+            status=_section_health.UNKNOWN, reason="error", detail=f"{spec.label}: check failed"
+        )
+    status = _section_health.section_status_for_test(result.status, configured=True)
+    return SectionHealth(
+        status=status,
+        reason=result.status,
+        detail=f"{spec.label}: {result.detail or result.status}",
+    )
+
+
+def _subagent_worker_usable(provider: str) -> bool:
+    """Best-effort "is the selected heavy-task worker connected/keyed?".
+
+    Provider-agnostic: a CLI login (Codex / Antigravity / Claude) is usable when
+    its auth service reports connected; an API-keyed worker reuses the brain
+    provider's credential. Any probe failure degrades to "not usable" rather than
+    raising (AP-22/23 — never brick on the maintainer's favourite worker).
+    """
+    p = (provider or "").lower()
+    try:
+        if p in _CODEX_SUBAGENT_SLUGS or p in {"codex", "openai-codex"}:
+            connected = bool(CodexAuthService(_codex_binary_path()).status().connected)
+            return connected or _has_openai_brain_credential()
+        if p == "antigravity":
+            from jarvis.google_cli.auth_service import GoogleCliAuthService
+
+            return bool(GoogleCliAuthService().status().connected)
+        if p in {"claude-api", "claude"}:
+            from jarvis.claude_auth import ClaudeAuthService
+
+            st = ClaudeAuthService().status()
+            return bool(
+                getattr(st, "connected", False) or getattr(st, "api_key_present", False)
+            )
+        spec = get_spec(p)
+        return bool(spec is not None and _is_credential_present(spec))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _subagent_section_health(cfg: Any) -> SectionHealth:
+    """Subagents tab: reflects whether the SELECTED heavy-task worker is usable.
+
+    A real "does it answer" call for a CLI worker is heavy, so v1 reports the
+    connectedness signal — connected/keyed → ok, otherwise needs_setup. It never
+    flags ``error`` (a connected-but-failing CLI worker is out of scope here).
+    """
+    brain = getattr(cfg, "brain", None) if cfg is not None else None
+    if brain is None:
+        return SectionHealth(
+            status=_section_health.NEEDS_SETUP,
+            reason="no_active",
+            detail="No subagent worker selected",
+        )
+    sub = getattr(brain, "sub_jarvis", None)
+    provider = (getattr(sub, "provider", None) if sub else None) or getattr(
+        brain, "primary", None
+    )
+    if not provider:
+        return SectionHealth(
+            status=_section_health.NEEDS_SETUP,
+            reason="no_active",
+            detail="No subagent worker selected",
+        )
+    spec = get_spec(provider)
+    label = spec.label if spec is not None else provider
+    if _subagent_worker_usable(provider):
+        return SectionHealth(
+            status=_section_health.OK, reason="ok", detail=f"Subagent worker: {label}"
+        )
+    return SectionHealth(
+        status=_section_health.NEEDS_SETUP,
+        reason="not_configured",
+        detail=f"Subagent worker '{label}' is not connected",
+    )
+
+
+def _advanced_section_health(request: Request) -> SectionHealth:
+    """Advanced tab: every integration here is OPTIONAL, so it never reports
+    ``needs_setup`` — only ``error`` when something the user actually configured
+    is failing. Today that is telephony's cached reachability check; otherwise the
+    tab stays silent (``unknown``)."""
+    contributions: list[str] = []
+    detail = ""
+    reason = "unknown"
+    tm = getattr(request.app.state, "telephony_manager", None)
+    if tm is not None and getattr(tm, "reachable", None) is False:
+        err = getattr(tm, "reachable_error", None)
+        if err:
+            contributions.append(_section_health.ERROR)
+            detail = f"Telephony unreachable: {err}"
+            reason = "telephony"
+    return SectionHealth(
+        status=_section_health.aggregate(contributions), reason=reason, detail=detail
+    )
+
+
+@router.get("/providers/section-health")
+async def section_health(request: Request, refresh: bool = False) -> SectionHealthResponse:
+    """Per-tab health for the API-Keys segmented tabs ("is this part working?").
+
+    The brain/tts/stt tiers get a REAL connectivity test of their active provider
+    (run in parallel), the Subagents tab reflects whether the selected worker is
+    connected, and the Advanced tab only flags a configured optional integration
+    that is actually failing. The result is cached for a few seconds so opening the
+    page / switching tabs does not re-run the real calls each render;
+    ``?refresh=true`` forces a fresh check after a key save or provider switch.
+    """
+    cache = getattr(request.app.state, "_section_health_cache", None)
+    now = time.time()
+    if (
+        not refresh
+        and isinstance(cache, dict)
+        and now - cache.get("checked_at", 0.0) < _SECTION_HEALTH_TTL_S
+    ):
+        return SectionHealthResponse(
+            sections=cache["payload"], checked_at=cache["checked_at"], cached=True
+        )
+
+    cfg = _resolve_cfg(request)
+    sections: dict[str, SectionHealth] = {}
+
+    if cfg is None:
+        for key in ("brain", "tts", "stt", "subagents", "advanced"):
+            sections[key] = SectionHealth(
+                status=_section_health.UNKNOWN,
+                reason="unavailable",
+                detail="Configuration unavailable",
+            )
+    else:
+        brain_spec = get_spec(_active_brain(request) or "")
+        tts_spec = get_spec(_active_tts(request) or "")
+        stt_spec = get_spec(_active_stt(request) or "")
+        sections["brain"], sections["tts"], sections["stt"] = await asyncio.gather(
+            _tier_section_health(cfg, brain_spec),
+            _tier_section_health(cfg, tts_spec),
+            _tier_section_health(cfg, stt_spec),
+        )
+        try:
+            sections["subagents"] = _subagent_section_health(cfg)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("section-health subagent check failed: %s", exc)
+            sections["subagents"] = SectionHealth()
+        try:
+            sections["advanced"] = _advanced_section_health(request)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("section-health advanced check failed: %s", exc)
+            sections["advanced"] = SectionHealth()
+
+    request.app.state._section_health_cache = {"checked_at": now, "payload": sections}
+    return SectionHealthResponse(sections=sections, checked_at=now, cached=False)
 
 
 # ----------------------------------------------------------------------
@@ -977,6 +1210,16 @@ async def codex_logout(request: Request) -> dict[str, Any]:
     return {"ok": True, "message": "Codex wurde getrennt"}
 
 
+# M6: STT/TTS engines build ONCE at voice-pipeline bootstrap, so a key feeding them
+# is unused until the next voice start. Surface restart_required so the UI shows the
+# "active from next voice start" hint instead of implying the new key is live now.
+# (Brain provider keys hot-reload, so they are deliberately NOT listed here.)
+_RESTART_REQUIRED_SECRET_KEYS: frozenset[str] = frozenset({
+    "groq_api_key", "deepgram_api_key",        # STT
+    "cartesia_api_key", "elevenlabs_api_key",  # TTS
+})
+
+
 @router.post("/secrets/{key}")
 async def set_secret_value(key: str, body: SecretBody, request: Request) -> dict[str, Any]:
     if key not in ALLOWED_SECRET_KEYS:
@@ -984,7 +1227,11 @@ async def set_secret_value(key: str, body: SecretBody, request: Request) -> dict
     if not cfg_mod.set_secret(key, body.value):
         raise HTTPException(status_code=500, detail="Keyring-Write fehlgeschlagen")
     await _emit(request, SecretConfigured(key=key, action="set"))
-    return {"ok": True, "key": key}
+    return {
+        "ok": True,
+        "key": key,
+        "restart_required": key in _RESTART_REQUIRED_SECRET_KEYS,
+    }
 
 
 @router.delete("/secrets/{key}")
@@ -1367,12 +1614,19 @@ async def subagent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     if provider in ANTIGRAVITY_SUBAGENT_SLUGS:
         from jarvis.google_cli.auth_service import GoogleCliAuthService
 
-        if not GoogleCliAuthService().status().connected:
+        # Dual billing (mirror of codex): the Google subscription OAuth login OR
+        # a Gemini API key (per token). Either is enough to run the worker.
+        antigravity_connected = GoogleCliAuthService().status().connected
+        antigravity_key = bool(
+            cfg_mod.get_secret("gemini_api_key", env_fallback="GEMINI_API_KEY")
+        )
+        if not (antigravity_connected or antigravity_key):
             raise HTTPException(
                 status_code=409,
                 detail=(
                     "Antigravity is not connected — sign in with Google "
-                    "(install agy or the Gemini CLI and log in), then activate."
+                    "(install agy or the Gemini CLI and log in) or set a Gemini "
+                    "API key, then activate."
                 ),
             )
         persisted = False
@@ -1408,9 +1662,19 @@ async def subagent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
         )
 
     # Key-Check — a provider without a stored credential cannot be activated.
-    # ``claude-api`` counts the OAuth bearer as present (Claude Max). Reads the
-    # same secret store the status endpoint uses for the per-card ``key_set``.
-    if not cfg_mod.get_provider_secret(provider):
+    # ``claude-api`` counts the live Claude Max OAuth login (read by the
+    # ClaudeDirectWorker from ~/.claude/.credentials.json) as a credential, so a
+    # fresh Claude-Max user who only ran `claude login` (no stored API key) can
+    # still select it — mirrors the codex/antigravity OAuth branches above.
+    has_credential = bool(cfg_mod.get_provider_secret(provider))
+    if not has_credential and provider == "claude-api":
+        try:
+            from jarvis.missions.isolation.env import read_live_claude_oauth_token
+
+            has_credential = bool(read_live_claude_oauth_token())
+        except Exception:  # noqa: BLE001
+            has_credential = False
+    if not has_credential:
         raise HTTPException(
             status_code=409,
             detail=(

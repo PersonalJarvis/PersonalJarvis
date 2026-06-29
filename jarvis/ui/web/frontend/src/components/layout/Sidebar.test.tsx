@@ -1,8 +1,25 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { Sidebar } from "@/components/layout/Sidebar";
 import { useEventStore } from "@/store/events";
+
+// The sidebar header avatar must mirror the chosen on-screen display style:
+// the ghost mascot ONLY when the user explicitly picked "mascot"; the slim bar
+// for "jarvis_bar"/"none" and while the style is still loading (config null).
+// Mock the overlay-style hook so the test controls the style without a fetch.
+const overlayMock = vi.hoisted(() => ({ style: "jarvis_bar" as string | null }));
+vi.mock("@/hooks/useOverlayStyle", () => ({
+  useOverlayStyle: () => ({
+    config: overlayMock.style
+      ? { style: overlayMock.style, options: ["jarvis_bar", "mascot", "none"] }
+      : null,
+    loading: false,
+    error: null,
+    refetch: () => {},
+    saveStyle: () => {},
+  }),
+}));
 
 describe("Sidebar voice header", () => {
   beforeEach(() => {
@@ -50,6 +67,88 @@ describe("Sidebar voice header", () => {
     // getByText throws if absent or if it matches more than once — so a single
     // hit proves the transcript survives exactly once (no duplicate bubble).
     expect(screen.getByText("auflegen")).toBeTruthy();
+  });
+});
+
+describe("Sidebar header avatar", () => {
+  beforeEach(() => {
+    useEventStore.setState({
+      voiceState: "idle",
+      transcription: "",
+      transcriptionFinal: true,
+      connected: true,
+      voiceReady: true,
+      assistantName: "Ruben",
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    overlayMock.style = "jarvis_bar";
+  });
+
+  // NOTE: an earlier change had the header avatar mirror the overlay display
+  // style (bar glyph for "jarvis_bar"). A later snapshot reverted it to the
+  // canonical static brand logo (jarvis-logo.png) regardless of style. This
+  // test pins the CURRENT behavior; the bar-vs-mascot-vs-logo choice is a
+  // product/branding decision tracked separately from the boot-speed work.
+  test("renders the static brand-logo avatar (one stable header identity)", () => {
+    const { container } = render(<Sidebar />);
+    const avatar = container.querySelector('[data-testid="sidebar-style-avatar"]');
+    expect(avatar).not.toBeNull();
+    expect(avatar?.getAttribute("data-variant")).toBe("logo");
+  });
+});
+
+describe("Sidebar brain footer", () => {
+  beforeEach(() => {
+    useEventStore.setState({
+      voiceState: "idle",
+      transcription: "",
+      transcriptionFinal: true,
+      connected: true,
+      voiceReady: true,
+      brainProvider: "unknown",
+      brainModel: "",
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  test("renders the active provider and its model id", () => {
+    // The footer must show WHICH model is in use, not just the provider — a
+    // user who configured e.g. opus-4-8 wants that surfaced, not a bare "—".
+    useEventStore.setState({ brainProvider: "claude-api", brainModel: "claude-opus-4-8" });
+
+    render(<Sidebar />);
+
+    expect(screen.getByText("Claude (API)")).toBeTruthy();
+    const modelLine = screen.getByTestId("sidebar-brain-model");
+    expect(modelLine.textContent).toBe("claude-opus-4-8");
+  });
+
+  test("hides the model line when no model is known (shows provider only)", () => {
+    useEventStore.setState({ brainProvider: "gemini", brainModel: "" });
+
+    render(<Sidebar />);
+
+    expect(screen.getByText("Gemini")).toBeTruthy();
+    expect(screen.queryByTestId("sidebar-brain-model")).toBeNull();
+  });
+
+  test("follows a live model change", () => {
+    useEventStore.setState({ brainProvider: "claude-api", brainModel: "claude-opus-4-8" });
+    render(<Sidebar />);
+    expect(screen.getByTestId("sidebar-brain-model").textContent).toBe("claude-opus-4-8");
+
+    act(() => {
+      useEventStore.setState({ brainProvider: "gemini", brainModel: "gemini-3.1-flash" });
+    });
+
+    expect(screen.getByTestId("sidebar-brain-model").textContent).toBe("gemini-3.1-flash");
+    expect(screen.getByText("Gemini")).toBeTruthy();
   });
 });
 
@@ -132,15 +231,28 @@ describe("Sidebar voice-boot indicator", () => {
     expect(container.querySelector('[data-testid="voice-starting-spinner"]')).toBeNull();
   });
 
-  test("shows 'Offline' (not the spinner) when disconnected", () => {
-    // Disconnected outranks warmup: there is no live socket to even report
-    // voice readiness, so the honest state is Offline.
-    useEventStore.setState({ connected: false, voiceReady: false });
+  test("shows 'Offline' (not the spinner) when disconnected and NOT warming", () => {
+    // Truly offline: no live socket AND the WS is not in the fast-boot warming
+    // loop (no 1013) — the honest state is Offline.
+    useEventStore.setState({ connected: false, voiceReady: false, wsWarming: false });
 
     const { container } = render(<Sidebar />);
 
     expect(screen.getByText("Offline")).toBeTruthy();
     expect(screen.queryByText("Voice starting…")).toBeNull();
     expect(container.querySelector('[data-testid="voice-starting-spinner"]')).toBeNull();
+  });
+
+  test("shows the booting label + spinner (not Offline) while warming", () => {
+    // Disconnected but the fast-boot bootstrap keeps closing the WS with 1013:
+    // the backend is still starting, so the honest state is "Starting…", not
+    // the alarming "Offline".
+    useEventStore.setState({ connected: false, voiceReady: false, wsWarming: true });
+
+    const { container } = render(<Sidebar />);
+
+    expect(screen.getByText("Starting…")).toBeTruthy();
+    expect(screen.queryByText("Offline")).toBeNull();
+    expect(container.querySelector('[data-testid="voice-starting-spinner"]')).not.toBeNull();
   });
 });

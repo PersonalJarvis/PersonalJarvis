@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Request
@@ -248,6 +250,81 @@ async def put_ui_language(body: UiLanguageBody, request: Request) -> dict[str, o
             log.warning("UiLanguageChanged publish failed: %s", exc)
 
     return {"ok": True, "language": lang, "persisted": persisted}
+
+
+# ----------------------------------------------------------------------
+# STT recognition language — the language Whisper TRANSCRIBES the user's voice
+# into. Distinct from BOTH the UI language (what the user sees) and the reply
+# language (what Jarvis answers in). ``auto`` lets Whisper detect the spoken
+# language per utterance (the bilingual default); a concrete code forces it.
+# This had NO UI/REST control before — the recognition language was stranded in
+# jarvis.toml, so a user whose voice was mis-recognized had no way to fix it
+# (forensic 2026-06-28: German spoken, English-only model, "Can't you me" garbage).
+# Applies on the next voice bootstrap (a restart); the STT provider is built once.
+# ----------------------------------------------------------------------
+
+_STT_LANGUAGES: tuple[str, ...] = ("auto", "de", "en", "es")
+
+
+class SttLanguageBody(BaseModel):
+    language: str = Field(..., min_length=1)
+    persist: bool = Field(default=True, description="Persist as boot default in jarvis.toml")
+
+
+def _current_stt_language(request: Request) -> str:
+    # Read fresh from disk so a value just written is reflected; fall back to the
+    # boot config, then the "auto" bilingual default.
+    try:
+        from jarvis.core.config import load_config
+
+        return str(getattr(load_config().stt, "language", "auto"))
+    except Exception as exc:  # noqa: BLE001 — never 500 a settings read
+        log.debug("stt-language fresh read failed, using boot config: %s", exc)
+    cfg = getattr(request.app.state, "config", None)
+    return str(getattr(getattr(cfg, "stt", None), "language", "auto"))
+
+
+@router.get("/stt-language")
+async def get_stt_language(request: Request) -> dict[str, object]:
+    return {"language": _current_stt_language(request), "options": list(_STT_LANGUAGES)}
+
+
+@router.put("/stt-language")
+async def put_stt_language(body: SttLanguageBody, request: Request) -> dict[str, object]:
+    lang = (body.language or "").strip().lower()
+    if lang not in _STT_LANGUAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown STT language {body.language!r} (allowed: {list(_STT_LANGUAGES)})",
+        )
+
+    persisted = False
+    if body.persist:
+        try:
+            from jarvis.core import config_writer
+            from jarvis.core.config import resolve_config_path
+
+            config_writer.set_stt_language(lang, path=resolve_config_path())
+            persisted = True
+        except Exception as exc:  # noqa: BLE001 — persist is best-effort
+            log.warning("stt-language persist failed: %s", exc)
+
+    cfg = getattr(request.app.state, "config", None)
+    if cfg is not None and getattr(cfg, "stt", None) is not None:
+        try:
+            cfg.stt.language = lang  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 — frozen model is not an error
+            log.debug("in-memory cfg.stt.language update skipped: %s", exc)
+
+    # The STT provider is built once at voice bootstrap, so a live turn keeps the
+    # old language until the next voice restart. ``restart_required`` tells the UI
+    # to surface that hint.
+    return {
+        "ok": True,
+        "language": lang,
+        "persisted": persisted,
+        "restart_required": True,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -747,7 +824,7 @@ async def put_autostart(body: AutostartBody, request: Request) -> dict[str, obje
     }
 
 
-_OVERLAY_STYLES = ("whisper_bar", "mascot", "none")
+_OVERLAY_STYLES = ("jarvis_bar", "mascot", "none")
 
 
 class OverlayStyleBody(BaseModel):
@@ -760,19 +837,23 @@ async def get_overlay_style(request: Request) -> dict[str, object]:
     """Current on-screen overlay style + the selectable options."""
     cfg = _config(request)
     ui = getattr(cfg, "ui", None)
-    current = getattr(ui, "orb_style", None) or "whisper_bar"
+    current = getattr(ui, "orb_style", None) or "jarvis_bar"
     return {"style": current, "options": list(_OVERLAY_STYLES)}
 
 
 @router.put("/overlay-style")
 async def put_overlay_style(body: OverlayStyleBody, request: Request) -> dict[str, object]:
-    """Switch the on-screen overlay (whisper_bar / mascot / none).
+    """Switch the on-screen overlay (jarvis_bar / mascot / none).
 
     Persists [ui].orb_style and live-swaps the running surface via the
     DesktopApp (app.state.desktop_app.swap_overlay). When no live app is
     reachable (headless), the choice is persisted and applies on restart.
     """
     style = body.style.strip()
+    # Backwards-compat: accept the legacy "whisper_bar" value (renamed to
+    # "jarvis_bar" to drop a trademarked name) from any not-yet-rebuilt client.
+    if style == "whisper_bar":
+        style = "jarvis_bar"
     if style not in _OVERLAY_STYLES:
         raise HTTPException(status_code=400, detail=f"Unknown overlay style '{style}'")
 
@@ -972,6 +1053,45 @@ async def _running_mission_summaries(
     return summaries
 
 
+async def _run_off_pool(fn: Callable[[], object]) -> object:
+    """Run a quick blocking callable on a fresh, dedicated thread.
+
+    Deliberately does NOT use ``asyncio.to_thread`` / the shared default
+    ``ThreadPoolExecutor``. A restart is the app's recovery path and must keep
+    working precisely *when the app is unhealthy* — including when that shared
+    pool is exhausted by un-cancellable hung threads.
+
+    Forensic 2026-06-29: the custom-wake ctranslate2 transcription hung inside
+    C code; its 8 s ``asyncio.timeout`` cancelled only the *await*, abandoning
+    the pool thread mid-call (a running thread can't be killed in Python). The
+    8 s re-poll storm leaked one default-pool worker every cycle until every
+    worker was wedged, so ``await asyncio.to_thread(request_restart)`` queued
+    behind the dead pool forever — the restart POST never returned and the
+    button spun "Restarting…" with the window still up. A dedicated thread is
+    immune to that starvation. Cross-platform: pool exhaustion hits any host
+    (a slow CPU-only Whisper on a VPS reaches the same wall as a stuck GPU one).
+    """
+    loop = asyncio.get_running_loop()
+    fut: asyncio.Future[object] = loop.create_future()
+
+    def _runner() -> None:
+        try:
+            result = fn()
+        except BaseException as exc:  # noqa: BLE001 — relay verbatim to the awaiter
+            loop.call_soon_threadsafe(_resolve, fut.set_exception, exc)
+        else:
+            loop.call_soon_threadsafe(_resolve, fut.set_result, result)
+
+    def _resolve(setter: Callable[[object], None], value: object) -> None:
+        if not fut.done():  # awaiter may have been cancelled meanwhile
+            setter(value)
+
+    threading.Thread(
+        target=_runner, name="jarvis-restart-trigger", daemon=True
+    ).start()
+    return await fut
+
+
 @router.post("/restart-app")
 async def restart_app(request: Request, force: bool = False) -> dict[str, object]:
     """Cleanly self-restart the desktop app.
@@ -997,7 +1117,15 @@ async def restart_app(request: Request, force: bool = False) -> dict[str, object
         running = list(list_running()) if callable(list_running) else []
         if running:
             manager = getattr(request.app.state, "mission_manager", None)
-            missions = await _running_mission_summaries(manager, running)
+            try:
+                # A wedged mission manager (the very state a user restarts to
+                # escape) must not hang the guard — bound the title lookup and
+                # fall back to id-only summaries so the 409 still reaches the UI.
+                missions = await asyncio.wait_for(
+                    _running_mission_summaries(manager, running), timeout=2.0
+                )
+            except TimeoutError:
+                missions = [{"id": mid, "title": ""} for mid in running]
             raise HTTPException(
                 status_code=409,
                 detail={"error": "missions_running", "missions": missions},
@@ -1009,12 +1137,48 @@ async def restart_app(request: Request, force: bool = False) -> dict[str, object
         raise HTTPException(
             status_code=503, detail="self-restart unavailable on this host"
         )
-    scheduled = await asyncio.to_thread(fn)
+    # Off the shared default pool — a restart must survive a pool exhausted by
+    # hung threads (see ``_run_off_pool``). ``asyncio.to_thread`` would queue
+    # behind the dead pool and hang the POST forever.
+    scheduled = await _run_off_pool(fn)
     if not scheduled:
         raise HTTPException(
             status_code=503, detail="no desktop window to restart"
         )
     return {"ok": True, "restarting": True}
+
+
+class OpenExternalBody(BaseModel):
+    url: str = Field(min_length=1, max_length=4096)
+
+
+@router.post("/open-external")
+async def open_external(body: OpenExternalBody) -> dict[str, object]:
+    """Open an ``http(s)`` URL in the user's real default browser.
+
+    The desktop shell embeds WebView2, which silently drops ``window.open`` /
+    ``target="_blank"`` — so OAuth-authorize and token-creation pages never
+    reached the browser and plugin connect appeared to "do nothing". The
+    frontend calls this only when it detects the embedded shell (``window
+    .__JARVIS_TOKEN``); a real browser tab opens the URL itself. Returns
+    ``{"opened": false}`` on a headless host (no display) so the caller can
+    fall back to ``window.open``.
+
+    Scheme is validated to ``http``/``https`` here AND in ``open_url`` so no
+    ``file:``/``javascript:``/app-protocol URL can ever be launched.
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(body.url)
+    if parsed.scheme.lower() not in ("http", "https"):
+        raise HTTPException(
+            status_code=400, detail="only http/https URLs may be opened"
+        )
+    from jarvis.platform.open_path import open_url
+
+    opened = await asyncio.to_thread(open_url, body.url)
+    log.info("open-external: opened=%s url=%s", opened, body.url)
+    return {"opened": bool(opened)}
 
 
 # ---------------------------------------------------------------------------

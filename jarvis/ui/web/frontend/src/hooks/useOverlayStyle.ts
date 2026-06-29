@@ -2,9 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 
 /**
  * On-screen overlay style from GET /api/settings/overlay-style.
- * "whisper_bar" = slim default bar, "mascot" = ghost orb, "none" = hidden.
+ * "jarvis_bar" = slim default bar, "mascot" = ghost orb, "none" = hidden.
  */
-export type OverlayStyle = "whisper_bar" | "mascot" | "none";
+export type OverlayStyle = "jarvis_bar" | "mascot" | "none";
 
 export interface OverlayStyleConfig {
   style: OverlayStyle;
@@ -59,7 +59,7 @@ export function useOverlayStyle() {
       setConfig((prev) =>
         prev
           ? { ...prev, style: result.style }
-          : { style: result.style, options: ["whisper_bar", "mascot", "none"] },
+          : { style: result.style, options: ["jarvis_bar", "mascot", "none"] },
       );
       return result;
     },

@@ -41,6 +41,38 @@ export const CLUSTER_ORDER: ClusterId[] = [
   "relationship",
 ];
 
+// Field shapes — drive the inline editor. A list field is edited as removable
+// chips (append/remove one item); a bool field as a yes/no toggle; everything
+// else as a single text input. These MUST mirror _LIST_FIELDS / _BOOL_FIELDS in
+// jarvis/plugins/tool/profile_update.py (the backend rejects a mismatched
+// operation with 400) — the parity is pinned by test_profile_update.py.
+export const LIST_FIELD_KEYS: ReadonlySet<string> = new Set([
+  "languages",
+  "devices",
+  "humor_types",
+  "top_values",
+  "pet_peeves",
+  "motivations",
+]);
+
+export const BOOL_FIELD_KEYS: ReadonlySet<string> = new Set(["emoji_ok"]);
+
+export type FieldKind = "scalar" | "list" | "bool";
+
+export function isListField(field: string): boolean {
+  return LIST_FIELD_KEYS.has(field);
+}
+
+export function isBoolField(field: string): boolean {
+  return BOOL_FIELD_KEYS.has(field);
+}
+
+export function fieldKind(field: string): FieldKind {
+  if (LIST_FIELD_KEYS.has(field)) return "list";
+  if (BOOL_FIELD_KEYS.has(field)) return "bool";
+  return "scalar";
+}
+
 export const TOTAL_FIELDS: number = CLUSTER_ORDER.reduce(
   (acc, cid) => acc + CLUSTER_FIELD_KEYS[cid].length,
   0,

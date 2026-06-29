@@ -17,7 +17,7 @@
   },
   "nav": {
     "chats": "Chats",
-    "agents": "Agents",
+    "agents": "Jarvis-Agents",
     "extensions": "Skills, Plugins & MCPs",
     "skills": "Skills",
     "plugins": "Plugins",
@@ -41,7 +41,37 @@
     "socials": "Socials",
     "taskbar": "Taskbar",
     "contacts": "Kontakte",
+    "feedback": "Feedback",
+    "personalize": "Mach's zu deinem",
     "agent_instructions": "{name}.md"
+  },
+  "make_it_yours": {
+    "title": "Mach's zu deinem",
+    "subtitle": "Öffne Coding-Agents direkt in deinem Jarvis-Ordner und mach ihn persönlich.",
+    "step_layout": "Wie viele Terminals?",
+    "step_layout_hint": "Wähle ein Layout — eine Kachel pro Terminal-Anzahl.",
+    "step_agents": "Welche Agents?",
+    "step_agents_hint": "Lege fest, wie viele von jedem Agenten deine Terminals füllen. Nur Claude Code und Codex.",
+    "quick_fill": "Schnellwahl",
+    "split_evenly": "Gleichmäßig aufteilen",
+    "all_claude": "Alles Claude Code",
+    "all_codex": "Alles Codex",
+    "installed": "Installiert",
+    "not_installed": "Nicht installiert",
+    "install": "Im Terminal installieren",
+    "installing": "Installer wird im Terminal geöffnet…",
+    "step_confirm": "Bereit zum Start",
+    "folder": "Ordner",
+    "launch": "Starten",
+    "launching": "Wird gestartet…",
+    "back": "Zurück",
+    "next": "Weiter",
+    "no_terminal": "Auf diesem Host läuft kein Terminal (keine Shell bzw. kein PTY-Backend), daher können die Agents hier nicht gestartet werden.",
+    "launched_ok": "Terminals geöffnet",
+    "launch_failed": "Einige Terminals konnten nicht geöffnet werden.",
+    "terminals": "Terminals",
+    "end_session": "Sitzung beenden",
+    "install_done": "Fertig — neu prüfen"
   },
   "agent_instructions": {
     "subtitle": "Deine persönlichen Präferenzen, wie der Assistent mit dir arbeitet — Ton, Sprache, Voreinstellungen, dauerhafte Fakten. Getrennt vom System-Prompt und hebelt niemals Sicherheit oder Bestätigungen aus.",
@@ -155,7 +185,11 @@
     "speaking": "Spricht",
     "error": "Fehler",
     "offline": "Offline",
-    "starting": "Sprachmodul startet…"
+    "booting": "Startet…",
+    "starting": "Sprachmodul startet…",
+    "warming_title": "Jarvis fährt hoch",
+    "warming_hint": "Das Zuhören wird vorbereitet – einen Moment, gleich kannst du sprechen.",
+    "ready_title": "Bereit – du kannst jetzt sprechen"
   },
   "sidebar": {
     "wake_hint": "Sag dein Wake-Word…",
@@ -169,6 +203,8 @@
     "thinking_label": "denkt nach…",
     "empty_title": "Bereit für Befehle",
     "empty_subtitle": "Sag dein Wake-Word oder schreibe unten deine Nachricht. Dein Assistent dirigiert Sub-Agents, ruft Tools auf und gibt dir eine Stimme zurück.",
+    "warming_title": "Macht sich bereit",
+    "warming_subtitle": "Dein Assistent startet gerade. Gleich kannst du sprechen, tippen geht schon jetzt.",
     "examples": {
       "0": "Zeig die Agents",
       "1": "Wechsel Brain auf Gemini",
@@ -212,7 +248,7 @@
     "step_cu_settle": "Wartet auf den Bildschirm"
   },
   "subagents_view": {
-    "title": "Sub-Agents",
+    "title": "Jarvis-Agents",
     "stat_active": "aktiv",
     "stat_total": "gesamt",
     "clear": "Leeren",
@@ -220,11 +256,11 @@
     "board_title": "Abfahrtstafel",
     "active_label": "Aktiv",
     "standby_label": "Standby",
-    "col_agent": "Agent",
+    "col_agent": "Jarvis-Agent",
     "col_target": "Ziel",
     "col_status": "Status",
     "col_cost": "Kosten",
-    "agents_traveling": "Agent(s) unterwegs",
+    "agents_traveling": "Jarvis-Agent(s) unterwegs",
     "last_departure": "letzte Abfahrt",
     "last_departure_ago": "letzte Abfahrt vor {0}",
     "status": {
@@ -302,6 +338,23 @@
       "tier_fast": "Schnell",
       "tier_auto": "Auto",
       "tier_deep": "Stark",
+      "trigger_mode_label": "Auslöser",
+      "mode_schedule": "Zeitplan",
+      "mode_event": "Wenn-Dann",
+      "when_label": "Wenn",
+      "when_mission_succeeded": "Eine Mission ist fertig",
+      "when_mission_failed": "Eine Mission scheitert",
+      "when_mission_cancelled": "Eine Mission wird abgebrochen",
+      "then_label": "Dann",
+      "then_computer_use": "Computer-Use",
+      "then_agent": "Agenten-Aufgabe",
+      "then_notify": "Nur Bescheid sagen",
+      "cu_goal_label": "Was soll Computer-Use tun?",
+      "cu_goal_placeholder": "z. B. Öffne {result_uri} im Browser.",
+      "announce_label": "Bescheid sagen, wenn fertig (optional)",
+      "notify_text_label": "Was soll gesagt werden?",
+      "announce_placeholder": "z. B. Deine Mission ist fertig — ich habe sie im Browser geöffnet.",
+      "when_then_hint": "Wird jedes Mal ausgelöst. Du kannst {result_uri}, {summary_de} oder {mission_id} als Platzhalter im Text oben verwenden.",
       "cancel": "Abbrechen",
       "save": "Aufgabe erstellen",
       "save_error": "Aufgabe konnte nicht erstellt werden."
@@ -655,6 +708,13 @@
     "more_to_learn": "{0} weitere offen",
     "value_yes": "ja",
     "value_no": "nein",
+    "field_edit": "Bearbeiten",
+    "field_clear": "Löschen",
+    "field_remove_item": "Entfernen",
+    "field_add": "Hinzufügen",
+    "field_add_placeholder": "Hinzufügen…",
+    "field_value_placeholder": "Wert…",
+    "field_saved": "Gespeichert",
     "review_confirm": "Stimmt",
     "review_strike": "Streichen",
     "questions": {
@@ -772,7 +832,7 @@
   },
   "apikeys_view": {
     "title": "API-Keys & Provider",
-    "subtitle": "Codex nutzt den offiziellen ChatGPT/Codex-Login.",
+    "subtitle": "Verbinde Provider und lege fest, was die einzelnen Teile von Jarvis antreibt.",
     "save": "Speichern",
     "saved": "Gespeichert",
     "missing": "Fehlt",
@@ -785,6 +845,20 @@
     "tier_stt": "Voice-Input (STT)",
     "tier_subagent": "Subagent (Heavy-Tasks)",
     "tier_telephony": "Telefonie",
+    "tab_brain": "Brain",
+    "tab_tts": "Sprachausgabe",
+    "tab_stt": "Spracheingabe",
+    "tab_subagents": "Jarvis-Agents",
+    "tab_advanced": "Erweitert",
+    "cat_brain_desc": "Das Modell, das Chat, Routing und Computer-Use antreibt.",
+    "cat_tts_desc": "Die Stimme, mit der Jarvis spricht.",
+    "cat_stt_desc": "Wie Jarvis deine Sprache in Text umwandelt.",
+    "cat_subagents_title": "Jarvis-Agents",
+    "cat_subagents_desc": "Wähle, welcher Provider schwere Hintergrund-Aufgaben übernimmt.",
+    "advanced_title": "Zugang & Integrationen",
+    "advanced_desc": "Optionale Extras: Control-API-Zugang, der Team-Key-Proxy, Telefonie und der Wissens-Wiki-Provider.",
+    "no_providers_in_tier": "In dieser Kategorie sind keine Provider verfügbar.",
+    "model_picker_activate_hint": "Aktiviere diesen Provider, um seine Stimme oder sein Modell zu wählen.",
     "active_tooltip": "Bereits aktiv",
     "click_to_activate": "Klick aktiviert diesen Provider",
     "needs_codex": "Erst Codex verbinden oder API-Key speichern",
@@ -792,6 +866,9 @@
     "needs_key": "Erst API-Key speichern, dann aktivierbar",
     "recommended": "Empfohlen",
     "recommended_tooltip": "Empfohlenes Modell: {0}",
+    "health_needs_setup": "Einrichtung nötig",
+    "health_error": "Funktioniert nicht",
+    "health_ok": "Funktioniert",
     "security_notice": ""
   },
   "apikeys_test": {
@@ -822,7 +899,8 @@
     "load_failed": "Modelle konnten nicht geladen werden",
     "source_static": "Standardliste",
     "source_static_note": "Live-Katalog nicht erreichbar — gepflegte Standardauswahl.",
-    "more_hint": "{0} weitere — Suche verfeinern",
+    "count_hint": "{0} Modelle im Katalog",
+    "open_on_provider": "Auf OpenRouter ansehen",
     "choose_placeholder": "Modell wählen…",
     "heading_voice": "Stimme",
     "choose_voice": "Stimme wählen…",
@@ -946,7 +1024,7 @@
       "saved": "Anzeige-Stil gewechselt.",
       "restart_required": "Gespeichert — {name} neu starten zum Übernehmen.",
       "options": {
-        "whisper_bar": "Bar (Standard)",
+        "jarvis_bar": "Bar (Standard)",
         "mascot": "Maskottchen-Orb",
         "none": "Keins (ausgeblendet)"
       }
@@ -1123,6 +1201,7 @@
     "restart_label": "Neu starten",
     "rerun_starting": "Wird gestartet…",
     "rerun_confirm": "Erneut ausführen",
+    "continuation_running": "Fortgesetzt · läuft",
     "list_load_error": "Outputs nicht geladen",
     "empty_sessions": "Noch keine Sub-Agent-Sessions. Starte einen OpenClaw-Task.",
     "select_session": "Wähle eine Session.",
@@ -1292,6 +1371,13 @@
       "cta": "Los geht's",
       "skip_setup": "Einrichtung vorerst überspringen"
     },
+    "tutorial": {
+      "title": "Sieh dir die 2-Minuten-Tour an",
+      "body": "Ein kurzer Überblick, was Personal Jarvis kann und wie die Einrichtung läuft. Du kannst überspringen und sofort loslegen.",
+      "continue": "Weiter",
+      "skip": "Video überspringen",
+      "play": "Tutorial-Video abspielen"
+    },
     "risk": {
       "title": "Bevor du fortfährst",
       "lead": "Personal Jarvis ist mächtige, experimentelle Software.",
@@ -1348,12 +1434,12 @@
       "body": "Wie soll dein Assistent auf dem Bildschirm erscheinen? Du kannst das jederzeit in den Einstellungen ändern.",
       "recommended": "Empfohlen",
       "options": {
-        "whisper_bar": "Jarvis-Leiste",
+        "jarvis_bar": "Jarvis-Leiste",
         "mascot": "Orb",
         "none": "Kein Overlay"
       },
       "captions": {
-        "whisper_bar": "Eine schmale schwebende Sprachleiste, immer griffbereit.",
+        "jarvis_bar": "Eine schmale schwebende Sprachleiste, immer griffbereit.",
         "mascot": "Ein schwebender Begleiter-Orb, der auf deine Stimme reagiert.",
         "none": "Nur das App-Fenster — kein schwebendes Element auf dem Bildschirm."
       },
@@ -1378,6 +1464,8 @@
     "ui_hint": "Betrifft jede Beschriftung, Schaltfläche und Nachricht in der App.",
     "reply_section": "Antwort-Sprache",
     "reply_hint": "In welcher Sprache {name} antwortet. Eigennamen, Code-Bezeichner und Fachbegriffe bleiben in ihrer Originalform.",
+    "stt_section": "Erkennungssprache (Stimme)",
+    "stt_hint": "In welcher Sprache deine gesprochene Stimme erkannt und in Text umgewandelt wird. Automatisch erkennt von selbst, welche Sprache du sprichst.",
     "options": {
       "auto": {
         "label": "Automatisch",
@@ -1401,6 +1489,12 @@
       "en": "{name} antwortet auf Englisch.",
       "de": "{name} antwortet auf Deutsch.",
       "es": "{name} antwortet auf Spanisch."
+    },
+    "stt_options": {
+      "auto": "Erkennt automatisch, welche Sprache du sprichst.",
+      "en": "Erkennt deine Stimme immer als Englisch.",
+      "de": "Erkennt deine Stimme immer als Deutsch.",
+      "es": "Erkennt deine Stimme immer als Spanisch."
     }
   },
   "cli_connect_poller": {
@@ -1489,6 +1583,7 @@
     "copy_failed_clipboard": "Kopieren fehlgeschlagen — Clipboard-Zugriff blockiert?",
     "copy_failed": "Kopieren fehlgeschlagen",
     "downloaded_as": "Heruntergeladen als",
+    "saved_to_downloads": "In Downloads gespeichert:",
     "download_failed": "Download fehlgeschlagen",
     "loading": "Lade Session…",
     "load_error": "Fehler beim Laden",
@@ -1496,13 +1591,17 @@
     "turns": "Turns",
     "no_turns_suffix": "ohne Folge-Utterance.",
     "copy_action": "Kopieren",
-    "download_file_action": "Als Datei herunterladen:"
+    "download_file_action": "Als Datei herunterladen:",
+    "open_editor_action": "Im Editor öffnen:",
+    "opened_in_editor": "Im Editor geöffnet",
+    "open_failed": "Konnte nicht im Editor öffnen"
   },
   "turn_card": {
     "turn": "Turn",
     "copied": "kopiert",
     "copy_failed": "Kopieren fehlgeschlagen",
     "downloaded_as": "Heruntergeladen als",
+    "saved_to_downloads": "In Downloads gespeichert:",
     "copy_turn": "Diesen Turn kopieren",
     "copy": "Kopieren",
     "download_turn": "Diesen Turn als Datei herunterladen",
@@ -1950,7 +2049,12 @@
     "trigger_placeholder": "z. B. starte die Morgenroutine",
     "create": "Skill erstellen",
     "create_error": "Skill konnte nicht erstellt werden",
-    "name_required": "Bitte einen Namen mit mindestens 3 Zeichen eingeben."
+    "name_required": "Bitte einen Namen mit mindestens 3 Zeichen eingeben.",
+    "needs_instructions": "Bitte beschreibe, was der Skill tun soll — entweder im Feld ganz oben oder in den Anweisungen darunter.",
+    "write_with_ai": "Den ganzen Skill von KI schreiben lassen",
+    "writing": "Die KI schreibt deinen Skill…",
+    "ai_done_review": "Fertig — die KI hat den ganzen Skill unten geschrieben. Prüfe ihn und klicke auf Skill erstellen.",
+    "or_review_edit": "oder prüfen & anpassen"
   },
   "missions_view": {
     "active": "aktiv",
@@ -2044,5 +2148,29 @@
   },
   "friends_view": {
     "subtitle": "Telegram-Bot + lokaler Friend-Registry. Du entscheidest, was Friends sehen."
+  },
+  "feedback": {
+    "discord_cta_title": "Auf unserem Discord melden",
+    "discord_cta_subtitle": "Tritt #bug-reports bei und poste deinen Fehler, deine Idee oder Frage direkt.",
+    "discord_cta_button": "Discord öffnen",
+    "or_send_here": "oder hier direkt senden",
+    "subtitle": "Fehler melden, Ideen teilen oder eine Frage stellen — geht direkt in unseren Discord.",
+    "type_label": "Typ",
+    "type_bug": "Bug",
+    "type_idea": "Idee",
+    "type_question": "Frage",
+    "title_label": "Titel",
+    "title_placeholder": "Kurze Zusammenfassung deines Feedbacks",
+    "description_label": "Beschreibung",
+    "description_placeholder": "Beschreib es genauer — Schritte zur Reproduktion, Kontext, Erwartetes vs. Tatsächliches Verhalten…",
+    "screenshot_label": "Screenshot (optional)",
+    "screenshot_pick": "Klicken, um einen Screenshot anzuhängen",
+    "screenshot_preview_alt": "Screenshot-Vorschau",
+    "screenshot_remove": "Screenshot entfernen",
+    "submit": "Senden",
+    "sending": "Sende…",
+    "result_sent": "Danke — wurde an unseren Discord gesendet!",
+    "result_not_configured": "Feedback-Kanal ist noch nicht eingerichtet — es wurde nichts gesendet.",
+    "result_error": "Discord nicht erreichbar, bitte später erneut versuchen."
   }
 }

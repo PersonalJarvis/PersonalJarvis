@@ -94,6 +94,29 @@ export interface AntigravityStatus {
   error: string | null;
 }
 
+/**
+ * Mirror of `jarvis/claude_auth.py::ClaudeAuthStatus.to_dict()`. The Anthropic
+ * sibling of `CodexStatus` / `AntigravityStatus`: whether the `claude` CLI is
+ * installed and whether the subagent runs over the Claude Max subscription
+ * (the OAuth login) or an Anthropic API key, plus the connected account email +
+ * subscription tier so the card can show "Connected as <email>".
+ */
+export interface ClaudeStatus {
+  installed: boolean;
+  connected: boolean;
+  mode: string; // "subscription" | "api_key" | "unknown"
+  message: string;
+  version?: string | null;
+  account_label?: string | null;
+  user_email?: string | null;
+  subscription_type?: string | null; // raw tier, e.g. "max"
+  binary_path?: string | null;
+  error?: string | null;
+  /** True when a classic Anthropic API key (sk-ant-api…) is stored — drives the
+   * API-key field's "configured" state on the subagent card. Never the key. */
+  api_key_present?: boolean;
+}
+
 interface ProvidersResponse {
   providers: ProviderDescriptor[];
 }
@@ -157,6 +180,81 @@ export function useProviders() {
   }, [refetch]);
 
   return { providers, loading, error, refetch, setActiveOptimistic };
+}
+
+// ── Section health (the at-a-glance API-Keys tab indicators) ────────────────
+// Mirrors SECTION_HEALTH_STATUSES in jarvis/brain/section_health.py and the
+// SectionHealthStatusLiteral in provider_routes.py (five-layer anti-drift; a
+// backend parity test guards the Python↔Pydantic side, this union is the UI
+// mirror). Only "needs_setup" (amber) and "error" (red) draw a dot; "ok" and
+// "unknown" stay silent.
+export type SectionHealthStatus = "ok" | "needs_setup" | "error" | "unknown";
+
+export interface SectionHealth {
+  status: SectionHealthStatus;
+  /** Machine cause (the underlying provider-test status / "not_configured" /
+   * "no_active" / "local" / "ok" / "unknown") — for tooltips + debugging. */
+  reason: string;
+  /** Plain-English one-liner for the hover tooltip. */
+  detail: string;
+}
+
+export interface SectionHealthResponse {
+  sections: Record<string, SectionHealth>;
+  checked_at: number;
+  cached: boolean;
+}
+
+/**
+ * Fetches the per-tab health rollup. `refresh=true` bypasses the server-side
+ * TTL cache — used right after a key save / provider switch so the dot reflects
+ * the change immediately instead of a stale cached result.
+ */
+export async function getSectionHealth(refresh = false): Promise<SectionHealthResponse> {
+  const res = await fetch(
+    `/api/providers/section-health${refresh ? "?refresh=true" : ""}`,
+  );
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as SectionHealthResponse;
+}
+
+/**
+ * Drives the tab status dots in the API-Keys view. Fetches once on mount (the
+ * server runs the REAL connectivity test of each tier's active provider, cached
+ * briefly) and re-fetches with `refresh=true` whenever a key is saved, a provider
+ * is switched, or a manual per-card test completes — so the dot tracks live.
+ *
+ * Health is best-effort: a failed fetch leaves the map empty (no dots), never
+ * breaking the page.
+ */
+export function useSectionHealth() {
+  const [health, setHealth] = useState<Record<string, SectionHealth>>({});
+
+  const reload = useCallback(async (refresh = false) => {
+    try {
+      const data = await getSectionHealth(refresh);
+      setHealth(data.sections ?? {});
+    } catch {
+      // best-effort — keep whatever we last had rather than clearing to nothing
+    }
+  }, []);
+
+  useEffect(() => {
+    void reload(false);
+    const onChange = () => void reload(true);
+    const events = [
+      "jarvis:secret-configured",
+      "jarvis:brain-switched",
+      "jarvis:tts-switched",
+      "jarvis:stt-switched",
+      "jarvis:subagent-switched",
+      "jarvis:provider-tested",
+    ];
+    events.forEach((e) => window.addEventListener(e, onChange));
+    return () => events.forEach((e) => window.removeEventListener(e, onChange));
+  }, [reload]);
+
+  return { health, reload };
 }
 
 export async function postSecret(key: string, value: string): Promise<void> {
@@ -224,6 +322,34 @@ export async function loginAntigravity(): Promise<void> {
 /** Disconnects the Google login (POST /api/antigravity/logout). */
 export async function logoutAntigravity(): Promise<void> {
   const res = await fetch("/api/antigravity/logout", { method: "POST" });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+}
+
+/**
+ * Starts the interactive Claude sign-in by driving the `claude` CLI as a
+ * subprocess (POST /api/claude/login). The Anthropic sibling of
+ * `startCodexLogin` — a 409 means no Claude CLI is installed (the detail carries
+ * an install_command).
+ */
+export async function loginClaude(): Promise<void> {
+  const res = await fetch("/api/claude/login", { method: "POST" });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const detail = body.detail;
+    throw new Error(
+      typeof detail === "object" && detail?.message
+        ? detail.message
+        : detail ?? `HTTP ${res.status}`,
+    );
+  }
+}
+
+/** Disconnects the Claude subscription login (POST /api/claude/logout). */
+export async function logoutClaude(): Promise<void> {
+  const res = await fetch("/api/claude/logout", { method: "POST" });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(body.detail ?? `HTTP ${res.status}`);

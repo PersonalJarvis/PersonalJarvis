@@ -11,7 +11,8 @@ import {
   shareToX,
   type ShareStats,
 } from "@/lib/shareImage";
-import { downloadBlob } from "@/lib/clipboard";
+import { saveOrDownload } from "@/lib/clipboard";
+import { useCapabilities } from "@/hooks/useCapabilities";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
@@ -38,6 +39,8 @@ const SCALE = PREVIEW / 1080;
  */
 export function ShareDialog({ open, onOpenChange, stats }: Props) {
   const t = useT();
+  const caps = useCapabilities();
+  const native = caps.data?.native_file_actions ?? false;
   const cardRef = useRef<HTMLDivElement>(null);
   const [handle, setHandle] = useShareHandle();
   const [status, setStatus] = useState<Status>({ kind: "idle" });
@@ -108,14 +111,22 @@ export function ShareDialog({ open, onOpenChange, stats }: Props) {
       if (res === "copied") {
         setStatus({ kind: "ok", msgKey: "board_view.share.status_copied" });
       } else {
-        downloadBlob("jarvis-stats.png", await ensureBlob());
+        await saveOrDownload({
+          filename: "jarvis-stats.png",
+          blob: await ensureBlob(),
+          native,
+        });
         setStatus({ kind: "ok", msgKey: "board_view.share.status_copy_unsupported" });
       }
     });
 
   const onSave = () =>
     run(async () => {
-      downloadBlob("jarvis-stats.png", await ensureBlob());
+      await saveOrDownload({
+        filename: "jarvis-stats.png",
+        blob: await ensureBlob(),
+        native,
+      });
       setStatus({ kind: "ok", msgKey: "board_view.share.status_saved" });
     });
 

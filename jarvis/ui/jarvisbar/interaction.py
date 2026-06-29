@@ -6,7 +6,7 @@ The pure helpers (``is_drag``, ``classify_release``, ``default_bottom_center``,
 (→ start a voice session); a press that moves past it is a DRAG (→ reposition
 + persist). No duration gate is needed — moving the pointer arms a drag.
 
-Persistence uses a dedicated top-level ``[whisperbar]`` TOML section (absolute
+Persistence uses a dedicated top-level ``[jarvisbar]`` TOML section (absolute
 x/y) so it never clobbers the orb's ``[overlay.mascot]`` pin, and serialises
 through ``config_writer._WRITE_LOCK`` so it cannot race other config writes
 (AP-7). The orb's own writer predates that lock; ours is stricter.
@@ -52,10 +52,10 @@ def resolve_click(
 ) -> str:
     """Resolve a click on the bar into an action by its horizontal zone + state.
 
-    Returns one of ``"hangup"`` / ``"dictate"`` / ``"talk"`` / ``"none"``.
+    Returns one of ``"hangup"`` / ``"mute"`` / ``"talk"`` / ``"none"``.
 
-    The RIGHT zone is the square (toggle endpoint-free dictation — non-
-    destructive, so it keeps a generous zone). When IDLE, a click anywhere
+    The RIGHT zone is the microphone mute toggle (mic muted FOR JARVIS only —
+    non-destructive, so it keeps a generous zone). When IDLE, a click anywhere
     starts a normal session.
 
     The hang-up X is different: it ENDS the session, so its hit-box is
@@ -70,8 +70,8 @@ def resolve_click(
     """
     frac = x / max(1, width)
     active = mode in ("listen", "think", "speak")
-    if frac >= 0.60:            # right zone → the square (non-destructive)
-        return "dictate"
+    if frac >= 0.60:            # right zone → the mic mute toggle (non-destructive)
+        return "mute"
     if not active:             # idle middle/left → start a normal session
         return "talk"
     # Active session: the ONLY destructive bar action is the close-X hang-up,
@@ -109,10 +109,10 @@ def clamp_to_screen(
 
 
 # --------------------------------------------------------------------------- #
-# Position persistence ([whisperbar] section, absolute x/y)                   #
+# Position persistence ([jarvisbar] section, absolute x/y)                   #
 # --------------------------------------------------------------------------- #
-def load_whisperbar_position(path: str | Path) -> tuple[int, int] | None:
-    """Read [whisperbar] pos_x/pos_y. Returns None if absent/invalid."""
+def load_jarvisbar_position(path: str | Path) -> tuple[int, int] | None:
+    """Read [jarvisbar] pos_x/pos_y. Returns None if absent/invalid."""
     import tomllib
 
     try:
@@ -123,7 +123,7 @@ def load_whisperbar_position(path: str | Path) -> tuple[int, int] | None:
         data = tomllib.loads(raw.decode("utf-8-sig"))
     except (UnicodeDecodeError, tomllib.TOMLDecodeError):
         return None
-    section = data.get("whisperbar")
+    section = data.get("jarvisbar")
     if not isinstance(section, dict):
         return None
     x, y = section.get("pos_x"), section.get("pos_y")
@@ -132,8 +132,8 @@ def load_whisperbar_position(path: str | Path) -> tuple[int, int] | None:
     return None
 
 
-def save_whisperbar_position(path: str | Path, x: int, y: int) -> None:
-    """Atomically persist [whisperbar] pos_x/pos_y, comment- and BOM-safe.
+def save_jarvisbar_position(path: str | Path, x: int, y: int) -> None:
+    """Atomically persist [jarvisbar] pos_x/pos_y, comment- and BOM-safe.
 
     Reuses ``config_writer._WRITE_LOCK`` so the write serialises with every
     other jarvis.toml mutation (AP-7). No-op if the config file is missing.
@@ -155,10 +155,10 @@ def save_whisperbar_position(path: str | Path, x: int, y: int) -> None:
         raw_bytes = p.read_bytes()
         had_bom = raw_bytes.startswith(b"\xef\xbb\xbf")
         doc = tomlkit.parse(raw_bytes.decode("utf-8-sig"))
-        section = doc.get("whisperbar")
+        section = doc.get("jarvisbar")
         if section is None:
             section = tomlkit.table()
-            doc["whisperbar"] = section
+            doc["jarvisbar"] = section
         section["pos_x"] = int(x)
         section["pos_y"] = int(y)
         out = tomlkit.dumps(doc)
@@ -166,7 +166,7 @@ def save_whisperbar_position(path: str | Path, x: int, y: int) -> None:
             out = bom + out
         # Path-based temp + os.replace: the context manager guarantees the
         # file handle is closed, so no descriptor can leak (unlike mkstemp).
-        tmp = p.with_suffix(p.suffix + ".whisperbar.tmp")
+        tmp = p.with_suffix(p.suffix + ".jarvisbar.tmp")
         try:
             with open(tmp, "w", encoding="utf-8", newline="") as fh:
                 fh.write(out)

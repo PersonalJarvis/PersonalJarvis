@@ -20,8 +20,10 @@ import secrets
 import sys
 import threading
 import time
+from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable
+from typing import TYPE_CHECKING, Any
 
 # Windows-UTF8-Fix (analog zu jarvis.__main__)
 if sys.platform == "win32":
@@ -404,26 +406,91 @@ async def _await_cancellable_chat_turn(
 # ---------------------------------------------------------------------------
 
 
+def _default_lock_holder_health(port: int) -> bool:
+    """True if a Jarvis webserver answers ``/api/health`` on *port* (loopback).
+
+    Retries briefly so a still-booting fast-boot instance — which binds + answers
+    health in well under a second — is NEVER mistaken for a dead one. Returns the
+    SAFE default (``True`` → "treat as alive, do not evict") whenever it cannot
+    probe at all (no httpx), so a probing failure can never cause an eviction.
+    """
+    try:
+        import httpx
+    except Exception:  # noqa: BLE001
+        return True  # cannot probe → never evict on uncertainty
+    url = f"http://127.0.0.1:{int(port)}/api/health"
+    for _ in range(4):
+        with suppress(Exception):
+            r = httpx.get(url, timeout=1.0)
+            if r.status_code == 200:
+                return True
+        time.sleep(0.5)
+    return False
+
+
+def _terminate_pid(pid: int) -> bool:
+    """Terminate a confirmed lock-zombie process. Returns True once it is gone.
+
+    Graceful ``terminate()`` first, then ``kill()`` if it lingers. Returns False
+    (→ the caller keeps the lock blocked, the SAFE outcome) when psutil is
+    missing or the kill did not take, so we never falsely report a still-living
+    process as evicted.
+    """
+    try:
+        import psutil  # type: ignore[import-not-found]
+    except Exception:  # noqa: BLE001
+        return False
+    try:
+        proc = psutil.Process(int(pid))
+    except Exception:  # noqa: BLE001
+        return True  # already gone
+    # terminate may race the process self-exiting; the final _pid_alive check is
+    # the authority on whether it is really gone.
+    with suppress(Exception):
+        proc.terminate()
+        try:
+            proc.wait(timeout=5.0)
+        except Exception:  # noqa: BLE001 — graceful timed out → hard kill
+            with suppress(Exception):
+                proc.kill()
+                proc.wait(timeout=5.0)
+    return not _pid_alive(pid)
+
+
 def acquire_single_instance_lock(
     *,
     timeout: float = _LOCK_ACQUIRE_TIMEOUT,
     lock_path: Path | None = None,
     meta_path: Path | None = None,
+    health_probe: Callable[[int], bool] | None = None,
+    terminate: Callable[[int], bool] | None = None,
 ) -> FileLock:
     """Acquire exklusives Lock oder raise :class:`SingleInstanceError`.
 
     Stale-Lock-Erkennung: wenn das Lock belegt ist, lesen wir das
     PID-Sidecar und pruefen ``psutil.pid_exists(pid)``. Ist der PID tot,
-    loeschen wir Lock + Sidecar und versuchen erneut (genau einmal).
+    loeschen wir Lock + Sidecar und versuchen erneut.
+
+    Lock-zombie eviction (forensic 2026-06-26): a holder PID can be ALIVE yet
+    non-functional — its webserver accept-socket died on a transient WinError 64
+    while voice/telegram kept the process running, so it holds the lock with no
+    bound port and no window and would block EVERY restart. When the holder is
+    alive but its admin port does not answer health (probed with retries so a
+    still-booting instance is never falsely accused), we terminate the zombie and
+    reclaim the lock. Never the own pid (no suicide); never a healthy holder.
 
     Args:
         timeout: Sekunden bis wir den ersten Acquire aufgeben. Default 0.0.
         lock_path: Override fuer Tests.
         meta_path: Override fuer Tests.
+        health_probe: Override fuer Tests — ``(port) -> bool`` health check.
+        terminate: Override fuer Tests — ``(pid) -> bool`` process kill.
     """
     lp = lock_path or LOCK_FILE_PATH
     mp = meta_path or META_FILE_PATH
     lp.parent.mkdir(parents=True, exist_ok=True)
+    probe = health_probe or _default_lock_holder_health
+    killer = terminate or _terminate_pid
 
     lock = FileLock(str(lp))
     try:
@@ -441,25 +508,52 @@ def acquire_single_instance_lock(
         meta = None
 
     pid = int(meta["pid"]) if meta and "pid" in meta else None
+    port = (
+        int(meta["port"]) if meta and "port" in meta and meta["port"] else None
+    )
     if pid is not None and _pid_alive(pid):
-        raise SingleInstanceError(
-            f"Jarvis laeuft bereits (pid={pid})."
-        )
+        # Holder is alive. Is it actually FUNCTIONAL (serving its port)? A
+        # healthy instance, the own pid, or a holder with no recorded port is
+        # respected; only a live-but-non-serving lock-zombie is evicted.
+        if pid == os.getpid() or port is None or probe(port):
+            raise SingleInstanceError(f"Jarvis laeuft bereits (pid={pid}).")
+        with suppress(Exception):
+            from loguru import logger
 
-    # Stale: Sidecar entfernen, Lock erneut versuchen. Das Lock-File auf
-    # Filesystem-Ebene wegzuraeumen ist nicht noetig — filelock nutzt
-    # fcntl/LockFileEx, d.h. sobald der Halter weg ist, ist das Lock frei.
-    try:
+            logger.warning(
+                "Jarvis-Lock von einer LEBENDEN, aber nicht-reagierenden Instanz "
+                "belegt (pid={}, port={} antwortet nicht) — Lock-Zombie wird "
+                "beendet, damit dieser Start durchkommt.",
+                pid,
+                port,
+            )
+        if not killer(pid):
+            raise SingleInstanceError(
+                f"Jarvis-Lock von nicht-reagierender Instanz (pid={pid}) belegt; "
+                "konnte sie nicht beenden."
+            )
+        # fall through to the stale-reclaim path below (sidecar + retry acquire)
+
+    # Stale (toter Halter) ODER eben beendeter Zombie: Sidecar entfernen, Lock
+    # erneut versuchen. Das Lock-File auf Filesystem-Ebene wegzuraeumen ist nicht
+    # noetig — filelock nutzt fcntl/LockFileEx, d.h. sobald der Halter weg ist,
+    # ist das Lock frei. Nach einem Kill braucht Windows allerdings einen Moment,
+    # den Lock-Handle freizugeben — deshalb mehrere kurze Versuche.
+    with suppress(Exception):
         mp.unlink(missing_ok=True)
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        lock.acquire(timeout=max(timeout, 2.0))
-    except Timeout as exc:
-        raise SingleInstanceError(
-            "Jarvis-Lock ist besetzt aber der Halter reagiert nicht."
-        ) from exc
-    return lock
+    last_exc: Timeout | None = None
+    deadline = time.monotonic() + 5.0
+    while True:
+        try:
+            lock.acquire(timeout=max(timeout, 2.0))
+            return lock
+        except Timeout as exc:
+            last_exc = exc
+            if time.monotonic() >= deadline:
+                raise SingleInstanceError(
+                    "Jarvis-Lock ist besetzt aber der Halter reagiert nicht."
+                ) from last_exc
+            time.sleep(0.3)
 
 
 # ---------------------------------------------------------------------------
@@ -478,9 +572,15 @@ class DesktopApp:
            Event-Loop stoppen, Meta-Sidecar aufraeumen.
     """
 
-    def __init__(self, cfg: JarvisConfig | None = None) -> None:
+    def __init__(
+        self, cfg: JarvisConfig | None = None, *, session_token: str | None = None
+    ) -> None:
         self.cfg = cfg or load_config()
-        self.session_token = _generate_session_token()
+        # The fast-boot launcher generates the token up front (on the main
+        # thread, before this backend-thread construction) so the same token is
+        # used for both the server's TokenAuth env (below) and the window's
+        # _inject_token. When not injected, generate our own (classic path).
+        self.session_token = session_token or _generate_session_token()
         # ENV muss _vor_ dem Start des Backends gesetzt werden: uvicorn-Thread
         # liest sie beim FastAPI-App-Build, um den TokenAuth-Guard zu prime.
         os.environ[self.cfg.ui.auth_token_env] = self.session_token
@@ -495,6 +595,10 @@ class DesktopApp:
         self._backend_thread: threading.Thread | None = None
         self._backend_loop: asyncio.AbstractEventLoop | None = None
         self._server: WebServer | None = None
+        # Serve-first bootstrap: binds the admin port before the heavy build so
+        # /api/health answers immediately and the window can appear (see
+        # _run_backend). The real app is delegated to it once built.
+        self._bootstrap: Any = None
         self._window: Any = None
         self._shutdown_done = False
         self._tray: Any = None
@@ -527,8 +631,13 @@ class DesktopApp:
 
     # ---- Backend-Thread ----------------------------------------------------
 
-    def _run_backend(self) -> None:
+    def _run_backend(self, *, prebound: tuple[Any, Any] | None = None) -> None:
         """Eintrittspunkt des Backend-Threads.
+
+        ``prebound`` (fast-boot launcher path): ``(loop, bootstrap)`` already
+        created + bound BEFORE this heavy module was imported, so the port-bind
+        beat the import floor. When ``None`` (classic path), this creates the
+        loop and binds the bootstrap itself.
 
         Erstellt einen dedizierten asyncio-Loop, startet den ``WebServer``
         (``await server.start()``) und laesst den Loop ewig laufen bis
@@ -550,20 +659,21 @@ class DesktopApp:
         der Chat antwortet mit einer ehrlichen Setup-Anweisung statt mit
         scripted Standard-Phrasen. User-Wunsch: kein "dummer Jarvis" ohne LLM.
         """
-        from jarvis.brain.factory import build_default_brain
-        from jarvis.core.events import (
-            ErrorOccurred,
-            MessageSent,
-            ResponseGenerated,
-            ShowWindowRequested,
-        )
-        from jarvis.mcp import state as mcp_state
-        from jarvis.mcp.registry import MCPRegistry
-        from jarvis.state.chat_store import ChatStore, default_chats_db_path
-        from jarvis.state.supervisor import Supervisor
-        from jarvis.ui.web.server import WebServer  # lazy, vermeidet Circular
-
-        loop = asyncio.new_event_loop()
+        # NOTE: the heavy imports (build_default_brain → the brain graph,
+        # WebServer → fastapi + every route schema, etc.) are DELIBERATELY NOT
+        # done here. They hold the GIL in long C-level blocks, which would
+        # starve the bootstrap loop and delay the UI shell. They are imported
+        # AFTER ``wait_shell_served`` below — i.e. once the window has painted —
+        # so the visible boot is never blocked by the import storm.
+        if prebound is not None:
+            # Fast-boot launcher path: the loop already exists and the bootstrap
+            # is already bound + serving (the launcher did that BEFORE importing
+            # this heavy module, so the bind beat the import floor). Reuse them.
+            loop, _prebound_bootstrap = prebound
+            self._backend_thread = threading.current_thread()
+        else:
+            loop = asyncio.new_event_loop()
+            _prebound_bootstrap = None
         asyncio.set_event_loop(loop)
         self._backend_loop = loop
 
@@ -576,6 +686,14 @@ class DesktopApp:
         _bp = os.environ.get("JARVIS_BOOT_PROFILE") == "1"
         _bp_t0 = time.perf_counter()
         _bp_last = _bp_t0
+        # Expose the boot t0 so ``_start_speech_and_orb`` can emit an honest
+        # ``VOICE_READY_MS`` anchor (wake loop armed) on the SAME clock as
+        # ``BOOT_READY_MS`` (window appears). The gap between the two is the
+        # wake-boot cost the user actually feels ("the window is fast but
+        # talking to it takes forever"). Gated identically; production stdout
+        # unchanged.
+        self._bp_t0 = _bp_t0
+        self._bp = _bp
 
         def _db_mark(_name: str) -> None:
             nonlocal _bp_last
@@ -594,6 +712,30 @@ class DesktopApp:
                     flush=True,
                 )
 
+        # === Serve-first fast boot ===========================================
+        # Bind a tiny bootstrap server on the admin port NOW, before the heavy
+        # WebServer build, so ``/api/health`` answers 200 within ~150 ms. The
+        # desktop shell (``run`` -> ``_wait_for_backend``) gates the pywebview
+        # window on that health poll, so the window appears at bootstrap-bind
+        # time instead of after the full ``server.start()``. The real FastAPI
+        # app is built behind the bootstrap (below) and handed over via
+        # ``set_app``; requests that arrive while it warms are held then
+        # delegated (the "serve first, init behind" contract). Mirrors the
+        # proven headless path (commit 6379222e).
+        if _prebound_bootstrap is not None:
+            # Already bound + BOOT_READY emitted by the launcher — just adopt it.
+            bootstrap = _prebound_bootstrap
+            self._bootstrap = bootstrap
+        else:
+            from jarvis.ui.web.fast_bootstrap import FastBootstrap
+
+            bootstrap = FastBootstrap()
+            loop.run_until_complete(
+                bootstrap.serve("127.0.0.1", self.cfg.ui.admin_api_port)
+            )
+            self._bootstrap = bootstrap
+            _db_boot_ready()  # /api/health is servable now → window can appear
+
         # Fire the heavy OpenWakeWord/onnxruntime import NOW, in a daemon thread,
         # BEFORE the WebServer + brain build + subsystem boot storm grab the
         # Python import lock. The wake-critical Phase-A warm-up gates
@@ -604,8 +746,18 @@ class DesktopApp:
         # finds openwakeword already in sys.modules. No-op on a headless VPS /
         # JARVIS_VOICE=0; never slower than today (worst case Phase A waits on
         # the same import it would have triggered itself).
-        from jarvis.speech.warmup_prefetch import start_wake_import_prefetch
+        from jarvis.speech.warmup_prefetch import (
+            start_tts_import_prefetch,
+            start_wake_import_prefetch,
+        )
         start_wake_import_prefetch()
+        # Same idea for the default TTS SDK (google-genai): the deferred warm-up
+        # loader gates honest readiness on the TTS client, and its dominant cost
+        # is the ``from google import genai`` import (~4-11 s when starved in the
+        # boot storm). Prefetch it now in a daemon thread (disjoint from the wake
+        # import — no torch/shield interaction) so ``_ensure_client`` later hits
+        # a warm sys.modules. No-op for non-Gemini TTS / JARVIS_VOICE=0.
+        start_tts_import_prefetch()
 
         # Same idea for the audio-device settle: the BUG-014 guard
         # (wait_for_stable_audio_devices) is a blocking ~1.5 s poll that gates
@@ -627,8 +779,39 @@ class DesktopApp:
 
         loop.set_exception_handler(_log_unhandled_async)
 
+        # Let the window OPEN and PAINT (fetch /api/health, then index.html +
+        # the entry JS bundle from the bootstrap) BEFORE the GIL-heavy build
+        # starts. The WebServer ctor + its C-extension imports (fastapi, the
+        # route schemas) hold the GIL in long blocks; if they run first they
+        # starve the loop and the user stares at a blank window. Serving the
+        # shell first means the rendered UI is up before the warm-up storm.
+        # Bounded (2 s) so a headless run with no window never stalls the build.
+        if self._bootstrap is not None:
+            loop.run_until_complete(self._bootstrap.wait_shell_served(timeout=2.0))
+
+        # Heavy imports — done NOW (after the shell has painted) so their
+        # GIL-holding C-level work no longer starves the bootstrap loop while
+        # the window is still rendering. See the note at the top of _run_backend.
+        from jarvis.brain.factory import build_default_brain
+        from jarvis.core.events import (
+            ErrorOccurred,
+            MessageSent,
+            ResponseGenerated,
+            ShowWindowRequested,
+        )
+        from jarvis.mcp import state as mcp_state
+        from jarvis.mcp.registry import MCPRegistry
+        from jarvis.state.chat_store import ChatStore, default_chats_db_path
+        from jarvis.state.supervisor import Supervisor
+        from jarvis.ui.web.server import WebServer  # lazy, vermeidet Circular
+
         _db_mark("pre_webserver")
-        server = WebServer(self.cfg)
+        # Build the FastAPI app + all routes (~1 s, CPU-bound) in a worker thread
+        # via the running loop, so the loop stays free to answer the bootstrap's
+        # /api/health while it builds — that is what lets the window appear at
+        # bind time rather than after the ~1 s ctor. WebServer.__init__ is
+        # loop-agnostic (pure construction + route mounting), so off-loop is safe.
+        server = loop.run_until_complete(asyncio.to_thread(WebServer, self.cfg))
         self._server = server
         _db_mark("webserver_ctor")
 
@@ -812,6 +995,106 @@ class DesktopApp:
                 except TimeoutError:
                     pass
             return brain_holder["brain"]
+
+        desktop_cfg = self.cfg
+
+        class _DeferredVoiceBrain:
+            """Callable brain facade that lets the wake listener boot first.
+
+            The voice pipeline only needs a callable brain once a user utterance
+            has been captured. Wake detection itself must not wait for the
+            BrainManager build. This proxy waits at turn dispatch time and
+            delegates to the real shared brain as soon as it is ready.
+            """
+
+            def __init__(self) -> None:
+                self._pending_skill_notes: list[
+                    tuple[tuple[Any, ...], dict[str, Any]]
+                ] = []
+
+            @property
+            def active_provider(self) -> str:
+                brain = brain_holder["brain"]
+                return str(getattr(brain, "active_provider", "starting"))
+
+            @property
+            def reply_language(self) -> str:
+                brain = brain_holder["brain"]
+                if brain is not None:
+                    return str(getattr(brain, "reply_language", "auto"))
+                return str(
+                    getattr(getattr(desktop_cfg, "brain", None), "reply_language", "auto")
+                )
+
+            @property
+            def conversation_language(self) -> str:
+                brain = brain_holder["brain"]
+                return str(getattr(brain, "conversation_language", "")) if brain else ""
+
+            def _brain_unavailable_message(self) -> str:
+                detail = brain_holder["error"] or "BrainManager not initialized"
+                return f"Brain unavailable: {detail}"
+
+            def _drain_skill_notes(self, brain: Any) -> None:
+                note = getattr(brain, "note_skill_trigger", None)
+                if not callable(note) or not self._pending_skill_notes:
+                    return
+                pending = list(self._pending_skill_notes)
+                self._pending_skill_notes.clear()
+                for args, kwargs in pending:
+                    note(*args, **kwargs)
+
+            async def _resolve(self) -> Any | None:
+                brain = await _await_brain_ready()
+                if brain is not None:
+                    self._drain_skill_notes(brain)
+                return brain
+
+            def note_skill_trigger(self, *args: Any, **kwargs: Any) -> None:
+                brain = brain_holder["brain"]
+                note = getattr(brain, "note_skill_trigger", None)
+                if callable(note):
+                    note(*args, **kwargs)
+                    return
+                if len(self._pending_skill_notes) < 16:
+                    self._pending_skill_notes.append((args, dict(kwargs)))
+
+            async def __call__(self, text: str) -> str:
+                brain = await self._resolve()
+                if brain is None:
+                    return self._brain_unavailable_message()
+                return await brain(text)
+
+            async def generate(self, text: str, *args: Any, **kwargs: Any) -> str:
+                brain = await self._resolve()
+                if brain is None:
+                    return self._brain_unavailable_message()
+                generate = getattr(brain, "generate", None)
+                if callable(generate):
+                    return await generate(text, *args, **kwargs)
+                return await brain(text)
+
+            async def generate_stream(self, text: str, **kwargs: Any):
+                brain = await self._resolve()
+                if brain is None:
+                    yield self._brain_unavailable_message()
+                    return
+                stream = getattr(brain, "generate_stream", None)
+                if not callable(stream):
+                    yield await self.generate(text)
+                    return
+                call_kwargs = dict(kwargs)
+                try:
+                    iterator = stream(text, **call_kwargs)
+                except TypeError:
+                    call_kwargs.pop("allow_voice_confirm", None)
+                    try:
+                        iterator = stream(text, **call_kwargs)
+                    except TypeError:
+                        call_kwargs.pop("on_progress", None)
+                        iterator = stream(text, **call_kwargs)
+                async for chunk in iterator:
+                    yield chunk
 
         async def _on_user_message(evt: MessageSent) -> None:
             """Brain-Dispatcher: jedes user-turned MessageSent triggert generate.
@@ -1215,13 +1498,19 @@ class DesktopApp:
                 )
 
         try:
-            loop.run_until_complete(server.start())
-            _db_mark("server_start")
-            # Erst nach erfolgreichem start() ist der Port wirklich belegt.
-            _write_meta(self.cfg.ui.admin_api_port, os.getpid())
-            # The backend is now serving /api/health — the desktop shell's
-            # ``_wait_for_backend`` poll can succeed and the window be created.
-            _db_boot_ready()
+            # The bootstrap already owns the listening socket, so build the real
+            # app WITHOUT starting its own uvicorn, then hand it to the bootstrap
+            # which delegates held + new requests to it.
+            # Serve-WAKE-first ordering (2026-06-27): the heavy ``server.start()``
+            # _init_* chain (mission stack incl. git-worktree-prune, wiki,
+            # sessions, tasks, channels) is NO LONGER awaited here before voice
+            # starts. It is moved into ``_heavy_backend_bg`` below so it runs
+            # BEHIND the live Jarvis-Bar / wake listener. ``_start_speech_and_orb``
+            # needs only ``server.bus`` + ``server.app.state`` (skill_registry,
+            # set in the WebServer ctor — already done above) + ``supervisor`` +
+            # the deferred brain proxy — NONE of that chain. The user-perceived
+            # "ready to talk to Jarvis" gate is the wake listener, not the full
+            # backend, so it must not wait ~15-20 s for subsystems it never uses.
             async def _start_overlay_bg() -> None:
                 try:
                     # Phase 9.8: Overlay-Subprocess starten wenn [overlay].enabled=true.
@@ -1245,28 +1534,87 @@ class DesktopApp:
                         "Overlay-Bootstrap fehlgeschlagen."
                     )
 
-            loop.create_task(_start_overlay_bg(), name="overlay-bootstrap")
-            loop.create_task(_build_brain_bg(), name="brain-build")
-            # MCP-Autostart als Fire-and-Forget-Task — blockt Backend-Ready nicht.
-            loop.create_task(_start_enabled_mcps())
-            loop.create_task(_bootstrap_workflows(), name="workflow-bootstrap")
-            loop.create_task(_bootstrap_conductor(), name="conductor-bootstrap")
-
-            # Speech-Pipeline + Orb-Overlay: after the backend is serving. This
-            # used to run synchronously before ``run_forever()``, which meant the
-            # already-started uvicorn task could not answer ``/api/health`` while
-            # voice/overlay imports and setup ran. The desktop shell waits on
-            # that health probe before creating the window, so any slow wake/GUI
-            # warm-up inflated visible app startup.
-            def _start_desktop_post_ready_services() -> None:
-                brain = brain_holder["brain"]
-                if brain is None and not brain_ready.is_set():
-                    loop.call_later(0.25, _start_desktop_post_ready_services)
+            def _log_speech_and_orb_done(task: asyncio.Task) -> None:
+                if task.cancelled():
                     return
-                self._start_speech_and_orb(loop, server.bus, supervisor, brain, server)
-                self._start_virtual_cursor()
+                exc = task.exception()
+                if exc is not None:
+                    from loguru import logger as _slog
+                    _slog.opt(exception=exc).error(
+                        "Voice/orb startup task crashed."
+                    )
 
-            loop.call_later(0.25, _start_desktop_post_ready_services)
+            # Wake-model GIL-priority gate: set by ``_start_speech_and_orb`` once
+            # the (light base/cpu) wake model has finished loading. The heavy
+            # backend (the GIL-heavy brain + MCP build) waits on this so the wake
+            # model load is NOT starved by the import storm — it loads in ~3 s
+            # isolated instead of ~8.8 s racing brain/mcp. Matches the user's
+            # "window -> Jarvis-Bar -> rest" order.
+            self._wake_model_loaded = asyncio.Event()
+
+            # === 1) Jarvis-Bar / wake listener FIRST ========================
+            # The user's "Jarvis is ready to talk to" gate. Scheduled before the
+            # heavy backend so the wake word arms within ~1 s of the window
+            # appearing, not after the whole _init_* chain. Wake detection only
+            # needs a callable for later turn dispatch, so the deferred proxy
+            # waits for the real shared brain at answer time instead of keeping
+            # the wake word deaf while the app is visibly open.
+            speech_task = loop.create_task(
+                self._start_speech_and_orb(
+                    loop, server.bus, supervisor, _DeferredVoiceBrain(), server
+                ),
+                name="speech-and-orb",
+            )
+            speech_task.add_done_callback(_log_speech_and_orb_done)
+            loop.create_task(_start_overlay_bg(), name="overlay-bootstrap")
+
+            # === 2) Everything else, BEHIND the live wake listener ==========
+            # The heavy backend keeps its original internal order (server.start()
+            # before brain/mcp/workflows/conductor) so no task that depended on a
+            # fully-initialised app.state regresses — only the wake path was
+            # pulled ahead of it. set_app + _write_meta gate API delegation
+            # (serve-first), which Voice does not need.
+            async def _heavy_backend_bg() -> None:
+                # Wake-model CPU/disk priority: hold the ENTIRE heavy backend
+                # (server.start's mission/wiki/session/channel init + git-prune,
+                # then the brain + MCP build) until the wake model has loaded.
+                # Measured: the light base/cpu wake model loads ~4 s isolated but
+                # ~8 s when it races this boot storm for CPU/disk — gating the
+                # whole storm behind wake roughly halves the custom-wake hear-
+                # ready time. This matches the user's explicit "window ->
+                # Jarvis-Bar -> rest" order: the bootstrap already serves the
+                # static UI shell, so only the API DATA (chat history, missions,
+                # wiki) and background services land a few seconds later. Bounded
+                # so a stuck/absent wake load never blocks the backend forever.
+                try:
+                    await asyncio.wait_for(
+                        self._wake_model_loaded.wait(), timeout=12.0
+                    )
+                except (TimeoutError, asyncio.TimeoutError):
+                    from loguru import logger as _slog
+                    _slog.info(
+                        "Heavy backend: wake-model gate timed out (12 s) — "
+                        "starting the backend anyway."
+                    )
+                try:
+                    await server.start(start_serving=False)
+                    bootstrap.set_app(server.app)
+                    _db_mark("server_start")
+                    # Erst nach erfolgreichem start() ist der Port wirklich belegt.
+                    _write_meta(self.cfg.ui.admin_api_port, os.getpid())
+                except Exception as exc:  # noqa: BLE001 — never kill the backend loop
+                    from loguru import logger as _slog
+                    _slog.opt(exception=exc).error(
+                        "Heavy backend init (server.start) failed."
+                    )
+                loop.create_task(_build_brain_bg(), name="brain-build")
+                # MCP-Autostart als Fire-and-Forget-Task — blockt Backend-Ready nicht.
+                loop.create_task(_start_enabled_mcps())
+                loop.create_task(_bootstrap_workflows(), name="workflow-bootstrap")
+                loop.create_task(_bootstrap_conductor(), name="conductor-bootstrap")
+
+            loop.create_task(_heavy_backend_bg(), name="heavy-backend")
+            loop.call_soon(self._start_virtual_cursor)
             loop.run_forever()
         finally:
             try:
@@ -1352,35 +1700,44 @@ class DesktopApp:
             logger.opt(exception=exc).warning("Virtual mouse overlay not startable")
             self._virtual_cursor = None
 
-    def _build_overlay_surface(self, style: str, *, boot: bool = False):
+    def _build_overlay_surface(self, style: str, *, start_hidden: bool = False):
         """Construct (and start) the overlay surface for a display style.
 
         Returns a ``NullOverlay`` for ``"none"`` (no Tk window, no-op surface),
-        a started ``WhisperBarOverlay`` for ``"whisper_bar"``, or a started
+        a started ``JarvisBarOverlay`` for ``"jarvis_bar"``, or a started
         mascot ``OrbOverlay`` for anything else. Shared by boot wiring and the
         live ``swap_overlay`` path so the two never drift.
 
-        ``boot=True`` (only the first-boot call) builds the persistent bar
-        WITHDRAWN; the boot wiring then schedules its reveal on
-        ``VoiceBootStatus(ready=True)``. A non-boot caller must leave ``boot``
-        False so the bar maps immediately (it has no reveal task to wait on).
+        A persistent ``JarvisBarOverlay`` maps its window immediately, so the
+        bar is visible as soon as it is constructed — at boot AND on a live
+        ``swap_overlay``. Its boot visibility is deliberately decoupled from the
+        voice warm-up / wake path (the sidebar "Voice starting…" badge carries
+        readiness instead). A non-persistent bar / the mascot still starts
+        withdrawn and pops on a real session.
         """
         if style == "none":
-            from jarvis.ui.whisperbar import NullOverlay
+            from jarvis.ui.jarvisbar import NullOverlay
 
             return NullOverlay()
-        if style == "whisper_bar":
-            from jarvis.ui.whisperbar import WhisperBarOverlay
+        if style == "jarvis_bar":
+            from jarvis.ui.jarvisbar import JarvisBarOverlay
 
-            # start_hidden only at boot: a persistent bar must NOT map its window
-            # before the speech pipeline can hear the user — the OrbBusBridge
-            # reveals it on VoiceBootStatus(ready=True). A runtime rebuild
-            # (boot=False) shows immediately; the non-persistent bar starts
-            # hidden regardless (it pops on a session).
-            surface = WhisperBarOverlay(
+            # Synchronized appearance (2026-06-29): when ``start_hidden`` is set,
+            # the persistent bar starts WITHDRAWN and is revealed only on the
+            # honest ``VoiceBootStatus(ready=True)`` (via
+            # ``reveal_bar_when_voice_ready``), so the bar appears AT THE SAME
+            # MOMENT the voice stack is genuinely ready — no more "bar shows at
+            # boot, then 'ready' a few seconds later" desync. An earlier attempt
+            # at this left the bar hidden until the first wake word because
+            # ready=True fired unreliably/too early on the fast-boot path; that
+            # root cause is fixed (ready now fires once, after the deferred
+            # loaders bring up wake+VAD+TTS), and a 30 s reveal timeout backstops
+            # it so the bar can never be stuck hidden. A non-persistent bar starts
+            # withdrawn regardless (it pops on a session).
+            surface = JarvisBarOverlay(
                 persistent=self.cfg.ui.bar_persistent,
                 accent=self.cfg.ui.bar_accent,
-                start_hidden=boot,
+                start_hidden=start_hidden,
             )
         else:  # "mascot" (and any legacy style value)
             from ui.orb.overlay import OrbOverlay
@@ -1452,8 +1809,8 @@ class DesktopApp:
         """
         from loguru import logger
 
-        style = (style or "whisper_bar").strip()
-        if style not in ("whisper_bar", "mascot", "none"):
+        style = (style or "jarvis_bar").strip()
+        if style not in ("jarvis_bar", "mascot", "none"):
             return {"ok": False, "applied_live": False, "style": style}
         bridge = getattr(self, "_bridge", None)
         if bridge is None:
@@ -1468,7 +1825,7 @@ class DesktopApp:
             if style == "none":
                 new = cache.get("none")
                 if new is None:
-                    from jarvis.ui.whisperbar import NullOverlay  # no Tk root
+                    from jarvis.ui.jarvisbar import NullOverlay  # no Tk root
 
                     new = NullOverlay()
                     cache["none"] = new
@@ -1492,7 +1849,7 @@ class DesktopApp:
                 except Exception:  # noqa: BLE001
                     logger.debug("old overlay hide failed", exc_info=True)
             try:
-                if style == "whisper_bar" and self.cfg.ui.bar_persistent:
+                if style == "jarvis_bar" and self.cfg.ui.bar_persistent:
                     new.show("idle")
             except Exception:  # noqa: BLE001
                 logger.debug("post-swap show failed", exc_info=True)
@@ -1584,7 +1941,7 @@ class DesktopApp:
         )
         return True
 
-    def _start_speech_and_orb(
+    async def _start_speech_and_orb(
         self,
         loop: asyncio.AbstractEventLoop,
         bus: Any,
@@ -1612,14 +1969,14 @@ class DesktopApp:
 
         # On-screen overlay in its own Tk daemon thread — the bus bridge reacts
         # to SystemStateChanged and drives whichever surface is selected.
-        # Style is chosen by [ui].orb_style: "whisper_bar" (slim default),
+        # Style is chosen by [ui].orb_style: "jarvis_bar" (slim default),
         # "mascot" (ghost orb), or "none". Both real surfaces share OrbBusBridge.
         try:
             from loguru import logger
 
             from jarvis.platform.probes import has_overlay
 
-            orb_style = self.cfg.ui.orb_style or "whisper_bar"
+            orb_style = self.cfg.ui.orb_style or "jarvis_bar"
             overlay_ok = has_overlay()
 
             if not overlay_ok:
@@ -1636,21 +1993,25 @@ class DesktopApp:
                 from ui.orb.bus_bridge import OrbBusBridge
 
                 # NullOverlay for "none" still gets a bridge, so a live switch to
-                # bar/mascot works without a restart. boot=True builds the
-                # persistent bar withdrawn — revealed below on voice-ready.
-                surface = self._build_overlay_surface(orb_style, boot=True)
+                # bar/mascot works without a restart. Synchronized appearance:
+                # the persistent bar starts WITHDRAWN (start_hidden=True) and is
+                # revealed only on the honest VoiceBootStatus(ready=True), so it
+                # appears exactly when the voice stack is genuinely ready — no
+                # "bar at boot, ready a few seconds later" desync.
+                surface = self._build_overlay_surface(orb_style, start_hidden=True)
                 hide_on_idle = (
                     (not self.cfg.ui.bar_persistent)
-                    if orb_style == "whisper_bar"
+                    if orb_style == "jarvis_bar"
                     else True
                 )
                 bridge = OrbBusBridge(bus=bus, orb=surface, hide_on_idle=hide_on_idle)
                 bridge.attach()
-                # Reveal the (start-hidden) persistent bar only once voice is
-                # ready to listen — gated on VoiceBootStatus(ready=True), with a
-                # bounded fallback so a voice-offline host still gets its bar.
-                # loop.create_task works before run_forever (it just schedules);
-                # the boot surface starts withdrawn, so this never flickers.
+                # Visibility gate: the persistent bar started withdrawn (above),
+                # so this task is what actually SHOWS it — it waits for
+                # VoiceBootStatus(ready=True) (full stack: wake+VAD+TTS) and then
+                # maps + lifts the idle pill. Bounded by a 30 s timeout fallback
+                # so the bar can never be stuck hidden. A non-persistent bar / the
+                # mascot is left untouched (it pops on a real session).
                 loop.create_task(
                     bridge.reveal_bar_when_voice_ready(),
                     name="overlay-boot-reveal",
@@ -1758,7 +2119,6 @@ class DesktopApp:
         # Wenn brain ein MockBrain ist (Fallback), funktioniert Voice-TTS auch,
         # aber ohne echten LLM-Output → erkennbar an scripted Replies.
         try:
-            from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
             from jarvis.plugins.tts import build_tts_from_config
             from jarvis.plugins.wake.openwakeword_provider import (
                 PRODUCTION_WAKE_THRESHOLD,
@@ -1805,6 +2165,16 @@ class DesktopApp:
             # build it when the plan asks for it. See
             # docs/local-wakeword/{RESEARCH-AND-DESIGN,CUSTOM-WAKE-WORD-DESIGN}.md.
             stt = None
+            # Progressive wake-model state: when we build the LIGHT base/cpu wake
+            # model (fast_first), remember the phrase so a background task can
+            # hot-swap in the heavier turbo/cuda model once the pipeline is live.
+            wake_phrase = None
+            _wake_progressive_upgrade = False
+            _t_build0 = time.perf_counter()
+            # Concurrency handle for the heavy wake-model build (below). It is
+            # started in a worker thread and joined just before the pipeline ctor
+            # so the TTS + ack-brain builds overlap it instead of waiting it out.
+            wake_task: "asyncio.Task | None" = None
             if self.cfg.trigger.heavy_local_whisper or wake_plan.needs_local_whisper:
                 # The local wake-match / live-preview Whisper — a SMALL model on
                 # CPU (cfg.stt.wake_*), not the heavy utterance model on the GPU.
@@ -1812,6 +2182,12 @@ class DesktopApp:
                 # (~71 s vs ~0.45 s for base/cpu, measured); wake matching is
                 # latency-tolerant and does not need the big model.
                 from jarvis.plugins.stt import build_wake_whisper
+
+                # Tell the boot-storm housekeeping (deferred registry disk scans)
+                # that a local wake model is loading, so it yields CPU/disk to the
+                # wake-model load first (no-op for headless / voice-off).
+                from jarvis.core import runtime_refs as _rr_wake
+                _rr_wake.signal_wake_model_expected()
 
                 # Seed the wake Whisper's prompt with the custom phrase ONLY on
                 # the stt_match path (a custom name with no OWW model). The
@@ -1821,10 +2197,36 @@ class DesktopApp:
                 wake_phrase = (
                     wake_plan.phrase if wake_plan.needs_local_whisper else None
                 )
-                stt = build_wake_whisper(
-                    self.cfg.stt, language=stt_language, wake_phrase=wake_phrase
+                # Build the local wake-Whisper OFF the event loop: it probes CUDA
+                # availability, whose first-call context init JIT-compiles for
+                # ~30-60 s on a Blackwell GPU (cold cache). Offloading keeps the
+                # backend responsive — a desktop app must never freeze its UI
+                # while a subsystem warms up. The persisted probe cache
+                # (jarvis.plugins.stt._wake_cuda_available) makes this near-instant
+                # on every boot after the first.
+                # Start the wake-model build in a worker thread but DON'T block
+                # on it here — the TTS + ack-brain builds below run on the loop
+                # thread WHILE it loads (the wake C-extension / CUDA load releases
+                # the GIL), overlapping their cost instead of paying it after the
+                # ~3-5 s wake build. Joined right before the pipeline ctor. The
+                # LIGHT base/cpu model is built now (hear-ready in ~3 s, no CUDA
+                # JIT); the turbo/cuda hot-swap is armed in the background after
+                # the pipeline is live (see ``_upgrade_wake_model_bg``).
+                wake_task = asyncio.create_task(
+                    asyncio.to_thread(
+                        build_wake_whisper,
+                        self.cfg.stt,
+                        language=stt_language,
+                        wake_phrase=wake_phrase,
+                        fast_first=True,
+                    ),
+                    name="voice-build-wake-model",
                 )
+                _wake_progressive_upgrade = True
+            # TTS + ack-brain build here, on the loop thread, overlapping the
+            # wake-model build started above.
             tts = build_tts_from_config(self.cfg.tts)
+            _t_tts = time.perf_counter()
             # SpeechPipeline.brain_callback braucht Callable[[str], Awaitable[str]].
             # BrainManager und Echo-/Gemini-Fallback erfüllen das via __call__.
             # MockBrain erfüllt es nicht (hat nur respond()) → eigener Voice-Brain.
@@ -1850,6 +2252,20 @@ class DesktopApp:
             # None. Threaded into the pipeline below.
             from jarvis.brain.factory import build_ack_brain as _bab
             voice_ack_brain = _bab(self.cfg)
+            _t_ack = time.perf_counter()
+            # Join the wake-model build started above (it loaded in its worker
+            # thread WHILE the TTS + ack-brain were built here). On failure
+            # re-raise to the outer handler — voice degrades exactly as the
+            # previous inline ``await`` did — and cancel the task so the worker
+            # thread's result is never left orphaned.
+            if wake_task is not None:
+                try:
+                    stt = await wake_task
+                except BaseException:
+                    if not wake_task.done():
+                        wake_task.cancel()
+                    raise
+            _t_stt = time.perf_counter()
             _call_hk, _ptt_hk = self.cfg.trigger.resolve_hotkeys()
             pipeline = SpeechPipeline(
                 call_hotkeys=_call_hk,
@@ -1931,6 +2347,24 @@ class DesktopApp:
                 # phrase matcher for the verifier + rolling-whisper.
                 wake_plan=wake_plan,
             )
+            _t_ctor = time.perf_counter()
+            # Targeted boot-timing breakdown so the log shows exactly which voice
+            # build step costs what (the wake-Whisper CUDA probe was the hidden
+            # ~60 s "VOICE STARTING…" stall before the persisted probe cache).
+            from loguru import logger as _vlog
+            # Stamps now reflect the OVERLAPPED build: TTS + ack-brain run on the
+            # loop thread while the wake model loads in its worker thread, so
+            # ``wake_join`` is only the wake time NOT already hidden behind them
+            # (≈0 when fully overlapped). total is wall-clock for the whole build.
+            _vlog.info(
+                "Voice setup build timings (ms): tts={:.0f} ack_brain={:.0f} "
+                "wake_join={:.0f} pipeline_ctor={:.0f} total={:.0f}",
+                (_t_tts - _t_build0) * 1000.0,
+                (_t_ack - _t_tts) * 1000.0,
+                (_t_stt - _t_ack) * 1000.0,
+                (_t_ctor - _t_stt) * 1000.0,
+                (_t_ctor - _t_build0) * 1000.0,
+            )
             # Pipeline-Referenz fuer Live-Provider-Switches (TTS) auf app.state
             # legen — der /api/tts/switch-Endpoint baut bei einem UI-Wechsel
             # einen neuen TTS-Provider und ruft pipeline.set_tts() auf, ohne
@@ -1968,7 +2402,119 @@ class DesktopApp:
                     )
 
             self._pipeline_task.add_done_callback(_on_pipeline_done)
-            logger.info("Speech-Pipeline gestartet — Wake: 'Hey Jarvis'.")
+            # Log the ACTUAL configured wake word, not a hardcoded "Hey Jarvis"
+            # (the custom phrase, e.g. "Luca", or the openWakeWord keyword).
+            logger.info(
+                "Speech-Pipeline gestartet — Wake: {!r}.",
+                wake_plan.phrase or wake_plan.oww_keyword or "?",
+            )
+            if getattr(self, "_bp", False):
+                # Honest wake-armed anchor on the same clock as BOOT_READY_MS.
+                print(
+                    f"VOICE_READY_MS={(time.perf_counter() - self._bp_t0) * 1000.0:.1f}",
+                    flush=True,
+                )
+
+            # Wake-model GIL-priority gate: signal the heavy backend (brain/mcp)
+            # to resume as soon as the LIGHT base/cpu wake model has loaded — or
+            # immediately if there is no local wake model (e.g. the OWW path), so
+            # the backend never waits needlessly.
+            def _wake_model_is_loaded() -> bool:
+                ww = getattr(pipeline, "_whisper_wake", None)
+                base_stt = getattr(ww, "_stt", None) if ww is not None else stt
+                return (
+                    base_stt is not None
+                    and getattr(base_stt, "_model", None) is not None
+                )
+
+            from jarvis.core import runtime_refs as _rr_ready
+            if stt is None:
+                self._wake_model_loaded.set()
+                _rr_ready.signal_wake_model_ready()
+            else:
+                async def _signal_wake_model_loaded() -> None:
+                    for _ in range(40):  # ~20 s cap, then release the gate anyway
+                        if _wake_model_is_loaded():
+                            break
+                        await asyncio.sleep(0.5)
+                    self._wake_model_loaded.set()
+                    # Release the boot-storm housekeeping gate too.
+                    _rr_ready.signal_wake_model_ready()
+
+                loop.create_task(
+                    _signal_wake_model_loaded(), name="wake-model-ready-signal"
+                )
+
+            # Progressive wake model: the pipeline is now live on the LIGHT
+            # base/cpu wake model (hear-ready fast, no CUDA JIT). Hot-swap the
+            # heavier turbo/cuda model in the BACKGROUND for faster steady-state
+            # inference, so a custom phrase comes up fast AND stays accurate. No-op
+            # on a CPU-only host (the build returns base again). Any failure leaves
+            # the working base/cpu model in place — wake never breaks.
+            if _wake_progressive_upgrade:
+                _wake_phrase_for_upgrade = wake_phrase
+                _stt_lang_for_upgrade = stt_language
+
+                async def _upgrade_wake_model_bg() -> None:
+                    try:
+                        from jarvis.plugins.stt import (
+                            build_wake_whisper as _bww,
+                        )
+
+                        ww = getattr(pipeline, "_whisper_wake", None)
+                        # Wait until the base/cpu wake model is loaded (the same
+                        # gate the heavy backend uses) BEFORE loading turbo —
+                        # loading turbo in parallel races the base load on the
+                        # GIL/CUDA-init lock and doubled it (~3 s -> ~20 s,
+                        # measured 2026-06-27). Wake is already live on base while
+                        # we wait, so this costs nothing user-visible.
+                        try:
+                            await asyncio.wait_for(
+                                self._wake_model_loaded.wait(), timeout=120.0
+                            )
+                        except (TimeoutError, asyncio.TimeoutError):
+                            pass
+
+                        turbo = await asyncio.to_thread(
+                            _bww,
+                            self.cfg.stt,
+                            language=_stt_lang_for_upgrade,
+                            wake_phrase=_wake_phrase_for_upgrade,
+                            fast_first=False,
+                        )
+                        if getattr(turbo, "_model_name", "base") == "base":
+                            return  # no GPU upgrade available — keep base/cpu
+                        # WARM-UP, not just load: ``warm_up`` runs one real
+                        # inference so the turbo/cuda kernels are primed BEFORE
+                        # the ref swap below makes it the live wake model. Without
+                        # this the first "Hey Jarvis" after the swap hits a cold
+                        # CUDA inference (kernel JIT / cuDNN search, several
+                        # seconds) and is swallowed by the rolling-window wake
+                        # loop — the same first-wake-missed bug the boot pre-warm
+                        # fixes (forensic 2026-06-28). Falls back to a plain load
+                        # for any STT without the prime hook.
+                        _turbo_prime = getattr(turbo, "warm_up", None)
+                        await asyncio.to_thread(
+                            _turbo_prime
+                            if callable(_turbo_prime)
+                            else turbo._ensure_model
+                        )
+                        if ww is not None:
+                            # Atomic ref swap (GIL); the next transcribe uses turbo.
+                            ww._stt = turbo
+                            logger.info(
+                                "Wake-model upgraded base/cpu -> turbo/cuda "
+                                "(background hot-swap; faster steady-state inference)."
+                            )
+                    except Exception as exc:  # noqa: BLE001 — base/cpu stays; wake never breaks
+                        logger.warning(
+                            "Wake-model turbo upgrade failed (staying on base/cpu): %s",
+                            exc,
+                        )
+
+                self._wake_upgrade_task = loop.create_task(
+                    _upgrade_wake_model_bg(), name="wake-model-turbo-upgrade"
+                )
         except Exception as exc:  # noqa: BLE001
             from loguru import logger
             # FAIL-LOUD (2026-05-28 "Hey Jarvis silently dead" incident): a
@@ -2024,6 +2570,8 @@ class DesktopApp:
                 desktop._window.restore()
                 desktop._window_visible = True
                 _bring_window_to_front_by_title(WINDOW_TITLE)
+                # Restore the persistent bar if a prior minimise cleared it.
+                desktop._restore_overlay_for_visible_window()
                 return {"ok": True, "focused": True}
             except Exception as exc:  # noqa: BLE001
                 return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
@@ -2087,15 +2635,25 @@ class DesktopApp:
     # ---- Main-Entry --------------------------------------------------------
 
     def run(self) -> int:
-        """Blockt bis der User das Fenster schliesst. Rueckgabe = Exit-Code."""
-        import webview  # type: ignore[import-not-found]
+        """Blockt bis der User das Fenster schliesst. Rueckgabe = Exit-Code.
 
+        Classic boot: start the backend thread here, then run the window. The
+        fast-boot launcher path starts the backend thread itself (so the
+        bootstrap binds BEFORE the heavy imports) and calls ``run_window_only``
+        directly — both share the identical window code below.
+        """
         self._backend_thread = threading.Thread(
             target=self._run_backend,
             name="jarvis-backend",
             daemon=True,
         )
         self._backend_thread.start()
+        return self.run_window_only()
+
+    def run_window_only(self) -> int:
+        """The main-thread pywebview window. Assumes the backend thread is
+        already running (started by :meth:`run` or the fast-boot launcher)."""
+        import webview  # type: ignore[import-not-found]
 
         if not self._wait_for_backend():
             sys.stderr.write("Backend startete nicht in 45s — Abbruch.\n")
@@ -2115,17 +2673,9 @@ class DesktopApp:
 
         # Close-Button = Minimize-to-Tray (User-Entscheidung 2026-04-20).
         # `closing`-Callback gibt False zurueck → pywebview bricht Destroy ab.
-        def _on_closing() -> bool:
-            if self._user_requested_quit:
-                return True
-            try:
-                self._window.hide()
-                self._window_visible = False
-            except Exception:  # noqa: BLE001
-                return True
-            return False
-
-        self._window.events.closing += _on_closing
+        # Extracted to a method so the tray-minimise + overlay-clear contract
+        # is unit-testable (test_desktop_minimize_to_tray_overlay.py).
+        self._window.events.closing += self._on_window_closing
 
         # Tray + Bridge zum Main-Thread-Window starten. Daemon-Thread, damit
         # er beim Hauptprogramm-Exit nicht am Leben bleibt.
@@ -2170,25 +2720,46 @@ class DesktopApp:
         from jarvis.ui.icon_utils import (
             project_icon_path,
             set_window_icon_by_title,
+            set_window_icon_for_pid,
         )
 
         ico = project_icon_path()
         if not ico.is_file():
             return
 
+        own_pid = os.getpid()
+
         def _poll() -> None:
             from loguru import logger
 
-            deadline = time.monotonic() + 5.0
+            # 30s window (was 5s): a voice-loaded boot delays the WebView2 host
+            # window past the old 5s deadline, so the icon was never set and the
+            # titlebar kept the pythonw.exe Python logo (forensic 2026-06-28).
+            # Match by title OR by our own process id (the WebView2 host title is
+            # applied late, so an exact-title FindWindowW alone is racy), and keep
+            # re-applying for a few seconds after the first success — WebView2
+            # re-assigns the process icon once its control finishes initialising,
+            # so a single WM_SETICON does not stick.
+            deadline = time.monotonic() + 30.0
+            first_set_at: float | None = None
             while time.monotonic() < deadline:
-                if set_window_icon_by_title(WINDOW_TITLE, ico, quiet=True):
-                    logger.debug("Taskbar-Icon fruehzeitig gesetzt.")
-                    return
-                time.sleep(0.05)
-            logger.warning(
-                "Taskbar-Icon-Setter Timeout — Fenster '{}' nicht gefunden.",
-                WINDOW_TITLE,
-            )
+                ok = set_window_icon_by_title(WINDOW_TITLE, ico, quiet=True)
+                if not ok:
+                    ok = set_window_icon_for_pid(own_pid, ico)
+                if ok:
+                    if first_set_at is None:
+                        first_set_at = time.monotonic()
+                        logger.debug(
+                            "Taskbar-Icon gesetzt; re-arming gegen WebView2-Override."
+                        )
+                    elif time.monotonic() - first_set_at > 8.0:
+                        return
+                time.sleep(0.3)
+            if first_set_at is None:
+                logger.warning(
+                    "Taskbar-Icon-Setter Timeout — Fenster '{}' nicht gefunden.",
+                    WINDOW_TITLE,
+                )
 
         threading.Thread(
             target=_poll, name="jarvis-icon-setter", daemon=True
@@ -2257,6 +2828,8 @@ class DesktopApp:
             self._window_visible = True
             _bring_window_to_front_by_title(WINDOW_TITLE)
             self._reload_window_if_stale()
+            # Bring the persistent bar back too (it was cleared on minimise).
+            self._restore_overlay_for_visible_window()
         except Exception:  # noqa: BLE001
             pass
 
@@ -2285,6 +2858,94 @@ class DesktopApp:
         except Exception:  # noqa: BLE001
             pass
 
+    # ---- Window close (X) = minimise to tray + clear overlay ---------------
+
+    def _on_window_closing(self) -> bool:
+        """pywebview ``closing`` callback: the X minimises to tray, not quit.
+
+        Returns ``True`` to allow the destroy — a genuine tray "Quit", where the
+        real :meth:`shutdown` tears everything down — and ``False`` to veto it
+        and hide the window instead. On a minimise we ALSO take the overlay bar
+        off the screen so the desktop is actually clean; it returns on the next
+        window-show or voice session.
+        """
+        if self._user_requested_quit:
+            return True
+        try:
+            self._window.hide()
+            self._window_visible = False
+            self._suppress_overlay_for_hidden_window()
+        except Exception:  # noqa: BLE001
+            return True
+        return False
+
+    def _suppress_overlay_for_hidden_window(self) -> None:
+        """Take the overlay bar off the screen while the window is minimised.
+
+        The persistent bar would otherwise stay on screen after the X (the app
+        keeps running in the tray for voice), which reads as "the bar won't
+        close". Drive the bar into the non-persistent (hide-at-idle) regime and
+        hide it now, WITHOUT mutating the user's saved ``bar_persistent``
+        preference. Voice activity still surfaces it (the bridge shows it on a
+        session and hides it again at idle); reopening the window restores the
+        configured regime via :meth:`_restore_overlay_for_visible_window`.
+        """
+        bar = getattr(self, "_orb", None)
+        bridge = getattr(self, "_bridge", None)
+        if bar is None or bridge is None:
+            return
+        try:
+            if getattr(bridge, "_boot_reveal_done", True) is False:
+                # The persistent jarvis bar starts withdrawn at boot and is
+                # revealed once voice is ready. Before that first reveal there
+                # is no visible surface to suppress; flipping hide-on-idle here
+                # would turn the one-shot startup reveal into a no-op.
+                return
+            bridge._hide_on_idle = True
+            if hasattr(bar, "_persistent"):
+                bar._persistent = False
+            hide = getattr(bar, "hide", None)
+            if callable(hide):
+                hide()
+        except Exception:  # noqa: BLE001
+            from loguru import logger
+
+            logger.debug(
+                "overlay suppress for hidden window failed", exc_info=True
+            )
+
+    def _restore_overlay_for_visible_window(self) -> None:
+        """Reverse of :meth:`_suppress_overlay_for_hidden_window`.
+
+        Put the bar back into the user's configured persistence regime when the
+        window is shown again (tray click / focus / overlay right-click). A
+        persistent user gets the idle pill back immediately; a non-persistent
+        user keeps the hide-at-idle behaviour (the bar pops only on a session).
+        """
+        bar = getattr(self, "_orb", None)
+        bridge = getattr(self, "_bridge", None)
+        if bar is None or bridge is None:
+            return
+        try:
+            # Mirror the boot wiring in ``_start_speech_and_orb``: bar_persistent
+            # only governs the jarvis bar; the mascot is always hide-at-idle.
+            orb_style = getattr(self.cfg.ui, "orb_style", "jarvis_bar") or "jarvis_bar"
+            persistent = bool(getattr(self.cfg.ui, "bar_persistent", True))
+            is_bar = orb_style == "jarvis_bar"
+            bridge._hide_on_idle = (not persistent) if is_bar else True
+            if hasattr(bar, "_persistent"):
+                bar._persistent = persistent
+            if is_bar and persistent:
+                show = getattr(bar, "show", None)
+                if callable(show):
+                    show("idle")
+        except Exception:  # noqa: BLE001
+            from loguru import logger
+
+            logger.debug(
+                "overlay restore for visible window failed", exc_info=True
+            )
+
     # ---- Shutdown ----------------------------------------------------------
 
     def shutdown(self) -> int:
@@ -2300,7 +2961,7 @@ class DesktopApp:
         # oben rechts verschwindet bevor der Prozess terminiert.
         if self._orb is not None:
             try:
-                # Prefer stop() when the surface has it (whisper bar:
+                # Prefer stop() when the surface has it (jarvis bar:
                 # unsubscribes its level_tap sink + destroys the window). The
                 # mascot orb has no stop() → fall back to hide().
                 stop = getattr(self._orb, "stop", None)
@@ -2363,6 +3024,25 @@ class DesktopApp:
                     loop.call_soon_threadsafe(self._pipeline_task.cancel)
                 except Exception:  # noqa: BLE001
                     pass
+            # Wake-model background tasks + gate: cancel the turbo hot-swap task
+            # and RELEASE the wake-model-loaded gate so any task still parked in
+            # ``await self._wake_model_loaded.wait()`` (the heavy-backend gate)
+            # unblocks instead of sitting pending through shutdown. Left pending,
+            # these log "Task was destroyed but it is pending" and can stall
+            # loop.stop → the self-restart hangs and the old process keeps the
+            # port (forensic 2026-06-27: PID 51240 hung ~30 min on shutdown).
+            _wut = getattr(self, "_wake_upgrade_task", None)
+            if _wut is not None and not _wut.done():
+                try:
+                    loop.call_soon_threadsafe(_wut.cancel)
+                except Exception:  # noqa: BLE001
+                    pass
+            _wml = getattr(self, "_wake_model_loaded", None)
+            if _wml is not None:
+                try:
+                    loop.call_soon_threadsafe(_wml.set)
+                except Exception:  # noqa: BLE001
+                    pass
             # Workflow-Scheduler + Store sauber herunterfahren — verhindert
             # dass ein cron-Tick mitten im Shutdown noch einen Run triggert.
             wf_scheduler = getattr(self, "_workflow_scheduler", None)
@@ -2410,6 +3090,14 @@ class DesktopApp:
                 asyncio.run_coroutine_threadsafe(stop_overlay(), loop).result(timeout=2.0)
             except Exception:  # noqa: BLE001
                 pass
+            # Stop the serve-first bootstrap (it owns the listening socket).
+            if self._bootstrap is not None:
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        self._bootstrap.stop(), loop
+                    ).result(timeout=3.0)
+                except Exception:  # noqa: BLE001
+                    pass
             try:
                 fut = asyncio.run_coroutine_threadsafe(server.stop(), loop)
                 try:

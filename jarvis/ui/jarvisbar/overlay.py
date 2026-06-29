@@ -1,4 +1,4 @@
-"""WhisperBarOverlay — the slim Tk on-screen bar.
+"""JarvisBarOverlay — the slim Tk on-screen bar.
 
 Implements the same duck-typed surface API ``OrbBusBridge`` already drives, so
 the bridge is reused unchanged. ``show(mode)`` selects the renderer state;
@@ -29,9 +29,9 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from jarvis.ui.whisperbar import interaction, renderer
+from jarvis.ui.jarvisbar import interaction, renderer
 
-log = logging.getLogger("jarvis.ui.whisperbar")
+log = logging.getLogger("jarvis.ui.jarvisbar")
 
 COLOR_KEY_HEX = "#FF00FF"
 DRAG_THRESHOLD_PX = 16
@@ -52,6 +52,18 @@ BAR_ALPHA = 0.6
 # short word/sentence gaps so they don't flap back to the wave on every pause.
 AUDIBLE_LEVEL = 0.06
 AUDIBLE_HOLD_S = 0.5
+
+# Frame-loop revival watchdog (anti-freeze). The animation re-arms only from its
+# own tail, so any single silent break (a swallowed after() failure, an exception
+# before the try/finally, a one-off Tk hiccup) would kill it permanently while
+# the Tk mainloop keeps running — the bar stays visible, frozen on its last
+# frame. A SECOND, independent after-chain (``_schedule_frame_watchdog``) watches
+# a per-frame heartbeat (``_last_frame_ns``) and kicks the frame loop back to life
+# when it goes stale. It renders nothing, so it is immune to the render/PIL faults
+# that kill the frame loop. The threshold is far above the 16 ms tick, so a
+# continuously-stamped heartbeat can never false-fire while the loop is ticking.
+WATCHDOG_INTERVAL_MS = 1000
+FRAME_STALL_THRESHOLD_NS = 2_000_000_000  # 2 s of silence ⇒ the loop is dead
 
 
 def _primary_work_area() -> tuple[int, int, int, int] | None:
@@ -77,7 +89,7 @@ def _primary_work_area() -> tuple[int, int, int, int] | None:
         return None
 
 
-class WhisperBarOverlay:
+class JarvisBarOverlay:
     def __init__(
         self,
         persistent: bool = True,
@@ -100,9 +112,13 @@ class WhisperBarOverlay:
         # (>= AUDIBLE_LEVEL). Drives the wave↔bars choice in _schedule_frame.
         # 0.0 = "long ago" → starts on the wave, not the bars.
         self._last_audible_t = 0.0
+        # monotonic_ns() stamped on every frame tick (alive or dropped). The
+        # revival watchdog compares against this to tell a living loop from a
+        # silently-dead one. 0 = "no frame has run yet" → the watchdog holds off.
+        self._last_frame_ns = 0
         self._root: Any = None
         self._canvas: Any = None
-        self._renderer: renderer.WhisperBarRenderer | None = None
+        self._renderer: renderer.JarvisBarRenderer | None = None
         self._photo: Any = None
         self._image_id: Any = None
         self._ui_queue: queue.Queue = queue.Queue()
@@ -118,6 +134,11 @@ class WhisperBarOverlay:
         self._feedback_publisher: Callable[[str, dict], None] | None = None
         self._on_show_window: Callable[[], None] | None = None
         self._hovered = False  # mouse over the bar → reveal the close cross
+        # Local mirror of the global voice-mute state (mic muted FOR JARVIS only).
+        # Flipped optimistically on a mic-button click and reconciled by the
+        # authoritative VoiceMuteChanged via set_muted(). A bool write is atomic
+        # under the GIL, like _ext_level — read on the frame loop without a lock.
+        self._muted = False
 
     # ------------------------------------------------------------------ #
     # Surface API consumed by OrbBusBridge                               #
@@ -163,6 +184,15 @@ class WhisperBarOverlay:
     def start_mouth_animation(self, duration_ms: int = 60000) -> None: ...
     def stop_mouth_animation(self) -> None: ...
 
+    def set_muted(self, muted: bool) -> None:
+        """Mirror the pipeline's authoritative voice-mute state onto the bar.
+
+        Called by OrbBusBridge on every VoiceMuteChanged (from this bar, the
+        mascot, or a voice command), so the red rim + slashed-mic icon stay in
+        lock-step with reality regardless of where the toggle originated. Plain
+        atomic bool write — the frame loop reads it; no Tk marshal needed."""
+        self._muted = bool(muted)
+
     def set_on_mute_toggle(self, callback: Callable[[], None] | None) -> None:
         self._on_mute_toggle = callback
 
@@ -191,12 +221,12 @@ class WhisperBarOverlay:
             try:
                 self.start()
             except Exception:  # noqa: BLE001
-                log.exception("WhisperBar thread start failed")
+                log.exception("JarvisBar thread start failed")
 
-        t = threading.Thread(target=_run, name="whisperbar-tk-mainloop", daemon=True)
+        t = threading.Thread(target=_run, name="jarvisbar-tk-mainloop", daemon=True)
         t.start()
         if not self._started.wait(timeout=timeout):
-            log.error("WhisperBar window not initialised within %.1fs", timeout)
+            log.error("JarvisBar window not initialised within %.1fs", timeout)
 
     def start(self) -> None:
         import tkinter as tk
@@ -204,11 +234,11 @@ class WhisperBarOverlay:
         from PIL import ImageTk  # noqa: F401 — fail fast here if Pillow missing
 
         self._tk_thread_id = threading.get_ident()
-        self._renderer = renderer.WhisperBarRenderer(accent=self._accent)
+        self._renderer = renderer.JarvisBarRenderer(accent=self._accent)
 
         root = tk.Tk()
         self._root = root
-        root.title("JarvisWhisperBar")
+        root.title("JarvisBar")
         root.overrideredirect(True)
         root.wm_attributes("-topmost", True)
         try:
@@ -277,6 +307,7 @@ class WhisperBarOverlay:
         self._started.set()
         self._schedule_ui_queue()
         self._schedule_frame()
+        self._schedule_frame_watchdog()  # independent anti-freeze revival loop
         root.mainloop()
 
     def stop(self) -> None:
@@ -292,7 +323,7 @@ class WhisperBarOverlay:
             try:
                 root.after(0, root.destroy)
             except Exception:  # noqa: BLE001
-                log.debug("whisperbar destroy failed", exc_info=True)
+                log.debug("jarvisbar destroy failed", exc_info=True)
 
     # ------------------------------------------------------------------ #
     # Tk-thread internals                                                #
@@ -307,7 +338,7 @@ class WhisperBarOverlay:
         try:
             from jarvis.core.config_writer import DEFAULT_CONFIG_FILE
 
-            pos = interaction.load_whisperbar_position(DEFAULT_CONFIG_FILE)
+            pos = interaction.load_jarvisbar_position(DEFAULT_CONFIG_FILE)
         except Exception:  # noqa: BLE001
             pos = None
         if pos is not None:
@@ -336,7 +367,7 @@ class WhisperBarOverlay:
         try:
             self._root.deiconify()
         except Exception:  # noqa: BLE001
-            log.debug("whisperbar deiconify failed", exc_info=True)
+            log.debug("jarvisbar deiconify failed", exc_info=True)
 
     def _do_hide(self) -> None:
         if self._root is None:
@@ -344,7 +375,7 @@ class WhisperBarOverlay:
         try:
             self._root.withdraw()
         except Exception:  # noqa: BLE001
-            log.debug("whisperbar withdraw failed", exc_info=True)
+            log.debug("jarvisbar withdraw failed", exc_info=True)
 
     def _enqueue_ui(self, fn: Callable[[], None]) -> None:
         if self._root is None:
@@ -365,7 +396,7 @@ class WhisperBarOverlay:
             try:
                 fn()
             except Exception:  # noqa: BLE001
-                log.exception("WhisperBar UI command failed")
+                log.exception("JarvisBar UI command failed")
         self._root.after(20, self._schedule_ui_queue)
 
     def _schedule_frame(self) -> None:
@@ -404,7 +435,8 @@ class WhisperBarOverlay:
             # exactly like it reacts to your mic. No synthetic floor (that made the
             # bars look uniformly blocky).
             img = self._renderer.render(
-                t, effective_mode, self._ext_level, hovered=self._hovered
+                t, effective_mode, self._ext_level,
+                hovered=self._hovered, muted=self._muted,
             )
             # PhotoImage must be retained on self, else Tk GCs it before drawing.
             self._photo = ImageTk.PhotoImage(img)
@@ -415,8 +447,12 @@ class WhisperBarOverlay:
             else:
                 self._canvas.itemconfig(self._image_id, image=self._photo)
         except Exception:  # noqa: BLE001 — one bad frame must never freeze the bar
-            log.exception("WhisperBar frame render failed — dropping one frame")
+            log.exception("JarvisBar frame render failed — dropping one frame")
         finally:
+            # Heartbeat first: a dropped-but-rearmed frame is still a LIVING loop,
+            # so we stamp even on the failure path. The watchdog reads this to
+            # tell alive from silently-dead.
+            self._last_frame_ns = time.monotonic_ns()
             # Re-arm unconditionally so the loop is self-healing. Guard the after()
             # call itself: if the root was torn down mid-frame, swallow the
             # TclError and stop re-arming (the window is gone — correct to stop).
@@ -424,7 +460,43 @@ class WhisperBarOverlay:
                 try:
                     self._root.after(16, self._schedule_frame)  # ~60 FPS
                 except Exception:  # noqa: BLE001
-                    log.debug("WhisperBar frame re-arm skipped", exc_info=True)
+                    log.warning(
+                        "JarvisBar frame re-arm skipped — watchdog will revive",
+                        exc_info=True,
+                    )
+
+    def _schedule_frame_watchdog(self) -> None:
+        """Independent revival loop — the second after-chain (anti-freeze). Renders
+        nothing; only checks the frame-loop heartbeat and kicks ``_schedule_frame``
+        back to life if it has gone silent past ``FRAME_STALL_THRESHOLD_NS`` (e.g.
+        a render hang or a swallowed re-arm failure froze the bar). Its own re-arm
+        is in ``finally`` so a single check error cannot kill the watchdog. A
+        deliberate ``stop()`` (``_running`` False) ends it cleanly."""
+        if not self._running or self._root is None:
+            return
+        try:
+            last = self._last_frame_ns
+            if last and (time.monotonic_ns() - last) > FRAME_STALL_THRESHOLD_NS:
+                stalled_s = (time.monotonic_ns() - last) / 1e9
+                log.warning(
+                    "JarvisBar frame loop stalled %.1fs — reviving it", stalled_s
+                )
+                # Pre-stamp so a false alarm (a still-live loop) doesn't make us
+                # re-kick every tick; the revived loop immediately re-stamps.
+                self._last_frame_ns = time.monotonic_ns()
+                self._schedule_frame()
+        except Exception:  # noqa: BLE001 — the watchdog must itself never die
+            log.debug("JarvisBar frame watchdog check failed", exc_info=True)
+        finally:
+            if self._running and self._root is not None:
+                try:
+                    self._root.after(
+                        WATCHDOG_INTERVAL_MS, self._schedule_frame_watchdog
+                    )
+                except Exception:  # noqa: BLE001
+                    log.warning(
+                        "JarvisBar frame watchdog re-arm skipped", exc_info=True
+                    )
 
     # ------------------------------------------------------------------ #
     # Drag (reposition) + click (start a voice session)                 #
@@ -460,7 +532,7 @@ class WhisperBarOverlay:
         try:
             self._root.geometry(f"{renderer.WIN_W}x{renderer.WIN_H}+{self._x}+{self._y}")
         except Exception:  # noqa: BLE001
-            log.debug("whisperbar geometry update failed", exc_info=True)
+            log.debug("jarvisbar geometry update failed", exc_info=True)
 
     def _on_release(self, event: Any) -> None:
         d = self._drag
@@ -468,6 +540,17 @@ class WhisperBarOverlay:
         if d is None:
             return
         if interaction.classify_release(moved=bool(d["moved"])) == "click":
+            # Phantom-click guard (root cause of the request_hangup STORM): a
+            # frameless color-key topmost Tk window emits SYNTHETIC press/release
+            # events on withdraw/deiconify/turn-mode-switch under a stationary
+            # cursor. Read as a close-X click, they fired a machine-paced
+            # request_hangup storm that killed live sessions AND armed the
+            # post-hangup wake-lock, so the next "Hey Jarvis" was swallowed
+            # ("wake triggers, nothing happens"). Honor a click ONLY when the OS
+            # pointer is really over the bar right now.
+            if not self._pointer_over_bar():
+                log.debug("jarvisbar: ignoring phantom click (pointer off bar)")
+                return
             # Use the PRESS-time hover (consistent with the press-time cx): a
             # deliberate click that started on the bar registers even if a stray
             # <Leave> flickered _hovered before release.
@@ -483,9 +566,38 @@ class WhisperBarOverlay:
             self._root.geometry(f"{renderer.WIN_W}x{renderer.WIN_H}+{self._x}+{self._y}")
             from jarvis.core.config_writer import DEFAULT_CONFIG_FILE
 
-            interaction.save_whisperbar_position(DEFAULT_CONFIG_FILE, self._x, self._y)
+            interaction.save_jarvisbar_position(DEFAULT_CONFIG_FILE, self._x, self._y)
         except Exception:  # noqa: BLE001
-            log.debug("whisperbar position persist failed", exc_info=True)
+            log.debug("jarvisbar position persist failed", exc_info=True)
+
+    def _pointer_over_bar(self) -> bool:
+        """True when the OS pointer is really inside the bar window right now.
+
+        Guards against synthetic/phantom button events that a frameless
+        color-key topmost Tk window emits on withdraw/deiconify/turn-mode-switch
+        under a stationary cursor (tkdnd was one source, now disabled; the
+        deiconify path remains). Uses ``winfo_pointerxy`` + the window's own
+        ``winfo_rootx/rooty/width/height`` — all Tk screen-pixel measurements in
+        one coordinate space, so it stays correct under HiDPI scaling. Fails
+        CLOSED (returns False) on any error or an unmapped / zero-size window:
+        a missed real click is recoverable, a phantom hang-up is not.
+        """
+        root = self._root
+        if root is None:
+            return False
+        try:
+            if not int(root.winfo_ismapped()):
+                return False
+            bw = int(root.winfo_width())
+            bh = int(root.winfo_height())
+            if bw <= 1 or bh <= 1:
+                return False
+            px, py = root.winfo_pointerxy()
+            bx = int(root.winfo_rootx())
+            by = int(root.winfo_rooty())
+            return bx <= int(px) < bx + bw and by <= int(py) < by + bh
+        except Exception:  # noqa: BLE001
+            return False
 
     def _on_enter(self, _event: Any = None) -> None:
         self._hovered = True
@@ -503,12 +615,12 @@ class WhisperBarOverlay:
         try:
             callback()
         except Exception:  # noqa: BLE001
-            log.debug("whisperbar show-window callback failed", exc_info=True)
+            log.debug("jarvisbar show-window callback failed", exc_info=True)
 
     def _on_click(self, click_x: float | None = None, *, hovered: bool = False) -> None:
-        # Zone-routed: LEFT X → hang up (active only), RIGHT square → toggle
-        # endpoint-free dictation, MIDDLE (idle) → start a normal session. All
-        # entries are thread-safe from the Tk thread.
+        # Zone-routed: LEFT X → hang up (active only), RIGHT mic → toggle voice
+        # mute (mic muted FOR JARVIS only), MIDDLE (idle) → start a normal
+        # session. All entries are thread-safe from the Tk thread.
         if click_x is None:
             click_x = renderer.WIN_W / 2
         try:
@@ -527,19 +639,40 @@ class WhisperBarOverlay:
                 click_x, renderer.WIN_W, self._mode,
                 hovered=hovered, pill_w=pill_w,
             )
-            if action == "dictate":
-                toggle = getattr(pipeline, "request_ptt_toggle", None)
-                if callable(toggle):
-                    toggle()
+            if action == "mute":
+                # The mic button toggles voice mute via the bridge-wired
+                # callback (publishes VoiceMuteToggleRequested → pipeline flips
+                # _muted → broadcasts VoiceMuteChanged → set_muted reconciles).
+                # Flip the local mirror optimistically so the red rim +
+                # slashed-mic show on the very next frame — but ONLY when a
+                # callback is wired, else a boot-race click would paint a false
+                # slash with nothing muted behind it.
+                cb = self._on_mute_toggle
+                if cb is not None:
+                    cb()
+                    self._muted = not self._muted
             elif action == "hangup":
-                hangup = getattr(pipeline, "request_hangup", None)
-                if callable(hangup):
-                    hangup()
+                # Only a LIVE session is hung up. If the bar is stuck in an
+                # active "listen/think/speak" look with NO session behind it
+                # (a wake confirmed then swallowed by the post-hangup wake-lock,
+                # or a stray event flipped the look), a close-X would be a no-op
+                # request_hangup that just traps the user. Start a session
+                # instead so a click ALWAYS escapes the stuck state. Legacy
+                # pipelines without is_session_active keep the plain hang-up.
+                active_fn = getattr(pipeline, "is_session_active", None)
+                if active_fn is not None and not active_fn():
+                    start = getattr(pipeline, "request_voice_session", None)
+                    if callable(start):
+                        start()
+                else:
+                    hangup = getattr(pipeline, "request_hangup", None)
+                    if callable(hangup):
+                        hangup()
             elif action == "talk":
                 pipeline.request_voice_session()
             # "none" → nothing
         except Exception:  # noqa: BLE001
-            log.debug("whisperbar click action failed", exc_info=True)
+            log.debug("jarvisbar click action failed", exc_info=True)
 
     def _on_reset_double_click(self, _event: Any = None) -> None:
         """Reset the bar to its default bottom-center anchor.
@@ -560,6 +693,6 @@ class WhisperBarOverlay:
             self._root.geometry(f"{renderer.WIN_W}x{renderer.WIN_H}+{self._x}+{self._y}")
             from jarvis.core.config_writer import DEFAULT_CONFIG_FILE
 
-            interaction.save_whisperbar_position(DEFAULT_CONFIG_FILE, self._x, self._y)
+            interaction.save_jarvisbar_position(DEFAULT_CONFIG_FILE, self._x, self._y)
         except Exception:  # noqa: BLE001
-            log.debug("whisperbar reset failed", exc_info=True)
+            log.debug("jarvisbar reset failed", exc_info=True)

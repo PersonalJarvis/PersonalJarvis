@@ -14,7 +14,7 @@ export function StylePreview({ style }: { style: OverlayStyle }) {
   if (style === "mascot") {
     return <MascotGigi size={46} reactToVoice={false} enableComments={false} />;
   }
-  if (style === "whisper_bar") return <BarPreview />;
+  if (style === "jarvis_bar") return <BarPreview />;
   return <NonePreview />;
 }
 
