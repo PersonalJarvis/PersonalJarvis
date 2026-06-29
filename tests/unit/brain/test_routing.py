@@ -891,6 +891,45 @@ def test_router_tools_stays_frozenset() -> None:
     assert isinstance(ROUTER_TOOLS, frozenset)
 
 
+def test_dispatch_to_harness_not_in_router_tools() -> None:
+    """``dispatch-to-harness`` must NOT be an LLM-visible router tool.
+
+    Phantom-openclaw regression (forensic 2026-06-28): the tool's raw ``harness``
+    parameter let the brain request ``harness="openclaw"`` — an unregistered
+    harness (Welle-4 removal) — which surfaced a raw "Harness not available"
+    KeyError to voice. Heavy sub-agent work is ``spawn-worker``; live desktop
+    work is ``computer-use``. The tool class still exists for the INTERNAL
+    local-action fast path, but it must never be router-selectable again.
+    """
+    from jarvis.brain.factory import ROUTER_TOOLS
+
+    assert "dispatch-to-harness" not in ROUTER_TOOLS
+
+
+@pytest.mark.asyncio
+async def test_subagent_request_forces_spawn_worker() -> None:
+    """An explicit "start a subagent" request forces spawn_worker, never a harness.
+
+    Structural guarantee #2 (the #1 guarantee is that dispatch-to-harness is no
+    longer router-visible): a cleanly recognised subagent trigger must route to
+    spawn_worker deterministically, before any free LLM tool choice.
+    """
+    manager, executor = _manager_with_spawn()
+    utterance = "Starte einen Subagenten, der mir einen Lernzettel schreibt"
+
+    assert manager._should_force_spawn(utterance), (
+        "explicit subagent request did not trigger the force-spawn heuristic"
+    )
+    result = await manager._force_spawn_worker(utterance)
+    assert result is not None
+    assert len(executor.calls) == 1, (
+        f"expected exactly one spawn call, got {len(executor.calls)}"
+    )
+    tool, _args, user_utterance = executor.calls[0]
+    assert tool.name == "spawn_worker"
+    assert user_utterance == utterance  # verbatim, never paraphrased
+
+
 def test_no_spawn_tool_leaked_into_worker_set() -> None:
     """No spawn/dispatch/run-skill tool may appear in a worker tool-set.
 
@@ -1514,8 +1553,14 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             "screen-snapshot",
             "multi-spawn",
             "spawn-worker",
-            # Phase-5-Endstand (ADR-0011 + Re-Introduction Begruendung im Code)
-            "dispatch-to-harness",
+            # NB: ``dispatch-to-harness`` was REMOVED from the LLM-visible router
+            # set on 2026-06-28 (ADR-0011 amendment "dispatch-to-harness removal").
+            # Its raw ``harness`` param let the brain request a phantom
+            # ``harness="openclaw"`` (unregistered, Welle-4 removal), surfacing a
+            # raw "Harness not available" KeyError to voice. Heavy work →
+            # spawn-worker, desktop → computer-use. It must NOT reappear here;
+            # the negative guard ``test_dispatch_to_harness_not_in_router_tools``
+            # pins that.
             # Phase 8.4 (Quality-Gate, Recursion-geschuetzt analog spawn-worker)
             "dispatch-with-review",
             # AI Pointer (pull path): resolve the element under the mouse cursor
@@ -1556,6 +1601,11 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # rationale as gmail — its rest_wrapper transport produced zero MCP
             # tools, so it must be router-visible directly. Read-only.
             "vercel",
+            # Google Calendar Marketplace plugin (2026-06-27): native bridge tool
+            # whose bot logic is a Node script (calendar_bot.mjs). Same rationale
+            # as gmail — no MCP server block, so it must be router-visible
+            # directly. Full autonomy (writes are monitor, never ask).
+            "google_calendar",
             # Computer-Use (Wave 1, 2026-05-29): first-class tool to drive the
             # live desktop. Router-tier only — a direct safe-gated action (the
             # loop gates each action via ToolExecutor, ADR-0008), never a spawn,
@@ -2850,3 +2900,173 @@ async def test_force_spawn_worker_skips_dropped_mission_recap() -> None:
     )
     assert result is None, "no mission for a dropped-card recap"
     assert executor.calls == [], "zero spawn_worker dispatches for a recap turn"
+
+
+# ---------------------------------------------------------------------------
+# Knowledge-question spawn-hide (forensic 2026-06-27, voice session 08:35):
+# "Welche Unternehmen haben so viel Speicherplatz?" was a pure factual question,
+# yet the router-LLM reflexively CHOSE spawn_worker and announced "ich ziehe
+# einen Experten hinzu". The deterministic force-spawn gate correctly stands
+# down on such a turn (it only FORCES spawns, it never CONSTRAINS the LLM's own
+# spawn reflex). The fix mirrors the smalltalk tool-hide: on a plain knowledge
+# question the spawn tools are removed from the per-turn LLM surface, so the
+# model cannot grab spawn_worker against its own prompt rule. Read/search tools
+# stay visible so the question is still answerable inline.
+# ---------------------------------------------------------------------------
+
+
+class _FakeSearchTool:
+    name = "search_web"
+    schema: dict[str, Any] = {}
+
+
+def _manager_with_spawn_and_search() -> BrainManager:
+    executor = _RecordingExecutor()
+    manager = BrainManager(
+        config=JarvisConfig(),
+        bus=EventBus(),
+        tools={"spawn_worker": _FakeTool(), "search_web": _FakeSearchTool()},
+        tool_executor=executor,  # type: ignore[arg-type]
+    )
+    return manager
+
+
+PLAIN_KNOWLEDGE_QUESTIONS = [
+    "Welche Unternehmen haben so viel Speicherplatz?",
+    "Welche Firmen besitzen so viele Rechenzentren?",
+    "Wie viele Menschen leben in Australien?",
+    "Which companies own that much storage?",
+    "Was ist der groesste Cloud-Anbieter der Welt?",
+]
+
+
+@pytest.mark.parametrize("utterance", PLAIN_KNOWLEDGE_QUESTIONS)
+def test_plain_knowledge_question_hides_spawn_worker(utterance: str) -> None:
+    """A pure factual/knowledge question removes spawn_worker from the per-turn
+    LLM tool surface, while keeping the read/search tools to answer inline."""
+    manager = _manager_with_spawn_and_search()
+    gated = manager._hide_spawn_on_knowledge_question(dict(manager._tools), utterance)
+    assert "spawn_worker" not in gated, (
+        f"spawn_worker must be hidden on a plain knowledge question: {utterance!r}"
+    )
+    assert "search_web" in gated, "search_web must stay visible to answer inline"
+
+
+BUILD_OR_ACTION_REQUESTS = [
+    "Bau mir eine HTML-Uebersicht der groessten Cloud-Anbieter",
+    "Schreib mir einen Bericht ueber Rechenzentren in eine Datei",
+]
+
+
+@pytest.mark.parametrize("utterance", BUILD_OR_ACTION_REQUESTS)
+def test_build_request_keeps_spawn_worker(utterance: str) -> None:
+    """A request that BUILDS a deliverable keeps spawn_worker available — the
+    artifact gate must not be stripped by the knowledge-question hide."""
+    manager = _manager_with_spawn_and_search()
+    gated = manager._hide_spawn_on_knowledge_question(dict(manager._tools), utterance)
+    assert "spawn_worker" in gated, (
+        f"spawn_worker must stay for a build request: {utterance!r}"
+    )
+
+
+def test_explicit_subagent_question_keeps_spawn_worker() -> None:
+    """Even in question form, an explicitly named heavy-work vehicle keeps the
+    spawn tool — the user named the vehicle, respect it (AD-S9)."""
+    manager = _manager_with_spawn_and_search()
+    gated = manager._hide_spawn_on_knowledge_question(
+        dict(manager._tools),
+        "Kannst du einen Subagenten spawnen der die groessten Cloud-Anbieter recherchiert?",
+    )
+    assert "spawn_worker" in gated, (
+        "an explicit 'Subagent' trigger must never be hidden, even in question form"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Signalless-turn action-hide (forensic 2026-06-27, voice session): the German
+# smalltalk "Was geht ab?" was mis-transcribed by STT as "Lask it up!" [en]
+# confidence 0.509 — missing BOTH the smalltalk allowlist AND the whisper-junk
+# seed lists — so the action tools stayed visible and gemini, reading a
+# 30k-token context full of the PREVIOUS "open Discord, bridge-mine channel"
+# command, re-ran that exact computer_use plan on a turn that asked for nothing.
+# A short turn with no actionable signal of its own must not reach computer_use
+# / spawn so it cannot inherit the prior turn's desktop action.
+# ---------------------------------------------------------------------------
+
+
+class _FakeCuTool:
+    name = "computer_use"
+    schema: dict[str, Any] = {}
+
+
+def _manager_with_cu_spawn_search() -> BrainManager:
+    executor = _RecordingExecutor()
+    return BrainManager(
+        config=JarvisConfig(),
+        bus=EventBus(),
+        tools={
+            "computer_use": _FakeCuTool(),
+            "spawn_worker": _FakeTool(),
+            "search_web": _FakeSearchTool(),
+        },
+        tool_executor=executor,  # type: ignore[arg-type]
+    )
+
+
+# GENERAL rule (user mandate 2026-06-27 — "this must apply to ALL questions"):
+# ANY turn with no action signal of its own — short or long, with or without a
+# trailing "?" — loses computer_use/spawn so it cannot inherit the previous
+# turn's CU action. Mis-transcriptions, smalltalk, and plain questions all
+# qualify. (The real "Was geht ab?" is ALSO caught upstream by the smalltalk
+# gate; here we prove the filter itself no longer exempts it.)
+NO_ACTION_SIGNAL_TURNS = [
+    "Lask it up!",                                   # the live STT junk
+    "Mask it up.",                                   # sibling STT-junk variant
+    "Was geht ab?",                                  # i18n-allow: the original question
+    "Wie viele Menschen leben in Australien?",       # i18n-allow: long factual question
+    "Which company owns the most data centers in the world right now?",
+    "Erzaehl mir einen Witz",                        # i18n-allow: chit-chat, no action
+]
+
+
+@pytest.mark.parametrize("utterance", NO_ACTION_SIGNAL_TURNS)
+def test_no_action_signal_turn_hides_computer_use_and_spawn(utterance: str) -> None:
+    """ANY turn with no action signal of its own (question, remark, or
+    mis-transcription — regardless of length or a trailing '?') cannot reach
+    computer_use/spawn, so the LLM cannot inherit the previous turn's CU action.
+    The read-only search tool stays visible so the turn is still answerable."""
+    manager = _manager_with_cu_spawn_search()
+    gated = manager._hide_action_tools_on_signalless_turn(
+        dict(manager._tools), utterance
+    )
+    assert "computer_use" not in gated, (
+        f"computer_use must be hidden on a no-action-signal turn: {utterance!r}"
+    )
+    assert "spawn_worker" not in gated, (
+        f"spawn_worker must be hidden on a no-action-signal turn: {utterance!r}"
+    )
+    assert "search_web" in gated, "read-only search_web must stay visible"
+
+
+ACTIONABLE_TURNS = [
+    "Oeffne Discord fuer mich",            # explicit open-app intent
+    "Klick auf den Play-Button",           # PC-control verb
+    "Mach das am Bildschirm",              # names the screen surface
+    "Was siehst du auf meinem Bildschirm?",  # i18n-allow: a VISUAL question keeps CU (Bildschirm)
+    "Bau mir eine HTML-Uebersicht der groessten Cloud-Anbieter",  # artifact build
+]
+
+
+@pytest.mark.parametrize("utterance", ACTIONABLE_TURNS)
+def test_actionable_turn_keeps_computer_use(utterance: str) -> None:
+    """A turn that DOES carry an action signal — an action verb, a named app, the
+    screen surface, or an artifact-build request — keeps computer_use. This holds
+    even for a question ('Was siehst du auf meinem Bildschirm?'): naming the
+    screen is action-intent, so the heavy tools stay available."""
+    manager = _manager_with_cu_spawn_search()
+    gated = manager._hide_action_tools_on_signalless_turn(
+        dict(manager._tools), utterance
+    )
+    assert "computer_use" in gated, (
+        f"computer_use must stay for an actionable turn: {utterance!r}"
+    )

@@ -4,8 +4,10 @@ Trigger surface: the desktop mascot publishes ``VoiceMuteToggleRequested``
 when the user double-clicks the sprite. The pipeline must:
 
 1. Flip ``self._muted`` (and expose it via ``is_muted``).
-2. Stop in-flight playback so the user is not stuck listening to a
-   sentence that started before the click.
+2. Leave Jarvis's in-flight voice ALONE — mute is input-only (maintainer
+   intent 2026-06-29: "mute my mic for Jarvis, do not mute Jarvis"). Calling
+   ``player.stop()`` here used to abort the output stream mid-write and wedge
+   the WASAPI device, killing the wake-mic afterwards.
 3. Reject wake activations through ``_activation_allowed`` while muted.
 4. Suppress every ``AnnouncementRequested`` / ``_speak`` exit while muted.
 5. Broadcast a follow-up ``VoiceMuteChanged`` for UI / overlay mirrors.
@@ -122,14 +124,26 @@ async def test_mute_suppresses_announcements() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mute_stops_inflight_playback() -> None:
-    """Mute should immediately silence what is currently coming out."""
+async def test_mute_does_not_stop_inflight_playback() -> None:
+    """Mute is INPUT-ONLY: it must NOT abort Jarvis's in-flight voice.
+
+    The maintainer asked for "mute my mic FOR Jarvis, do not mute Jarvis — other
+    things keep working" (2026-06-29). The old behaviour called ``player.stop()``
+    on mute, which ran ``stream.abort()`` (Pa_AbortStream) mid-TTS-write. That
+    (a) contradicted the input-only intent and (b) wedged the shared WASAPI
+    device: the next wake-mic opened "successfully" but delivered only dead/silent
+    frames (no rolling-whisper transcripts, and the 3 s no-chunk Mic-Stall
+    watchdog never fired because chunks kept arriving), so "Hey <wake>" silently
+    stopped working after a mute-during-speech + hangup. Jarvis now finishes the
+    current sentence; new ``_speak`` calls stay suppressed and input frames are
+    dropped at our boundary (see ``test_session_input_is_dropped_while_muted``).
+    """
     bus = EventBus()
     pipeline, _tts, player = _make_pipeline(bus)
 
     assert player.stop_calls == 0
     await bus.publish(VoiceMuteToggleRequested(source="mascot_dblclick"))
-    assert player.stop_calls == 1
+    assert player.stop_calls == 0  # mute no longer aborts the output stream
 
 
 @pytest.mark.asyncio
@@ -143,6 +157,40 @@ async def test_speak_short_circuits_when_muted() -> None:
     assert barged is False
     assert tts.calls == []
     assert player.plays == 0
+
+
+@pytest.mark.asyncio
+async def test_session_input_is_dropped_while_muted() -> None:
+    """Input mute: while muted Jarvis must STOP HEARING the user mid-session.
+
+    The mute flag gated wake activation + TTS output, but the active-session
+    input stream (mic -> VAD -> STT) ignored it, so a user who muted during a
+    conversation kept being heard ("ich rede, aber er hoert mich trotzdem",
+    2026-06-28). Muting drops every frame at Jarvis' input boundary WITHOUT
+    touching the OS mic, so other apps still get the microphone.
+    """
+    bus = EventBus()
+    pipeline, _tts, _player = _make_pipeline(bus)
+
+    async def _src() -> AsyncIterator[AudioChunk]:
+        for i in range(3):
+            yield AudioChunk(
+                pcm=b"\x01\x00" * 1600, sample_rate=16_000, timestamp_ns=i + 1
+            )
+
+    # Unmuted: every frame reaches the VAD.
+    out = [c async for c in pipeline._session_input_stream(_src())]
+    assert len(out) == 3
+
+    # Muted: every frame is dropped — Jarvis is deaf to the user.
+    await bus.publish(VoiceMuteToggleRequested(source="mascot_dblclick"))
+    out_muted = [c async for c in pipeline._session_input_stream(_src())]
+    assert out_muted == []
+
+    # Unmute again: hearing resumes.
+    await bus.publish(VoiceMuteToggleRequested(source="mascot_dblclick"))
+    out_resumed = [c async for c in pipeline._session_input_stream(_src())]
+    assert len(out_resumed) == 3
 
 
 @pytest.mark.asyncio

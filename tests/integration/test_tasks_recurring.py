@@ -95,7 +95,7 @@ class _FakeRunner:
     def __init__(self) -> None:
         self.dispatched: list[str] = []
 
-    async def run(self, task_id: str) -> None:
+    async def run(self, task_id: str, **_kwargs: object) -> None:
         self.dispatched.append(task_id)
 
 

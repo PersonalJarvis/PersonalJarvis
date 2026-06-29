@@ -194,7 +194,10 @@ def test_scripts_endpoint_lists_helpers(app, secret_store):
     assert r.status_code == 200
     scripts = r.json()["scripts"]
     names = {s["name"] for s in scripts}
-    assert "Public tunnel (dev)" in names
+    # M7: a cross-platform (cloudflared) tunnel command alongside the Windows one.
+    assert "Public tunnel (portable)" in names
+    assert "Public tunnel (Windows dev)" in names
+    assert any("cloudflared tunnel --url" in s["command"] for s in scripts)
     assert "Provision number" in names
     for s in scripts:
         assert s["command"]

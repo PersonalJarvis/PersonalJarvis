@@ -1,9 +1,9 @@
-"""Unit tests for the whisper-bar pure renderer math + draw smoke."""
+"""Unit tests for the jarvis-bar pure renderer math + draw smoke."""
 from __future__ import annotations
 
 import pytest
 
-from jarvis.ui.whisperbar import renderer as R
+from jarvis.ui.jarvisbar import renderer as R
 
 
 def test_ease_moves_toward_target():
@@ -163,7 +163,7 @@ def test_core_highlight_swings_across_the_sphere():
 
 
 def test_render_think_mode_animates_over_time():
-    r = R.WhisperBarRenderer()
+    r = R.JarvisBarRenderer()
     for _ in range(60):  # settle pill size
         r.render(0.0, "think", 0.0)
     a = list(r.render(1.0, "think", 0.0).getdata())
@@ -172,7 +172,7 @@ def test_render_think_mode_animates_over_time():
 
 
 def test_render_returns_image_for_every_mode():
-    rnd = R.WhisperBarRenderer(accent="#e7c46e")
+    rnd = R.JarvisBarRenderer(accent="#e7c46e")
     for mode in ("idle", "listen", "speak", "think"):
         img = rnd.render(0.1, mode, 0.5)
         assert img.size == (R.WIN_W, R.WIN_H)
@@ -180,7 +180,7 @@ def test_render_returns_image_for_every_mode():
 
 
 def _settled(mode, hovered, frames=40, final_t=0.1):
-    r = R.WhisperBarRenderer()
+    r = R.JarvisBarRenderer()
     for _ in range(frames):
         r.render(0.0, mode, 0.0)  # deterministic settle
     return list(r.render(final_t, mode, 0.0, hovered=hovered).getdata())
@@ -198,7 +198,7 @@ def test_hover_reveals_controls():
 
 
 def test_idle_collapses_expansion_over_frames():
-    rnd = R.WhisperBarRenderer()
+    rnd = R.JarvisBarRenderer()
     for _ in range(40):
         rnd.render(0.0, "listen", 0.5)
     active_h = rnd._st.ph
@@ -265,7 +265,7 @@ def test_visual_mode_shows_bars_while_tts_playback_is_active():
 
 def _grow_settle(mode, *, hovered=False, frames=120):
     """Run enough frames that the eased pill size has converged on its target."""
-    r = R.WhisperBarRenderer()
+    r = R.JarvisBarRenderer()
     for _ in range(frames):
         r.render(0.0, mode, 0.0, hovered=hovered)
     return r
@@ -311,7 +311,7 @@ def test_equalizer_bars_scale_with_pill_height():
     assert R.bar_max_for(R.ACTIVE_H) > R.bar_max_for(R.OPEN_H)
 
 
-# --- Wispr-style refinement: thin strokes + standby dots ---------------------
+# --- Slim-bar refinement: thin strokes + standby dots ---------------------
 
 
 def test_evenly_spaced_is_centered_and_symmetric():
@@ -329,7 +329,7 @@ def test_evenly_spaced_single_item_sits_at_center():
 def test_idle_pill_is_empty_no_standby_dots():
     # When nothing is happening the standby pill is CLEAN — no dots, no bars.
     # (User: "when nothing is happening, nothing is in the bar.")
-    r = R.WhisperBarRenderer()
+    r = R.JarvisBarRenderer()
     img = None
     for _ in range(150):  # settle to the collapsed idle pill
         img = r.render(0.0, "idle", 0.0)
@@ -343,5 +343,5 @@ def test_idle_pill_is_empty_no_standby_dots():
 
 
 def test_active_bars_are_slim_not_chunky():
-    # Wispr-style: the equalizer strokes are thin, not the old chunky ~6px bars.
+    # Slim-bar style: the equalizer strokes are thin, not the old chunky ~6px bars.
     assert R.bar_half_w_for(R.ACTIVE_W) <= 2.0

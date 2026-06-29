@@ -510,3 +510,36 @@ async def test_open_discord_e2e_dispatches_computer_use_not_refusal(
         name == "dispatch_to_harness" for name, *_ in executor.harness_calls
     ), f"Computer-Use was never dispatched; calls={executor.harness_calls}"
     assert reply, "the turn must speak an immediate ACK, not stay silent"
+
+
+# ----------------------------------------------------------------------
+# Definitional-question guard (2026-06-24 skill-routing eval): a bare-name
+# plugin trigger must not capture a "was ist <App>?" knowledge turn, while a
+# real data request that merely opens with "was ist" stays a skill hit.
+# ----------------------------------------------------------------------
+
+import pytest as _pytest  # noqa: E402
+
+from jarvis.brain.manager import _is_definitional_question_about  # noqa: E402
+
+
+@_pytest.mark.parametrize(
+    "text,token,expected",
+    [
+        # Definitional questions ABOUT the app → suppress (do not fire skill).
+        ("was ist eigentlich github fuer eine plattform?", "github", True),  # i18n-allow
+        ("was ist stripe ueberhaupt und wofuer nutzt man das?", "stripe", True),  # i18n-allow
+        ("what is github?", "github", True),
+        ("what is stripe used for", "stripe", True),
+        # Real data requests / commands that merely mention the token → keep.
+        ("was ist in meinem posteingang?", "posteingang", False),  # i18n-allow
+        ("lies meine github issues vor", "github", False),  # i18n-allow
+        ("check my stripe payments", "stripe", False),
+        ("starte die morgenroutine", "morgenroutine", False),  # i18n-allow
+        # Degenerate inputs.
+        ("", "github", False),
+        ("was ist github", "", False),
+    ],
+)
+def test_definitional_question_guard(text: str, token: str, expected: bool) -> None:
+    assert _is_definitional_question_about(text, token) is expected

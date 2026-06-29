@@ -80,7 +80,7 @@ class TestTargetIsPublic:
 
     def test_private_work_repo_is_not_public(self):
         assert not gate.target_is_public(
-            "origin", "https://github.com/personal-jarvis/personal-jarvis.git"
+            "origin", "https://github.com/example-org/private-work.git"
         )
 
     def test_url_match_is_case_insensitive(self):
@@ -249,7 +249,7 @@ class TestMain:
             f"refs/heads/main {_NONZERO_A} refs/heads/main {_NONZERO_B}\n"
         )
         rc = gate.main(
-            ["prog", "origin", "https://github.com/personal-jarvis/personal-jarvis.git"],
+            ["prog", "origin", "https://github.com/example-org/private-work.git"],
             stdin,
         )
         assert rc == 0

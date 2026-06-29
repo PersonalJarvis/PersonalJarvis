@@ -87,7 +87,12 @@ def test_load_persona_prompt_extracts_real_persona(monkeypatch) -> None:
     finally:
         invalidate_cache()
     assert prompt
-    assert "JARVIS" in prompt
+    # Name-neutral persona (2026-06-29): the assistant name is injected at
+    # runtime from the wake word (see assistant_name.py), so the default persona
+    # must NOT bake in a fixed product name like "Jarvis". This guards against a
+    # regression back to a hardcoded "You are JARVIS" opener.
+    assert "JARVIS" not in prompt
+    assert "voice companion" in prompt
     assert "LANGUAGE POLICY" in prompt
     # Mandat-Phase-2: ECHO-PARAPHRASE-Sektion direkt nach OUTPUT RULES
     assert "ECHO-PARAPHRASE" in prompt

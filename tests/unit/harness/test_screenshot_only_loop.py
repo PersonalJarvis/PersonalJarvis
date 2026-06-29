@@ -219,7 +219,11 @@ def test_parse_actions_wraps_single_object_in_list() -> None:
     # plural parser treats it as a one-element batch so the executor can
     # iterate uniformly.
     actions = _parse_actions('{"action": "click", "x": 10, "y": 20}')
-    assert actions == [{"action": "click", "x": 10, "y": 20}]
+    # button/double are normalized onto every click (audit #21): default
+    # left single-click — additive, the coordinates are unchanged.
+    assert actions == [
+        {"action": "click", "x": 10, "y": 20, "button": "left", "double": False}
+    ]
 
 
 def test_parse_actions_accepts_list_of_actions() -> None:
@@ -231,7 +235,9 @@ def test_parse_actions_accepts_list_of_actions() -> None:
     assert len(actions) == 3
     assert actions[0] == {"action": "open_app", "name": "calc"}
     assert actions[1] == {"action": "wait", "ms": 500}
-    assert actions[2] == {"action": "click", "x": 100, "y": 200}
+    assert actions[2] == {
+        "action": "click", "x": 100, "y": 200, "button": "left", "double": False
+    }
 
 
 def test_parse_actions_rejects_empty_list() -> None:
@@ -441,8 +447,59 @@ def test_cancel_active_cu_registry() -> None:
         def cancel(self, reason: str) -> None:
             raise RuntimeError("boom")
 
+    register_active_cu_token(None)
     register_active_cu_token(_BadTok())
     assert cancel_active_cu("voice_hangup") is False
+    register_active_cu_token(None)
+
+
+def test_cancel_active_cu_cancels_all_concurrent_missions() -> None:
+    """A hangup must stop EVERY running Computer-Use mission, not just the
+    most-recently-registered one.
+
+    Live regression (2026-06-24, feat/fast-boot-bootstrap): two CU missions
+    ran concurrently as overlapping background tasks. The single-slot active
+    token only remembered the last registration, so ``cancel_active_cu``
+    cancelled one mission while the other kept clicking the screen for ~22 s
+    after the user hung up (data/jarvis_desktop.log 20:45:54 -> 20:46:16).
+    """
+    from jarvis.harness.computer_use_context import (
+        cancel_active_cu,
+        register_active_cu_token,
+        unregister_active_cu_token,
+    )
+
+    class _Tok:
+        def __init__(self) -> None:
+            self.reason: str | None = None
+
+        def cancel(self, reason: str) -> None:
+            self.reason = reason
+
+        def is_cancelled(self) -> bool:
+            return self.reason is not None
+
+    register_active_cu_token(None)
+    mission_a = _Tok()
+    mission_b = _Tok()
+    register_active_cu_token(mission_a)
+    register_active_cu_token(mission_b)
+
+    # ONE hangup must cancel BOTH concurrent missions.
+    assert cancel_active_cu("voice_hangup") is True
+    assert mission_a.reason == "voice_hangup"
+    assert mission_b.reason == "voice_hangup"
+
+    # A finished mission removes only ITS OWN token; a sibling stays cancelable.
+    register_active_cu_token(None)
+    mission_c = _Tok()
+    mission_d = _Tok()
+    register_active_cu_token(mission_c)
+    register_active_cu_token(mission_d)
+    unregister_active_cu_token(mission_c)  # C's harness finally ran
+    assert cancel_active_cu("voice_hangup") is True
+    assert mission_c.reason is None        # C already gone — untouched
+    assert mission_d.reason == "voice_hangup"  # D still cancelled
     register_active_cu_token(None)
 
 
@@ -820,6 +877,15 @@ def test_execute_type_settles_before_dispatch(monkeypatch) -> None:
             return _FakeResult(success=True, output="typed")
 
     monkeypatch.setattr(loop.asyncio, "sleep", _fake_sleep)
+
+    # The type read-back gate (audit 🔴 #1) fetches the a11y tree after dispatch.
+    # Isolate it with an empty tree so this settle-ORDERING test stays deterministic
+    # and never depends on the live desktop's editable fields.
+    class _EmptyTree:
+        async def observe(self, **_kw):
+            return type("_Obs", (), {"nodes": ()})()
+
+    monkeypatch.setattr(loop, "_get_ui_tree_source", lambda: _EmptyTree())
 
     type_tool = object()
     executor = _OrderRecordingExecutor()

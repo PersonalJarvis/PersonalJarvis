@@ -1,12 +1,12 @@
-"""UIConfig selects the whisper bar by default and carries its flags."""
+"""UIConfig selects the jarvis bar by default and carries its flags."""
 from __future__ import annotations
 
 from jarvis.core.config import UIConfig
 
 
-def test_defaults_select_whisper_bar():
+def test_defaults_select_jarvis_bar():
     c = UIConfig()
-    assert c.orb_style == "whisper_bar"
+    assert c.orb_style == "jarvis_bar"
     assert c.bar_persistent is True
     assert c.bar_accent == "#e7c46e"
 

@@ -15,7 +15,12 @@ import pytest
 from jarvis.core.bus import EventBus
 from jarvis.core.events import ProfileUpdated
 from jarvis.memory.user_profile import UserProfile
-from jarvis.plugins.tool.profile_update import _CANONICAL_FIELDS, UpdateProfileTool
+from jarvis.plugins.tool.profile_update import (
+    _BOOL_FIELDS,
+    _CANONICAL_FIELDS,
+    _LIST_FIELDS,
+    UpdateProfileTool,
+)
 
 
 def test_canonical_fields_match_matrix_ui():
@@ -42,6 +47,25 @@ def test_canonical_fields_match_matrix_ui():
         "update_profile _CANONICAL_FIELDS drifted from ProfileView.tsx "
         "CLUSTER_FIELD_KEYS — a writable-but-invisible field is silent enum drift."
     )
+
+
+def test_list_and_bool_field_shapes_match_ui_editor():
+    """The list/bool field shapes MUST mirror ledger.ts (LIST_FIELD_KEYS /
+    BOOL_FIELD_KEYS), which drives the inline Profile editor: a list field is
+    edited as chips (append/remove), a bool as a yes/no toggle. If these drift,
+    the editor sends an operation the PATCH /api/profile/field endpoint rejects
+    with 400 (e.g. a "set" on a field the UI thinks is scalar). Keep this in sync
+    with jarvis/ui/web/frontend/src/views/profile/ledger.ts.
+    """
+    list_field_names = {field for _cluster, field in _LIST_FIELDS}
+    assert list_field_names == {
+        "languages", "devices", "humor_types", "top_values", "pet_peeves", "motivations",
+    }
+    bool_field_names = {field for _cluster, field in _BOOL_FIELDS}
+    assert bool_field_names == {"emoji_ok"}
+    # Every list/bool field must be a real, writable field.
+    for cluster, field in _LIST_FIELDS | _BOOL_FIELDS:
+        assert field in _CANONICAL_FIELDS[cluster]
 
 _SEED = """---
 schema_version: 1

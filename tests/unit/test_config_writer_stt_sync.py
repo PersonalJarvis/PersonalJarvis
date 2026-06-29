@@ -168,3 +168,58 @@ def test_raises_on_missing_toml(
 
     with pytest.raises(FileNotFoundError):
         config_writer.set_stt_provider("faster-whisper", path=tmp_path / "nope.toml")
+
+
+# ---------------------------------------------------------------------------
+# set_stt_language: TOML + config-soll sync (drift-guard pinned, no ENV var).
+# ---------------------------------------------------------------------------
+
+
+def test_set_stt_language_writes_all_three_layers(
+    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The recognition-language switch persists to TOML + config-soll + the
+    JARVIS__STT__LANGUAGE ENV var, so neither the drift-guard nor a stale ENV
+    override reverts it (same 3-layer trap as stt.model)."""
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)
+    env_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        config_writer, "_set_user_env_var", lambda n, v: env_calls.append((n, v))
+    )
+
+    config_writer.set_stt_language("de", path=sample_toml)
+
+    assert 'language = "de"' in sample_toml.read_text(encoding="utf-8")
+    soll = json.loads(sample_soll.read_text(encoding="utf-8"))
+    assert soll["stt"]["language"] == "de"
+    # Sibling keys untouched.
+    assert soll["stt"]["provider"] == "groq-api"
+    assert soll["stt"]["model"] == "large-v3-turbo"
+    # ENV layer written so a stale JARVIS__STT__LANGUAGE cannot mask the choice.
+    assert env_calls == [("JARVIS__STT__LANGUAGE", "de")]
+
+
+def test_set_stt_language_auto_roundtrip(
+    sample_toml: Path, sample_soll: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)
+    monkeypatch.setattr(config_writer, "_set_user_env_var", lambda n, v: None)
+
+    config_writer.set_stt_language("auto", path=sample_toml)
+
+    assert 'language = "auto"' in sample_toml.read_text(encoding="utf-8")
+    soll = json.loads(sample_soll.read_text(encoding="utf-8"))
+    assert soll["stt"]["language"] == "auto"
+
+
+def test_set_stt_language_soll_failure_does_not_break_toml(
+    sample_toml: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    broken = tmp_path / "config-soll.json"
+    broken.write_text("{ not valid json ", encoding="utf-8")
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: broken)
+    monkeypatch.setattr(config_writer, "_set_user_env_var", lambda n, v: None)
+
+    config_writer.set_stt_language("es", path=sample_toml)
+
+    assert 'language = "es"' in sample_toml.read_text(encoding="utf-8")

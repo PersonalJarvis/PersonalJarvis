@@ -167,11 +167,11 @@ def test_subagent_switch_updates_status_endpoint(monkeypatch: pytest.MonkeyPatch
     cfg.brain.sub_jarvis = BrainTierConfig(provider="claude-api", model="")
     client = _client(cfg)
 
-    client.post("/api/subagent/switch", json={"provider": "grok", "persist": True})
+    client.post("/api/subagent/switch", json={"provider": "openrouter", "persist": True})
 
     data = client.get("/api/openclaw/status").json()
     active = {r["jarvis"]: r["is_active_brain"] for r in data["mapping"]}
-    assert active["grok"] is True
+    assert active["openrouter"] is True
     assert active["claude-api"] is False
 
 
@@ -297,6 +297,81 @@ def test_subagent_switch_409_codex_when_not_connected(
     assert persisted == []
 
 
+# --- Claude Max OAuth as a subagent credential (no API key needed) ---------
+# The ClaudeDirectWorker authenticates via the live Claude Max OAuth login in
+# ~/.claude/.credentials.json (read_live_claude_oauth_token), NOT a stored
+# Anthropic API key. A fresh Claude-Max user who only ran `claude login` must
+# therefore see claude-api unlocked + selectable, mirroring the codex/agy OAuth
+# rows above. Source of the worker auth: missions/init.py::_worker_factory.
+
+
+def test_claude_api_row_key_set_via_max_oauth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No API key anywhere, but a live Claude Max OAuth login -> row unlocked."""
+    import jarvis.core.config as cfg_mod
+
+    monkeypatch.setattr(cfg_mod, "get_secret", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "jarvis.missions.isolation.env.read_live_claude_oauth_token",
+        lambda: "sk-ant-oat-live",
+    )
+    cfg = load_config()
+    row = next(r for r in _status(cfg)["mapping"] if r["jarvis"] == "claude-api")
+    assert row["key_set"] is True
+
+
+def test_claude_api_row_locked_without_key_or_oauth(monkeypatch: pytest.MonkeyPatch) -> None:
+    import jarvis.core.config as cfg_mod
+
+    monkeypatch.setattr(cfg_mod, "get_secret", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "jarvis.missions.isolation.env.read_live_claude_oauth_token", lambda: None
+    )
+    cfg = load_config()
+    row = next(r for r in _status(cfg)["mapping"] if r["jarvis"] == "claude-api")
+    assert row["key_set"] is False
+
+
+def test_subagent_switch_accepts_claude_max_oauth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """OAuth login present, no API key -> claude-api selectable as subagent."""
+    import jarvis.core.config as cfg_mod
+    import jarvis.core.config_writer as config_writer
+
+    monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _p: None)
+    monkeypatch.setattr(
+        "jarvis.missions.isolation.env.read_live_claude_oauth_token",
+        lambda: "sk-ant-oat-live",
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: calls.append(n))
+
+    cfg = load_config()
+    resp = _client(cfg).post(
+        "/api/subagent/switch", json={"provider": "claude-api", "persist": True}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["active"] == "claude-api"
+    assert calls == ["claude-api"]
+
+
+def test_subagent_switch_409_claude_api_no_key_no_oauth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import jarvis.core.config as cfg_mod
+    import jarvis.core.config_writer as config_writer
+
+    monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _p: None)
+    monkeypatch.setattr(
+        "jarvis.missions.isolation.env.read_live_claude_oauth_token", lambda: None
+    )
+    persisted: list[str] = []
+    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: persisted.append(n))
+
+    cfg = load_config()
+    resp = _client(cfg).post("/api/subagent/switch", json={"provider": "claude-api"})
+    assert resp.status_code == 409
+    assert persisted == []
+
+
 # --- Antigravity as a subagent (direct GoogleCliWorker, no OpenClaw slug) ---
 # The Google sibling of Codex: a selectable subagent row backed by the Google
 # subscription OAuth login (no API key), so the user can run heavy tasks over
@@ -339,7 +414,11 @@ def test_openclaw_status_includes_antigravity_row(monkeypatch: pytest.MonkeyPatc
 
 
 def test_antigravity_row_key_set_reflects_oauth(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No API key — the row is unlocked iff the Google OAuth login is connected."""
+    """With NO Gemini API key, the row is unlocked iff the Google OAuth login is
+    connected. (The Gemini-key path is covered separately below.)"""
+    import jarvis.core.config as cfg_mod
+
+    monkeypatch.setattr(cfg_mod, "get_secret", lambda *_a, **_k: None)
     _patch_antigravity(monkeypatch, connected=True)
     cfg = load_config()
     row = next(r for r in _status(cfg)["mapping"] if r["jarvis"] == "antigravity")
@@ -382,11 +461,12 @@ def test_subagent_switch_accepts_antigravity(monkeypatch: pytest.MonkeyPatch) ->
 def test_subagent_switch_409_antigravity_when_not_connected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Not signed in with Google -> 409, nothing persisted."""
+    """Not signed in with Google AND no Gemini key -> 409, nothing persisted."""
     import jarvis.core.config as cfg_mod
     import jarvis.core.config_writer as config_writer
 
     monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _p: None)
+    monkeypatch.setattr(cfg_mod, "get_secret", lambda *_a, **_k: None)
     _patch_antigravity(monkeypatch, connected=False)
     persisted: list[str] = []
     monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: persisted.append(n))
@@ -395,3 +475,63 @@ def test_subagent_switch_409_antigravity_when_not_connected(
     resp = _client(cfg).post("/api/subagent/switch", json={"provider": "antigravity"})
     assert resp.status_code == 409
     assert persisted == []
+
+
+# --- Antigravity DUAL billing: subscription OAuth OR a Gemini API key ---------
+# Mirror of Codex (subscription_or_api). A user with no Google login but a Gemini
+# API key set can still run the Antigravity subagent, billed per token.
+
+
+def test_antigravity_row_key_set_via_gemini_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No OAuth login, but a Gemini API key is set -> the row unlocks (API billing)."""
+    import jarvis.core.config as cfg_mod
+
+    _patch_antigravity(monkeypatch, connected=False)
+    monkeypatch.setattr(
+        cfg_mod, "get_secret",
+        lambda key, *a, **k: "AIza-fake" if key == "gemini_api_key" else None,
+    )
+    cfg = load_config()
+    row = next(r for r in _status(cfg)["mapping"] if r["jarvis"] == "antigravity")
+    assert row["key_set"] is True
+
+
+def test_antigravity_row_billing_is_subscription_or_api(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The row exposes its billing mode so the UI can badge it."""
+    _patch_antigravity(monkeypatch, connected=True)
+    cfg = load_config()
+    row = next(r for r in _status(cfg)["mapping"] if r["jarvis"] == "antigravity")
+    assert row["billing"] == "subscription_or_api"
+    codex_row = next(r for r in _status(cfg)["mapping"] if r["jarvis"] == "openai-codex")
+    assert codex_row["billing"] == "subscription_or_api"
+    gemini_row = next(r for r in _status(cfg)["mapping"] if r["jarvis"] == "gemini")
+    assert gemini_row["billing"] == "api"
+
+
+def test_subagent_switch_accepts_antigravity_via_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No OAuth, but a Gemini API key -> antigravity selectable (per-token billing)."""
+    import jarvis.core.config as cfg_mod
+    import jarvis.core.config_writer as config_writer
+
+    monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _p: None)
+    monkeypatch.setattr(
+        cfg_mod, "get_secret",
+        lambda key, *a, **k: "AIza-fake" if key == "gemini_api_key" else None,
+    )
+    _patch_antigravity(monkeypatch, connected=False)
+    calls: list[str] = []
+    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: calls.append(n))
+
+    cfg = load_config()
+    resp = _client(cfg).post(
+        "/api/subagent/switch", json={"provider": "antigravity", "persist": True}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["active"] == "antigravity"
+    assert calls == ["antigravity"]

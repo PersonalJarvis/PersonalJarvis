@@ -1,6 +1,6 @@
 """The voice-hangup chokepoint must also cancel an in-flight CHAT turn.
 
-Live bug 2026-06-19: the whisper-bar X (``request_hangup`` → ``_trigger_voice_hangup``)
+Live bug 2026-06-19: the jarvis-bar X (``request_hangup`` → ``_trigger_voice_hangup``)
 set the voice ``_hangup_event`` and cancelled active Computer-Use, but a chat
 turn dispatched through ``desktop_app._on_user_message`` runs on a separate path
 that ignored the X — so the brain kept thinking through ~27 X presses. The fix

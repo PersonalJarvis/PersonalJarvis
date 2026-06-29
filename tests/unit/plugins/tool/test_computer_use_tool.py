@@ -396,6 +396,50 @@ async def test_success_readback_surfaces_verifier_observation() -> None:
     assert text != action_phrase("cu_done", "en"), "must not be the content-free Done phrase"
 
 
+# ---------------------------------------------------------------------------
+# Output-language threading to the verifier (fix 2026-06-27). The verifier's
+# spoken `proof` was English even in a German turn ("Erledigt — The file explorer
+# window is open ..."). The resolved turn output language must reach the harness
+# via task.env so the verifier writes proof in the user's language. This pins the
+# whole chain: tool → dispatch_to_harness → HarnessTask.env.
+# ---------------------------------------------------------------------------
+
+
+class _EnvCapturingManager(_FakeHarnessManager):
+    def __init__(self) -> None:
+        super().__init__()
+        self.task_envs: list[dict] = []
+
+    async def dispatch(self, name, task) -> AsyncIterator[HarnessResult]:
+        self.task_envs.append(dict(getattr(task, "env", None) or {}))
+        self.dispatched.append((name, task.prompt))
+        yield HarnessResult(stdout="[cu] done at step 1", exit_code=0, is_final=True)
+
+
+async def test_tool_threads_output_language_into_harness_env() -> None:
+    from jarvis.harness.screenshot_only_loop import _OUTPUT_LANGUAGE_ENV_KEY
+    from jarvis.plugins.tool.computer_use_tool import ComputerUseTool
+
+    bus = _FakeBus()
+    fake = _EnvCapturingManager()
+    tool = ComputerUseTool(bus=bus, manager=fake)
+
+    # A German conversation (loop-stamped output language) must arrive at the
+    # harness as env["JARVIS_OUTPUT_LANGUAGE"] = "de".
+    ctx = ExecutionContext(
+        trace_id=uuid.uuid4(),
+        user_utterance="öffne den explorer",  # i18n-allow: DE fixture
+        config={"output_language": "de"},
+        memory_read=None,
+    )
+    result = await tool.execute({"goal": "öffne den explorer"}, ctx)  # i18n-allow: DE fixture
+    assert result.success
+
+    await _collect_completion(bus)
+    assert fake.task_envs, "harness was never dispatched"
+    assert fake.task_envs[0].get(_OUTPUT_LANGUAGE_ENV_KEY) == "de"
+
+
 async def test_success_readback_falls_back_to_done_without_proof() -> None:
     from jarvis.plugins.tool.computer_use_tool import ComputerUseTool
     from jarvis.voice.action_phrases import action_phrase

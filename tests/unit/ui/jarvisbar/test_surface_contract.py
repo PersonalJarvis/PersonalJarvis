@@ -1,14 +1,15 @@
-"""WhisperBarOverlay must expose the duck-typed surface OrbBusBridge drives,
+"""JarvisBarOverlay must expose the duck-typed surface OrbBusBridge drives,
 and every method must be safe to call before/without a Tk window."""
 from __future__ import annotations
 
-from jarvis.ui.whisperbar.overlay import WhisperBarOverlay
+from jarvis.ui.jarvisbar.overlay import JarvisBarOverlay
 
 # Every method OrbBusBridge invokes on the surface (directly or via getattr).
 REQUIRED = [
     "show",
     "hide",
     "set_level",
+    "set_muted",
     "play_animation",
     "stop_animation",
     "show_listening_transcript",
@@ -26,18 +27,18 @@ REQUIRED = [
 
 def test_surface_exposes_every_method_the_bridge_calls():
     for name in REQUIRED:
-        assert callable(getattr(WhisperBarOverlay, name, None)), name
+        assert callable(getattr(JarvisBarOverlay, name, None)), name
 
 
 def test_constructs_headless_without_tk():
-    bar = WhisperBarOverlay(persistent=False, accent="#abcdef")
+    bar = JarvisBarOverlay(persistent=False, accent="#abcdef")
     assert bar._mode == "idle"
     assert bar._persistent is False
     assert bar._root is None
 
 
 def test_methods_safe_without_tk_window():
-    bar = WhisperBarOverlay.__new__(WhisperBarOverlay)
+    bar = JarvisBarOverlay.__new__(JarvisBarOverlay)
     bar._root = None
     bar._mode = "idle"
     bar._ext_level = 0.0
@@ -59,6 +60,11 @@ def test_methods_safe_without_tk_window():
     assert bar._ext_level == 1.0
     bar.set_level(-2.0)
     assert bar._ext_level == 0.0
+
+    bar.set_muted(True)  # _root None → safe atomic write
+    assert bar._muted is True
+    bar.set_muted(False)
+    assert bar._muted is False
 
     bar.hide()  # _root None → safe no-op
     bar.play_animation("wave", x=1)

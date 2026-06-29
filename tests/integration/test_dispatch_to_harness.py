@@ -94,6 +94,33 @@ async def test_missing_prompt_fails(ctx):
 
 
 @pytest.mark.asyncio
+async def test_unknown_harness_returns_neutral_error_no_inventory_leak(ctx):
+    """A missing harness must NOT leak the internal active/failed harness list.
+
+    Forensic 2026-06-28: the raw KeyError ("...Aktiv: [mcp-remote, …]") rode into
+    the voice path and was read aloud verbatim. The returned error must be
+    neutral — it may name the requested harness, but must never contain the
+    internal harness inventory.
+    """
+    bus = EventBus()
+    mgr = _make_manager_with_fakes(bus, {
+        "python-script": FakeHarness(scripted_output="ok"),
+        "mcp-remote": FakeHarness(scripted_output="ok"),
+    })
+    tool = DispatchToHarnessTool(bus=bus, manager=mgr)
+
+    result = await tool.execute({"harness": "openclaw", "prompt": "x"}, ctx)
+    assert result.success is False
+    err = result.error or ""
+    # No internal inventory leak — neither the registered harness names nor the
+    # "Aktiv: [...]"/available wording may appear.
+    assert "python-script" not in err
+    assert "mcp-remote" not in err
+    assert "Aktiv" not in err
+    assert "available" not in err.lower()
+
+
+@pytest.mark.asyncio
 async def test_output_trim_for_large_stdout(ctx):
     bus = EventBus()
     long = "x" * 20_000

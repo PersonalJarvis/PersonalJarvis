@@ -413,3 +413,29 @@ async def test_heartbeat_dropped_not_deferred_while_user_holds_floor() -> None:
         "stale heartbeat was deferred — kind='progress' must be DROPPED so it "
         "never replays after the user finishes or after the answer"
     )
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_dropped_not_deferred_while_turn_is_processing() -> None:
+    """A background heartbeat must not speak during a new foreground turn.
+
+    Live regression 2026-06-25: a Notion research mission heartbeat fired while
+    Jarvis was processing a simple election question. The user heard "still on
+    it" instead of immediate progress on the foreground answer, and the shared
+    audio progress counter polluted that turn's playback watchdog. A progress
+    beat is ephemeral, so it is dropped rather than queued.
+    """
+    from jarvis.speech.pipeline import TurnTakingState
+
+    bus = EventBus()
+    pipe = _pipeline(bus, watchdog_delay_s=0.03)
+    pipe._turn_state = TurnTakingState.PROCESSING
+
+    await bus.publish(OpenClawAnnouncement(action="bauen", target="x"))
+    await asyncio.sleep(0.2)  # heartbeat fires into _on_announcement
+
+    assert pipe._player.plays == [], "heartbeat was spoken during a foreground turn"
+    assert pipe._deferred_announcements == [], (
+        "stale heartbeat was deferred; progress beats must be dropped during "
+        "active foreground turns"
+    )

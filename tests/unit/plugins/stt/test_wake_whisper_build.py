@@ -42,15 +42,30 @@ def test_build_wake_whisper_uses_wake_fields_not_utterance_model() -> None:
     assert p._compute_type == "int8"
 
 
-def test_build_wake_whisper_gpu_turbo_drops_bias_when_cuda() -> None:
-    # Capability-gated upgrade (forensic 2026-06-24): on a CUDA box the wake runs
-    # the fast turbo model AND drops the bias — the strong model hears the name
-    # without it, and the bias on a strong model is what hallucinated the wake
-    # onto silence (the false-wake source). Offline-validated 0 false-wakes.
+def test_build_wake_whisper_custom_phrase_keeps_base_cpu_bias_on_cuda() -> None:
+    # Forensic 2026-06-29: turbo WITHOUT the phrase bias MANGLES a short custom
+    # wake phrase ("Hey Nico" -> "cuf ich" -> the wake never fired). The strong
+    # turbo model is still unbiased there, and unbiased recall on a custom proper
+    # noun is poor (2-13% vs 83% with the initial_prompt bias). So a CUSTOM wake
+    # phrase stays on the validated base/cpu + bias config even on a CUDA box; it
+    # does NOT upgrade to turbo-without-bias (which is why the background hot-swap
+    # is a no-op for it — the rebuilt model stays "base"). Supersedes the
+    # 2026-06-24 "turbo drops bias" decision, which only validated false-wakes (0)
+    # and missed that turbo-without-bias also wrecks custom-phrase recall.
     p = build_wake_whisper(STTConfig(), wake_phrase="Hey Ruben", cuda_available=True)
+    assert p._model_name == "base"
+    assert p._device == "cpu"
+    assert p._initial_prompt == "Hey Ruben"  # bias KEPT — needed to hear the name
+
+
+def test_build_wake_whisper_default_phrase_gets_turbo_no_bias_on_cuda() -> None:
+    # The default "Hey Jarvis" / OWW path carries NO custom bias, so on a CUDA
+    # box it still gets the fast turbo upgrade (no bias means nothing to
+    # hallucinate the wake onto silence).
+    p = build_wake_whisper(STTConfig(), wake_phrase=None, cuda_available=True)
     assert p._model_name == "large-v3-turbo"
     assert p._device == "cuda"
-    assert p._initial_prompt is None  # bias OFF on turbo
+    assert p._initial_prompt is None  # bias OFF on turbo (no custom phrase)
 
 
 def test_build_wake_whisper_cpu_keeps_bias() -> None:
@@ -103,3 +118,63 @@ def test_build_wake_whisper_default_has_no_prompt_bias() -> None:
         STTConfig(), language="de", wake_phrase="   ", cuda_available=False
     )
     assert p_blank._initial_prompt is None
+
+
+# --- Persisted CUDA-availability probe (boot-speed fix) ---------------------
+#
+# The first CUDA call (``ctranslate2.get_cuda_device_count``) JIT-compiles
+# kernels for ~30-60 s on a Blackwell GPU and used to run synchronously on the
+# desktop boot path, freezing "VOICE STARTING…". The probe result is a stable
+# hardware fact, so it is cached to disk and skipped on every boot after the
+# first.
+import json  # noqa: E402
+
+from jarvis.plugins.stt import _wake_cuda_available, _wake_cuda_cache_path  # noqa: E402
+
+
+def test_wake_cuda_cache_path_honours_data_dir_env(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("JARVIS__MEMORY__DATA_DIR", str(tmp_path))
+    assert _wake_cuda_cache_path() == tmp_path / "wake_cuda_probe.json"
+
+
+def test_wake_cuda_available_returns_persisted_value_without_probing(
+    tmp_path, monkeypatch
+) -> None:
+    """A cache HIT must return the stored value and never touch ctranslate2."""
+    monkeypatch.setenv("JARVIS__MEMORY__DATA_DIR", str(tmp_path))
+    _wake_cuda_available.cache_clear()
+    (tmp_path / "wake_cuda_probe.json").write_text(
+        json.dumps({"cuda": True}), encoding="utf-8"
+    )
+    # A real probe in CI (no GPU) would return False; a True result therefore
+    # proves the cached value was used, not a fresh probe.
+    assert _wake_cuda_available() is True
+    _wake_cuda_available.cache_clear()
+
+
+def test_wake_cuda_available_writes_cache_on_miss(tmp_path, monkeypatch) -> None:
+    """A cold probe (no cache) must persist its result for the next boot."""
+    monkeypatch.setenv("JARVIS__MEMORY__DATA_DIR", str(tmp_path))
+    _wake_cuda_available.cache_clear()
+    cache_file = tmp_path / "wake_cuda_probe.json"
+    assert not cache_file.exists()
+
+    value = _wake_cuda_available()  # CI has no GPU → False, but the path runs.
+
+    assert cache_file.exists()
+    assert json.loads(cache_file.read_text(encoding="utf-8"))["cuda"] == value
+    _wake_cuda_available.cache_clear()
+
+
+def test_wake_cuda_available_survives_corrupt_cache(tmp_path, monkeypatch) -> None:
+    """A corrupt cache file must not break boot — it falls back to a fresh probe."""
+    monkeypatch.setenv("JARVIS__MEMORY__DATA_DIR", str(tmp_path))
+    _wake_cuda_available.cache_clear()
+    cache_file = tmp_path / "wake_cuda_probe.json"
+    cache_file.write_text("{not json", encoding="utf-8")
+
+    # Must not raise; re-probes and overwrites the corrupt file with a valid one.
+    value = _wake_cuda_available()
+    assert isinstance(value, bool)
+    assert json.loads(cache_file.read_text(encoding="utf-8"))["cuda"] == value
+    _wake_cuda_available.cache_clear()

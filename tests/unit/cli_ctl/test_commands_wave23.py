@@ -1,5 +1,6 @@
 """Tests for the Wave 2-3 curated domains (skills, outputs, board, workflows,
-conductor, contacts, telephony, marketplace, mcps, docs, frontier)."""
+conductor, contacts, telephony, marketplace, mcps, docs, frontier) plus the
+later friends / socials / clis groups."""
 from __future__ import annotations
 
 from typer.testing import CliRunner
@@ -163,3 +164,79 @@ def test_frontier_ack_proceeds(capture_api):
     res = runner.invoke(app, ["frontier", "ack"])
     assert res.exit_code == 0
     assert _last(capture_api)["path"] == "/api/frontier/ack"
+
+
+# --- friends --------------------------------------------------------------
+def test_friends_list(capture_api):
+    runner.invoke(app, ["friends", "list"])
+    assert _last(capture_api)["path"] == "/api/friends"
+
+
+def test_friends_add(capture_api):
+    res = runner.invoke(app, ["friends", "add", "--json-body", '{"display_name": "Bob"}'])
+    assert res.exit_code == 0
+    call = _last(capture_api)
+    assert call["method"] == "POST" and call["body"] == {"display_name": "Bob"}
+
+
+def test_friends_delete_requires_yes(capture_api):
+    assert runner.invoke(app, ["friends", "delete", "f1"]).exit_code == 1
+    assert capture_api["calls"] == []
+
+
+def test_friends_message_requires_yes(capture_api):
+    # Sending a real outbound DM is marked dangerous=True → fails closed.
+    assert runner.invoke(app, ["friends", "message", "f1", "--text", "hi"]).exit_code == 1
+    assert capture_api["calls"] == []
+
+
+def test_friends_message_with_yes(capture_api):
+    res = runner.invoke(app, ["friends", "message", "f1", "--text", "hi", "--yes"])
+    assert res.exit_code == 0
+    call = _last(capture_api)
+    assert call["method"] == "POST" and call["path"] == "/api/friends/f1/messages"
+    assert call["body"] == {"text": "hi"}
+
+
+# --- socials ---------------------------------------------------------------
+def test_socials_list(capture_api):
+    runner.invoke(app, ["socials", "list"])
+    assert _last(capture_api)["path"] == "/api/socials"
+
+
+def test_socials_add(capture_api):
+    res = runner.invoke(
+        app, ["socials", "add", "--json-body", '{"platform": "x", "label": "X", "url": "u"}']
+    )
+    assert res.exit_code == 0
+    assert _last(capture_api)["method"] == "POST"
+
+
+def test_socials_delete_requires_yes(capture_api):
+    assert runner.invoke(app, ["socials", "delete", "1"]).exit_code == 1
+    assert capture_api["calls"] == []
+
+
+# --- clis ------------------------------------------------------------------
+def test_clis_list(capture_api):
+    runner.invoke(app, ["clis", "list"])
+    assert _last(capture_api)["path"] == "/api/clis"
+
+
+def test_clis_show(capture_api):
+    runner.invoke(app, ["clis", "show", "gcloud"])
+    assert _last(capture_api)["path"] == "/api/clis/gcloud"
+
+
+def test_clis_install_proceeds(capture_api):
+    # POST install is a reversible, server-audited mutation → proceeds, no --yes.
+    res = runner.invoke(app, ["clis", "install", "gcloud", "--method", "winget"])
+    assert res.exit_code == 0
+    call = _last(capture_api)
+    assert call["method"] == "POST" and call["path"] == "/api/clis/gcloud/install"
+    assert call["body"] == {"method": "winget"}
+
+
+def test_clis_usage_stats(capture_api):
+    runner.invoke(app, ["clis", "usage-stats", "gcloud"])
+    assert _last(capture_api)["path"] == "/api/clis/gcloud/usage/stats"

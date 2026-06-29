@@ -123,6 +123,83 @@ def test_list_providers_returns_full_catalog(server_with_brain: WebServer, secre
         assert "ollama-local" not in ids, "Ollama wurde 2026-04-21 entfernt"
 
 
+# ----------------------------------------------------------------------
+# /api/providers/section-health — the at-a-glance tab indicators
+# ----------------------------------------------------------------------
+
+
+class _FakeTestResult:
+    """Minimal stand-in for provider_test.ProviderTestResult — the section-health
+    route only reads ``.status`` and ``.detail``."""
+
+    def __init__(self, status: str = "ok", detail: str = "") -> None:
+        self.status = status
+        self.detail = detail
+
+
+@pytest.fixture
+def no_real_provider_test(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub the REAL connectivity call so section-health never hits the network
+    (and can't pick up the maintainer's live keyring keys), keeping the test
+    hermetic and fast."""
+    from jarvis.brain import provider_test as _pt
+
+    async def _fake_run(spec: Any, cfg: Any) -> _FakeTestResult:  # noqa: ANN401
+        return _FakeTestResult("ok", "")
+
+    monkeypatch.setattr(_pt, "run_provider_test", _fake_run)
+
+
+def test_section_health_returns_all_tabs(
+    server_with_brain: WebServer,
+    secret_store: _InMemorySecretStore,
+    no_real_provider_test: None,
+) -> None:
+    """Every tab gets a status drawn from the SSOT vocabulary, and the response
+    is honestly marked uncached on the first call."""
+    with TestClient(server_with_brain.app) as client:
+        resp = client.get("/api/providers/section-health")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert set(body["sections"]) == {"brain", "tts", "stt", "subagents", "advanced"}
+        valid = {"ok", "needs_setup", "error", "unknown"}
+        for sec in body["sections"].values():
+            assert sec["status"] in valid
+        assert body["cached"] is False
+        # No telephony manager mounted → the optional Advanced tab stays silent.
+        assert body["sections"]["advanced"]["status"] == "unknown"
+
+
+def test_section_health_missing_key_is_needs_setup(
+    server_with_brain: WebServer,
+    secret_store: _InMemorySecretStore,
+    no_real_provider_test: None,
+) -> None:
+    """The active brain provider with no stored key rolls up to needs_setup —
+    the 'you still have to set this up' (amber) signal, distinct from a broken
+    key (which would be 'error')."""
+    with TestClient(server_with_brain.app) as client:
+        body = client.get("/api/providers/section-health").json()
+        assert body["sections"]["brain"]["status"] == "needs_setup"
+        assert body["sections"]["brain"]["reason"] == "not_configured"
+
+
+def test_section_health_caches_then_refresh_bypasses(
+    server_with_brain: WebServer,
+    secret_store: _InMemorySecretStore,
+    no_real_provider_test: None,
+) -> None:
+    """Repeated opens / tab switches reuse the cached rollup; ?refresh=true (used
+    after a key save or provider switch) forces a fresh check."""
+    with TestClient(server_with_brain.app) as client:
+        assert client.get("/api/providers/section-health").json()["cached"] is False
+        assert client.get("/api/providers/section-health").json()["cached"] is True
+        assert (
+            client.get("/api/providers/section-health?refresh=true").json()["cached"]
+            is False
+        )
+
+
 def test_list_providers_exposes_credential_help_and_billing(
     server_with_brain: WebServer, secret_store: _InMemorySecretStore
 ) -> None:

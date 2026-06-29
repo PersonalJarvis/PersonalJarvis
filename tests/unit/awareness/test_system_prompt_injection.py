@@ -22,8 +22,14 @@ from jarvis.core.config import JarvisConfig
 
 
 def _make_brain(awareness_manager: AwarenessManager | None) -> BrainManager:
+    # These tests assert the snapshot lands in the cached SYSTEM prompt. The
+    # default `cache_optimized_prompt=True` deliberately moves the snapshot into
+    # the per-turn user message instead (Wave-2 omni-latency), so pin the legacy
+    # in-system-prompt path here to test exactly that contract.
+    config = JarvisConfig()
+    config.performance.cache_optimized_prompt = False
     return BrainManager(
-        config=JarvisConfig(),
+        config=config,
         bus=EventBus(),
         tools={},
         awareness_manager=awareness_manager,

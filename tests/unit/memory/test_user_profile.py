@@ -73,6 +73,74 @@ class TestAppendList:
 
 
 # ======================================================================
+# clear / remove_list_item — manual deletion from the Profile UI
+# ======================================================================
+
+class TestClearField:
+    def test_clear_scalar_returns_true_and_empties(self, profile: UserProfile) -> None:
+        profile.set("identity", "name", "Ruben")
+        assert profile.clear("identity", "name") is True
+        # The field reads back as unset (None) — "not known yet".
+        assert profile.get("identity", "name") is None
+
+    def test_clear_already_empty_returns_false(self, profile: UserProfile) -> None:
+        # Template ships name=null → nothing to clear → no change.
+        assert profile.clear("identity", "name") is False
+
+    def test_clear_list_field_empties_it(self, profile: UserProfile) -> None:
+        profile.append_list("identity", "languages", "Deutsch")
+        assert profile.clear("identity", "languages") is True
+        # Empty list / None — either reads as "not known yet" to the UI.
+        assert not profile.get("identity", "languages")
+
+    def test_clear_rejects_unknown_cluster(self, profile: UserProfile) -> None:
+        with pytest.raises(ValueError):
+            profile.clear("unknown_cluster", "name")
+
+    def test_clear_survives_save_reload(self, profile: UserProfile) -> None:
+        profile.set("identity", "preferred_address", "Chef")
+        profile.save()
+        profile.clear("identity", "preferred_address")
+        profile.save()
+        reloaded = UserProfile.load(profile.path)
+        assert reloaded.get("identity", "preferred_address") is None
+
+
+class TestRemoveListItem:
+    def test_remove_existing_item(self, profile: UserProfile) -> None:
+        profile.append_list("identity", "languages", "Deutsch")
+        profile.append_list("identity", "languages", "English")
+        assert profile.remove_list_item("identity", "languages", "Deutsch") is True
+        assert profile.get("identity", "languages") == ["English"]
+
+    def test_remove_absent_item_returns_false(self, profile: UserProfile) -> None:
+        profile.append_list("identity", "languages", "Deutsch")
+        assert profile.remove_list_item("identity", "languages", "Spanish") is False
+        assert profile.get("identity", "languages") == ["Deutsch"]
+
+    def test_remove_last_item_leaves_field_empty(self, profile: UserProfile) -> None:
+        profile.append_list("identity", "languages", "Deutsch")
+        assert profile.remove_list_item("identity", "languages", "Deutsch") is True
+        assert not profile.get("identity", "languages")
+
+    def test_remove_from_unset_field_returns_false(self, profile: UserProfile) -> None:
+        assert profile.remove_list_item("values", "top_values", "Pizza") is False
+
+    def test_remove_rejects_unknown_cluster(self, profile: UserProfile) -> None:
+        with pytest.raises(ValueError):
+            profile.remove_list_item("foo", "bar", "baz")
+
+    def test_remove_survives_save_reload(self, profile: UserProfile) -> None:
+        profile.append_list("identity", "languages", "Deutsch")
+        profile.append_list("identity", "languages", "English")
+        profile.save()
+        profile.remove_list_item("identity", "languages", "Deutsch")
+        profile.save()
+        reloaded = UserProfile.load(profile.path)
+        assert reloaded.get("identity", "languages") == ["English"]
+
+
+# ======================================================================
 # save / load / reload Roundtrip
 # ======================================================================
 

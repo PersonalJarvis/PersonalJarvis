@@ -144,6 +144,53 @@ def test_self_reference_is_removed() -> None:
     assert "removed_self_reference" in result.actions
 
 
+@pytest.mark.parametrize(
+    ("text", "language", "gone", "kept"),
+    [
+        # The maintainer never wants Jarvis to SAY it is noting / reviewing the
+        # last transcription — it happens silently in the background.
+        ("Verstanden. Ich notiere mir das. Das Wetter ist sonnig.", "de",
+         "notiere", "sonnig"),
+        ("Ich schaue mir die letzte Transkription an. Die Hauptstadt ist Rom.",
+         "de", "transkription", "rom"),
+        ("Ich merke mir das. Hier ist die Antwort.", "de", "merke mir", "antwort"),
+        ("Got it. I am noting that down. The capital is Rome.", "en",
+         "noting", "rome"),
+        ("Sure. Let me look at the last transcription. It is 25 degrees.", "en",
+         "transcription", "25 degrees"),
+        ("Entendido, tomo nota. La capital es Roma.", "es", "tomo nota", "roma"),
+    ],
+)
+def test_background_action_narration_is_removed(
+    text: str, language: str, gone: str, kept: str,
+) -> None:
+    """Noting / 'review the last transcription' narration is stripped (DE/EN/ES)."""
+    result = scrub_for_voice(text, language=language)
+    low = result.cleaned.lower()
+    assert gone not in low
+    assert kept in low  # the real content survives
+    assert "removed_background_action_narration" in result.actions
+
+
+@pytest.mark.parametrize(
+    ("text", "language"),
+    [
+        # Must NOT be stripped: content lead-ins + legit save/check confirmations.
+        ("Looking at the data, the answer is 42.", "en"),
+        ("Ich schaue gleich nach dem Wetter und melde mich.", "de"),
+        ("I'm saving the file now.", "en"),
+        ("Die Datei ist gespeichert.", "de"),
+        ("I will check the weather for you.", "en"),
+    ],
+)
+def test_background_action_narration_no_false_positive(
+    text: str, language: str,
+) -> None:
+    """A content lead-in or a legit save/check action is left intact."""
+    result = scrub_for_voice(text, language=language)
+    assert "removed_background_action_narration" not in result.actions
+
+
 def test_echo_paraphrase_in_opener_is_cut() -> None:
     """Echo-Paraphrase am Satzanfang wird abgeschnitten — Antwort ist die Substanz."""
     text = "Du möchtest also wissen, wie spät es ist. Halb drei."
@@ -269,6 +316,41 @@ def test_echo_paraphrase_mid_sentence_is_kept() -> None:
     # Mid-sentence Echo bleibt erhalten
     assert "möchtest also" in result.cleaned.lower()
     assert "rephrased_echo" not in result.actions
+
+
+# ---------------------------------------------------------------------------
+# Em-dash / en-dash scrub (2026-06-29 "choppy voice" forensic): a parenthetical
+# dash renders as a hard TTS pause. Collapse it to a comma; hyphen compounds
+# (plain ASCII '-', no surrounding spaces) must survive.
+# ---------------------------------------------------------------------------
+
+
+def test_em_dash_becomes_comma() -> None:
+    text = "Kurz nach drei — Viertel nach, genau genommen."
+    result = scrub_for_voice(text)
+    assert "—" not in result.cleaned
+    assert "Kurz nach drei, Viertel nach" in result.cleaned
+
+
+def test_en_dash_becomes_comma() -> None:
+    text = "Alles bereit – wir können sofort loslegen."
+    result = scrub_for_voice(text)
+    assert "–" not in result.cleaned
+    assert "Alles bereit, wir können" in result.cleaned
+
+
+def test_hyphen_compound_survives_em_dash_filter() -> None:
+    """A plain ASCII hyphen compound has no surrounding spaces and must stay."""
+    text = "Dein T-Shirt liegt im Schrank."
+    result = scrub_for_voice(text)
+    assert "T-Shirt" in result.cleaned
+
+
+def test_trailing_em_dash_leaves_no_dangling_comma() -> None:
+    text = "Im Hintergrund laufen mehrere Programme —"
+    result = scrub_for_voice(text)
+    assert "—" not in result.cleaned
+    assert not result.cleaned.endswith(",")
 
 
 def test_fallback_used_true_only_for_stacktrace() -> None:
@@ -654,6 +736,55 @@ def test_scrub_strips_end_call_sentinel() -> None:
     assert "stripped_end_signal" in result.actions
 
 
+# ---------------------------------------------------------------------------
+# Web-search / SERP source artefacts (live forensic 2026-06-28, voice Turn 4).
+# The brain occasionally reads a raw search hit verbatim — title, snippet, URL,
+# "Weitere Ergebnisse von <domain>" — instead of synthesizing an answer. The
+# search_web tool result now instructs the brain to synthesize (primary fix);
+# this is the fail-closed defense so a source URL / domain can never be spoken.
+# ---------------------------------------------------------------------------
+
+
+def test_http_url_is_stripped_from_voice() -> None:
+    """A spoken answer must never read out an http(s) URL."""
+    text = "Die Prüfung dauert 190 Minuten. Mehr unter https://www.km.bayern.de/schueler.html"
+    result = scrub_for_voice(text)
+    assert "http" not in result.cleaned.lower()
+    assert "km.bayern.de" not in result.cleaned.lower()
+    assert "190 minuten" in result.cleaned.lower()
+    assert "removed_source_artifacts" in result.actions
+
+
+def test_serp_more_results_footer_is_stripped() -> None:
+    """The 'Weitere Ergebnisse von <domain>' SERP footer is never spoken."""
+    text = "Note 2 gibt es ab 34,5 Punkten. Weitere Ergebnisse von www.gutefrage.net"
+    result = scrub_for_voice(text)
+    low = result.cleaned.lower()
+    assert "gutefrage" not in low
+    assert "weitere ergebnisse" not in low
+    assert "note 2" in low
+    assert "removed_source_artifacts" in result.actions
+
+
+def test_bare_www_domain_is_stripped_from_voice() -> None:
+    """A bare www-domain hit reference is stripped (English/Spanish SERP too)."""
+    text = "Insgesamt 190 Minuten. Mehr dazu: www.realschule.bayern.de Viel Erfolg."
+    result = scrub_for_voice(text)
+    assert "www." not in result.cleaned.lower()
+    assert "realschule.bayern.de" not in result.cleaned.lower()
+    assert "190 minuten" in result.cleaned.lower()
+    assert "viel erfolg" in result.cleaned.lower()
+
+
+def test_clean_answer_without_sources_is_untouched() -> None:
+    """Defense against false positives: a normal spoken answer with no URL /
+    domain / SERP footer must pass through unchanged (no source-artifact pass)."""
+    text = "Morgen schreiben alle Realschüler in Bayern ihre Mathe-Abschlussprüfung."
+    result = scrub_for_voice(text)
+    assert result.cleaned == text
+    assert "removed_source_artifacts" not in result.actions
+
+
 def test_scrub_sentinel_only_yields_empty() -> None:
     from jarvis.speech.hangup import END_CALL_SIGNAL
 
@@ -761,3 +892,49 @@ def test_scrub_keeps_sentence_with_inline_brace_not_a_dump() -> None:
     result = scrub_for_voice(text, language="de")
     assert result.fallback_used is False
     assert "test()" in result.cleaned or "test" in result.cleaned
+
+
+# ---------------------------------------------------------------------------
+# Raw shell / PowerShell command guard (live bug 2026-06-28): the fast tier
+# emitted a SendKeys PowerShell command as its reply and TTS read it aloud
+# "mit Sonderzeichen und allem". A raw command is code, never a spoken
+# sentence -> fail-closed to the standard phrase, like a stacktrace.
+# ---------------------------------------------------------------------------
+
+SHELL_COMMAND_CASES = [
+    pytest.param(
+        "Add-Type -AssemblyName System.Windows.Forms; "
+        "[System.Windows.Forms.SendKeys]::SendWait('^(g)')",
+        id="powershell-sendkeys-the-live-bug",
+    ),
+    pytest.param(
+        "[System.Windows.Forms.SendKeys]::SendWait('^g')",
+        id="dotnet-static-call",
+    ),
+    pytest.param("$env:USERPROFILE", id="ps-env-var"),
+    pytest.param("cmd /c start discord", id="cmd-invocation"),
+]
+
+
+@pytest.mark.parametrize("text", SHELL_COMMAND_CASES)
+def test_raw_shell_command_is_never_spoken(text: str) -> None:
+    result = scrub_for_voice(text, language="de")
+    assert result.fallback_used is True
+    for frag in ("SendKeys", "Add-Type", "::", "$env", "cmd /c"):
+        assert frag not in result.cleaned
+
+
+@pytest.mark.parametrize(
+    "clean",
+    [
+        "Schau bitte im Browser-Verlauf nach.",
+        "Das kostet 5-10 Euro.",
+        "Die E-Mail ist raus.",
+        "Ich habe die Datei gespeichert.",
+        "Ruf Anna an und sag ihr Bescheid.",
+    ],
+)
+def test_shell_guard_does_not_destroy_normal_prose(clean: str) -> None:
+    # Hyphen compounds, ranges and ordinary speech must NOT trip the guard.
+    result = scrub_for_voice(clean, language="de")
+    assert result.fallback_used is False

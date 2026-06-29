@@ -579,7 +579,7 @@ async def test_reply_is_reset_between_turns() -> None:
 
 
 # --- Boot readiness gate: the persistent bar stays hidden until voice is ready.
-# The persistent WhisperBar used to map its window the instant its mainloop ran,
+# The persistent JarvisBar used to map its window the instant its mainloop ran,
 # i.e. during backend boot — seconds before the speech pipeline could actually
 # hear "Hey Jarvis". The user saw the bar and assumed Jarvis was listening when
 # it was not. The bridge now reveals the persistent bar only on the existing

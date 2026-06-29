@@ -29,6 +29,28 @@ from jarvis.missions.ids import uuid7_str
 from jarvis.missions.voice.announcer import MissionAnnouncer
 
 
+class _FakeAckProvider:
+    """Minimal flash-provider stand-in for ReadbackComposer wiring tests."""
+
+    def __init__(self, reply: str | None) -> None:
+        self.reply = reply
+
+    async def run(self, utterance: str, language: str, *, persona_prompt: str) -> str | None:
+        return self.reply
+
+
+def _composer_with(reply: str | None):
+    from jarvis.brain.ack_brain import CircuitBreaker
+    from jarvis.brain.ack_brain.config import AckBrainConfig
+    from jarvis.voice.contextual_readback import ReadbackComposer
+
+    return ReadbackComposer(
+        provider=_FakeAckProvider(reply),
+        config=AckBrainConfig(timeout_ms=1500),
+        breaker=CircuitBreaker(threshold=3, cooldown_s=60),
+    )
+
+
 @pytest.fixture
 async def store_and_bus(tmp_missions_db: Path):
     bus = MissionBus()
@@ -122,6 +144,74 @@ async def test_approved_emits_announcement(store_and_bus) -> None:
     assert "Sir" not in ann.text
     assert ann.language == "de"
     assert ann.priority == "normal"
+
+
+@pytest.mark.asyncio
+async def test_approved_readback_is_contextually_rephrased(store_and_bus) -> None:
+    """With a composer wired, the signed summary is spoken in a fresh phrasing
+    (maintainer mandate: no fixed stock phrases) — but still faithfully."""
+    store, bus = store_and_bus
+    speech_bus = EventBus()
+    captured = _collect_announcements(speech_bus)
+
+    announcer = MissionAnnouncer(
+        bus=bus, store=store, speech_bus=speech_bus,
+        readback_composer=_composer_with("All done — the mission completed."),
+    )
+    await announcer.start()
+
+    mid = await _seed_voice_mission(store, language="en")
+    await store.append_and_publish(
+        EventEnvelope(
+            mission_id=mid,
+            source_actor="kontrollierer",
+            ts_ms=now_ms(),
+            payload=MissionApproved(
+                result_uri=f"mission://{mid}", tokens_used=100, cost_usd=0.05,
+                wall_ms=1000, summary_de="Mission abgeschlossen.",
+                summary_en="Mission completed.",
+            ),
+        )
+    )
+
+    assert len(captured) == 1
+    text = captured[0].text
+    assert text != "Mission completed."  # rephrased, not the canned summary
+    assert "completed" in text.lower()  # but still faithful to the signed fact
+
+
+@pytest.mark.asyncio
+async def test_approved_falls_back_to_signed_summary_when_generation_fails(
+    store_and_bus,
+) -> None:
+    """A composer whose provider yields nothing must fall back to the exact
+    Kontrollierer-signed summary (ADR-0009 + AD-OE6 zero silent drops)."""
+    store, bus = store_and_bus
+    speech_bus = EventBus()
+    captured = _collect_announcements(speech_bus)
+
+    announcer = MissionAnnouncer(
+        bus=bus, store=store, speech_bus=speech_bus,
+        readback_composer=_composer_with(""),  # provider returns empty -> fallback
+    )
+    await announcer.start()
+
+    mid = await _seed_voice_mission(store, language="de")
+    await store.append_and_publish(
+        EventEnvelope(
+            mission_id=mid,
+            source_actor="kontrollierer",
+            ts_ms=now_ms(),
+            payload=MissionApproved(
+                result_uri=f"mission://{mid}", tokens_used=100, cost_usd=0.05,
+                wall_ms=1000, summary_de="Mission abgeschlossen.",
+                summary_en="Mission completed.",
+            ),
+        )
+    )
+
+    assert len(captured) == 1
+    assert captured[0].text == "Mission abgeschlossen."
 
 
 @pytest.mark.asyncio

@@ -27,28 +27,34 @@ def _ctx() -> ExecutionContext:
 
 
 def _stub_launch(monkeypatch) -> list:
-    """Stub resolve + Popen so no real process starts; return the Popen call log."""
+    """Stub resolve + Popen so no real process starts; return the Popen call log.
+
+    Also stubs the post-launch foreground raise to a fast no-op so the launch
+    tests stay deterministic and host-independent (the real raise polls
+    list_windows for up to 3 s). Tests that care about the raise re-stub it.
+    """
     calls: list = []
     monkeypatch.setattr(
         oa, "resolve_app_launch_target",
         lambda n: types.SimpleNamespace(kind="executable", value=r"C:\fake\obs.exe"),
     )
     monkeypatch.setattr(oa.subprocess, "Popen", lambda *a, **k: calls.append((a, k)))
+    monkeypatch.setattr(oa.window_state, "raise_after_launch", lambda n, **k: (False, ""))
     return calls
 
 
 async def test_focuses_when_already_running(monkeypatch):
     calls = _stub_launch(monkeypatch)
     monkeypatch.setattr(oa.window_state, "is_app_running", lambda n: WindowInfo("OBS 30.0.0"))
-    focused: list = []
+    raised: list = []
     monkeypatch.setattr(
-        oa.window_state, "focus_window", lambda t: (focused.append(t), (True, t))[1]
+        oa.window_state, "raise_window", lambda w: (raised.append(w.title), (True, w.title))[1]
     )
     res = await OpenAppTool().execute({"app_name": "obs"}, _ctx())
     assert res.success is True
     assert "already running" in (res.output or "").lower()
     assert calls == []          # never launched a second instance
-    assert focused              # focus was attempted
+    assert raised               # hardened raise was attempted on the existing window
 
 
 async def test_launches_when_not_running(monkeypatch):
@@ -63,14 +69,14 @@ async def test_launches_when_not_running(monkeypatch):
 async def test_multi_instance_app_always_launches(monkeypatch):
     calls = _stub_launch(monkeypatch)
     monkeypatch.setattr(oa.window_state, "is_app_running", lambda n: WindowInfo("File Explorer"))
-    focused: list = []
+    raised: list = []
     monkeypatch.setattr(
-        oa.window_state, "focus_window", lambda t: (focused.append(t), (True, t))[1]
+        oa.window_state, "raise_window", lambda w: (raised.append(w.title), (True, w.title))[1]
     )
     res = await OpenAppTool().execute({"app_name": "explorer"}, _ctx())
     assert res.success is True
     assert len(calls) == 1       # explorer is multi-instance -> launch anyway
-    assert focused == []         # short-circuit skipped, never focused
+    assert raised == []          # short-circuit skipped, never raised
 
 
 async def test_reuse_existing_false_always_launches(monkeypatch):
@@ -84,10 +90,10 @@ async def test_reuse_existing_false_always_launches(monkeypatch):
 async def test_focus_failure_falls_through_to_launch(monkeypatch):
     calls = _stub_launch(monkeypatch)
     monkeypatch.setattr(oa.window_state, "is_app_running", lambda n: WindowInfo("OBS 30"))
-    monkeypatch.setattr(oa.window_state, "focus_window", lambda t: (False, "lock timeout"))
+    monkeypatch.setattr(oa.window_state, "raise_window", lambda w: (False, "lock timeout"))
     res = await OpenAppTool().execute({"app_name": "obs"}, _ctx())
     assert res.success is True
-    assert "Gestartet" in (res.output or "")   # launched after focus failed
+    assert "Gestartet" in (res.output or "")   # launched after the raise failed
     assert len(calls) == 1
 
 
@@ -100,3 +106,62 @@ async def test_url_is_not_short_circuited(monkeypatch):
     res = await OpenAppTool().execute({"app_name": "https://example.com"}, _ctx())
     assert res.success is True
     assert seen == []            # URL must not be treated as an app to focus
+
+
+# --- post-launch foreground raise (the "opens in background" bug) ------------
+
+
+async def test_fresh_launch_raises_window_to_foreground(monkeypatch):
+    calls = _stub_launch(monkeypatch)
+    monkeypatch.setattr(oa.window_state, "is_app_running", lambda n: None)
+    raised: list = []
+    monkeypatch.setattr(
+        oa.window_state, "raise_after_launch",
+        lambda n, **k: (raised.append(n), (True, "New Tab - Google Chrome"))[1],
+    )
+    res = await OpenAppTool().execute({"app_name": "chrome"}, _ctx())
+    assert res.success is True
+    assert len(calls) == 1               # launched once
+    assert raised == ["chrome"]          # and actively pulled to the front
+    assert "vorn" in (res.output or "").lower()   # honest readback
+
+
+async def test_raise_miss_keeps_success(monkeypatch):
+    # The launch already succeeded; a foreground-raise miss must NOT flip the
+    # result to failure — it only softens the readback back to plain "Gestartet".
+    calls = _stub_launch(monkeypatch)
+    monkeypatch.setattr(oa.window_state, "is_app_running", lambda n: None)
+    monkeypatch.setattr(oa.window_state, "raise_after_launch", lambda n, **k: (False, "no window"))
+    res = await OpenAppTool().execute({"app_name": "chrome"}, _ctx())
+    assert res.success is True
+    assert "Gestartet" in (res.output or "")
+    assert "vorn" not in (res.output or "").lower()
+    assert len(calls) == 1
+
+
+async def test_raise_crash_never_breaks_launch(monkeypatch):
+    calls = _stub_launch(monkeypatch)
+    monkeypatch.setattr(oa.window_state, "is_app_running", lambda n: None)
+
+    def boom(_n, **_k):
+        raise RuntimeError("focus blew up")
+
+    monkeypatch.setattr(oa.window_state, "raise_after_launch", boom)
+    res = await OpenAppTool().execute({"app_name": "chrome"}, _ctx())
+    assert res.success is True            # crash in the raise never fails the launch
+    assert "Gestartet" in (res.output or "")
+    assert len(calls) == 1
+
+
+async def test_url_launch_does_not_raise(monkeypatch):
+    # A URL reuses an existing browser window; the app-name raise would not
+    # apply, so it must be skipped (no pointless 3 s poll).
+    _stub_launch(monkeypatch)
+    monkeypatch.setattr(oa.window_state, "is_app_running", lambda n: None)
+    raised: list = []
+    monkeypatch.setattr(
+        oa.window_state, "raise_after_launch", lambda n, **k: raised.append(n) or (True, n)
+    )
+    res = await OpenAppTool().execute({"app_name": "https://example.com"}, _ctx())
+    assert res.success is True
+    assert raised == []                  # raise skipped for URLs

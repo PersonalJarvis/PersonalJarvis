@@ -27,5 +27,31 @@ def test_gate_discovers_route_modules():
     gate = _load_gate()
     mods = gate.route_modules()
     assert len(mods) > 15, f"expected many route modules, found {mods}"
-    # frontier_routes was the route module we had to mount; it must be tracked.
+    # frontier_routes + self_mod_routes were the route modules we had to mount;
+    # they must be tracked.
     assert "frontier_routes" in mods
+    assert "self_mod_routes" in mods
+
+
+def test_all_route_modules_are_tagged():
+    gate = _load_gate()
+    untagged = gate.untagged_modules()
+    assert untagged == [], (
+        f"route modules with an untagged APIRouter (land in `default` group): {untagged}"
+    )
+
+
+def test_tag_detection_handles_nested_parens():
+    gate = _load_gate()
+    src = (
+        'tagged = APIRouter(prefix="/api/x", tags=["x"], '
+        "dependencies=[Depends(require_key)])\n"
+        'untagged = APIRouter(prefix="/api/y")\n'
+    )
+    blocks = gate._apirouter_arg_blocks(src)
+    assert len(blocks) == 2
+    # Balanced-paren scan keeps the nested Depends(...) call inside the first
+    # block; a naive `.*?\)` regex would have truncated it there and lost tags=.
+    assert "tags=" in blocks[0]
+    assert "Depends(require_key)" in blocks[0]
+    assert "tags=" not in blocks[1]

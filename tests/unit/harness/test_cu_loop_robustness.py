@@ -723,6 +723,13 @@ async def test_open_app_waits_for_the_window_before_next_think(
             "Program Manager", "Program Manager", "New Tab - Google Chrome",
         ],
     )
+    # The happy path matches the probe and returns early — the timeout
+    # fallback raise must NOT fire.
+    fallback: list = []
+    monkeypatch.setattr(
+        loop_mod.window_state, "focus_window",
+        lambda t: (fallback.append(t), (True, t))[1],
+    )
     results = await run_loop(ctx, "oeffne chrome")
 
     assert results[-1].exit_code == 0
@@ -731,6 +738,7 @@ async def test_open_app_waits_for_the_window_before_next_think(
     # Still exactly 2 think calls — the settle wait replaced the wasted
     # stale-frame round, it did not add LLM cost.
     assert len(brain.requests) == 2
+    assert fallback == [], "fallback raise fired on the happy path (double-raise)"
 
 
 async def test_open_app_settle_gives_up_when_window_never_appears(
@@ -740,6 +748,13 @@ async def test_open_app_settle_gives_up_when_window_never_appears(
     up after its timeout and the mission continues (and may fail honestly)."""
     monkeypatch.setattr(loop_mod, "_OPEN_APP_SETTLE_POLL_S", 0.005)
     monkeypatch.setattr(loop_mod, "_OPEN_APP_SETTLE_TIMEOUT_S", 0.05)
+    # On timeout the settle probe makes ONE last-ditch raise before observing,
+    # so a backgrounded window still gets a correct next frame. Record it.
+    fallback: list = []
+    monkeypatch.setattr(
+        loop_mod.window_state, "focus_window",
+        lambda t: (fallback.append(t), (False, "no window"))[1],
+    )
     brain = FakeBrain([
         '{"action": "open_app", "name": "spotify"}',
         '{"action": "fail", "reason": "window never appeared"}',
@@ -754,6 +769,7 @@ async def test_open_app_settle_gives_up_when_window_never_appears(
 
     assert time.monotonic() - start < 1.0, "settle probe wedged the loop"
     assert results[-1].is_final
+    assert fallback == ["spotify"], "settle timeout did not attempt the fallback raise"
 
 
 async def test_mission_profile_summary_is_emitted() -> None:
@@ -1610,3 +1626,213 @@ async def test_uac_detected_before_brain_call_skips_blind_step(
     from jarvis.voice.action_phrases import action_phrase
     texts = [getattr(e, "text", "") for e in bus.events]
     assert action_phrase("cu_awaiting_elevation", "en") in texts
+
+
+async def test_focus_click_then_type_is_not_blind_batched() -> None:
+    """Audit 🔴 #2: a [click_element, type] batch must NOT type under the same
+    pre-batch screenshot. The type is held back so it re-observes the focused
+    state first (where the type read-back gate then verifies it) — instead of
+    typing into a possibly-missed focus while Enter still fires."""
+    brain = FakeBrain([
+        '[{"action": "click_element", "name": "search"}, '
+        '{"action": "type", "text": "hello world"}]',
+        '{"action": "done"}',
+    ])
+    ctx = make_ctx(brain, titles=["App"])
+    await run_loop(ctx, "search hello world")
+
+    executed = [name for name, _args in ctx.tool_executor.calls]
+    assert "click_element" in executed       # the focus-click ran
+    assert "type_text" not in executed       # the type was held back, not blind-typed
+    assert len(brain.requests) >= 2          # it re-planned against a fresh observe
+
+
+async def test_loop_refuses_cleanly_on_wayland(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Audit 🔴 #8: a Wayland session can't capture or inject, so the loop refuses
+    with a clear message BEFORE any model call — instead of clicking blind."""
+    monkeypatch.setattr(
+        loop_mod, "_wayland_block_message",
+        lambda: "Computer-Use is unavailable on this Wayland session. Run X11.",
+    )
+    brain = FakeBrain(['{"action": "done"}'])  # must never be reached
+    ctx = make_ctx(brain, titles=["App"])
+    results = await run_loop(ctx, "click the button")
+
+    assert results[-1].is_final
+    assert results[-1].exit_code == loop_mod._OBSERVE_EXIT_CODE
+    assert "wayland" in (results[-1].stderr or "").lower()
+    assert len(brain.requests) == 0          # refused before any model call
+
+
+# ---------------------------------------------------------------------------
+# Audit 🔴 #5 — human-handoff guard wired into the observe phase
+# ---------------------------------------------------------------------------
+
+
+async def test_human_handoff_pauses_then_resumes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A login/2FA/CAPTCHA screen detected from the observation pauses the loop
+    (the brain is NOT asked to act on it), and once the user clears it the loop
+    RESUMES and finishes — far better than mashing wrong clicks at a password box."""
+    calls = {"labels": 0, "clearance": 0}
+
+    async def _labels(timeout_s: float, max_n: int = 28):
+        calls["labels"] += 1
+        # Login screen on the first step; gone after the user signs in.
+        reason = "login / password entry" if calls["labels"] == 1 else None
+        return ([], "", reason)
+
+    async def _clearance(ctx, task_prompt, step_idx, cancel_token, *, reason):
+        calls["clearance"] += 1
+        return "cleared"
+
+    monkeypatch.setattr(loop_mod, "_foreground_clickable_labels", _labels)
+    monkeypatch.setattr(loop_mod, "_await_human_handoff_clearance", _clearance)
+
+    brain = FakeBrain(['{"action": "done"}'])
+    ctx = make_ctx(brain, titles=["App"])
+    results = await run_loop(ctx, "open my mail")
+
+    assert results[-1].exit_code == 0
+    assert calls["clearance"] == 1            # paused exactly once
+    assert len(brain.requests) == 1           # brain NOT asked on the blocked step
+
+
+async def test_human_handoff_timeout_fails_honestly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If the user never completes the handoff, the loop stops with an honest
+    fail naming the screen — it does not silently push through."""
+    async def _labels(timeout_s: float, max_n: int = 28):
+        return ([], "", "captcha challenge")   # never clears
+
+    async def _clearance(ctx, task_prompt, step_idx, cancel_token, *, reason):
+        return "timeout"
+
+    monkeypatch.setattr(loop_mod, "_foreground_clickable_labels", _labels)
+    monkeypatch.setattr(loop_mod, "_await_human_handoff_clearance", _clearance)
+
+    brain = FakeBrain(['{"action": "done"}'])  # must never be reached
+    ctx = make_ctx(brain, titles=["App"])
+    results = await run_loop(ctx, "open my mail")
+
+    assert results[-1].is_final
+    assert results[-1].exit_code == loop_mod._FAIL_EXIT_CODE
+    assert "captcha challenge" in (results[-1].stderr or "")
+    assert len(brain.requests) == 0
+
+
+async def test_human_handoff_cancelled_exits_clean(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cancelling (hangup) while awaiting the user's handoff exits with the
+    cancel code, not a generic failure."""
+    async def _labels(timeout_s: float, max_n: int = 28):
+        return ([], "", "two-factor / one-time code")
+
+    async def _clearance(ctx, task_prompt, step_idx, cancel_token, *, reason):
+        return "cancelled"
+
+    monkeypatch.setattr(loop_mod, "_foreground_clickable_labels", _labels)
+    monkeypatch.setattr(loop_mod, "_await_human_handoff_clearance", _clearance)
+
+    brain = FakeBrain(['{"action": "done"}'])
+    ctx = make_ctx(brain, titles=["App"])
+    results = await run_loop(ctx, "open my mail")
+
+    assert results[-1].exit_code == loop_mod._CANCEL_EXIT_CODE
+    assert len(brain.requests) == 0
+
+
+# ---------------------------------------------------------------------------
+# Audit 🟠 #15 — modal/banner "handle the dialog first" note injection
+# ---------------------------------------------------------------------------
+
+
+async def test_modal_banner_note_injected_into_brain_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the foreground labels look like a cookie/consent banner, the loop
+    injects a 'handle the dialog first' note into the model's context before the
+    next decision."""
+    async def _cookie_labels(timeout_s: float, max_n: int = 28):
+        return (["Accept all", "Reject all", "Manage preferences"], "", None)
+
+    monkeypatch.setattr(loop_mod, "_foreground_clickable_labels", _cookie_labels)
+
+    brain = FakeBrain(['{"action": "click_element", "name": "Accept all"}',
+                       '{"action": "done"}'])
+    ctx = make_ctx(brain, titles=["Site"])
+    await run_loop(ctx, "accept the cookies")
+
+    # The very first decision must already carry the modal note.
+    assert brain.requests, "brain was never called"
+    _system, first_user = brain.requests[0]
+    assert "modal dialog or banner" in first_user
+
+
+async def test_no_modal_note_on_ordinary_screen(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _plain_labels(timeout_s: float, max_n: int = 28):
+        return (["File", "Edit", "View", "Settings"], "", None)
+
+    monkeypatch.setattr(loop_mod, "_foreground_clickable_labels", _plain_labels)
+
+    brain = FakeBrain(['{"action": "done"}'])
+    ctx = make_ctx(brain, titles=["App"])
+    await run_loop(ctx, "do the thing")
+
+    _system, first_user = brain.requests[0]
+    assert "modal dialog or banner" not in first_user
+
+
+# ---------------------------------------------------------------------------
+# G8c Part 1 — re-ensure-on-primary AFTER a mid-mission open_app launch
+# ---------------------------------------------------------------------------
+
+
+async def test_ensure_on_primary_reruns_after_mid_mission_open_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A mission-start ensure-on-primary cannot cover an app launched LATER. After
+    a mid-mission open_app the loop must re-bring the (now foreground) window onto
+    the main monitor, or CU keeps operating on the secondary (live bug 2026-06-28:
+    CU launched Chrome on the secondary and worked there)."""
+    calls = {"n": 0}
+
+    def _spy(_ctx):
+        calls["n"] += 1
+        return None
+
+    # Overrides the conftest autouse no-op stub for this test.
+    monkeypatch.setattr(loop_mod, "_ensure_target_on_primary", _spy)
+
+    brain = FakeBrain([
+        '{"action": "open_app", "name": "chrome"}',
+        '{"action": "done"}',
+    ])
+    ctx = make_ctx(brain, titles=["Chrome"])
+    await run_loop(ctx, "open chrome")
+
+    # Once at mission start + once after the open_app action.
+    assert calls["n"] >= 2, f"ensure-on-primary ran {calls['n']}x, want >= 2"
+
+
+# ---------------------------------------------------------------------------
+# Problem 2 — a guard-BLOCKED repeated click must TELL the model (or it spins to
+# the no-progress abort: "macht nicht weiter", live 2026-06-28).
+# ---------------------------------------------------------------------------
+
+
+async def test_toggle_stop_tells_the_model_its_click_was_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The model keeps clicking the SAME point; the toggle-stop guard blocks it.
+    Unlike the open_app suppression, the click guard injected NO history note, so
+    the model never learned WHY nothing happened and kept repeating until the
+    no-progress abort. It must now be told its click was blocked + to try a
+    different element/approach."""
+    brain = FakeBrain([
+        '{"action": "click", "x": 500, "y": 500, "target": "thing"}',
+        '{"action": "click", "x": 500, "y": 500, "target": "thing"}',
+        '{"action": "click", "x": 500, "y": 500, "target": "thing"}',
+        '{"action": "done"}',
+    ])
+    ctx = make_ctx(brain, titles=["App"], verify=False)
+    await run_loop(ctx, "do the thing")
+
+    joined = " ".join(user for _sys, user in brain.requests).lower()
+    assert "blocked" in joined
+    assert "stop clicking" in joined or "different" in joined
