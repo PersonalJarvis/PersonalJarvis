@@ -205,13 +205,13 @@ class WebServer:
 
         # Sub-Agent-Registry (Dashboard-Feature) — abonniert sofort den Bus.
         try:
-            from jarvis.agents import SubAgentRegistry
+            from jarvis.agents import JarvisAgentRegistry
 
-            sub_agent_registry = SubAgentRegistry(bus=self.bus)
+            sub_agent_registry = JarvisAgentRegistry(bus=self.bus)
             sub_agent_registry.attach()
             app.state.sub_agent_registry = sub_agent_registry
         except Exception as exc:  # noqa: BLE001
-            logger.opt(exception=exc).warning("SubAgentRegistry-Setup fehlgeschlagen")
+            logger.opt(exception=exc).warning("JarvisAgentRegistry setup failed")
             app.state.sub_agent_registry = None
 
         # MCP-, Tool-, Provider-, Profile-, Task-, Skills-, CLI- und Sub-Agents-
@@ -735,8 +735,8 @@ class WebServer:
             """
             return {"ready": bool(getattr(self, "_voice_ready", False))}
 
-        @app.get("/api/openclaw/status")
-        async def openclaw_status() -> dict[str, Any]:
+        @app.get("/api/jarvis-agent/status")
+        async def jarvis_agent_status() -> dict[str, Any]:
             """OpenClaw-Bridge-Status fuer die SettingsView (Welle 3).
 
             Read-only Snapshot:
@@ -767,13 +767,13 @@ class WebServer:
             try:
                 from jarvis.missions.worker_runtime.provider_map import (
                     MAPPINGS,
-                    canonical_subagent_provider,
-                    to_provider_slug,
+                    canonical_worker_provider,
+                    to_worker_slug,
                 )
             except Exception:  # noqa: BLE001
                 MAPPINGS = ()  # type: ignore[assignment]
-                to_provider_slug = None  # type: ignore[assignment]
-                canonical_subagent_provider = None  # type: ignore[assignment]
+                to_worker_slug = None  # type: ignore[assignment]
+                canonical_worker_provider = None  # type: ignore[assignment]
 
             # The HEAVY-TASK subagent runs on ``[brain.sub_jarvis].provider`` —
             # NOT on ``brain.primary`` (that is only the lightweight router
@@ -788,8 +788,8 @@ class WebServer:
                 getattr(sub_cfg, "provider", None) if sub_cfg is not None else None
             )
             sub_provider = (
-                canonical_subagent_provider(sub_raw)
-                if canonical_subagent_provider is not None
+                canonical_worker_provider(sub_raw)
+                if canonical_worker_provider is not None
                 else None
             )
             primary = sub_provider or router_primary
@@ -809,9 +809,9 @@ class WebServer:
             )
 
             provider_slug: str | None = None
-            if to_provider_slug is not None:
+            if to_worker_slug is not None:
                 try:
-                    provider_slug = to_provider_slug(primary)
+                    provider_slug = to_worker_slug(primary)
                 except Exception:  # noqa: BLE001
                     provider_slug = None
 
@@ -873,7 +873,7 @@ class WebServer:
                 mapping_rows.append(
                     {
                         "jarvis": mapping.jarvis,
-                        "openclaw": mapping.openclaw,
+                        "worker_slug": mapping.worker_slug,
                         "env_var": mapping.env_var,
                         "env_fallback": mapping.env_fallback,
                         "key_set": key_set,
@@ -2035,33 +2035,33 @@ class WebServer:
             from jarvis.brain.factory import (
                 set_kontrollierer,
                 set_mission_manager,
-                set_openclaw_bootstrap_failed,
+                set_worker_bootstrap_failed,
             )
 
             set_mission_manager(result["manager"])
             set_kontrollierer(result["kontrollierer"])
-            set_openclaw_bootstrap_failed(False)
-            self.app.state.openclaw_available = True
+            set_worker_bootstrap_failed(False)
+            self.app.state.worker_available = True
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "set_mission_manager/kontrollierer-Wiring fehlgeschlagen — "
                 "spawn_worker wird in diesem Run deaktiviert: %s", exc,
             )
             # Surface the failure for both downstream readers:
-            #  - `self.app.state.openclaw_available` lets REST routes and
-            #    UI components show an explicit "OpenClaw unavailable" hint
+            #  - `self.app.state.worker_available` lets REST routes and
+            #    UI components show an explicit "worker unavailable" hint
             #    instead of permanently rendering "loading" / "pending".
             #  - the factory-level singleton lets the Brain's spawn_worker
             #    tool short-circuit at execute()-time with an honest
             #    "konnte nicht initialisiert werden" message instead of the
             #    transient "noch nicht bereit" the in-progress path returns.
-            self.app.state.openclaw_available = False
+            self.app.state.worker_available = False
             try:
-                from jarvis.brain.factory import set_openclaw_bootstrap_failed
-                set_openclaw_bootstrap_failed(True)
+                from jarvis.brain.factory import set_worker_bootstrap_failed
+                set_worker_bootstrap_failed(True)
             except Exception as inner_exc:  # noqa: BLE001
                 logger.warning(
-                    "set_openclaw_bootstrap_failed wiring failed: %s",
+                    "set_worker_bootstrap_failed wiring failed: %s",
                     inner_exc,
                 )
 

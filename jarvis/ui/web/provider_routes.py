@@ -372,11 +372,11 @@ def _codex_binary_path(request: Request | None = None) -> str | None:
     return getattr(getattr(cfg, "codex", None), "binary_path", "") or None
 
 
-def _apply_sub_jarvis_in_memory(request: Request, provider: str) -> None:
+def _apply_worker_in_memory(request: Request, provider: str) -> None:
     """Best-effort in-memory update of ``cfg.brain.sub_jarvis.provider``.
 
-    So the next ``/openclaw/status`` reflects the choice immediately (the worker
-    itself only re-reads at restart). Frozen / detached cfg is not an error.
+    So the next ``/jarvis-agent/status`` reflects the choice immediately (the
+    worker itself only re-reads at restart). Frozen / detached cfg is not an error.
     """
     cfg = _resolve_cfg(request)
     if cfg is None or getattr(cfg, "brain", None) is None:
@@ -393,10 +393,10 @@ def _apply_sub_jarvis_in_memory(request: Request, provider: str) -> None:
         log.debug("In-memory sub_jarvis.provider update skipped: %s", exc)
 
 
-def _apply_sub_jarvis_model_in_memory(request: Request, model: str) -> None:
+def _apply_worker_model_in_memory(request: Request, model: str) -> None:
     """Best-effort in-memory update of ``cfg.brain.sub_jarvis.model``.
 
-    Mirrors :func:`_apply_sub_jarvis_in_memory`; a missing ``sub_jarvis``
+    Mirrors :func:`_apply_worker_in_memory`; a missing ``sub_jarvis``
     block is created with the router primary as provider so the override is
     never silently dropped.
     """
@@ -578,7 +578,7 @@ async def _tier_section_health(cfg: Any, spec: ProviderSpec | None) -> SectionHe
     )
 
 
-def _subagent_worker_usable(provider: str) -> bool:
+def _worker_usable(provider: str) -> bool:
     """Best-effort "is the selected heavy-task worker connected/keyed?".
 
     Provider-agnostic: a CLI login (Codex / Antigravity / Claude) is usable when
@@ -608,7 +608,7 @@ def _subagent_worker_usable(provider: str) -> bool:
         return False
 
 
-def _subagent_section_health(cfg: Any) -> SectionHealth:
+def _jarvis_agent_section_health(cfg: Any) -> SectionHealth:
     """Subagents tab: reflects whether the SELECTED heavy-task worker is usable.
 
     A real "does it answer" call for a CLI worker is heavy, so v1 reports the
@@ -634,7 +634,7 @@ def _subagent_section_health(cfg: Any) -> SectionHealth:
         )
     spec = get_spec(provider)
     label = spec.label if spec is not None else provider
-    if _subagent_worker_usable(provider):
+    if _worker_usable(provider):
         return SectionHealth(
             status=_section_health.OK, reason="ok", detail=f"Subagent worker: {label}"
         )
@@ -707,7 +707,7 @@ async def section_health(request: Request, refresh: bool = False) -> SectionHeal
             _tier_section_health(cfg, stt_spec),
         )
         try:
-            sections["subagents"] = _subagent_section_health(cfg)
+            sections["subagents"] = _jarvis_agent_section_health(cfg)
         except Exception as exc:  # noqa: BLE001
             log.warning("section-health subagent check failed: %s", exc)
             sections["subagents"] = SectionHealth()
@@ -1529,8 +1529,8 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     }
 
 
-@router.post("/subagent/switch")
-async def subagent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
+@router.post("/jarvis-agent/switch")
+async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     """Wechselt den aktiven SUBAGENT-Provider (``[brain.sub_jarvis].provider``).
 
     Das ist der Heavy-Task-Worker (lies Repo, baue Feature, reproduziere Bug) —
@@ -1556,17 +1556,17 @@ async def subagent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     nach Voice-/App-Restart: ``restart_required: true`` (wie bei STT).
     """
     from jarvis.missions.worker_runtime.provider_map import (
-        JARVIS_TO_OPENCLAW,
-        canonical_subagent_provider,
+        JARVIS_TO_WORKER_SLUG,
+        canonical_worker_provider,
     )
 
     # Normalize (lower/strip + ``openclaw-claude`` -> ``claude-api``) so the
     # accepted set matches what the UI cards display.
-    provider = canonical_subagent_provider(body.provider) or ""
+    provider = canonical_worker_provider(body.provider) or ""
 
-    # Codex is a DIRECT worker (CodexDirectWorker) with no OpenClaw slug — it is
-    # not in JARVIS_TO_OPENCLAW. Handle it explicitly: it can be backed by the
-    # ChatGPT subscription (OAuth, ``codex login``) OR an OpenAI API key.
+    # Codex is a DIRECT worker (CodexDirectWorker) with no worker-harness slug —
+    # it is not in JARVIS_TO_WORKER_SLUG. Handle it explicitly: it can be backed by
+    # the ChatGPT subscription (OAuth, ``codex login``) OR an OpenAI API key.
     if provider in _CODEX_SUBAGENT_SLUGS:
         codex_connected = CodexAuthService(_codex_binary_path(request)).status().connected
         has_key = bool(
@@ -1594,7 +1594,7 @@ async def subagent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 raise HTTPException(
                     status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
                 ) from exc
-        _apply_sub_jarvis_in_memory(request, _CODEX_SUBAGENT_CANONICAL)
+        _apply_worker_in_memory(request, _CODEX_SUBAGENT_CANONICAL)
         await _emit(request, SecretConfigured(key="brain.sub_jarvis.provider", action="set"))
         return {
             "ok": True,
@@ -1642,7 +1642,7 @@ async def subagent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 raise HTTPException(
                     status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
                 ) from exc
-        _apply_sub_jarvis_in_memory(request, ANTIGRAVITY_SUBAGENT_CANONICAL)
+        _apply_worker_in_memory(request, ANTIGRAVITY_SUBAGENT_CANONICAL)
         await _emit(request, SecretConfigured(key="brain.sub_jarvis.provider", action="set"))
         return {
             "ok": True,
@@ -1651,8 +1651,8 @@ async def subagent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             "restart_required": True,
         }
 
-    if provider not in JARVIS_TO_OPENCLAW:
-        known = ", ".join(sorted(JARVIS_TO_OPENCLAW))
+    if provider not in JARVIS_TO_WORKER_SLUG:
+        known = ", ".join(sorted(JARVIS_TO_WORKER_SLUG))
         raise HTTPException(
             status_code=404,
             detail=(
@@ -1698,9 +1698,9 @@ async def subagent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
             ) from exc
 
-    # Best-effort in-memory update so the next /openclaw/status reflects the
+    # Best-effort in-memory update so the next /jarvis-agent/status reflects the
     # choice immediately (the worker itself only re-reads on restart).
-    _apply_sub_jarvis_in_memory(request, provider)
+    _apply_worker_in_memory(request, provider)
 
     await _emit(request, SecretConfigured(key="brain.sub_jarvis.provider", action="set"))
 
@@ -1720,13 +1720,13 @@ class SubagentModelBody(BaseModel):
     persist: bool = Field(default=True)
 
 
-@router.post("/subagent/model")
-async def subagent_model(body: SubagentModelBody, request: Request) -> dict[str, Any]:
-    """Pin which MODEL the heavy-task sub-agents run (``[brain.sub_jarvis].model``).
+@router.post("/jarvis-agent/model")
+async def jarvis_agent_model(body: SubagentModelBody, request: Request) -> dict[str, Any]:
+    """Pin which MODEL the Jarvis-Agent worker runs (``[brain.sub_jarvis].model``).
 
-    The dedicated subagent LLM, separate from the router brain: the worker
+    The dedicated worker LLM, separate from the router brain: the worker
     chain reads it per spawn (``provider_chain._resolve_provider_chain``) and
-    ``/openclaw/status`` displays it as ``sub_model_override`` /
+    ``/jarvis-agent/status`` displays it as ``sub_model_override`` /
     ``model_resolved``. No allowlist on the model id — providers add models
     faster than we could pin them; a typo simply falls back at the provider
     when rejected. Empty string = the documented sentinel for "provider's
@@ -1752,9 +1752,9 @@ async def subagent_model(body: SubagentModelBody, request: Request) -> dict[str,
                 status_code=500, detail=f"TOML write failed: {exc}"
             ) from exc
 
-    # Best-effort in-memory update so the next /openclaw/status reflects the
+    # Best-effort in-memory update so the next /jarvis-agent/status reflects the
     # choice immediately (workers resolve their chain per spawn from config).
-    _apply_sub_jarvis_model_in_memory(request, model)
+    _apply_worker_model_in_memory(request, model)
 
     await _emit(request, SecretConfigured(key="brain.sub_jarvis.model", action="set"))
 
