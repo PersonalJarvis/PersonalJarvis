@@ -201,6 +201,8 @@ describe("ApiKeysView - Codex is subagent-only", () => {
   it("does not render Codex as a Brain provider card", async () => {
     installFetchMock(routesFor(codexDescriptor()));
     render(<ApiKeysView />);
+    // Codex lives in the "Subagents" category tab now; open it first.
+    fireEvent.click(screen.getByRole("tab", { name: /subagents/i }));
 
     await waitFor(() => expect(screen.getByText("OpenAI Codex (Subscription)")).toBeTruthy());
 
@@ -211,6 +213,8 @@ describe("ApiKeysView - Codex is subagent-only", () => {
   it("switches the subagent to Codex without calling brain switch", async () => {
     const { calls } = installFetchMock(routesFor(codexDescriptor()));
     render(<ApiKeysView />);
+    // Codex lives in the "Subagents" category tab now; open it first.
+    fireEvent.click(screen.getByRole("tab", { name: /subagents/i }));
 
     await waitFor(() => screen.getByRole("radio"));
     fireEvent.click(screen.getByRole("radio"));
@@ -231,6 +235,8 @@ describe("ApiKeysView - Codex is subagent-only", () => {
   it("shows the Connect button while not logged in and starts login", async () => {
     const { calls } = installFetchMock(routesFor(codexDescriptorNotConnected()));
     render(<ApiKeysView />);
+    // Codex lives in the "Subagents" category tab now; open it first.
+    fireEvent.click(screen.getByRole("tab", { name: /subagents/i }));
 
     const connect = await waitFor(() => screen.getByText("Connect"));
     fireEvent.click(connect);
@@ -247,6 +253,8 @@ describe("ApiKeysView - Codex is subagent-only", () => {
   it("disconnects via POST /api/codex/logout", async () => {
     const { calls } = installFetchMock(routesFor(codexDescriptor()));
     render(<ApiKeysView />);
+    // Codex lives in the "Subagents" category tab now; open it first.
+    fireEvent.click(screen.getByRole("tab", { name: /subagents/i }));
 
     const disconnect = await waitFor(() => screen.getByText("Disconnect"));
     fireEvent.click(disconnect);

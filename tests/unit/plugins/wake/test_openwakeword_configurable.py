@@ -28,8 +28,9 @@ def test_explicit_model_path_canonicalises_keyword() -> None:
     assert provider._canonical_keyword("alexa_v0.1") == "alexa"
 
 
-def test_default_still_uses_bundled_hey_jarvis() -> None:
-    # Regression: the zero-arg construction path is unchanged.
+def test_default_still_uses_bundled_neutral_model() -> None:
+    # Regression: the zero-arg construction path loads the neutral bundled
+    # default (hey_rhasspy — no branded/trademarked default wake word).
     provider = OpenWakeWordProvider()
     kw = provider._model_kwargs()
-    assert kw["wakeword_models"][0].endswith("hey_jarvis_v0.1.onnx")
+    assert kw["wakeword_models"][0].endswith("hey_rhasspy_v0.1.onnx")

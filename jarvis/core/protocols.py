@@ -434,6 +434,13 @@ class Observation:
     active_pid: int = 0
     source: Literal["full", "screenshot_only", "ui_tree_only"] = "full"
     pruning_stats: dict[str, int] = field(default_factory=dict)  # nodes_before/after, depth_used
+    # (left, top, width, height) of the monitor this screenshot was ACTUALLY
+    # captured from (virtual-desktop pixels). The click-coordinate resolution must
+    # use THIS — not a separate GetForegroundWindow/MonitorFromWindow lookup that
+    # can pick a different monitor on a mixed-DPI / multi-monitor desktop and make
+    # every click miss (live 2026-06-28: 150% primary + 100% secondary). (0,0,0,0)
+    # = unknown (older sources / non-screenshot observes) -> caller falls back.
+    monitor_geom: tuple[int, int, int, int] = (0, 0, 0, 0)
 
 
 @runtime_checkable

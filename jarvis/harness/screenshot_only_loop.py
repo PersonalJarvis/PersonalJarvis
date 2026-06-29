@@ -1186,6 +1186,24 @@ def _capture_monitor_geometry() -> tuple[int, int, int, int]:
         return (0, 0, 0, 0)
 
 
+def _resolve_monitor_geom(observation: Observation | None) -> tuple[int, int, int, int]:
+    """The monitor geometry to map the model's 0-1000 click coords against.
+
+    Prefers the EXACT monitor the screenshot was captured from — threaded on the
+    Observation (``monitor_geom``) by the ScreenshotSource — so the coords (which
+    are relative to THAT captured image) map back to the same screen. On a
+    mixed-DPI / multi-monitor desktop a separate ``GetForegroundWindow`` /
+    ``MonitorFromWindow`` probe can pick a DIFFERENT monitor at a boundary / DPI
+    transition, so every click would land on the wrong screen (live bug
+    2026-06-28: 150% primary + 100% secondary). Falls back to the win32 probe
+    only when the source carries no geometry ((0,0,0,0) — older / non-screenshot
+    observes). Pure but for the fallback's win32 call; never raises."""
+    geom = getattr(observation, "monitor_geom", (0, 0, 0, 0)) if observation else (0, 0, 0, 0)
+    if geom and geom != (0, 0, 0, 0) and len(geom) == 4 and int(geom[2]) > 0:
+        return (int(geom[0]), int(geom[1]), int(geom[2]), int(geom[3]))
+    return _capture_monitor_geometry()
+
+
 def _mss_monitor_geometry() -> tuple[int, int, int, int]:
     """Non-Windows fallback for ``_capture_monitor_geometry`` (B1, 2026-06-19).
 
@@ -3757,6 +3775,74 @@ async def run_cu_loop(
             yield chunk
 
 
+# Generic verbs / fillers that are never an app NAME (de + en). They must not be
+# matched against an open window title and accidentally focus an unrelated window.
+# Lower-cased ascii (the goal is lower-cased before matching).
+_TASK_FOCUS_STOPWORDS = frozenset({
+    "mach", "mache", "machen", "macht", "bitte", "kannst", "wuerde", "irgendwas",
+    "etwas", "something", "anything", "please", "would", "could", "open", "oeffne",
+    "oeffnen", "starte", "launch", "klick", "klicke", "click", "suche", "such",
+    "search", "navigiere", "navigieren", "navigate", "gehe", "schreibe", "tippe",
+    "type", "scroll", "scrolle", "mein", "meine", "meinen", "einen", "eine",
+    "this", "that", "the", "und", "and", "for", "fuer", "with", "mit", "post",
+    "page", "seite", "tab", "fenster", "window", "screen", "monitor", "last",
+    "letzte", "letzten", "first", "erste", "next", "naechste", "dann", "then",
+})
+
+
+def _focus_task_target_window(ctx: ComputerUseContext, task_prompt: str) -> str | None:
+    """If the goal names an app that is ALREADY OPEN on ANY monitor (not just the
+    current foreground), bring THAT window to the front so CU operates on the
+    right app (live bug 2026-06-28: "Chrome is open on monitor 2, do something in
+    Chrome" — CU only ever looked at the foreground screen and never found it).
+
+    Deterministic + conservative: a distinctive goal token (>= 4 chars, not a
+    generic verb/filler) is matched against open window titles via the established
+    window matcher, longest token first (an app name beats a filler); an
+    already-foreground match is a no-op, and an ambiguous/short token simply does
+    nothing (the model can still ``switch_window``). Best-effort; never raises.
+    Returns a note when it focused a target, else ``None``. Sync (run via
+    ``asyncio.to_thread``)."""
+    if not getattr(ctx, "window_awareness", True):
+        return None
+    try:
+        from jarvis.platform import window_state as ws  # noqa: PLC0415
+
+        windows = ws.list_windows()
+        if not windows:
+            return None
+        fg = (ws.get_foreground_title() or "").strip().lower()
+        tokens = sorted(
+            {
+                t for t in re.findall(r"[a-z][a-z0-9]{3,}", task_prompt.lower())
+                if t not in _TASK_FOCUS_STOPWORDS
+            },
+            key=len, reverse=True,
+        )
+        for token in tokens:
+            win = ws._match_window(token, windows)
+            if win is None:
+                continue
+            title = (win.title or "").strip()
+            if title and title.lower() in fg:
+                return None  # the target app is already in front
+            raised, _ = ws.raise_window(win)
+            if raised:
+                log.info(
+                    "[cu] focused task-target window %r (token=%r)", title[:40], token,
+                )
+                return (
+                    f"Brought the already-open '{title[:40]}' to the front — it is "
+                    "the app your goal names (it was on another screen). Re-read "
+                    "the screen before acting."
+                )
+            return None  # found but could not raise -> stop, don't thrash
+        return None
+    except Exception:  # noqa: BLE001 — never block a mission on the focus probe
+        log.debug("[cu] focus-task-target failed", exc_info=True)
+        return None
+
+
 def _ensure_target_on_primary(ctx: ComputerUseContext) -> str | None:
     """When ``monitor="primary"``, bring the foreground window onto the main
     monitor before CU acts, so it never works on a secondary screen (audit G8c).
@@ -4039,6 +4125,22 @@ async def _run_screenshot_loop(
             "[cu] screenshot fast path unavailable (capture returned None) — "
             "falling through to the interactive loop",
         )
+
+    # Multi-monitor target focus (live bug 2026-06-28): if the GOAL names an app
+    # that is already open on ANOTHER monitor (not the current foreground), bring
+    # THAT window to the front FIRST — otherwise CU only ever sees the foreground
+    # screen and never finds the named app ("Chrome is open on monitor 2, do
+    # something in Chrome" -> it never got it). Runs BEFORE ensure-on-primary so
+    # the now-foreground target is then moved onto the main monitor. Best-effort.
+    try:
+        _focus_note = await asyncio.to_thread(
+            _focus_task_target_window, ctx, task_prompt,
+        )
+        if _focus_note:
+            history.append(_focus_note)
+            yield _progress(f"[cu] {_focus_note}")
+    except Exception:  # noqa: BLE001 — never block a mission on the focus probe
+        log.debug("[cu] focus-task-target call failed", exc_info=True)
 
     # G8c — work on the MAIN monitor: when monitor="primary", bring the target
     # (foreground) window onto the primary screen ONCE before the first observe,
@@ -4342,9 +4444,13 @@ async def _run_screenshot_loop(
         # issued this step are translated from Gemini's 0-1000 grid to
         # monitor pixels (using width/height) and shifted by the origin so
         # they land on the captured monitor, not the primary one
-        # (BUG-CU-MULTIMON + BUG-CU-NORMCOORD). Computed right after observe
-        # so the foreground hasn't drifted before we use it.
-        monitor_geom = _capture_monitor_geometry()
+        # (BUG-CU-MULTIMON + BUG-CU-NORMCOORD).
+        # MIXED-DPI / multi-monitor fix (live 2026-06-28: 150% primary + 100%
+        # secondary): map clicks against the EXACT monitor the screenshot was
+        # captured from (threaded on the Observation), NOT a separate win32
+        # foreground probe that can pick a different monitor at a boundary / DPI
+        # transition and make every click miss. See _resolve_monitor_geom.
+        monitor_geom = _resolve_monitor_geom(observation)
 
         # UIA-first grounding (BUG-CU-GROUNDING): the clickable control names
         # were already enumerated concurrently with the screenshot above, so

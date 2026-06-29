@@ -5,17 +5,23 @@ visible because warm-up ran every step sequentially — the dominant cost being
 ~20 confirmation-audio phrases pre-rendered one at a time. This split warm-up
 into:
 
-* **Phase A (critical, parallel):** audio-device stabilization + VAD +
-  OpenWakeWord + TTS-client init run concurrently. When it finishes the
-  pipeline emits ``VoiceBootStatus(ready=True)`` — the listening path is live.
+* **Phase A (critical):** audio-device stabilization + wake-loop start. It does
+  the absolute minimum so the wake LOOP is listening fast; the heavy VAD/STT/TTS
+  loads are deferred so they never gate wake-loop start (BUG class: "Hey Jarvis"
+  dead while heavy loads serialize on the import lock).
+* **Deferred loaders (background):** wake model + VAD + TTS-client load off the
+  wake-critical path. HONEST readiness lives here: ``VoiceBootStatus(ready=True)``
+  and the audible "you can speak" cue fire only at the END of this task — the
+  first moment wake (model) + VAD + TTS are ALL up. Flipping ready in Phase A
+  (before TTS) was the "it says ready but I can't talk" bug (2026-06-29).
 * **Phase B (background, fire-and-forget):** confirmation audio is pre-rendered
   off the critical path (ACK "Ja?" first, then the task-ack phrases
   concurrently). It must NOT block the ready signal.
 
 These tests pin the contract: ``ready=False`` is emitted before Phase A,
-``ready=True`` after Phase A completes, and the background render never blocks
-ready. They also keep the BUG-014 audio-stabilization guard and the chime/ready
-fallback intact.
+``ready=True`` (and the cue) only after the DEFERRED loaders complete the full
+stack, and the Phase-B confirmation render never blocks ready. They also keep
+the BUG-014 audio-stabilization guard and the chime/ready fallback intact.
 """
 from __future__ import annotations
 
@@ -128,12 +134,15 @@ def _new_pipe(monkeypatch, *, bus=None, ack_phrase: str = "Ja?") -> SpeechPipeli
 
 @pytest.mark.asyncio
 async def test_emits_ready_false_then_true(monkeypatch) -> None:
-    """Boot-status order: ready=False at the very start, ready=True after the
-    critical Phase A completes."""
+    """Boot-status order: ready=False at the very start, ready=True only after
+    the DEFERRED loaders bring up the full stack (honest readiness)."""
     bus = FakeBus()
     pipe = _new_pipe(monkeypatch, bus=bus)
 
     await pipe._warmup()
+    # Honest readiness fires from the background deferred-loaders task, not from
+    # _warmup itself (which returns fast so the wake loop starts immediately).
+    await pipe._deferred_warmup_task
 
     boot_events = [e for e in bus.published if isinstance(e, VoiceBootStatus)]
     assert len(boot_events) >= 2
@@ -244,6 +253,10 @@ async def test_ready_signaled_before_background_render_finishes(monkeypatch) -> 
     pipe._tts.synthesize = gated_synth  # type: ignore[method-assign]
 
     await pipe._warmup()
+    # Honest readiness comes from the deferred loaders (which use the TTS
+    # client's _ensure_client, NOT synthesize), so it completes while the Phase-B
+    # confirmation render (synthesize) is still gated.
+    await pipe._deferred_warmup_task
 
     # ready=True is already on the bus while the background render is blocked.
     boot_events = [e for e in bus.published if isinstance(e, VoiceBootStatus)]
@@ -274,12 +287,14 @@ async def test_background_renders_ack_and_task_acks(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_ready_cue_played_after_phase_a(monkeypatch) -> None:
-    """The audible boot-ready cue still plays so the user hears when listening
-    starts — the wake/chime fallback for a not-yet-cached ACK is intact."""
+async def test_ready_cue_played_after_deferred_loaders(monkeypatch) -> None:
+    """The audible boot-ready cue still plays so the user hears when the voice
+    stack is genuinely ready — now fired at the END of the deferred loaders
+    (honest readiness), not after Phase A."""
     pipe = _new_pipe(monkeypatch, bus=FakeBus())
 
     await pipe._warmup()
+    await pipe._deferred_warmup_task
     task = pipe._warmup_ready_cue_task
     assert task is not None
     await task
@@ -308,6 +323,10 @@ async def test_ready_cue_does_not_block_wake_loop_start(monkeypatch) -> None:
     pipe._play_ready_cue = _blocking_ready_cue  # type: ignore[method-assign]
 
     await asyncio.wait_for(pipe._warmup(), timeout=0.5)
+    # The cue is created + fired by the deferred-loaders task (honest readiness)
+    # as a fire-and-forget task, so neither _warmup NOR the deferred task itself
+    # is blocked by a slow/wedged output device.
+    await asyncio.wait_for(pipe._deferred_warmup_task, timeout=0.5)
 
     boot_events = [e for e in bus.published if isinstance(e, VoiceBootStatus)]
     assert any(e.ready for e in boot_events), "ready=True must be emitted"
@@ -363,3 +382,51 @@ async def test_cancel_background_is_noop_when_absent(monkeypatch) -> None:
     await pipe._cancel_warmup_background()  # must not raise
 
     assert pipe._warmup_background_task is None
+
+
+@pytest.mark.asyncio
+async def test_deferred_warmup_task_cancelled_on_shutdown(monkeypatch) -> None:
+    """The deferred wake/VAD/TTS loader task is fire-and-forget; on shutdown it
+    must be cancelled + awaited, not orphaned. It owns the honest ready signal
+    and spawns the ready-cue task, so a leak here strands both."""
+    pipe = _new_pipe(monkeypatch, bus=FakeBus())
+
+    started = asyncio.Event()
+
+    async def _never_ends() -> None:
+        started.set()
+        await asyncio.Event().wait()  # blocks until cancelled
+
+    task = asyncio.create_task(_never_ends())
+    pipe._deferred_warmup_task = task
+    await started.wait()  # the task is genuinely running
+
+    await pipe._cancel_warmup_background()
+
+    assert task.cancelled(), "the deferred loader task must be cancelled, not leaked"
+    assert pipe._deferred_warmup_task is None
+
+
+@pytest.mark.asyncio
+async def test_ready_cue_task_cancelled_on_shutdown(monkeypatch) -> None:
+    """The boot-ready audio cue task is created INSIDE the deferred loaders; a
+    shutdown after it is armed must cancel + await it, not orphan it (a wedged
+    output device must not keep the cue alive past pipeline shutdown). The
+    cue-task-may-be-None-before-creation race is covered by the getattr() in
+    _cancel_warmup_background and the noop test above."""
+    pipe = _new_pipe(monkeypatch, bus=FakeBus())
+
+    started = asyncio.Event()
+
+    async def _never_ends() -> None:
+        started.set()
+        await asyncio.Event().wait()  # blocks until cancelled
+
+    task = asyncio.create_task(_never_ends())
+    pipe._warmup_ready_cue_task = task
+    await started.wait()  # the task is genuinely running
+
+    await pipe._cancel_warmup_background()
+
+    assert task.cancelled(), "the ready-cue task must be cancelled, not leaked"
+    assert pipe._warmup_ready_cue_task is None

@@ -42,9 +42,11 @@ def test_add_allowed_user_id_is_idempotent_and_appends(tmp_path):
     assert data["integrations"]["discord"]["allowed_user_ids"] == [12345, 67890]
 
 
-def test_raises_when_config_missing(tmp_path):
-    with pytest.raises(FileNotFoundError):
-        add_discord_allowed_user_id(1, path=tmp_path / "absent.toml")
+def test_creates_config_when_missing(tmp_path):
+    # M1 (headless VPS): in-app writers create the config if absent, not raise.
+    p = tmp_path / "absent.toml"
+    add_discord_allowed_user_id(1, path=p)
+    assert p.exists()
 
 
 def test_set_discord_enabled_creates_nested_table(tmp_path):
@@ -83,6 +85,7 @@ def test_set_discord_pairing_writes_flag(tmp_path):
     assert data["integrations"]["discord"]["enabled"] is True
 
 
-def test_set_discord_enabled_raises_when_config_missing(tmp_path):
-    with pytest.raises(FileNotFoundError):
-        set_discord_enabled(True, path=tmp_path / "absent.toml")
+def test_set_discord_enabled_creates_config_when_missing(tmp_path):
+    p = tmp_path / "absent.toml"
+    set_discord_enabled(True, path=p)
+    assert p.exists()

@@ -53,34 +53,17 @@ BAR_ALPHA = 0.6
 AUDIBLE_LEVEL = 0.06
 AUDIBLE_HOLD_S = 0.5
 
-# Frame-loop revival watchdog. The animation re-arms ONLY from its own tail, so
-# any single silent break (a swallowed after() failure, an exception before the
-# try/finally, a one-off Tk hiccup) kills it permanently while the Tk mainloop
-# keeps running — the bar stays visible, frozen on its last frame, yet still
-# takes mouse clicks (proven live 2026-06-27: the close-X still fired hangups
-# after the animation had frozen). A self-re-arming loop cannot resurrect itself
-# once the break is in its own re-arm path. So a SECOND, independent after-chain
-# (``_schedule_frame_watchdog``) watches a per-frame heartbeat and kicks the
-# frame loop back to life when it goes stale. It renders nothing, so it is immune
-# to the render/PIL faults that kill the frame loop. WATCHDOG_INTERVAL_MS is how
-# often it checks; FRAME_STALL_THRESHOLD_NS is how long the loop may be silent
-# before it counts as dead. The threshold is ~125× the 16 ms frame tick, so a
-# continuously-stamped heartbeat can never false-fire while the loop is actually
-# ticking (the AP-19 / BUG-032 stale-counter guard: the heartbeat is stamped
-# every frame, never per-turn, so there is no cross-unit idle gap to misread).
+# Frame-loop revival watchdog (anti-freeze). The animation re-arms only from its
+# own tail, so any single silent break (a swallowed after() failure, an exception
+# before the try/finally, a one-off Tk hiccup) would kill it permanently while
+# the Tk mainloop keeps running — the bar stays visible, frozen on its last
+# frame. A SECOND, independent after-chain (``_schedule_frame_watchdog``) watches
+# a per-frame heartbeat (``_last_frame_ns``) and kicks the frame loop back to life
+# when it goes stale. It renders nothing, so it is immune to the render/PIL faults
+# that kill the frame loop. The threshold is far above the 16 ms tick, so a
+# continuously-stamped heartbeat can never false-fire while the loop is ticking.
 WATCHDOG_INTERVAL_MS = 1000
 FRAME_STALL_THRESHOLD_NS = 2_000_000_000  # 2 s of silence ⇒ the loop is dead
-
-# Idle hover-collapse debounce. A Tk ``<Leave>`` on this color-keyed window fires
-# whenever the pointer crosses off the small OPAQUE pill — including the constant
-# antialiased-edge flicker while the pointer is still over the bar. Collapsing
-# the idle pill straight off that ``<Leave>`` made it "open briefly and snap
-# shut" (BUG: the idle pill SIZE is bound to the hover state). So a leave instead
-# starts a poll of the REAL pointer position; the idle pill collapses only once
-# the pointer has genuinely left the window rect. This many ms between polls — a
-# tick or two of grace that absorbs the edge flicker yet still collapses promptly
-# once the pointer is really gone.
-HOVER_COLLAPSE_POLL_MS = 120
 
 
 def _primary_work_area() -> tuple[int, int, int, int] | None:
@@ -150,20 +133,11 @@ class JarvisBarOverlay:
         self._on_mute_toggle: Callable[[], None] | None = None
         self._feedback_publisher: Callable[[str, dict], None] | None = None
         self._on_show_window: Callable[[], None] | None = None
-        # Instantaneous "pointer is on the opaque pill" flag — set on <Enter>,
-        # cleared on <Leave>. Drives the ACTIVE bar's hover controls (the "End"
-        # button + the mic mute toggle), so the active state is unchanged.
-        self._hovered = False
-        # Debounced "expand the idle pill" flag — sticky across the color-key edge
-        # flicker, cleared only once a poll confirms the pointer left the window
-        # rect. Drives the IDLE pill SIZE so it stays open while hovered. Separate
-        # from _hovered precisely so the active state keeps its instantaneous flag.
-        self._hover_expanded = False
-        self._hover_collapse_id: Any = None  # pending after() id for the collapse poll
-        # Mirror of the pipeline's authoritative global voice-mute flag, kept in
-        # sync by ``set_muted`` (the bridge forwards ``VoiceMuteChanged``). Drives
-        # the right control's slashed-mic look. Optimistically flipped on a mute
-        # click for instant feedback, then reconciled by the authoritative event.
+        self._hovered = False  # mouse over the bar → reveal the close cross
+        # Local mirror of the global voice-mute state (mic muted FOR JARVIS only).
+        # Flipped optimistically on a mic-button click and reconciled by the
+        # authoritative VoiceMuteChanged via set_muted(). A bool write is atomic
+        # under the GIL, like _ext_level — read on the frame loop without a lock.
         self._muted = False
 
     # ------------------------------------------------------------------ #
@@ -201,14 +175,6 @@ class JarvisBarOverlay:
         if lv >= AUDIBLE_LEVEL:
             self._last_audible_t = time.perf_counter()
 
-    def set_muted(self, muted: bool) -> None:
-        """Mirror the pipeline's authoritative global voice-mute state so the
-        right control renders the slashed-mic look. Atomic bool write (like
-        ``set_level``), safe from the bus thread; the frame loop reads it. The
-        bridge forwards ``VoiceMuteChanged`` here, so a mute from ANY source
-        (this bar, the mascot, a voice command) keeps the icon in lock-step."""
-        self._muted = bool(muted)
-
     # The bar has no text bubble and no mouth — these stay no-ops so the
     # bridge's duck-typed calls remain safe.
     def play_animation(self, name: str, **params: Any) -> None: ...
@@ -217,6 +183,15 @@ class JarvisBarOverlay:
     def hide_comment(self) -> None: ...
     def start_mouth_animation(self, duration_ms: int = 60000) -> None: ...
     def stop_mouth_animation(self) -> None: ...
+
+    def set_muted(self, muted: bool) -> None:
+        """Mirror the pipeline's authoritative voice-mute state onto the bar.
+
+        Called by OrbBusBridge on every VoiceMuteChanged (from this bar, the
+        mascot, or a voice command), so the red rim + slashed-mic icon stay in
+        lock-step with reality regardless of where the toggle originated. Plain
+        atomic bool write — the frame loop reads it; no Tk marshal needed."""
+        self._muted = bool(muted)
 
     def set_on_mute_toggle(self, callback: Callable[[], None] | None) -> None:
         self._on_mute_toggle = callback
@@ -273,7 +248,7 @@ class JarvisBarOverlay:
         root.configure(bg=COLOR_KEY_HEX)
         # Window-level alpha ON TOP of the color key: the magenta stays fully
         # keyed out (verified — no bleed) while the pill itself goes
-        # semi-transparent, so the desktop shows through it (translucent against the desktop).
+        # semi-transparent, so the desktop shows through it (Wispr-like).
         try:
             root.wm_attributes("-alpha", self._opacity)
         except tk.TclError:
@@ -332,7 +307,7 @@ class JarvisBarOverlay:
         self._started.set()
         self._schedule_ui_queue()
         self._schedule_frame()
-        self._schedule_frame_watchdog()
+        self._schedule_frame_watchdog()  # independent anti-freeze revival loop
         root.mainloop()
 
     def stop(self) -> None:
@@ -393,21 +368,6 @@ class JarvisBarOverlay:
             self._root.deiconify()
         except Exception:  # noqa: BLE001
             log.debug("jarvisbar deiconify failed", exc_info=True)
-        # Re-assert topmost + lift after every reveal. A withdrawn→deiconified
-        # ``overrideredirect`` window comes back on Windows WITHOUT its topmost
-        # z-order (it is remapped as an ordinary window). On the fast-boot path
-        # the boot reveal fires within ~200 ms of window creation — *before* the
-        # desktop main window + tray finish mapping — so those windows map ON TOP
-        # of the just-revealed bar and hide it until the first wake-word happens
-        # to re-show it. Lifting + re-pinning topmost here keeps the bar reliably
-        # on top regardless of boot-window ordering. The mascot orb already does
-        # the same (deiconify + lift); this brings the bar to parity. Guarded
-        # separately so a lift failure never undoes the deiconify.
-        try:
-            self._root.wm_attributes("-topmost", True)
-            self._root.lift()
-        except Exception:  # noqa: BLE001
-            log.debug("jarvisbar lift/topmost re-assert failed", exc_info=True)
 
     def _do_hide(self) -> None:
         if self._root is None:
@@ -442,22 +402,17 @@ class JarvisBarOverlay:
     def _schedule_frame(self) -> None:
         if not self._running or not self._root or not self._canvas or not self._renderer:
             return
+        from PIL import ImageTk
 
         # SELF-HEALING LOOP. This after-loop re-arms ONLY from its own tail, so a
         # single transient render/Tk error (ImageTk.PhotoImage raising, a TclError
         # during a window move, a one-off PIL glitch) used to skip the re-arm and
         # the animation died PERMANENTLY — the Tk mainloop kept running, so the
         # window stayed visible frozen on its last frame until an app restart
-        # ("JarvisBar stopped moving" forensic). The whole body — INCLUDING the
-        # ``import ImageTk`` (a transient ImportError/MemoryError there once
-        # bypassed the finally) — is wrapped so one bad frame is dropped, logged,
-        # and the next tick is still armed in `finally`. Belt-and-braces, the
-        # independent ``_schedule_frame_watchdog`` revives the loop should the
-        # re-arm itself ever fail. The loop can no longer be killed by any one
-        # exception.
+        # ("JarvisBar stopped moving" forensic). The render body is now wrapped so
+        # one bad frame is dropped, logged, and the next tick is still armed in
+        # `finally`. The loop can no longer be killed by any one exception.
         try:
-            from PIL import ImageTk
-
             now = time.perf_counter()
             t = now - self._t0
             # Sound-driven look: bars while audio is present (mic OR TTS), wave
@@ -479,16 +434,9 @@ class JarvisBarOverlay:
             # so the equalizer reacts to Jarvis's actual loudness — thin and lively,
             # exactly like it reacts to your mic. No synthetic floor (that made the
             # bars look uniformly blocky).
-            # Idle pill size follows the DEBOUNCED hover (flicker-free expand);
-            # the active bar keeps the instantaneous flag for its hover controls,
-            # so its behaviour is unchanged. effective_mode == "idle" iff the
-            # coarse mode is idle (see renderer.visual_mode).
-            render_hovered = (
-                self._hover_expanded if effective_mode == "idle" else self._hovered
-            )
             img = self._renderer.render(
                 t, effective_mode, self._ext_level,
-                hovered=render_hovered, muted=self._muted,
+                hovered=self._hovered, muted=self._muted,
             )
             # PhotoImage must be retained on self, else Tk GCs it before drawing.
             self._photo = ImageTk.PhotoImage(img)
@@ -508,9 +456,6 @@ class JarvisBarOverlay:
             # Re-arm unconditionally so the loop is self-healing. Guard the after()
             # call itself: if the root was torn down mid-frame, swallow the
             # TclError and stop re-arming (the window is gone — correct to stop).
-            # A re-arm failure is logged at WARNING (not the old, invisible DEBUG)
-            # so the next incident leaves a trace — and the watchdog will revive
-            # the loop regardless.
             if self._running and self._root is not None:
                 try:
                     self._root.after(16, self._schedule_frame)  # ~60 FPS
@@ -521,13 +466,12 @@ class JarvisBarOverlay:
                     )
 
     def _schedule_frame_watchdog(self) -> None:
-        """Independent revival loop — the second after-chain (see the module-level
-        watchdog note). Renders nothing; only checks the frame-loop heartbeat and
-        kicks ``_schedule_frame`` back to life if it has gone silent past
-        ``FRAME_STALL_THRESHOLD_NS``. Its own re-arm is in ``finally`` so a single
-        check error cannot kill the watchdog. A deliberate ``stop()`` (``_running``
-        False) ends it cleanly.
-        """
+        """Independent revival loop — the second after-chain (anti-freeze). Renders
+        nothing; only checks the frame-loop heartbeat and kicks ``_schedule_frame``
+        back to life if it has gone silent past ``FRAME_STALL_THRESHOLD_NS`` (e.g.
+        a render hang or a swallowed re-arm failure froze the bar). Its own re-arm
+        is in ``finally`` so a single check error cannot kill the watchdog. A
+        deliberate ``stop()`` (``_running`` False) ends it cleanly."""
         if not self._running or self._root is None:
             return
         try:
@@ -564,8 +508,6 @@ class JarvisBarOverlay:
         # still gates the hang-up on the X-glyph hit-box, so this only makes a
         # DELIBERATE X-click reliable; it never widens the accidental-hangup zone.
         self._hovered = True
-        self._hover_expanded = True
-        self._cancel_hover_collapse()
         self._drag = {
             "sx": event.x_root,
             "sy": event.y_root,
@@ -598,6 +540,17 @@ class JarvisBarOverlay:
         if d is None:
             return
         if interaction.classify_release(moved=bool(d["moved"])) == "click":
+            # Phantom-click guard (root cause of the request_hangup STORM): a
+            # frameless color-key topmost Tk window emits SYNTHETIC press/release
+            # events on withdraw/deiconify/turn-mode-switch under a stationary
+            # cursor. Read as a close-X click, they fired a machine-paced
+            # request_hangup storm that killed live sessions AND armed the
+            # post-hangup wake-lock, so the next "Hey Jarvis" was swallowed
+            # ("wake triggers, nothing happens"). Honor a click ONLY when the OS
+            # pointer is really over the bar right now.
+            if not self._pointer_over_bar():
+                log.debug("jarvisbar: ignoring phantom click (pointer off bar)")
+                return
             # Use the PRESS-time hover (consistent with the press-time cx): a
             # deliberate click that started on the bar registers even if a stray
             # <Leave> flickered _hovered before release.
@@ -617,78 +570,40 @@ class JarvisBarOverlay:
         except Exception:  # noqa: BLE001
             log.debug("jarvisbar position persist failed", exc_info=True)
 
+    def _pointer_over_bar(self) -> bool:
+        """True when the OS pointer is really inside the bar window right now.
+
+        Guards against synthetic/phantom button events that a frameless
+        color-key topmost Tk window emits on withdraw/deiconify/turn-mode-switch
+        under a stationary cursor (tkdnd was one source, now disabled; the
+        deiconify path remains). Uses ``winfo_pointerxy`` + the window's own
+        ``winfo_rootx/rooty/width/height`` — all Tk screen-pixel measurements in
+        one coordinate space, so it stays correct under HiDPI scaling. Fails
+        CLOSED (returns False) on any error or an unmapped / zero-size window:
+        a missed real click is recoverable, a phantom hang-up is not.
+        """
+        root = self._root
+        if root is None:
+            return False
+        try:
+            if not int(root.winfo_ismapped()):
+                return False
+            bw = int(root.winfo_width())
+            bh = int(root.winfo_height())
+            if bw <= 1 or bh <= 1:
+                return False
+            px, py = root.winfo_pointerxy()
+            bx = int(root.winfo_rootx())
+            by = int(root.winfo_rooty())
+            return bx <= int(px) < bx + bw and by <= int(py) < by + bh
+        except Exception:  # noqa: BLE001
+            return False
+
     def _on_enter(self, _event: Any = None) -> None:
-        # Pointer is on the opaque pill: expand the idle bar and (re)show the
-        # active controls. Cancel any pending collapse poll — the pointer is back.
         self._hovered = True
-        self._hover_expanded = True
-        self._cancel_hover_collapse()
 
     def _on_leave(self, _event: Any = None) -> None:
-        # The active controls hide instantly (unchanged). The idle EXPAND does
-        # NOT collapse here — a <Leave> on this color-keyed window fires on every
-        # antialiased-edge flicker while the pointer is still over the bar. Defer
-        # to a poll of the real pointer position so the idle pill collapses only
-        # once the pointer has genuinely left the window rect.
         self._hovered = False
-        self._schedule_hover_collapse()
-
-    def _schedule_hover_collapse(self) -> None:
-        """Arm the deferred idle-collapse poll (idempotent)."""
-        if self._root is None:
-            # No Tk root (headless / pre-start): no poll loop to clear the flag,
-            # so collapse immediately rather than letting it stick open.
-            self._hover_expanded = False
-            return
-        if self._hover_collapse_id is not None:
-            return  # a poll is already pending
-        try:
-            self._hover_collapse_id = self._root.after(
-                HOVER_COLLAPSE_POLL_MS, self._maybe_collapse_hover
-            )
-        except Exception:  # noqa: BLE001 — scheduling failed → fail toward closing
-            self._hover_collapse_id = None
-            self._hover_expanded = False
-
-    def _cancel_hover_collapse(self) -> None:
-        cid = self._hover_collapse_id
-        self._hover_collapse_id = None
-        if cid is not None and self._root is not None:
-            try:
-                self._root.after_cancel(cid)
-            except Exception:  # noqa: BLE001
-                log.debug("jarvisbar hover-collapse cancel failed", exc_info=True)
-
-    def _maybe_collapse_hover(self) -> None:
-        """Poll the real pointer: keep the idle bar expanded while the pointer is
-        still over the window rect; collapse + stop polling once it has left."""
-        self._hover_collapse_id = None
-        if self._root is None:
-            self._hover_expanded = False
-            return
-        try:
-            px, py = self._root.winfo_pointerxy()
-            # Use the LIVE on-screen geometry (winfo_*), NOT the cached _x/_y +
-            # WIN_W/H. The cached values live in the geometry-string space, which
-            # disagrees with winfo_pointerxy under display scaling / a
-            # window-manager nudge — then the pointer reads as "outside" and the
-            # bar collapses while still hovered. winfo_rootx/rooty/width/height
-            # and winfo_pointerxy share one coordinate space, so the test is exact.
-            wx, wy = self._root.winfo_rootx(), self._root.winfo_rooty()
-            ww, wh = self._root.winfo_width(), self._root.winfo_height()
-            inside = interaction.pointer_in_window(
-                int(px), int(py), int(wx), int(wy), int(ww), int(wh)
-            )
-        except Exception:  # noqa: BLE001 — cannot read the pointer → fail toward closing
-            self._hover_expanded = False
-            return
-        if inside:
-            # A spurious / edge <Leave>: the pointer is still over the bar. Stay
-            # expanded and keep polling until it truly leaves.
-            self._hover_expanded = True
-            self._schedule_hover_collapse()
-        else:
-            self._hover_expanded = False
 
     def _on_right_click(self, _event: Any = None) -> None:
         """Right-click → raise the main desktop window via the injected
@@ -703,9 +618,9 @@ class JarvisBarOverlay:
             log.debug("jarvisbar show-window callback failed", exc_info=True)
 
     def _on_click(self, click_x: float | None = None, *, hovered: bool = False) -> None:
-        # Zone-routed: LEFT "End" → hang up (active only), RIGHT microphone →
-        # toggle the global voice mute, MIDDLE (idle) → start a normal session.
-        # All entries are thread-safe from the Tk thread.
+        # Zone-routed: LEFT X → hang up (active only), RIGHT mic → toggle voice
+        # mute (mic muted FOR JARVIS only), MIDDLE (idle) → start a normal
+        # session. All entries are thread-safe from the Tk thread.
         if click_x is None:
             click_x = renderer.WIN_W / 2
         try:
@@ -714,50 +629,45 @@ class JarvisBarOverlay:
             pipeline = get_speech_pipeline()
             if pipeline is None:
                 return
-            # Ground truth over a possibly-stale ``_mode``: the bridge pops the
-            # bar into the active "listen" look on the earliest wake signal, but
-            # a wake-lock-rejected wake starts no session and emits no IDLE
-            # state, leaving the bar STUCK "active" with nothing live (freeze
-            # forensic 2026-06-28). In that state resolve_click would read the
-            # close-X as a hang-up → a no-op ``request_hangup()`` that just traps
-            # the user ("frozen, nothing works"). So gate the destructive action
-            # on a real session: with none live, resolve the click as if IDLE,
-            # which can never hang up and instead starts a session — the escape
-            # hatch. Fail-safe: an older pipeline without the accessor keeps the
-            # legacy behaviour (trust ``_mode``).
-            session_live = True
-            checker = getattr(pipeline, "is_session_active", None)
-            if callable(checker):
-                try:
-                    session_live = bool(checker())
-                except Exception:  # noqa: BLE001 — a probe error must not break the click
-                    session_live = True
             # Hang-up must be a deliberate click on the VISIBLE close-X glyph
             # (the X is only drawn while hovered), never the wide left dead-zone
             # — see interaction.resolve_click + the silent-hangup forensic. The
             # active pill is ACTIVE_W, so the X glyph sits at WIN_W/2-0.42*pw.
-            click_mode = self._mode if session_live else "idle"
-            active = click_mode in ("listen", "think", "speak")
+            active = self._mode in ("listen", "think", "speak")
             pill_w = renderer.ACTIVE_W if active else None
             action = interaction.resolve_click(
-                click_x, renderer.WIN_W, click_mode,
+                click_x, renderer.WIN_W, self._mode,
                 hovered=hovered, pill_w=pill_w,
             )
             if action == "mute":
-                # Fire the wired bridge callback (publishes VoiceMuteToggleRequested
-                # → the pipeline flips the authoritative flag → VoiceMuteChanged
-                # comes back via set_muted). Optimistically flip the local mirror
-                # too, so the slashed-mic shows on the very next frame instead of
-                # waiting for the bus round-trip. No callback wired (boot race) →
-                # leave the state untouched (the click was a genuine no-op).
+                # The mic button toggles voice mute via the bridge-wired
+                # callback (publishes VoiceMuteToggleRequested → pipeline flips
+                # _muted → broadcasts VoiceMuteChanged → set_muted reconciles).
+                # Flip the local mirror optimistically so the red rim +
+                # slashed-mic show on the very next frame — but ONLY when a
+                # callback is wired, else a boot-race click would paint a false
+                # slash with nothing muted behind it.
                 cb = self._on_mute_toggle
                 if cb is not None:
-                    self._muted = not self._muted
                     cb()
+                    self._muted = not self._muted
             elif action == "hangup":
-                hangup = getattr(pipeline, "request_hangup", None)
-                if callable(hangup):
-                    hangup()
+                # Only a LIVE session is hung up. If the bar is stuck in an
+                # active "listen/think/speak" look with NO session behind it
+                # (a wake confirmed then swallowed by the post-hangup wake-lock,
+                # or a stray event flipped the look), a close-X would be a no-op
+                # request_hangup that just traps the user. Start a session
+                # instead so a click ALWAYS escapes the stuck state. Legacy
+                # pipelines without is_session_active keep the plain hang-up.
+                active_fn = getattr(pipeline, "is_session_active", None)
+                if active_fn is not None and not active_fn():
+                    start = getattr(pipeline, "request_voice_session", None)
+                    if callable(start):
+                        start()
+                else:
+                    hangup = getattr(pipeline, "request_hangup", None)
+                    if callable(hangup):
+                        hangup()
             elif action == "talk":
                 pipeline.request_voice_session()
             # "none" → nothing

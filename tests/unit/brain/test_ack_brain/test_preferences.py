@@ -56,7 +56,7 @@ async def test_ack_prompt_includes_user_preferences_when_set() -> None:
     assert provider.persona_prompts, "the provider should have been called"
     prompt = provider.persona_prompts[0]
     assert "PREFS-MARKER-XYZZY" in prompt
-    assert "JARVIS" in prompt  # base persona still present
+    assert "Vor-Antwort" in prompt  # base persona still present (name-neutral marker)
 
 
 async def test_ack_prompt_is_base_persona_when_no_preferences() -> None:

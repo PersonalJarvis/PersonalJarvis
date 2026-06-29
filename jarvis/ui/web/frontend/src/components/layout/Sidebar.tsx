@@ -13,6 +13,7 @@ import {
   Sparkles,
   Mic,
   Terminal,
+  Wand2,
   Share2,
   Contact,
   MessageSquareWarning,
@@ -22,6 +23,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { useEventStore, type SectionId } from "@/store/events";
+import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { cn } from "@/lib/utils";
 import { useMemo } from "react";
 import { useT } from "@/i18n";
@@ -68,6 +70,7 @@ const NAV_GROUPS: NavItem[][] = [
     },
     // CLIs — the CLIs list + the CLI Test Hub behind one tab switch (CLIs first).
     { id: "clis", labelKey: "nav.clis_hub", icon: Terminal, matchIds: ["clis", "cli-test-hub"] },
+    { id: "personalize", labelKey: "nav.personalize", icon: Wand2, fallbackLabel: "Make It Yours" },
   ],
   // 2) Content & data — things the user reads, edits, or browses.
   [
@@ -130,9 +133,8 @@ export function Sidebar() {
   const assistantName = useEventStore((s) => s.assistantName);
   const transcription = useEventStore((s) => s.transcription);
   const transcriptionFinal = useEventStore((s) => s.transcriptionFinal);
-  const connected = useEventStore((s) => s.connected);
-  const wsWarming = useEventStore((s) => s.wsWarming);
-  const voiceReady = useEventStore((s) => s.voiceReady);
+  // Shared readiness derivation (same source the banner + chat empty-state use).
+  const { connected, voiceWarming, bootWarming, warming } = useVoiceReadiness();
   const brainProvider = useEventStore((s) => s.brainProvider);
   const brainModel = useEventStore((s) => s.brainModel);
   const agentsCount = useEventStore((s) =>
@@ -143,11 +145,9 @@ export function Sidebar() {
   // background. During that gap show a "Voice starting…" spinner instead of the
   // normal idle "Ready" dot (which would falsely imply the mic already works).
   // Disconnected outranks warmup — "Offline" is the honest state with no socket.
-  const voiceWarming = connected && !voiceReady;
-  // A disconnected-but-warming socket (fast-boot backend still starting) reads
-  // "Starting…", not the alarming "OFFLINE".
-  const bootWarming = !connected && wsWarming;
-  const showSpinner = voiceWarming || bootWarming;
+  // voiceWarming / bootWarming / warming come from the shared useVoiceReadiness
+  // hook so the sidebar dot, the banner and the chat empty-state never disagree.
+  const showSpinner = warming;
   const vs = VOICE_STATE_STYLE[voiceState] ?? VOICE_STATE_STYLE.idle;
   const voiceLabel = !connected
     ? bootWarming

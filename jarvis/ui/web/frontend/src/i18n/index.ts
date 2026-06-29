@@ -14,8 +14,9 @@
  *   const lang = useUiLanguage();      // "en" | "de" | "es"
  *   setUiLanguage("de");                // sofort reactive
  *
- * Voice-Sprache (was Whisper erkennt) ist ein eigenes Setting:
- *   useVoiceLanguage(), setVoiceLanguage("auto" | "en" | "de" | "es")
+ * STT recognition language (what Whisper transcribes the spoken voice INTO) is
+ * its own setting, distinct from the UI and the reply language:
+ *   useSttLanguage(), setSttLanguage("auto" | "en" | "de" | "es")
  */
 import { create } from "zustand";
 import enJson from "./locales/en.json";
@@ -27,10 +28,16 @@ export type UiLanguage = "en" | "de" | "es";
 // "auto" mirrors the user's input language; the rest hard-pin the reply language.
 // Mirrors jarvis/brain/manager.py::SUPPORTED_REPLY_LANGUAGES (single source of truth).
 export type ReplyLanguage = "auto" | "en" | "de" | "es";
+// "auto" lets Whisper detect the spoken language per utterance (bilingual
+// default); a concrete code forces what the recogniser transcribes into.
+// Mirrors jarvis/ui/web/settings_routes.py::_STT_LANGUAGES.
+export type SttLanguage = "auto" | "en" | "de" | "es";
 
 const REPLY_LANGUAGE_ENDPOINT = "/api/settings/reply-language";
 const UI_LANGUAGE_ENDPOINT = "/api/settings/ui-language";
+const STT_LANGUAGE_ENDPOINT = "/api/settings/stt-language";
 const REPLY_VALUES: readonly ReplyLanguage[] = ["auto", "en", "de", "es"];
+const STT_VALUES: readonly SttLanguage[] = ["auto", "en", "de", "es"];
 
 function isUiLanguage(v: unknown): v is UiLanguage {
   return v === "en" || v === "de" || v === "es";
@@ -38,6 +45,10 @@ function isUiLanguage(v: unknown): v is UiLanguage {
 
 function isReplyLanguage(v: unknown): v is ReplyLanguage {
   return typeof v === "string" && (REPLY_VALUES as readonly string[]).includes(v);
+}
+
+function isSttLanguage(v: unknown): v is SttLanguage {
+  return typeof v === "string" && (STT_VALUES as readonly string[]).includes(v);
 }
 
 const RESOURCES: Record<UiLanguage, Record<string, unknown>> = {
@@ -48,6 +59,7 @@ const RESOURCES: Record<UiLanguage, Record<string, unknown>> = {
 
 const UI_KEY = "jarvis.ui.language";
 const REPLY_KEY = "jarvis.reply.language";
+const STT_KEY = "jarvis.stt.language";
 
 function readUi(): UiLanguage {
   try {
@@ -63,6 +75,16 @@ function readReply(): ReplyLanguage {
   try {
     const raw = localStorage.getItem(REPLY_KEY);
     if (isReplyLanguage(raw)) return raw;
+  } catch {
+    /* ignore */
+  }
+  return "auto";
+}
+
+function readStt(): SttLanguage {
+  try {
+    const raw = localStorage.getItem(STT_KEY);
+    if (isSttLanguage(raw)) return raw;
   } catch {
     /* ignore */
   }
@@ -101,6 +123,43 @@ export async function hydrateReplyLanguage(): Promise<void> {
     const body = (await res.json()) as { language?: unknown };
     if (isReplyLanguage(body.language)) {
       useI18nStore.getState().setReply(body.language, { push: false });
+    }
+  } catch {
+    /* keep the local value */
+  }
+}
+
+/**
+ * Push the STT recognition language to the backend. Fire-and-forget. Persists to
+ * jarvis.toml [stt].language; applies on the next voice restart (the STT provider
+ * is built once at voice bootstrap), so the UI hints at a restart after a change.
+ */
+function pushStt(lang: SttLanguage): void {
+  try {
+    void fetch(STT_LANGUAGE_ENDPOINT, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ language: lang }),
+    }).catch(() => {
+      /* offline / headless — localStorage re-syncs on next mount */
+    });
+  } catch {
+    /* fetch unavailable (SSR / tests without stub) */
+  }
+}
+
+/**
+ * Pull the persisted STT recognition language from the backend and reflect it so
+ * the UI shows the real boot default. Call once on the Languages view mount. On
+ * failure the localStorage value (already in the store) stands.
+ */
+export async function hydrateSttLanguage(): Promise<void> {
+  try {
+    const res = await fetch(STT_LANGUAGE_ENDPOINT);
+    if (!res.ok) return;
+    const body = (await res.json()) as { language?: unknown };
+    if (isSttLanguage(body.language)) {
+      useI18nStore.getState().setStt(body.language, { push: false });
     }
   } catch {
     /* keep the local value */
@@ -147,13 +206,16 @@ export async function hydrateUiLanguage(): Promise<void> {
 interface I18nState {
   ui: UiLanguage;
   reply: ReplyLanguage;
+  stt: SttLanguage;
   setUi: (lang: UiLanguage, opts?: { push?: boolean }) => void;
   setReply: (lang: ReplyLanguage, opts?: { push?: boolean }) => void;
+  setStt: (lang: SttLanguage, opts?: { push?: boolean }) => void;
 }
 
 export const useI18nStore = create<I18nState>((set) => ({
   ui: readUi(),
   reply: readReply(),
+  stt: readStt(),
   setUi: (lang, opts) => {
     try {
       localStorage.setItem(UI_KEY, lang);
@@ -178,6 +240,19 @@ export const useI18nStore = create<I18nState>((set) => ({
     // GET→PUT echo loop.
     if (opts?.push !== false) {
       pushReply(lang);
+    }
+  },
+  setStt: (lang, opts) => {
+    try {
+      localStorage.setItem(STT_KEY, lang);
+    } catch {
+      /* ignore */
+    }
+    set({ stt: lang });
+    // Default: propagate to the backend. Hydrate passes push:false to avoid a
+    // GET→PUT echo loop.
+    if (opts?.push !== false) {
+      pushStt(lang);
     }
   },
 }));
@@ -250,10 +325,18 @@ export function useReplyLanguage(): ReplyLanguage {
   return useI18nStore((s) => s.reply);
 }
 
+export function useSttLanguage(): SttLanguage {
+  return useI18nStore((s) => s.stt);
+}
+
 export function setUiLanguage(lang: UiLanguage): void {
   useI18nStore.getState().setUi(lang);
 }
 
 export function setReplyLanguage(lang: ReplyLanguage): void {
   useI18nStore.getState().setReply(lang);
+}
+
+export function setSttLanguage(lang: SttLanguage): void {
+  useI18nStore.getState().setStt(lang);
 }

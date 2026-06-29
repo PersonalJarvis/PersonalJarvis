@@ -288,30 +288,46 @@ async def post_test(request: Request) -> JSONResponse:
                 "error": "twilio package not installed (pip install -e .[telephony])",
             }
         )
+    # M3: prefer credentials typed in the form body (test-before-save) over the
+    # persisted ones, so clicking Test with fresh creds validates THOSE — not stale
+    # or absent saved values that read as a broken key.
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            body = {}
+    except Exception:  # noqa: BLE001 — no/empty body → fall back to persisted
+        body = {}
     twilio = _twilio_cfg(request)
-    account_sid = getattr(twilio, "account_sid", "") or ""
-    token = _auth_token()
+    account_sid = (str(body.get("account_sid") or "").strip()
+                   or (getattr(twilio, "account_sid", "") or ""))
+    token = str(body.get("auth_token") or "").strip() or _auth_token()
     mgr = _manager(request)
+    # M4: honest five-layer status (PROVIDER_TEST_STATUSES) instead of a binary
+    # ok/failed — bad SID, unfunded/suspended account, and an outage are different.
+    from jarvis.brain.provider_test import classify_provider_error
+
     if not account_sid or not token:
         mgr.set_reachable(False, "account_sid or auth_token missing")
-        return JSONResponse(
-            {"ok": False, "reachable": False, "error": "account_sid or auth_token missing"}
-        )
+        return JSONResponse({
+            "ok": False, "reachable": False, "status": "not_configured",
+            "error": "account_sid or auth_token missing",
+        })
     try:
         from jarvis.telephony.provisioning import verify_credentials
 
         info = verify_credentials(account_sid, token)
         mgr.set_reachable(True, None)
-        return JSONResponse(
-            {
-                "ok": True,
-                "reachable": True,
-                "account_status": info.get("account_status", ""),
-            }
-        )
+        return JSONResponse({
+            "ok": True, "reachable": True, "status": "ok",
+            "account_status": info.get("account_status", ""),
+        })
     except Exception as exc:  # noqa: BLE001
         mgr.set_reachable(False, str(exc))
-        return JSONResponse({"ok": False, "reachable": False, "error": str(exc)})
+        return JSONResponse({
+            "ok": False, "reachable": False,
+            "status": classify_provider_error(str(exc)),
+            "error": str(exc),
+        })
 
 
 # ---------------------------------------------------------------------------
@@ -407,12 +423,25 @@ async def get_scripts(request: Request) -> JSONResponse:
     webhook = public_url_for(base, "/api/telephony/voice")
     scripts = [
         {
-            "name": "Public tunnel (dev)",
+            # M7: cross-platform tunnel command (Linux/macOS/Windows) — the
+            # PowerShell script below is Windows-only and was the ONLY option
+            # shown to every OS. Needs `cloudflared` installed.
+            "name": "Public tunnel (portable)",
+            "path": "",
+            "description": (
+                "Start a cloudflared tunnel to the local FastAPI port and copy the "
+                "printed https URL into 'public_base_url'. Works on Linux, macOS and "
+                "Windows (install cloudflared first)."
+            ),
+            "command": f"cloudflared tunnel --url http://localhost:{port}",
+        },
+        {
+            "name": "Public tunnel (Windows dev)",
             "path": "scripts/telephony-tunnel.ps1",
             "description": (
                 "Start a cloudflared tunnel to the local FastAPI port and print "
                 "the public HTTPS URL to paste into 'public_base_url'. Home-PC "
-                "development path."
+                "development path (Windows PowerShell)."
             ),
             "command": f"pwsh scripts/telephony-tunnel.ps1 -Port {port}",
         },

@@ -117,7 +117,13 @@ async function pollStatusUntilConnected(
   return false;
 }
 
-export function SubagentSection() {
+export function SubagentSection({
+  hideHeader = false,
+}: {
+  /** Suppress the section header — used inside the API-Keys "Subagents" tab,
+   * whose category hero already shows the title (avoids a double label). */
+  hideHeader?: boolean;
+} = {}) {
   const t = useT();
   const [bridge, setBridge] = useState<SubagentStatus | null>(null);
   const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null);
@@ -176,7 +182,7 @@ export function SubagentSection() {
   if (error) {
     return (
       <section>
-        <SectionHeader label={t("apikeys_view.tier_subagent")} />
+        {!hideHeader && <SectionHeader label={t("apikeys_view.tier_subagent")} />}
         <p className="text-xs text-destructive">Status unavailable: {error}</p>
       </section>
     );
@@ -203,7 +209,7 @@ export function SubagentSection() {
 
   return (
     <section>
-      <SectionHeader label={t("apikeys_view.tier_subagent")} />
+      {!hideHeader && <SectionHeader label={t("apikeys_view.tier_subagent")} />}
       {/* The coupling is non-obvious: subagent providers have no key field of
           their own — they reuse the Brain-provider keys set above. Spell it out
           so users know where to add the key instead of looking for an input

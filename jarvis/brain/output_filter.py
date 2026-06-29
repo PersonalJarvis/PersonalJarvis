@@ -638,9 +638,24 @@ def scrub_for_voice(
     if sir_changed:
         actions.append("removed_anrede_drift")
 
+    # 7c. Em dash / en dash -> comma (2026-06-29 "choppy voice" forensic). A
+    #     parenthetical dash renders as a hard pause and a trailing half-sentence
+    #     once a speech engine reads it. The persona forbids them, but any
+    #     provider can still emit one, so collapse the Unicode dashes into a
+    #     comma. Hyphen compounds ("Browser-Provider", "Sub-Agent") use a plain
+    #     ASCII '-' with no surrounding whitespace and are NOT in the class below,
+    #     so they survive untouched.
+    new = re.sub(r"\s*[—–]\s*", ", ", out)
+    if new != out:
+        actions.append("removed_em_dash")
+        out = new
+
     # 8. Whitespace normalisieren
     out = re.sub(r"\s{2,}", " ", out).strip()
     out = re.sub(r"\s+([,.!?;:])", r"\1", out)
+    # A dash->comma swap can leave a doubled or dangling comma; tidy it.
+    out = re.sub(r",\s*(?=[,.!?;:])", "", out)
+    out = re.sub(r",\s*$", "", out).strip()
 
     # 9. Post-Scrub-Muell-Fallback: wenn nach allem Filtern weniger als
     #    MIN_MEANINGFUL_CHARS alphanumerische Zeichen uebrig sind UND der

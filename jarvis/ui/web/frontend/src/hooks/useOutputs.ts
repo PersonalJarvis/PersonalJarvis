@@ -51,6 +51,12 @@ export interface OutputSummary {
   started_at?: number;
   github_url?: string | null;
   error?: string | null;
+  /** When this terminal mission has already been continued/restarted and that
+   *  re-run is still running, the full id + slug of that live child. The card
+   *  then shows a "running" indicator pointing at the child instead of a
+   *  redundant Continue/Restart button. */
+  active_child_id?: string | null;
+  active_child_slug?: string | null;
 }
 
 export function useOutputsList() {

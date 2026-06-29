@@ -68,7 +68,7 @@ class Soul:
         """
         # Extract the first section up to and including "## Grenzen"
         lines = self._body.splitlines()
-        out: list[str] = ["## Jarvis Persona"]
+        out: list[str] = ["## Persona"]
         in_tone = False
         in_grenzen = False
         for line in lines:

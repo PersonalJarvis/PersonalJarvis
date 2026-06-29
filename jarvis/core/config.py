@@ -1,13 +1,18 @@
 """Config loading with layers: TOML → YAML profiles → Env → Runtime.
 
-Secrets do NOT come from the config file; they come from the Windows Credential
-Manager via `keyring`. The `get_secret()` getter is the single access point.
+Secrets do NOT come from the config file. They resolve through the OS credential
+store via `keyring` (Windows Credential Manager / macOS Keychain / Linux Secret
+Service), then an ENV-variable fallback, then `.env`, and — on a headless host with
+no OS keyring (e.g. python:3.11-slim) — a local 0600 file (see
+`_ensure_keyring_backend`). The `get_secret()` getter is the single access point.
 
 Hot-reload: watchdog monitors the config file and dispatches `ConfigReloaded`
 on change. Subscribers decide whether to reinitialise themselves.
 """
 from __future__ import annotations
 
+import json
+import logging
 import os
 import sys
 import tomllib
@@ -217,12 +222,15 @@ class TriggerConfig(BaseModel):
 
 class STTConfig(BaseModel):
     provider: str = "groq-api"
-    # NOTE: ``model`` is consumed by the local FasterWhisperProvider for the
-    # Wake-Detector's rolling-whisper instance even when the post-wake STT
-    # provider is set to a cloud one. Must remain a faster-whisper-compatible
-    # name (see faster_whisper/utils.py for the allowlist). The Groq plugin
-    # hardcodes its own model name internally.
-    model: str = "distil-large-v3"
+    # ``model`` is the local FasterWhisperProvider's post-wake utterance model
+    # (used whenever ``provider = "faster-whisper"``; the Groq cloud plugin
+    # hardcodes its own multilingual model and ignores this). Must be a
+    # faster-whisper-compatible name (see faster_whisper/utils.py). It MUST be
+    # multilingual for the bilingual default: ``distil-large-v3`` is ENGLISH-ONLY
+    # and mangles German/Spanish speech into English words. ``large-v3-turbo`` is
+    # the fast multilingual checkpoint. (FasterWhisperProvider also guards this at
+    # runtime: an English-only model + a non-"en" language auto-upgrades.)
+    model: str = "large-v3-turbo"
     # Cloud-first default: "cpu". A fresh clone on a VPS or a laptop must never
     # assume a local GPU. Set to "cuda" in jarvis.toml on a CUDA box; the local
     # faster-whisper path also tolerates "cuda" with a no-CUDA runtime fallback.
@@ -2148,6 +2156,108 @@ def load_config(
 # Secrets (Windows Credential Manager via keyring)
 # ----------------------------------------------------------------------
 
+# ----------------------------------------------------------------------
+# Headless credential store (C1, open-source AP-22)
+# ----------------------------------------------------------------------
+# On a headless Linux/VPS (python:3.11-slim — no D-Bus Secret Service / gnome-
+# keyring / KWallet) the platform keyring resolves to ``fail.Keyring`` and every
+# in-app key save / channel-connect / plugin-connect raises → the whole API-Keys
+# section is unusable. We fall back to a local 0600 JSON file so a bare-VPS user
+# can paste a key in the UI and have it persist. NOT a security feature; the OS
+# keyring stays the secure path whenever it is functional (the file backend is
+# installed ONLY when the current backend is the no-op fail.Keyring).
+_KEYRING_BACKEND_READY: bool = False
+
+
+class _FileCredStore:
+    """Minimal 0600 JSON credential store keyed by ``(service, username)``."""
+
+    def __init__(self, path: Path | None = None) -> None:
+        self._explicit = path
+
+    def _file(self) -> Path:
+        p = self._explicit if self._explicit is not None else (DATA_DIR / "credentials.json")
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
+
+    def _load(self) -> dict[str, str]:
+        try:
+            f = self._file()
+            return json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+        except Exception:  # noqa: BLE001 — a corrupt store must never crash a read
+            return {}
+
+    def _save(self, data: dict[str, str]) -> None:
+        f = self._file()
+        tmp = f.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data), encoding="utf-8")
+        try:
+            os.chmod(tmp, 0o600)
+        except Exception:  # noqa: BLE001 — chmod is a no-op on Windows
+            pass
+        os.replace(tmp, f)
+
+    @staticmethod
+    def _k(service: str, username: str) -> str:
+        return f"{service}\x00{username}"
+
+    def get(self, service: str, username: str) -> str | None:
+        return self._load().get(self._k(service, username))
+
+    def set(self, service: str, username: str, password: str) -> None:
+        data = self._load()
+        data[self._k(service, username)] = password
+        self._save(data)
+
+    def delete(self, service: str, username: str) -> None:
+        data = self._load()
+        data.pop(self._k(service, username), None)
+        self._save(data)
+
+
+def _ensure_keyring_backend() -> None:
+    """Install the local-file credential store when the OS keyring is non-functional.
+
+    Runs once. Installs the file backend ONLY when the current backend is the no-op
+    ``fail.Keyring`` (so a working Windows/macOS/Linux OS keyring is never replaced).
+    Any error is swallowed — a missing keyring must never break boot.
+    """
+    global _KEYRING_BACKEND_READY
+    if _KEYRING_BACKEND_READY:
+        return
+    _KEYRING_BACKEND_READY = True
+    try:
+        import keyring
+        import keyring.backend
+        from keyring.backends import fail
+
+        if not isinstance(keyring.get_keyring(), fail.Keyring):
+            return
+
+        _store = _FileCredStore()
+
+        class _FileKeyringBackend(keyring.backend.KeyringBackend):
+            priority = 0.1  # type: ignore[assignment]  # below any real OS backend
+
+            def get_password(self, service: str, username: str) -> str | None:
+                return _store.get(service, username)
+
+            def set_password(self, service: str, username: str, password: str) -> None:
+                _store.set(service, username, password)
+
+            def delete_password(self, service: str, username: str) -> None:
+                _store.delete(service, username)
+
+        keyring.set_keyring(_FileKeyringBackend())
+        logging.getLogger(__name__).warning(
+            "No OS credential store available (headless host) — API keys are stored "
+            "in a local 0600 file under %s. Configure a Secret Service / Keychain "
+            "for OS-encrypted storage.", DATA_DIR / "credentials.json",
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def get_secret(key: str, env_fallback: str | None = None) -> str | None:
     """Retrieve a secret value. Priority: keyring → ENV fallback → .env.
 
@@ -2155,6 +2265,15 @@ def get_secret(key: str, env_fallback: str | None = None) -> str | None:
         key: Secret name in the Credential Manager (e.g. "anthropic_api_key").
         env_fallback: ENV variable checked when keyring is empty (e.g. "ANTHROPIC_API_KEY").
     """
+    _ensure_keyring_backend()
+    # H2 (open-source AP-22 / headless VPS): when the caller passes no explicit ENV
+    # var, derive it from the slot name (``groq_api_key`` → ``GROQ_API_KEY``) so the
+    # documented keyring → ENV → .env hierarchy holds for EVERY slot — not only the
+    # brain providers whose callers happen to pass one. On a host with no OS keyring
+    # (python:3.11-slim) the ENV path is the only credential input until C1 lands.
+    if env_fallback is None:
+        env_fallback = key.upper()
+
     # Lazy import — keyring requires pywin32 on Windows
     try:
         import keyring
@@ -2251,7 +2370,12 @@ def resolve_provider_endpoint(
 
 
 def set_secret(key: str, value: str) -> bool:
-    """Store a secret in the Credential Manager. Returns True on success."""
+    """Store a secret in the OS keyring (or the headless 0600 file fallback).
+
+    Returns True on success. C1: the in-app API-Keys section writes through here,
+    so the headless file fallback is what makes a fresh VPS user able to save a key.
+    """
+    _ensure_keyring_backend()
     try:
         import keyring
 
@@ -2262,7 +2386,8 @@ def set_secret(key: str, value: str) -> bool:
 
 
 def delete_secret(key: str) -> bool:
-    """Remove a secret from the Credential Manager."""
+    """Remove a secret from the OS keyring (or the headless file fallback)."""
+    _ensure_keyring_backend()
     try:
         import keyring
 

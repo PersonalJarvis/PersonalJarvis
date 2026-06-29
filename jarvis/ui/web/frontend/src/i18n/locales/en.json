@@ -42,7 +42,36 @@
     "taskbar": "Taskbar",
     "contacts": "Contacts",
     "feedback": "Feedback",
+    "personalize": "Make It Yours",
     "agent_instructions": "{name}.md"
+  },
+  "make_it_yours": {
+    "title": "Make It Yours",
+    "subtitle": "Open coding agents right inside your Jarvis folder and personalize it.",
+    "step_layout": "How many terminals?",
+    "step_layout_hint": "Pick a layout — one tile per number of terminals.",
+    "step_agents": "Which agents?",
+    "step_agents_hint": "Choose how many of each agent fill your terminals. Only Claude Code and Codex.",
+    "quick_fill": "Quick fill",
+    "split_evenly": "Split evenly",
+    "all_claude": "All Claude Code",
+    "all_codex": "All Codex",
+    "installed": "Installed",
+    "not_installed": "Not installed",
+    "install": "Install in terminal",
+    "installing": "Opening installer in a terminal…",
+    "step_confirm": "Ready to launch",
+    "folder": "Folder",
+    "launch": "Launch",
+    "launching": "Launching…",
+    "back": "Back",
+    "next": "Next",
+    "no_terminal": "This host can't run a terminal (no shell or PTY backend), so the agents can't be launched here.",
+    "launched_ok": "Terminals opened",
+    "launch_failed": "Some terminals could not be opened.",
+    "terminals": "terminals",
+    "end_session": "End session",
+    "install_done": "Done — re-check"
   },
   "agent_instructions": {
     "subtitle": "Your personal preferences for how the assistant works with you — tone, language, defaults, standing facts. Separate from the System Prompt, and it never overrides safety or confirmations.",
@@ -174,6 +203,8 @@
     "thinking_label": "thinking…",
     "empty_title": "Ready for commands",
     "empty_subtitle": "Say your wake word or type your message below. Your assistant dispatches sub-agents, calls tools, and gives you a voice back.",
+    "warming_title": "Getting ready",
+    "warming_subtitle": "Your assistant is starting up. You'll be able to speak in a moment, and you can already type below.",
     "examples": {
       "0": "Show the agents",
       "1": "Switch brain to Gemini",
@@ -801,7 +832,7 @@
   },
   "apikeys_view": {
     "title": "API Keys & Providers",
-    "subtitle": "Codex uses the official ChatGPT/Codex login.",
+    "subtitle": "Connect providers and choose what powers each part of Jarvis.",
     "save": "Save",
     "saved": "Saved",
     "missing": "Missing",
@@ -814,6 +845,20 @@
     "tier_stt": "Voice Input (STT)",
     "tier_subagent": "Subagent (heavy tasks)",
     "tier_telephony": "Telephony",
+    "tab_brain": "Brain",
+    "tab_tts": "Voice Output",
+    "tab_stt": "Voice Input",
+    "tab_subagents": "Subagents",
+    "tab_advanced": "Advanced",
+    "cat_brain_desc": "The model that powers chat, routing, and Computer-Use.",
+    "cat_tts_desc": "The voice Jarvis speaks with.",
+    "cat_stt_desc": "How Jarvis turns your speech into text.",
+    "cat_subagents_title": "Subagents",
+    "cat_subagents_desc": "Choose which provider runs heavy background tasks.",
+    "advanced_title": "Access & Integrations",
+    "advanced_desc": "Optional extras: control-API access, the team key proxy, telephony, and the knowledge Wiki provider.",
+    "no_providers_in_tier": "No providers available in this category.",
+    "model_picker_activate_hint": "Activate this provider to choose its voice or model.",
     "active_tooltip": "Already active",
     "click_to_activate": "Click to activate this provider",
     "needs_codex": "First connect Codex or save API key, then activate",
@@ -852,7 +897,8 @@
     "load_failed": "Could not load models",
     "source_static": "default list",
     "source_static_note": "Live catalog unavailable — showing the maintained default selection.",
-    "more_hint": "{0} more — refine your search",
+    "count_hint": "{0} models in the catalog",
+    "open_on_provider": "View on OpenRouter",
     "choose_placeholder": "Choose a model…",
     "heading_voice": "Voice",
     "choose_voice": "Choose a voice…",
@@ -1153,6 +1199,7 @@
     "restart_label": "Restart",
     "rerun_starting": "Starting…",
     "rerun_confirm": "Confirm re-run",
+    "continuation_running": "Continued · running",
     "list_load_error": "Could not load outputs",
     "empty_sessions": "No sub-agent sessions yet. Start an OpenClaw task.",
     "select_session": "Select a session.",
@@ -1326,7 +1373,8 @@
       "title": "Watch the 2-minute tour",
       "body": "A quick walkthrough of what Personal Jarvis does and how setup works. You can skip and start right away.",
       "continue": "Continue",
-      "skip": "Skip the video"
+      "skip": "Skip the video",
+      "play": "Play the tutorial video"
     },
     "risk": {
       "title": "Before you continue",
@@ -1414,6 +1462,8 @@
     "ui_hint": "Affects every label, button and message in the app.",
     "reply_section": "Reply Language",
     "reply_hint": "Which language {name} speaks when answering you. Proper names, code identifiers and technical terms stay in their original form.",
+    "stt_section": "Voice Recognition Language",
+    "stt_hint": "Which language your spoken voice is recognised and turned into text. Automatic detects the language you speak on its own.",
     "options": {
       "auto": {
         "label": "Automatic",
@@ -1437,6 +1487,12 @@
       "en": "{name} answers in English.",
       "de": "{name} antwortet auf Deutsch.",
       "es": "{name} responde en español."
+    },
+    "stt_options": {
+      "auto": "Detect the language you speak automatically.",
+      "en": "Always recognise your voice as English.",
+      "de": "Always recognise your voice as German.",
+      "es": "Always recognise your voice as Spanish."
     }
   },
   "cli_connect_poller": {
@@ -1525,6 +1581,7 @@
     "copy_failed_clipboard": "Copy failed — clipboard access blocked?",
     "copy_failed": "Copy failed",
     "downloaded_as": "Downloaded as",
+    "saved_to_downloads": "Saved to Downloads:",
     "download_failed": "Download failed",
     "loading": "Loading session…",
     "load_error": "Failed to load",
@@ -1532,13 +1589,17 @@
     "turns": "turns",
     "no_turns_suffix": "without a follow-up utterance.",
     "copy_action": "Copy",
-    "download_file_action": "Download as file:"
+    "download_file_action": "Download as file:",
+    "open_editor_action": "Open in editor:",
+    "opened_in_editor": "Opened in editor",
+    "open_failed": "Couldn't open in editor"
   },
   "turn_card": {
     "turn": "Turn",
     "copied": "copied",
     "copy_failed": "Copy failed",
     "downloaded_as": "Downloaded as",
+    "saved_to_downloads": "Saved to Downloads:",
     "copy_turn": "Copy this turn",
     "copy": "Copy",
     "download_turn": "Download this turn as a file",
@@ -2087,6 +2148,10 @@
     "subtitle": "Telegram bot + local friend registry. You decide what friends see."
   },
   "feedback": {
+    "discord_cta_title": "Report on our Discord",
+    "discord_cta_subtitle": "Join #bug-reports and post your bug, idea, or question directly.",
+    "discord_cta_button": "Open Discord",
+    "or_send_here": "or send it from here",
     "subtitle": "Report a bug, share an idea, or ask a question — sent straight to our Discord.",
     "type_label": "Type",
     "type_bug": "Bug",

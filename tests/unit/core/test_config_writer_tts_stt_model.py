@@ -38,10 +38,31 @@ def test_set_tts_model_writes_model(tmp_path: Path) -> None:
     assert 'model = "sonic-2"' in p.read_text(encoding="utf-8")
 
 
-def test_set_stt_model_writes_model(tmp_path: Path) -> None:
+def test_set_stt_model_writes_all_three_layers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The STT model picker writes TOML + config-soll + the JARVIS__STT__MODEL ENV
+    var — a stale single-word ENV override otherwise masks the TOML at boot (the
+    "model is hardcoded, I can't change it" trap, forensic 2026-06-28)."""
     p = _toml(tmp_path)
-    config_writer.set_stt_model("whisper-large-v3", path=p)
-    assert 'model = "whisper-large-v3"' in p.read_text(encoding="utf-8")
+    soll = tmp_path / "config-soll.json"
+    soll.write_text('{"stt": {"model": "distil-large-v3"}}', encoding="utf-8")
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: soll)
+    env_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        config_writer, "_set_user_env_var", lambda n, v: env_calls.append((n, v))
+    )
+
+    config_writer.set_stt_model("large-v3-turbo", path=p)
+
+    # Layer 1: TOML.
+    assert 'model = "large-v3-turbo"' in p.read_text(encoding="utf-8")
+    # Layer 2: config-soll.json.
+    import json
+
+    assert json.loads(soll.read_text(encoding="utf-8"))["stt"]["model"] == "large-v3-turbo"
+    # Layer 3: the User-scope ENV var that overrides TOML at boot.
+    assert env_calls == [("JARVIS__STT__MODEL", "large-v3-turbo")]
 
 
 def test_set_tts_cartesia_model_writes_subtable(tmp_path: Path) -> None:
@@ -58,9 +79,9 @@ def test_set_tts_cartesia_model_writes_subtable(tmp_path: Path) -> None:
     assert data["tts"]["cartesia"]["model_id"] == "sonic-2"
 
 
-def test_writers_raise_when_config_missing(tmp_path: Path) -> None:
+def test_writers_create_config_when_missing(tmp_path: Path) -> None:
+    # M1 (headless VPS): provider-switch writers create the config if absent.
     missing = tmp_path / "nope.toml"
-    with pytest.raises(FileNotFoundError):
-        config_writer.set_tts_voice("Kore", path=missing)
-    with pytest.raises(FileNotFoundError):
-        config_writer.set_stt_model("whisper-large-v3", path=missing)
+    config_writer.set_tts_voice("Kore", path=missing)
+    assert missing.exists()
+    config_writer.set_stt_model("whisper-large-v3", path=missing)

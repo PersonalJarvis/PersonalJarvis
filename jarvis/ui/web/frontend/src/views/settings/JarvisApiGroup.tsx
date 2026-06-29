@@ -50,9 +50,9 @@ export function JarvisApiGroup() {
   }
 
   return (
-    <div className="mt-8 space-y-4">
-      <h3 className="font-display text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        {t("settings_view.jarvis_api.title")}
+    <section className="space-y-3">
+      <h3 className="mb-3 inline-flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+        <KeyRound className="h-3.5 w-3.5" /> {t("settings_view.jarvis_api.title")}
       </h3>
       <div className="rounded-lg border border-border bg-card/60 p-4">
         <div className="flex items-start gap-3">
@@ -106,6 +106,6 @@ export function JarvisApiGroup() {
           </div>
         </div>
       </div>
-    </div>
+    </section>
   );
 }

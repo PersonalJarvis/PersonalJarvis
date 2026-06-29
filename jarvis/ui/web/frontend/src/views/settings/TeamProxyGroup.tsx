@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, Loader2 } from "lucide-react";
+import { Check, Loader2, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
@@ -110,9 +110,9 @@ export function TeamProxyGroup() {
   };
 
   return (
-    <div className="mb-8 space-y-4">
-      <h3 className="font-display text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        {t("settings_view.team_proxy.title")}
+    <section className="space-y-4">
+      <h3 className="mb-3 inline-flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+        <Users className="h-3.5 w-3.5" /> {t("settings_view.team_proxy.title")}
       </h3>
       <p className="text-xs text-muted-foreground">
         {t("settings_view.team_proxy.hint")}
@@ -202,6 +202,6 @@ export function TeamProxyGroup() {
         </button>
         {error && <span className="text-xs text-destructive">{error}</span>}
       </div>
-    </div>
+    </section>
   );
 }

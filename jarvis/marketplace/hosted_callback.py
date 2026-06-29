@@ -148,18 +148,25 @@ def make_callback_server(
     *,
     timeout_seconds: float = 300.0,
     fixed_port: int | None = None,
+    callback_path: str | None = None,
 ) -> HostedCallbackServer | OAuthCallbackServer:
     """Return a hosted callback server when a public base URL is configured,
     else the loopback server (the desktop power-user path).
 
-    ``fixed_port`` only applies to the loopback server (e.g. Slack's registered
-    redirect_uri); it is ignored in hosted mode.
+    ``fixed_port`` and ``callback_path`` only apply to the loopback server (e.g.
+    Slack's registered ``http://127.0.0.1:3118/<path>`` redirect_uri); both are
+    ignored in hosted mode, where the rendezvous owns the redirect. H3: routing the
+    PKCE flows through here makes a VPS-configured ``public_callback_base_url`` give
+    Gmail/Google/Slack/Asana a publicly-reachable redirect instead of a dead loopback.
     """
     base = get_public_callback_base_url()
     if base:
         return HostedCallbackServer(expected_state, base, timeout_seconds=timeout_seconds)
-    return OAuthCallbackServer(
-        expected_state=expected_state,
-        timeout_seconds=timeout_seconds,
-        port=fixed_port,
-    )
+    loopback_kwargs: dict = {
+        "expected_state": expected_state,
+        "timeout_seconds": timeout_seconds,
+        "port": fixed_port,
+    }
+    if callback_path is not None:
+        loopback_kwargs["callback_path"] = callback_path
+    return OAuthCallbackServer(**loopback_kwargs)

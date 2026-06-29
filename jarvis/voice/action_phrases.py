@@ -173,6 +173,46 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "{tool} failed.",
         "es": "{tool} falló.",
     },
+    # Generic action-failure fallback — the deterministic line behind the
+    # context-aware composer for ANY failed action (local tool, recovered tool).
+    # The user must NEVER hear the opaque ``exit N`` token the tool layer emits;
+    # when there is no human reason to forward, this honest, plain sentence is
+    # spoken instead (live forensic 2026-06-28: a harness failure was read back
+    # as the bare "exit 1"). All supported languages, never a hardcoded German
+    # string on an en/es turn.
+    "action_failed_generic": {
+        "de": "Das hat gerade nicht geklappt.",  # i18n-allow
+        "en": "That didn't work just now.",
+        "es": "Eso no funcionó ahora mismo.",
+    },
+    # Action failure WITH a human reason forwarded (the speakable cause pulled
+    # from the tool's stderr/error — never a bare exit code).
+    "action_failed_reason": {
+        "de": "Das hat nicht geklappt: {reason}",  # i18n-allow
+        "en": "That didn't work: {reason}",
+        "es": "Eso no funcionó: {reason}",
+    },
+    # A local action that ran past its short deadline. Replaces the old
+    # tool-name-prefixed "X timeout after 3s" machine string (which leaked the
+    # internal tool name) with a plain, honest sentence.
+    "action_timeout": {
+        "de": "Das hat zu lange gedauert, also habe ich abgebrochen.",  # i18n-allow
+        "en": "That took too long, so I stopped.",
+        "es": "Eso tardó demasiado, así que lo detuve.",
+    },
+    # Background sub-agent / worker could not be started. The spoken sibling of
+    # action_failed_* for the spawn paths — the opaque ``exit N`` / a hardcoded
+    # German fallback must never reach an en/es turn.
+    "spawn_failed_generic": {
+        "de": "Ich konnte den Hintergrund-Helfer gerade nicht starten.",  # i18n-allow
+        "en": "I couldn't start the background helper just now.",
+        "es": "No pude iniciar el ayudante en segundo plano ahora mismo.",
+    },
+    "spawn_failed_reason": {
+        "de": "Ich konnte den Hintergrund-Helfer nicht starten: {reason}",  # i18n-allow
+        "en": "I couldn't start the background helper: {reason}",
+        "es": "No pude iniciar el ayudante en segundo plano: {reason}",
+    },
 }
 
 
@@ -376,6 +416,38 @@ def _is_speakable_observation(text: str | None) -> bool:
     return _CU_VERIFIER_DUMP_RE.search(text or "") is None
 
 
+def extract_speakable_reason(error: str | None, output: object = None) -> str | None:
+    """Pull a clean, user-facing failure reason out of a tool result, or ``None``.
+
+    The single opaque-token gate for every NON-computer-use failure readback
+    (the local-action fast path, the spawn / leaked-tool recovery paths). It
+    mirrors :func:`cu_failure_readback`'s resolution, reusing the same guards so
+    the "what may be spoken" rule lives in ONE place:
+
+    1. If ``output`` is a harness/tool result dict, prefer a human sentence from
+       its ``stderr`` (then ``stdout``) — the loop's ``"[cu] … : "`` prefix is
+       stripped first.
+    2. Otherwise fall back to ``error`` if it is itself a human sentence.
+    3. Return ``None`` when nothing speakable remains — a bare ``exit N``, a
+       purely numeric / empty token, internal diagnostic / telemetry noise, or a
+       leaked path. The caller then degrades to a generic localized phrase.
+
+    Pure regex, no LLM (AP-11). The user must NEVER hear the opaque ``exit N``
+    token the tool layer emits (``dispatch_to_harness`` → ``f"exit {code}"``).
+    """
+    if isinstance(output, dict):
+        for field in ("stderr", "stdout"):
+            raw = str(output.get(field) or "").strip()
+            if not raw:
+                continue
+            candidate = _CU_REASON_PREFIX_RE.sub("", raw).strip()
+            if _is_speakable_reason(candidate):
+                return candidate
+    if _is_speakable_reason(error):
+        return str(error).strip()
+    return None
+
+
 def cu_failure_readback(
     lang: str,
     *,
@@ -467,5 +539,6 @@ __all__ = [
     "action_phrase",
     "cu_failure_readback",
     "cu_success_readback",
+    "extract_speakable_reason",
     "resolve_phrase_language",
 ]

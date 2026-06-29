@@ -51,6 +51,9 @@ def test_groq_stt_direct_mode_untouched(monkeypatch):
         "resolve_provider_endpoint",
         lambda pid, **kw: ResolvedEndpoint(base_url=None, credential=None, via_proxy=False),
     )
+    # Direct mode requires the user's own key to exist (else the key-aware
+    # factory correctly falls back to local faster-whisper, AP-22).
+    monkeypatch.setattr(cfg, "get_secret_any", lambda candidates: "gsk-direct-key")
     stt_pkg.build_stt_from_config(STTConfig(provider="groq-api"))
     # Direct mode: factory injects neither endpoint nor api_key — the provider
     # falls back to its own DEFAULT_ENDPOINT + key resolution.

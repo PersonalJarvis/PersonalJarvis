@@ -43,9 +43,11 @@ def test_toggles_existing_flag_and_preserves_siblings(tmp_path):
     assert data["integrations"]["telegram"]["chat_id"] == "123"
 
 
-def test_raises_when_config_missing(tmp_path):
-    with pytest.raises(FileNotFoundError):
-        set_telegram_enabled(True, path=tmp_path / "absent.toml")
+def test_creates_config_when_missing(tmp_path):
+    # M1 (headless VPS): in-app writers create the config if absent, not raise.
+    p = tmp_path / "absent.toml"
+    set_telegram_enabled(True, path=p)
+    assert p.exists()
 
 
 def test_add_allowed_user_id_creates_list(tmp_path):

@@ -746,8 +746,18 @@ class DesktopApp:
         # finds openwakeword already in sys.modules. No-op on a headless VPS /
         # JARVIS_VOICE=0; never slower than today (worst case Phase A waits on
         # the same import it would have triggered itself).
-        from jarvis.speech.warmup_prefetch import start_wake_import_prefetch
+        from jarvis.speech.warmup_prefetch import (
+            start_tts_import_prefetch,
+            start_wake_import_prefetch,
+        )
         start_wake_import_prefetch()
+        # Same idea for the default TTS SDK (google-genai): the deferred warm-up
+        # loader gates honest readiness on the TTS client, and its dominant cost
+        # is the ``from google import genai`` import (~4-11 s when starved in the
+        # boot storm). Prefetch it now in a daemon thread (disjoint from the wake
+        # import — no torch/shield interaction) so ``_ensure_client`` later hits
+        # a warm sys.modules. No-op for non-Gemini TTS / JARVIS_VOICE=0.
+        start_tts_import_prefetch()
 
         # Same idea for the audio-device settle: the BUG-014 guard
         # (wait_for_stable_audio_devices) is a blocking ~1.5 s poll that gates
@@ -1690,7 +1700,7 @@ class DesktopApp:
             logger.opt(exception=exc).warning("Virtual mouse overlay not startable")
             self._virtual_cursor = None
 
-    def _build_overlay_surface(self, style: str):
+    def _build_overlay_surface(self, style: str, *, start_hidden: bool = False):
         """Construct (and start) the overlay surface for a display style.
 
         Returns a ``NullOverlay`` for ``"none"`` (no Tk window, no-op surface),
@@ -1712,16 +1722,22 @@ class DesktopApp:
         if style == "jarvis_bar":
             from jarvis.ui.jarvisbar import JarvisBarOverlay
 
-            # The persistent bar maps its window immediately — visible at boot,
-            # decoupled from the voice warm-up / wake path. An earlier design
-            # started it withdrawn and revealed it on VoiceBootStatus(ready=True),
-            # which on the serve-first fast-boot path left the bar hidden until
-            # the first wake word re-showed it. A non-persistent bar starts
-            # withdrawn regardless (it pops on a session) — handled by the
-            # overlay's own _should_start_withdrawn(), so no flag is needed here.
+            # Synchronized appearance (2026-06-29): when ``start_hidden`` is set,
+            # the persistent bar starts WITHDRAWN and is revealed only on the
+            # honest ``VoiceBootStatus(ready=True)`` (via
+            # ``reveal_bar_when_voice_ready``), so the bar appears AT THE SAME
+            # MOMENT the voice stack is genuinely ready — no more "bar shows at
+            # boot, then 'ready' a few seconds later" desync. An earlier attempt
+            # at this left the bar hidden until the first wake word because
+            # ready=True fired unreliably/too early on the fast-boot path; that
+            # root cause is fixed (ready now fires once, after the deferred
+            # loaders bring up wake+VAD+TTS), and a 30 s reveal timeout backstops
+            # it so the bar can never be stuck hidden. A non-persistent bar starts
+            # withdrawn regardless (it pops on a session).
             surface = JarvisBarOverlay(
                 persistent=self.cfg.ui.bar_persistent,
                 accent=self.cfg.ui.bar_accent,
+                start_hidden=start_hidden,
             )
         else:  # "mascot" (and any legacy style value)
             from ui.orb.overlay import OrbOverlay
@@ -1977,10 +1993,12 @@ class DesktopApp:
                 from ui.orb.bus_bridge import OrbBusBridge
 
                 # NullOverlay for "none" still gets a bridge, so a live switch to
-                # bar/mascot works without a restart. The persistent bar maps its
-                # window immediately — visible at boot, independent of the voice
-                # warm-up (see _build_overlay_surface).
-                surface = self._build_overlay_surface(orb_style)
+                # bar/mascot works without a restart. Synchronized appearance:
+                # the persistent bar starts WITHDRAWN (start_hidden=True) and is
+                # revealed only on the honest VoiceBootStatus(ready=True), so it
+                # appears exactly when the voice stack is genuinely ready — no
+                # "bar at boot, ready a few seconds later" desync.
+                surface = self._build_overlay_surface(orb_style, start_hidden=True)
                 hide_on_idle = (
                     (not self.cfg.ui.bar_persistent)
                     if orb_style == "jarvis_bar"
@@ -1988,14 +2006,15 @@ class DesktopApp:
                 )
                 bridge = OrbBusBridge(bus=bus, orb=surface, hide_on_idle=hide_on_idle)
                 bridge.attach()
-                # The persistent bar is already visible from boot (above); this
-                # task only RE-ASSERTS its topmost z-order once voice is ready,
-                # after the main window + tray have finished mapping — a belt-and-
-                # suspenders re-lift, NOT the visibility gate. A non-persistent
-                # bar / the mascot is left untouched (it pops on a real session).
+                # Visibility gate: the persistent bar started withdrawn (above),
+                # so this task is what actually SHOWS it — it waits for
+                # VoiceBootStatus(ready=True) (full stack: wake+VAD+TTS) and then
+                # maps + lifts the idle pill. Bounded by a 30 s timeout fallback
+                # so the bar can never be stuck hidden. A non-persistent bar / the
+                # mascot is left untouched (it pops on a real session).
                 loop.create_task(
                     bridge.reveal_bar_when_voice_ready(),
-                    name="overlay-boot-relift",
+                    name="overlay-boot-reveal",
                 )
                 self._orb = surface
                 self._bridge = bridge
@@ -2152,6 +2171,10 @@ class DesktopApp:
             wake_phrase = None
             _wake_progressive_upgrade = False
             _t_build0 = time.perf_counter()
+            # Concurrency handle for the heavy wake-model build (below). It is
+            # started in a worker thread and joined just before the pipeline ctor
+            # so the TTS + ack-brain builds overlap it instead of waiting it out.
+            wake_task: "asyncio.Task | None" = None
             if self.cfg.trigger.heavy_local_whisper or wake_plan.needs_local_whisper:
                 # The local wake-match / live-preview Whisper — a SMALL model on
                 # CPU (cfg.stt.wake_*), not the heavy utterance model on the GPU.
@@ -2181,22 +2204,27 @@ class DesktopApp:
                 # while a subsystem warms up. The persisted probe cache
                 # (jarvis.plugins.stt._wake_cuda_available) makes this near-instant
                 # on every boot after the first.
-                stt = await asyncio.to_thread(
-                    build_wake_whisper,
-                    self.cfg.stt,
-                    language=stt_language,
-                    wake_phrase=wake_phrase,
-                    # Progressive wake model: build the LIGHT base/cpu model now
-                    # (hear-ready in ~3 s, no CUDA JIT) and hot-swap the turbo/cuda
-                    # model in the background after the pipeline is live (see
-                    # ``_upgrade_wake_model_bg`` below). Keeps custom-phrase wake
-                    # fast to come up AND accurate at steady state.
-                    fast_first=True,
+                # Start the wake-model build in a worker thread but DON'T block
+                # on it here — the TTS + ack-brain builds below run on the loop
+                # thread WHILE it loads (the wake C-extension / CUDA load releases
+                # the GIL), overlapping their cost instead of paying it after the
+                # ~3-5 s wake build. Joined right before the pipeline ctor. The
+                # LIGHT base/cpu model is built now (hear-ready in ~3 s, no CUDA
+                # JIT); the turbo/cuda hot-swap is armed in the background after
+                # the pipeline is live (see ``_upgrade_wake_model_bg``).
+                wake_task = asyncio.create_task(
+                    asyncio.to_thread(
+                        build_wake_whisper,
+                        self.cfg.stt,
+                        language=stt_language,
+                        wake_phrase=wake_phrase,
+                        fast_first=True,
+                    ),
+                    name="voice-build-wake-model",
                 )
-                # The light base/cpu wake model is up; arm the background
-                # turbo/cuda hot-swap (a no-op on a CPU-only host — see task).
                 _wake_progressive_upgrade = True
-            _t_stt = time.perf_counter()
+            # TTS + ack-brain build here, on the loop thread, overlapping the
+            # wake-model build started above.
             tts = build_tts_from_config(self.cfg.tts)
             _t_tts = time.perf_counter()
             # SpeechPipeline.brain_callback braucht Callable[[str], Awaitable[str]].
@@ -2225,6 +2253,19 @@ class DesktopApp:
             from jarvis.brain.factory import build_ack_brain as _bab
             voice_ack_brain = _bab(self.cfg)
             _t_ack = time.perf_counter()
+            # Join the wake-model build started above (it loaded in its worker
+            # thread WHILE the TTS + ack-brain were built here). On failure
+            # re-raise to the outer handler — voice degrades exactly as the
+            # previous inline ``await`` did — and cancel the task so the worker
+            # thread's result is never left orphaned.
+            if wake_task is not None:
+                try:
+                    stt = await wake_task
+                except BaseException:
+                    if not wake_task.done():
+                        wake_task.cancel()
+                    raise
+            _t_stt = time.perf_counter()
             _call_hk, _ptt_hk = self.cfg.trigger.resolve_hotkeys()
             pipeline = SpeechPipeline(
                 call_hotkeys=_call_hk,
@@ -2311,13 +2352,17 @@ class DesktopApp:
             # build step costs what (the wake-Whisper CUDA probe was the hidden
             # ~60 s "VOICE STARTING…" stall before the persisted probe cache).
             from loguru import logger as _vlog
+            # Stamps now reflect the OVERLAPPED build: TTS + ack-brain run on the
+            # loop thread while the wake model loads in its worker thread, so
+            # ``wake_join`` is only the wake time NOT already hidden behind them
+            # (≈0 when fully overlapped). total is wall-clock for the whole build.
             _vlog.info(
-                "Voice setup build timings (ms): wake_stt={:.0f} tts={:.0f} "
-                "ack_brain={:.0f} pipeline_ctor={:.0f} total={:.0f}",
-                (_t_stt - _t_build0) * 1000.0,
-                (_t_tts - _t_stt) * 1000.0,
+                "Voice setup build timings (ms): tts={:.0f} ack_brain={:.0f} "
+                "wake_join={:.0f} pipeline_ctor={:.0f} total={:.0f}",
+                (_t_tts - _t_build0) * 1000.0,
                 (_t_ack - _t_tts) * 1000.0,
-                (_t_ctor - _t_ack) * 1000.0,
+                (_t_stt - _t_ack) * 1000.0,
+                (_t_ctor - _t_stt) * 1000.0,
                 (_t_ctor - _t_build0) * 1000.0,
             )
             # Pipeline-Referenz fuer Live-Provider-Switches (TTS) auf app.state
@@ -2439,7 +2484,21 @@ class DesktopApp:
                         )
                         if getattr(turbo, "_model_name", "base") == "base":
                             return  # no GPU upgrade available — keep base/cpu
-                        await asyncio.to_thread(turbo._ensure_model)
+                        # WARM-UP, not just load: ``warm_up`` runs one real
+                        # inference so the turbo/cuda kernels are primed BEFORE
+                        # the ref swap below makes it the live wake model. Without
+                        # this the first "Hey Jarvis" after the swap hits a cold
+                        # CUDA inference (kernel JIT / cuDNN search, several
+                        # seconds) and is swallowed by the rolling-window wake
+                        # loop — the same first-wake-missed bug the boot pre-warm
+                        # fixes (forensic 2026-06-28). Falls back to a plain load
+                        # for any STT without the prime hook.
+                        _turbo_prime = getattr(turbo, "warm_up", None)
+                        await asyncio.to_thread(
+                            _turbo_prime
+                            if callable(_turbo_prime)
+                            else turbo._ensure_model
+                        )
                         if ww is not None:
                             # Atomic ref swap (GIL); the next transcribe uses turbo.
                             ww._stt = turbo

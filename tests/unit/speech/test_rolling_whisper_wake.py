@@ -267,7 +267,7 @@ async def test_detect_rejects_matching_low_confidence_transcript() -> None:
     try:
         try:
             kw = await asyncio.wait_for(_first_keyword(), timeout=0.7)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             kw = ""
         assert kw == ""
     finally:
@@ -317,7 +317,7 @@ async def test_detect_rejects_matching_high_no_speech_transcript() -> None:
     try:
         try:
             kw = await asyncio.wait_for(_first_keyword(), timeout=0.7)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             kw = ""
         assert kw == ""
     finally:
@@ -397,6 +397,74 @@ async def test_consumer_keeps_draining_while_transcription_is_in_flight() -> Non
         feeder.cancel()
         detect_task.cancel()
         for t in (feeder, detect_task):
+            try:
+                await t
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                pass
+
+
+class _HangingThenRecoverSTT:
+    """transcribe_pcm hangs forever (models a wedged local Whisper); records how
+    often the wake loop asked it to ``recover()``."""
+
+    def __init__(self) -> None:
+        self.recovered = 0
+
+    async def transcribe_pcm(self, pcm, sample_rate=16000, language=None):  # noqa: ANN001
+        await asyncio.Event().wait()  # never returns -> the timeout fires
+
+    def recover(self) -> None:
+        self.recovered += 1
+
+
+async def test_wake_self_heals_a_wedged_model_via_recover() -> None:
+    """Forensic 2026-06-29: a wedged local Whisper hung on EVERY transcribe (8 s
+    timeout, forever) and an app restart did not clear it — the custom wake was
+    dead for HOURS. After a run of consecutive timeouts the wake loop must call
+    ``stt.recover()`` to rebuild the model, so a wedge can never leave the wake
+    permanently dead ("no dead state blocks waking")."""
+    import re
+
+    stt = _HangingThenRecoverSTT()
+    wake = RollingWhisperWake(
+        stt,
+        pattern=re.compile(r"nico", re.IGNORECASE),
+        poll_interval_s=0.01,
+        cooldown_s=0.0,
+        save_debug_wavs=False,
+        min_rms=0.0,
+        min_peak=0.0,
+        transcribe_timeout_s=0.02,  # fast timeout so the wedge is detected quickly
+    )
+
+    src: asyncio.Queue = asyncio.Queue()
+    stop = asyncio.Event()
+
+    async def _iter():
+        while True:
+            chunk = await src.get()
+            if chunk is None:
+                return
+            yield chunk
+
+    async def _drive() -> None:
+        async for _kw in wake.detect(_iter()):
+            pass
+
+    feeder = asyncio.create_task(_feed_until(src, stop))
+    drive = asyncio.create_task(_drive())
+    try:
+        for _ in range(300):
+            if stt.recovered >= 1:
+                break
+            await asyncio.sleep(0.02)
+        assert stt.recovered >= 1, "a wedged model never self-healed via recover()"
+    finally:
+        stop.set()
+        await src.put(None)
+        drive.cancel()
+        feeder.cancel()
+        for t in (drive, feeder):
             try:
                 await t
             except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110

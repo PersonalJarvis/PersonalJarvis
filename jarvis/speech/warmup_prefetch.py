@@ -36,7 +36,12 @@ from collections.abc import Callable
 
 from loguru import logger
 
-__all__ = ["prefetch_wake_imports", "start_wake_import_prefetch"]
+__all__ = [
+    "prefetch_wake_imports",
+    "start_wake_import_prefetch",
+    "prefetch_tts_imports",
+    "start_tts_import_prefetch",
+]
 
 # Mirror the gate the speech stack itself uses (``_start_speech_and_orb``):
 # JARVIS_VOICE in {0, off, false} means no voice, so nothing to prefetch.
@@ -85,6 +90,56 @@ def start_wake_import_prefetch(
         target=prefetch_wake_imports,
         args=(importer,),
         name="wake-import-prefetch",
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
+def prefetch_tts_imports(importer: Callable[[], None] | None = None) -> bool:
+    """Eagerly import the heavy default-TTS SDK (``google-genai``), off the
+    boot critical path.
+
+    Why: the deferred warm-up loader (``SpeechPipeline._warmup_deferred_loaders``)
+    gates honest ``VoiceBootStatus(ready=True)`` on the TTS client being up, and
+    the dominant cost of that ``_ensure_client`` is ``from google import genai``
+    — a heavy import that, run inside the serve-first boot storm, serializes on
+    the global import lock and starves to ~4-11 s (measured ``tts-init=10797``).
+    Firing it once, early, in a daemon thread collapses the later import to a
+    ``sys.modules`` cache hit. Unlike the wake (ctranslate2) load this touches
+    NO torch/transformers, so it never races the ``inference_only_import_shield``.
+
+    Idempotent and fail-closed: a missing/other TTS provider (Grok, SAPI5,
+    headless VPS with no google-genai) is a logged no-op, never an error.
+    ``importer`` is injectable for tests.
+    """
+
+    def _default_import() -> None:
+        from google import genai  # noqa: F401, PLC0415 — eager warm import
+
+    do_import = importer or _default_import
+    try:
+        do_import()
+        return True
+    except Exception as exc:  # noqa: BLE001 — a prefetch must never break boot
+        logger.debug("TTS-import prefetch skipped (google-genai unavailable): {}", exc)
+        return False
+
+
+def start_tts_import_prefetch(
+    *, importer: Callable[[], None] | None = None
+) -> threading.Thread | None:
+    """Run :func:`prefetch_tts_imports` in a daemon thread, off the boot path.
+
+    No-op (returns ``None``) when voice is disabled via ``JARVIS_VOICE``. Safe to
+    run concurrently with the wake-import prefetch — they touch disjoint modules.
+    """
+    if _voice_disabled():
+        return None
+    thread = threading.Thread(
+        target=prefetch_tts_imports,
+        args=(importer,),
+        name="tts-import-prefetch",
         daemon=True,
     )
     thread.start()

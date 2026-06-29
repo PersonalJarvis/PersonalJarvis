@@ -52,6 +52,13 @@ _SUB_JARVIS_MODEL_ENV = "JARVIS__BRAIN__SUB_JARVIS__MODEL"
 # ``_apply_env_overrides`` maps them cleanly to ``tts.provider`` / ``stt.provider``.
 _TTS_PROVIDER_ENV = "JARVIS__TTS__PROVIDER"
 _STT_PROVIDER_ENV = "JARVIS__STT__PROVIDER"
+# ``[stt] model`` / ``[stt] language`` have the same single-word section + key,
+# so a stale User-scope ENV var (e.g. one the wizard once wrote) OVERRIDES the
+# TOML at boot and silently masks any later UI/TOML edit — the "model is
+# hardcoded, I can't change it" trap (forensic 2026-06-28). The model/language
+# setters therefore clear/sync this layer too, not just TOML + config-soll.
+_STT_MODEL_ENV = "JARVIS__STT__MODEL"
+_STT_LANGUAGE_ENV = "JARVIS__STT__LANGUAGE"
 
 
 def set_brain_primary(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -212,17 +219,50 @@ def set_tts_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
 
 
 def set_stt_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
-    """Set the global STT model (``[stt] model``).
+    """Set the global STT model (``[stt] model``) across all THREE layers.
 
     Takes effect on the next SpeechPipeline bootstrap (a voice restart): the STT
-    provider is instantiated once at pipeline start. config-soll synced (the stt
-    block is drift-guard pinned like its provider key).
+    provider is instantiated once at pipeline start.
+
+    ``stt.model`` is pinned in ``config-soll.json`` AND the single-word
+    ``JARVIS__STT__MODEL`` ENV var overrides the TOML at boot, so — exactly like
+    ``stt.provider`` — the switch needs the 3-layer persist (TOML + config-soll +
+    ENV); otherwise a stale ENV var (the "model is hardcoded" trap, forensic
+    2026-06-28) or the drift-guard silently reverts it. Layers 2 + 3 are
+    best-effort (cloud-first) and never break the TOML write.
     """
     _patch_table(path, "stt", "model", model)
     try:
         _update_config_soll_section("stt", {"model": model})
     except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
         log.warning("Could not sync stt.model to config-soll.json: %s", exc)
+    try:
+        _set_user_env_var(_STT_MODEL_ENV, model)
+    except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
+        log.warning("Could not sync %s to the User environment: %s", _STT_MODEL_ENV, exc)
+
+
+def set_stt_language(language: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Set the STT recognition language (``[stt] language``).
+
+    One of ``auto`` | ``de`` | ``en`` | ``es`` (validated by the caller). ``auto``
+    lets Whisper detect the spoken language per utterance (the bilingual default);
+    a concrete code forces that language. Takes effect on the next SpeechPipeline
+    bootstrap (a voice restart): the STT provider is instantiated once at pipeline
+    start. Persisted across all THREE layers (TOML + config-soll + ENV): the stt
+    block is drift-guard pinned, and the single-word ``JARVIS__STT__LANGUAGE`` ENV
+    var would otherwise override the TOML at boot, so a 2-layer write could be
+    silently masked (same trap as stt.model — forensic 2026-06-28).
+    """
+    _patch_table(path, "stt", "language", language)
+    try:
+        _update_config_soll_section("stt", {"language": language})
+    except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
+        log.warning("Could not sync stt.language to config-soll.json: %s", exc)
+    try:
+        _set_user_env_var(_STT_LANGUAGE_ENV, language)
+    except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
+        log.warning("Could not sync %s to the User environment: %s", _STT_LANGUAGE_ENV, exc)
 
 
 def set_tts_cartesia_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -232,8 +272,7 @@ def set_tts_cartesia_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> N
     global ``[tts] model`` that Gemini/OpenAI use. ``[tts.cartesia]`` is not pinned
     in config-soll, so a plain atomic TOML write suffices (no drift-guard revert).
     """
-    if not path.exists():
-        raise FileNotFoundError(f"Config-Datei fehlt: {path}")
+    path = _ensure_writable_config_path(path)
     with _WRITE_LOCK:
         raw = path.read_text(encoding="utf-8")
         had_bom = raw.startswith(_BOM)
@@ -474,6 +513,26 @@ def set_team_proxy(
     )
 
 
+def _ensure_writable_config_path(path: Path) -> Path:
+    """Resolve a writable config path and create it if missing (M1, headless VPS).
+
+    The in-app config writers (channel toggles, provider switches, wiki curator)
+    default to ``DEFAULT_CONFIG_FILE`` (``/app/jarvis.toml``), which a headless
+    ``python:3.11-slim`` container does not ship and ``/app`` is read-only. When the
+    caller passed that bundled default, honour ``JARVIS_CONFIG`` via
+    ``resolve_config_path()``; then create the file (+ parent) if absent so an
+    in-app save/connect persists on EVERY OS instead of raising FileNotFoundError.
+    """
+    from jarvis.core.config import DEFAULT_CONFIG_FILE as _DEFAULT, resolve_config_path
+
+    if path == _DEFAULT:
+        path = resolve_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_text("", encoding="utf-8")
+    return path
+
+
 def set_telegram_enabled(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the Telegram channel toggle to ``[integrations.telegram] enabled``.
 
@@ -486,8 +545,7 @@ def set_telegram_enabled(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> 
     design: ``integrations.telegram.enabled`` is not tracked in
     ``config-soll.json``, so the drift-guard never reverts it.
     """
-    if not path.exists():
-        raise FileNotFoundError(f"Config file missing: {path}")
+    path = _ensure_writable_config_path(path)
 
     with _WRITE_LOCK:
         raw = path.read_text(encoding="utf-8")
@@ -518,8 +576,7 @@ def add_telegram_allowed_user_id(user_id: int, *, path: Path = DEFAULT_CONFIG_FI
     so the channel keeps working after restart. Idempotent and comment-preserving
     like :func:`set_telegram_enabled`.
     """
-    if not path.exists():
-        raise FileNotFoundError(f"Config file missing: {path}")
+    path = _ensure_writable_config_path(path)
 
     uid = int(user_id)
     with _WRITE_LOCK:
@@ -557,8 +614,7 @@ def add_discord_allowed_user_id(user_id: int, *, path: Path = DEFAULT_CONFIG_FIL
     so the channel keeps working after restart. Idempotent and comment-preserving
     like :func:`add_telegram_allowed_user_id`.
     """
-    if not path.exists():
-        raise FileNotFoundError(f"Config file missing: {path}")
+    path = _ensure_writable_config_path(path)
 
     uid = int(user_id)
     with _WRITE_LOCK:
@@ -599,8 +655,7 @@ def _set_integration_value(
     operational integration flags are not tracked in ``config-soll.json``, so
     the drift-guard never reverts them.
     """
-    if not path.exists():
-        raise FileNotFoundError(f"Config file missing: {path}")
+    path = _ensure_writable_config_path(path)
 
     with _WRITE_LOCK:
         raw = path.read_text(encoding="utf-8")
@@ -672,8 +727,7 @@ def set_brain_provider_defaults(
     ensure here that after an app restart the tier-default fallback logic in
     BrainManager is not needed again — the block is then cleanly persisted.
     """
-    if not path.exists():
-        raise FileNotFoundError(f"Config-Datei fehlt: {path}")
+    path = _ensure_writable_config_path(path)
 
     with _WRITE_LOCK:
         raw = path.read_text(encoding="utf-8")
@@ -823,8 +877,7 @@ def _patch_tts_block(path: Path, provider: str, defaults: dict[str, str]) -> dic
     config-soll drift-sync mirrors exactly these keys so the guard sees zero
     drift across the whole block.
     """
-    if not path.exists():
-        raise FileNotFoundError(f"Config-Datei fehlt: {path}")
+    path = _ensure_writable_config_path(path)
 
     whitelist = _VOICES_FOR_PROVIDER.get(provider.lower())
     applied: dict[str, str] = {"provider": provider}
@@ -912,8 +965,7 @@ def set_brain_provider_model(
     Idempotent: if the block is absent it is created; ``None`` values change
     nothing.
     """
-    if not path.exists():
-        raise FileNotFoundError(f"Config-Datei fehlt: {path}")
+    path = _ensure_writable_config_path(path)
     if model is None and deep_model is None and cu_model is None:
         return
 
@@ -972,8 +1024,7 @@ def set_telephony_config(values: dict[str, object], *, path: Path = DEFAULT_CONF
     Idempotent and comment-preserving via tomlkit, BOM-aware like the other
     writers in this module.
     """
-    if not path.exists():
-        raise FileNotFoundError(f"Config-Datei fehlt: {path}")
+    path = _ensure_writable_config_path(path)
     if not values:
         return
 
@@ -1011,8 +1062,7 @@ def _patch_table(path: Path, table: str, key: str, value: str | bool | list[str]
     autostart toggle), or a ``list[str]`` (serialised as a TOML array — used by
     ``[team_proxy] local_providers``).
     """
-    if not path.exists():
-        raise FileNotFoundError(f"Config-Datei fehlt: {path}")
+    path = _ensure_writable_config_path(path)
 
     with _WRITE_LOCK:
         raw = path.read_text(encoding="utf-8")
@@ -1040,8 +1090,7 @@ def _patch_sub_jarvis_provider_toml(path: Path, name: str) -> None:
     ``[brain.sub_jarvis]`` section). Creates either level if missing. Preserves
     comments, sibling keys, and the optional BOM.
     """
-    if not path.exists():
-        raise FileNotFoundError(f"Config-Datei fehlt: {path}")
+    path = _ensure_writable_config_path(path)
 
     with _WRITE_LOCK:
         raw = path.read_text(encoding="utf-8")
@@ -1074,8 +1123,7 @@ def _patch_sub_jarvis_key_toml(path: Path, key: str, value: object) -> None:
     (creating either level if missing), preserves comments, sibling keys, and
     the optional BOM.
     """
-    if not path.exists():
-        raise FileNotFoundError(f"Config-Datei fehlt: {path}")
+    path = _ensure_writable_config_path(path)
 
     with _WRITE_LOCK:
         raw = path.read_text(encoding="utf-8")
@@ -1107,8 +1155,7 @@ def _patch_wake_word_toml(path: Path, values: dict[str, object]) -> None:
     each key in ``values``, and preserves comments, sibling keys, and the
     optional BOM (same contract as :func:`_patch_sub_jarvis_provider_toml`).
     """
-    if not path.exists():
-        raise FileNotFoundError(f"Config-Datei fehlt: {path}")
+    path = _ensure_writable_config_path(path)
 
     with _WRITE_LOCK:
         raw = path.read_text(encoding="utf-8")
@@ -1547,8 +1594,7 @@ def _patch_wiki_curator_toml(path: Path, values: dict[str, object]) -> None:
     sets each key in ``values``, and preserves comments, sibling keys, and the
     optional BOM (same contract as :func:`_patch_sub_jarvis_provider_toml`).
     """
-    if not path.exists():
-        raise FileNotFoundError(f"Config file missing: {path}")
+    path = _ensure_writable_config_path(path)
 
     with _WRITE_LOCK:
         raw = path.read_text(encoding="utf-8")

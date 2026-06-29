@@ -53,6 +53,28 @@ log = logging.getLogger("jarvis.wake.rolling")
 # Watchdog-Verzeichnis für Debug-WAVs
 DEBUG_DIR = Path(os.environ.get("JARVIS_DEBUG_DIR", "./data/wake_debug"))
 
+# Production default is OFF. The watchdog WAV dump writes ONE WAV file per
+# transcribed wake window SYNCHRONOUSLY inside the poll loop. Left on, it both
+# (a) accumulates unbounded — a live box reached 218k files in data/wake_debug/
+# 2026-06-29 — and (b) on Windows, writing into a directory that large is slow,
+# so the disk I/O lands ON the wake hot path and adds latency to every poll
+# (the user's "no delay" requirement). Opt in for debugging with
+# JARVIS_WAKE_DEBUG_WAVS=1; otherwise the wake path never touches the disk.
+_DEBUG_WAVS_ENV = os.environ.get("JARVIS_WAKE_DEBUG_WAVS", "").strip().lower() in (
+    "1", "true", "yes", "on",
+)
+
+# After this many CONSECUTIVE transcription failures (a timeout = the local
+# Whisper hung, or a "busy" skip because a prior call is wedged holding the
+# model), rebuild the wake model fresh via ``stt.recover()``. Forensic
+# 2026-06-29: a custom wake ("Hey Nico") went dead for 2 HOURS — every transcribe
+# timed out at 8 s, abandoned, retried, hung again, forever; an app restart did
+# not even clear it. The timeout only BOUNDS a hang; it never RECOVERS. A run of
+# failures with zero successes is the wedge signature (a legitimate VAD-probe
+# overlap clears in 1-2 polls and resets the counter on the next success), so a
+# small threshold self-heals fast without firing on a transient overlap.
+_WEDGE_RECOVER_AFTER_FAILS = 5
+
 
 def _save_wav(pcm_bytes: bytes, sample_rate: int, path: Path) -> None:
     """Schreibt int16-PCM als gültiges WAV-File."""
@@ -118,8 +140,16 @@ class RollingWhisperWake:
         # Whisper wird dabei etwas oefter aufgerufen (mehr GPU-Last), aber das
         # Trigger-Verhalten ist korrekt — genau was der User will.
         min_rms: float = 0.003,
-        min_peak: float = 0.02,
-        save_debug_wavs: bool = True,  # Watchdog-Modus
+        # 2026-06-29 (mission "wake only triggers when shouting"): the raw peak
+        # gate runs BEFORE transcription on a quiet mic, so a normal-volume
+        # custom wake ("Hey Nico") whose window peaks below the legacy 0.02 was
+        # dropped silently — only a shout cleared it. Lowered to 0.012 so a
+        # genuinely quiet wake reaches Whisper; the ``min_rms`` silence guard
+        # (pinned >= 0.003 by test_wake_hallucination_guard) still rejects digital
+        # silence/idle hiss, and the confidence + no_speech + pattern gates below
+        # are the real false-positive guards on whatever does reach Whisper.
+        min_peak: float = 0.012,
+        save_debug_wavs: bool = False,  # Watchdog-Modus — OFF in prod (env opt-in)
         heartbeat_interval_s: float = 3.0,
         # Peak-Normalization statt fester Gain: misst Audio-Peak, wendet
         # dynamisch den Gain an, der nötig ist um auf -3 dBFS zu kommen.
@@ -139,8 +169,28 @@ class RollingWhisperWake:
         # ``max_no_speech_prob`` gate below still rejects silence/noise. Keep only
         # a low sanity floor that still drops a near-zero-confidence transcript
         # (regression: a 0.2-confidence match must stay rejected).
-        min_wake_confidence: float = 0.28,
+        # 2026-06-29 (mission "wake fails repeatedly / only when shouting"): 0.28
+        # sat at the very BOTTOM of the measured genuine-wake band (0.28-0.52), so
+        # a quiet-but-correct wake under-scored it and was rejected — louder =
+        # higher confidence = accepted, which IS the "only when shouting" symptom.
+        # Lowered to 0.22: still strictly above the 0.2 hallucination floor the
+        # regression test pins, but it no longer clips the quiet tail of genuine
+        # wakes. The phrase pattern + no_speech gate remain the real guards.
+        min_wake_confidence: float = 0.22,
         max_no_speech_prob: float = 0.6,
+        # Hard ceiling on a SINGLE transcription. Live forensic 2026-06-29
+        # (data/jarvis_desktop.log): the local faster-whisper ``transcribe_pcm``
+        # hung mid-session (no error, no return) and, with no cap, the poll loop
+        # blocked on that one ``await`` forever — the chunk consumer stayed alive
+        # (audio kept flowing, max-rms up to 0.27 while the user spoke) but ZERO
+        # transcripts were produced for 12 min and the custom wake word ("Hey
+        # Nico") was permanently dead. A genuine transcription of a ~1.8 s window
+        # is ~0.1 s (GPU) to ~1 s (CPU base), so a multi-second cap never cuts a
+        # real one but lets the loop ABANDON a hung call and re-poll fresh audio
+        # (self-healing — the "no dead state blocks waking" guarantee). Mirrors
+        # the OWW prefix-verifier's _WAKE_VERIFY_TIMEOUT_S. Set high enough to
+        # tolerate a slow/loaded CPU box (€5-VPS doctrine); <= 0 disables the cap.
+        transcribe_timeout_s: float = 8.0,
     ) -> None:
         self._stt = stt
         self._pattern = pattern
@@ -149,7 +199,9 @@ class RollingWhisperWake:
         self._cooldown_s = cooldown_s
         self._sample_rate = sample_rate
         self._min_rms = min_rms
-        self._save_debug_wavs = save_debug_wavs
+        # Caller flag OR the env opt-in. Default OFF so the wake poll loop never
+        # does synchronous disk I/O (latency) or accretes a huge WAV dir in prod.
+        self._save_debug_wavs = bool(save_debug_wavs) or _DEBUG_WAVS_ENV
         self._heartbeat_interval_s = heartbeat_interval_s
         self._target_peak = float(10.0 ** (target_peak_dbfs / 20.0))  # -3 dBFS ≈ 0.707
         self._max_gain_factor = float(10.0 ** (max_gain_db / 20.0))    # 40 dB = 100x
@@ -160,12 +212,51 @@ class RollingWhisperWake:
         self._language: str | None = language
         self._min_wake_confidence = min_wake_confidence
         self._max_no_speech_prob = max_no_speech_prob
+        self._transcribe_timeout_s = float(transcribe_timeout_s)
         # Statistik für Heartbeat
         self._chunks_seen = 0
         self._total_bytes = 0
         self._max_rms = 0.0
         self._last_transcript = ""
         self._last_heartbeat_t = time.time()
+        # Per-session debug counters (mirrors OpenWakeWordProvider.stats() so the
+        # two wake paths report the same way). They make the stt_match path's
+        # "wake never fires / sometimes stops entirely" diagnosable: a user can
+        # see how many windows were evaluated, how many were too quiet to even
+        # transcribe (gated_peak / gated_rms), how many reached Whisper, and why
+        # each transcript was dropped — instead of a silent dead listener.
+        self._stat_windows_polled = 0
+        self._stat_gated_rms = 0
+        self._stat_gated_peak = 0
+        self._stat_transcribed = 0
+        self._stat_empty = 0
+        self._stat_rejected_unreliable = 0
+        self._stat_rejected_no_match = 0
+        self._stat_matched = 0
+        self._stat_suppressed_cooldown = 0
+
+    def stats(self) -> dict[str, int]:
+        """Snapshot of this listen session's wake-evaluation counters.
+
+        Keys: ``windows_polled`` (snapshots that reached the audio gates),
+        ``gated_rms`` / ``gated_peak`` (dropped as silence / sub-speech BEFORE
+        Whisper), ``transcribed`` (Whisper calls), ``empty`` (blank transcript),
+        ``rejected_unreliable`` (confidence/no_speech gate), ``rejected_no_match``
+        (transcript did not contain the wake phrase), ``matched`` (wake yielded),
+        ``suppressed_cooldown`` (in the debounce window). Surfaced in the
+        heartbeat log; the analogue of ``OpenWakeWordProvider.stats()``.
+        """
+        return {
+            "windows_polled": self._stat_windows_polled,
+            "gated_rms": self._stat_gated_rms,
+            "gated_peak": self._stat_gated_peak,
+            "transcribed": self._stat_transcribed,
+            "empty": self._stat_empty,
+            "rejected_unreliable": self._stat_rejected_unreliable,
+            "rejected_no_match": self._stat_rejected_no_match,
+            "matched": self._stat_matched,
+            "suppressed_cooldown": self._stat_suppressed_cooldown,
+        }
 
     async def detect(
         self, chunks: AsyncIterator[AudioChunk]
@@ -212,12 +303,24 @@ class RollingWhisperWake:
                         dbfs = 20.0 * np.log10(max(self._max_rms, 1e-12))
                         log.info(
                             "💓 wake-heartbeat: chunks=%d bytes=%dKB "
-                            "max-rms=%.4f (%.1f dBFS) last-transcript=%r",
+                            "max-rms=%.4f (%.1f dBFS) last-transcript=%r | "
+                            "windows=%d gated[rms=%d peak=%d] transcribed=%d "
+                            "rejected[unreliable=%d no_match=%d] matched=%d "
+                            "(conf_floor=%.2f peak_gate=%.3f)",
                             self._chunks_seen,
                             self._total_bytes // 1024,
                             self._max_rms,
                             dbfs,
                             self._last_transcript[:80],
+                            self._stat_windows_polled,
+                            self._stat_gated_rms,
+                            self._stat_gated_peak,
+                            self._stat_transcribed,
+                            self._stat_rejected_unreliable,
+                            self._stat_rejected_no_match,
+                            self._stat_matched,
+                            self._min_wake_confidence,
+                            self._min_peak,
                         )
                         self._chunks_seen = 0
                         self._total_bytes = 0
@@ -239,6 +342,30 @@ class RollingWhisperWake:
 
         consumer = asyncio.create_task(_consume(), name="rolling-whisper-consume")
         last_trigger_t = 0.0
+        # Self-heal counter: consecutive transcribe failures with no success.
+        # Reset on any successful transcription; a run of these triggers a fresh
+        # model rebuild (see _WEDGE_RECOVER_AFTER_FAILS) so a wedged local Whisper
+        # can never leave the wake permanently dead.
+        consecutive_fail = 0
+
+        def _note_transcribe_fail() -> int:
+            nonlocal consecutive_fail
+            consecutive_fail += 1
+            if consecutive_fail >= _WEDGE_RECOVER_AFTER_FAILS:
+                recover = getattr(self._stt, "recover", None)
+                if callable(recover):
+                    log.error(
+                        "rolling-whisper: %d consecutive transcribe failures — "
+                        "rebuilding the wedged wake model (self-heal, no restart).",
+                        consecutive_fail,
+                    )
+                    try:
+                        recover()
+                    except Exception as exc:  # noqa: BLE001 — heal must never crash
+                        log.warning("rolling-whisper: model recover() failed: %s", exc)
+                consecutive_fail = 0
+            return consecutive_fail
+
         try:
             while not stopped.is_set():
                 # Wall-clock poll cadence — independent of the chunk arrival rate
@@ -248,6 +375,7 @@ class RollingWhisperWake:
                 now = time.time()
                 # Cooldown nach letztem Trigger
                 if now - last_trigger_t < self._cooldown_s:
+                    self._stat_suppressed_cooldown += 1
                     continue
                 # Noch nicht genug Audio im Buffer
                 if buf_len[0] < self._sample_rate:  # mind. 1 Sek
@@ -261,16 +389,27 @@ class RollingWhisperWake:
                 audio_np = np.concatenate(list(buffer))
                 if len(audio_np) < self._sample_rate:
                     continue
+                # A full window reached the audio gates — this is one wake
+                # evaluation attempt (the denominator for the gate counters).
+                self._stat_windows_polled += 1
 
                 # Lautstärke-Check (RMS) — kein Whisper-Call bei Stille
                 rms = float(np.sqrt(np.mean(audio_np * audio_np) + 1e-12))
                 if rms < self._min_rms:
+                    self._stat_gated_rms += 1
                     continue
 
                 # Peak-Gate: bei reinem Rauschen gar nicht erst Whisper bemühen
                 peak = float(np.max(np.abs(audio_np)))
                 if peak < self._min_peak:
-                    # Kein Whisper-Call — zu leise für Sprache
+                    # Kein Whisper-Call — zu leise für Sprache. Log the measured
+                    # peak so "wake stopped working" on a quiet mic is visible as
+                    # "your audio peaks below the gate", not silent nothing.
+                    self._stat_gated_peak += 1
+                    log.debug(
+                        "rolling-whisper: window gated (peak=%.4f < %.4f) — too quiet",
+                        peak, self._min_peak,
+                    )
                     continue
 
                 # Whisper-Call mit Peak-Normalization (dynamischer Gain)
@@ -286,11 +425,41 @@ class RollingWhisperWake:
                         np.clip(boosted, -1.0, 1.0) * 32767.0
                     ).astype(np.int16).tobytes()
                     log.debug("whisper-gain applied=%.1f dB (peak-in=%.3f)", applied_db, peak)
-                    transcript = await self._stt.transcribe_pcm(
-                        pcm_bytes, language=self._language
+                    # Bounded transcription: a hung local-Whisper call must not
+                    # freeze the poll loop forever (the 12-min silent-wedge
+                    # forensic). On timeout we abandon THIS call and re-poll fresh
+                    # audio so the wake self-heals instead of dying. timeout<=0
+                    # disables the cap. We use ``asyncio.timeout`` (3.11+), NOT
+                    # ``asyncio.wait_for``: wait_for SWALLOWS an external
+                    # cancellation when the inner coroutine completes in the same
+                    # tick (a fast/instant STT), which would make detect() ignore
+                    # its own ``aclose``/cancel and loop forever on shutdown.
+                    # ``asyncio.timeout`` raises TimeoutError only on ITS deadline
+                    # and lets an external CancelledError propagate untouched.
+                    if self._transcribe_timeout_s > 0:
+                        async with asyncio.timeout(self._transcribe_timeout_s):
+                            transcript = await self._stt.transcribe_pcm(
+                                pcm_bytes, language=self._language
+                            )
+                    else:
+                        transcript = await self._stt.transcribe_pcm(
+                            pcm_bytes, language=self._language
+                        )
+                    self._stat_transcribed += 1
+                    consecutive_fail = 0  # a success clears the wedge streak
+                except TimeoutError:
+                    log.warning(
+                        "Rolling-Whisper Transkription nach %.1fs abgebrochen "
+                        "(hung STT, %d in Folge) — re-poll, Wake bleibt lebendig",
+                        self._transcribe_timeout_s,
+                        _note_transcribe_fail(),
                     )
+                    continue
                 except Exception as exc:  # noqa: BLE001
-                    log.warning("Rolling-Whisper Transkription fehlgeschlagen: %s", exc)
+                    log.warning(
+                        "Rolling-Whisper Transkription fehlgeschlagen (%d in Folge): %s",
+                        _note_transcribe_fail(), exc,
+                    )
                     continue
 
                 text = transcript.text.strip()
@@ -310,6 +479,7 @@ class RollingWhisperWake:
                         log.warning("WAV-Save fehlgeschlagen: %s", exc)
 
                 if not text:
+                    self._stat_empty += 1
                     log.info("rolling-whisper: rms=%.4f text=<leer>", rms)
                     continue
 
@@ -318,11 +488,13 @@ class RollingWhisperWake:
                     min_confidence=self._min_wake_confidence,
                     max_no_speech_prob=self._max_no_speech_prob,
                 ):
+                    self._stat_rejected_unreliable += 1
                     log.info(
                         "rolling-whisper: rejected unreliable wake transcript "
-                        "rms=%.4f confidence=%.3f no_speech=%r text=%r",
+                        "rms=%.4f confidence=%.3f (floor %.2f) no_speech=%r text=%r",
                         rms,
                         float(getattr(transcript, "confidence", 0.0) or 0.0),
+                        self._min_wake_confidence,
                         _segment_no_speech_probs(transcript),
                         text,
                     )
@@ -331,8 +503,12 @@ class RollingWhisperWake:
                 log.info("rolling-whisper: rms=%.4f text=%r", rms, text)
                 m = self._pattern.search(text)
                 if m:
+                    self._stat_matched += 1
                     last_trigger_t = now
+                    log.info("rolling-whisper: WAKE matched %r in %r", m.group(0), text)
                     yield m.group(0)
+                else:
+                    self._stat_rejected_no_match += 1
         finally:
             consumer.cancel()
             try:

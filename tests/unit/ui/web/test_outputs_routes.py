@@ -66,6 +66,13 @@ async def db_conn() -> AsyncIterator[aiosqlite.Connection]:
         "updated_ms INTEGER NOT NULL, iteration INTEGER NOT NULL DEFAULT 0, "
         "cost_usd REAL NOT NULL DEFAULT 0.0)"
     )
+    # The continuation-link lookup reads MissionDispatched events; mirror the
+    # subset of the real `mission_events` schema the route helper touches.
+    await conn.execute(
+        "CREATE TABLE mission_events ("
+        "seq INTEGER PRIMARY KEY AUTOINCREMENT, mission_id TEXT NOT NULL, "
+        "event_type TEXT NOT NULL, payload_json TEXT NOT NULL)"
+    )
     try:
         yield conn
     finally:
@@ -130,6 +137,36 @@ async def _insert_mission(
         "INSERT INTO missions (id, prompt, state, created_ms, updated_ms) "
         "VALUES (?, ?, ?, ?, ?)",
         (mission_id, prompt, state, created_ms, updated_ms),
+    )
+
+
+async def _insert_dispatch_event(
+    conn: aiosqlite.Connection,
+    *,
+    child_id: str,
+    parent_id: str,
+) -> None:
+    """Record the child's ``MissionDispatched`` event carrying its parent link.
+
+    Mirrors what ``mgr.dispatch(parent_mission_id=...)`` persists on a re-run:
+    the parent→child edge lives only in the dispatch event payload (the
+    ``missions`` header has no parent column).
+    """
+    import json
+
+    payload = json.dumps(
+        {
+            "event_type": "MissionDispatched",
+            "prompt": "task",
+            "parent_mission_id": parent_id,
+            "priority": 0,
+            "language": "en",
+        }
+    )
+    await conn.execute(
+        "INSERT INTO mission_events (mission_id, event_type, payload_json) "
+        "VALUES (?, ?, ?)",
+        (child_id, "MissionDispatched", payload),
     )
 
 
@@ -290,6 +327,72 @@ async def test_list_outputs_cancelled_maps_to_cancelled_status(
         r = client.get("/api/outputs")
     sessions = r.json()["sessions"]
     assert sessions[0]["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_list_outputs_cancelled_with_live_child_exposes_continuation(
+    app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
+) -> None:
+    """A CANCELLED card whose re-run child is still running must say so.
+
+    Forensic 2026-06-28 (missions 019f0fa6 → 019f0fac): the user clicked
+    "Continue" on a cancelled mission; that spawned a linked child which ran
+    on (CRITIQUING), but the cancelled card kept showing a "Continue" button
+    with no hint that its work was already live — two visually identical
+    cards, one cancelled + continuable, one running. The list now resolves the
+    live continuation (parent_mission_id in the child's MissionDispatched
+    event) and exposes it so the UI can replace "Continue" with a "running"
+    indicator pointing at the child.
+    """
+    parent = "019f0fa6-4ff6-7bd9-87fd-a32e201b32c9"
+    child = "019f0fac-26a3-7c59-bfa3-385fb1e426fc"
+    _make_mission_dir(tmp_path, parent)
+    _make_mission_dir(tmp_path, child)
+    await _insert_mission(db_conn, mission_id=parent, state="CANCELLED")
+    await _insert_mission(db_conn, mission_id=child, state="CRITIQUING")
+    await _insert_dispatch_event(db_conn, child_id=child, parent_id=parent)
+
+    with TestClient(app) as client:
+        r = client.get("/api/outputs")
+    sessions = {s["slug"]: s for s in r.json()["sessions"]}
+
+    psum = sessions[f"mission_{parent[:13]}"]
+    assert psum["status"] == "cancelled"
+    assert psum["active_child_id"] == child, (
+        "cancelled card must expose its live re-run child so the UI can stop "
+        f"lying with a 'Continue' button, got {psum.get('active_child_id')!r}"
+    )
+    assert psum["active_child_slug"] == f"mission_{child[:13]}"
+
+    # The live child itself is just RUNNING — it has no continuation of its own.
+    csum = sessions[f"mission_{child[:13]}"]
+    assert csum["status"] == "running"
+    assert csum["active_child_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_list_outputs_cancelled_with_terminal_child_keeps_continue(
+    app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
+) -> None:
+    """A re-run child that has itself finished must NOT suppress Continue.
+
+    The guard is a *liveness* signal, not a permanent lock: once the child
+    reaches a terminal state the parent is freely re-runnable again, so the
+    list must report no active continuation (active_child_id stays None) and
+    the UI shows "Continue" once more.
+    """
+    parent = "019f0fb0-1111-7000-8000-000000000001"
+    child = "019f0fb1-2222-7000-8000-000000000002"
+    _make_mission_dir(tmp_path, parent)
+    _make_mission_dir(tmp_path, child)
+    await _insert_mission(db_conn, mission_id=parent, state="CANCELLED")
+    await _insert_mission(db_conn, mission_id=child, state="FAILED")
+    await _insert_dispatch_event(db_conn, child_id=child, parent_id=parent)
+
+    with TestClient(app) as client:
+        r = client.get("/api/outputs")
+    sessions = {s["slug"]: s for s in r.json()["sessions"]}
+    assert sessions[f"mission_{parent[:13]}"]["active_child_id"] is None
 
 
 @pytest.mark.asyncio

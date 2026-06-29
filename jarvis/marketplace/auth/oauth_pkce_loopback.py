@@ -30,6 +30,10 @@ from jarvis.marketplace.auth.base import (
     random_state,
     session_id,
 )
+from jarvis.marketplace.hosted_callback import (
+    HostedCallbackServer,
+    make_callback_server,
+)
 from jarvis.marketplace.oauth_callback_server import (
     CallbackTimeoutError,
     OAuthCallbackServer,
@@ -67,7 +71,7 @@ class PkceLoopbackConfig:
 @dataclass
 class _PendingPkceFlow:
     config: PkceLoopbackConfig
-    callback_server: OAuthCallbackServer
+    callback_server: OAuthCallbackServer | HostedCallbackServer
     code_verifier: str
     redirect_uri: str
 
@@ -81,21 +85,24 @@ class PkceLoopbackHandler:
         self._pending: dict[str, _PendingPkceFlow] = {}
 
     async def start(self, plugin_spec: object) -> AuthSession:
-        # Loopback callback server on the fixed port (Slack's 3118).
+        # H3: route through make_callback_server so a configured
+        # public_callback_base_url gives a publicly-reachable hosted redirect on a
+        # VPS; the desktop loopback still binds the plugin's registered fixed port +
+        # callback path (e.g. Slack's http://127.0.0.1:3118/<path>).
         state = random_state()
-        callback_server = OAuthCallbackServer(
-            expected_state=state,
+        callback_server = make_callback_server(
+            state,
             timeout_seconds=300,
+            fixed_port=self._config.callback_port,
             callback_path=self._config.callback_path,
-            port=self._config.callback_port,
         )
         try:
             await callback_server.start()
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(
-                f"could not bind {self._config.plugin_id} callback "
-                f"on port {self._config.callback_port}: {exc} "
-                "(another app may be using it — close it and retry)"
+                f"could not start the {self._config.plugin_id} OAuth callback "
+                f"server: {exc} (loopback port {self._config.callback_port} may be "
+                "in use, or the hosted callback base URL is unreachable)"
             ) from exc
 
         redirect_uri = callback_server.redirect_uri

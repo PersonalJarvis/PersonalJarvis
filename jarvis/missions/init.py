@@ -292,6 +292,14 @@ def _live_subagent_provider(boot_snapshot: str | None) -> str | None:
             resolved = str(raw).strip().lower()
             if resolved:
                 return resolved
+        # B6 (open-source AP-22): no explicit [brain.sub_jarvis].provider → run the
+        # heavy worker on the user's ACTIVE brain provider, not the legacy Claude
+        # CLI. A fresh openrouter/gemini/codex install never sets sub_jarvis, so
+        # without this the default ClaudeDirectWorker spawns the absent `claude`
+        # binary and every mission fails.
+        primary = (getattr(cfg.brain, "primary", None) or "").strip().lower()
+        if primary:
+            return primary
     except Exception as exc:  # noqa: BLE001
         logger.debug(
             "missions: live subagent re-resolve failed (%s) — using boot "
@@ -478,6 +486,12 @@ async def bootstrap_missions(
             "openclaw-backed worker routing", exc,
         )
 
+    # B6 (open-source AP-22): no explicit sub-agent provider → default to the
+    # active brain provider so the boot snapshot, env_builder, and the per-mission
+    # _live_subagent_provider all agree (and never silently route to the Claude CLI).
+    if not sub_jarvis_provider:
+        sub_jarvis_provider = brain_primary
+
     # 7. Kontrollierer
     def _env_builder(mission_dir: Path) -> dict[str, str]:
         # Each worker CLI reads its own API-key env
@@ -628,6 +642,20 @@ async def bootstrap_missions(
             live_provider, getattr(step, "model", "") or ""
         )
         if kind == "claude_direct":
+            # B3 (open-source AP-22): an Anthropic-API-key-only user has NO `claude`
+            # CLI binary — run the heavy worker IN-PROCESS via ApiAgentWorker on the
+            # API key instead of failing on the missing binary. The CLI stays
+            # preferred (subscription-first) whenever the binary IS present.
+            from jarvis.core.config import get_provider_secret
+            from jarvis.missions.workers.claude_direct_worker import (
+                _resolve_claude_binary,
+            )
+            if _resolve_claude_binary() is None and get_provider_secret("claude-api"):
+                logger.info(
+                    "Mission worker -> ApiAgentWorker('claude-api'): no `claude` CLI "
+                    "binary, running in-process on the Anthropic API key."
+                )
+                return ApiAgentWorker("claude-api")
             # Proactive quota routing (mirror of the codex_needs_reauth branch
             # below): if a Claude worker already proved the Max window exhausted
             # this session, route STRAIGHT to codex (a separate ChatGPT
@@ -714,6 +742,18 @@ async def bootstrap_missions(
             )
             return ClaudeDirectWorker(mcp_servers=_assemble_worker_mcp_servers())
         if kind == "gemini":
+            # B4 (open-source AP-22): no Gemini CLI but a Gemini API key → run the
+            # heavy worker IN-PROCESS via ApiAgentWorker instead of failing on the
+            # missing npm `gemini` CLI binary.
+            import shutil
+
+            from jarvis.core.config import get_provider_secret
+            if not (shutil.which("gemini") or shutil.which("gemini.cmd")) and get_provider_secret("gemini"):
+                logger.info(
+                    "Mission worker -> ApiAgentWorker('gemini'): no Gemini CLI, "
+                    "running in-process on the Gemini API key."
+                )
+                return ApiAgentWorker("gemini")
             # Reached when [brain.sub_jarvis].provider == "gemini" was selected
             # (the user's "selected provider must run" mandate) OR, legacy, when
             # no provider is configured but the step model is a gemini model.

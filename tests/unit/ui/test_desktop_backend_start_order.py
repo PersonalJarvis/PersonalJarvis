@@ -178,6 +178,7 @@ def test_desktop_voice_start_does_not_wait_for_brain_ready(monkeypatch, tmp_path
         monkeypatch,
         "jarvis.speech.warmup_prefetch",
         start_wake_import_prefetch=lambda: None,
+        start_tts_import_prefetch=lambda: None,
     )
     _install_fake_module(
         monkeypatch,

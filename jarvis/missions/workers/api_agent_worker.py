@@ -49,6 +49,12 @@ logger = logging.getLogger(__name__)
 _BRAIN_BY_PROVIDER: dict[str, tuple[str, str]] = {
     "openai": ("jarvis.plugins.brain.openai", "OpenAIBrain"),
     "openrouter": ("jarvis.plugins.brain.openrouter", "OpenRouterBrain"),
+    # B3/B4 (open-source AP-22): claude-api + gemini run the SAME in-process tool
+    # loop, so an Anthropic- or Gemini-API-key-only user can run heavy missions
+    # without the npm `claude`/`gemini` CLI binary. The CLI worker stays preferred
+    # (subscription-first) when its binary is present; this is the API fallback.
+    "claude-api": ("jarvis.plugins.brain.claude_api", "ClaudeAPIBrain"),
+    "gemini": ("jarvis.plugins.brain.gemini", "GeminiBrain"),
 }
 
 # Per-provider default deep model when the step carries none. Documented
@@ -56,6 +62,8 @@ _BRAIN_BY_PROVIDER: dict[str, tuple[str, str]] = {
 _DEFAULT_MODEL: dict[str, str] = {
     "openai": "gpt-5.5",
     "openrouter": "anthropic/claude-opus-4.8",
+    "claude-api": "claude-opus-4-8",
+    "gemini": "gemini-3.1-pro-preview",
 }
 
 _WORKER_TIMEOUT_S: float = 1200.0  # 20 min hard cap, mirrors the other workers

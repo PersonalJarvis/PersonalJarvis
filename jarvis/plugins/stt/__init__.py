@@ -19,6 +19,38 @@ from loguru import logger
 
 ENTRY_POINT_GROUP = "jarvis.stt"
 
+# Credential candidates per CLOUD STT provider — the (keyring_key, env_var) pairs
+# that hold a usable key. A fresh downloader's single key is rarely Groq, so the
+# factory must consult this before constructing a cloud STT and cross over to the
+# key-free local faster-whisper when the configured cloud provider has no key
+# (open-source single-provider resilience, AP-22). Providers NOT listed here are
+# left untouched (unknown / third-party entry-points cannot be probed).
+_STT_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
+    "groq-api": (("groq_api_key", "GROQ_API_KEY"),),
+    "openai-api": (("openai_api_key", "OPENAI_API_KEY"),),
+    "deepgram": (("deepgram_api_key", "DEEPGRAM_API_KEY"),),
+    "deepgram-flux": (("deepgram_api_key", "DEEPGRAM_API_KEY"),),
+    "deepgram-nova3": (("deepgram_api_key", "DEEPGRAM_API_KEY"),),
+}
+
+
+def _stt_has_credential(provider_name: str, kwargs: dict[str, Any]) -> bool:
+    """Whether the configured cloud STT has a usable key (else: fall to local).
+
+    True when a key is injected (team-proxy token / explicit ``api_key``) or a
+    keyring/env credential resolves. Providers with no entry in
+    ``_STT_SECRET_CANDIDATES`` (unknown / third-party) return True so their
+    construction path is unchanged — only known cloud providers are gated.
+    """
+    if kwargs.get("api_key"):
+        return True
+    candidates = _STT_SECRET_CANDIDATES.get(provider_name)
+    if candidates is None:
+        return True
+    from jarvis.core import config as _cfg
+
+    return _cfg.get_secret_any(candidates) is not None
+
 
 def _load_provider_class(name: str) -> type | None:
     """Resolve an STT provider class by its entry-point ``name`` (e.g. ``groq-api``)."""
@@ -72,6 +104,14 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
                 kwargs["endpoint"] = ep.base_url.rstrip("/") + "/audio/transcriptions"
                 if ep.credential:
                     kwargs["api_key"] = ep.credential
+        if not _stt_has_credential(provider_name, kwargs):
+            logger.warning(
+                "STT provider {!r} has no usable credential; falling back to the "
+                "key-free local faster-whisper so voice input still works for a "
+                "single-key user (AP-22).",
+                provider_name,
+            )
+            return _build_local_fallback(stt_cfg, language)
         try:
             instance = cls(**kwargs) if kwargs else cls()
             logger.info(
@@ -116,6 +156,11 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
             )
 
     # Local fallback (also the explicit "faster-whisper" path).
+    return _build_local_fallback(stt_cfg, language)
+
+
+def _build_local_fallback(stt_cfg: Any, language: str | None) -> Any:
+    """Construct the key-free local faster-whisper provider (the universal floor)."""
     from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
 
     return FasterWhisperProvider(
@@ -278,12 +323,39 @@ def build_wake_whisper(
     # above). The caller then hot-swaps in the turbo/cuda model in the background
     # for faster steady-state inference, so the 2026-06-24 accuracy upgrade is
     # preserved — only its load is moved off the hear-ready path.
-    if not fast_first and model == "base" and device == "cpu" and cuda_available:
+    if (
+        not fast_first
+        and not bias
+        and model == "base"
+        and device == "cpu"
+        and cuda_available
+    ):
         model, device, compute = "large-v3-turbo", "cuda", "int8_float16"
         bias = None  # strong model needs no bias; the bias is what hallucinates
         logger.info(
             "Wake-Whisper: CUDA present -> GPU turbo (large-v3-turbo/cuda), "
             "bias OFF (fast + no silence hallucination)."
+        )
+    elif (
+        not fast_first
+        and bias
+        and model == "base"
+        and device == "cpu"
+        and cuda_available
+    ):
+        # CUSTOM WAKE PHRASE: keep the validated base/cpu + phrase-bias config;
+        # do NOT upgrade to the turbo model. The strong turbo runs WITHOUT the
+        # initial_prompt bias (the bias hallucinates on silence on the strong
+        # model), but without that bias it MANGLES a short custom phrase — live
+        # forensic 2026-06-29: "Hey Nico" -> "cuf ich" -> the wake never fired.
+        # base/cpu+bias is the validated custom-phrase config (83% recall / ~0%
+        # false on real WAVs), so a user-set custom wake word stays on it.
+        # (Default "Hey Jarvis" / OWW paths carry no bias and still get the fast
+        # turbo upgrade above.) This makes the background hot-swap a no-op for a
+        # custom phrase: the rebuilt model stays "base", so the caller keeps it.
+        logger.info(
+            "Wake-Whisper: custom phrase -> staying on base/cpu (bias ON); turbo "
+            "upgrade skipped (turbo-without-bias mangles short custom phrases)."
         )
     elif fast_first and model == "base" and device == "cpu" and cuda_available:
         logger.info(

@@ -1,12 +1,14 @@
 """POST /api/settings/restart-app — one-click self-restart of the desktop app."""
 from __future__ import annotations
 
+import asyncio
+import threading
 from types import SimpleNamespace
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from jarvis.ui.web.settings_routes import router
+from jarvis.ui.web.settings_routes import restart_app, router
 
 
 def _client(desktop=None, kontrollierer=None, mission_manager=None):
@@ -107,3 +109,82 @@ def test_restart_proceeds_when_no_missions_running():
     )
     assert r.status_code == 200
     assert calls["n"] == 1
+
+
+def _fake_request(desktop=None, kontrollierer=None, mission_manager=None):
+    state = SimpleNamespace()
+    if desktop is not None:
+        state.desktop_app = desktop
+    if kontrollierer is not None:
+        state.kontrollierer = kontrollierer
+    if mission_manager is not None:
+        state.mission_manager = mission_manager
+    return SimpleNamespace(app=SimpleNamespace(state=state))
+
+
+async def test_restart_survives_exhausted_default_thread_pool():
+    """A restart must work even when the shared default ThreadPoolExecutor is
+    saturated by un-cancellable hung threads.
+
+    Forensic 2026-06-29: the custom-wake ctranslate2 transcription hung in C
+    code; its 8 s ``asyncio.timeout`` cancelled only the *await*, abandoning the
+    pool thread mid-call. Within minutes every default-pool worker was wedged,
+    so the old ``await asyncio.to_thread(request_restart)`` queued forever — the
+    restart POST never returned and the button spun "Restarting…" with the
+    window still up. The restart trigger must run OFF the shared pool.
+    """
+    loop = asyncio.get_running_loop()
+    release = threading.Event()
+    # Saturate the default executor well beyond any platform's max_workers
+    # (min(32, cpu+4)); the surplus queues, so no free worker remains.
+    blockers = [loop.run_in_executor(None, release.wait) for _ in range(64)]
+    await asyncio.sleep(0.1)  # let the blockers claim every pool thread
+
+    called = threading.Event()
+
+    def request_restart():
+        called.set()
+        return True
+
+    request = _fake_request(SimpleNamespace(request_restart=request_restart))
+    try:
+        # With the bug this never resolves (queued behind the dead pool); the
+        # 5 s cap turns the hang into a clean failure instead of a stuck test.
+        result = await asyncio.wait_for(restart_app(request, force=True), timeout=5.0)
+    finally:
+        release.set()
+        await asyncio.gather(*blockers, return_exceptions=True)
+
+    assert result == {"ok": True, "restarting": True}
+    assert called.is_set()
+
+
+async def test_restart_guard_does_not_hang_on_wedged_mission_manager():
+    """A wedged mission manager must not hang the restart guard.
+
+    The guard looks up titles for in-flight missions to show in the 409 body.
+    If that lookup blocks (a sick manager — the very state a user restarts to
+    escape), the guard must time out and fall back to id-only summaries rather
+    than hang the POST forever.
+    """
+    forever = asyncio.Event()  # never set → mission() would block indefinitely
+
+    async def mission(mid):
+        await forever.wait()
+        return SimpleNamespace(prompt="never returns")
+
+    request = _fake_request(
+        SimpleNamespace(request_restart=lambda: True),
+        kontrollierer=_running_kontrollierer("019e-aaa"),
+        mission_manager=SimpleNamespace(mission=mission),
+    )
+    from fastapi import HTTPException
+
+    try:
+        await asyncio.wait_for(restart_app(request, force=False), timeout=5.0)
+        raise AssertionError("expected HTTPException(409)")
+    except HTTPException as exc:
+        assert exc.status_code == 409
+        detail = exc.detail
+        assert detail["error"] == "missions_running"
+        assert [m["id"] for m in detail["missions"]] == ["019e-aaa"]

@@ -52,6 +52,27 @@ class WakeWordDetected(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class WakeCandidateDetected(Event):
+    """Optimistic, VISUAL-ONLY wake hint — the overlay bar pops on this the
+    instant OpenWakeWord fires, *before* the slow STT prefix-verification that
+    gates the authoritative ``WakeWordDetected``.
+
+    Carries no session semantics: only the overlay bridge consumes it. It never
+    reaches the session recorder, the telemetry turn count, or the brain — so a
+    rejected candidate (an OWW false positive) costs only a brief bar flash, not
+    a phantom session record. Publishing ``WakeWordDetected`` early instead would
+    open a session turn on every false positive; this lightweight sibling exists
+    precisely so the *visual* feedback can be instant without that cost.
+
+    ``active=True``  → show the listening bar now (candidate detected).
+    ``active=False`` → retract: the prefix-verifier rejected the candidate, so
+    hide the bar again unless a real session has meanwhile begun.
+    """
+    active: bool = True
+    keyword: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class ListeningStarted(Event):
     """Jarvis opens the microphone for an utterance."""
     pass

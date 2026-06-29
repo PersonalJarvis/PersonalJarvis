@@ -60,6 +60,7 @@ from jarvis.core.events import (
     VoiceMuteToggleRequested,
     VoiceSessionEnded,
     VoiceSessionStarted,
+    WakeCandidateDetected,
     WakeWordDetected,
 )
 from jarvis.core.protocols import AudioChunk, Transcript
@@ -70,7 +71,10 @@ from jarvis.core.turn_language import (
 )
 from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
 from jarvis.plugins.tts.gemini_flash_tts import GEMINI_TTS_SAMPLE_RATE, GeminiFlashTTS
-from jarvis.plugins.wake.openwakeword_provider import OpenWakeWordProvider
+from jarvis.plugins.wake.openwakeword_provider import (
+    PRODUCTION_WAKE_THRESHOLD,
+    OpenWakeWordProvider,
+)
 from jarvis.sessions.constants import (
     HANGUP_ERROR,
     HANGUP_HOTKEY,
@@ -1579,18 +1583,40 @@ class SpeechPipeline:
                 self._whisper_wake._pattern = self._wake_matcher  # noqa: SLF001
             self._whisper_wake_enabled = False
         else:  # stt_match — arbitrary phrase via local-Whisper transcript match
-            self._openwakeword_enabled = False
             if self._stt is not None:
+                self._openwakeword_enabled = False
                 self._whisper_wake = RollingWhisperWake(
                     self._stt, pattern=self._wake_matcher
                 )
                 self._whisper_wake_enabled = True
             else:
-                # No local Whisper available: cannot detect an arbitrary phrase.
+                # No local Whisper could be built: rather than disable BOTH
+                # detectors — a SILENT DEAD LISTENER that only an app restart
+                # could recover ("Hey/Neko sometimes stops waking entirely") —
+                # fall back to the bundled hey_rhasspy OWW model so the wake path
+                # stays ALIVE. The user keeps a working wake word (the neutral
+                # offline phrase "Hey Rhasspy") instead of a dead custom one, and
+                # a later set_wake_plan with a buildable Whisper re-arms the
+                # custom phrase. AP-22 + the mission's "no dead state blocks
+                # waking": a missing capability must degrade, never brick.
+                from jarvis.speech.wake_constants import resolve_oww_model_path
+
+                rhasspy_path = resolve_oww_model_path("hey_rhasspy")
+                self._wake = OpenWakeWordProvider(
+                    keywords=("hey_rhasspy",),
+                    activation_threshold=getattr(
+                        plan, "threshold", PRODUCTION_WAKE_THRESHOLD
+                    ),
+                    model_path=rhasspy_path,
+                )
+                self._openwakeword_enabled = True
                 self._whisper_wake_enabled = False
                 log.warning(
-                    "Wake-Live-Switch: stt_match requested but no local Whisper; "
-                    "wake detection is now inactive until restart."
+                    "Wake-Live-Switch: stt_match requested but no local Whisper "
+                    "could be built — degrading to the bundled 'Hey Rhasspy' "
+                    "offline model so the wake stays alive (say 'Hey Rhasspy'). "
+                    "Install the [desktop] extra or supply a custom .onnx to use "
+                    "the custom phrase."
                 )
 
         log.info(
@@ -2133,11 +2159,17 @@ class SpeechPipeline:
             "ENABLED" if new_value else "disabled",
             event.source or "unknown",
         )
-        if new_value:
-            try:
-                self._player.stop()
-            except Exception:  # noqa: BLE001
-                log.debug("player.stop on mute swallowed", exc_info=True)
+        # Mute is INPUT-ONLY (maintainer intent 2026-06-29: "mute my mic FOR
+        # Jarvis, do NOT mute Jarvis — other things keep working"). We deliberately
+        # do NOT call self._player.stop() here: that ran Pa_AbortStream
+        # (stream.abort) mid-TTS-write, which (a) contradicted the input-only
+        # intent and (b) wedged the shared WASAPI device — the next wake-mic then
+        # opened "successfully" but delivered only dead/silent frames (no
+        # rolling-whisper, no 3 s Mic-Stall fire), so "Hey <wake>" silently
+        # stopped working after a mute-during-speech + hangup. Jarvis finishes the
+        # current sentence; new _speak() calls are still suppressed while muted,
+        # and the user's input frames are dropped at our boundary — the OS mic is
+        # untouched. Forensic: data/jarvis_desktop.log 2026-06-29 14:09–14:12.
         if self._bus is None:
             return
         try:
@@ -3220,8 +3252,10 @@ class SpeechPipeline:
         """Publish a VoiceBootStatus on the bus (guarded — never breaks boot).
 
         ``ready=False`` is emitted at the very start of warm-up; ``ready=True``
-        the moment the critical listening path (Phase A) is live, *before* the
-        background confirmation-audio render finishes.
+        only once ALL deferred loaders (wake model + VAD + TTS client) have
+        completed, from ``_warmup_deferred_loaders`` — the first honest moment
+        the user can both be heard AND get a spoken reply. (It runs after Phase A
+        has returned, so the wake loop is already listening by then.)
         """
         if self._bus is None:
             return
@@ -3233,10 +3267,12 @@ class SpeechPipeline:
     async def _cancel_warmup_background(self) -> None:
         """Cancel + await the fire-and-forget warm-up tasks on shutdown.
 
-        Two background tasks run off the wake-critical path: Phase B (the ACK +
-        task-ack confirmation-audio pre-render) and the deferred VAD/STT/TTS
-        loaders. When ``run()`` is cancelled (the normal desktop-shutdown path)
-        both must be cancelled and awaited, otherwise they are orphaned: under
+        Three background tasks run off the wake-critical path: Phase B (the ACK +
+        task-ack confirmation-audio pre-render), the deferred wake/VAD/TTS
+        loaders (``_warmup_deferred_loaders``), and the boot-ready audio cue
+        (``_warmup_ready_cue_task``, created at the end of the deferred loaders).
+        When ``run()`` is cancelled (the normal desktop-shutdown path) all must
+        be cancelled and awaited, otherwise they are orphaned: under
         ``pythonw.exe`` there is no stderr to surface the "Task exception was
         never retrieved" warning, and a late TTS render could write stale PCM
         into ``_ack_pcm`` / ``_task_ack_pcm`` after a live TTS-provider switch
@@ -3262,40 +3298,32 @@ class SpeechPipeline:
         log.info("Warm-up: Whisper / Silero / Wake-Word / TTS …")
         await self._emit_boot_status(ready=False, detail="warmup_start")
 
-        # --- Phase A: the critical listening path -------------------------
-        # Audio-device stabilization, VAD + OpenWakeWord loads and the TTS
-        # client init are mutually independent (each touches only its own
-        # object), so they run concurrently instead of one-after-another. When
-        # this finishes, voice is genuinely ready to hear "Hey Jarvis".
+        # --- Phase A: start the wake LOOP, nothing else -------------------
+        # Phase A blocks on the absolute minimum so the wake loop is listening
+        # fast: the audio-device table settling (BUG-014 guard) and the wake
+        # start. The heavy VAD / STT / TTS loads are deliberately NOT here — they
+        # move to the background ``_warmup_deferred_loaders`` so they never gate
+        # wake-loop start. NOTE: a started wake loop is NOT the same as "ready to
+        # converse"; honest readiness (incl. TTS) is signalled later, from the
+        # deferred loaders (see below).
         phase_a_start = time.monotonic()
         await self._warmup_phase_a()
         phase_a_ms = (time.monotonic() - phase_a_start) * 1000.0
         log.info("Warm-up Phase A (critical listening path) done in %.0f ms.", phase_a_ms)
-        # Honest readiness (2026-06-27): Phase A only starts the wake LOOP. For a
-        # CUSTOM wake phrase (rolling-whisper) the wake Whisper model (self._stt)
-        # is still loading in _warmup_deferred_loaders below, so wake is DEAF
-        # until that finishes (~3 s warm, longer cold). Signalling ready=True here
-        # made the UI flip to "you can speak" while Jarvis could not yet hear —
-        # the "I talked, nothing happened, is it broken?" confusion. Only the
-        # lightweight openWakeWord path is genuinely ready now; the rolling-
-        # whisper path emits ready=True AFTER its model loads (see
-        # _warmup_deferred_loaders). Until then we report ready=False so the UI
-        # shows an honest "starting up / preparing to listen" state.
-        _wake_needs_model = bool(self._whisper_wake_enabled and self._stt is not None)
-        await self._emit_boot_status(
-            ready=not _wake_needs_model,
-            detail="listening" if not _wake_needs_model else "preparing_wake",
-        )
-
-        # Audible "ready" cue: tells the user exactly when listening starts
-        # after a (cold) boot. It is intentionally fire-and-forget: a slow or
-        # wedged output device must not sit between ready=True and the wake loop.
-        self._warmup_ready_cue_task = asyncio.create_task(
-            self._play_ready_cue(), name="warmup-ready-cue"
-        )
-        self._warmup_ready_cue_task.add_done_callback(
-            self._log_warmup_ready_cue_done
-        )
+        # Honest readiness (2026-06-29): Phase A only starts the wake LOOP — it
+        # does NOT mean the user can hold a conversation yet (VAD + TTS, and the
+        # custom-wake Whisper model, are still loading in
+        # _warmup_deferred_loaders below). Readiness is therefore NOT signalled
+        # here. BOTH the VoiceBootStatus(ready=True) and the audible "you can
+        # speak" cue now fire at the END of _warmup_deferred_loaders — the first
+        # moment wake (model) + VAD + TTS are ALL genuinely up. Previously the
+        # openWakeWord path flipped ready in Phase A and the custom-phrase path
+        # flipped it right after the wake model alone — either way the UI said
+        # "ready" while TTS was still loading, so the user spoke and nothing came
+        # back ("it says ready but I can't talk"). ready=False was already
+        # emitted at warmup_start above, so the UI stays in its honest
+        # "starting up / preparing to listen" state until the deferred loaders
+        # complete.
 
         # --- Phase B: confirmation audio, off the critical path -----------
         # Pre-rendering the ACK + ~20 task-ack phrases used to dominate warm-up
@@ -3370,78 +3398,110 @@ class SpeechPipeline:
         )
 
     async def _warmup_deferred_loaders(self) -> None:
-        """Background pre-load of VAD + STT + TTS client — never gates wake
-        readiness (see ``_warmup_phase_a``).
+        """Background pre-load of the FULL conversational stack (wake model +
+        VAD + TTS), then signal HONEST readiness.
 
-        VAD is the soonest thing needed after a wake (utterance endpointing), so
-        it is loaded first; the local-Whisper STT (if any) and the TTS client
-        follow. Each load is isolated (``return_exceptions=True``) so one
-        slow/failing load never breaks the others, and every object's
-        ``_ensure_*`` is idempotent — a concurrent lazy load on first use is a
-        harmless no-op once this has run.
+        Runs OFF the wake-critical path (see ``_warmup_phase_a``): the wake loop
+        is already listening by the time this starts, so a wake mid-load just
+        triggers a one-off lazy load on the VAD/STT/TTS object. What this owns is
+        the *honest* readiness signal — ``VoiceBootStatus(ready=True)`` and the
+        audible "you can speak" cue fire ONLY at the very end, once wake (model),
+        VAD endpointing AND the TTS reply path are all initialized. Flipping
+        ready before TTS was up was the "it says ready but I can't talk" bug
+        (2026-06-29).
+
+        Ordering / GIL: the wake-model load is the one heavy CUDA/GIL step, kept
+        FIRST and ALONE (racing it against the VAD load serialized both on the
+        import + CUDA-init lock to ~11.8 s — forensic 2026-06-22). The TTS client
+        init is network-bound (releases the GIL on I/O), so it is kicked off
+        CONCURRENTLY with the wake warm-up to overlap its latency instead of
+        paying it sequentially afterwards. VAD loads after the wake model. Every
+        load is guarded so one slow/failing load never strands readiness — it
+        will lazy-load / fall back on first use.
         """
-        # PRIORITY: pre-warm the WAKE model FIRST and ALONE. For a custom wake
-        # phrase (stt_match / rolling-whisper) ``self._stt`` IS the wake model,
-        # and until it is in memory the wake loop cannot transcribe — the wake
-        # word is DEAF. Racing it in one gather against VAD+TTS serialized it on
-        # the Python/GIL + CUDA init lock to 11.8 s (measured: stt-load=11828
-        # while vad-load=5859, tts-init=4297 ran alongside). Loading it on its
-        # own first roughly halves that (~5.9 s) and, more importantly, makes the
-        # wake word hear-ready as early as possible. VAD + the TTS client are
-        # only needed AFTER a wake fires and are lazy-safe (each re-ensures its
-        # model on first use), so they load afterwards and never gate wake-ready.
-        if self._stt is not None:
-            _wake_t0 = time.monotonic()
-            try:
-                await asyncio.to_thread(self._stt._ensure_model)
-                log.info(
-                    "Wake-model pre-warm done in %.0f ms (priority, no GIL race).",
-                    (time.monotonic() - _wake_t0) * 1000.0,
-                )
-                # Honest readiness (2026-06-27): the custom-phrase wake model is
-                # now in memory, so the rolling-whisper wake loop can ACTUALLY
-                # hear. Phase A reported ready=False ("preparing_wake") for this
-                # path; flip it to ready=True now so the UI's "starting up" state
-                # becomes "you can speak now" exactly when it's true. No-op for
-                # the openWakeWord path (it already reported ready in Phase A).
-                if self._whisper_wake_enabled:
-                    await self._emit_boot_status(
-                        ready=True, detail="wake_model_loaded"
-                    )
-            except Exception as exc:  # noqa: BLE001 — lazy load on first use still works
-                log.warning("Wake-model pre-warm failed (will lazy-load): %s", exc)
-                # Don't strand the UI in "preparing" forever: the model will
-                # lazy-load on first transcribe, so report ready so the user can
-                # try speaking (honest-ish — better than a stuck "starting up").
-                if self._whisper_wake_enabled:
-                    await self._emit_boot_status(
-                        ready=True, detail="wake_model_lazy"
-                    )
+        deferred_t0 = time.monotonic()
 
-        async def _load_vad() -> None:
-            await asyncio.to_thread(self._vad._ensure_model)
-
+        # TTS client init is network-bound → overlap it with the (CUDA-heavy)
+        # wake warm-up rather than adding it on afterwards. Idempotent: a later
+        # lazy ``_ensure_client`` on first synth is a harmless no-op.
         async def _init_tts() -> None:
             await asyncio.to_thread(self._tts._ensure_client)
 
-        timings, results = await _gather_timed(
-            [
-                ("vad-load", _load_vad),
-                ("tts-init", _init_tts),
-            ]
-        )
-        log.info(
-            "Warm-up deferred loaders (ms): %s",
-            ", ".join(
-                f"{name}={timings[name]:.0f}"
-                for name in sorted(timings, key=lambda n: -timings[n])
-            ),
-        )
-        for name, res in zip(
-            ("vad-load", "tts-init"), results, strict=True
-        ):
-            if isinstance(res, Exception):
-                log.warning("Warm-up deferred loader '%s' failed: %s", name, res)
+        tts_task = asyncio.create_task(_init_tts(), name="warmup-tts-init")
+        try:
+            # PRIORITY: pre-warm the WAKE model FIRST and ALONE. For a custom wake
+            # phrase (stt_match / rolling-whisper) ``self._stt`` IS the wake model,
+            # and until it is in memory + warmed the wake loop cannot transcribe.
+            # Prime with one REAL inference (not just the model load): the first
+            # transcribe is cold (CUDA kernel JIT / cuDNN algo search), and that
+            # cost used to land on the user's first "Hey Jarvis" (swallowed wake,
+            # forensic 2026-06-28). ``warm_up`` pays it here; falls back to
+            # ``_ensure_model``.
+            if self._stt is not None:
+                _wake_t0 = time.monotonic()
+                try:
+                    _prime = getattr(self._stt, "warm_up", None)
+                    await asyncio.to_thread(
+                        _prime if callable(_prime) else self._stt._ensure_model
+                    )
+                    log.info(
+                        "Wake-model pre-warm done in %.0f ms (priority, no GIL race).",
+                        (time.monotonic() - _wake_t0) * 1000.0,
+                    )
+                except Exception as exc:  # noqa: BLE001 — lazy load on first use still works
+                    log.warning("Wake-model pre-warm failed (will lazy-load): %s", exc)
+
+            # VAD after the wake model (both touch heavy C-extensions; serialize
+            # to dodge the import/CUDA-init lock contention measured above).
+            _vad_t0 = time.monotonic()
+            try:
+                await asyncio.to_thread(self._vad._ensure_model)
+                log.info("VAD load done in %.0f ms.", (time.monotonic() - _vad_t0) * 1000.0)
+            except Exception as exc:  # noqa: BLE001 — lazy load on first use still works
+                log.warning("Warm-up deferred loader 'vad-load' failed: %s", exc)
+
+            # Join the concurrently-running TTS init (started before the wake warm).
+            tts_err: Exception | None = None
+            try:
+                await tts_task
+            except Exception as exc:  # noqa: BLE001 — lazy load on first synth still works
+                tts_err = exc
+                log.warning("Warm-up deferred loader 'tts-init' failed: %s", exc)
+
+            log.info(
+                "Warm-up deferred loaders done in %.0f ms (tts-init=%s).",
+                (time.monotonic() - deferred_t0) * 1000.0,
+                "ok" if tts_err is None else "failed",
+            )
+
+            # --- HONEST READINESS: the full stack is up (or attempted) ------
+            # Wake model warmed + VAD loaded + TTS client init done → the user
+            # can now actually be heard AND get a spoken reply. Signal ready and
+            # play the audible cue here, exactly once, at the first truthful
+            # moment. Even on a failed VAD/TTS load we still flip ready (each
+            # lazy-loads / falls back on first use) rather than stranding the UI
+            # in "starting up" forever. The cue is fire-and-forget so a
+            # slow/wedged output device never sits between ready=True and a
+            # responsive wake loop.
+            await self._emit_boot_status(ready=True, detail="listening")
+            self._warmup_ready_cue_task = asyncio.create_task(
+                self._play_ready_cue(), name="warmup-ready-cue"
+            )
+            self._warmup_ready_cue_task.add_done_callback(self._log_warmup_ready_cue_done)
+        finally:
+            # Never orphan the concurrently-started TTS init: if this deferred
+            # task is cancelled (desktop shutdown) before the ``await tts_task``
+            # join above is reached, CancelledError propagates straight here. Cancel
+            # + await it so a late ``_ensure_client`` failure can't surface as an
+            # unretrieved-exception warning under pythonw.exe. No-op on the normal
+            # path (tts_task already awaited → done). Swallowed; re-raises the
+            # original CancelledError after cleanup.
+            if not tts_task.done():
+                tts_task.cancel()
+                try:
+                    await tts_task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001 — shutdown swallow
+                    pass
 
     async def _warmup_phase_b(self) -> None:
         """Background pre-render of confirmation audio (never blocks ready).
@@ -3770,20 +3830,42 @@ class SpeechPipeline:
             "on" if self._whisper_wake_enabled else "off",
             "open" if self._activation_allowed() else "closed",
         )
-        if not self._wake_listening_enabled():
+        # Both detectors off: PARK, do not die. The old code did
+        # ``await asyncio.Event().wait()`` on a FRESH event nobody ever sets —
+        # a permanent sleep that not even a later live wake-word change could
+        # re-arm (only an app restart). Wait on ``_wake_reload_event`` instead so
+        # a ``set_wake_plan`` that re-enables a detector wakes the loop back up,
+        # in-app. The 30 s timeout re-logs the parked state so a genuinely dead
+        # listener stays visible without busy-spinning. (Mission: "no dead state
+        # blocks waking"; AP-22: recovery must be reachable in-app, not a restart.)
+        while not self._wake_listening_enabled():
             log.warning(
-                "Beide Wake-Detektoren deaktiviert — Wake-Loop schlaeft permanent. "
-                "Voice geht nur per Hotkey."
+                "Both wake detectors are disabled — wake is PARKED until a "
+                "wake-word change re-enables one (voice still works via hotkey). "
+                "Waiting on a live wake-plan reload, not sleeping forever."
             )
-            await asyncio.Event().wait()
+            try:
+                await asyncio.wait_for(self._wake_reload_event.wait(), timeout=30.0)
+            except asyncio.TimeoutError:
+                pass
+            finally:
+                self._wake_reload_event.clear()
         gate_blocked_logged_at = 0.0
         while True:
             if not self._activation_allowed():
                 now = time.time()
                 if now - gate_blocked_logged_at > 30.0:
+                    # Name the REAL reason: mute is checked first in
+                    # _activation_allowed, so a muted user must not be told the
+                    # window is hidden (that misled a live freeze diagnosis).
+                    reason = (
+                        "voice is muted"
+                        if getattr(self, "_muted", False)
+                        else "desktop window not visible?"
+                    )
                     log.info(
-                        "Wake-Loop wartet — Activation-Gate geschlossen "
-                        "(Desktop-Fenster nicht sichtbar?)."
+                        "Wake-Loop wartet — Activation-Gate geschlossen (%s).",
+                        reason,
                     )
                     gate_blocked_logged_at = now
                 await asyncio.sleep(0.25)
@@ -3806,13 +3888,14 @@ class SpeechPipeline:
         leading up to an OpenWakeWord hit actually contained "hey/hi/hallo +
         jarv". Returns True if the strict prefix is in the transcript.
 
-        Failure modes degrade open (return True with a warning) so that a
-        misconfigured STT, a network blip, or a rate-limit response cannot
-        brick the wake on a quiet hardware setup — we'd rather accept the
-        occasional bare-"Jarvis" false positive than have the user shout into
-        a dead listener. ``verify_wake_with_stt`` itself returns False on STT
-        exceptions, which is the desired suppression behaviour for transient
-        errors when an STT is wired up.
+        Failure modes degrade OPEN (return True with a log line) so a
+        misconfigured STT, a network blip, a rate-limit, or a known
+        silence/noise hallucination cannot brick the wake — we'd rather accept
+        the occasional bare-"Jarvis" false positive than have the user shout
+        into a dead listener. The ONLY no-transcript case that still suppresses
+        is an EMPTY capture buffer (nothing was recorded). A clear, non-matching
+        transcript (genuine other speech) also suppresses, preserving the
+        bare-"Jarvis" BUG-009 guard.
         """
         if not self._require_hey_prefix:
             return True
@@ -3830,12 +3913,60 @@ class SpeechPipeline:
                 "require_hey_prefix=True but no utterance STT — accepting OWW hit"
             )
             return True
-        matched, _ = await verify_wake_with_stt(
+        # Nothing captured yet (empty ring buffer) — there is genuinely no audio
+        # to confirm the wake, so reject without an STT round-trip. This is the
+        # ONLY no-transcript case that suppresses: a NON-empty buffer the STT
+        # could not turn into text is treated as an outage below (degrade open).
+        if not pcm_snapshot:
+            return False
+        matched, text = await verify_wake_with_stt(
             self._utterance_stt,
             pcm_snapshot,
             matcher=getattr(self, "_wake_matcher", None),
         )
-        return matched
+        if matched:
+            return True
+        text = (text or "").strip()
+        # Degrade OPEN on a KNOWN STT hallucination. A silence/noise boilerplate
+        # transcript ("Untertitelung des ZDF, 2020", "Vielen Dank.") means the
+        # STT failed to transcribe the real audio — NOT that the user didn't say
+        # the wake word. OWW already fired strongly, so this is the same case as
+        # the transient-STT-failure path (which degrades open above): accept
+        # rather than drop a real "Hey Jarvis". Forensic 2026-06-28: short
+        # "Hey Jarvis" buffers made the verify STT hallucinate these phrases for
+        # ~half of all valid wakes, so the wake "stopped working" intermittently.
+        # An arbitrary non-matching transcript (genuine OTHER speech) still
+        # suppresses, so the bare-"Jarvis" false-positive guard (BUG-009) stays.
+        if text and _STT_HALLUCINATION_RE.search(text) is not None:
+            log.info(
+                "wake-verify: STT hallucination %r on a strong OWW hit — "
+                "accepting (degrade-open, not a real rejection)",
+                text[:80],
+            )
+            return True
+        # Degrade OPEN when the verify STT yielded NO usable transcript for real
+        # captured audio. ``verify_wake_with_stt`` collapses a persistent STT
+        # failure (Groq 429/503/timeout) AND an empty transcription to "" — and
+        # since OWW already fired strongly on audio we DID capture, an absent
+        # transcript is an STT problem, not the user staying silent. Accepting
+        # here is what keeps the wake alive through a single-provider outage
+        # (AP-22 / open-source resilience: one dead provider must never brick a
+        # core path, and recovery must be reachable in-app, never via a restart).
+        # This is the runtime-failure twin of the hallucination degrade-open just
+        # above; the documented honesty cost is the occasional bare-"Jarvis"
+        # false positive while the STT is down. A CLEAR non-matching transcript
+        # still suppresses below, so the BUG-009 guard is unaffected.
+        if not text:
+            log.info(
+                "wake-verify: verify STT returned no transcript on a strong OWW "
+                "hit — accepting (degrade-open; an STT outage must not brick the "
+                "wake, AP-22)"
+            )
+            return True
+        log.info(
+            "wake-verify: suppressed — transcript %r has no wake prefix", text[:80]
+        )
+        return False
 
     async def _run_parallel_wake(self) -> None:
         """Öffnet ein Mic, fannt zu 2 Detector-Queues, wartet auf ersten Hit."""
@@ -3859,6 +3990,13 @@ class SpeechPipeline:
 
         async def _fanout(mic: MicrophoneCapture) -> None:
             async for chunk in mic.stream():
+                # Input mute (Jarvis-scoped): if the user mutes while a wake
+                # session is already mid-wait, stop feeding the detectors so
+                # Jarvis goes deaf immediately — without touching the OS mic.
+                # (A fresh mute while IDLE is already handled by _wake_loop's
+                # _activation_allowed() gate, which never opens the mic.)
+                if getattr(self, "_muted", False):
+                    continue
                 ring_bytes.extend(chunk.pcm)
                 if len(ring_bytes) > RING_MAX:
                     del ring_bytes[: len(ring_bytes) - RING_MAX]
@@ -3966,8 +4104,27 @@ class SpeechPipeline:
                         # already enforces the same pattern, so its hits skip
                         # the second stage. See ``_verify_oww_hit``.
                         if result.startswith("oww:"):
+                            # Optimistic VISUAL reveal: pop the overlay bar NOW,
+                            # before the slow STT prefix-verify below, so the bar
+                            # feels instant on "Hey Jarvis". This is visual-only
+                            # (WakeCandidateDetected never opens a session turn),
+                            # so a rejected candidate costs a brief bar flash, not
+                            # a phantom session — retracted just below on reject.
+                            show_candidate = self._state == PipelineState.IDLE
+                            if show_candidate:
+                                await self._publish_event(
+                                    WakeCandidateDetected(
+                                        source_layer="speech", active=True
+                                    )
+                                )
                             verified = await self._verify_oww_hit(bytes(ring_bytes))
                             if not verified:
+                                if show_candidate:
+                                    await self._publish_event(
+                                        WakeCandidateDetected(
+                                            source_layer="speech", active=False
+                                        )
+                                    )
                                 log.info(
                                     "🚫 WAKE verworfen — kein 'Hey'-Prefix im "
                                     "Transkript der letzten ~3 s"
@@ -3984,6 +4141,37 @@ class SpeechPipeline:
                                 break
                         log.info("🎙 WAKE bestätigt über %s", result)
                         if self._state == PipelineState.IDLE:
+                            # The state-loop SILENTLY drops a wake that arrives
+                            # inside the post-hangup echo lock (or when the app
+                            # is not activatable) — it just ``continue``s. But
+                            # _emit_wake below publishes WakeWordDetected, which
+                            # flips the overlay bar to its "listen" look. Emitting
+                            # for a wake the loop will then drop leaves the bar
+                            # stuck "listening" with no session behind it, and the
+                            # user is ignored ("wake triggers, nothing happens").
+                            # Mirror the loop's gate HERE, before _emit_wake, and
+                            # retract the optimistic candidate instead of lying.
+                            now = time.time()
+                            locked = now < self._wake_lock_until
+                            if locked or not self._activation_allowed():
+                                if locals().get("show_candidate"):
+                                    await self._publish_event(
+                                        WakeCandidateDetected(
+                                            source_layer="speech", active=False
+                                        )
+                                    )
+                                if locked:
+                                    log.info(
+                                        "🔒 Wake-Lock aktiv — Emit verworfen "
+                                        "(noch %.1fs)",
+                                        max(0.0, self._wake_lock_until - now),
+                                    )
+                                else:
+                                    log.info(
+                                        "Wake-Emit verworfen — App nicht "
+                                        "aktivierbar."
+                                    )
+                                break
                             # Event-Bus: WakeWordDetected + Supervisor-State
                             # werden fuer UI-Feedback gebraucht (Orb einblenden).
                             keyword = result.split(":", 1)[-1] if ":" in result else result
@@ -4471,6 +4659,16 @@ class SpeechPipeline:
         except RuntimeError:
             log.warning("start_dictation: no running loop.")
             return False
+        # A fresh dictation session must NOT inherit a stale hangup. ``_hangup_event``
+        # is set by every "auflegen" and is otherwise only cleared when the next
+        # VOICE session is accepted (``_run_session``). The dictation lane shares
+        # that event in its ``asyncio.wait`` gate, so a leftover hangup from an
+        # earlier voice call would finalize this session on its first tick — the
+        # mic appears to "stop the instant you click it". Clear it here, mirroring
+        # the voice-path ``self._hangup_event.clear()`` at session accept.
+        hangup = getattr(self, "_hangup_event", None)
+        if hangup is not None:
+            hangup.clear()
         self._dictation_stop_event = asyncio.Event()
         self._dictation_task = loop.create_task(
             self._dictation_session(), name="chat-dictation"
@@ -4602,6 +4800,14 @@ class SpeechPipeline:
         """Filtert Mic-Frames, die waehrend/nach Jarvis-TTS aufgenommen wurden."""
         dropped = 0
         async for chunk in chunks:
+            # Input mute (Jarvis-scoped): while muted, drop the user's audio at
+            # OUR input boundary so Jarvis stops hearing them mid-session —
+            # without touching the OS microphone, so every other app keeps the
+            # mic. The mute flag already gated wake activation + TTS output; this
+            # closes the active-session input gap ("ich rede, aber er hoert mich
+            # trotzdem", 2026-06-28).  # i18n-allow
+            if getattr(self, "_muted", False):
+                continue
             if self._should_drop_session_input(chunk):
                 dropped += 1
                 continue

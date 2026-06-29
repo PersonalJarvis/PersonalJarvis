@@ -2635,3 +2635,77 @@ test_forced_cut_then_false_start_blip_still_flushes_tail,
 test_forced_cut_then_user_resumes_no_extra_tail_flush}` +
 `tests/unit/speech/test_long_dictation_accumulation.py::{test_empty_tail_flush_finalizes_carry,
 test_empty_flush_without_carry_skips_stt}`.
+
+---
+
+## BUG-036: Custom wake word permanently dead — wedged ctranslate2 transcription (2026-06-29)
+
+- **Date:** 2026-06-29 · **Scope:** `jarvis/plugins/stt/fwhisper.py`,
+  `jarvis/speech/rolling_whisper_wake.py` (custom-phrase `stt_match` wake path)
+
+### Symptom (what the user experiences)
+
+A custom wake word ("Hey Nico", any name on the `stt_match` / `RollingWhisperWake`
+path) stops working **entirely**: no orb, no bar, no reaction — for HOURS — no
+matter how loud or how often the word is spoken, and **even an app restart does
+not clear it**. User report: "I have to shout it ten times", then "I restarted and
+it's still dead, it doesn't work at all, with any wake word".
+
+### Root cause (code path)
+
+The local faster-whisper wake model (`FasterWhisperProvider`, ctranslate2 backend)
+is shared by TWO callers — the `RollingWhisperWake` poll loop AND the VAD
+"listening bubble" probe (`pipeline._probe_stt = self._stt` for a custom phrase).
+Both call `transcribe_pcm`, which runs `model.transcribe` in a worker thread
+(`asyncio.to_thread`). **ctranslate2's `WhisperModel` is NOT thread-safe for
+concurrent `transcribe` on one model object** — two overlapping calls corrupt its
+internal state and the call HANGS forever. An `asyncio.to_thread` worker cannot be
+cancelled, so:
+
+1. Every later `transcribe_pcm` times out at 8 s, is abandoned, re-polled, and
+   hangs again — an infinite `Transkription nach 8.0s abgebrochen (hung STT)` loop.
+   The heartbeat `transcribed`/`matched` counters FREEZE while `windows` keeps
+   climbing. Live forensic (`data/jarvis_desktop.log`): `transcribed=10 matched=2`
+   frozen for ~2 h while `windows` climbed to 20889; zero wakes the whole time.
+2. The hung, un-killable threads **exhaust the default thread pool**, which also
+   starves the in-app Restart endpoint's own `asyncio.to_thread` — so the Restart
+   button hangs "Restarting…" forever. That is why a soft restart did NOT clear it;
+   only a HARD process kill (Task Manager → end `pythonw.exe`) + relaunch worked.
+
+The 8 s timeout (added earlier) only BOUNDED each hang (re-poll the SAME wedged
+engine) — it never RECOVERED the model, so the wake stayed permanently dead.
+
+### Fix (file:line + test)
+
+1. **Prevent the corruption** — `jarvis/plugins/stt/fwhisper.py`
+   `FasterWhisperProvider._transcribe_sync`: a NON-BLOCKING per-instance inference
+   lock. A second concurrent call raises `TranscribeBusy` and is skipped (the
+   caller re-polls) instead of running `model.transcribe` concurrently or piling
+   worker threads up behind a hung call.
+2. **Self-heal the wedge** — `FasterWhisperProvider.recover()` drops the (possibly
+   hung) model + its lock so the next `transcribe_pcm` rebuilds a FRESH engine; the
+   hung thread keeps the OLD object/lock alive (orphaned, never blocks the fresh
+   path). `RollingWhisperWake.detect` counts consecutive transcribe failures and
+   calls `recover()` after `_WEDGE_RECOVER_AFTER_FAILS = 5` (resets on any success)
+   — a wedge now self-heals in seconds, NO restart needed.
+3. **Unwedge the Restart button** (parallel fix) — the restart endpoint runs on a
+   dedicated thread (`_run_off_pool`) so hung wake threads can no longer starve it.
+   A hard kill is still required for an ALREADY-wedged old process.
+
+Tests: `tests/unit/plugins/stt/test_fwhisper_concurrency.py`
+(`test_concurrent_transcribe_calls_never_overlap`, `test_busy_lock_raises_transcribe_busy`,
+`test_recover_drops_model_and_swaps_in_a_fresh_lock`) +
+`tests/unit/speech/test_rolling_whisper_wake.py::test_wake_self_heals_a_wedged_model_via_recover`.
+
+### Defense (bug class) — see AP-24
+
+Any shared single-threaded NATIVE inference engine (ctranslate2 / faster-whisper,
+and most ONNX / torch sessions) must NEVER be called concurrently — serialize with
+a NON-BLOCKING guard (concurrent call → skip, never overlap). And because a hung
+native `to_thread` call cannot be cancelled, a wedge must be RECOVERABLE (rebuild a
+fresh object), not merely timeout-bounded. **A timeout that re-polls the SAME
+wedged engine is a permanent-dead-state in disguise.** Signal: `transcribed` /
+`matched` heartbeat counters frozen while `windows` climbs; "hung STT" every
+timeout; a restart that does not help (the un-killable threads can even starve
+other thread pools, including the Restart button). Production restart after this
+fix: required (a HARD kill for an already-wedged old process).
