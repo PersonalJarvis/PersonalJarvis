@@ -49,8 +49,8 @@ from jarvis.core.events import (
     LatencyTurnComplete,
     ListeningStarted,
     ObservationCaptured,
-    OpenClawAnnouncement,
-    OpenClawBackgroundCompleted,
+    JarvisAgentAnnouncement,
+    JarvisAgentBackgroundCompleted,
     SpeechSpoken,
     TranscriptFinal,
     TranscriptionUpdate,
@@ -1395,10 +1395,10 @@ class SpeechPipeline:
             # User auch dann Bescheid, wenn er zwischenzeitlich etwas anderes
             # gemacht hat.
             self._bus.subscribe(
-                OpenClawBackgroundCompleted, self._on_background_completed
+                JarvisAgentBackgroundCompleted, self._on_background_completed
             )
             # Spawn-Ansage: dynamisch aus action/target geformt.
-            self._bus.subscribe(OpenClawAnnouncement, self._on_spawn_announcement)
+            self._bus.subscribe(JarvisAgentAnnouncement, self._on_spawn_announcement)
             # Mute toggle from any trigger surface (mascot doubleClick,
             # future hotkey/REST). The handler flips ``self._muted`` and
             # republishes the authoritative state on the bus.
@@ -2782,7 +2782,7 @@ class SpeechPipeline:
             log.warning("Flash-Brain ack publish failed: %s", exc)
 
     async def _on_background_completed(
-        self, event: OpenClawBackgroundCompleted
+        self, event: JarvisAgentBackgroundCompleted
     ) -> None:
         """Proaktive Voice-Ansage wenn ein Background-OpenClaw-Task fertig wird.
 
@@ -2915,7 +2915,7 @@ class SpeechPipeline:
                 hungup = hangup is not None and hangup.is_set()
                 await self._transition("IDLE" if hungup else "LISTENING")
 
-    async def _on_spawn_announcement(self, event: OpenClawAnnouncement) -> None:
+    async def _on_spawn_announcement(self, event: JarvisAgentAnnouncement) -> None:
         """Spawn-ACK ist auf User-Wunsch (2026-05-12) deaktiviert.
 
         History:

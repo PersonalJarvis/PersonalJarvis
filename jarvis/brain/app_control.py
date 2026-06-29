@@ -534,8 +534,8 @@ async def _switch_subagent(
             ANTIGRAVITY_SUBAGENT_SLUGS,
             CODEX_SUBAGENT_CANONICAL,
             CODEX_SUBAGENT_SLUGS,
-            JARVIS_TO_OPENCLAW,
-            canonical_subagent_provider,
+            JARVIS_TO_WORKER_SLUG,
+            canonical_worker_provider,
         )
     except Exception as exc:  # noqa: BLE001
         return {
@@ -544,10 +544,11 @@ async def _switch_subagent(
             "error": f"Subagent provider map unavailable: {exc}",
         }
 
-    canon = canonical_subagent_provider(provider) or ""
+    canon = canonical_worker_provider(provider) or ""
 
-    # Codex is a DIRECT worker (no OpenClaw slug) — accept it explicitly, mirroring
-    # the REST ``/api/subagent/switch`` path so the two switch sites never drift.
+    # Codex is a DIRECT worker (no worker-harness slug) — accept it explicitly,
+    # mirroring the REST ``/api/jarvis-agent/switch`` path so the two switch sites
+    # never drift.
     # Backed by the ChatGPT subscription (OAuth) OR an OpenAI API key.
     if canon in CODEX_SUBAGENT_SLUGS:
         try:
@@ -626,13 +627,13 @@ async def _switch_subagent(
             "requires_restart": True,
         }
 
-    if canon not in JARVIS_TO_OPENCLAW:
-        # List EVERY subagent-capable provider, not just the API/OpenClaw ones —
+    if canon not in JARVIS_TO_WORKER_SLUG:
+        # List EVERY worker-capable provider, not just the API/harness ones —
         # Codex and Antigravity route through their own workers, so omitting them
         # produced the false "codex is not a valid provider, only claude/gemini/
         # openai/openrouter" reply (forensic 2026-06-27).
         known = ", ".join(sorted(
-            set(JARVIS_TO_OPENCLAW)
+            set(JARVIS_TO_WORKER_SLUG)
             | {CODEX_SUBAGENT_CANONICAL, ANTIGRAVITY_SUBAGENT_CANONICAL}
         ))
         return {

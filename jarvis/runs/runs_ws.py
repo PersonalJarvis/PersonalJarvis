@@ -56,8 +56,8 @@ _LIVE_KINDS: frozenset[str] = frozenset({
     "LatencySpan",
     "ErrorOccurred",
     "SpeechSpoken",
-    "OpenClawTaskStarted",
-    "OpenClawTaskCompleted",
+    "JarvisAgentTaskStarted",
+    "JarvisAgentTaskCompleted",
 })
 
 

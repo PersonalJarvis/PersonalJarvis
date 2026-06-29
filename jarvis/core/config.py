@@ -957,7 +957,7 @@ class JarvisAgentHarnessConfig(BaseModel):
     setting ``enabled = true`` has NO effect — the harness cannot be dispatched
     and "start a subagent" routes to ``spawn_worker`` regardless. The boot path
     logs a warning when ``enabled`` is true but the harness is unregistered
-    (see ``warn_if_phantom_openclaw`` in jarvis/brain/factory.py). Heavy
+    (see ``warn_if_phantom_worker_harness`` in jarvis/brain/factory.py). Heavy
     sub-agent work runs through the Mission-Manager (ClaudeDirectWorker), not
     here, until Wave 3 actually wires the bridge.
 

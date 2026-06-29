@@ -93,7 +93,7 @@ def _eval_first_mcp(event: Event, ctx: AchievementContext) -> UnlockDecision | N
 
 def _eval_openclaw_summoner(event: Event, ctx: AchievementContext) -> UnlockDecision | None:
     """First successful OpenClaw spawn."""
-    if type(event).__name__ != "OpenClawTaskCompleted":
+    if type(event).__name__ != "JarvisAgentTaskCompleted":
         return None
     if not bool(getattr(event, "success", False)):
         return None
@@ -136,9 +136,9 @@ def _eval_triple_combo(event: Event, ctx: AchievementContext) -> UnlockDecision 
 def _make_task_count_eval(threshold: int) -> Callable[[Event, AchievementContext], UnlockDecision | None]:
     def _eval(event: Event, ctx: AchievementContext) -> UnlockDecision | None:
         name = type(event).__name__
-        if name not in ("TaskCompleted", "OpenClawTaskCompleted"):
+        if name not in ("TaskCompleted", "JarvisAgentTaskCompleted"):
             return None
-        if name == "OpenClawTaskCompleted" and not bool(getattr(event, "success", False)):
+        if name == "JarvisAgentTaskCompleted" and not bool(getattr(event, "success", False)):
             return None
         total = ctx.successful_tasks_total()
         if total >= threshold:
@@ -154,7 +154,7 @@ def _eval_ten_x_engineer(event: Event, ctx: AchievementContext) -> UnlockDecisio
     sums over OpenClaw runtimes during which the user was typically doing
     something else.
     """
-    if type(event).__name__ != "OpenClawTaskCompleted":
+    if type(event).__name__ != "JarvisAgentTaskCompleted":
         return None
     if ctx.hours_saved_last_7d() >= 10.0:
         return UnlockDecision(evidence={"hours_saved_7d": round(ctx.hours_saved_last_7d(), 1)})
@@ -195,8 +195,8 @@ ACHIEVEMENTS: list[AchievementSpec] = [
     ),
     AchievementSpec(
         id="openclaw_summoner",
-        title="OpenClaw Summoner",
-        description="Erster erfolgreicher OpenClaw-Spawn.",
+        title="Jarvis-Agent Summoner",
+        description="Erster erfolgreicher Jarvis-Agent-Spawn.",
         tier="mastery",
         evaluator=_eval_openclaw_summoner,
     ),
@@ -231,7 +231,7 @@ ACHIEVEMENTS: list[AchievementSpec] = [
     AchievementSpec(
         id="ten_x_engineer",
         title="10x Engineer",
-        description="Ueber 10 OpenClaw-Stunden in den letzten 7 Tagen.",
+        description="Ueber 10 Jarvis-Agent-Stunden in den letzten 7 Tagen.",
         tier="mastery",
         evaluator=_eval_ten_x_engineer,
     ),
@@ -271,6 +271,6 @@ ACHIEVEMENTS_BY_ID: dict[str, AchievementSpec] = {a.id: a for a in ACHIEVEMENTS}
 TRIGGERING_EVENT_NAMES: frozenset[str] = frozenset({
     "ActionExecuted",
     "HarnessCompleted",
-    "OpenClawTaskCompleted",
+    "JarvisAgentTaskCompleted",
     "TaskCompleted",
 })

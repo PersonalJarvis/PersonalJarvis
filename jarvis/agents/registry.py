@@ -1,4 +1,4 @@
-"""SubAgentRegistry — live tree of all active Jarvis sub-agents.
+"""JarvisAgentRegistry — live tree of all active Jarvis-Agents.
 
 The registry is a typed bus subscriber: it holds an in-memory dict
 of ``AgentNode`` instances and maintains parent-child links via the
@@ -12,7 +12,7 @@ Design decisions (see Plan §3):
   removes the node from the map and from ``parent.children_trace_ids``.
 - **Heuristic parent linking for HarnessDispatched**: the event has no
   ``parent_trace_id`` field. We take the most recently started still-running
-  OpenClaw node as the parent. If none exists, the harness node becomes root.
+  worker node as the parent. If none exists, the harness node becomes root.
 """
 from __future__ import annotations
 
@@ -30,9 +30,9 @@ from jarvis.core.events import (
     BrainTurnStarted,
     HarnessCompleted,
     HarnessDispatched,
-    OpenClawReviewTriggered,
-    OpenClawTaskCompleted,
-    OpenClawTaskStarted,
+    JarvisAgentReviewTriggered,
+    JarvisAgentTaskCompleted,
+    JarvisAgentTaskStarted,
     ToolCallCompleted,
     ToolCallStarted,
 )
@@ -51,7 +51,7 @@ from jarvis.missions.events import (
 
 log = logging.getLogger(__name__)
 
-NodeKind = Literal["router", "openclaw", "harness", "tool_call"]
+NodeKind = Literal["router", "jarvis_agent", "harness", "tool_call"]
 NodeStatus = Literal["running", "completed", "failed"]
 
 
@@ -90,12 +90,12 @@ class AgentNode:
     depth: int = 0
 
 
-class SubAgentRegistry:
-    """Live tree registry for the sub-agent dashboard.
+class JarvisAgentRegistry:
+    """Live tree registry for the Jarvis-Agent dashboard.
 
     Usage::
 
-        registry = SubAgentRegistry(bus)
+        registry = JarvisAgentRegistry(bus)
         registry.attach()              # activate bus subscriptions
         roots = registry.tree()        # root nodes only (no parent)
         snap  = registry.snapshot()    # flat Dict[trace_id, AgentNode]
@@ -109,12 +109,12 @@ class SubAgentRegistry:
         self._mission_bus_attached = False
         self._cleanup_tasks: set[asyncio.Task[None]] = set()
 
-    def attach(self) -> SubAgentRegistry:
+    def attach(self) -> JarvisAgentRegistry:
         if self._attached:
             return self
-        self._bus.subscribe(OpenClawTaskStarted, self._on_openclaw_started)
-        self._bus.subscribe(OpenClawReviewTriggered, self._on_openclaw_review)
-        self._bus.subscribe(OpenClawTaskCompleted, self._on_openclaw_completed)
+        self._bus.subscribe(JarvisAgentTaskStarted, self._on_worker_started)
+        self._bus.subscribe(JarvisAgentReviewTriggered, self._on_worker_review)
+        self._bus.subscribe(JarvisAgentTaskCompleted, self._on_worker_completed)
         self._bus.subscribe(BrainTurnStarted, self._on_brain_turn_started)
         self._bus.subscribe(BrainTurnCompleted, self._on_brain_turn_completed)
         self._bus.subscribe(ToolCallStarted, self._on_tool_call_started)
@@ -124,7 +124,7 @@ class SubAgentRegistry:
         self._attached = True
         return self
 
-    def attach_mission_bus(self, mission_bus: Any) -> SubAgentRegistry:
+    def attach_mission_bus(self, mission_bus: Any) -> JarvisAgentRegistry:
         """Bridge Phase-6 MissionBus events into the legacy agent-tree.
 
         Welle-4 removed the publishers for OpenClawTaskStarted/Completed et
@@ -164,27 +164,27 @@ class SubAgentRegistry:
         if child_tid not in parent.children_trace_ids:
             parent.children_trace_ids.append(child_tid)
 
-    def _find_newest_running_openclaw(self) -> AgentNode | None:
+    def _find_newest_running_worker(self) -> AgentNode | None:
         candidates = [
             n for n in self._nodes.values()
-            if n.kind == "openclaw" and n.status == "running"
+            if n.kind == "jarvis_agent" and n.status == "running"
         ]
         if not candidates:
             return None
         return max(candidates, key=lambda n: n.started_ns)
 
-    async def _on_openclaw_started(self, e: OpenClawTaskStarted) -> None:
+    async def _on_worker_started(self, e: JarvisAgentTaskStarted) -> None:
         tid = _tid(e.trace_id)
         if tid is None:
             return
         parent_tid = _tid(e.parent_trace_id)
         # User-facing name is the neutral role only. provider/model are kept as
         # structured fields (below) for internal aggregation, but never baked
-        # into the display name — the Sub-Agents board must not surface the
+        # into the display name — the Jarvis-Agent board must not surface the
         # underlying engine or model. `kind` stays the internal routing tag.
-        name = "Sub-Agent"
+        name = "Jarvis-Agent"
         self._nodes[tid] = AgentNode(
-            trace_id=tid, kind="openclaw", name=name, status="running",
+            trace_id=tid, kind="jarvis_agent", name=name, status="running",
             parent_trace_id=parent_tid,
             provider=e.provider or None, model=e.model or None,
             started_ns=e.timestamp_ns,
@@ -194,7 +194,7 @@ class SubAgentRegistry:
         )
         self._attach_child(parent_tid, tid)
 
-    async def _on_openclaw_review(self, e: OpenClawReviewTriggered) -> None:
+    async def _on_worker_review(self, e: JarvisAgentReviewTriggered) -> None:
         tid = _tid(e.trace_id)
         if tid is None or tid not in self._nodes:
             return
@@ -202,7 +202,7 @@ class SubAgentRegistry:
             self._nodes[tid].review_iterations, e.iteration
         )
 
-    async def _on_openclaw_completed(self, e: OpenClawTaskCompleted) -> None:
+    async def _on_worker_completed(self, e: JarvisAgentTaskCompleted) -> None:
         tid = _tid(e.trace_id)
         if tid is None or tid not in self._nodes:
             return
@@ -231,7 +231,7 @@ class SubAgentRegistry:
     async def _on_brain_turn_completed(self, e: BrainTurnCompleted) -> None:
         running = [
             n for n in self._nodes.values()
-            if n.kind == "openclaw" and n.status == "running"
+            if n.kind == "jarvis_agent" and n.status == "running"
         ]
         if not running:
             return
@@ -267,7 +267,7 @@ class SubAgentRegistry:
         tid = _tid(e.trace_id)
         if tid is None:
             return
-        parent = self._find_newest_running_openclaw()
+        parent = self._find_newest_running_worker()
         parent_tid = parent.trace_id if parent else None
         self._nodes[tid] = AgentNode(
             trace_id=tid, kind="harness",
@@ -365,10 +365,10 @@ class SubAgentRegistry:
                 return
             self._nodes[tid] = AgentNode(
                 trace_id=tid,
-                kind="openclaw",
+                kind="jarvis_agent",
                 # Neutral role label only — no engine/provider/model/language in
                 # the name. The prompt (what it is doing) rides `utterance`.
-                name="Sub-Agent",
+                name="Jarvis-Agent",
                 status="running",
                 started_ns=ts_ns,
                 utterance=payload.prompt,

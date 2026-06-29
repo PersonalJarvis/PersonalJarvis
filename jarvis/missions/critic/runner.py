@@ -394,16 +394,16 @@ def build_critic_cmd(
     """
     del model, use_bare
 
-    from jarvis.missions.worker_runtime.provider_map import to_provider_slug
+    from jarvis.missions.worker_runtime.provider_map import to_worker_slug
     from jarvis.missions.workers.provider_chain import (
-        _build_openclaw_cmd,
+        _build_worker_cmd,
         _resolve_provider_chain,
         _resolve_worker_argv_prefix,
     )
 
     chain = _resolve_provider_chain(requested_provider=provider)
     primary = chain[0]
-    openclaw_slug = to_provider_slug(primary.provider)
+    worker_slug = to_worker_slug(primary.provider)
     augmented_prompt = (
         f"{prompt}\n\n"
         "---\n"
@@ -411,11 +411,11 @@ def build_critic_cmd(
         "schema. No prose, markdown, or code fences before or after it.\n"
         f"{schema_json}\n"
     )
-    return _build_openclaw_cmd(
+    return _build_worker_cmd(
         augmented_prompt,
         binary=_resolve_worker_argv_prefix(),
         session_id="critic",
-        openclaw_slug=openclaw_slug,
+        worker_slug=worker_slug,
         model=primary.model,
         timeout_s=DEFAULT_TIMEOUT_SECONDS,
         extra_args=("--agent", "critic"),
@@ -1069,8 +1069,8 @@ class CriticRunner:
         # only fires when the resolved provider is actually claude-cli.
         try:
             from jarvis.missions.worker_runtime.provider_map import (
-                UnknownJarvisProviderError,
-                to_provider_slug,
+                NoWorkerSlugMappingError,
+                to_worker_slug,
             )
             from jarvis.missions.workers.provider_chain import (
                 _resolve_provider_chain,
@@ -1078,9 +1078,9 @@ class CriticRunner:
             _chain = _resolve_provider_chain()
             _primary = _chain[0] if _chain else None
             _slug = (
-                to_provider_slug(_primary.provider) if _primary else None
+                to_worker_slug(_primary.provider) if _primary else None
             )
-        except (UnknownJarvisProviderError, Exception):  # noqa: BLE001
+        except (NoWorkerSlugMappingError, Exception):  # noqa: BLE001
             _slug = None
         if _slug == "claude-cli":
             defaults_cfg = agents_cfg.setdefault("defaults", {})

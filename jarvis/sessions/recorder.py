@@ -47,8 +47,8 @@ from jarvis.core.events import (
     Event,
     ListeningStarted,
     ResponseGenerated,
-    OpenClawTaskCompleted,
-    OpenClawTaskStarted,
+    JarvisAgentTaskCompleted,
+    JarvisAgentTaskStarted,
     SpeechSpoken,
     SystemStateChanged,
     ToolCallCompleted,
@@ -80,8 +80,8 @@ _RAW_EVENT_KINDS: frozenset[str] = frozenset(
         "ActionExecuted",
         "ResponseGenerated",
         "AudioOutFirst",
-        "OpenClawTaskStarted",
-        "OpenClawTaskCompleted",
+        "JarvisAgentTaskStarted",
+        "JarvisAgentTaskCompleted",
         "SystemStateChanged",
         "VoiceSessionStarted",
         "VoiceSessionEnded",
@@ -246,9 +246,9 @@ class SessionRecorder:
             self._on_response_generated(event)
         elif isinstance(event, AudioOutFirst):
             self._on_audio_out_first(event)
-        elif isinstance(event, OpenClawTaskStarted):
-            self._on_openclaw_task_started(event)
-        elif isinstance(event, OpenClawTaskCompleted):
+        elif isinstance(event, JarvisAgentTaskStarted):
+            self._on_worker_task_started(event)
+        elif isinstance(event, JarvisAgentTaskCompleted):
             if self._state.current_turn:
                 self._state.current_turn.cost_usd += event.cost_estimate_usd
         elif isinstance(event, SystemStateChanged):
@@ -544,28 +544,27 @@ class SessionRecorder:
         if event.intent_level and not t.tier:
             t.tier = _normalize_intent_level_to_tier(event.intent_level)
 
-    def _on_openclaw_task_started(self, event: OpenClawTaskStarted) -> None:
-        """OpenClaw-Task-Spawn markieren — Tier + Provider/Model fuellen.
+    def _on_worker_task_started(self, event: JarvisAgentTaskStarted) -> None:
+        """Jarvis-Agent task spawn — set tier + provider/model for telemetry.
 
-        Welle-4-Migration: vorher hiess das ``_on_sub_jarvis_started`` mit
-        ``SubJarvisStarted``-Event. Sub-Jarvis-Tier wurde durch OpenClaw-
-        Bridge ersetzt (siehe docs/openclaw-bridge.md §11). Schema bleibt 1:1.
+        Welle-4-Migration: formerly ``_on_sub_jarvis_started`` with
+        ``SubJarvisStarted``-Event. Sub-Jarvis tier was replaced by the worker
+        harness (see docs/openclaw-bridge.md §11). Schema preserved 1:1.
 
-        Wichtig fuer die Telemetrie: ohne diesen Setter blieb provider/model
-        in voice_turns leer, wenn der Worker seinen eigenen
-        BrainTurnStarted nicht (mehr) emittierte — z.B. wenn die
-        Provider-Chain wegen fehlendem API-Key continue'd. ``OpenClawTaskStarted``
-        traegt provider/model bereits, also nutzen wir das als Quelle.
+        Important for telemetry: without this setter, provider/model stayed
+        empty in voice_turns when the worker no longer emitted its own
+        BrainTurnStarted — e.g. when the provider chain continued due to a
+        missing API key. ``JarvisAgentTaskStarted`` already carries provider/
+        model, so we use that as the source.
 
-        Tier wird hier IMMER auf ``"openclaw"`` gesetzt (nicht nur wenn
-        leer): Der OpenClaw-Spawn ist die ``tier``-bestimmende Aktion fuer
-        diesen Turn — auch wenn vorher bereits der Router seinen
-        BrainTurnStarted("router") emittiert hatte.
+        Tier is ALWAYS set to ``"jarvis_agent"`` here (not only when empty):
+        the worker spawn is the tier-determining action for this turn — even
+        when the router had already emitted BrainTurnStarted("router").
         """
         if self._state is None or self._state.current_turn is None:
             return
         t = self._state.current_turn
-        t.tier = "openclaw"
+        t.tier = "jarvis_agent"
         if event.provider:
             t.provider = event.provider
         if event.model:
