@@ -13,7 +13,7 @@
 ## 0. TL;DR — whom do you trust when you run the one-liner?
 
 ```
-curl -fsSL https://github.com/personal-jarvis/personal-jarvis/releases/download/<TAG>/install-verify.sh | bash
+curl -fsSL https://github.com/PersonalJarvis/PersonalJarvis/releases/download/<TAG>/install-verify.sh | bash
 ```
 
 Running this binds you to all of the following parties at once:
@@ -22,7 +22,7 @@ Running this binds you to all of the following parties at once:
    release host (serves the `.sh`, `.sig`, `.pem`, `.bundle` bytes).
 2. **The Sigstore project** — Fulcio CA, Rekor transparency log, and the
    `cosign` binary itself.
-3. **The current owners of `personal-jarvis/personal-jarvis`** — at the
+3. **The current owners of `PersonalJarvis/PersonalJarvis`** — at the
    instant of any tag push, whoever can trigger `.github/workflows/sign-installer.yml`
    on this repo can mint a signature that this verifier will accept.
 4. **The cosign release at `v2.4.1`** — pinned by SHA-256 inside
@@ -45,7 +45,7 @@ the entire trust root in one screen of code.
 
 | Constant | Current value (Wave 1) | What it pins | Failure mode if wrong |
 |---|---|---|---|
-| `EXPECTED_REPO` | `personal-jarvis/personal-jarvis` | The GitHub repo whose Actions identity is allowed to sign. | An attacker who signs a `install.sh` under a *different* repo's OIDC identity (even with a legitimately-issued Fulcio cert) will fail verification. |
+| `EXPECTED_REPO` | `PersonalJarvis/PersonalJarvis` | The GitHub repo whose Actions identity is allowed to sign. | An attacker who signs a `install.sh` under a *different* repo's OIDC identity (even with a legitimately-issued Fulcio cert) will fail verification. |
 | `EXPECTED_WORKFLOW_PATH` | `.github/workflows/sign-installer.yml` | The specific workflow file inside `EXPECTED_REPO` whose identity is allowed to sign. | An attacker who pushes a *second* signing workflow to this repo (e.g. via a poisoned PR that survives review) and uses it to mint signatures will be rejected — the regex won't match. |
 | `EXPECTED_OIDC_ISSUER` | `https://token.actions.githubusercontent.com` | The GitHub Actions production OIDC issuer. | An attacker using a different OIDC issuer (a self-hosted Dex, GitLab, etc.) cannot mint a Fulcio cert that satisfies this issuer pin. |
 | `COSIGN_VERSION` | `v2.4.1` | The cosign release we will download. | Combined with the SHA-256 pins below — if the version doesn't match its known-good hash, verification fails before any signature work begins. |
@@ -155,10 +155,10 @@ The exact migration path (do this on real production releases):
    The exact command (run by a maintainer with `secrets` access on the repo):
    ```bash
    gh secret set WAVE2_CEREMONY_PASSPHRASE \
-     --repo personal-jarvis/personal-jarvis \
+     --repo PersonalJarvis/PersonalJarvis \
      --body "<your 24+ char passphrase from openssl rand -base64 18>"
    ```
-   After setting, `gh secret list --repo personal-jarvis/personal-jarvis`
+   After setting, `gh secret list --repo PersonalJarvis/PersonalJarvis`
    must show `WAVE2_CEREMONY_PASSPHRASE` with a recent updated_at.
 3. **Sign-installer.yml** then references the secret as
    `${{ secrets.WAVE2_CEREMONY_PASSPHRASE }}` to decrypt the private key
@@ -291,8 +291,8 @@ repo-takeover would let an attacker swap the binary under the tag.
 | `SLSA_VERIFIER_SHA256_DARWIN_AMD64` | `f838adf01bbe62b883e7967167fa827bbf7373f83e2d7727ec18e53f725fee93` | Pinned bytes of `slsa-verifier-darwin-amd64`. |
 | `SLSA_VERIFIER_SHA256_DARWIN_ARM64` | `8740e66832fd48bbaa479acd5310986b876ff545460add0cb4a087aec056189c` | Pinned bytes of `slsa-verifier-darwin-arm64`. |
 | `SLSA_VERIFIER_SHA256_WINDOWS` | `37ca29ad748e8ea7be76d3ae766e8fa505362240431f6ea7f0648c727e2f2507` | Pinned bytes of `slsa-verifier-windows-amd64.exe`. |
-| `EXPECTED_SLSA_SOURCE_URI` | `github.com/personal-jarvis/personal-jarvis` | Source URI passed to `slsa-verifier verify-artifact`. |
-| `EXPECTED_INTOTO_IDENTITY_REGEXP` | `^https://github\.com/personal-jarvis/personal-jarvis/\.github/workflows/sign-installer\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._-]+)?$` | Functionary identity_regexp the in-toto layout MUST pin. Catch-all values (`.*`, `.+`, `^.*$`, `^.+$`, `""`) are rejected explicitly. |
+| `EXPECTED_SLSA_SOURCE_URI` | `github.com/PersonalJarvis/PersonalJarvis` | Source URI passed to `slsa-verifier verify-artifact`. |
+| `EXPECTED_INTOTO_IDENTITY_REGEXP` | `^https://github\.com/PersonalJarvis/PersonalJarvis/\.github/workflows/sign-installer\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._-]+)?$` | Functionary identity_regexp the in-toto layout MUST pin. Catch-all values (`.*`, `.+`, `^.*$`, `^.+$`, `""`) are rejected explicitly. |
 | `SLSA_PROVENANCE_FILENAME` | `personal-jarvis.intoto.jsonl` | Filename the workflow uploads the SLSA L3 provenance under. |
 | `INTOTO_LAYOUT_FILENAME` | `layout.template.json` | Filename the workflow uploads the in-toto layout template under. |
 
@@ -623,7 +623,7 @@ The OIDC identity verified by `cosign verify-blob` is **not a person**; it
 is a *workflow file path inside a repo*. Specifically:
 
 ```
-https://github.com/personal-jarvis/personal-jarvis/.github/workflows/sign-installer.yml@refs/tags/<TAG>
+https://github.com/PersonalJarvis/PersonalJarvis/.github/workflows/sign-installer.yml@refs/tags/<TAG>
 ```
 
 This means:
@@ -633,7 +633,7 @@ This means:
   **a tag matching `v*.*.*[-suffix]`**.
 - The *person* who pushed the tag is recorded in Rekor but is not gated
   by the verifier. In Wave 1, **any maintainer with `push` permission on
-  `personal-jarvis/personal-jarvis` and the ability to push a `v*.*.*`
+  `PersonalJarvis/PersonalJarvis` and the ability to push a `v*.*.*`
   tag can mint a verifier-accepted signature.**
 - A repo-takeover (account compromise of the repo owner) breaks this
   trust root. Wave 2 mitigates with threshold signing (2-of-N maintainer
@@ -641,7 +641,7 @@ This means:
 
 Today (Wave 1), the maintainer set is `@RubenLuetke` (repo owner) plus any
 collaborators added under
-https://github.com/personal-jarvis/personal-jarvis/settings/access. The
+https://github.com/PersonalJarvis/PersonalJarvis/settings/access. The
 expectation is that this list is short and audited.
 
 ---
@@ -771,7 +771,7 @@ Implementation:
 
 - **Secret scanning + push protection** enabled at the repo level via
   the GitHub Security & Analysis settings (`gh api -X PATCH
-  /repos/personal-jarvis/personal-jarvis -F
+  /repos/PersonalJarvis/PersonalJarvis -F
   security_and_analysis.secret_scanning.status=enabled -F
   security_and_analysis.secret_scanning_push_protection.status=enabled`).
 - **Dependabot** enabled via `.github/dependabot.yml` — weekly updates
