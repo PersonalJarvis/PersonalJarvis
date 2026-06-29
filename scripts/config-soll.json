@@ -6,10 +6,10 @@
     "single_turn_mode": false
   },
   "tts": {
-    "provider": "cartesia",
+    "provider": "grok-voice",
     "fallback": "grok-voice",
-    "voice_de": "Charon",
-    "voice_en": "Charon",
+    "voice_de": "Kore",
+    "voice_en": "Kore",
     "language_code": "auto",
     "chunk_by_sentence": false,
     "seed": 7,
@@ -18,7 +18,7 @@
     "vertex_project": "",
     "vertex_location": "us-central1",
     "service_account_path": "~/.config/jarvis/vertex-sa.json",
-    "model": "gemini-3.1-flash-tts-preview"
+    "model": "sonic-2"
   },
   "tts.cartesia": {
     "model_id": "sonic-3.5",
@@ -32,7 +32,7 @@
     "allow_sapi5_fallback": false
   },
   "brain": {
-    "primary": "gemini",
+    "primary": "openrouter",
     "fallback": "gemini",
     "deep_brain": "gemini",
     "routing_provider": "gemini",
@@ -53,8 +53,8 @@
     "deep_model": "claude-opus-4-8"
   },
   "brain.sub_jarvis": {
-    "provider": "claude-api",
-    "model": "",
+    "provider": "antigravity",
+    "model": "claude-opus-4-8",
     "fallback_provider": "gemini",
     "fallback_model": "gemini-3.1-pro-preview",
     "fallback_provider_2": "gemini",
@@ -63,7 +63,8 @@
   "stt": {
     "provider": "groq-api",
     "model": "whisper-large-v3",
-    "bias_prompt": "Jarvis, OpenClaw, Codex, Gemini, Grok, Claude, Anthropic, OpenAI, OpenRouter, Whisper, Wispr Flow, Subagent, Sub-Agent, Mission-Manager, Critic-Loop, Critic, Worker, Router-Brain, Router, Kontrollierer, Voice-Pipeline, Wake-Word, Silero, VAD, TTS, STT, Telemetry, Transkript, Token, Provider, Plugin, Sprechblase, Orb, Mascot, Quip, Browser, Terminal, Repository, Branch, Commit, Push, Pull-Request, Issue, Merge, Refactor, Deployment, Screenshot, Debuggen, Workflow, Microservice, Container, Docker, Kubernetes, FastAPI, React, TypeScript, Python, JSON, Markdown, Logfile, Konfiguration, Endpoint, Webhook, API-Key, Service-Account, Cloud, Google Cloud, Vertex AI, BigQuery, GitHub, Twilio, ElevenLabs, OAuth, Credential Manager, Frontend, Backend, Skript, Daemon, Hangup, Auflegen, Denkpause, submitted, distanziert, erkennt"
+    "bias_prompt": "Jarvis, OpenClaw, Codex, Gemini, Grok, Claude, Anthropic, OpenAI, OpenRouter, Whisper, Wispr Flow, Subagent, Sub-Agent, Mission-Manager, Critic-Loop, Critic, Worker, Router-Brain, Router, Kontrollierer, Voice-Pipeline, Wake-Word, Silero, VAD, TTS, STT, Telemetry, Transkript, Token, Provider, Plugin, Sprechblase, Orb, Mascot, Quip, Browser, Terminal, Repository, Branch, Commit, Push, Pull-Request, Issue, Merge, Refactor, Deployment, Screenshot, Debuggen, Workflow, Microservice, Container, Docker, Kubernetes, FastAPI, React, TypeScript, Python, JSON, Markdown, Logfile, Konfiguration, Endpoint, Webhook, API-Key, Service-Account, Cloud, Google Cloud, Vertex AI, BigQuery, GitHub, Twilio, ElevenLabs, OAuth, Credential Manager, Frontend, Backend, Skript, Daemon, Hangup, Auflegen, Denkpause, submitted, distanziert, erkennt",
+    "language": "auto"
   },
   "ack_brain": {
     "enabled": true,
@@ -86,5 +87,8 @@
   },
   "brain.providers.antigravity": {
     "model": "gemini-3.5-flash"
+  },
+  "brain.providers.openrouter": {
+    "model": "nvidia/nemotron-3-ultra-550b-a55b:free"
   }
 }

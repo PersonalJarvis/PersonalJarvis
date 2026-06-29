@@ -187,7 +187,28 @@ jobs:
           # pytest is needed to RUN the suite; --no-deps above skips it (and all
           # of [dev]'s deps), so install the test runner explicitly alongside the
           # CLI's own runtime deps. Keeps the job light (no torch/heavy deps).
-          python -m pip install typer platformdirs httpx rich pytest pytest-asyncio
+          python -m pip install typer platformdirs click httpx rich pytest pytest-asyncio
+
+      - name: Import + --help smoke (CLI runs without desktop deps)
+        # python:3.11-slim-equivalent: `--no-deps` above skipped torch / sounddevice
+        # / etc., so this proves jarvis.cli_ctl imports and its --help renders on a
+        # bare Linux/macOS/Windows with only typer/httpx/platformdirs/rich. No live
+        # server here: the dynamic `api` build fails closed to the curated surface.
+        run: |
+          python -c "import jarvis.cli_ctl.__main__"
+          python -m jarvis.cli_ctl --help
+
+      - name: CLI coverage gate (every route mounted + tagged)
+        # Static + stdlib-only: every jarvis/ui/web/*_routes.py router must be
+        # mounted in server.py and carry tags=, so every WebUI action stays a
+        # reachable, cleanly-grouped `jarvis api <tag>` command. Mirrors the
+        # pre-push hook so a contributor without the hook can't bypass it.
+        run: python scripts/ci/check_cli_coverage.py
+
+      - name: CLI reference drift gate (docs in sync with command tree)
+        # Fails if a curated command was added/changed without regenerating
+        # docs/jarvis-cli-reference.md. Mirrors the pre-push docgen gate.
+        run: python scripts/ci/gen_cli_reference.py --check
 
       - name: pytest (jarvisctl unit suite)
         run: python -m pytest tests/unit/cli_ctl/ -v

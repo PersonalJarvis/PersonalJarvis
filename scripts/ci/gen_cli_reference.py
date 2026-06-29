@@ -4,6 +4,12 @@ Walks the Typer app (the curated commands only — NOT the dynamic `api` group,
 which needs a live server's OpenAPI) and emits a grouped markdown reference. Run
 after adding/removing commands so the reference never drifts; the
 ``generate-cli-command`` skill calls this.
+
+Modes:
+* (no flag) — regenerate ``docs/jarvis-cli-reference.md`` in place.
+* ``--check`` — build the reference in memory and exit non-zero if it differs
+  from the committed file (the pre-push hook + CI drift gate use this, so the
+  reference can never silently fall behind the command tree).
 """
 from __future__ import annotations
 
@@ -43,7 +49,7 @@ def _walk(cmd: click.Command, prefix: str, lines: list[str]) -> None:
         lines.append(f"- `{sig}` — {summary_line}")
 
 
-def main() -> int:
+def _build_reference() -> str:
     root = typer.main.get_command(app)
     assert isinstance(root, click.Group)
     lines = [
@@ -61,7 +67,24 @@ def main() -> int:
         lines.append("")
         _walk(root.commands[name], name, lines)
         lines.append("")
-    _OUT.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return "\n".join(lines) + "\n"
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    generated = _build_reference()
+    rel = _OUT.relative_to(_REPO)
+    if "--check" in args:
+        current = _OUT.read_text(encoding="utf-8") if _OUT.exists() else ""
+        if current != generated:
+            print(
+                f"DRIFT: {rel} is out of date with the curated command tree.\n"
+                "Run `python scripts/ci/gen_cli_reference.py` and commit the result."
+            )
+            return 1
+        print(f"check OK — {rel} is current.")
+        return 0
+    _OUT.write_text(generated, encoding="utf-8")
     print(f"wrote {_OUT}")
     return 0
 

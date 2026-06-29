@@ -296,3 +296,11 @@ tests/unit/clis/test_capability_provider.py
 tests/unit/sessions/test_recorder_posthangup_readback.py
 tests/unit/speech/test_subagent_readback.py
 tests/unit/ui/test_tray.py
+
+# --- Frozen "June 13" Computer-Use engine (2026-06-27): a byte-for-byte
+#     historical snapshot of screenshot_only_loop.py at git 352a784f (2026-06-10),
+#     kept as a reversible fallback ([computer_use].engine = "june13"). Its German
+#     comments/strings are faithful captured history, not new artifacts — exempt
+#     as a frozen reference, same spirit as the forensic deep-dive docs. ---
+jarvis/harness/screenshot_only_loop_june13.py
+jarvis/harness/screenshot_only_loop_stable.py
