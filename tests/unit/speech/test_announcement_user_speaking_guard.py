@@ -165,7 +165,7 @@ async def test_background_completion_while_user_speaking_is_deferred() -> None:
     """The direct OpenClaw-background readback path (which bypasses
     ``_on_announcement`` and plays straight to the player) must also respect the
     floor: defer while the user speaks, flush at the boundary."""
-    from jarvis.core.events import OpenClawBackgroundCompleted
+    from jarvis.core.events import JarvisAgentBackgroundCompleted
 
     bus = EventBus()
     tts = FakeTTS()
@@ -174,7 +174,7 @@ async def test_background_completion_while_user_speaking_is_deferred() -> None:
     pipeline._turn_state = TurnTakingState.USER_SPEAKING  # type: ignore[attr-defined]
 
     await bus.publish(
-        OpenClawBackgroundCompleted(
+        JarvisAgentBackgroundCompleted(
             success=True, summary="Der Bericht liegt bereit.", duration_s=42.0
         )
     )

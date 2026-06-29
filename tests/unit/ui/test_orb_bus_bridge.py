@@ -32,7 +32,7 @@ except ModuleNotFoundError:  # pragma: no cover
 
 from jarvis.core.events import (
     AudioOutFirst,
-    OpenClawBackgroundCompleted,
+    JarvisAgentBackgroundCompleted,
     ResponseGenerated,
     SystemStateChanged,
     TranscriptionUpdate,
@@ -940,7 +940,7 @@ async def test_orb_pops_in_when_background_task_finishes_while_idle() -> None:
     orb = _FakeOrb()
     bridge = OrbBusBridge(bus=_FakeBus(), orb=orb, idle_animations_enabled=False)  # type: ignore[arg-type]
 
-    await bridge._on_background_completed(OpenClawBackgroundCompleted(success=True))  # noqa: SLF001
+    await bridge._on_background_completed(JarvisAgentBackgroundCompleted(success=True))  # noqa: SLF001
 
     assert ("show", "speak") in orb.calls
 

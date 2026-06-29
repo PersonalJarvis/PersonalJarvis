@@ -2,7 +2,7 @@
 """Unit-Tests fuer :class:`jarvis.friends.status_filter.StatusFilter`.
 
 Branch-portable: die echten Bus-Events (VoiceSessionStarted, MissionStarted,
-OpenClawTaskStarted, ...) existieren auf diesem Branch eventuell noch nicht.
+JarvisAgentTaskStarted, ...) existieren auf diesem Branch eventuell noch nicht.
 Wir bauen Fake-DataClass-Events mit den passenden Class-Names — der Filter
 arbeitet ueber ``type(event).__name__`` + ``hasattr``, also reicht das.
 
@@ -76,7 +76,7 @@ class MissionCompleted:
 
 
 @dataclass
-class OpenClawTaskStarted:
+class JarvisAgentTaskStarted:
     timestamp_ns: int = 5_000
     summary: str = "Implementiert F4-Pipeline"
     utterance: str = "leak me"  # darf NICHT durchkommen
@@ -84,7 +84,7 @@ class OpenClawTaskStarted:
 
 
 @dataclass
-class OpenClawTaskCompleted:
+class JarvisAgentTaskCompleted:
     timestamp_ns: int = 6_000
     summary: str = "Done"
     success: bool = True
@@ -186,7 +186,7 @@ def test_minimal_blocks_mission_started() -> None:
 
 def test_minimal_blocks_openclaw() -> None:
     """'minimal' blockiert Sub-Jarvis-Events (erst 'detailed')."""
-    event = OpenClawTaskStarted()
+    event = JarvisAgentTaskStarted()
     result = StatusFilter.filter(event, "minimal")
     assert result is None
 
@@ -214,21 +214,21 @@ def test_standard_passes_mission_completed_with_success() -> None:
 
 
 def test_standard_blocks_openclaw() -> None:
-    """'standard' blockiert OpenClawTaskStarted."""
-    event = OpenClawTaskStarted()
+    """'standard' blockiert JarvisAgentTaskStarted."""
+    event = JarvisAgentTaskStarted()
     result = StatusFilter.filter(event, "standard")
     assert result is None
 
 
 def test_detailed_passes_openclaw_with_summary_only() -> None:
-    """'detailed' laesst OpenClawTaskStarted durch, ABER nur summary-Field.
+    """'detailed' laesst JarvisAgentTaskStarted durch, ABER nur summary-Field.
 
     KRITISCH: utterance + private_secret im Event duerfen NICHT durchkommen.
     """
-    event = OpenClawTaskStarted()
+    event = JarvisAgentTaskStarted()
     result = StatusFilter.filter(event, "detailed")
     assert result is not None
-    assert result.event_type == "OpenClawTaskStarted"
+    assert result.event_type == "JarvisAgentTaskStarted"
     assert result.fields == {"summary": "Implementiert F4-Pipeline"}
     assert "utterance" not in result.fields
     assert "private_secret" not in result.fields
@@ -236,7 +236,7 @@ def test_detailed_passes_openclaw_with_summary_only() -> None:
 
 def test_no_data_leak_via_unknown_field() -> None:
     """Erfundene Felder im Event leaken NICHT — Filter ist Whitelist-only."""
-    event = OpenClawTaskStarted()
+    event = JarvisAgentTaskStarted()
     result = StatusFilter.filter(event, "detailed")
     assert result is not None
     # Nur summary darf raus
@@ -252,7 +252,7 @@ def test_detailed_passes_voice_session_ended() -> None:
 
 
 def test_detailed_passes_openclaw_completed() -> None:
-    event = OpenClawTaskCompleted()
+    event = JarvisAgentTaskCompleted()
     result = StatusFilter.filter(event, "detailed")
     assert result is not None
     assert result.fields == {"summary": "Done", "success": True}

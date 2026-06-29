@@ -89,7 +89,7 @@ def test_feature_tags_from_events():
     events = [
         _ev("ActionProposed", tool_name="computer_use"),
         _ev("ActionProposed", tool_name="cli_gcloud"),
-        _ev("OpenClawTaskStarted"),
+        _ev("JarvisAgentTaskStarted"),
     ]
     tags = feature_tags_from_events(events)
     assert "computer_use" in tags

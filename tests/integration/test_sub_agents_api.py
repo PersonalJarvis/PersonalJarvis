@@ -14,18 +14,18 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from jarvis.agents import SubAgentRegistry
+from jarvis.agents import JarvisAgentRegistry
 from jarvis.core.bus import EventBus
 from jarvis.core.config import load_config
 from jarvis.core.events import (
-    OpenClawTaskCompleted,
-    OpenClawTaskStarted,
+    JarvisAgentTaskCompleted,
+    JarvisAgentTaskStarted,
 )
 from jarvis.ui.web.server import WebServer
 
 
 @pytest.fixture
-def server_bus() -> tuple[TestClient, EventBus, SubAgentRegistry]:
+def server_bus() -> tuple[TestClient, EventBus, JarvisAgentRegistry]:
     """Baut einen echten WebServer + FastAPI + Registry auf.
 
     Die Registry haengt direkt am Bus, also fliessen bus.publish-Events
@@ -35,7 +35,7 @@ def server_bus() -> tuple[TestClient, EventBus, SubAgentRegistry]:
     ws = WebServer(bus=bus, cfg=load_config())
     client = TestClient(ws.app)
     registry = ws.app.state.sub_agent_registry
-    assert registry is not None, "SubAgentRegistry wurde nicht attached"
+    assert registry is not None, "JarvisAgentRegistry wurde nicht attached"
     return client, bus, registry
 
 
@@ -55,7 +55,7 @@ async def test_tree_reflects_published_events(server_bus) -> None:
     client, bus, _ = server_bus
     tid = uuid4()
     await bus.publish(
-        OpenClawTaskStarted(
+        JarvisAgentTaskStarted(
             trace_id=tid,
             utterance="bau mir X",
             provider="openclaw",
@@ -67,7 +67,7 @@ async def test_tree_reflects_published_events(server_bus) -> None:
     assert data["count"] == 1
     assert len(data["roots"]) == 1
     root = data["roots"][0]
-    assert root["kind"] == "openclaw"
+    assert root["kind"] == "jarvis_agent"
     assert root["utterance"] == "bau mir X"
     assert root["model"] == "opus"
 
@@ -76,7 +76,7 @@ async def test_tree_reflects_published_events(server_bus) -> None:
 async def test_get_agent_by_trace_id(server_bus) -> None:
     client, bus, _ = server_bus
     tid = uuid4()
-    await bus.publish(OpenClawTaskStarted(trace_id=tid, utterance="test"))
+    await bus.publish(JarvisAgentTaskStarted(trace_id=tid, utterance="test"))
 
     # Akzeptiert hex-form
     resp = client.get(f"/api/sub-agents/{tid.hex}")
@@ -99,12 +99,12 @@ def test_get_agent_404_on_unknown(server_bus) -> None:
 async def test_tree_lifecycle_running_to_completed(server_bus) -> None:
     client, bus, _ = server_bus
     tid = uuid4()
-    await bus.publish(OpenClawTaskStarted(trace_id=tid))
+    await bus.publish(JarvisAgentTaskStarted(trace_id=tid))
     r1 = client.get("/api/sub-agents/tree").json()
     assert r1["roots"][0]["status"] == "running"
 
     await bus.publish(
-        OpenClawTaskCompleted(
+        JarvisAgentTaskCompleted(
             trace_id=tid,
             success=True,
             summary="done",

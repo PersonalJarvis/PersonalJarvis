@@ -89,7 +89,7 @@ def synthetic_jsonl(tmp_path: Path) -> Path:
         {
             "ts_ns": _ns(day1 + timedelta(minutes=5)),
             "trace_id": "e" * 32,
-            "event": "OpenClawTaskCompleted",
+            "event": "JarvisAgentTaskCompleted",
             "layer": "agents",
             "payload": {"success": True, "duration_s": 1800.0, "summary": "<redacted>"},
         },
@@ -149,7 +149,7 @@ def real_jsonl_with_voice_text(tmp_path: Path) -> Path:
         {
             "ts_ns": _ns(base + timedelta(seconds=10)),
             "trace_id": "a" * 32,
-            "event": "OpenClawTaskCompleted",
+            "event": "JarvisAgentTaskCompleted",
             "layer": "agents",
             "payload": {
                 "success": True,

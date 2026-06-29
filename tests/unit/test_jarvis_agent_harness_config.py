@@ -1,11 +1,11 @@
-"""Tests fuer OpenClawConfig + OpenClawNotificationConfig (Welle 2).
+"""Tests for JarvisAgentHarnessConfig + JarvisAgentNotificationConfig (Wave 2).
 
-Drei Bloecke gemaess docs/openclaw-bridge.md §4.2:
-  1. Schema-Defaults (Pydantic-Konstruktion ohne TOML-Daten)
-  2. Live-Load aus jarvis.toml + Pydantic-Auto-Unmarshal
-  3. Validierungs-Fehlerpfade (ungueltige Werte, fehlende Required-Felder)
+Three blocks per docs/openclaw-bridge.md §4.2:
+  1. Schema defaults (Pydantic construction without TOML data)
+  2. Live-load from jarvis.toml + Pydantic auto-unmarshal
+  3. Validation error paths (invalid values, missing required fields)
 
-Pattern uebernommen aus tests/unit/test_router_vision_config.py (Wave-1 B4).
+Pattern adopted from tests/unit/test_router_vision_config.py (Wave-1 B4).
 """
 from __future__ import annotations
 
@@ -17,202 +17,200 @@ from pydantic import ValidationError
 from jarvis.core.config import (
     DEFAULT_CONFIG_FILE,
     HarnessConfig,
-    OpenClawConfig,
-    OpenClawNotificationConfig,
+    JarvisAgentHarnessConfig,
+    JarvisAgentNotificationConfig,
     load_config,
 )
 
 
 # ----------------------------------------------------------------------
-# 1. Schema-Defaults — gueltiger minimaler Block
+# 1. Schema defaults — valid minimal block
 # ----------------------------------------------------------------------
 
-def test_openclaw_config_defaults_with_required_version():
-    """Minimaler gueltiger Block: nur ``version`` (AD-21 Pin), Rest Defaults."""
-    cfg = OpenClawConfig(version="2026.5.7")
-    assert cfg.enabled is False                  # default off bis Welle 3
+def test_jarvis_agent_harness_config_defaults_with_required_version():
+    """Minimal valid block: only ``version`` (AD-21 pin), rest are defaults."""
+    cfg = JarvisAgentHarnessConfig(version="2026.5.7")
+    assert cfg.enabled is False                  # default off until Wave 3
     assert cfg.version == "2026.5.7"
     assert cfg.binary_path == "openclaw"
-    # AD-6: leer = Bridge resolved aus cfg.brain.primary, kein Anthropic-Lock.
+    # AD-6: empty = bridge resolves from cfg.brain.primary, no Anthropic lock.
     assert cfg.model is None
     assert cfg.time_cap_min == 30                # AD-19
     assert cfg.concurrency == 3                  # AD-13
     assert cfg.cost_cap_eur is None              # AD-20 reserved
     assert cfg.state_dir_root == "data/openclaw_state"  # AD-23
 
-    # Notification-Sub-Block traegt eigene Defaults.
-    assert isinstance(cfg.notification, OpenClawNotificationConfig)
+    # Notification sub-block carries its own defaults.
+    assert isinstance(cfg.notification, JarvisAgentNotificationConfig)
     assert cfg.notification.via == "announcement_bus"
     assert cfg.notification.toast is True
     assert cfg.notification.voice_when_active is True
 
 
-def test_openclaw_notification_defaults():
-    """Notification-Sub-Config laedt sauber ohne Args."""
-    n = OpenClawNotificationConfig()
+def test_jarvis_agent_notification_defaults():
+    """Notification sub-config loads cleanly without args."""
+    n = JarvisAgentNotificationConfig()
     assert n.via == "announcement_bus"           # AD-17
     assert n.toast is True
     assert n.voice_when_active is True
 
 
 def test_harness_config_openclaw_optional_default_none():
-    """Ohne expliziten Block bleibt ``HarnessConfig.openclaw is None``.
+    """Without an explicit block, ``HarnessConfig.openclaw is None``.
 
-    Garantiert: bestehende Configs ohne ``[harness.openclaw]`` laden weiter.
+    Guarantees: existing configs without ``[harness.openclaw]`` still load.
     """
     h = HarnessConfig()
     assert h.openclaw is None
 
 
-def test_openclaw_model_can_be_pinned_explicitly():
-    """Wer pinnen will, kann jede Provider/Model-Combo angeben — kein
-    Anthropic-Lock im Schema."""
+def test_jarvis_agent_harness_model_can_be_pinned_explicitly():
+    """Anyone who wants to pin can specify any provider/model combo —
+    no Anthropic lock in the schema."""
     for slug in (
         "anthropic/claude-opus-4-7",
         "google/gemini-3.1-pro-preview",
         "xai/grok-4-fast",
         "openai/gpt-4o",
     ):
-        cfg = OpenClawConfig(version="2026.5.7", model=slug)
+        cfg = JarvisAgentHarnessConfig(version="2026.5.7", model=slug)
         assert cfg.model == slug
 
 
 # ----------------------------------------------------------------------
-# 2. Live-Load aus jarvis.toml
+# 2. Live-load from jarvis.toml
 # ----------------------------------------------------------------------
 
 def test_openclaw_section_present_in_jarvis_toml():
-    """Raw-TOML: ``[harness.openclaw]`` existiert mit Plan-Werten."""
+    """Raw-TOML: ``[harness.openclaw]`` exists with planned values."""
     toml_path = DEFAULT_CONFIG_FILE
-    assert toml_path.exists(), f"jarvis.toml nicht an {toml_path}"
+    assert toml_path.exists(), f"jarvis.toml not found at {toml_path}"
 
     with toml_path.open("rb") as f:
         data = tomllib.load(f)
 
-    assert "harness" in data, "[harness] Top-Level fehlt"
-    assert "openclaw" in data["harness"], "[harness.openclaw] fehlt"
+    assert "harness" in data, "[harness] top-level key missing"
+    assert "openclaw" in data["harness"], "[harness.openclaw] missing"
     sec = data["harness"]["openclaw"]
 
-    # Pflicht-Schema-Felder pro Bridge-Doku §4.2.
-    assert sec["enabled"] is True                # default on since Welle 4 merged
+    # Required schema fields per bridge docs §4.2.
+    assert sec["enabled"] is True                # default on since Wave 4 merged
     assert isinstance(sec["version"], str) and sec["version"]
     assert sec["binary_path"] == "openclaw"
     assert sec["time_cap_min"] == 30
     assert sec["concurrency"] == 3
     assert sec["state_dir_root"] == "data/openclaw_state"
 
-    # Notification-Subsektion — AD-17.
+    # Notification sub-section — AD-17.
     assert "notification" in sec
     notif = sec["notification"]
     assert notif["via"] == "announcement_bus"
     assert notif["toast"] is True
     assert notif["voice_when_active"] is True
 
-    # ``model`` und ``cost_cap_eur`` sind bewusst NICHT in der TOML
-    # gesetzt (auskommentiert) — der Loader muss sie als None auffassen.
+    # ``model`` and ``cost_cap_eur`` are intentionally NOT set in TOML
+    # (commented out) — the loader must treat them as None.
     assert "model" not in sec
     assert "cost_cap_eur" not in sec
 
 
-def test_openclaw_config_unmarshalled_via_load_config():
-    """Pydantic-Auto-Unmarshal landet im richtigen Feld."""
+def test_jarvis_agent_harness_config_unmarshalled_via_load_config():
+    """Pydantic auto-unmarshal lands in the correct field."""
     cfg = load_config(DEFAULT_CONFIG_FILE)
-    assert cfg.harness.openclaw is not None, "[harness.openclaw] nicht geparsed"
+    assert cfg.harness.openclaw is not None, "[harness.openclaw] not parsed"
 
     oc = cfg.harness.openclaw
-    assert isinstance(oc, OpenClawConfig)
+    assert isinstance(oc, JarvisAgentHarnessConfig)
     assert oc.enabled is True
-    assert oc.version  # AD-21 Pin gesetzt
+    assert oc.version  # AD-21 pin set
     assert oc.binary_path == "openclaw"
-    assert oc.model is None                      # auskommentiert in TOML
+    assert oc.model is None                      # commented out in TOML
     assert oc.time_cap_min == 30
     assert oc.concurrency == 3
-    assert oc.cost_cap_eur is None               # auskommentiert in TOML
+    assert oc.cost_cap_eur is None               # commented out in TOML
     assert oc.state_dir_root == "data/openclaw_state"
 
-    assert isinstance(oc.notification, OpenClawNotificationConfig)
+    assert isinstance(oc.notification, JarvisAgentNotificationConfig)
     assert oc.notification.via == "announcement_bus"
     assert oc.notification.toast is True
     assert oc.notification.voice_when_active is True
 
 
 # ----------------------------------------------------------------------
-# 3. Validierungs-Fehlerpfade
+# 3. Validation error paths
 # ----------------------------------------------------------------------
 
-def test_openclaw_missing_version_raises():
-    """``version`` ist Required (AD-21 Pin). Ohne -> ValidationError."""
+def test_jarvis_agent_harness_missing_version_raises():
+    """``version`` is Required (AD-21 pin). Without it -> ValidationError."""
     with pytest.raises(ValidationError) as exc_info:
-        OpenClawConfig()  # noqa: PIE790 — wir wollen den Fehler
+        JarvisAgentHarnessConfig()  # noqa: PIE790 — we want the error
 
     msg = str(exc_info.value).lower()
     assert "version" in msg
 
 
-def test_openclaw_concurrency_must_be_positive():
-    """``concurrency`` hat Field(ge=1). 0 oder negativ -> ValidationError."""
+def test_jarvis_agent_harness_concurrency_must_be_positive():
+    """``concurrency`` has Field(ge=1). 0 or negative -> ValidationError."""
     with pytest.raises(ValidationError):
-        OpenClawConfig(version="2026.5.7", concurrency=0)
+        JarvisAgentHarnessConfig(version="2026.5.7", concurrency=0)
     with pytest.raises(ValidationError):
-        OpenClawConfig(version="2026.5.7", concurrency=-1)
+        JarvisAgentHarnessConfig(version="2026.5.7", concurrency=-1)
 
 
-def test_openclaw_concurrency_capped_at_ten():
-    """``concurrency`` hat Field(le=10). 11 -> ValidationError.
+def test_jarvis_agent_harness_concurrency_capped_at_ten():
+    """``concurrency`` has Field(le=10). 11 -> ValidationError.
 
-    Schutz vor versehentlich exorbitanter Parallel-Last (AD-13: 3 default,
-    Range 1..10 ist die operativ vernuenftige Spanne).
+    Guards against accidentally enormous parallel load (AD-13: default 3,
+    range 1..10 is the operationally sensible span).
     """
     with pytest.raises(ValidationError):
-        OpenClawConfig(version="2026.5.7", concurrency=11)
+        JarvisAgentHarnessConfig(version="2026.5.7", concurrency=11)
 
 
-def test_openclaw_time_cap_min_must_be_positive():
-    """``time_cap_min`` hat Field(ge=1). 0 -> ValidationError."""
+def test_jarvis_agent_harness_time_cap_min_must_be_positive():
+    """``time_cap_min`` has Field(ge=1). 0 -> ValidationError."""
     with pytest.raises(ValidationError):
-        OpenClawConfig(version="2026.5.7", time_cap_min=0)
+        JarvisAgentHarnessConfig(version="2026.5.7", time_cap_min=0)
 
 
-def test_openclaw_cost_cap_eur_must_be_non_negative():
-    """``cost_cap_eur`` hat Field(ge=0). Negativ -> ValidationError."""
+def test_jarvis_agent_harness_cost_cap_eur_must_be_non_negative():
+    """``cost_cap_eur`` has Field(ge=0). Negative -> ValidationError."""
     with pytest.raises(ValidationError):
-        OpenClawConfig(version="2026.5.7", cost_cap_eur=-1.0)
+        JarvisAgentHarnessConfig(version="2026.5.7", cost_cap_eur=-1.0)
 
 
-def test_openclaw_rejects_unknown_keys():
-    """``extra="forbid"`` faengt Tippfehler im TOML.
+def test_jarvis_agent_harness_rejects_unknown_keys():
+    """``extra="forbid"`` catches typos in TOML.
 
-    Gegen Three-Layer-Drift (BUG-008): wenn jemand ``[harness.openclaw]``
-    um ``concurrencey = 3`` (Tippfehler) erweitert, soll Pydantic schreien
-    statt den Wert stillschweigend zu droppen.
+    Against three-layer drift (BUG-008): if someone extends
+    ``[harness.openclaw]`` with ``concurrencey = 3`` (typo), Pydantic
+    should raise instead of silently dropping the value.
     """
     with pytest.raises(ValidationError) as exc_info:
-        OpenClawConfig(version="2026.5.7", concurrencey=3)
+        JarvisAgentHarnessConfig(version="2026.5.7", concurrencey=3)
     assert "extra" in str(exc_info.value).lower()
 
 
-def test_openclaw_notification_rejects_unknown_keys():
-    """Notification-Subblock erbt strict-mode."""
+def test_jarvis_agent_notification_rejects_unknown_keys():
+    """Notification sub-block inherits strict mode."""
     with pytest.raises(ValidationError):
-        OpenClawNotificationConfig(via="bus", unknown_flag=True)
+        JarvisAgentNotificationConfig(via="bus", unknown_flag=True)
 
 
-def test_openclaw_enabled_must_be_bool():
-    """``enabled`` ist bool-typed; String-Wert wird im strict-mode abgelehnt.
+def test_jarvis_agent_harness_enabled_must_be_bool():
+    """``enabled`` is bool-typed; a dict value is rejected.
 
-    Pydantic-v2 coerced normalerweise "true"/"false" zu bool; mit
-    ``model_config = ConfigDict(extra="forbid")`` bleibt diese Coercion
-    erhalten, aber harte Typ-Verletzungen wie int/float werden gefangen
-    sobald sie keinen sauberen bool-Cast haben.
+    Pydantic-v2 normally coerces "true"/"false" to bool; with
+    ``model_config = ConfigDict(extra="forbid")`` that coercion is preserved,
+    but hard type violations like passing a dict are caught.
     """
-    # Klare Typ-Verletzung: dict statt bool.
     with pytest.raises(ValidationError):
-        OpenClawConfig(version="2026.5.7", enabled={"foo": "bar"})
+        JarvisAgentHarnessConfig(version="2026.5.7", enabled={"foo": "bar"})
 
 
-def test_openclaw_round_trip_with_full_block():
-    """Vollstaendiger Block — alle Felder explizit — laedt sauber."""
-    cfg = OpenClawConfig(
+def test_jarvis_agent_harness_round_trip_with_full_block():
+    """Full block — all fields explicit — loads cleanly."""
+    cfg = JarvisAgentHarnessConfig(
         version="2026.5.7",
         enabled=True,
         binary_path="C:/tools/openclaw/openclaw.cmd",
@@ -221,7 +219,7 @@ def test_openclaw_round_trip_with_full_block():
         concurrency=2,
         cost_cap_eur=8.5,
         state_dir_root="C:/jarvis/openclaw_state",
-        notification=OpenClawNotificationConfig(
+        notification=JarvisAgentNotificationConfig(
             via="announcement_bus",
             toast=False,
             voice_when_active=False,

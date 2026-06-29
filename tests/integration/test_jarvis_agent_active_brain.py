@@ -1,7 +1,7 @@
 """Regression: the API-Keys "SUBAGENT (HEAVY TASKS)" section must mark the
 brain that ACTUALLY executes heavy tasks as active.
 
-Root cause (2026-05-28): GET /api/openclaw/status derived ``is_active_brain``
+Root cause (2026-05-28): GET /api/jarvis-agent/status derived ``is_active_brain``
 from ``cfg.brain.primary`` — that is only the lightweight ROUTER brain
 (Gemini). The heavy-task subagent runs on ``[brain.sub_jarvis].provider``
 (claude-api -> ClaudeDirectWorker -> Claude Max OAuth). The UI therefore
@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 
 from jarvis.core.bus import EventBus
 from jarvis.core.config import BrainTierConfig, load_config
-from jarvis.missions.worker_runtime.provider_map import canonical_subagent_provider
+from jarvis.missions.worker_runtime.provider_map import canonical_worker_provider
 from jarvis.ui.web.server import WebServer
 
 # --- pure helper: canonical subagent (display) provider -------------------
@@ -39,8 +39,8 @@ from jarvis.ui.web.server import WebServer
         (None, None),
     ],
 )
-def test_canonical_subagent_provider(raw, expected) -> None:
-    assert canonical_subagent_provider(raw) == expected
+def test_canonical_worker_provider(raw, expected) -> None:
+    assert canonical_worker_provider(raw) == expected
 
 
 # --- endpoint: active brain follows the subagent provider -----------------
@@ -50,7 +50,7 @@ def _status(cfg) -> dict:
     bus = EventBus()
     ws = WebServer(bus=bus, cfg=cfg)
     client = TestClient(ws.app)
-    resp = client.get("/api/openclaw/status")
+    resp = client.get("/api/jarvis-agent/status")
     assert resp.status_code == 200
     return resp.json()
 
@@ -97,7 +97,7 @@ def test_openclaw_claude_alias_marks_claude_active() -> None:
     assert active["gemini"] is False
 
 
-# --- endpoint: POST /api/subagent/switch ----------------------------------
+# --- endpoint: POST /api/jarvis-agent/switch ----------------------------------
 
 
 def _client(cfg) -> TestClient:
@@ -121,7 +121,7 @@ def test_subagent_switch_persists_and_restart_required(
     cfg.brain.primary = "gemini"
     cfg.brain.sub_jarvis = BrainTierConfig(provider="claude-api", model="")
 
-    resp = _client(cfg).post("/api/subagent/switch", json={"provider": "gemini", "persist": True})
+    resp = _client(cfg).post("/api/jarvis-agent/switch", json={"provider": "gemini", "persist": True})
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["active"] == "gemini"
@@ -135,7 +135,7 @@ def test_subagent_switch_404_unknown_provider(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda p: "fake-key")
     cfg = load_config()
-    resp = _client(cfg).post("/api/subagent/switch", json={"provider": "banana"})
+    resp = _client(cfg).post("/api/jarvis-agent/switch", json={"provider": "banana"})
     assert resp.status_code == 404
 
 
@@ -149,13 +149,13 @@ def test_subagent_switch_409_when_no_key(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda name: persisted.append(name))
 
     cfg = load_config()
-    resp = _client(cfg).post("/api/subagent/switch", json={"provider": "openai"})
+    resp = _client(cfg).post("/api/jarvis-agent/switch", json={"provider": "openai"})
     assert resp.status_code == 409
     assert persisted == [], "must not persist a provider that has no key"
 
 
 def test_subagent_switch_updates_status_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
-    """After a switch, /api/openclaw/status reflects the new active provider."""
+    """After a switch, /api/jarvis-agent/status reflects the new active provider."""
     import jarvis.core.config as cfg_mod
     import jarvis.core.config_writer as config_writer
 
@@ -167,9 +167,9 @@ def test_subagent_switch_updates_status_endpoint(monkeypatch: pytest.MonkeyPatch
     cfg.brain.sub_jarvis = BrainTierConfig(provider="claude-api", model="")
     client = _client(cfg)
 
-    client.post("/api/subagent/switch", json={"provider": "openrouter", "persist": True})
+    client.post("/api/jarvis-agent/switch", json={"provider": "openrouter", "persist": True})
 
-    data = client.get("/api/openclaw/status").json()
+    data = client.get("/api/jarvis-agent/status").json()
     active = {r["jarvis"]: r["is_active_brain"] for r in data["mapping"]}
     assert active["openrouter"] is True
     assert active["claude-api"] is False
@@ -232,7 +232,7 @@ def test_subagent_switch_accepts_codex_oauth(monkeypatch: pytest.MonkeyPatch) ->
 
     cfg = load_config()
     resp = _client(cfg).post(
-        "/api/subagent/switch", json={"provider": "openai-codex", "persist": True}
+        "/api/jarvis-agent/switch", json={"provider": "openai-codex", "persist": True}
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["active"] == "openai-codex"
@@ -254,7 +254,7 @@ def test_subagent_switch_codex_api_key_only(monkeypatch: pytest.MonkeyPatch) -> 
 
     cfg = load_config()
     resp = _client(cfg).post(
-        "/api/subagent/switch", json={"provider": "openai-codex", "persist": True}
+        "/api/jarvis-agent/switch", json={"provider": "openai-codex", "persist": True}
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["active"] == "openai-codex"
@@ -272,7 +272,7 @@ def test_subagent_switch_chatgpt_alias_normalizes(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: calls.append(n))
 
     cfg = load_config()
-    resp = _client(cfg).post("/api/subagent/switch", json={"provider": "chatgpt"})
+    resp = _client(cfg).post("/api/jarvis-agent/switch", json={"provider": "chatgpt"})
     assert resp.status_code == 200, resp.text
     assert resp.json()["active"] == "openai-codex"
     assert calls == ["openai-codex"]
@@ -292,7 +292,7 @@ def test_subagent_switch_409_codex_when_not_connected(
     monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: persisted.append(n))
 
     cfg = load_config()
-    resp = _client(cfg).post("/api/subagent/switch", json={"provider": "openai-codex"})
+    resp = _client(cfg).post("/api/jarvis-agent/switch", json={"provider": "openai-codex"})
     assert resp.status_code == 409
     assert persisted == []
 
@@ -346,7 +346,7 @@ def test_subagent_switch_accepts_claude_max_oauth(monkeypatch: pytest.MonkeyPatc
 
     cfg = load_config()
     resp = _client(cfg).post(
-        "/api/subagent/switch", json={"provider": "claude-api", "persist": True}
+        "/api/jarvis-agent/switch", json={"provider": "claude-api", "persist": True}
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["active"] == "claude-api"
@@ -367,7 +367,7 @@ def test_subagent_switch_409_claude_api_no_key_no_oauth(
     monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: persisted.append(n))
 
     cfg = load_config()
-    resp = _client(cfg).post("/api/subagent/switch", json={"provider": "claude-api"})
+    resp = _client(cfg).post("/api/jarvis-agent/switch", json={"provider": "claude-api"})
     assert resp.status_code == 409
     assert persisted == []
 
@@ -451,7 +451,7 @@ def test_subagent_switch_accepts_antigravity(monkeypatch: pytest.MonkeyPatch) ->
 
     cfg = load_config()
     resp = _client(cfg).post(
-        "/api/subagent/switch", json={"provider": "antigravity", "persist": True}
+        "/api/jarvis-agent/switch", json={"provider": "antigravity", "persist": True}
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["active"] == "antigravity"
@@ -472,7 +472,7 @@ def test_subagent_switch_409_antigravity_when_not_connected(
     monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: persisted.append(n))
 
     cfg = load_config()
-    resp = _client(cfg).post("/api/subagent/switch", json={"provider": "antigravity"})
+    resp = _client(cfg).post("/api/jarvis-agent/switch", json={"provider": "antigravity"})
     assert resp.status_code == 409
     assert persisted == []
 
@@ -530,7 +530,7 @@ def test_subagent_switch_accepts_antigravity_via_api_key(
 
     cfg = load_config()
     resp = _client(cfg).post(
-        "/api/subagent/switch", json={"provider": "antigravity", "persist": True}
+        "/api/jarvis-agent/switch", json={"provider": "antigravity", "persist": True}
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["active"] == "antigravity"

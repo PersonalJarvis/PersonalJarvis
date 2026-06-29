@@ -2,7 +2,7 @@
 
 Locks the post-Welle-4 wiring: ``spawn_openclaw`` dispatches a Mission, the
 MissionManager publishes Phase-6 ``EventEnvelope``s on its ``MissionBus``, and
-the ``SubAgentRegistry`` (bridged via :meth:`attach_mission_bus`) must translate
+the ``JarvisAgentRegistry`` (bridged via :meth:`attach_mission_bus`) must translate
 them into ``AgentNode``s that ``GET /api/sub-agents/tree`` serves.
 
 This is the regression guard for the question "does a spawned sub-agent get
@@ -17,7 +17,7 @@ import asyncio
 
 import pytest
 
-from jarvis.agents.registry import SubAgentRegistry
+from jarvis.agents.registry import JarvisAgentRegistry
 from jarvis.core.bus import EventBus
 from jarvis.missions.event_bus import MissionBus
 from jarvis.missions.events import (
@@ -36,8 +36,8 @@ async def _settle() -> None:
     await asyncio.sleep(0)
 
 
-def _openclaw_node(registry: SubAgentRegistry) -> dict:
-    nodes = [n for n in registry.to_json()["all"].values() if n["kind"] == "openclaw"]
+def _openclaw_node(registry: JarvisAgentRegistry) -> dict:
+    nodes = [n for n in registry.to_json()["all"].values() if n["kind"] == "jarvis_agent"]
     assert len(nodes) == 1, registry.to_json()
     return nodes[0]
 
@@ -45,7 +45,7 @@ def _openclaw_node(registry: SubAgentRegistry) -> dict:
 @pytest.mark.asyncio
 async def test_dispatched_mission_appears_in_tree() -> None:
     bus = MissionBus()
-    registry = SubAgentRegistry(bus=EventBus())
+    registry = JarvisAgentRegistry(bus=EventBus())
     registry.attach_mission_bus(bus)
     try:
         mission_id = uuid7_str()
@@ -70,7 +70,7 @@ async def test_dispatched_mission_appears_in_tree() -> None:
 @pytest.mark.asyncio
 async def test_worker_spawn_and_approval_update_node() -> None:
     bus = MissionBus()
-    registry = SubAgentRegistry(bus=EventBus())
+    registry = JarvisAgentRegistry(bus=EventBus())
     registry.attach_mission_bus(bus)
     try:
         mission_id = uuid7_str()
@@ -129,7 +129,7 @@ async def test_worker_spawn_and_approval_update_node() -> None:
 @pytest.mark.asyncio
 async def test_failed_mission_marks_node_failed() -> None:
     bus = MissionBus()
-    registry = SubAgentRegistry(bus=EventBus())
+    registry = JarvisAgentRegistry(bus=EventBus())
     registry.attach_mission_bus(bus)
     try:
         mission_id = uuid7_str()

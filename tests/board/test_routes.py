@@ -54,7 +54,7 @@ def wired_client(tmp_path: Path) -> TestClient:
         },
         {
             "ts_ns": _ns(today + timedelta(seconds=10)),
-            "trace_id": "c" * 32, "event": "OpenClawTaskCompleted", "layer": "agents",
+            "trace_id": "c" * 32, "event": "JarvisAgentTaskCompleted", "layer": "agents",
             "payload": {"success": True, "duration_s": 600.0, "summary": "<redacted>"},
         },
     ]

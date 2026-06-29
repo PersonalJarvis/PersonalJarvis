@@ -23,12 +23,12 @@ import pytest
 from jarvis.brain.factory import (
     _KONTROLLIERER_REF,
     _MISSION_MANAGER_REF,
-    _OPENCLAW_BOOTSTRAP_FAILED,
+    _WORKER_BOOTSTRAP_FAILED,
     build_default_brain,
-    is_openclaw_bootstrap_failed,
+    is_worker_bootstrap_failed,
     set_kontrollierer,
     set_mission_manager,
-    set_openclaw_bootstrap_failed,
+    set_worker_bootstrap_failed,
 )
 from jarvis.core.bus import EventBus
 from jarvis.core.protocols import ExecutionContext
@@ -40,17 +40,17 @@ def _clean_singleton():
     + bootstrap-failed sentinel."""
     saved_mgr = list(_MISSION_MANAGER_REF)
     saved_kon = list(_KONTROLLIERER_REF)
-    saved_flag = _OPENCLAW_BOOTSTRAP_FAILED[0]
+    saved_flag = _WORKER_BOOTSTRAP_FAILED[0]
     _MISSION_MANAGER_REF.clear()
     _KONTROLLIERER_REF.clear()
-    _OPENCLAW_BOOTSTRAP_FAILED[0] = False
+    _WORKER_BOOTSTRAP_FAILED[0] = False
     os.environ.pop("JARVIS_BRAIN", None)
     yield
     _MISSION_MANAGER_REF.clear()
     _MISSION_MANAGER_REF.extend(saved_mgr)
     _KONTROLLIERER_REF.clear()
     _KONTROLLIERER_REF.extend(saved_kon)
-    _OPENCLAW_BOOTSTRAP_FAILED[0] = saved_flag
+    _WORKER_BOOTSTRAP_FAILED[0] = saved_flag
 
 
 def _make_ctx() -> ExecutionContext:
@@ -238,20 +238,20 @@ async def test_voice_path_no_kontrollierer_logs_warning() -> None:
 async def test_voice_path_kontrollierer_crash_publishes_completed_event() -> None:
     """If run_mission crashes, the tool must publish a failure event.
 
-    The Voice-Listener subscribes to OpenClawBackgroundCompleted with
+    The Voice-Listener subscribes to JarvisAgentBackgroundCompleted with
     success=False to give the user voice feedback ("OpenClaw ist
     abgestuerzt"). Without this publish the user would just hear silence.
     """
-    from jarvis.core.events import OpenClawBackgroundCompleted
+    from jarvis.core.events import JarvisAgentBackgroundCompleted
     from jarvis.plugins.tool.spawn_worker import SpawnWorkerTool
 
     bus = EventBus()
-    received: list[OpenClawBackgroundCompleted] = []
+    received: list[JarvisAgentBackgroundCompleted] = []
 
-    def _capture(env: OpenClawBackgroundCompleted) -> None:
+    def _capture(env: JarvisAgentBackgroundCompleted) -> None:
         received.append(env)
 
-    bus.subscribe(OpenClawBackgroundCompleted, _capture)
+    bus.subscribe(JarvisAgentBackgroundCompleted, _capture)
 
     fake_manager = MagicMock()
     fake_manager.dispatch = AsyncMock(return_value="mid")
@@ -280,15 +280,15 @@ async def test_voice_path_kontrollierer_crash_publishes_completed_event() -> Non
 # --- Phase 2A: bootstrap-failed sentinel (forensic report 2026-05-14) -------
 
 
-def test_set_openclaw_bootstrap_failed_round_trips() -> None:
+def test_set_worker_bootstrap_failed_round_trips() -> None:
     """The factory-level singleton must round-trip through its setter/getter
     so server.py can mark a failed bootstrap and the spawn_worker tool can
     read that signal at execute-time."""
-    assert is_openclaw_bootstrap_failed() is False
-    set_openclaw_bootstrap_failed(True)
-    assert is_openclaw_bootstrap_failed() is True
-    set_openclaw_bootstrap_failed(False)
-    assert is_openclaw_bootstrap_failed() is False
+    assert is_worker_bootstrap_failed() is False
+    set_worker_bootstrap_failed(True)
+    assert is_worker_bootstrap_failed() is True
+    set_worker_bootstrap_failed(False)
+    assert is_worker_bootstrap_failed() is False
 
 
 @pytest.mark.asyncio
@@ -300,7 +300,7 @@ async def test_execute_short_circuits_on_bootstrap_failed() -> None:
     brain = build_default_brain(tier="router")
     tool = brain._tools["spawn_worker"]
 
-    set_openclaw_bootstrap_failed(True)
+    set_worker_bootstrap_failed(True)
 
     result = await tool.execute(
         {"utterance": "baue mir eine app", "action": "build"}, _make_ctx()

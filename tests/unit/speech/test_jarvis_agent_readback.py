@@ -23,7 +23,7 @@ import pytest
 from jarvis.core.bus import EventBus
 from jarvis.core.events import (
     AnnouncementRequested,
-    OpenClawBackgroundCompleted,
+    JarvisAgentBackgroundCompleted,
     SpeechSpoken,
     SystemStateChanged,
 )
@@ -232,7 +232,7 @@ async def test_background_completed_arms_readback_grace() -> None:
     assert pipeline._last_announcement_spoken_monotonic is None  # type: ignore[attr-defined]
 
     await bus.publish(
-        OpenClawBackgroundCompleted(
+        JarvisAgentBackgroundCompleted(
             success=True,
             utterance="recherchier mir fuenf themen",
             summary="Fuenf Recherche-Themen liegen bereit.",
