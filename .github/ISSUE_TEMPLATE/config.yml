@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & community
+    url: https://discord.gg/UPu6pFWrJ
+    about: For usage questions, setup help, and general chat, please use Discord instead of an issue.
+  - name: Security vulnerability
+    url: https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SECURITY.md
+    about: Please report security issues privately — do NOT open a public issue.
