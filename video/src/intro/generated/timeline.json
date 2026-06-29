@@ -1,0 +1,628 @@
+{
+  "fps": 30,
+  "overlap": 14,
+  "totalFrames": 4837,
+  "scenes": [
+    {
+      "id": "intro",
+      "dur": 385,
+      "lines": [
+        {
+          "id": "intro_1",
+          "kind": "narration",
+          "text": "Hey — I'm Ruben's AI assistant.",
+          "file": "vo/intro_1.mp3",
+          "localStart": 9,
+          "dur": 69
+        },
+        {
+          "id": "intro_2",
+          "kind": "narration",
+          "text": "Ruben built me — a developer from Germany — and put it all on GitHub.",
+          "file": "vo/intro_2.mp3",
+          "localStart": 85,
+          "dur": 131
+        },
+        {
+          "id": "intro_3",
+          "kind": "narration",
+          "text": "One day, I'll even make videos like this one myself — that's just not quite live yet.",
+          "file": "vo/intro_3.mp3",
+          "localStart": 223,
+          "dur": 144
+        }
+      ]
+    },
+    {
+      "id": "concept",
+      "dur": 771,
+      "lines": [
+        {
+          "id": "concept_1",
+          "kind": "narration",
+          "text": "Personal Jarvis is an AI agent that lives on your computer.",
+          "file": "vo/concept_1.mp3",
+          "localStart": 9,
+          "dur": 112
+        },
+        {
+          "id": "concept_2",
+          "kind": "narration",
+          "text": "You just talk to it, and it talks back — completely hands-free.",
+          "file": "vo/concept_2.mp3",
+          "localStart": 128,
+          "dur": 106
+        },
+        {
+          "id": "concept_3",
+          "kind": "narration",
+          "text": "But it's much more than a realtime voice model.",
+          "file": "vo/concept_3.mp3",
+          "localStart": 241,
+          "dur": 75
+        },
+        {
+          "id": "concept_4",
+          "kind": "narration",
+          "text": "It's a full agent orchestrator.",
+          "file": "vo/concept_4.mp3",
+          "localStart": 323,
+          "dur": 60
+        },
+        {
+          "id": "concept_5",
+          "kind": "narration",
+          "text": "It runs tasks in the background, and actually gets things done for you.",
+          "file": "vo/concept_5.mp3",
+          "localStart": 390,
+          "dur": 116
+        },
+        {
+          "id": "concept_6",
+          "kind": "narration",
+          "text": "And it runs everywhere — your desktop, a small server, even a browser tab.",
+          "file": "vo/concept_6.mp3",
+          "localStart": 513,
+          "dur": 145
+        },
+        {
+          "id": "concept_7",
+          "kind": "narration",
+          "text": "Think of it as a home for you, right on your machine.",
+          "file": "vo/concept_7.mp3",
+          "localStart": 665,
+          "dur": 88
+        }
+      ]
+    },
+    {
+      "id": "real_app",
+      "dur": 249,
+      "lines": [
+        {
+          "id": "app_1",
+          "kind": "narration",
+          "text": "And this is the actual desktop app.",
+          "file": "vo/app_1.mp3",
+          "localStart": 9,
+          "dur": 64
+        },
+        {
+          "id": "app_2",
+          "kind": "narration",
+          "text": "Chat, agents, skills — and an Outputs folder where every result lands.",
+          "file": "vo/app_2.mp3",
+          "localStart": 80,
+          "dur": 151
+        }
+      ]
+    },
+    {
+      "id": "setup_keys",
+      "dur": 687,
+      "lines": [
+        {
+          "id": "keys_1",
+          "kind": "narration",
+          "text": "Setting it up takes about a minute, right in the onboarding.",
+          "file": "vo/keys_1.mp3",
+          "localStart": 9,
+          "dur": 93
+        },
+        {
+          "id": "keys_2",
+          "kind": "narration",
+          "text": "Jarvis actually uses four kinds of keys.",
+          "file": "vo/keys_2.mp3",
+          "localStart": 109,
+          "dur": 85
+        },
+        {
+          "id": "keys_3",
+          "kind": "narration",
+          "text": "A brain to think, workers for the big jobs, a voice to speak, and ears to listen.",
+          "file": "vo/keys_3.mp3",
+          "localStart": 201,
+          "dur": 162
+        },
+        {
+          "id": "keys_4",
+          "kind": "narration",
+          "text": "For each one, you just pick your provider — Claude, OpenAI, Gemini, and more.",
+          "file": "vo/keys_4.mp3",
+          "localStart": 370,
+          "dur": 168
+        },
+        {
+          "id": "keys_5",
+          "kind": "narration",
+          "text": "No account to create — you bring your own keys, and you're never locked in.",
+          "file": "vo/keys_5.mp3",
+          "localStart": 545,
+          "dur": 124
+        }
+      ]
+    },
+    {
+      "id": "setup_wake",
+      "dur": 285,
+      "lines": [
+        {
+          "id": "wake_1",
+          "kind": "narration",
+          "text": "Next, pick your wake word — the phrase that wakes Jarvis up.",
+          "file": "vo/wake_1.mp3",
+          "localStart": 9,
+          "dur": 108
+        },
+        {
+          "id": "wake_2",
+          "kind": "narration",
+          "text": "I chose Hey Ruben. You can pick anything you like.",
+          "file": "vo/wake_2.mp3",
+          "localStart": 124,
+          "dur": 94
+        },
+        {
+          "id": "wake_3",
+          "kind": "narration",
+          "text": "And that's the whole setup.",
+          "file": "vo/wake_3.mp3",
+          "localStart": 225,
+          "dur": 42
+        }
+      ]
+    },
+    {
+      "id": "examples",
+      "dur": 386,
+      "lines": [
+        {
+          "id": "ex_1",
+          "kind": "narration",
+          "text": "Once you're set up, you just talk.",
+          "file": "vo/ex_1.mp3",
+          "localStart": 9,
+          "dur": 60
+        },
+        {
+          "id": "ex_2",
+          "kind": "narration",
+          "text": "You can ask it almost anything.",
+          "file": "vo/ex_2.mp3",
+          "localStart": 76,
+          "dur": 48
+        },
+        {
+          "id": "ex_3",
+          "kind": "command",
+          "text": "What's on my calendar today?",
+          "file": "vo/ex_3.mp3",
+          "localStart": 131,
+          "dur": 70
+        },
+        {
+          "id": "ex_4",
+          "kind": "command",
+          "text": "Switch the brain to Gemini.",
+          "file": "vo/ex_4.mp3",
+          "localStart": 208,
+          "dur": 76
+        },
+        {
+          "id": "ex_5",
+          "kind": "command",
+          "text": "Summarise this article for me.",
+          "file": "vo/ex_5.mp3",
+          "localStart": 291,
+          "dur": 77
+        }
+      ]
+    },
+    {
+      "id": "computer_use",
+      "dur": 775,
+      "lines": [
+        {
+          "id": "cu_1",
+          "kind": "narration",
+          "text": "Now let me show you two of my favourite features.",
+          "file": "vo/cu_1.mp3",
+          "localStart": 9,
+          "dur": 78
+        },
+        {
+          "id": "cu_2",
+          "kind": "narration",
+          "text": "Feature one: Computer Use.",
+          "file": "vo/cu_2.mp3",
+          "localStart": 94,
+          "dur": 60
+        },
+        {
+          "id": "cu_3",
+          "kind": "command",
+          "text": "Open Chrome and find Elon Musk's latest posts.",
+          "file": "vo/cu_3.mp3",
+          "localStart": 161,
+          "dur": 122
+        },
+        {
+          "id": "cu_4",
+          "kind": "narration",
+          "text": "Jarvis looks at the screen, reads the interface, moves the mouse, and clicks — exactly like a person would.",
+          "file": "vo/cu_4.mp3",
+          "localStart": 290,
+          "dur": 191
+        },
+        {
+          "id": "cu_5",
+          "kind": "narration",
+          "text": "No scripts, no macros. It just uses your computer for you.",
+          "file": "vo/cu_5.mp3",
+          "localStart": 488,
+          "dur": 118
+        },
+        {
+          "id": "cu_6",
+          "kind": "narration",
+          "text": "And it works across any app on your screen, not just the browser.",
+          "file": "vo/cu_6.mp3",
+          "localStart": 613,
+          "dur": 114
+        }
+      ]
+    },
+    {
+      "id": "sub_agents",
+      "dur": 722,
+      "lines": [
+        {
+          "id": "sa_1",
+          "kind": "narration",
+          "text": "Feature two: background sub-agents.",
+          "file": "vo/sa_1.mp3",
+          "localStart": 9,
+          "dur": 72
+        },
+        {
+          "id": "sa_2",
+          "kind": "narration",
+          "text": "For the bigger jobs, you just hand off the hard stuff.",
+          "file": "vo/sa_2.mp3",
+          "localStart": 88,
+          "dur": 89
+        },
+        {
+          "id": "sa_3",
+          "kind": "command",
+          "text": "Write me a deep-dive report on the global EV market.",
+          "file": "vo/sa_3.mp3",
+          "localStart": 184,
+          "dur": 125
+        },
+        {
+          "id": "sa_4",
+          "kind": "narration",
+          "text": "It spins up a worker that searches, analyses, and writes the whole thing.",
+          "file": "vo/sa_4.mp3",
+          "localStart": 316,
+          "dur": 129
+        },
+        {
+          "id": "sa_5",
+          "kind": "narration",
+          "text": "Then it delivers the finished file — while you just keep talking.",
+          "file": "vo/sa_5.mp3",
+          "localStart": 452,
+          "dur": 99
+        },
+        {
+          "id": "sa_6",
+          "kind": "narration",
+          "text": "And it checks its own work up to three times before you ever see the result.",
+          "file": "vo/sa_6.mp3",
+          "localStart": 558,
+          "dur": 116
+        }
+      ]
+    },
+    {
+      "id": "plugins",
+      "dur": 351,
+      "lines": [
+        {
+          "id": "plug_1",
+          "kind": "narration",
+          "text": "And Jarvis plugs into the tools you already use.",
+          "file": "vo/plug_1.mp3",
+          "localStart": 9,
+          "dur": 85
+        },
+        {
+          "id": "plug_2",
+          "kind": "narration",
+          "text": "Gmail, Calendar, Telegram, Discord, Spotify, GitHub — and more.",
+          "file": "vo/plug_2.mp3",
+          "localStart": 101,
+          "dur": 162
+        },
+        {
+          "id": "plug_3",
+          "kind": "narration",
+          "text": "New plugins land all the time.",
+          "file": "vo/plug_3.mp3",
+          "localStart": 270,
+          "dur": 63
+        }
+      ]
+    },
+    {
+      "id": "outro",
+      "dur": 352,
+      "lines": [
+        {
+          "id": "outro_1",
+          "kind": "narration",
+          "text": "So that's Personal Jarvis — your voice, your computer, your own AI agent.",
+          "file": "vo/outro_1.mp3",
+          "localStart": 9,
+          "dur": 143
+        },
+        {
+          "id": "outro_2",
+          "kind": "narration",
+          "text": "It's completely free, and open source.",
+          "file": "vo/outro_2.mp3",
+          "localStart": 159,
+          "dur": 78
+        },
+        {
+          "id": "outro_3",
+          "kind": "narration",
+          "text": "The link is in the description below. Give it a try.",
+          "file": "vo/outro_3.mp3",
+          "localStart": 244,
+          "dur": 90
+        }
+      ]
+    }
+  ],
+  "audio": [
+    {
+      "file": "vo/intro_1.mp3",
+      "from": 9,
+      "dur": 69
+    },
+    {
+      "file": "vo/intro_2.mp3",
+      "from": 85,
+      "dur": 131
+    },
+    {
+      "file": "vo/intro_3.mp3",
+      "from": 223,
+      "dur": 144
+    },
+    {
+      "file": "vo/concept_1.mp3",
+      "from": 380,
+      "dur": 112
+    },
+    {
+      "file": "vo/concept_2.mp3",
+      "from": 499,
+      "dur": 106
+    },
+    {
+      "file": "vo/concept_3.mp3",
+      "from": 612,
+      "dur": 75
+    },
+    {
+      "file": "vo/concept_4.mp3",
+      "from": 694,
+      "dur": 60
+    },
+    {
+      "file": "vo/concept_5.mp3",
+      "from": 761,
+      "dur": 116
+    },
+    {
+      "file": "vo/concept_6.mp3",
+      "from": 884,
+      "dur": 145
+    },
+    {
+      "file": "vo/concept_7.mp3",
+      "from": 1036,
+      "dur": 88
+    },
+    {
+      "file": "vo/app_1.mp3",
+      "from": 1137,
+      "dur": 64
+    },
+    {
+      "file": "vo/app_2.mp3",
+      "from": 1208,
+      "dur": 151
+    },
+    {
+      "file": "vo/keys_1.mp3",
+      "from": 1372,
+      "dur": 93
+    },
+    {
+      "file": "vo/keys_2.mp3",
+      "from": 1472,
+      "dur": 85
+    },
+    {
+      "file": "vo/keys_3.mp3",
+      "from": 1564,
+      "dur": 162
+    },
+    {
+      "file": "vo/keys_4.mp3",
+      "from": 1733,
+      "dur": 168
+    },
+    {
+      "file": "vo/keys_5.mp3",
+      "from": 1908,
+      "dur": 124
+    },
+    {
+      "file": "vo/wake_1.mp3",
+      "from": 2045,
+      "dur": 108
+    },
+    {
+      "file": "vo/wake_2.mp3",
+      "from": 2160,
+      "dur": 94
+    },
+    {
+      "file": "vo/wake_3.mp3",
+      "from": 2261,
+      "dur": 42
+    },
+    {
+      "file": "vo/ex_1.mp3",
+      "from": 2316,
+      "dur": 60
+    },
+    {
+      "file": "vo/ex_2.mp3",
+      "from": 2383,
+      "dur": 48
+    },
+    {
+      "file": "vo/ex_3.mp3",
+      "from": 2438,
+      "dur": 70
+    },
+    {
+      "file": "vo/ex_4.mp3",
+      "from": 2515,
+      "dur": 76
+    },
+    {
+      "file": "vo/ex_5.mp3",
+      "from": 2598,
+      "dur": 77
+    },
+    {
+      "file": "vo/cu_1.mp3",
+      "from": 2688,
+      "dur": 78
+    },
+    {
+      "file": "vo/cu_2.mp3",
+      "from": 2773,
+      "dur": 60
+    },
+    {
+      "file": "vo/cu_3.mp3",
+      "from": 2840,
+      "dur": 122
+    },
+    {
+      "file": "vo/cu_4.mp3",
+      "from": 2969,
+      "dur": 191
+    },
+    {
+      "file": "vo/cu_5.mp3",
+      "from": 3167,
+      "dur": 118
+    },
+    {
+      "file": "vo/cu_6.mp3",
+      "from": 3292,
+      "dur": 114
+    },
+    {
+      "file": "vo/sa_1.mp3",
+      "from": 3449,
+      "dur": 72
+    },
+    {
+      "file": "vo/sa_2.mp3",
+      "from": 3528,
+      "dur": 89
+    },
+    {
+      "file": "vo/sa_3.mp3",
+      "from": 3624,
+      "dur": 125
+    },
+    {
+      "file": "vo/sa_4.mp3",
+      "from": 3756,
+      "dur": 129
+    },
+    {
+      "file": "vo/sa_5.mp3",
+      "from": 3892,
+      "dur": 99
+    },
+    {
+      "file": "vo/sa_6.mp3",
+      "from": 3998,
+      "dur": 116
+    },
+    {
+      "file": "vo/plug_1.mp3",
+      "from": 4157,
+      "dur": 85
+    },
+    {
+      "file": "vo/plug_2.mp3",
+      "from": 4249,
+      "dur": 162
+    },
+    {
+      "file": "vo/plug_3.mp3",
+      "from": 4418,
+      "dur": 63
+    },
+    {
+      "file": "vo/outro_1.mp3",
+      "from": 4494,
+      "dur": 143
+    },
+    {
+      "file": "vo/outro_2.mp3",
+      "from": 4644,
+      "dur": 78
+    },
+    {
+      "file": "vo/outro_3.mp3",
+      "from": 4729,
+      "dur": 90
+    }
+  ]
+}

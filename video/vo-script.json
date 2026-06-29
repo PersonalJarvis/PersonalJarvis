@@ -1,0 +1,108 @@
+{
+  "voice": "en-US-AndrewNeural",
+  "rate": "+6%",
+  "timing": {
+    "fps": 30,
+    "leadIn": 9,
+    "gap": 7,
+    "tail": 18,
+    "overlap": 14
+  },
+  "scenes": [
+    {
+      "id": "intro",
+      "lines": [
+        { "id": "intro_1", "kind": "narration", "text": "Hey — I'm Ruben's AI assistant.", "tts": "Hey, I'm Reuben's AI assistant." },
+        { "id": "intro_2", "kind": "narration", "text": "Ruben built me — a developer from Germany — and put it all on GitHub.", "tts": "Reuben built me. He's a developer from Germany, and he put it all on GitHub." },
+        { "id": "intro_3", "kind": "narration", "text": "One day, I'll even make videos like this one myself — that's just not quite live yet.", "tts": "One day, I'll even make videos like this one myself. That's just not quite live yet." }
+      ]
+    },
+    {
+      "id": "concept",
+      "lines": [
+        { "id": "concept_1", "kind": "narration", "text": "Personal Jarvis is an AI agent that lives on your computer." },
+        { "id": "concept_2", "kind": "narration", "text": "You just talk to it, and it talks back — completely hands-free." },
+        { "id": "concept_3", "kind": "narration", "text": "But it's much more than a realtime voice model." },
+        { "id": "concept_4", "kind": "narration", "text": "It's a full agent orchestrator." },
+        { "id": "concept_5", "kind": "narration", "text": "It runs tasks in the background, and actually gets things done for you." },
+        { "id": "concept_6", "kind": "narration", "text": "And it runs everywhere — your desktop, a small server, even a browser tab." },
+        { "id": "concept_7", "kind": "narration", "text": "Think of it as a home for you, right on your machine." }
+      ]
+    },
+    {
+      "id": "real_app",
+      "lines": [
+        { "id": "app_1", "kind": "narration", "text": "And this is the actual desktop app." },
+        { "id": "app_2", "kind": "narration", "text": "Chat, agents, skills — and an Outputs folder where every result lands." }
+      ]
+    },
+    {
+      "id": "setup_keys",
+      "lines": [
+        { "id": "keys_1", "kind": "narration", "text": "Setting it up takes about a minute, right in the onboarding." },
+        { "id": "keys_2", "kind": "narration", "text": "Jarvis actually uses four kinds of keys." },
+        { "id": "keys_3", "kind": "narration", "text": "A brain to think, workers for the big jobs, a voice to speak, and ears to listen." },
+        { "id": "keys_4", "kind": "narration", "text": "For each one, you just pick your provider — Claude, OpenAI, Gemini, and more." },
+        { "id": "keys_5", "kind": "narration", "text": "No account to create — you bring your own keys, and you're never locked in." }
+      ]
+    },
+    {
+      "id": "setup_wake",
+      "lines": [
+        { "id": "wake_1", "kind": "narration", "text": "Next, pick your wake word — the phrase that wakes Jarvis up." },
+        { "id": "wake_2", "kind": "narration", "text": "I chose Hey Ruben. You can pick anything you like.", "tts": "I chose, hey Reuben. You can pick anything you like." },
+        { "id": "wake_3", "kind": "narration", "text": "And that's the whole setup." }
+      ]
+    },
+    {
+      "id": "examples",
+      "lines": [
+        { "id": "ex_1", "kind": "narration", "text": "Once you're set up, you just talk." },
+        { "id": "ex_2", "kind": "narration", "text": "You can ask it almost anything." },
+        { "id": "ex_3", "kind": "command", "text": "What's on my calendar today?", "tts": "Hey Reuben. What's on my calendar today?" },
+        { "id": "ex_4", "kind": "command", "text": "Switch the brain to Gemini.", "tts": "Hey Reuben. Switch the brain to Gemini." },
+        { "id": "ex_5", "kind": "command", "text": "Summarise this article for me.", "tts": "Hey Reuben. Summarise this article for me." }
+      ]
+    },
+    {
+      "id": "computer_use",
+      "extra": 30,
+      "lines": [
+        { "id": "cu_1", "kind": "narration", "text": "Now let me show you two of my favourite features." },
+        { "id": "cu_2", "kind": "narration", "text": "Feature one: Computer Use." },
+        { "id": "cu_3", "kind": "command", "text": "Open Chrome and find Elon Musk's latest posts.", "tts": "Hey Reuben. Open Chrome and find Elon Musk's latest posts." },
+        { "id": "cu_4", "kind": "narration", "text": "Jarvis looks at the screen, reads the interface, moves the mouse, and clicks — exactly like a person would." },
+        { "id": "cu_5", "kind": "narration", "text": "No scripts, no macros. It just uses your computer for you." },
+        { "id": "cu_6", "kind": "narration", "text": "And it works across any app on your screen, not just the browser." }
+      ]
+    },
+    {
+      "id": "sub_agents",
+      "extra": 30,
+      "lines": [
+        { "id": "sa_1", "kind": "narration", "text": "Feature two: background sub-agents." },
+        { "id": "sa_2", "kind": "narration", "text": "For the bigger jobs, you just hand off the hard stuff." },
+        { "id": "sa_3", "kind": "command", "text": "Write me a deep-dive report on the global EV market.", "tts": "Hey Reuben. Write me a deep-dive report on the global EV market." },
+        { "id": "sa_4", "kind": "narration", "text": "It spins up a worker that searches, analyses, and writes the whole thing." },
+        { "id": "sa_5", "kind": "narration", "text": "Then it delivers the finished file — while you just keep talking." },
+        { "id": "sa_6", "kind": "narration", "text": "And it checks its own work up to three times before you ever see the result." }
+      ]
+    },
+    {
+      "id": "plugins",
+      "lines": [
+        { "id": "plug_1", "kind": "narration", "text": "And Jarvis plugs into the tools you already use." },
+        { "id": "plug_2", "kind": "narration", "text": "Gmail, Calendar, Telegram, Discord, Spotify, GitHub — and more." },
+        { "id": "plug_3", "kind": "narration", "text": "New plugins land all the time." }
+      ]
+    },
+    {
+      "id": "outro",
+      "lines": [
+        { "id": "outro_1", "kind": "narration", "text": "So that's Personal Jarvis — your voice, your computer, your own AI agent." },
+        { "id": "outro_2", "kind": "narration", "text": "It's completely free, and open source." },
+        { "id": "outro_3", "kind": "narration", "text": "The link is in the description below. Give it a try." }
+      ]
+    }
+  ]
+}

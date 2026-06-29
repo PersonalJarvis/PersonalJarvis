@@ -17,11 +17,23 @@ export const SpokenCommand: React.FC<{
   delay?: number;
   size?: number;
   compact?: boolean;
-}> = ({ text, speaker = "user", delay = 0, size = 40, compact = false }) => {
+  jarvisSrc?: string;
+  /** Optional wake word shown highlighted before the command (e.g. "Hey Ruben") —
+   *  makes clear you say the wake word first, then the command. */
+  wake?: string;
+}> = ({ text, speaker = "user", delay = 0, size = 40, compact = false, jarvisSrc = "jarvis-mark.png", wake }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const s = spring({ frame: frame - delay, fps, config: { damping: 200, mass: 0.7 } });
   const isUser = speaker === "user";
+
+  // “Hey Ruben, <command>” — the wake word in signal-yellow, the command in white.
+  const quoted = (
+    <>
+      “{wake ? <span style={{ color: COLORS.primary, fontWeight: 800 }}>{wake}, </span> : null}
+      {text}”
+    </>
+  );
 
   const dim = compact ? 40 : 52;
   const badge = isUser ? (
@@ -55,7 +67,10 @@ export const SpokenCommand: React.FC<{
         boxShadow: `0 0 16px ${COLORS.primaryGlow}`,
       }}
     >
-      <Img src={staticFile("jarvis-mark.png")} style={{ width: dim * 0.74, height: dim * 0.74 }} />
+      <Img
+        src={staticFile(jarvisSrc)}
+        style={{ width: dim * 0.78, height: dim * 0.78, objectFit: "contain" }}
+      />
     </div>
   );
 
@@ -85,7 +100,7 @@ export const SpokenCommand: React.FC<{
             whiteSpace: "nowrap",
           }}
         >
-          “{text}”
+          {quoted}
         </span>
       </div>
     );
@@ -118,7 +133,7 @@ export const SpokenCommand: React.FC<{
           maxWidth: 1000,
         }}
       >
-        “{text}”
+        {quoted}
       </div>
     </div>
   );
