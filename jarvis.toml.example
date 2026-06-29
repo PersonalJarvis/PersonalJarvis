@@ -128,16 +128,16 @@ tray_enabled = true
 admin_api_port = 47821
 startup_chime = true
 # On-screen overlay shown by default on a desktop install: the slim
-# "whisper_bar" (the Jarvis bar). Alternatives: "mascot" (Gigi orb) or "none".
+# "jarvis_bar" (the Jarvis bar). Alternatives: "mascot" (Gigi orb) or "none".
 # This mirrors the built-in default — listed here so the bar is the obvious,
 # self-documented out-of-the-box choice and never silently disappears.
-orb_style = "whisper_bar"
+orb_style = "jarvis_bar"
 bar_persistent = true        # keep the bar visible at all times (not only during a voice session)
 
 # ── Memory ──
 [memory]
 recall_store = "sqlite"
-archival_store = "chroma"
+archival_store = "sqlite"   # chromadb was removed; sqlite is the supported backend
 data_dir = "./data"          # per-user runtime data (gitignored)
 
 # ── Knowledge wiki (Obsidian vault) — self-creates an empty vault on first run ──

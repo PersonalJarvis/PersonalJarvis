@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-jarvis"
-version = "0.1.0"
-description = "Voice-gesteuerter Meta-Orchestrator für Windows 11"
+version = "1.0.0"
+description = "Voice-driven meta-orchestrator that turns one spoken request into a fleet of self-checking AI agents"
 requires-python = ">=3.11"
 readme = "README.md"
 license = { text = "MIT" }
@@ -32,9 +32,11 @@ dependencies = [
     # Local STT removed 2026-05-18 — Groq Whisper API is the new default.
     "google-cloud-texttospeech>=2.21",
     "elevenlabs>=1.5",  # cloud TTS (pure-Python HTTP SDK) — safe in base
-    "chromadb>=0.5",  # vector store; ships its own onnxruntime MiniLM embedder
-    # sentence-transformers (another torch puller, no direct importer in jarvis/)
-    # lives in [local-voice]; chromadb's default embedder does not require it.
+    # chromadb removed 2026-06-28: it had ZERO importers in jarvis/ (vestige of the
+    # soft-disabled legacy curator), pulled a large transitive tree, and carried a
+    # critical advisory with no fixed release. The Wiki is the live memory tier.
+    # sentence-transformers (a torch puller, no direct importer in jarvis/) lives
+    # in [local-voice].
     # Desktop-only packages (global-hotkeys, pywinauto, pywin32, pystray,
     # pywebview, pywinpty, win10toast-click, pyautogui, mss) live in the [desktop]
     # extras group per the cloud-first doctrine (CLAUDE.md). The base install must
@@ -55,6 +57,11 @@ dependencies = [
     # for cross-platform per-user config/cache dirs. Pure-Python, VPS-safe.
     "typer>=0.12",
     "platformdirs>=4",
+    # click is imported directly by jarvis/cli_ctl (__main__.py + dynamic.py). It
+    # used to arrive transitively via typer, but modern typer no longer guarantees
+    # it, so declare it explicitly — otherwise the jarvisctl CLI fails to import on
+    # a clean install.
+    "click>=8.1",
     # Desktop-App (Phase 1a) — cross-platform pieces stay in base.
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
@@ -78,6 +85,12 @@ dependencies = [
     # Phase F1 — Telegram-Channel-Bot via long-polling (ChannelAdapter).
     "python-telegram-bot>=22,<23",
 ]
+
+[project.urls]
+Homepage = "https://github.com/PersonalJarvis/PersonalJarvis"
+Repository = "https://github.com/PersonalJarvis/PersonalJarvis"
+Issues = "https://github.com/PersonalJarvis/PersonalJarvis/issues"
+Documentation = "https://github.com/PersonalJarvis/PersonalJarvis/blob/main/README.md"
 
 [project.optional-dependencies]
 dev = [
@@ -286,6 +299,14 @@ gmail = "jarvis.plugins.tool.gmail_rest:GmailRestTool"
 # router-tier, risk_tier "monitor" (read-only). A direct gated action, never a
 # spawn (AP-5/AP-14). See docs/superpowers/plans/2026-06-07-plugin-skill-pairing-reachability.md.
 vercel = "jarvis.plugins.tool.vercel_rest:VercelRestTool"
+# Google Calendar (marketplace plugin, 2026-06-27) — read/create/update/delete
+# calendar events. The bot logic is a dependency-free Node script
+# (calendar_bot.mjs); this Python entry point is the OAuth bridge that reuses
+# the marketplace token + refresh loop (so the connection "never expires").
+# Router-tier, full autonomy: writes are "monitor" (audited, no prompt), never a
+# spawn (AP-5/AP-14). Entry-point name matches the catalog native_tool +
+# token-store key "google_calendar".
+google_calendar = "jarvis.plugins.tool.google_calendar_rest:GoogleCalendarRestTool"
 screen-snapshot = "jarvis.plugins.tool.screen_snapshot:ScreenSnapshotTool"
 move-mouse = "jarvis.plugins.tool.move_mouse:MoveMouseTool"
 switch-window = "jarvis.plugins.tool.switch_window:SwitchWindowTool"
@@ -399,6 +420,9 @@ jarvis = [
     "ui/web/dist/**/*",
     "ui/web/dist/*",
     "assets/**/*",
+    # Node bot scripts shipped alongside their Python bridge tools (e.g. the
+    # google_calendar bot). Not Python, so packages.find won't pick them up.
+    "plugins/tool/*.mjs",
 ]
 
 [tool.ruff]
