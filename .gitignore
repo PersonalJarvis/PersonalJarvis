@@ -195,3 +195,13 @@ wiki/obsidian-vault/.obsidian/hotkeys.json
 # Pre-release dist backups (a snapshot copy of jarvis/ui/web/dist taken before a
 # UI rework). The live build output is dist/, not these dated backup siblings.
 jarvis/ui/web/dist._predockpolish/
+# Computer-Use restore points (plain no-git file snapshots taken before risky CU
+# work, with a restore script). Local safety nets, never committed.
+/cu-restore-points/
+
+# Scratch analysis + video render output (local-only working material). NOTE:
+# the video/ folder is a tracked Remotion source project, so only its rendered
+# output is ignored here — not the whole folder.
+.tmp_video_analysis/
+video/public/
+video/out/
