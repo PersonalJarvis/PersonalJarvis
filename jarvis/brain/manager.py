@@ -60,6 +60,7 @@ from jarvis.core.turn_language import (
 )
 from jarvis.voice.action_phrases import (
     CU_CANCEL_EXIT_CODE,
+    CU_TOOL_OUTCOME_LAYER,
     OUTPUT_LANGUAGE_ENV_KEY,
     action_phrase,
     cu_failure_readback,
@@ -5145,6 +5146,33 @@ class BrainManager:
         if len(history) > self._HISTORY_MAX:
             self._history = history[-self._HISTORY_MAX:]
 
+    async def _on_cu_tool_completion(self, event: Any) -> None:
+        """Mirror a router-tier ``computer_use`` TOOL outcome into the history.
+
+        The voice fast-path grounds its CU outcome inline (``_run_computer_use_
+        background`` → :meth:`_append_cu_outcome_to_history`). The router-tier
+        ``computer_use`` tool runs in its own module with NO ``_history`` access,
+        so it tags its completion announcement with
+        ``source_layer=CU_TOOL_OUTCOME_LAYER`` and we mirror it here — same
+        grounding, so a text-chat / router-picked desktop action is in the
+        model's next-turn context too (no subsystem confusion). Only the tagged
+        CU-tool completion is mirrored; a mission / worker / other announcement is
+        ignored, so an unrelated background readback never pollutes the grounding.
+        Never raises — a bus subscriber that throws would break the pipeline
+        (AP-18). The fast-path leaves ``source_layer`` empty, so its outcome is
+        NOT double-recorded here.
+        """
+        try:
+            if getattr(event, "source_layer", "") != CU_TOOL_OUTCOME_LAYER:
+                return
+            self._append_cu_outcome_to_history(
+                user_request="",
+                outcome_text=getattr(event, "text", "") or "",
+                diagnostic=getattr(event, "detail", None),
+            )
+        except Exception:  # noqa: BLE001
+            log.debug("CU-tool completion history mirror failed", exc_info=True)
+
     async def _record_response_side_effects(
         self,
         *,
@@ -7392,11 +7420,17 @@ class BrainManager:
           provider whose key was just set. Prevents a provider that already
           failed with "no API key" from being excluded from the fallback chain
           until the app is restarted.
+        - ``AnnouncementRequested`` (CU-tool-tagged) → mirror the router-tier
+          ``computer_use`` outcome into the live history (subsystem-confusion fix).
 
         Called separately rather than in ``__init__`` so BrainManager can be
         constructed for tests without a bus subscription.
         """
-        from jarvis.core.events import BrainToolsChanged, SecretConfigured
+        from jarvis.core.events import (
+            AnnouncementRequested,
+            BrainToolsChanged,
+            SecretConfigured,
+        )
 
         target_bus = bus or self._bus
         if target_bus is None:
@@ -7407,6 +7441,7 @@ class BrainManager:
             self.refresh_tools()
 
         target_bus.subscribe(BrainToolsChanged, _on_tools_changed)
+        target_bus.subscribe(AnnouncementRequested, self._on_cu_tool_completion)
 
         async def _on_secret_configured(ev: SecretConfigured) -> None:
             if ev.action != "set":

@@ -6,7 +6,11 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
-from jarvis.brain.manager import _classify_provider_error, _is_rate_limit_exc
+from jarvis.brain.manager import (
+    _DEAD_LIST_KINDS,
+    _classify_provider_error,
+    _is_rate_limit_exc,
+)
 
 log = logging.getLogger(__name__)
 
@@ -103,7 +107,14 @@ class ComputerUsePlannerSelector:
                 mark_rate_limited(provider, model)
             return
 
-        if kind in ("missing_key", "account_blocked"):
+        # Dead-list a terminal-credential failure so it stops leading the chain.
+        # Use the SAME shared set the manager uses (_DEAD_LIST_KINDS) instead of a
+        # hardcoded subset — the manager added "bad_key" (a bare HTTP 401, e.g.
+        # "Error code: 401 - invalid x-api-key") on 2026-06-30, and a local subset
+        # silently dropped it here, so a 401 CU provider was re-tried every step
+        # instead of being skipped (drift bug: _looks_invalid_auth_error became
+        # dead code for any 401 that carried the numeric code).
+        if kind in _DEAD_LIST_KINDS:
             dead_providers = getattr(self.manager, "_dead_providers", None)
             if isinstance(dead_providers, set):
                 dead_providers.add(provider)

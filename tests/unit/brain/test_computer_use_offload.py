@@ -324,3 +324,72 @@ async def test_cu_user_cancel_writes_nothing_to_history(monkeypatch) -> None:
     assert mgr._history == [], (
         f"a silent user cancel must not write to history; got {mgr._history!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# The router-tier `computer_use` TOOL path (computer_use_tool.py) runs in its own
+# module with NO _history access. It tags its completion announcement with a CU
+# source_layer; the BrainManager mirrors that tagged outcome into the live
+# history so a text-chat / router-picked desktop action is grounded for the next
+# turn too — same fix as the voice fast-path, the other CU entry point.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_manager_mirrors_cu_tool_completion_into_history() -> None:
+    from jarvis.core.events import AnnouncementRequested
+    from jarvis.voice.action_phrases import CU_TOOL_OUTCOME_LAYER
+
+    mgr = _make_manager(_SlowHarnessExecutor(), _FakeBus())
+    await mgr._on_cu_tool_completion(AnnouncementRequested(
+        text="That didn't work on screen.",
+        kind="completion",
+        source_layer=CU_TOOL_OUTCOME_LAYER,
+        detail="exit 2 · provider chain failed: no vision-capable provider reachable",
+    ))
+
+    assert mgr._history, "a tool-path CU outcome must be mirrored into history"
+    content = str(mgr._history[-1].content).lower()
+    assert "screen" in content
+    assert "provider chain" in content
+
+
+@pytest.mark.asyncio
+async def test_cu_tool_completion_grounds_history_end_to_end() -> None:
+    """Full chain: attach_to_bus wires the subscriber, and a tool-tagged
+    completion published on the REAL bus lands in the live history."""
+    from jarvis.core.bus import EventBus
+    from jarvis.core.events import AnnouncementRequested
+    from jarvis.voice.action_phrases import CU_TOOL_OUTCOME_LAYER
+
+    bus = EventBus()
+    mgr = _make_manager(_SlowHarnessExecutor(), bus)
+    mgr.attach_to_bus(bus)
+
+    await bus.publish(AnnouncementRequested(
+        text="That didn't work on screen.",
+        kind="completion",
+        source_layer=CU_TOOL_OUTCOME_LAYER,
+        detail="exit 3 · no vision-capable provider reachable",
+    ))
+    await asyncio.sleep(0.01)  # allow async dispatch to run
+
+    assert mgr._history, "the tool-path outcome must reach history via the bus"
+    assert "screen" in str(mgr._history[-1].content).lower()
+
+
+@pytest.mark.asyncio
+async def test_manager_ignores_non_cu_tool_completion() -> None:
+    """A mission / worker / other completion must NOT be mirrored — only a
+    CU-tool-tagged one — so an unrelated background readback never pollutes the
+    desktop-action grounding."""
+    from jarvis.core.events import AnnouncementRequested
+
+    mgr = _make_manager(_SlowHarnessExecutor(), _FakeBus())
+    await mgr._on_cu_tool_completion(AnnouncementRequested(
+        text="Your sub-agent finished.",
+        kind="completion",
+        source_layer="missions.announcer",
+    ))
+
+    assert mgr._history == []

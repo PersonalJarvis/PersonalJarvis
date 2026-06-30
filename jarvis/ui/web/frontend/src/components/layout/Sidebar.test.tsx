@@ -21,6 +21,13 @@ vi.mock("@/hooks/useOverlayStyle", () => ({
   }),
 }));
 
+// usePluginAttention polls /api/marketplace/plugins; mock it so the sidebar's
+// plugin reconnect dot is driven by the test, not a fetch.
+const pluginAttentionMock = vi.hoisted(() => ({ needsReconnect: false }));
+vi.mock("@/hooks/usePluginAttention", () => ({
+  usePluginAttention: () => pluginAttentionMock.needsReconnect,
+}));
+
 describe("Sidebar voice header", () => {
   beforeEach(() => {
     useEventStore.setState({
@@ -189,6 +196,36 @@ describe("Sidebar assistant name header", () => {
 
     expect(screen.getByText("Athena")).toBeTruthy();
     expect(screen.queryByText("Jarvis")).toBeNull();
+  });
+});
+
+describe("Sidebar plugin reconnect indicator", () => {
+  beforeEach(() => {
+    useEventStore.setState({ connected: true, voiceReady: true });
+  });
+
+  afterEach(() => {
+    cleanup();
+    pluginAttentionMock.needsReconnect = false;
+  });
+
+  test("shows an amber dot on Skills & Tools when a plugin needs reconnect", () => {
+    // A revoked / expired plugin must be visible app-wide, not only on the
+    // Plugins page — the sidebar carries an amber dot on the row that fronts
+    // Plugins ("Skills & Tools", id "skills").
+    pluginAttentionMock.needsReconnect = true;
+
+    render(<Sidebar />);
+
+    expect(screen.getByTestId("nav-warn-skills")).toBeTruthy();
+  });
+
+  test("no amber dot when every plugin is healthy", () => {
+    pluginAttentionMock.needsReconnect = false;
+
+    render(<Sidebar />);
+
+    expect(screen.queryByTestId("nav-warn-skills")).toBeNull();
   });
 });
 

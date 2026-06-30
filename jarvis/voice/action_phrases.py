@@ -30,6 +30,15 @@ _SUPPORTED = ("de", "en", "es")
 #: sites cannot drift apart.
 OUTPUT_LANGUAGE_ENV_KEY = "JARVIS_OUTPUT_LANGUAGE"
 
+#: ``AnnouncementRequested.source_layer`` marker the router-tier ``computer_use``
+#: TOOL stamps on its background-mission completion. The tool runs in its own
+#: module with no access to ``BrainManager._history``, so it tags the outcome and
+#: the manager mirrors it into the live conversation history (a desktop action
+#: picked by the router / in text-chat must be grounded for the next turn too —
+#: the same fix the voice fast-path gets inline). Shared here so the producer
+#: (computer_use tool) and the consumer (BrainManager subscriber) cannot drift.
+CU_TOOL_OUTCOME_LAYER = "brain.computer_use_tool"
+
 # key -> {lang -> template}. Templates may carry named ``{fields}``.
 _PHRASES: dict[str, dict[str, str]] = {
     # Computer-use background offload — outcome readbacks (announcement bus).
@@ -555,6 +564,8 @@ def cu_success_readback(lang: str, *, stdout: str | None) -> str:
 
 __all__ = [
     "CU_CANCEL_EXIT_CODE",
+    "CU_TOOL_OUTCOME_LAYER",
+    "OUTPUT_LANGUAGE_ENV_KEY",
     "action_phrase",
     "cu_failure_readback",
     "cu_success_readback",

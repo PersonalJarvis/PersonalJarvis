@@ -440,6 +440,27 @@ async def test_tool_threads_output_language_into_harness_env() -> None:
     assert fake.task_envs[0].get(_OUTPUT_LANGUAGE_ENV_KEY) == "de"
 
 
+async def test_completion_carries_cu_tool_source_layer_for_history_mirror() -> None:
+    """The tool has NO access to BrainManager._history, so it tags its completion
+    with CU_TOOL_OUTCOME_LAYER; the manager subscriber mirrors that outcome into
+    the live history (otherwise a router/text-chat desktop action vanishes from
+    the model's next-turn context — the subsystem-confusion bug)."""
+    from jarvis.plugins.tool.computer_use_tool import ComputerUseTool
+    from jarvis.voice.action_phrases import CU_TOOL_OUTCOME_LAYER
+
+    bus = _FakeBus()
+    tool = ComputerUseTool(bus=bus, manager=_FakeHarnessManager())
+    result = await tool.execute({"goal": "open chrome"}, _ctx_en())
+    assert result.success
+
+    completions = await _collect_completion(bus)
+    assert len(completions) == 1
+    assert completions[0].source_layer == CU_TOOL_OUTCOME_LAYER, (
+        f"completion must be tagged for the history mirror; got "
+        f"{completions[0].source_layer!r}"
+    )
+
+
 async def test_success_readback_falls_back_to_done_without_proof() -> None:
     from jarvis.plugins.tool.computer_use_tool import ComputerUseTool
     from jarvis.voice.action_phrases import action_phrase

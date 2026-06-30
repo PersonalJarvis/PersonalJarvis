@@ -33,6 +33,7 @@ from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.harness.manager import HarnessManager
 from jarvis.plugins.tool.dispatch_to_harness import DispatchToHarnessTool
 from jarvis.voice.action_phrases import (
+    CU_TOOL_OUTCOME_LAYER,
     OUTPUT_LANGUAGE_ENV_KEY,
     action_phrase,
     cu_failure_readback,
@@ -244,6 +245,12 @@ class ComputerUseTool:
                 # so a failure is debuggable.
                 kind="completion",
                 detail=detail,
+                # Tag this so the BrainManager mirrors the outcome into the live
+                # conversation history. This tool runs in its own module with no
+                # _history access; without the mirror, a router/text-chat desktop
+                # action would vanish from the model's next-turn context (the same
+                # subsystem-confusion bug the voice fast-path fixes inline).
+                source_layer=CU_TOOL_OUTCOME_LAYER,
             ))
         except Exception:  # noqa: BLE001
             log.debug("computer_use completion announce failed", exc_info=True)
