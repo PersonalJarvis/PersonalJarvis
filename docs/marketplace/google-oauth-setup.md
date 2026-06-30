@@ -3,9 +3,14 @@
 These marketplace plugins use browser-login OAuth against an app **you** register
 once. This is the providers' security model — no one can do it for you, and there
 is no shared Jarvis-owned client: every user connects their *own* Google account
-through their *own* OAuth client. After registering, you store the resulting
-**Client ID** as a secret (preferred) or paste it into your local
-`data/plugin_catalog.json` (gitignored runtime override) and restart.
+through their *own* OAuth client.
+
+The simplest way to hand the resulting **Client ID** to Jarvis is right in the
+app: click **Connect** on the plugin, expand **"Use your own OAuth client
+(advanced)"**, and paste your Client ID (and secret, if needed) there — no env
+vars, no file edits, no restart. Jarvis stores it as a secret for you. (You can
+still set it as an env var / credential-manager secret or edit
+`data/plugin_catalog.json`; see "Applying Client IDs" below.)
 
 | Plugin | App to register | Client ID placeholder to replace |
 |---|---|---|
@@ -62,10 +67,19 @@ through their *own* OAuth client. After registering, you store the resulting
 
 Jarvis now self-heals: when a Gmail call hits an expired token it refreshes once
 and retries automatically. If the refresh can't succeed (revoked token, or the
-client_id is still the placeholder), Jarvis flags the connection for re-auth — the
-Plugins view shows **Reconnect** and the voice/chat reply says the Gmail
-authorization expired and needs reconnecting, instead of a cryptic "expired" or
-"timeout". Set a real `google_oauth_client_id` first (above), then reconnect.
+client_id is still the placeholder), Jarvis flags the connection for re-auth and
+makes it impossible to miss:
+
+- the plugin **stays in the Plugins "Installed" tab** with an amber
+  **"Reconnect needed"** badge and a one-click **Reconnect** button (it does NOT
+  silently drop back to "Browse"),
+- the **sidebar shows an amber dot** on the "Skills & Tools" row, so a dead
+  connection is visible from anywhere in the app,
+- and the voice/chat reply says the authorization expired and needs reconnecting,
+  instead of a cryptic "expired" or "timeout".
+
+Click **Reconnect**, sign in again, and you're back. If you never set a real
+client, do that in the same dialog first (above), then reconnect.
 
 ### Keeping it connected (the 7-day rule)
 
@@ -108,8 +122,10 @@ for distributing the app publicly.
 2. Under the app's **OAuth** settings, add the redirect URI
    `http://127.0.0.1:3119/oauth/callback`.
 3. Copy the **Client ID**.
-4. In `data/plugin_catalog.json`, replace `REPLACE_WITH_JARVIS_ASANA_CLIENT_ID`
-   (the `asana` entry) with it. Restart Jarvis.
+4. Hand it to Jarvis the same way as Google — easiest is the in-app **Connect**
+   dialog ("Use your own OAuth client"), which stores the `asana_oauth_client_id`
+   secret for you. (Setting that secret yourself, or editing
+   `data/plugin_catalog.json` + restart, also works.)
 
 **Loopback caveat:** Asana's docs only document `https` / `oob` redirect URIs. If
 Asana rejects the `http://127.0.0.1:3119` loopback at registration, fall back to
@@ -123,17 +139,25 @@ default `bearer` scheme) and point `mcp_server` at a community Asana stdio MCP
 
 ## Applying Client IDs
 
-Two ways, in precedence order:
+Three ways, in precedence order:
 
-1. **Secret (recommended, durable).** Google: `google_oauth_client_id`
-   (+ optional `google_oauth_client_secret`). These override the catalog at
-   connect-time *and* refresh-time and survive a catalog re-sync. Set them as env
-   vars or in the credential manager (service `personal-jarvis`).
-2. **`data/plugin_catalog.json` (fallback).** Your local, gitignored runtime
+1. **In-app, in the Connect dialog (recommended).** Click **Connect** (or
+   **Reconnect**) on the plugin → expand **"Use your own OAuth client
+   (advanced)"** → paste the Client ID (+ secret if needed). Jarvis writes it to
+   the right secret for you (Google: `google_oauth_client_id`; Asana:
+   `asana_oauth_client_id`; Slack: `slack_oauth_client_id`) — no env vars, no file
+   edits, no restart. This is the same durable secret as option 2, just entered
+   from the UI.
+2. **Secret directly (headless / scripted).** Set the credential-manager secret
+   or env var yourself — Google: `google_oauth_client_id`
+   (+ optional `google_oauth_client_secret`); Asana: `asana_oauth_client_id`;
+   Slack: `slack_oauth_client_id`. These override the catalog at connect-time
+   *and* refresh-time and survive a catalog re-sync. On a headless host with no OS
+   keyring they fall back to `.env` / a local file automatically.
+3. **`data/plugin_catalog.json` (fallback).** Your local, gitignored runtime
    override; edit the `gmail`/`google_drive`/`google_calendar`/`asana` entries
    and restart. Note this file is re-synced from the seed, so a real Client ID
-   written here can be reset back to the placeholder — prefer the secret for
-   Google.
+   written here can be reset back to the placeholder — prefer a secret.
 
 After any change, restart Jarvis and reconnect the plugin. The tracked
 `jarvis/marketplace/seed_catalog.json` keeps the placeholders (never commit your
