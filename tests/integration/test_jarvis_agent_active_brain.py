@@ -59,7 +59,7 @@ def test_active_brain_follows_sub_jarvis_not_router() -> None:
     """Router = gemini, heavy worker = claude-api. Claude must be active."""
     cfg = load_config()
     cfg.brain.primary = "gemini"
-    cfg.brain.sub_jarvis = BrainTierConfig(provider="claude-api", model="")
+    cfg.brain.worker = BrainTierConfig(provider="claude-api", model="")
 
     data = _status(cfg)
     active = {r["jarvis"]: r["is_active_brain"] for r in data["mapping"]}
@@ -74,7 +74,7 @@ def test_active_brain_follows_sub_jarvis_gemini() -> None:
     """When the subagent provider IS gemini, gemini is correctly active."""
     cfg = load_config()
     cfg.brain.primary = "claude-api"
-    cfg.brain.sub_jarvis = BrainTierConfig(provider="gemini", model="")
+    cfg.brain.worker = BrainTierConfig(provider="gemini", model="")
 
     data = _status(cfg)
     active = {r["jarvis"]: r["is_active_brain"] for r in data["mapping"]}
@@ -88,7 +88,7 @@ def test_openclaw_claude_alias_marks_claude_active() -> None:
     """The 'openclaw-claude' alias is still the Claude brain for display."""
     cfg = load_config()
     cfg.brain.primary = "gemini"
-    cfg.brain.sub_jarvis = BrainTierConfig(provider="openclaw-claude", model="")
+    cfg.brain.worker = BrainTierConfig(provider="openclaw-claude", model="")
 
     data = _status(cfg)
     active = {r["jarvis"]: r["is_active_brain"] for r in data["mapping"]}
