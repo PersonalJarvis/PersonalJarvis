@@ -136,8 +136,8 @@ async def test_apply_switches_when_resolver_returns_newer_models(
     assert cfg.brain.providers["openai"].model == "gpt-5.5"
 
     # Sub-Jarvis-Override unangetastet
-    assert cfg.brain.sub_jarvis is not None
-    assert cfg.brain.sub_jarvis.model == "gemini-2.5-pro"
+    assert cfg.brain.worker is not None
+    assert cfg.brain.worker.model == "gemini-2.5-pro"
 
     # Bus-Events publisht (event-loop-tick fuer subscribe-async)
     import asyncio

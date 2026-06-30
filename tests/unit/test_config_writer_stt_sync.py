@@ -163,11 +163,16 @@ def test_winreg_skipped_on_non_win32(
 def test_raises_on_missing_toml(
     sample_soll: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Production now auto-creates a missing TOML instead of raising
+    # FileNotFoundError (_ensure_writable_config_path, headless-VPS fix).
     monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)
     monkeypatch.setattr(config_writer, "_set_user_env_var", lambda name, value: None)
 
-    with pytest.raises(FileNotFoundError):
-        config_writer.set_stt_provider("faster-whisper", path=tmp_path / "nope.toml")
+    p = tmp_path / "nope.toml"
+    assert not p.exists()
+    config_writer.set_stt_provider("faster-whisper", path=p)
+    assert p.exists(), "set_stt_provider must auto-create a missing config file"
+    assert 'provider = "faster-whisper"' in p.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

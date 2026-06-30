@@ -23,6 +23,16 @@ class SecretAccessError(SelfModError):
     """
 
 
+class ProviderSwitchLockedError(SelfModError):
+    """A non-USER actor tried to change a brain provider-selection key.
+
+    The active brain provider is the user's hard choice — it changes ONLY
+    through an explicit user action (the control CLI or the manual provider
+    switch in the desktop app, `actor=USER`), never through Jarvis itself
+    (voice/chat self-mod) or any automatic mechanism. See `provider_lock.py`.
+    """
+
+
 class TypeMismatchError(SelfModError):
     """Value type does not match the expected Pydantic field type."""
 

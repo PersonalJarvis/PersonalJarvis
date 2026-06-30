@@ -107,6 +107,12 @@ def _patch_direct(
         "jarvis.missions.critic.runner._resolve_critic_provider_model",
         lambda: ("claude-api", "claude-sonnet-4-6"),
     )
+    # Neutralize the in-process API critic so no live network call is made
+    # even on a machine that has a real API key configured.
+    monkeypatch.setattr(
+        "jarvis.missions.critic.runner._resolve_api_critic_provider",
+        lambda *a, **k: (None, None),
+    )
     # Pin the binary so the test does not depend on a real `claude` shim
     # being on PATH on the developer machine.
     monkeypatch.setattr(
@@ -292,6 +298,10 @@ async def test_claude_direct_invalid_json_triggers_adversarial_retry(
         lambda: ("claude-api", "claude-sonnet-4-6"),
     )
     monkeypatch.setattr(
+        "jarvis.missions.critic.runner._resolve_api_critic_provider",
+        lambda *a, **k: (None, None),
+    )
+    monkeypatch.setattr(
         "jarvis.missions.workers.claude_direct_worker."
         "_resolve_claude_argv_prefix",
         lambda: ["claude"],
@@ -332,6 +342,10 @@ async def test_claude_direct_nonzero_exit_returns_none_for_retry(
     monkeypatch.setattr(
         "jarvis.missions.critic.runner._resolve_critic_provider_model",
         lambda: ("claude-api", "claude-sonnet-4-6"),
+    )
+    monkeypatch.setattr(
+        "jarvis.missions.critic.runner._resolve_api_critic_provider",
+        lambda *a, **k: (None, None),
     )
     monkeypatch.setattr(
         "jarvis.missions.workers.claude_direct_worker."

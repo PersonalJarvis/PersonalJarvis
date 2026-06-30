@@ -59,7 +59,7 @@ def test_active_brain_follows_sub_jarvis_not_router() -> None:
     """Router = gemini, heavy worker = claude-api. Claude must be active."""
     cfg = load_config()
     cfg.brain.primary = "gemini"
-    cfg.brain.sub_jarvis = BrainTierConfig(provider="claude-api", model="")
+    cfg.brain.worker = BrainTierConfig(provider="claude-api", model="")
 
     data = _status(cfg)
     active = {r["jarvis"]: r["is_active_brain"] for r in data["mapping"]}
@@ -74,7 +74,7 @@ def test_active_brain_follows_sub_jarvis_gemini() -> None:
     """When the subagent provider IS gemini, gemini is correctly active."""
     cfg = load_config()
     cfg.brain.primary = "claude-api"
-    cfg.brain.sub_jarvis = BrainTierConfig(provider="gemini", model="")
+    cfg.brain.worker = BrainTierConfig(provider="gemini", model="")
 
     data = _status(cfg)
     active = {r["jarvis"]: r["is_active_brain"] for r in data["mapping"]}
@@ -88,7 +88,7 @@ def test_openclaw_claude_alias_marks_claude_active() -> None:
     """The 'openclaw-claude' alias is still the Claude brain for display."""
     cfg = load_config()
     cfg.brain.primary = "gemini"
-    cfg.brain.sub_jarvis = BrainTierConfig(provider="openclaw-claude", model="")
+    cfg.brain.worker = BrainTierConfig(provider="openclaw-claude", model="")
 
     data = _status(cfg)
     active = {r["jarvis"]: r["is_active_brain"] for r in data["mapping"]}
@@ -115,11 +115,11 @@ def test_subagent_switch_persists_and_restart_required(
     monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda p: "fake-key")
     # Do NOT touch the real jarvis.toml — record the persist call instead.
     calls: list[str] = []
-    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda name: calls.append(name))
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda name: calls.append(name))
 
     cfg = load_config()
     cfg.brain.primary = "gemini"
-    cfg.brain.sub_jarvis = BrainTierConfig(provider="claude-api", model="")
+    cfg.brain.worker = BrainTierConfig(provider="claude-api", model="")
 
     resp = _client(cfg).post("/api/jarvis-agent/switch", json={"provider": "gemini", "persist": True})
     assert resp.status_code == 200, resp.text
@@ -127,7 +127,7 @@ def test_subagent_switch_persists_and_restart_required(
     assert body["active"] == "gemini"
     assert body["persisted"] is True
     assert body["restart_required"] is True
-    assert calls == ["gemini"], "set_sub_jarvis_provider must be called with the new provider"
+    assert calls == ["gemini"], "set_worker_provider must be called with the new provider"
 
 
 def test_subagent_switch_404_unknown_provider(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -146,7 +146,7 @@ def test_subagent_switch_409_when_no_key(monkeypatch: pytest.MonkeyPatch) -> Non
 
     monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda p: None)
     persisted: list[str] = []
-    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda name: persisted.append(name))
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda name: persisted.append(name))
 
     cfg = load_config()
     resp = _client(cfg).post("/api/jarvis-agent/switch", json={"provider": "openai"})
@@ -160,11 +160,11 @@ def test_subagent_switch_updates_status_endpoint(monkeypatch: pytest.MonkeyPatch
     import jarvis.core.config_writer as config_writer
 
     monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda p: "fake-key")
-    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda name: None)
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda name: None)
 
     cfg = load_config()
     cfg.brain.primary = "gemini"
-    cfg.brain.sub_jarvis = BrainTierConfig(provider="claude-api", model="")
+    cfg.brain.worker = BrainTierConfig(provider="claude-api", model="")
     client = _client(cfg)
 
     client.post("/api/jarvis-agent/switch", json={"provider": "openrouter", "persist": True})
@@ -212,7 +212,7 @@ def test_codex_subagent_active_when_selected(monkeypatch: pytest.MonkeyPatch) ->
     _patch_codex(monkeypatch, connected=True)
     cfg = load_config()
     cfg.brain.primary = "gemini"
-    cfg.brain.sub_jarvis = BrainTierConfig(provider="openai-codex", model="")
+    cfg.brain.worker = BrainTierConfig(provider="openai-codex", model="")
     data = _status(cfg)
     active = {r["jarvis"]: r["is_active_brain"] for r in data["mapping"]}
     assert active["openai-codex"] is True
@@ -228,7 +228,7 @@ def test_subagent_switch_accepts_codex_oauth(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(cfg_mod, "get_secret", lambda *_a, **_k: None)
     _patch_codex(monkeypatch, connected=True)
     calls: list[str] = []
-    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: calls.append(n))
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n: calls.append(n))
 
     cfg = load_config()
     resp = _client(cfg).post(
@@ -250,7 +250,7 @@ def test_subagent_switch_codex_api_key_only(monkeypatch: pytest.MonkeyPatch) -> 
     )
     monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _p: None)
     _patch_codex(monkeypatch, connected=False)
-    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: None)
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n: None)
 
     cfg = load_config()
     resp = _client(cfg).post(
@@ -269,7 +269,7 @@ def test_subagent_switch_chatgpt_alias_normalizes(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(cfg_mod, "get_secret", lambda *_a, **_k: None)
     _patch_codex(monkeypatch, connected=True)
     calls: list[str] = []
-    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: calls.append(n))
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n: calls.append(n))
 
     cfg = load_config()
     resp = _client(cfg).post("/api/jarvis-agent/switch", json={"provider": "chatgpt"})
@@ -289,7 +289,7 @@ def test_subagent_switch_409_codex_when_not_connected(
     monkeypatch.setattr(cfg_mod, "get_secret", lambda *_a, **_k: None)
     _patch_codex(monkeypatch, connected=False)
     persisted: list[str] = []
-    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: persisted.append(n))
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n: persisted.append(n))
 
     cfg = load_config()
     resp = _client(cfg).post("/api/jarvis-agent/switch", json={"provider": "openai-codex"})
@@ -342,7 +342,7 @@ def test_subagent_switch_accepts_claude_max_oauth(monkeypatch: pytest.MonkeyPatc
         lambda: "sk-ant-oat-live",
     )
     calls: list[str] = []
-    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: calls.append(n))
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n: calls.append(n))
 
     cfg = load_config()
     resp = _client(cfg).post(
@@ -364,7 +364,7 @@ def test_subagent_switch_409_claude_api_no_key_no_oauth(
         "jarvis.missions.isolation.env.read_live_claude_oauth_token", lambda: None
     )
     persisted: list[str] = []
-    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: persisted.append(n))
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n: persisted.append(n))
 
     cfg = load_config()
     resp = _client(cfg).post("/api/jarvis-agent/switch", json={"provider": "claude-api"})
@@ -432,7 +432,7 @@ def test_antigravity_subagent_active_when_selected(monkeypatch: pytest.MonkeyPat
     _patch_antigravity(monkeypatch, connected=True)
     cfg = load_config()
     cfg.brain.primary = "gemini"
-    cfg.brain.sub_jarvis = BrainTierConfig(provider="antigravity", model="")
+    cfg.brain.worker = BrainTierConfig(provider="antigravity", model="")
     data = _status(cfg)
     active = {r["jarvis"]: r["is_active_brain"] for r in data["mapping"]}
     assert active["antigravity"] is True
@@ -447,7 +447,7 @@ def test_subagent_switch_accepts_antigravity(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _p: None)
     _patch_antigravity(monkeypatch, connected=True)
     calls: list[str] = []
-    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: calls.append(n))
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n: calls.append(n))
 
     cfg = load_config()
     resp = _client(cfg).post(
@@ -469,7 +469,7 @@ def test_subagent_switch_409_antigravity_when_not_connected(
     monkeypatch.setattr(cfg_mod, "get_secret", lambda *_a, **_k: None)
     _patch_antigravity(monkeypatch, connected=False)
     persisted: list[str] = []
-    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: persisted.append(n))
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n: persisted.append(n))
 
     cfg = load_config()
     resp = _client(cfg).post("/api/jarvis-agent/switch", json={"provider": "antigravity"})
@@ -526,7 +526,7 @@ def test_subagent_switch_accepts_antigravity_via_api_key(
     )
     _patch_antigravity(monkeypatch, connected=False)
     calls: list[str] = []
-    monkeypatch.setattr(config_writer, "set_sub_jarvis_provider", lambda n: calls.append(n))
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n: calls.append(n))
 
     cfg = load_config()
     resp = _client(cfg).post(

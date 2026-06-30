@@ -16,12 +16,10 @@ Priorität vor Confirm (Sicherheits-Bias). Mehrdeutiges (`vielleicht`,
 from __future__ import annotations
 
 import re
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from jarvis.core.self_mod import (
-    PendingMutation,
-    SelfModRegistry,
-)
+if TYPE_CHECKING:
+    from jarvis.core.self_mod import PendingMutation
 from jarvis.core.self_mod.errors import (
     PreValidateError,
     ReloadError,
@@ -197,6 +195,8 @@ def is_sensitive_path(path: str) -> bool:
     2. `MutableSpec.sensitive == True` (explizit gesetzt)
     3. Heuristik: Pfad enthält key/secret/token/password als Substring
     """
+    from jarvis.core.self_mod.registry import SelfModRegistry
+
     if SelfModRegistry.is_forbidden(path):
         return True
     spec = SelfModRegistry.get_spec(path)
