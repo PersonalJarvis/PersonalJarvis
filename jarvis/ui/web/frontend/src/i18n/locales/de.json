@@ -166,7 +166,8 @@
     "wake_hint": "Sag dein Wake-Word…",
     "brain_label": "Brain",
     "brain_tooltip": "Brain-Provider wechseln",
-    "apikeys_alert": "Ein Anbieter ist eingerichtet, funktioniert aber nicht — zum Beheben API Keys öffnen"
+    "apikeys_alert": "Ein Anbieter ist eingerichtet, funktioniert aber nicht — zum Beheben API Keys öffnen",
+    "plugins_reconnect_alert": "Eine Plugin-Verbindung ist abgelaufen — zum Neuverbinden Skills & Tools öffnen"
   },
   "chats_view": {
     "title": "Chat",
