@@ -161,7 +161,7 @@ def _build_router_config() -> JarvisConfig:
             default_intent_on_low_confidence="spawn_worker",
         ),
     )
-    cfg.brain.sub_jarvis = BrainTierConfig(provider="fake", model="fake-model")
+    cfg.brain.worker = BrainTierConfig(provider="fake", model="fake-model")
     return cfg
 
 

@@ -14,7 +14,7 @@ import jarvis.core.config as cfg_mod
 def _stub_config(monkeypatch, *, sub_provider, primary):
     stub = SimpleNamespace(
         brain=SimpleNamespace(
-            sub_jarvis=SimpleNamespace(provider=sub_provider),
+            worker=SimpleNamespace(provider=sub_provider),
             primary=primary,
         )
     )

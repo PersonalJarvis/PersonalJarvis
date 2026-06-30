@@ -56,12 +56,14 @@ def test_jarvis_agent_notification_defaults():
 
 
 def test_harness_config_openclaw_optional_default_none():
-    """Without an explicit block, ``HarnessConfig.openclaw is None``.
+    """Without an explicit block, ``HarnessConfig.jarvis_agent is None``.
 
-    Guarantees: existing configs without ``[harness.openclaw]`` still load.
+    Guarantees: existing configs without ``[harness.openclaw]`` / ``[harness.jarvis_agent]``
+    still load. The field was renamed openclaw → jarvis_agent in the 2026-06-29
+    Jarvis-Agents rename; the TOML alias accepts both section names.
     """
     h = HarnessConfig()
-    assert h.openclaw is None
+    assert h.jarvis_agent is None
 
 
 def test_jarvis_agent_harness_model_can_be_pinned_explicitly():
@@ -115,11 +117,16 @@ def test_openclaw_section_present_in_jarvis_toml():
 
 
 def test_jarvis_agent_harness_config_unmarshalled_via_load_config():
-    """Pydantic auto-unmarshal lands in the correct field."""
-    cfg = load_config(DEFAULT_CONFIG_FILE)
-    assert cfg.harness.openclaw is not None, "[harness.openclaw] not parsed"
+    """Pydantic auto-unmarshal lands in the correct field (jarvis_agent).
 
-    oc = cfg.harness.openclaw
+    jarvis.toml still uses the old ``[harness.openclaw]`` section name for
+    back-compat; the ``validation_alias`` on HarnessConfig.jarvis_agent
+    accepts both names, so this field is populated regardless.
+    """
+    cfg = load_config(DEFAULT_CONFIG_FILE)
+    assert cfg.harness.jarvis_agent is not None, "[harness.openclaw] / [harness.jarvis_agent] not parsed"
+
+    oc = cfg.harness.jarvis_agent
     assert isinstance(oc, JarvisAgentHarnessConfig)
     assert oc.enabled is True
     assert oc.version  # AD-21 pin set

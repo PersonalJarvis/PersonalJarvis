@@ -49,8 +49,8 @@ def test_frontier_resolver_chain_honors_openrouter_pick() -> None:
     config = JarvisConfig()
     config.brain.primary = "openrouter"
     config.brain.providers["openrouter"] = BrainProviderConfig(model=_FREE)
-    # No legacy sub_jarvis tier so stage 3 (primary) is the one under test.
-    config.brain.sub_jarvis = None
+    # No legacy worker tier so stage 3 (primary) is the one under test.
+    config.brain.worker = None
 
     chain = _resolve_chain(config)
     openrouter_models = [m for (p, m) in chain if p == "openrouter"]

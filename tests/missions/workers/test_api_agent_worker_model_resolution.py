@@ -44,11 +44,11 @@ def test_openrouter_uses_provider_pick_not_paid_opus(
 def test_subagent_pin_used_only_for_its_own_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """[brain.sub_jarvis].model belongs to [brain.sub_jarvis].provider — it must
+    """[brain.worker].model belongs to [brain.worker].provider — it must
     NOT be applied to a different worker provider (that is how a claude-opus pin
     set for antigravity would otherwise leak onto the OpenRouter key)."""
     config = JarvisConfig()
-    config.brain.sub_jarvis = BrainTierConfig(
+    config.brain.worker = BrainTierConfig(
         provider="antigravity", model="claude-opus-4-8",
     )
     config.brain.providers["openrouter"] = BrainProviderConfig(model=_FREE)

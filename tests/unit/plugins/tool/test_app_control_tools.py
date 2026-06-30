@@ -43,7 +43,7 @@ def make_cfg(*, brain="grok", tts="grok-voice", stt="faster-whisper", sub="claud
     return SimpleNamespace(
         brain=SimpleNamespace(
             primary=brain,
-            sub_jarvis=SimpleNamespace(provider=sub),
+            worker=SimpleNamespace(provider=sub),
             reply_language="de",
         ),
         tts=SimpleNamespace(provider=tts, voice_de="Charon", voice_en="Charon", speed=1.0),
@@ -220,7 +220,7 @@ async def test_switch_antigravity_allowed_as_subagent(monkeypatch, no_keys):
     assert res["ok"] is True
     assert res["tier"] == "subagent"
     assert res["new_provider"] == "antigravity"
-    assert cfg.brain.sub_jarvis.provider == "antigravity"
+    assert cfg.brain.worker.provider == "antigravity"
 
 
 async def test_switch_codex_allowed_as_subagent(monkeypatch, no_keys):
@@ -243,7 +243,7 @@ async def test_switch_codex_allowed_as_subagent(monkeypatch, no_keys):
     assert res["ok"] is True
     assert res["tier"] == "subagent"
     assert res["new_provider"] == "openai-codex"
-    assert cfg.brain.sub_jarvis.provider == "openai-codex"
+    assert cfg.brain.worker.provider == "openai-codex"
 
 
 async def test_switch_unknown_tier(configured_keys):

@@ -104,7 +104,7 @@ def test_unconfigured_non_gemini_defaults_to_subjarvis() -> None:
 
 
 def _fake_cfg(provider: object) -> SimpleNamespace:
-    return SimpleNamespace(brain=SimpleNamespace(sub_jarvis=SimpleNamespace(provider=provider)))
+    return SimpleNamespace(brain=SimpleNamespace(worker=SimpleNamespace(provider=provider)))
 
 
 def test_live_provider_overrides_stale_boot_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -526,14 +526,14 @@ def _manager_with_worker_provider(
     force_spawn_mode: str = "permissive",
 ) -> tuple[BrainManager, _RecordingExecutor]:
     """Manager with the talker (brain.primary) and the heavy-worker
-    ([brain.sub_jarvis].provider) providers set independently."""
+    ([brain.worker].provider) providers set independently."""
     from jarvis.core.config import BrainTierConfig
 
     executor = _RecordingExecutor()
     config = JarvisConfig()
     config.brain.primary = brain_primary
     config.brain.routing.force_spawn_mode = force_spawn_mode
-    config.brain.sub_jarvis = (
+    config.brain.worker = (
         BrainTierConfig(provider=worker_provider)
         if worker_provider is not None
         else None
