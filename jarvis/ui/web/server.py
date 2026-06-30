@@ -268,6 +268,7 @@ class WebServer:
         from .wiki_routes import router as wiki_router
         from .wiki_ws import router as wiki_ws_router
         from .workflows_routes import router as workflows_router
+        from .workspace_routes import router as workspace_router
         # Conductor ist ein externes Package im selben Monorepo. Import
         # defensiv — wer das Repo ohne conductor checkt aus, kriegt sonst
         # hier einen ImportError beim Server-Boot.
@@ -318,6 +319,10 @@ class WebServer:
         app.include_router(socials_router)
         # In-app feedback / bug-report form → Discord webhook.
         app.include_router(feedback_router)
+        # "Make It Yours" multi-agent workspace (/api/workspace/*).
+        # Provides agent detection, workspace launch planning, and PTY WebSocket
+        # for in-app Claude Code / Codex terminals (xterm panes, not OS windows).
+        app.include_router(workspace_router)
         # Contacts section — user-curated address book (pure file store, no Brain dep).
         app.include_router(contacts_router)
         app.include_router(workflows_router)

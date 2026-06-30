@@ -725,10 +725,16 @@ def requires_external_integration(text: str) -> bool:
     sub-agent (the universal capability for generic work)".
     """
     t = text or ""
-    return bool(
-        _EXTERNAL_INTEGRATION_NOUN_RE.search(t)
-        and _EXTERNAL_DISPATCH_VERB_RE.search(t)
-    )
+    if not _EXTERNAL_DISPATCH_VERB_RE.search(t):
+        return False
+    if _EXTERNAL_INTEGRATION_NOUN_RE.search(t):
+        return True
+    # Twitter/X rebrand: bare "x" is too ambiguous (math variable, letter),
+    # but "auf X" / "on X" + a posting dispatch verb unambiguously means the
+    # social platform. The preposition is the minimal disambiguator.
+    if re.search(r"\b(?:auf|on)\s+x\b", t, re.I):
+        return True
+    return False
 
 
 def _get_capability_registry() -> _CapabilityRegistryLike | None:
