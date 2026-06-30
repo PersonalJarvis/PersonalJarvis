@@ -170,3 +170,14 @@ docs/qa/**
 # lists what to hide is itself the leak (2026-06-30 sub-agent review). It is an
 # internal dev tool with no downstream value; a fork writes its own.
 .claude/agents/docs-privacy-reviewer.md
+
+# --- Internal handoff notes carrying the maintainer's private email (2026-06-30) ---
+# docs/handoffs/ holds internal review-answer handoffs. report-tutorial-review-
+# answers.md is a meta-note ABOUT the depersonalization scheme: it quotes the
+# maintainer's private email in plain text (lines 30/142/242) as a pattern to
+# protect — same self-leak class as docs-privacy-reviewer.md and the pii-scrub
+# map already withheld above. The email is a block-only scrub rule, so leaving
+# the file in would fail-close the ship anyway; withhold the whole subtree so a
+# valid snapshot never depends on a last-minute abort. Internal process doc with
+# no downstream value; a fork writes its own.
+docs/handoffs/**
