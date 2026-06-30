@@ -211,6 +211,8 @@ async def test_continuation_finals_merge_into_one_turn(tmp_path) -> None:
             turns[0].user_text
             == "Was ist der weiteste Ort nicht australische sondern wirklich der weiteste"
         )
+    finally:
+        store.close()
 
 
 @pytest.mark.asyncio
@@ -260,6 +262,8 @@ async def test_continuation_merges_then_a_fresh_utterance_splits(tmp_path) -> No
         turns = store.get_turns("s-mix")
         user_texts = [t.user_text for t in turns]
         assert user_texts == ["frage eins mit zusatz", "ganz neue frage"]
+    finally:
+        store.close()
 
 
 @pytest.mark.asyncio
