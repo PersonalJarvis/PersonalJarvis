@@ -25,6 +25,8 @@ class TestTierDefaultsCatalog:
         # Heuristik akzeptiert daher auch Frontier-Hauptmodelle.
         # Siehe TIER_DEFAULTS_BY_PROVIDER-Doc in jarvis/brain/manager.py.
         for provider, model in TIER_DEFAULTS_BY_PROVIDER["router"].items():
+            if provider == "openrouter":
+                continue  # deliberate free-model default; not a fast-tier slug
             if provider == "gemini":
                 continue  # hat keinen Fast-Mode
             if provider == "openai" and model in {"gpt-5.5", "gpt-5"}:
@@ -34,6 +36,8 @@ class TestTierDefaultsCatalog:
 
     def test_sub_models_look_frontier(self):
         for provider, model in TIER_DEFAULTS_BY_PROVIDER["deep"].items():
+            if provider == "openrouter":
+                continue  # deliberate free-model default; not a frontier slug
             assert any(tag in model.lower() for tag in
                        ("fable", "opus", "pro", "large", "reasoner", "gpt-4", "gpt-5")), \
                 f"{provider}: {model} sieht nicht nach Frontier-Tier aus"

@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 # is_vault_registered / register_vault by name at import time, so the
 # tests monkeypatch the names ON THE ROUTE MODULE (not on the underlying
 # package) — that is the binding the routes actually call.
+import jarvis.setup.state as _state_mod
 from jarvis.setup.obsidian import (
     ObsidianDetection,
     ObsidianVaultsState,
@@ -342,7 +343,10 @@ def test_get_state_returns_false_initially(
     monkeypatch: pytest.MonkeyPatch, client_factory, tmp_path: Path
 ) -> None:
     """Fresh sandbox (no setup_state.json) → obsidian_setup_seen=false."""
-    monkeypatch.chdir(tmp_path)
+    # setup/state.py now anchors the path to the package root (not CWD) so
+    # monkeypatch.chdir no longer isolates it.  Point _DEFAULT_STATE_PATH at a
+    # fresh temp location so the real repo's data/setup_state.json is ignored.
+    monkeypatch.setattr(_state_mod, "_DEFAULT_STATE_PATH", tmp_path / "data" / "setup_state.json")
     _, client, _vault = client_factory()
 
     resp = client.get("/api/setup/state")
@@ -355,7 +359,7 @@ def test_post_obsidian_seen_then_get_state_true(
     monkeypatch: pytest.MonkeyPatch, client_factory, tmp_path: Path
 ) -> None:
     """POST sets the flag; the subsequent GET reflects the mutation."""
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(_state_mod, "_DEFAULT_STATE_PATH", tmp_path / "data" / "setup_state.json")
     _, client, _vault = client_factory()
 
     post = client.post("/api/setup/state/obsidian-seen")
@@ -375,8 +379,8 @@ def test_get_state_corrupt_file_returns_false(
     monkeypatch: pytest.MonkeyPatch, client_factory, tmp_path: Path
 ) -> None:
     """A corrupt setup_state.json must NOT 5xx — degrade to ``false``."""
-    monkeypatch.chdir(tmp_path)
     state_file = tmp_path / "data" / "setup_state.json"
+    monkeypatch.setattr(_state_mod, "_DEFAULT_STATE_PATH", state_file)
     state_file.parent.mkdir(parents=True, exist_ok=True)
     state_file.write_text("{not valid", encoding="utf-8")
 

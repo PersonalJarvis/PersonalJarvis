@@ -53,7 +53,8 @@ def test_supports_api_agent_worker() -> None:
     assert supports_api_agent_worker("openrouter")
     # grok was removed as a brain/worker provider — no longer an api-agent slug.
     assert not supports_api_agent_worker("grok")
-    assert not supports_api_agent_worker("claude-api")
+    # claude-api and gemini are now in-process api-agent workers (B3/B4, 2026-06-29)
+    assert supports_api_agent_worker("claude-api")
     assert not supports_api_agent_worker("antigravity")
     assert not supports_api_agent_worker(None)
 

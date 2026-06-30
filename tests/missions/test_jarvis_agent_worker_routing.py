@@ -41,7 +41,7 @@ def test_codex_providers_route_codex(provider: str) -> None:
     assert _select_subagent_worker_kind(provider, "gemini-x") == "codex_direct"
 
 
-@pytest.mark.parametrize("provider", ["grok", "openai", "openrouter"])
+@pytest.mark.parametrize("provider", ["openai", "openrouter"])
 @pytest.mark.parametrize("step_model", ["", "gemini-3.1-pro", "sonnet", "claude-opus-4-8"])
 def test_api_agent_providers_route_to_api_agent(provider: str, step_model: str) -> None:
     """grok/openai/openrouter run ON their own provider via the in-process
@@ -53,10 +53,10 @@ def test_api_agent_providers_route_to_api_agent(provider: str, step_model: str) 
 
 
 def test_api_agent_providers_are_not_a_claude_fallback() -> None:
-    """The UI badge must stop pretending grok/openai/openrouter run on Claude."""
+    """The UI badge must stop pretending openai/openrouter run on Claude."""
     from jarvis.missions.init import subagent_runs_on_claude_fallback
 
-    for provider in ("grok", "openai", "openrouter"):
+    for provider in ("openai", "openrouter"):
         assert subagent_runs_on_claude_fallback(provider) is False
     # the genuine always-Claude case stays True
     assert subagent_runs_on_claude_fallback("openclaw-claude") is True
@@ -200,7 +200,7 @@ def test_subjarvis_kind_flagged_as_claude(provider: str) -> None:
     assert subagent_runs_on_claude_fallback(provider) is True
 
 
-@pytest.mark.parametrize("provider", ["grok", "openai", "openrouter"])
+@pytest.mark.parametrize("provider", ["openai", "openrouter"])
 def test_api_agent_providers_no_longer_flagged_as_claude(provider: str) -> None:
     from jarvis.missions.init import subagent_runs_on_claude_fallback
 

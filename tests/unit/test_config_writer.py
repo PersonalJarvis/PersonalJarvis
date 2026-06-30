@@ -114,8 +114,13 @@ def test_atomic_write_does_not_leave_tmp(sample_toml: Path) -> None:
 
 
 def test_missing_config_raises(tmp_path: Path) -> None:
-    with pytest.raises(FileNotFoundError):
-        config_writer.set_brain_primary("openai", path=tmp_path / "does-not-exist.toml")
+    # Production now auto-creates a missing TOML instead of raising
+    # FileNotFoundError (open-source / headless-VPS fix, _ensure_writable_config_path).
+    p = tmp_path / "does-not-exist.toml"
+    assert not p.exists()
+    config_writer.set_brain_primary("openai", path=p)
+    assert p.exists(), "set_brain_primary must auto-create a missing config file"
+    assert 'primary = "openai"' in p.read_text(encoding="utf-8")
 
 
 def test_creates_brain_section_if_missing(tmp_path: Path) -> None:

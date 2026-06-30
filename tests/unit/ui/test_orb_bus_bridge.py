@@ -984,6 +984,43 @@ async def test_orb_pops_in_when_background_task_finishes_while_idle() -> None:
     assert ("show", "speak") in orb.calls
 
 
+async def test_delayed_hide_keeps_persistent_bar_visible_returns_to_idle() -> None:
+    """A persistent "show at all times" bar must NEVER be withdrawn by the
+    delayed hide that follows a background-task pop (``_on_background_completed``
+    shows the bar in 'speak' then schedules ``_delayed_hide``). Withdrawing the
+    always-on bar there was the "the bar vanishes after I talk to it, only the
+    wake word brings it back" path — the SAME class as the consolidate
+    restore-trap, via the one unconditional ``hide()`` the persistence gate in
+    ``_on_state`` never covered. The persistent bar returns to the idle pill."""
+    orb = _FakeOrb()
+    bridge = OrbBusBridge(
+        bus=_FakeBus(), orb=orb, idle_animations_enabled=False, hide_on_idle=False
+    )  # type: ignore[arg-type]
+    bridge._last_state = "IDLE"  # noqa: SLF001
+
+    await bridge._delayed_hide(0.0)  # noqa: SLF001
+
+    assert ("hide", None) not in orb.calls
+    assert ("show", "idle") in orb.calls
+
+
+async def test_delayed_hide_withdraws_non_persistent_bar() -> None:
+    """Regression guard: a non-persistent bar / mascot (``hide_on_idle=True``)
+    still withdraws on the delayed hide, so the salute/grace teardown after a
+    real session is unchanged. The persistence gate only spares the always-on
+    bar."""
+    orb = _FakeOrb()
+    bridge = OrbBusBridge(
+        bus=_FakeBus(), orb=orb, idle_animations_enabled=False, hide_on_idle=True
+    )  # type: ignore[arg-type]
+    bridge._last_state = "IDLE"  # noqa: SLF001
+
+    await bridge._delayed_hide(0.0)  # noqa: SLF001
+
+    assert ("hide", None) in orb.calls
+    assert ("show", "idle") not in orb.calls
+
+
 async def test_attach_registers_mute_toggle_callback_with_orb() -> None:
     """``OrbBusBridge.attach()`` must inject a callback into the orb so
     a double-double-click can publish on the bus.

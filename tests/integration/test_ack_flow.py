@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import types
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -64,12 +65,21 @@ def _make_pipeline_stub(
     """Build a SimpleNamespace with the attribute surface
     :func:`_spawn_flash_brain_ack` and :func:`_on_announcement` read.
     """
-    from jarvis.speech.pipeline import TurnTakingState
+    from jarvis.speech.pipeline import SpeechPipeline, TurnTakingState
 
     bus = _StubPublishBus()
 
     async def _publish(event: Any) -> None:
         await bus.publish(event)
+
+    # Set ack_continuation_grace_ms=0 so the stub bypass the continuation-grace
+    # poll (AD-OE5) that calls _await_ack_turn_commit.  Production added this in
+    # Wave-3; the test stub has no real turn-state machine to poll against.
+    if ack_brain is not None and hasattr(ack_brain, "_config"):
+        try:
+            ack_brain._config.ack_continuation_grace_ms = 0
+        except Exception:  # noqa: BLE001 — Pydantic frozen model (shouldn't happen)
+            pass
 
     stub = SimpleNamespace(
         _ack_brain=ack_brain,
@@ -79,6 +89,11 @@ def _make_pipeline_stub(
         _player=MagicMock(),
         _tts=MagicMock(),
         _bus_events=bus.events,
+    )
+    # Bind the real _await_ack_turn_commit so any residual grace-poll path works
+    # against the stub's _turn_state (stays PROCESSING throughout the test).
+    stub._await_ack_turn_commit = types.MethodType(
+        SpeechPipeline._await_ack_turn_commit, stub
     )
     return stub
 
@@ -127,6 +142,11 @@ async def test_happy_path_announcement_handler_calls_tts_once() -> None:
         _player=MagicMock(),
         _tts=MagicMock(),
         _publish_event=MagicMock(),
+        # Production attrs added after the stub was first written:
+        _last_interrupt_announcement_ts=None,   # incoherence guard (2026-05-26)
+        _output_language=lambda lang, text: lang,  # language resolver
+        _emit_spoken=lambda *a, **kw: None,         # session-log hook
+        _bcp47=lambda lang: lang,                   # BCP-47 converter
     )
     stub._tts.synthesize = MagicMock(return_value=iter([b"audio-chunk"]))
 

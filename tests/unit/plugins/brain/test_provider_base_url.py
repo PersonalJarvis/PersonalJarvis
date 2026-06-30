@@ -63,29 +63,6 @@ def test_openrouter_default_without_override(monkeypatch):
     assert _FakeOpenAI.last_kwargs["base_url"] == "https://openrouter.ai/api/v1"
 
 
-# ── Grok ──────────────────────────────────────────────────────────────────
-def test_grok_uses_override(monkeypatch):
-    import openai
-
-    monkeypatch.setattr(openai, "AsyncOpenAI", _FakeOpenAI)
-    _override("grok", "https://proxy/p/grok/v1", monkeypatch)
-    from jarvis.plugins.brain.grok import GrokBrain
-
-    GrokBrain()._ensure_client()
-    assert _FakeOpenAI.last_kwargs["base_url"] == "https://proxy/p/grok/v1"
-
-
-def test_grok_default_without_override(monkeypatch):
-    import openai
-
-    monkeypatch.setattr(openai, "AsyncOpenAI", _FakeOpenAI)
-    _no_override(monkeypatch)
-    from jarvis.plugins.brain.grok import GrokBrain
-
-    GrokBrain()._ensure_client()
-    assert _FakeOpenAI.last_kwargs["base_url"] == "https://api.x.ai/v1"
-
-
 # ── OpenAI ────────────────────────────────────────────────────────────────
 def test_openai_uses_override(monkeypatch):
     import openai

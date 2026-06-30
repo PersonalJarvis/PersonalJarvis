@@ -147,7 +147,7 @@ async def test_router_handle_includes_image():
                 self.calls = []
             def tools_payload(self):
                 return []
-            async def dispatch(self, user_text, *, images=(), history=None, trace_id=None):
+            async def dispatch(self, user_text, *, images=(), history=None, trace_id=None, ack_emitter=None, **kwargs):
                 self.calls.append({"user_text": user_text, "images": images})
                 agg = StreamingAggregate()
                 agg.text = "ok"
@@ -160,7 +160,7 @@ async def test_router_handle_includes_image():
             provider="fake", model="fake",
             fallback_provider="fake", fallback_model="fake",
         )
-        cfg.brain.sub_jarvis = BrainTierConfig(provider="fake", model="fake")
+        cfg.brain.worker = BrainTierConfig(provider="fake", model="fake")
 
         bus = EventBus()
         router = RouterBrain(
@@ -237,7 +237,7 @@ async def test_privacy_pause_drops_image():
             def __init__(self):
                 self.calls = []
             def tools_payload(self): return []
-            async def dispatch(self, user_text, *, images=(), history=None, trace_id=None):
+            async def dispatch(self, user_text, *, images=(), history=None, trace_id=None, ack_emitter=None, **kwargs):
                 self.calls.append({"images": images})
                 agg = StreamingAggregate(); agg.text = "ok"; agg.finish_reason = "stop"
                 return agg
@@ -251,7 +251,7 @@ async def test_privacy_pause_drops_image():
         cfg.brain.providers["fake"] = BrainProviderConfig(model="fake", deep_model="fake")
         cfg.brain.router = BrainTierConfig(provider="fake", model="fake",
                                            fallback_provider="fake", fallback_model="fake")
-        cfg.brain.sub_jarvis = BrainTierConfig(provider="fake", model="fake")
+        cfg.brain.worker = BrainTierConfig(provider="fake", model="fake")
         bus = EventBus()
         router = RouterBrain(cfg, bus, tools={"bash": _FakeTool()},
                              tool_executor=object(), vision_provider=provider)

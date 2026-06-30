@@ -44,7 +44,7 @@ def _valid_entity_markdown(slug: str = "alex") -> str:
         "type: entity\n"
         "entity_kind: person\n"
         f"slug: {slug}\n"
-        "aliases: [Rubén, Personal Jarvis Maintainer]\n"
+        "aliases: [Alex, Personal Jarvis Maintainer]\n"
         "created: 2026-05-11\n"
         "updated: 2026-05-11\n"
         "---\n"
@@ -77,7 +77,7 @@ def test_parse_valid_entity_is_schema_valid(tmp_path: Path) -> None:
     assert page.is_schema_valid is True
     assert page.page_type == "entity"
     assert page.slug == "alex"
-    assert page.frontmatter["aliases"] == "[Rubén, Personal Jarvis Maintainer]"
+    assert page.frontmatter["aliases"] == "[Alex, Personal Jarvis Maintainer]"
 
 
 def test_parse_extracts_wikilinks_in_order(tmp_path: Path) -> None:
@@ -317,7 +317,7 @@ def test_round_trip_unicode_body(tmp_path: Path) -> None:
         "---\n"
         "type: entity\n"
         "slug: alex\n"
-        "aliases: [Rubén Maintainer]\n"
+        "aliases: [Alex Maintainer]\n"
         "---\n"
         "Café — über sechs Zeichen mit Umlauten: äöüß.\n"
     )
