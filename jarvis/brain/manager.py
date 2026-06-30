@@ -7401,10 +7401,17 @@ def _classify_provider_error(msg: str, *, default: str) -> str:
 
     Order is intentional:
       1. missing_key (auth/config — important for the dead-list).
-      2. account_blocked (credit/quota/tier — also dead-list, different message).
+      2. account_blocked (credit/quota/tier/budget — also dead-list, by wording).
       3. invalid_model (config bug — different action: fix jarvis.toml).
-      4. rate_limit (transient — handled by its own cooldown path).
-      5. default (init_fail or call_fail — caller decides).
+      4. code-first terminal: a bare 401 -> bad_key, a bare 402 -> account_blocked
+         (dead-list; catches a live invalid key / Payment-Required that carries the
+         numeric code but no known wording).
+      5. rate_limit (transient — handled by its own cooldown path).
+      6. default (init_fail or call_fail — caller decides).
+
+    bad_key / account_blocked / missing_key all dead-list (``_DEAD_LIST_KINDS``)
+    so a terminal provider stops leading the chain; only rate_limit takes the
+    transient cooldown.
 
     missing_key is checked before rate_limit so an auth error that happens to
     contain "limit" (e.g. "exceeded the rate limit for this resource") is not
@@ -7478,6 +7485,7 @@ def _format_provider_chain_error(
                 "Setze mindestens GEMINI_API_KEY oder ANTHROPIC_API_KEY.")
 
     missing_keys: list[str] = []
+    invalid_keys: list[str] = []
     account_blocked: list[str] = []
     invalid_models: list[str] = []
     rate_limited: list[str] = []
@@ -7486,6 +7494,8 @@ def _format_provider_chain_error(
     for prov_name, _model, kind, _detail in errors:
         if kind == "missing_key":
             missing_keys.append(prov_name)
+        elif kind == "bad_key":
+            invalid_keys.append(prov_name)
         elif kind == "account_blocked":
             account_blocked.append(prov_name)
         elif kind == "invalid_model":
@@ -7508,6 +7518,7 @@ def _format_provider_chain_error(
         return out
 
     missing_keys = _uniq(missing_keys)
+    invalid_keys = _uniq(invalid_keys)
     account_blocked = _uniq(account_blocked)
     invalid_models = _uniq(invalid_models)
     rate_limited = _uniq(rate_limited)
@@ -7526,6 +7537,12 @@ def _format_provider_chain_error(
         parts.append(
             "Kein Brain-Key gefunden. Sidebar -> API-Keys oeffnen und "
             f"einen Key setzen ({' oder '.join(hints)})."
+        )
+    # 1b. Invalid/expired key (a 401 — the stored key is rejected, not absent).
+    if invalid_keys:
+        parts.append(
+            f"Key abgelehnt bei {', '.join(invalid_keys)} (ungueltig oder abgelaufen). "
+            "Sidebar -> API-Keys: Key ersetzen."
         )
     # 2. Account block (credit/quota/tier) — user must take action
     if account_blocked:
