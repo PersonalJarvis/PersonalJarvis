@@ -89,6 +89,6 @@
     "model": "gemini-3.5-flash"
   },
   "brain.providers.openrouter": {
-    "model": "anthropic/claude-opus-4.8-fast"
+    "model": "openai/gpt-oss-120b:free"
   }
 }
