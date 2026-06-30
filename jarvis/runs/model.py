@@ -40,6 +40,11 @@ class ToolCall(BaseModel):
     exit_code: int | None = None
     success: bool = True
     error_line: str | None = None   # scrubbed stderr ERROR line
+    # The actual command + result — already captured (CLI full_command,
+    # ToolCallStarted.args_preview / ToolCallCompleted.output_preview) but never
+    # surfaced until now. Both are redacted/length-capped upstream.
+    command: str = ""           # what was run (args_preview / full_command)
+    output: str = ""            # what came back (output_preview, truncated)
 
 
 class LatencyEntry(BaseModel):
@@ -54,6 +59,13 @@ class DecisionStep(BaseModel):
     kind: str                  # see RUN_DECISION_KINDS
     label: str
     detail: str | None = None
+    # Session-Decision-Log: the honest "why" for this step. ``rationale`` is the
+    # plain-language reason; ``rationale_source`` tags its provenance — see
+    # RATIONALE_SOURCES ("model" = the brain's own words, "rule" = a
+    # deterministic explanation from a captured fact, "" = none available).
+    # Never fabricated; an empty source surfaces as "no rationale recorded".
+    rationale: str = ""
+    rationale_source: str = ""
 
 
 class ErrorEntry(BaseModel):
