@@ -1985,7 +1985,7 @@ def _proof_language_directive(output_language: str | None) -> str:
     """One-line instruction telling a verifier which language to write ``proof`` in.
 
     The verdict's ``proof`` is forwarded verbatim into the spoken completion
-    readback ("Erledigt — {proof}" / "Done — {proof}" / "Listo — {proof}"), so it
+    readback ("Erledigt. {proof}" / "Done. {proof}" / "Listo. {proof}"), so it
     must match the turn's resolved output language — otherwise a German frame wraps
     an English body (live bug 2026-06-27). A missing/unknown language yields no
     directive, preserving the historical (English-default) behaviour for tests /
@@ -2198,7 +2198,7 @@ async def _verify_goal_done(
 
     Returns ``(done, proof)``. Never raises -- on any error returns
     ``(False, "")`` so verification can only HELP, never block the loop."""
-    # The verdict's `proof` is spoken back verbatim ("Erledigt — {proof}"), so
+    # The verdict's `proof` is spoken back verbatim ("Erledigt. {proof}"), so
     # steer every judge to write it in the turn's resolved language (de/en/es).
     # Empty when no language was threaded in (tests / minimal wiring) — then the
     # judge keeps its historical English default.
