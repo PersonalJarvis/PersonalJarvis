@@ -240,30 +240,6 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         alt_credential=_GEMINI_VERTEX,
     ),
     ProviderSpec(
-        id="google-neural2",
-        label="Google Cloud TTS (Neural2)",
-        tier="tts",
-        auth_mode="api_key",
-        secret_keys=("google_tts_credentials_path",),
-        dashboard_url="https://console.cloud.google.com/apis/credentials",
-        credential_help=(
-            "Path to a Google Cloud service-account JSON with the Text-to-Speech "
-            "API enabled. Billed on the Cloud project."
-        ),
-    ),
-    ProviderSpec(
-        id="openai-tts",
-        label="OpenAI TTS",
-        tier="tts",
-        auth_mode="api_key",
-        secret_keys=("openai_api_key",),
-        dashboard_url="https://platform.openai.com/api-keys",
-        credential_help=(
-            "Uses your OpenAI API key (shared with the GPT brain) — no separate "
-            "key to enter if OpenAI is already configured."
-        ),
-    ),
-    ProviderSpec(
         id="grok-voice",
         label="xAI Grok Voice (leo/rex/sal/ara/eve)",
         tier="tts",
@@ -288,18 +264,6 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         ),
     ),
     # ── STT ───────────────────────────────────────────────────────────────
-    ProviderSpec(
-        id="deepgram",
-        label="Deepgram STT",
-        tier="stt",
-        auth_mode="api_key",
-        secret_keys=("deepgram_api_key",),
-        dashboard_url="https://console.deepgram.com/",
-        credential_help=(
-            "Deepgram API key. Billed per minute of audio; fast hosted "
-            "speech-to-text."
-        ),
-    ),
     ProviderSpec(
         id="groq-api",
         label="Groq STT (Whisper)",
