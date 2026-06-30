@@ -4963,6 +4963,17 @@ class BrainManager:
                 canned=lambda: action_phrase("cu_crashed", lang),
                 latency_budget_ms=2000,
             )
+        # Ground the finished outcome in the LIVE conversation history so the
+        # model's NEXT turn knows the on-screen action ran and how it ended.
+        # The outcome is offloaded fire-and-forget and only ever rode the
+        # announcement bus (spoken, then gone) — it never re-entered _history,
+        # so the model believed the screen action SUCCEEDED (it saw only the
+        # optimistic ACK) and answered a follow-up "why didn't it work?" against
+        # a stale unrelated error (live forensic 2026-06-30: a failed Spotify
+        # screen action was explained with an old Google-Calendar auth error).
+        self._append_cu_outcome_to_history(
+            user_request=user_text, outcome_text=text, diagnostic=diag,
+        )
         # AD-OE6 zero silent drops: ALWAYS speak the outcome at the next turn
         # boundary (announcement -> scrub_for_voice -> TTS).
         try:
@@ -4977,6 +4988,50 @@ class BrainManager:
             ))
         except Exception:  # noqa: BLE001
             log.debug("CU-background completion announce failed", exc_info=True)
+
+    def _append_cu_outcome_to_history(
+        self,
+        *,
+        user_request: str,
+        outcome_text: str,
+        diagnostic: str | None,
+    ) -> None:
+        """Ground a finished background Computer-Use outcome in the live history.
+
+        A desktop action is offloaded fire-and-forget, so its outcome lands AFTER
+        the optimistic ACK ("On it, I'll do that on screen") was already appended
+        as the turn's assistant message. Without this, ``_history`` shows only the
+        ACK and the model never learns whether the screen action actually
+        succeeded — so a later "why didn't it work?" is answered against whatever
+        OTHER failure is still in context (live forensic 2026-06-30: a failed
+        Spotify screen action was explained with a stale Google-Calendar auth
+        error). Append an honest assistant note carrying the spoken outcome PLUS
+        the real technical reason — which the humanized spoken readback hides — so
+        the next turn is grounded in what actually happened. Pure in-memory
+        append, no LLM, no IO (off the hot path anyway). ``user_request`` is
+        accepted for call-site symmetry/debuggability; the ACK already names the
+        request in history, so the note stays compact.
+        """
+        history = getattr(self, "_history", None)
+        if history is None:
+            return
+        spoken = (outcome_text or "").strip()
+        diag = (diagnostic or "").strip()
+        if not spoken and not diag:
+            return
+        note = spoken
+        if diag:
+            # The spoken readback is humanized to "didn't work on screen"; the
+            # model needs the REAL cause to answer a follow-up honestly. Mark it
+            # clearly as a non-spoken background detail so the model treats it as
+            # context, not as something it already said aloud.
+            note = (
+                f"{note}\n\n(Background on-screen-action detail, not spoken aloud "
+                f"— for your context on a follow-up: {diag})"
+            ).strip()
+        history.append(BrainMessage(role="assistant", content=note))
+        if len(history) > self._HISTORY_MAX:
+            self._history = history[-self._HISTORY_MAX:]
 
     async def _record_response_side_effects(
         self,

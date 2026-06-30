@@ -211,3 +211,116 @@ async def test_three_parallel_cancels_speak_nothing(monkeypatch) -> None:
     assert not completions, (
         f"three hangup-cancelled missions must speak nothing; got {len(completions)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Conversation continuity: a finished background CU outcome must be written back
+# into the LIVE history (BrainManager._history — the model's next-turn context).
+#
+# Live forensic 2026-06-30: the user asked to open Spotify on screen; the action
+# failed (exit 2, vision-provider chain exhausted). The spoken failure readback
+# rode AnnouncementRequested(kind="completion") and was NEVER recorded in
+# _history. So the model's only "problem" in context was a stale Google-Calendar
+# auth error from an earlier turn — and a follow-up "why don't you get one?" was
+# answered against the CALENDAR, the wrong subsystem. Grounding the outcome (and
+# its real technical reason) in history fixes the subsystem confusion at the root.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cu_failure_outcome_is_written_back_to_history(monkeypatch) -> None:
+    bus = _FakeBus()
+    # exit 2 here = the vision-provider chain was exhausted (the real 2026-06-30
+    # cause); the harness writes the technical reason into stderr.
+    output = {
+        "harness": "screenshot",
+        "exit_code": 2,
+        "stdout": "",
+        "stderr": (
+            "[cu] giving up after 3 model failures (last: ComputerUseLoop "
+            "provider chain failed: no vision-capable provider reachable)"
+        ),
+        "cost_usd": 0.0,
+        "duration_ms": 9700,
+    }
+    executor = _SlowHarnessExecutor(
+        output=output, success=False, error="exit 2", delay=0.05
+    )
+    mgr = _make_manager(executor, bus)
+    plan = LocalActionPlan(
+        mode=LocalActionMode.COMPUTER_USE, harness="computer-use", prompt="open spotify"
+    )
+    monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
+
+    await mgr._run_local_action_fast_path("öffne mein spotify und spiel das lied")
+    await asyncio.gather(*getattr(mgr, "_cu_background_tasks", set()))
+
+    # The failed screen action must be grounded in the live history so the model
+    # knows it failed (no stale-error confusion on the next turn).
+    assert mgr._history, "the failed CU outcome must be recorded in the live history"
+    last = mgr._history[-1]
+    assert last.role == "assistant", f"unexpected role: {last.role!r}"
+    content = str(last.content).lower()
+    # carries BOTH the fact it was an on-screen action AND the real technical
+    # reason the humanized spoken readback hid.
+    assert "screen" in content or "bildschirm" in content, content
+    assert "provider chain" in content or "vision" in content, (
+        f"the real technical reason must be grounded for a faithful follow-up: {content!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cu_success_outcome_is_written_back_to_history(monkeypatch) -> None:
+    bus = _FakeBus()
+    output = {
+        "harness": "screenshot",
+        "exit_code": 0,
+        "stdout": "[cu] done at step 2.1 (verified: Spotify is open and the song is playing)",
+        "stderr": "",
+        "cost_usd": 0.0,
+        "duration_ms": 4200,
+    }
+    executor = _SlowHarnessExecutor(output=output, success=True, delay=0.05)
+    mgr = _make_manager(executor, bus)
+    plan = LocalActionPlan(
+        mode=LocalActionMode.COMPUTER_USE, harness="computer-use", prompt="open spotify"
+    )
+    monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
+
+    await mgr._run_local_action_fast_path("öffne spotify und spiel das lied")
+    await asyncio.gather(*getattr(mgr, "_cu_background_tasks", set()))
+
+    assert mgr._history, "a successful CU outcome must also be recorded in history"
+    last = mgr._history[-1]
+    assert last.role == "assistant"
+    assert "spotify" in str(last.content).lower(), str(last.content)
+
+
+@pytest.mark.asyncio
+async def test_cu_user_cancel_writes_nothing_to_history(monkeypatch) -> None:
+    """A user-initiated cancel (exit 130 / "auflegen") speaks nothing AND must
+    not pollute the history — there is no outcome the user is waiting on."""
+    bus = _FakeBus()
+    output = {
+        "harness": "screenshot",
+        "exit_code": 130,
+        "stdout": "",
+        "stderr": "[cu] cancelled mid-batch\n",
+        "cost_usd": 0.0,
+        "duration_ms": 6200,
+    }
+    executor = _SlowHarnessExecutor(
+        output=output, success=False, error="exit 130", delay=0.05
+    )
+    mgr = _make_manager(executor, bus)
+    plan = LocalActionPlan(
+        mode=LocalActionMode.COMPUTER_USE, harness="computer-use", prompt="do it"
+    )
+    monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
+
+    await mgr._run_local_action_fast_path("mach einen screenshot")
+    await asyncio.gather(*getattr(mgr, "_cu_background_tasks", set()))
+
+    assert mgr._history == [], (
+        f"a silent user cancel must not write to history; got {mgr._history!r}"
+    )
