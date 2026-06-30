@@ -878,7 +878,13 @@
     "choose_voice": "Choose a voice…",
     "use_custom": "Use \"{0}\"",
     "no_models": "No models found",
-    "loading": "Loading…"
+    "loading": "Loading…",
+    "filter_all": "All",
+    "filter_starred": "Top",
+    "filter_free": "Free",
+    "filter_frontier": "Frontier",
+    "filter_value": "Best value",
+    "starred_label": "Top pick"
   },
   "apikeys_cu_model": {
     "heading": "Computer-Use model",

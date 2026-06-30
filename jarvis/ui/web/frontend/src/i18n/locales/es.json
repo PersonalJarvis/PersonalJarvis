@@ -877,7 +877,13 @@
     "choose_voice": "Elige una voz…",
     "use_custom": "Usar \"{0}\"",
     "no_models": "Sin modelos",
-    "loading": "Cargando…"
+    "loading": "Cargando…",
+    "filter_all": "Todos",
+    "filter_starred": "Top",
+    "filter_free": "Gratis",
+    "filter_frontier": "Frontier",
+    "filter_value": "Mejor valor",
+    "starred_label": "Selección top"
   },
   "apikeys_cu_model": {
     "heading": "Modelo para Computer-Use",

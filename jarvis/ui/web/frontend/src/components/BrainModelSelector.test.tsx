@@ -314,4 +314,74 @@ describe("BrainModelSelector", () => {
       await screen.findByLabelText("apikeys_model.search_placeholder"),
     ).toBeTruthy();
   });
+
+  // ── Filter chips + star ───────────────────────────────────────────────────
+  const TAGGED = {
+    provider: "openrouter",
+    current_model: "",
+    models: [
+      {
+        id: "anthropic/claude-opus-4.8",
+        label: "Claude Opus 4.8",
+        frontier: true,
+        starred: true,
+      },
+      { id: "deepseek/deepseek-v3.2", label: "DeepSeek V3.2", value: true },
+      {
+        id: "nvidia/nemotron-3-ultra:free",
+        label: "NVIDIA: Nemotron 3 Ultra (free)",
+        free: true,
+      },
+    ],
+    source: "live",
+    fetched_at: 1,
+  };
+
+  function mockTagged(body = TAGGED) {
+    return vi.fn().mockImplementation(async (url: string) => {
+      if (String(url).includes("/models")) return { ok: true, json: async () => body };
+      return { ok: true, json: async () => ({}) };
+    });
+  }
+
+  it("shows a star next to a starred model", async () => {
+    vi.stubGlobal("fetch", mockTagged());
+    render(<BrainModelSelector providerId="openrouter" currentModel="" />);
+    await openDropdown();
+    await screen.findByText("Claude Opus 4.8");
+    // The star carries an aria-label so it is discoverable + asserted.
+    expect(screen.getByLabelText("apikeys_model.starred_label")).toBeTruthy();
+  });
+
+  it("narrows the list to free models when the Free chip is clicked", async () => {
+    vi.stubGlobal("fetch", mockTagged());
+    render(<BrainModelSelector providerId="openrouter" currentModel="" />);
+    await openDropdown();
+    // All three visible before filtering.
+    await screen.findByText("Claude Opus 4.8");
+    expect(screen.getByText("DeepSeek V3.2")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("apikeys_model.filter_free"));
+    // Only the free model remains.
+    expect(await screen.findByText("NVIDIA: Nemotron 3 Ultra (free)")).toBeTruthy();
+    expect(screen.queryByText("Claude Opus 4.8")).toBeNull();
+    expect(screen.queryByText("DeepSeek V3.2")).toBeNull();
+  });
+
+  it("narrows to frontier models when the Frontier chip is clicked", async () => {
+    vi.stubGlobal("fetch", mockTagged());
+    render(<BrainModelSelector providerId="openrouter" currentModel="" />);
+    await openDropdown();
+    fireEvent.click(await screen.findByLabelText("apikeys_model.filter_frontier"));
+    expect(await screen.findByText("Claude Opus 4.8")).toBeTruthy();
+    expect(screen.queryByText("NVIDIA: Nemotron 3 Ultra (free)")).toBeNull();
+  });
+
+  it("hides the filter chips for a tag-less catalog (voice/STT)", async () => {
+    // The Gemini mock carries no tags → the band chips must not render.
+    vi.stubGlobal("fetch", mockFetch());
+    render(<BrainModelSelector providerId="gemini" currentModel="" />);
+    await openDropdown();
+    await screen.findByText("gemini-3.1-pro-preview");
+    expect(screen.queryByLabelText("apikeys_model.filter_free")).toBeNull();
+  });
 });
