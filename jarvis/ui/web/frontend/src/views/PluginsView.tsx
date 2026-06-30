@@ -145,6 +145,26 @@ const COMING_SOON = [
   "Asana",
 ];
 
+// PKCE plugins that ship a placeholder OAuth client: a downloader supplies their
+// OWN production client here (the durable fix for provider-side refresh-token
+// expiry — e.g. Google revokes a "Testing" app's token after 7 days). The Google
+// family shares ONE client pair; slack and asana each have their own. Mirrors
+// `marketplace.connect_helpers._OAUTH_CLIENT_FAMILY` — keep in sync.
+const OAUTH_CLIENT_FAMILY: Record<string, { family: string; label: string }> = {
+  gmail: { family: "google", label: "Google" },
+  google_drive: { family: "google", label: "Google" },
+  google_calendar: { family: "google", label: "Google" },
+  slack: { family: "slack", label: "Slack" },
+  asana: { family: "asana", label: "Asana" },
+};
+
+// Where the user creates/manages their own OAuth client per family.
+const OAUTH_CLIENT_CONSOLE: Record<string, string> = {
+  google: "https://console.cloud.google.com/auth/clients",
+  slack: "https://api.slack.com/apps",
+  asana: "https://app.asana.com/0/my-apps",
+};
+
 type TabId = "browse" | "installed";
 type FilterId = "all" | Category;
 
@@ -1538,6 +1558,223 @@ function DeviceCodeDialog({
             className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             {state === "pending" ? "Cancel" : "Close"}
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// PKCE pre-connect dialog — the in-app path to run your OWN production OAuth
+// client (no env vars, no catalog edits) plus the honest provider-side hint.
+// Shown before the browser sign-in for Google / Slack / Asana.
+// ---------------------------------------------------------------------------
+
+export function PkceConnectDialog({
+  plugin,
+  onClose,
+  onProceed,
+}: {
+  plugin: Plugin;
+  onClose: () => void;
+  onProceed: () => void | Promise<void>;
+}) {
+  const fam = OAUTH_CLIENT_FAMILY[plugin.id];
+  const isGoogle = fam?.family === "google";
+  const [showClient, setShowClient] = useState(false);
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const busyRef = useRef(false);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !busyRef.current) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const writeSecret = async (key: string, value: string) => {
+    const res = await fetch(`/api/secrets/${key}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+      throw new Error(e.detail || `could not save ${key}`);
+    }
+  };
+
+  const handleContinue = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    setErr(null);
+    try {
+      const cid = clientId.trim();
+      const csec = clientSecret.trim();
+      // Only write when the user actually entered a client — an empty field must
+      // never clobber an already-stored secret or the catalog default.
+      if (fam && cid) {
+        await writeSecret(`${fam.family}_oauth_client_id`, cid);
+        if (csec) await writeSecret(`${fam.family}_oauth_client_secret`, csec);
+      }
+      await onProceed();
+      onClose();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="pkce-connect-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !busy) onClose();
+      }}
+    >
+      <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
+        <header className="flex items-center gap-3 border-b border-border px-5 py-4">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border/60 bg-white">
+            <img
+              src={resolveLogoUrl(plugin)}
+              alt=""
+              className={cn(plugin.logoUrl ? "h-7 w-7" : "h-5 w-5")}
+            />
+          </div>
+          <div className="min-w-0">
+            <h2
+              id="pkce-connect-title"
+              className="font-display text-sm font-semibold tracking-tight"
+            >
+              Connect {plugin.name}
+            </h2>
+            <p className="text-[11px] text-muted-foreground">
+              You'll sign in with your {fam?.label ?? "provider"} account in the
+              browser.
+            </p>
+          </div>
+        </header>
+
+        <div className="space-y-3 px-5 py-4">
+          {isGoogle && (
+            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-[11px] leading-relaxed">
+              <p className="font-medium text-amber-300">
+                Keep it connected permanently
+              </p>
+              <p className="mt-1 text-amber-200/90">
+                Google drops the connection every 7 days while your OAuth app is
+                in "Testing". Publish your app to <strong>In production</strong>{" "}
+                (it can stay unverified for personal use) so it never expires.
+              </p>
+              <a
+                href="https://console.cloud.google.com/auth/audience"
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1.5 inline-flex items-center gap-1 font-medium text-amber-300 underline underline-offset-2 hover:text-amber-200"
+              >
+                Open Google Cloud Console <ExternalLink className="h-3 w-3" />
+              </a>
+            </div>
+          )}
+
+          {fam && (
+            <div>
+              <button
+                type="button"
+                onClick={() => setShowClient((v) => !v)}
+                className="text-[11px] font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              >
+                Use your own OAuth client (advanced)
+              </button>
+              {showClient && (
+                <div className="mt-2 space-y-2">
+                  <p className="text-[10px] leading-relaxed text-muted-foreground">
+                    Optional. Paste a client from your own {fam.label}{" "}
+                    {OAUTH_CLIENT_CONSOLE[fam.family] && (
+                      <a
+                        href={OAUTH_CLIENT_CONSOLE[fam.family]}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline underline-offset-2 hover:text-foreground"
+                      >
+                        console
+                      </a>
+                    )}
+                    .{" "}
+                    {fam.family === "google" &&
+                      "One client covers Gmail, Drive and Calendar."}
+                  </p>
+                  <div>
+                    <label
+                      htmlFor="pkce-client-id"
+                      className="block text-[10px] font-medium uppercase tracking-wider text-muted-foreground"
+                    >
+                      Client ID
+                    </label>
+                    <input
+                      id="pkce-client-id"
+                      value={clientId}
+                      onChange={(e) => setClientId(e.target.value)}
+                      className="mt-1 h-8 w-full rounded-md border border-border bg-background/60 px-2 text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-primary/40 focus:outline-none"
+                      placeholder="…apps.googleusercontent.com"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      htmlFor="pkce-client-secret"
+                      className="block text-[10px] font-medium uppercase tracking-wider text-muted-foreground"
+                    >
+                      Client Secret
+                    </label>
+                    <input
+                      id="pkce-client-secret"
+                      type="password"
+                      value={clientSecret}
+                      onChange={(e) => setClientSecret(e.target.value)}
+                      className="mt-1 h-8 w-full rounded-md border border-border bg-background/60 px-2 text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-primary/40 focus:outline-none"
+                      placeholder="optional for some providers"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {err && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              {err}
+            </div>
+          )}
+        </div>
+
+        <footer className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-60"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleContinue}
+            disabled={busy}
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
+          >
+            {busy && <Loader2 className="h-3 w-3 animate-spin" />}
+            Continue
           </button>
         </footer>
       </div>

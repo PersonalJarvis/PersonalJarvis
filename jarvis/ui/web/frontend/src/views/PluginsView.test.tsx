@@ -206,6 +206,73 @@ describe("ConnectIconButton reconnect state", () => {
   });
 });
 
+// The PKCE pre-connect dialog is the in-app path to run your OWN production
+// OAuth client (the durable fix for the 7-day Google revocation) without env
+// vars, plus the honest provider-side hint.
+describe("PkceConnectDialog own-client + production hint", () => {
+  const gmail = {
+    id: "gmail",
+    name: "Gmail",
+    description: "Mail",
+    category: "Communication",
+    logoSlug: "gmail",
+    authMode: "oauth_pkce_loopback",
+    authConfig: { mode: "oauth_pkce_loopback" },
+    status: "not_connected",
+  } as unknown as Parameters<typeof PkceConnectDialog>[0]["plugin"];
+
+  it("shows the Google production hint with a console link", () => {
+    render(
+      <PkceConnectDialog plugin={gmail} onClose={() => {}} onProceed={() => {}} />,
+    );
+    expect(screen.getByText(/production/i)).toBeDefined();
+    const link = screen.getByRole("link", { name: /google cloud console/i });
+    expect((link as HTMLAnchorElement).href).toContain("console.cloud.google.com");
+  });
+
+  it("proceeds without writing secrets when no client is entered", async () => {
+    const fetchMock = vi.fn();
+    (globalThis as unknown as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
+    const onProceed = vi.fn(() => Promise.resolve());
+    render(
+      <PkceConnectDialog plugin={gmail} onClose={() => {}} onProceed={onProceed} />,
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^continue$/i }));
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(onProceed).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes google_oauth_client_id/secret then proceeds when a client is entered", async () => {
+    const calls: string[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      calls.push(String(input));
+      return { ok: true, status: 200, json: async () => ({}) } as Response;
+    });
+    (globalThis as unknown as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
+    const onProceed = vi.fn(() => Promise.resolve());
+    render(
+      <PkceConnectDialog plugin={gmail} onClose={() => {}} onProceed={onProceed} />,
+    );
+    fireEvent.click(screen.getByText(/use your own oauth client/i));
+    fireEvent.change(screen.getByLabelText(/client id/i), {
+      target: { value: "myid.apps.googleusercontent.com" },
+    });
+    fireEvent.change(screen.getByLabelText(/client secret/i), {
+      target: { value: "GOCSPX-x" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^continue$/i }));
+    });
+    expect(calls).toContain("/api/secrets/google_oauth_client_id");
+    expect(calls).toContain("/api/secrets/google_oauth_client_secret");
+    expect(onProceed).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("PluginsView keeps revoked plugins visible", () => {
   it("shows a needs_reauth plugin under Installed with a Reconnect-needed badge", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
