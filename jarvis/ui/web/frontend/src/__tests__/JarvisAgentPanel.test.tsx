@@ -42,18 +42,18 @@ describe("JarvisAgentPanel", () => {
   it("zeigt Empty-State wenn keine Mission ausgewaehlt ist", () => {
     render(<JarvisAgentPanel />);
     expect(
-      screen.getByText("Mission auswaehlen, um OpenClaw-Worker zu sehen."),
+      screen.getByText("Select a mission to see Jarvis-Agent workers."),
     ).toBeDefined();
   });
 
-  it("zeigt Empty-State wenn Mission keine OpenClaw-Worker hat", () => {
+  it("zeigt Empty-State wenn Mission keine Jarvis-Agent-Worker hat", () => {
     useMissionsStore.setState({
       selectedMissionId: "mid-1",
       workerSnapshotsByMission: { "mid-1": [] },
     });
     render(<JarvisAgentPanel />);
     expect(
-      screen.getByText("Keine OpenClaw-Worker in dieser Mission."),
+      screen.getByText("No Jarvis-Agent workers in this mission."),
     ).toBeDefined();
   });
 
