@@ -89,6 +89,6 @@
     "model": "gemini-3.5-flash"
   },
   "brain.providers.openrouter": {
-    "model": "moonshotai/kimi-k2-thinking"
+    "model": "anthropic/claude-opus-4.8-fast"
   }
 }
