@@ -210,7 +210,7 @@ def test_list_providers_exposes_credential_help_and_billing(
         by_id = {p["id"]: p for p in body["providers"]}
         assert by_id["gemini"]["credential_help"]
         assert by_id["gemini"]["billing"] == "api"
-        assert by_id["antigravity"]["billing"] == "subscription"
+        assert by_id["antigravity"]["billing"] == "subscription_or_api"
         assert by_id["codex"]["billing"] == "subscription_or_api"
         assert by_id["faster-whisper"]["billing"] == "local"
 

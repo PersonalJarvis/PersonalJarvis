@@ -3498,6 +3498,10 @@ class BrainManager:
     # allowlist forms). Reset at the start of every generate() turn.
     _evidence_directive: str = ""
     _evidence_required_tool: str = ""
+    # True when the mandated tool this turn is a WRITE/create action (e.g.
+    # contact-upsert) rather than a read lookup — switches the honest backstop
+    # to write wording and lets a clarifying question stand. Reset per turn.
+    _evidence_required_is_write: bool = False
     # Per-turn self-control directive (general settings/config control). Reset
     # at the start of every generate() turn; appended to the system prompt.
     _self_control_directive: str = ""
@@ -5812,6 +5816,7 @@ class BrainManager:
         # early-returns before the gate runs).
         self._evidence_directive = ""
         self._evidence_required_tool = ""
+        self._evidence_required_is_write = False
         # General self-control directive — reset here, set below once the
         # smalltalk classification for this turn is known.
         self._self_control_directive = ""
@@ -6003,6 +6008,36 @@ class BrainManager:
             if not injected:
                 self._evidence_directive = verdict.directive
                 self._evidence_required_tool = verdict.tool_name
+
+        # Say-do honesty guard for WRITES (contacts). The read evidence gate
+        # above never fires on a "save this person" turn (it is not a lookup),
+        # so a confirmed offer ("ja, leg die an … die Mail ist …") used to be
+        # answered with a chatty "Okay, sehr gut" and NO contact-upsert call —
+        # the address book stayed empty (live session 2026-06-30). Mandate the
+        # real tool this turn, reusing the evidence machinery: the prompt
+        # directive, the smalltalk tool-widening (_evidence_required_tool stays
+        # visible), and the unverified-answer backstop that catches a fake
+        # confirmation. Only when the read gate did not already mandate a tool,
+        # and only if contact-upsert is actually registered (a deployment
+        # without contacts degrades to no mandate — never a mandate for a
+        # missing tool, §3 open-source).
+        if (
+            not self._evidence_required_tool
+            and "contact-upsert" in (getattr(self, "_tools", None) or {})
+        ):
+            from jarvis.brain.contact_intent import (
+                CONTACT_WRITE_DIRECTIVE,
+                detect_contact_write_intent,
+            )
+
+            if detect_contact_write_intent(user_text):
+                self._evidence_directive = CONTACT_WRITE_DIRECTIVE
+                self._evidence_required_tool = "contact-upsert"
+                self._evidence_required_is_write = True
+                log.info(
+                    "Say-do guard: contact-write intent — mandating "
+                    "contact-upsert this turn"
+                )
 
         # Phase 5 / ADR-0006: pre-call budget gate. Block rather than request
         # when cooldown is active or the task/daily budget is exhausted.
@@ -6588,23 +6623,26 @@ class BrainManager:
         # question"). Replace it with an honest non-data fallback; never speak an
         # answer a mandated read tool was supposed to ground. Runs AFTER recovery
         # so a leaked-but-recovered mandated tool (real data) is not pre-empted.
-        if recovered is None and _evidence_answer_is_unverified(
-            self._evidence_required_tool,
-            _turn_executed,
-            response_text,
-            suppressed=self._last_turn_suppressed,
-        ):
-            log.warning(
-                "Evidence gate mandated %s but it never ran (executed=%s) — "
-                "replacing the unverified answer with an honest fallback.",
-                self._evidence_required_tool,
-                sorted(_turn_executed),
-            )
-            response_text = _evidence_unfulfilled_answer(
+        if recovered is None and self._evidence_required_tool:
+            _replacement = _unfulfilled_replacement(
+                required_tool=self._evidence_required_tool,
+                executed=_turn_executed,
+                response_text=response_text,
+                suppressed=self._last_turn_suppressed,
+                is_write=self._evidence_required_is_write,
                 lang=resolve_output_language(
                     self._reply_language, "unknown", user_text, default="de"
-                )
+                ),
             )
+            if _replacement is not None:
+                log.warning(
+                    "Mandated tool %s never ran (executed=%s, write=%s) — "
+                    "replacing the unverified answer with an honest fallback.",
+                    self._evidence_required_tool,
+                    sorted(_turn_executed),
+                    self._evidence_required_is_write,
+                )
+                response_text = _replacement
 
         # 4. History + Events
         if use_history:
