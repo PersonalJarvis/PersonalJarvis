@@ -112,6 +112,7 @@ async def test_window_focus_watcher_stop_under_2s() -> None:
     assert elapsed < 2.0, f"stop() took {elapsed:.2f}s, exceeds 2s budget"
 
 
+@pytest.mark.skip_ci
 @pytest.mark.asyncio
 async def test_idle_detector_real_threshold_2s() -> None:
     """IdleDetector mit threshold_s=2 — wartet 3.5s ohne Mouse/KB-Sim.

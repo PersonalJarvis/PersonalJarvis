@@ -40,7 +40,9 @@ def test_click_windows_glides_pulses_then_sends(monkeypatch) -> None:
     glides: list[tuple[int, int]] = []
     sends: list[tuple[str, bool]] = []
     monkeypatch.setattr(click_mod, "glide_os_cursor", lambda x, y, **k: glides.append((x, y)))
-    monkeypatch.setattr(click_mod, "_send_click", lambda button, double: sends.append((button, double)))
+    # _send_click gained an optional abs_xy kwarg — accept it so the patched
+    # lambda does not raise TypeError when _click_windows passes the coord.
+    monkeypatch.setattr(click_mod, "_send_click", lambda button, double, abs_xy=None: sends.append((button, double)))
 
     rec = _RecordingCursor()
     set_virtual_cursor(rec)
@@ -60,7 +62,7 @@ def test_click_element_reuses_the_same_visual_click(monkeypatch) -> None:
 
     glides: list[tuple[int, int]] = []
     monkeypatch.setattr(click_mod, "glide_os_cursor", lambda x, y, **k: glides.append((x, y)))
-    monkeypatch.setattr(click_mod, "_send_click", lambda button, double: None)
+    monkeypatch.setattr(click_mod, "_send_click", lambda button, double, abs_xy=None: None)
 
     rec = _RecordingCursor()
     set_virtual_cursor(rec)

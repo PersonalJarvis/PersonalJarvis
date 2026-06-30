@@ -43,6 +43,7 @@ def test_config():
         pytest.skip(f"JarvisConfig() kann nicht instanziiert werden: {exc!r}")
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_webserver_starts_and_stops(test_config):
     WebServer = _try_import_webserver()

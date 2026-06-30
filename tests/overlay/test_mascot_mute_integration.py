@@ -82,8 +82,11 @@ async def test_mascot_dblclick_envelope_drives_pipeline_mute() -> None:
 
     assert pipeline.is_muted is True
     assert pipeline._activation_allowed() is False
-    # Player.stop must have been called so a sentence-in-flight goes silent.
-    assert player.stop_calls == 1
+    # player.stop() is intentionally NOT called on mute (input-only mute,
+    # 2026-06-29 forensic): stopping playback mid-write wedged the WASAPI
+    # device so subsequent wake-mic opens silently failed.  Jarvis finishes
+    # the current sentence; new _speak() calls are suppressed while muted.
+    assert player.stop_calls == 0
 
 
 @pytest.mark.asyncio
