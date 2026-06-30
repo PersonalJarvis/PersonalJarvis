@@ -329,7 +329,7 @@ Force the commit author to the public noreply identity (Hard rule 1: `-C` is the
 ```bash
 git -C "$WORK/dist" \
   -c user.name="Personal Jarvis Maintainer" \
-  -c user.email="226271791+rubenluetke10-beep@users.noreply.github.com" \
+  -c user.email="noreply@personaljarvis.dev" \
   commit -m "release: vX.Y.Z — <short summary>"
 
 git -C "$WORK/dist" tag -a "vX.Y.Z" -m "vX.Y.Z — <short summary>"
@@ -342,7 +342,7 @@ git -C "$WORK/dist" push origin "vX.Y.Z"
 ```bash
 git -C "$WORK/dist" \
   -c user.name="Personal Jarvis Maintainer" \
-  -c user.email="226271791+rubenluetke10-beep@users.noreply.github.com" \
+  -c user.email="noreply@personaljarvis.dev" \
   commit -m "snapshot: <YYYY-MM-DD> — <short summary>"
 
 git -C "$WORK/dist" push origin HEAD:main
