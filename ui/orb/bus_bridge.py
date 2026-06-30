@@ -852,10 +852,27 @@ class OrbBusBridge:
                 log.debug("start_mouth_animation on AudioOutFirst failed: %s", exc)
 
     async def _delayed_hide(self, delay_s: float) -> None:
-        """Wartet die Salut-Animation ab, blendet dann aus + startet Idle-Scheduler."""
+        """Wait out the salute/grace animation, then take the surface down.
+
+        Persistence gate: a persistent "show at all times" bar must NEVER be
+        withdrawn — it returns to the idle pill instead. The salute/grace
+        callers in ``_on_state`` only reach here for a hide-on-idle surface (the
+        persistent branch returns earlier), but ``_on_background_completed``
+        schedules this hide for BOTH regimes: a finished Jarvis-Agent task pops
+        the bar to 'speak' and then this fires. Without the gate that
+        unconditional ``hide()`` withdrew the always-on bar — the "bar vanishes
+        after I talk to it, only the wake word brings it back" path, the same
+        class as the consolidate restore-trap but via the one hide() the
+        ``_on_state`` persistence gate never covered. ``hide()`` itself stays
+        unconditional (swap_overlay / shutdown still need a real withdraw); the
+        gate belongs here at the caller that knows the regime.
+        """
         try:
             await asyncio.sleep(delay_s)
-            self._orb.hide()
+            if self._hide_on_idle:
+                self._orb.hide()
+            else:
+                self._orb.show(mode="idle")
             # Idle-Scheduler nur wenn wir noch im IDLE-Zustand sind (keine
             # neue Wake-Sequenz reingekommen waehrend des Salut).
             if self._last_state == "IDLE":
