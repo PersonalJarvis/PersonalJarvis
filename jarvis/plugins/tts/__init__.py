@@ -269,7 +269,10 @@ def _build_provider(tts_cfg: Any, provider: str) -> Any:
             allow_sapi5_fallback=allow_sapi5,
         )
 
-    if provider in ("cartesia", "cartesia-sonic", "cartesia-sonic3", "cartesia-sonic-3", "cartesia-sonic-3.5"):
+    if provider in (
+        "cartesia", "cartesia-sonic", "cartesia-sonic3", "cartesia-sonic-3",
+        "cartesia-sonic-3.5",
+    ):
         try:
             from jarvis.plugins.tts.cartesia_tts import (
                 DEFAULT_MODEL_ID,

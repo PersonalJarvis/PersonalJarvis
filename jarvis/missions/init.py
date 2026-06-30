@@ -969,7 +969,9 @@ async def bootstrap_missions(
             import shutil
 
             from jarvis.core.config import get_provider_secret
-            if not (shutil.which("gemini") or shutil.which("gemini.cmd")) and get_provider_secret("gemini"):
+            if not (
+                shutil.which("gemini") or shutil.which("gemini.cmd")
+            ) and get_provider_secret("gemini"):
                 logger.info(
                     "Mission worker -> ApiAgentWorker('gemini'): no Gemini CLI, "
                     "running in-process on the Gemini API key."

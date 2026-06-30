@@ -15,6 +15,8 @@ from jarvis.runs.constants import (
     OUTCOME_FAILED,
     OUTCOME_PARTIAL,
     OUTCOME_SUCCESS,
+    RATIONALE_MODEL,
+    RATIONALE_RULE,
     ROLE_ERROR,
     ROLE_JARVIS,
     ROLE_SYSTEM,
@@ -79,34 +81,71 @@ def build_latency(events: list[VoiceEventRow]) -> list[LatencyEntry]:
     return out
 
 
+def _approval_rationale(by: str) -> str:
+    """Honest plain-language reading of a CAPTURED approval source — not a guess."""
+    b = (by or "").lower()
+    if b == "whitelist":
+        return "Auto-approved — this action is on your allow-list."
+    if b == "user":
+        return "You approved this action."
+    if b == "auto":
+        return "Auto-approved — a low-risk action."
+    return f"Approved ({by})." if by else "Approved."
+
+
 def build_decision_path(events: list[VoiceEventRow]) -> list[DecisionStep]:
+    """The decision path, now carrying the honest "why" per step.
+
+    The route step prefers the model's OWN words (ActionProposed.rationale,
+    captured for free) tagged ``model``; every other step gets a deterministic
+    ``rule`` explanation built from a captured fact (approval source, denial
+    reason, provider, fallback). Nothing here is fabricated."""
     steps: list[DecisionStep] = []
     providers_seen: list[str] = []
     for e in sorted(events, key=lambda x: x.ts_ms):
         p = e.payload
         if e.kind == "IntentClassified":
+            intent = p.get("intent", "?")
+            risk = p.get("risk_tier", "?")
             steps.append(DecisionStep(
                 kind=DECISION_TIER,
-                label=f"intent: {p.get('intent', '?')}",
-                detail=f"risk={p.get('risk_tier', '?')}",
+                label=f"intent: {intent}",
+                detail=f"risk={risk}",
+                rationale=f"Recognized as a '{intent}' request (risk tier: {risk}).",
+                rationale_source=RATIONALE_RULE,
             ))
         elif e.kind == "ActionProposed":
+            tool = p.get("tool_name", "?")
+            risk = p.get("risk_tier", "?")
+            model_why = str(p.get("rationale", "") or "").strip()
+            if model_why:
+                rationale, source = model_why, RATIONALE_MODEL
+            else:
+                rationale, source = f"Chose the {tool} tool (risk: {risk}).", RATIONALE_RULE
             steps.append(DecisionStep(
                 kind=DECISION_ROUTE,
-                label=f"proposed: {p.get('tool_name', '?')}",
-                detail=f"risk={p.get('risk_tier', '?')}",
+                label=f"proposed: {tool}",
+                detail=f"risk={risk}",
+                rationale=rationale,
+                rationale_source=source,
             ))
         elif e.kind == "ActionApproved":
+            by = p.get("approved_by", "auto")
             steps.append(DecisionStep(
                 kind=DECISION_RISK,
                 label=f"approved: {p.get('tool_name', '?')}",
-                detail=f"by={p.get('approved_by', 'auto')}",
+                detail=f"by={by}",
+                rationale=_approval_rationale(by),
+                rationale_source=RATIONALE_RULE,
             ))
         elif e.kind == "ActionDenied":
+            reason = str(p.get("reason", "")).strip()
             steps.append(DecisionStep(
                 kind=DECISION_RISK,
                 label=f"denied: {p.get('tool_name', '?')}",
-                detail=str(p.get("reason", "")),
+                detail=reason or None,
+                rationale=(f"Blocked — {reason}." if reason else "Blocked by a safety rule."),
+                rationale_source=RATIONALE_RULE,
             ))
         elif e.kind == "BrainTurnStarted":
             provider = str(p.get("provider", ""))
@@ -117,12 +156,19 @@ def build_decision_path(events: list[VoiceEventRow]) -> list[DecisionStep]:
                 kind=DECISION_BRAIN,
                 label=f"brain: {provider or '?'}",
                 detail=(f"model={model}" if model else None),
+                rationale=(
+                    f"Answered by {provider}" + (f" ({model})" if model else "") + "."
+                    if provider else "Answered by the configured brain."
+                ),
+                rationale_source=RATIONALE_RULE,
             ))
         elif e.kind == "JarvisAgentTaskStarted":
             steps.append(DecisionStep(
                 kind=DECISION_MISSION,
                 label="spawned sub-agent mission",
                 detail=str(p.get("model", "")) or None,
+                rationale="Handed the task to a background sub-agent.",
+                rationale_source=RATIONALE_RULE,
             ))
     # A second distinct provider across the turn means the smart-fallback fired.
     distinct = [p for i, p in enumerate(providers_seen) if p and p not in providers_seen[:i]]
@@ -131,8 +177,44 @@ def build_decision_path(events: list[VoiceEventRow]) -> list[DecisionStep]:
             kind=DECISION_FALLBACK,
             label="provider fallback",
             detail=" -> ".join(distinct),
+            rationale=f"Switched provider — {distinct[0]} → {distinct[-1]} (a fallback fired).",
+            rationale_source=RATIONALE_RULE,
         ))
     return steps
+
+
+def attach_tool_io(events: list[VoiceEventRow], tools: list[ToolCall]) -> list[ToolCall]:
+    """Surface the already-captured command + result onto the tool rows.
+
+    ``ToolCallStarted`` carries the tool name + ``args_preview`` (the command);
+    ``ToolCallCompleted`` carries ``output_preview`` (the result) but no name, so
+    it is paired with the most recent Started in chronological order. A tool seen
+    only here (no ActionProposed row) is added so its I/O is never silently
+    dropped. All fields are already redacted/length-capped upstream."""
+    by_name = {t.name: t for t in tools}
+    pending: str | None = None
+    for e in sorted(events, key=lambda x: x.ts_ms):
+        p = e.payload
+        if e.kind == "ToolCallStarted":
+            name = str(p.get("tool_name") or "")
+            cmd = str(p.get("args_preview") or "")
+            pending = name or pending
+            if name:
+                tc = by_name.get(name)
+                if tc is None:
+                    tc = ToolCall(name=name)
+                    tools.append(tc)
+                    by_name[name] = tc
+                if cmd and not tc.command:
+                    tc.command = cmd
+        elif e.kind == "ToolCallCompleted":
+            out = str(p.get("output_preview") or "")
+            if pending and out:
+                tc = by_name.get(pending)
+                if tc is not None and not tc.output:
+                    tc.output = out
+            pending = None
+    return tools
 
 
 def build_errors(events: list[VoiceEventRow]) -> list[ErrorEntry]:
@@ -508,7 +590,7 @@ def _summarize(e: VoiceEventRow) -> str:
 __all__ = [
     "classify_latency", "build_latency", "build_decision_path", "build_errors",
     "build_extras", "build_transcript", "build_timeline", "tools_from_usage",
-    "merge_action_tools", "build_analytics",
+    "merge_action_tools", "attach_tool_io", "build_analytics",
     "turn_outcome", "build_outcome", "outcome_from_events", "build_activity",
     "feature_tags_from_events",
 ]
