@@ -339,6 +339,7 @@ def tools_from_usage(usage_rows: list) -> list[ToolCall]:
             exit_code=r.exit_code,
             success=(r.exit_code == 0),
             error_line=first_err,
+            command=str(getattr(r, "full_command", "") or ""),
         ))
     return out
 
