@@ -268,7 +268,6 @@ class WebServer:
         from .wiki_routes import router as wiki_router
         from .wiki_ws import router as wiki_ws_router
         from .workflows_routes import router as workflows_router
-        from .workspace_routes import router as workspace_router
         # Conductor ist ein externes Package im selben Monorepo. Import
         # defensiv — wer das Repo ohne conductor checkt aus, kriegt sonst
         # hier einen ImportError beim Server-Boot.
@@ -322,7 +321,6 @@ class WebServer:
         # Contacts section — user-curated address book (pure file store, no Brain dep).
         app.include_router(contacts_router)
         app.include_router(workflows_router)
-        app.include_router(workspace_router)
         if conductor_router is not None:
             app.include_router(conductor_router)
         app.include_router(preview_router)
@@ -761,7 +759,7 @@ class WebServer:
             """
             import shutil
 
-            oc_cfg = cfg.harness.openclaw
+            oc_cfg = cfg.harness.jarvis_agent
             router_primary = (cfg.brain.primary or "").lower()
 
             try:
@@ -775,7 +773,7 @@ class WebServer:
                 to_worker_slug = None  # type: ignore[assignment]
                 canonical_worker_provider = None  # type: ignore[assignment]
 
-            # The HEAVY-TASK subagent runs on ``[brain.sub_jarvis].provider`` —
+            # The HEAVY-TASK subagent runs on ``[brain.worker].provider`` —
             # NOT on ``brain.primary`` (that is only the lightweight router
             # brain). Mark the brain that ACTUALLY executes heavy tasks as
             # active; fall back to the router brain only when no subagent
@@ -783,7 +781,7 @@ class WebServer:
             # Mirrors jarvis/missions/init.py::_worker_factory so the displayed
             # brain never drifts from the worker that runs. (Bug 2026-05-28:
             # the UI showed Gemini active while heavy work ran on Claude.)
-            sub_cfg = getattr(cfg.brain, "sub_jarvis", None)
+            sub_cfg = getattr(cfg.brain, "worker", None)
             sub_raw = (
                 getattr(sub_cfg, "provider", None) if sub_cfg is not None else None
             )
@@ -1956,12 +1954,14 @@ class WebServer:
         data_dir.mkdir(parents=True, exist_ok=True)
         db_path = data_dir / "missions.db"
 
-        # Isolation-Root: <repo_parent>/sub-agents-outputs/. Repo-Root ist 4 Ebenen
-        # ueber jarvis/ui/web/server.py: server.py -> web -> ui -> jarvis -> repo.
+        # Isolation-Root: <repo_parent>/jarvis-agent-outputs/ (preferred; falls back
+        # to <repo_parent>/sub-agents-outputs/ if only the old dir exists — see
+        # resolve_outputs_root). Repo-Root ist 4 Ebenen over jarvis/ui/web/server.py:
+        # server.py -> web -> ui -> jarvis -> repo.
         repo_root = WEB_DIR.parent.parent.parent
         # Test/benchmark isolation seam: an explicit JARVIS_ISOLATION_ROOT
         # redirects the mission worktree container (and, with it, the startup
-        # cleanup sweep) away from the SHARED production sub-agents-outputs/.
+        # cleanup sweep) away from the SHARED production outputs dir.
         # Unset in production → unchanged behavior. Critical because
         # ``startup_sweep`` is filesystem-driven (removes any entry older than
         # cleanup_days by mtime, not DB-gated): without this seam an isolated
@@ -1971,7 +1971,8 @@ class WebServer:
         if _iso_override:
             isolation_root = Path(_iso_override)
         else:
-            isolation_root = repo_root.parent / "sub-agents-outputs"
+            from jarvis.missions.isolation.worktree import resolve_outputs_root
+            isolation_root = resolve_outputs_root(repo_root)
 
         # Fail-closed primary-instance gate: POSITIVE proof is required.
         # Only the launcher process, after confirming it holds the

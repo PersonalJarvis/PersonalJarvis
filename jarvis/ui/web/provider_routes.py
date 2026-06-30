@@ -373,7 +373,7 @@ def _codex_binary_path(request: Request | None = None) -> str | None:
 
 
 def _apply_worker_in_memory(request: Request, provider: str) -> None:
-    """Best-effort in-memory update of ``cfg.brain.sub_jarvis.provider``.
+    """Best-effort in-memory update of ``cfg.brain.worker.provider``.
 
     So the next ``/jarvis-agent/status`` reflects the choice immediately (the
     worker itself only re-reads at restart). Frozen / detached cfg is not an error.
@@ -381,40 +381,40 @@ def _apply_worker_in_memory(request: Request, provider: str) -> None:
     cfg = _resolve_cfg(request)
     if cfg is None or getattr(cfg, "brain", None) is None:
         return
-    sub = getattr(cfg.brain, "sub_jarvis", None)
+    sub = getattr(cfg.brain, "worker", None)
     try:
         if sub is None:
             from jarvis.core.config import BrainTierConfig
 
-            cfg.brain.sub_jarvis = BrainTierConfig(provider=provider)
+            cfg.brain.worker = BrainTierConfig(provider=provider)
         else:
             sub.provider = provider
     except Exception as exc:  # noqa: BLE001 — frozen models / detached cfg are not errors
-        log.debug("In-memory sub_jarvis.provider update skipped: %s", exc)
+        log.debug("In-memory worker.provider update skipped: %s", exc)
 
 
 def _apply_worker_model_in_memory(request: Request, model: str) -> None:
-    """Best-effort in-memory update of ``cfg.brain.sub_jarvis.model``.
+    """Best-effort in-memory update of ``cfg.brain.worker.model``.
 
-    Mirrors :func:`_apply_worker_in_memory`; a missing ``sub_jarvis``
+    Mirrors :func:`_apply_worker_in_memory`; a missing ``worker``
     block is created with the router primary as provider so the override is
     never silently dropped.
     """
     cfg = _resolve_cfg(request)
     if cfg is None or getattr(cfg, "brain", None) is None:
         return
-    sub = getattr(cfg.brain, "sub_jarvis", None)
+    sub = getattr(cfg.brain, "worker", None)
     try:
         if sub is None:
             from jarvis.core.config import BrainTierConfig
 
-            cfg.brain.sub_jarvis = BrainTierConfig(
+            cfg.brain.worker = BrainTierConfig(
                 provider=getattr(cfg.brain, "primary", "") or "", model=model,
             )
         else:
             sub.model = model
     except Exception as exc:  # noqa: BLE001 — frozen models / detached cfg are not errors
-        log.debug("In-memory sub_jarvis.model update skipped: %s", exc)
+        log.debug("In-memory worker.model update skipped: %s", exc)
 
 
 async def _emit(request: Request, event: Any) -> None:
@@ -622,7 +622,7 @@ def _jarvis_agent_section_health(cfg: Any) -> SectionHealth:
             reason="no_active",
             detail="No subagent worker selected",
         )
-    sub = getattr(brain, "sub_jarvis", None)
+    sub = getattr(brain, "worker", None)
     provider = (getattr(sub, "provider", None) if sub else None) or getattr(
         brain, "primary", None
     )
@@ -1584,9 +1584,9 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
         persisted = False
         if body.persist:
             try:
-                from jarvis.core.config_writer import set_sub_jarvis_provider
+                from jarvis.core.config_writer import set_worker_provider
 
-                set_sub_jarvis_provider(_CODEX_SUBAGENT_CANONICAL)
+                set_worker_provider(_CODEX_SUBAGENT_CANONICAL)
                 persisted = True
             except FileNotFoundError as exc:
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -1595,7 +1595,7 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
                     status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
                 ) from exc
         _apply_worker_in_memory(request, _CODEX_SUBAGENT_CANONICAL)
-        await _emit(request, SecretConfigured(key="brain.sub_jarvis.provider", action="set"))
+        await _emit(request, SecretConfigured(key="brain.worker.provider", action="set"))
         return {
             "ok": True,
             "active": _CODEX_SUBAGENT_CANONICAL,
@@ -1632,9 +1632,9 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
         persisted = False
         if body.persist:
             try:
-                from jarvis.core.config_writer import set_sub_jarvis_provider
+                from jarvis.core.config_writer import set_worker_provider
 
-                set_sub_jarvis_provider(ANTIGRAVITY_SUBAGENT_CANONICAL)
+                set_worker_provider(ANTIGRAVITY_SUBAGENT_CANONICAL)
                 persisted = True
             except FileNotFoundError as exc:
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -1643,7 +1643,7 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
                     status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
                 ) from exc
         _apply_worker_in_memory(request, ANTIGRAVITY_SUBAGENT_CANONICAL)
-        await _emit(request, SecretConfigured(key="brain.sub_jarvis.provider", action="set"))
+        await _emit(request, SecretConfigured(key="brain.worker.provider", action="set"))
         return {
             "ok": True,
             "active": ANTIGRAVITY_SUBAGENT_CANONICAL,
@@ -1687,9 +1687,9 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
     persisted = False
     if body.persist:
         try:
-            from jarvis.core.config_writer import set_sub_jarvis_provider
+            from jarvis.core.config_writer import set_worker_provider
 
-            set_sub_jarvis_provider(provider)
+            set_worker_provider(provider)
             persisted = True
         except FileNotFoundError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -1702,7 +1702,7 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
     # choice immediately (the worker itself only re-reads on restart).
     _apply_worker_in_memory(request, provider)
 
-    await _emit(request, SecretConfigured(key="brain.sub_jarvis.provider", action="set"))
+    await _emit(request, SecretConfigured(key="brain.worker.provider", action="set"))
 
     return {
         "ok": True,
@@ -1741,9 +1741,9 @@ async def jarvis_agent_model(body: SubagentModelBody, request: Request) -> dict[
     persisted = False
     if body.persist:
         try:
-            from jarvis.core.config_writer import set_sub_jarvis_model
+            from jarvis.core.config_writer import set_worker_model
 
-            set_sub_jarvis_model(model)
+            set_worker_model(model)
             persisted = True
         except FileNotFoundError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -1756,7 +1756,7 @@ async def jarvis_agent_model(body: SubagentModelBody, request: Request) -> dict[
     # choice immediately (workers resolve their chain per spawn from config).
     _apply_worker_model_in_memory(request, model)
 
-    await _emit(request, SecretConfigured(key="brain.sub_jarvis.model", action="set"))
+    await _emit(request, SecretConfigured(key="brain.worker.model", action="set"))
 
     return {
         "ok": True,
