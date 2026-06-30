@@ -1138,6 +1138,72 @@ def _evidence_unfulfilled_answer(*, lang: str) -> str:
     )
 
 
+# Honest spoken fallback for a mandated WRITE (e.g. contact-upsert) that never
+# ran — the say-do gap (live voice session 2026-06-30: "Okay, sehr gut" spoken
+# while no contact was saved). Distinct from the READ fallback above: it speaks
+# to a write ("not saved yet"), not a failed lookup. Static, no LLM (AP-11);
+# localized for every supported language, unknown code → default locale.
+_ACTION_UNFULFILLED_PHRASES: dict[str, dict[str, str]] = {
+    "contact-upsert": {
+        "de": (
+            "Ich hab den Kontakt noch nicht gespeichert — sag mir die Angaben "  # i18n-allow: German TTS
+            "noch mal, dann lege ich ihn an."  # i18n-allow: German TTS
+        ),
+        "en": (
+            "I haven't actually saved that contact yet — give me the details "
+            "once more and I'll add it."
+        ),
+        "es": (
+            "Todavía no he guardado ese contacto — dime los datos otra vez y lo "
+            "añado."
+        ),
+    },
+}
+# A write tool with no bespoke table reuses the contact wording's shape.
+_ACTION_UNFULFILLED_DEFAULT = _ACTION_UNFULFILLED_PHRASES["contact-upsert"]
+
+
+def _action_unfulfilled_answer(required_tool: str, *, lang: str) -> str:
+    """Honest spoken fallback for a mandated WRITE tool that never ran.
+
+    Mirrors :func:`_evidence_unfulfilled_answer` but for a write/create action:
+    it must never claim the save happened. Unknown tool or language degrades to
+    the contact wording / default locale so the spoken turn never crashes.
+    """
+    table = _ACTION_UNFULFILLED_PHRASES.get(required_tool, _ACTION_UNFULFILLED_DEFAULT)
+    return table.get(lang, table.get(DEFAULT_LOCALE, table["de"]))
+
+
+def _unfulfilled_replacement(
+    *,
+    required_tool: str,
+    executed: "set[str]",
+    response_text: str,
+    suppressed: bool,
+    is_write: bool,
+    lang: str,
+) -> "str | None":
+    """Decide whether a mandated-tool turn's answer must be replaced for honesty.
+
+    Returns the honest replacement text, or ``None`` to keep the answer as-is.
+    Shared by the read evidence gate and the write (contact) say-do guard.
+
+    A WRITE mandate additionally LEAVES A CLARIFYING QUESTION intact: asking the
+    user to repeat a missing/broken field (e.g. the '@'-less email) is the
+    desired behavior, not a fake claim — only a flat confirmation with no
+    question is corrected.
+    """
+    if not _evidence_answer_is_unverified(
+        required_tool, executed, response_text, suppressed=suppressed
+    ):
+        return None
+    if is_write:
+        if "?" in (response_text or ""):
+            return None  # honest clarifying question — keep it
+        return _action_unfulfilled_answer(required_tool, lang=lang)
+    return _evidence_unfulfilled_answer(lang=lang)
+
+
 def _render_recovered_tool_output(output: Any) -> str:
     """Speakable plain-text rendering of a recovered tool's output.
 
