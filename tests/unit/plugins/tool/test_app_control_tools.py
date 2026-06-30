@@ -100,8 +100,9 @@ async def test_describe_rejects_params():
 async def test_describe_snapshot_structure(monkeypatch, configured_keys):
     from jarvis.plugins.tool.describe_app_settings import DescribeAppSettingsTool
 
+    # Use gemini as brain — grok was removed from the brain provider list.
     monkeypatch.setattr(
-        "jarvis.brain.app_control.resolve_running_cfg", lambda: make_cfg()
+        "jarvis.brain.app_control.resolve_running_cfg", lambda: make_cfg(brain="gemini")
     )
     monkeypatch.setattr("jarvis.brain.app_control.list_mcp_servers", lambda: [])
 
@@ -112,7 +113,7 @@ async def test_describe_snapshot_structure(monkeypatch, configured_keys):
     assert "brain" in out["providers"] and "tts" in out["providers"]
     # active brain provider reflects cfg
     actives = [p for p in out["providers"]["brain"] if p["active"]]
-    assert actives and actives[0]["id"] == "grok"
+    assert actives and actives[0]["id"] == "gemini"
     # secret-free: provider entries expose only booleans for credentials
     for p in out["providers"]["brain"]:
         assert isinstance(p["configured"], bool)
