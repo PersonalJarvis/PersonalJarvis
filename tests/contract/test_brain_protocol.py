@@ -21,7 +21,6 @@ BRAIN_PROVIDERS = [
     "openrouter",
     "openai",
     "gemini",
-    "grok",
 ]
 
 
