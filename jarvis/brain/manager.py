@@ -689,6 +689,22 @@ _SPAWN_TOOL_NAMES: frozenset[str] = frozenset({"spawn_worker", "multi_spawn"})
 # works) and ``open_app`` (lighter; naming an app already reads as action-intent).
 _INHERITABLE_ACTION_TOOL_NAMES: frozenset[str] = _SPAWN_TOOL_NAMES | {"computer_use"}
 
+# Deterministic write/record tools that create user-visible state (a contact, a
+# profile field, a wiki note, a calendar event, a phone call). On a turn with NO
+# action signal of its own these must NOT sit in the LLM surface, or the model
+# can pick one on a plain conversational question (deep-dive 2026-06-30: a
+# "does my budget fit?" turn had google_calendar/contact-upsert/wiki-ingest/
+# update-profile ungated). Hidden by the signalless guard, with a hard exemption
+# for any tool the deterministic layer ALREADY mandated this turn (a real "merk
+# dir, dass…" keeps wiki-ingest via resolve_save_mandate; a calendar READ keeps
+# google_calendar via the evidence gate) so the say-do write feature and calendar
+# reads never regress. The background wiki (VoiceFactBridge) is untouched — it is
+# not a model-callable tool (AP-9).
+_DETERMINISTIC_WRITE_TOOL_NAMES: frozenset[str] = frozenset({
+    "contact-upsert", "update-profile", "wiki-ingest", "google_calendar",
+    "call-contact",
+})
+
 # Interrogative opener (DE / EN / ES) — the leading question word of a plain
 # "what/which/who/how/…"-style factual question. Anchored at the start after an
 # optional wake/greeting/politeness run so "Jarvis, welche Firmen …" still
@@ -1150,17 +1166,76 @@ _EVIDENCE_UNFULFILLED_PHRASES: dict[str, str] = {
 }
 
 
-def _evidence_unfulfilled_answer(*, lang: str) -> str:
+# Spoken domain labels for the honest "couldn't reach X" fallback. Mirrors the
+# capability vocabulary already used by evidence_gate's refusal tables, so a
+# mandated-but-unrun READ names the real domain ("…deine Cloud-Abrechnung…")
+# instead of the generic "the tool" — which also seeds the conversation history
+# so a follow-up "welches Werkzeug?" is answerable. Localized for every
+# supported language; an unknown domain falls back to the generic phrase.
+_EVIDENCE_DOMAIN_LABELS: dict[str, dict[str, str]] = {
+    "de": {
+        "calendar": "deinen Kalender",  # i18n-allow: German TTS
+        "email": "dein Postfach",  # i18n-allow: German TTS
+        "tasks": "deine Aufgaben",  # i18n-allow: German TTS
+        "repos": "deine Repositories",  # i18n-allow: German TTS
+        "deployments": "deine Deployments",  # i18n-allow: German TTS
+        "cloud": "deine Cloud-Abrechnung",  # i18n-allow: German TTS
+        "activity": "deinen Aktivitätsverlauf",  # i18n-allow: German TTS
+    },
+    "en": {
+        "calendar": "your calendar",
+        "email": "your inbox",
+        "tasks": "your tasks",
+        "repos": "your repositories",
+        "deployments": "your deployments",
+        "cloud": "your cloud billing",
+        "activity": "your activity history",
+    },
+    "es": {
+        "calendar": "tu calendario",
+        "email": "tu bandeja de entrada",
+        "tasks": "tus tareas",
+        "repos": "tus repositorios",
+        "deployments": "tus despliegues",
+        "cloud": "tu facturación en la nube",
+        "activity": "tu historial de actividad",
+    },
+}
+
+# Domain-aware variant of the unfulfilled phrase — same honesty contract (never
+# claims a "block"/invents a reason), just names the capability via {label}.
+_EVIDENCE_UNFULFILLED_DOMAIN_PHRASES: dict[str, str] = {
+    "de": (
+        "Ich konnte {label} gerade nicht abrufen — der Zugriff ist nicht "  # i18n-allow: German TTS
+        "durchgelaufen. Sag noch mal Bescheid, dann versuche ich es erneut."  # i18n-allow: German TTS
+    ),
+    "en": (
+        "I couldn't pull {label} just now — the access didn't go through. "
+        "Say the word and I'll try again."
+    ),
+    "es": (
+        "No pude obtener {label} ahora mismo — el acceso no se completó. "
+        "Avísame y lo intento de nuevo."
+    ),
+}
+
+
+def _evidence_unfulfilled_answer(*, lang: str, domain: str = "") -> str:
     """Honest spoken fallback for a mandated-tool turn whose tool never ran.
 
     Static, no LLM (AP-11). Never claims the tool "blocked" or invents a reason.
-    Localized for every supported language (de/en/es); an unrecognised code
-    degrades to the default locale so the spoken turn never crashes (Runtime
+    When ``domain`` is a known external-data domain the phrase NAMES the
+    capability ("…deine Cloud-Abrechnung…"); otherwise it degrades to the generic
+    wording. Localized for every supported language (de/en/es); an unrecognised
+    code degrades to the default locale so the spoken turn never crashes (Runtime
     Output Language doctrine).
     """
-    return _EVIDENCE_UNFULFILLED_PHRASES.get(
-        lang, _EVIDENCE_UNFULFILLED_PHRASES[DEFAULT_LOCALE]
-    )
+    if lang not in _EVIDENCE_UNFULFILLED_PHRASES:
+        lang = DEFAULT_LOCALE
+    label = _EVIDENCE_DOMAIN_LABELS.get(lang, {}).get(domain, "")
+    if label:
+        return _EVIDENCE_UNFULFILLED_DOMAIN_PHRASES[lang].format(label=label)
+    return _EVIDENCE_UNFULFILLED_PHRASES[lang]
 
 
 # Honest spoken fallback for a mandated WRITE (e.g. contact-upsert) that never
@@ -1220,6 +1295,7 @@ def _unfulfilled_replacement(
     suppressed: bool,
     is_write: bool,
     lang: str,
+    domain: str = "",
 ) -> "str | None":
     """Decide whether a mandated-tool turn's answer must be replaced for honesty.
 
@@ -1239,7 +1315,7 @@ def _unfulfilled_replacement(
         if "?" in (response_text or ""):
             return None  # honest clarifying question — keep it
         return _action_unfulfilled_answer(required_tool, lang=lang)
-    return _evidence_unfulfilled_answer(lang=lang)
+    return _evidence_unfulfilled_answer(lang=lang, domain=domain)
 
 
 def _render_recovered_tool_output(output: Any) -> str:
@@ -3540,6 +3616,10 @@ class BrainManager:
     # contact-upsert) rather than a read lookup — switches the honest backstop
     # to write wording and lets a clarifying question stand. Reset per turn.
     _evidence_required_is_write: bool = False
+    # The external-data domain (calendar/email/cloud/…) a READ mandate targets,
+    # so an unmet mandate's spoken fallback can NAME the capability instead of
+    # the generic "the tool" (B3, 2026-06-30). Reset per turn.
+    _evidence_required_domain: str = ""
     # Per-turn self-control directive (general settings/config control). Reset
     # at the start of every generate() turn; appended to the system prompt.
     _self_control_directive: str = ""
@@ -3956,10 +4036,17 @@ class BrainManager:
                 or self._get_force_spawn_pattern().search(t)
             ):
                 return tools
+            # Hide computer_use/spawn AND the deterministic write/record tools so
+            # the model cannot pick one on a no-action conversational turn — but
+            # NEVER strip a tool the deterministic layer already mandated this
+            # turn (a say-do write via resolve_save_mandate, or a calendar/email
+            # READ via the evidence gate), or those features regress (AD-CLI8).
+            hidden = _INHERITABLE_ACTION_TOOL_NAMES | _DETERMINISTIC_WRITE_TOOL_NAMES
+            mandated = getattr(self, "_evidence_required_tool", "") or ""
             return {
                 n: tool
                 for n, tool in tools.items()
-                if n not in _INHERITABLE_ACTION_TOOL_NAMES
+                if n not in hidden or n == mandated
             }
         except Exception:  # noqa: BLE001 — gate must never blind the brain
             log.debug("signalless-turn action-hide gate failed", exc_info=True)
@@ -5910,6 +5997,7 @@ class BrainManager:
         self._evidence_directive = ""
         self._evidence_required_tool = ""
         self._evidence_required_is_write = False
+        self._evidence_required_domain = ""
         # General self-control directive — reset here, set below once the
         # smalltalk classification for this turn is known.
         self._self_control_directive = ""
@@ -6068,7 +6156,23 @@ class BrainManager:
                 trace_id=turn_trace_id,
             )
             return verdict.refusal_text
-        if verdict.kind == "require_tool":
+        if verdict.kind == "require_tool" and (
+            _conversational_turn_suppresses_read_mandate(user_text)
+        ):
+            # Opinion/advice/conversational turn: never FORCE a read tool — and so
+            # never void the answer — just because a domain keyword appeared. Live
+            # 2026-06-30 (Bora-Bora): "...bei meinem Budget bei 25.000 Euro ...
+            # passt es?" matched the cloud domain, the gate forced cli_gcloud, and
+            # the backstop then deleted the model's good travel answer. The tool
+            # stays in the surface, so the model keeps discretion to call it; it is
+            # just never forced. A bare data lookup ("Was sind meine Abrechnungen?")
+            # carries no opinion opener and stays gated (no confab regression).
+            log.info(
+                "Evidence gate stood down (conversational): domain=%s tool=%s "
+                "— answering inline, not forcing the tool.",
+                verdict.domain, verdict.tool_name,
+            )
+        elif verdict.kind == "require_tool":
             log.info(
                 "Evidence gate: domain=%s requires tool %s this turn",
                 verdict.domain, verdict.tool_name,
@@ -6101,6 +6205,9 @@ class BrainManager:
             if not injected:
                 self._evidence_directive = verdict.directive
                 self._evidence_required_tool = verdict.tool_name
+                # Persist the domain so the honest "couldn't reach X" fallback can
+                # NAME the capability (B3) instead of the generic "the tool".
+                self._evidence_required_domain = verdict.domain
 
         # Say-do honesty guard for WRITES. The read evidence gate above never
         # fires on a "save this" turn (it is not a lookup), so a confirmed offer
@@ -6724,6 +6831,7 @@ class BrainManager:
                 lang=resolve_output_language(
                     self._reply_language, "unknown", user_text, default="de"
                 ),
+                domain=self._evidence_required_domain,
             )
             if _replacement is not None:
                 log.warning(
