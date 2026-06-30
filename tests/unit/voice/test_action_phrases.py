@@ -223,6 +223,38 @@ class TestCuFailureReadback:
         assert reason in out
 
 
+class TestNoCapableProviderPhrase:
+    """Exit 3 == the Computer-Use vision-provider chain was exhausted: NO
+    screen-capable AI model was reachable (every candidate keyless / depleted /
+    rate-limited / no-vision). Live forensic 2026-06-30: the user heard the
+    generic "couldn't get a valid screen-control response" (exit 2) while the
+    real cause was a dead provider chain (Gemini credits depleted, Claude 502,
+    OpenAI no key, OpenRouter model no-vision). Exit 3 must be an HONEST,
+    ACTIONABLE sentence — distinct from the misleading exit-2 parse phrase — so
+    the user knows to fix keys/credit, not that the model "got confused".
+    """
+
+    def test_exit_3_is_the_no_provider_phrase(self) -> None:
+        for lang in ("de", "en", "es"):
+            out = cu_failure_readback(lang, error="exit 3", exit_code=3)
+            assert not _EXIT_TOKEN_RE.search(out), out
+            assert out == action_phrase("cu_exit_no_provider", lang)
+            # distinct from the exit-2 parse phrase (the misleading one).
+            assert out != cu_failure_readback(lang, error="exit 2", exit_code=2)
+
+    def test_exit_3_is_actionable_about_keys_or_credit(self) -> None:
+        en = action_phrase("cu_exit_no_provider", "en")
+        assert len(en) > 10
+        assert "screen" in en.lower()
+        # points the user at the real fix: keys / credit / settings.
+        assert any(w in en.lower() for w in ("key", "credit", "settings"))
+
+    def test_exit_3_unknown_language_falls_back_to_german(self) -> None:
+        assert action_phrase("cu_exit_no_provider", "fr") == action_phrase(
+            "cu_exit_no_provider", "de"
+        )
+
+
 class TestElevationPausePhrases:
     """Phrases for the UAC / privilege-prompt pause-and-resume flow.
 

@@ -87,6 +87,22 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "I couldn't get a valid screen-control response, so I stopped.",
         "es": "No pude obtener una respuesta valida para controlar la pantalla, asi que me detuve.",
     },
+    # exit 3 — the vision-provider chain was EXHAUSTED: no screen-capable AI model
+    # was reachable (every candidate keyless / out-of-credit / rate-limited /
+    # no-vision). This is NOT the model "getting confused" (exit 2); it is an
+    # account/credential fact the user can fix in-app, so the phrase is honest and
+    # ACTIONABLE (points at keys/credit/settings) instead of the misleading
+    # "couldn't get a valid response". Live forensic 2026-06-30: the user's whole
+    # CU chain was dead (Gemini credits depleted, Claude 502, OpenAI no key,
+    # OpenRouter model no-vision) yet they heard the generic exit-2 phrase.
+    "cu_exit_no_provider": {  # exit 3 — no vision-capable provider reachable
+        "de": "Ich habe gerade kein KI-Modell, das den Bildschirm sehen kann. "  # i18n-allow
+              "Bitte pruefe deine API-Schluessel oder dein Guthaben in den Einstellungen.",  # i18n-allow
+        "en": "I don't have an AI model that can see the screen right now. "
+              "Please check your API keys or your credit in settings.",
+        "es": "Ahora mismo no tengo un modelo de IA que pueda ver la pantalla. "
+              "Revisa tus claves de API o tu saldo en los ajustes.",
+    },
     "cu_exit_too_many_steps": {  # exit 4 — step budget exhausted
         "de": "Es hat am Bildschirm zu viele Schritte gebraucht, ich habe "  # i18n-allow
               "aufgehoert.",  # i18n-allow
@@ -258,6 +274,7 @@ CU_CANCEL_EXIT_CODE: int = 130
 _EXIT_CODE_PHRASE: dict[int, str] = {
     1: "cu_exit_no_view",
     2: "cu_exit_confused",
+    3: "cu_exit_no_provider",
     4: "cu_exit_too_many_steps",
     5: "cu_exit_gave_up",
     8: "cu_exit_action_failed",
