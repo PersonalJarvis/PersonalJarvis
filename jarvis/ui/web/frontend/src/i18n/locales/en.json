@@ -1,7 +1,7 @@
 {
   "jarvis_dock": {
     "aria": "{name} — drop a mission here to talk about it",
-    "hint": "Drag a sub-agent output here to pull it into the conversation",
+    "hint": "Drag a Jarvis-Agent output here to pull it into the conversation",
     "drop_here": "Drop to discuss",
     "drop_active": "Drop to brief {name}",
     "dropped": "Added to conversation"
@@ -173,7 +173,7 @@
     "thinking_aria": "Your assistant is thinking",
     "thinking_label": "thinking…",
     "empty_title": "Ready for commands",
-    "empty_subtitle": "Say your wake word or type your message below. Your assistant dispatches sub-agents, calls tools, and gives you a voice back.",
+    "empty_subtitle": "Say your wake word or type your message below. Your assistant dispatches Jarvis-Agents, calls tools, and gives you a voice back.",
     "warming_title": "Getting ready",
     "warming_subtitle": "Your assistant is starting up. You'll be able to speak in a moment, and you can already type below.",
     "examples": {
@@ -814,7 +814,7 @@
     "tier_brain": "Brain Provider",
     "tier_tts": "Voice Output (TTS)",
     "tier_stt": "Voice Input (STT)",
-    "tier_subagent": "Subagent (heavy tasks)",
+    "tier_subagent": "Jarvis-Agent (heavy tasks)",
     "tier_telephony": "Telephony",
     "tab_brain": "Brain",
     "tab_tts": "Voice Output",
@@ -1162,7 +1162,7 @@
   },
   "outputs_view": {
     "title": "Outputs",
-    "subtitle": "Files {name} or sub-agents wrote for you.",
+    "subtitle": "Files {name} or Jarvis-Agents wrote for you.",
     "empty": "No outputs yet.",
     "open": "Open",
     "delete": "Delete",
@@ -1175,7 +1175,7 @@
     "rerun_confirm": "Confirm re-run",
     "continuation_running": "Continued · running",
     "list_load_error": "Could not load outputs",
-    "empty_sessions": "No sub-agent sessions yet. Start an OpenClaw task.",
+    "empty_sessions": "No Jarvis-Agent sessions yet. Start a Jarvis-Agent task.",
     "select_session": "Select a session.",
     "loading_plan": "Loading plan…",
     "plan_load_error": "Could not load plan",
@@ -1257,14 +1257,14 @@
     "load_error": "Could not load the Wiki provider settings."
   },
   "subagent_model": {
-    "description": "Sub-agents (heavy background workers) can run on their own model, separate from the chat brain. Leave the field empty to use the active subagent provider's strongest model.",
-    "model_label": "Subagent model (optional)",
+    "description": "Jarvis-Agents (heavy background workers) can run on their own model, separate from the chat brain. Leave the field empty to use the active Jarvis-Agent provider's strongest model.",
+    "model_label": "Jarvis-Agent model (optional)",
     "model_placeholder": "Leave empty for the provider's default model",
-    "model_hint": "Empty means the active subagent provider's deep model.",
+    "model_hint": "Empty means the active Jarvis-Agent provider's deep model.",
     "apply": "Apply",
     "applying": "Applying…",
-    "saved": "Subagent model saved.",
-    "saved_restart": "Subagent model saved — applies to the next mission."
+    "saved": "Jarvis-Agent model saved.",
+    "saved_restart": "Jarvis-Agent model saved — applies to the next mission."
   },
   "cli_connect": {
     "is_connected": "{0} is connected",
@@ -1303,7 +1303,7 @@
     "status_loading": "Loading Codex status",
     "needs_codex_full": "{0}: first connect Codex or save API key, then activate.",
     "needs_key_full": "{0}: first save API key, then activate.",
-    "runs_as_subagent_hint": "Codex works as a subagent (background worker) on your ChatGPT login. After connecting, activate it in the Subagent list below. A thinking brain needs the separate OpenAI API-key provider.",
+    "runs_as_subagent_hint": "Codex works as a Jarvis-Agent (background worker) on your ChatGPT login. After connecting, activate it in the Jarvis-Agent list below. A thinking brain needs the separate OpenAI API-key provider.",
     "brain_needs_openai_key": "Codex as a brain needs an OpenAI API key — the ChatGPT login only powers the Codex worker. Add an OpenAI key (e.g. on the OpenAI provider), then select Codex here.",
     "brain_key_hint": "To use Codex as a brain too, add an OpenAI API key (paid, separate from your ChatGPT login — which only powers the worker). Saving it unlocks the brain toggle above."
   },
@@ -1702,8 +1702,8 @@
     "empty": "No critic verdicts for this mission yet."
   },
   "openclaw_panel": {
-    "select_mission": "Select a mission to see OpenClaw workers.",
-    "no_workers": "No OpenClaw workers in this mission.",
+    "select_mission": "Select a mission to see Jarvis-Agent workers.",
+    "no_workers": "No Jarvis-Agent workers in this mission.",
     "not_available": "(not available)",
     "copy_path": "Copy path",
     "file_link_copies_path": "file:// link (path is copied)",
@@ -1933,8 +1933,8 @@
     "profile_minimal_desc": "Friend sees: voice session active yes/no, duration. No content.",
     "profile_standard_subline": "+ Mission title",
     "profile_standard_desc": "Friend also sees: which missions/tasks are currently running, success, duration.",
-    "profile_detailed_subline": "+ OpenClaw summary",
-    "profile_detailed_desc": "Friend also sees: signed OpenClaw summaries (NO utterances)."
+    "profile_detailed_subline": "+ Jarvis-Agent summary",
+    "profile_detailed_desc": "Friend also sees: signed Jarvis-Agent summaries (NO utterances)."
   },
   "tools_canvas": {
     "back_tooltip": "Back to the agents overview",
@@ -1943,7 +1943,7 @@
     "duration": "Duration",
     "empty": "(empty)",
     "no_tools_yet": "hasn't called any tools yet.",
-    "no_tools_explainer": "As soon as the OpenClaw worker triggers a tool (e.g. dispatch_to_harness, run_shell, screenshot), it appears here as an icon node."
+    "no_tools_explainer": "As soon as the Jarvis-Agent worker triggers a tool (e.g. dispatch_to_harness, run_shell, screenshot), it appears here as an icon node."
   },
   "use_web_socket": {
     "jarvis_opened": "{name} opened"
@@ -1974,7 +1974,7 @@
   "permission_matrix": {
     "subline_minimal": "Online/offline only",
     "subline_standard": "+ Mission title",
-    "subline_detailed": "+ OpenClaw summary",
+    "subline_detailed": "+ Jarvis-Agent summary",
     "aria_label": "Sharing profile"
   },
   "self_mod_view": {
@@ -2112,10 +2112,10 @@
     "connection_lost": "connection lost …"
   },
   "agents_view": {
-    "subtitle": "Running sub-agents — role, status, output.",
+    "subtitle": "Running Jarvis-Agents — role, status, output.",
     "empty_title": "No active agents",
     "empty_body_a": "When",
-    "empty_body_b": "starts a sub-agent, it appears here as a live tile with streaming output and a kill button.",
+    "empty_body_b": "starts a Jarvis-Agent, it appears here as a live tile with streaming output and a kill button.",
     "phase4_notice": "Activated with Phase 4 (harness integration)."
   },
   "friends_view": {

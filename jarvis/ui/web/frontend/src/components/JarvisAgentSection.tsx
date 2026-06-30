@@ -372,7 +372,7 @@ function BridgeCard({ status }: { status: SubagentStatus }) {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">Subagent bridge</span>
+            <span className="font-medium">Jarvis-Agent bridge</span>
             {live ? (
               <span className="chip-yellow">active</span>
             ) : (
@@ -382,10 +382,10 @@ function BridgeCard({ status }: { status: SubagentStatus }) {
             )}
           </div>
           <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-            External subagent for heavy tasks (read a repo, build a feature,
+            External Jarvis-Agent for heavy tasks (read a repo, build a feature,
             reproduce a bug). It reuses the same brain-provider keys you set
             above &mdash; no separate input field needed. Every registered MCP
-            server is handed to the subagent at pre-boot with a mission-isolated
+            server is handed to the Jarvis-Agent at pre-boot with a mission-isolated
             state directory.
           </p>
         </div>
@@ -470,7 +470,7 @@ function CodexConnectionCard({
       // poll until the CLI reports connected; then the card flips to selectable
       // on its own — no manual reload needed.
       void pollStatusUntilConnected("/api/codex/status", onChanged).then((ok) => {
-        if (ok) pushToast("success", "Codex connected — now selectable as a subagent");
+        if (ok) pushToast("success", "Codex connected — now selectable as a Jarvis-Agent");
       });
     } catch (e) {
       pushToast("error", (e as Error).message);
@@ -594,7 +594,7 @@ function AntigravityConnectionCard({
       // Same as Codex: the Google sign-in completes asynchronously, so poll
       // until agy reports connected and the card unlocks on its own.
       void pollStatusUntilConnected("/api/antigravity/status", onChanged).then((ok) => {
-        if (ok) pushToast("success", "Antigravity connected — now selectable as a subagent");
+        if (ok) pushToast("success", "Antigravity connected — now selectable as a Jarvis-Agent");
       });
     } catch (e) {
       pushToast("error", (e as Error).message);
@@ -726,7 +726,7 @@ function ClaudeConnectionCard({
       // The sign-in finishes asynchronously in the spawned console, so poll
       // until the CLI reports connected; the card then unlocks on its own.
       void pollStatusUntilConnected("/api/claude/status", onChanged).then((ok) => {
-        if (ok) pushToast("success", "Claude connected — now selectable as a subagent");
+        if (ok) pushToast("success", "Claude connected — now selectable as a Jarvis-Agent");
       });
     } catch (e) {
       pushToast("error", (e as Error).message);
@@ -864,9 +864,9 @@ function ClaudeApiCard({
       onDoubleClick={handleCardActivate}
       title={
         isActive
-          ? "This subagent provider is active"
+          ? "This Jarvis-Agent provider is active"
           : keySet
-            ? "Activate this subagent provider"
+            ? "Activate this Jarvis-Agent provider"
             : "Add the Claude API key in the Brain section first"
       }
       className={cn(
@@ -963,7 +963,7 @@ function useSubagentActivate(
     try {
       const result = await switchSubagentProvider(row.jarvis);
       const note = result.restart_required ? " (active from next restart)" : "";
-      pushToast("success", `Subagent → ${label}${note}`);
+      pushToast("success", `Jarvis-Agent → ${label}${note}`);
       window.dispatchEvent(new CustomEvent("jarvis:agent-switched"));
       await onSwitched();
     } catch (e) {
@@ -1010,9 +1010,9 @@ function SubagentProviderCard({
       onDoubleClick={handleCardActivate}
       title={
         row.is_active_brain
-          ? "This subagent provider is active"
+          ? "This Jarvis-Agent provider is active"
           : row.key_set
-            ? "Activate this subagent provider"
+            ? "Activate this Jarvis-Agent provider"
             : "Set an API key first"
       }
       className={cn(
@@ -1105,9 +1105,9 @@ function SubagentActiveControl({
 }) {
   const isActive = active ?? row.is_active_brain;
   const labelTitle = isActive
-    ? "This subagent provider is active"
+    ? "This Jarvis-Agent provider is active"
     : row.key_set
-      ? "Activate this subagent provider"
+      ? "Activate this Jarvis-Agent provider"
       : "Set an API key first";
 
   return (

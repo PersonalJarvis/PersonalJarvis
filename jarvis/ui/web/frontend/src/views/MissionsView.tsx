@@ -172,7 +172,7 @@ export function MissionsView() {
                 </TabsTrigger>
                 <TabsTrigger value="openclaw" className="gap-1.5">
                   <Cpu className="h-3.5 w-3.5" />
-                  OpenClaw
+                  Jarvis-Agent
                 </TabsTrigger>
               </TabsList>
             </div>

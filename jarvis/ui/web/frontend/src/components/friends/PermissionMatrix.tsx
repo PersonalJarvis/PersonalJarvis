@@ -12,7 +12,7 @@ import type { StatusProfile } from "@/hooks/useFriends";
 const PROFILES: { value: StatusProfile; label: string; subline: string }[] = [
   { value: "minimal", label: "minimal", subline: "Nur online/offline" },
   { value: "standard", label: "standard", subline: "+ Mission-Titel" },
-  { value: "detailed", label: "detailed", subline: "+ OpenClaw-Summary" },
+  { value: "detailed", label: "detailed", subline: "+ Jarvis-Agent-Summary" },
 ];
 
 export function PermissionMatrix({
