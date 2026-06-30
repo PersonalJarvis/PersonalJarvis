@@ -224,18 +224,11 @@ jctl = "jarvis.cli_ctl.__main__:main"
 openwakeword = "jarvis.plugins.wake.openwakeword_provider:OpenWakeWordProvider"
 
 [project.entry-points."jarvis.turn"]
-# Phase L.2 — End-of-Turn Detection. Default: flux_integrated (siehe AD-L-4).
-flux-integrated = "jarvis.plugins.turn.flux_integrated:FluxIntegratedNoOp"
-smart-turn-v3 = "jarvis.plugins.turn.smart_turn_v3:SmartTurnV3Detector"
-silero-only = "jarvis.plugins.turn.silero_only:SileroOnlyDetector"
+# Phase L turn-detection providers are not implemented yet — slot kept for forward
+# discovery; no provider ships until the streaming work lands.
 
 [project.entry-points."jarvis.stt"]
-openai-api = "jarvis.plugins.stt.openai_api:OpenAIWhisperAPI"
 groq-api = "jarvis.plugins.stt.groq_api:GroqWhisperAPI"
-deepgram = "jarvis.plugins.stt.deepgram:DeepgramSTT"
-# Phase L.3 — Streaming-STT mit integriertem EOT (Variante A) bzw. Plan-B Nova-3.
-deepgram-flux = "jarvis.plugins.stt.deepgram_flux:DeepgramFluxSTT"
-deepgram-nova3 = "jarvis.plugins.stt.deepgram_nova3:DeepgramNova3STT"
 
 [project.entry-points."jarvis.tts"]
 elevenlabs = "jarvis.plugins.tts.elevenlabs_tts:ElevenLabsTTS"
