@@ -44,7 +44,7 @@ class FakeTTS:
 
 
 class _FakeMic:
-    async def __aenter__(self) -> "_FakeMic":
+    async def __aenter__(self) -> _FakeMic:
         return self
 
     async def __aexit__(self, *args: object) -> bool:
