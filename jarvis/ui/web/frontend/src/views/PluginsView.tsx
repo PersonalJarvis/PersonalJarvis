@@ -7,12 +7,14 @@ import {
   ExternalLink,
   Search,
   RefreshCw,
+  RotateCw,
   Plus,
   Check,
   Copy,
   Sparkles,
   X,
   Loader2,
+  AlertTriangle,
 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -321,8 +323,28 @@ export function PluginsView() {
     () => data?.plugins.map(adapt) ?? [],
     [data],
   );
+  // "Installed" keeps every plugin the user ever connected — including a revoked
+  // (needs_reauth) or errored one — so a dead token surfaces a Reconnect prompt
+  // here instead of silently dropping back into Browse as a plain "+".
   const installed = useMemo(
-    () => allPlugins.filter((p) => p.status === "connected"),
+    () =>
+      allPlugins.filter(
+        (p) =>
+          p.status === "connected" ||
+          p.status === "needs_reauth" ||
+          p.status === "error",
+      ),
+    [allPlugins],
+  );
+  const connectedCount = useMemo(
+    () => allPlugins.filter((p) => p.status === "connected").length,
+    [allPlugins],
+  );
+  const needsAttentionCount = useMemo(
+    () =>
+      allPlugins.filter(
+        (p) => p.status === "needs_reauth" || p.status === "error",
+      ).length,
     [allPlugins],
   );
 
@@ -346,7 +368,11 @@ export function PluginsView() {
             ? "Loading catalog…"
             : error
               ? "Backend unreachable"
-              : `${allPlugins.length} available · ${installed.length} connected`
+              : `${allPlugins.length} available · ${connectedCount} connected${
+                  needsAttentionCount > 0
+                    ? ` · ${needsAttentionCount} need reconnect`
+                    : ""
+                }`
         }
         right={
           <Button
@@ -896,15 +922,21 @@ function PluginRow({
   onDisconnect,
 }: { plugin: Plugin } & ConnectHandlers) {
   const isConnected = plugin.status === "connected";
+  const needsReauth = plugin.status === "needs_reauth";
+  const isError = plugin.status === "error";
   const isMulticolor = !!plugin.logoUrl;
 
   return (
     <article
       className={cn(
         "group flex items-center gap-3 rounded-lg border bg-card/40 px-3 py-2.5 transition-colors",
-        isConnected
-          ? "border-primary/30"
-          : "border-border hover:border-primary/40 hover:bg-card/70",
+        isConnected && "border-primary/30",
+        needsReauth && "border-amber-500/40",
+        isError && "border-destructive/40",
+        !isConnected &&
+          !needsReauth &&
+          !isError &&
+          "border-border hover:border-primary/40 hover:bg-card/70",
       )}
     >
       <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border/60 bg-white">
@@ -929,6 +961,18 @@ function PluginRow({
           {isConnected && plugin.liveCallable && (
             <span className="text-[9px] font-medium uppercase tracking-wider text-emerald-400">
               · Live
+            </span>
+          )}
+          {needsReauth && (
+            <span className="inline-flex items-center gap-1 text-[9px] font-medium uppercase tracking-wider text-amber-500">
+              <AlertTriangle className="h-2.5 w-2.5" />
+              Reconnect needed
+            </span>
+          )}
+          {isError && (
+            <span className="inline-flex items-center gap-1 text-[9px] font-medium uppercase tracking-wider text-destructive">
+              <AlertTriangle className="h-2.5 w-2.5" />
+              Error
             </span>
           )}
         </div>
@@ -993,6 +1037,33 @@ export function ConnectIconButton({
       setBusy(false);
     }
   };
+
+  // A revoked / errored token re-runs the SAME connect flow, but is shown as a
+  // distinct amber "Reconnect" affordance so it can never be mistaken for a
+  // never-connected "+" (the silent-rot bug this view used to have).
+  const needsReconnect = status === "needs_reauth" || status === "error";
+  if (needsReconnect) {
+    return (
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={busy}
+        aria-busy={busy}
+        className={cn(
+          "grid h-7 w-7 shrink-0 place-items-center rounded-full border border-amber-500/50 bg-amber-500/10 text-amber-500 transition-all hover:bg-amber-500/20 group-hover:scale-105",
+          busy && "cursor-not-allowed opacity-60 group-hover:scale-100",
+        )}
+        aria-label="Reconnect plugin"
+        title="Reconnect"
+      >
+        {busy ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <RotateCw className="h-3.5 w-3.5" />
+        )}
+      </button>
+    );
+  }
 
   return (
     <button

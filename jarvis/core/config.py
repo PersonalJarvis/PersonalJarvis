@@ -625,12 +625,17 @@ class EvidenceDomainsConfig(BaseModel):
         # "cloud" domain), so a billing question deterministically FORCES a
         # real cli_gcloud call (or an honest refusal) instead of relying on the
         # model's discretion (live 2026-06-17). Keywords are cloud/billing
-        # specific — NO bare "kosten"/"cost" so "was kostet X" never hijacks.
+        # specific — NO bare "kosten"/"cost" so "was kostet X" never hijacks, and
+        # NO bare "budget" so a travel/household/project budget never forces a
+        # billing call (live 2026-06-30 Bora-Bora session: "bei meinem Budget bei
+        # 25.000 Euro" voided a good travel answer). Cloud-budget phrasing is kept
+        # via the explicit "cloud budget"/"gcp budget" phrases instead.
         "cloud": [
             "google cloud", "gcp", "gcloud", "cloud-cli", "cloud cli",
             "google-kosten", "google kosten", "cloud-kosten", "cloud kosten",
             "cloud-rechnung", "cloud rechnung", "cloud billing", "billing account",
-            "abrechnung", "abrechnungen", "guthaben", "billing", "budget",
+            "cloud budget", "cloud-budget", "gcp budget", "gcloud budget",
+            "abrechnung", "abrechnungen", "guthaben", "billing",
         ],
         # Local screen / window-activity history. Served by the always-on
         # internal `awareness-recall` tool (wired into the domain→tool map in

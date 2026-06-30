@@ -823,6 +823,31 @@ def _is_opinion_advice_question(user_text: str) -> bool:
     return bool(_OPINION_ADVICE_QUESTION_RE.search(user_text or ""))
 
 
+def _conversational_turn_suppresses_read_mandate(user_text: str) -> bool:
+    """True when an opinion/advice/conversational turn must stand the READ
+    evidence gate down instead of forcing a tool.
+
+    Live 2026-06-30 (Bora-Bora voice session): the user asked a plain travel
+    question — "...bin jetzt bei meinem Budget bei so 25.000 Euro ... passt es?".
+    The word "budget" matched the cloud-billing domain, the gate FORCED
+    ``cli_gcloud``, the model answered the travel question without that
+    (irrelevant) tool, and the honesty backstop then VOIDED the good answer
+    (``executed=[]``). The very same classifier that already inlines such a turn
+    (force-spawn skip, log "opinion/advice/conversational question — inline")
+    suppresses the read mandate here, so a chat/advice turn is never dead-ended
+    by an irrelevant tool it never needed. The tool stays in the surface, so the
+    model keeps discretion to call it — it is just never *forced*, and the answer
+    is never voided.
+
+    Narrow on purpose (no confab regression): fires ONLY on an actual
+    opinion/advice/conversational opener. A bare data lookup ("Was sind meine
+    Abrechnungen?", live 2026-06-17) matches no opener and stays gated. Pure
+    regex (AP-11). WRITE mandates (``resolve_save_mandate``) are intentional and
+    handled separately — only the READ gate stands down here.
+    """
+    return _is_opinion_advice_question(user_text)
+
+
 # A spawn / sub-agent / worker token in DE/EN/ES (declined forms included). Used
 # by both the decline guard below and nowhere else — kept local on purpose.
 _SPAWN_TOKEN = (
