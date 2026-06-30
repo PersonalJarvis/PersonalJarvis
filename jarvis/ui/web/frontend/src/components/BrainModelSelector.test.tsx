@@ -376,6 +376,16 @@ describe("BrainModelSelector", () => {
     expect(screen.queryByText("NVIDIA: Nemotron 3 Ultra (free)")).toBeNull();
   });
 
+  it("shows the active band's hint line ('when price doesn't matter…')", async () => {
+    vi.stubGlobal("fetch", mockTagged());
+    render(<BrainModelSelector providerId="openrouter" currentModel="" />);
+    await openDropdown();
+    // No hint while on "all" (the full list needs no explanation).
+    expect(screen.queryByText("apikeys_model.filter_hint_frontier")).toBeNull();
+    fireEvent.click(await screen.findByLabelText("apikeys_model.filter_frontier"));
+    expect(await screen.findByText("apikeys_model.filter_hint_frontier")).toBeTruthy();
+  });
+
   it("hides the filter chips for a tag-less catalog (voice/STT)", async () => {
     // The Gemini mock carries no tags → the band chips must not render.
     vi.stubGlobal("fetch", mockFetch());

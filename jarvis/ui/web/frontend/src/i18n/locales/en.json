@@ -884,7 +884,12 @@
     "filter_free": "Free",
     "filter_frontier": "Frontier",
     "filter_value": "Best value",
-    "starred_label": "Top pick"
+    "starred_label": "Top pick",
+    "filter_hint_all": "Every model in the catalog.",
+    "filter_hint_starred": "Hand-picked best models.",
+    "filter_hint_free": "Zero-cost models — no API credit needed.",
+    "filter_hint_frontier": "When price doesn't matter — the most capable models.",
+    "filter_hint_value": "The best performance for the price."
   },
   "apikeys_cu_model": {
     "heading": "Computer-Use model",

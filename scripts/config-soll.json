@@ -89,6 +89,6 @@
     "model": "gemini-3.5-flash"
   },
   "brain.providers.openrouter": {
-    "model": "nvidia/nemotron-3-ultra-550b-a55b:free"
+    "model": "nvidia/nemotron-3.5-content-safety:free"
   }
 }

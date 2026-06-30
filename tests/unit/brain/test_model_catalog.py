@@ -604,6 +604,8 @@ class TestModelClassification:
         # OpenRouter namespaced id — separator/punctuation differences and all.
         assert is_starred_model("claude-opus-4-8") is True
         assert is_starred_model("anthropic/claude-opus-4.8") is True
+        # The separate Fast variant is its own starred pick (distinct from base).
+        assert is_starred_model("anthropic/claude-opus-4.8-fast") is True
         assert is_starred_model("claude-fable-5") is True
         assert is_starred_model("openai/gpt-5.5") is True
         assert is_starred_model("gemini-3.5-flash") is True

@@ -363,37 +363,48 @@ export function BrainModelSelector({
 
           {/* Quality-band filter chips — narrow the list to free / frontier /
               best-value / starred. Only shown for catalogs that carry tags (the
-              brain-model pickers), never for the voice/STT lists. */}
+              brain-model pickers), never for the voice/STT lists. A one-line hint
+              under the chips explains the active band ("when price doesn't
+              matter…") so the picker is self-explanatory for a non-technical
+              user. */}
           {hasTags && (
-            <div className="flex flex-wrap items-center gap-1 border-b border-border px-2 py-1.5">
-              {MODEL_FILTERS.map((f) => {
-                const count = filterCounts[f];
-                const isActive = filter === f;
-                // A band with no current hit is shown but disabled, so the chip
-                // row stays stable while typing instead of reflowing.
-                const disabled = f !== "all" && count === 0;
-                return (
-                  <button
-                    key={f}
-                    type="button"
-                    onClick={() => setFilter(f)}
-                    disabled={disabled}
-                    aria-pressed={isActive}
-                    aria-label={t(`apikeys_model.filter_${f}`)}
-                    className={cn(
-                      "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition-colors",
-                      isActive
-                        ? "border-primary/40 bg-primary/20 text-primary"
-                        : "border-border bg-muted text-muted-foreground hover:text-foreground",
-                      disabled && "cursor-not-allowed opacity-40 hover:text-muted-foreground",
-                    )}
-                  >
-                    {f === "starred" && <Star className="h-2.5 w-2.5 fill-current" />}
-                    {t(`apikeys_model.filter_${f}`)}
-                    {f !== "all" && <span className="tabular-nums opacity-60">{count}</span>}
-                  </button>
-                );
-              })}
+            <div className="border-b border-border">
+              <div className="flex flex-wrap items-center gap-1 px-2 py-1.5">
+                {MODEL_FILTERS.map((f) => {
+                  const count = filterCounts[f];
+                  const isActive = filter === f;
+                  // A band with no current hit is shown but disabled, so the chip
+                  // row stays stable while typing instead of reflowing.
+                  const disabled = f !== "all" && count === 0;
+                  return (
+                    <button
+                      key={f}
+                      type="button"
+                      onClick={() => setFilter(f)}
+                      disabled={disabled}
+                      aria-pressed={isActive}
+                      aria-label={t(`apikeys_model.filter_${f}`)}
+                      title={t(`apikeys_model.filter_hint_${f}`)}
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition-colors",
+                        isActive
+                          ? "border-primary/40 bg-primary/20 text-primary"
+                          : "border-border bg-muted text-muted-foreground hover:text-foreground",
+                        disabled && "cursor-not-allowed opacity-40 hover:text-muted-foreground",
+                      )}
+                    >
+                      {f === "starred" && <Star className="h-2.5 w-2.5 fill-current" />}
+                      {t(`apikeys_model.filter_${f}`)}
+                      {f !== "all" && <span className="tabular-nums opacity-60">{count}</span>}
+                    </button>
+                  );
+                })}
+              </div>
+              {filter !== "all" && (
+                <p className="px-2.5 pb-1.5 text-[10px] leading-snug text-muted-foreground">
+                  {t(`apikeys_model.filter_hint_${filter}`)}
+                </p>
+              )}
             </div>
           )}
 

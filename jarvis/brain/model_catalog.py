@@ -489,11 +489,12 @@ def _squash(text: str) -> str:
 # (``claude-opus-4-8``) or OpenRouter (``anthropic/claude-opus-4.8``). Extend
 # freely — this is a curated favourites list, presentation only.
 STARRED_MODELS: frozenset[str] = frozenset({
-    _squash("claude-opus-4.8"),   # Opus 4.8
-    _squash("gpt-5.5"),           # GPT-5.5
-    _squash("gemini-3.5-flash"),  # Gemini 3.5 Flash
-    _squash("claude-fable-5"),    # Fable 5
-    _squash("glm-5.2"),           # GLM-5.2
+    _squash("claude-opus-4.8"),       # Opus 4.8
+    _squash("claude-opus-4.8-fast"),  # Opus 4.8 (Fast)
+    _squash("gpt-5.5"),               # GPT-5.5
+    _squash("gemini-3.5-flash"),      # Gemini 3.5 Flash
+    _squash("claude-fable-5"),        # Fable 5
+    _squash("glm-5.2"),               # GLM-5.2
 })
 
 

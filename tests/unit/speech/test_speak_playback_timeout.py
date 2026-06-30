@@ -25,7 +25,12 @@ import pytest
 from jarvis.core.bus import EventBus
 from jarvis.core.config import JarvisConfig
 from jarvis.core.protocols import AudioChunk
-from jarvis.speech.pipeline import _BRAIN_TIMEOUT_PHRASE, SpeechPipeline
+from jarvis.speech.pipeline import (
+    SPOKEN_KIND_COMPLETION,
+    _TIMEOUT_NO_ANSWER_PHRASE,
+    _TIMEOUT_TOOL_STALL_PHRASE,
+    SpeechPipeline,
+)
 
 
 @dataclass
@@ -496,7 +501,7 @@ async def test_spoken_warn_reports_no_first_frame_true_for_attribution(
     with caplog.at_level(logging.WARNING, logger="jarvis.speech.pipeline"):
         await p._handle_silent_brain_turn("de", "")
 
-    assert spoken == [_BRAIN_TIMEOUT_PHRASE["de"]]
+    assert spoken == [_TIMEOUT_TOOL_STALL_PHRASE["de"]]
     assert any(
         "spoken" in rec.message
         and "site=empty_after_no_first_frame" in rec.message
@@ -514,7 +519,7 @@ async def test_genuinely_slow_empty_turn_still_speaks_timeout() -> None:
 
     await p._handle_silent_brain_turn("de", "")
 
-    assert spoken == [_BRAIN_TIMEOUT_PHRASE["de"]], (
+    assert spoken == [_TIMEOUT_TOOL_STALL_PHRASE["de"]], (
         "a genuinely slow beheaded turn must still speak the timeout phrase"
     )
 

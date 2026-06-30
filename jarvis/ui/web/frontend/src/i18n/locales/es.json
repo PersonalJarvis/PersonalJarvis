@@ -883,7 +883,12 @@
     "filter_free": "Gratis",
     "filter_frontier": "Frontier",
     "filter_value": "Mejor valor",
-    "starred_label": "Selección top"
+    "starred_label": "Selección top",
+    "filter_hint_all": "Todos los modelos del catálogo.",
+    "filter_hint_starred": "Los mejores modelos, elegidos a mano.",
+    "filter_hint_free": "Modelos gratuitos — sin necesidad de crédito de API.",
+    "filter_hint_frontier": "Cuando el precio no importa — los modelos más capaces.",
+    "filter_hint_value": "La mejor relación calidad-precio."
   },
   "apikeys_cu_model": {
     "heading": "Modelo para Computer-Use",

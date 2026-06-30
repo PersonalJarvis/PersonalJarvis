@@ -8,7 +8,11 @@ import pytest
 from jarvis.core.bus import EventBus
 from jarvis.core.events import TranscriptFinal, TranscriptionUpdate
 from jarvis.core.protocols import AudioChunk, Transcript
-from jarvis.speech.pipeline import SpeechPipeline, TurnTakingState
+from jarvis.speech.pipeline import (
+    _BRAIN_TIMEOUT_PHRASE,
+    SpeechPipeline,
+    TurnTakingState,
+)
 
 
 @dataclass
@@ -428,9 +432,13 @@ async def test_brain_call_timeout_returns_to_listening_without_hanging() -> None
 
     assert keep_session is True
     assert pipe._turn_state == TurnTakingState.LISTENING
-    # AD-OE6: a stall must be spoken, not a silent drop.
+    # AD-OE6: a stall must be spoken, not a silent drop. Assert against the
+    # actual phrase table (not a hardcoded word) so a future reword of the
+    # timeout phrase can't silently re-break this contract test.
     assert pipe._spoken, "brain timeout stayed silent (AD-OE6 violation)"
-    assert "lange" in pipe._spoken[0][0].lower() or "too long" in pipe._spoken[0][0].lower()
+    assert pipe._spoken[0][0] in _BRAIN_TIMEOUT_PHRASE.values(), (
+        f"expected a brain-timeout fallback phrase, got {pipe._spoken[0][0]!r}"
+    )
 
 
 # ---------------------------------------------------------------------------

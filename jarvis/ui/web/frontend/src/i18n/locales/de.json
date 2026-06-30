@@ -883,7 +883,12 @@
     "filter_free": "Kostenlos",
     "filter_frontier": "Frontier",
     "filter_value": "Preis-Leistung",
-    "starred_label": "Top-Empfehlung"
+    "starred_label": "Top-Empfehlung",
+    "filter_hint_all": "Alle Modelle im Katalog.",
+    "filter_hint_starred": "Handverlesene Top-Modelle.",
+    "filter_hint_free": "Kostenlose Modelle — kein API-Guthaben nötig.",
+    "filter_hint_frontier": "Wenn der Preis egal ist — die leistungsstärksten Modelle.",
+    "filter_hint_value": "Die beste Leistung fürs Geld."
   },
   "apikeys_cu_model": {
     "heading": "Modell für Computer-Use",
