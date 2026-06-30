@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <base href="/" />
+    <title>CONTRIBUTING preview — Personal Jarvis</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5/github-markdown-dark.css" />
+    <style>
+      body { background:#0d1117; margin:0; }
+      .markdown-body { box-sizing:border-box; max-width:920px; margin:0 auto; padding:48px 32px 120px; }
+      img { background:transparent; }
+    </style>
+  </head>
+  <body>
+    <article class="markdown-body" id="content">Loading…</article>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script>
+      fetch("/CONTRIBUTING.md")
+        .then((r) => r.text())
+        .then((md) => { document.getElementById("content").innerHTML = marked.parse(md); })
+        .catch((e) => { document.getElementById("content").textContent = "Failed: " + e; });
+    </script>
+  </body>
+</html>

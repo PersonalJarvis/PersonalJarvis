@@ -8,7 +8,11 @@ import pytest
 from jarvis.core.bus import EventBus
 from jarvis.core.events import TranscriptFinal, TranscriptionUpdate
 from jarvis.core.protocols import AudioChunk, Transcript
-from jarvis.speech.pipeline import SpeechPipeline, TurnTakingState
+from jarvis.speech.pipeline import (
+    _TIMEOUT_NO_ANSWER_PHRASE,
+    SpeechPipeline,
+    TurnTakingState,
+)
 
 
 @dataclass
@@ -428,9 +432,15 @@ async def test_brain_call_timeout_returns_to_listening_without_hanging() -> None
 
     assert keep_session is True
     assert pipe._turn_state == TurnTakingState.LISTENING
-    # AD-OE6: a stall must be spoken, not a silent drop.
+    # AD-OE6: a stall must be spoken, not a silent drop. Assert against the
+    # actual phrase table (not a hardcoded word) so a future reword of the
+    # timeout phrase can't silently re-break this contract test.
     assert pipe._spoken, "brain timeout stayed silent (AD-OE6 violation)"
-    assert "lange" in pipe._spoken[0][0].lower() or "too long" in pipe._spoken[0][0].lower()
+    # A bare provider stall (non-stream total cap, no tool evidence) honestly
+    # admits it couldn't find the answer — not the vague "took too long".
+    assert pipe._spoken[0][0] in _TIMEOUT_NO_ANSWER_PHRASE.values(), (
+        f"expected a no-answer timeout fallback phrase, got {pipe._spoken[0][0]!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -626,7 +636,7 @@ async def test_streaming_long_tool_loop_speaks_real_answer_not_timeout() -> None
     loop round — exactly what ``ToolUseLoop`` does (tool_use_loop.py:400). Before
     the fix, ``_await_playback`` only honoured the computer_use heartbeat, so the
     20 s ceiling beheaded the working turn: the answer was discarded and the
-    empty-turn handler spoke ``_BRAIN_TIMEOUT_PHRASE`` ("…zu lange gedauert…").
+    empty-turn handler spoke a canned timeout fallback ("…zu lange gedauert…").
 
     This drives the REAL streaming path end-to-end (``_handle_utterance`` →
     ``_run_brain_with_stall_guard`` → ``_brain_streaming`` → ``_await_playback``)

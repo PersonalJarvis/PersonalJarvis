@@ -186,7 +186,7 @@ class _LiveContext(AchievementContext):
                 self._successful_tasks += 1
                 self._persist("successful_tasks_total", str(self._successful_tasks))
 
-            elif name == "OpenClawTaskCompleted":
+            elif name == "JarvisAgentTaskCompleted":
                 if bool(getattr(event, "success", False)):
                     self._successful_tasks += 1
                     self._openclaw_success += 1

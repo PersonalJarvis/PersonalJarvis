@@ -49,8 +49,8 @@ from jarvis.core.events import (
     LatencyTurnComplete,
     ListeningStarted,
     ObservationCaptured,
-    OpenClawAnnouncement,
-    OpenClawBackgroundCompleted,
+    JarvisAgentAnnouncement,
+    JarvisAgentBackgroundCompleted,
     SpeechSpoken,
     TranscriptFinal,
     TranscriptionUpdate,
@@ -321,12 +321,35 @@ _STT_UNAVAILABLE_PHRASE: dict[str, str] = {
 # AD-OE6 zero-silent-drop fallback for a brain TURN that times out. Live bug
 # 2026-05-29: "kannst du Claude Code öffnen" stalled the Gemini stream; the
 # brain-timeout path returned to LISTENING in SILENCE (and idle_timeout
-# pre-empted brain_timeout, so the turn just hung up with no feedback). Short,
-# bilingual, TTS-clean (``_speak`` does not scrub).
-_BRAIN_TIMEOUT_PHRASE: dict[str, str] = {
-    "de": "Entschuldige, ich habe die Antwort nicht rechtzeitig fertigbekommen.",
-    "en": "Sorry, I couldn't finish the answer in time.",
-    "es": "Lo siento, no pude terminar la respuesta a tiempo.",
+# pre-empted brain_timeout, so the turn just hung up with no feedback).
+#
+# Honest, cause-aware messaging (live complaint 2026-06-30). The old single
+# phrase ("Sorry, I couldn't finish the answer in time.") explained NOTHING:
+# a slow MCP/plugin tool hung ~35 s, the turn timed out, and Jarvis apologised
+# for "taking too long" with no reason. Honesty over guessing (CLAUDE.md §1.4):
+#   • TOOL-STALL — the turn was beheaded mid-tool-loop (no first audio frame,
+#     i.e. the assistant was blocked waiting on a tool/stage that never
+#     returned) OR a desktop (computer_use) tool was demonstrably active when
+#     the stall fired: name that honest cause. The concrete tool NAME lives in
+#     the brain's tool-use loop (jarvis/brain/manager.py), not reachable from
+#     here without coupling, so we name the generic-but-true cause.
+#   • NO-ANSWER — a bare provider stall / total cap with no tool evidence:
+#     honestly admit we could not find it out, never the vague "took too long".
+# Both are short, TTS-clean (``_speak`` does not scrub — no em-dash, two short
+# sentences), and carry all supported locales (de/en/es). String-only: NO LLM
+# call in this timeout/scrub path (AP-11). Resolved through the ONE output-
+# language decision via ``_resolve_timeout_phrase`` below (CLAUDE.md §1 — no
+# per-layer language re-derivation).
+_TIMEOUT_TOOL_STALL_PHRASE: dict[str, str] = {
+    "de": "Ich habe rechtzeitig keine Antwort bekommen. Ein Tool, auf das ich gewartet habe, hat nicht reagiert.",
+    "en": "I couldn't get an answer in time. A tool I was waiting on didn't respond.",
+    "es": "No pude obtener una respuesta a tiempo. Una herramienta que esperaba no respondió.",
+}
+
+_TIMEOUT_NO_ANSWER_PHRASE: dict[str, str] = {
+    "de": "Das konnte ich gerade nicht herausfinden.",
+    "en": "I couldn't find that out just now.",
+    "es": "No pude averiguar eso ahora mismo.",
 }
 
 # AD-OE6 zero-silent-drop fallback for an ABANDONED incomplete utterance. When
@@ -384,6 +407,31 @@ def _phrase_lang(lang: str | None) -> str:
     """
     code = normalize_language_tag(lang)
     return code if code in _PHRASE_LANGS else DEFAULT_LOCALE
+
+
+# Timeout sites that PROVE the assistant was blocked waiting on a downstream
+# tool/stage when the turn timed out: a no-first-frame beheading means the brain
+# produced no first audio frame because it was still inside a tool call that
+# never returned. Such a site always speaks the honest TOOL-STALL phrase. The
+# stream-stall / total-cap sites only do so when a desktop tool was demonstrably
+# active (``_long_tool_last_activity``); otherwise they carry no tool evidence
+# and admit the honest NO-ANSWER outcome instead.
+_TIMEOUT_TOOL_STALL_SITES: frozenset[str] = frozenset({"empty_after_no_first_frame"})
+
+
+def _resolve_timeout_phrase(site: str, lang: str, *, tool_active: bool) -> str:
+    """Pick the honest, cause-aware timeout phrase for ``site``.
+
+    Resolves language through the ONE shared decision (``_phrase_lang``) — never
+    a per-layer re-derivation (CLAUDE.md §1). String-only, no LLM call (AP-11).
+    Names a tool cause when the turn was beheaded mid-tool-loop (no first frame)
+    or a desktop tool was active; otherwise honestly admits no answer was found.
+    """
+    key = _phrase_lang(lang)
+    if site in _TIMEOUT_TOOL_STALL_SITES or tool_active:
+        return _TIMEOUT_TOOL_STALL_PHRASE[key]
+    return _TIMEOUT_NO_ANSWER_PHRASE[key]
+
 
 # Transient STT failures worth a retry: cloud rate-limit (429) and transient
 # gateway/server errors (5xx). Anything else (401 bad key, 400 bad audio) is a
@@ -1167,6 +1215,13 @@ class SpeechPipeline:
         # turn ends with an audible timeout notice instead of silent LISTENING
         # (AD-OE6; live bug 2026-06-10 14:34). Reset at every turn finalize.
         self._playback_aborted_no_first_frame = False
+        # Per-turn terminal mark: a timeout / "couldn't finish" notice already
+        # spoke for this utterance, so the outcome is closed. The double-answer
+        # guard in ``_speak`` reads it to suppress a late/abandoned brain ANSWER
+        # (kind="reply") that would otherwise speak a SECOND time for the same
+        # content (live complaint 2026-06-30: a stalled tool timed out, then the
+        # turn re-answered). Re-armed at every utterance finalize.
+        self._brain_timeout_spoken_this_turn = False
         self._pending_context_flush_s = max(0.5, float(pending_context_flush_s))
         self._pending_flush_task: asyncio.Task[None] | None = None
         self._vad = SileroEndpointer(
@@ -1395,10 +1450,10 @@ class SpeechPipeline:
             # User auch dann Bescheid, wenn er zwischenzeitlich etwas anderes
             # gemacht hat.
             self._bus.subscribe(
-                OpenClawBackgroundCompleted, self._on_background_completed
+                JarvisAgentBackgroundCompleted, self._on_background_completed
             )
             # Spawn-Ansage: dynamisch aus action/target geformt.
-            self._bus.subscribe(OpenClawAnnouncement, self._on_spawn_announcement)
+            self._bus.subscribe(JarvisAgentAnnouncement, self._on_spawn_announcement)
             # Mute toggle from any trigger surface (mascot doubleClick,
             # future hotkey/REST). The handler flips ``self._muted`` and
             # republishes the authoritative state on the bus.
@@ -2782,7 +2837,7 @@ class SpeechPipeline:
             log.warning("Flash-Brain ack publish failed: %s", exc)
 
     async def _on_background_completed(
-        self, event: OpenClawBackgroundCompleted
+        self, event: JarvisAgentBackgroundCompleted
     ) -> None:
         """Proaktive Voice-Ansage wenn ein Background-OpenClaw-Task fertig wird.
 
@@ -2915,7 +2970,7 @@ class SpeechPipeline:
                 hungup = hangup is not None and hangup.is_set()
                 await self._transition("IDLE" if hungup else "LISTENING")
 
-    async def _on_spawn_announcement(self, event: OpenClawAnnouncement) -> None:
+    async def _on_spawn_announcement(self, event: JarvisAgentAnnouncement) -> None:
         """Spawn-ACK ist auf User-Wunsch (2026-05-12) deaktiviert.
 
         History:
@@ -5122,6 +5177,10 @@ class SpeechPipeline:
         # Per-turn re-arm of the beheaded-playback mark (BUG-032 lesson: never
         # let a previous turn's abort leak into this turn's empty-turn handling).
         self._playback_aborted_no_first_frame = False
+        # Per-turn re-arm of the timeout-terminal mark: a fresh utterance must
+        # be free to speak its answer even if the PREVIOUS turn ended in a
+        # timeout notice (the double-answer guard is scoped to ONE utterance).
+        self._brain_timeout_spoken_this_turn = False
         # Anchor this brain-bound turn's wall-clock here — the single point past
         # all early returns (forced-cut carry, empty PCM, wake-only) where the
         # turn commits to the brain. The floor guard in _speak_brain_timeout uses
@@ -5152,8 +5211,24 @@ class SpeechPipeline:
             transcript.language,
             getattr(transcript, "confidence", 0.0) or 0.0,
         )
+        # Tag whether this finalized utterance will be re-attached to the still-
+        # open turn by the continuation-recombine path (brain mid-thinking, window
+        # live). NON-mutating mirror of _maybe_recombine_continuation's gate
+        # (enabled + armed/live + not a cancel phrase) — so the SessionRecorder
+        # records the coalesced fragments as ONE turn instead of splitting them.
+        _cont_win = getattr(self, "_continuation_window", None)
+        continues_previous = bool(
+            getattr(self, "_continuation_interrupt_enabled", False)
+            and _cont_win is not None
+            and _cont_win.is_live()
+            and not is_cancel(transcript.text)
+        )
         await self._publish_event(
-            TranscriptFinal(source_layer="speech.stt", transcript=transcript)
+            TranscriptFinal(
+                source_layer="speech.stt",
+                transcript=transcript,
+                continues_previous=continues_previous,
+            )
         )
         if self._latency_tracker is not None:
             self._latency_tracker.mark(LatencyPhase.STT_FINALIZE)
@@ -6827,14 +6902,19 @@ class SpeechPipeline:
         stall_s = getattr(self, "_brain_timeout_s", 30.0)
         ceiling_s = getattr(self, "_brain_hard_timeout_s", 90.0)
         self._mark_brain_progress()
-        first_progress_floor = self._brain_last_progress
         # Each turn starts with the ceiling fully armed: only a computer_use
         # step THIS turn (ObservationCaptured/ActionPlanned → _on_agent_progress)
         # may suspend it — never a stale heartbeat bled over from a previous
         # desktop turn that finished moments ago.
         self._long_tool_last_activity = 0.0
-        # Reset the pre-first-token thinking heartbeat per turn (no stale bleed).
+        # Reset per turn (no stale bleed): the still-working heartbeat AND the
+        # "a speakable token has reached TTS" flag that gates it. The heartbeat
+        # runs until the FIRST speakable token (_spoke_this_turn), so a stale
+        # True bled over from the previous turn must not suppress it on this
+        # turn's first poll (BUG-032 stale-counter class). _brain_streaming
+        # also clears it, but the guard's poll loop can run first.
         self._brain_thinking_heartbeat = 0.0
+        self._spoke_this_turn = False
         start = time.monotonic()
         task: asyncio.Task[tuple[str, bool]] = asyncio.ensure_future(coro)
         monitor_task: asyncio.Task[bool] | None = None
@@ -6930,19 +7010,32 @@ class SpeechPipeline:
                 stalled = (not playback_active) and (
                     now - self._brain_last_progress
                 ) >= stall_s
-                # Pre-first-token "still-thinking" heartbeat: while the brain has
-                # made NO progress yet (a token / tool round / CU step would have
-                # advanced _brain_last_progress past the initial guard mark), keep
-                # a dedicated heartbeat fresh so the no-first-frame TTS ceiling — which
-                # re-arms off it — does not behead a brain that is legitimately
-                # thinking (live bug 2026-06-14 16:17: Gemini built an 18k-token
-                # cache then thought ~17 s with no on_progress; the 20 s ceiling
-                # beheaded it, since_progress_s=20.19). It STOPS the instant real
-                # progress arrives (so a wedged TTS after a real token is still
-                # aborted) and is bounded by the absolute hard cap below (measured
-                # from `start`, never reset here) so a truly hung brain still dies.
+                # "Still-working" heartbeat: until the brain hands its FIRST
+                # speakable sentence to TTS (_spoke_this_turn), keep a dedicated
+                # heartbeat fresh so the no-first-frame TTS ceiling — which
+                # re-arms off it — cannot behead a brain that is still thinking
+                # OR still in its tool loop. Two live bugs this must cover:
+                #   • 2026-06-14 16:17 (Gemini built an 18k-token cache then
+                #     thought ~17 s with no on_progress, since_progress_s=20.19):
+                #     PRE-first-token thinking emits no heartbeat of its own.
+                #   • 2026-06-30 ("München nach Bora Bora", since_progress_s=20.77):
+                #     the brain ran ONE tool round (~10 s in) then worked a second
+                #     ~20 s model roundtrip with no further ping and no token. The
+                #     old gate (_brain_last_progress <= first_progress_floor) froze
+                #     the heartbeat at that first round — so the 20 s ceiling
+                #     beheaded the turn 10 s before the 30 s brain stall guard
+                #     would have. A tool round is progress, but it is NOT a spoken
+                #     token: only _spoke_this_turn means TTS actually has text, so
+                #     only then may the no-first-frame ceiling judge a wedged
+                #     provider.
+                # It STOPS the instant a speakable token reaches TTS (so a wedged
+                # TTS after real output is still aborted) and is bounded by the
+                # absolute hard cap below (measured from `start`, never reset here)
+                # so a truly hung brain still dies. The independent no-progress
+                # `stalled` check above is unaffected — a brain that pings nothing
+                # for stall_s still times out on schedule.
                 if (
-                    self._brain_last_progress <= first_progress_floor
+                    not getattr(self, "_spoke_this_turn", False)
                     and (now - start) < ceiling_s
                 ):
                     self._brain_thinking_heartbeat = now
@@ -7090,7 +7183,18 @@ class SpeechPipeline:
             return
         log.warning("brain-timeout phrase spoken: " + payload, *fields)
         picker_lang = _phrase_lang(lang)
-        phrase = _BRAIN_TIMEOUT_PHRASE[picker_lang]
+        # Cause-aware, honest phrase (live complaint 2026-06-30): name a tool
+        # cause when the turn was beheaded mid-tool-loop (no first frame) or a
+        # desktop tool was demonstrably active; otherwise honestly admit no
+        # answer was found. Resolved through the one output-language decision.
+        tool_active = getattr(self, "_long_tool_last_activity", 0.0) > 0.0
+        phrase = _resolve_timeout_phrase(site, lang, tool_active=tool_active)
+        # The outcome is now terminal for this utterance: arm the double-answer
+        # guard BEFORE speaking so a concurrently-abandoned brain stream that
+        # later reaches ``_speak`` (kind="reply") is suppressed, never voiced as
+        # a second answer for the same content. Set only here — past the floor
+        # guard's early return — so a floor-suppressed (no-op) call never arms it.
+        self._brain_timeout_spoken_this_turn = True
         try:
             await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
             await self._speak(phrase, language=picker_lang, kind=SPOKEN_KIND_TIMEOUT)
@@ -7396,6 +7500,22 @@ class SpeechPipeline:
         """
         if getattr(self, "_muted", False):
             log.debug("_speak suppressed — voice muted")
+            return False
+        # Double-answer guard (live complaint 2026-06-30): once a timeout /
+        # "couldn't finish" notice closed THIS utterance, an ordinary brain
+        # ANSWER (kind="reply", the default) must NOT also be voiced — a stalled
+        # tool that timed out and then re-answered for the same content. Gate
+        # ONLY the brain answer: every canned notice (timeout / clarify / ack /
+        # unavailable) and every background mission readback (completion /
+        # subagent / announcement) carries its own kind and is intentionally
+        # exempt, so a legitimately-spawned later result still speaks. The flag
+        # re-arms at the next utterance finalize. Before ``_emit_spoken`` so a
+        # suppressed answer — never actually voiced — is not logged.
+        if kind == "reply" and getattr(self, "_brain_timeout_spoken_this_turn", False):
+            log.info(
+                "Brain answer suppressed — a timeout notice already closed this "
+                "turn (no double-answer)."
+            )
             return False
         # Document the voiced phrase in the session log (no-op for the reply
         # sentinel and empty text). After the mute check, so a suppressed

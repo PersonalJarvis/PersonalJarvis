@@ -113,7 +113,7 @@ def _power_user_db(tmp_path: Path) -> tuple[Path, Path]:
             events.append({
                 "ts_ns": _ns(day + timedelta(hours=1, minutes=k * 10)),
                 "trace_id": f"{day_off:032x}sub{k}",
-                "event": "OpenClawTaskCompleted",
+                "event": "JarvisAgentTaskCompleted",
                 "layer": "agents",
                 "payload": {"success": True, "duration_s": 900.0},
             })

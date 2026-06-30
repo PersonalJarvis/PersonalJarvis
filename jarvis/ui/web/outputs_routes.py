@@ -54,18 +54,20 @@ _MISSION_DIR_RE = re.compile(r"^mission_(?P<short>[0-9a-f-]{6,40})$")
 
 
 def _outputs_root(request: Request) -> Path:
-    """Resolve the sub-agents-outputs directory.
+    """Resolve the mission outputs directory.
 
     Bootstrap stashed the path on `app.state.outputs_root` in
     `_init_mission_stack` (see `server.py:_init_mission_stack`). Falls back to
-    `<repo_parent>/sub-agents-outputs` when missing (defensive — same default
-    the bootstrap uses).
+    the resolver (prefers ``jarvis-agent-outputs/``, falls back to legacy
+    ``sub-agents-outputs/`` if only that exists) when the stashed path is absent.
     """
     cached = getattr(request.app.state, "outputs_root", None)
     if cached is not None:
         return Path(cached)
+    from jarvis.missions.isolation.worktree import resolve_outputs_root
     here = Path(__file__).resolve()
-    return here.parent.parent.parent.parent / "sub-agents-outputs"
+    repo_root = here.parent.parent.parent.parent
+    return resolve_outputs_root(repo_root)
 
 
 def _parse_slug(name: str) -> dict[str, Any]:

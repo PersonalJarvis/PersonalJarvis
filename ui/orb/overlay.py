@@ -1324,6 +1324,18 @@ class OrbOverlay:
 
     def start(self, auto_demo: bool = False) -> None:
         self._tk_thread_id = threading.get_ident()
+        # Test-safety guard: under pytest, never put a REAL mascot window on the
+        # developer's desktop unless explicitly opted in (JARVIS_GUI_TESTS=1).
+        # A routine `pytest tests/unit/` run (and parallel runs across worktrees)
+        # would otherwise leave a live 'JarvisOrb' Tk window on screen until the
+        # test process exits — users saw several mascots stacked beside their
+        # chosen overlay style even though the desktop app was rendering only the
+        # selected one. No production effect: pytest is never imported in the
+        # live app, so this branch is dead there. ``_started`` is still set so a
+        # ``start_in_thread`` caller unblocks immediately instead of timing out.
+        if "pytest" in sys.modules and not os.environ.get("JARVIS_GUI_TESTS"):
+            self._started.set()
+            return
         # DPI awareness MUST be set before Win32 GetWindowRect calls, else
         # taskbar coords come back DPI-virtualised and the mascot ends up
         # misplaced on 125%/150% scaled displays.

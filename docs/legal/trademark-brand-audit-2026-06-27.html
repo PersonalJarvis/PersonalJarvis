@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Personal Jarvis — Trademark &amp; Brand Check</title>
+<style>
+  :root{
+    --bg:#0A0A0A; --card:#0F0F0F; --border:#242424; --fg:#F4F4F5; --muted:#9a9a9a;
+    --yellow:#FFD60A; --deep:#B8960A;
+    --crit:#ff5c5c; --high:#ff9d3c; --med:#ffd60a; --low:#5cc8ff; --good:#5cd98a; --defer:#b58bff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:Inter,"Segoe UI",system-ui,sans-serif;line-height:1.5}
+  .wrap{max-width:880px;margin:0 auto;padding:30px 20px 80px}
+  code,.mono{font-family:"JetBrains Mono",ui-monospace,Consolas,monospace}
+  h1{font-size:25px;margin:0 0 4px;font-weight:800;
+    background:linear-gradient(177deg,#FFE552,#FFD60A 55%,#B8960A);
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;display:inline-block}
+  .sub{color:var(--muted);margin:0;font-size:14px}
+  h2{font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);
+    margin:30px 0 12px;padding-bottom:7px;border-bottom:1px solid var(--border)}
+  .note{font-size:12.5px;color:#ffb877;border:1px solid rgba(255,157,60,.4);
+    background:rgba(255,157,60,.08);border-radius:10px;padding:9px 13px;margin:16px 0 6px}
+  .note b{color:#ffc999}
+  .done-box{font-size:13px;color:#cfeedb;border:1px solid rgba(92,217,138,.32);
+    background:rgba(92,217,138,.08);border-radius:10px;padding:11px 14px;margin:16px 0 4px}
+  .done-box b{color:var(--good)}
+
+  .card{border:1px solid var(--border);border-left-width:4px;border-radius:12px;
+    background:var(--card);padding:14px 18px;margin:10px 0}
+  .card.good{border-left-color:var(--good)} .card.defer{border-left-color:var(--defer)}
+  .card.low{border-left-color:var(--low)}
+  .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:7px}
+  .badge{font-family:"JetBrains Mono",monospace;font-size:10px;font-weight:700;letter-spacing:.08em;
+    text-transform:uppercase;padding:3px 8px;border-radius:6px;border:1px solid transparent}
+  .badge.good{color:var(--good);background:rgba(92,217,138,.1);border-color:rgba(92,217,138,.4)}
+  .badge.defer{color:#c4a6ff;background:rgba(181,139,255,.1);border-color:rgba(181,139,255,.4)}
+  .badge.low{color:var(--low);background:rgba(92,200,255,.1);border-color:rgba(92,200,255,.4)}
+  .title{font-size:15px;font-weight:700;margin:0}
+  .row{display:flex;gap:10px;font-size:13.5px;margin-top:5px}
+  .row .k{flex:0 0 64px;color:var(--deep);font-size:10.5px;font-weight:700;text-transform:uppercase;
+    letter-spacing:.07em;padding-top:3px}
+  .row .v{flex:1;color:#dcdcde}
+  .where{font-family:"JetBrains Mono",monospace;font-size:11px;color:#7d7d7d;margin-top:7px}
+  footer{margin-top:26px;color:#6f6f6f;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Trademark &amp; Brand Check</h1>
+  <p class="sub">Personal Jarvis · scanned 2026-06-27 · <b style="color:#cfeedb">updated after fixes the same day</b></p>
+
+  <div class="note"><b>Not legal advice.</b> An automated check to flag possible issues for your own review — confirm anything you publish or register with a trademark attorney. The name stays; the wake word was left unchanged on purpose.</div>
+
+  <div class="done-box"><b>Done today:</b> added a top-level <code>TRADEMARK.md</code> + a README line, and a "trademarks of their respective owners" note next to the provider list. Decision: third-party logos (Slack &amp; co.) <b>stay</b> as integration markers — now covered by that notice (nominative use). Name &amp; wake word: legally cleared + handled in onboarding.</div>
+
+  <h2>Handled — nothing more needed before release</h2>
+
+  <div class="card good">
+    <div class="top"><span class="badge good">Resolved</span><p class="title">Third-party logos shown in the app</p></div>
+    <div class="row"><span class="k">Decision</span><span class="v">Logos (Slack, etc.) stay — they mark a real integration the user can connect to, which is allowed nominative use. They are now backed by the new trademark notice instead of removed.</span></div>
+    <div class="row"><span class="k">Keep it safe</span><span class="v">Only show a logo for a feature that genuinely exists, use the brand's official logo unmodified, and never imply the brand endorses you. The disclaimer states exactly that.</span></div>
+    <div class="where">jarvis/ui/web/frontend/public/plugin-assets/ · covered by TRADEMARK.md + provider-list notice</div>
+  </div>
+
+  <div class="card good">
+    <div class="top"><span class="badge good">Cleared</span><p class="title">The name "Jarvis"</p></div>
+    <div class="row"><span class="k">Decision</span><span class="v">Stays. Legally cleared by you, and the onboarding makes the user accept responsibility for their own activation word. A test already blocks ever posing as the Marvel character.</span></div>
+    <div class="row"><span class="k">Later</span><span class="v">Only before a formal trademark registration: a quick name-availability check. Not release-blocking.</span></div>
+  </div>
+
+  <div class="card good">
+    <div class="top"><span class="badge good">Done</span><p class="title">Provider names had no "trademarks" note</p></div>
+    <div class="row"><span class="k">Fixed</span><span class="v">Added a line under the provider list: names &amp; logos are trademarks of their owners, shown only to identify integrations — no affiliation implied.</span></div>
+    <div class="where">jarvis/ui/web/frontend/src/views/ApiKeysView.tsx · i18n en.json apikeys_view.trademark_notice</div>
+  </div>
+
+  <div class="card good">
+    <div class="top"><span class="badge good">Done</span><p class="title">Disclaimers were hard to find</p></div>
+    <div class="row"><span class="k">Fixed</span><span class="v">New <code>TRADEMARK.md</code> at the top level (non-affiliation + "marks belong to their owners" + integration-logo clause) and a one-line link from the README.</span></div>
+    <div class="where">TRADEMARK.md · README.md (License section)</div>
+  </div>
+
+  <h2>Deferred — your call, on purpose</h2>
+
+  <div class="card defer">
+    <div class="top"><span class="badge defer">Later</span><p class="title">60+ brand logos in the marketing videos</p></div>
+    <div class="row"><span class="k">Status</span><span class="v">Left for now at your request. Only matters once a video goes public.</span></div>
+    <div class="row"><span class="k">When you do it</span><span class="v">Show only logos of services you actually integrate, and add a short "not affiliated" line on screen.</span></div>
+    <div class="where">video/public/logos/ · jarvis-promo-video/public/logos/</div>
+  </div>
+
+  <h2>Low — fine for now, glance at after release</h2>
+
+  <div class="card low">
+    <div class="top"><span class="badge low">Low</span><p class="title">Gold "forged metal" wordmark</p></div>
+    <div class="row"><span class="k">Note</span><span class="v">Original and fine. Just avoid any explicit Iron-Man styling or "your own Iron Man" copy in marketing.</span></div>
+  </div>
+
+  <div class="card low">
+    <div class="top"><span class="badge low">Low</span><p class="title">"Gigi" ghost mascot</p></div>
+    <div class="row"><span class="k">Note</span><span class="v">Looks original. A one-second glance next to Casper / Snapchat's ghost is enough to confirm.</span></div>
+  </div>
+
+  <div class="card low">
+    <div class="top"><span class="badge low">Low</span><p class="title">Service names in buttons &amp; docs</p></div>
+    <div class="row"><span class="k">Note</span><span class="v">Slack, Obsidian, Twilio etc. as plain text labels — fine, and now also covered by the trademark notice. Just don't turn a brand logo into the main button.</span></div>
+  </div>
+
+  <footer>Automated engineering scan, 2026-06-27 — potential issues only, not a legal determination. Frontend changes take effect after the next app build/restart.</footer>
+
+</div>
+</body>
+</html>

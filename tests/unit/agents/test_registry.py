@@ -1,4 +1,4 @@
-"""Unit-Tests fuer jarvis.agents.registry.SubAgentRegistry.
+"""Unit-Tests fuer jarvis.agents.registry.JarvisAgentRegistry.
 
 Deckt:
 - Event-Ingestion pro Event-Typ (9 Typen: OpenClawTask*, BrainTurn*, ToolCall*,
@@ -17,16 +17,16 @@ from uuid import uuid4
 
 import pytest
 
-from jarvis.agents import AgentNode, SubAgentRegistry
+from jarvis.agents import AgentNode, JarvisAgentRegistry
 from jarvis.core.bus import EventBus
 from jarvis.core.events import (
     BrainTurnCompleted,
     BrainTurnStarted,
     HarnessCompleted,
     HarnessDispatched,
-    OpenClawTaskCompleted,
-    OpenClawReviewTriggered,
-    OpenClawTaskStarted,
+    JarvisAgentTaskCompleted,
+    JarvisAgentReviewTriggered,
+    JarvisAgentTaskStarted,
     ToolCallCompleted,
     ToolCallStarted,
 )
@@ -39,8 +39,8 @@ def bus() -> EventBus:
 
 
 @pytest.fixture
-def registry(bus: EventBus) -> SubAgentRegistry:
-    return SubAgentRegistry(bus, ttl_completed_s=3600).attach()
+def registry(bus: EventBus) -> JarvisAgentRegistry:
+    return JarvisAgentRegistry(bus, ttl_completed_s=3600).attach()
 
 
 # ────────────────────────────────────────────────────────────────
@@ -49,11 +49,11 @@ def registry(bus: EventBus) -> SubAgentRegistry:
 
 @pytest.mark.asyncio
 async def test_openclaw_task_started_creates_running_node(
-    bus: EventBus, registry: SubAgentRegistry
+    bus: EventBus, registry: JarvisAgentRegistry
 ) -> None:
     tid = uuid4()
     await bus.publish(
-        OpenClawTaskStarted(
+        JarvisAgentTaskStarted(
             trace_id=tid,
             utterance="bau mir eine Flask-App",
             context_hints=["Port 8000", "single file"],
@@ -65,7 +65,7 @@ async def test_openclaw_task_started_creates_running_node(
     snap = registry.snapshot()
     assert len(snap) == 1
     node = snap[tid.hex]
-    assert node.kind == "openclaw"
+    assert node.kind == "jarvis_agent"
     assert node.status == "running"
     assert node.utterance == "bau mir eine Flask-App"
     assert node.context_hints == ["Port 8000", "single file"]
@@ -74,19 +74,19 @@ async def test_openclaw_task_started_creates_running_node(
     # The display name is the neutral role only — engine/provider/model must
     # never leak into it (Sub-Agents board hygiene). provider/model stay as
     # structured fields above for internal aggregation.
-    assert node.name == "Sub-Agent"
+    assert node.name == "Jarvis-Agent"
     assert "opus" not in node.name
     assert "OpenClaw" not in node.name
 
 
 @pytest.mark.asyncio
 async def test_openclaw_task_completed_marks_success_with_metrics(
-    bus: EventBus, registry: SubAgentRegistry
+    bus: EventBus, registry: JarvisAgentRegistry
 ) -> None:
     tid = uuid4()
-    await bus.publish(OpenClawTaskStarted(trace_id=tid, provider="claude-api", model="haiku"))
+    await bus.publish(JarvisAgentTaskStarted(trace_id=tid, provider="claude-api", model="haiku"))
     await bus.publish(
-        OpenClawTaskCompleted(
+        JarvisAgentTaskCompleted(
             trace_id=tid,
             success=True,
             summary="Fertig",
@@ -104,12 +104,12 @@ async def test_openclaw_task_completed_marks_success_with_metrics(
 
 @pytest.mark.asyncio
 async def test_openclaw_task_failed_marks_failed_with_error(
-    bus: EventBus, registry: SubAgentRegistry
+    bus: EventBus, registry: JarvisAgentRegistry
 ) -> None:
     tid = uuid4()
-    await bus.publish(OpenClawTaskStarted(trace_id=tid))
+    await bus.publish(JarvisAgentTaskStarted(trace_id=tid))
     await bus.publish(
-        OpenClawTaskCompleted(
+        JarvisAgentTaskCompleted(
             trace_id=tid,
             success=False,
             error="timeout after 1800s",
@@ -123,12 +123,12 @@ async def test_openclaw_task_failed_marks_failed_with_error(
 
 @pytest.mark.asyncio
 async def test_review_triggered_updates_iteration_counter(
-    bus: EventBus, registry: SubAgentRegistry
+    bus: EventBus, registry: JarvisAgentRegistry
 ) -> None:
     tid = uuid4()
-    await bus.publish(OpenClawTaskStarted(trace_id=tid))
-    await bus.publish(OpenClawReviewTriggered(trace_id=tid, iteration=1))
-    await bus.publish(OpenClawReviewTriggered(trace_id=tid, iteration=2))
+    await bus.publish(JarvisAgentTaskStarted(trace_id=tid))
+    await bus.publish(JarvisAgentReviewTriggered(trace_id=tid, iteration=1))
+    await bus.publish(JarvisAgentReviewTriggered(trace_id=tid, iteration=2))
     node = registry.snapshot()[tid.hex]
     assert node.review_iterations == 2
 
@@ -139,10 +139,10 @@ async def test_review_triggered_updates_iteration_counter(
 
 @pytest.mark.asyncio
 async def test_brain_turn_tokens_aggregate_into_newest_openclaw(
-    bus: EventBus, registry: SubAgentRegistry
+    bus: EventBus, registry: JarvisAgentRegistry
 ) -> None:
     sj = uuid4()
-    await bus.publish(OpenClawTaskStarted(trace_id=sj, provider="gemini", model="opus"))
+    await bus.publish(JarvisAgentTaskStarted(trace_id=sj, provider="gemini", model="opus"))
     await bus.publish(
         BrainTurnStarted(
             trace_id=uuid4(),
@@ -169,11 +169,11 @@ async def test_brain_turn_tokens_aggregate_into_newest_openclaw(
 
 @pytest.mark.asyncio
 async def test_tool_call_started_appends_to_parent(
-    bus: EventBus, registry: SubAgentRegistry
+    bus: EventBus, registry: JarvisAgentRegistry
 ) -> None:
     sj = uuid4()
     tc = uuid4()
-    await bus.publish(OpenClawTaskStarted(trace_id=sj))
+    await bus.publish(JarvisAgentTaskStarted(trace_id=sj))
     await bus.publish(
         ToolCallStarted(
             trace_id=tc,
@@ -190,11 +190,11 @@ async def test_tool_call_started_appends_to_parent(
 
 @pytest.mark.asyncio
 async def test_tool_call_completed_updates_matching_entry(
-    bus: EventBus, registry: SubAgentRegistry
+    bus: EventBus, registry: JarvisAgentRegistry
 ) -> None:
     sj = uuid4()
     tc = uuid4()
-    await bus.publish(OpenClawTaskStarted(trace_id=sj))
+    await bus.publish(JarvisAgentTaskStarted(trace_id=sj))
     await bus.publish(
         ToolCallStarted(trace_id=tc, parent_trace_id=sj, tool_name="run_shell", args_preview="ls")
     )
@@ -216,11 +216,11 @@ async def test_tool_call_completed_updates_matching_entry(
 
 @pytest.mark.asyncio
 async def test_harness_dispatched_links_to_newest_running_openclaw(
-    bus: EventBus, registry: SubAgentRegistry
+    bus: EventBus, registry: JarvisAgentRegistry
 ) -> None:
     sj = uuid4()
     harness = uuid4()
-    await bus.publish(OpenClawTaskStarted(trace_id=sj, provider="gemini", model="opus"))
+    await bus.publish(JarvisAgentTaskStarted(trace_id=sj, provider="gemini", model="opus"))
     await bus.publish(HarnessDispatched(trace_id=harness, harness="openclaw"))
 
     snap = registry.snapshot()
@@ -233,11 +233,11 @@ async def test_harness_dispatched_links_to_newest_running_openclaw(
 
 @pytest.mark.asyncio
 async def test_harness_completed_nonzero_exit_marks_failed(
-    bus: EventBus, registry: SubAgentRegistry
+    bus: EventBus, registry: JarvisAgentRegistry
 ) -> None:
     sj = uuid4()
     h = uuid4()
-    await bus.publish(OpenClawTaskStarted(trace_id=sj))
+    await bus.publish(JarvisAgentTaskStarted(trace_id=sj))
     await bus.publish(HarnessDispatched(trace_id=h, harness="openclaw"))
     await bus.publish(
         HarnessCompleted(
@@ -259,11 +259,11 @@ async def test_harness_completed_nonzero_exit_marks_failed(
 
 @pytest.mark.asyncio
 async def test_tree_returns_only_root_nodes(
-    bus: EventBus, registry: SubAgentRegistry
+    bus: EventBus, registry: JarvisAgentRegistry
 ) -> None:
     root_sj = uuid4()
     harness = uuid4()
-    await bus.publish(OpenClawTaskStarted(trace_id=root_sj))
+    await bus.publish(JarvisAgentTaskStarted(trace_id=root_sj))
     await bus.publish(HarnessDispatched(trace_id=harness, harness="openclaw"))
 
     tree = registry.tree()
@@ -273,9 +273,9 @@ async def test_tree_returns_only_root_nodes(
 
 @pytest.mark.asyncio
 async def test_to_json_is_serializable_shape(
-    bus: EventBus, registry: SubAgentRegistry
+    bus: EventBus, registry: JarvisAgentRegistry
 ) -> None:
-    await bus.publish(OpenClawTaskStarted(trace_id=uuid4(), utterance="x"))
+    await bus.publish(JarvisAgentTaskStarted(trace_id=uuid4(), utterance="x"))
     payload = registry.to_json()
     assert "roots" in payload
     assert "all" in payload
@@ -292,10 +292,10 @@ async def test_to_json_is_serializable_shape(
 
 @pytest.mark.asyncio
 async def test_clear_removes_all_nodes(
-    bus: EventBus, registry: SubAgentRegistry
+    bus: EventBus, registry: JarvisAgentRegistry
 ) -> None:
-    await bus.publish(OpenClawTaskStarted(trace_id=uuid4()))
-    await bus.publish(OpenClawTaskStarted(trace_id=uuid4()))
+    await bus.publish(JarvisAgentTaskStarted(trace_id=uuid4()))
+    await bus.publish(JarvisAgentTaskStarted(trace_id=uuid4()))
     assert len(registry.snapshot()) == 2
     registry.clear()
     assert len(registry.snapshot()) == 0
@@ -308,10 +308,10 @@ async def test_clear_removes_all_nodes(
 @pytest.mark.asyncio
 async def test_ttl_removes_completed_node_after_timeout(bus: EventBus) -> None:
     # Sehr kurzes TTL fuer den Test
-    reg = SubAgentRegistry(bus, ttl_completed_s=0).attach()
+    reg = JarvisAgentRegistry(bus, ttl_completed_s=0).attach()
     tid = uuid4()
-    await bus.publish(OpenClawTaskStarted(trace_id=tid))
-    await bus.publish(OpenClawTaskCompleted(trace_id=tid, success=True))
+    await bus.publish(JarvisAgentTaskStarted(trace_id=tid))
+    await bus.publish(JarvisAgentTaskCompleted(trace_id=tid, success=True))
     # Event-Loop Runde lassen, damit der Cleanup-Task laeuft
     await asyncio.sleep(0.05)
     assert tid.hex not in reg.snapshot()
@@ -319,7 +319,7 @@ async def test_ttl_removes_completed_node_after_timeout(bus: EventBus) -> None:
 
 @pytest.mark.asyncio
 async def test_orphan_child_tolerated_without_parent(
-    bus: EventBus, registry: SubAgentRegistry
+    bus: EventBus, registry: JarvisAgentRegistry
 ) -> None:
     # HarnessDispatched ohne running Sub-Jarvis → Harness als Root (parent=None)
     h = uuid4()
@@ -347,7 +347,7 @@ async def test_agent_node_default_fields_are_empty() -> None:
 
 @pytest.mark.asyncio
 async def test_mission_bus_bridge_creates_openclaw_node(
-    registry: SubAgentRegistry,
+    registry: JarvisAgentRegistry,
 ) -> None:
     """attach_mission_bus: MissionDispatched -> AgentNode of kind=openclaw."""
     from jarvis.missions.event_bus import MissionBus
@@ -375,7 +375,7 @@ async def test_mission_bus_bridge_creates_openclaw_node(
     tid = mission_id.replace("-", "")
     assert tid in snap, f"mission node not created. snap={snap.keys()}"
     node = snap[tid]
-    assert node.kind == "openclaw"
+    assert node.kind == "jarvis_agent"
     assert node.status == "running"
     assert node.utterance == "hello world"
 
@@ -404,7 +404,7 @@ async def test_mission_bus_bridge_creates_openclaw_node(
 
 @pytest.mark.asyncio
 async def test_mission_bus_bridge_failed_marks_failed(
-    registry: SubAgentRegistry,
+    registry: JarvisAgentRegistry,
 ) -> None:
     """MissionFailed -> status=failed, error captured."""
     from jarvis.missions.event_bus import MissionBus
@@ -446,7 +446,7 @@ async def test_mission_bus_bridge_failed_marks_failed(
 
 @pytest.mark.asyncio
 async def test_mission_bus_bridge_is_idempotent(
-    registry: SubAgentRegistry,
+    registry: JarvisAgentRegistry,
 ) -> None:
     """attach_mission_bus twice must not double-subscribe."""
     from jarvis.missions.event_bus import MissionBus

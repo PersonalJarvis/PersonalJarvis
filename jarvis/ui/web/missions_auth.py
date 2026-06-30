@@ -12,6 +12,7 @@ Single-User-Localhost-Threat-Model.
 """
 from __future__ import annotations
 
+import os
 import secrets
 from typing import Final
 
@@ -35,6 +36,34 @@ def validate_token(tok: str) -> bool:
     if not tok:
         return False
     return tok in _TOKENS
+
+
+def register_token(tok: str) -> None:
+    """Register an externally-minted token as valid. Idempotent.
+
+    The fast-boot desktop path mints a RAW ``secrets.token_urlsafe`` and injects
+    it into ``window.__JARVIS_TOKEN`` without ever issuing it through
+    ``GET /token`` — so without this it fails ``validate_token`` (close 4401) on
+    every token-gated WebSocket. That is exactly what hung the "Make It Yours"
+    workspace PTY terminals forever on "connecting".
+    """
+    if tok:
+        _TOKENS.add(tok)
+
+
+def register_session_token_from_env(env_var: str) -> str | None:
+    """Read the desktop session token from ``env_var`` and register it as valid.
+
+    Called once at server build with ``cfg.ui.auth_token_env`` so the injected
+    ``window.__JARVIS_TOKEN`` passes ``validate_token``. Returns the token when
+    present, else ``None`` (headless / browser-only boots inject no token and
+    fetch a fresh one via ``GET /token`` instead).
+    """
+    tok = os.environ.get(env_var)
+    if tok:
+        _TOKENS.add(tok)
+        return tok
+    return None
 
 
 def revoke_token(tok: str) -> None:

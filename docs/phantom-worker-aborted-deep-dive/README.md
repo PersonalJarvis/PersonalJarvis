@@ -39,7 +39,7 @@ abgebrochen."** Implemented test-first; see **§8.A-IMPLEMENTED**.
 ## 1. TL;DR (one paragraph)
 
 The user heard Jarvis say **"Die Mission ist fehlgeschlagen. Der Worker ist
-abgebrochen."** and reported they had *never spawned a sub-agent*. The forensic
+abgebrochen."** and reported they had *never spawned a Jarvis-Agent*. The forensic
 ground truth says otherwise but **proves the user's perception is the real
 bug**: a normal-sounding voice command — *"…Explorer öffnen mit Computer-User"*
 — was silently turned into a full background **Worker-Critic mission** by the
@@ -203,9 +203,9 @@ The force-spawn heuristic (`BrainManager._should_force_openclaw` /
 *"open Explorer with Computer-Use"* into a heavyweight background Worker-Critic
 mission. The user received a brief optimistic ACK
 ("Mach ich, ich kümmere mich im Hintergrund darum…", log 30575) but does **not**
-mentally model that as *"I spawned a sub-agent."* So when it fails much later,
+mentally model that as *"I spawned a Jarvis-Agent."* So when it fails much later,
 the announcement references a "Worker" the user never knowingly created.
-**This is why the user says "I never spawned a sub-agent."** They are right at
+**This is why the user says "I never spawned a Jarvis-Agent."** They are right at
 the level of intent; the system spawned one on their behalf and never made that
 legible.
 **Files:** `manager.py:1736-1845, 2085-2086, 2494`, `jarvis/.../spawn_worker.py:479,549-565`.
@@ -245,7 +245,7 @@ hypothesis space to the one true timeline**. Neither alone was sufficient.
 
 ## 7. Why the user's framing is correct (and important)
 
-"I never spawned a sub-agent" is **literally false** (they said
+"I never spawned a Jarvis-Agent" is **literally false** (they said
 "…Explorer öffnen mit Computer-User", which force-spawned) but **experientially
 true**: the system never made the spawn legible, ran it for 18 minutes off-
 transcript, mislabeled the timeout as an abort, and announced it un-softened.

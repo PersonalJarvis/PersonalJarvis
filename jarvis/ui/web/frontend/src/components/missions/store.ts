@@ -23,7 +23,7 @@ interface MissionsStore {
   missions: Record<string, MissionSummary>;
   eventsByMission: Record<string, EventEnvelope[]>;
   verdictsByMission: Record<string, CriticVerdictReady[]>;
-  openclawWorkersByMission: Record<string, OpenClawWorkerSnapshot[]>;
+  workerSnapshotsByMission: Record<string, OpenClawWorkerSnapshot[]>;
   selectedMissionId: string | null;
   selectedWorkerId: string | null;
   lastSeq: number;
@@ -36,7 +36,7 @@ interface MissionsStore {
     missionId: string,
     events: EventEnvelope[],
     verdicts: CriticVerdictReady[],
-    openclawWorkers?: OpenClawWorkerSnapshot[],
+    workerSnapshots?: OpenClawWorkerSnapshot[],
   ) => void;
   selectMission: (id: string | null) => void;
   selectWorker: (id: string | null) => void;
@@ -49,7 +49,7 @@ export const useMissionsStore = create<MissionsStore>()(
     missions: {},
     eventsByMission: {},
     verdictsByMission: {},
-    openclawWorkersByMission: {},
+    workerSnapshotsByMission: {},
     selectedMissionId: null,
     selectedWorkerId: null,
     lastSeq: 0,
@@ -156,16 +156,16 @@ export const useMissionsStore = create<MissionsStore>()(
         return { lastSeq, eventsByMission, verdictsByMission, missions };
       }),
 
-    setMissionDetail: (missionId, events, verdicts, openclawWorkers) =>
+    setMissionDetail: (missionId, events, verdicts, workerSnapshots) =>
       set((state) => ({
         eventsByMission: { ...state.eventsByMission, [missionId]: events },
         verdictsByMission: { ...state.verdictsByMission, [missionId]: verdicts },
-        openclawWorkersByMission: openclawWorkers
+        workerSnapshotsByMission: workerSnapshots
           ? {
-              ...state.openclawWorkersByMission,
-              [missionId]: openclawWorkers,
+              ...state.workerSnapshotsByMission,
+              [missionId]: workerSnapshots,
             }
-          : state.openclawWorkersByMission,
+          : state.workerSnapshotsByMission,
       })),
 
     selectMission: (id) => set({ selectedMissionId: id, selectedWorkerId: null }),
@@ -176,7 +176,7 @@ export const useMissionsStore = create<MissionsStore>()(
         missions: {},
         eventsByMission: {},
         verdictsByMission: {},
-        openclawWorkersByMission: {},
+        workerSnapshotsByMission: {},
         selectedMissionId: null,
         selectedWorkerId: null,
         lastSeq: 0,

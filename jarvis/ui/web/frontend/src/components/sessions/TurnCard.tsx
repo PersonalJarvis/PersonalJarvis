@@ -38,7 +38,7 @@ export const SPOKEN_KIND_LABEL: Record<string, string> = {
   stt_unavailable: "Couldn't hear you",
   privacy: "Privacy",
   completion: "Background result",
-  subagent: "Jarvis Sub-Agent / Output",
+  subagent: "Jarvis-Agent / Output",
   action_done: "Action confirmed",
   backchannel: "Backchannel",
   announcement: "Announcement",
@@ -59,10 +59,11 @@ export function TurnCard({ turn, spoken = [] }: Props) {
   // Desktop shell → save to ~/Downloads via the backend; browser → blob download.
   const caps = useCapabilities();
   const native = caps.data?.native_file_actions ?? false;
-  // Override the subagent label so it follows the configured assistant name.
+  // The Jarvis-Agents brand label is fixed: it names the system, not the
+  // configured assistant, so it does not follow the assistant name.
   const kindLabel: Record<string, string> = {
     ...SPOKEN_KIND_LABEL,
-    subagent: `${assistantName} Sub-Agent / Output`,
+    subagent: "Jarvis-Agent / Output",
   };
 
   const copyTurn = useCallback(async () => {

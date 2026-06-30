@@ -455,6 +455,89 @@ def _family_rank(model_id: str) -> int:
     return 0
 
 
+# ----------------------------------------------------------------------
+# Presentation-only model classification — the picker's filter chips + star
+# ----------------------------------------------------------------------
+# These tag a model for the API-Keys picker's "Free / Frontier / Best value"
+# chips and the maintainer's star. They are PRESENTATION ONLY (AP-21): a tag
+# never changes which model is pinned, how it is gated, or what the brain does.
+# The two quality bands REUSE ``_family_rank`` (the one source of truth for list
+# order) so the chips can never drift from the ordering — Frontier is the
+# flagship band, Best value the strong price/performance band.
+
+# Rank floors that split ``_family_rank``'s band into the two quality chips.
+# Frontier ≥ 33 = flagship families (Opus/Fable/Sonnet/GPT-5/Gemini-3/Grok-4/
+# o3-o4/Haiku); 20 ≤ value < 33 = popular price/performance families (DeepSeek/
+# Kimi/GLM/Qwen/Llama-4/Mistral-large.../gpt-oss/command-r).
+FRONTIER_RANK_FLOOR = 33
+VALUE_RANK_FLOOR = 20
+
+
+def _squash(text: str) -> str:
+    """Lowercase ``text`` stripped of every non-alphanumeric character.
+
+    Mirrors the picker's separator-insensitive search so a star pattern matches
+    an id regardless of vendor-prefix punctuation: ``anthropic/claude-opus-4.8``
+    and the direct ``claude-opus-4-8`` both squash to ``claudeopus48``.
+    """
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+# Maintainer's hand-picked "best models" — they get a star in the picker. Matched
+# on the SQUASHED id tail (vendor prefix + a ``:free``/``:nitro`` variant suffix
+# stripped) so the same pick is starred whether it comes from a direct provider
+# (``claude-opus-4-8``) or OpenRouter (``anthropic/claude-opus-4.8``). Extend
+# freely — this is a curated favourites list, presentation only.
+STARRED_MODELS: frozenset[str] = frozenset({
+    _squash("claude-opus-4.8"),       # Opus 4.8
+    _squash("claude-opus-4.8-fast"),  # Opus 4.8 (Fast)
+    _squash("gpt-5.5"),               # GPT-5.5
+    _squash("gemini-3.5-flash"),      # Gemini 3.5 Flash
+    _squash("claude-fable-5"),        # Fable 5
+    _squash("glm-5.2"),               # GLM-5.2
+})
+
+
+def is_free_model(model_id: str, label: str = "") -> bool:
+    """True for a zero-cost model. OpenRouter marks these with a ``:free`` id
+    suffix and a ``(free)`` label; both are checked so the flag survives whichever
+    signal a future catalog keeps."""
+    return ":free" in model_id.lower() or "(free)" in label.lower()
+
+
+def is_starred_model(model_id: str) -> bool:
+    """True if ``model_id`` is one of the maintainer's starred picks."""
+    tail = model_id.lower().rsplit("/", 1)[-1]
+    tail = tail.split(":", 1)[0]  # drop a ``:free``/``:nitro`` variant suffix
+    return _squash(tail) in STARRED_MODELS
+
+
+@dataclass(frozen=True, slots=True)
+class ModelTags:
+    """Presentation-only classification of one model for the picker's filters.
+
+    Four independent booleans (a model can be both ``value`` and ``free``), so
+    there is no enum to drift across the Python↔TS boundary — just flags the UI
+    renders as chips/stars. None of them gate behavior (AP-21)."""
+
+    free: bool
+    frontier: bool
+    value: bool
+    starred: bool
+
+
+def classify_model(model_id: str, label: str = "") -> ModelTags:
+    """Tag a model for the picker's filter chips + star, REUSING the family
+    relevance ranking so the chips never drift from the displayed list order."""
+    rank = _family_rank(model_id)
+    return ModelTags(
+        free=is_free_model(model_id, label),
+        frontier=rank >= FRONTIER_RANK_FLOOR,
+        value=VALUE_RANK_FLOOR <= rank < FRONTIER_RANK_FLOOR,
+        starred=is_starred_model(model_id),
+    )
+
+
 # Variant markers that demote a model WITHIN its family — smaller/cheaper or
 # special-purpose siblings rarely wanted as the default pick. The full flagship
 # (incl. ``-pro``) is NOT demoted.

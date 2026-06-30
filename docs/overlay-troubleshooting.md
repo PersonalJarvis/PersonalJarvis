@@ -55,7 +55,7 @@ keystrokes go through.
      only wired in tests, glow will silently no-op.
 
 2. **`JARVIS_DEPTH == 0`?**
-   - In Sub-Agents (`JARVIS_DEPTH > 0` env var, see Plan §8.7), the
+   - In Jarvis-Agents (`JARVIS_DEPTH > 0` env var, see Plan §8.7), the
      `OverlayBridge` is a **no-op stub by design**. Only the top-level
      Hauptjarvis triggers the glow.
    - Verify with `echo %JARVIS_DEPTH%` (cmd) or `$env:JARVIS_DEPTH`
@@ -220,23 +220,23 @@ privacy.
 
 ---
 
-## 8. Sub-Agent triggers the overlay
+## 8. Jarvis-Agent triggers the overlay
 
-**Symptoms:** Spawned Sub-Jarvis or Worker triggers the glow, even though only
+**Symptoms:** Spawned Jarvis-Agent or Worker triggers the glow, even though only
 Hauptjarvis is supposed to.
 
-**Explanation (Plan §8.7):** In Sub-Agents (`JARVIS_DEPTH > 0`),
-`OverlayBridge` is a **no-op stub by design**. If a Sub-Agent's actions
+**Explanation (Plan §8.7):** In Jarvis-Agents (`JARVIS_DEPTH > 0`),
+`OverlayBridge` is a **no-op stub by design**. If a Jarvis-Agent's actions
 trigger the glow, the env-var inheritance broke.
 
 **Checks:**
 
-1. **Confirm `JARVIS_DEPTH > 0` is set in the Sub-Agent subprocess:**
-   - Inspect the spawn command (in the Worker code or the Sub-Jarvis
+1. **Confirm `JARVIS_DEPTH > 0` is set in the Jarvis-Agent subprocess:**
+   - Inspect the spawn command (in the Worker code or the Jarvis-Agent
      supervisor).
    - The parent must inject `env={**os.environ, "JARVIS_DEPTH": str(depth+1)}`
      when spawning the child.
-2. **Verify at runtime:** add a debug-print in the Sub-Agent's `OverlayBridge`
+2. **Verify at runtime:** add a debug-print in the Jarvis-Agent's `OverlayBridge`
    instantiation; it should hit the no-op-stub branch, not the real-bridge
    branch.
 3. **Test:** `pytest OS-Level/tests/test_subagent_noop.py` (sets
@@ -245,7 +245,7 @@ trigger the glow, the env-var inheritance broke.
    spawn-env-injection, not in the bridge itself.
 
 **Source files:** `OS-Level/src/overlay/bridge.py` (no-op-stub branch),
-spawn sites in the Phase-5 Sub-Jarvis manager.
+spawn sites in the Phase-5 Jarvis-Agent manager.
 
 ---
 

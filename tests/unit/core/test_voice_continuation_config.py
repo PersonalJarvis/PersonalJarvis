@@ -8,7 +8,9 @@ def test_continuation_defaults():
     cfg = VoiceConfig()
     assert cfg.continuation_interrupt_enabled is True
     assert cfg.continuation_grace_ms == 2500
-    assert cfg.continuation_max_chain == 3
+    # Raised 3 -> 8 (2026-06-30): users correct themselves in several short bursts
+    # while the brain is still thinking; a low cap dropped the earliest context.
+    assert cfg.continuation_max_chain == 8
 
 
 def test_continuation_overrides_apply():

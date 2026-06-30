@@ -7,6 +7,43 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
+## [1.0.0] — 2026-06-29
+
+First **public** release of Personal Jarvis — a voice-driven meta-orchestrator
+that turns one spoken request into a fleet of self-checking AI agents.
+
+### Highlights
+
+- **Voice-first pipeline** — wake word → speech-to-text → multi-provider Brain →
+  text-to-speech, fully streaming, with honest, language-aware readbacks
+  (`de` / `en` / `es`).
+- **Provider-agnostic by design** — every tier (router, ack, STT, TTS, worker,
+  critic) degrades or crosses provider families on a missing or dead key. No
+  single provider is load-bearing, and credentials are managed entirely in-app.
+- **Cross-platform core** — the base install boots on a headless
+  `python:3.11-slim` VPS; Windows-desktop and local-voice features live behind
+  optional extras.
+- **Jarvis-Agents mission system** — isolated `git worktree` workers with a
+  self-healing critic loop.
+- **Plugin marketplace** (OAuth + MCP) and a cross-platform control CLI
+  (`jarvisctl`).
+
+### Fixed
+
+- Declared `click` as an explicit dependency so the `jarvisctl` CLI imports on a
+  clean install (it no longer arrives transitively via `typer`), restoring a
+  green CI.
+- Restored `TRADEMARK.md` to the published tree and removed a dead documentation
+  link from the README.
+- Stopped defaulting the archival store to the removed `chroma` backend.
+
+### Changed
+
+- `pyproject` metadata for the public release: English, cross-platform
+  description and a `[project.urls]` block.
+
+---
+
 ## [v1.0.0-board] — 2026-04-25
 
 First consolidated release of the **Jarvis Board**: Phase A through D.

@@ -1,7 +1,7 @@
 {
   "jarvis_dock": {
     "aria": "{name} — suelta una misión aquí para hablar de ella",
-    "hint": "Arrastra un resultado de sub-agente aquí para llevarlo a la conversación",
+    "hint": "Arrastra un resultado de Jarvis-Agent aquí para llevarlo a la conversación",
     "drop_here": "Suelta para comentar",
     "drop_active": "Suelta para informar a {name}",
     "dropped": "Añadido a la conversación"
@@ -17,7 +17,7 @@
   },
   "nav": {
     "chats": "Chats",
-    "agents": "Agentes",
+    "agents": "Jarvis-Agents",
     "extensions": "Skills, Plugins & MCPs",
     "skills": "Habilidades",
     "plugins": "Plugins",
@@ -42,36 +42,7 @@
     "taskbar": "Barra",
     "contacts": "Contactos",
     "feedback": "Comentarios",
-    "personalize": "Hazlo tuyo",
     "agent_instructions": "{name}.md"
-  },
-  "make_it_yours": {
-    "title": "Hazlo tuyo",
-    "subtitle": "Abre agentes de programación dentro de tu carpeta de Jarvis y personalízalo.",
-    "step_layout": "¿Cuántas terminales?",
-    "step_layout_hint": "Elige un diseño — una casilla por número de terminales.",
-    "step_agents": "¿Qué agentes?",
-    "step_agents_hint": "Decide cuántos de cada agente llenan tus terminales. Solo Claude Code y Codex.",
-    "quick_fill": "Relleno rápido",
-    "split_evenly": "Dividir en partes iguales",
-    "all_claude": "Todo Claude Code",
-    "all_codex": "Todo Codex",
-    "installed": "Instalado",
-    "not_installed": "No instalado",
-    "install": "Instalar en la terminal",
-    "installing": "Abriendo el instalador en una terminal…",
-    "step_confirm": "Listo para lanzar",
-    "folder": "Carpeta",
-    "launch": "Lanzar",
-    "launching": "Lanzando…",
-    "back": "Atrás",
-    "next": "Siguiente",
-    "no_terminal": "Este host no puede ejecutar una terminal (sin shell ni backend PTY), así que los agentes no se pueden lanzar aquí.",
-    "launched_ok": "Terminales abiertas",
-    "launch_failed": "Algunas terminales no se pudieron abrir.",
-    "terminals": "terminales",
-    "end_session": "Terminar sesión",
-    "install_done": "Listo — volver a comprobar"
   },
   "agent_instructions": {
     "subtitle": "Tus preferencias personales sobre cómo el asistente trabaja contigo — tono, idioma, valores por defecto, hechos permanentes. Separado del System Prompt y nunca anula la seguridad ni las confirmaciones.",
@@ -194,7 +165,8 @@
   "sidebar": {
     "wake_hint": "Di tu palabra de activación…",
     "brain_label": "Cerebro",
-    "brain_tooltip": "Cambiar proveedor de IA"
+    "brain_tooltip": "Cambiar proveedor de IA",
+    "apikeys_alert": "Un proveedor está configurado pero no funciona — abre API Keys para solucionarlo"
   },
   "chats_view": {
     "title": "Chat",
@@ -202,7 +174,7 @@
     "thinking_aria": "Tu asistente está pensando",
     "thinking_label": "pensando…",
     "empty_title": "Listo para órdenes",
-    "empty_subtitle": "Di tu palabra de activación o escribe tu mensaje abajo. Tu asistente dirige sub-agentes, llama a herramientas y te devuelve voz.",
+    "empty_subtitle": "Di tu palabra de activación o escribe tu mensaje abajo. Tu asistente dirige Jarvis-Agents, llama a herramientas y te devuelve voz.",
     "warming_title": "Preparándose",
     "warming_subtitle": "Tu asistente está arrancando. Podrás hablar en un momento, y ya puedes escribir abajo.",
     "examples": {
@@ -248,7 +220,7 @@
     "step_cu_settle": "Esperando la pantalla"
   },
   "subagents_view": {
-    "title": "Sub-Agentes",
+    "title": "Jarvis-Agents",
     "stat_active": "activos",
     "stat_total": "total",
     "clear": "Limpiar",
@@ -256,11 +228,11 @@
     "board_title": "Tablero de Salidas",
     "active_label": "Activo",
     "standby_label": "En espera",
-    "col_agent": "Agente",
+    "col_agent": "Jarvis-Agent",
     "col_target": "Destino",
     "col_status": "Estado",
     "col_cost": "Coste",
-    "agents_traveling": "Agente(s) en camino",
+    "agents_traveling": "Jarvis-Agent(s) en camino",
     "last_departure": "última salida",
     "last_departure_ago": "última salida hace {0}",
     "status": {
@@ -843,17 +815,17 @@
     "tier_brain": "Proveedor de IA",
     "tier_tts": "Salida de voz (TTS)",
     "tier_stt": "Entrada de voz (STT)",
-    "tier_subagent": "Subagente (tareas pesadas)",
+    "tier_subagent": "Jarvis-Agent (tareas pesadas)",
     "tier_telephony": "Telefonía",
     "tab_brain": "IA",
     "tab_tts": "Salida de voz",
     "tab_stt": "Entrada de voz",
-    "tab_subagents": "Subagentes",
+    "tab_subagents": "Jarvis-Agents",
     "tab_advanced": "Avanzado",
     "cat_brain_desc": "El modelo que impulsa el chat, el enrutamiento y Computer-Use.",
     "cat_tts_desc": "La voz con la que habla Jarvis.",
     "cat_stt_desc": "Cómo convierte Jarvis tu voz en texto.",
-    "cat_subagents_title": "Subagentes",
+    "cat_subagents_title": "Jarvis-Agents",
     "cat_subagents_desc": "Elige qué proveedor ejecuta las tareas pesadas en segundo plano.",
     "advanced_title": "Acceso e integraciones",
     "advanced_desc": "Extras opcionales: acceso a la API de control, el proxy de claves de equipo, telefonía y el proveedor del Wiki de conocimiento.",
@@ -866,6 +838,9 @@
     "needs_key": "Primero guarda la clave API, luego se puede activar",
     "recommended": "Recomendado",
     "recommended_tooltip": "Modelo recomendado: {0}",
+    "health_needs_setup": "Falta configurar",
+    "health_error": "No funciona",
+    "health_ok": "Funciona",
     "security_notice": ""
   },
   "apikeys_test": {
@@ -903,7 +878,18 @@
     "choose_voice": "Elige una voz…",
     "use_custom": "Usar \"{0}\"",
     "no_models": "Sin modelos",
-    "loading": "Cargando…"
+    "loading": "Cargando…",
+    "filter_all": "Todos",
+    "filter_starred": "Top",
+    "filter_free": "Gratis",
+    "filter_frontier": "Frontier",
+    "filter_value": "Mejor valor",
+    "starred_label": "Selección top",
+    "filter_hint_all": "Todos los modelos del catálogo.",
+    "filter_hint_starred": "Los mejores modelos, elegidos a mano.",
+    "filter_hint_free": "Modelos gratuitos — sin necesidad de crédito de API.",
+    "filter_hint_frontier": "Cuando el precio no importa — los modelos más capaces.",
+    "filter_hint_value": "La mejor relación calidad-precio."
   },
   "apikeys_cu_model": {
     "heading": "Modelo para Computer-Use",
@@ -1187,7 +1173,7 @@
   },
   "outputs_view": {
     "title": "Salidas",
-    "subtitle": "Archivos que {name} o los sub-agentes han escrito para ti.",
+    "subtitle": "Archivos que {name} o los Jarvis-Agents han escrito para ti.",
     "empty": "Aún no hay salidas.",
     "open": "Abrir",
     "delete": "Eliminar",
@@ -1200,7 +1186,7 @@
     "rerun_confirm": "Confirmar reejecución",
     "continuation_running": "Continuado · en curso",
     "list_load_error": "No se pudieron cargar las salidas",
-    "empty_sessions": "Aún no hay sesiones de subagentes. Inicia una tarea de OpenClaw.",
+    "empty_sessions": "Aún no hay sesiones de Jarvis-Agents. Inicia una tarea de Jarvis-Agent.",
     "select_session": "Selecciona una sesión.",
     "loading_plan": "Cargando el plan…",
     "plan_load_error": "No se pudo cargar el plan",
@@ -1282,14 +1268,14 @@
     "load_error": "No se pudieron cargar los ajustes del proveedor del Wiki."
   },
   "subagent_model": {
-    "description": "Los subagentes (workers pesados en segundo plano) pueden ejecutarse con su propio modelo, separado de la IA del chat. Deja el campo vacío para usar el modelo más potente del proveedor de subagentes activo.",
-    "model_label": "Modelo del subagente (opcional)",
+    "description": "Los Jarvis-Agents (workers pesados en segundo plano) pueden ejecutarse con su propio modelo, separado de la IA del chat. Deja el campo vacío para usar el modelo más potente del proveedor de Jarvis-Agents activo.",
+    "model_label": "Modelo del Jarvis-Agent (opcional)",
     "model_placeholder": "Déjalo vacío para el modelo predeterminado del proveedor",
-    "model_hint": "Vacío significa el modelo profundo del proveedor de subagentes activo.",
+    "model_hint": "Vacío significa el modelo profundo del proveedor de Jarvis-Agents activo.",
     "apply": "Aplicar",
     "applying": "Aplicando…",
-    "saved": "Modelo del subagente guardado.",
-    "saved_restart": "Modelo del subagente guardado — se aplica a la próxima misión."
+    "saved": "Modelo del Jarvis-Agent guardado.",
+    "saved_restart": "Modelo del Jarvis-Agent guardado — se aplica a la próxima misión."
   },
   "cli_connect": {
     "is_connected": "{0} está conectado",
@@ -1328,7 +1314,7 @@
     "status_loading": "Cargando estado de Codex",
     "needs_codex_full": "{0}: primero conecta Codex o guarda la clave API, luego activa.",
     "needs_key_full": "{0}: primero guarda la clave API, luego activa.",
-    "runs_as_subagent_hint": "Con tu inicio de sesión de ChatGPT, Codex funciona como subagente (trabajador en segundo plano). Tras conectar, actívalo en la lista de subagentes de abajo. Un cerebro pensante necesita el proveedor de clave API de OpenAI por separado.",
+    "runs_as_subagent_hint": "Con tu inicio de sesión de ChatGPT, Codex funciona como Jarvis-Agent (trabajador en segundo plano). Tras conectar, actívalo en la lista de Jarvis-Agents de abajo. Un cerebro pensante necesita el proveedor de clave API de OpenAI por separado.",
     "brain_needs_openai_key": "Codex como cerebro necesita una clave API de OpenAI — el inicio de sesión de ChatGPT solo impulsa el trabajador de Codex. Añade una clave de OpenAI (p. ej. en el proveedor OpenAI) y luego selecciona Codex aquí.",
     "brain_key_hint": "Para usar Codex también como cerebro, añade una clave API de OpenAI (de pago, independiente de tu inicio de sesión de ChatGPT — que solo impulsa el trabajador). Al guardarla se desbloquea el interruptor de arriba."
   },
@@ -1727,8 +1713,8 @@
     "empty": "Aún no hay veredictos del crítico para esta misión."
   },
   "openclaw_panel": {
-    "select_mission": "Selecciona una misión para ver los workers de OpenClaw.",
-    "no_workers": "No hay workers de OpenClaw en esta misión.",
+    "select_mission": "Selecciona una misión para ver los Jarvis-Agent workers.",
+    "no_workers": "No hay Jarvis-Agent workers en esta misión.",
     "not_available": "(no disponible)",
     "copy_path": "Copiar ruta",
     "file_link_copies_path": "Enlace file:// (se copia la ruta)",
@@ -1958,8 +1944,8 @@
     "profile_minimal_desc": "El friend ve: sesión de voz activa sí/no, duración. Sin contenido.",
     "profile_standard_subline": "+ Título de la misión",
     "profile_standard_desc": "El friend también ve: qué misiones/tareas se están ejecutando, éxito, duración.",
-    "profile_detailed_subline": "+ Resumen de OpenClaw",
-    "profile_detailed_desc": "El friend también ve: resúmenes de OpenClaw firmados (SIN enunciados)."
+    "profile_detailed_subline": "+ Resumen de Jarvis-Agent",
+    "profile_detailed_desc": "El friend también ve: resúmenes de Jarvis-Agent firmados (SIN enunciados)."
   },
   "tools_canvas": {
     "back_tooltip": "Volver al resumen de agentes",
@@ -1968,7 +1954,7 @@
     "duration": "Duración",
     "empty": "(vacío)",
     "no_tools_yet": "aún no ha llamado a ninguna herramienta.",
-    "no_tools_explainer": "En cuanto el worker de OpenClaw activa una herramienta (p. ej. dispatch_to_harness, run_shell, screenshot), aparece aquí como un nodo de icono."
+    "no_tools_explainer": "En cuanto el Jarvis-Agent worker activa una herramienta (p. ej. dispatch_to_harness, run_shell, screenshot), aparece aquí como un nodo de icono."
   },
   "use_web_socket": {
     "jarvis_opened": "{name} abrió"
@@ -1999,7 +1985,7 @@
   "permission_matrix": {
     "subline_minimal": "Solo en línea/sin conexión",
     "subline_standard": "+ Título de la misión",
-    "subline_detailed": "+ Resumen de OpenClaw",
+    "subline_detailed": "+ Resumen de Jarvis-Agent",
     "aria_label": "Perfil de uso compartido"
   },
   "self_mod_view": {
@@ -2137,10 +2123,10 @@
     "connection_lost": "conexión perdida …"
   },
   "agents_view": {
-    "subtitle": "Subagentes en ejecución — rol, estado, salida.",
+    "subtitle": "Jarvis-Agents en ejecución — rol, estado, salida.",
     "empty_title": "No hay agentes activos",
     "empty_body_a": "Cuando",
-    "empty_body_b": "inicia un subagente, aparece aquí como un panel en vivo con salida en streaming y un botón para detenerlo.",
+    "empty_body_b": "inicia un Jarvis-Agent, aparece aquí como un panel en vivo con salida en streaming y un botón para detenerlo.",
     "phase4_notice": "Se activa con la Fase 4 (integración del harness)."
   },
   "friends_view": {

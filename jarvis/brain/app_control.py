@@ -250,7 +250,7 @@ def build_settings_snapshot(cfg: Any) -> dict[str, Any]:
     wake = getattr(cfg, "wake", None) or getattr(cfg, "wakeword", None)
     autostart = getattr(cfg, "autostart", None)
     computer_use = getattr(cfg, "computer_use", None)
-    sub_jarvis = getattr(brain, "sub_jarvis", None) if brain is not None else None
+    sub_jarvis = getattr(brain, "worker", None) if brain is not None else None
 
     active_brain = getattr(brain, "primary", None) if brain is not None else None
     # Prefer the *live* active provider when the BrainManager is running — it is
@@ -348,7 +348,7 @@ def _current_provider(cfg: Any, tier: str) -> str | None:
     if tier == "stt":
         return getattr(getattr(cfg, "stt", None), "provider", None)
     if tier == "subagent":
-        sub = getattr(brain, "sub_jarvis", None) if brain else None
+        sub = getattr(brain, "worker", None) if brain else None
         return getattr(sub, "provider", None) if sub else None
     return None
 
@@ -534,8 +534,8 @@ async def _switch_subagent(
             ANTIGRAVITY_SUBAGENT_SLUGS,
             CODEX_SUBAGENT_CANONICAL,
             CODEX_SUBAGENT_SLUGS,
-            JARVIS_TO_OPENCLAW,
-            canonical_subagent_provider,
+            JARVIS_TO_WORKER_SLUG,
+            canonical_worker_provider,
         )
     except Exception as exc:  # noqa: BLE001
         return {
@@ -544,10 +544,11 @@ async def _switch_subagent(
             "error": f"Subagent provider map unavailable: {exc}",
         }
 
-    canon = canonical_subagent_provider(provider) or ""
+    canon = canonical_worker_provider(provider) or ""
 
-    # Codex is a DIRECT worker (no OpenClaw slug) — accept it explicitly, mirroring
-    # the REST ``/api/subagent/switch`` path so the two switch sites never drift.
+    # Codex is a DIRECT worker (no worker-harness slug) — accept it explicitly,
+    # mirroring the REST ``/api/jarvis-agent/switch`` path so the two switch sites
+    # never drift.
     # Backed by the ChatGPT subscription (OAuth) OR an OpenAI API key.
     if canon in CODEX_SUBAGENT_SLUGS:
         try:
@@ -571,12 +572,12 @@ async def _switch_subagent(
             }
         persisted = (
             _persist(
-                lambda: _import_writer().set_sub_jarvis_provider(CODEX_SUBAGENT_CANONICAL)
+                lambda: _import_writer().set_worker_provider(CODEX_SUBAGENT_CANONICAL)
             )
             if persist
             else False
         )
-        _set_in_memory(cfg, ["brain", "sub_jarvis", "provider"], CODEX_SUBAGENT_CANONICAL)
+        _set_in_memory(cfg, ["brain", "worker", "provider"], CODEX_SUBAGENT_CANONICAL)
         return {
             "ok": True,
             "tier": "subagent",
@@ -606,7 +607,7 @@ async def _switch_subagent(
             }
         persisted = (
             _persist(
-                lambda: _import_writer().set_sub_jarvis_provider(
+                lambda: _import_writer().set_worker_provider(
                     ANTIGRAVITY_SUBAGENT_CANONICAL
                 )
             )
@@ -614,7 +615,7 @@ async def _switch_subagent(
             else False
         )
         _set_in_memory(
-            cfg, ["brain", "sub_jarvis", "provider"], ANTIGRAVITY_SUBAGENT_CANONICAL
+            cfg, ["brain", "worker", "provider"], ANTIGRAVITY_SUBAGENT_CANONICAL
         )
         return {
             "ok": True,
@@ -626,13 +627,13 @@ async def _switch_subagent(
             "requires_restart": True,
         }
 
-    if canon not in JARVIS_TO_OPENCLAW:
-        # List EVERY subagent-capable provider, not just the API/OpenClaw ones —
+    if canon not in JARVIS_TO_WORKER_SLUG:
+        # List EVERY worker-capable provider, not just the API/harness ones —
         # Codex and Antigravity route through their own workers, so omitting them
         # produced the false "codex is not a valid provider, only claude/gemini/
         # openai/openrouter" reply (forensic 2026-06-27).
         known = ", ".join(sorted(
-            set(JARVIS_TO_OPENCLAW)
+            set(JARVIS_TO_WORKER_SLUG)
             | {CODEX_SUBAGENT_CANONICAL, ANTIGRAVITY_SUBAGENT_CANONICAL}
         ))
         return {
@@ -651,9 +652,9 @@ async def _switch_subagent(
         }
 
     persisted = (
-        _persist(lambda: _import_writer().set_sub_jarvis_provider(canon)) if persist else False
+        _persist(lambda: _import_writer().set_worker_provider(canon)) if persist else False
     )
-    _set_in_memory(cfg, ["brain", "sub_jarvis", "provider"], canon)
+    _set_in_memory(cfg, ["brain", "worker", "provider"], canon)
     return {
         "ok": True,
         "tier": "subagent",

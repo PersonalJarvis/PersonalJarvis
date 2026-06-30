@@ -7,7 +7,7 @@
 
 ## What Works Now
 
-Your brain can **let real sub-agents do the work**:
+Your brain can **let real Jarvis-Agents do the work**:
 
 ```
 User (Voice): "Jarvis, frag OpenClaw ob der Build durchläuft"

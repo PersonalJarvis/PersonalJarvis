@@ -233,6 +233,23 @@ class JarvisBarOverlay:
 
         from PIL import ImageTk  # noqa: F401 — fail fast here if Pillow missing
 
+        # Per-monitor DPI awareness MUST be set before THIS surface's Tk root is
+        # created — exactly like the orb (ui/orb/overlay.py). Without it, on a
+        # scaled display (e.g. 150%) the window's geometry coordinate space and
+        # the pointer-event space (``event.x_root``) drift apart, so dragging the
+        # bar makes it run AWAY from the cursor toward the bottom-right and become
+        # uncontrollable (the HiDPI "drag-teleport"). The bar boots in its own
+        # thread, often before any other code has set process DPI awareness, so
+        # it must assert it here itself. ``ensure_dpi_awareness`` is idempotent
+        # and a no-op off Windows, so this is safe even when the process is
+        # already aware.
+        try:
+            from jarvis.core.win32_dpi import ensure_dpi_awareness
+
+            ensure_dpi_awareness()
+        except Exception:  # noqa: BLE001 — never block the bar on a DPI hiccup
+            log.debug("jarvisbar DPI-awareness setup skipped", exc_info=True)
+
         self._tk_thread_id = threading.get_ident()
         self._renderer = renderer.JarvisBarRenderer(accent=self._accent)
 
@@ -368,6 +385,20 @@ class JarvisBarOverlay:
             self._root.deiconify()
         except Exception:  # noqa: BLE001
             log.debug("jarvisbar deiconify failed", exc_info=True)
+        # Re-assert topmost + lift after every reveal. A withdrawn→deiconified
+        # ``overrideredirect`` window comes back on Windows WITHOUT its topmost
+        # z-order (it is remapped as an ordinary window), so later-mapped windows
+        # (the desktop main window + tray on the fast-boot path) land ON TOP of
+        # the bar and hide it until the next wake-word incidentally re-shows it —
+        # the "bar does not appear, only after the wake-word" forensic. Lifting +
+        # re-pinning topmost here keeps the always-on bar reliably visible,
+        # matching the mascot orb. Guarded separately so a lift failure never
+        # undoes the deiconify. (Lost in the consolidate restore-trap; restored.)
+        try:
+            self._root.wm_attributes("-topmost", True)
+            self._root.lift()
+        except Exception:  # noqa: BLE001
+            log.debug("jarvisbar lift/topmost re-assert failed", exc_info=True)
 
     def _do_hide(self) -> None:
         if self._root is None:

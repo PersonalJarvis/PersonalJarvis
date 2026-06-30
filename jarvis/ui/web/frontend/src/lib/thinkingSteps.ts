@@ -277,7 +277,7 @@ export function reduceThinkingSteps(
       return upsertComputer(steps, labelKey, `#${idx + 1}`, tsMs);
     }
 
-    case "OpenClawTaskStarted":
+    case "JarvisAgentTaskStarted":
       return push(steps, {
         id: nextId(),
         kind: "worker",
@@ -287,7 +287,7 @@ export function reduceThinkingSteps(
         startedTs: tsMs,
       });
 
-    case "OpenClawTaskCompleted":
+    case "JarvisAgentTaskCompleted":
       return complete(steps, "worker", tsMs, {
         durationMs: num(p.duration_s) * 1000 || undefined,
         error: p.success === false,

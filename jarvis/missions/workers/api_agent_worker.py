@@ -57,14 +57,58 @@ _BRAIN_BY_PROVIDER: dict[str, tuple[str, str]] = {
     "gemini": ("jarvis.plugins.brain.gemini", "GeminiBrain"),
 }
 
-# Per-provider default deep model when the step carries none. Documented
-# defaults only — never a gate (AP-21).
+# A free OpenRouter model id — the LAST-RESORT default for the gateway provider
+# when the user configured no model at all. Never a paid Anthropic id: a gateway
+# default that silently bills the most expensive model is the exact open-source
+# §3 / AP-22 trap (live forensic 2026-06-29 drained ~5€ on Opus 4.8). A wrong free
+# id degrades with a clean 404; a wrong-but-valid paid id bills the user silently.
+_OPENROUTER_FREE_DEFAULT = "nvidia/nemotron-3-ultra-550b-a55b:free"
+
+# Per-provider default deep model when the step carries none AND the user pinned
+# nothing. Documented defaults only — never a gate (AP-21).
 _DEFAULT_MODEL: dict[str, str] = {
     "openai": "gpt-5.5",
-    "openrouter": "anthropic/claude-opus-4.8",
+    "openrouter": _OPENROUTER_FREE_DEFAULT,
     "claude-api": "claude-opus-4-8",
     "gemini": "gemini-3.1-pro-preview",
 }
+
+
+def _resolve_worker_model(provider: str, explicit: str) -> str:
+    """Model for the in-process API worker, honoring the user's PICK.
+
+    Precedence:
+      1. the step's explicit model (the decomposer pinned one) — always wins;
+      2. ``[brain.sub_jarvis].model`` but ONLY when its provider matches this
+         worker (a pin set for antigravity must never run on the openrouter key);
+      3. ``[brain.providers[provider]].model`` — the user's own pick for this
+         provider (e.g. the free OpenRouter model);
+      4. the documented per-provider ``_DEFAULT_MODEL`` (non-paid for openrouter).
+
+    Never a hardcoded paid foreign-family id while the user has picked something
+    (AP-21/AP-22, open-source single-key §3).
+    """
+    if explicit and explicit.strip():
+        return explicit.strip()
+    prov = (provider or "").strip().lower()
+    try:
+        from jarvis.core import config as _cfg
+
+        root = _cfg.load_config()
+        sub = getattr(root.brain, "worker", None)
+        if (
+            sub is not None
+            and (getattr(sub, "provider", "") or "").strip().lower() == prov
+            and (getattr(sub, "model", "") or "").strip()
+        ):
+            return sub.model.strip()
+        pc = (root.brain.providers or {}).get(prov)
+        picked = (getattr(pc, "model", "") or "").strip()
+        if picked:
+            return picked
+    except Exception:  # noqa: BLE001 — config read must never crash the worker
+        pass
+    return _DEFAULT_MODEL.get(prov, "")
 
 _WORKER_TIMEOUT_S: float = 1200.0  # 20 min hard cap, mirrors the other workers
 _MAX_TURNS: int = 25
@@ -123,7 +167,7 @@ class ApiAgentWorker:
     ) -> AsyncIterator[Any]:
         session_id = str(uuid.uuid4())
         self.last_session_id = session_id
-        resolved_model = model or _DEFAULT_MODEL.get(self.provider, "")
+        resolved_model = _resolve_worker_model(self.provider, model)
         log_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240 — trivial sync mkdir (mirrors sibling workers)
         stream_path = log_dir / "stream.jsonl"
         written: list[str] = []

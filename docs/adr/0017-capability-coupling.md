@@ -19,8 +19,8 @@ tool can actually execute".
 
 Three existing architectural decisions make the problem worse:
 
-**AD-9 (openclaw-bridge.md):** The Critic currently ratifies empty diffs for
-non-file tasks. An OpenClaw mission can complete with no file changes, no
+**AD-9 (jarvis-agents-bridge.md):** The Critic currently ratifies empty diffs for
+non-file tasks. A Jarvis-Agent mission can complete with no file changes, no
 tool-call evidence, and a positive `success=True` from the Critic if the worker
 text *says* the task is done. For `requires_evidence=True` capabilities this is
 a silent lie.
@@ -97,7 +97,7 @@ called. This is intentionally AP-11 compliant — no LLM, regex-only.
 **(b) `jarvis/brain/manager.py`** — sibling check `_capability_resolves(text)`
 alongside the existing `_should_force_openclaw` heuristic. If
 `has_action_intent AND NOT _capability_resolves AND NOT _is_smalltalk`:
-skip brain dispatch and OpenClaw spawn; emit the deterministic UNSUPPORTED
+skip brain dispatch and Jarvis-Agent spawn; emit the deterministic UNSUPPORTED
 response via the same TTS path as a short reply.
 
 Deterministic response phrasing (no LLM, constant strings):
@@ -132,7 +132,7 @@ is `success=False` with `reason="capability_not_executed"`. `summary_de` is
 derived from tool-call evidence via `summarise_from_tool_calls(calls)` in
 `jarvis/missions/critic/summary.py`, not from the worker's text claim.
 
-For OpenClaw missions in the current Welle-2 mock state (no tool-call telemetry
+For Jarvis-Agent missions in the current Welle-2 mock state (no tool-call telemetry
 streaming), the Critic **defaults to `success=False`** for
 `requires_evidence=True` capabilities. This conservative default is intentional
 and will be relaxed in Welle 3 when proper tool-call telemetry lands.
@@ -180,7 +180,7 @@ contributor guide.
   (Section 4) is designed to make this cost negligible when the adapter already
   exists.
 - The Critic will conservatively fail `requires_evidence=True` missions that use
-  the Welle-2 mock OpenClaw path (no tool-call telemetry). This is the correct
+  the Welle-2 mock Jarvis-Agents path (no tool-call telemetry). This is the correct
   default — accepting unverifiable success claims is the bug this ADR fixes.
   Welle-3 tool-call telemetry resolves this at the Critic layer; the gate and
   prompt layers are unaffected.
@@ -236,5 +236,5 @@ not a confirmation loop for phantom capability.
   - `tests/integration/test_capability_coupling_e2e.py` (this ADR — Agent E)
 - Bug register: `docs/BUGS.md` — BUG-028 Capability Hallucination
 - Sibling pattern: `docs/anti-drift-three-layer.md`
-- OpenClaw bridge: `docs/openclaw-bridge.md` AD-9 (Critic + risk-tier)
-- Welle-3 telemetry: OpenClaw bridge contract AP-OC7
+- Jarvis-Agents bridge: `docs/jarvis-agents-bridge.md` AD-9 (Critic + risk-tier)
+- Welle-3 telemetry: Jarvis-Agents bridge contract AP-OC7

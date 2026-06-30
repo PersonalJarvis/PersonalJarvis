@@ -32,7 +32,7 @@ except ModuleNotFoundError:  # pragma: no cover
 
 from jarvis.core.events import (
     AudioOutFirst,
-    OpenClawBackgroundCompleted,
+    JarvisAgentBackgroundCompleted,
     ResponseGenerated,
     SystemStateChanged,
     TranscriptionUpdate,
@@ -659,6 +659,45 @@ async def test_boot_reveal_is_idempotent_across_ready_and_timeout() -> None:
     assert orb.calls.count(("show", "idle")) == 1
 
 
+@pytest.mark.parametrize("state", ["ERROR", "PAUSED"])
+async def test_persistent_bar_shows_idle_on_non_active_state_never_hides(
+    state: str,
+) -> None:
+    """An always-on bar (hide_on_idle=False) must survive a non-active state.
+
+    A transient ERROR (an STT/provider hiccup) or a manual PAUSE used to hit the
+    bridge's ``else: self._orb.hide()`` and withdraw the always-on bar until the
+    next wake word — a second 'the bar vanishes' path on top of the
+    minimise-to-tray one. A persistent bar must show the idle pill instead and
+    NEVER hide."""
+    orb = _FakeOrb()
+    bridge = OrbBusBridge(  # type: ignore[arg-type]
+        bus=_FakeBus(), orb=orb, idle_animations_enabled=False, hide_on_idle=False
+    )
+
+    await bridge._on_state(  # noqa: SLF001
+        SystemStateChanged(new_state=state, previous="IDLE")
+    )
+
+    assert ("hide", None) not in orb.calls, f"{state} must not hide the always-on bar"
+    assert ("show", "idle") in orb.calls, f"{state} must show the idle pill"
+
+
+async def test_non_persistent_bar_hides_on_error_state() -> None:
+    """The contrast: a hide-at-idle bar / the mascot still withdraws on a
+    non-active state, unchanged."""
+    orb = _FakeOrb()
+    bridge = OrbBusBridge(  # type: ignore[arg-type]
+        bus=_FakeBus(), orb=orb, idle_animations_enabled=False, hide_on_idle=True
+    )
+
+    await bridge._on_state(  # noqa: SLF001
+        SystemStateChanged(new_state="ERROR", previous="IDLE")
+    )
+
+    assert ("hide", None) in orb.calls
+
+
 async def test_listening_bubble_mirrors_pipeline_snapshot_one_to_one() -> None:
     """Pendel-Episode 3 regression (2026-05-27).
 
@@ -940,7 +979,7 @@ async def test_orb_pops_in_when_background_task_finishes_while_idle() -> None:
     orb = _FakeOrb()
     bridge = OrbBusBridge(bus=_FakeBus(), orb=orb, idle_animations_enabled=False)  # type: ignore[arg-type]
 
-    await bridge._on_background_completed(OpenClawBackgroundCompleted(success=True))  # noqa: SLF001
+    await bridge._on_background_completed(JarvisAgentBackgroundCompleted(success=True))  # noqa: SLF001
 
     assert ("show", "speak") in orb.calls
 

@@ -8,18 +8,18 @@
 that performs a BM25 full-text search over the recent episode log so the
 brain can answer questions like „was war der Befehl von vorhin?" without
 fabricating an answer. The plan was written before Welle 4 of the
-OpenClaw-Bridge migration and assumes the existence of a "Sub-Jarvis"
+Jarvis-Agents bridge migration and assumes the existence of a "Jarvis-Agent"
 worker tier. In that world the plan unambiguously assigns the tool to
 `SUB_TOOLS` (Plan §7, Hard-Negative #1) — the rationale at the time was
 that recall is a slightly heavier operation (~50–300 ms SQLite hit) that
 the latency-sensitive router should not perform.
 
-Welle 4 deleted the Sub-Jarvis tier in its entirety
+Welle 4 deleted the Jarvis-Agent tier in its entirety
 (`jarvis/brain/factory.py:90-103`). Heavy work is now executed by
-external OpenClaw subprocesses spawned via `spawn_openclaw`. Those
-subprocesses run their own OpenClaw instances and do **not** inherit
+external Jarvis-Agent subprocesses spawned via `spawn_openclaw`. Those
+subprocesses run their own Jarvis-Agent instances and do **not** inherit
 the Jarvis in-process tool registry — they can only call the tools that
-OpenClaw itself exposes (`Bash`, `Read`, `Grep`, MCP servers, etc.).
+the Jarvis-Agent itself exposes (`Bash`, `Read`, `Grep`, MCP servers, etc.).
 A Python tool registered as a `jarvis.tool` entry point is invisible to
 them.
 
@@ -29,8 +29,8 @@ This leaves two real homes for `awareness-recall`:
    process. Latency is fine — a single FTS5 `MATCH` on the local SQLite
    file is well under the 300 ms budget set by the plan, and the result
    stays inside the router's context window so it can decide whether to
-   answer directly or spawn an OpenClaw worker.
-2. **Inside an MCP server that OpenClaw connects to.** Workable but
+   answer directly or spawn a Jarvis-Agent worker.
+2. **Inside an MCP server that the Jarvis-Agent connects to.** Workable but
    premature: it requires standing up an MCP transport, exposing
    internal Jarvis state across a process boundary, and forcing the
    worker to discover and call the tool. Three additional moving parts
@@ -44,7 +44,7 @@ entry-point loader. The tool's constructor takes the existing
 `RecallStore` instance the factory already builds for `MessageRecorder`
 and `StoryTracker`, so no new dependency is introduced.
 
-If the router brain decides to delegate work to an OpenClaw worker
+If the router brain decides to delegate work to a Jarvis-Agent worker
 after recalling, it may bake the recall result into the worker's
 `context_hints` field on the `spawn_openclaw` call. That follow-up is
 out of scope for the initial A3 wave but the placement chosen here does
@@ -68,7 +68,7 @@ not block it.
   clear error rather than disappearing from the schema mid-session.
   This prevents the router brain from re-learning the tool list every
   time awareness is toggled.
-- **Recursion-protection is structural.** Because OpenClaw workers
+- **Recursion-protection is structural.** Because Jarvis-Agent workers
   cannot reach `awareness-recall` at all (no MCP bridge exposes it),
   there is no risk of a recursive spawn chain — analogous to how
   `spawn_openclaw` itself is intentionally absent from any worker tool
@@ -82,7 +82,7 @@ not block it.
 - **Expose recall via an MCP server.** Future-compatible but adds a
   process boundary, MCP transport plumbing, and worker-side tool
   discovery for what is otherwise a 200-line addition. Revisit if and
-  when OpenClaw workers need recall directly, e.g. for long-running
+  when Jarvis-Agent workers need recall directly, e.g. for long-running
   analytic tasks. The router-tier placement does not preclude this
   upgrade.
 - **Add an in-process worker tier.** Would directly resurrect what
@@ -91,7 +91,7 @@ not block it.
 ## References
 
 - `JARVIS_AWARENESS_PLAN.md` §7 (Phase A3 original specification).
-- `docs/openclaw-bridge.md` §11 (Code-Migrations-Tabelle, Welle 4).
+- `docs/jarvis-agents-bridge.md` §11 (Code-Migrations-Tabelle, Welle 4).
 - `jarvis/brain/factory.py:40-58` (ROUTER_TOOLS frozenset).
 - `jarvis/plugins/tool/awareness_recall.py` (tool implementation).
 - `jarvis/memory/recall.py:357` (`search_episodes` with `since_ns`).

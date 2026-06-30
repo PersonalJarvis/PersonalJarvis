@@ -924,3 +924,112 @@ async def test_autonomous_patience_grant_resets_across_utterances() -> None:
         f"got {len(utterances)} utterances; the second should have ended at the "
         "10-frame base window, not the 93-frame extended window"
     )
+
+
+# --------------------------------------------------------------------------- #
+# The configured "Thinking pause" must govern the silence window — stuck-in-
+# LISTENING regression (2026-06-29).
+#
+# Forensic: the user set the Settings slider to 1.0 s, expecting the turn to
+# submit after ~1 s of silence. It did not. The autonomous long-utterance grant
+# (and the STT-probe delegation grant) call ``extend_silence_window(3000)``,
+# which set the silence window to a FIXED 3000 ms regardless of the configured
+# base — so any utterance with >=2 s of speech waited ~3 s, and on pause-rich
+# speech the natural endpoint slipped so far that only the max_utterance cap
+# fired (forced-cut -> carry -> keep listening, NOT a submit) until the session
+# inactivity timeout ended it. The fix caps the grant relative to the configured
+# base, so the slider value actually governs the wait.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_configured_silence_window_submits_long_utterance_not_stuck() -> None:
+    """TEST A (the fix): with the slider at 1.0 s, a long utterance followed by
+    silence above the configured threshold must SUBMIT (yield exactly one
+    utterance) instead of hanging in LISTENING until the inactivity timeout.
+
+    65 speech frames (> the 62-frame long-utterance trigger) arm the autonomous
+    patience grant; then 70 silence frames (2240 ms) follow. With the bug the
+    grant forces the window to a fixed ~3000 ms (93 frames), so 70 < 93 -> no
+    endpoint ever fires, the VAD never yields, and on the live ``_active_session``
+    loop the inactivity timeout would end the session. With the fix the grant is
+    capped relative to the 1.0 s base, so the window stays around 2 s and the
+    70 silence frames cross it -> one submitted utterance.
+    """
+    vad = SileroEndpointer(silence_ms=1000)  # production wiring: base 1.0 s
+    endpoint_reasons: list[str] = []
+    vad._on_endpoint = lambda reason: endpoint_reasons.append(reason)  # type: ignore[method-assign]
+
+    probs = [0.9] * 65 + [0.0] * 70
+    _stub_vad(vad, probs)
+    frames = [_pcm_frame(0.08) for _ in range(65)] + [_pcm_frame(0.0) for _ in range(70)]
+
+    utterances = await _collect(vad, frames)
+
+    assert len(utterances) == 1, (
+        "a long utterance + 2.24 s of silence at a 1.0 s setting did not submit — "
+        "the hardcoded 3 s patience grant kept the turn stuck in LISTENING "
+        f"(endpoint reasons: {endpoint_reasons})"
+    )
+    assert endpoint_reasons == ["silence"], (
+        "the turn must end on the natural silence endpoint, not a forced cut "
+        f"(got {endpoint_reasons})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_pure_silence_yields_nothing_so_session_idle_times_out() -> None:
+    """TEST B (regression): pure silence with NO captured speech must yield
+    nothing, so the session still ends via the inactivity timeout. The fix
+    (a shorter silence window) must not make noise/silence submit spuriously.
+
+    Mirrors the session-level guard ``test_idle_timeout_still_hangs_up_without_
+    inflight_mission``: a VAD that never yields -> ``_active_session`` returns
+    ``HANGUP_IDLE_TIMEOUT``.
+    """
+    vad = SileroEndpointer(silence_ms=1000)
+    probs = [0.0] * 120  # never crosses the speech threshold
+    _stub_vad(vad, probs)
+    frames = [_pcm_frame(0.0) for _ in range(120)]
+
+    utterances = await _collect(vad, frames)
+
+    assert utterances == [], (
+        "pure silence produced a submitted utterance — there was no captured "
+        "speech, so the session must fall through to the inactivity timeout"
+    )
+
+
+@pytest.mark.asyncio
+async def test_lower_thinking_pause_submits_sooner_than_higher() -> None:
+    """TEST C (config): the configured threshold must govern the timing. With
+    the SAME long utterance and the SAME amount of trailing silence, a lower
+    "Thinking pause" setting submits while a higher one is still waiting —
+    proving the slider value (not a fixed 3 s constant) drives the endpoint.
+
+    75 silence frames (2400 ms) follow a long utterance for both VADs. With the
+    bug both windows are forced to a fixed ~3000 ms (93 frames), so 75 < 93 ->
+    NEITHER submits and the timing is identical regardless of the setting. With
+    the fix the 1.0 s base caps the window near 2 s (75 frames cross it -> submit)
+    while the 1.5 s base caps it near 3 s (75 frames do not -> still waiting).
+    """
+    async def _submitted(silence_ms: int) -> int:
+        vad = SileroEndpointer(silence_ms=silence_ms)
+        probs = [0.9] * 65 + [0.0] * 75
+        _stub_vad(vad, probs)
+        frames = [_pcm_frame(0.08) for _ in range(65)] + [
+            _pcm_frame(0.0) for _ in range(75)
+        ]
+        return len(await _collect(vad, frames))
+
+    submitted_at_1000ms = await _submitted(1000)
+    submitted_at_1500ms = await _submitted(1500)
+
+    assert submitted_at_1000ms == 1, (
+        "the 1.0 s setting did not submit after 2.4 s of silence — its window is "
+        "still pinned to the fixed 3 s grant instead of scaling with the setting"
+    )
+    assert submitted_at_1500ms == 0, (
+        "the 1.5 s setting submitted at the same silence as the 1.0 s one — the "
+        "endpoint timing does not scale with the configured threshold"
+    )

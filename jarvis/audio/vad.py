@@ -29,6 +29,16 @@ from jarvis.core.protocols import AudioChunk
 VAD_SAMPLE_RATE = 16_000
 VAD_FRAME_SAMPLES = 512       # fixed requirement from Silero
 
+# Upper bound on the adaptive patience grant, expressed as a multiple of the
+# user-configured base silence window. A long dictation / delegation widens the
+# silence window so a thinking pause is not cut, but the grant must never stretch
+# the window to a fixed absolute value that ignores the slider: a deliberately
+# short "thinking pause" (e.g. 1.0 s) was being silently forced to ~3 s, so the
+# turn never submitted near the configured threshold. At the 1.5 s default this
+# is a no-op (2 x 1.5 s == the historical fixed 3 s grant). See
+# tests/unit/audio/test_vad_turn_taking.py (stuck-in-LISTENING regression).
+_PATIENCE_FACTOR = 2
+
 log = logging.getLogger("jarvis.audio.vad")
 
 
@@ -145,6 +155,12 @@ class SileroEndpointer:
         endpoint is made more patient.
         """
         want_frames = max(1, int(total_ms) // 32)
+        # Cap the grant relative to the configured base so the slider keeps
+        # governing the wait: the window may at most grow to _PATIENCE_FACTOR x
+        # the base, never to a fixed absolute value that overrides a short
+        # setting (the 1.0 s "Thinking pause" stuck-in-LISTENING bug, 2026-06-29).
+        # No-op at the 1.5 s default (2 x 1.5 s >= the 3 s callers request).
+        want_frames = min(want_frames, self._silence_frames * _PATIENCE_FACTOR)
         extra = max(0, want_frames - self._silence_frames)
         if extra > self._extra_silence_frames:
             self._extra_silence_frames = extra

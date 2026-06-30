@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { selectTaskRows } from "./rows";
-import type { SubAgentNode } from "@/store/subAgents";
+import type { SubAgentNode } from "@/store/jarvisAgents";
 
 function node(
   partial: Partial<SubAgentNode> & { trace_id: string },
 ): SubAgentNode {
   return {
-    kind: "openclaw",
+    kind: "jarvis_agent",
     name: "Sub-Agent",
     status: "running",
     parent_trace_id: null,

@@ -118,7 +118,7 @@ def build_decision_path(events: list[VoiceEventRow]) -> list[DecisionStep]:
                 label=f"brain: {provider or '?'}",
                 detail=(f"model={model}" if model else None),
             ))
-        elif e.kind == "OpenClawTaskStarted":
+        elif e.kind == "JarvisAgentTaskStarted":
             steps.append(DecisionStep(
                 kind=DECISION_MISSION,
                 label="spawned sub-agent mission",
@@ -432,7 +432,7 @@ def feature_tags_from_events(events: list[VoiceEventRow]) -> list[str]:
                     agents.append(ag)
             elif name not in tools:
                 tools.append(name)
-        if e.kind == "OpenClawTaskStarted" and "sub_agent" not in agents:
+        if e.kind == "JarvisAgentTaskStarted" and "sub_agent" not in agents:
             agents.append("sub_agent")
         if (e.kind == "SpeechSpoken"
                 and _is_cu_failure_detail(str(e.payload.get("detail", "")))

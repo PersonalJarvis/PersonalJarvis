@@ -73,7 +73,7 @@ jarvis --plugins
 
 ## Voice bridge: ``jarvis-ask``
 
-A thin CLI/HTTP bridge over which OpenClaw (or another
+A thin CLI/HTTP bridge over which a Jarvis-Agent (or another
 CLI agent) can ask the user a question **by voice**. Jarvis reads
 the question out via TTS, captures the spoken answer, and returns it on
 stdout.
@@ -121,7 +121,7 @@ curl -s http://127.0.0.1:47821/api/voice-bridge/health
 ## Skill runner: ``jarvis-skills``
 
 CLI frontend to the ``SkillRegistry`` — lists, inspects, runs skills,
-imports external OpenClaw skills, and promotes sub-Jarvis-authored
+imports external OpenClaw skills, and promotes Jarvis-Agent-authored
 drafts to ``state=active``.
 
 **Synopsis:**
@@ -137,7 +137,7 @@ jarvis-skills (--list | --info NAME | --run NAME |
 | ``--info NAME`` | Full detail for a skill: frontmatter, triggers, tools, resources, risk tier. |
 | ``--run NAME`` | Run a skill (requires an MCP connection context). |
 | ``--import-claude-skills PATH`` | Imports Anthropic-OpenClaw skills from a directory into the user skill repo. |
-| ``--list-drafts`` | List sub-Jarvis-authored drafts (``state=draft``). |
+| ``--list-drafts`` | List Jarvis-Agent-authored drafts (``state=draft``). |
 | ``--promote SLUG`` | Promote a draft skill to ``state=active`` — user-explicit activation with a security lint of the skill body. |
 
 **Examples:**
@@ -224,7 +224,7 @@ jarvis-review-gc --older-than 30d
 ## CLI tool registry (external tools)
 
 A central registry indexes ~20 external CLI tools that the Brain-Manager
-(main Jarvis and sub-Jarvis) can dispatch as tools. Each
+(main Jarvis and Jarvis-Agents) can dispatch as tools. Each
 entry carries a spec, auth profiles, a risk-tier default, and a probe status.
 
 **Inventory (as of 2026-04-23, ``jarvis/clis/catalog/seed_catalog.json``):**

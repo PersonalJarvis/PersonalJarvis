@@ -15,14 +15,17 @@ Wird vom WebServer in `_build_app()` eingehängt:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from typing import Any, Literal, get_args
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from jarvis.brain import provider_test as _provider_test
-from jarvis.brain.model_catalog import catalog_spec
+from jarvis.brain import section_health as _section_health
+from jarvis.brain.model_catalog import ModelInfo, catalog_spec, classify_model
 from jarvis.codex_auth import CodexAuthService
 from jarvis.core import config as cfg_mod
 from jarvis.core.events import SecretConfigured
@@ -118,6 +121,15 @@ CatalogSourceLiteral = Literal["live", "cache", "static", "curated"]
 class BrainModelInfo(BaseModel):
     id: str
     label: str
+    # Presentation-only classification for the picker's filter chips + star
+    # (jarvis.brain.model_catalog.classify_model). Independent booleans — never
+    # gate behavior (AP-21). ``free`` = zero-cost (OpenRouter ``:free``);
+    # ``frontier`` = flagship band; ``value`` = strong price/performance band;
+    # ``starred`` = a maintainer-picked favourite.
+    free: bool = False
+    frontier: bool = False
+    value: bool = False
+    starred: bool = False
 
 
 class BrainModelsResponse(BaseModel):
@@ -369,49 +381,49 @@ def _codex_binary_path(request: Request | None = None) -> str | None:
     return getattr(getattr(cfg, "codex", None), "binary_path", "") or None
 
 
-def _apply_sub_jarvis_in_memory(request: Request, provider: str) -> None:
-    """Best-effort in-memory update of ``cfg.brain.sub_jarvis.provider``.
+def _apply_worker_in_memory(request: Request, provider: str) -> None:
+    """Best-effort in-memory update of ``cfg.brain.worker.provider``.
 
-    So the next ``/openclaw/status`` reflects the choice immediately (the worker
-    itself only re-reads at restart). Frozen / detached cfg is not an error.
+    So the next ``/jarvis-agent/status`` reflects the choice immediately (the
+    worker itself only re-reads at restart). Frozen / detached cfg is not an error.
     """
     cfg = _resolve_cfg(request)
     if cfg is None or getattr(cfg, "brain", None) is None:
         return
-    sub = getattr(cfg.brain, "sub_jarvis", None)
+    sub = getattr(cfg.brain, "worker", None)
     try:
         if sub is None:
             from jarvis.core.config import BrainTierConfig
 
-            cfg.brain.sub_jarvis = BrainTierConfig(provider=provider)
+            cfg.brain.worker = BrainTierConfig(provider=provider)
         else:
             sub.provider = provider
     except Exception as exc:  # noqa: BLE001 — frozen models / detached cfg are not errors
-        log.debug("In-memory sub_jarvis.provider update skipped: %s", exc)
+        log.debug("In-memory worker.provider update skipped: %s", exc)
 
 
-def _apply_sub_jarvis_model_in_memory(request: Request, model: str) -> None:
-    """Best-effort in-memory update of ``cfg.brain.sub_jarvis.model``.
+def _apply_worker_model_in_memory(request: Request, model: str) -> None:
+    """Best-effort in-memory update of ``cfg.brain.worker.model``.
 
-    Mirrors :func:`_apply_sub_jarvis_in_memory`; a missing ``sub_jarvis``
+    Mirrors :func:`_apply_worker_in_memory`; a missing ``worker``
     block is created with the router primary as provider so the override is
     never silently dropped.
     """
     cfg = _resolve_cfg(request)
     if cfg is None or getattr(cfg, "brain", None) is None:
         return
-    sub = getattr(cfg.brain, "sub_jarvis", None)
+    sub = getattr(cfg.brain, "worker", None)
     try:
         if sub is None:
             from jarvis.core.config import BrainTierConfig
 
-            cfg.brain.sub_jarvis = BrainTierConfig(
+            cfg.brain.worker = BrainTierConfig(
                 provider=getattr(cfg.brain, "primary", "") or "", model=model,
             )
         else:
             sub.model = model
     except Exception as exc:  # noqa: BLE001 — frozen models / detached cfg are not errors
-        log.debug("In-memory sub_jarvis.model update skipped: %s", exc)
+        log.debug("In-memory worker.model update skipped: %s", exc)
 
 
 async def _emit(request: Request, event: Any) -> None:
@@ -486,6 +498,236 @@ async def test_provider_connection(
         latency_ms=round(result.latency_ms, 1),
         integration_ok=result.status in _provider_test.INTEGRATION_OK_STATUSES,
     )
+
+
+# ----------------------------------------------------------------------
+# Section health — the at-a-glance API-Keys tab indicators
+# ----------------------------------------------------------------------
+
+# Section-health status vocabulary. ``SectionHealthStatusLiteral`` MUST mirror the
+# SSOT in ``jarvis.brain.section_health`` — the runtime assert is the five-layer
+# anti-drift guard (BUG-008 class) and the TS ``SectionHealthStatus`` union in
+# ``useProviders.ts`` is the UI mirror.
+SectionHealthStatusLiteral = Literal["ok", "needs_setup", "error", "unknown"]
+assert set(get_args(SectionHealthStatusLiteral)) == set(
+    _section_health.SECTION_HEALTH_STATUSES
+), "section-health status vocabulary drift (Pydantic Literal vs SSOT)"
+
+# Cache the rollup briefly so opening the API-Keys page / switching tabs does not
+# re-run the REAL connectivity tests on every render. ``?refresh=true`` (used by
+# the UI after a key save / provider switch) bypasses it.
+_SECTION_HEALTH_TTL_S = 45.0
+
+
+class SectionHealth(BaseModel):
+    """One tab's rolled-up health. Only ``needs_setup`` (amber) and ``error``
+    (red) draw a dot in the UI; ``ok`` / ``unknown`` stay silent."""
+
+    status: SectionHealthStatusLiteral = "unknown"
+    # Machine-readable cause for the UI tooltip + debugging: the underlying
+    # provider-test status ("bad_key"/"no_credits"/…), "not_configured",
+    # "no_active", "local", "ok", or "unknown". Not shown verbatim to the user.
+    reason: str = "unknown"
+    # Plain-English one-liner for the hover tooltip (provider label + detail).
+    detail: str = ""
+
+
+class SectionHealthResponse(BaseModel):
+    sections: dict[str, SectionHealth]
+    checked_at: float = 0.0
+    cached: bool = False
+
+
+async def _tier_section_health(cfg: Any, spec: ProviderSpec | None) -> SectionHealth:
+    """Health of one provider tier, derived from its ACTIVE provider only.
+
+    A tier is only as healthy as the single provider currently powering it —
+    deliberately NOT "does any provider here lack a key" (that would paint every
+    tab red, since unused providers are normally left empty).
+    """
+    if spec is None:
+        return SectionHealth(
+            status=_section_health.NEEDS_SETUP,
+            reason="no_active",
+            detail="No active provider selected",
+        )
+    # Local providers (faster-whisper, SAPI) have no key to be invalid; if one is
+    # the active provider it is usable. Skip the real test — it could force a heavy
+    # model load on page open for no signal we don't already have.
+    if getattr(spec, "auth_mode", None) == "none":
+        return SectionHealth(
+            status=_section_health.OK,
+            reason="local",
+            detail=f"{spec.label}: local, no key needed",
+        )
+    try:
+        configured = _is_credential_present(
+            spec, _codex_binary_path() if spec.id == "codex" else None
+        )
+    except Exception:  # noqa: BLE001 — a probe failure is "not set up", not a crash
+        configured = False
+    if not configured:
+        return SectionHealth(
+            status=_section_health.NEEDS_SETUP,
+            reason="not_configured",
+            detail=f"{spec.label}: no key set",
+        )
+    try:
+        result = await _provider_test.run_provider_test(spec, cfg)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("section-health test for %s failed: %s", spec.id, exc)
+        return SectionHealth(
+            status=_section_health.UNKNOWN, reason="error", detail=f"{spec.label}: check failed"
+        )
+    status = _section_health.section_status_for_test(result.status, configured=True)
+    return SectionHealth(
+        status=status,
+        reason=result.status,
+        detail=f"{spec.label}: {result.detail or result.status}",
+    )
+
+
+def _worker_usable(provider: str) -> bool:
+    """Best-effort "is the selected heavy-task worker connected/keyed?".
+
+    Provider-agnostic: a CLI login (Codex / Antigravity / Claude) is usable when
+    its auth service reports connected; an API-keyed worker reuses the brain
+    provider's credential. Any probe failure degrades to "not usable" rather than
+    raising (AP-22/23 — never brick on the maintainer's favourite worker).
+    """
+    p = (provider or "").lower()
+    try:
+        if p in _CODEX_SUBAGENT_SLUGS or p in {"codex", "openai-codex"}:
+            connected = bool(CodexAuthService(_codex_binary_path()).status().connected)
+            return connected or _has_openai_brain_credential()
+        if p == "antigravity":
+            from jarvis.google_cli.auth_service import GoogleCliAuthService
+
+            return bool(GoogleCliAuthService().status().connected)
+        if p in {"claude-api", "claude"}:
+            from jarvis.claude_auth import ClaudeAuthService
+
+            st = ClaudeAuthService().status()
+            return bool(
+                getattr(st, "connected", False) or getattr(st, "api_key_present", False)
+            )
+        spec = get_spec(p)
+        return bool(spec is not None and _is_credential_present(spec))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _jarvis_agent_section_health(cfg: Any) -> SectionHealth:
+    """Subagents tab: reflects whether the SELECTED heavy-task worker is usable.
+
+    A real "does it answer" call for a CLI worker is heavy, so v1 reports the
+    connectedness signal — connected/keyed → ok, otherwise needs_setup. It never
+    flags ``error`` (a connected-but-failing CLI worker is out of scope here).
+    """
+    brain = getattr(cfg, "brain", None) if cfg is not None else None
+    if brain is None:
+        return SectionHealth(
+            status=_section_health.NEEDS_SETUP,
+            reason="no_active",
+            detail="No subagent worker selected",
+        )
+    sub = getattr(brain, "worker", None)
+    provider = (getattr(sub, "provider", None) if sub else None) or getattr(
+        brain, "primary", None
+    )
+    if not provider:
+        return SectionHealth(
+            status=_section_health.NEEDS_SETUP,
+            reason="no_active",
+            detail="No subagent worker selected",
+        )
+    spec = get_spec(provider)
+    label = spec.label if spec is not None else provider
+    if _worker_usable(provider):
+        return SectionHealth(
+            status=_section_health.OK, reason="ok", detail=f"Subagent worker: {label}"
+        )
+    return SectionHealth(
+        status=_section_health.NEEDS_SETUP,
+        reason="not_configured",
+        detail=f"Subagent worker '{label}' is not connected",
+    )
+
+
+def _advanced_section_health(request: Request) -> SectionHealth:
+    """Advanced tab: every integration here is OPTIONAL, so it never reports
+    ``needs_setup`` — only ``error`` when something the user actually configured
+    is failing. Today that is telephony's cached reachability check; otherwise the
+    tab stays silent (``unknown``)."""
+    contributions: list[str] = []
+    detail = ""
+    reason = "unknown"
+    tm = getattr(request.app.state, "telephony_manager", None)
+    if tm is not None and getattr(tm, "reachable", None) is False:
+        err = getattr(tm, "reachable_error", None)
+        if err:
+            contributions.append(_section_health.ERROR)
+            detail = f"Telephony unreachable: {err}"
+            reason = "telephony"
+    return SectionHealth(
+        status=_section_health.aggregate(contributions), reason=reason, detail=detail
+    )
+
+
+@router.get("/providers/section-health")
+async def section_health(request: Request, refresh: bool = False) -> SectionHealthResponse:
+    """Per-tab health for the API-Keys segmented tabs ("is this part working?").
+
+    The brain/tts/stt tiers get a REAL connectivity test of their active provider
+    (run in parallel), the Subagents tab reflects whether the selected worker is
+    connected, and the Advanced tab only flags a configured optional integration
+    that is actually failing. The result is cached for a few seconds so opening the
+    page / switching tabs does not re-run the real calls each render;
+    ``?refresh=true`` forces a fresh check after a key save or provider switch.
+    """
+    cache = getattr(request.app.state, "_section_health_cache", None)
+    now = time.time()
+    if (
+        not refresh
+        and isinstance(cache, dict)
+        and now - cache.get("checked_at", 0.0) < _SECTION_HEALTH_TTL_S
+    ):
+        return SectionHealthResponse(
+            sections=cache["payload"], checked_at=cache["checked_at"], cached=True
+        )
+
+    cfg = _resolve_cfg(request)
+    sections: dict[str, SectionHealth] = {}
+
+    if cfg is None:
+        for key in ("brain", "tts", "stt", "subagents", "advanced"):
+            sections[key] = SectionHealth(
+                status=_section_health.UNKNOWN,
+                reason="unavailable",
+                detail="Configuration unavailable",
+            )
+    else:
+        brain_spec = get_spec(_active_brain(request) or "")
+        tts_spec = get_spec(_active_tts(request) or "")
+        stt_spec = get_spec(_active_stt(request) or "")
+        sections["brain"], sections["tts"], sections["stt"] = await asyncio.gather(
+            _tier_section_health(cfg, brain_spec),
+            _tier_section_health(cfg, tts_spec),
+            _tier_section_health(cfg, stt_spec),
+        )
+        try:
+            sections["subagents"] = _jarvis_agent_section_health(cfg)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("section-health subagent check failed: %s", exc)
+            sections["subagents"] = SectionHealth()
+        try:
+            sections["advanced"] = _advanced_section_health(request)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("section-health advanced check failed: %s", exc)
+            sections["advanced"] = SectionHealth()
+
+    request.app.state._section_health_cache = {"checked_at": now, "payload": sections}
+    return SectionHealthResponse(sections=sections, checked_at=now, cached=False)
 
 
 # ----------------------------------------------------------------------
@@ -635,6 +877,20 @@ def _current_selection(cfg: Any, provider_id: str, cat: Any) -> str:
     return ""
 
 
+def _brain_model_info(m: ModelInfo) -> BrainModelInfo:
+    """Wire a catalog ``ModelInfo`` into the API model, attaching the
+    presentation-only filter/star tags from ``classify_model``."""
+    tags = classify_model(m.id, m.label)
+    return BrainModelInfo(
+        id=m.id,
+        label=m.label,
+        free=tags.free,
+        frontier=tags.frontier,
+        value=tags.value,
+        starred=tags.starred,
+    )
+
+
 @router.get("/providers/{provider_id}/models")
 async def list_brain_models(
     provider_id: str, request: Request, refresh: bool = False
@@ -659,7 +915,7 @@ async def list_brain_models(
     return BrainModelsResponse(
         provider=provider_id,
         current_model=current,
-        models=[BrainModelInfo(id=m.id, label=m.label) for m in result.models],
+        models=[_brain_model_info(m) for m in result.models],
         source=result.source,
         fetched_at=result.fetched_at,
         selects=result.selects,
@@ -1296,8 +1552,8 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     }
 
 
-@router.post("/subagent/switch")
-async def subagent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
+@router.post("/jarvis-agent/switch")
+async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     """Wechselt den aktiven SUBAGENT-Provider (``[brain.sub_jarvis].provider``).
 
     Das ist der Heavy-Task-Worker (lies Repo, baue Feature, reproduziere Bug) —
@@ -1323,17 +1579,17 @@ async def subagent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     nach Voice-/App-Restart: ``restart_required: true`` (wie bei STT).
     """
     from jarvis.missions.worker_runtime.provider_map import (
-        JARVIS_TO_OPENCLAW,
-        canonical_subagent_provider,
+        JARVIS_TO_WORKER_SLUG,
+        canonical_worker_provider,
     )
 
     # Normalize (lower/strip + ``openclaw-claude`` -> ``claude-api``) so the
     # accepted set matches what the UI cards display.
-    provider = canonical_subagent_provider(body.provider) or ""
+    provider = canonical_worker_provider(body.provider) or ""
 
-    # Codex is a DIRECT worker (CodexDirectWorker) with no OpenClaw slug — it is
-    # not in JARVIS_TO_OPENCLAW. Handle it explicitly: it can be backed by the
-    # ChatGPT subscription (OAuth, ``codex login``) OR an OpenAI API key.
+    # Codex is a DIRECT worker (CodexDirectWorker) with no worker-harness slug —
+    # it is not in JARVIS_TO_WORKER_SLUG. Handle it explicitly: it can be backed by
+    # the ChatGPT subscription (OAuth, ``codex login``) OR an OpenAI API key.
     if provider in _CODEX_SUBAGENT_SLUGS:
         codex_connected = CodexAuthService(_codex_binary_path(request)).status().connected
         has_key = bool(
@@ -1351,9 +1607,9 @@ async def subagent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
         persisted = False
         if body.persist:
             try:
-                from jarvis.core.config_writer import set_sub_jarvis_provider
+                from jarvis.core.config_writer import set_worker_provider
 
-                set_sub_jarvis_provider(_CODEX_SUBAGENT_CANONICAL)
+                set_worker_provider(_CODEX_SUBAGENT_CANONICAL)
                 persisted = True
             except FileNotFoundError as exc:
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -1361,8 +1617,8 @@ async def subagent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 raise HTTPException(
                     status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
                 ) from exc
-        _apply_sub_jarvis_in_memory(request, _CODEX_SUBAGENT_CANONICAL)
-        await _emit(request, SecretConfigured(key="brain.sub_jarvis.provider", action="set"))
+        _apply_worker_in_memory(request, _CODEX_SUBAGENT_CANONICAL)
+        await _emit(request, SecretConfigured(key="brain.worker.provider", action="set"))
         return {
             "ok": True,
             "active": _CODEX_SUBAGENT_CANONICAL,
@@ -1399,9 +1655,9 @@ async def subagent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
         persisted = False
         if body.persist:
             try:
-                from jarvis.core.config_writer import set_sub_jarvis_provider
+                from jarvis.core.config_writer import set_worker_provider
 
-                set_sub_jarvis_provider(ANTIGRAVITY_SUBAGENT_CANONICAL)
+                set_worker_provider(ANTIGRAVITY_SUBAGENT_CANONICAL)
                 persisted = True
             except FileNotFoundError as exc:
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -1409,8 +1665,8 @@ async def subagent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 raise HTTPException(
                     status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
                 ) from exc
-        _apply_sub_jarvis_in_memory(request, ANTIGRAVITY_SUBAGENT_CANONICAL)
-        await _emit(request, SecretConfigured(key="brain.sub_jarvis.provider", action="set"))
+        _apply_worker_in_memory(request, ANTIGRAVITY_SUBAGENT_CANONICAL)
+        await _emit(request, SecretConfigured(key="brain.worker.provider", action="set"))
         return {
             "ok": True,
             "active": ANTIGRAVITY_SUBAGENT_CANONICAL,
@@ -1418,8 +1674,8 @@ async def subagent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             "restart_required": True,
         }
 
-    if provider not in JARVIS_TO_OPENCLAW:
-        known = ", ".join(sorted(JARVIS_TO_OPENCLAW))
+    if provider not in JARVIS_TO_WORKER_SLUG:
+        known = ", ".join(sorted(JARVIS_TO_WORKER_SLUG))
         raise HTTPException(
             status_code=404,
             detail=(
@@ -1454,9 +1710,9 @@ async def subagent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     persisted = False
     if body.persist:
         try:
-            from jarvis.core.config_writer import set_sub_jarvis_provider
+            from jarvis.core.config_writer import set_worker_provider
 
-            set_sub_jarvis_provider(provider)
+            set_worker_provider(provider)
             persisted = True
         except FileNotFoundError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -1465,11 +1721,11 @@ async def subagent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
             ) from exc
 
-    # Best-effort in-memory update so the next /openclaw/status reflects the
+    # Best-effort in-memory update so the next /jarvis-agent/status reflects the
     # choice immediately (the worker itself only re-reads on restart).
-    _apply_sub_jarvis_in_memory(request, provider)
+    _apply_worker_in_memory(request, provider)
 
-    await _emit(request, SecretConfigured(key="brain.sub_jarvis.provider", action="set"))
+    await _emit(request, SecretConfigured(key="brain.worker.provider", action="set"))
 
     return {
         "ok": True,
@@ -1487,13 +1743,13 @@ class SubagentModelBody(BaseModel):
     persist: bool = Field(default=True)
 
 
-@router.post("/subagent/model")
-async def subagent_model(body: SubagentModelBody, request: Request) -> dict[str, Any]:
-    """Pin which MODEL the heavy-task sub-agents run (``[brain.sub_jarvis].model``).
+@router.post("/jarvis-agent/model")
+async def jarvis_agent_model(body: SubagentModelBody, request: Request) -> dict[str, Any]:
+    """Pin which MODEL the Jarvis-Agent worker runs (``[brain.sub_jarvis].model``).
 
-    The dedicated subagent LLM, separate from the router brain: the worker
+    The dedicated worker LLM, separate from the router brain: the worker
     chain reads it per spawn (``provider_chain._resolve_provider_chain``) and
-    ``/openclaw/status`` displays it as ``sub_model_override`` /
+    ``/jarvis-agent/status`` displays it as ``sub_model_override`` /
     ``model_resolved``. No allowlist on the model id — providers add models
     faster than we could pin them; a typo simply falls back at the provider
     when rejected. Empty string = the documented sentinel for "provider's
@@ -1508,9 +1764,9 @@ async def subagent_model(body: SubagentModelBody, request: Request) -> dict[str,
     persisted = False
     if body.persist:
         try:
-            from jarvis.core.config_writer import set_sub_jarvis_model
+            from jarvis.core.config_writer import set_worker_model
 
-            set_sub_jarvis_model(model)
+            set_worker_model(model)
             persisted = True
         except FileNotFoundError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -1519,11 +1775,11 @@ async def subagent_model(body: SubagentModelBody, request: Request) -> dict[str,
                 status_code=500, detail=f"TOML write failed: {exc}"
             ) from exc
 
-    # Best-effort in-memory update so the next /openclaw/status reflects the
+    # Best-effort in-memory update so the next /jarvis-agent/status reflects the
     # choice immediately (workers resolve their chain per spawn from config).
-    _apply_sub_jarvis_model_in_memory(request, model)
+    _apply_worker_model_in_memory(request, model)
 
-    await _emit(request, SecretConfigured(key="brain.sub_jarvis.model", action="set"))
+    await _emit(request, SecretConfigured(key="brain.worker.model", action="set"))
 
     return {
         "ok": True,

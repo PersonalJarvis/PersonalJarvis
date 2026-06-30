@@ -4,6 +4,30 @@
 @tailwind components;
 @tailwind utilities;
 
+/* xterm.js viewport scrollbar — PLAIN (non-@layer) CSS on purpose. Tailwind
+   tree-shakes `@layer utilities` by class usage, and `.xterm-viewport` is
+   created by xterm.js at runtime (it never appears in the source), so a rule
+   for it inside a @layer gets PURGED from the build — which is exactly why the
+   embedded "Make It Yours" terminals kept the native light WebView2 scrollbar.
+   Top-level CSS is always emitted. Thin, dark, no arrow buttons. */
+.xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+.xterm-viewport::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 4px;
+}
+.xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground));
+}
+.xterm-viewport::-webkit-scrollbar-button {
+  display: none;
+}
+
 @layer base {
   :root {
     /* Jarvis — Schwarz/Gelb Theme (matte, signal-yellow) */

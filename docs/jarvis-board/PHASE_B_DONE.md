@@ -18,7 +18,7 @@ via `INSERT OR IGNORE` into the `achievements` table.
 | ID | Title | Event(s) | Condition |
 |---|---|---|---|
 | `first_mcp` | First MCP connection | `HarnessCompleted` | `harness == "mcp-remote"` and `result.exit_code == 0` |
-| `sub_jarvis_summoner` | Sub-Jarvis Summoner | `SubJarvisCompleted` | `success == True` |
+| `sub_jarvis_summoner` | Jarvis-Agent Summoner | `SubJarvisCompleted` | `success == True` |
 | `tool_dabbler` | Tool Dabbler | `ActionExecuted` | 5 distinct tools with `success == True` ever seen |
 | `tool_journeyman` | Tool Journeyman | `ActionExecuted` | 15 distinct tools |
 | `tool_master` | Tool Master | `ActionExecuted` | 30 distinct tools — additionally triggers bio regeneration |
@@ -141,7 +141,7 @@ subscriber for `*_master` unlocks.
 The plan left open how the evaluator keeps its state. I decided
 on a hybrid solution:
 
-- **Counters** (successful tasks, sub-jarvis success, mcp success,
+- **Counters** (successful tasks, Jarvis-Agent success, mcp success,
   ever-seen-tools) — persisted in `aggregator_meta` as JSON/int,
   hydrated on restart.
 - **Per-trace tools** for `triple_combo` — in-memory LRU with cap 200

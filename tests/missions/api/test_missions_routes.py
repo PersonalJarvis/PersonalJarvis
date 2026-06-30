@@ -368,7 +368,7 @@ def test_kill_invokes_kontrollierer_method_when_present(
 async def test_get_returns_empty_openclaw_workers_when_no_openclaw_marker(
     manager: MissionManager,
 ) -> None:
-    """Ohne step.harness=='openclaw' Marker: ``openclaw_workers`` ist [] aber
+    """Ohne step.harness=='openclaw' Marker: ``worker_snapshots`` ist [] aber
     immer im Response (Frontend kann sich darauf verlassen)."""
     mid = await manager.dispatch(prompt="non-openclaw mission")
 
@@ -396,14 +396,14 @@ async def test_get_returns_empty_openclaw_workers_when_no_openclaw_marker(
         r = client.get(f"/api/missions/{mid}")
     assert r.status_code == 200
     body = r.json()
-    assert "openclaw_workers" in body
-    assert body["openclaw_workers"] == []
+    assert "worker_snapshots" in body
+    assert body["worker_snapshots"] == []
 
 
 async def test_get_returns_openclaw_worker_snapshot(
     manager: MissionManager,
 ) -> None:
-    """Mit step.harness=='openclaw' + WorkerKilled: alle Spalten gefuellt."""
+    """Mit step.harness=='openclaw' + WorkerKilled: alle Spalten gefuellt (als worker_snapshots)."""
     mid = await manager.dispatch(prompt="openclaw mission")
 
     spawn_env = EventEnvelope(
@@ -439,7 +439,7 @@ async def test_get_returns_openclaw_worker_snapshot(
         r = client.get(f"/api/missions/{mid}")
     assert r.status_code == 200
     body = r.json()
-    workers = body["openclaw_workers"]
+    workers = body["worker_snapshots"]
     assert len(workers) == 1
     w = workers[0]
     assert w["worker_id"] == "oc-worker-1"

@@ -7,6 +7,7 @@ import {
   Loader2,
   RefreshCw,
   Search,
+  Star,
   XCircle,
 } from "lucide-react";
 import {
@@ -36,6 +37,39 @@ function modelProviderUrl(providerId: string, modelId: string): string | null {
   return null;
 }
 
+
+/**
+ * Catalog filter chips — narrow the (already search-filtered) list to one
+ * quality band. ``starred`` = maintainer favourites, ``free`` = zero-cost,
+ * ``frontier`` = flagship band, ``value`` = strong price/performance band. The
+ * tags are computed once in the backend (classify_model) so the chips can never
+ * drift from the list order. Presentation only — a chip never changes what is
+ * pinned. The list of keys IS the render order of the chip row.
+ */
+type ModelFilter = "all" | "starred" | "free" | "frontier" | "value";
+
+const MODEL_FILTERS: readonly ModelFilter[] = [
+  "all",
+  "starred",
+  "free",
+  "frontier",
+  "value",
+] as const;
+
+function matchesFilter(m: BrainModel, f: ModelFilter): boolean {
+  switch (f) {
+    case "starred":
+      return !!m.starred;
+    case "free":
+      return !!m.free;
+    case "frontier":
+      return !!m.frontier;
+    case "value":
+      return !!m.value;
+    default:
+      return true;
+  }
+}
 
 // Mirrors TEST_STATUS_TONE in ApiKeysView (kept local to avoid a circular import).
 const STATUS_TONE: Record<ProviderTestStatus, string> = {
@@ -111,6 +145,7 @@ export function BrainModelSelector({
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<ModelFilter>("all");
   const [models, setModels] = useState<BrainModel[]>([]);
   const [source, setSource] = useState<"live" | "cache" | "static" | "curated" | null>(null);
   const [selects, setSelects] = useState<"model" | "voice">("model");
@@ -186,11 +221,46 @@ export function BrainModelSelector({
 
   const trimmed = query.trim();
   const exactMatch = matched.some((m) => m.id === trimmed);
+  // Per-filter hit counts over the SEARCH-filtered list, so each chip shows how
+  // many of the current results it would keep and an empty band can disable its
+  // chip instead of dead-ending the user on a blank list.
+  const filterCounts = useMemo(() => {
+    const counts: Record<ModelFilter, number> = {
+      all: matched.length,
+      starred: 0,
+      free: 0,
+      frontier: 0,
+      value: 0,
+    };
+    for (const m of matched) {
+      if (m.starred) counts.starred += 1;
+      if (m.free) counts.free += 1;
+      if (m.frontier) counts.frontier += 1;
+      if (m.value) counts.value += 1;
+    }
+    return counts;
+  }, [matched]);
+  // Only brain-model catalogs carry tags; the chip row stays hidden for the
+  // voice/STT pickers (and any tag-less list) so it never adds dead controls.
+  const hasTags = useMemo(
+    () => models.some((m) => m.starred || m.free || m.frontier || m.value),
+    [models],
+  );
   // Show the COMPLETE catalog — every model is visible on open and every search
   // hit is shown. The list lives in a scrollable container, so even OpenRouter's
-  // full ~340-model catalog is fully reachable without a display cap.
-  const visible = matched;
+  // full ~340-model catalog is fully reachable without a display cap. The active
+  // band chip narrows it further (presentation only — never gates the pin).
+  const visible = useMemo(
+    () => matched.filter((m) => matchesFilter(m, filter)),
+    [matched, filter],
+  );
   const pinnedLabel = models.find((m) => m.id === pinned)?.label ?? pinned;
+
+  // If a search narrows the active band to zero hits, drop back to "all" so the
+  // user never stares at an empty list behind a still-active band chip.
+  useEffect(() => {
+    if (filter !== "all" && filterCounts[filter] === 0) setFilter("all");
+  }, [filter, filterCounts]);
 
   async function save(value: string) {
     const model = value.trim();
@@ -291,6 +361,53 @@ export function BrainModelSelector({
             />
           </div>
 
+          {/* Quality-band filter chips — narrow the list to free / frontier /
+              best-value / starred. Only shown for catalogs that carry tags (the
+              brain-model pickers), never for the voice/STT lists. A one-line hint
+              under the chips explains the active band ("when price doesn't
+              matter…") so the picker is self-explanatory for a non-technical
+              user. */}
+          {hasTags && (
+            <div className="border-b border-border">
+              <div className="flex flex-wrap items-center gap-1 px-2 py-1.5">
+                {MODEL_FILTERS.map((f) => {
+                  const count = filterCounts[f];
+                  const isActive = filter === f;
+                  // A band with no current hit is shown but disabled, so the chip
+                  // row stays stable while typing instead of reflowing.
+                  const disabled = f !== "all" && count === 0;
+                  return (
+                    <button
+                      key={f}
+                      type="button"
+                      onClick={() => setFilter(f)}
+                      disabled={disabled}
+                      aria-pressed={isActive}
+                      aria-label={t(`apikeys_model.filter_${f}`)}
+                      title={t(`apikeys_model.filter_hint_${f}`)}
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition-colors",
+                        isActive
+                          ? "border-primary/40 bg-primary/20 text-primary"
+                          : "border-border bg-muted text-muted-foreground hover:text-foreground",
+                        disabled && "cursor-not-allowed opacity-40 hover:text-muted-foreground",
+                      )}
+                    >
+                      {f === "starred" && <Star className="h-2.5 w-2.5 fill-current" />}
+                      {t(`apikeys_model.filter_${f}`)}
+                      {f !== "all" && <span className="tabular-nums opacity-60">{count}</span>}
+                    </button>
+                  );
+                })}
+              </div>
+              {filter !== "all" && (
+                <p className="px-2.5 pb-1.5 text-[10px] leading-snug text-muted-foreground">
+                  {t(`apikeys_model.filter_hint_${filter}`)}
+                </p>
+              )}
+            </div>
+          )}
+
           <ul className="max-h-56 overflow-y-auto p-1 scrollbar-jarvis">
             {visible.map((m) => {
               const link = modelProviderUrl(providerId, m.id);
@@ -319,6 +436,12 @@ export function BrainModelSelector({
                           isPinned && "font-medium text-primary",
                         )}
                       >
+                        {m.starred && (
+                          <Star
+                            aria-label={t("apikeys_model.starred_label")}
+                            className="h-3 w-3 shrink-0 fill-primary text-primary"
+                          />
+                        )}
                         {m.label}
                         {recommendedModel && m.id === recommendedModel && (
                           <span className="shrink-0 rounded-full bg-primary px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-primary-foreground">

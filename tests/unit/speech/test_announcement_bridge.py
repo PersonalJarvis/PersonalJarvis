@@ -23,8 +23,8 @@ import pytest
 from jarvis.core.bus import EventBus
 from jarvis.core.events import (
     AnnouncementRequested,
-    OpenClawAnnouncement,
-    OpenClawBackgroundCompleted,
+    JarvisAgentAnnouncement,
+    JarvisAgentBackgroundCompleted,
 )
 from jarvis.core.protocols import AudioChunk
 from jarvis.speech.pipeline import SpeechPipeline
@@ -199,7 +199,7 @@ async def test_announcement_without_bus_is_safe() -> None:
 
 @pytest.mark.asyncio
 async def test_openclaw_spawn_announcement_is_silent() -> None:
-    """``OpenClawAnnouncement`` darf NICHT mehr TTS-sprechen.
+    """``JarvisAgentAnnouncement`` darf NICHT mehr TTS-sprechen.
 
     Spawn-ACK-History:
     - 2026-04-25 .. 2026-05-10: stumm (User-Wunsch).
@@ -220,7 +220,7 @@ async def test_openclaw_spawn_announcement_is_silent() -> None:
     _make_pipeline(tts, bus, player)
 
     await bus.publish(
-        OpenClawAnnouncement(
+        JarvisAgentAnnouncement(
             trace_id=uuid4(),
             action="den vom User beschriebenen Workflow",
             target="",
@@ -236,14 +236,14 @@ async def test_openclaw_spawn_announcement_is_silent() -> None:
 
 @pytest.mark.asyncio
 async def test_openclaw_background_success_with_summary_speaks() -> None:
-    """``OpenClawBackgroundCompleted(success=True, summary=...)`` → Voice-Ansage."""
+    """``JarvisAgentBackgroundCompleted(success=True, summary=...)`` → Voice-Ansage."""
     bus = EventBus()
     tts = FakeTTS()
     player = FakePlayer()
     _make_pipeline(tts, bus, player)
 
     await bus.publish(
-        OpenClawBackgroundCompleted(
+        JarvisAgentBackgroundCompleted(
             success=True,
             utterance="recherchier mir fuenf themen",
             summary="Fuenf Recherche-Themen liegen bereit.",
@@ -267,7 +267,7 @@ async def test_openclaw_background_success_no_summary_speaks_fertig() -> None:
     _make_pipeline(tts, bus, player)
 
     await bus.publish(
-        OpenClawBackgroundCompleted(
+        JarvisAgentBackgroundCompleted(
             success=True, utterance="mach mir das", summary="", error="", duration_s=1.0,
         )
     )
@@ -285,7 +285,7 @@ async def test_openclaw_background_failure_speaks_error() -> None:
     _make_pipeline(tts, bus, player)
 
     await bus.publish(
-        OpenClawBackgroundCompleted(
+        JarvisAgentBackgroundCompleted(
             success=False, utterance="mach mir das", summary="",
             error="rate-limit reached", duration_s=2.0,
         )
@@ -380,7 +380,7 @@ async def test_openclaw_spawn_action_echo_is_not_spoken() -> None:
     _make_pipeline(tts, bus, player)
 
     await bus.publish(
-        OpenClawAnnouncement(
+        JarvisAgentAnnouncement(
             trace_id=uuid4(),
             action="eine App baut",
             target="im Workspace",
@@ -408,7 +408,7 @@ async def test_openclaw_completion_signal_does_speak_with_summary() -> None:
     _make_pipeline(tts, bus, player)
 
     await bus.publish(
-        OpenClawBackgroundCompleted(
+        JarvisAgentBackgroundCompleted(
             success=True,
             utterance="baue mir etwas",
             summary="Fertig gebaut",
@@ -497,7 +497,7 @@ async def test_plain_late_announcement_still_dropped_after_hangup() -> None:
 
 @pytest.mark.asyncio
 async def test_background_completed_speaks_after_hangup() -> None:
-    """An OpenClawBackgroundCompleted readback is by definition fresh — it must
+    """An JarvisAgentBackgroundCompleted readback is by definition fresh — it must
     be spoken even after hangup. RED before WS3b (the hangup gate dropped it)."""
     bus = EventBus()
     tts = FakeTTS()
@@ -506,7 +506,7 @@ async def test_background_completed_speaks_after_hangup() -> None:
     pipeline._hangup_event.set()  # type: ignore[attr-defined]
 
     await bus.publish(
-        OpenClawBackgroundCompleted(
+        JarvisAgentBackgroundCompleted(
             success=True,
             utterance="recherchier mir fuenf themen",
             summary="Fuenf Recherche-Themen liegen bereit.",

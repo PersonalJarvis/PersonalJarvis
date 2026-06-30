@@ -77,7 +77,7 @@ Phase 6 is **additive** to Phase 5 — the Phase-5 `SubJarvisManager` (`jarvis/b
 
 ## Concrete command lines
 
-**OpenClaw-Worker** (see `_build_claude_cmd` in `openclaw_worker.py:63`):
+**Jarvis-Agent Worker** (see `_build_claude_cmd` in `openclaw_worker.py:63`):
 
 ```bash
 openclaw agent "<prompt>" \

@@ -79,7 +79,7 @@ removing or renaming a trigger requires amending this ADR.
 | `VoiceFactBridge` (aggressive path) | `ResponseGenerated` without ack, > 30 chars | calls `WikiCurator.ingest()` in background, rate-limited | **loud regression** — same as ack path, plus rate-limit logged at DEBUG |
 | `SessionRollupWorker` | `IdleEntered` past `session_idle_threshold_minutes` | writes one session Markdown page | **loud regression** — failure increments `session_rollups_failed` and is WARNING-logged |
 
-New triggers (planned in B6: external-source ingest, OpenClaw
+New triggers (planned in B6: external-source ingest, Jarvis-Agents
 context hints) MUST be added to this table in the same PR that adds
 their code.
 
@@ -131,7 +131,7 @@ the 2026-05-13 outage.
 
 Any second-path ingest mode that fires without an explicit
 acknowledgement signal (today: `VoiceFactBridge` aggressive path;
-future: OpenClaw context hints) MUST satisfy three structural
+future: Jarvis-Agents context hints) MUST satisfy three structural
 properties.
 
 **Rate-limited.** A per-source minimum interval, configurable via

@@ -1,34 +1,34 @@
-"""Tests fuer jarvis.missions.worker_runtime.provider_map.
+"""Tests for jarvis.missions.worker_runtime.provider_map.
 
-Quelle der Wahrheit: docs/openclaw-bridge.md AD-6 Amendment-Tabelle.
-Bei Aenderung der Tabelle bitte BEIDES anpassen — Doku ist verbindlich.
+Source of truth: docs/openclaw-bridge.md AD-6 Amendment table.
+When the table changes, update BOTH — the doc is authoritative.
 """
 from __future__ import annotations
 
 import pytest
 
 from jarvis.missions.worker_runtime.provider_map import (
-    JARVIS_TO_OPENCLAW,
+    JARVIS_TO_WORKER_SLUG,
     MAPPINGS,
-    OPENCLAW_TO_JARVIS,
+    WORKER_SLUG_TO_JARVIS,
     ProviderMapping,
-    UnknownJarvisProviderError,
-    UnknownOpenclawProviderError,
+    NoWorkerSlugMappingError,
+    NoJarvisFromWorkerSlugError,
     env_vars_for,
-    to_jarvis_slug,
-    to_provider_slug,
+    to_jarvis_from_worker_slug,
+    to_worker_slug,
     validate_configured_providers,
 )
 
 
-# --- Forward-Mapping (jarvis -> openclaw) ---
+# --- Forward-Mapping (jarvis -> worker slug) ---
 
 
 @pytest.mark.parametrize(
-    "jarvis_slug,openclaw_slug",
+    "jarvis_slug,worker_slug",
     [
         ("gemini", "google"),
-        # 2026-05-17 — claude-api now routes through OpenClaw's claude-cli
+        # 2026-05-17 — claude-api now routes through the worker's claude-cli
         # backend (OAuth, Claude Max subscription) instead of `anthropic`
         # (paid Messages API with extra-usage requirement). See
         # provider_map.MAPPINGS docstring + docs/openclaw-bridge.md AD-6.
@@ -37,44 +37,44 @@ from jarvis.missions.worker_runtime.provider_map import (
         ("openrouter", "openrouter"),
     ],
 )
-def test_to_provider_slug_known_providers(jarvis_slug: str, openclaw_slug: str) -> None:
-    """Alle dokumentierten Provider mappen wie in AD-6 Amendment-Tabelle."""
-    assert to_provider_slug(jarvis_slug) == openclaw_slug
+def test_to_worker_slug_known_providers(jarvis_slug: str, worker_slug: str) -> None:
+    """All documented providers map as in the AD-6 Amendment table."""
+    assert to_worker_slug(jarvis_slug) == worker_slug
 
 
-def test_to_provider_slug_grok_removed_raises() -> None:
+def test_to_worker_slug_grok_removed_raises() -> None:
     """Grok was removed as a brain/worker provider — its mapping is gone, so
     the slug no longer resolves (only the grok-voice TTS + credential remain,
     which never route through this provider map)."""
-    with pytest.raises(UnknownJarvisProviderError):
-        to_provider_slug("grok")
+    with pytest.raises(NoWorkerSlugMappingError):
+        to_worker_slug("grok")
 
 
-def test_to_provider_slug_unknown_raises() -> None:
-    with pytest.raises(UnknownJarvisProviderError) as exc_info:
-        to_provider_slug("ollama-local")
+def test_to_worker_slug_unknown_raises() -> None:
+    with pytest.raises(NoWorkerSlugMappingError) as exc_info:
+        to_worker_slug("ollama-local")
     msg = str(exc_info.value)
     assert "ollama-local" in msg
-    assert "claude-api" in msg  # Hinweis auf bekannte Mappings
-    assert "MAPPINGS" in msg  # Hinweis wo erweitern
+    assert "claude-api" in msg  # hint about known mappings
+    assert "MAPPINGS" in msg  # hint where to extend
 
 
-def test_to_provider_slug_empty_string_raises() -> None:
-    with pytest.raises(UnknownJarvisProviderError):
-        to_provider_slug("")
+def test_to_worker_slug_empty_string_raises() -> None:
+    with pytest.raises(NoWorkerSlugMappingError):
+        to_worker_slug("")
 
 
-def test_to_provider_slug_case_sensitive() -> None:
-    """Slugs sind lowercase — Case-Mismatch ist kein Auto-Match."""
-    with pytest.raises(UnknownJarvisProviderError):
-        to_provider_slug("Gemini")
+def test_to_worker_slug_case_sensitive() -> None:
+    """Slugs are lowercase — case mismatch is not auto-matched."""
+    with pytest.raises(NoWorkerSlugMappingError):
+        to_worker_slug("Gemini")
 
 
-# --- Reverse-Mapping (openclaw -> jarvis) ---
+# --- Reverse-Mapping (worker slug -> jarvis) ---
 
 
 @pytest.mark.parametrize(
-    "openclaw_slug,jarvis_slug",
+    "worker_slug,jarvis_slug",
     [
         ("google", "gemini"),
         ("claude-cli", "claude-api"),
@@ -82,19 +82,19 @@ def test_to_provider_slug_case_sensitive() -> None:
         ("openrouter", "openrouter"),
     ],
 )
-def test_to_jarvis_slug_round_trip(openclaw_slug: str, jarvis_slug: str) -> None:
-    assert to_jarvis_slug(openclaw_slug) == jarvis_slug
+def test_to_jarvis_from_worker_slug_round_trip(worker_slug: str, jarvis_slug: str) -> None:
+    assert to_jarvis_from_worker_slug(worker_slug) == jarvis_slug
 
 
-def test_to_jarvis_slug_unknown_raises() -> None:
-    with pytest.raises(UnknownOpenclawProviderError) as exc_info:
-        to_jarvis_slug("groq")  # OpenClaw kennt das, Personal-Jarvis nicht
+def test_to_jarvis_from_worker_slug_unknown_raises() -> None:
+    with pytest.raises(NoJarvisFromWorkerSlugError) as exc_info:
+        to_jarvis_from_worker_slug("groq")  # worker may know this, Jarvis does not
     assert "groq" in str(exc_info.value)
 
 
-def test_round_trip_jarvis_openclaw_jarvis() -> None:
-    for jarvis_slug in JARVIS_TO_OPENCLAW:
-        assert to_jarvis_slug(to_provider_slug(jarvis_slug)) == jarvis_slug
+def test_round_trip_jarvis_worker_jarvis() -> None:
+    for jarvis_slug in JARVIS_TO_WORKER_SLUG:
+        assert to_jarvis_from_worker_slug(to_worker_slug(jarvis_slug)) == jarvis_slug
 
 
 # --- ENV-Var-Mapping ---
@@ -112,17 +112,17 @@ def test_round_trip_jarvis_openclaw_jarvis() -> None:
 def test_env_vars_for_known_providers(
     jarvis_slug: str, expected_env: tuple[str, ...]
 ) -> None:
-    """ENV-Var-Set matcht AD-6 Amendment, Reihenfolge: primary, fallback."""
+    """ENV-var set matches AD-6 Amendment, order: primary, fallback."""
     assert env_vars_for(jarvis_slug) == expected_env
 
 
 def test_env_vars_for_unknown_raises() -> None:
-    with pytest.raises(UnknownJarvisProviderError):
+    with pytest.raises(NoWorkerSlugMappingError):
         env_vars_for("ollama-local")
 
 
 def test_env_vars_primary_always_first() -> None:
-    """Bridge soll primary-ENV zuerst setzen — beide gesetzt ist robuster."""
+    """Bridge should set primary-ENV first — both set is more robust."""
     primary, *_ = env_vars_for("gemini")
     assert primary == "GEMINI_API_KEY"
 
@@ -138,7 +138,7 @@ def test_validate_configured_providers_all_mapped_returns_empty() -> None:
 def test_validate_configured_providers_unmapped_listed() -> None:
     configured = ["gemini", "ollama-local", "openai", "codex"]
     unmapped = validate_configured_providers(configured)
-    assert unmapped == ["codex", "ollama-local"]  # alphabetisch sortiert
+    assert unmapped == ["codex", "ollama-local"]  # alphabetically sorted
 
 
 def test_validate_configured_providers_empty_input() -> None:
@@ -146,7 +146,7 @@ def test_validate_configured_providers_empty_input() -> None:
 
 
 def test_validate_configured_providers_consumes_iterator() -> None:
-    """Iterable-Argument darf auch ein Generator sein."""
+    """Iterable argument may also be a generator."""
 
     def gen() -> object:
         yield "gemini"
@@ -156,38 +156,38 @@ def test_validate_configured_providers_consumes_iterator() -> None:
 
 
 def test_validate_configured_providers_order_stable() -> None:
-    """Ergebnis ist alphabetisch sortiert, unabhaengig von Input-Reihenfolge."""
+    """Result is alphabetically sorted, independent of input order."""
     a = validate_configured_providers(["zzz", "aaa", "mmm"])
     b = validate_configured_providers(["aaa", "mmm", "zzz"])
     assert a == b == ["aaa", "mmm", "zzz"]
 
 
-# --- Tabelle/Daten-Konsistenz ---
+# --- Table/data consistency ---
 
 
 def test_mappings_are_unique_in_both_directions() -> None:
-    """Kein doppelter jarvis-Slug, kein doppelter openclaw-Slug."""
+    """No duplicate jarvis slug, no duplicate worker slug."""
     jarvis_slugs = [m.jarvis for m in MAPPINGS]
-    openclaw_slugs = [m.openclaw for m in MAPPINGS]
+    worker_slugs = [m.worker_slug for m in MAPPINGS]
     assert len(jarvis_slugs) == len(set(jarvis_slugs))
-    assert len(openclaw_slugs) == len(set(openclaw_slugs))
+    assert len(worker_slugs) == len(set(worker_slugs))
 
 
 def test_mappings_match_dict_size() -> None:
-    """Drift-Guard: alle abgeleiteten Dicts haben dieselbe Groesse wie MAPPINGS."""
-    assert len(JARVIS_TO_OPENCLAW) == len(MAPPINGS)
-    assert len(OPENCLAW_TO_JARVIS) == len(MAPPINGS)
+    """Drift guard: all derived dicts have the same size as MAPPINGS."""
+    assert len(JARVIS_TO_WORKER_SLUG) == len(MAPPINGS)
+    assert len(WORKER_SLUG_TO_JARVIS) == len(MAPPINGS)
 
 
 def test_provider_mapping_is_frozen() -> None:
-    """ProviderMapping ist frozen — kein Runtime-Tampering."""
+    """ProviderMapping is frozen — no runtime tampering."""
     m = ProviderMapping("test", "test", "TEST_KEY")
     with pytest.raises((AttributeError, TypeError)):
         m.jarvis = "hacked"  # type: ignore[misc]
 
 
 def test_ad6_table_is_complete() -> None:
-    """AD-6 Amendment listet exakt 4 Provider — Drift-Schutz gegen versehentliches Loeschen.
+    """AD-6 Amendment lists exactly 4 providers — drift guard against accidental deletion.
 
     Grok was removed as a brain/worker provider, so its ``grok->xai`` row is
     gone from the table (only grok-voice TTS + the credential remain, neither of
@@ -195,8 +195,8 @@ def test_ad6_table_is_complete() -> None:
     expected_jarvis_slugs = {"gemini", "claude-api", "openai", "openrouter"}
     actual = {m.jarvis for m in MAPPINGS}
     assert actual == expected_jarvis_slugs, (
-        "AD-6 Amendment-Tabelle weicht ab — bitte docs/openclaw-bridge.md "
-        "und MAPPINGS synchron halten."
+        "AD-6 Amendment table drifted — please keep docs/openclaw-bridge.md "
+        "and MAPPINGS in sync."
     )
 
 
@@ -205,8 +205,8 @@ def test_ad6_table_is_complete() -> None:
 
 def test_antigravity_subagent_slugs_ssot() -> None:
     """The Antigravity subagent slug set is the SSoT mirror of CODEX_SUBAGENT_SLUGS:
-    it routes to the dedicated OAuth-CLI worker, NOT through MAPPINGS (no OpenClaw
-    provider slug)."""
+    it routes to the dedicated OAuth-CLI worker, NOT through MAPPINGS (no worker
+    slug in the provider map)."""
     from jarvis.missions.worker_runtime.provider_map import (
         ANTIGRAVITY_SUBAGENT_CANONICAL,
         ANTIGRAVITY_SUBAGENT_SLUGS,
@@ -214,8 +214,8 @@ def test_antigravity_subagent_slugs_ssot() -> None:
 
     assert "antigravity" in ANTIGRAVITY_SUBAGENT_SLUGS
     assert ANTIGRAVITY_SUBAGENT_CANONICAL == "antigravity"
-    # Not a MAPPINGS provider (OAuth CLI has no OpenClaw slug, like codex).
-    assert "antigravity" not in JARVIS_TO_OPENCLAW
+    # Not a MAPPINGS provider (OAuth CLI has no worker slug, like codex).
+    assert "antigravity" not in JARVIS_TO_WORKER_SLUG
 
 
 def test_codex_subagent_slugs_accept_bare_codex_alias() -> None:

@@ -117,6 +117,23 @@ if [ -f "$docgen_gate" ]; then
     fi
 fi
 
+# --- 5) DOCS PRIVACY gate (FAIL-CLOSED) ---------------------------------------
+# Personal data must never leave the machine inside a documentation file:
+# the maintainer's real name, private email/handle, personal Windows paths,
+# machine/account ids. This is the docs-content half the privacy_pre_push gate
+# above does NOT cover (it checks commit author emails + real secrets, not the
+# name/path text inside docs/). Same canonical manifest the ship-public-release
+# scrub uses (.claude/skills/ship-public-release/references/pii-scrub.tsv), so
+# the two never drift. Read-only scan over tracked docs/; exit 1 on any hit.
+docs_privacy_gate="scripts/ci/docs_privacy_scan.py"
+if [ -f "$docs_privacy_gate" ]; then
+    "$PY" "$docs_privacy_gate" </dev/null
+    if [ "$?" -ne 0 ]; then
+        status=1
+        docs_privacy_hit=1
+    fi
+fi
+
 rm -f "$refs_file"
 
 if [ "$status" -ne 0 ]; then
@@ -135,6 +152,12 @@ if [ "$status" -ne 0 ]; then
     if [ "${docgen_hit:-0}" -ne 0 ]; then
         echo "pre-push BLOCKED: CLI DOCGEN drift (jarvis-cli-reference.md out of date)."
         echo "  Run: python scripts/ci/gen_cli_reference.py  and commit the result."
+    fi
+    if [ "${docs_privacy_hit:-0}" -ne 0 ]; then
+        echo "pre-push BLOCKED: DOCS PRIVACY gate (personal data in docs/)."
+        echo "  See the findings above. Fix with:"
+        echo "    python scripts/ci/docs_privacy_scan.py --fix <file>"
+        echo "  or run the docs-privacy-reviewer sub-agent for a semantic pass."
     fi
     echo "Bypass once with:  git push --no-verify   (layer-3 CI is the backstop)."
 fi

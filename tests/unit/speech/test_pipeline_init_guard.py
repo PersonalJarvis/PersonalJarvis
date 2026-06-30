@@ -20,8 +20,8 @@ from jarvis.core.bus import EventBus
 from jarvis.core.events import (
     AnnouncementRequested,
     AudioOutFirst,
-    OpenClawAnnouncement,
-    OpenClawBackgroundCompleted,
+    JarvisAgentAnnouncement,
+    JarvisAgentBackgroundCompleted,
     VoiceMuteToggleRequested,
 )
 from jarvis.core.protocols import AudioChunk
@@ -62,8 +62,8 @@ def test_init_subscribes_the_known_announcement_and_audio_events() -> None:
 
     for event_type in (
         AnnouncementRequested,
-        OpenClawBackgroundCompleted,
-        OpenClawAnnouncement,
+        JarvisAgentBackgroundCompleted,
+        JarvisAgentAnnouncement,
         VoiceMuteToggleRequested,
         AudioOutFirst,
     ):

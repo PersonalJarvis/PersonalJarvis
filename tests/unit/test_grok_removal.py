@@ -39,14 +39,14 @@ def test_grok_absent_from_brain_model_catalog_but_tts_voice_kept():
 
 def test_grok_absent_from_subagent_mapping():
     from jarvis.missions.worker_runtime.provider_map import (
-        JARVIS_TO_OPENCLAW,
+        JARVIS_TO_WORKER_SLUG,
         MAPPINGS,
-        OPENCLAW_TO_JARVIS,
+        WORKER_SLUG_TO_JARVIS,
     )
 
     assert "grok" not in {m.jarvis for m in MAPPINGS}
-    assert "grok" not in JARVIS_TO_OPENCLAW
-    assert "xai" not in OPENCLAW_TO_JARVIS
+    assert "grok" not in JARVIS_TO_WORKER_SLUG
+    assert "xai" not in WORKER_SLUG_TO_JARVIS
 
 
 def test_grok_absent_from_api_agent_subagent_slugs():
@@ -108,28 +108,28 @@ def test_gemini_is_the_recommended_brain():
 
 def test_provider_chain_last_ditch_fallback_is_no_longer_grok():
     """The SubJarvisWorker last-ditch fallback used to be ('grok','grok-4.3').
-    With Grok out of MAPPINGS that hardcoded stub would crash ``to_provider_slug``
+    With Grok out of MAPPINGS that hardcoded stub would crash ``to_worker_slug``
     at spawn time, so the OpenClaw-routed fallback must no longer mention grok and
-    must use a provider that still maps to an OpenClaw slug.
+    must use a provider that still maps to a worker harness slug.
 
     (Note: a *configured* sub-agent provider can legitimately be a direct-worker
-    slug like ``antigravity``/``codex`` that has no OpenClaw mapping — that is the
-    worker factory's job, not this fallback's. This test only pins the hardcoded
-    last-ditch stub, which IS OpenClaw-routed.)
+    slug like ``antigravity``/``codex`` that has no worker-harness mapping — that
+    is the worker factory's job, not this fallback's. This test only pins the
+    hardcoded last-ditch stub, which IS harness-routed.)
     """
     import inspect
 
     import pytest
 
     from jarvis.missions.worker_runtime.provider_map import (
-        UnknownJarvisProviderError,
-        to_provider_slug,
+        NoWorkerSlugMappingError,
+        to_worker_slug,
     )
     from jarvis.missions.workers import provider_chain
 
     src = inspect.getsource(provider_chain)
     assert "grok" not in src.lower(), "grok still referenced in provider_chain.py"
     # The remaining gemini stub maps cleanly; the old grok stub would have raised.
-    to_provider_slug("gemini")
-    with pytest.raises(UnknownJarvisProviderError):
-        to_provider_slug("grok")
+    to_worker_slug("gemini")
+    with pytest.raises(NoWorkerSlugMappingError):
+        to_worker_slug("grok")

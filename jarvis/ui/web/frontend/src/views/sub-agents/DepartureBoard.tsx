@@ -12,7 +12,7 @@ import {
   Wrench,
 } from "lucide-react";
 
-import type { SubAgentNode, ToolCallEntry } from "@/store/subAgents";
+import type { SubAgentNode, ToolCallEntry } from "@/store/jarvisAgents";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 
@@ -56,12 +56,12 @@ function runtimeLabel(node: SubAgentNode, nowMs: number): string {
 
 // User-facing role label only. The underlying engine, provider and model are
 // deliberately NOT surfaced here: from the operator's perspective every node is
-// just one of Jarvis' own sub-agents. `kind` is an internal routing tag
-// (openclaw == top-level mission node, harness == the worker subprocess) and is
+// just one of Jarvis' own Jarvis-Agents. `kind` is an internal routing tag
+// (the top-level mission node vs. harness == the worker subprocess) and is
 // never shown raw — see the subtitle below. The concrete "what is it doing"
 // lives in the Task/Project column (`taskLabel`).
 function displayAgentName(node: SubAgentNode): string {
-  return node.kind === "harness" ? "Worker" : "Sub-Agent";
+  return node.kind === "harness" ? "Worker" : "Jarvis-Agent";
 }
 
 function taskLabel(node: SubAgentNode): string {
@@ -126,7 +126,7 @@ export function DepartureBoard({ agents = [], snapshotError = null }: Props) {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-[radial-gradient(circle_at_78%_0%,rgba(255,214,10,0.08),transparent_30%),linear-gradient(rgba(255,214,10,0.016)_1px,transparent_1px),linear-gradient(90deg,rgba(255,214,10,0.012)_1px,transparent_1px)] bg-[length:auto,72px_72px,72px_72px]">
       <div className="grid grid-cols-2 gap-px border-b border-zinc-900 bg-zinc-900/70 md:grid-cols-5">
-        <Metric label="Subagents" value={agents.length.toString()} icon={Bot} />
+        <Metric label="Jarvis-Agents" value={agents.length.toString()} icon={Bot} />
         <Metric label="Active" value={activeCount.toString()} icon={Radio} tone="primary" />
         <Metric label="Done" value={doneCount.toString()} icon={CheckCircle2} tone="success" />
         <Metric label="Failed" value={failedCount.toString()} icon={Activity} tone={failedCount ? "danger" : "muted"} />
@@ -137,10 +137,10 @@ export function DepartureBoard({ agents = [], snapshotError = null }: Props) {
         <div className="mb-3 flex items-center justify-between gap-4">
           <div>
             <div className="font-mono text-[11px] uppercase tracking-[0.32em] text-primary/80">
-              Subagent operations board
+              Jarvis-Agent operations board
             </div>
             <div className="mt-1 text-xs text-zinc-500">
-              Live table from the Sub-Agent backend registry and WebSocket events.
+              Live table from the Jarvis-Agent backend registry and WebSocket events.
             </div>
           </div>
           <div className="flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.22em] text-primary">
@@ -152,7 +152,7 @@ export function DepartureBoard({ agents = [], snapshotError = null }: Props) {
         {snapshotError && (
           <div className="mb-3 flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
             <CircleAlert className="h-4 w-4" />
-            Sub-agent snapshot could not be loaded: {snapshotError}
+            Jarvis-Agent snapshot could not be loaded: {snapshotError}
           </div>
         )}
 
@@ -217,7 +217,7 @@ function BoardHeader() {
   return (
     <div className="sticky top-0 z-10 grid grid-cols-[44px_1.4fr_3fr_0.85fr_0.7fr_0.8fr_1.4fr] gap-4 border-b border-zinc-800 bg-zinc-950/95 px-4 py-3 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500 backdrop-blur">
       <span />
-      <span>Subagent</span>
+      <span>Jarvis-Agent</span>
       <span>Task / Project</span>
       <span>Status</span>
       <span>Tools</span>
@@ -233,10 +233,10 @@ function EmptyState() {
     <div className="flex min-h-[420px] flex-col items-center justify-center px-8 text-center">
       <Bot className="mb-4 h-8 w-8 text-zinc-600" />
       <div className="font-display text-base font-semibold text-zinc-200">
-        No subagents are running right now.
+        No Jarvis-Agents are running right now.
       </div>
       <p className="mt-2 max-w-lg text-sm text-zinc-500">
-        When {assistantName} starts a real subagent, it will appear here with its task, status,
+        When {assistantName} starts a real Jarvis-Agent, it will appear here with its task, status,
         tool calls, runtime and result.
       </p>
     </div>
@@ -277,7 +277,7 @@ function AgentRow({
         <span className="min-w-0">
           <span className="block truncate text-zinc-100">{displayAgentName(agent)}</span>
           <span className="block truncate text-[10px] uppercase tracking-[0.16em] text-zinc-600">
-            {agent.kind === "harness" ? "worker" : "sub-agent"}
+            {agent.kind === "harness" ? "worker" : "jarvis-agent"}
           </span>
         </span>
         <span className="truncate text-zinc-400" title={taskLabel(agent)}>
@@ -315,7 +315,7 @@ function AgentRow({
 
             <div className="min-w-0 rounded-md border border-zinc-800/70 bg-black/30">
               <div className="border-b border-zinc-900 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
-                Subagent details
+                Jarvis-Agent details
               </div>
               <div className="space-y-2 px-3 py-3 font-mono text-xs text-zinc-500">
                 <div className="line-clamp-4">{taskLabel(agent)}</div>

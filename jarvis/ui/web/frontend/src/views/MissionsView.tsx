@@ -39,7 +39,7 @@ import { fetchMissions, fetchMissionDetail } from "@/components/missions/api";
 import { EventTimeline } from "@/components/missions/EventTimeline";
 import { GlobalKillButton } from "@/components/missions/GlobalKillButton";
 import { MissionTree } from "@/components/missions/MissionTree";
-import { OpenClawPanel } from "@/components/missions/OpenClawPanel";
+import { JarvisAgentPanel } from "@/components/missions/JarvisAgentPanel";
 import { VerdictPanel } from "@/components/missions/VerdictPanel";
 import {
   selectActiveCount,
@@ -90,7 +90,7 @@ export function MissionsView() {
         selectedMissionId,
         detailQuery.data.events,
         detailQuery.data.verdicts,
-        detailQuery.data.openclaw_workers,
+        detailQuery.data.worker_snapshots,
       );
     }
   }, [detailQuery.data, selectedMissionId, setMissionDetail]);
@@ -172,7 +172,7 @@ export function MissionsView() {
                 </TabsTrigger>
                 <TabsTrigger value="openclaw" className="gap-1.5">
                   <Cpu className="h-3.5 w-3.5" />
-                  OpenClaw
+                  Jarvis-Agent
                 </TabsTrigger>
               </TabsList>
             </div>
@@ -186,7 +186,7 @@ export function MissionsView() {
               <PlanPanel />
             </TabsContent>
             <TabsContent value="openclaw" className="m-0 flex-1 overflow-hidden">
-              <OpenClawPanel />
+              <JarvisAgentPanel />
             </TabsContent>
           </Tabs>
         </div>

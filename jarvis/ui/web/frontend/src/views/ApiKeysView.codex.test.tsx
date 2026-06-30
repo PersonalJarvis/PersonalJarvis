@@ -167,12 +167,12 @@ function routesFor(
 ): Record<string, () => RouteResult> {
   return {
     "/api/providers": () => ({ body: { providers: [provider] } }),
-    "/api/openclaw/status": () => ({ body: OPENCLAW_CODEX }),
+    "/api/jarvis-agent/status": () => ({ body: OPENCLAW_CODEX }),
     "/api/codex/status": () => ({
       body: provider.codex_status ?? {},
     }),
     "/api/antigravity/status": () => ({ body: {} }),
-    "/api/subagent/switch": () => ({
+    "/api/jarvis-agent/switch": () => ({
       body: { ok: true, active: "openai-codex", persisted: true },
     }),
     "/api/codex/login": () => ({
@@ -202,7 +202,7 @@ describe("ApiKeysView - Codex is subagent-only", () => {
     installFetchMock(routesFor(codexDescriptor()));
     render(<ApiKeysView />);
     // Codex lives in the "Subagents" category tab now; open it first.
-    fireEvent.click(screen.getByRole("tab", { name: /subagents/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /jarvis-agents/i }));
 
     await waitFor(() => expect(screen.getByText("OpenAI Codex (Subscription)")).toBeTruthy());
 
@@ -214,7 +214,7 @@ describe("ApiKeysView - Codex is subagent-only", () => {
     const { calls } = installFetchMock(routesFor(codexDescriptor()));
     render(<ApiKeysView />);
     // Codex lives in the "Subagents" category tab now; open it first.
-    fireEvent.click(screen.getByRole("tab", { name: /subagents/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /jarvis-agents/i }));
 
     await waitFor(() => screen.getByRole("radio"));
     fireEvent.click(screen.getByRole("radio"));
@@ -223,7 +223,7 @@ describe("ApiKeysView - Codex is subagent-only", () => {
       expect(
         calls.some(
           (c) =>
-            c.url.startsWith("/api/subagent/switch") &&
+            c.url.startsWith("/api/jarvis-agent/switch") &&
             c.method === "POST" &&
             (c.body as { provider?: string })?.provider === "openai-codex",
         ),
@@ -236,7 +236,7 @@ describe("ApiKeysView - Codex is subagent-only", () => {
     const { calls } = installFetchMock(routesFor(codexDescriptorNotConnected()));
     render(<ApiKeysView />);
     // Codex lives in the "Subagents" category tab now; open it first.
-    fireEvent.click(screen.getByRole("tab", { name: /subagents/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /jarvis-agents/i }));
 
     const connect = await waitFor(() => screen.getByText("Connect"));
     fireEvent.click(connect);
@@ -254,7 +254,7 @@ describe("ApiKeysView - Codex is subagent-only", () => {
     const { calls } = installFetchMock(routesFor(codexDescriptor()));
     render(<ApiKeysView />);
     // Codex lives in the "Subagents" category tab now; open it first.
-    fireEvent.click(screen.getByRole("tab", { name: /subagents/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /jarvis-agents/i }));
 
     const disconnect = await waitFor(() => screen.getByText("Disconnect"));
     fireEvent.click(disconnect);

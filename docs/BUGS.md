@@ -1,10 +1,10 @@
 ---
-title: Bug Register Sub-Agent Pipeline
+title: Bug Register Jarvis-Agent Pipeline
 date: 2026-04-29
-scope: Voice → Router → Sub-Jarvis-Spawn → Harness-Dispatch
+scope: Voice → Router → Jarvis-Agent-Spawn → Harness-Dispatch
 ---
 
-# Bug Register: Sub-Agent Pipeline (2026-04-29)
+# Bug Register: Jarvis-Agent Pipeline (2026-04-29)
 
 This register documents every root cause found and fixed around the
 "Spawn sub-agents." voice failures. Per bug: symptom (what the user hears),
@@ -805,7 +805,7 @@ Expected: speech unit suite green; a normal response ends with
       `speak`/`tool_call` actions terminate with `failed` + a clear
       error message. `after_delay`/`at_time` triggers work; the
       tasks view is fully functional. Voice/tool wiring comes in the
-      Phase-5 brain-tool step (`schedule_task` as a Sub-Jarvis tool).
+      Phase-5 brain-tool step (`schedule_task` as a Jarvis-Agent tool).
     - **Brain tool to create one is missing** — the voice command "Erinner mich in 2h" ("Remind me in 2 hours")
       does not work yet; tasks can currently only be created via REST
       (or a future form UI).
@@ -1468,7 +1468,7 @@ See also: `docs/anti-drift-three-layer.md` for the general pattern.
      additions.
   2. Closed two new gaps that grew in after the original fix:
      - `jarvis/core/paths.py:141` — `subprocess.run([...mklink...])` ran
-       without `creationflags` for every Sub-Agent-output session.
+       without `creationflags` for every Jarvis-Agent-output session.
      - `jarvis/missions/kontrollierer/orchestrator.py:517` —
        `subprocess.run(["git", "diff", "HEAD"])` ran without
        `creationflags` on every mission completion.
@@ -1770,7 +1770,7 @@ See also: `docs/anti-drift-three-layer.md` for the general pattern.
      to fail. A defensive `try/except ImportError` plus a fallback
      would have downgraded this to a soft warning instead of a backend
      crash. Worth considering for AD-15 in
-     `docs/openclaw-bridge.md` or its overlay equivalent.
+     `docs/jarvis-agents-bridge.md` or its overlay equivalent.
   3. **Server-hangs need lifecycle checks.** Inside
      `_run_backend`, the import of `start_overlay` happens between two
      `loop.run_until_complete` calls. Any exception there silently
@@ -1893,7 +1893,7 @@ have caught it.
   ``jarvis/sessions/recorder.py::_on_transcript_final`` always wrote
   ``current_turn.user_text = event.transcript.text`` and never closed
   the turn. Turn boundaries are normally drawn by ``_on_system_state``
-  on the SPEAKING→LISTENING transition, but in OpenClaw-routed turns
+  on the SPEAKING→LISTENING transition, but in Jarvis-Agents-routed turns
   the brain returns ``finish_reason="suppress_response"`` and the
   state goes THINKING→LISTENING (no SPEAKING). The auto-turn therefore
   stays open across every utterance in the session, and the text
@@ -2194,7 +2194,7 @@ Three decoupled layers each contribute independently:
    deep brain even runs.
 
 3. **Critic layer:** The Critic currently ratifies empty diffs for non-file
-   tasks (AD-9 in `docs/openclaw-bridge.md`). An OpenClaw worker can produce
+   tasks (AD-9 in `docs/jarvis-agents-bridge.md`). A Jarvis-Agent worker can produce
    `success=True` with no tool-call evidence, purely from a text claim. The
    Critic reads the worker's unverified assertion and signs it off.
 
@@ -2213,7 +2213,7 @@ analysis and the three-layer fix.
      with the deterministic response. The brain is never called.
    - `jarvis/brain/manager.py` — sibling `_capability_resolves(text)` check
      alongside `_should_force_openclaw`. If action-intent and no matching
-     capability and not smalltalk: skip brain + OpenClaw, emit UNSUPPORTED.
+     capability and not smalltalk: skip brain + Jarvis-Agent, emit UNSUPPORTED.
 
 3. **Dynamic system prompt.** The hardcoded `NUTZE: search_web` block is
    replaced with `registry.render_for_prompt(lang)`. If a capability is not
@@ -2227,7 +2227,7 @@ analysis and the three-layer fix.
 5. **Critic capability-honesty gate.** For capabilities with
    `requires_evidence=True`, `CriticVerdict.success=False` when no tool-call
    evidence is present. `summary_de` is derived from tool-call evidence, not
-   from the worker's unverified text claim. For Welle-2 mock OpenClaw (no
+   from the worker's unverified text claim. For Welle-2 mock Jarvis-Agents (no
    telemetry), the Critic defaults conservative-fail.
 
 ### Regression Test
@@ -2256,7 +2256,7 @@ pytest tests/integration/test_capability_coupling_e2e.py -v
 - [docs/plans/capability-coupling/EXTENSIBILITY.md](plans/capability-coupling/EXTENSIBILITY.md) — contributor guide for adding new capabilities.
 - `docs/anti-drift-three-layer.md` — cross-reference section comparing this
   pattern to the anti-drift and visible-feedback patterns.
-- AD-9 in `docs/openclaw-bridge.md` — Critic + risk-tier preconditions that
+- AD-9 in `docs/jarvis-agents-bridge.md` — Critic + risk-tier preconditions that
   BUG-028 exposes as insufficient for non-file tasks.
 
 ## BUG-029: Long dictation truncated — VAD 8 s max-utterance cut + no downstream accumulation (HIGH, 2026-05-24)
@@ -2523,7 +2523,7 @@ not just that the artifact is present — and prefer the scheduler subsystem
 (Task Scheduler / launchd / systemd-user) over the desktop-shell startup queue
 when promptness matters. Guards: `tests/unit/autostart/test_windows_task.py`.
 
-## BUG-035: "Listens forever" #4 — explicit Sub-Agent command hijacked by a topical skill match, then a beheaded mute turn ends in silence (HIGH, 2026-06-10)
+## BUG-035: "Listens forever" #4 — explicit Jarvis-Agent command hijacked by a topical skill match, then a beheaded mute turn ends in silence (HIGH, 2026-06-10)
 
 ### Symptom
 
