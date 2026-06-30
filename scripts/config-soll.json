@@ -89,6 +89,6 @@
     "model": "gemini-3.5-flash"
   },
   "brain.providers.openrouter": {
-    "model": "nvidia/nemotron-3.5-content-safety:free"
+    "model": "anthropic/claude-opus-4.8-fast"
   }
 }

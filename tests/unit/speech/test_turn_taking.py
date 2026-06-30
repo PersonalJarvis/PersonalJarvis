@@ -10,7 +10,6 @@ from jarvis.core.events import TranscriptFinal, TranscriptionUpdate
 from jarvis.core.protocols import AudioChunk, Transcript
 from jarvis.speech.pipeline import (
     _TIMEOUT_NO_ANSWER_PHRASE,
-    _TIMEOUT_TOOL_STALL_PHRASE,
     SpeechPipeline,
     TurnTakingState,
 )
@@ -637,7 +636,7 @@ async def test_streaming_long_tool_loop_speaks_real_answer_not_timeout() -> None
     loop round — exactly what ``ToolUseLoop`` does (tool_use_loop.py:400). Before
     the fix, ``_await_playback`` only honoured the computer_use heartbeat, so the
     20 s ceiling beheaded the working turn: the answer was discarded and the
-    empty-turn handler spoke ``_BRAIN_TIMEOUT_PHRASE`` ("…zu lange gedauert…").
+    empty-turn handler spoke a canned timeout fallback ("…zu lange gedauert…").
 
     This drives the REAL streaming path end-to-end (``_handle_utterance`` →
     ``_run_brain_with_stall_guard`` → ``_brain_streaming`` → ``_await_playback``)

@@ -92,6 +92,12 @@ class TranscriptPartial(Event):
 @dataclass(frozen=True, slots=True)
 class TranscriptFinal(Event):
     transcript: Transcript | None = None
+    # True when this finalized utterance will be re-attached to the still-open
+    # turn by the continuation-recombine path (the brain is mid-thinking and the
+    # window is live). The SessionRecorder reads this to record the coalesced
+    # fragments as ONE transcript turn instead of splitting them — so the
+    # Transcription view shows the single prompt the brain actually processes.
+    continues_previous: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -17,7 +17,7 @@ from jarvis.sessions.recorder import SessionRecorder
 from jarvis.sessions.store import SessionStore
 
 
-def _final(text: str, lang: str = "de") -> TranscriptFinal:
+def _final(text: str, lang: str = "de", *, continues: bool = False) -> TranscriptFinal:
     return TranscriptFinal(
         source_layer="speech.stt",
         transcript=Transcript(
@@ -26,6 +26,7 @@ def _final(text: str, lang: str = "de") -> TranscriptFinal:
             confidence=0.9,
             is_partial=False,
         ),
+        continues_previous=continues,
     )
 
 
@@ -152,6 +153,113 @@ async def test_multiple_transcript_finals_in_suppressed_session_keep_each_uttera
         assert user_texts == ["Hallo Jarvis", "Wie spät ist es", "Auflegen."]
     finally:
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_continuation_finals_merge_into_one_turn(tmp_path) -> None:
+    """When the user keeps talking while the brain is still thinking, the pipeline
+    tags the follow-up TranscriptFinals with ``continues_previous=True``
+    (continuation-recombine). The recorder must record them as ONE turn carrying
+    the combined user_text — matching the single prompt the brain re-thinks —
+    instead of 2-3 split user turns (the maintainer's "drei Prompts" complaint,
+    transcript session 2026-06-30)."""
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    try:
+        bus = EventBus()
+        SessionRecorder(store).attach(bus)
+        await bus.publish(
+            VoiceSessionStarted(
+                source_layer="speech.pipeline",
+                session_id="s-cont",
+                wake_keyword="hey_jarvis",
+                language="de",
+            )
+        )
+        await bus.publish(ListeningStarted(source_layer="speech"))
+        # First utterance, then two follow-ups WHILE the brain is still thinking
+        # (no SPEAKING boundary yet) — flagged as continuations.
+        await bus.publish(_final("Was ist der weiteste Ort"))
+        await bus.publish(_final("nicht australische", continues=True))
+        await bus.publish(_final("sondern wirklich der weiteste", continues=True))
+        # Brain finally speaks the combined answer → SPEAKING boundary finalizes.
+        await bus.publish(
+            SystemStateChanged(
+                source_layer="speech", previous="LISTENING", new_state="SPEAKING"
+            )
+        )
+        await bus.publish(
+            ResponseGenerated(source_layer="brain", text="Das ist Sydney.", language="de")
+        )
+        await bus.publish(
+            SystemStateChanged(
+                source_layer="speech", previous="SPEAKING", new_state="LISTENING"
+            )
+        )
+        await bus.publish(
+            VoiceSessionEnded(
+                source_layer="speech.pipeline",
+                session_id="s-cont",
+                hangup_reason="voice_pattern",
+            )
+        )
+
+        turns = store.get_turns("s-cont")
+        user_texts = [t.user_text for t in turns]
+        assert len(turns) == 1, user_texts
+        assert (
+            turns[0].user_text
+            == "Was ist der weiteste Ort nicht australische sondern wirklich der weiteste"
+        )
+
+
+@pytest.mark.asyncio
+async def test_continuation_merges_then_a_fresh_utterance_splits(tmp_path) -> None:
+    """A continuation merges into the open turn, but a genuinely new utterance
+    AFTER the brain has spoken (continues_previous=False) starts a fresh turn —
+    so merge and split coexist correctly."""
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    try:
+        bus = EventBus()
+        SessionRecorder(store).attach(bus)
+        await bus.publish(
+            VoiceSessionStarted(
+                source_layer="speech.pipeline",
+                session_id="s-mix",
+                wake_keyword="hey_jarvis",
+                language="de",
+            )
+        )
+        await bus.publish(ListeningStarted(source_layer="speech"))
+        await bus.publish(_final("frage eins"))
+        await bus.publish(_final("mit zusatz", continues=True))  # merges into turn 0
+        await bus.publish(
+            SystemStateChanged(
+                source_layer="speech", previous="LISTENING", new_state="SPEAKING"
+            )
+        )
+        await bus.publish(
+            ResponseGenerated(source_layer="brain", text="Antwort eins.", language="de")
+        )
+        await bus.publish(
+            SystemStateChanged(
+                source_layer="speech", previous="SPEAKING", new_state="LISTENING"
+            )
+        )
+        # New, unrelated utterance after the answer → fresh turn (not a continuation).
+        await bus.publish(_final("ganz neue frage"))
+        await bus.publish(
+            VoiceSessionEnded(
+                source_layer="speech.pipeline",
+                session_id="s-mix",
+                hangup_reason="voice_pattern",
+            )
+        )
+
+        turns = store.get_turns("s-mix")
+        user_texts = [t.user_text for t in turns]
+        assert user_texts == ["frage eins mit zusatz", "ganz neue frage"]
 
 
 @pytest.mark.asyncio

@@ -1763,8 +1763,12 @@ class VoiceConfig(BaseModel):
     # genuinely new command is mis-attached.
     continuation_grace_ms: int = 2500
     # Max fragments coalesced into one turn before the next utterance is a fresh
-    # turn (mirrors completion_max_chain — bounds indefinite chaining).
-    continuation_max_chain: int = 3
+    # turn (mirrors completion_max_chain — bounds indefinite chaining). Set
+    # generously: users who correct themselves in several short bursts while the
+    # brain is still thinking ("…nicht australische" → "Australien oder so, nein"
+    # → "sondern der weiteste Ort") chain many fragments into ONE intended
+    # prompt; a low cap drops the earliest context on the (cap+1)-th fragment.
+    continuation_max_chain: int = 8
     # Floor (seconds) below which the canned "that took too long, say it again"
     # phrase is structurally SUPPRESSED, as a stale-state guard. None of the
     # three timeout paths (20 s no-first-frame ceiling / 30 s no-progress stall /

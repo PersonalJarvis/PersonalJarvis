@@ -475,6 +475,26 @@ class SessionRecorder:
         # session — see BUG-008 history and the BUG_TRANSCRIPT_OVERWRITE entry.
         cur = self._state.current_turn
         if cur is not None and cur.user_text and not cur.finalized:
+            # Continuation-recombine: the user kept talking while the brain was
+            # still thinking, so the pipeline re-thinks the COMBINED sentence as
+            # ONE turn (TranscriptFinal.continues_previous). Mirror that here —
+            # APPEND the new fragment to the open turn instead of finalizing it
+            # and opening a new one — so the Transcription view shows the single
+            # prompt the brain processes, not 2-3 split user turns.
+            #
+            # When it is NOT a continuation we keep splitting (below): that guard
+            # exists so multi-utterance sessions with no SPEAKING boundary
+            # (brain returned suppress_response) don't overwrite each other into
+            # the last word — see BUG-008 history / the BUG_TRANSCRIPT_OVERWRITE
+            # entry.
+            if getattr(event, "continues_previous", False) and event.transcript is not None:
+                frag = event.transcript.text
+                if frag:
+                    cur.user_text = f"{cur.user_text} {frag}".strip()
+                lang = getattr(event.transcript, "language", None) or self._state.language
+                cur.user_lang = lang
+                cur.transcript_final_ms = ts_ms
+                return
             self._finalize_current_turn(end_ms=ts_ms)
 
         self._ensure_turn_open(ts_ms)

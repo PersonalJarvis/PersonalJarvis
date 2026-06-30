@@ -26,9 +26,9 @@ from jarvis.core.bus import EventBus
 from jarvis.core.config import JarvisConfig
 from jarvis.core.protocols import AudioChunk
 from jarvis.speech.pipeline import (
-    SPOKEN_KIND_COMPLETION,
     _TIMEOUT_NO_ANSWER_PHRASE,
     _TIMEOUT_TOOL_STALL_PHRASE,
+    SPOKEN_KIND_COMPLETION,
     SpeechPipeline,
 )
 
