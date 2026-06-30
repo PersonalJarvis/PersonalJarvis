@@ -92,6 +92,23 @@ class CULoopError(RuntimeError):
     """Structural error in the screenshot-only loop."""
 
 
+class CUNoCapableProviderError(CULoopError):
+    """No screen-capable (vision) brain was reachable for Computer-Use.
+
+    Raised when the whole provider chain is exhausted because every candidate
+    was keyless / out-of-credit (402) / rate-limited (429) / unreachable /
+    no-vision — i.e. an account/credential fact the user can fix in-app, NOT the
+    model returning an unparseable response. Subclasses :class:`CULoopError` so
+    existing ``except CULoopError`` paths keep catching it, while callers that
+    care (the exit-code mapper) can tell it apart and report it honestly (exit 3,
+    a "check your keys/credit" readback) instead of the generic parse phrase.
+    Live forensic 2026-06-30: a Spotify screen action failed because Gemini's
+    credits were depleted, Claude returned 502, OpenAI had no key, and the
+    OpenRouter model had no vision — yet the user heard the misleading "couldn't
+    get a valid screen-control response" (exit 2).
+    """
+
+
 _VALID_ACTIONS: frozenset[str] = frozenset(
     {"click", "click_element", "type", "key", "scroll", "drag",
      "open_app", "switch_window", "wait", "done", "fail"}
