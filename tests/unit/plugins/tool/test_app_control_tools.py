@@ -51,6 +51,12 @@ def make_cfg(*, brain="grok", tts="grok-voice", stt="faster-whisper", sub="claud
         ui=SimpleNamespace(theme="dark"),
         profile=SimpleNamespace(language="auto"),
         persona=SimpleNamespace(name="Jarvis"),
+        # resolve_assistant_name now derives the name from the wake phrase
+        # (wake_word coupling 2026-06-20), not persona.name.  Set the trigger
+        # block so "Hey Jarvis" → "Jarvis" in build_settings_snapshot.
+        trigger=SimpleNamespace(
+            wake_word=SimpleNamespace(phrase="Hey Jarvis"),
+        ),
         wake=SimpleNamespace(phrase="hey jarvis", engine="openwakeword"),
         autostart=SimpleNamespace(enabled=True),
         computer_use=SimpleNamespace(step_budget=100),

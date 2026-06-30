@@ -12,9 +12,6 @@ import time
 
 import pytest
 
-from jarvis.core.protocols import ToolResult
-
-
 def _api_key_available() -> bool:
     import os
     return bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("GEMINI_API_KEY"))
@@ -26,6 +23,7 @@ def _oauth_available() -> bool:
     return _api_key_available()
 
 
+@pytest.mark.voice_latency
 @pytest.mark.skipif(not _api_key_available(), reason="kein Brain-API-Key")
 @pytest.mark.asyncio
 async def test_latency_simple_answer():
@@ -39,6 +37,7 @@ async def test_latency_simple_answer():
     assert dt < 8.0, f"Zu langsam: {dt}s"
 
 
+@pytest.mark.voice_latency
 @pytest.mark.skipif(not _api_key_available(), reason="kein Brain-API-Key")
 @pytest.mark.asyncio
 async def test_rate_limit_tracker_skips_bad_provider():
@@ -56,18 +55,17 @@ async def test_rate_limit_tracker_skips_bad_provider():
     assert dt < 25.0
 
 
+@pytest.mark.voice_latency
 @pytest.mark.skipif(not _oauth_available(), reason="kein Claude OAuth")
 @pytest.mark.asyncio
 async def test_multitool_latency():
+    """Latenz-Test: Multi-Part-Request muss innerhalb der Deadline beantwortet werden.
+
+    (open_app wurde in älteren Builds als Tool-Assertion-Anker genutzt; das Tool
+    wurde entfernt — dieser Test misst jetzt reine Antwort-Latenz.)
+    """
     from jarvis.brain.factory import build_default_brain
     brain = build_default_brain()
-    calls: list = []
-
-    async def fake_open(args, ctx):
-        calls.append(args)
-        return ToolResult(success=True, output="ok")
-
-    brain._tools["open_app"].execute = fake_open
 
     t0 = time.perf_counter()
     r = await asyncio.wait_for(
@@ -77,5 +75,5 @@ async def test_multitool_latency():
     dt = time.perf_counter() - t0
     print(f"\nMulti-Tool-Latenz Tier-1: {dt:.2f}s")
     print(f"Response: {r[:150]}")
-    print(f"Tool-Calls: {len(calls)}")
-    assert len(calls) >= 2
+    assert r, "Brain muss eine Antwort liefern"
+    assert dt < 25.0, f"Brain zu langsam: {dt}s"

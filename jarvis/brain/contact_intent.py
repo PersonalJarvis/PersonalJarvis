@@ -113,4 +113,71 @@ def detect_contact_write_intent(utterance: str) -> bool:
     return False
 
 
-__all__ = ["detect_contact_write_intent", "CONTACT_WRITE_DIRECTIVE"]
+# Minimum substance for a wiki note (mirrors wiki_ingest._MIN_INGEST_CHARS) —
+# below this the curator's salience filter would drop it anyway.
+_MIN_MEMORY_CHARS: int = 12
+
+# An EXPLICIT "write this into my long-term memory" cue. Deliberately narrow:
+# "speichere" alone is excluded (it also means save a file / a config), so a
+# general memory note needs a clear remember-phrasing.
+_MEMORY_VERB_RE = re.compile(
+    r"\b("
+    r"merk(e|t)?\s+(es\s+)?dir"  # merk dir / merke dir / merk es dir
+    r"|notier\w*\s+dir"  # notier dir / notiere dir
+    r"|behalt\w*"  # behalte (im Hinterkopf/Kopf)
+    r"|halt\w*\b[^?]{0,30}\bfest\b"  # halt … fest
+    r"|schreib\w*\b[^?]{0,30}\bauf\b"  # schreib … auf
+    r"|vermerk\w*"  # vermerke
+    r"|remember\s+(that|this|to)|note\s+(that|down)|keep\s+in\s+mind"
+    r"|recuerda\w*|apunta\w*|anota\w*"  # ES recordar/apuntar/anotar
+    r")"
+)
+
+# Per-turn directive for a general wiki memory note (English — LLM-facing).
+WIKI_INGEST_DIRECTIVE = (
+    "MANDATORY THIS TURN: the user explicitly asked you to remember a fact "
+    "about a person or their life. You MUST call the `wiki-ingest` tool to "
+    "actually write it to their long-term wiki — pass the fact as one "
+    "self-contained sentence in the `text` argument — instead of only "
+    "acknowledging it in words. Never tell the user you noted or saved "
+    "something unless the `wiki-ingest` tool actually ran this turn."
+)
+
+
+def detect_memory_save_intent(utterance: str) -> bool:
+    """True when the user explicitly asks to REMEMBER a general fact (no contact
+    field) — routed to the direct wiki write path (``wiki-ingest``).
+
+    Requires an explicit remember cue ("merk dir", "notier dir", "remember
+    that", "behalte im Hinterkopf") AND enough substance to be worth a page, so
+    a bare "merk dir" or a plain question never fires.
+    """
+    t = _normalize(utterance or "")
+    if len(t.strip()) < _MIN_MEMORY_CHARS:
+        return False
+    return bool(_MEMORY_VERB_RE.search(t))
+
+
+def resolve_save_mandate(utterance: str) -> tuple[str, str] | None:
+    """Map a save/remember turn to ``(tool_name, per-turn directive)``, or None.
+
+    Contact-data writes (an email/phone/address, or "save X as a contact") take
+    priority over a general wiki memory note, so a dictated phone number lands in
+    the address book rather than as free prose in the wiki. This is the single
+    routing point the manager consumes — both the contact and the wiki say-do
+    guards flow through here.
+    """
+    if detect_contact_write_intent(utterance):
+        return ("contact-upsert", CONTACT_WRITE_DIRECTIVE)
+    if detect_memory_save_intent(utterance):
+        return ("wiki-ingest", WIKI_INGEST_DIRECTIVE)
+    return None
+
+
+__all__ = [
+    "detect_contact_write_intent",
+    "detect_memory_save_intent",
+    "resolve_save_mandate",
+    "CONTACT_WRITE_DIRECTIVE",
+    "WIKI_INGEST_DIRECTIVE",
+]
