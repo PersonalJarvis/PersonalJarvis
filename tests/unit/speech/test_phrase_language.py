@@ -24,10 +24,11 @@ import pytest
 from jarvis.speech import pipeline as pipeline_mod
 from jarvis.speech.pipeline import (
     _ACTION_DONE_PHRASE,
-    _BRAIN_TIMEOUT_PHRASE,
     _BRAIN_UNAVAILABLE_PHRASE,
     _CLARIFY_QUESTION_PHRASE,
     _STT_UNAVAILABLE_PHRASE,
+    _TIMEOUT_NO_ANSWER_PHRASE,
+    _TIMEOUT_TOOL_STALL_PHRASE,
     SpeechPipeline,
     TurnTakingState,
     _smalltalk_fallback_for_non_substantive,
@@ -114,7 +115,8 @@ def test_all_canned_phrase_tables_cover_de_en_es() -> None:
     for table in (
         _BRAIN_UNAVAILABLE_PHRASE,
         _STT_UNAVAILABLE_PHRASE,
-        _BRAIN_TIMEOUT_PHRASE,
+        _TIMEOUT_TOOL_STALL_PHRASE,
+        _TIMEOUT_NO_ANSWER_PHRASE,
         _CLARIFY_QUESTION_PHRASE,
         _ACTION_DONE_PHRASE,
     ):
@@ -153,9 +155,12 @@ async def test_action_done_ack_is_german_for_whisper_language_name() -> None:
 
 @pytest.mark.asyncio
 async def test_brain_timeout_phrase_is_german_for_whisper_language_name() -> None:
+    # A bare brain timeout with no tool evidence honestly admits "couldn't find
+    # that out" — and resolves the Whisper language NAME "german" to the German
+    # phrase, not the English fallback (the 2026-06-09 regression class).
     pipe = _make_pipe()
     await pipe._speak_brain_timeout("german")
-    assert pipe._spoken == [(_BRAIN_TIMEOUT_PHRASE["de"], "de")], pipe._spoken
+    assert pipe._spoken == [(_TIMEOUT_NO_ANSWER_PHRASE["de"], "de")], pipe._spoken
 
 
 def test_smalltalk_fallback_is_german_for_whisper_language_name() -> None:

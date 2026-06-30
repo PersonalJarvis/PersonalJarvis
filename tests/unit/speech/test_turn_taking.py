@@ -9,7 +9,8 @@ from jarvis.core.bus import EventBus
 from jarvis.core.events import TranscriptFinal, TranscriptionUpdate
 from jarvis.core.protocols import AudioChunk, Transcript
 from jarvis.speech.pipeline import (
-    _BRAIN_TIMEOUT_PHRASE,
+    _TIMEOUT_NO_ANSWER_PHRASE,
+    _TIMEOUT_TOOL_STALL_PHRASE,
     SpeechPipeline,
     TurnTakingState,
 )
@@ -436,8 +437,10 @@ async def test_brain_call_timeout_returns_to_listening_without_hanging() -> None
     # actual phrase table (not a hardcoded word) so a future reword of the
     # timeout phrase can't silently re-break this contract test.
     assert pipe._spoken, "brain timeout stayed silent (AD-OE6 violation)"
-    assert pipe._spoken[0][0] in _BRAIN_TIMEOUT_PHRASE.values(), (
-        f"expected a brain-timeout fallback phrase, got {pipe._spoken[0][0]!r}"
+    # A bare provider stall (non-stream total cap, no tool evidence) honestly
+    # admits it couldn't find the answer — not the vague "took too long".
+    assert pipe._spoken[0][0] in _TIMEOUT_NO_ANSWER_PHRASE.values(), (
+        f"expected a no-answer timeout fallback phrase, got {pipe._spoken[0][0]!r}"
     )
 
 
