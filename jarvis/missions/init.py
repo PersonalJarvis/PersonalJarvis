@@ -121,13 +121,146 @@ def _resolve_readback_mode(
     return "none"
 
 
-def _assemble_worker_mcp_servers(token_store=None, mcp_json_servers=None):  # noqa: ANN001, ANN201
+def _worker_mcp_relevance_filter_enabled() -> bool:
+    """The ``[brain.routing].worker_mcp_relevance_filter`` kill-switch (default ON).
+
+    Reading from the LIVE config (uncached) lets the maintainer flip the filter
+    off without a code change. Any read failure degrades to ON — the safe default
+    is to gate, exactly like the router's plugin-relevance gate. Never raises.
+    """
+    try:
+        from jarvis.core.config import load_config
+
+        cfg = load_config()
+        return bool(
+            getattr(cfg.brain.routing, "worker_mcp_relevance_filter", True)
+        )
+    except Exception:  # noqa: BLE001 — missing/blip config => keep the gate ON
+        return True
+
+
+def _live_server_tools():  # noqa: ANN202
+    """Per-server tool lists (namespaced ``<server_id>/<tool>``) from the LIVE
+    MCP registry, for the relevance filter.
+
+    Returns ``{server_id: [{"name": "<sid>/<tool>", "description": ...}, ...]}``.
+    The namespace prefix is what lets ``plugin_is_relevant`` mine a server's OWN
+    distinctive tool nouns (its ``_derive_tool_nouns`` keys on the ``<id>/`` prefix).
+
+    A server that is enabled but not started has no live client → it is simply
+    absent from the map → the relevance gate sees an empty tool list and matches
+    on the server NAME / usage card only (the correct degraded behaviour: export
+    only if the task names it). Never raises.
+    """
+    out: dict[str, list] = {}
+    try:
+        from jarvis.core.runtime_refs import get_mcp_registry
+
+        reg = get_mcp_registry()
+        if reg is None:
+            return out
+        for sid, client in reg.active_clients().items():
+            tools: list[dict] = []
+            for t in getattr(client, "_tools_cache", []) or []:
+                if isinstance(t, dict):
+                    name = t.get("name") or ""
+                    desc = t.get("description") or ""
+                else:
+                    name = getattr(t, "name", "") or ""
+                    desc = getattr(t, "description", "") or ""
+                if name:
+                    tools.append({"name": f"{sid}/{name}", "description": desc})
+            out[sid] = tools
+    except Exception:  # noqa: BLE001 — gate must never break mission dispatch
+        logger.debug("missions: live MCP tool gather failed", exc_info=True)
+    return out
+
+
+def _filter_servers_by_relevance(  # noqa: ANN201
+    servers,  # noqa: ANN001
+    *,
+    task_text=None,  # noqa: ANN001
+    relevance_filter=None,  # noqa: ANN001
+    server_tools=None,  # noqa: ANN001
+):
+    """Drop MCP servers irrelevant to this mission's task, ungated otherwise.
+
+    Mirrors the router's plugin-relevance gate one layer below it: a worker runs
+    ``--permission-mode bypassPermissions`` so an exported off-topic server is
+    actually reachable and re-introduces the ~35 s wrong-MCP stall. A server is
+    kept only when ``plugin_is_relevant(task_text, server_id, server_tools)`` is
+    True (NAMES the server, OR a usage card matches, OR a distinctive tool-noun
+    matches) — the SAME definition the router uses.
+
+    Fail-OPEN at every layer so a gate bug can NEVER silently strip a mission's
+    MCPs: no task context → full export; kill-switch OFF → full export; any
+    per-server or setup fault → export that server. NO silent truncation — the
+    kept/dropped server ids are logged at INFO when anything is dropped.
+    """
+    # No task context → we cannot judge relevance → export everything (honesty
+    # over guessing; this is the back-compat path for callers without a prompt).
+    if not servers or not task_text or not str(task_text).strip():
+        return servers
+
+    enabled = relevance_filter
+    if enabled is None:
+        enabled = _worker_mcp_relevance_filter_enabled()
+    if not enabled:
+        return servers  # kill-switch OFF → exact prior behaviour (full export)
+
+    try:
+        from jarvis.marketplace.plugin_relevance import plugin_is_relevant
+
+        tool_lookup = server_tools if server_tools is not None else _live_server_tools()
+        kept: dict[str, dict] = {}
+        dropped: list[str] = []
+        for sid, entry in servers.items():
+            tools = tool_lookup.get(sid, []) if hasattr(tool_lookup, "get") else []
+            try:
+                relevant = plugin_is_relevant(str(task_text), sid, tools)
+            except Exception:  # noqa: BLE001 — a relevance fault must NOT strip
+                relevant = True
+            if relevant:
+                kept[sid] = entry
+            else:
+                dropped.append(sid)
+        if dropped:
+            logger.info(
+                "missions: MCP relevance filter kept %s, dropped %s (off-task)",
+                sorted(kept), sorted(dropped),
+            )
+        return kept
+    except Exception as exc:  # noqa: BLE001 — never break dispatch; full export
+        logger.debug(
+            "missions: MCP relevance filter failed (%s) — full export", exc
+        )
+        return servers
+
+
+def _assemble_worker_mcp_servers(  # noqa: ANN201
+    token_store=None,  # noqa: ANN001
+    mcp_json_servers=None,  # noqa: ANN001
+    *,
+    task_text=None,  # noqa: ANN001
+    relevance_filter=None,  # noqa: ANN001
+    server_tools=None,  # noqa: ANN001
+):
     """Build the claude-cli ``mcpServers`` map for the delegated worker.
 
     Two sources, both reaching the worker identically:
       1. Connected Marketplace plugins (saved tokens + catalog mcp_server spec).
       2. Self-added MCP servers from ``mcp.json`` (the "MCPs" section), converted
          via :func:`jarvis.mcp.claude_export.mcp_json_to_claude_servers`.
+
+    When ``task_text`` is provided, the assembled set is filtered down to the
+    servers RELEVANT to that mission's task (the same plugin-relevance gate the
+    router uses) — a worker runs ``bypassPermissions`` so an exported off-topic
+    MCP is reachable and would re-introduce the ~35 s wrong-MCP stall. The filter
+    is reversible (``relevance_filter=False`` or the ``[brain.routing].
+    worker_mcp_relevance_filter`` kill-switch) and ALWAYS degrades to exporting
+    on a fault, so it can never silently strip a mission's MCPs. ``server_tools``
+    is an optional per-server tool map (``{id: [tool, ...]}``) for the relevance
+    decision; when omitted it is gathered from the live MCP registry.
 
     Never raises: a marketplace / keyring / mcp.json hiccup degrades to an
     empty (or partial) map so mission dispatch is never blocked.
@@ -156,8 +289,14 @@ def _assemble_worker_mcp_servers(token_store=None, mcp_json_servers=None):  # no
             logger.warning("missions: mcp.json -> claude config failed (%s)", exc)
             extra = {}
 
-        return assemble_claude_mcp_servers(
+        servers = assemble_claude_mcp_servers(
             load_catalog(), store, extra_servers=extra
+        )
+        return _filter_servers_by_relevance(
+            servers,
+            task_text=task_text,
+            relevance_filter=relevance_filter,
+            server_tools=server_tools,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
@@ -680,7 +819,11 @@ async def bootstrap_missions(
                     return CodexDirectWorker()
             # Give the delegated worker the connected marketplace plugins as a
             # claude-cli MCP config so it can issue the plugin tool calls (AD-OE4).
-            return ClaudeDirectWorker(mcp_servers=_assemble_worker_mcp_servers())
+            return ClaudeDirectWorker(
+                mcp_servers=_assemble_worker_mcp_servers(
+                    task_text=getattr(step, "prompt", "") or ""
+                )
+            )
         if kind == "codex_direct":
             # If a codex subprocess already proved the ChatGPT login dead this
             # session, skip codex entirely and run on Claude Max directly (one
@@ -696,7 +839,11 @@ async def bootstrap_missions(
                     "`codex login` restores it (avoids the dead-provider double "
                     "fallback)."
                 )
-                return ClaudeDirectWorker(mcp_servers=_assemble_worker_mcp_servers())
+                return ClaudeDirectWorker(
+                mcp_servers=_assemble_worker_mcp_servers(
+                    task_text=getattr(step, "prompt", "") or ""
+                )
+            )
             return CodexDirectWorker()
         if kind == "antigravity":
             # "antigravity" (Google subscription): drive the official `agy` CLI
@@ -740,7 +887,11 @@ async def bootstrap_missions(
                 "instead of failing the mission.",
                 provider,
             )
-            return ClaudeDirectWorker(mcp_servers=_assemble_worker_mcp_servers())
+            return ClaudeDirectWorker(
+                mcp_servers=_assemble_worker_mcp_servers(
+                    task_text=getattr(step, "prompt", "") or ""
+                )
+            )
         if kind == "gemini":
             # B4 (open-source AP-22): no Gemini CLI but a Gemini API key → run the
             # heavy worker IN-PROCESS via ApiAgentWorker instead of failing on the
@@ -770,7 +921,11 @@ async def bootstrap_missions(
         # unset default) routed to the OpenClaw subprocess worker, which was
         # removed (it caused the ~92% nested-claude hang; see docs/BUGS.md).
         # All of those cases now fall back to the proven direct Opus worker.
-        return ClaudeDirectWorker(mcp_servers=_assemble_worker_mcp_servers())
+        return ClaudeDirectWorker(
+            mcp_servers=_assemble_worker_mcp_servers(
+                task_text=getattr(step, "prompt", "") or ""
+            )
+        )
 
     kontrollierer = Kontrollierer(
         manager=manager,
