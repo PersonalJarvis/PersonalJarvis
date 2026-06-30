@@ -181,3 +181,12 @@ docs/qa/**
 # valid snapshot never depends on a last-minute abort. Internal process doc with
 # no downstream value; a fork writes its own.
 docs/handoffs/**
+
+# --- Voice-session transcripts (2026-06-30) ---------------------------------
+# voice-session-*.{md,txt} are raw transcripts of the maintainer talking to
+# Jarvis (e.g. "was-geht-ab…") — personal speech content with no downstream
+# value, occasionally git-tracked by accident (an auto-save / `git add -A` in a
+# parallel session). Withhold every voice-session transcript, at any depth, so a
+# stray one never reaches public history.
+voice-session-*
+**/voice-session-*
