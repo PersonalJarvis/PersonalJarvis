@@ -24,7 +24,10 @@ from jarvis.brain.model_catalog import (
     ModelCatalog,
     ModelInfo,
     catalog_spec,
+    classify_model,
     filter_brain_models,
+    is_free_model,
+    is_starred_model,
     parse_models_response,
     sort_models,
 )
@@ -581,3 +584,60 @@ class TestListModels:
             "gemini",
             "openrouter",
         }
+
+
+# ----------------------------------------------------------------------
+# Presentation-only classification — the picker's filter chips + star
+# ----------------------------------------------------------------------
+
+class TestModelClassification:
+    def test_free_model_detected_by_id_suffix(self) -> None:
+        assert is_free_model("nvidia/nemotron-3-ultra:free") is True
+        assert is_free_model("openai/gpt-5.5") is False
+
+    def test_free_model_detected_by_label(self) -> None:
+        # Some catalogs only mark "(free)" in the human label.
+        assert is_free_model("vendor/x", "Vendor X (free)") is True
+
+    def test_starred_matches_across_provider_id_shapes(self) -> None:
+        # The same pick is starred whether it is a direct-provider id or an
+        # OpenRouter namespaced id — separator/punctuation differences and all.
+        assert is_starred_model("claude-opus-4-8") is True
+        assert is_starred_model("anthropic/claude-opus-4.8") is True
+        assert is_starred_model("claude-fable-5") is True
+        assert is_starred_model("openai/gpt-5.5") is True
+        assert is_starred_model("gemini-3.5-flash") is True
+        assert is_starred_model("z-ai/glm-5.2") is True
+
+    def test_starred_is_exact_so_siblings_are_not_starred(self) -> None:
+        # Only the named base picks are starred — not their mini/pro siblings.
+        assert is_starred_model("openai/gpt-5.5-pro") is False
+        assert is_starred_model("openai/gpt-5.5-mini") is False
+        assert is_starred_model("z-ai/glm-4.6") is False
+
+    def test_starred_survives_a_free_variant_suffix(self) -> None:
+        assert is_starred_model("z-ai/glm-5.2:free") is True
+
+    def test_classify_flagship_is_frontier_not_value(self) -> None:
+        tags = classify_model("anthropic/claude-opus-4.8", "Claude Opus 4.8")
+        assert tags.frontier is True
+        assert tags.value is False
+        assert tags.starred is True
+        assert tags.free is False
+
+    def test_classify_strong_value_family_is_value_not_frontier(self) -> None:
+        tags = classify_model("deepseek/deepseek-v3.2", "DeepSeek V3.2")
+        assert tags.value is True
+        assert tags.frontier is False
+
+    def test_classify_free_and_value_are_independent(self) -> None:
+        # A model can be BOTH a value-band family AND free at once.
+        tags = classify_model("z-ai/glm-5.2:free", "Z.AI: GLM 5.2 (free)")
+        assert tags.free is True
+        assert tags.value is True
+
+    def test_classify_unknown_family_has_no_band(self) -> None:
+        tags = classify_model("sao10k/some-community-finetune")
+        assert tags.frontier is False
+        assert tags.value is False
+        assert tags.starred is False

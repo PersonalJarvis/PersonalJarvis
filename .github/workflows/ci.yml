@@ -269,3 +269,31 @@ jobs:
         env:
           PRIVACY_PRIVATE_EMAILS: ${{ vars.PRIVACY_PRIVATE_EMAILS }}
         run: python scripts/ci/privacy_scan_ci.py --base "${{ github.event.pull_request.base.sha }}"
+
+  # Docs privacy gate (layer-3 backstop for the .githooks/pre-push docs scan,
+  # which `--no-verify` can skip). Scans the tracked docs/ tree for the
+  # maintainer's real name, private email/handle, personal Windows paths, and
+  # machine/account ids, using the SAME manifest the ship-public-release scrub
+  # uses (.claude/skills/ship-public-release/references/pii-scrub.tsv) so the two
+  # never drift. Unlike privacy-gate above, this DOES check the real name — but
+  # ONLY inside docs/, where (maintainer decision 2026-06-29) it must never
+  # appear, so it cannot false-positive on code where the name lives
+  # legitimately. stdlib + git only, no pip install. BLOCKING, PR-only.
+  docs-privacy:
+    name: docs-privacy (no personal data in docs/)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.11"
+
+      - name: Docs privacy gate (BLOCKING - name / email / paths / ids in docs/)
+        run: python scripts/ci/docs_privacy_scan.py

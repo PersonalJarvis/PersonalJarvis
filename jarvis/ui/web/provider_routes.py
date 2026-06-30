@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 
 from jarvis.brain import provider_test as _provider_test
 from jarvis.brain import section_health as _section_health
-from jarvis.brain.model_catalog import catalog_spec
+from jarvis.brain.model_catalog import ModelInfo, catalog_spec, classify_model
 from jarvis.codex_auth import CodexAuthService
 from jarvis.core import config as cfg_mod
 from jarvis.core.events import SecretConfigured
@@ -121,6 +121,15 @@ CatalogSourceLiteral = Literal["live", "cache", "static", "curated"]
 class BrainModelInfo(BaseModel):
     id: str
     label: str
+    # Presentation-only classification for the picker's filter chips + star
+    # (jarvis.brain.model_catalog.classify_model). Independent booleans — never
+    # gate behavior (AP-21). ``free`` = zero-cost (OpenRouter ``:free``);
+    # ``frontier`` = flagship band; ``value`` = strong price/performance band;
+    # ``starred`` = a maintainer-picked favourite.
+    free: bool = False
+    frontier: bool = False
+    value: bool = False
+    starred: bool = False
 
 
 class BrainModelsResponse(BaseModel):
@@ -868,6 +877,20 @@ def _current_selection(cfg: Any, provider_id: str, cat: Any) -> str:
     return ""
 
 
+def _brain_model_info(m: ModelInfo) -> BrainModelInfo:
+    """Wire a catalog ``ModelInfo`` into the API model, attaching the
+    presentation-only filter/star tags from ``classify_model``."""
+    tags = classify_model(m.id, m.label)
+    return BrainModelInfo(
+        id=m.id,
+        label=m.label,
+        free=tags.free,
+        frontier=tags.frontier,
+        value=tags.value,
+        starred=tags.starred,
+    )
+
+
 @router.get("/providers/{provider_id}/models")
 async def list_brain_models(
     provider_id: str, request: Request, refresh: bool = False
@@ -892,7 +915,7 @@ async def list_brain_models(
     return BrainModelsResponse(
         provider=provider_id,
         current_model=current,
-        models=[BrainModelInfo(id=m.id, label=m.label) for m in result.models],
+        models=[_brain_model_info(m) for m in result.models],
         source=result.source,
         fetched_at=result.fetched_at,
         selects=result.selects,
