@@ -1205,6 +1205,7 @@
     "open_with_remember": "Als Standard merken",
     "open_with_change": "Öffnen-mit ändern",
     "open_with_empty": "Keine Apps gefunden, um diese Datei zu öffnen.",
+    "open_with_loading": "Apps werden gesucht …",
     "opener_default": "System-Standard-App",
     "opener_browser": "Browser",
     "reveal_in_folder": "Im Ordner anzeigen"

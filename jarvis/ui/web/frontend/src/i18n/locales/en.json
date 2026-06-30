@@ -1206,6 +1206,7 @@
     "open_with_remember": "Remember as default",
     "open_with_change": "Change how this opens",
     "open_with_empty": "No apps detected to open this file.",
+    "open_with_loading": "Detecting apps…",
     "opener_default": "System default app",
     "opener_browser": "Browser",
     "reveal_in_folder": "Reveal in folder"

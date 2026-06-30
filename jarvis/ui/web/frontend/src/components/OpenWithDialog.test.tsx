@@ -51,4 +51,15 @@ describe("OpenWithDialog", () => {
       screen.getByText("No apps detected to open this file."),
     ).toBeDefined();
   });
+
+  it("shows a detecting state (not the empty hint) while still loading", () => {
+    render(
+      <OpenWithDialog openers={[]} loading onPick={() => {}} onClose={() => {}} />,
+    );
+    // The misleading "no apps" message must NOT flash while detection runs.
+    expect(
+      screen.queryByText("No apps detected to open this file."),
+    ).toBeNull();
+    expect(screen.getByText("Detecting apps…")).toBeDefined();
+  });
 });
