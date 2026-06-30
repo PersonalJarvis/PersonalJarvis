@@ -732,6 +732,57 @@ async def test_thinking_heartbeat_stops_after_first_progress() -> None:
 
 
 @pytest.mark.asyncio
+async def test_thinking_heartbeat_survives_tool_round_until_first_spoken_token() -> None:
+    """A tool round is NOT a spoken token: the thinking heartbeat must keep
+    advancing AFTER the brain's first ``_mark_brain_progress`` (a tool-use-loop
+    round) for as long as NO speakable sentence has reached TTS — only a real
+    spoken token (``_spoke_this_turn``) may freeze it.
+
+    Live bug 2026-06-30 ("München nach Bora Bora"): the brain ran a tool round
+    ~10 s in, then worked a second model roundtrip ~20 s with no further
+    progress ping and no token. The heartbeat froze at the FIRST progress, so
+    the 20 s no-first-frame TTS ceiling beheaded the still-working turn 10 s
+    before the 30 s brain stall guard would have — Jarvis spoke "that took too
+    long" instead of answering (since_progress_s=20.77). The freeze must key on
+    the first SPEAKABLE token, not on any progress.
+    """
+    bus = EventBus()
+    pipeline = SpeechPipeline(tts=FakeTTS(), bus=bus, enable_whisper_wake=False)
+    pipeline._brain_stall_poll_s = 0.02  # type: ignore[attr-defined]
+    pipeline._brain_timeout_s = 10.0  # type: ignore[attr-defined]
+    pipeline._brain_hard_timeout_s = 10.0  # type: ignore[attr-defined]
+
+    async def _tool_round_then_more_thinking() -> tuple[str, bool]:
+        await asyncio.sleep(0.08)  # pre-token thinking — heartbeat advances
+        pipeline._mark_brain_progress()  # first TOOL ROUND — not a spoken token
+        await asyncio.sleep(0.08)  # let the poll loop observe the round
+        hb_after_round = pipeline._brain_thinking_heartbeat  # type: ignore[attr-defined]
+        assert hb_after_round > 0.0
+        await asyncio.sleep(0.14)  # keep working — still no speakable token
+        assert pipeline._brain_thinking_heartbeat > hb_after_round, (  # type: ignore[attr-defined]
+            "heartbeat must keep advancing through a tool round while the brain "
+            "has produced no speakable token yet (the no-first-frame ceiling "
+            "must not behead a still-working brain)"
+        )
+        # First speakable sentence now reaches TTS → heartbeat must freeze so a
+        # genuinely wedged TTS after a real token is still aborted.
+        pipeline._spoke_this_turn = True  # type: ignore[attr-defined]
+        await asyncio.sleep(0.06)  # let the poll loop observe the spoken flag
+        frozen = pipeline._brain_thinking_heartbeat  # type: ignore[attr-defined]
+        await asyncio.sleep(0.12)  # post-token silence
+        assert pipeline._brain_thinking_heartbeat == frozen, (  # type: ignore[attr-defined]
+            "thinking heartbeat must freeze once a speakable token reaches TTS"
+        )
+        return ("done", False)
+
+    result = await asyncio.wait_for(
+        pipeline._run_brain_with_stall_guard(_tool_round_then_more_thinking()),
+        timeout=5.0,
+    )
+    assert result == ("done", False)
+
+
+@pytest.mark.asyncio
 async def test_hung_brain_times_out_despite_thinking_heartbeat() -> None:
     """Safety: the thinking heartbeat defers the TTS ceiling but must NOT mask a
     genuinely hung brain — the absolute hard cap (measured from turn start, never
