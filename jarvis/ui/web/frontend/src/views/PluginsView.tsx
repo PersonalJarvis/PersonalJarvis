@@ -966,13 +966,13 @@ function PluginRow({
           {needsReauth && (
             <span className="inline-flex items-center gap-1 text-[9px] font-medium uppercase tracking-wider text-amber-500">
               <AlertTriangle className="h-2.5 w-2.5" />
-              Reconnect needed
+              <span>Reconnect needed</span>
             </span>
           )}
           {isError && (
             <span className="inline-flex items-center gap-1 text-[9px] font-medium uppercase tracking-wider text-destructive">
               <AlertTriangle className="h-2.5 w-2.5" />
-              Error
+              <span>Error</span>
             </span>
           )}
         </div>

@@ -246,6 +246,10 @@ describe("PluginsView keeps revoked plugins visible", () => {
     await waitFor(() => {
       expect(screen.getByText("Gmail")).toBeDefined();
     });
-    expect(screen.getByText(/reconnect/i)).toBeDefined();
+    // The row carries the amber "Reconnect needed" badge AND a Reconnect button.
+    expect(screen.getByText("Reconnect needed")).toBeDefined();
+    expect(
+      screen.getByRole("button", { name: "Reconnect plugin" }),
+    ).toBeDefined();
   });
 });
