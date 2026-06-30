@@ -127,7 +127,7 @@ describe("TurnCard spoken track", () => {
       />,
     );
     // Attributed label, not the generic "Background result".
-    expect(screen.getByText("Jarvis Sub-Agent / Output")).toBeTruthy();
+    expect(screen.getByText("Jarvis-Agent / Output")).toBeTruthy();
     // The line block is tinted violet (agent) — visibly distinct from the sky
     // tint used by every other spoken kind.
     const line = container.querySelector('[data-spoken-kind="subagent"]');

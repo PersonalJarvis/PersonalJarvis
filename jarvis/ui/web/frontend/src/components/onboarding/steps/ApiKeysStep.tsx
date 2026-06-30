@@ -101,7 +101,7 @@ export function ApiKeysStep({ goNext, skip }: StepProps) {
           );
         })}
 
-        {/* Subagent (Heavy-Task worker) — own data source (/api/openclaw/status),
+        {/* Jarvis-Agent (Heavy-Task worker) — own data source (/api/jarvis-agent/status),
             rendered as a sibling section so the onboarding key step matches the
             full Settings → API Keys layout. */}
         <JarvisAgentSection />

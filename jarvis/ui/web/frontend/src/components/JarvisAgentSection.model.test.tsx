@@ -45,9 +45,9 @@ const MODELS = {
 function mockFetch() {
   return vi.fn().mockImplementation(async (url: string) => {
     const u = String(url);
-    if (u.includes("/api/openclaw/status")) return { ok: true, json: async () => STATUS };
+    if (u.includes("/api/jarvis-agent/status")) return { ok: true, json: async () => STATUS };
     if (u.includes("/models")) return { ok: true, json: async () => MODELS };
-    if (u.includes("/api/subagent/model")) {
+    if (u.includes("/api/jarvis-agent/model")) {
       return {
         ok: true,
         json: async () => ({
@@ -78,7 +78,7 @@ describe("JarvisAgentSection — dedicated subagent LLM dropdown", () => {
     expect(await screen.findByText("claude-opus-4-8")).toBeTruthy();
   });
 
-  it("saves a picked model via POST /api/subagent/model", async () => {
+  it("saves a picked model via POST /api/jarvis-agent/model", async () => {
     const fetchMock = mockFetch();
     vi.stubGlobal("fetch", fetchMock);
     render(<JarvisAgentSection />);
@@ -91,7 +91,7 @@ describe("JarvisAgentSection — dedicated subagent LLM dropdown", () => {
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(
         (c) =>
-          String(c[0]).includes("/api/subagent/model") &&
+          String(c[0]).includes("/api/jarvis-agent/model") &&
           (c[1] as RequestInit | undefined)?.method === "POST",
       );
       expect(post).toBeDefined();

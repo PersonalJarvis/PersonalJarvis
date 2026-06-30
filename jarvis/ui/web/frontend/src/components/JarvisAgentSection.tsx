@@ -30,11 +30,11 @@ import { ProviderBillingBadge } from "@/components/ProviderBillingBadge";
  * being stuck on one. There is no key input — sub-agent workers reuse the
  * brain-provider keys entered above (`key_set` mirrors that state).
  *
- * Data source is `GET /api/openclaw/status`; the switch posts to
- * `POST /api/subagent/switch` (3-layer persist). This is its own section
+ * Data source is `GET /api/jarvis-agent/status`; the switch posts to
+ * `POST /api/jarvis-agent/switch` (3-layer persist). This is its own section
  * rather than a fourth `ProviderTier` because the status payload differs.
  * The endpoint path and the JSON keys below are the server contract; the
- * user-facing UI never says anything but "Subagent".
+ * user-facing UI never says anything but "Jarvis-Agent".
  */
 
 interface SubagentMappingRow {
