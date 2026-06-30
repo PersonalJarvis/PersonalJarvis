@@ -112,6 +112,8 @@ def test_known_sections_match_frontend_section_ids() -> None:
     text = events_ts.read_text(encoding="utf-8")
     block = re.search(r"SECTION_IDS\s*=\s*\[(.*?)\]\s*as const", text, re.DOTALL)
     assert block, "could not find SECTION_IDS array in store/events.ts"
-    ts_ids = set(re.findall(r'"([a-z0-9-]+)"', block.group(1)))
+    # [a-z0-9_-]+ — underscore added to match "run_inspector" (hyphen-only
+    # pattern silently dropped it, so KNOWN had run_inspector but ts_ids didn't).
+    ts_ids = set(re.findall(r'"([a-z0-9_-]+)"', block.group(1)))
     assert ts_ids, "no ids parsed from SECTION_IDS"
     assert NavigateTool.known_sections() == ts_ids

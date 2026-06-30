@@ -33,6 +33,15 @@ def test_action_unfulfilled_answer_unknown_language_is_safe():
     assert _action_unfulfilled_answer("contact-upsert", lang="fr").strip()
 
 
+def test_action_unfulfilled_answer_wiki_ingest_is_distinct_and_honest():
+    de = _action_unfulfilled_answer("wiki-ingest", lang="de")
+    en = _action_unfulfilled_answer("wiki-ingest", lang="en")
+    assert de.strip() and en.strip()
+    # Wiki wording, not the contact line.
+    assert "kontakt" not in de.lower()
+    assert any(w in de.lower() for w in ("wiki", "vermerkt", "notiert", "gemerkt"))
+
+
 # --- the replacement decision (pure) -----------------------------------------
 
 

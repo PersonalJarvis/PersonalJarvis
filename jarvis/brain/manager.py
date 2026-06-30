@@ -1158,6 +1158,19 @@ _ACTION_UNFULFILLED_PHRASES: dict[str, dict[str, str]] = {
             "añado."
         ),
     },
+    "wiki-ingest": {
+        "de": (
+            "Ich hab das noch nicht in deinem Wiki vermerkt — sag's noch mal, "  # i18n-allow: German TTS
+            "dann schreib ich's rein."  # i18n-allow: German TTS
+        ),
+        "en": (
+            "I haven't actually noted that in your wiki yet — say it once more "
+            "and I'll write it down."
+        ),
+        "es": (
+            "Todavía no lo he anotado en tu wiki — dímelo otra vez y lo escribo."
+        ),
+    },
 }
 # A write tool with no bespoke table reuses the contact wording's shape.
 _ACTION_UNFULFILLED_DEFAULT = _ACTION_UNFULFILLED_PHRASES["contact-upsert"]
@@ -6009,34 +6022,32 @@ class BrainManager:
                 self._evidence_directive = verdict.directive
                 self._evidence_required_tool = verdict.tool_name
 
-        # Say-do honesty guard for WRITES (contacts). The read evidence gate
-        # above never fires on a "save this person" turn (it is not a lookup),
-        # so a confirmed offer ("ja, leg die an … die Mail ist …") used to be
-        # answered with a chatty "Okay, sehr gut" and NO contact-upsert call —
-        # the address book stayed empty (live session 2026-06-30). Mandate the
-        # real tool this turn, reusing the evidence machinery: the prompt
-        # directive, the smalltalk tool-widening (_evidence_required_tool stays
-        # visible), and the unverified-answer backstop that catches a fake
-        # confirmation. Only when the read gate did not already mandate a tool,
-        # and only if contact-upsert is actually registered (a deployment
-        # without contacts degrades to no mandate — never a mandate for a
-        # missing tool, §3 open-source).
-        if (
-            not self._evidence_required_tool
-            and "contact-upsert" in (getattr(self, "_tools", None) or {})
-        ):
-            from jarvis.brain.contact_intent import (
-                CONTACT_WRITE_DIRECTIVE,
-                detect_contact_write_intent,
-            )
+        # Say-do honesty guard for WRITES. The read evidence gate above never
+        # fires on a "save this" turn (it is not a lookup), so a confirmed offer
+        # ("ja, leg die an … die Mail ist …") or an explicit "merk dir, dass …"
+        # used to be answered with a chatty "Okay, sehr gut" and NO write call —
+        # nothing persisted (live session 2026-06-30). Mandate the right write
+        # tool this turn, reusing the evidence machinery: the prompt directive,
+        # the smalltalk tool-widening (_evidence_required_tool stays visible),
+        # and the unverified-answer backstop that catches a fake confirmation.
+        # resolve_save_mandate routes contact data → contact-upsert and a
+        # general fact → wiki-ingest. Only when the read gate did not already
+        # mandate a tool, and only if the target tool is actually registered (a
+        # deployment without contacts/wiki degrades to no mandate — never a
+        # mandate for a missing tool, §3 open-source).
+        if not self._evidence_required_tool:
+            from jarvis.brain.contact_intent import resolve_save_mandate
 
-            if detect_contact_write_intent(user_text):
-                self._evidence_directive = CONTACT_WRITE_DIRECTIVE
-                self._evidence_required_tool = "contact-upsert"
+            _save_mandate = resolve_save_mandate(user_text)
+            if _save_mandate is not None and _save_mandate[0] in (
+                getattr(self, "_tools", None) or {}
+            ):
+                self._evidence_directive = _save_mandate[1]
+                self._evidence_required_tool = _save_mandate[0]
                 self._evidence_required_is_write = True
                 log.info(
-                    "Say-do guard: contact-write intent — mandating "
-                    "contact-upsert this turn"
+                    "Say-do guard: save intent — mandating %s this turn",
+                    _save_mandate[0],
                 )
 
         # Phase 5 / ADR-0006: pre-call budget gate. Block rather than request

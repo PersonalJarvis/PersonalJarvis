@@ -10,7 +10,10 @@ backstop can catch a fake confirmation. Pure regex, no LLM (AP-9/AP-11).
 
 from jarvis.brain.contact_intent import (
     CONTACT_WRITE_DIRECTIVE,
+    WIKI_INGEST_DIRECTIVE,
     detect_contact_write_intent,
+    detect_memory_save_intent,
+    resolve_save_mandate,
 )
 
 # --- positive: the turn really asks to save a person ------------------------
@@ -82,4 +85,66 @@ def test_directive_forces_the_real_tool_and_clarifies_bad_fields():
     # Must instruct asking on a malformed required field (the '@'-less email).
     assert "@" in d
     # Must forbid claiming a save that did not run.
+    assert "never" in d.lower() or "not" in d.lower()
+
+
+# --- general "merk dir …" facts → wiki-ingest (the wiki document path) --------
+
+
+def test_memory_save_intent_fires_on_explicit_remember():
+    assert detect_memory_save_intent("Merk dir, dass Sam gerne Fußball schaut.") is True
+    assert detect_memory_save_intent("Notier dir, dass Joy am 14. August Geburtstag hat.") is True
+    assert detect_memory_save_intent("Remember that Tom prefers tea over coffee.") is True
+    assert (
+        detect_memory_save_intent("Behalte im Hinterkopf, dass ich allergisch gegen Nüsse bin.")
+        is True
+    )
+
+
+def test_memory_save_intent_needs_a_remember_cue_and_substance():
+    assert detect_memory_save_intent("Was geht ab?") is False
+    assert detect_memory_save_intent("Wie ist das Wetter?") is False
+    # "speichere die Datei" is file/config, not a personal memory note.
+    assert detect_memory_save_intent("Speichere die Datei.") is False
+    assert detect_memory_save_intent("Merk.") is False  # no real content
+
+
+# --- routing: contact data vs general fact -----------------------------------
+
+
+def test_resolve_save_mandate_routes_contact_data_to_contact_upsert():
+    mandate = resolve_save_mandate(
+        "Ähm, ja, legt die mal an. Also die Mailadresse von Sam ist sam.10.de."
+    )
+    assert mandate is not None
+    tool, directive = mandate
+    assert tool == "contact-upsert"
+    assert directive == CONTACT_WRITE_DIRECTIVE
+
+
+def test_resolve_save_mandate_routes_general_fact_to_wiki_ingest():
+    mandate = resolve_save_mandate("Merk dir, dass Sam gerne Fußball schaut.")
+    assert mandate is not None
+    tool, directive = mandate
+    assert tool == "wiki-ingest"
+    assert directive == WIKI_INGEST_DIRECTIVE
+
+
+def test_resolve_save_mandate_prefers_contact_when_both_match():
+    # "merk dir … Nummer ist …" is BOTH a remember cue AND contact data — the
+    # address-book path wins so the number lands where it belongs.
+    mandate = resolve_save_mandate("Merk dir, Christophs Nummer ist 0171 1234567.")
+    assert mandate is not None
+    assert mandate[0] == "contact-upsert"
+
+
+def test_resolve_save_mandate_none_on_plain_turn():
+    assert resolve_save_mandate("Was geht ab?") is None
+    assert resolve_save_mandate("Wie ist das Wetter?") is None
+
+
+def test_wiki_ingest_directive_forces_the_real_tool():
+    d = WIKI_INGEST_DIRECTIVE
+    assert "wiki-ingest" in d
+    assert "MANDATORY" in d
     assert "never" in d.lower() or "not" in d.lower()
