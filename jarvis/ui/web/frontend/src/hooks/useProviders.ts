@@ -529,6 +529,13 @@ export async function testProvider(providerId: string): Promise<ProviderTestResu
 export interface BrainModel {
   id: string;
   label: string;
+  // Presentation-only classification from the backend (classify_model) that
+  // drives the picker's filter chips + star. All optional/defaulting to false so
+  // older payloads and the custom-id row stay valid. Never gate behavior on them.
+  free?: boolean;
+  frontier?: boolean;
+  value?: boolean;
+  starred?: boolean;
 }
 
 export interface BrainModelsResult {
