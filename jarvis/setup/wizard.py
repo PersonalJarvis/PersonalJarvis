@@ -79,6 +79,11 @@ class SecretSpec:
     help_url: str         # Wo den Key holen
     required_for: str     # Menschen-lesbar: "Brain (Claude)" etc.
     optional: bool = True
+    # When False, the slot is whitelisted for the API (so it CAN be stored from
+    # the app) but is NOT asked in the interactive first-run wizard. Used for
+    # advanced, app-only secrets (e.g. per-provider BYO OAuth client ids) so they
+    # don't lengthen onboarding.
+    prompt: bool = True
 
 
 SECRETS: list[SecretSpec] = [
@@ -229,6 +234,69 @@ SECRETS: list[SecretSpec] = [
         required_for="Telephony (call Jarvis on a Twilio phone number)",
         optional=True,
     ),
+    # === Bring-your-own OAuth client (marketplace plugins) ===
+    # A downloader can run their OWN production OAuth app instead of the shipped
+    # catalog placeholder. This is the ONLY durable fix for provider-side
+    # refresh-token expiry: a Google OAuth app left in "Testing" status drops its
+    # refresh token after 7 days; publishing one's own app to production stops the
+    # clock. Resolved by `marketplace.connect_helpers.resolve_pkce_client` via the
+    # `<family>_oauth_client_*` keys. prompt=False: advanced + entered ONLY from
+    # the Plugins UI, never asked in the first-run wizard. The Google family
+    # (gmail/drive/calendar) shares ONE client pair.
+    SecretSpec(
+        key="google_oauth_client_id",
+        env_fallback="GOOGLE_OAUTH_CLIENT_ID",
+        label="Google OAuth Client ID (Gmail / Drive / Calendar)",
+        help_url="https://console.cloud.google.com/auth/clients",
+        required_for="Marketplace plugins (Google family) — your own OAuth client",
+        optional=True,
+        prompt=False,
+    ),
+    SecretSpec(
+        key="google_oauth_client_secret",
+        env_fallback="GOOGLE_OAUTH_CLIENT_SECRET",
+        label="Google OAuth Client Secret (Gmail / Drive / Calendar)",
+        help_url="https://console.cloud.google.com/auth/clients",
+        required_for="Marketplace plugins (Google family) — your own OAuth client",
+        optional=True,
+        prompt=False,
+    ),
+    SecretSpec(
+        key="slack_oauth_client_id",
+        env_fallback="SLACK_OAUTH_CLIENT_ID",
+        label="Slack OAuth Client ID",
+        help_url="https://api.slack.com/apps",
+        required_for="Marketplace plugin (Slack) — your own OAuth client",
+        optional=True,
+        prompt=False,
+    ),
+    SecretSpec(
+        key="slack_oauth_client_secret",
+        env_fallback="SLACK_OAUTH_CLIENT_SECRET",
+        label="Slack OAuth Client Secret",
+        help_url="https://api.slack.com/apps",
+        required_for="Marketplace plugin (Slack) — your own OAuth client",
+        optional=True,
+        prompt=False,
+    ),
+    SecretSpec(
+        key="asana_oauth_client_id",
+        env_fallback="ASANA_OAUTH_CLIENT_ID",
+        label="Asana OAuth Client ID",
+        help_url="https://app.asana.com/0/my-apps",
+        required_for="Marketplace plugin (Asana) — your own OAuth client",
+        optional=True,
+        prompt=False,
+    ),
+    SecretSpec(
+        key="asana_oauth_client_secret",
+        env_fallback="ASANA_OAUTH_CLIENT_SECRET",
+        label="Asana OAuth Client Secret",
+        help_url="https://app.asana.com/0/my-apps",
+        required_for="Marketplace plugin (Asana) — your own OAuth client",
+        optional=True,
+        prompt=False,
+    ),
 ]
 
 
@@ -285,6 +353,10 @@ def step_api_keys() -> dict[str, str]:
 
     stored: dict[str, str] = {}
     for spec in SECRETS:
+        if not spec.prompt:
+            # Advanced, app-only slot (e.g. a BYO OAuth client id) — whitelisted
+            # for the API but intentionally not asked here to keep onboarding short.
+            continue
         existing = cfg.get_secret(spec.key)
         marker = "✓ bereits hinterlegt" if existing else "–"
         _println(f"• {spec.label}  [{marker}]")
