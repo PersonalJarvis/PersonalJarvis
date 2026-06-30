@@ -178,6 +178,16 @@ class TriggerConfig(BaseModel):
     # 2026-05-18: single-turn is the canonical behaviour — open-mic mode
     # made Jarvis trigger on every word in the room.
     single_turn_mode: bool = True
+    # Silence window (seconds) after which a CONVERSATION-mode voice session
+    # (``single_turn_mode = false``) auto-hangs-up while waiting for the next
+    # user turn. Set to 0 — or any value <= 0 — to DISABLE the auto-hangup
+    # entirely: the session then stays active until you hang up manually (say
+    # "auflegen" or press the hangup hotkey). User mandate 2026-06-30. Has no
+    # effect in single-turn mode (each turn ends after Jarvis answers anyway).
+    # Wired into ``SpeechPipeline(idle_timeout_s=...)`` at every construction
+    # site; the constructor default (30 s) stays the safe baseline for a fresh
+    # download so an accidental wake never holds the mic open forever.
+    session_idle_timeout_s: float = 30.0
     # When True (default, user mandate 2026-05-29), the configured ``hotkey`` is
     # a true push-to-talk key: holding it records, releasing it submits the
     # captured audio as one prompt (one-shot — Jarvis answers once, then the

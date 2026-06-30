@@ -353,6 +353,24 @@ def test_trailing_em_dash_leaves_no_dangling_comma() -> None:
     assert not result.cleaned.endswith(",")
 
 
+def test_ascii_double_hyphen_dash_aside_becomes_comma() -> None:
+    """A ' -- ' dash-aside (ASCII double hyphen, space-surrounded) reads as the
+    same hard TTS pause as an em dash — collapse it to a comma too. The
+    Unicode-only scrub missed it, and several canned phrases / LLM outputs use
+    ' -- ' (live forensic 2026-06-30)."""
+    result = scrub_for_voice("Mach ich -- ich sage Bescheid, sobald es fertig ist.")
+    assert "--" not in result.cleaned
+    assert "Mach ich, ich sage Bescheid" in result.cleaned
+
+
+def test_ascii_hyphen_compound_and_range_survive_double_hyphen_filter() -> None:
+    """No false positive: a compound ('T-Shirt') or numeric range ('20-30') has
+    no surrounding spaces and must survive the double-hyphen scrub."""
+    result = scrub_for_voice("Dein T-Shirt kostet 20-30 Euro.")
+    assert "T-Shirt" in result.cleaned
+    assert "20-30" in result.cleaned
+
+
 def test_fallback_used_true_only_for_stacktrace() -> None:
     """``fallback_used`` nur ``True`` wenn der gesamte Text durch Standard-
     Phrase ersetzt wurde (Stacktrace), nicht bei Teil-Scrub."""

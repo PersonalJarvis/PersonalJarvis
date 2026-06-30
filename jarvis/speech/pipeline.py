@@ -1311,7 +1311,16 @@ class SpeechPipeline:
         # re-enumerated PortAudio table (post-reboot idx-drift cure, BUG-014).
         self._output_device = output_device
         self._input_device = input_device
-        self._idle_timeout_s = idle_timeout_s
+        # Idle/silence auto-hangup. A value <= 0 DISABLES it: the session then
+        # waits forever for the next utterance or a manual hangup (hotkey /
+        # "auflegen"), exactly the "stay active until I hang up" mandate
+        # (2026-06-30). ``_idle_timeout_s`` is kept at a sane POSITIVE value even
+        # when disabled because the re-arm grace fields below are derived from it
+        # and the grace math must never see a zero/negative window; those graces
+        # are only consulted on the idle-expiry branch, which is unreachable once
+        # the hangup is disabled (the loop passes ``timeout=None`` to asyncio.wait).
+        self._idle_hangup_enabled = idle_timeout_s > 0
+        self._idle_timeout_s = idle_timeout_s if idle_timeout_s > 0 else 30.0
         # Monotonic timestamp of the last out-of-band announcement Jarvis
         # actually SPOKE (mission/background readback, preamble) plus the grace
         # window it grants. An async readback is delivered via ``_on_announcement``
@@ -1323,7 +1332,7 @@ class SpeechPipeline:
         # idle_timeout hangup at :18). The idle-expiry branch re-arms a fresh
         # window while within this grace. Bounded — one full window's worth.
         self._last_announcement_spoken_monotonic: float | None = None
-        self._post_readback_grace_s: float = idle_timeout_s
+        self._post_readback_grace_s: float = self._idle_timeout_s
         # Monotonic timestamp of the moment Jarvis last STOPPED speaking an
         # inline answer (SPEAKING -> LISTENING). A long turn dispatched OFF the
         # ``_active_session`` loop — the delegation grace / completion timer buffers
@@ -4425,7 +4434,17 @@ class SpeechPipeline:
                     try:
                         done, _pending = await asyncio.wait(
                             {next_task, hangup_task},
-                            timeout=self._idle_timeout_s,
+                            # Idle auto-hangup disabled (``session_idle_timeout_s``
+                            # <= 0) → wait indefinitely for an utterance or a
+                            # manual hangup; the idle-expiry branch below is then
+                            # never reached, so the session stays active until the
+                            # user hangs up. Otherwise bound the LISTENING window
+                            # so a silent session hangs up after the timeout.
+                            timeout=(
+                                self._idle_timeout_s
+                                if getattr(self, "_idle_hangup_enabled", True)
+                                else None
+                            ),
                             return_when=asyncio.FIRST_COMPLETED,
                         )
                     except asyncio.CancelledError:
@@ -7723,6 +7742,7 @@ async def _main() -> None:
         tts=tts,
         brain_callback=brain,
         enable_whisper_wake=True,
+        idle_timeout_s=config.trigger.session_idle_timeout_s,
         input_device=config.audio.input_device or None,
         output_device=config.audio.output_device or None,
     )

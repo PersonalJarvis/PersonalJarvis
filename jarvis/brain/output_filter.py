@@ -646,6 +646,12 @@ def scrub_for_voice(
     #     ASCII '-' with no surrounding whitespace and are NOT in the class below,
     #     so they survive untouched.
     new = re.sub(r"\s*[—–]\s*", ", ", out)
+    # ASCII double hyphen used as a dash-aside (" -- ") reads as the same hard
+    # TTS pause; collapse it too (2026-06-30: the Unicode-only scrub missed it,
+    # and several canned phrases / LLM outputs use " -- "). Require surrounding
+    # whitespace so hyphen compounds ("T-Shirt") and numeric ranges ("20-30") —
+    # which have no spaces — survive untouched.
+    new = re.sub(r"\s+-{2,}\s+", ", ", new)
     if new != out:
         actions.append("removed_em_dash")
         out = new
