@@ -1207,8 +1207,9 @@ _EVIDENCE_DOMAIN_LABELS: dict[str, dict[str, str]] = {
 # claims a "block"/invents a reason), just names the capability via {label}.
 _EVIDENCE_UNFULFILLED_DOMAIN_PHRASES: dict[str, str] = {
     "de": (
-        "Ich konnte {label} gerade nicht abrufen — der Zugriff ist nicht "  # i18n-allow: German TTS
-        "durchgelaufen. Sag noch mal Bescheid, dann versuche ich es erneut."  # i18n-allow: German TTS
+        "Ich konnte {label} gerade nicht abrufen — der Zugriff ist "  # i18n-allow: German TTS
+        "nicht durchgelaufen. Sag noch mal Bescheid, dann versuche "  # i18n-allow: German TTS
+        "ich es erneut."  # i18n-allow: German TTS
     ),
     "en": (
         "I couldn't pull {label} just now — the access didn't go through. "
