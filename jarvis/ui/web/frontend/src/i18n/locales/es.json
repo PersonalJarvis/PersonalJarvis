@@ -165,7 +165,8 @@
   "sidebar": {
     "wake_hint": "Di tu palabra de activación…",
     "brain_label": "Cerebro",
-    "brain_tooltip": "Cambiar proveedor de IA"
+    "brain_tooltip": "Cambiar proveedor de IA",
+    "apikeys_alert": "Un proveedor está configurado pero no funciona — abre API Keys para solucionarlo"
   },
   "chats_view": {
     "title": "Chat",

@@ -12,7 +12,9 @@ be held for the entire lifetime of the client.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 import re
 import time
 from contextlib import AsyncExitStack
@@ -28,6 +30,34 @@ log = logging.getLogger(__name__)
 # Circuit-breaker defaults
 _CB_THRESHOLD = 3
 _CB_COOLDOWN_NS = 60_000_000_000  # 60 seconds
+
+
+def _read_call_timeout_s() -> float:
+    """Per-call timeout (seconds), ENV-overridable with a safe fallback.
+
+    Default 20 s. Rationale: a hung MCP server must NOT block the whole voice
+    turn (~35 s hangs were observed), but the ceiling must not guillotine
+    legitimately slower tools — a remote http MCP doing real network I/O
+    (search, a DB query, a web fetch) can take well over 5-10 s. 20 s sits
+    comfortably above normal tool latency yet still trips long before a voice
+    turn feels dead, and a repeatedly-slow server tips into the circuit
+    breaker (3 strikes) and drops off the surface on its own. Tunable per host
+    via ``JARVIS_MCP_CALL_TIMEOUT_S`` (a headless VPS with a slow uvx cold
+    start can raise it) without code or config edits.
+    """
+    raw = os.environ.get("JARVIS_MCP_CALL_TIMEOUT_S")
+    if raw:
+        try:
+            val = float(raw)
+            if val > 0:
+                return val
+        except ValueError:
+            log.warning("JARVIS_MCP_CALL_TIMEOUT_S=%r is not a number; using 20s", raw)
+    return 20.0
+
+
+# Module-level so a test can monkeypatch it and call_tool re-reads it each call.
+_CALL_TIMEOUT_S = _read_call_timeout_s()
 
 # Matches ``$NAME`` secret placeholders inside http header values, e.g.
 # ``"Bearer $ZAPIER_TOKEN"`` → the ``ZAPIER_TOKEN`` group.
@@ -145,7 +175,26 @@ class MCPClient:
             raise RuntimeError(f"{self.spec.name}: MCPClient not started")
 
         try:
-            result = await self._session.call_tool(name, args)
+            # Per-call timeout: the MCP SDK has no built-in ceiling, so a server
+            # that hangs on a tool call would block the whole turn forever. We
+            # bound it here and RAISE on expiry; the raise falls into the
+            # ``except Exception`` below, which counts the failure — so a
+            # repeatedly-hung server trips the circuit breaker and drops from the
+            # surface instead of hanging every future turn. We re-read the module
+            # global each call so the ENV override / a test monkeypatch applies.
+            timeout_s = _CALL_TIMEOUT_S
+            try:
+                result = await asyncio.wait_for(
+                    self._session.call_tool(name, args),
+                    timeout=timeout_s,
+                )
+            except TimeoutError as exc:
+                # Clean, honest message so the brain's tool loop surfaces it and
+                # the voice layer can speak its timeout phrase — not a bare crash.
+                raise RuntimeError(
+                    f"{self.spec.name} tool {name!r} timed out after "
+                    f"{timeout_s:.0f}s (server not responding)"
+                ) from exc
             # MCP-SDK quirk: server-side tool exceptions do NOT propagate as
             # Python exceptions; instead they arrive as a CallToolResult with
             # isError=True. The circuit breaker counts this as a failure.

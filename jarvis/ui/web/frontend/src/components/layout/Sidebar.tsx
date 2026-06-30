@@ -287,12 +287,19 @@ function NavRow({
   label,
   active,
   badge,
+  alert = false,
+  alertTitle,
   onClick,
 }: {
   item: NavItem;
   label: string;
   active: boolean;
   badge?: number;
+  /** Draw a red status dot on the row — a section this row fronts has a provider
+   *  that is set up but failing, so the problem is visible app-wide. */
+  alert?: boolean;
+  /** Plain-language hover text for the alert dot. */
+  alertTitle?: string;
   onClick: () => void;
 }) {
   const Icon = item.icon;
@@ -301,6 +308,7 @@ function NavRow({
       <button
         type="button"
         onClick={onClick}
+        title={alert ? alertTitle : undefined}
         className={cn(
           "group relative flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all",
           "hover:bg-background/60",
@@ -316,6 +324,14 @@ function NavRow({
           )}
         />
         <span className="flex-1 text-left">{label}</span>
+        {alert && (
+          <span
+            data-testid={`nav-alert-${item.id}`}
+            role="status"
+            aria-label={alertTitle}
+            className="h-2 w-2 shrink-0 rounded-full bg-destructive ring-2 ring-background"
+          />
+        )}
         {badge !== undefined && badge > 0 && (
           <span className="rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
             {badge}

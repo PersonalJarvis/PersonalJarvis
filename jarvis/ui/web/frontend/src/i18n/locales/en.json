@@ -165,7 +165,8 @@
   "sidebar": {
     "wake_hint": "Say your wake word…",
     "brain_label": "Brain",
-    "brain_tooltip": "Switch brain provider"
+    "brain_tooltip": "Switch brain provider",
+    "apikeys_alert": "A provider is set up but not working — open API Keys to fix it"
   },
   "chats_view": {
     "title": "Chat",
