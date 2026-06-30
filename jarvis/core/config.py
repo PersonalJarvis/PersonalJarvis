@@ -473,6 +473,20 @@ class BrainRoutingConfig(BaseModel):
     # delegation). See manager._build_fallback_chain / the router fall-through.
     intelligent_router: bool = True
 
+    # Per-mission MCP relevance filter (mirror of the router's plugin-relevance
+    # gate, one layer below). A mission WORKER runs --permission-mode
+    # bypassPermissions, so every exported MCP server is actually reachable; an
+    # off-topic server (e.g. NotebookLM on a flight question) would re-introduce
+    # the ~35 s wrong-MCP stall the router gate removed. When True (default), the
+    # servers exported to a worker are filtered to those RELEVANT to that
+    # mission's task text via the SAME relevance definition the router uses
+    # (jarvis.marketplace.plugin_relevance.plugin_is_relevant). This flag is the
+    # reversible kill switch: set false → exactly the prior behaviour (every
+    # enabled MCP server + every connected plugin exported to every mission). A
+    # relevance fault always degrades to exporting (never strips). See
+    # jarvis.missions.init._assemble_worker_mcp_servers.
+    worker_mcp_relevance_filter: bool = True
+
     # Heavy-research force-spawn (live bug 2026-06-14, the Berlin→Melbourne
     # turn): a multi-step research/analysis request must be OFFLOADED to a
     # background mission, not run inline on the deep brain where it blows the
