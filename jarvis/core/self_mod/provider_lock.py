@@ -16,6 +16,7 @@ Kept dependency-free (string patterns + ``fnmatch`` only) so both the writer
 and the schema introspector can consult it without an import cycle, mirroring
 ``forbidden.py``.
 """
+
 from __future__ import annotations
 
 from fnmatch import fnmatch

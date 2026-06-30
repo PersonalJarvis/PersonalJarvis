@@ -267,8 +267,12 @@ async def test_switch_provider_tool_missing_credential(no_keys, monkeypatch):
     from jarvis.plugins.tool.switch_provider import SwitchProviderTool
 
     monkeypatch.setattr("jarvis.brain.app_control.resolve_running_cfg", lambda: make_cfg())
+    # tier=tts: the brain provider is locked to user-only channels (CLI / manual
+    # UI switch) and is refused up-front by the tool, so the missing-credential
+    # path is exercised on a still-voice-switchable tier. The brain lock itself
+    # is covered by tests/unit/plugins/tool/test_switch_provider_brain_lock.py.
     res = await SwitchProviderTool().execute(
-        {"tier": "brain", "provider": "gemini", "reason": "test"}, _ctx()
+        {"tier": "tts", "provider": "cartesia", "reason": "test"}, _ctx()
     )
     assert res.success is False
     assert "not configured" in (res.error or "")

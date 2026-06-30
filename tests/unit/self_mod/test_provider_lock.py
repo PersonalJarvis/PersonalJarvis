@@ -11,6 +11,7 @@ Control-API mutation, so the lock holds regardless of which tool initiates the
 write. The dedicated ``config_writer.set_brain_primary`` path used by the UI
 button + ``jarvis brain switch`` does NOT flow through here and stays allowed.
 """
+
 from __future__ import annotations
 
 import json
@@ -62,9 +63,7 @@ def writer(fixture_path: Path, tmp_path: Path) -> AtomicConfigWriter:
 
 
 def _req(path: str, value: object, actor: AuditActor) -> MutationRequest:
-    return MutationRequest(
-        path=path, new_value=value, actor=actor, source=AuditSource.VOICE
-    )
+    return MutationRequest(path=path, new_value=value, actor=actor, source=AuditSource.VOICE)
 
 
 # ----------------------------------------------------------------------
@@ -133,9 +132,7 @@ class TestWriterEnforcement:
         assert result.ok is True
         assert _isolated_loader(fixture_path).tts.provider == "elevenlabs"
 
-    def test_refused_switch_is_audited(
-        self, writer: AtomicConfigWriter, tmp_path: Path
-    ) -> None:
+    def test_refused_switch_is_audited(self, writer: AtomicConfigWriter, tmp_path: Path) -> None:
         with pytest.raises(ProviderSwitchLockedError):
             writer.mutate(_req("brain.primary", "gemini", AuditActor.HAUPTJARVIS))
         entries = [

@@ -6,6 +6,7 @@ which is what calls this tool — must refuse a brain switch with an honest
 message and never reach the actual switch path. TTS / STT / subagent switches
 stay fully voice-controllable.
 """
+
 from __future__ import annotations
 
 import jarvis.brain.app_control as app_control
