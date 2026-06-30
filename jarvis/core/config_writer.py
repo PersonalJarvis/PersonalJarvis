@@ -482,6 +482,21 @@ def set_silence_window_ms(ms: int, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _patch_table(path, "speech", "vad_silence_ms", clamped)
 
 
+def set_session_idle_timeout_s(
+    seconds: float, *, path: Path = DEFAULT_CONFIG_FILE
+) -> None:
+    """Persist ``[trigger] session_idle_timeout_s`` — the conversation-mode idle
+    auto-hangup window.
+
+    A value <= 0 DISABLES the auto-hangup entirely: the voice session then stays
+    active until a manual hangup ("auflegen" / the hangup hotkey). Negative input
+    is normalised to 0. Stored as a plain number; applies on the next voice
+    (re)start. TOML-only (not drift-guarded), like :func:`set_silence_window_ms`.
+    """
+    value = max(0.0, float(seconds))
+    _patch_table(path, "trigger", "session_idle_timeout_s", value)
+
+
 def set_bar_persistent(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist ``[ui] bar_persistent`` (the 'show bar at all times' toggle).
 
