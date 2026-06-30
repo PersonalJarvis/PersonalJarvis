@@ -6,11 +6,11 @@ confirmation ("Okay, sehr gut") is a dishonest say-do gap and must be replaced
 with an honest line. A clarifying QUESTION ("Wie lautet die volle E-Mail?") is
 the DESIRED behavior for a missing/broken field and must be left intact.
 """
+
 from jarvis.brain.manager import (
     _action_unfulfilled_answer,
     _unfulfilled_replacement,
 )
-
 
 # --- honest write fallback wording -------------------------------------------
 
@@ -23,7 +23,7 @@ def test_action_unfulfilled_answer_is_honest_and_localized():
     for txt in (de, en, es):
         assert txt.strip()
         assert "gespeichert habe ich" not in txt.lower()
-    assert "noch nicht" in de.lower()        # "not yet saved"
+    assert "noch nicht" in de.lower()  # "not yet saved"
     assert "haven't" in en.lower() or "not" in en.lower()
     assert "todav" in es.lower() or "aún" in es.lower() or "no he" in es.lower()
 

@@ -7,6 +7,7 @@ ist …", and Jarvis replied "Okay, sehr gut" WITHOUT ever calling the
 mandates the real tool on a contact-write turn so the read-style evidence gate's
 backstop can catch a fake confirmation. Pure regex, no LLM (AP-9/AP-11).
 """
+
 from jarvis.brain.contact_intent import (
     CONTACT_WRITE_DIRECTIVE,
     detect_contact_write_intent,
@@ -17,9 +18,12 @@ from jarvis.brain.contact_intent import (
 
 def test_reported_transcript_turn_fires():
     # The exact utterance from the live session (save verb + dictated detail).
-    assert detect_contact_write_intent(
-        "Ähm, ja, legt die mal an. Also die Mailadresse von Harald ist harald.10.de."
-    ) is True
+    assert (
+        detect_contact_write_intent(
+            "Ähm, ja, legt die mal an. Also die Mailadresse von Harald ist harald.10.de."
+        )
+        is True
+    )
 
 
 def test_genitive_detail_alone_fires():

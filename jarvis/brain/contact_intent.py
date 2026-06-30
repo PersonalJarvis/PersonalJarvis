@@ -22,6 +22,7 @@ only on high-confidence signals — a genitive contact detail ("Christophs Numme
 ist …") alone, or a save verb corroborated by a contact noun / dictated detail.
 A bare "die Nummer ist falsch" or "schick Harald eine Mail" must NOT fire.
 """
+
 from __future__ import annotations
 
 import re
@@ -49,18 +50,18 @@ _DETAIL_RE = re.compile(
 # Imperative/intent to save, create, add, remember, enter a contact.
 _SAVE_VERB_RE = re.compile(
     r"\b("
-    r"merk(e|t)?\s+dir"                  # merk dir / merke dir
-    r"|notier\w*"                        # notiere / notier dir
-    r"|speicher\w*"                      # speichere / speichern / speicher
-    r"|anleg\w*"                         # anlegen
-    r"|leg\w*\b[^?]{0,40}\ban\b"        # leg/legt … an (separable)
-    r"|eintrag\w*"                       # eintragen
-    r"|trag\w*\b[^?]{0,40}\bein\b"      # trag … ein (separable)
-    r"|hinzufueg\w*"                     # hinzufuegen
-    r"|fueg\w*\b[^?]{0,40}\bhinzu\b"    # fueg … hinzu (separable)
-    r"|nimm\b[^?]{0,40}\bauf\b"          # nimm … auf
+    r"merk(e|t)?\s+dir"  # merk dir / merke dir
+    r"|notier\w*"  # notiere / notier dir
+    r"|speicher\w*"  # speichere / speichern / speicher
+    r"|anleg\w*"  # anlegen
+    r"|leg\w*\b[^?]{0,40}\ban\b"  # leg/legt … an (separable)
+    r"|eintrag\w*"  # eintragen
+    r"|trag\w*\b[^?]{0,40}\bein\b"  # trag … ein (separable)
+    r"|hinzufueg\w*"  # hinzufuegen
+    r"|fueg\w*\b[^?]{0,40}\bhinzu\b"  # fueg … hinzu (separable)
+    r"|nimm\b[^?]{0,40}\bauf\b"  # nimm … auf
     r"|save|remember|store\b|note\s+down|add\b|create\b"
-    r"|guard\w*|anota\w*|agrega\w*|anade\w*"   # ES guardar/anotar/agregar/anadir
+    r"|guard\w*|anota\w*|agrega\w*|anade\w*"  # ES guardar/anotar/agregar/anadir
     r")"
 )
 
