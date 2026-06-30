@@ -6827,14 +6827,19 @@ class SpeechPipeline:
         stall_s = getattr(self, "_brain_timeout_s", 30.0)
         ceiling_s = getattr(self, "_brain_hard_timeout_s", 90.0)
         self._mark_brain_progress()
-        first_progress_floor = self._brain_last_progress
         # Each turn starts with the ceiling fully armed: only a computer_use
         # step THIS turn (ObservationCaptured/ActionPlanned → _on_agent_progress)
         # may suspend it — never a stale heartbeat bled over from a previous
         # desktop turn that finished moments ago.
         self._long_tool_last_activity = 0.0
-        # Reset the pre-first-token thinking heartbeat per turn (no stale bleed).
+        # Reset per turn (no stale bleed): the still-working heartbeat AND the
+        # "a speakable token has reached TTS" flag that gates it. The heartbeat
+        # runs until the FIRST speakable token (_spoke_this_turn), so a stale
+        # True bled over from the previous turn must not suppress it on this
+        # turn's first poll (BUG-032 stale-counter class). _brain_streaming
+        # also clears it, but the guard's poll loop can run first.
         self._brain_thinking_heartbeat = 0.0
+        self._spoke_this_turn = False
         start = time.monotonic()
         task: asyncio.Task[tuple[str, bool]] = asyncio.ensure_future(coro)
         monitor_task: asyncio.Task[bool] | None = None
@@ -6930,19 +6935,32 @@ class SpeechPipeline:
                 stalled = (not playback_active) and (
                     now - self._brain_last_progress
                 ) >= stall_s
-                # Pre-first-token "still-thinking" heartbeat: while the brain has
-                # made NO progress yet (a token / tool round / CU step would have
-                # advanced _brain_last_progress past the initial guard mark), keep
-                # a dedicated heartbeat fresh so the no-first-frame TTS ceiling — which
-                # re-arms off it — does not behead a brain that is legitimately
-                # thinking (live bug 2026-06-14 16:17: Gemini built an 18k-token
-                # cache then thought ~17 s with no on_progress; the 20 s ceiling
-                # beheaded it, since_progress_s=20.19). It STOPS the instant real
-                # progress arrives (so a wedged TTS after a real token is still
-                # aborted) and is bounded by the absolute hard cap below (measured
-                # from `start`, never reset here) so a truly hung brain still dies.
+                # "Still-working" heartbeat: until the brain hands its FIRST
+                # speakable sentence to TTS (_spoke_this_turn), keep a dedicated
+                # heartbeat fresh so the no-first-frame TTS ceiling — which
+                # re-arms off it — cannot behead a brain that is still thinking
+                # OR still in its tool loop. Two live bugs this must cover:
+                #   • 2026-06-14 16:17 (Gemini built an 18k-token cache then
+                #     thought ~17 s with no on_progress, since_progress_s=20.19):
+                #     PRE-first-token thinking emits no heartbeat of its own.
+                #   • 2026-06-30 ("München nach Bora Bora", since_progress_s=20.77):
+                #     the brain ran ONE tool round (~10 s in) then worked a second
+                #     ~20 s model roundtrip with no further ping and no token. The
+                #     old gate (_brain_last_progress <= first_progress_floor) froze
+                #     the heartbeat at that first round — so the 20 s ceiling
+                #     beheaded the turn 10 s before the 30 s brain stall guard
+                #     would have. A tool round is progress, but it is NOT a spoken
+                #     token: only _spoke_this_turn means TTS actually has text, so
+                #     only then may the no-first-frame ceiling judge a wedged
+                #     provider.
+                # It STOPS the instant a speakable token reaches TTS (so a wedged
+                # TTS after real output is still aborted) and is bounded by the
+                # absolute hard cap below (measured from `start`, never reset here)
+                # so a truly hung brain still dies. The independent no-progress
+                # `stalled` check above is unaffected — a brain that pings nothing
+                # for stall_s still times out on schedule.
                 if (
-                    self._brain_last_progress <= first_progress_floor
+                    not getattr(self, "_spoke_this_turn", False)
                     and (now - start) < ceiling_s
                 ):
                     self._brain_thinking_heartbeat = now
