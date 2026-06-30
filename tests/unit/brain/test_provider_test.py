@@ -62,6 +62,28 @@ def test_english_missing_key_is_not_configured() -> None:
     assert classify_provider_error("No API key found for provider") == "not_configured"
 
 
+def test_openrouter_key_spend_limit_403_is_no_credits() -> None:
+    # Live probe 2026-06-30: an OpenRouter key with a per-key spend cap that is
+    # used up returns 403 "Key limit exceeded (total limit)" for EVERY paid model,
+    # while the SAME key still answers free models. It is a funded-account budget
+    # block, NOT an invalid key — labeling it "Key invalid" (bad_key) sent the user
+    # hunting the wrong problem. Must read as out-of-credits.
+    msg = (
+        "PermissionDeniedError: Error code: 403 - {'error': {'message': "
+        "'Key limit exceeded (total limit). Manage it using "
+        "https://openrouter.ai/settings/keys', 'code': 403}}"
+    )
+    assert classify_provider_error(msg) == "no_credits"
+
+
+def test_generic_spend_limit_without_credit_word_is_no_credits() -> None:
+    # Robustness across providers: a 403 whose wording is a budget/limit block but
+    # does not contain the literal word "credit" must still read as no_credits, not
+    # bad_key. (The old marker list keyed on "credit"/"spending limit" only.)
+    msg = "PermissionDeniedError: Error code: 403 - monthly budget exceeded for this key"
+    assert classify_provider_error(msg) == "no_credits"
+
+
 def test_openai_insufficient_quota_429_is_no_credits() -> None:
     msg = (
         "RateLimitError: Error code: 429 - {'error': {'message': 'You exceeded your "

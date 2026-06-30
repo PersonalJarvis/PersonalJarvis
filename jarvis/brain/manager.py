@@ -70,6 +70,10 @@ from jarvis.voice.contextual_readback import render_readback
 from jarvis.memory import CoreMemory, PersonStore, RecallStore, Soul, UserProfile
 from jarvis.memory.curator import Curator
 from jarvis.safety.tool_executor import ToolExecutor
+# ONE canonical billing/budget/quota marker list, shared with the test-badge
+# classifier (provider_test.classify_provider_error) so the live fallback chain and
+# the API-Keys badge can never disagree on "out of credits / over budget" (AP-22).
+from jarvis.brain.provider_test import BILLING_LIMIT_MARKERS
 
 from .dispatcher import BrainDispatcher
 from .healthcheck import BrainConfigError
@@ -6154,7 +6158,7 @@ class BrainManager:
                 # On missing_key: remove provider from the chain for the rest
                 # of the session. Prevents each voice turn from running 8x
                 # sequentially against the same missing keys.
-                if kind in ("missing_key", "account_blocked") and prov_name not in self._dead_providers:
+                if kind in _DEAD_LIST_KINDS and prov_name not in self._dead_providers:
                     self._dead_providers.add(prov_name)
                     if kind == "missing_key":
                         log.warning(
@@ -6430,7 +6434,7 @@ class BrainManager:
                 else:
                     log.warning("Brain %s(%s) fehlgeschlagen: %s", prov_name, model, exc)
                     if (
-                        kind in ("missing_key", "account_blocked")
+                        kind in _DEAD_LIST_KINDS
                         and prov_name not in self._dead_providers
                     ):
                         self._dead_providers.add(prov_name)
@@ -7322,43 +7326,56 @@ def _is_account_blocked_exc(msg: str) -> bool:
       - OpenAI 403: ``The model `o1-pro` is not available on your tier.``
       - Gemini 403: ``Quota exceeded for ...`` (unlike 429 — terminal).
 
+      - OpenRouter 403: ``Key limit exceeded (total limit).`` (a funded account
+        whose per-key spend cap is used up — live probe 2026-06-30, AP-22).
+
     These providers are dead for the session (a simple retry won't help).
     BrainManager pushes them immediately into _dead_providers and emits a
     user-actionable setup message instead of "provider unreachable".
     """
     m = msg.lower()
-    return any(k in m for k in (
-        "credit balance is too low",
-        "credit balance too low",
-        "plans & billing",
-        "billing required",
-        "your team",
-        "your team does not have access",
-        "team does not have access",
-        "team_does_not_have_access",
-        "not available on your tier",
-        "subscription required",
-        "upgrade plan",
-        "upgrade your plan",
-        "exceeded your quota",  # Gemini-style, terminal vs. 429
-        "exceeded your current quota",  # OpenAI insufficient_quota wording
-        "quota exceeded for",
-        "insufficient_quota",
-        "insufficient quota",
-        "billing not active",
-        "payment required",
-        "account is suspended",
-        # Terminal-billing 429s that carry "429" in the message and would
-        # otherwise be mis-read as a transient rate-limit (live forensic
-        # 2026-06-28: depleted Gemini bricked the whole chain — AP-22).
-        "credits are depleted",
-        "credits depleted",
-        "prepayment credits",
-        "out of credits",
-        "no credits remaining",
-        "check your plan and billing",
-        "plan and billing",
-    ))
+    # Billing / budget / quota wording is the SHARED canonical list (one source of
+    # truth with the test-badge classifier) — covers credit-balance, spend/key/total
+    # limit, insufficient_quota, depleted prepayment, out-of-credits, etc.
+    if any(k in m for k in BILLING_LIMIT_MARKERS):
+        return True
+    # Access / tier / subscription gates — terminal too, but not strictly "money".
+    return any(k in m for k in _ACCOUNT_ACCESS_MARKERS)
+
+
+# Terminal access/tier/subscription wordings (NOT money — kept beside the shared
+# billing markers so both flavours of "account blocked" live in one classifier).
+_ACCOUNT_ACCESS_MARKERS: tuple[str, ...] = (
+    "your team",                   # xAI "your team ... does not have access"
+    "team does not have access",
+    "team_does_not_have_access",
+    "not available on your tier",  # OpenAI tier gate
+    "subscription required",
+    "upgrade plan",
+    "upgrade your plan",
+    "billing required",
+    "billing not active",
+    "account is suspended",
+)
+
+
+def _http_status_code(msg: str) -> int | None:
+    """First 4xx/5xx HTTP status embedded in a provider error string, else None.
+
+    The SDK serializes the numeric code into ``str(exc)`` ("Error code: 403 - …"
+    for the OpenAI/Anthropic families; "403 … PERMISSION_DENIED" for Gemini), so a
+    code-first decision works uniformly without importing any provider SDK — the
+    same approach the test-badge classifier uses.
+    """
+    match = re.search(r"\b([45]\d\d)\b", msg)
+    return int(match.group(1)) if match else None
+
+
+# The chain loop dead-lists exactly these kinds: a terminal credential/account state
+# (no key stored, blocked/over-budget account, invalid key) must cross to another
+# available provider family for the rest of the session. A transient ``rate_limit``
+# is deliberately NOT here — it takes the 30s cooldown path and keeps the provider.
+_DEAD_LIST_KINDS: frozenset[str] = frozenset({"missing_key", "account_blocked", "bad_key"})
 
 
 # User-friendly labels per provider — what the user needs to do.
@@ -7400,6 +7417,18 @@ def _classify_provider_error(msg: str, *, default: str) -> str:
     if _is_invalid_model_exc(msg):
         return "invalid_model"
     m = msg.lower()
+    # Code-first terminal fallback for a 401/402 that carries the numeric HTTP code
+    # but NONE of the known wordings (a bare live "Error code: 401 - invalid x-api-key"
+    # / "Error code: 402 - Payment Required"). A 401 = invalid/expired/wrong-account
+    # key, a 402 = Payment-Required — both terminal, so the provider is dead-listed and
+    # stops leading the chain every turn (live log 2026-06-30: claude-api 401 with no
+    # Anthropic account was retried on every turn). 403/429 stay word-driven on purpose:
+    # a transient Gemini 403 "CachedContent not found" must NOT dead-list (BUG-019).
+    code = _http_status_code(m)
+    if code == 401:
+        return "bad_key"
+    if code == 402:
+        return "account_blocked"
     if any(s in m for s in ("429", "rate_limit", "rate-limit",
                              "rate limit", "too many requests")):
         return "rate_limit"
