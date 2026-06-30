@@ -99,6 +99,26 @@ class SwitchProviderTool:
                 output=None,
                 error=f"invalid_input: tier must be one of {', '.join(_TIERS)}",
             )
+        if tier == "brain":
+            # The active brain provider is the user's HARD choice. Jarvis (which
+            # is what invokes this tool) must NOT switch it — only the user, via
+            # the control CLI or the manual provider switch in the desktop app's
+            # API-Keys section. TTS / STT / subagent stay voice-switchable. This
+            # mirrors the self-mod writer's provider-selection lock so a brain
+            # switch is refused on EVERY Jarvis-initiated path.
+            return ToolResult(
+                success=False,
+                output={
+                    "error_kind": "provider_switch_locked",
+                    "tier": tier,
+                    "provider": provider,
+                },
+                error=(
+                    "provider_switch_locked: I can't switch the brain provider "
+                    "myself. The active brain provider is your choice — change it "
+                    "in the desktop app's API-Keys section or with the CLI."
+                ),
+            )
         if not provider:
             return ToolResult(
                 success=False, output=None, error="invalid_input: 'provider' is required"

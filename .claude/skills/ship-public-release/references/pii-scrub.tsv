@@ -32,6 +32,12 @@ scrub	luetke	maintainer	maintainer surname (lowercase residue in slugs)
 # --- the user (address) and "Harald" is an example third person mentioned. ---
 scrub	Ruben	Alex	maintainer first name (sample/address user) -> neutral
 scrub	ruben	alex	maintainer first name lowercase (config defaults, slugs, branch tags)
+# Accented spelling 'Rubén' — the ASCII 'Ruben' rules above do NOT match the é,
+# so the accented real first name shipped through (2026-06-30 sub-agent review:
+# docs/phase-b1-wiki-curator/*, tests/unit/memory/wiki/test_page.py, etc.).
+scrub	Rubén	Alex	maintainer first name accented (é) -> neutral
+scrub	rubén	alex	maintainer first name accented lowercase
+scrub	RUBÉN	ALEX	maintainer first name accented all-caps (regression guard)
 scrub	Harald	Sam	maintainer alt first name (example person in prompts/tests)
 scrub	harald	sam	maintainer alt first name lowercase (ADR owner field, slugs, test emails)
 

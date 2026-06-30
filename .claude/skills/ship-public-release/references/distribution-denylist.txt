@@ -161,3 +161,12 @@ tools/**
 # docs/qa/ is the maintainer's internal voice-QA checklist — same internal-
 # process class as docs/superpowers/** / docs/plans/** already withheld above.
 docs/qa/**
+
+# --- Internal privacy/red-team agent spec (2026-06-30) ----------------------
+# docs-privacy-reviewer.md is the maintainer's OWN depersonalization red-team
+# guide: in source it enumerates the real maintainer identity (real name in
+# every spelling incl. the accented 'Rubén', alt name 'Harald Herz', the private
+# email shapes, GitHub login) and the entire scrub scheme. Shipping the doc that
+# lists what to hide is itself the leak (2026-06-30 sub-agent review). It is an
+# internal dev tool with no downstream value; a fork writes its own.
+.claude/agents/docs-privacy-reviewer.md

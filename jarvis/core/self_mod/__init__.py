@@ -13,6 +13,7 @@ from .errors import (
     AllowlistViolationError,
     BackupError,
     PreValidateError,
+    ProviderSwitchLockedError,
     ReloadError,
     RollbackError,
     SecretAccessError,
@@ -20,6 +21,7 @@ from .errors import (
     TypeMismatchError,
 )
 from .pending import PendingMutation, PendingMutationStore
+from .provider_lock import PROVIDER_LOCK_PATHS, is_provider_lock_path
 from .registry import FORBIDDEN_PATTERNS, SelfModRegistry
 from .schema import (
     AuditActor,
@@ -35,6 +37,7 @@ from .writer import AtomicConfigWriter
 
 __all__ = [
     "FORBIDDEN_PATTERNS",
+    "PROVIDER_LOCK_PATHS",
     "AllowlistViolationError",
     "AtomicConfigWriter",
     "AuditActor",
@@ -48,6 +51,7 @@ __all__ = [
     "PendingMutation",
     "PendingMutationStore",
     "PreValidateError",
+    "ProviderSwitchLockedError",
     "ReloadError",
     "RollbackError",
     "SecretAccessError",
@@ -56,4 +60,5 @@ __all__ = [
     "SelfModRegistry",
     "SelfModRiskTier",
     "TypeMismatchError",
+    "is_provider_lock_path",
 ]

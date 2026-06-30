@@ -58,12 +58,15 @@ from .errors import (
     AllowlistViolationError,
     BackupError,
     PreValidateError,
+    ProviderSwitchLockedError,
     ReloadError,
     RollbackError,
     SecretAccessError,
 )
+from .provider_lock import is_provider_lock_path
 from .registry import SelfModRegistry
 from .schema import (
+    AuditActor,
     AuditEvent,
     BackupRef,
     MutableSpec,
@@ -165,6 +168,22 @@ class AtomicConfigWriter:
         - `ReloadError` (step 8; backup has been restored)
         - `RollbackError` (step 8; backup restore itself failed)
         """
+        # Step 0 — provider-selection lock. The active brain provider is the
+        # user's hard choice: only an explicit user action (the control CLI or
+        # the manual provider switch in the desktop app, actor=USER) may change
+        # it — never Jarvis itself (voice/chat self-mod) or any automation. The
+        # UI button + `jarvis brain switch` use config_writer.set_brain_primary
+        # and never reach this writer, so this gate sits purely on the self-mod
+        # / Control-API surface and leaves those sanctioned paths untouched.
+        if is_provider_lock_path(request.path) and request.actor != AuditActor.USER:
+            error = (
+                f"provider_switch_locked: {request.path} can only be changed by "
+                "the user (the CLI or the manual provider switch in the desktop "
+                f"app), not by {request.actor.value}."
+            )
+            self._audit_failure(request, old_value=None, error=error)
+            raise ProviderSwitchLockedError(error)
+
         # Step 1 — no lock required (ClassVar read).
         try:
             spec = SelfModRegistry.require_spec(request.path)

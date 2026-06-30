@@ -32,7 +32,7 @@
     "allow_sapi5_fallback": false
   },
   "brain": {
-    "primary": "gemini",
+    "primary": "openrouter",
     "fallback": "gemini",
     "deep_brain": "gemini",
     "routing_provider": "gemini",
@@ -89,6 +89,6 @@
     "model": "gemini-3.5-flash"
   },
   "brain.providers.openrouter": {
-    "model": "openai/gpt-oss-120b:free"
+    "model": "deepseek/deepseek-v4-flash"
   }
 }
