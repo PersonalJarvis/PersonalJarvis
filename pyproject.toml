@@ -233,13 +233,9 @@ groq-api = "jarvis.plugins.stt.groq_api:GroqWhisperAPI"
 [project.entry-points."jarvis.tts"]
 elevenlabs = "jarvis.plugins.tts.elevenlabs_tts:ElevenLabsTTS"
 gemini-flash-tts = "jarvis.plugins.tts.gemini_flash_tts:GeminiFlashTTS"
-google-neural2 = "jarvis.plugins.tts.google_neural2:GoogleNeural2TTS"
-openai-tts = "jarvis.plugins.tts.openai_tts:OpenAITTS"
-piper-local = "jarvis.plugins.tts.piper_local:PiperLocalTTS"
 grok-voice = "jarvis.plugins.tts.grok_voice_tts:GrokVoiceTTS"
 # Phase L.4 — Streaming-TTS mit niedriger TTFB.
 cartesia = "jarvis.plugins.tts.cartesia_tts:CartesiaTTS"
-elevenlabs-flash = "jarvis.plugins.tts.elevenlabs_flash:ElevenLabsFlashTTS"
 
 [project.entry-points."jarvis.brain"]
 claude-api = "jarvis.plugins.brain.claude_api:ClaudeAPIBrain"
