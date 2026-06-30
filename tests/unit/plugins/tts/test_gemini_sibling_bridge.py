@@ -131,8 +131,10 @@ async def test_synthesize_switches_to_sibling_on_429() -> None:
         "gemini-2.5-flash-preview-tts",
     ]
     # Cooldown timer parsed from the 429 (17270 s ± few seconds).
+    # Upper bound is 17271.0 to tolerate float drift: time.monotonic() + 17270.0
+    # can yield 17270.000000x when measured immediately after, exceeding 17270.0.
     remaining = tts._quota_blocked_until - time.monotonic()
-    assert 17260.0 < remaining <= 17270.0
+    assert 17260.0 < remaining <= 17271.0
 
 
 @pytest.mark.asyncio

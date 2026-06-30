@@ -648,11 +648,15 @@ class TestRestApi:
         assert "events" in body
         assert body["total_returned"] >= 1
 
-    def test_get_mutable_returns_8_specs(self, api_app: FastAPI) -> None:
+    def test_get_mutable_returns_schema_derived_specs(self, api_app: FastAPI) -> None:
+        # The mutable set is now derived automatically from the full JarvisConfig
+        # schema (schema_introspect.py), so the count grows with the schema.
+        # The hard-coded 8 was the old hand-maintained list; the floor here is a
+        # meaningful regression guard (schema shrinking would be a bug).
         client = TestClient(api_app)
         response = client.get("/api/self-mod/mutable")
         assert response.status_code == 200
-        assert len(response.json()["specs"]) == 8
+        assert len(response.json()["specs"]) >= 50
 
     def test_get_backups_empty_when_no_mutations(
         self, api_app: FastAPI

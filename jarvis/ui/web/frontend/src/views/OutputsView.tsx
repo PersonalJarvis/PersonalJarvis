@@ -33,6 +33,7 @@ import {
   type ArtifactSummary,
 } from "@/hooks/useOutputs";
 import { OpenWithDialog } from "@/components/OpenWithDialog";
+import { openExternalUrl } from "@/lib/openExternal";
 import { useT } from "@/i18n";
 import { applyMissionDragImage } from "@/lib/missionDragImage";
 import { useMissionDrag } from "@/store/missionDrag";
@@ -617,9 +618,26 @@ function ArtifactRow({
   const preferred = usePreferredOpener();
   const setPreferred = useSetPreferredOpener();
 
+  // The render endpoint as an ABSOLUTE url. The open-external bridge resolves it
+  // through `open_url`, which validates an http(s) absolute url — a relative path
+  // would 400 there and leave only the (WebView2-dropped) window.open fallback.
+  const absoluteOpenUrl = openUrl
+    ? new URL(openUrl, window.location.origin).toString()
+    : null;
+
+  // Open the artifact's render url in the user's real default browser. Routes
+  // through openExternalUrl (the backend open-external bridge), NOT a bare
+  // window.open — the embedded WebView2 desktop shell silently drops
+  // window.open / target="_blank", which is exactly why the "Browser" opener did
+  // nothing on the desktop. The bridge opens the OS default browser on every OS
+  // and falls back to a window.open tab on a headless/remote host.
+  const openInBrowser = () => {
+    if (absoluteOpenUrl) void openExternalUrl(absoluteOpenUrl);
+  };
+
   const openWithOpener = (opener: string) => {
-    if (opener === "browser" && openUrl) {
-      window.open(openUrl, "_blank", "noopener,noreferrer");
+    if (opener === "browser" && absoluteOpenUrl) {
+      openInBrowser();
       return;
     }
     void openArtifactWith(slug, file.path, opener).catch(() => {});
@@ -635,9 +653,10 @@ function ArtifactRow({
 
   const handleOpen = () => {
     if (!nativeActions) {
-      // Headless VPS: the UI is already a real browser tab — open the render
-      // URL there (no local apps to launch).
-      if (openUrl) window.open(openUrl, "_blank", "noopener,noreferrer");
+      // Headless VPS / web: the UI is already a real browser tab. openExternalUrl
+      // asks the backend first (no display there -> opened:false) and falls back
+      // to a window.open tab, so the render URL opens in the user's own browser.
+      openInBrowser();
       return;
     }
     const pref = preferred.data ?? "";

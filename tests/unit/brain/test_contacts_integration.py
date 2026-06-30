@@ -104,8 +104,10 @@ def test_email_by_name_directive_present_when_tools_wired() -> None:
     prompt = _manager(tools=tools)._build_system_prompt()
     assert "contact-lookup" in prompt
     assert "gmail" in prompt
-    # A recognizable marker so the directive is unambiguous in the prompt.
-    assert "KONTAKT" in prompt.upper()
+    # The directive block opens with the "CONTACTS:" label; this is the
+    # unambiguous marker that the directive is present (the German "KONTAKT"
+    # label was dropped when the persona was reworked to English-first).
+    assert "CONTACTS" in prompt
 
 
 def test_email_by_name_directive_absent_without_gmail() -> None:

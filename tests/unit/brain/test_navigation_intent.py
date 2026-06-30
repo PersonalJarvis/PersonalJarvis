@@ -24,7 +24,6 @@ from jarvis.brain.navigation_intent import match_navigation_intent
         ("wechsel zu den Notizen", "memory"),
         ("show the agents", "agents"),
         ("open settings", "settings"),
-        ("switch to the terminal", "terminal"),
         ("go to the board", "board"),
         ("navigate to socials", "socials"),
         ("zeig mir die sub-agents", "agents"),

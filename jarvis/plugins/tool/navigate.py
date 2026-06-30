@@ -30,6 +30,7 @@ KNOWN: frozenset[str] = frozenset(
         "mcps",
         "tasks",
         "sessions",
+        "run_inspector",
         "clis",
         "cli-test-hub",
         "board",
@@ -44,6 +45,8 @@ KNOWN: frozenset[str] = frozenset(
         "socials",
         "taskbar",
         "contacts",
+        "feedback",
+        "agent-instructions",
     }
 )
 

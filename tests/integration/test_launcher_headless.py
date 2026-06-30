@@ -42,7 +42,14 @@ def _patch_webserver(monkeypatch):
 
 
 def _make_cfg(port: int = 18123):
-    return SimpleNamespace(ui=SimpleNamespace(admin_api_port=port, dev_mode=False))
+    # `args.port` is read by _run_headless before falling back to _fast_admin_port();
+    # the SimpleNamespace stub must carry the attribute (None = use auto-detect).
+    return SimpleNamespace(
+        ui=SimpleNamespace(admin_api_port=port, dev_mode=False),
+        port=None,
+        dev=False,
+        no_lock=True,
+    )
 
 
 def test_headless_starts_and_stops_on_signal():
