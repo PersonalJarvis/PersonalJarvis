@@ -183,11 +183,11 @@ function routesFor(
 ): Record<string, () => RouteResult> {
   return {
     "/api/providers": () => ({ body: { providers: [provider] } }),
-    "/api/openclaw/status": () => ({ body: OPENCLAW_EMPTY }),
+    "/api/jarvis-agent/status": () => ({ body: OPENCLAW_EMPTY }),
     "/api/antigravity/status": () => ({
       body: provider.antigravity_status ?? {},
     }),
-    "/api/subagent/switch": () => ({
+    "/api/jarvis-agent/switch": () => ({
       body: { ok: true, active: "antigravity", persisted: true },
     }),
     "/api/antigravity/login": () => ({
@@ -213,7 +213,7 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
     installFetchMock(routesFor(antigravityDescriptor()));
     render(<ApiKeysView />);
     // Antigravity lives in the "Subagents" category tab now; open it first.
-    fireEvent.click(screen.getByRole("tab", { name: /subagents/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /jarvis-agents/i }));
 
     await waitFor(() =>
       expect(screen.getByText("Antigravity (Subscription)")).toBeTruthy(),
@@ -231,7 +231,7 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
     const { calls } = installFetchMock(routesFor(antigravityDescriptor()));
     render(<ApiKeysView />);
     // Antigravity lives in the "Subagents" category tab now; open it first.
-    fireEvent.click(screen.getByRole("tab", { name: /subagents/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /jarvis-agents/i }));
 
     await waitFor(() => screen.getByRole("radio"));
     fireEvent.click(screen.getByRole("radio"));
@@ -240,7 +240,7 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
       expect(
         calls.some(
           (c) =>
-            c.url.startsWith("/api/subagent/switch") &&
+            c.url.startsWith("/api/jarvis-agent/switch") &&
             c.method === "POST" &&
             (c.body as { provider?: string })?.provider === "antigravity",
         ),
@@ -252,7 +252,7 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
     const { calls } = installFetchMock(routesFor(antigravityNotConnected()));
     render(<ApiKeysView />);
     // Antigravity lives in the "Subagents" category tab now; open it first.
-    fireEvent.click(screen.getByRole("tab", { name: /subagents/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /jarvis-agents/i }));
 
     await waitFor(() =>
       expect(screen.getByText("Connect")).toBeTruthy(),
@@ -273,7 +273,7 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
     installFetchMock(routesFor(antigravityMissing()));
     render(<ApiKeysView />);
     // Antigravity lives in the "Subagents" category tab now; open it first.
-    fireEvent.click(screen.getByRole("tab", { name: /subagents/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /jarvis-agents/i }));
 
     const connectBtn = await waitFor(() =>
       screen.getByText("Connect"),
@@ -288,7 +288,7 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
     const { calls } = installFetchMock(routesFor(antigravityDescriptor()));
     render(<ApiKeysView />);
     // Antigravity lives in the "Subagents" category tab now; open it first.
-    fireEvent.click(screen.getByRole("tab", { name: /subagents/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /jarvis-agents/i }));
 
     const disconnect = await waitFor(() => screen.getByText("Disconnect"));
     fireEvent.click(disconnect);

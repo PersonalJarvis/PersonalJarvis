@@ -113,3 +113,43 @@ def test_speech_resume_while_in_flight_is_harmless_noop():
     # No mark_idle call — window is still in flight (deadline None)
     w.note_speech_resumed()            # should be a pure no-op
     assert w.try_recombine("zweiter teil") == "erster teil zweiter teil"
+
+
+# ---------------------------------------------------------------------------
+# is_live — non-mutating mirror of try_recombine's gate. The pipeline uses it to
+# tag TranscriptFinal.continues_previous so the recorder merges the coalesced
+# fragments into ONE transcript turn (it must NOT consume the window).
+# ---------------------------------------------------------------------------
+
+
+def test_is_live_false_when_unarmed():
+    w = ContinuationWindow(grace_ms=2500, max_chain=3, clock=FakeClock())
+    assert w.is_live() is False
+
+
+def test_is_live_true_while_in_flight():
+    w = ContinuationWindow(grace_ms=2500, max_chain=3, clock=FakeClock())
+    w.note_dispatch("erster teil", continued=False)
+    assert w.is_live() is True
+
+
+def test_is_live_tracks_grace_and_never_mutates():
+    clk = FakeClock()
+    w = ContinuationWindow(grace_ms=2500, max_chain=3, clock=clk)
+    w.note_dispatch("erster teil", continued=False)
+    w.mark_idle()
+    clk.advance_ms(2000)                 # within grace
+    assert w.is_live() is True
+    assert w.is_armed                    # not consumed
+    assert w.try_recombine("zweiter teil") == "erster teil zweiter teil"
+    clk.advance_ms(2000)                 # past the grace deadline
+    assert w.is_live() is False          # expired
+    assert w.is_armed                    # is_live did NOT clear it (try_recombine does)
+
+
+def test_is_live_false_at_chain_cap():
+    w = ContinuationWindow(grace_ms=9999, max_chain=2, clock=FakeClock())
+    w.note_dispatch("a", continued=False)   # chain=1
+    assert w.is_live() is True
+    w.note_dispatch("a b", continued=True)  # chain=2 == max
+    assert w.is_live() is False

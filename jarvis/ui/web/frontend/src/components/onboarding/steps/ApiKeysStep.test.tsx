@@ -46,11 +46,11 @@ vi.mock("@/components/ApiKeyForm", () => ({
     <div data-testid="keyform">{secretKey}</div>
   ),
 }));
-// The subagent section fetches /api/openclaw/status on mount, which jsdom has no
+// The subagent section fetches /api/jarvis-agent/status on mount, which jsdom has no
 // server for. Stub it so the step renders deterministically; its real behaviour
-// is covered by SubagentSection's own tests.
-vi.mock("@/components/SubagentSection", () => ({
-  SubagentSection: () => <div data-testid="subagent-section" />,
+// is covered by JarvisAgentSection's own tests.
+vi.mock("@/components/JarvisAgentSection", () => ({
+  JarvisAgentSection: () => <div data-testid="subagent-section" />,
 }));
 vi.mock("@/hooks/useProviders", () => ({
   useProviders: () => ({
@@ -90,9 +90,9 @@ it("shows every provider class and the subagent section at once", () => {
   renderStep();
 
   // All three tier headers are visible simultaneously — no paging.
-  expect(screen.getByText("Brain — reasoning")).toBeTruthy();
-  expect(screen.getByText("Voice — text to speech")).toBeTruthy();
-  expect(screen.getByText("Hearing — speech to text")).toBeTruthy();
+  expect(screen.getByText("Brain")).toBeTruthy();
+  expect(screen.getByText("Voice")).toBeTruthy();
+  expect(screen.getByText("Hearing")).toBeTruthy();
 
   // ...and their providers, in order, in the same scroll container.
   expect(screen.getByText("Claude")).toBeTruthy();

@@ -13,7 +13,6 @@ import {
   Sparkles,
   Mic,
   Terminal,
-  Wand2,
   Share2,
   Contact,
   MessageSquareWarning,
@@ -24,6 +23,7 @@ import {
 } from "lucide-react";
 import { useEventStore, type SectionId } from "@/store/events";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
+import { useSectionHealth } from "@/hooks/useProviders";
 import { cn } from "@/lib/utils";
 import { useMemo } from "react";
 import { useT } from "@/i18n";
@@ -70,7 +70,6 @@ const NAV_GROUPS: NavItem[][] = [
     },
     // CLIs — the CLIs list + the CLI Test Hub behind one tab switch (CLIs first).
     { id: "clis", labelKey: "nav.clis_hub", icon: Terminal, matchIds: ["clis", "cli-test-hub"] },
-    { id: "personalize", labelKey: "nav.personalize", icon: Wand2, fallbackLabel: "Make It Yours" },
   ],
   // 2) Content & data — things the user reads, edits, or browses.
   [
@@ -137,6 +136,16 @@ export function Sidebar() {
   const { connected, voiceWarming, bootWarming, warming } = useVoiceReadiness();
   const brainProvider = useEventStore((s) => s.brainProvider);
   const brainModel = useEventStore((s) => s.brainModel);
+  // Per-section provider health (same source as the API-Keys tab dots). The
+  // sidebar surfaces only a hard "error" — a provider that is set up but failing
+  // — so a broken key is visible from anywhere without opening the page. The
+  // amber "needs setup" state is intentionally NOT shown here: on a fresh install
+  // every unconfigured section would light up and the bar would never be calm.
+  const { health: sectionHealth } = useSectionHealth();
+  const apikeysHasError = useMemo(
+    () => Object.values(sectionHealth).some((h) => h?.status === "error"),
+    [sectionHealth],
+  );
   const agentsCount = useEventStore((s) =>
     s.events.filter((e) => e.name === "AgentStateChange").length > 0 ? undefined : 0,
   );
@@ -232,6 +241,8 @@ export function Sidebar() {
                 label={resolveNavLabel(t, item)}
                 active={item.matchIds ? item.matchIds.includes(active) : item.id === active}
                 badge={item.id === "agents" ? agentsCount : undefined}
+                alert={item.id === "apikeys" ? apikeysHasError : false}
+                alertTitle={t("sidebar.apikeys_alert")}
                 onClick={() => setActive(item.id)}
               />
             ))}
@@ -276,12 +287,19 @@ function NavRow({
   label,
   active,
   badge,
+  alert = false,
+  alertTitle,
   onClick,
 }: {
   item: NavItem;
   label: string;
   active: boolean;
   badge?: number;
+  /** Draw a red status dot on the row — a section this row fronts has a provider
+   *  that is set up but failing, so the problem is visible app-wide. */
+  alert?: boolean;
+  /** Plain-language hover text for the alert dot. */
+  alertTitle?: string;
   onClick: () => void;
 }) {
   const Icon = item.icon;
@@ -290,6 +308,7 @@ function NavRow({
       <button
         type="button"
         onClick={onClick}
+        title={alert ? alertTitle : undefined}
         className={cn(
           "group relative flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all",
           "hover:bg-background/60",
@@ -305,6 +324,14 @@ function NavRow({
           )}
         />
         <span className="flex-1 text-left">{label}</span>
+        {alert && (
+          <span
+            data-testid={`nav-alert-${item.id}`}
+            role="status"
+            aria-label={alertTitle}
+            className="h-2 w-2 shrink-0 rounded-full bg-destructive ring-2 ring-background"
+          />
+        )}
         {badge !== undefined && badge > 0 && (
           <span className="rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
             {badge}

@@ -205,13 +205,13 @@ class WebServer:
 
         # Sub-Agent-Registry (Dashboard-Feature) — abonniert sofort den Bus.
         try:
-            from jarvis.agents import SubAgentRegistry
+            from jarvis.agents import JarvisAgentRegistry
 
-            sub_agent_registry = SubAgentRegistry(bus=self.bus)
+            sub_agent_registry = JarvisAgentRegistry(bus=self.bus)
             sub_agent_registry.attach()
             app.state.sub_agent_registry = sub_agent_registry
         except Exception as exc:  # noqa: BLE001
-            logger.opt(exception=exc).warning("SubAgentRegistry-Setup fehlgeschlagen")
+            logger.opt(exception=exc).warning("JarvisAgentRegistry setup failed")
             app.state.sub_agent_registry = None
 
         # MCP-, Tool-, Provider-, Profile-, Task-, Skills-, CLI- und Sub-Agents-
@@ -268,7 +268,6 @@ class WebServer:
         from .wiki_routes import router as wiki_router
         from .wiki_ws import router as wiki_ws_router
         from .workflows_routes import router as workflows_router
-        from .workspace_routes import router as workspace_router
         # Conductor ist ein externes Package im selben Monorepo. Import
         # defensiv — wer das Repo ohne conductor checkt aus, kriegt sonst
         # hier einen ImportError beim Server-Boot.
@@ -322,7 +321,6 @@ class WebServer:
         # Contacts section — user-curated address book (pure file store, no Brain dep).
         app.include_router(contacts_router)
         app.include_router(workflows_router)
-        app.include_router(workspace_router)
         if conductor_router is not None:
             app.include_router(conductor_router)
         app.include_router(preview_router)
@@ -349,6 +347,15 @@ class WebServer:
         # Phase-6 Mission-Stack — Auth-Token vor allen anderen, damit der
         # Browser ihn ueberhaupt holen kann; danach REST + WS + PTY.
         app.include_router(missions_auth_router)
+        # Seed the desktop session token (injected as window.__JARVIS_TOKEN by
+        # the fast-boot path) into the token store. The fast-boot token is a RAW
+        # secrets.token_urlsafe that is never issued via GET /token, so without
+        # this it fails validate_token → 4401 on every token-gated WebSocket —
+        # which hung the "Make It Yours" workspace PTY terminals forever on
+        # "connecting" (missions survive via the unauthenticated main /ws).
+        from .missions_auth import register_session_token_from_env
+
+        register_session_token_from_env(self.cfg.ui.auth_token_env)
         app.include_router(missions_router)
         app.include_router(missions_ws_router)
         app.include_router(missions_pty_router)
@@ -726,8 +733,8 @@ class WebServer:
             """
             return {"ready": bool(getattr(self, "_voice_ready", False))}
 
-        @app.get("/api/openclaw/status")
-        async def openclaw_status() -> dict[str, Any]:
+        @app.get("/api/jarvis-agent/status")
+        async def jarvis_agent_status() -> dict[str, Any]:
             """OpenClaw-Bridge-Status fuer die SettingsView (Welle 3).
 
             Read-only Snapshot:
@@ -752,21 +759,21 @@ class WebServer:
             """
             import shutil
 
-            oc_cfg = cfg.harness.openclaw
+            oc_cfg = cfg.harness.jarvis_agent
             router_primary = (cfg.brain.primary or "").lower()
 
             try:
                 from jarvis.missions.worker_runtime.provider_map import (
                     MAPPINGS,
-                    canonical_subagent_provider,
-                    to_provider_slug,
+                    canonical_worker_provider,
+                    to_worker_slug,
                 )
             except Exception:  # noqa: BLE001
                 MAPPINGS = ()  # type: ignore[assignment]
-                to_provider_slug = None  # type: ignore[assignment]
-                canonical_subagent_provider = None  # type: ignore[assignment]
+                to_worker_slug = None  # type: ignore[assignment]
+                canonical_worker_provider = None  # type: ignore[assignment]
 
-            # The HEAVY-TASK subagent runs on ``[brain.sub_jarvis].provider`` —
+            # The HEAVY-TASK subagent runs on ``[brain.worker].provider`` —
             # NOT on ``brain.primary`` (that is only the lightweight router
             # brain). Mark the brain that ACTUALLY executes heavy tasks as
             # active; fall back to the router brain only when no subagent
@@ -774,13 +781,13 @@ class WebServer:
             # Mirrors jarvis/missions/init.py::_worker_factory so the displayed
             # brain never drifts from the worker that runs. (Bug 2026-05-28:
             # the UI showed Gemini active while heavy work ran on Claude.)
-            sub_cfg = getattr(cfg.brain, "sub_jarvis", None)
+            sub_cfg = getattr(cfg.brain, "worker", None)
             sub_raw = (
                 getattr(sub_cfg, "provider", None) if sub_cfg is not None else None
             )
             sub_provider = (
-                canonical_subagent_provider(sub_raw)
-                if canonical_subagent_provider is not None
+                canonical_worker_provider(sub_raw)
+                if canonical_worker_provider is not None
                 else None
             )
             primary = sub_provider or router_primary
@@ -800,9 +807,9 @@ class WebServer:
             )
 
             provider_slug: str | None = None
-            if to_provider_slug is not None:
+            if to_worker_slug is not None:
                 try:
-                    provider_slug = to_provider_slug(primary)
+                    provider_slug = to_worker_slug(primary)
                 except Exception:  # noqa: BLE001
                     provider_slug = None
 
@@ -864,7 +871,7 @@ class WebServer:
                 mapping_rows.append(
                     {
                         "jarvis": mapping.jarvis,
-                        "openclaw": mapping.openclaw,
+                        "worker_slug": mapping.worker_slug,
                         "env_var": mapping.env_var,
                         "env_fallback": mapping.env_fallback,
                         "key_set": key_set,
@@ -1947,12 +1954,14 @@ class WebServer:
         data_dir.mkdir(parents=True, exist_ok=True)
         db_path = data_dir / "missions.db"
 
-        # Isolation-Root: <repo_parent>/sub-agents-outputs/. Repo-Root ist 4 Ebenen
-        # ueber jarvis/ui/web/server.py: server.py -> web -> ui -> jarvis -> repo.
+        # Isolation-Root: <repo_parent>/jarvis-agent-outputs/ (preferred; falls back
+        # to <repo_parent>/sub-agents-outputs/ if only the old dir exists — see
+        # resolve_outputs_root). Repo-Root ist 4 Ebenen over jarvis/ui/web/server.py:
+        # server.py -> web -> ui -> jarvis -> repo.
         repo_root = WEB_DIR.parent.parent.parent
         # Test/benchmark isolation seam: an explicit JARVIS_ISOLATION_ROOT
         # redirects the mission worktree container (and, with it, the startup
-        # cleanup sweep) away from the SHARED production sub-agents-outputs/.
+        # cleanup sweep) away from the SHARED production outputs dir.
         # Unset in production → unchanged behavior. Critical because
         # ``startup_sweep`` is filesystem-driven (removes any entry older than
         # cleanup_days by mtime, not DB-gated): without this seam an isolated
@@ -1962,7 +1971,8 @@ class WebServer:
         if _iso_override:
             isolation_root = Path(_iso_override)
         else:
-            isolation_root = repo_root.parent / "sub-agents-outputs"
+            from jarvis.missions.isolation.worktree import resolve_outputs_root
+            isolation_root = resolve_outputs_root(repo_root)
 
         # Fail-closed primary-instance gate: POSITIVE proof is required.
         # Only the launcher process, after confirming it holds the
@@ -2026,33 +2036,33 @@ class WebServer:
             from jarvis.brain.factory import (
                 set_kontrollierer,
                 set_mission_manager,
-                set_openclaw_bootstrap_failed,
+                set_worker_bootstrap_failed,
             )
 
             set_mission_manager(result["manager"])
             set_kontrollierer(result["kontrollierer"])
-            set_openclaw_bootstrap_failed(False)
-            self.app.state.openclaw_available = True
+            set_worker_bootstrap_failed(False)
+            self.app.state.worker_available = True
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "set_mission_manager/kontrollierer-Wiring fehlgeschlagen — "
                 "spawn_worker wird in diesem Run deaktiviert: %s", exc,
             )
             # Surface the failure for both downstream readers:
-            #  - `self.app.state.openclaw_available` lets REST routes and
-            #    UI components show an explicit "OpenClaw unavailable" hint
+            #  - `self.app.state.worker_available` lets REST routes and
+            #    UI components show an explicit "worker unavailable" hint
             #    instead of permanently rendering "loading" / "pending".
             #  - the factory-level singleton lets the Brain's spawn_worker
             #    tool short-circuit at execute()-time with an honest
             #    "konnte nicht initialisiert werden" message instead of the
             #    transient "noch nicht bereit" the in-progress path returns.
-            self.app.state.openclaw_available = False
+            self.app.state.worker_available = False
             try:
-                from jarvis.brain.factory import set_openclaw_bootstrap_failed
-                set_openclaw_bootstrap_failed(True)
+                from jarvis.brain.factory import set_worker_bootstrap_failed
+                set_worker_bootstrap_failed(True)
             except Exception as inner_exc:  # noqa: BLE001
                 logger.warning(
-                    "set_openclaw_bootstrap_failed wiring failed: %s",
+                    "set_worker_bootstrap_failed wiring failed: %s",
                     inner_exc,
                 )
 

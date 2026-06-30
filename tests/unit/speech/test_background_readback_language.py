@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from jarvis.core.bus import EventBus
-from jarvis.core.events import OpenClawBackgroundCompleted
+from jarvis.core.events import JarvisAgentBackgroundCompleted
 from tests.unit.speech.test_announcement_bridge import (
     FakePlayer,
     FakeTTS,
@@ -30,7 +30,7 @@ async def test_background_readback_speaks_english_for_english_conversation() -> 
     pipe._brain = SimpleNamespace(reply_language="auto", conversation_language="en")
 
     await bus.publish(
-        OpenClawBackgroundCompleted(success=True, summary="", duration_s=1.0)
+        JarvisAgentBackgroundCompleted(success=True, summary="", duration_s=1.0)
     )
 
     assert tts.calls, "expected a background readback to be synthesized"
@@ -47,7 +47,7 @@ async def test_background_readback_stays_german_for_german_conversation() -> Non
     pipe._brain = SimpleNamespace(reply_language="auto", conversation_language="de")
 
     await bus.publish(
-        OpenClawBackgroundCompleted(success=True, summary="", duration_s=1.0)
+        JarvisAgentBackgroundCompleted(success=True, summary="", duration_s=1.0)
     )
 
     assert tts.calls, "expected a background readback to be synthesized"

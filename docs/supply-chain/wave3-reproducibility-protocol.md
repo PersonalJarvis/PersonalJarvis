@@ -13,7 +13,7 @@
 > Status: **Foundation step.** This document defines the bar. The
 > scaffolding (`slsa-provenance.yml.tmpl`, `cross-runner-hash.yml.tmpl`,
 > `install/in-toto/layout.template.json`) is checked in and ready for
-> follow-up sub-agents SA-2 / SA-3 / SA-4 / SA-5 to wire into
+> follow-up Jarvis-Agents SA-2 / SA-3 / SA-4 / SA-5 to wire into
 > `.github/workflows/sign-installer.yml`. No production workflow runs
 > Wave 3 logic yet.
 >

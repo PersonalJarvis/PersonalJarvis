@@ -74,7 +74,9 @@ _CHEAP_MODEL_FALLBACK: dict[str, str] = {
     "openai": "gpt-5.5",
     "codex": "gpt-5.5",
     "deepseek": "deepseek-chat",
-    "openrouter": "anthropic/claude-haiku-4.5",
+    # Gateway: background curation must not bill a paid Anthropic model on a
+    # free OpenRouter key (§3/AP-22) — use a free general-purpose model.
+    "openrouter": "nvidia/nemotron-3-ultra-550b-a55b:free",
     "mistral": "mistral-small-3.1",
 }
 

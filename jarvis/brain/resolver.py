@@ -172,11 +172,12 @@ def _resolve_chain(config: JarvisConfig) -> list[tuple[str, str | None]]:
         chain.append((bio_cfg.override_provider, bio_cfg.override_model or None))
 
     brain_cfg = config.brain
-    # Wave 4 migration: the ``sub_jarvis`` field on BrainConfig was marked
-    # as legacy (see core/config.py). We still read it if a configuration
-    # still contains ``[brain.sub_jarvis]`` — it serves as a frontier hint
-    # for ``resolve_frontier_brain``.
-    sub_tier = brain_cfg.sub_jarvis
+    # Wave 4 migration / 2026-06-29 Jarvis-Agents rename: the field was
+    # ``sub_jarvis``, now ``worker`` (accepts old key via AliasChoices). We
+    # still read it if a configuration contains ``[brain.worker]`` or the
+    # legacy ``[brain.sub_jarvis]`` — it serves as a frontier hint for
+    # ``resolve_frontier_brain``.
+    sub_tier = brain_cfg.worker
 
     # Stage 2 — legacy sub-jarvis tier config from Wave 3 / pre-Wave-4
     # (user had explicitly set the frontier tier there; remains readable)
@@ -194,9 +195,16 @@ def _resolve_chain(config: JarvisConfig) -> list[tuple[str, str | None]]:
             )
             chain.append((sub_tier.fallback_provider_2, fb2_model or None))
 
-    # Stage 3 — primary provider (with frontier default lookup)
+    # Stage 3 — primary provider. Honor the user's PICKED model
+    # ([brain.providers[primary]].model) before the hardcoded deep TIER default —
+    # otherwise an OpenRouter user who chose a free model has skill-creation /
+    # board-bio resolve onto the paid anthropic/claude-opus default and bills the
+    # gateway key (§3/AP-21). The default only applies when nothing is pinned.
     primary = brain_cfg.primary or "claude-api"
-    primary_model = _default_for("deep", primary)
+    primary_pc = (brain_cfg.providers or {}).get(primary)
+    primary_model = (getattr(primary_pc, "model", "") or "").strip() or _default_for(
+        "deep", primary,
+    )
     chain.append((primary, primary_model or None))
 
     # Stage 4 — local fallback (Ollama local or similar, last resort)

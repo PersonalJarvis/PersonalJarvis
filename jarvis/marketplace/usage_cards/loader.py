@@ -4,7 +4,8 @@ A card co-locates two things: the relevance keywords (for the per-turn gate)
 and the guidance prose (injected into the system prompt only when the plugin
 is active this turn). No YAML dependency — we parse the tiny frontmatter by
 hand. Missing card = None (a plugin without a card still works, just without
-guidance/keyword gating; the relevance gate then falls back to always-include).
+curated keywords/guidance; the relevance gate then keeps it only when the turn
+NAMES it or a noun auto-derived from its own tools matches — not always-include).
 """
 from __future__ import annotations
 
@@ -13,6 +14,28 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 _CARDS_DIR = Path(__file__).parent
+
+
+def _resolve_card_path(plugin_id: str) -> Path | None:
+    """Locate the card file for ``plugin_id``, treating ``-`` and ``_`` as
+    equivalent in the filename.
+
+    Catalog ids and on-disk card filenames disagree on the separator (a catalog
+    ``google-calendar`` vs the bundled ``google_calendar.md``), so a literal
+    filename match silently returned ``None``. We try the id as given, then with
+    ``-`` -> ``_`` and ``_`` -> ``-``, and return the first existing file. The
+    swaps only touch ``-``/``_`` and so cannot introduce a path separator; the
+    caller still applies the path-traversal guard beforehand.
+    """
+    for candidate in (
+        plugin_id,
+        plugin_id.replace("-", "_"),
+        plugin_id.replace("_", "-"),
+    ):
+        path = _CARDS_DIR / f"{candidate}.md"
+        if path.exists():
+            return path
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,8 +60,8 @@ def load_usage_card(plugin_id: str) -> UsageCard | None:
     # plugin_id is a catalog id (validated elsewhere); guard path traversal.
     if not plugin_id or "/" in plugin_id or "\\" in plugin_id or ".." in plugin_id:
         return None
-    path = _CARDS_DIR / f"{plugin_id}.md"
-    if not path.exists():
+    path = _resolve_card_path(plugin_id)
+    if path is None:
         return None
     raw = path.read_text(encoding="utf-8")
     keywords: list[str] = []

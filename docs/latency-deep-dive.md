@@ -18,7 +18,7 @@
 The token footprint presumably breaks down roughly into:
 
 - **Vision frames** (`[brain.router.vision] enabled = true, refresh_interval_s = 2.0`): foreground screenshot up to 500 KB, ~1500–3000 image tokens per frame. With a 2-second refresh and frame-history/buffer logic, 5000–10000 tokens are not unusual.
-- **Persona/system prompt** (`brain/persona_loader.py`): plan §22-compliant pure-dispatcher prompt + sub-Jarvis spawn rules + bilingual + filter hints. Estimate: 2000–3000 tokens.
+- **Persona/system prompt** (`brain/persona_loader.py`): plan §22-compliant pure-dispatcher prompt + Jarvis-Agent spawn rules + bilingual + filter hints. Estimate: 2000–3000 tokens.
 - **Tool definitions** (router tier: `run-shell`, `screen-snapshot`, `dispatch-to-harness`, `multi-spawn`, `spawn-sub-jarvis`, `dispatch-with-review` plus self-mod tools): each tool with its JSON schema 200–600 tokens, aggregate ~3000 tokens.
 - **Memory context** (core memory + recall + persona recall): variable, 1000–3000 tokens.
 - **Conversation history** (`use_history = True`): since session start, nearly empty on a voice-session restart.
@@ -85,12 +85,12 @@ Weighted below by **latency effect × quality risk × effort**. Quality risk = 0
 
 | # | Lever | Latency effect | Quality risk | Effort |
 |---|-------|---------------|--------------|---------|
-| **C1** | **Gemini `thinking_config.thinking_budget`** — configurable per tier: Router=0 or dynamic-low, Sub-Jarvis=high | −2 to −5 s in the router tier (currently thinks without a limit) | low (the router makes a tool choice, barely needs reasoning) | small (1 day) |
-| **C2** | **Anthropic Extended Thinking `thinking.budget_tokens`** for sub-Jarvis (Opus) — deliberately set instead of default | at a low value −1 to −3 s | low-medium (depending on the value) | small (1 day) |
+| **C1** | **Gemini `thinking_config.thinking_budget`** — configurable per tier: Router=0 or dynamic-low, Jarvis-Agent=high | −2 to −5 s in the router tier (currently thinks without a limit) | low (the router makes a tool choice, barely needs reasoning) | small (1 day) |
+| **C2** | **Anthropic Extended Thinking `thinking.budget_tokens`** for the Jarvis-Agent (Opus) — deliberately set instead of default | at a low value −1 to −3 s | low-medium (depending on the value) | small (1 day) |
 | **C3** | **OpenAI `reasoning.effort: "low"|"medium"|"high"` for GPT-5.5 Pro** — map per tier | analogous to C1 | analogous to C1 | small |
 | **C4** | **Per-intent tier routing** — smalltalk → Flash/Haiku; reasoning → Pro/Opus. Partially exists via the router; map it consistently onto the thinking budget | −3 to −6 s on smalltalk requests | 0 (correct model choice, not a downgrade) | medium |
 
-**Recommendation:** C1 is mandatory. Currently Gemini 3.1 Pro Preview in the sub-Jarvis tier probably thinks with the default budget (high), and the router (Gemini 3 Flash Preview) does too — but Flash has barely any thinking need for tool routing.
+**Recommendation:** C1 is mandatory. Currently Gemini 3.1 Pro Preview in the Jarvis-Agent tier probably thinks with the default budget (high), and the router (Gemini 3 Flash Preview) does too — but Flash has barely any thinking need for tool routing.
 
 ### Lever class D — Hedged / parallel requests (quality risk = 0, cost +)
 
@@ -100,14 +100,14 @@ Weighted below by **latency effect × quality risk × effort**. Quality risk = 0
 | **D2** | **Region hedging** — same provider in 2 regions (US-East + EU) | TTFT −100 to −500 ms | double cost | small (endpoint config) |
 | **D3** | **Speculative acknowledgment** — at latency > 800 ms play a pre-rendered filler phrase (already exists via `_brain_with_ack` and `_task_ack_delay_s`) | perceived −1 s | 0 | already implemented |
 
-**Recommendation:** D1 is a backup strategy for especially tough cases (>10s). Not the first priority, but quite interesting as a "premium mode" for sub-Jarvis spawns.
+**Recommendation:** D1 is a backup strategy for especially tough cases (>10s). Not the first priority, but quite interesting as a "premium mode" for Jarvis-Agent spawns.
 
 ### Lever class E — Model strategy (quality risk: controllable)
 
 | # | Lever | Latency effect | Quality risk |
 |---|-------|---------------|--------------|
 | **E1** | **Frontier registry with auto-update** — `models.toml` with "frontier" as a tag, an automatic check (e.g. weekly) for whether new frontier models exist | 0 (latency-neutral, but automatically future-proof) | 0 |
-| **E2** | **"Speculative tier" instead of reasoning** for trivial requests — the router already decides: do I need Pro or Flash? The current logic is a pure dispatcher → spawn a sub-Jarvis on every action verb. Not every "öffne …" needs Opus. | −5 to −8 s on trivial sub-Jarvis spawns | low (some spawns then run on Flash instead of Pro) |
+| **E2** | **"Speculative tier" instead of reasoning** for trivial requests — the router already decides: do I need Pro or Flash? The current logic is a pure dispatcher → spawn a Jarvis-Agent on every action verb. Not every "öffne …" needs Opus. | −5 to −8 s on trivial Jarvis-Agent spawns | low (some spawns then run on Flash instead of Pro) |
 | **E3** | **Model aliasing** — `claude-opus-latest` / `gemini-pro-latest` instead of hard-wired `claude-opus-4-7` / `gemini-3.1-pro-preview`. Provider-side or as a config layer. | 0 | 0 |
 
 ---
@@ -137,7 +137,7 @@ Weighted below by **latency effect × quality risk × effort**. Quality risk = 0
 4. **C1: Gemini thinking-budget config** (1 day)
    - Pydantic model: `[brain.providers.gemini].thinking_budget_router = 0`, `thinking_budget_sub_jarvis = "dynamic"` or a fixed token value.
    - In `gemini.py:complete()`: `thinking_config = types.ThinkingConfig(thinking_budget=N)` on `GenerateContentConfig`.
-   - Expected effect: router-tier latency roughly halves; sub-Jarvis on trivial actions likewise.
+   - Expected effect: router-tier latency roughly halves; Jarvis-Agent on trivial actions likewise.
 
 ### Stage 2 — Mid-term (2–3 weeks)
 
@@ -148,10 +148,10 @@ Weighted below by **latency effect × quality risk × effort**. Quality risk = 0
    - Resolution in the BrainManager via the registry.
    - Expected effect: an automatic switch on every new frontier release without a code edit. **Exactly what you requested.**
 
-6. **E2: "Quick-path" for trivial sub-Jarvis spawns**
+6. **E2: "Quick-path" for trivial Jarvis-Agent spawns**
    - The force-spawn heuristic (`_should_force_sub_jarvis`) gets a second stage: trivial actions ("öffne Notepad", "type X", "click Y") land on the Flash tier instead of Pro.
    - Complex visions ("baue mir eine App", "deploy auf Vercel") stay on Opus/Pro.
-   - Expected effect: ~50 % of sub-Jarvis spawns become 5–8 s faster.
+   - Expected effect: ~50 % of Jarvis-Agent spawns become 5–8 s faster.
 
 7. **A3 + A4: Pipeline optimizations**
    - Move the vision-capture path out of the critical path (its own background producer, the BrainManager reads the last frame from shared state).
@@ -227,7 +227,7 @@ User mandate: "die Qualität der Antworten unter Mitleidenschaft" must not suffe
 | Provider caching | **Bit-identical to the uncached version** (the cache is transparent) |
 | Connection pooling | **0** |
 | Thinking-budget reduction on the router | The router makes a tool choice, needs no reasoning. **0 risk in the router tier.** |
-| Thinking-budget reduction on sub-Jarvis | **Careful here.** Keep the default budget for sub-Jarvis Pro/Opus conservative. Divert trivial actions (E2) to the Flash tier via heuristic instead of blocking Opus with a low budget. |
+| Thinking-budget reduction on the Jarvis-Agent | **Careful here.** Keep the default budget for the Jarvis-Agent Pro/Opus conservative. Divert trivial actions (E2) to the Flash tier via heuristic instead of blocking Opus with a low budget. |
 | Hedging | **0** (same frontier provider, the fastest answer wins) |
 
 **Red line:** never statically cap the reasoning budget on Opus/Pro for complex requests. Instead, route the *class* of the request correctly (E2). The mandate "keep frontier models" is consistent with thinking-budget control as long as the budget fits the class of the task.
@@ -274,7 +274,7 @@ Expected new voice-session latency for the request above ("Was geht ab?"):
 | S1 | B1 verify Anthropic cache | 1 day | Hauptjarvis |
 | S1 | C1 Gemini thinking-budget config | 1 day | Hauptjarvis |
 | S2 (week 2-3) | E1 frontier registry with auto-update | 3 days | Hauptjarvis |
-| S2 | E2 quick-path heuristic for trivial sub-Jarvis spawns | 2 days | Hauptjarvis |
+| S2 | E2 quick-path heuristic for trivial Jarvis-Agent spawns | 2 days | Hauptjarvis |
 | S2 | A3+A4 pipeline optimizations | 2 days | Hauptjarvis |
 | S3 (optional) | D1 hedging as premium mode | 3 days | Hauptjarvis |
 | S3 (optional) | B4 vision-frame diff cache | 3 days | Hauptjarvis |
@@ -292,7 +292,7 @@ After each stage, run the following smoke tests:
 
 1. **A latency regression test** exists: `tests/integration/test_tier1_speed.py`. Extend it to:
    - Time-to-first-audio ≤ 3 s (P95) on smalltalk
-   - Time-to-first-audio ≤ 5 s (P95) on a sub-Jarvis spawn
+   - Time-to-first-audio ≤ 5 s (P95) on a Jarvis-Agent spawn
    - Total latency ≤ 8 s (P95) on smalltalk
 2. **Quality regression test:** 20 fixed voice prompts (deterministic seed), compare the brain outputs before/after. Diff score (cosine similarity) ≥ 0.95.
 3. **Cost regression test:** compare the cost meter before/after caching on the same prompt set. Expectation: cost reduction > 50 % at stable quality.

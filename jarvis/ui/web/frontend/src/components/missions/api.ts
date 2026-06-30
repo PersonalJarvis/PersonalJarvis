@@ -39,9 +39,9 @@ export async function fetchMissionDetail(id: string): Promise<MissionDetail> {
     events
       .filter((e) => e.payload.event_type === "CriticVerdictReady")
       .map((e) => e.payload as CriticVerdictReady);
-  const openclaw_workers: OpenClawWorkerSnapshot[] =
-    Array.isArray(data.openclaw_workers) ? data.openclaw_workers : [];
-  return { mission: data.mission, events, verdicts, openclaw_workers };
+  const worker_snapshots: OpenClawWorkerSnapshot[] =
+    Array.isArray(data.worker_snapshots) ? data.worker_snapshots : [];
+  return { mission: data.mission, events, verdicts, worker_snapshots };
 }
 
 export async function cancelMission(id: string): Promise<void> {

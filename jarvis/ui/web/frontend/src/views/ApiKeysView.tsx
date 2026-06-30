@@ -6,7 +6,7 @@ import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
 import { CuModelSelector } from "@/components/CuModelSelector";
 import { ProviderBillingBadge } from "@/components/ProviderBillingBadge";
-import { SubagentSection } from "@/components/SubagentSection";
+import { JarvisAgentSection } from "@/components/JarvisAgentSection";
 import { TelephonyPanel } from "@/views/TelephonyView";
 import { WikiProviderCard } from "@/views/settings/WikiProviderCard";
 import { JarvisApiGroup } from "@/views/settings/JarvisApiGroup";
@@ -20,12 +20,14 @@ import {
   type ProviderTestResult,
   type ProviderTestStatus,
   type ProviderTier,
+  type SectionHealth,
   startCodexLogin,
   switchBrainProvider,
   switchSttProvider,
   switchTtsProvider,
   testProvider,
   useProviders,
+  useSectionHealth,
 } from "@/hooks/useProviders";
 import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
@@ -80,6 +82,9 @@ function makeProviderCategories(
 export function ApiKeysView() {
   const t = useT();
   const { providers, loading, error, refetch, setActiveOptimistic } = useProviders();
+  // Per-tab health (amber = the active provider isn't set up, red = it's set up
+  // but failing a live check). Best-effort and off the render-blocking path.
+  const { health } = useSectionHealth();
   const categories = makeProviderCategories(t);
   const [active, setActive] = useState<CategoryKey>("brain");
 
@@ -91,7 +96,7 @@ export function ApiKeysView() {
         subtitle={t("apikeys_view.subtitle")}
       />
 
-      <CategoryTabs active={active} onSelect={setActive} />
+      <CategoryTabs active={active} onSelect={setActive} health={health} />
 
       <div className="flex-1 overflow-y-auto scrollbar-jarvis p-6">
         {(active === "brain" || active === "tts" || active === "stt") && (
@@ -103,6 +108,7 @@ export function ApiKeysView() {
             error={error}
             onChanged={refetch}
             onActivateOptimistic={setActiveOptimistic}
+            health={health[active]}
           />
         )}
         {active === "subagents" && <SubagentCategory />}
@@ -121,9 +127,12 @@ export function ApiKeysView() {
 function CategoryTabs({
   active,
   onSelect,
+  health,
 }: {
   active: CategoryKey;
   onSelect: (key: CategoryKey) => void;
+  /** Per-tab health rollup keyed by category; absent keys render no dot. */
+  health: Record<string, SectionHealth>;
 }) {
   const t = useT();
   const coreTabs: { key: CategoryKey; label: string; icon: LucideIcon }[] = [
@@ -143,6 +152,7 @@ function CategoryTabs({
               label={tab.label}
               selected={active === tab.key}
               onClick={() => onSelect(tab.key)}
+              health={health[tab.key]}
             />
           ))}
         </div>
@@ -155,6 +165,7 @@ function CategoryTabs({
           label={t("apikeys_view.tab_advanced")}
           selected={active === "advanced"}
           onClick={() => onSelect("advanced")}
+          health={health.advanced}
           muted
         />
       </div>
@@ -168,6 +179,7 @@ function TabButton({
   selected,
   onClick,
   muted = false,
+  health,
 }: {
   icon: LucideIcon;
   label: string;
@@ -175,15 +187,40 @@ function TabButton({
   onClick: () => void;
   /** The de-emphasized "Advanced" tab: neutral fill instead of the gold accent. */
   muted?: boolean;
+  /** Optional health rollup driving the corner status dot. */
+  health?: SectionHealth;
 }) {
+  const t = useT();
+  // Only the two "needs attention" states draw a dot — amber for "still has to be
+  // set up", red for "set up but not working". `ok` / `unknown` stay silent so the
+  // tab bar is calm and a dot always means "look here".
+  const indicator =
+    health?.status === "error"
+      ? "error"
+      : health?.status === "needs_setup"
+        ? "needs_setup"
+        : null;
+  const statusLabel =
+    indicator === "error"
+      ? t("apikeys_view.health_error")
+      : indicator === "needs_setup"
+        ? t("apikeys_view.health_needs_setup")
+        : "";
+  // Tooltip: the plain-language status plus the backend's one-line detail
+  // (e.g. "Groq STT: key invalid"), so hovering explains exactly what's wrong.
+  const title = indicator
+    ? [statusLabel, health?.detail].filter(Boolean).join(" — ")
+    : undefined;
+
   return (
     <button
       type="button"
       role="tab"
       aria-selected={selected}
       onClick={onClick}
+      title={title}
       className={cn(
-        "inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
+        "relative inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
         muted
           ? selected
             ? "bg-secondary text-foreground ring-1 ring-border"
@@ -191,10 +228,25 @@ function TabButton({
           : selected
             ? "bg-primary/10 text-primary ring-1 ring-primary/30"
             : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+        // A faint red outline echoes the "rot umrandet" cue for a broken section,
+        // independent of the selection ring so the two never fight.
+        indicator === "error" && "outline outline-1 outline-destructive/70",
       )}
     >
       <Icon className="h-4 w-4" />
       {label}
+      {indicator && (
+        <>
+          <span
+            aria-hidden="true"
+            className={cn(
+              "absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-background",
+              indicator === "error" ? "bg-destructive" : "bg-amber-500",
+            )}
+          />
+          <span className="sr-only">{` (${statusLabel})`}</span>
+        </>
+      )}
     </button>
   );
 }
@@ -241,6 +293,7 @@ function ProviderCategory({
   error,
   onChanged,
   onActivateOptimistic,
+  health,
 }: {
   meta: CategoryMeta;
   tier: ProviderTier;
@@ -249,6 +302,9 @@ function ProviderCategory({
   error: string | null;
   onChanged: () => void;
   onActivateOptimistic: (tier: ProviderTier, id: string) => void;
+  /** Live health of this tier's ACTIVE provider — drills the tab's red dot down
+   *  onto the exact card that is failing so the user sees WHICH provider broke. */
+  health?: SectionHealth;
 }) {
   const t = useT();
   const tierProviders = providers.filter(
@@ -288,6 +344,7 @@ function ProviderCategory({
           providers={tierProviders}
           onChanged={onChanged}
           onActivateOptimistic={onActivateOptimistic}
+          health={health}
         />
       )}
     </div>
@@ -308,7 +365,7 @@ function SubagentCategory() {
         title={t("apikeys_view.cat_subagents_title")}
         description={t("apikeys_view.cat_subagents_desc")}
       />
-      <SubagentSection hideHeader />
+      <JarvisAgentSection hideHeader />
     </div>
   );
 }
@@ -383,10 +440,14 @@ function TierSection({
   providers,
   onChanged,
   onActivateOptimistic,
+  health,
 }: {
   providers: ProviderDescriptor[];
   onChanged: () => void;
   onActivateOptimistic: (tier: ProviderTier, id: string) => void;
+  /** Tier health — handed only to the ACTIVE card, since section-health tests
+   *  exactly the one provider powering this tier. */
+  health?: SectionHealth;
 }) {
   const tierHasActive = providers.some((p) => p.active);
   return (
@@ -398,6 +459,7 @@ function TierSection({
             onChanged={onChanged}
             onActivateOptimistic={onActivateOptimistic}
             autoActivateOnSave={!tierHasActive}
+            health={p.active ? health : undefined}
           />
         </li>
       ))}
@@ -410,15 +472,27 @@ function ProviderCard({
   onChanged,
   onActivateOptimistic,
   autoActivateOnSave,
+  health,
 }: {
   descriptor: ProviderDescriptor;
   onChanged: () => void;
   onActivateOptimistic: (tier: ProviderTier, id: string) => void;
   autoActivateOnSave: boolean;
+  /** Live section-health for THIS card (set only on the active provider). A
+   *  status of "error" turns the card red and surfaces the cause inline — the
+   *  tab dot says "something here is broken", this says exactly WHAT/WHERE. */
+  health?: SectionHealth;
 }) {
   const t = useT();
   const [activating, setActivating] = useState(false);
   const pushToast = useEventStore((s) => s.pushToast);
+  // The card only escalates to red for a real "set up but failing" error — the
+  // amber "needs setup" case stays on the tab + the open/ready badge so a fresh,
+  // half-configured screen doesn't paint cards red.
+  const cardError = descriptor.active && health?.status === "error";
+  // The backend one-liner (e.g. "OpenRouter: rate limited") already names the
+  // provider + cause, so it answers "what is wrong" without a second lookup.
+  const cardErrorDetail = health?.detail?.trim() || "";
 
   // Codex is filtered out of the Brain tier (`brain_switchable=false`) and is
   // selected from the Subagent section. This branch stays for older payloads or
@@ -430,7 +504,7 @@ function ProviderCard({
   async function activate(assumeConfigured = false) {
     if (descriptor.active) return;
     if (!isBrainSwitchable) {
-      pushToast("warning", `${descriptor.label} is only available for Subagents.`);
+      pushToast("warning", `${descriptor.label} is only available for Jarvis-Agents.`);
       return;
     }
     if (isCodex && !descriptor.codex_brain_ready) {
@@ -527,7 +601,7 @@ function ProviderCard({
         descriptor.active
           ? t("apikeys_view.active_tooltip")
           : !isBrainSwitchable
-            ? "Available for Subagents only"
+            ? "Available for Jarvis-Agents only"
           : descriptor.configured
             ? t("apikeys_view.click_to_activate")
             : descriptor.auth_mode === "codex"
@@ -538,13 +612,17 @@ function ProviderCard({
       }
       className={cn(
         "card-outline space-y-3 p-4 transition-colors",
-        descriptor.active
-          ? "border-primary bg-primary/[0.06] ring-1 ring-primary/30"
-          : descriptor.configured
-            ? isBrainSwitchable
-              ? "cursor-pointer hover:border-primary/40 hover:bg-primary/[0.02]"
-              : ""
-            : "opacity-95",
+        // A broken active provider wins the card's frame — red outline + faint
+        // red wash — so the eye lands on the exact card behind the tab's red dot.
+        cardError
+          ? "border-destructive/70 bg-destructive/[0.05] ring-1 ring-destructive/30"
+          : descriptor.active
+            ? "border-primary bg-primary/[0.06] ring-1 ring-primary/30"
+            : descriptor.configured
+              ? isBrainSwitchable
+                ? "cursor-pointer hover:border-primary/40 hover:bg-primary/[0.02]"
+                : ""
+              : "opacity-95",
       )}
     >
       <div className="flex items-start justify-between gap-3">
@@ -591,13 +669,30 @@ function ProviderCard({
           disabled={!isBrainSwitchable || (isCodex && !descriptor.codex_brain_ready)}
           disabledReason={
             !isBrainSwitchable
-              ? "Available for Subagents only"
+              ? "Available for Jarvis-Agents only"
               : isCodex && !descriptor.codex_brain_ready
                 ? t("apikeys_codex.brain_needs_openai_key")
                 : undefined
           }
         />
       </div>
+
+      {/* The precise "this card is the problem" banner: only on the active card,
+          only when the live check actually failed. Names the cause in plain
+          words instead of leaving the user to guess behind the tab's red dot. */}
+      {cardError && (
+        <div
+          data-testid={`provider-health-error-${descriptor.id}`}
+          role="status"
+          className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/[0.07] px-3 py-2 text-[11px] leading-relaxed text-destructive"
+        >
+          <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span className="min-w-0 break-words">
+            <span className="font-medium">{t("apikeys_view.health_error")}</span>
+            {cardErrorDetail ? ` — ${cardErrorDetail}` : ""}
+          </span>
+        </div>
+      )}
 
       <AuthWidget
         descriptor={descriptor}
@@ -607,7 +702,7 @@ function ProviderCard({
 
       {!isBrainSwitchable && (
         <p className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-700">
-          Subagent only. This provider cannot be used as the main Brain or
+          Jarvis-Agent only. This provider cannot be used as the main Brain or
           Computer-Use planner because it does not receive screenshots.
         </p>
       )}
@@ -693,6 +788,9 @@ function ProviderTestControl({ providerId }: { providerId: string }) {
       });
     } finally {
       setRunning(false);
+      // Let the tab indicators re-check: if this was the active provider, its
+      // tab dot should reflect the fresh result instead of a stale cached one.
+      window.dispatchEvent(new Event("jarvis:provider-tested"));
     }
   }
 

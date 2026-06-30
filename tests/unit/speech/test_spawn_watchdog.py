@@ -26,8 +26,8 @@ from jarvis.brain.ack_brain.spawn_announcement import STILL_RUNNING_PHRASES
 from jarvis.core.bus import EventBus
 from jarvis.core.events import (
     AnnouncementRequested,
-    OpenClawAnnouncement,
-    OpenClawBackgroundCompleted,
+    JarvisAgentAnnouncement,
+    JarvisAgentBackgroundCompleted,
     VoiceMuteToggleRequested,
 )
 from jarvis.core.protocols import AudioChunk
@@ -97,10 +97,10 @@ async def test_completion_within_window_cancels_watchdog() -> None:
     announcements: list[AnnouncementRequested] = []
     bus.subscribe(AnnouncementRequested, lambda ev: announcements.append(ev))
 
-    await bus.publish(OpenClawAnnouncement(action="bauen", target="x"))
+    await bus.publish(JarvisAgentAnnouncement(action="bauen", target="x"))
     await asyncio.sleep(0.02)  # let the watchdog task get scheduled
 
-    await bus.publish(OpenClawBackgroundCompleted(success=True, summary="ok"))
+    await bus.publish(JarvisAgentBackgroundCompleted(success=True, summary="ok"))
     await asyncio.sleep(0.05)
 
     progress = _heartbeats(announcements)
@@ -120,7 +120,7 @@ async def test_no_completion_triggers_watchdog_phrase() -> None:
     announcements: list[AnnouncementRequested] = []
     bus.subscribe(AnnouncementRequested, lambda ev: announcements.append(ev))
 
-    await bus.publish(OpenClawAnnouncement(action="bauen", target="x"))
+    await bus.publish(JarvisAgentAnnouncement(action="bauen", target="x"))
     # Wait long enough for the watchdog timer to fire.
     await asyncio.sleep(0.3)
 
@@ -148,7 +148,7 @@ async def test_watchdog_respects_mute() -> None:
     await bus.publish(VoiceMuteToggleRequested(source="test"))
     assert pipe.is_muted is True
 
-    await bus.publish(OpenClawAnnouncement(action="bauen", target="x"))
+    await bus.publish(JarvisAgentAnnouncement(action="bauen", target="x"))
     await asyncio.sleep(0.3)
 
     progress = _heartbeats(announcements)
@@ -169,12 +169,12 @@ async def test_multiple_spawns_each_get_a_watchdog() -> None:
     announcements: list[AnnouncementRequested] = []
     bus.subscribe(AnnouncementRequested, lambda ev: announcements.append(ev))
 
-    await bus.publish(OpenClawAnnouncement(action="A", target="a"))
-    await bus.publish(OpenClawAnnouncement(action="B", target="b"))
+    await bus.publish(JarvisAgentAnnouncement(action="A", target="a"))
+    await bus.publish(JarvisAgentAnnouncement(action="B", target="b"))
     assert len(pipe._spawn_watchdog_tasks) == 2
 
     # Complete only the first spawn -- the second's watchdog stays alive.
-    await bus.publish(OpenClawBackgroundCompleted(success=True, summary="A done"))
+    await bus.publish(JarvisAgentBackgroundCompleted(success=True, summary="A done"))
     await asyncio.sleep(0.3)
 
     progress = _heartbeats(announcements)
@@ -192,7 +192,7 @@ async def test_finish_after_response_stays_listening_while_spawn_in_flight() -> 
 
     The fix re-uses the existing ``_spawn_watchdog_tasks`` FIFO as the
     canonical 'spawns in flight' tracker: as long as at least one spawn
-    has not yet emitted ``OpenClawBackgroundCompleted``, the turn is not
+    has not yet emitted ``JarvisAgentBackgroundCompleted``, the turn is not
     semantically complete and the pipeline must stay LISTENING.
     """
     from jarvis.speech.pipeline import TurnTakingState
@@ -202,7 +202,7 @@ async def test_finish_after_response_stays_listening_while_spawn_in_flight() -> 
     # Single-turn-mode: without the fix, _finish_after_response hangs up.
     pipe._continue_listening_after_response = False
 
-    await bus.publish(OpenClawAnnouncement(action="bauen", target="x"))
+    await bus.publish(JarvisAgentAnnouncement(action="bauen", target="x"))
     await asyncio.sleep(0.02)
     assert len(pipe._spawn_watchdog_tasks) == 1, "spawn must be tracked"
 
@@ -220,12 +220,12 @@ async def test_finish_after_response_stays_listening_while_spawn_in_flight() -> 
     )
     assert pipe._session_end_reason is None, (
         "_session_end_reason must NOT be set to HANGUP_TURN_COMPLETE -- the "
-        "turn is not complete until OpenClawBackgroundCompleted fires."
+        "turn is not complete until JarvisAgentBackgroundCompleted fires."
     )
 
     # After the mission completes the watchdog is popped; a follow-up turn
     # then respects single-turn-mode again.
-    await bus.publish(OpenClawBackgroundCompleted(success=True, summary="ok"))
+    await bus.publish(JarvisAgentBackgroundCompleted(success=True, summary="ok"))
     await asyncio.sleep(0.05)
     assert pipe._spawn_watchdog_tasks == []
 
@@ -244,10 +244,10 @@ async def test_completion_after_watchdog_fires_is_still_clean() -> None:
     bus = EventBus()
     pipe = _pipeline(bus, watchdog_delay_s=0.02)
 
-    await bus.publish(OpenClawAnnouncement(action="x", target="y"))
+    await bus.publish(JarvisAgentAnnouncement(action="x", target="y"))
     await asyncio.sleep(0.2)  # watchdog fires
     # Completing afterwards must not raise.
-    await bus.publish(OpenClawBackgroundCompleted(success=True, summary="ok"))
+    await bus.publish(JarvisAgentBackgroundCompleted(success=True, summary="ok"))
     await asyncio.sleep(0.05)
     assert pipe._spawn_watchdog_tasks == []
 
@@ -257,7 +257,7 @@ async def test_fired_watchdog_self_removes_from_inflight_list() -> None:
     """Bound for the idle-timeout / finish-after-response override.
 
     In production a *successful* background mission never publishes
-    ``OpenClawBackgroundCompleted`` — the readback travels the MissionAnnouncer
+    ``JarvisAgentBackgroundCompleted`` — the readback travels the MissionAnnouncer
     path (MissionApproved → AnnouncementRequested), and ``_on_background_completed``
     (the only code that pops ``_spawn_watchdog_tasks``) fires solely on the crash
     path. So the watchdog is never *cancelled*; it simply *fires* after the delay.
@@ -269,7 +269,7 @@ async def test_fired_watchdog_self_removes_from_inflight_list() -> None:
     bus = EventBus()
     pipe = _pipeline(bus, watchdog_delay_s=0.05)
 
-    await bus.publish(OpenClawAnnouncement(action="bauen", target="x"))
+    await bus.publish(JarvisAgentAnnouncement(action="bauen", target="x"))
     await asyncio.sleep(0.02)
     assert len(pipe._spawn_watchdog_tasks) == 1, "spawn must arm a watchdog"
 
@@ -298,7 +298,7 @@ async def test_finish_after_response_hangs_up_once_watchdog_has_fired() -> None:
     pipe = _pipeline(bus, watchdog_delay_s=0.05)
     pipe._continue_listening_after_response = False  # single-turn mode
 
-    await bus.publish(OpenClawAnnouncement(action="bauen", target="x"))
+    await bus.publish(JarvisAgentAnnouncement(action="bauen", target="x"))
     await asyncio.sleep(0.02)
     assert await pipe._finish_after_response(barged=False) is True  # in flight
 
@@ -327,7 +327,7 @@ async def test_heartbeat_repeats_and_varies_until_capped() -> None:
     announcements: list[AnnouncementRequested] = []
     bus.subscribe(AnnouncementRequested, lambda ev: announcements.append(ev))
 
-    await bus.publish(OpenClawAnnouncement(action="eine grosse Analyse", target=""))
+    await bus.publish(JarvisAgentAnnouncement(action="eine grosse Analyse", target=""))
     await asyncio.sleep(0.3)
 
     beats = _heartbeats(announcements)
@@ -352,7 +352,7 @@ async def test_heartbeat_follows_conversation_language(lang: str) -> None:
     announcements: list[AnnouncementRequested] = []
     bus.subscribe(AnnouncementRequested, lambda ev: announcements.append(ev))
 
-    await bus.publish(OpenClawAnnouncement(action="x", target="y"))
+    await bus.publish(JarvisAgentAnnouncement(action="x", target="y"))
     await asyncio.sleep(0.2)
 
     beats = _heartbeats(announcements)
@@ -372,7 +372,7 @@ async def test_completion_readback_cancels_pending_heartbeat() -> None:
     announcements: list[AnnouncementRequested] = []
     bus.subscribe(AnnouncementRequested, lambda ev: announcements.append(ev))
 
-    await bus.publish(OpenClawAnnouncement(action="bauen", target="x"))
+    await bus.publish(JarvisAgentAnnouncement(action="bauen", target="x"))
     await asyncio.sleep(0.02)
     assert len(pipe._spawn_watchdog_tasks) == 1
 
@@ -405,7 +405,7 @@ async def test_heartbeat_dropped_not_deferred_while_user_holds_floor() -> None:
     pipe = _pipeline(bus, watchdog_delay_s=0.03)
     pipe._turn_state = TurnTakingState.USER_SPEAKING  # user holds the floor
 
-    await bus.publish(OpenClawAnnouncement(action="bauen", target="x"))
+    await bus.publish(JarvisAgentAnnouncement(action="bauen", target="x"))
     await asyncio.sleep(0.2)  # heartbeat fires into _on_announcement
 
     assert pipe._player.plays == [], "heartbeat was spoken over the user"
@@ -431,7 +431,7 @@ async def test_heartbeat_dropped_not_deferred_while_turn_is_processing() -> None
     pipe = _pipeline(bus, watchdog_delay_s=0.03)
     pipe._turn_state = TurnTakingState.PROCESSING
 
-    await bus.publish(OpenClawAnnouncement(action="bauen", target="x"))
+    await bus.publish(JarvisAgentAnnouncement(action="bauen", target="x"))
     await asyncio.sleep(0.2)  # heartbeat fires into _on_announcement
 
     assert pipe._player.plays == [], "heartbeat was spoken during a foreground turn"

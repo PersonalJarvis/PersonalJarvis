@@ -95,6 +95,20 @@ class ContinuationWindow:
             return
         self._deadline_ns = None
 
+    def is_live(self) -> bool:
+        """True if the NEXT utterance WOULD recombine — armed, not expired, and
+        under the chain cap. NON-mutating mirror of ``try_recombine``'s gate, so
+        a caller (e.g. the pipeline tagging ``TranscriptFinal.continues_previous``
+        before dispatch) can learn the recombine decision without consuming the
+        window. Fail-safe: never raises."""
+        if not self.is_armed:
+            return False
+        if self._deadline_ns is not None and self._clock() > self._deadline_ns:
+            return False
+        if self._chain >= self._max_chain:
+            return False
+        return True
+
     def try_recombine(self, new_text: str) -> str | None:
         """Return ``prior + new`` if a continuation is live, else ``None``.
 

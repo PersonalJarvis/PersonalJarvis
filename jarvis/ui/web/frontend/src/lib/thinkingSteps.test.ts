@@ -132,10 +132,10 @@ describe("reduceThinkingSteps", () => {
     expect(cu[0].status).toBe("active");
   });
 
-  it("pairs OpenClaw worker start/completion and converts duration_s to ms", () => {
+  it("pairs Jarvis-Agent worker start/completion and converts duration_s to ms", () => {
     const steps = run([
-      ["OpenClawTaskStarted", { utterance: "build a flask app" }],
-      ["OpenClawTaskCompleted", { success: true, duration_s: 44.8 }],
+      ["JarvisAgentTaskStarted", { utterance: "build a flask app" }],
+      ["JarvisAgentTaskCompleted", { success: true, duration_s: 44.8 }],
     ]);
     expect(steps).toHaveLength(1);
     expect(steps[0]).toMatchObject({

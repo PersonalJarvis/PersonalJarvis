@@ -12,7 +12,7 @@ const AGENT_META: Record<string, { label: string; Icon: LucideIcon; cls: string 
     cls: "bg-sky-400/10 text-sky-300 ring-sky-400/25",
   },
   sub_agent: {
-    label: "Sub-Agent",
+    label: "Jarvis-Agent",
     Icon: Bot,
     cls: "bg-violet-400/10 text-violet-300 ring-violet-400/25",
   },

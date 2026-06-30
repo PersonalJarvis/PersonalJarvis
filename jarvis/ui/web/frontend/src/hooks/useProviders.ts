@@ -182,6 +182,81 @@ export function useProviders() {
   return { providers, loading, error, refetch, setActiveOptimistic };
 }
 
+// ── Section health (the at-a-glance API-Keys tab indicators) ────────────────
+// Mirrors SECTION_HEALTH_STATUSES in jarvis/brain/section_health.py and the
+// SectionHealthStatusLiteral in provider_routes.py (five-layer anti-drift; a
+// backend parity test guards the Python↔Pydantic side, this union is the UI
+// mirror). Only "needs_setup" (amber) and "error" (red) draw a dot; "ok" and
+// "unknown" stay silent.
+export type SectionHealthStatus = "ok" | "needs_setup" | "error" | "unknown";
+
+export interface SectionHealth {
+  status: SectionHealthStatus;
+  /** Machine cause (the underlying provider-test status / "not_configured" /
+   * "no_active" / "local" / "ok" / "unknown") — for tooltips + debugging. */
+  reason: string;
+  /** Plain-English one-liner for the hover tooltip. */
+  detail: string;
+}
+
+export interface SectionHealthResponse {
+  sections: Record<string, SectionHealth>;
+  checked_at: number;
+  cached: boolean;
+}
+
+/**
+ * Fetches the per-tab health rollup. `refresh=true` bypasses the server-side
+ * TTL cache — used right after a key save / provider switch so the dot reflects
+ * the change immediately instead of a stale cached result.
+ */
+export async function getSectionHealth(refresh = false): Promise<SectionHealthResponse> {
+  const res = await fetch(
+    `/api/providers/section-health${refresh ? "?refresh=true" : ""}`,
+  );
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as SectionHealthResponse;
+}
+
+/**
+ * Drives the tab status dots in the API-Keys view. Fetches once on mount (the
+ * server runs the REAL connectivity test of each tier's active provider, cached
+ * briefly) and re-fetches with `refresh=true` whenever a key is saved, a provider
+ * is switched, or a manual per-card test completes — so the dot tracks live.
+ *
+ * Health is best-effort: a failed fetch leaves the map empty (no dots), never
+ * breaking the page.
+ */
+export function useSectionHealth() {
+  const [health, setHealth] = useState<Record<string, SectionHealth>>({});
+
+  const reload = useCallback(async (refresh = false) => {
+    try {
+      const data = await getSectionHealth(refresh);
+      setHealth(data.sections ?? {});
+    } catch {
+      // best-effort — keep whatever we last had rather than clearing to nothing
+    }
+  }, []);
+
+  useEffect(() => {
+    void reload(false);
+    const onChange = () => void reload(true);
+    const events = [
+      "jarvis:secret-configured",
+      "jarvis:brain-switched",
+      "jarvis:tts-switched",
+      "jarvis:stt-switched",
+      "jarvis:subagent-switched",
+      "jarvis:provider-tested",
+    ];
+    events.forEach((e) => window.addEventListener(e, onChange));
+    return () => events.forEach((e) => window.removeEventListener(e, onChange));
+  }, [reload]);
+
+  return { health, reload };
+}
+
 export async function postSecret(key: string, value: string): Promise<void> {
   const res = await fetch(`/api/secrets/${encodeURIComponent(key)}`, {
     method: "POST",
@@ -370,7 +445,7 @@ export async function switchSttProvider(
 export async function switchSubagentProvider(
   providerId: string,
 ): Promise<PipelineSwitchResult> {
-  const res = await fetch("/api/subagent/switch", {
+  const res = await fetch("/api/jarvis-agent/switch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ provider: providerId, persist: true }),
@@ -390,7 +465,7 @@ export async function switchSubagentProvider(
 export async function saveSubagentModel(
   model: string,
 ): Promise<PipelineSwitchResult> {
-  const res = await fetch("/api/subagent/model", {
+  const res = await fetch("/api/jarvis-agent/model", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model, persist: true }),
@@ -454,6 +529,13 @@ export async function testProvider(providerId: string): Promise<ProviderTestResu
 export interface BrainModel {
   id: string;
   label: string;
+  // Presentation-only classification from the backend (classify_model) that
+  // drives the picker's filter chips + star. All optional/defaulting to false so
+  // older payloads and the custom-id row stay valid. Never gate behavior on them.
+  free?: boolean;
+  frontier?: boolean;
+  value?: boolean;
+  starred?: boolean;
 }
 
 export interface BrainModelsResult {

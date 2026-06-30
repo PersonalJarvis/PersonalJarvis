@@ -29,6 +29,7 @@ Two coverage tiers:
 """
 from __future__ import annotations
 
+import os
 import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -208,9 +209,20 @@ def test_post_condition_helper_silent_under_escape_hatch():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip_ci
 @pytest.mark.skipif(
     sys.platform != "win32",
     reason="real-Tk visibility check is Win32-only (uses EnumDisplayMonitors)",
+)
+@pytest.mark.skipif(
+    not os.environ.get("JARVIS_GUI_TESTS"),
+    reason=(
+        "Opens a REAL on-screen Tk mascot window. Opt-in only via "
+        "JARVIS_GUI_TESTS=1 so a routine `pytest tests/unit/` run never "
+        "pops a mascot onto the developer's desktop — the window would "
+        "linger until the pytest process exits, and parallel runs stack up "
+        "multiple mascots regardless of the user's chosen overlay style."
+    ),
 )
 def test_real_tk_orb_lands_on_a_known_screen(tmp_path, monkeypatch):
     """End-to-end: a real ``OrbOverlay`` instance, with a fresh empty
@@ -221,6 +233,9 @@ def test_real_tk_orb_lands_on_a_known_screen(tmp_path, monkeypatch):
     orb's actual absolute position lies INSIDE the bounds of at least one
     detected screen. This is the deepest end-to-end contract we can
     assert without running a graphics-comparison harness.
+
+    Opt-in (``JARVIS_GUI_TESTS=1``): it puts a genuine window on screen, so
+    it must NOT run in routine/parallel suites — see the skip reason above.
     """
     import time
 
@@ -262,9 +277,17 @@ def test_real_tk_orb_lands_on_a_known_screen(tmp_path, monkeypatch):
             f"{[s.geometry for s in screens]}"
         )
     finally:
-        # The OrbOverlay thread is daemon — Python exits will reap it.
-        # No explicit stop API exists; that's fine for this test.
-        pass
+        # Tear the real window down so it never lingers on the desktop after
+        # the test. The daemon Tk thread is only reaped at process exit, so a
+        # slow/hung later test in the same pytest process would otherwise keep
+        # the mascot on screen. Marshal destroy onto the Tk thread (calling it
+        # cross-thread risks the BUG-031 ``Tcl_AsyncDelete`` abort).
+        try:
+            root = orb._root
+            if root is not None:
+                root.after(0, root.destroy)
+        except Exception:  # noqa: BLE001 — best-effort cleanup, never fail here
+            pass
 
 
 # ---------------------------------------------------------------------------

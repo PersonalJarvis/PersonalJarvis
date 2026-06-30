@@ -394,16 +394,16 @@ def build_critic_cmd(
     """
     del model, use_bare
 
-    from jarvis.missions.worker_runtime.provider_map import to_provider_slug
+    from jarvis.missions.worker_runtime.provider_map import to_worker_slug
     from jarvis.missions.workers.provider_chain import (
-        _build_openclaw_cmd,
+        _build_worker_cmd,
         _resolve_provider_chain,
         _resolve_worker_argv_prefix,
     )
 
     chain = _resolve_provider_chain(requested_provider=provider)
     primary = chain[0]
-    openclaw_slug = to_provider_slug(primary.provider)
+    worker_slug = to_worker_slug(primary.provider)
     augmented_prompt = (
         f"{prompt}\n\n"
         "---\n"
@@ -411,11 +411,11 @@ def build_critic_cmd(
         "schema. No prose, markdown, or code fences before or after it.\n"
         f"{schema_json}\n"
     )
-    return _build_openclaw_cmd(
+    return _build_worker_cmd(
         augmented_prompt,
         binary=_resolve_worker_argv_prefix(),
         session_id="critic",
-        openclaw_slug=openclaw_slug,
+        worker_slug=worker_slug,
         model=primary.model,
         timeout_s=DEFAULT_TIMEOUT_SECONDS,
         extra_args=("--agent", "critic"),
@@ -1069,8 +1069,8 @@ class CriticRunner:
         # only fires when the resolved provider is actually claude-cli.
         try:
             from jarvis.missions.worker_runtime.provider_map import (
-                UnknownJarvisProviderError,
-                to_provider_slug,
+                NoWorkerSlugMappingError,
+                to_worker_slug,
             )
             from jarvis.missions.workers.provider_chain import (
                 _resolve_provider_chain,
@@ -1078,9 +1078,9 @@ class CriticRunner:
             _chain = _resolve_provider_chain()
             _primary = _chain[0] if _chain else None
             _slug = (
-                to_provider_slug(_primary.provider) if _primary else None
+                to_worker_slug(_primary.provider) if _primary else None
             )
-        except (UnknownJarvisProviderError, Exception):  # noqa: BLE001
+        except (NoWorkerSlugMappingError, Exception):  # noqa: BLE001
             _slug = None
         if _slug == "claude-cli":
             defaults_cfg = agents_cfg.setdefault("defaults", {})
@@ -1720,6 +1720,24 @@ def _resolve_critic_provider_model() -> tuple[str | None, str | None]:
 _API_CRITIC_PROVIDERS: tuple[str, ...] = ("openrouter", "openai", "gemini", "claude-api")
 
 
+def _provider_picked_model(provider: str) -> str | None:
+    """The user's configured model for ``provider`` ([brain.providers[p]].model).
+
+    Used so a cross-family critic reuses the user's PICK instead of falling to the
+    plugin's hardcoded ``DEFAULT_MODEL`` (OpenRouter = a paid Anthropic id). Returns
+    ``None`` when nothing is configured — the plugin default then applies, which is
+    free for the gateway (§3/AP-22).
+    """
+    try:
+        from jarvis.core.config import load_config
+
+        pc = (load_config().brain.providers or {}).get(provider)
+        picked = (getattr(pc, "model", "") or "").strip()
+        return picked or None
+    except Exception:  # noqa: BLE001 — config read must never break critic resolution
+        return None
+
+
 def _resolve_api_critic_provider(
     primary_provider: str | None, primary_model: str | None
 ) -> tuple[str | None, str | None]:
@@ -1741,7 +1759,15 @@ def _resolve_api_critic_provider(
     for prov in order:
         try:
             if get_provider_secret(prov):
-                model = primary_model if prov == primary_provider else None
+                # Same provider as the worker → reuse its model. Cross-family →
+                # the user's PICK for that provider, never None (which would let
+                # the in-process critic fall to the plugin's hardcoded DEFAULT_MODEL
+                # = a paid Anthropic id on the OpenRouter gateway). §3/AP-21/AP-22.
+                model = (
+                    primary_model
+                    if prov == primary_provider
+                    else _provider_picked_model(prov)
+                )
                 return prov, model
         except Exception:  # noqa: BLE001
             continue

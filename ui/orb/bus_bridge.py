@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any
 from jarvis.core.events import (
     AudioOutFirst,
     ListeningStarted,
-    OpenClawBackgroundCompleted,
+    JarvisAgentBackgroundCompleted,
     OrbResetRequested,
     ResponseGenerated,
     ShowWindowRequested,
@@ -285,7 +285,7 @@ class OrbBusBridge:
             self._bus.subscribe(ListeningStarted, self._on_listening_started)
             self._bus.subscribe(TranscriptionUpdate, self._on_transcription_update)
             self._bus.subscribe(ResponseGenerated, self._on_response_generated)
-            self._bus.subscribe(OpenClawBackgroundCompleted, self._on_background_completed)
+            self._bus.subscribe(JarvisAgentBackgroundCompleted, self._on_background_completed)
             self._bus.subscribe(AudioOutFirst, self._on_audio_out_first)
             # Boot z-order re-lift: once the speech pipeline signals voice is
             # ready, re-assert the (already-visible) persistent bar's topmost.
@@ -712,11 +712,19 @@ class OrbBusBridge:
                 except Exception as exc:  # noqa: BLE001
                     log.debug("hide_comment failed: %s", exc)
 
-            if state == "IDLE" and not self._hide_on_idle:
+            if not self._hide_on_idle:
+                # Persistent "show at all times" bar: a standalone always-on
+                # element. EVERY non-active state (IDLE, and also ERROR / PAUSED)
+                # shows the idle pill and NEVER withdraws the bar. Hiding it on
+                # ERROR/PAUSED was a second "the always-on bar vanishes until the
+                # next wake word" path (a transient STT/provider ERROR or a manual
+                # pause took it off screen). The salute + idle-animation scheduler
+                # belong only to a genuine return to IDLE.
                 self._orb.show(mode="idle")
-                if prev_state == "SPEAKING":
-                    self._orb.play_animation("salute")
-                self._start_idle_scheduler()
+                if state == "IDLE":
+                    if prev_state == "SPEAKING":
+                        self._orb.play_animation("salute")
+                    self._start_idle_scheduler()
                 return
             # Drei Faelle, drei verzoegerte Hides — niemals instant-hide aus
             # einem aktiven Voice-State, sonst sieht der User den Mascot bei
@@ -855,7 +863,7 @@ class OrbBusBridge:
         except asyncio.CancelledError:
             pass
 
-    async def _on_background_completed(self, _event: OpenClawBackgroundCompleted) -> None:
+    async def _on_background_completed(self, _event: JarvisAgentBackgroundCompleted) -> None:
         """Briefly surface the mascot when an async task finishes.
 
         This is UI-only. It does not start or end the speech session, so the

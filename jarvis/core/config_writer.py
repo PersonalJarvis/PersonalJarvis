@@ -40,12 +40,17 @@ _BOM = "﻿"
 # stale env value silently reverts the switch on the next start.
 _BRAIN_PRIMARY_ENV = "JARVIS__BRAIN__PRIMARY"
 
-# Canonical User-scope ENV var that overrides ``[brain.sub_jarvis] provider``
+# Canonical User-scope ENV var that overrides ``[brain.worker] provider``
 # at boot. ``_apply_env_overrides`` splits on ``__`` and lower-cases, so
-# ``JARVIS__BRAIN__SUB_JARVIS__PROVIDER`` -> ``brain.sub_jarvis.provider``
-# (``sub_jarvis`` survives because it carries only a single underscore).
-_SUB_JARVIS_PROVIDER_ENV = "JARVIS__BRAIN__SUB_JARVIS__PROVIDER"
-_SUB_JARVIS_MODEL_ENV = "JARVIS__BRAIN__SUB_JARVIS__MODEL"
+# ``JARVIS__BRAIN__WORKER__PROVIDER`` -> ``brain.worker.provider``
+# (renamed from JARVIS__BRAIN__SUB_JARVIS__PROVIDER in the 2026-06-29
+# Jarvis-Agents rename; the old var is accepted via AliasChoices + migration shim).
+_WORKER_PROVIDER_ENV = "JARVIS__BRAIN__WORKER__PROVIDER"
+_WORKER_MODEL_ENV = "JARVIS__BRAIN__WORKER__MODEL"
+# Back-compat aliases for the old ENV var names — kept so any code that
+# references these constants by name still resolves without an ImportError.
+_SUB_JARVIS_PROVIDER_ENV = _WORKER_PROVIDER_ENV  # back-compat alias (pre-rename)
+_SUB_JARVIS_MODEL_ENV = _WORKER_MODEL_ENV        # back-compat alias (pre-rename)
 
 # Canonical User-scope ENV vars that override ``[tts] provider`` / ``[stt]
 # provider`` at boot. Both section + key are single words, so
@@ -84,21 +89,21 @@ def set_brain_primary(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _sync_brain_primary_drift_soll(name)
 
 
-def set_sub_jarvis_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
-    """Set ``[brain.sub_jarvis] provider`` (the Heavy-Task SUBAGENT provider)
+def set_worker_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Set ``[brain.worker] provider`` (the Heavy-Task Jarvis-Agent provider)
     across all persistence layers.
 
     This is the AUTHORITATIVE writer for the user's subagent-provider choice
     and the write-side counterpart to the read-side resolution in
-    ``jarvis.missions.openclaw.provider_map.canonical_subagent_provider`` /
-    ``jarvis.missions.init._worker_factory``. The subagent provider is pinned
-    in ``config-soll.json`` (``brain.sub_jarvis.provider``), so a switch that
+    ``jarvis.missions.worker_runtime.provider_map.canonical_worker_provider`` /
+    ``jarvis.missions.init._worker_factory``. The worker provider is pinned
+    in ``config-soll.json`` (``brain.worker.provider``), so a switch that
     wrote only the TOML would be reverted by the drift-guard within minutes —
     the same failure mode that hit ``brain.primary`` before it went 3-layer.
 
-      1. ``jarvis.toml`` ``[brain.sub_jarvis] provider``               (TOML)
-      2. ``scripts/config-soll.json`` ``brain.sub_jarvis.provider``   (drift-soll)
-      3. ``JARVIS__BRAIN__SUB_JARVIS__PROVIDER`` User-scope ENV var    (boot override)
+      1. ``jarvis.toml`` ``[brain.worker] provider``               (TOML)
+      2. ``scripts/config-soll.json`` ``brain.worker.provider``    (drift-soll)
+      3. ``JARVIS__BRAIN__WORKER__PROVIDER`` User-scope ENV var     (boot override)
 
     Raises ``FileNotFoundError`` if the TOML config file does not exist. Layers
     2 + 3 are best-effort cloud-first enhancements: graceful no-op on a headless
@@ -107,41 +112,55 @@ def set_sub_jarvis_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> N
     NB: this writes only ``provider``. The fallback chain
     (``fallback_provider`` etc.) is left untouched, mirroring how the brain
     switch leaves ``[brain]`` siblings alone.
+
+    Renamed from ``set_sub_jarvis_provider`` in the 2026-06-29 Jarvis-Agents
+    rename. The old name is preserved as a back-compat alias below.
     """
     # Layer 1 — universal, runs on every platform. May raise FileNotFoundError.
-    _patch_sub_jarvis_provider_toml(path, name)
+    _patch_worker_provider_toml(path, name)
     # Layers 2 + 3 — best-effort, never raise.
-    _sync_sub_jarvis_provider_drift_soll(name)
+    _sync_worker_provider_drift_soll(name)
 
 
-def set_sub_jarvis_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
-    """Set ``[brain.sub_jarvis] model`` (the dedicated subagent LLM override)
+# Back-compat alias — callers that imported set_sub_jarvis_provider still work.
+set_sub_jarvis_provider = set_worker_provider
+
+
+def set_worker_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Set ``[brain.worker] model`` (the dedicated Jarvis-Agent LLM override)
     across all persistence layers.
 
     The write-side counterpart to the read-side resolution in
     ``jarvis.missions.workers.provider_chain._resolve_provider_chain`` (the
-    worker's primary model) and the ``/api/openclaw/status`` ``model_resolved``
-    display. Empty string is the documented sentinel: the active subagent
+    worker's primary model) and the ``/api/jarvis-agent/status`` ``model_resolved``
+    display. Empty string is the documented sentinel: the active worker
     provider's ``deep_model`` (frontier) wins.
 
-    ``brain.sub_jarvis.model`` is pinned in ``config-soll.json`` like the
+    ``brain.worker.model`` is pinned in ``config-soll.json`` like the
     provider, so a TOML-only write would be reverted by the drift-guard within
     minutes (BUG-010 class). Three layers, same shape as
-    :func:`set_sub_jarvis_provider`:
+    :func:`set_worker_provider`:
 
-      1. ``jarvis.toml`` ``[brain.sub_jarvis] model``                (TOML)
-      2. ``scripts/config-soll.json`` ``brain.sub_jarvis.model``     (drift-soll)
-      3. ``JARVIS__BRAIN__SUB_JARVIS__MODEL`` User-scope ENV var     (boot override)
+      1. ``jarvis.toml`` ``[brain.worker] model``                (TOML)
+      2. ``scripts/config-soll.json`` ``brain.worker.model``     (drift-soll)
+      3. ``JARVIS__BRAIN__WORKER__MODEL`` User-scope ENV var     (boot override)
 
     Layers 2 + 3 are best-effort cloud-first enhancements: graceful no-op on a
     headless Linux VPS and never raise out of this function nor break the TOML
     write. Takes effect for the NEXT mission (the worker resolves its chain per
     spawn).
+
+    Renamed from ``set_sub_jarvis_model`` in the 2026-06-29 Jarvis-Agents rename.
+    The old name is preserved as a back-compat alias below.
     """
     # Layer 1 — universal, runs on every platform. May raise FileNotFoundError.
-    _patch_sub_jarvis_key_toml(path, "model", model)
+    _patch_worker_key_toml(path, "model", model)
     # Layers 2 + 3 — best-effort, never raise.
-    _sync_sub_jarvis_model_drift_soll(model)
+    _sync_worker_model_drift_soll(model)
+
+
+# Back-compat alias — callers that imported set_sub_jarvis_model still work.
+set_sub_jarvis_model = set_worker_model
 
 
 def set_tts_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -1081,14 +1100,19 @@ def _patch_table(path: Path, table: str, key: str, value: str | bool | list[str]
         _atomic_write(path, out)
 
 
-def _patch_sub_jarvis_provider_toml(path: Path, name: str) -> None:
-    """Set ``[brain.sub_jarvis] provider = name`` in the TOML.
+def _patch_worker_provider_toml(path: Path, name: str) -> None:
+    """Set ``[brain.worker] provider = name`` in the TOML.
 
-    Unlike :func:`_patch_table`, this walks the NESTED ``brain`` -> ``sub_jarvis``
-    path instead of treating ``"brain.sub_jarvis"`` as a flat top-level key
-    (``doc.get("brain.sub_jarvis")`` would create a literal dotted key, not the
-    ``[brain.sub_jarvis]`` section). Creates either level if missing. Preserves
+    Unlike :func:`_patch_table`, this walks the NESTED ``brain`` -> ``worker``
+    path instead of treating ``"brain.worker"`` as a flat top-level key
+    (``doc.get("brain.worker")`` would create a literal dotted key, not the
+    ``[brain.worker]`` section). Creates either level if missing. Preserves
     comments, sibling keys, and the optional BOM.
+
+    Renamed from ``_patch_sub_jarvis_provider_toml`` in the 2026-06-29
+    Jarvis-Agents rename. Writes to ``[brain.worker]`` so new config files
+    use the new section name; old ``[brain.sub_jarvis]`` blocks are still
+    read via BrainConfig.worker's AliasChoices back-compat alias.
     """
     path = _ensure_writable_config_path(path)
 
@@ -1103,10 +1127,10 @@ def _patch_sub_jarvis_provider_toml(path: Path, name: str) -> None:
         if brain is None:
             brain = tomlkit.table()
             doc["brain"] = brain
-        sub = brain.get("sub_jarvis")
+        sub = brain.get("worker")
         if sub is None:
             sub = tomlkit.table()
-            brain["sub_jarvis"] = sub
+            brain["worker"] = sub
         sub["provider"] = name
 
         out = tomlkit.dumps(doc)
@@ -1115,13 +1139,16 @@ def _patch_sub_jarvis_provider_toml(path: Path, name: str) -> None:
         _atomic_write(path, out)
 
 
-def _patch_sub_jarvis_key_toml(path: Path, key: str, value: object) -> None:
-    """Set one key under the nested ``[brain.sub_jarvis]`` table.
+def _patch_worker_key_toml(path: Path, key: str, value: object) -> None:
+    """Set one key under the nested ``[brain.worker]`` table.
 
-    Generalised sibling of :func:`_patch_sub_jarvis_provider_toml` (kept
-    untouched for parallel-session safety): walks ``brain`` -> ``sub_jarvis``
+    Generalised sibling of :func:`_patch_worker_provider_toml` (kept
+    untouched for parallel-session safety): walks ``brain`` -> ``worker``
     (creating either level if missing), preserves comments, sibling keys, and
     the optional BOM.
+
+    Renamed from ``_patch_sub_jarvis_key_toml`` in the 2026-06-29
+    Jarvis-Agents rename.
     """
     path = _ensure_writable_config_path(path)
 
@@ -1136,10 +1163,10 @@ def _patch_sub_jarvis_key_toml(path: Path, key: str, value: object) -> None:
         if brain is None:
             brain = tomlkit.table()
             doc["brain"] = brain
-        sub = brain.get("sub_jarvis")
+        sub = brain.get("worker")
         if sub is None:
             sub = tomlkit.table()
-            brain["sub_jarvis"] = sub
+            brain["worker"] = sub
         sub[key] = value
 
         out = tomlkit.dumps(doc)
@@ -1280,44 +1307,50 @@ def _sync_brain_primary_drift_soll(name: str) -> None:
         log.warning("Could not sync %s to the User environment: %s", _BRAIN_PRIMARY_ENV, exc)
 
 
-def _sync_sub_jarvis_provider_drift_soll(name: str) -> None:
-    """Best-effort sync of ``brain.sub_jarvis.provider`` into config-soll + ENV.
+def _sync_worker_provider_drift_soll(name: str) -> None:
+    """Best-effort sync of ``brain.worker.provider`` into config-soll + ENV.
 
     NEVER raises and NEVER breaks the (already-completed) TOML write. Same
     two-step shape as :func:`_sync_brain_primary_drift_soll`.
+
+    Renamed from ``_sync_sub_jarvis_provider_drift_soll`` in the 2026-06-29
+    Jarvis-Agents rename.
     """
     try:
-        _update_config_soll_sub_jarvis_provider(name)
+        _update_config_soll_worker_provider(name)
     except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
-        log.warning("Could not sync sub_jarvis provider to config-soll.json: %s", exc)
+        log.warning("Could not sync worker provider to config-soll.json: %s", exc)
 
     try:
-        _set_user_env_var(_SUB_JARVIS_PROVIDER_ENV, name)
+        _set_user_env_var(_WORKER_PROVIDER_ENV, name)
     except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
         log.warning(
             "Could not sync %s to the User environment: %s",
-            _SUB_JARVIS_PROVIDER_ENV,
+            _WORKER_PROVIDER_ENV,
             exc,
         )
 
 
-def _sync_sub_jarvis_model_drift_soll(model: str) -> None:
-    """Best-effort sync of ``brain.sub_jarvis.model`` into config-soll + ENV.
+def _sync_worker_model_drift_soll(model: str) -> None:
+    """Best-effort sync of ``brain.worker.model`` into config-soll + ENV.
 
     NEVER raises and NEVER breaks the (already-completed) TOML write. Same
-    two-step shape as :func:`_sync_sub_jarvis_provider_drift_soll`.
+    two-step shape as :func:`_sync_worker_provider_drift_soll`.
+
+    Renamed from ``_sync_sub_jarvis_model_drift_soll`` in the 2026-06-29
+    Jarvis-Agents rename.
     """
     try:
-        _update_config_soll_sub_jarvis_key("model", model)
+        _update_config_soll_worker_key("model", model)
     except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
-        log.warning("Could not sync sub_jarvis model to config-soll.json: %s", exc)
+        log.warning("Could not sync worker model to config-soll.json: %s", exc)
 
     try:
-        _set_user_env_var(_SUB_JARVIS_MODEL_ENV, model)
+        _set_user_env_var(_WORKER_MODEL_ENV, model)
     except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
         log.warning(
             "Could not sync %s to the User environment: %s",
-            _SUB_JARVIS_MODEL_ENV,
+            _WORKER_MODEL_ENV,
             exc,
         )
 
@@ -1450,15 +1483,17 @@ def _update_config_soll_brain_primary(name: str) -> None:
         _atomic_write_text(soll_path, out)
 
 
-def _update_config_soll_sub_jarvis_provider(name: str) -> None:
-    """Atomically set ``data["brain.sub_jarvis"]["provider"] = name`` in
+def _update_config_soll_worker_provider(name: str) -> None:
+    """Atomically set ``data["brain.worker"]["provider"] = name`` in
     config-soll.json.
 
-    Note the FLAT dotted key ``"brain.sub_jarvis"`` — that is how the
-    drift-guard soll file stores the sub-table (see scripts/config-soll.json),
-    NOT a nested ``data["brain"]["sub_jarvis"]``. Preserves all other keys
-    (``_comment``, the fallback chain, other tables). Graceful no-op when the
-    file is absent.
+    Note the FLAT dotted key ``"brain.worker"`` — that is how the drift-guard
+    soll file stores the sub-table (see scripts/config-soll.json), NOT a nested
+    ``data["brain"]["worker"]``. Preserves all other keys (``_comment``, the
+    fallback chain, other tables). Graceful no-op when the file is absent.
+
+    Renamed from ``_update_config_soll_sub_jarvis_provider`` in the 2026-06-29
+    Jarvis-Agents rename; now writes to the ``"brain.worker"`` flat key.
     """
     soll_path = _config_soll_path()
     if not soll_path.exists():
@@ -1468,10 +1503,10 @@ def _update_config_soll_sub_jarvis_provider(name: str) -> None:
     with _WRITE_LOCK:
         raw = soll_path.read_text(encoding="utf-8")
         data = json.loads(raw)
-        block = data.get("brain.sub_jarvis")
+        block = data.get("brain.worker")
         if not isinstance(block, dict):
             block = {}
-            data["brain.sub_jarvis"] = block
+            data["brain.worker"] = block
         if block.get("provider") == name:
             return  # already in sync — avoid a needless rewrite
         block["provider"] = name
@@ -1480,13 +1515,15 @@ def _update_config_soll_sub_jarvis_provider(name: str) -> None:
         _atomic_write_text(soll_path, out)
 
 
-def _update_config_soll_sub_jarvis_key(key: str, value: str) -> None:
-    """Atomically set ``data["brain.sub_jarvis"][key] = value`` in
-    config-soll.json.
+def _update_config_soll_worker_key(key: str, value: str) -> None:
+    """Atomically set ``data["brain.worker"][key] = value`` in config-soll.json.
 
-    Generalised sibling of :func:`_update_config_soll_sub_jarvis_provider`
+    Generalised sibling of :func:`_update_config_soll_worker_provider`
     (same FLAT dotted-key layout, same preservation guarantees, same graceful
     no-op when the file is absent).
+
+    Renamed from ``_update_config_soll_sub_jarvis_key`` in the 2026-06-29
+    Jarvis-Agents rename.
     """
     soll_path = _config_soll_path()
     if not soll_path.exists():
@@ -1496,10 +1533,10 @@ def _update_config_soll_sub_jarvis_key(key: str, value: str) -> None:
     with _WRITE_LOCK:
         raw = soll_path.read_text(encoding="utf-8")
         data = json.loads(raw)
-        block = data.get("brain.sub_jarvis")
+        block = data.get("brain.worker")
         if not isinstance(block, dict):
             block = {}
-            data["brain.sub_jarvis"] = block
+            data["brain.worker"] = block
         if block.get(key) == value:
             return  # already in sync — avoid a needless rewrite
         block[key] = value

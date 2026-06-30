@@ -56,8 +56,8 @@ PROFILES: dict[StatusProfile, dict[str, Any]] = {
                 "VoiceSessionEnded",
                 "MissionStarted",
                 "MissionCompleted",
-                "OpenClawTaskStarted",
-                "OpenClawTaskCompleted",
+                "JarvisAgentTaskStarted",
+                "JarvisAgentTaskCompleted",
             }
         ),
         "fields": {
@@ -65,8 +65,8 @@ PROFILES: dict[StatusProfile, dict[str, Any]] = {
             "VoiceSessionEnded": frozenset({"timestamp_ns"}),
             "MissionStarted": frozenset({"timestamp_ns", "title"}),
             "MissionCompleted": frozenset({"timestamp_ns", "title", "success"}),
-            "OpenClawTaskStarted": frozenset({"timestamp_ns", "summary"}),
-            "OpenClawTaskCompleted": frozenset(
+            "JarvisAgentTaskStarted": frozenset({"timestamp_ns", "summary"}),
+            "JarvisAgentTaskCompleted": frozenset(
                 {"timestamp_ns", "summary", "success"}
             ),
         },

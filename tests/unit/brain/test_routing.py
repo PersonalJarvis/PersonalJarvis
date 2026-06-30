@@ -526,14 +526,14 @@ def _manager_with_worker_provider(
     force_spawn_mode: str = "permissive",
 ) -> tuple[BrainManager, _RecordingExecutor]:
     """Manager with the talker (brain.primary) and the heavy-worker
-    ([brain.sub_jarvis].provider) providers set independently."""
+    ([brain.worker].provider) providers set independently."""
     from jarvis.core.config import BrainTierConfig
 
     executor = _RecordingExecutor()
     config = JarvisConfig()
     config.brain.primary = brain_primary
     config.brain.routing.force_spawn_mode = force_spawn_mode
-    config.brain.sub_jarvis = (
+    config.brain.worker = (
         BrainTierConfig(provider=worker_provider)
         if worker_provider is not None
         else None
@@ -776,6 +776,37 @@ def test_router_prompt_mentions_plugin_inline_reads():
     low = SYSTEM_PROMPT.lower()
     assert "plugin" in low
     assert "spawn_worker" in low or "spawn-worker" in low
+
+
+def test_apply_plugin_relevance_drops_cardless_mcp_on_unrelated_turn() -> None:
+    """Manager-level guard for the over-trigger: a connected MCP server with no
+    usage card (notebooklm-mcp) must not be exposed to the router on a turn that
+    does not signal it. Forensic (voice session): a plain flight question
+    reflexively fired ``notebooklm-mcp/chat_configure``, wasting ~35s before the
+    turn timed out. Keyword-only relevance gate (AP-9), provider-agnostic.
+    """
+
+    class _T:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    mgr = BrainManager.__new__(BrainManager)
+    tools = {
+        "search_web": _T("search_web"),
+        "notebooklm-mcp/chat_configure": _T("notebooklm-mcp/chat_configure"),
+        "notebooklm-mcp/notebook_list": _T("notebooklm-mcp/notebook_list"),
+    }
+    out = mgr._apply_plugin_relevance(
+        "Was ist der kürzeste Flug von München nach Bora Bora?", tools
+    )
+    assert "search_web" in out  # native tool kept
+    assert not any(n.startswith("notebooklm-mcp/") for n in out)
+
+    # Same MCP server, now explicitly named -> kept (the clear keep case).
+    named = mgr._apply_plugin_relevance(
+        "frag das NotebookLM nach meinen Quellen", tools
+    )
+    assert "notebooklm-mcp/notebook_list" in named
 
 
 def test_factory_wires_computer_use_tool_into_router_set() -> None:

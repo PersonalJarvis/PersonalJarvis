@@ -189,10 +189,10 @@ async def get_mission(mission_id: str, request: Request) -> dict[str, Any]:
         if env.payload.event_type == "CriticVerdictReady"
     ]
 
-    # Phase 9 (Welle 4 UI): OpenClaw-Worker-Snapshots fuer die UI-Spalten
-    # (Modell / Cost / State-Dir / Logfile / Reattach-Status). Pure Aggregation
-    # ueber den vorhandenen Event-Stream — kein Schema-Drift, kein Live-Lookup.
-    openclaw_workers = extract_worker_missions(envelopes)
+    # Phase 9 (Welle 4 UI): Worker-Snapshots for the UI columns
+    # (model / cost / state-dir / logfile / reattach status). Pure aggregation
+    # over the existing event stream — no schema drift, no live lookup.
+    worker_snapshots = extract_worker_missions(envelopes)
 
     return {
         "mission": {
@@ -207,7 +207,7 @@ async def get_mission(mission_id: str, request: Request) -> dict[str, Any]:
         },
         "events": events_dump,
         "verdicts": verdicts,
-        "openclaw_workers": openclaw_workers,
+        "worker_snapshots": worker_snapshots,
     }
 
 

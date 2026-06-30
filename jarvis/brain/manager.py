@@ -70,6 +70,10 @@ from jarvis.voice.contextual_readback import render_readback
 from jarvis.memory import CoreMemory, PersonStore, RecallStore, Soul, UserProfile
 from jarvis.memory.curator import Curator
 from jarvis.safety.tool_executor import ToolExecutor
+# ONE canonical billing/budget/quota marker list, shared with the test-badge
+# classifier (provider_test.classify_provider_error) so the live fallback chain and
+# the API-Keys badge can never disagree on "out of credits / over budget" (AP-22).
+from jarvis.brain.provider_test import BILLING_LIMIT_MARKERS
 
 from .dispatcher import BrainDispatcher
 from .healthcheck import BrainConfigError
@@ -280,7 +284,11 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         "gemini": "gemini-3-flash-preview",
         "openai": "gpt-5.5",
         "deepseek": "deepseek-chat",
-        "openrouter": "anthropic/claude-haiku-4.5",
+        # Gateway: a model-less OpenRouter user must NEVER default to a paid
+        # Anthropic id (that billed Opus/Haiku on a free key — §3/AP-22). A free
+        # general-purpose model degrades with a clean 404 if ever retired, instead
+        # of silently billing the most expensive model in the catalog.
+        "openrouter": "nvidia/nemotron-3-ultra-550b-a55b:free",
         "mistral": "mistral-small-3.1",
     },
     "deep": {
@@ -294,7 +302,9 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         "gemini": "gemini-3.1-pro-preview",
         "openai": "gpt-5.5-pro",
         "deepseek": "deepseek-reasoner",
-        "openrouter": "anthropic/claude-opus-4.8",
+        # Gateway: never a paid Anthropic default for a model-less OpenRouter
+        # user (§3/AP-22) — see the router-tier note above.
+        "openrouter": "nvidia/nemotron-3-ultra-550b-a55b:free",
         "mistral": "mistral-large-3",
     },
 }
@@ -1780,10 +1790,23 @@ class BrainManager:
         local_config.brain.deep_brain = deep_provider
 
         # Tier model resolver:
-        # - If a live override is active: ignore tier_cfg.model (it was for
-        #   the old provider). The default from TIER_DEFAULTS applies.
+        # - If a live override is active: ignore tier_cfg.model (it belonged to
+        #   the ORIGINAL tier provider, e.g. [brain.router].model="gemini-3.5-flash").
+        #   BUT the override provider's OWN picked model
+        #   ([brain.providers.<override>].model) IS the user's selection and MUST
+        #   win over the hardcoded TIER default. Without this, an OpenRouter user
+        #   who picked a free model silently ran — and was billed for — the
+        #   hardcoded paid anthropic/claude default (router=haiku-4.5, deep=opus-4.8)
+        #   on EVERY boot, because this very assignment clobbered the picked model
+        #   in the in-memory config before _fast_model/_deep_model could read it
+        #   (live forensic 2026-06-29: ~5€ OpenRouter key drained on Opus + Haiku).
+        #   AP-21/AP-22, open-source single-key §3.
         # - If no override: respect tier_cfg.model, then fall back to the default.
-        explicit_model = None if provider_override else tier_cfg.model
+        if provider_override:
+            override_pc = (local_config.brain.providers or {}).get(effective_provider)
+            explicit_model = getattr(override_pc, "model", None) or None
+        else:
+            explicit_model = tier_cfg.model
         resolved_model = _resolve_tier_model(tier, effective_provider, explicit_model)
         if resolved_model and effective_provider in (local_config.brain.providers or {}):
             local_config.brain.providers[effective_provider].model = resolved_model
@@ -1913,8 +1936,19 @@ class BrainManager:
         cfg = self._provider_cfg(name)
         if cfg is None:
             return get_tier_default_model("deep", name)
+        # Precedence: explicit deep_model → the user's CHOSEN model → hardcoded
+        # tier default. The chosen model MUST outrank the hardcoded default:
+        # otherwise a provider with a `model` set but no `deep_model` (e.g.
+        # openrouter = "nvidia/nemotron-...:free") silently runs the deep slot on
+        # a foreign-family default (anthropic/claude-opus-4.8). Live forensic
+        # 2026-06-29: that default is a PAID model 403-blocked by the user's
+        # OpenRouter key spend-limit, while the chosen FREE model answered fine —
+        # so the turn bricked despite a healthy, user-selected brain. Respect the
+        # selected model; never hijack a turn onto the most expensive Anthropic
+        # model the user never picked (AP-21/AP-22, open-source single-key §3).
         return (
             getattr(cfg, "deep_model", None)
+            or getattr(cfg, "model", None)
             or get_tier_default_model("deep", name)
         )
 
@@ -1970,7 +2004,39 @@ class BrainManager:
         try:
             inst = self._registry.instantiate(name, **kwargs)
         except TypeError:
-            inst = self._registry.instantiate(name)
+            # A plugin __init__ rejected an OPTIONAL kwarg (base_url /
+            # thinking_budget — not every brain accepts them). Retry, but NEVER
+            # drop ``model``: the old fallback re-instantiated with NO kwargs at
+            # all, so the brain fell back to its hardcoded DEFAULT_MODEL. For the
+            # OpenRouter gateway that default is anthropic/claude-opus-4.8 — the
+            # exact PAID model a spend-limited key 403s on, while the user's
+            # chosen FREE model would have answered (live forensic 2026-06-29:
+            # the wire carried opus though the chain logged nemotron:free). The
+            # endpoint/budget are re-resolved from config inside the plugin's
+            # _ensure_client, so dropping them here is safe; the model is
+            # essential and must survive (AP-21/AP-22, open-source single-key §3).
+            retry_kwargs: dict[str, Any] = {"model": model} if model else {}
+            try:
+                inst = self._registry.instantiate(name, **retry_kwargs)
+            except TypeError:
+                inst = self._registry.instantiate(name)
+        # Anti-drift guarantee (user mandate 2026-06-29): the model on the wire
+        # MUST be the SELECTED model. A brain silently running its hardcoded
+        # DEFAULT_MODEL — user picks GPT-5.5 but Opus runs, while the UI still
+        # shows GPT-5.5 — is the exact "wrong model used, shown right" defect.
+        # Every brain plugin stores its resolved model as ``self._model``; if a
+        # requested model did NOT survive construction, log it LOUDLY so the drift
+        # is visible instead of silent. Provider-agnostic (no provider/model
+        # special-case); the chosen-model contract tests lock this in.
+        if model:
+            actual = getattr(inst, "_model", None)
+            if actual is not None and actual != model:
+                log.error(
+                    "MODEL DRIFT %s: requested model %r but the constructed brain "
+                    "runs %r — the SELECTED model is not the one being used. This "
+                    "is a bug (a silent DEFAULT_MODEL fallback), not expected.",
+                    name, model, actual,
+                )
         self._brain_cache[key] = inst
         return inst
 
@@ -4337,7 +4403,7 @@ class BrainManager:
         factory may fall back to the Gemini API worker, which 403s on an account
         without Gemini access (the original BUG-017, 2026-05-13)."""
         try:
-            sub = getattr(self._config.brain, "sub_jarvis", None)
+            sub = getattr(self._config.brain, "worker", None)
             worker_provider = (getattr(sub, "provider", "") or "").strip().lower()
         except Exception:  # noqa: BLE001 — config hiccup must not block dispatch
             return True
@@ -6092,7 +6158,7 @@ class BrainManager:
                 # On missing_key: remove provider from the chain for the rest
                 # of the session. Prevents each voice turn from running 8x
                 # sequentially against the same missing keys.
-                if kind in ("missing_key", "account_blocked") and prov_name not in self._dead_providers:
+                if kind in _DEAD_LIST_KINDS and prov_name not in self._dead_providers:
                     self._dead_providers.add(prov_name)
                     if kind == "missing_key":
                         log.warning(
@@ -6368,7 +6434,7 @@ class BrainManager:
                 else:
                     log.warning("Brain %s(%s) fehlgeschlagen: %s", prov_name, model, exc)
                     if (
-                        kind in ("missing_key", "account_blocked")
+                        kind in _DEAD_LIST_KINDS
                         and prov_name not in self._dead_providers
                     ):
                         self._dead_providers.add(prov_name)
@@ -7260,43 +7326,56 @@ def _is_account_blocked_exc(msg: str) -> bool:
       - OpenAI 403: ``The model `o1-pro` is not available on your tier.``
       - Gemini 403: ``Quota exceeded for ...`` (unlike 429 — terminal).
 
+      - OpenRouter 403: ``Key limit exceeded (total limit).`` (a funded account
+        whose per-key spend cap is used up — live probe 2026-06-30, AP-22).
+
     These providers are dead for the session (a simple retry won't help).
     BrainManager pushes them immediately into _dead_providers and emits a
     user-actionable setup message instead of "provider unreachable".
     """
     m = msg.lower()
-    return any(k in m for k in (
-        "credit balance is too low",
-        "credit balance too low",
-        "plans & billing",
-        "billing required",
-        "your team",
-        "your team does not have access",
-        "team does not have access",
-        "team_does_not_have_access",
-        "not available on your tier",
-        "subscription required",
-        "upgrade plan",
-        "upgrade your plan",
-        "exceeded your quota",  # Gemini-style, terminal vs. 429
-        "exceeded your current quota",  # OpenAI insufficient_quota wording
-        "quota exceeded for",
-        "insufficient_quota",
-        "insufficient quota",
-        "billing not active",
-        "payment required",
-        "account is suspended",
-        # Terminal-billing 429s that carry "429" in the message and would
-        # otherwise be mis-read as a transient rate-limit (live forensic
-        # 2026-06-28: depleted Gemini bricked the whole chain — AP-22).
-        "credits are depleted",
-        "credits depleted",
-        "prepayment credits",
-        "out of credits",
-        "no credits remaining",
-        "check your plan and billing",
-        "plan and billing",
-    ))
+    # Billing / budget / quota wording is the SHARED canonical list (one source of
+    # truth with the test-badge classifier) — covers credit-balance, spend/key/total
+    # limit, insufficient_quota, depleted prepayment, out-of-credits, etc.
+    if any(k in m for k in BILLING_LIMIT_MARKERS):
+        return True
+    # Access / tier / subscription gates — terminal too, but not strictly "money".
+    return any(k in m for k in _ACCOUNT_ACCESS_MARKERS)
+
+
+# Terminal access/tier/subscription wordings (NOT money — kept beside the shared
+# billing markers so both flavours of "account blocked" live in one classifier).
+_ACCOUNT_ACCESS_MARKERS: tuple[str, ...] = (
+    "your team",                   # xAI "your team ... does not have access"
+    "team does not have access",
+    "team_does_not_have_access",
+    "not available on your tier",  # OpenAI tier gate
+    "subscription required",
+    "upgrade plan",
+    "upgrade your plan",
+    "billing required",
+    "billing not active",
+    "account is suspended",
+)
+
+
+def _http_status_code(msg: str) -> int | None:
+    """First 4xx/5xx HTTP status embedded in a provider error string, else None.
+
+    The SDK serializes the numeric code into ``str(exc)`` ("Error code: 403 - …"
+    for the OpenAI/Anthropic families; "403 … PERMISSION_DENIED" for Gemini), so a
+    code-first decision works uniformly without importing any provider SDK — the
+    same approach the test-badge classifier uses.
+    """
+    match = re.search(r"\b([45]\d\d)\b", msg)
+    return int(match.group(1)) if match else None
+
+
+# The chain loop dead-lists exactly these kinds: a terminal credential/account state
+# (no key stored, blocked/over-budget account, invalid key) must cross to another
+# available provider family for the rest of the session. A transient ``rate_limit``
+# is deliberately NOT here — it takes the 30s cooldown path and keeps the provider.
+_DEAD_LIST_KINDS: frozenset[str] = frozenset({"missing_key", "account_blocked", "bad_key"})
 
 
 # User-friendly labels per provider — what the user needs to do.
@@ -7322,10 +7401,17 @@ def _classify_provider_error(msg: str, *, default: str) -> str:
 
     Order is intentional:
       1. missing_key (auth/config — important for the dead-list).
-      2. account_blocked (credit/quota/tier — also dead-list, different message).
+      2. account_blocked (credit/quota/tier/budget — also dead-list, by wording).
       3. invalid_model (config bug — different action: fix jarvis.toml).
-      4. rate_limit (transient — handled by its own cooldown path).
-      5. default (init_fail or call_fail — caller decides).
+      4. code-first terminal: a bare 401 -> bad_key, a bare 402 -> account_blocked
+         (dead-list; catches a live invalid key / Payment-Required that carries the
+         numeric code but no known wording).
+      5. rate_limit (transient — handled by its own cooldown path).
+      6. default (init_fail or call_fail — caller decides).
+
+    bad_key / account_blocked / missing_key all dead-list (``_DEAD_LIST_KINDS``)
+    so a terminal provider stops leading the chain; only rate_limit takes the
+    transient cooldown.
 
     missing_key is checked before rate_limit so an auth error that happens to
     contain "limit" (e.g. "exceeded the rate limit for this resource") is not
@@ -7338,6 +7424,18 @@ def _classify_provider_error(msg: str, *, default: str) -> str:
     if _is_invalid_model_exc(msg):
         return "invalid_model"
     m = msg.lower()
+    # Code-first terminal fallback for a 401/402 that carries the numeric HTTP code
+    # but NONE of the known wordings (a bare live "Error code: 401 - invalid x-api-key"
+    # / "Error code: 402 - Payment Required"). A 401 = invalid/expired/wrong-account
+    # key, a 402 = Payment-Required — both terminal, so the provider is dead-listed and
+    # stops leading the chain every turn (live log 2026-06-30: claude-api 401 with no
+    # Anthropic account was retried on every turn). 403/429 stay word-driven on purpose:
+    # a transient Gemini 403 "CachedContent not found" must NOT dead-list (BUG-019).
+    code = _http_status_code(m)
+    if code == 401:
+        return "bad_key"
+    if code == 402:
+        return "account_blocked"
     if any(s in m for s in ("429", "rate_limit", "rate-limit",
                              "rate limit", "too many requests")):
         return "rate_limit"
@@ -7387,6 +7485,7 @@ def _format_provider_chain_error(
                 "Setze mindestens GEMINI_API_KEY oder ANTHROPIC_API_KEY.")
 
     missing_keys: list[str] = []
+    invalid_keys: list[str] = []
     account_blocked: list[str] = []
     invalid_models: list[str] = []
     rate_limited: list[str] = []
@@ -7395,6 +7494,8 @@ def _format_provider_chain_error(
     for prov_name, _model, kind, _detail in errors:
         if kind == "missing_key":
             missing_keys.append(prov_name)
+        elif kind == "bad_key":
+            invalid_keys.append(prov_name)
         elif kind == "account_blocked":
             account_blocked.append(prov_name)
         elif kind == "invalid_model":
@@ -7417,6 +7518,7 @@ def _format_provider_chain_error(
         return out
 
     missing_keys = _uniq(missing_keys)
+    invalid_keys = _uniq(invalid_keys)
     account_blocked = _uniq(account_blocked)
     invalid_models = _uniq(invalid_models)
     rate_limited = _uniq(rate_limited)
@@ -7435,6 +7537,12 @@ def _format_provider_chain_error(
         parts.append(
             "Kein Brain-Key gefunden. Sidebar -> API-Keys oeffnen und "
             f"einen Key setzen ({' oder '.join(hints)})."
+        )
+    # 1b. Invalid/expired key (a 401 — the stored key is rejected, not absent).
+    if invalid_keys:
+        parts.append(
+            f"Key abgelehnt bei {', '.join(invalid_keys)} (ungueltig oder abgelaufen). "
+            "Sidebar -> API-Keys: Key ersetzen."
         )
     # 2. Account block (credit/quota/tier) — user must take action
     if account_blocked:

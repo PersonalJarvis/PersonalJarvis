@@ -92,6 +92,12 @@ class TranscriptPartial(Event):
 @dataclass(frozen=True, slots=True)
 class TranscriptFinal(Event):
     transcript: Transcript | None = None
+    # True when this finalized utterance will be re-attached to the still-open
+    # turn by the continuation-recombine path (the brain is mid-thinking and the
+    # window is live). The SessionRecorder reads this to record the coalesced
+    # fragments as ONE transcript turn instead of splitting them — so the
+    # Transcription view shows the single prompt the brain actually processes.
+    continues_previous: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -845,14 +851,11 @@ class WorkflowCompleted(Event):
 
 
 # ----------------------------------------------------------------------
-# OpenClaw Task Dashboard (Welle-4-Migration aus Phase 5.5 Sub-Jarvis)
+# Jarvis-Agent Task Dashboard (formerly OpenClaw / Sub-Jarvis)
 # ----------------------------------------------------------------------
-# Wave 4 Sub-Jarvis cleanup (see docs/openclaw-bridge.md §11):
-# The Sub-Jarvis tier was replaced by the OpenClaw bridge. Event schemas are
-# preserved 1:1 — only the class names changed to OpenClaw*.
 
 @dataclass(frozen=True, slots=True)
-class OpenClawTaskStarted(Event):
+class JarvisAgentTaskStarted(Event):
     parent_trace_id: UUID | None = None
     utterance: str = ""
     context_hints: list[str] = field(default_factory=list)
@@ -863,12 +866,12 @@ class OpenClawTaskStarted(Event):
 
 
 @dataclass(frozen=True, slots=True)
-class OpenClawReviewTriggered(Event):
+class JarvisAgentReviewTriggered(Event):
     iteration: int = 0
 
 
 @dataclass(frozen=True, slots=True)
-class OpenClawTaskCompleted(Event):
+class JarvisAgentTaskCompleted(Event):
     success: bool = False
     summary: str = ""
     full_log_len: int = 0
@@ -1066,10 +1069,10 @@ class ToolCallCompleted(Event):
 
 
 @dataclass(frozen=True, slots=True)
-class OpenClawBackgroundCompleted(Event):
-    """A background OpenClaw task finished — TTS should speak proactively.
+class JarvisAgentBackgroundCompleted(Event):
+    """A background Jarvis-Agent task finished — TTS should speak proactively.
 
-    Separate from ``OpenClawTaskCompleted`` for pipeline/UI feedback without
+    Separate from ``JarvisAgentTaskCompleted`` for pipeline/UI feedback without
     a standardised voice announcement.
     """
     success: bool = False
@@ -1080,8 +1083,8 @@ class OpenClawBackgroundCompleted(Event):
 
 
 @dataclass(frozen=True, slots=True)
-class OpenClawAnnouncement(Event):
-    """OpenClaw spawn start signal for UI/telemetry, without a voice ACK."""
+class JarvisAgentAnnouncement(Event):
+    """Jarvis-Agent spawn start signal for UI/telemetry, without a voice ACK."""
     action: str = ""   # z.B. "eine Flask-App baut"
     target: str = ""   # z.B. "auf Port 8000"
 

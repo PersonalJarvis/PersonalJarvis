@@ -19,14 +19,14 @@ audience: developer
 Brain output lands on two TTS paths:
 
 1. `pipeline._handle_utterance` → `_speak()` → `tts.synthesize()` (main path).
-2. `pipeline._on_announcement` (`AnnouncementRequested` bus handler) → `tts.synthesize()` (bus bypass for skill / Sub-Jarvis announcements).
+2. `pipeline._on_announcement` (`AnnouncementRequested` bus handler) → `tts.synthesize()` (bus bypass for skill / Jarvis-Agent announcements).
 
 On both paths, tool-call JSON, stack traces, Markdown remnants, engineering jargon (`Harness`/`MCP`/`Subprocess`/`Provider`), self-reference (`Als KI`/`As an AI`), echo paraphrase (`Du möchtest also …`/`If I understand correctly …`) and filler openers (`Großartige Frage`) reach the TTS synthesis unfiltered — the user hears engineering garbage read aloud. Pre-existing pre-filters (`_strip_paraphrase_prefix`, `_is_non_substantive_response`) cover only a part of it.
 
 Three filter strategies were up for debate:
 
 - **A. LLM roundtrip** ("Please rephrase this in voice form"). Clean output quality, but 200–800 ms of additional latency per turn. Kills any butler tone.
-- **B. Hard cut** (truncate everything after the first stack-trace / JSON marker). Fast, but wrecks legitimate Sub-Jarvis replies that look "JSON-like".
+- **B. Hard cut** (truncate everything after the first stack-trace / JSON marker). Fast, but wrecks legitimate Jarvis-Agent replies that look "JSON-like".
 - **C. Pattern-based** (regex-only, with whitelist protection for user-concept words). Fast, testable, deterministic.
 
 ## Decision
@@ -66,7 +66,7 @@ Three filter strategies were up for debate:
 ## Alternatives Considered
 
 - **A. LLM-filter roundtrip** ("the brain produces raw, an LLM wrapper rephrases for voice"): cleanest output quality, but +200–800 ms latency kills the butler tone. **Rejected.**
-- **B. Hard cut at the tool-JSON marker** (cut off everything after `dispatch_to_*`): very fast, but wrecks legitimate Sub-Jarvis replies that happen to contain JSON-like strings ("Die Datei deklariert vier Provider in JSON-Format"). **Rejected.**
+- **B. Hard cut at the tool-JSON marker** (cut off everything after `dispatch_to_*`): very fast, but wrecks legitimate Jarvis-Agent replies that happen to contain JSON-like strings ("Die Datei deklariert vier Provider in JSON-Format"). **Rejected.**
 - **D. Enforce a pre-filter via the brain system prompt** ("You MUST NOT output JSON"): not reliable — Gemini Flash still leaks occasionally. Defense in depth required (prompt + filter). **Implemented as a complement** (JARVIS_PERSONA.md ECHO-PARAPHRASE section + ROUTER-DISCIPLINE section), not as a replacement.
 
 ## Subsequent drift-class extension 2026-04-28

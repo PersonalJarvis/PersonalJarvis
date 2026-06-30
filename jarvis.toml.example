@@ -137,7 +137,7 @@ bar_persistent = true        # keep the bar visible at all times (not only durin
 # ── Memory ──
 [memory]
 recall_store = "sqlite"
-archival_store = "chroma"
+archival_store = "sqlite"   # chromadb was removed; sqlite is the supported backend
 data_dir = "./data"          # per-user runtime data (gitignored)
 
 # ── Knowledge wiki (Obsidian vault) — self-creates an empty vault on first run ──

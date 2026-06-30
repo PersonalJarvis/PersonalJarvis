@@ -53,7 +53,7 @@ def _make_cfg() -> JarvisConfig:
             default_intent_on_low_confidence="spawn_worker",
         ),
     )
-    cfg.brain.sub_jarvis = BrainTierConfig(
+    cfg.brain.worker = BrainTierConfig(
         provider="gemini",
         model="gemini-3.1-pro-preview",
     )

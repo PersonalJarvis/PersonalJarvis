@@ -1,4 +1,4 @@
-import type { SubAgentNode } from "@/store/subAgents";
+import type { SubAgentNode } from "@/store/jarvisAgents";
 
 /**
  * Collapse the flat node map to ONE row per task.

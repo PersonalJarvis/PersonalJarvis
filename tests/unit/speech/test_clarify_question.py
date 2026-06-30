@@ -306,9 +306,11 @@ async def test_beheaded_turn_speaks_timeout_notice_despite_clarify_off() -> None
 
     assert len(pipe._spoken) == 1, pipe._spoken
     spoken_text, spoken_lang = pipe._spoken[0]
-    from jarvis.speech.pipeline import _BRAIN_TIMEOUT_PHRASE
+    # A no-first-frame beheading means the assistant was blocked waiting on a
+    # tool that never returned — name that honest cause, not the old vague phrase.
+    from jarvis.speech.pipeline import _TIMEOUT_TOOL_STALL_PHRASE
 
-    assert spoken_text == _BRAIN_TIMEOUT_PHRASE["de"]
+    assert spoken_text == _TIMEOUT_TOOL_STALL_PHRASE["de"]
     assert spoken_lang == "de"
     # The mark is consumed — the next empty turn must not re-fire the notice.
     assert pipe._playback_aborted_no_first_frame is False

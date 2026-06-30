@@ -13,7 +13,7 @@ from jarvis.core.events import (
     AchievementUnlocked,
     ActionExecuted,
     HarnessCompleted,
-    OpenClawTaskCompleted,
+    JarvisAgentTaskCompleted,
     TaskCompleted,
 )
 from jarvis.core.protocols import HarnessResult
@@ -39,8 +39,8 @@ def _mcp_ok() -> HarnessCompleted:
     )
 
 
-def _sub_ok(duration_s: float = 60.0) -> OpenClawTaskCompleted:
-    return OpenClawTaskCompleted(success=True, duration_s=duration_s)
+def _sub_ok(duration_s: float = 60.0) -> JarvisAgentTaskCompleted:
+    return JarvisAgentTaskCompleted(success=True, duration_s=duration_s)
 
 
 def _task() -> TaskCompleted:

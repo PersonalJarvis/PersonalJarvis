@@ -214,28 +214,39 @@ SELF_MOD_TOOL_NAMES_ROUTER = frozenset({
 })
 
 
-def warn_if_phantom_openclaw(config: Any, harness_manager: Any) -> bool:
-    """Log a warning when ``[harness.openclaw].enabled`` is true but unregistered.
+def warn_if_phantom_worker_harness(config: Any, harness_manager: Any) -> bool:
+    """Log a warning when ``[harness.jarvis_agent].enabled`` is true but unregistered.
 
     OpenClaw was removed in Welle 4 and has no entry-point, so an
     ``enabled = true`` block is INERT (config honesty, 2026-06-28). This probe is
     advisory only: it never raises, never changes routing, and "start a subagent"
     routes to ``spawn_worker`` regardless. Returns True when a phantom config was
     detected (consumed by the regression guard in tests).
+
+    The config field was renamed from ``harness.openclaw`` to ``harness.jarvis_agent``
+    in the 2026-06-29 Jarvis-Agents rename; both TOML keys are accepted via
+    AliasChoices in HarnessConfig. The harness-availability slug string "openclaw"
+    is left unchanged because the external openclaw binary keeps its name.
     """
-    oc = getattr(getattr(config, "harness", None), "openclaw", None)
+    # Field renamed openclaw → jarvis_agent; back-compat: also check old attribute
+    # name in case a partially-upgraded in-memory config is passed.
+    oc = getattr(getattr(config, "harness", None), "jarvis_agent", None)
+    if oc is None:
+        oc = getattr(getattr(config, "harness", None), "openclaw", None)
     if oc is None or not getattr(oc, "enabled", False):
         return False
     try:
         available = harness_manager.available()
     except Exception:  # noqa: BLE001 — an advisory probe must never break boot
         return False
+    # The harness registration slug is still "openclaw" (external binary keeps its
+    # name); if it ever gets registered, the warning becomes a no-op.
     if "openclaw" in available:
         return False
     log.warning(
-        "[harness.openclaw].enabled is true but 'openclaw' is not a registered "
-        "harness (available: %s) — the block is inert. Heavy sub-agent work runs "
-        "through spawn_worker; set [harness.openclaw].enabled = false to silence "
+        "[harness.jarvis_agent].enabled is true but 'openclaw' is not a registered "
+        "harness (available: %s) — the block is inert. Heavy Jarvis-Agent work runs "
+        "through spawn_worker; set [harness.jarvis_agent].enabled = false to silence "
         "this.",
         available,
     )
@@ -587,7 +598,7 @@ _KONTROLLIERER_REF: list[Any] = []
 # "noch nicht bereit, bitte einen Moment warten" the in-progress path
 # returns when both the manager and kontrollierer singletons are None
 # but the server is still booting.
-_OPENCLAW_BOOTSTRAP_FAILED: list[bool] = [False]
+_WORKER_BOOTSTRAP_FAILED: list[bool] = [False]
 
 
 def set_mission_manager(manager: Any) -> None:
@@ -617,21 +628,21 @@ def set_kontrollierer(kontrollierer: Any) -> None:
         _KONTROLLIERER_REF.append(kontrollierer)
 
 
-def set_openclaw_bootstrap_failed(flag: bool) -> None:
-    """Mark the OpenClaw bootstrap as permanently broken for this process.
+def set_worker_bootstrap_failed(flag: bool) -> None:
+    """Mark the worker-harness bootstrap as permanently broken for this process.
 
     Called from ``server.py::_init_mission_stack`` when the Mission-Stack
     bootstrap raised. spawn_worker reads this via
-    ``is_openclaw_bootstrap_failed()`` and surfaces an honest "konnte
+    ``is_worker_bootstrap_failed()`` and surfaces an honest "konnte
     nicht initialisiert werden" message instead of the transient
     "noch nicht bereit" the in-progress path returns.
     """
-    _OPENCLAW_BOOTSTRAP_FAILED[0] = bool(flag)
+    _WORKER_BOOTSTRAP_FAILED[0] = bool(flag)
 
 
-def is_openclaw_bootstrap_failed() -> bool:
+def is_worker_bootstrap_failed() -> bool:
     """Returns True iff the Mission-Stack bootstrap raised at startup."""
-    return bool(_OPENCLAW_BOOTSTRAP_FAILED[0])
+    return bool(_WORKER_BOOTSTRAP_FAILED[0])
 
 
 def _phase2_full_brain(
@@ -700,7 +711,7 @@ def _phase2_full_brain(
     harness_manager = HarnessManager(bus=bus)
     # Config honesty: warn (don't fail) if a [harness.openclaw] block is enabled
     # but the harness is unregistered — that block is inert (Welle-4 removal).
-    warn_if_phantom_openclaw(config, harness_manager)
+    warn_if_phantom_worker_harness(config, harness_manager)
 
     # Phase A1: build the AwarenessManager (DI for the awareness-snapshot tool).
     # Do NOT start it here — start()/stop() is the responsibility of the app layer

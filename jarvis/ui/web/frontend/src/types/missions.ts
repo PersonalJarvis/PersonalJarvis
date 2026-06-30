@@ -248,7 +248,7 @@ export interface MissionDetail {
   mission: MissionSummary;
   events: EventEnvelope[];
   verdicts: CriticVerdictReady[];
-  openclaw_workers: OpenClawWorkerSnapshot[];
+  worker_snapshots: OpenClawWorkerSnapshot[];
 }
 
 export interface MissionStateBadgeMeta {

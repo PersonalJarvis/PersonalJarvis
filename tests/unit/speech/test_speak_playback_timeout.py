@@ -25,7 +25,12 @@ import pytest
 from jarvis.core.bus import EventBus
 from jarvis.core.config import JarvisConfig
 from jarvis.core.protocols import AudioChunk
-from jarvis.speech.pipeline import _BRAIN_TIMEOUT_PHRASE, SpeechPipeline
+from jarvis.speech.pipeline import (
+    _TIMEOUT_NO_ANSWER_PHRASE,
+    _TIMEOUT_TOOL_STALL_PHRASE,
+    SPOKEN_KIND_COMPLETION,
+    SpeechPipeline,
+)
 
 
 @dataclass
@@ -496,7 +501,7 @@ async def test_spoken_warn_reports_no_first_frame_true_for_attribution(
     with caplog.at_level(logging.WARNING, logger="jarvis.speech.pipeline"):
         await p._handle_silent_brain_turn("de", "")
 
-    assert spoken == [_BRAIN_TIMEOUT_PHRASE["de"]]
+    assert spoken == [_TIMEOUT_TOOL_STALL_PHRASE["de"]]
     assert any(
         "spoken" in rec.message
         and "site=empty_after_no_first_frame" in rec.message
@@ -514,7 +519,7 @@ async def test_genuinely_slow_empty_turn_still_speaks_timeout() -> None:
 
     await p._handle_silent_brain_turn("de", "")
 
-    assert spoken == [_BRAIN_TIMEOUT_PHRASE["de"]], (
+    assert spoken == [_TIMEOUT_TOOL_STALL_PHRASE["de"]], (
         "a genuinely slow beheaded turn must still speak the timeout phrase"
     )
 
@@ -528,7 +533,7 @@ async def test_floor_guard_skipped_when_turn_anchor_unset() -> None:
 
     await p._handle_silent_brain_turn("de", "")
 
-    assert spoken == [_BRAIN_TIMEOUT_PHRASE["de"]], (
+    assert spoken == [_TIMEOUT_TOOL_STALL_PHRASE["de"]], (
         "with no turn anchor the guard must default to speaking"
     )
 
@@ -586,7 +591,7 @@ async def test_no_first_frame_abort_at_ceiling_speaks_despite_brain_stall_floor(
 
     await p._handle_silent_brain_turn("de", "")
 
-    assert spoken == [_BRAIN_TIMEOUT_PHRASE["de"]], (
+    assert spoken == [_TIMEOUT_TOOL_STALL_PHRASE["de"]], (
         "a genuine 20 s no-first-frame abort must speak, not be swallowed by the "
         "30 s brain-stall floor (the 2026-06-14 silent-research bug)"
     )
@@ -632,10 +637,12 @@ def test_no_first_frame_phrase_floor_clamped_to_ceiling() -> None:
 # a working brain. Live bug 2026-06-14 16:17 (Berlin→Melbourne research):
 # Gemini built an 18k-token cache, thought silently ~17 s, ceiling fired
 # (since_progress_s=20.19). The stall guard pings a DEDICATED
-# _brain_thinking_heartbeat while the brain is pre-first-token; the ceiling
-# re-arm honours it. It must stop at first progress (so a wedged TTS after a
-# real token is still aborted) and must NOT mask a hung brain (the 90 s hard
-# cap, measured from turn start, still fires).
+# _brain_thinking_heartbeat while the brain has not yet spoken; the ceiling
+# re-arm honours it. It runs until the first SPEAKABLE token reaches TTS
+# (_spoke_this_turn) — NOT merely the first tool round (live bug 2026-06-30:
+# a tool round then a 20 s silent model roundtrip was beheaded mid-work) —
+# then freezes so a wedged TTS after real output is still aborted, and it must
+# NOT mask a hung brain (the 90 s hard cap, measured from turn start, still fires).
 # ---------------------------------------------------------------------------
 
 
@@ -701,32 +708,84 @@ async def test_stall_guard_pings_thinking_heartbeat_pre_first_token() -> None:
 
 
 @pytest.mark.asyncio
-async def test_thinking_heartbeat_stops_after_first_progress() -> None:
-    """Once the brain makes real progress (first token → _mark_brain_progress),
-    the dedicated thinking heartbeat must FREEZE: the real _brain_last_progress
-    signal governs from then on, so a brain that produces a token and then wedges
-    its TTS is still aborted by the no-first-frame ceiling (the thinking
-    heartbeat must not paper over a post-token wedge). RED before WS2."""
+async def test_thinking_heartbeat_stops_after_first_spoken_token() -> None:
+    """Once the brain hands its first SPEAKABLE sentence to TTS
+    (``_spoke_this_turn``), the dedicated thinking heartbeat must FREEZE: from
+    then on TTS genuinely has text, so a provider that yields no audio is a real
+    wedge and the no-first-frame ceiling must be free to abort it (the heartbeat
+    must not paper over a post-token wedge). A mere tool round must NOT freeze it
+    (see test_thinking_heartbeat_survives_tool_round_until_first_spoken_token)."""
     bus = EventBus()
     pipeline = SpeechPipeline(tts=FakeTTS(), bus=bus, enable_whisper_wake=False)
     pipeline._brain_stall_poll_s = 0.02  # type: ignore[attr-defined]
     pipeline._brain_timeout_s = 10.0  # type: ignore[attr-defined]
     pipeline._brain_hard_timeout_s = 10.0  # type: ignore[attr-defined]
 
-    async def _think_then_progress() -> tuple[str, bool]:
+    async def _think_then_speak() -> tuple[str, bool]:
         await asyncio.sleep(0.1)  # pre-token thinking — heartbeat advances
         assert getattr(pipeline, "_brain_thinking_heartbeat", 0.0) > 0.0
-        pipeline._mark_brain_progress()  # first token arrives
-        await asyncio.sleep(0.08)  # let the poll loop observe the progress
+        pipeline._spoke_this_turn = True  # first speakable sentence reaches TTS
+        await asyncio.sleep(0.08)  # let the poll loop observe the spoken flag
         frozen = pipeline._brain_thinking_heartbeat  # type: ignore[attr-defined]
         await asyncio.sleep(0.12)  # post-token silence
         assert pipeline._brain_thinking_heartbeat == frozen, (  # type: ignore[attr-defined]
-            "thinking heartbeat must freeze once real progress is seen"
+            "thinking heartbeat must freeze once a speakable token reaches TTS"
         )
         return ("done", False)
 
     result = await asyncio.wait_for(
-        pipeline._run_brain_with_stall_guard(_think_then_progress()), timeout=5.0
+        pipeline._run_brain_with_stall_guard(_think_then_speak()), timeout=5.0
+    )
+    assert result == ("done", False)
+
+
+@pytest.mark.asyncio
+async def test_thinking_heartbeat_survives_tool_round_until_first_spoken_token() -> None:
+    """A tool round is NOT a spoken token: the thinking heartbeat must keep
+    advancing AFTER the brain's first ``_mark_brain_progress`` (a tool-use-loop
+    round) for as long as NO speakable sentence has reached TTS — only a real
+    spoken token (``_spoke_this_turn``) may freeze it.
+
+    Live bug 2026-06-30 ("München nach Bora Bora"): the brain ran a tool round
+    ~10 s in, then worked a second model roundtrip ~20 s with no further
+    progress ping and no token. The heartbeat froze at the FIRST progress, so
+    the 20 s no-first-frame TTS ceiling beheaded the still-working turn 10 s
+    before the 30 s brain stall guard would have — Jarvis spoke "that took too
+    long" instead of answering (since_progress_s=20.77). The freeze must key on
+    the first SPEAKABLE token, not on any progress.
+    """
+    bus = EventBus()
+    pipeline = SpeechPipeline(tts=FakeTTS(), bus=bus, enable_whisper_wake=False)
+    pipeline._brain_stall_poll_s = 0.02  # type: ignore[attr-defined]
+    pipeline._brain_timeout_s = 10.0  # type: ignore[attr-defined]
+    pipeline._brain_hard_timeout_s = 10.0  # type: ignore[attr-defined]
+
+    async def _tool_round_then_more_thinking() -> tuple[str, bool]:
+        await asyncio.sleep(0.08)  # pre-token thinking — heartbeat advances
+        pipeline._mark_brain_progress()  # first TOOL ROUND — not a spoken token
+        await asyncio.sleep(0.08)  # let the poll loop observe the round
+        hb_after_round = pipeline._brain_thinking_heartbeat  # type: ignore[attr-defined]
+        assert hb_after_round > 0.0
+        await asyncio.sleep(0.14)  # keep working — still no speakable token
+        assert pipeline._brain_thinking_heartbeat > hb_after_round, (  # type: ignore[attr-defined]
+            "heartbeat must keep advancing through a tool round while the brain "
+            "has produced no speakable token yet (the no-first-frame ceiling "
+            "must not behead a still-working brain)"
+        )
+        # First speakable sentence now reaches TTS → heartbeat must freeze so a
+        # genuinely wedged TTS after a real token is still aborted.
+        pipeline._spoke_this_turn = True  # type: ignore[attr-defined]
+        await asyncio.sleep(0.06)  # let the poll loop observe the spoken flag
+        frozen = pipeline._brain_thinking_heartbeat  # type: ignore[attr-defined]
+        await asyncio.sleep(0.12)  # post-token silence
+        assert pipeline._brain_thinking_heartbeat == frozen, (  # type: ignore[attr-defined]
+            "thinking heartbeat must freeze once a speakable token reaches TTS"
+        )
+        return ("done", False)
+
+    result = await asyncio.wait_for(
+        pipeline._run_brain_with_stall_guard(_tool_round_then_more_thinking()),
+        timeout=5.0,
     )
     assert result == ("done", False)
 
@@ -814,3 +873,196 @@ async def test_await_playback_still_aborts_genuine_midplayback_wedge() -> None:
     finally:
         if not play_task.done():
             play_task.cancel()
+
+
+# ---------------------------------------------------------------------------
+# Honest, cause-aware timeout messaging (live complaint 2026-06-30).
+#
+# A voice turn called a slow MCP tool, hung ~35 s, then timed out — and Jarvis
+# spoke a GENERIC, unhelpful "I couldn't finish the answer in time", giving the
+# user NO reason. The fix replaces the one flat phrase with cause-aware
+# messaging resolved through the SAME output-language decision (``_phrase_lang``):
+#   • a turn beheaded mid-tool-loop (no first audio frame), OR with a desktop
+#     (computer_use) tool demonstrably active, names an HONEST tool cause
+#     ("a tool I was waiting on didn't respond");
+#   • a bare provider stall / total cap with no tool evidence honestly admits it
+#     could not find the answer ("I couldn't find that out") — never the vague
+#     "took too long".
+# String-only, no LLM call in this path (AP-11). All three locales (de/en/es).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_no_first_frame_timeout_speaks_honest_tool_cause() -> None:
+    """A tool-stall / no-first-frame timeout must name an HONEST cause (a tool
+    didn't respond), never an empty string, never the old vague wording.
+
+    Reproduces the 2026-06-30 complaint: a NotebookLM MCP tool hung ~35 s and
+    the turn was beheaded by the no-first-frame ceiling. The notice must explain
+    WHY, not just apologise for "taking too long"."""
+    p, spoken = _silent_turn_pipeline(flag=True, elapsed_s=20.83, floor=30.0)
+
+    await p._handle_silent_brain_turn("de", "")
+
+    assert spoken == [_TIMEOUT_TOOL_STALL_PHRASE["de"]]
+    assert spoken[0], "the timeout notice must never be an empty string"
+    assert "Tool" in spoken[0], "must name the honest cause (a tool didn't respond)"
+
+
+@pytest.mark.asyncio
+async def test_bare_provider_stall_admits_no_answer_honestly() -> None:
+    """A bare provider stall with NO tool evidence must honestly admit it could
+    not find the answer — not falsely blame a tool, not the vague 'took too
+    long'."""
+    p, spoken = _silent_turn_pipeline(flag=False, elapsed_s=45.0, floor=30.0)
+
+    await p._speak_brain_timeout("de", site="stream_stall")
+
+    assert spoken == [_TIMEOUT_NO_ANSWER_PHRASE["de"]]
+    assert spoken[0], "the no-answer notice must never be an empty string"
+
+
+@pytest.mark.asyncio
+async def test_cu_tool_stall_names_tool_cause_even_on_stream_stall() -> None:
+    """When a desktop (computer_use) tool was demonstrably active this turn, even
+    a stream-stall timeout must name the tool cause, not the generic no-answer
+    phrase — the tool was the thing we were waiting on."""
+    p, spoken = _silent_turn_pipeline(flag=False, elapsed_s=45.0, floor=30.0)
+    p._long_tool_last_activity = time.monotonic()  # type: ignore[attr-defined]
+
+    await p._speak_brain_timeout("de", site="stream_stall")
+
+    assert spoken == [_TIMEOUT_TOOL_STALL_PHRASE["de"]]
+
+
+@pytest.mark.asyncio
+async def test_timeout_phrase_resolves_in_input_language() -> None:
+    """The cause-aware notice resolves through the one output-language decision:
+    a German turn gets the German phrase, an English turn the English one, a
+    Spanish turn the Spanish one — never a wrong-language fallback."""
+    for lang, table in (
+        ("de", _TIMEOUT_TOOL_STALL_PHRASE),
+        ("english", _TIMEOUT_TOOL_STALL_PHRASE),
+        ("spanish", _TIMEOUT_TOOL_STALL_PHRASE),
+    ):
+        p, spoken = _silent_turn_pipeline(flag=True, elapsed_s=20.83, floor=30.0)
+        await p._handle_silent_brain_turn(lang, "")
+        expected_key = {"de": "de", "english": "en", "spanish": "es"}[lang]
+        assert spoken == [table[expected_key]], (lang, spoken)
+
+
+def test_cause_aware_timeout_tables_cover_de_en_es() -> None:
+    """Both new cause-aware tables must carry every supported locale (CLAUDE.md
+    §1): an es speaker must never fall back to the wrong language."""
+    for table in (_TIMEOUT_TOOL_STALL_PHRASE, _TIMEOUT_NO_ANSWER_PHRASE):
+        assert {"de", "en", "es"} <= set(table), table
+        for value in table.values():
+            assert value and value.strip(), table
+
+
+# ---------------------------------------------------------------------------
+# Double-answer guard (live complaint 2026-06-30): a turn that already spoke a
+# timeout / "couldn't finish" notice must NOT then speak a SECOND brain answer
+# for the same content. Once the timeout outcome is committed it is terminal for
+# that utterance; a separately-spawned background mission readback
+# (COMPLETION/SUBAGENT) is a DIFFERENT, legitimate path and is NOT gated. The
+# flag re-arms at the next utterance.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CompletingPlayer:
+    """A player whose ``play_chunks`` drains the (empty) stream and returns at
+    once — models a normal, healthy short playback so ``_speak`` completes fast."""
+
+    last_write_ns: int = 0
+    stop_calls: int = 0
+
+    async def play_chunks(self, chunks: AsyncIterator[AudioChunk]) -> None:
+        async for _ in chunks:
+            pass
+
+    def stop(self) -> None:
+        self.stop_calls += 1
+
+
+def _speak_pipeline() -> tuple[SpeechPipeline, FakeTTS]:
+    bus = EventBus()
+    tts = FakeTTS()
+    pipeline = SpeechPipeline(tts=tts, bus=bus, enable_whisper_wake=False)
+    pipeline._player = CompletingPlayer()  # type: ignore[assignment]
+
+    async def _no_barge() -> bool:
+        return False
+
+    pipeline._barge_monitor = _no_barge  # type: ignore[assignment,method-assign]
+    return pipeline, tts
+
+
+@pytest.mark.asyncio
+async def test_brain_answer_suppressed_after_timeout_spoken_same_turn() -> None:
+    """A late/abandoned brain ANSWER (kind="reply") must be suppressed once a
+    timeout notice has closed this turn — no double-answer for the same content."""
+    pipeline, tts = _speak_pipeline()
+    pipeline._brain_timeout_spoken_this_turn = True  # type: ignore[attr-defined]
+
+    barged = await asyncio.wait_for(
+        pipeline._speak("Here is the real answer.", language="en"), timeout=5.0
+    )
+
+    assert barged is False
+    assert tts.calls == [], (
+        "a second brain answer must not be synthesized after a timeout notice"
+    )
+
+
+@pytest.mark.asyncio
+async def test_brain_answer_speaks_normally_without_prior_timeout() -> None:
+    """Counter-test: with no timeout spoken this turn (the flag re-armed), the
+    ordinary brain answer speaks normally — the guard only muzzles a SECOND
+    answer, never the first."""
+    pipeline, tts = _speak_pipeline()
+    pipeline._brain_timeout_spoken_this_turn = False  # type: ignore[attr-defined]
+
+    barged = await asyncio.wait_for(
+        pipeline._speak("Here is the answer.", language="en"), timeout=5.0
+    )
+
+    assert barged is False
+    assert len(tts.calls) == 1
+    assert tts.calls[0][0] == "Here is the answer."
+
+
+@pytest.mark.asyncio
+async def test_background_readback_not_suppressed_by_timeout_flag() -> None:
+    """A background mission readback (COMPLETION) is a DIFFERENT, legitimate turn
+    and must speak even after a timeout closed an earlier utterance — the guard
+    gates only the ordinary brain answer (kind="reply")."""
+    pipeline, tts = _speak_pipeline()
+    pipeline._brain_timeout_spoken_this_turn = True  # type: ignore[attr-defined]
+
+    await asyncio.wait_for(
+        pipeline._speak(
+            "Mission done.", language="en", kind=SPOKEN_KIND_COMPLETION
+        ),
+        timeout=5.0,
+    )
+
+    assert len(tts.calls) == 1, "a background readback must not be gated"
+    assert tts.calls[0][0] == "Mission done."
+
+
+@pytest.mark.asyncio
+async def test_speak_brain_timeout_sets_terminal_flag() -> None:
+    """Speaking the timeout notice marks the turn terminal so the double-answer
+    guard engages; a turn whose phrase was floor-suppressed must NOT set it (no
+    answer was actually spoken, so a real answer that follows must still play)."""
+    p, spoken = _silent_turn_pipeline(flag=True, elapsed_s=20.83, floor=30.0)
+    await p._speak_brain_timeout("de", site="empty_after_no_first_frame")
+    assert p._brain_timeout_spoken_this_turn is True
+    assert spoken, "sanity: this turn actually spoke the notice"
+
+    p2, spoken2 = _silent_turn_pipeline(flag=False, elapsed_s=0.1, floor=30.0)
+    await p2._speak_brain_timeout("de", site="stream_stall")  # sub-floor → suppressed
+    assert spoken2 == [], "sanity: floor guard suppressed the phrase"
+    assert getattr(p2, "_brain_timeout_spoken_this_turn", False) is False

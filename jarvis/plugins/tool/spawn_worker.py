@@ -38,7 +38,7 @@ from typing import Any, Final
 
 from jarvis.brain.ack_brain.spawn_announcement import SpawnAnnouncementComposer
 from jarvis.core.bus import EventBus
-from jarvis.core.events import OpenClawAnnouncement, OpenClawBackgroundCompleted
+from jarvis.core.events import JarvisAgentAnnouncement, JarvisAgentBackgroundCompleted
 from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.missions.manager import MissionManager
 from jarvis.missions.stream_evidence import strip_spawn_meta
@@ -507,9 +507,9 @@ class SpawnWorkerTool:
         # honest "konnte nicht initialisiert werden — siehe Log" instead
         # of being told to wait for something that will never happen.
         try:
-            from jarvis.brain.factory import is_openclaw_bootstrap_failed
+            from jarvis.brain.factory import is_worker_bootstrap_failed
 
-            if is_openclaw_bootstrap_failed():
+            if is_worker_bootstrap_failed():
                 log.warning(
                     "spawn_worker invoked but bootstrap was marked failed — "
                     "returning permanent-failure ack"
@@ -575,7 +575,7 @@ class SpawnWorkerTool:
         try:
             # 1. UI/Telemetry-Announce — kein Voice-ACK (Pipeline filtert Empty).
             await self._bus.publish(
-                OpenClawAnnouncement(
+                JarvisAgentAnnouncement(
                     trace_id=ctx.trace_id,
                     action=action,
                     target=target,
@@ -678,13 +678,13 @@ class SpawnWorkerTool:
             # the Voice-Listener will then publish OpenClawBackgroundCompleted.
             await kontrollierer.run_mission(mission_id)
         except asyncio.CancelledError:
-            log.info("OpenClaw background dispatch cancelled (app shutdown)")
+            log.info("Jarvis-Agent background dispatch cancelled (app shutdown)")
             raise  # Propagieren, damit Loop sauber aufraeumt.
         except BaseException as exc:  # noqa: BLE001
-            log.exception("Background openclaw dispatch crashed")
+            log.exception("Background Jarvis-Agent dispatch crashed")
             try:
                 await self._bus.publish(
-                    OpenClawBackgroundCompleted(
+                    JarvisAgentBackgroundCompleted(
                         success=False,
                         utterance=utterance,
                         summary="",
@@ -698,7 +698,7 @@ class SpawnWorkerTool:
                 # whole failure disappears with no record in either the
                 # log or the voice path.
                 log.exception(
-                    "OpenClawBackgroundCompleted bus-publish crashed"
+                    "JarvisAgentBackgroundCompleted bus-publish crashed"
                 )
         finally:
             # Release the liveness gate on EVERY terminal state — success,

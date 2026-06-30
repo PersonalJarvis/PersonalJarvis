@@ -139,7 +139,7 @@ split (`auto_apply="safe_only"`).
 
 A voice command like "Erstelle einen Skill, der Spotify pausiert wenn ich
 rede" (Create a skill that pauses Spotify when I speak) → main Jarvis
-calls the `spawn_skill_author` tool → sub-Jarvis (Opus 4.7) generates
+calls the `spawn_skill_author` tool → a Jarvis-Agent (Opus 4.7) generates
 SKILL.md → forces `state=draft`. The draft lands in
 `~/.jarvis/skills/<slug>/` and is visible in the hot-reload pool, but is
 **not active**.

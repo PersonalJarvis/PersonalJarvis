@@ -2,7 +2,7 @@ import { useEventStore } from "@/store/events";
 import { ViewErrorBoundary } from "@/components/ViewErrorBoundary";
 import { BoardView } from "@/views/BoardView";
 import { ChatsView } from "@/views/ChatsView";
-import { SubAgentsView } from "@/views/SubAgentsView";
+import { JarvisAgentsView } from "@/views/JarvisAgentsView";
 import { ExtensionsView } from "@/views/ExtensionsView";
 import { DocsView } from "@/views/DocsView";
 import { TasksView } from "@/views/TasksView";
@@ -19,7 +19,6 @@ import { ContactsView } from "@/views/contacts/ContactsView";
 import { FeedbackView } from "@/views/feedback/FeedbackView";
 import { AgentInstructionsView } from "@/views/AgentInstructionsView";
 import { TelephonySetupView } from "@/views/TelephonyView";
-import { MakeItYoursView } from "@/views/MakeItYoursView";
 
 /**
  * Main area to the right of the sidebar. All views are switched the classic
@@ -47,7 +46,7 @@ function SwitchOnActiveSection({ active }: { active: string }) {
     case "chats":
       return <ChatsView />;
     case "agents":
-      return <SubAgentsView />;
+      return <JarvisAgentsView />;
     // Skills + Plugins + MCPs are merged behind the "Skills & Tools" entry with
     // an in-view tab switcher; the active id doubles as the tab state.
     case "skills":
@@ -103,8 +102,6 @@ function SwitchOnActiveSection({ active }: { active: string }) {
       return <FeedbackView />;
     case "agent-instructions":
       return <AgentInstructionsView />;
-    case "personalize":
-      return <MakeItYoursView />;
     default:
       return <ChatsView />;
   }

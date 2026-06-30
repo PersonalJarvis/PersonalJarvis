@@ -25,7 +25,7 @@ what Wave 1 changes (and what it does not).
 
 The post-install runtime threat model — Brain provider API keys, Computer-Use
 risk-tier policy, Mission-Manager worker isolation — is out of scope here.
-That work lives in `docs/openclaw-bridge.md`, `jarvis/safety/risk_tier.py`,
+That work lives in `docs/jarvis-agents-bridge.md`, `jarvis/safety/risk_tier.py`,
 and the Phase-6 isolation invariants in `CLAUDE.md`.
 
 ---

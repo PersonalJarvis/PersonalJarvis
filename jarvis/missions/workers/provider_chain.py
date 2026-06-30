@@ -1,13 +1,13 @@
-"""SubJarvisWorker — drives the `openclaw agent --local --json` CLI as a
+"""Worker provider chain — drives the `openclaw agent --local --json` CLI as a
 provider-agnostic Phase-6 worker.
 
-SubJarvisWorker delegates to OpenClaw —
+The worker delegates to the OpenClaw harness —
 which already supports `google/gemini-*`, `openai/gpt-*`,
 `anthropic/claude-*`, and `openrouter/*` behind a single CLI surface.
 The provider+model is resolved from `[brain.sub_jarvis]` in jarvis.toml
-(provider in jarvis-slug form, e.g. "gemini"; model in OpenClaw form, e.g.
-"gemini-3.1-pro-preview"). The jarvis-to-openclaw slug translation lives in
-`jarvis.missions.worker_runtime.provider_map.to_provider_slug` so this worker
+(provider in jarvis-slug form, e.g. "gemini"; model in worker-harness form, e.g.
+"gemini-3.1-pro-preview"). The jarvis-to-worker-slug translation lives in
+`jarvis.missions.worker_runtime.provider_map.to_worker_slug` so this worker
 never hardcodes slugs.
 
 CLI layout (verified live 2026-05-13 against OpenClaw 2026.5.7):
@@ -73,8 +73,8 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Literal
 
 from jarvis.missions.worker_runtime.provider_map import (
-    UnknownJarvisProviderError,
-    to_provider_slug,
+    NoWorkerSlugMappingError,
+    to_worker_slug,
 )
 
 from .process_utils import worker_creationflags as _win32_creationflags
@@ -83,8 +83,8 @@ from .stream_consumer import ClaudeResult, ClaudeSystemInit
 logger = logging.getLogger(__name__)
 
 
-# OpenClaw binary candidates (Windows ships .cmd, POSIX ships bare).
-_OPENCLAW_BINARIES: tuple[str, ...] = ("openclaw.cmd", "openclaw")
+# Worker harness binary candidates (Windows ships .cmd, POSIX ships bare).
+_WORKER_BINARIES: tuple[str, ...] = ("openclaw.cmd", "openclaw")
 
 # Quota / rate-limit markers across providers. Detected on stderr after a
 # non-zero exit to decide whether to attempt the configured fallback.
@@ -130,15 +130,15 @@ class _FallbackStep:
     jarvis-slug ("openai", "gemini", "claude-api", "openrouter").
     `model` is the provider-native model id ("gpt-5.5-pro",
     "gemini-3.1-pro-preview", etc.). The OpenClaw slug translation
-    happens at spawn time via `to_provider_slug`.
+    happens at spawn time via `to_worker_slug`.
     """
 
     provider: str
     model: str
 
 
-def _resolve_openclaw_binary() -> str:
-    """Returns the absolute path to the OpenClaw CLI shim.
+def _resolve_worker_binary() -> str:
+    """Returns the absolute path to the worker harness CLI shim.
 
     Kept for backward compatibility with tests that pin a single string
     and for the fallback path in `_resolve_worker_argv_prefix()`.
@@ -152,7 +152,7 @@ def _resolve_openclaw_binary() -> str:
             path = shutil.which(name)
             if path:
                 return path
-    for name in _OPENCLAW_BINARIES:
+    for name in _WORKER_BINARIES:
         path = shutil.which(name)
         if path:
             return path
@@ -199,7 +199,7 @@ def _resolve_worker_argv_prefix() -> list[str]:
                 return [node, str(candidate)]
     # Last-resort fallback: bare CLI shim. Still works for prompts that
     # don't contain cmd.exe metacharacters.
-    return [_resolve_openclaw_binary()]
+    return [_resolve_worker_binary()]
 
 
 def _stderr_signals_quota_block(stderr_bytes: bytes) -> bool:
@@ -243,14 +243,14 @@ def _resolve_provider_chain(
         from jarvis.core.config import load_config
 
         cfg = load_config()
-        sub_cfg = getattr(cfg.brain, "sub_jarvis", None)
+        sub_cfg = getattr(cfg.brain, "worker", None)
         if sub_cfg is not None:
             primary_provider = primary_provider or getattr(sub_cfg, "provider", None)
             # Welle 7 (2026-05-20): "openclaw-claude" is a jarvis-side
             # sentinel that means "route through SubJarvisWorker, but use
             # the claude-cli OpenClaw backend". It is NOT a real openclaw
             # provider slug — normalise it to "claude-api" so the rest of
-            # the resolver + to_provider_slug() find it in MAPPINGS.
+            # the resolver + to_worker_slug() find it in MAPPINGS.
             if isinstance(primary_provider, str) and primary_provider.strip().lower() == "openclaw-claude":
                 primary_provider = "claude-api"
             primary_model = primary_model or getattr(sub_cfg, "model", None)
@@ -300,17 +300,17 @@ def _resolve_provider_chain(
     return tuple(chain)
 
 
-def _build_openclaw_cmd(
+def _build_worker_cmd(
     prompt: str,
     *,
     binary: str | list[str],
     session_id: str,
-    openclaw_slug: str,
+    worker_slug: str,
     model: str,
     timeout_s: float = _DEFAULT_TIMEOUT_S,
     extra_args: tuple[str, ...] = (),
 ) -> list[str]:
-    """Constructs the OpenClaw CLI argv.
+    """Constructs the worker harness CLI argv.
 
     `binary` accepts either a single executable path (legacy contract,
     used by existing tests that pin one string) or the full argv prefix
@@ -320,9 +320,9 @@ def _build_openclaw_cmd(
     Windows (BUG-ALT-03, 2026-05-14).
 
     Stable order so the dry-run test can pin it argument-for-argument.
-    The model arg is `<openclaw_slug>/<model>` — the jarvis-slug must
-    have been translated to the openclaw-slug by the caller (e.g. via
-    `to_provider_slug("gemini") -> "google"`).
+    The model arg is `<worker_slug>/<model>` — the jarvis-slug must
+    have been translated to the worker slug by the caller (e.g. via
+    `to_worker_slug("gemini") -> "google"`).
     """
     prefix: list[str] = [binary] if isinstance(binary, str) else list(binary)
     cmd: list[str] = [
@@ -337,7 +337,7 @@ def _build_openclaw_cmd(
         "--message",
         prompt,
         "--model",
-        f"{openclaw_slug}/{model}",
+        f"{worker_slug}/{model}",
         "--timeout",
         str(int(timeout_s)),
     ]
@@ -378,9 +378,9 @@ def _extract_assistant_text(stdout_bytes: bytes) -> tuple[str, dict[str, Any]]:
 
 
 __all__ = [
-    "_build_openclaw_cmd",
+    "_build_worker_cmd",
     "_resolve_provider_chain",
-    "_resolve_openclaw_binary",
+    "_resolve_worker_binary",
     "_resolve_worker_argv_prefix",
     "_extract_assistant_text",
     "_stderr_signals_quota_block",

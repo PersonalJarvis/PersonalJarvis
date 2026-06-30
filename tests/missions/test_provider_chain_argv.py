@@ -1,4 +1,4 @@
-"""Unit tests for the OpenClaw argv-prefix resolver (BUG-ALT-03).
+"""Unit tests for the worker harness argv-prefix resolver (BUG-ALT-03).
 
 Goal: prove that the OpenClaw worker invokes `node openclaw.mjs` directly
 when possible (sidestepping the cmd.exe metacharacter trap that mangles
@@ -100,17 +100,17 @@ def test_resolver_returns_bare_default_when_nothing_resolves(
     )
 
 
-# --- _build_openclaw_cmd ---------------------------------------------------
+# --- _build_worker_cmd ---------------------------------------------------
 
 
 def test_build_openclaw_cmd_accepts_string_binary_legacy() -> None:
     """The old contract — `binary` as a single path string — must still
     work for existing callers and tests."""
-    cmd = sjw._build_openclaw_cmd(
+    cmd = sjw._build_worker_cmd(
         "Create hello.py",
         binary="C:/npm/openclaw.cmd",
         session_id="s-1",
-        openclaw_slug="google",
+        worker_slug="google",
         model="gemini-3.1-pro-preview",
         timeout_s=600.0,
     )
@@ -127,11 +127,11 @@ def test_build_openclaw_cmd_accepts_argv_prefix_list() -> None:
     """The new contract — `binary` as a list — must place the prefix
     elements at the head of the argv, in order, and then append the
     OpenClaw arguments unchanged."""
-    cmd = sjw._build_openclaw_cmd(
+    cmd = sjw._build_worker_cmd(
         "Create hello.py with print('hi')",
         binary=["C:/Program Files/nodejs/node.exe", "C:/npm/openclaw.mjs"],
         session_id="s-2",
-        openclaw_slug="google",
+        worker_slug="google",
         model="gemini-3.1-pro-preview",
         timeout_s=600.0,
     )
@@ -147,11 +147,11 @@ def test_build_openclaw_cmd_accepts_argv_prefix_list() -> None:
 def test_build_openclaw_cmd_extra_args_appended_after_timeout() -> None:
     """Stable order: `extra_args` go at the very end so they can override
     or supplement standard flags without re-ordering parsing."""
-    cmd = sjw._build_openclaw_cmd(
+    cmd = sjw._build_worker_cmd(
         "p",
         binary=["node", "openclaw.mjs"],
         session_id="s",
-        openclaw_slug="google",
+        worker_slug="google",
         model="gemini-3.1-pro-preview",
         timeout_s=10.0,
         extra_args=("--verbose", "--max-tokens", "4096"),

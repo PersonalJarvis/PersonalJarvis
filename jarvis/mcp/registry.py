@@ -18,6 +18,12 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# Per-server start ceiling (seconds). A server that hangs on initialize /
+# list_tools must not hang its start task forever — mirrors the 60 s guard in
+# ``bootstrap.verify_server``. On expiry we log per-server and move on; the
+# parallel start of the other servers is never aborted.
+_START_TIMEOUT_S = 60.0
+
 
 # ----------------------------------------------------------------------
 # Spec
@@ -164,10 +170,20 @@ class MCPRegistry:
             env_overrides = _env_from_mcp_json(spec.name)
             client = MCPClient(spec, env_overrides=env_overrides)
             try:
-                await client.start()
+                # Per-server start timeout: a server hanging on initialize /
+                # list_tools must not block this task forever. asyncio.wait_for
+                # cancels the hung start on expiry and raises TimeoutError, which
+                # the ``except`` below records per server — the gather over the
+                # other servers keeps running, so one hung server never stalls
+                # the parallel boot.
+                await asyncio.wait_for(client.start(), timeout=_START_TIMEOUT_S)
                 self._clients[spec.name] = client
                 self._errors.pop(spec.name, None)
                 log.info("MCP-Server %s gestartet", spec.name)
+            except TimeoutError:
+                error_msg = f"start timeout ({_START_TIMEOUT_S:.0f}s)"
+                self._errors[spec.name] = error_msg
+                log.error("MCP-Server %s Startfehler: %s", spec.name, error_msg)
             except Exception as e:  # noqa: BLE001
                 error_msg = f"{type(e).__name__}: {e}"
                 self._errors[spec.name] = error_msg

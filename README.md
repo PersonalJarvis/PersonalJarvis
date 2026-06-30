@@ -195,7 +195,6 @@ Inside `jarvis/`, the layout mirrors the 8-layer model above — `jarvis/brain/`
 | [`CLAUDE.md`](CLAUDE.md) | Binding contributor guide — conventions, doctrine, anti-patterns |
 | [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md) | Cross-platform, provider-agnostic design doctrine |
 | [`docs/BRAND.md`](docs/BRAND.md) | Brand guidelines — colors, typography, the wordmark |
-| [`docs/openclaw-bridge.md`](docs/openclaw-bridge.md) | The agent-harness contract |
 | [`docs/adr/`](docs/adr/) | Architecture Decision Records |
 | [`docs/BUGS.md`](docs/BUGS.md) | The recurring-bug register |
 

@@ -32,7 +32,7 @@ Every subagent is primarily classified along two axes: **role** (what it does) a
 |---|---|---|---|
 | Researcher | — | `jarvis-architect-explorer` (P0–7) | — |
 | Worker | — | `jarvis-worker` (P6, more generically usable), `openclaw-bridge-builder` (openclaw) | `win32-specialist` |
-| Reviewer | `code-reviewer` | `jarvis-reviewer` (P6 Adversarial), `openclaw-bridge-reviewer` (openclaw), `phase7-selfmod-auditor` (P7) | `jarvis-critic-design-reviewer` (P6 Critic-Loop) |
+| Reviewer | `code-reviewer`, `docs-privacy-reviewer` | `jarvis-reviewer` (P6 Adversarial), `openclaw-bridge-reviewer` (openclaw), `phase7-selfmod-auditor` (P7) | `jarvis-critic-design-reviewer` (P6 Critic-Loop) |
 | Verifier | `plan-verifier` (Awareness + general) | `awareness-a3-a5-verifier` (A3-A5) | — |
 | Test-Runner | `test-runner` | `jarvis-test-runner` (P6) | — |
 
@@ -55,6 +55,7 @@ Every subagent is primarily classified along two axes: **role** (what it does) a
 | Task | Subagent | Justification |
 |---|---|---|
 | Diff after every substantial change | `code-reviewer` | Senior review against AGENTS.md |
+| New/changed file under `docs/` (privacy pass before it could ship) | `docs-privacy-reviewer` | Reads the doc for the maintainer's name/email/handle, personal paths, machine ids, private life details, and real secrets — the semantic half of the docs privacy gate (`scripts/ci/docs_privacy_scan.py` is the deterministic half, run by a PostToolUse hook) |
 | Adversarially check jarvis-worker output (build phase) | `jarvis-reviewer` | JSON verdict, during the build before handoff to the user. NOT for OpenClaw production output (use the Phase-6 critic for that) |
 | Phase-6 Critic-Loop design (prompts, verdict schema) | `jarvis-critic-design-reviewer` | Sycophancy risks, reflexion pattern |
 | OpenClaw-bridge code against AP-OC1..OC13 | `openclaw-bridge-reviewer` | Bridge doc §5 anti-patterns |

@@ -56,16 +56,45 @@ INTEGRATION_OK_STATUSES: frozenset[str] = frozenset(
 
 _HTTP_CODE_RE = re.compile(r"\b([45]\d\d)\b")
 
-# Money / quota markers — distinguish a billing 403/429 ("no credits") from a
-# plain auth 403 ("bad key") or a transient 429 ("rate limited").
-_BILLING_MARKERS = (
-    "credit",            # "used all available credits", "purchase more credits"
+# Money / quota / budget markers — a credential that AUTHENTICATES but is refused
+# for a billing/budget/quota reason (an *account* state, not a bad key). This is
+# the SINGLE canonical list shared with the runtime dead-list classifier
+# (jarvis/brain/manager.py::_is_account_blocked_exc) so the test-badge and the live
+# fallback chain can never drift apart on what "out of credits / over budget" means.
+# Every entry is a phrase observed live or documented from a real provider 4xx body.
+#
+# HARD INVARIANT: none of these may be a substring of a transient
+# "rate limit exceeded" message (that must stay rate_limited / take the cooldown,
+# never dead-list) — so there is deliberately NO bare "limit exceeded" / "limit"
+# here, only qualified forms ("key limit", "spend limit", "total limit", …).
+BILLING_LIMIT_MARKERS = (
+    "credit",            # "credit balance too low", "used all available credits"
     "spending limit",
+    "spend limit",
+    "key limit",         # OpenRouter per-key cap: "Key limit exceeded (total limit)"
+    "total limit",       # OpenRouter per-key cap (the parenthetical)
+    "credit limit",
+    "usage limit",
+    "monthly limit",
+    "budget",            # "monthly budget exceeded for this key"
     "billing",           # OpenAI "check your plan and billing details"
     "insufficient_quota",
+    "insufficient quota",
     "out of funds",
-    "payment",
+    "out of credits",
+    "no credits",
+    "payment",           # HTTP 402 Payment Required bodies
+    "quota exceeded",
+    "exceeded your quota",
+    "exceeded your current quota",
+    "prepayment",        # Gemini "prepayment credits are depleted"
+    "depleted",
+    "plan and billing",
+    "plans & billing",
 )
+
+# Back-compat alias (anything importing the old private name keeps working).
+_BILLING_MARKERS = BILLING_LIMIT_MARKERS
 
 # "No key stored" shapes from the plugins' own _ensure_client guards.
 _MISSING_KEY_MARKERS = (

@@ -65,8 +65,8 @@ ACTIVE_EVENT_NAMES = {
     "ListeningStarted",
     "MessageSent",
     "ResponseGenerated",
-    "OpenClawBackgroundCompleted",
-    "OpenClawTaskCompleted",
+    "JarvisAgentBackgroundCompleted",
+    "JarvisAgentTaskCompleted",
     "SystemStarted",
     "TaskCompleted",
     "TaskFailed",
@@ -377,7 +377,7 @@ class BoardAggregator:
                 stats.tasks_completed += 1
             elif event == "TaskFailed":
                 stats.tasks_failed += 1
-            elif event == "OpenClawTaskCompleted":
+            elif event == "JarvisAgentTaskCompleted":
                 if payload.get("success"):
                     stats.tasks_completed += 1
                 else:

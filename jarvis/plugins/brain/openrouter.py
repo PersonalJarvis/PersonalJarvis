@@ -13,7 +13,13 @@ from jarvis.core.protocols import BrainDelta, BrainRequest
 
 from ._openai_base import CLIENT_TIMEOUT, stream_complete
 
-DEFAULT_MODEL = "anthropic/claude-opus-4.8"
+# Last-resort default when the brain is built with NO model. OpenRouter is a
+# gateway, so this must NEVER be a paid Anthropic id — that silently billed the
+# single most expensive model in the catalog on a spend-limited key (live forensic
+# 2026-06-29). A free general-purpose model degrades with a clean 404 if retired,
+# rather than charging the user (§3/AP-22). The manager passes the user's PICK in
+# almost every path; this only bites a genuinely model-less construction.
+DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 BASE_URL = "https://openrouter.ai/api/v1"
 
 

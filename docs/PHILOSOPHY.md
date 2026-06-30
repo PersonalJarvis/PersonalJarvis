@@ -48,7 +48,7 @@ Concretely:
 | L2 Speech | Cloud STT (Deepgram / Google STT / Whisper-API); cloud TTS (Gemini Flash / Grok Voice / ElevenLabs); **server-side push-to-talk replaces local wake** | `faster-whisper` + Silero-VAD + openWakeWord on local GPU; SAPI5 fallback TTS |
 | L3 Intent / Risk | Unchanged — pure Python logic | Unchanged |
 | L4 Brain | Unchanged — already five cloud providers (OpenRouter, OpenAI, Gemini, Grok, Claude-Max-OAuth-inside-workers); no Anthropic-API hard-dep | Future Ollama-local optional path |
-| L5 Harness-Adapter | OpenClaw via cloud subprocess host; MCP-Remote; Codex CLI on a worker container | POAV computer-use, local PowerShell, in-tree subprocess |
+| L5 Harness-Adapter | Jarvis-Agents via cloud subprocess host; MCP-Remote; Codex CLI on a worker container | POAV computer-use, local PowerShell, in-tree subprocess |
 | L6 Orchestrator | Unchanged | Unchanged |
 | L7 UI / UX | FastAPI + React **served as a web app** — reachable in any browser, no native window | `pywebview` window, tray, Orb overlay, global hotkey |
 
@@ -106,7 +106,7 @@ This document is referenced from:
 
 - [`README.md`](../README.md) §1 (top of file)
 - [`CLAUDE.md`](../CLAUDE.md) §"Cloud-First Philosophy" (binding doctrine block)
-- [`docs/openclaw-bridge.md`](openclaw-bridge.md) — preamble (planned: OpenClaw harness must support a cloud-subprocess-host transport, not only local Windows subprocesses)
+- [`docs/jarvis-agents-bridge.md`](jarvis-agents-bridge.md) — preamble (planned: Jarvis-Agents harness must support a cloud-subprocess-host transport, not only local Windows subprocesses)
 - [`docs/BUGS.md`](BUGS.md) — recurring bug classes 1, 4, and 5 (restore-trap, subprocess flicker, audio host-API) are explicitly **maintainer-machine bugs** that would not occur on a cloud-first deployment, and serve as evidence for this doctrine
 
 ---

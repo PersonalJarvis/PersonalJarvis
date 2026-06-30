@@ -2880,27 +2880,29 @@ class DesktopApp:
         return False
 
     def _suppress_overlay_for_hidden_window(self) -> None:
-        """Take the overlay bar off the screen while the window is minimised.
+        """Take a NON-persistent overlay bar off the screen on minimise — but
+        NEVER touch a bar the user set to "show at all times".
 
-        The persistent bar would otherwise stay on screen after the X (the app
-        keeps running in the tray for voice), which reads as "the bar won't
-        close". Drive the bar into the non-persistent (hide-at-idle) regime and
-        hide it now, WITHOUT mutating the user's saved ``bar_persistent``
-        preference. Voice activity still surfaces it (the bridge shows it on a
-        session and hides it again at idle); reopening the window restores the
+        "Show at all times" (``bar_persistent``) makes the bar a standalone,
+        always-on element by the user's explicit choice: minimising the main
+        window to tray must leave it exactly where it is. Forcing an always-on
+        bar into the hide-at-idle regime here was the regression where the bar
+        "vanishes after a while and only the wake word brings it back" — every
+        tray-minimise silently overrode the user's always-on preference. A user
+        who wants the bar gone turns "show at all times" OFF instead.
+
+        A non-persistent bar is already hide-at-idle, so we only make sure it is
+        off the screen now (clean desktop). Reopening the window restores the
         configured regime via :meth:`_restore_overlay_for_visible_window`.
         """
+        # Always-on bar: the tray-minimise must not disturb it.
+        if bool(getattr(self.cfg.ui, "bar_persistent", True)):
+            return
         bar = getattr(self, "_orb", None)
         bridge = getattr(self, "_bridge", None)
         if bar is None or bridge is None:
             return
         try:
-            if getattr(bridge, "_boot_reveal_done", True) is False:
-                # The persistent jarvis bar starts withdrawn at boot and is
-                # revealed once voice is ready. Before that first reveal there
-                # is no visible surface to suppress; flipping hide-on-idle here
-                # would turn the one-shot startup reveal into a no-op.
-                return
             bridge._hide_on_idle = True
             if hasattr(bar, "_persistent"):
                 bar._persistent = False
