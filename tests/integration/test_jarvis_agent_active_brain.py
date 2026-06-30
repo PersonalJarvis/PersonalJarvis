@@ -119,7 +119,7 @@ def test_subagent_switch_persists_and_restart_required(
 
     cfg = load_config()
     cfg.brain.primary = "gemini"
-    cfg.brain.sub_jarvis = BrainTierConfig(provider="claude-api", model="")
+    cfg.brain.worker = BrainTierConfig(provider="claude-api", model="")
 
     resp = _client(cfg).post("/api/jarvis-agent/switch", json={"provider": "gemini", "persist": True})
     assert resp.status_code == 200, resp.text
@@ -164,7 +164,7 @@ def test_subagent_switch_updates_status_endpoint(monkeypatch: pytest.MonkeyPatch
 
     cfg = load_config()
     cfg.brain.primary = "gemini"
-    cfg.brain.sub_jarvis = BrainTierConfig(provider="claude-api", model="")
+    cfg.brain.worker = BrainTierConfig(provider="claude-api", model="")
     client = _client(cfg)
 
     client.post("/api/jarvis-agent/switch", json={"provider": "openrouter", "persist": True})
@@ -212,7 +212,7 @@ def test_codex_subagent_active_when_selected(monkeypatch: pytest.MonkeyPatch) ->
     _patch_codex(monkeypatch, connected=True)
     cfg = load_config()
     cfg.brain.primary = "gemini"
-    cfg.brain.sub_jarvis = BrainTierConfig(provider="openai-codex", model="")
+    cfg.brain.worker = BrainTierConfig(provider="openai-codex", model="")
     data = _status(cfg)
     active = {r["jarvis"]: r["is_active_brain"] for r in data["mapping"]}
     assert active["openai-codex"] is True
@@ -432,7 +432,7 @@ def test_antigravity_subagent_active_when_selected(monkeypatch: pytest.MonkeyPat
     _patch_antigravity(monkeypatch, connected=True)
     cfg = load_config()
     cfg.brain.primary = "gemini"
-    cfg.brain.sub_jarvis = BrainTierConfig(provider="antigravity", model="")
+    cfg.brain.worker = BrainTierConfig(provider="antigravity", model="")
     data = _status(cfg)
     active = {r["jarvis"]: r["is_active_brain"] for r in data["mapping"]}
     assert active["antigravity"] is True

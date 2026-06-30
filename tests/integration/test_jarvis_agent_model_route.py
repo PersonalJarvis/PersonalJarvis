@@ -23,7 +23,7 @@ from jarvis.ui.web.server import WebServer
 def server() -> Iterator[WebServer]:
     cfg = load_config()
     cfg.brain.primary = "gemini"
-    cfg.brain.sub_jarvis = BrainTierConfig(provider="claude-api", model="")
+    cfg.brain.worker = BrainTierConfig(provider="claude-api", model="")
     bus = EventBus()
     yield WebServer(cfg=cfg, bus=bus)
 
@@ -56,23 +56,23 @@ def test_post_model_persists_and_updates_memory(
         assert body["restart_required"] is True
     assert _no_toml_write == ["claude-sonnet-4-6"]
     # In-memory cfg updated so the next /openclaw/status reflects it.
-    assert server.cfg.brain.sub_jarvis.model == "claude-sonnet-4-6"
+    assert server.cfg.brain.worker.model == "claude-sonnet-4-6"
 
 
 def test_post_empty_model_resets_to_provider_default(
     server: WebServer, _no_toml_write: list[str]
 ) -> None:
-    server.cfg.brain.sub_jarvis.model = "claude-sonnet-4-6"
+    server.cfg.brain.worker.model = "claude-sonnet-4-6"
     with TestClient(server.app) as client:
         resp = client.post("/api/subagent/model", json={"model": ""})
         assert resp.status_code == 200
         assert resp.json()["model"] == ""
     assert _no_toml_write == [""]
-    assert server.cfg.brain.sub_jarvis.model == ""
+    assert server.cfg.brain.worker.model == ""
 
 
 def test_status_exposes_override_and_resolved_model(server: WebServer) -> None:
-    server.cfg.brain.sub_jarvis = BrainTierConfig(
+    server.cfg.brain.worker = BrainTierConfig(
         provider="claude-api", model="claude-sonnet-4-6",
     )
     with TestClient(server.app) as client:

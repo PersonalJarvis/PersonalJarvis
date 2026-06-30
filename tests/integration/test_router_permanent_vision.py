@@ -160,7 +160,7 @@ async def test_router_handle_includes_image():
             provider="fake", model="fake",
             fallback_provider="fake", fallback_model="fake",
         )
-        cfg.brain.sub_jarvis = BrainTierConfig(provider="fake", model="fake")
+        cfg.brain.worker = BrainTierConfig(provider="fake", model="fake")
 
         bus = EventBus()
         router = RouterBrain(
@@ -251,7 +251,7 @@ async def test_privacy_pause_drops_image():
         cfg.brain.providers["fake"] = BrainProviderConfig(model="fake", deep_model="fake")
         cfg.brain.router = BrainTierConfig(provider="fake", model="fake",
                                            fallback_provider="fake", fallback_model="fake")
-        cfg.brain.sub_jarvis = BrainTierConfig(provider="fake", model="fake")
+        cfg.brain.worker = BrainTierConfig(provider="fake", model="fake")
         bus = EventBus()
         router = RouterBrain(cfg, bus, tools={"bash": _FakeTool()},
                              tool_executor=object(), vision_provider=provider)
