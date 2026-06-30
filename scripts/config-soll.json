@@ -32,7 +32,7 @@
     "allow_sapi5_fallback": false
   },
   "brain": {
-    "primary": "gemini",
+    "primary": "openrouter",
     "fallback": "gemini",
     "deep_brain": "gemini",
     "routing_provider": "gemini",
