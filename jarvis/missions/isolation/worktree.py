@@ -86,6 +86,22 @@ def _slugify(value: str) -> str:
     return out or "x"
 
 
+def resolve_outputs_root(repo_root: Path) -> Path:
+    """Return the mission outputs root directory.
+
+    Prefers ``<repo_root>.parent/jarvis-agent-outputs/`` (post-rename, 2026-06-29).
+    Falls back to ``<repo_root>.parent/sub-agents-outputs/`` when that old directory
+    exists AND the new one does NOT — this keeps existing missions readable without
+    any migration step. Does NOT create the directory; callers are responsible.
+    """
+    parent = repo_root.resolve().parent
+    new_dir = parent / "jarvis-agent-outputs"
+    old_dir = parent / "sub-agents-outputs"
+    if not new_dir.exists() and old_dir.exists():
+        return old_dir  # back-compat: keep existing missions accessible
+    return new_dir
+
+
 class WorktreeManager:
     """Manages `git worktree add/remove` for Phase-6 worker tasks.
 
@@ -110,7 +126,7 @@ class WorktreeManager:
         self._outputs_root = (
             outputs_root.resolve()
             if outputs_root is not None
-            else (self._repo_root.parent / "sub-agents-outputs").resolve()
+            else resolve_outputs_root(self._repo_root)
         )
 
     # --- Public API ---------------------------------------------------------

@@ -286,13 +286,13 @@ def _live_subagent_provider(boot_snapshot: str | None) -> str | None:
             pass
 
         cfg = load_config()
-        sub_cfg = getattr(cfg.brain, "sub_jarvis", None)
+        sub_cfg = getattr(cfg.brain, "worker", None)
         raw = getattr(sub_cfg, "provider", None) if sub_cfg is not None else None
         if raw:
             resolved = str(raw).strip().lower()
             if resolved:
                 return resolved
-        # B6 (open-source AP-22): no explicit [brain.sub_jarvis].provider → run the
+        # B6 (open-source AP-22): no explicit [brain.worker].provider → run the
         # heavy worker on the user's ACTIVE brain provider, not the legacy Claude
         # CLI. A fresh openrouter/gemini/codex install never sets sub_jarvis, so
         # without this the default ClaudeDirectWorker spawns the absent `claude`
@@ -472,10 +472,10 @@ async def bootstrap_missions(
                 or getattr(provider_cfg, "model", None)
                 or brain_deep_model
             )
-        # [brain.sub_jarvis] is the SOURCE OF TRUTH for the OpenClaw worker
+        # [brain.worker] is the SOURCE OF TRUTH for the Jarvis-Agent worker
         # selection (post-Welle-4). If present and provider is set, every
-        # mission step routes to SubJarvisWorker — regardless of brain.primary.
-        sub_cfg = getattr(cfg.brain, "sub_jarvis", None)
+        # mission step routes to the worker — regardless of brain.primary.
+        sub_cfg = getattr(cfg.brain, "worker", None)
         if sub_cfg is not None:
             raw_provider = getattr(sub_cfg, "provider", None)
             if raw_provider:

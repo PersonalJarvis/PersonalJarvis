@@ -172,11 +172,12 @@ def _resolve_chain(config: JarvisConfig) -> list[tuple[str, str | None]]:
         chain.append((bio_cfg.override_provider, bio_cfg.override_model or None))
 
     brain_cfg = config.brain
-    # Wave 4 migration: the ``sub_jarvis`` field on BrainConfig was marked
-    # as legacy (see core/config.py). We still read it if a configuration
-    # still contains ``[brain.sub_jarvis]`` — it serves as a frontier hint
-    # for ``resolve_frontier_brain``.
-    sub_tier = brain_cfg.sub_jarvis
+    # Wave 4 migration / 2026-06-29 Jarvis-Agents rename: the field was
+    # ``sub_jarvis``, now ``worker`` (accepts old key via AliasChoices). We
+    # still read it if a configuration contains ``[brain.worker]`` or the
+    # legacy ``[brain.sub_jarvis]`` — it serves as a frontier hint for
+    # ``resolve_frontier_brain``.
+    sub_tier = brain_cfg.worker
 
     # Stage 2 — legacy sub-jarvis tier config from Wave 3 / pre-Wave-4
     # (user had explicitly set the frontier tier there; remains readable)

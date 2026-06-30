@@ -243,7 +243,7 @@ def _resolve_provider_chain(
         from jarvis.core.config import load_config
 
         cfg = load_config()
-        sub_cfg = getattr(cfg.brain, "sub_jarvis", None)
+        sub_cfg = getattr(cfg.brain, "worker", None)
         if sub_cfg is not None:
             primary_provider = primary_provider or getattr(sub_cfg, "provider", None)
             # Welle 7 (2026-05-20): "openclaw-claude" is a jarvis-side

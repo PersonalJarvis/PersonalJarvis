@@ -95,7 +95,7 @@ def _resolve_worker_model(provider: str, explicit: str) -> str:
         from jarvis.core import config as _cfg
 
         root = _cfg.load_config()
-        sub = getattr(root.brain, "sub_jarvis", None)
+        sub = getattr(root.brain, "worker", None)
         if (
             sub is not None
             and (getattr(sub, "provider", "") or "").strip().lower() == prov

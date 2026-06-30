@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 # wake_constants is pure stdlib (no jarvis imports) — safe to import from this
 # foundational config module without a cycle. Single source of truth for the
@@ -647,6 +647,10 @@ class EvidenceDomainsConfig(BaseModel):
 
 
 class BrainConfig(BaseModel):
+    # populate_by_name=True lets callers use the Python field name alongside the
+    # validation aliases (needed so both new and old TOML keys populate the fields).
+    model_config = ConfigDict(populate_by_name=True)
+
     primary: str = "claude-api"
     # For deep/code intents an API-key provider can be preferred.
     deep_brain: str | None = None
@@ -668,12 +672,17 @@ class BrainConfig(BaseModel):
     # Phase 5 tiered routing — Wave-4 migration: the ``sub_jarvis`` tier was
     # replaced by the OpenClaw bridge (see docs/openclaw-bridge.md §11).
     # Only ``router`` remains as a tier; the heavy worker runs as an external
-    # subprocess via Mission Manager. The ``sub_jarvis`` field is kept with a
-    # default of ``None`` so that old ``[brain.sub_jarvis]`` blocks in
-    # jarvis.toml do not cause a Pydantic validation error — the values are
-    # ignored regardless.
+    # subprocess via Mission Manager. The ``worker`` field (renamed from
+    # ``sub_jarvis`` in the Jarvis-Agents rename, 2026-06-29) accepts both the
+    # new TOML key ``[brain.worker]`` and the old ``[brain.sub_jarvis]`` key
+    # via AliasChoices so pre-rename installs keep working.
     router: BrainTierConfig | None = None
-    sub_jarvis: BrainTierConfig | None = None  # legacy, ignored post-Wave-4
+    # ``validation_alias`` back-compat: old installs use [brain.sub_jarvis];
+    # new installs use [brain.worker]. Both populate this field transparently.
+    worker: BrainTierConfig | None = Field(
+        default=None,
+        validation_alias=AliasChoices("worker", "sub_jarvis"),
+    )
     # User-facing reply language pin (desktop "Languages" view → Reply Language).
     # "auto" mirrors the user's input language (DE/EN/ES); "de"/"en"/"es" force
     # that language as a hard rule for every Jarvis reply. Consumed by
@@ -1009,6 +1018,10 @@ class JarvisAgentHarnessConfig(BaseModel):
 
 class HarnessConfig(BaseModel):
     """Config for the harness dispatcher (Phase 4)."""
+    # populate_by_name=True lets callers use the Python field name alongside
+    # validation aliases for the renamed openclaw → jarvis_agent field.
+    model_config = ConfigDict(populate_by_name=True)
+
     enabled: list[str] = Field(
         default_factory=lambda: ["python-script", "mcp-remote"]
     )
@@ -1021,7 +1034,12 @@ class HarnessConfig(BaseModel):
     per_harness: dict[str, dict[str, object]] = Field(default_factory=dict)
     # Jarvis-Agent worker harness (Wave 2). None = block missing in jarvis.toml,
     # bridge stays inactive. When the block is present, ``version`` is required.
-    openclaw: JarvisAgentHarnessConfig | None = None
+    # ``validation_alias`` back-compat: old installs use [harness.openclaw];
+    # new installs use [harness.jarvis_agent]. Both populate this field.
+    jarvis_agent: JarvisAgentHarnessConfig | None = Field(
+        default=None,
+        validation_alias=AliasChoices("jarvis_agent", "openclaw"),
+    )
 
 
 class MCPServerConfig(BaseModel):
@@ -1896,6 +1914,10 @@ class TeamProxyConfig(BaseModel):
 
 class JarvisConfig(BaseModel):
     """Root config model."""
+    # populate_by_name=True lets callers use Python field names alongside
+    # validation aliases for the renamed sub_agents → jarvis_agents field.
+    model_config = ConfigDict(populate_by_name=True)
+
     profile: ProfileConfig = Field(default_factory=ProfileConfig)
     persona: PersonaConfig = Field(default_factory=PersonaConfig)
     trigger: TriggerConfig = Field(default_factory=TriggerConfig)
@@ -1915,7 +1937,12 @@ class JarvisConfig(BaseModel):
     autostart: AutostartConfig = Field(default_factory=AutostartConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
-    sub_agents: JarvisAgentsOutputConfig = Field(default_factory=JarvisAgentsOutputConfig)
+    # ``validation_alias`` back-compat: old installs use [sub_agents];
+    # new installs use [jarvis_agents]. Both populate this field transparently.
+    jarvis_agents: JarvisAgentsOutputConfig = Field(
+        default_factory=JarvisAgentsOutputConfig,
+        validation_alias=AliasChoices("jarvis_agents", "sub_agents"),
+    )
     integrations: IntegrationsConfig = Field(default_factory=IntegrationsConfig)
     # Wave 2 — plugin-marketplace OAuth connect (hosted vs loopback callback).
     marketplace: MarketplaceConfig = Field(default_factory=MarketplaceConfig)
@@ -2007,6 +2034,11 @@ def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]
 # cartesia reverting to gemini-flash-tts on every restart.
 _PERSISTED_PROVIDER_ENV_KEYS: tuple[str, ...] = (
     "JARVIS__BRAIN__PRIMARY",
+    # Post-rename name (2026-06-29 Jarvis-Agents rename): config_writer now
+    # writes to this key; the drift-guard / boot-heal reads it going forward.
+    "JARVIS__BRAIN__WORKER__PROVIDER",
+    # Back-compat: pre-rename installs have this key in the Windows registry.
+    # Kept so refresh_persisted_env_from_user_registry still heals it at boot.
     "JARVIS__BRAIN__SUB_JARVIS__PROVIDER",
     "JARVIS__TTS__PROVIDER",
     "JARVIS__STT__PROVIDER",
@@ -2120,6 +2152,24 @@ def _coerce_env_value(v: str) -> Any:
     return v
 
 
+def _migrate_worker_env_vars() -> None:
+    """Process-local back-compat shim for the sub_jarvis → worker rename.
+
+    If the OLD env vars (JARVIS__BRAIN__SUB_JARVIS__*) are set in os.environ
+    but the NEW ones (JARVIS__BRAIN__WORKER__*) are not, copy old → new so
+    _apply_env_overrides and pydantic's AliasChoices both see the expected
+    values. This is process-local only (os.environ, NOT setx/registry).
+    Called once from load_config before _apply_env_overrides.
+    """
+    for old_name, new_name in (
+        ("JARVIS__BRAIN__SUB_JARVIS__PROVIDER", "JARVIS__BRAIN__WORKER__PROVIDER"),
+        ("JARVIS__BRAIN__SUB_JARVIS__MODEL", "JARVIS__BRAIN__WORKER__MODEL"),
+    ):
+        old_val = os.environ.get(old_name)
+        if old_val and not os.environ.get(new_name):
+            os.environ[new_name] = old_val  # process-local only, no setx
+
+
 def load_config(
     config_file: Path | None = None,
     profile: str | None = None,
@@ -2151,6 +2201,9 @@ def load_config(
         if profile_file.exists():
             data = _deep_merge(data, _load_yaml(profile_file))
 
+    # Back-compat shim: copy old JARVIS__BRAIN__SUB_JARVIS__* to new
+    # JARVIS__BRAIN__WORKER__* if only the old names are set (process-local).
+    _migrate_worker_env_vars()
     data = _apply_env_overrides(data)
     return JarvisConfig(**data)
 

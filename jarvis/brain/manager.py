@@ -4399,7 +4399,7 @@ class BrainManager:
         factory may fall back to the Gemini API worker, which 403s on an account
         without Gemini access (the original BUG-017, 2026-05-13)."""
         try:
-            sub = getattr(self._config.brain, "sub_jarvis", None)
+            sub = getattr(self._config.brain, "worker", None)
             worker_provider = (getattr(sub, "provider", "") or "").strip().lower()
         except Exception:  # noqa: BLE001 — config hiccup must not block dispatch
             return True

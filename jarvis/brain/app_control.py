@@ -250,7 +250,7 @@ def build_settings_snapshot(cfg: Any) -> dict[str, Any]:
     wake = getattr(cfg, "wake", None) or getattr(cfg, "wakeword", None)
     autostart = getattr(cfg, "autostart", None)
     computer_use = getattr(cfg, "computer_use", None)
-    sub_jarvis = getattr(brain, "sub_jarvis", None) if brain is not None else None
+    sub_jarvis = getattr(brain, "worker", None) if brain is not None else None
 
     active_brain = getattr(brain, "primary", None) if brain is not None else None
     # Prefer the *live* active provider when the BrainManager is running — it is
@@ -348,7 +348,7 @@ def _current_provider(cfg: Any, tier: str) -> str | None:
     if tier == "stt":
         return getattr(getattr(cfg, "stt", None), "provider", None)
     if tier == "subagent":
-        sub = getattr(brain, "sub_jarvis", None) if brain else None
+        sub = getattr(brain, "worker", None) if brain else None
         return getattr(sub, "provider", None) if sub else None
     return None
 
@@ -572,12 +572,12 @@ async def _switch_subagent(
             }
         persisted = (
             _persist(
-                lambda: _import_writer().set_sub_jarvis_provider(CODEX_SUBAGENT_CANONICAL)
+                lambda: _import_writer().set_worker_provider(CODEX_SUBAGENT_CANONICAL)
             )
             if persist
             else False
         )
-        _set_in_memory(cfg, ["brain", "sub_jarvis", "provider"], CODEX_SUBAGENT_CANONICAL)
+        _set_in_memory(cfg, ["brain", "worker", "provider"], CODEX_SUBAGENT_CANONICAL)
         return {
             "ok": True,
             "tier": "subagent",
@@ -607,7 +607,7 @@ async def _switch_subagent(
             }
         persisted = (
             _persist(
-                lambda: _import_writer().set_sub_jarvis_provider(
+                lambda: _import_writer().set_worker_provider(
                     ANTIGRAVITY_SUBAGENT_CANONICAL
                 )
             )
@@ -615,7 +615,7 @@ async def _switch_subagent(
             else False
         )
         _set_in_memory(
-            cfg, ["brain", "sub_jarvis", "provider"], ANTIGRAVITY_SUBAGENT_CANONICAL
+            cfg, ["brain", "worker", "provider"], ANTIGRAVITY_SUBAGENT_CANONICAL
         )
         return {
             "ok": True,
@@ -652,9 +652,9 @@ async def _switch_subagent(
         }
 
     persisted = (
-        _persist(lambda: _import_writer().set_sub_jarvis_provider(canon)) if persist else False
+        _persist(lambda: _import_writer().set_worker_provider(canon)) if persist else False
     )
-    _set_in_memory(cfg, ["brain", "sub_jarvis", "provider"], canon)
+    _set_in_memory(cfg, ["brain", "worker", "provider"], canon)
     return {
         "ok": True,
         "tier": "subagent",
