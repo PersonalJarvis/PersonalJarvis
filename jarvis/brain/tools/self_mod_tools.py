@@ -34,6 +34,7 @@ from jarvis.core.self_mod import (
     MutationRequest,
     PendingMutationStore,
     PreValidateError,
+    ProviderSwitchLockedError,
     ReloadError,
     RollbackError,
     SecretAccessError,
@@ -373,6 +374,15 @@ class SetConfigValueTool:
 
         try:
             pending = self._pending.create(request)
+        except ProviderSwitchLockedError as exc:
+            # The active brain provider is the user's hard choice — Jarvis may
+            # not change it by voice/chat, only the user via the CLI or the
+            # manual provider switch in the desktop app.
+            return ToolResult(
+                success=False,
+                output={"error_kind": "provider_switch_locked", "path": path},
+                error=f"provider_switch_locked: {exc}",
+            )
         except SecretAccessError as exc:
             return ToolResult(
                 success=False,
