@@ -63,13 +63,13 @@ This governs what Jarvis **speaks/writes back to the user** (a multilingual prod
 
 The recurring, expensive bug class on this project is **building/testing a feature against the maintainer's own machine, keys, providers, and OS — then shipping it broken for everyone else.** Two faces of ONE rule: **assume an arbitrary downloader, never the maintainer.** It governs the WHOLE product surface, and specifically the **entire API-Keys / credential / integration surface — not just brain providers:** STT, TTS, Vision, Wake, **Telephony (Twilio), Channels (Telegram/Discord), Marketplace plugins (OAuth + MCP), AND credential STORAGE itself.** Every one must:
 
-- **work with WHATEVER single key / login / account the user has** — no provider, model, or integration is load-bearing; a missing / empty / depleted / rate-limited (429) / out-of-credit (402) / unreachable one degrades or crosses to a **different family** with an honest message, and never bricks a core path (router, ack/flash, STT, sub-agent worker, mission critic). A tier whose primary AND fallback resolve to the same family is a single-provider brick (AP-22). Gate on **capability**, never a provider name or model id (AP-21).
+- **work with WHATEVER single key / login / account the user has** — no provider, model, or integration is load-bearing; a missing / empty / depleted / rate-limited (429) / out-of-credit (402) / unreachable one degrades or crosses to a **different family** with an honest message, and never bricks a core path (router, ack/flash, STT, Jarvis-Agent worker, mission critic). A tier whose primary AND fallback resolve to the same family is a single-provider brick (AP-22). Gate on **capability**, never a provider name or model id (AP-21).
 - **work on EVERY OS, including a headless `python:3.11-slim` VPS** with no OS keyring, no D-Bus Secret Service, no GPU, no audio, no Windows APIs. The base `pip install` + boot must succeed there. OS-specific code is allowed only behind (a) a runtime capability check, (b) an extras group, and (c) a graceful English-message no-op elsewhere. Use `pathlib` + capability probes + UTF-8; never hardcode `C:\Users\...` or assume cp1252.
 - **be recoverable IN-APP** — entering / switching / connecting a credential, and recovering from a dead one, happens inside the app, never by hand-editing `jarvis.toml`, exporting an ENV var, or spinning up a cloud instance.
 - **store credentials portably** — the OS keyring when present, else ENV/.env, else the local-file fallback (`config._ensure_keyring_backend`). A save/connect must never 500 on a host without a Secret Service.
 
 **Definition of done (NON-NEGOTIABLE).** A change touching config, credentials, a provider/integration, or OS-specific code is NOT "done" — and must not be claimed done — until you verify, with a test or an honest manual trace, the THREE paths that are NOT the maintainer's:
-1. **Fresh install, ONE arbitrary key** — a downloader whose only credential is for a DIFFERENT provider reaches a working path (chat + voice + sub-agent + the touched feature), entirely in-app.
+1. **Fresh install, ONE arbitrary key** — a downloader whose only credential is for a DIFFERENT provider reaches a working path (chat + voice + Jarvis-Agent + the touched feature), entirely in-app.
 2. **Headless Linux** — base `pip install` + boot + the touched feature work on `python:3.11-slim`; local-only parts degrade to a logged no-op.
 3. **Cross-family fallback** — when the configured provider/integration is absent or dead, the path crosses to whatever the user actually has, or degrades honestly — never dead-ends on the maintainer's favorite.
 
@@ -79,7 +79,7 @@ The recurring, expensive bug class on this project is **building/testing a featu
 
 ## 4. Naming — the agent/mission system is "Jarvis-Agents"
 
-The internal agent/mission/harness system is named **Jarvis-Agents** (singular **Jarvis-Agent**) everywhere a human or an LLM could read it — UI labels, docs, comments, new code identifiers, log/voice text. Do not introduce other names for it. (A repo-wide rename of older internal terms to this brand is in progress; write new surfaces as Jarvis-Agents.)
+The internal agent/mission/harness system is named **Jarvis-Agents** (singular **Jarvis-Agent**) everywhere a human or an LLM could read it — UI labels, docs, comments, new code identifiers, log/voice text. Do not introduce other names for it. **Glossary:** this system was formerly called "Subagents" / "Sub-Agent" / "sub_jarvis" / "SubJarvis" and "OpenClaw" / "openclaw"; those names were renamed repo-wide to Jarvis-Agents (2026-06-30). The only surviving old-name occurrences are intentional and documented where they stay: the external `openclaw` npm worker binary (it owns that executable name), read-time back-compat config aliases (e.g. the new `[brain.worker]` / `[harness.jarvis_agent]` keys still accept the old `[brain.sub_jarvis]` / `[harness.openclaw]` keys), and historical migration notes.
 
 ---
 
@@ -96,7 +96,7 @@ Full model + module catalog: [`docs/architecture-overview.md`](docs/architecture
 - **Voice scrub:** brain→TTS goes through `scrub_for_voice` (`jarvis/brain/output_filter.py`) — **regex only, no LLM call** (AP-11). ADR-0010.
 - **Atomic config writes:** mutate `jarvis.toml` only via `jarvis/core/config_writer.py` (lock + tempfile + BOM-safe, AP-7). Self-mod pipeline (Allowlist→Pre-Validate→Backup→replace→sync reload-test→Rollback→Audit) is non-negotiable (AP-13/14).
 - **Multi-layer enum drift:** any value crossing Python ↔ SQL ↔ Pydantic ↔ TS ↔ UI uses the five-layer pattern (`docs/anti-drift-three-layer.md`) + a parity test, preemptively (BUG-008 recurred 4×).
-- **Worker isolation:** every mission worker runs in a fresh `git worktree` under `<repo_parent>/sub-agents-outputs/` with a kill-on-crash containment (Job Object on Windows; process-group reaper on POSIX). `MAX_CRITIC_LOOPS = 3` is fixed.
+- **Worker isolation:** every mission worker runs in a fresh `git worktree` under `<repo_parent>/jarvis-agent-outputs/` (legacy `sub-agents-outputs/` still read as a fallback) with a kill-on-crash containment (Job Object on Windows; process-group reaper on POSIX). `MAX_CRITIC_LOOPS = 3` is fixed.
 - **Platform gotchas:** UTF-8 stdout (cp1252 default on Windows); every subprocess passes `NO_WINDOW_CREATIONFLAGS` (AP-1); WASAPI audio, WDM-KS forbidden (BUG-014); no Windows Service (SYSTEM has no mic); UAC `asInvoker`, elevate per-action.
 
 ---
