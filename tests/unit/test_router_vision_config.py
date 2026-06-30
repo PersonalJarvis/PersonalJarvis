@@ -18,7 +18,7 @@ from jarvis.core.config import (
 def test_router_vision_config_defaults():
     """RouterVisionConfig liefert ohne jegliche TOML-Daten die dokumentierten Defaults."""
     cfg = RouterVisionConfig()
-    assert cfg.enabled is True
+    assert cfg.enabled is False  # latency fix: opt-in only (default changed)
     assert cfg.refresh_interval_s == 2.0
     assert cfg.max_staleness_s == 2.0
     assert cfg.capture_mode == "screenshot"
@@ -50,7 +50,7 @@ def test_router_vision_config_loaded_from_jarvis_toml():
     with toml_path.open("rb") as f:
         data = tomllib.load(f)
     vsec = data["brain"]["router"]["vision"]
-    assert vsec["enabled"] is True
+    assert vsec["enabled"] is False  # latency fix: opt-in only (default changed)
     assert vsec["capture_mode"] == "screenshot"
     assert vsec["refresh_interval_s"] == 2.0
     assert vsec["max_staleness_s"] == 2.0
@@ -66,7 +66,7 @@ def test_router_vision_config_loaded_from_jarvis_toml():
     assert cfg.brain.router is not None, "brain.router-Section fehlt in jarvis.toml"
     vision = cfg.brain.router.vision
     assert isinstance(vision, RouterVisionConfig)
-    assert vision.enabled is True
+    assert vision.enabled is False  # latency fix: opt-in only (default changed)
     assert vision.capture_mode == "screenshot"
     assert vision.refresh_interval_s == 2.0
     assert vision.voice_pause_phrase_de == "privacy"

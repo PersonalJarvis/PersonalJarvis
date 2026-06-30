@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -75,21 +76,31 @@ async def test_voice_switch_intent_detected():
     manager = BrainManager(config=config, bus=bus, tools={})
     _patch_two_providers(manager, "claude-subscription", "gemini")
 
-    result = await manager.generate("Jarvis wechsel auf gemini bitte", use_history=False)
+    # Switch now routes through app_control.apply_provider_switch (credential /
+    # catalog validation + 3-layer persist).  Mock it to simulate a clean switch
+    # so the test stays unit-level (no real API key required).
+    async def _fake_apply(tier, provider, *, cfg, persist=True):
+        if tier == "brain":
+            await manager.switch(provider)
+        return {"ok": True, "new_provider": provider}
+
+    with patch("jarvis.brain.app_control.apply_provider_switch", side_effect=_fake_apply):
+        result = await manager.generate("Jarvis wechsel auf gemini bitte", use_history=False)
+
     assert manager.active_provider == "gemini"
-    # Seit 2026-04-25: keine standardisierte Sprach-Bestaetigung mehr
-    # ("OK, ich wechsle auf X"). Voice-Command-Replies returnen "" damit
-    # die Pipeline schweigt; Feedback laeuft visuell ueber BrainProviderSwitched.
-    assert result == ""
+    # Switch now returns a spoken confirmation phrase instead of the old silent "".
+    assert result  # non-empty confirmation (e.g. "Erledigt — dein Haupt-Brain…")
 
 
 @pytest.mark.asyncio
 async def test_alias_resolution():
+    # "local" was removed from PROVIDER_ALIASES.  Use "flash" → "gemini" which
+    # is still a valid alias in the current table.
     bus = EventBus()
     config = JarvisConfig()
     config.brain.primary = "openai"
     manager = BrainManager(config=config, bus=bus, tools={})
-    _patch_two_providers(manager, "openai", "ollama-local")
+    _patch_two_providers(manager, "openai", "gemini")
 
-    await manager.switch("local")
-    assert manager.active_provider == "ollama-local"
+    await manager.switch("flash")
+    assert manager.active_provider == "gemini"

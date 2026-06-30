@@ -297,10 +297,13 @@ def test_set_brain_primary_still_raises_on_missing_toml(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The TOML write is the universal path — a missing TOML still raises
-    FileNotFoundError (the syncs are not a way to mask a broken setup)."""
+    """Production now auto-creates a missing TOML (_ensure_writable_config_path).
+    Verify the file is created and the key is written even when the file was absent."""
     monkeypatch.setattr(config_writer, "_config_soll_path", lambda: sample_soll)
     monkeypatch.setattr(config_writer, "_set_user_env_var", lambda name, value: None)
 
-    with pytest.raises(FileNotFoundError):
-        config_writer.set_brain_primary("openai", path=tmp_path / "does-not-exist.toml")
+    p = tmp_path / "does-not-exist.toml"
+    assert not p.exists()
+    config_writer.set_brain_primary("openai", path=p)
+    assert p.exists(), "set_brain_primary must auto-create a missing config file"
+    assert 'primary = "openai"' in p.read_text(encoding="utf-8")
