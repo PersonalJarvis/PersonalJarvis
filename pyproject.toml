@@ -209,7 +209,6 @@ local-voice = [
 
 [project.scripts]
 jarvis = "jarvis.__main__:main"
-jarvis-ask = "jarvis.clis.jarvis_ask:main"
 # Phase 8.5 — Review-Pipeline-Run-GC (Plan §6.5).
 jarvis-review-gc = "jarvis.cli.review_gc:main"
 # Phase 8.6 — Review-Pipeline-Eval-Harness (Plan §6.6).
@@ -222,7 +221,6 @@ jctl = "jarvis.cli_ctl.__main__:main"
 # Neue Plugins werden ohne Core-Änderung discovered.
 
 [project.entry-points."jarvis.wakeword"]
-porcupine = "jarvis.plugins.wake.porcupine:PorcupineProvider"
 openwakeword = "jarvis.plugins.wake.openwakeword_provider:OpenWakeWordProvider"
 
 [project.entry-points."jarvis.turn"]
