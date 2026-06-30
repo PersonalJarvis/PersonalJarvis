@@ -108,6 +108,7 @@ export function ApiKeysView() {
             error={error}
             onChanged={refetch}
             onActivateOptimistic={setActiveOptimistic}
+            health={health[active]}
           />
         )}
         {active === "subagents" && <SubagentCategory />}
@@ -292,6 +293,7 @@ function ProviderCategory({
   error,
   onChanged,
   onActivateOptimistic,
+  health,
 }: {
   meta: CategoryMeta;
   tier: ProviderTier;
@@ -300,6 +302,9 @@ function ProviderCategory({
   error: string | null;
   onChanged: () => void;
   onActivateOptimistic: (tier: ProviderTier, id: string) => void;
+  /** Live health of this tier's ACTIVE provider — drills the tab's red dot down
+   *  onto the exact card that is failing so the user sees WHICH provider broke. */
+  health?: SectionHealth;
 }) {
   const t = useT();
   const tierProviders = providers.filter(
@@ -339,6 +344,7 @@ function ProviderCategory({
           providers={tierProviders}
           onChanged={onChanged}
           onActivateOptimistic={onActivateOptimistic}
+          health={health}
         />
       )}
     </div>
@@ -434,10 +440,14 @@ function TierSection({
   providers,
   onChanged,
   onActivateOptimistic,
+  health,
 }: {
   providers: ProviderDescriptor[];
   onChanged: () => void;
   onActivateOptimistic: (tier: ProviderTier, id: string) => void;
+  /** Tier health — handed only to the ACTIVE card, since section-health tests
+   *  exactly the one provider powering this tier. */
+  health?: SectionHealth;
 }) {
   const tierHasActive = providers.some((p) => p.active);
   return (
@@ -449,6 +459,7 @@ function TierSection({
             onChanged={onChanged}
             onActivateOptimistic={onActivateOptimistic}
             autoActivateOnSave={!tierHasActive}
+            health={p.active ? health : undefined}
           />
         </li>
       ))}
@@ -461,15 +472,27 @@ function ProviderCard({
   onChanged,
   onActivateOptimistic,
   autoActivateOnSave,
+  health,
 }: {
   descriptor: ProviderDescriptor;
   onChanged: () => void;
   onActivateOptimistic: (tier: ProviderTier, id: string) => void;
   autoActivateOnSave: boolean;
+  /** Live section-health for THIS card (set only on the active provider). A
+   *  status of "error" turns the card red and surfaces the cause inline — the
+   *  tab dot says "something here is broken", this says exactly WHAT/WHERE. */
+  health?: SectionHealth;
 }) {
   const t = useT();
   const [activating, setActivating] = useState(false);
   const pushToast = useEventStore((s) => s.pushToast);
+  // The card only escalates to red for a real "set up but failing" error — the
+  // amber "needs setup" case stays on the tab + the open/ready badge so a fresh,
+  // half-configured screen doesn't paint cards red.
+  const cardError = descriptor.active && health?.status === "error";
+  // The backend one-liner (e.g. "OpenRouter: rate limited") already names the
+  // provider + cause, so it answers "what is wrong" without a second lookup.
+  const cardErrorDetail = health?.detail?.trim() || "";
 
   // Codex is filtered out of the Brain tier (`brain_switchable=false`) and is
   // selected from the Subagent section. This branch stays for older payloads or
@@ -589,13 +612,17 @@ function ProviderCard({
       }
       className={cn(
         "card-outline space-y-3 p-4 transition-colors",
-        descriptor.active
-          ? "border-primary bg-primary/[0.06] ring-1 ring-primary/30"
-          : descriptor.configured
-            ? isBrainSwitchable
-              ? "cursor-pointer hover:border-primary/40 hover:bg-primary/[0.02]"
-              : ""
-            : "opacity-95",
+        // A broken active provider wins the card's frame — red outline + faint
+        // red wash — so the eye lands on the exact card behind the tab's red dot.
+        cardError
+          ? "border-destructive/70 bg-destructive/[0.05] ring-1 ring-destructive/30"
+          : descriptor.active
+            ? "border-primary bg-primary/[0.06] ring-1 ring-primary/30"
+            : descriptor.configured
+              ? isBrainSwitchable
+                ? "cursor-pointer hover:border-primary/40 hover:bg-primary/[0.02]"
+                : ""
+              : "opacity-95",
       )}
     >
       <div className="flex items-start justify-between gap-3">
@@ -649,6 +676,23 @@ function ProviderCard({
           }
         />
       </div>
+
+      {/* The precise "this card is the problem" banner: only on the active card,
+          only when the live check actually failed. Names the cause in plain
+          words instead of leaving the user to guess behind the tab's red dot. */}
+      {cardError && (
+        <div
+          data-testid={`provider-health-error-${descriptor.id}`}
+          role="status"
+          className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/[0.07] px-3 py-2 text-[11px] leading-relaxed text-destructive"
+        >
+          <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span className="min-w-0 break-words">
+            <span className="font-medium">{t("apikeys_view.health_error")}</span>
+            {cardErrorDetail ? ` — ${cardErrorDetail}` : ""}
+          </span>
+        </div>
+      )}
 
       <AuthWidget
         descriptor={descriptor}
