@@ -665,6 +665,10 @@ class ToolUseLoop:
                             "voice_confirm": voice_confirm,
                         },
                         trace_id=tid,
+                        # Session-Decision-Log: the model's natural-language text
+                        # emitted alongside this tool call IS the "why". Captured
+                        # for free (no extra call); the executor redacts + caps it.
+                        rationale=agg.text or "",
                     )
                     # Two-turn voice/chat confirmation: the executor deferred this
                     # consequential tool instead of blocking. Speak a short

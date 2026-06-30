@@ -20,6 +20,7 @@ from uuid import UUID, uuid4
 from jarvis.core.bus import EventBus
 from jarvis.core.events import ActionDenied, ActionExecuted, ActionProposed
 from jarvis.core.protocols import ExecutionContext, Tool, ToolResult, Transcript
+from jarvis.core.redact import safe_preview
 
 from .approval import ApprovalWorkflow
 from .risk_tier import ActionBlocked, RiskTierEvaluator
@@ -126,6 +127,7 @@ class ToolExecutor:
         config_snapshot: dict[str, Any] | None = None,
         memory_read: Any | None = None,
         trace_id: UUID | None = None,
+        rationale: str = "",
     ) -> ToolResult:
         tid = trace_id or uuid4()
         t_start = time.perf_counter()
@@ -141,12 +143,15 @@ class ToolExecutor:
             ))
             return ToolResult(success=False, output=None, error=str(exc))
 
-        # 2. Proposed-Event (UI kann das als Live-Indikator nutzen)
+        # 2. Proposed-Event (UI kann das als Live-Indikator nutzen). The brain's
+        # rationale rides along for the Session-Decision-Log — redacted + capped
+        # here so no raw secret reaches the bus / session DB / local diary.
         await self._bus.publish(ActionProposed(
             trace_id=tid,
             tool_name=tool.name,
             args=args,
             risk_tier=decision.tier,
+            rationale=safe_preview(rationale),
         ))
 
         # 2.5 Plausibility-Check (Phase 4): zwischen Tier-Decision und
@@ -225,6 +230,7 @@ class ToolExecutor:
             success=result.success,
             duration_ms=duration_ms,
             error=result.error,
+            output_preview=safe_preview(result.output),
         ))
         return result
 
@@ -286,6 +292,7 @@ class ToolExecutor:
             success=result.success,
             duration_ms=duration_ms,
             error=result.error,
+            output_preview=safe_preview(result.output),
         ))
         return result
 

@@ -185,6 +185,12 @@ class ActionProposed(Event):
     tool_name: str = ""
     args: dict[str, Any] = field(default_factory=dict)
     risk_tier: RiskTier = "safe"
+    # Session-Decision-Log: the brain's natural-language rationale emitted
+    # alongside this tool call (the model's ``text`` block next to the
+    # ``tool_use`` block). Captured "for free" — no extra model call — so the
+    # Run Inspector + local diary can show *why* Jarvis chose this action.
+    # Already redacted + length-capped by the ToolExecutor before publish.
+    rationale: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,6 +211,11 @@ class ActionExecuted(Event):
     success: bool = False
     duration_ms: int = 0
     error: str | None = None
+    # Session-Decision-Log: a short preview of what the tool returned
+    # (``ToolResult.output``). Already redacted + length-capped by the
+    # ToolExecutor before publish (``jarvis.core.redact.safe_preview``) so no
+    # raw secret reaches the bus / session DB / local diary.
+    output_preview: str = ""
 
 
 # ----------------------------------------------------------------------
