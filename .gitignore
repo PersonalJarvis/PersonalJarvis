@@ -81,6 +81,13 @@ logs/
 Screenshot *.png
 Bildschirmfoto *.png
 Screen Shot *.png
+# External screenshot-tool captures (e.g. ShareX) named "<foreground-process>_<random>.png"
+# — e.g. pythonw_AbCd123456.png. They land ANYWHERE in the tree when a capture is taken
+# while a repo-owned window is focused, and are never load-bearing assets. The root-only
+# "/*.png" rule above misses the ones that drop into a subdir, so match these by name in
+# every directory. The real fix is to point the screenshot tool's save folder out of the repo.
+pythonw_*.png
+ShareX_*.png
 
 # Canonical home for development/verification screenshots (see CLAUDE.md).
 # The app's boot sweep consolidates stray root captures here and auto-prunes
