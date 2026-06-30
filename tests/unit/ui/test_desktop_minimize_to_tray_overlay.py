@@ -143,7 +143,8 @@ def test_restore_keeps_mascot_hide_on_idle() -> None:
 # --- the X / closing callback ------------------------------------------------
 
 
-def test_window_closing_minimises_and_clears_bar() -> None:
+def test_window_closing_minimises_but_keeps_persistent_bar() -> None:
+    """The X minimises to tray, but an always-on bar stays on screen."""
     bar = FakeBar()
     bridge = SimpleNamespace(_hide_on_idle=False)
     app = _app(persistent=True, orb=bar, bridge=bridge)
@@ -156,9 +157,26 @@ def test_window_closing_minimises_and_clears_bar() -> None:
     assert result is False  # destroy vetoed → minimise to tray
     assert app._window.hidden is True
     assert app._window_visible is False
+    assert bar.hidden is False  # always-on bar is NOT cleared
+    assert bridge._hide_on_idle is False
+    assert app.cfg.ui.bar_persistent is True  # preference untouched
+
+
+def test_window_closing_clears_non_persistent_bar() -> None:
+    """A non-persistent bar is cleared on minimise (clean desktop)."""
+    bar = FakeBar()
+    bridge = SimpleNamespace(_hide_on_idle=False)
+    app = _app(persistent=False, orb=bar, bridge=bridge)
+    app._window = FakeWindow()
+    app._user_requested_quit = False
+    app._window_visible = True
+
+    result = app._on_window_closing()
+
+    assert result is False
+    assert app._window.hidden is True
     assert bar.hidden is True
     assert bridge._hide_on_idle is True
-    assert app.cfg.ui.bar_persistent is True  # preference untouched
 
 
 def test_window_closing_allows_genuine_quit() -> None:

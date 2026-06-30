@@ -712,11 +712,19 @@ class OrbBusBridge:
                 except Exception as exc:  # noqa: BLE001
                     log.debug("hide_comment failed: %s", exc)
 
-            if state == "IDLE" and not self._hide_on_idle:
+            if not self._hide_on_idle:
+                # Persistent "show at all times" bar: a standalone always-on
+                # element. EVERY non-active state (IDLE, and also ERROR / PAUSED)
+                # shows the idle pill and NEVER withdraws the bar. Hiding it on
+                # ERROR/PAUSED was a second "the always-on bar vanishes until the
+                # next wake word" path (a transient STT/provider ERROR or a manual
+                # pause took it off screen). The salute + idle-animation scheduler
+                # belong only to a genuine return to IDLE.
                 self._orb.show(mode="idle")
-                if prev_state == "SPEAKING":
-                    self._orb.play_animation("salute")
-                self._start_idle_scheduler()
+                if state == "IDLE":
+                    if prev_state == "SPEAKING":
+                        self._orb.play_animation("salute")
+                    self._start_idle_scheduler()
                 return
             # Drei Faelle, drei verzoegerte Hides — niemals instant-hide aus
             # einem aktiven Voice-State, sonst sieht der User den Mascot bei
