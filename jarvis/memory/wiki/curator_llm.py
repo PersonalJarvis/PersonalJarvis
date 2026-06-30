@@ -72,7 +72,9 @@ _CHEAP_MODEL_FALLBACK: dict[str, str] = {
     "claude-api": "claude-haiku-4-5-20251001",
     "gemini": "gemini-3-flash-preview",
     "openai": "gpt-5.5",
-    "codex": "gpt-5.5",
+    # codex removed: not in TIER_DEFAULTS_BY_PROVIDER["router"]; the fallback
+    # map must stay in lock-step with the live router defaults (drift guard in
+    # test_cheap_model_fallback_map_matches_live_router_defaults).
     "deepseek": "deepseek-chat",
     # Gateway: background curation must not bill a paid Anthropic model on a
     # free OpenRouter key (§3/AP-22) — use a free general-purpose model.

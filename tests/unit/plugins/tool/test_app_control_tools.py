@@ -100,8 +100,9 @@ async def test_describe_rejects_params():
 async def test_describe_snapshot_structure(monkeypatch, configured_keys):
     from jarvis.plugins.tool.describe_app_settings import DescribeAppSettingsTool
 
+    # Use gemini as brain — grok was removed from the brain provider list.
     monkeypatch.setattr(
-        "jarvis.brain.app_control.resolve_running_cfg", lambda: make_cfg()
+        "jarvis.brain.app_control.resolve_running_cfg", lambda: make_cfg(brain="gemini")
     )
     monkeypatch.setattr("jarvis.brain.app_control.list_mcp_servers", lambda: [])
 
@@ -112,7 +113,7 @@ async def test_describe_snapshot_structure(monkeypatch, configured_keys):
     assert "brain" in out["providers"] and "tts" in out["providers"]
     # active brain provider reflects cfg
     actives = [p for p in out["providers"]["brain"] if p["active"]]
-    assert actives and actives[0]["id"] == "grok"
+    assert actives and actives[0]["id"] == "gemini"
     # secret-free: provider entries expose only booleans for credentials
     for p in out["providers"]["brain"]:
         assert isinstance(p["configured"], bool)
@@ -267,8 +268,12 @@ async def test_switch_provider_tool_missing_credential(no_keys, monkeypatch):
     from jarvis.plugins.tool.switch_provider import SwitchProviderTool
 
     monkeypatch.setattr("jarvis.brain.app_control.resolve_running_cfg", lambda: make_cfg())
+    # tier=tts: the brain provider is locked to user-only channels (CLI / manual
+    # UI switch) and is refused up-front by the tool, so the missing-credential
+    # path is exercised on a still-voice-switchable tier. The brain lock itself
+    # is covered by tests/unit/plugins/tool/test_switch_provider_brain_lock.py.
     res = await SwitchProviderTool().execute(
-        {"tier": "brain", "provider": "gemini", "reason": "test"}, _ctx()
+        {"tier": "tts", "provider": "cartesia", "reason": "test"}, _ctx()
     )
     assert res.success is False
     assert "not configured" in (res.error or "")

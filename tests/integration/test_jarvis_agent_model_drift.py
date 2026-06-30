@@ -37,7 +37,10 @@ _CONFIG_SOLL = _REPO_ROOT / "scripts" / "config-soll.json"
 _UNREACHABLE_CLAUDE_MODELS = frozenset({"claude-fable-5"})
 
 _MODEL_KEYS = (
-    ("brain.sub_jarvis", "model"),
+    # Renamed from brain.sub_jarvis → brain.worker in the 2026-06-29
+    # Jarvis-Agents rename; both the TOML section header and the
+    # config-soll.json flat key now use "brain.worker".
+    ("brain.worker", "model"),
     ("brain.providers.claude-api", "deep_model"),
 )
 
@@ -65,6 +68,16 @@ def _soll_value(soll: dict, dotted: str, key: str) -> str | None:
     return block.get(key)
 
 
+# Back-compat map: renamed TOML section → old section name.  During the
+# 2026-06-29 Jarvis-Agents rename, jarvis.toml installs on disk may still
+# carry the OLD section header ([brain.sub_jarvis]) alongside the NEW one
+# ([brain.worker]).  The config system aliases them; the raw TOML reader here
+# does not — so we fall back to the old name when the new section lacks the key.
+_TOML_SECTION_ALIASES: dict[str, str] = {
+    "brain.worker": "brain.sub_jarvis",
+}
+
+
 def _toml_value(toml: dict, dotted: str, key: str) -> str | None:
     cur: object = toml
     for part in dotted.split("."):
@@ -73,7 +86,11 @@ def _toml_value(toml: dict, dotted: str, key: str) -> str | None:
         cur = cur.get(part)
     if not isinstance(cur, dict):
         return None
-    return cur.get(key)
+    val = cur.get(key)
+    if val is None and dotted in _TOML_SECTION_ALIASES:
+        # Transition period: key absent in the new section — try the old one.
+        val = _toml_value(toml, _TOML_SECTION_ALIASES[dotted], key)
+    return val
 
 
 def test_soll_worker_model_pins_are_reachable() -> None:
@@ -140,8 +157,8 @@ def test_jarvis_toml_model_pins_match_soll() -> None:
 def test_jarvis_toml_worker_model_is_reachable() -> None:
     """Defense-in-depth: the live worker model pin itself must be reachable."""
     toml = _load_toml()
-    worker_model = _toml_value(toml, "brain.sub_jarvis", "model")
+    worker_model = _toml_value(toml, "brain.worker", "model")
     assert worker_model not in _UNREACHABLE_CLAUDE_MODELS, (
-        f"jarvis.toml [brain.sub_jarvis].model = {worker_model!r} is unreachable "
+        f"jarvis.toml [brain.worker].model = {worker_model!r} is unreachable "
         f"via the Claude Max CLI — every sub-agent worker will 404 -> task_error."
     )

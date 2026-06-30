@@ -17,7 +17,7 @@ def test_antigravity_provider_spec():
     assert spec.tier == "brain"
     assert spec.brain_switchable is False
     assert spec.auth_mode == "antigravity"
-    assert spec.secret_keys == ()  # OAuth-only, no API-key slot
+    assert spec.secret_keys == ("gemini_api_key",)  # dual-billing: OAuth OR Gemini API key
     assert spec.login_cli is not None
     # agy has no `login` subcommand (it hangs) — the login is a bare interactive run.
     assert "login" not in spec.login_cli
