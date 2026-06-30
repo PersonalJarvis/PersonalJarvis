@@ -59,6 +59,16 @@ docs/supply-chain/wave4-distribution.md
 # --- Internal scratch scripts (underscore-prefixed convention) --------------
 scripts/_*.py
 
+# --- Dead WhisperBar dev-probe scripts (2026-06-30) -------------------------
+# Standalone desktop-capture probes that still `import jarvis.ui.whisperbar`,
+# a module renamed to jarvis.ui.jarvisbar (whisperbar->jarvisbar rename,
+# 2026-06-30). The import is dead, so the scripts are broken dev-only probes
+# with no downstream value — and the release verify gate (top-level unresolved
+# import) correctly refuses to ship them. They are not product code; a fork has
+# no use for them.
+scripts/whisperbar_live_probe.py
+scripts/whisperbar_thinking_preview.py
+
 # --- Personal operational state + scratch (2026-06-19 privacy review) -------
 # config-soll.json is the maintainer's PRIVATE drift-guard desired-state pin
 # (internal _reason changelog re: GCP/billing/model mandates) — a fork generates
