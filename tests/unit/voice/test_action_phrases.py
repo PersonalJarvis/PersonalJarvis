@@ -223,6 +223,32 @@ class TestCuFailureReadback:
         assert reason in out
 
 
+class TestNoHardcodedDashes:
+    """A fixed phrase must NOT carry an em dash, en dash, or a " -- " dash-aside.
+
+    These phrases run OFF the LLM. The announcement path humanizes + scrubs them
+    (the 2026-06-29 em-dash -> comma scrub), but our OWN canned strings must not
+    RELY on that downstream scrubber to honor the persona's "never use the em
+    dash or dash-asides" rule — defense in depth. Live forensic 2026-06-30: the
+    CU dispatch ACK "Mach ich — ich erledige das ..." was shown/spoken with a
+    hard em dash (spoken twice verbatim), and the persona explicitly forbids it
+    because a dash renders as a hard stop / trailing half-sentence in TTS.
+    """
+
+    def test_no_phrase_contains_a_dash_aside(self) -> None:
+        from jarvis.voice.action_phrases import _PHRASES
+
+        offenders: list[str] = []
+        for key, variants in _PHRASES.items():
+            for lang, template in variants.items():
+                if "—" in template or "–" in template or " -- " in template:
+                    offenders.append(f"{key}/{lang}: {template!r}")
+        assert not offenders, (
+            "fixed phrases must not carry an em/en dash or ' -- ' aside "
+            "(use a comma, full stop, or connective):\n" + "\n".join(offenders)
+        )
+
+
 class TestNoCapableProviderPhrase:
     """Exit 3 == the Computer-Use vision-provider chain was exhausted: NO
     screen-capable AI model was reachable (every candidate keyless / depleted /

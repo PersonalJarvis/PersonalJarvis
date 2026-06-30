@@ -45,9 +45,9 @@ _PHRASES: dict[str, dict[str, str]] = {
     # 241a1984). ``{detail}`` is the verifier's own sentence (already in the
     # turn's observed language, same as the failure-reason forwarding path).
     "cu_done_detail": {
-        "de": "Erledigt — {detail}",  # i18n-allow
-        "en": "Done — {detail}",
-        "es": "Listo — {detail}",
+        "de": "Erledigt. {detail}",  # i18n-allow
+        "en": "Done. {detail}",
+        "es": "Listo. {detail}",
     },
     "cu_failed": {
         "de": "Das am Bildschirm hat nicht geklappt.",  # i18n-allow
@@ -71,7 +71,8 @@ _PHRASES: dict[str, dict[str, str]] = {
     # didn't work on screen: exit 5" and the user asked "what is the exit file?".
     # Exit-code semantics are documented at the top of
     # jarvis/harness/screenshot_only_loop.py (5=`fail`, 1=observe, 2=parse,
-    # 4=step budget, 8=tool failure, 9=elevation unmet, 124=timeout, 130=cancel).
+    # 3=no vision-capable provider reachable, 4=step budget, 8=tool failure,
+    # 9=elevation unmet, 124=timeout, 130=cancel).
     "cu_exit_gave_up": {  # exit 5 — the model's `fail` action
         "de": "Ich habe es am Bildschirm versucht, aber nicht hinbekommen.",  # i18n-allow
         "en": "I tried it on screen but couldn't get it done.",
@@ -97,7 +98,8 @@ _PHRASES: dict[str, dict[str, str]] = {
     # OpenRouter model no-vision) yet they heard the generic exit-2 phrase.
     "cu_exit_no_provider": {  # exit 3 — no vision-capable provider reachable
         "de": "Ich habe gerade kein KI-Modell, das den Bildschirm sehen kann. "  # i18n-allow
-              "Bitte pruefe deine API-Schluessel oder dein Guthaben in den Einstellungen.",  # i18n-allow
+              "Bitte pruefe deine API-Schluessel oder dein Guthaben "  # i18n-allow
+              "in den Einstellungen.",  # i18n-allow
         "en": "I don't have an AI model that can see the screen right now. "
               "Please check your API keys or your credit in settings.",
         "es": "Ahora mismo no tengo un modelo de IA que pueda ver la pantalla. "
@@ -121,7 +123,7 @@ _PHRASES: dict[str, dict[str, str]] = {
     },
     "cu_exit_needs_elevation": {  # exit 9 — waited for admin confirmation, none came
         "de": "Ich habe auf die Administrator-Bestaetigung gewartet, aber es kam "  # i18n-allow
-              "keine -- ich habe gestoppt.",  # i18n-allow
+              "keine, also habe ich gestoppt.",  # i18n-allow
         "en": "I waited for the administrator confirmation, but none came, so I stopped.",
         "es": "Esperé la confirmación de administrador, pero no llegó, así que me detuve.",
     },
@@ -133,10 +135,10 @@ _PHRASES: dict[str, dict[str, str]] = {
     },
     # Computer-use dispatch — the immediate optimistic ACK.
     "cu_dispatch_ack": {
-        "de": "Mach ich — ich erledige das direkt am Bildschirm "  # i18n-allow
+        "de": "Mach ich. Ich erledige das direkt am Bildschirm "  # i18n-allow
               "und sage Bescheid, sobald es fertig ist.",  # i18n-allow
-        "en": "On it — I'll handle that on screen and let you know when it's done.",
-        "es": "Voy — lo hago directamente en la pantalla y te aviso cuando termine.",
+        "en": "On it. I'll handle that on screen and let you know when it's done.",
+        "es": "Voy. Lo hago directamente en la pantalla y te aviso cuando termine.",
     },
     # Computer-use pause: an OS elevation prompt (Windows Secure Desktop & co.)
     # is up. A non-elevated process can neither see nor click it (UIPI), so we
@@ -157,20 +159,20 @@ _PHRASES: dict[str, dict[str, str]] = {
     # to take over, polls until the screen clears, then resumes. Phrased generally
     # so it fits login, code-entry and captcha alike.
     "cu_awaiting_human": {
-        "de": "Dieser Schritt braucht dich -- bitte melde dich an oder loese "  # i18n-allow
+        "de": "Dieser Schritt braucht dich, bitte melde dich an oder loese "  # i18n-allow
               "die Bestaetigung, dann mache ich weiter.",  # i18n-allow
-        "en": "This step needs you — please sign in or complete the "
+        "en": "This step needs you, please sign in or complete the "
               "verification, then I'll keep going.",
-        "es": "Este paso te necesita — inicia sesión o completa la "
+        "es": "Este paso te necesita, inicia sesión o completa la "
               "verificación y continúo.",
     },
     # Cost / budget guards on the computer-use branch.
     "cost_cooldown": {
-        "de": "Cost-Cooldown aktiv — Tagesbudget erschoepft. "  # i18n-allow
+        "de": "Cost-Cooldown aktiv, das Tagesbudget ist erschoepft. "  # i18n-allow
               "Neue Anfragen werden erst nach dem Cooldown-Ende bearbeitet.",  # i18n-allow
-        "en": "Cost cooldown active — the daily budget is used up. "
+        "en": "Cost cooldown active, the daily budget is used up. "
               "New requests resume once the cooldown ends.",
-        "es": "Enfriamiento de costes activo — el presupuesto diario se agotó. "
+        "es": "Enfriamiento de costes activo, el presupuesto diario se agotó. "
               "Las nuevas solicitudes se reanudan al terminar el enfriamiento.",
     },
     "task_budget": {

@@ -34,6 +34,7 @@ Termination paths:
     - "done"            -> exit_code 0
     - "fail"            -> exit_code 5
     - parse error       -> exit_code 2
+    - no vision provider-> exit_code 3   (provider chain exhausted; keyless / out-of-credit / no-vision)
     - step budget       -> exit_code 4
     - tool failure      -> exit_code 8
     - observe failure   -> exit_code 1
@@ -160,10 +161,28 @@ _TIMEOUT_EXIT_CODE = 124
 _FAIL_EXIT_CODE = 5
 _BUDGET_EXIT_CODE = 4
 _PARSE_EXIT_CODE = 2
+_NO_PROVIDER_EXIT_CODE = 3  # vision-provider chain exhausted (no screen-capable brain)
 _TOOL_EXIT_CODE = 8
 _OBSERVE_EXIT_CODE = 1
 _ELEVATION_EXIT_CODE = 9  # waited for an OS elevation confirmation, none came
 _CANCEL_EXIT_CODE = 130
+
+
+def _llm_failure_exit_code(exc: BaseException) -> int:
+    """Map a giving-up brain failure to the right exit code.
+
+    An exhausted vision-provider chain (:class:`CUNoCapableProviderError`) is an
+    account/credential fact the user can fix in-app, so it gets its own honest
+    exit code (3 → a "no screen-capable model; check your keys/credit" readback).
+    Any other brain failure — a genuine parse error, a transient provider hiccup
+    that simply never recovered — stays the generic parse/"confused" code (2).
+    Keeping them apart is what stopped the user hearing "couldn't get a valid
+    screen-control response" when the real cause was a dead provider chain
+    (live forensic 2026-06-30).
+    """
+    if isinstance(exc, CUNoCapableProviderError):
+        return _NO_PROVIDER_EXIT_CODE
+    return _PARSE_EXIT_CODE
 
 
 def _wayland_block_message() -> str | None:
@@ -1644,7 +1663,7 @@ async def _call_brain(
                     )
                     continue
 
-        raise CULoopError(
+        raise CUNoCapableProviderError(
             selector.error_message(
                 images_attached=images_attached,
                 attempted=attempted,
@@ -4736,12 +4755,17 @@ async def _run_screenshot_loop(
                     step_idx, llm_failures, _MAX_LLM_FAILURES, exc,
                 )
                 if llm_failures >= _MAX_LLM_FAILURES:
+                    # Tell apart an exhausted vision-provider chain (exit 3 —
+                    # account/credential fact, fix keys/credit) from a generic
+                    # model/parse failure (exit 2). Live forensic 2026-06-30: a
+                    # dead chain was reported as exit 2 and the user heard the
+                    # misleading "couldn't get a valid screen-control response".
                     yield _final(
                         stderr=(
                             f"[cu] giving up after {llm_failures} model "
                             f"failures (last: {exc})\n"
                         ),
-                        exit_code=_PARSE_EXIT_CODE,
+                        exit_code=_llm_failure_exit_code(exc),
                     )
                     return
                 await _profile_phase(
