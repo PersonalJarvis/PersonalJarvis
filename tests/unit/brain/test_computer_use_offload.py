@@ -52,6 +52,10 @@ def _make_manager(executor, bus):
     mgr._local_action_tools = {"dispatch_to_harness": object()}
     mgr._cost_meter = None
     mgr._reply_language = "auto"
+    # Live conversation history (RAM): the model's next-turn context. A finished
+    # background CU outcome must be grounded here so a follow-up "why didn't it
+    # work?" is answered against the real screen failure, not a stale error.
+    mgr._history = []
     return mgr
 
 
