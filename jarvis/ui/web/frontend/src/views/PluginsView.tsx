@@ -181,6 +181,8 @@ export function PluginsView() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterId>("all");
   const [connectingPlugin, setConnectingPlugin] = useState<Plugin | null>(null);
+  // PKCE plugin awaiting the pre-connect dialog (own-client + keep-connected hint).
+  const [pkceSetupPlugin, setPkceSetupPlugin] = useState<Plugin | null>(null);
   // Plugin awaiting a "really disconnect?" confirmation. Removing a plugin is
   // destructive (tokens dropped, brain tools re-expanded), so it must ask first.
   const [disconnectingPlugin, setDisconnectingPlugin] = useState<Plugin | null>(null);
@@ -271,65 +273,79 @@ export function PluginsView() {
     expiresAtMs: number | null;
   } | null>(null);
 
+  // Kick off the real OAuth handshake: /connect/start, open the URL, then the
+  // dialog long-polls /connect/poll. Shared by the DCR/device path (called
+  // directly) and the PKCE path (called by the pre-connect dialog's Continue).
+  const startOAuthFlow = async (p: Plugin) => {
+    try {
+      const r = await oauthStart.mutateAsync(p.id);
+      if (r.kind === "device_flow") {
+        // GitHub-style: show the user_code in a dedicated dialog,
+        // pre-open the verification URL with code embedded if present.
+        const verifyUrl = (r as unknown as { verification_uri?: string })
+          .verification_uri;
+        const verifyUrlComplete = (r as unknown as {
+          verification_uri_complete?: string;
+        }).verification_uri_complete;
+        const userCode = (r as unknown as { user_code?: string }).user_code;
+        if (!verifyUrl || !userCode) {
+          alert("Backend returned an incomplete device-flow session.");
+          return;
+        }
+        // Auto-open the pre-filled verify URL if available; user lands
+        // on the consent page with the code already typed in.
+        if (verifyUrlComplete) {
+          void openExternalUrl(verifyUrlComplete);
+        }
+        setDeviceSession({
+          flowId: r.flow_id,
+          pluginId: r.plugin_id,
+          pluginName: p.name,
+          userCode,
+          verificationUri: verifyUrl,
+          verificationUriComplete: verifyUrlComplete ?? null,
+          expiresAtMs: r.expires_at_ms,
+        });
+        return;
+      }
+      if (!r.open_url) {
+        alert("Backend returned no open_url — connect aborted.");
+        return;
+      }
+      void openExternalUrl(r.open_url);
+      setOauthSession({
+        flowId: r.flow_id,
+        pluginId: r.plugin_id,
+        pluginName: p.name,
+        openUrl: r.open_url,
+      });
+    } catch (e) {
+      alert(
+        `Could not start ${p.name} connect flow: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  };
+
   const handleConnect = async (p: Plugin) => {
     if (p.authMode === "pat_paste") {
       setConnectingPlugin(p);
       return;
     }
+    if (p.authMode === "oauth_pkce_loopback") {
+      // PKCE plugins ship a placeholder client — show the pre-connect dialog so
+      // the user can supply their OWN production OAuth client (the durable fix
+      // for the 7-day expiry) and sees the keep-connected hint, before the
+      // browser sign-in actually starts.
+      setPkceSetupPlugin(p);
+      return;
+    }
     if (
       p.authMode === "hosted_mcp_oauth_dcr" ||
-      p.authMode === "oauth_pkce_loopback" ||
       p.authMode === "oauth_device_flow"
     ) {
-      try {
-        const r = await oauthStart.mutateAsync(p.id);
-        if (r.kind === "device_flow") {
-          // GitHub-style: show the user_code in a dedicated dialog,
-          // pre-open the verification URL with code embedded if present.
-          const verifyUrl = (r as unknown as { verification_uri?: string })
-            .verification_uri;
-          const verifyUrlComplete = (r as unknown as {
-            verification_uri_complete?: string;
-          }).verification_uri_complete;
-          const userCode = (r as unknown as { user_code?: string }).user_code;
-          if (!verifyUrl || !userCode) {
-            alert("Backend returned an incomplete device-flow session.");
-            return;
-          }
-          // Auto-open the pre-filled verify URL if available; user lands
-          // on the consent page with the code already typed in.
-          if (verifyUrlComplete) {
-            void openExternalUrl(verifyUrlComplete);
-          }
-          setDeviceSession({
-            flowId: r.flow_id,
-            pluginId: r.plugin_id,
-            pluginName: p.name,
-            userCode,
-            verificationUri: verifyUrl,
-            verificationUriComplete: verifyUrlComplete ?? null,
-            expiresAtMs: r.expires_at_ms,
-          });
-          return;
-        }
-        if (!r.open_url) {
-          alert("Backend returned no open_url — connect aborted.");
-          return;
-        }
-        void openExternalUrl(r.open_url);
-        setOauthSession({
-          flowId: r.flow_id,
-          pluginId: r.plugin_id,
-          pluginName: p.name,
-          openUrl: r.open_url,
-        });
-      } catch (e) {
-        alert(
-          `Could not start ${p.name} connect flow: ${
-            e instanceof Error ? e.message : String(e)
-          }`,
-        );
-      }
+      await startOAuthFlow(p);
       return;
     }
     // hosted_mcp_allowlist (Vercel v2) — needs cloud proxy, deferred.
@@ -473,6 +489,14 @@ export function PluginsView() {
               ? connectMutation.error.message
               : null
           }
+        />
+      )}
+
+      {pkceSetupPlugin && (
+        <PkceConnectDialog
+          plugin={pkceSetupPlugin}
+          onClose={() => setPkceSetupPlugin(null)}
+          onProceed={() => startOAuthFlow(pkceSetupPlugin)}
         />
       )}
 

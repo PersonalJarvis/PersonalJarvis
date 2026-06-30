@@ -273,6 +273,60 @@ describe("PkceConnectDialog own-client + production hint", () => {
   });
 });
 
+describe("PluginsView opens the PKCE pre-connect dialog", () => {
+  it("shows the own-client dialog instead of starting OAuth immediately", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/marketplace/plugins") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            version: 1,
+            schema_version: "t",
+            total: 1,
+            connected: 0,
+            plugins: [
+              {
+                id: "gmail",
+                display_name: "Gmail",
+                description: "Mail",
+                category: "Communication",
+                logo_slug: "gmail",
+                auth: { mode: "oauth_pkce_loopback" },
+                status: "not_connected",
+                live_callable: false,
+              },
+            ],
+          }),
+        } as Response;
+      }
+      // A /connect/start hit here would mean OAuth fired immediately (the old
+      // behaviour) — make that an explicit failure.
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    (globalThis as unknown as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
+
+    renderPluginsView();
+    // Wait for the real row's Connect button (the "Gmail" text alone also appears
+    // in the static "Coming soon" strip before data loads, so it isn't a safe
+    // signal that the row has rendered).
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Connect plugin" }),
+      ).toBeDefined(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect plugin" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("dialog")).toBeDefined(),
+    );
+    expect(screen.getByText(/Connect Gmail/i)).toBeDefined();
+  });
+});
+
 describe("PluginsView keeps revoked plugins visible", () => {
   it("shows a needs_reauth plugin under Installed with a Reconnect-needed badge", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
