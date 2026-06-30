@@ -77,10 +77,27 @@ class FakeBrain:
 class FakeRegistry:
     """Stand-in for ``BrainProviderRegistry`` that yields a pre-built brain."""
 
-    def __init__(self, brain: Any, *, fail_on: str | None = None) -> None:
+    def __init__(
+        self,
+        brain: Any,
+        *,
+        fail_on: str | None = None,
+        available: set[str] | None = None,
+    ) -> None:
         self._brain = brain
         self._fail_on = fail_on
+        # Default to the families the wiki fallback chain may cross to, so a
+        # configured primary leads and succeeds first. A test pins a narrower
+        # set to exercise the all-providers-down (chain-exhausted) path.
+        self._available = (
+            set(available)
+            if available is not None
+            else {"gemini", "claude-api", "openrouter", "openai"}
+        )
         self.instantiate_calls: list[tuple[str, dict[str, Any]]] = []
+
+    def available(self) -> set[str]:
+        return set(self._available)
 
     def instantiate(self, name: str, **kwargs: Any) -> Any:
         self.instantiate_calls.append((name, dict(kwargs)))
@@ -448,7 +465,8 @@ async def test_propose_updates_timeout_returns_empty(
         "source", "label", repo=FakeRepo(), vault=FakeVault(),
     )
     assert result == []
-    assert any("timeout" in rec.message.lower() for rec in caplog.records)
+    # Every provider timed out → the chain is exhausted and gives up honestly.
+    assert any("timed out" in rec.message.lower() for rec in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -471,7 +489,11 @@ async def test_propose_updates_brain_exception_returns_empty(
         "source", "label", repo=FakeRepo(), vault=FakeVault(),
     )
     assert result == []
-    assert any("brain-call failed" in rec.message.lower() for rec in caplog.records)
+    # The chain tries every family, then gives up HONESTLY (not a silent empty).
+    assert any(
+        "failed" in rec.message.lower() and "provider" in rec.message.lower()
+        for rec in caplog.records
+    )
 
 
 @pytest.mark.asyncio
@@ -501,11 +523,15 @@ async def test_propose_updates_missing_schema_returns_empty(
 async def test_propose_updates_unavailable_provider_returns_empty(
     tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A registry that doesn't know the provider name yields ``[]``."""
+    """An unavailable provider with NOTHING to fall back to yields ``[]``."""
 
     cfg = _make_config(primary="nonsense-provider")
     brain = FakeBrain(_ok_response())
-    registry = FakeRegistry(brain, fail_on="nonsense-provider")
+    # Only the (failing) primary is reachable — the chain has nothing to cross
+    # to, so it is exhausted and the curator gives up honestly.
+    registry = FakeRegistry(
+        brain, fail_on="nonsense-provider", available={"nonsense-provider"},
+    )
 
     llm = WikiCuratorLLM(
         config=cfg,
@@ -517,12 +543,19 @@ async def test_propose_updates_unavailable_provider_returns_empty(
         "source", "label", repo=FakeRepo(), vault=FakeVault(),
     )
     assert result == []
-    assert any("cannot instantiate" in rec.message.lower() for rec in caplog.records)
+    assert any("instantiate" in rec.message.lower() for rec in caplog.records)
 
 
 @pytest.mark.asyncio
-async def test_propose_updates_caches_brain_across_calls(tmp_path: Path) -> None:
-    """The provider is instantiated at most once per ``WikiCuratorLLM``."""
+async def test_propose_updates_reresolves_provider_per_call(tmp_path: Path) -> None:
+    """The key-aware fallback chain re-resolves the provider on every call.
+
+    The old single-brain cache (one instantiate per instance) was replaced by a
+    per-call chain so a provider switch — or a previously-dead provider that
+    recovered — is picked up immediately. A SUCCESSFUL call still stops at the
+    first working provider (no needless fallback instantiation), so two
+    successful calls instantiate exactly twice — never the whole chain.
+    """
 
     cfg = _make_config()
     brain = FakeBrain(_ok_response())
@@ -535,7 +568,8 @@ async def test_propose_updates_caches_brain_across_calls(tmp_path: Path) -> None
     )
     await llm.propose_updates("first source", "l1", repo=FakeRepo(), vault=FakeVault())
     await llm.propose_updates("second source", "l2", repo=FakeRepo(), vault=FakeVault())
-    assert len(registry.instantiate_calls) == 1
+    assert len(registry.instantiate_calls) == 2
+    assert [name for name, _ in registry.instantiate_calls] == ["gemini", "gemini"]
 
 
 @pytest.mark.asyncio

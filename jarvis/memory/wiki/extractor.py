@@ -199,10 +199,6 @@ class ConversationFactExtractor:
     # ------------------------------------------------------------------
 
     async def _extract(self, user_text: str, assistant_text: str) -> list[CandidateFact]:
-        brain = self._ensure_brain()
-        if brain is None:
-            return []
-
         context = assistant_text[:_MAX_ASSISTANT_CONTEXT_CHARS]
         # Real-time anchor so relative phrases ("last month", "this spring")
         # resolve to the correct year downstream.
@@ -221,23 +217,30 @@ class ConversationFactExtractor:
         )
 
         start_ns = time.time_ns()
-        try:
-            agg = await asyncio.wait_for(
-                aggregate(brain.complete(request)),
-                timeout=float(self._cfg.timeout_s),
-            )
-        except TimeoutError:
-            log.warning(
-                "ConversationFactExtractor: timeout after %.1fs (provider=%s)",
-                self._cfg.timeout_s, self._resolved_provider,
-            )
+        from jarvis.memory.wiki.provider_chain import (
+            build_wiki_provider_chain,
+            complete_with_fallback,
+        )
+
+        # Key-aware fallback (AP-22/23): try the configured provider, then cross
+        # to whatever family is reachable, instead of silently dropping the turn
+        # when one provider is throttled / keyless (live 2026-06-30).
+        chain = build_wiki_provider_chain(
+            primary=(self._curator_cfg.provider.strip() or self._root_cfg.brain.primary),
+            model_override=self._curator_cfg.model,
+            available=set(self._registry.available()),
+        )
+        result = await complete_with_fallback(
+            registry=self._registry,
+            chain=chain,
+            request=request,
+            timeout_s=float(self._cfg.timeout_s),
+            label="ConversationFactExtractor",
+            aggregate=aggregate,
+        )
+        if result is None:
             return []
-        except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "ConversationFactExtractor: brain call failed (provider=%s): %s",
-                self._resolved_provider, exc,
-            )
-            return []
+        agg, self._resolved_provider = result
 
         if is_length_truncated(agg.finish_reason, agg.text):
             log.warning(

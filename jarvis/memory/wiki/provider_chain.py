@@ -19,6 +19,7 @@ credit. This module gives the wiki the SAME resilience, plus an HONEST signal
 when the whole chain is exhausted (AP-22 single-provider brick / AP-23
 maintainer-config coupling).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -88,7 +89,9 @@ async def complete_with_fallback(
         try:
             brain = instantiate_curator_brain(registry, provider, model)
         except Exception as exc:  # noqa: BLE001 — a bad provider must not abort the chain
-            log.warning("%s: could not instantiate %s (%s) — trying next provider", label, provider, exc)
+            log.warning(
+                "%s: could not instantiate %s (%s) — trying next provider", label, provider, exc
+            )
             continue
         if brain is None:
             continue
@@ -96,7 +99,12 @@ async def complete_with_fallback(
             agg = await asyncio.wait_for(aggregate(brain.complete(request)), timeout=timeout_s)
             return agg, provider
         except TimeoutError:
-            log.warning("%s: provider %s timed out after %.1fs — trying next provider", label, provider, timeout_s)
+            log.warning(
+                "%s: provider %s timed out after %.1fs — trying next provider",
+                label,
+                provider,
+                timeout_s,
+            )
             continue
         except Exception as exc:  # noqa: BLE001 — try the next family, never dead-end on one
             log.warning("%s: provider %s failed (%s) — trying next provider", label, provider, exc)
@@ -111,7 +119,7 @@ async def complete_with_fallback(
     try:
         telemetry.inc("wiki_all_providers_failed")
     except Exception:  # noqa: BLE001 — telemetry must never break the pipeline
-        pass
+        log.debug("%s: telemetry inc failed", label, exc_info=True)
     return None
 
 

@@ -61,6 +61,12 @@ class FakeRegistry:
         self._brain = brain
         self.instantiate_calls: list[tuple[str, dict[str, Any]]] = []
 
+    def available(self) -> set[str]:
+        # Only the configured primary is reachable, so the key-aware fallback
+        # chain is a single hop — the existing assertions on the first (only)
+        # instantiated provider still hold.
+        return {"gemini"}
+
     def instantiate(self, name: str, **kwargs: Any) -> Any:
         self.instantiate_calls.append((name, dict(kwargs)))
         return self._brain
