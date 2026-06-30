@@ -24,6 +24,151 @@ _GEMINI_VOICES = frozenset({
 })
 _GROK_VOICES = frozenset({"leo", "rex", "sal", "ara", "eve"})
 
+# Accepted spellings → canonical provider name, mirroring the `if provider in (...)`
+# groups in ``_build_provider`` so the credential probe + cross-family order key
+# off ONE name regardless of how the user spelled it in `jarvis.toml`.
+_ELEVEN_ALIASES = frozenset({"elevenlabs", "eleven-labs", "eleven_labs", "11labs"})
+_CARTESIA_ALIASES = frozenset({
+    "cartesia", "cartesia-sonic", "cartesia-sonic3", "cartesia-sonic-3",
+    "cartesia-sonic-3.5",
+})
+_GROK_TTS_ALIASES = frozenset({
+    "grok-voice", "grok_voice", "grok-tts", "xai-tts", "xai-voice",
+})
+_GEMINI_TTS_ALIASES = frozenset({"gemini-flash-tts", "gemini-flash", "gemini"})
+
+# Credential candidates per TTS family — the (keyring_key, env_var) pairs that
+# hold a usable key, matching what each plugin's own key lookup reads. A fresh
+# downloader's single TTS key is rarely the configured default, so the factory
+# consults this and crosses to whatever TTS family the user DOES have a key for
+# instead of building a keyless provider that goes silently mute (open-source
+# single-provider resilience, AP-22). Families absent here are left untouched.
+_TTS_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
+    "gemini-flash-tts": (
+        ("gemini_api_key", "GEMINI_API_KEY"),
+        ("google_api_key", "GOOGLE_API_KEY"),
+    ),
+    "elevenlabs": (
+        ("elevenlabs_api_key", "ELEVENLABS_API_KEY"),
+        ("eleven_api_key", "ELEVEN_API_KEY"),
+    ),
+    "cartesia": (("cartesia_api_key", "CARTESIA_API_KEY"),),
+    "grok-voice": (
+        ("xai_api_key", "XAI_API_KEY"),
+        ("grok_api_key", "GROK_API_KEY"),
+    ),
+}
+
+# Cross-family probe order when the configured provider has no key: the family
+# the maintainer ships first, then the common BYO-key alternatives. Only a family
+# that actually has a key is ever chosen.
+_TTS_CROSS_FAMILY_ORDER: tuple[str, ...] = (
+    "gemini-flash-tts", "elevenlabs", "cartesia", "grok-voice",
+)
+
+
+def _canonical_tts_name(name: str) -> str:
+    """Map any accepted TTS provider spelling to its canonical family name."""
+    n = (name or "").strip().lower()
+    if n in _ELEVEN_ALIASES:
+        return "elevenlabs"
+    if n in _CARTESIA_ALIASES:
+        return "cartesia"
+    if n in _GROK_TTS_ALIASES:
+        return "grok-voice"
+    if n in _GEMINI_TTS_ALIASES:
+        return "gemini-flash-tts"
+    return n
+
+
+def _tts_has_credential(canonical: str, tts_cfg: Any) -> bool:
+    """Whether the TTS *family* ``canonical`` has a usable key on this host.
+
+    Unknown / third-party providers (no entry in ``_TTS_SECRET_CANDIDATES``)
+    return True so their path is never gated. Gemini via Vertex AI uses a service
+    account rather than an API key, so a configured Vertex setup counts as a
+    credential.
+    """
+    candidates = _TTS_SECRET_CANDIDATES.get(canonical)
+    if candidates is None:
+        return True
+    if canonical == "gemini-flash-tts" and bool(getattr(tts_cfg, "use_vertex", False)):
+        return True
+    from jarvis.core import config as _cfg
+
+    return _cfg.get_secret_any(candidates) is not None
+
+
+class _VoiceOverride:
+    """Read-through view of a ``TTSConfig`` that overrides only the voice fields.
+
+    Used when crossing TTS families so a foreign default voice (e.g. the Gemini
+    ``Charon``) is not inherited as a bogus ElevenLabs/Cartesia voice id — the
+    crossed-to provider then resolves its OWN default. Every other attribute
+    delegates to the base config (works for Pydantic models and test doubles).
+    """
+
+    __slots__ = ("_base", "_ov")
+
+    def __init__(self, base: Any, overrides: dict[str, str]) -> None:
+        self._base = base
+        self._ov = overrides
+
+    def __getattr__(self, name: str) -> Any:
+        if name in self._ov:
+            return self._ov[name]
+        return getattr(self._base, name)
+
+
+def _without_foreign_voice(tts_cfg: Any, target_canonical: str) -> Any:
+    """Blank voice fields that belong to a DIFFERENT family than the target, so
+    the crossed-to provider uses its own default instead of a mismatched voice."""
+    target_allowed = (
+        _GEMINI_VOICES
+        if target_canonical == "gemini-flash-tts"
+        else _GROK_VOICES
+        if target_canonical == "grok-voice"
+        else frozenset()
+    )
+    foreign = _GEMINI_VOICES | _GROK_VOICES
+    overrides: dict[str, str] = {}
+    for field in ("voice_de", "voice_en"):
+        value = getattr(tts_cfg, field, "") or ""
+        if value in foreign and value not in target_allowed:
+            overrides[field] = ""
+    return _VoiceOverride(tts_cfg, overrides) if overrides else tts_cfg
+
+
+def _resolve_keyed_tts_provider(primary_name: str, tts_cfg: Any) -> tuple[str, Any]:
+    """Pick a TTS provider the host can actually run (open-source AP-22).
+
+    Keeps the configured provider when it has a usable key — so the maintainer
+    path is untouched. Otherwise crosses to the first TTS family the user DOES
+    have a key for and returns a voice-adjusted config view. When NO family has a
+    key, keeps the configured provider (it degrades to the opt-in SAPI5 exit on
+    Windows, or logs an honest mute) — never a silent swap.
+    """
+    canonical = _canonical_tts_name(primary_name)
+    if _tts_has_credential(canonical, tts_cfg):
+        return primary_name, tts_cfg
+    for cand in _TTS_CROSS_FAMILY_ORDER:
+        if cand == canonical:
+            continue
+        if _tts_has_credential(cand, tts_cfg):
+            log.warning(
+                "TTS provider %r has no usable API key; crossing to %r — the TTS "
+                "family the user actually has a key for — so Jarvis is not mute "
+                "(open-source AP-22). Set [tts].provider to silence this.",
+                primary_name, cand,
+            )
+            return cand, _without_foreign_voice(tts_cfg, cand)
+    log.warning(
+        "No TTS provider has a usable API key (configured %r) — keeping it; voice "
+        "output needs a TTS key, or the opt-in SAPI5 fallback on Windows.",
+        primary_name,
+    )
+    return primary_name, tts_cfg
+
 
 def _resolve_voice_for_provider(
     requested: str, provider: str, default: str, allowed: frozenset[str]
@@ -69,8 +214,13 @@ def build_tts_from_config(tts_cfg: Any) -> Any:
             Ein nicht-baubarer *Fallback* degradiert dagegen nur (Warnung +
             primary-only), damit eine Fallback-Fehlkonfig den Ton nicht killt.
     """
-    primary_name = (tts_cfg.provider or "gemini-flash-tts").lower()
-    primary = _build_provider(tts_cfg, primary_name)
+    requested_name = (tts_cfg.provider or "gemini-flash-tts").lower()
+    # Open-source AP-22: if the configured TTS provider has no usable key, cross
+    # to whatever TTS family the user DOES have a key for, instead of building a
+    # keyless provider that goes silently mute. The maintainer (who has the
+    # configured key) is unaffected; an explicit [tts].fallback still composes.
+    primary_name, primary_cfg = _resolve_keyed_tts_provider(requested_name, tts_cfg)
+    primary = _build_provider(primary_cfg, primary_name)
 
     fallback_name = (getattr(tts_cfg, "fallback", "") or "").strip().lower()
     if not fallback_name or fallback_name == primary_name:

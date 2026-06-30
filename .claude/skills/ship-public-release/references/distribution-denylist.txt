@@ -190,3 +190,16 @@ docs/handoffs/**
 # stray one never reaches public history.
 voice-session-*
 **/voice-session-*
+
+# --- Internal pick-up / handoff prompt notes (2026-06-30) -------------------
+# reporttutorialpickupprompt*.md is a loose top-level "pick-up" prompt: an
+# internal instruction to a Claude session to run the §2 privacy review. It
+# names the maintainer real name ("Ruben", "Lütke / Luetke") and enumerates the
+# private categories to hunt for — the same self-leak class as
+# docs-privacy-reviewer.md and docs/handoffs/** already withheld above (shipping
+# the doc that lists what to hide IS the leak). Internal process artifact, zero
+# downstream value, occasionally git-tracked by accident. Withhold any such loose
+# pick-up/handoff prompt at the repo root.
+reporttutorialpickupprompt*
+**/reporttutorialpickupprompt*
+*pickupprompt*.md
