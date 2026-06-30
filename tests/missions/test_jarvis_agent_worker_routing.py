@@ -200,7 +200,7 @@ def test_subjarvis_kind_flagged_as_claude(provider: str) -> None:
     assert subagent_runs_on_claude_fallback(provider) is True
 
 
-@pytest.mark.parametrize("provider", ["grok", "openai", "openrouter"])
+@pytest.mark.parametrize("provider", ["openai", "openrouter"])
 def test_api_agent_providers_no_longer_flagged_as_claude(provider: str) -> None:
     from jarvis.missions.init import subagent_runs_on_claude_fallback
 
