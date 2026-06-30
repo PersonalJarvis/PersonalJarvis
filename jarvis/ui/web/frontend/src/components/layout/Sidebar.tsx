@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { useEventStore, type SectionId } from "@/store/events";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
+import { useSectionHealth } from "@/hooks/useProviders";
 import { cn } from "@/lib/utils";
 import { useMemo } from "react";
 import { useT } from "@/i18n";
@@ -135,6 +136,16 @@ export function Sidebar() {
   const { connected, voiceWarming, bootWarming, warming } = useVoiceReadiness();
   const brainProvider = useEventStore((s) => s.brainProvider);
   const brainModel = useEventStore((s) => s.brainModel);
+  // Per-section provider health (same source as the API-Keys tab dots). The
+  // sidebar surfaces only a hard "error" — a provider that is set up but failing
+  // — so a broken key is visible from anywhere without opening the page. The
+  // amber "needs setup" state is intentionally NOT shown here: on a fresh install
+  // every unconfigured section would light up and the bar would never be calm.
+  const { health: sectionHealth } = useSectionHealth();
+  const apikeysHasError = useMemo(
+    () => Object.values(sectionHealth).some((h) => h?.status === "error"),
+    [sectionHealth],
+  );
   const agentsCount = useEventStore((s) =>
     s.events.filter((e) => e.name === "AgentStateChange").length > 0 ? undefined : 0,
   );
@@ -230,6 +241,8 @@ export function Sidebar() {
                 label={resolveNavLabel(t, item)}
                 active={item.matchIds ? item.matchIds.includes(active) : item.id === active}
                 badge={item.id === "agents" ? agentsCount : undefined}
+                alert={item.id === "apikeys" ? apikeysHasError : false}
+                alertTitle={t("sidebar.apikeys_alert")}
                 onClick={() => setActive(item.id)}
               />
             ))}
