@@ -90,8 +90,10 @@ Screen Shot *.png
 # Sub-Agent-Sandbox-Outputs (Research-/Demo-Drops, kein Projekt-Code)
 examples/
 github-research/
-# Phase-6 worker-isolation parent (worktrees + per-mission OpenClaw state).
+# Phase-6 worker-isolation parent (worktrees + per-mission Jarvis-Agent state).
 # Each mission gets a fresh `git worktree` under here; never commit.
+jarvis-agent-outputs/
+# Legacy name kept so any existing sub-agents-outputs/ stays ignored (2026-06-29 rename).
 sub-agents-outputs/
 
 # Generated test inventory (refreshed by tooling, never reviewed by hand).
