@@ -2,7 +2,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ConnectIconButton, PluginsView } from "@/views/PluginsView";
+import {
+  ConnectIconButton,
+  PkceConnectDialog,
+  PluginsView,
+} from "@/views/PluginsView";
 
 const CATALOG = {
   version: 1,
