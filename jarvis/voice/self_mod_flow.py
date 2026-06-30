@@ -25,17 +25,17 @@ import time
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 from uuid import UUID
 
-from jarvis.core.self_mod import (
-    AuditActor,
-    AuditEvent,
-    AuditSource,
-    PendingMutation,
-    PendingMutationStore,
-    SelfModAudit,
-)
+from jarvis.core.self_mod.schema import AuditActor, AuditEvent, AuditSource
+
+if TYPE_CHECKING:
+    from jarvis.core.self_mod import (
+        PendingMutation,
+        PendingMutationStore,
+        SelfModAudit,
+    )
 from jarvis.core.self_mod.errors import (
     PreValidateError,
     ReloadError,
