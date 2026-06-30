@@ -53,7 +53,7 @@
     "deep_model": "claude-opus-4-8"
   },
   "brain.worker": {
-    "provider": "antigravity",
+    "provider": "claude-api",
     "model": "claude-opus-4-8",
     "fallback_provider": "gemini",
     "fallback_model": "gemini-3.1-pro-preview",
