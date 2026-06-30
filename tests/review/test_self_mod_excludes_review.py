@@ -40,7 +40,7 @@ def test_review_reviewer_model_not_in_allowlist() -> None:
 def test_no_review_path_in_explicit_allowlist() -> None:
     """Defense-in-Depth: kein einziger ALLOWED-Spec hat review-prefix."""
     review_specs = [
-        spec for spec in SelfModRegistry.ALLOWED if spec.path.startswith("review.")
+        spec for spec in SelfModRegistry.list_all() if spec.path.startswith("review.")
     ]
     assert review_specs == []
 

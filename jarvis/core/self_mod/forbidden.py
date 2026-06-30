@@ -34,6 +34,12 @@ FORBIDDEN_PATTERNS: tuple[str, ...] = (
     "safety.*",  # risk-tier whitelist/blacklist — never via self-mod or Control API
     "mcp_server.*",
     "harness.*",
+    # Review / quality-gate settings — never self-mutable. A self-mutable review
+    # gate lets the system disable its own quality check (e.g. review.enabled=
+    # False, review.max_iterations) at runtime — the constraint-self-bypass
+    # vector. These change by file-edit + code-review only, never voice/chat/
+    # self-mod or the Control API. Guarded by tests/review/test_self_mod_excludes_review.py.
+    "review.*",
     "*_api_key",
     "*_token",
     "*_secret",
