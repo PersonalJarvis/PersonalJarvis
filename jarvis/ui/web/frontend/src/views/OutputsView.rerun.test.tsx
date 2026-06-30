@@ -19,9 +19,17 @@ vi.mock("@/hooks/useWebSocket", () => ({
   getWSClient: () => null,
 }));
 
+// The "Browser" opener must reach the user's real browser via the open-external
+// bridge (WebView2 drops a bare window.open) — spy on it, not on window.open.
+vi.mock("@/lib/openExternal", () => ({
+  openExternalUrl: vi.fn(async () => {}),
+}));
+import { openExternalUrl } from "@/lib/openExternal";
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.clearAllMocks();
 });
 
 function installFetchMock(
@@ -216,7 +224,7 @@ describe("OutputsView artifact actions", () => {
     expect(screen.queryByTitle("Open in browser")).toBeNull();
   });
 
-  it("opens the browser chooser option via the rendered artifact URL", async () => {
+  it("routes the browser chooser option through the open-external bridge", async () => {
     const fetchMock = installFetchMock(
       [session({ slug: "artifact-slug", status: "success", mission_id: "m-a" })],
       [
@@ -247,17 +255,21 @@ describe("OutputsView artifact actions", () => {
     fireEvent.click(screen.getByTitle("Change how this opens"));
     fireEvent.click(await screen.findByText("Browser"));
 
-    expect(openSpy).toHaveBeenCalledWith(
+    // Absolute render URL handed to the bridge (open_url needs http(s) absolute),
+    // never a bare window.open (WebView2 drops it) and never /open-with.
+    await waitFor(() => expect(openExternalUrl).toHaveBeenCalledTimes(1));
+    const url = vi.mocked(openExternalUrl).mock.calls[0][0];
+    expect(url).toMatch(/^https?:\/\//);
+    expect(url).toContain(
       "/api/outputs/artifact-slug/files/tasks/019edf/artifacts/files/report.md/view",
-      "_blank",
-      "noopener,noreferrer",
     );
+    expect(openSpy).not.toHaveBeenCalled();
     expect(
       fetchMock.mock.calls.some(([input]) => String(input).includes("/open-with")),
     ).toBe(false);
   });
 
-  it("opens a remembered browser preference via the rendered artifact URL", async () => {
+  it("routes a remembered browser preference through the open-external bridge", async () => {
     const fetchMock = installFetchMock(
       [session({ slug: "artifact-slug", status: "success", mission_id: "m-a" })],
       [
@@ -287,11 +299,13 @@ describe("OutputsView artifact actions", () => {
 
     fireEvent.click(screen.getByTitle("Open"));
 
-    expect(openSpy).toHaveBeenCalledWith(
+    await waitFor(() => expect(openExternalUrl).toHaveBeenCalledTimes(1));
+    const url = vi.mocked(openExternalUrl).mock.calls[0][0];
+    expect(url).toMatch(/^https?:\/\//);
+    expect(url).toContain(
       "/api/outputs/artifact-slug/files/tasks/019edf/artifacts/files/report.md/view",
-      "_blank",
-      "noopener,noreferrer",
     );
+    expect(openSpy).not.toHaveBeenCalled();
     expect(
       fetchMock.mock.calls.some(([input]) => String(input).includes("/open-with")),
     ).toBe(false);
