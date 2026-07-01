@@ -1,4 +1,4 @@
-"""Route-Tests fuer Phase-B-Endpoints: Achievements + Bio."""
+"""Route tests for Phase-B endpoints: achievements + bio."""
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
@@ -19,14 +19,14 @@ from jarvis.ui.web.board_routes import board_router
 
 class _FakeBrain:
     async def complete(self, request: BrainRequest) -> AsyncIterator[BrainDelta]:
-        yield BrainDelta(content="Auf Daten basiert: 5 Tools genutzt, meistens bash. Kein Muster darueber hinaus.")
+        yield BrainDelta(content="Auf Daten basiert: 5 Tools genutzt, meistens bash. Kein Muster darueber hinaus.")  # i18n-allow: simulated German LLM bio output (product persona voice)
         yield BrainDelta(finish_reason="stop", usage={"input_tokens": 100, "output_tokens": 50})
 
 
 @pytest.fixture
 def wired_app(tmp_path: Path) -> TestClient:
     db = tmp_path / "personal.db"
-    # Evaluator mit ein paar Events vorbefuellen.
+    # Pre-fill the evaluator with a few events.
     ev = AchievementEvaluator(db)
     ev.attach()
     for tool in ("bash", "search_web", "write_file", "read_file", "grep_repo"):
@@ -59,7 +59,7 @@ def test_achievements_list_reports_unlocked_count(wired_app: TestClient) -> None
     assert resp.status_code == 200
     body = resp.json()
     assert body["total"] >= 10  # 10 im Katalog
-    # tool_dabbler muss unlocked sein (5 tools).
+    # tool_dabbler must be unlocked (5 tools).
     unlocked_ids = {i["id"] for i in body["items"] if i["unlocked_at"]}
     assert "tool_dabbler" in unlocked_ids
 
@@ -97,7 +97,7 @@ def test_bio_regenerate_graceful_on_brain_outage(tmp_path: Path) -> None:
             yield  # pragma: no cover — macht Methode zum AsyncGenerator
 
     db = tmp_path / "personal.db"
-    # Leere DB fuer minimalen Setup.
+    # Empty DB for minimal setup.
     ev = AchievementEvaluator(db)
     ev.attach()
     bio_store = BioStore(db)
