@@ -43,8 +43,8 @@ from jarvis.memory.recall import RecallStore
 @dataclass
 class FakeVerdichter:
     summary: str = (  # i18n-allow: simulated Verdichter output — the real Verdichter's summary is German by design (VERDICHTER_SYSTEM_PROMPT)
-        "Der Nutzer war 8min in Code.exe mit pipeline.py aktiv, "
-        "wechselte kurz zu Chrome.exe (GitHub-PR-Tab) und kehrte zurueck. "
+        "Der Nutzer war 8min in Code.exe mit pipeline.py aktiv, "  # i18n-allow: simulated Verdichter output, German by design
+        "wechselte kurz zu Chrome.exe (GitHub-PR-Tab) und kehrte zurueck. "  # i18n-allow: simulated Verdichter output, German by design
         "Aktueller Fokus: pipeline.py."
     )
     calls: list[dict[str, Any]] = field(default_factory=list)

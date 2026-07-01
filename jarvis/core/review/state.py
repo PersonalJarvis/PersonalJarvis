@@ -25,7 +25,7 @@ from jarvis.core.review.verdict import ReviewStatus, ReviewVerdict
 class PipelineOutcome(str, Enum):  # noqa: UP042 — explicit `(str, Enum)`, not `StrEnum`
     """Which terminal state the pipeline reached."""
 
-    SUCCESS = "success"  # noqa: S105 — Outcome-Wert, kein Secret
+    SUCCESS = "success"  # noqa: S105 — outcome value, not a secret
     FAIL = "fail"
     CAP_FIRED = "cap_fired"
     PRECHECK_FAIL = "precheck_fail"
@@ -149,8 +149,8 @@ class PipelineResult:
         last = state.iterations[-1]
         if last.verdict is None or last.verdict.status is not ReviewStatus.PASS:
             raise ValueError(
-                "PipelineResult.from_success: letzte Iteration hat keinen "
-                "PASS-Verdict — interner Pipeline-Fehler"
+                "PipelineResult.from_success: last iteration has no "
+                "PASS verdict — internal pipeline error"
             )
         return cls(
             run_id=state.run_id,

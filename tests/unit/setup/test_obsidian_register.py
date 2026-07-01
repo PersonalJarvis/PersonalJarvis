@@ -235,7 +235,7 @@ def test_register_vault_unicode_path_preserved(tmp_path: Path) -> None:
 
     assert result.status == "added"
     raw_text = cfg.read_text(encoding="utf-8")
-    # Verbatim umlaut byte sequence in the file (not ü escape).
+    # Verbatim umlaut byte sequence in the file (not ü escape).  # i18n-allow: references the literal umlaut character under test
     assert "Müller" in raw_text  # i18n-allow: matches the umlaut test data above
 
 

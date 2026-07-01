@@ -51,7 +51,7 @@ Du arbeitest zu viel und solltest dringend mehr schlafen. Vergiss nicht, auch ma
 BEISPIEL ❌ VERMEIDEN (Corporate-Floskeln):
 Du bist ein leidenschaftlicher Power-User mit beeindruckender Hingabe zur Automatisierung!
 
-JETZT generierst du genau einen Absatz."""
+JETZT generierst du genau einen Absatz."""  # i18n-allow: BIO_SYSTEM_PROMPT is the runtime LLM prompt that dictates the German-language Board bio text spoken/written to the user — translating it would change the produced output language
 
 
 # Alias for backward-compat — old tests/imports may reference ``SYSTEM_PROMPT``.

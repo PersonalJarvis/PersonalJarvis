@@ -37,7 +37,7 @@ _DEFAULT_NOREVIEW_KEYWORDS: tuple[str, ...] = (
     "danke",
     "was ist",
     "wer ist",
-    "wie spät",
+    "wie spät",  # i18n-allow: German speech-input smalltalk keyword, matched in logic
     "wie spaet",
 )
 

@@ -40,7 +40,7 @@ PEOPLE_DIR = "people"
 
 # Filename-safe slug: e.g. "Laura Müller" → "laura_mueller"  # i18n-allow: example name demonstrating umlaut-folding logic
 _UMLAUT_MAP = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss",  # i18n-allow: umlaut-folding lookup table used by person_slug()
-                             "Ä": "Ae", "Ö": "Oe", "Ü": "Ue"})
+                             "Ä": "Ae", "Ö": "Oe", "Ü": "Ue"})  # i18n-allow: umlaut-folding lookup table used by person_slug()
 _NON_SAFE = re.compile(r"[^a-z0-9_-]+")
 
 

@@ -450,7 +450,7 @@ async def test_router_injects_jpeg_with_matching_mime() -> None:
         provider = _FakeVisionProvider(obs=obs)
         router, recorder = _build_router(vision_provider=provider)
 
-        [d async for d in router.handle("was ist das hier")]
+        [d async for d in router.handle("was ist das hier")]  # i18n-allow
 
         img = recorder.calls[0]["images"][0]
         assert img.mime == "image/jpeg"

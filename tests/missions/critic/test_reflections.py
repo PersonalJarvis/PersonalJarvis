@@ -129,7 +129,7 @@ def test_render_caps_to_n(tmp_path: Path) -> None:
     for i in range(5):
         mem.append(i, f"sum {i}", [])
     out = mem.render_for_worker_prompt(n=2)
-    # nur die letzten 2 (3 + 4)
+    # only the last 2 (3 + 4)
     assert "[Iteration 3]" in out
     assert "[Iteration 4]" in out
     assert "[Iteration 0]" not in out

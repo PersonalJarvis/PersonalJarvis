@@ -437,7 +437,7 @@ export async function switchSttProvider(
 /**
  * Switches the active heavy-task WORKER provider
  * (`[brain.sub_jarvis].provider`). Persists across 3 layers
- * (jarvis.toml + config-soll.json + ENV) so the drift guard doesn't roll
+ * (jarvis.toml + config-soll.json + ENV) so the drift guard doesn't roll (i18n-allow: "soll" is part of the config-soll.json filename)
  * back the switch. The worker reads the provider once at mission bootstrap,
  * so the backend sets `restart_required = true`.
  */

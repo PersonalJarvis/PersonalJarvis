@@ -181,7 +181,7 @@ def test_observe_preserves_existing_episode_when_new_is_none() -> None:
 
 
 def test_observe_overwrites_episode_when_new_is_set() -> None:
-    """Wenn neuer Context eine neue Episode-ID setzt, ueberschreibt sie alte."""
+    """When a new context sets a new episode ID, it overwrites the old one."""
     ws = WorkingSet()
     ws.observe(_ctx("a", episode_id=7))
     ws.observe(_ctx("a", episode_id=12))

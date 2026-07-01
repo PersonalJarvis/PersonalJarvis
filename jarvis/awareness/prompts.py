@@ -39,7 +39,7 @@ Regeln:
 - Nenne Datei-/Project-Namen NUR wenn im window_title sichtbar.
 - Markiere Wiederholungs-Pattern als "Wechsel zwischen X und Y" (NICHT "ist verwirrt").
 - Bei kryptischen/leeren Titles: "unbekannter Inhalt" oder "kein Window-Title".
-"""
+"""  # i18n-allow: VERDICHTER_SYSTEM_PROMPT is the runtime LLM prompt that dictates the German-language board/awareness "story" output shown to the user — translating it would change the produced output language
 
 
 _HEADER = "# Frames + Events der letzten Minuten:"  # i18n-allow: header of the German-language Verdichter LLM input block (VERDICHTER_SYSTEM_PROMPT expects German)

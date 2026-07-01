@@ -319,7 +319,7 @@ export function useBioRegenerate() {
 }
 
 /**
- * Reaction click under the AI profile. Three kinds: "trifft" / "trifft_nicht"
+ * Reaction click under the AI profile. Three kinds: "trifft" / "trifft_nicht" (i18n-allow: API contract values)
  * / "haerter" (i18n-allow: API contract values). The signal calibrates the
  * NEXT bio generation; no immediate regenerate (Brainstorm-Decision 2026-05-02).
  */

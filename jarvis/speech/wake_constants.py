@@ -87,7 +87,7 @@ def _strip_diacritics(text: str) -> str:
 def normalize_phrase(phrase: str) -> list[str]:
     """Lower-case, strip punctuation, split into word tokens.
 
-    Keeps German umlauts/ß. Empty/whitespace input returns ``[]``.
+    Keeps German umlauts/ß. Empty/whitespace input returns ``[]``.  # i18n-allow
     """
     cleaned = _NORMALISE_RE.sub(" ", (phrase or "").lower()).strip()
     return cleaned.split() if cleaned else []

@@ -46,7 +46,7 @@ def get_rubric_items(rubric_id: str) -> list[str]:
 
 
 # ----------------------------------------------------------------------
-# Feedback-Block (für Worker-Re-Spawns ab Iteration 2)
+# Feedback block (for worker re-spawns starting at iteration 2)
 # ----------------------------------------------------------------------
 
 

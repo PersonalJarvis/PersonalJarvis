@@ -246,7 +246,7 @@ def _request_is_messaging_action(user_request: str) -> bool:
 # --- Main gate function ---
 
 _CAPABILITY_NOT_EXECUTED_SUMMARY_DE: Final[str] = (  # i18n-allow
-    "Konnte ich nicht ausführen — mir fehlt für diese Aufgabe das passende "
+    "Konnte ich nicht ausführen — mir fehlt für diese Aufgabe das passende "  # i18n-allow: German voice/chat readback (*_DE)
     "Werkzeug. Worker hat keinen Tool-Aufruf gemacht."  # i18n-allow
 )
 _CAPABILITY_NOT_EXECUTED_REASON: Final[str] = "capability_not_executed"
@@ -732,7 +732,7 @@ class CriticRunner:
                     "ground truth. Deterministic revise."
                 )
                 summary_de = (  # i18n-allow
-                    "Worker lief, aber keine sichtbaren Datei-Aenderungen. "
+                    "Worker lief, aber keine sichtbaren Datei-Aenderungen. "  # i18n-allow: German voice/chat readback (summary_de)
                     "Automatische Wiederholung."
                 )
             else:
@@ -743,7 +743,7 @@ class CriticRunner:
                 )
                 summary_en = "No worker output detected; deterministic revise."
                 summary_de = (  # i18n-allow
-                    "Worker hat keine sichtbaren Aenderungen erzeugt; "
+                    "Worker hat keine sichtbaren Aenderungen erzeugt; "  # i18n-allow: German voice/chat readback (summary_de)
                     "automatische Wiederholung."
                 )
             logger.warning(

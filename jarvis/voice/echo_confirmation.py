@@ -32,7 +32,7 @@ from jarvis.core.self_mod.errors import (
 
 # Plan-§7.4 + prompt extension. Veto is checked via a word-boundary
 # regex, so that "nichtig" (an affirmative in southern German dialect — rare) doesn't  # i18n-allow
-# falsely trigger as a veto. The `nicht` pattern is deliberately strict.
+# falsely trigger as a veto. The `nicht` pattern is deliberately strict.  # i18n-allow
 _CONFIRM_PATTERNS_DE: tuple[str, ...] = (
     r"\bja\b",
     r"\bbest(ä|ae)tig(e|en|t)?\b",  # i18n-allow

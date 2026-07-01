@@ -223,9 +223,9 @@ describe("TelephonyView — self-test voice", () => {
   it("renders the returned transcript and response_text without clipping", async () => {
     // i18n-allow: German voice self-test fixture — simulated Jarvis TTS response text
     const LONG_RESPONSE =
-      "Selbstverständlich, Sir. Ich habe die Verbindung geprüft und alles " +
-      "funktioniert einwandfrei über die gesamte Sprach-Kette hinweg, vom " +
-      "eingehenden Audio über die Transkription bis hin zur Charon-Stimme.";
+      "Selbstverständlich, Sir. Ich habe die Verbindung geprüft und alles " + // i18n-allow: German voice self-test fixture
+      "funktioniert einwandfrei über die gesamte Sprach-Kette hinweg, vom " + // i18n-allow: German voice self-test fixture
+      "eingehenden Audio über die Transkription bis hin zur Charon-Stimme."; // i18n-allow: German voice self-test fixture
 
     const routes = okRoutes();
     routes["/api/telephony/selftest"] = () => ({

@@ -214,29 +214,29 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jarvis-review-gc",
         description=(
-            "Löscht abgeschlossene Review-Pipeline-Run-Verzeichnisse "
-            "deren final.json älter ist als --older-than."
+            "Deletes completed review-pipeline run directories "
+            "whose final.json is older than --older-than."
         ),
     )
     parser.add_argument(
         "--older-than",
         default=DEFAULT_OLDER_THAN,
-        help="Mindest-Alter zum Löschen (Format: '30d', '12h', '60m'). Default 30d.",
+        help="Minimum age to delete (format: '30d', '12h', '60m'). Default 30d.",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Listet zu löschende Dirs, löscht aber NICHT.",
+        help="Lists directories that would be deleted, but does NOT delete.",
     )
     parser.add_argument(
         "--keep-passing",
         action="store_true",
-        help="Behält Runs mit outcome=success (auch wenn alt).",
+        help="Keeps runs with outcome=success (even if old).",
     )
     parser.add_argument(
         "--keep-cap-fired",
         action="store_true",
-        help="Behält Runs mit outcome=cap_fired (auch wenn alt).",
+        help="Keeps runs with outcome=cap_fired (even if old).",
     )
     parser.add_argument(
         "--runs-root",

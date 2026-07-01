@@ -174,7 +174,7 @@ def test_score_heuristic_null_query_null_score(sample_entries):
     assert _score_heuristic(set(), entry) == 0.0
 
 
-def test_score_heuristic_keine_treffer(sample_entries):
+def test_score_heuristic_keine_treffer(sample_entries):  # i18n-allow: identifier name, not translatable prose
     entry = sample_entries[0]  # email-triage
     score = _score_heuristic(_tokenize("quantencomputer"), entry)
     assert score == 0.0
@@ -250,7 +250,7 @@ async def test_search_nutzt_brain_ranking(monkeypatch, sample_entries):
 
 
 @pytest.mark.asyncio
-async def test_search_faellt_auf_heuristik_bei_brain_fehler(
+async def test_search_faellt_auf_heuristik_bei_brain_fehler(  # i18n-allow: identifier name, not translatable prose
     monkeypatch, sample_entries
 ):
     """If the brain returns invalid JSON, the finder must still return

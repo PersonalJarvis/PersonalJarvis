@@ -115,7 +115,7 @@ def _resolve_codex_argv_prefix() -> list[str]:
     When jarvis is launched with a degraded PATH that lacks the Node.js dir
     (live forensic 2026-06-20: jarvis started by the hermes-agent runtime),
     cmd.exe dies with ``'node' is not recognized`` and exits 1 in ~25 ms —
-    BEFORE codex starts — so every mission fails ``task_error`` ("Der Worker ist
+    BEFORE codex starts — so every mission fails ``task_error`` ("Der Worker ist  # i18n-allow (quotes the real DE voice-readback phrase)
     abgebrochen.").  # i18n-allow (quotes the real DE voice-readback phrase)
     Invoking the JS entrypoint with an ABSOLUTE ``node`` path
     bypasses the .CMD shim, the cmd.exe layer, and the inherited-PATH

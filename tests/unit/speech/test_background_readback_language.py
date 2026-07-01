@@ -3,7 +3,7 @@ must follow the resolved conversation language, not a hardcoded German literal.
 
 Forensic 2026-06-23 family: announcement emitters bypassed the resolver. This
 one hardcoded German text + ``language="de"`` + ``language_code="de-DE"``, so an
-English- or Spanish-speaking user heard "Fertig." in German. The readback now
+English- or Spanish-speaking user heard "Fertig." in German. The readback now  # i18n-allow: quotes the actual German TTS output under test
 resolves the language through ``_conversation_language_for_announcement`` and
 picks a de/en/es phrase, with the matching BCP-47 voice pin.
 """

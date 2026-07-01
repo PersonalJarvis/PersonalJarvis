@@ -9,7 +9,7 @@ Brainstorm spec 2026-05-02 (ten axes):
 - Data sources: everything Jarvis sees (Board stats + awareness episodes +
   missions + self-mod audit + previous bio + feedback vector).
 - Cold-start: first quiet observation from day 1.
-- Interaction: three reaction buttons (Trifft / Trifft nicht / Haerter).
+- Interaction: three reaction buttons (Trifft / Trifft nicht / Haerter).  # i18n-allow: literal button/API-contract label values (see kind constants below)
 
 ## Brain Provider — DYNAMIC
 
@@ -139,7 +139,7 @@ class BioStore:
         return dict(row)
 
     def record_feedback(self, bio_generated_at: str, kind: str) -> None:
-        """Writes a reaction click. ``kind`` ∈ {trifft, trifft_nicht, haerter}.
+        """Writes a reaction click. ``kind`` ∈ {trifft, trifft_nicht, haerter}.  # i18n-allow: API/DB contract identifiers, matched in logic
 
         Validates ``kind`` in addition to the CHECK constraint in the schema,
         so the API layer receives a clean ValueError instead of a
@@ -164,7 +164,7 @@ class BioStore:
     def recent_feedback(self, *, days: int = 28) -> dict[str, int]:
         """Aggregates click counts for the last ``days`` days.
 
-        Returns a dict with three keys (``trifft``, ``trifft_nicht``, ``haerter``).
+        Returns a dict with three keys (``trifft``, ``trifft_nicht``, ``haerter``).  # i18n-allow: API/DB contract identifiers, matched in logic
         Missing kinds are filled with 0 so the caller can safely iterate.
         """
         cutoff = (

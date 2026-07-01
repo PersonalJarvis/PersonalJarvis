@@ -133,14 +133,14 @@ def test_resolve_save_mandate_routes_general_fact_to_wiki_ingest():
 def test_resolve_save_mandate_prefers_contact_when_both_match():
     # "merk dir … Nummer ist …" is BOTH a remember cue AND contact data — the
     # address-book path wins so the number lands where it belongs.
-    mandate = resolve_save_mandate("Merk dir, Christophs Nummer ist 0171 1234567.")
+    mandate = resolve_save_mandate("Merk dir, Christophs Nummer ist 0171 1234567.")  # i18n-allow
     assert mandate is not None
     assert mandate[0] == "contact-upsert"
 
 
 def test_resolve_save_mandate_none_on_plain_turn():
-    assert resolve_save_mandate("Was geht ab?") is None
-    assert resolve_save_mandate("Wie ist das Wetter?") is None
+    assert resolve_save_mandate("Was geht ab?") is None  # i18n-allow
+    assert resolve_save_mandate("Wie ist das Wetter?") is None  # i18n-allow
 
 
 def test_wiki_ingest_directive_forces_the_real_tool():

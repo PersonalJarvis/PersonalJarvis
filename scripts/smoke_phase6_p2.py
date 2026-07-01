@@ -61,7 +61,7 @@ def _read_hello(workspace: Path) -> str | None:
 async def smoke() -> int:
     failures: list[str] = []
 
-    # --- Section 1: claude im PATH? ---
+    # --- Section 1: claude on PATH? ---
     claude_path = shutil.which("claude")
     if claude_path is None:
         print(f"{SKIP} claude not in PATH — Phase 6 worker smoke skipped")
@@ -111,8 +111,8 @@ async def smoke() -> int:
             print(f"{OK} WindowsJobObject opened (closed={job.closed})")
 
             async for event in worker.spawn(
-                "Erstelle eine Datei hello.txt mit dem Inhalt 'world' (ohne "
-                "Anfuehrungszeichen) im aktuellen Verzeichnis.",
+                "Create a file hello.txt with the content 'world' (without "
+                "quotation marks) in the current directory.",
                 worktree=workspace,
                 env=env,
                 job=job,
@@ -129,12 +129,12 @@ async def smoke() -> int:
 
         worker_pid = worker.last_pid
         if worker_pid is None:
-            failures.append("worker.last_pid ist None nach spawn")
+            failures.append("worker.last_pid is None after spawn")
         else:
             print(f"{OK} Worker spawned with pid={worker_pid}, {event_count} events drained")
 
         if result_event is None:
-            failures.append("Kein `result`-Event vor Stream-EOF erhalten")
+            failures.append("No `result` event received before stream EOF")
         else:
             is_error = getattr(result_event, "is_error", None)
             cost = getattr(result_event, "cost_usd", None)
@@ -143,15 +143,15 @@ async def smoke() -> int:
             print(
                 f"{OK} result event: is_error={is_error}, cost_usd={cost}, num_turns={turns}"
             )
-            # Auth-Failure ist eine Umgebungsbeschraenkung (claude nicht
-            # eingeloggt), kein Defekt am Worker-Code. Smoke skippt dann
-            # die Datei-Verifikation und exitet 0 — Spawn/Stream/Reaping
-            # wurden bereits validiert.
+            # Auth failure is an environment limitation (claude not logged
+            # in), not a defect in the worker code. The smoke test then
+            # skips the file verification and exits 0 -- spawn/stream/
+            # reaping have already been validated.
             if "Not logged in" in result_text or "Please run /login" in result_text:
                 auth_failed = True
                 print(
-                    f"{SKIP} claude-CLI nicht authentifiziert (Subprocess-Auth) — "
-                    f"Datei-Verifikation uebersprungen"
+                    f"{SKIP} claude CLI not authenticated (subprocess auth) — "
+                    f"file verification skipped"
                 )
             elif is_error:
                 failures.append(
@@ -159,39 +159,39 @@ async def smoke() -> int:
                     f"{getattr(result_event, 'subtype', None)}, result={result_text!r}"
                 )
 
-        # --- Section 5: Datei-Verifikation (nur wenn kein Auth-Failure) ---
+        # --- Section 5: file verification (only when no auth failure) ---
         if not auth_failed:
             content = _read_hello(workspace)
             if content is None:
-                failures.append(f"hello.txt nicht im Worktree erzeugt: {workspace}")
+                failures.append(f"hello.txt not created in worktree: {workspace}")
             elif content.strip() != "world":
-                failures.append(f"hello.txt content='{content!r}', erwartet 'world'")
+                failures.append(f"hello.txt content='{content!r}', expected 'world'")
             else:
-                print(f"{OK} hello.txt content verifiziert (raw={content!r})")
+                print(f"{OK} hello.txt content verified (raw={content!r})")
 
-        # --- Section 6: Worker-Subprocess tot? ---
+        # --- Section 6: worker subprocess dead? ---
         if worker_pid is not None:
-            # Kurz warten falls OS-Reaper noch nicht durch ist.
+            # Wait briefly in case the OS reaper hasn't finished yet.
             await asyncio.sleep(0.3)
             still_alive = psutil.pid_exists(worker_pid)
             if still_alive:
-                # Auf Windows: pid_exists kann True bleiben wenn ein anderer
-                # Prozess die PID recyclet hat — defensiv pruefen wir den Namen.
+                # On Windows: pid_exists can stay True if another process
+                # recycled the PID — defensively check the process name.
                 try:
                     p = psutil.Process(worker_pid)
                     name = p.name().lower()
                     if "claude" in name or "node" in name:
                         failures.append(
-                            f"Worker pid={worker_pid} lebt noch (name={name})"
+                            f"worker pid={worker_pid} still alive (name={name})"
                         )
                     else:
                         print(
-                            f"{OK} pid={worker_pid} recyclet zu '{name}', Worker tot"
+                            f"{OK} pid={worker_pid} recycled to '{name}', worker dead"
                         )
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    print(f"{OK} pid={worker_pid} nicht mehr ansprechbar")
+                    print(f"{OK} pid={worker_pid} no longer reachable")
             else:
-                print(f"{OK} Worker pid={worker_pid} terminiert")
+                print(f"{OK} worker pid={worker_pid} terminated")
 
     finally:
         # --- Section 7: Cleanup ---
@@ -199,9 +199,9 @@ async def smoke() -> int:
             wm.remove(workspace, force=True)
             print(f"{OK} worktree removed")
         except Exception as exc:  # noqa: BLE001
-            # Cleanup-Fehler nicht als Test-Failure werten — manueller Prune via
-            # `git worktree prune` raeumt nach.
-            print(f"{SKIP} cleanup warnung: {exc}")
+            # Don't count a cleanup failure as a test failure — a manual
+            # `git worktree prune` cleans up afterwards.
+            print(f"{SKIP} cleanup warning: {exc}")
 
     print()
     if failures:

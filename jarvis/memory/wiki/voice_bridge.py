@@ -72,7 +72,7 @@ def _turn_hash(text: str) -> str:
 _ACK_KEYWORDS = (  # i18n-allow: German acknowledgement-phrase matching vocabulary
     "notiert",
     "vermerkt",
-    "gespeichert",
+    "gespeichert",  # i18n-allow: German acknowledgement-phrase matching vocabulary
     "merke ich",
     "merke mir",
     "noted",

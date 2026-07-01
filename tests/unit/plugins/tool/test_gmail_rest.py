@@ -157,7 +157,7 @@ def test_tool_contract_shape():
 # ----------------------------------------------------------------------
 # Per-action risk (forensic 2026-06-19, session dc533e39): "Was habe ich
 # heute auf dem Plan?" → morning-routine → gmail action=list_messages  # i18n-allow: simulated German user utterance, forensic quote
-# (read) was forced through the ask-tier confirm and Jarvis spoke "Soll
+# (read) was forced through the ask-tier confirm and Jarvis spoke "Soll  # i18n-allow: verbatim quote of real German runtime voice output
 # ich die E-Mail wirklich senden?". Only send_message is consequential;  # i18n-allow: verbatim quote of real German runtime voice output
 # reads must stay safe so the morning briefing can check unread mail
 # without a spurious send confirmation.

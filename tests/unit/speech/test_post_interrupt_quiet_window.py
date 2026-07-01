@@ -5,7 +5,7 @@ Diagnosis source: ``docs/plans/voice-phrase-mismatch-2026-05-26/README.md``.
 The user heard a coherent-looking but semantically-incoherent voice block
 on 2026-05-26:
 
-    "Die Mission ist fehlgeschlagen, drei Versuche haben nicht gereicht.
+    "Die Mission ist fehlgeschlagen, drei Versuche haben nicht gereicht.  # i18n-allow: quotes the actual German TTS output under test
      Dann schauen wir einfach mal in die letzte Transkription, was ich
      gesagt habe."  # i18n-allow
 

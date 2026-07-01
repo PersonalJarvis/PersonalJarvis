@@ -176,7 +176,7 @@ class CliInstaller:
             res = InstallResult(
                 ok=False, exit_code=None,
                 duration_ms=int(time.time() * 1000) - job.started_at_ms,
-                error=f"Package-Manager nicht gefunden: {exc}",
+                error=f"Package manager not found: {exc}",
             )
             job.result = res
             if on_done:

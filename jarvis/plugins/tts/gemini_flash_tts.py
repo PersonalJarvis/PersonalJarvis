@@ -88,7 +88,7 @@ DEFAULT_VOICES: tuple[str, ...] = (
 # triggered the SAPI5 fallback more often — the different sample rate
 # (22050 vs 24000) forced mid-stream resample flushes, producing crackling
 # and robotic artifacts.
-_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[A-ZÄÖÜ])")
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[A-ZÄÖÜ])")  # i18n-allow: DE+EN capital-letter lookahead, matched in logic
 
 
 class GeminiFlashTTS:

@@ -162,7 +162,7 @@ def main() -> int:
     report["cases"].append(mission_case(
         "mission_file",
         "Schreib eine 120-Wörter-Geschichte über einen Roboter namens Beacon "  # i18n-allow: simulated German user command driving a live mission-spawn probe
-        "und speichere sie in eine Datei."))
+        "und speichere sie in eine Datei."))  # i18n-allow: simulated German user command driving a live mission-spawn probe
     report["cases"].append(mission_case(
         "mission_answer", "Which city would you recommend for a trip to Australia?"))
     report["cases"].append(mission_case(

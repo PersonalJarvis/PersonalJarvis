@@ -5,7 +5,7 @@ Verifies the goal stated in `docs/plans/capability-coupling/SPEC.md`:
     deterministic 'I cannot (yet) do that.'"
 
 Hard-negatives (must produce UNSUPPORTED + zero phantom TTS):
-    1. "Schick eine Email an harald@gmx.de ..."
+    1. "Schick eine Email an harald@gmx.de ..."  # i18n-allow
     2. "Trag einen Termin morgen 10 Uhr ein"  # i18n-allow
     3. "Sende eine WhatsApp an Mama"
     4. "Bestelle eine Pizza"
@@ -13,7 +13,7 @@ Hard-negatives (must produce UNSUPPORTED + zero phantom TTS):
 
 Hard-positives (must NOT trigger UNSUPPORTED — false-negative guard):
     6. "Öffne Chrome" → local_action.open_app  # i18n-allow
-    7. "Lies die Datei foo.txt" → harness.openclaw
+    7. "Lies die Datei foo.txt" → harness.openclaw  # i18n-allow
     8. "Wie spät ist es?" → smalltalk, gate inactive  # i18n-allow
     9. "Such im Web nach Python 3.13" → UNSUPPORTED when no web-search tool
        is registered (catches the manager.py:774 prompt-claim drift).
@@ -44,10 +44,10 @@ def seeded_registry() -> CapabilityRegistry:
 
 
 HARD_NEGATIVE_UTTERANCES = [
-    "Schick eine Email an harald@gmx.de mit dem Betreff Hallo",
+    "Schick eine Email an harald@gmx.de mit dem Betreff Hallo",  # i18n-allow
     "Trag einen Termin morgen 10 Uhr ein",  # i18n-allow
-    "Sende eine WhatsApp an Mama",
-    "Bestelle eine Pizza",
+    "Sende eine WhatsApp an Mama",  # i18n-allow
+    "Bestelle eine Pizza",  # i18n-allow
     "Poste auf X dass ich heute frei habe",  # i18n-allow
 ]
 
@@ -151,7 +151,7 @@ def test_hard_positive_file_ops_resolves_to_openclaw(
     seeded_registry: CapabilityRegistry,
 ) -> None:
     """'Lies die Datei foo.txt' must resolve to the openclaw harness."""
-    cap = seeded_registry.resolve_intent("Lies die Datei foo.txt")
+    cap = seeded_registry.resolve_intent("Lies die Datei foo.txt")  # i18n-allow
     assert cap is not None, "Expected a capability match for file-read"
     assert "openclaw" in cap.id or "file" in cap.id or cap.source == "harness", (
         f"Expected a file-capable harness/tool, got {cap!r}"

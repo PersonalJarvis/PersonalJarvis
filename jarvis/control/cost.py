@@ -200,7 +200,7 @@ class CostMeter:
         *,
         bus: EventBus | None = None,
         kill_switch: KillSwitch | None = None,
-        now_ns: Callable[[], int] = time.time_ns,   # fuer Tests
+        now_ns: Callable[[], int] = time.time_ns,   # for tests
         today_date: Callable[[], str] = lambda: datetime.now().strftime("%Y-%m-%d"),
     ) -> None:
         self._config = config

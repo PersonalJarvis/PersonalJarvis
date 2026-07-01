@@ -245,7 +245,7 @@ class ReviewerSpawner:
         verdict_payload = _extract_verdict_json(stdout)
         if verdict_payload is None:
             raise VerdictParseError(
-                f"Reviewer-stdout enthält kein valides JSON; "
+                f"Reviewer stdout does not contain valid JSON; "
                 f"head={stdout[:300]!r}"
             )
 

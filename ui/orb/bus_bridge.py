@@ -120,7 +120,7 @@ _ACTIVE_VOICE_STATES = frozenset({"LISTENING", "THINKING", "SPEAKING"})
 
 # German public-broadcaster subtitle-credit boilerplate that German-language
 # STT sometimes hallucinates onto silence/noise (e.g. "Untertitelung des ZDF
-# fuer funk, 2020" / "Vielen Dank"). Must stay the literal German tokens the
+# fuer funk, 2020" / "Vielen Dank"). Must stay the literal German tokens the  # i18n-allow
 # STT engine actually emits — this is speech-recognition input vocabulary,
 # not translatable prose.
 _TRANSCRIPT_BOILERPLATE_RE = re.compile(
@@ -304,7 +304,7 @@ class OrbBusBridge:
             self._bus.subscribe(VoiceMuteChanged, self._on_voice_mute_changed)
             # ADR-0016 L2 — voice-driven recovery from "orb lost on screen".
             # The local_action_gate publishes OrbResetRequested when the
-            # user says "Orb zurück" / "wo bist du" / "reset orb".
+            # user says "Orb zurück" / "wo bist du" / "reset orb".  # i18n-allow
             self._bus.subscribe(OrbResetRequested, self._on_reset_requested)
             # Wire the orb's double-double-click gesture to a bus publish.
             # The orb requires two ``<Double-Button-1>`` events inside

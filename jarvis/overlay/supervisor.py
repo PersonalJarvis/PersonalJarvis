@@ -300,7 +300,7 @@ class OverlaySupervisor:
     def _assign_to_job(self, pid: int) -> None:
         """Plan AD-9: CreateJobObject + SetInformationJobObject +
         AssignProcessToJobObject."""
-        # pywin32 lazy importieren damit non-Windows Hosts nicht crashen.
+        # Lazy-import pywin32 so non-Windows hosts don't crash.
         import win32api
         import win32con
         import win32job

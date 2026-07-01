@@ -101,7 +101,7 @@ def test_tool_kw_pattern_does_not_break_harmless_python() -> None:
 
 
 def test_stacktrace_is_replaced_with_fallback_phrase() -> None:
-    """A stacktrace becomes the fallback phrase 'Es trat ein Fehler auf.' + fallback_used=True."""
+    """A stacktrace becomes the fallback phrase 'Es trat ein Fehler auf.' + fallback_used=True."""  # i18n-allow
     text = (
         "Hier der Fehler:\n"  # i18n-allow
         'Traceback (most recent call last):\n'
@@ -132,7 +132,7 @@ def test_markdown_is_stripped() -> None:
 
 
 def test_self_reference_is_removed() -> None:
-    """``Als KI`` / ``Ich bin nur ein Sprachmodell`` are scrubbed."""
+    """``Als KI`` / ``Ich bin nur ein Sprachmodell`` are scrubbed."""  # i18n-allow
     text = "Als KI kann ich das natuerlich pruefen. Halb drei."  # i18n-allow
     result = scrub_for_voice(text)
     low = result.cleaned.lower()
@@ -196,17 +196,17 @@ def test_echo_paraphrase_in_opener_is_cut() -> None:
     text = "Du möchtest also wissen, wie spät es ist. Halb drei."  # i18n-allow
     result = scrub_for_voice(text)
     low = result.cleaned.lower()
-    assert "du möchtest also" not in low
+    assert "du möchtest also" not in low  # i18n-allow
     assert "halb drei" in low
     assert "rephrased_echo" in result.actions
 
 
 def test_filler_opener_is_removed() -> None:
-    """``Großartige Frage`` / ``Tolle Frage`` as an opener is removed."""
+    """``Großartige Frage`` / ``Tolle Frage`` as an opener is removed."""  # i18n-allow
     text = "Großartige Frage! Es ist halb drei."  # i18n-allow
     result = scrub_for_voice(text)
     low = result.cleaned.lower()
-    assert "großartige frage" not in low
+    assert "großartige frage" not in low  # i18n-allow
     assert "grossartige frage" not in low
     assert "halb drei" in low
     assert "removed_filler_opener" in result.actions
@@ -307,15 +307,15 @@ def test_echo_paraphrase_mid_sentence_is_kept() -> None:
     # Echo pattern in the middle (after >60 characters of clean text)
     text = (
         "Ich habe den Termin am Freitag im Kalender und einen Konflikt erkannt. "  # i18n-allow
-        "Du möchtest also den Termin verschieben? Ja oder nein?"
+        "Du möchtest also den Termin verschieben? Ja oder nein?"  # i18n-allow
     )
     # Sanity check: the echo pattern sits after position 60
-    echo_pos = text.lower().find("du möchtest also")
+    echo_pos = text.lower().find("du möchtest also")  # i18n-allow
     assert echo_pos > 60, f"test-setup bug: echo pattern at position {echo_pos}"
 
     result = scrub_for_voice(text)
     # Mid-sentence echo is preserved
-    assert "möchtest also" in result.cleaned.lower()
+    assert "möchtest also" in result.cleaned.lower()  # i18n-allow
     assert "rephrased_echo" not in result.actions
 
 
@@ -401,7 +401,7 @@ def test_empty_input_returns_empty() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_sir_anrede_is_removed() -> None:
+def test_sir_anrede_is_removed() -> None:  # i18n-allow
     """A1: 'Sir' as a form of address is scrubbed — mandate A1 (Ruben instead of Sir)."""
     text = "Sir, ich starte die Analyse."  # i18n-allow
     result = scrub_for_voice(text)
@@ -409,16 +409,16 @@ def test_sir_anrede_is_removed() -> None:
     assert "sir" not in low.split(",")[0].split()  # not as a word in the opener
     assert "sir" not in low
     assert "ich starte die analyse" in low  # i18n-allow
-    assert "removed_anrede_drift" in result.actions
+    assert "removed_anrede_drift" in result.actions  # i18n-allow
 
 
-def test_sir_anrede_mid_sentence_is_removed() -> None:
+def test_sir_anrede_mid_sentence_is_removed() -> None:  # i18n-allow
     """A1: 'Sir' is also removed mid-sentence (after a comma)."""
     text = "Erledigt, Sir. Die Datei ist gespeichert."  # i18n-allow
     result = scrub_for_voice(text)
     assert "Sir" not in result.cleaned
     assert "Datei" in result.cleaned
-    assert "removed_anrede_drift" in result.actions
+    assert "removed_anrede_drift" in result.actions  # i18n-allow
 
 
 def test_legitimate_sir_in_quote_is_kept() -> None:
@@ -459,7 +459,7 @@ def test_tool_args_yaml_block_is_removed() -> None:
 
     The 2026-04-28 probe leaked the entire Sub-Jarvis tool-call body in
     scenario 03:
-        utterance: "Wie kann ich das beschleunigen?"
+        utterance: "Wie kann ich das beschleunigen?"  # i18n-allow
         context_hints:
           - Unklar ...
           - Benoetigt Kontext ...
@@ -600,7 +600,7 @@ def test_short_clean_alphanumeric_is_kept() -> None:
 
 
 @pytest.mark.parametrize("opener,rest", [
-    ("Lass mich kurz", "schauen. Ja, gespeichert."),
+    ("Lass mich kurz", "schauen. Ja, gespeichert."),  # i18n-allow
     ("Lass mich kurz", "checken. Halb drei."),
     ("Let me think,", "the answer is 42."),
     ("Let me think.", "It's halb drei."),
@@ -635,7 +635,7 @@ def test_filler_selbstreferenz_mid_sentence_is_kept() -> None:
     # At least 61 characters before 'lass mich kurz' so failure-mode-6 applies.
     text = (
         "Ich gehe das systematisch durch, "
-        "und im naechsten Schritt soll ich lass mich kurz nachdenken, "
+        "und im naechsten Schritt soll ich lass mich kurz nachdenken, "  # i18n-allow
         "und dann antworte ich."
     )
     pos = text.lower().find("lass mich kurz")
@@ -692,8 +692,8 @@ def test_tool_args_prose_without_tool_name_is_removed() -> None:
 def test_legitimate_is_sentence_is_kept() -> None:
     """Defense against a false positive: legitimate 'X is Y' sentences remain.
 
-    If the user says 'Die Hauptstadt ist Paris', or the brain answers
-    'Es ist halb drei' — NO match on TOOL_ARGS_PROSE_RE, because 'Die
+    If the user says 'Die Hauptstadt ist Paris', or the brain answers  # i18n-allow
+    'Es ist halb drei' — NO match on TOOL_ARGS_PROSE_RE, because 'Die  # i18n-allow
     Hauptstadt' and 'Es' are not tool-arg keys.
     """
     text = "Es ist halb drei. Die Datei ist gespeichert."  # i18n-allow

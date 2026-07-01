@@ -321,9 +321,9 @@ async def test_crash_recovery_is_not_announced(store_and_bus) -> None:
     ``startup_recover`` marks each still-in-flight mission FAILED with
     reason ``crash_recovery`` and emits a MissionFailed. Those missions
     were dispatched by voice in a PRIOR session, so ``is_voice`` is True and
-    the announcer would otherwise barge in with "Die Mission ist
+    the announcer would otherwise barge in with "Die Mission ist  # i18n-allow: quotes the actual German TTS readback phrase
     fehlgeschlagen." at interrupt priority — the user's "random Mission  # i18n-allow: quotes the actual German TTS readback phrase
-    fehlgeschlagen, although I never started one" complaint (deep-dive
+    fehlgeschlagen, although I never started one" complaint (deep-dive  # i18n-allow: quotes the actual German TTS readback phrase
     2026-05-29). crash_recovery is not actionable to the user; suppress it.
     """
     store, bus = store_and_bus

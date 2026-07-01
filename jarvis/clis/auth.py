@@ -64,7 +64,7 @@ class CliAuthManager:
         validate: bool = True,
     ) -> tuple[bool, str | None]:
         if spec.auth.type != "api_key":
-            return False, f"{spec.name} nutzt auth.type='{spec.auth.type}', nicht api_key"
+            return False, f"{spec.name} uses auth.type='{spec.auth.type}', not api_key"
 
         missing = [k for k in spec.auth.secret_keys if not secrets.get(k)]
         required = list(spec.auth.secret_keys)
@@ -81,7 +81,7 @@ class CliAuthManager:
                         os.environ[env_var] = secrets[key]
                 status = await self._prober.probe(spec)
                 if status.auth_status != "connected":
-                    return False, f"Validation fehlgeschlagen (status={status.auth_status})"
+                    return False, f"Validation failed (status={status.auth_status})"
             finally:
                 for env_var, old in backup.items():
                     if old is None:
@@ -91,12 +91,12 @@ class CliAuthManager:
 
         for key, value in secrets.items():
             if key not in spec.auth.secret_keys:
-                log.warning("auth: unerwarteter secret_key '%s' fuer %s", key, spec.name)
+                log.warning("auth: unexpected secret_key '%s' for %s", key, spec.name)
                 continue
             if not value:
                 continue
             if not set_secret(key, value):
-                return False, f"Keyring-Write fuer '{key}' fehlgeschlagen"
+                return False, f"Keyring write for '{key}' failed"
         return True, None
 
     def disconnect_api_key(self, spec: CliSpec) -> bool:
@@ -143,7 +143,7 @@ class CliAuthManager:
 
     async def disconnect_oauth(self, spec: CliSpec) -> tuple[bool, str | None]:
         if spec.auth.type != "oauth_cli" or not spec.auth.logout_command:
-            return False, "keine logout_command definiert"
+            return False, "no logout_command defined"
         proc = await asyncio.create_subprocess_exec(
             *spec.auth.logout_command,
             stdout=asyncio.subprocess.PIPE,
@@ -164,7 +164,7 @@ class CliAuthManager:
         *,
         on_line: callable | None,  # type: ignore[type-arg]
     ) -> Literal["connected", "timeout", "cancelled", "error"]:
-        assert spec.auth.login_command, "precondition: login_command muss gesetzt sein"
+        assert spec.auth.login_command, "precondition: login_command must be set"
         try:
             proc = await asyncio.create_subprocess_exec(
                 *spec.auth.login_command,

@@ -2,8 +2,8 @@
 
 Why this exists
 ---------------
-Live voice session (2026-06-30): Jarvis offered "Soll ich die anlegen?", the
-user confirmed "ja, legt die mal an … die Mailadresse von Harald ist …", and
+Live voice session (2026-06-30): Jarvis offered "Soll ich die anlegen?", the  # i18n-allow: forensic voice-bug docstring quoting the real German utterances involved
+user confirmed "ja, legt die mal an … die Mailadresse von Harald ist …", and  # i18n-allow: forensic voice-bug docstring quoting the real German utterances involved
 Jarvis answered "Okay, sehr gut" — but never called the ``contact-upsert`` tool,
 so the address book stayed empty. The capability was fully wired; the gap was at
 the brain decision layer (it acknowledged in words instead of acting).
@@ -20,7 +20,7 @@ Falsely "correcting" the user is a hard anti-pattern here (the maintainer turned
 the generic clarify question OFF for exactly that reason). So the detector fires
 only on high-confidence signals — a genitive contact detail ("Christophs Nummer
 ist …") alone, or a save verb corroborated by a contact noun / dictated detail.
-A bare "die Nummer ist falsch" or "schick Harald eine Mail" must NOT fire.
+A bare "die Nummer ist falsch" or "schick Harald eine Mail" must NOT fire.  # i18n-allow: forensic voice-bug docstring quoting German counter-example utterances the classifier must NOT match
 """
 
 from __future__ import annotations

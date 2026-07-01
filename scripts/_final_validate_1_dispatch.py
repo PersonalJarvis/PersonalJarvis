@@ -231,7 +231,7 @@ def main() -> int:
     toml_p, soll_p = probe_drift()  # i18n-allow: identifier name, not translatable prose
     print(f"  jarvis.toml [brain.sub_jarvis].provider          = {toml_p!r}")
     print(f"  config-soll.json brain.sub_jarvis.provider       = {soll_p!r}")  # i18n-allow: filename identifier, not translatable prose
-    if toml_p == soll_p == "claude-api":
+    if toml_p == soll_p == "claude-api":  # i18n-allow: identifier name, not translatable prose
         print("  PASS (both = claude-api)")
     else:
         fails.append(f"drift: toml={toml_p}, soll={soll_p}")  # i18n-allow: identifier name, not translatable prose

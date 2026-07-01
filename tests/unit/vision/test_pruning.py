@@ -170,7 +170,7 @@ def test_prune_tree_empty_input():
 
 
 # ---------------------------------------------------------------------------
-# Performance budget for a 5000-node tree (mandate §Pattern-Warnung)
+# Performance budget for a 5000-node tree (mandate §pattern-warning)
 # ---------------------------------------------------------------------------
 
 def test_prune_tree_budget_under_300ms_for_5000_nodes():

@@ -187,28 +187,28 @@ rename to new/.env
 
 
 def test_prompt_with_explicit_ssh_path() -> None:
-    found = check_prompt_for_blocked_paths("Bitte zeig mir ~/.ssh/id_rsa an.")
+    found = check_prompt_for_blocked_paths("Bitte zeig mir ~/.ssh/id_rsa an.")  # i18n-allow
     assert any(".ssh" in p for p in found) or any("id_rsa" in p for p in found)
 
 
 def test_prompt_with_dotenv_path() -> None:
-    found = check_prompt_for_blocked_paths("Lies das .env file im /project/ Ordner")
+    found = check_prompt_for_blocked_paths("Lies das .env file im /project/ Ordner")  # i18n-allow
     # `.env` alone does NOT match (no slash/dot prefix as token start) —
     # we want to avoid false positives on phrases like "the env variable".
     # If someone explicitly writes "/project/.env", that should match.
-    found2 = check_prompt_for_blocked_paths("zeig /project/.env")
+    found2 = check_prompt_for_blocked_paths("zeig /project/.env")  # i18n-allow
     assert any(".env" in p for p in found2)
 
 
 def test_prompt_without_paths_no_match() -> None:
     """A harmless prompt must produce NO matches."""
-    found = check_prompt_for_blocked_paths("Schreibe eine Funktion is_palindrome")
+    found = check_prompt_for_blocked_paths("Schreibe eine Funktion is_palindrome")  # i18n-allow
     assert found == []
 
 
 def test_prompt_mentioning_env_word_not_match() -> None:
     """`die env Variable` must NOT match as a path — only real paths."""
-    found = check_prompt_for_blocked_paths("Setze die env Variable auf foo")
+    found = check_prompt_for_blocked_paths("Setze die env Variable auf foo")  # i18n-allow
     assert found == []
 
 

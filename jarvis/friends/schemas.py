@@ -25,14 +25,14 @@ class StatusUpdate(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    event_type: str = Field(..., description="Class-Name des Original-Events")
-    timestamp_ns: int = Field(..., description="Original-timestamp_ns aus dem Event")
+    event_type: str = Field(..., description="Class name of the original event")
+    timestamp_ns: int = Field(..., description="Original timestamp_ns from the event")
     fields: dict[str, Any] = Field(
         default_factory=dict,
-        description="Gefilterte Payload — nur per Profile erlaubte Felder.",
+        description="Filtered payload — only fields allowed by the profile.",
     )
     profile_used: StatusProfile = Field(
-        ..., description="Profile, das diesen Update freigegeben hat"
+        ..., description="Profile that approved this update"
     )
 
 

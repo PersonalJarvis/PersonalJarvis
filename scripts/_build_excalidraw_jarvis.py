@@ -227,7 +227,7 @@ for i, (eid, title, fill, st, ref, detail) in enumerate(steps):
 # Evidence artifacts beside the main flow
 code_box("ev_force", ex, ey0 + 5, 560, 120, [
     ('_WHISPER_FP_EXACT_ONLY = {"you","musik",', C["code_tx2"]),
-    ('   "applaus","subscribe","tschüss",...}', C["code_tx2"]),
+    ('   "applaus","subscribe","tschüss",...}', C["code_tx2"]),  # i18n-allow: reproduces the actual German STT false-positive word list
     ('# exact match only → "You there?" passes', C["code_gr"]),
     ('_WHISPER_FP_PREFIX_OK = {"vielen dank",', C["code_tx2"]),
     ('   "thanks for watching",...}  # startswith', C["code_tx2"]),

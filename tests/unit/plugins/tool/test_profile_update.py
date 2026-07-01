@@ -82,11 +82,9 @@ values:
   - Pizza
 ---
 
-# Ueber den User
-<!-- i18n-allow: matches the real (currently German) header rendered by UserProfile -->
+# About the User
 
-## Observations ueber Zeit
-<!-- i18n-allow: matches the real (currently German) header rendered by UserProfile -->
+## Observations over time
 
 <!-- curator:observations:start -->
 <!-- curator:observations:end -->

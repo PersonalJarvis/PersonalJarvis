@@ -68,7 +68,7 @@ DEFAULT_VOICES: tuple[str, ...] = (
 )
 
 # Sentence splitter: identical to GeminiFlashTTS — DE+EN capital lookahead.
-_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[A-ZÄÖÜ])")
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[A-ZÄÖÜ])")  # i18n-allow: DE+EN capital-letter lookahead, matched in logic
 
 
 class GrokVoiceTTS:

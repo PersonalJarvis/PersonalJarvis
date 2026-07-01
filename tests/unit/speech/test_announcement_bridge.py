@@ -155,8 +155,8 @@ async def test_announcement_bypass_skips_brain() -> None:
 
 @pytest.mark.asyncio
 async def test_announcement_interrupt_calls_player_stop_before_play() -> None:
-    """Bei ``priority="interrupt"`` wird erst ``player.stop()`` gerufen,
-    dann ``synthesize()`` + ``play_chunks()`` — in dieser Reihenfolge."""
+    """With ``priority="interrupt"``, ``player.stop()`` is called first,
+    then ``synthesize()`` + ``play_chunks()`` — in that order."""
     bus = EventBus()
     tts = FakeTTS()
     player = FakePlayer()
@@ -260,8 +260,8 @@ async def test_openclaw_background_success_with_summary_speaks() -> None:
 
 
 @pytest.mark.asyncio
-async def test_openclaw_background_success_no_summary_speaks_fertig() -> None:
-    """Success with no summary → ``"Fertig."`` (output-filter-safe)."""
+async def test_openclaw_background_success_no_summary_speaks_fertig() -> None:  # i18n-allow: identifier name, not translatable prose
+    """Success with no summary → ``"Fertig."`` (output-filter-safe)."""  # i18n-allow: quotes the actual German TTS output under test
     bus = EventBus()
     tts = FakeTTS()
     player = FakePlayer()
@@ -279,7 +279,7 @@ async def test_openclaw_background_success_no_summary_speaks_fertig() -> None:
 
 @pytest.mark.asyncio
 async def test_openclaw_background_failure_speaks_error() -> None:
-    """``success=False`` → error announcement ``"Das hat nicht geklappt. ..."``."""
+    """``success=False`` → error announcement ``"Das hat nicht geklappt. ..."``."""  # i18n-allow: quotes the actual German TTS output under test
     bus = EventBus()
     tts = FakeTTS()
     player = FakePlayer()

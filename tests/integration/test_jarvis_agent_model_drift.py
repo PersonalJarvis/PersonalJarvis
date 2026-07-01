@@ -146,7 +146,7 @@ def test_jarvis_toml_model_pins_match_soll() -> None:  # i18n-allow
     assert not mismatches, (
         "jarvis.toml drifted from config-soll.json on worker/critic model "
         "pins — the live resolver reads jarvis.toml, so the soll-approved fix "
-        "never reached the running worker:\n" + "\n".join(mismatches)
+        "never reached the running worker:\n" + "\n".join(mismatches)  # i18n-allow
     )
 
 
