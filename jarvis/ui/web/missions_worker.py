@@ -1,21 +1,21 @@
-"""OpenClaw-Worker-Aggregator fuer das Mission-Detail-API.
+"""OpenClaw worker aggregator for the mission-detail API.
 
-Phase 9 (Welle 4 UI): Wenn der OpenClaw-Harness in den Mission-Manager-Worker-
-Layer verdrahtet wird, emittiert er ``WorkerSpawned``-Events mit einer
-session_id und ``step["harness"] == "openclaw"``. Dieser Aggregator zieht aus
-dem Event-Stream einer Mission alle OpenClaw-spezifischen UI-Felder ab —
+Phase 9 (Welle 4 UI): once the OpenClaw harness is wired into the
+mission-manager worker layer, it emits ``WorkerSpawned`` events with a
+session_id and ``step["harness"] == "openclaw"``. This aggregator pulls all
+OpenClaw-specific UI fields out of a mission's event stream —
 ``state_dir``, ``log_path``, ``reattach_status``, ``cost_usd``, ``tokens``.
 
-Pure helpers, keine IO. Tests hierzu liegen in
+Pure helpers, no IO. Tests for this live in
 ``tests/missions/api/test_missions_worker_aggregator.py``.
 
-Vertrag-Kompatibilitaet (siehe ``docs/openclaw-bridge.md``):
-- ``MISSION_STATE_DIR`` Konvention aus ``OpenClawHarness._build_spec``:
+Contract compatibility (see ``docs/openclaw-bridge.md``):
+- ``MISSION_STATE_DIR`` convention from ``OpenClawHarness._build_spec``:
   ``<worktree>/.openclaw_state/<session_id>/openclaw_state``.
-- ``log_path`` Konvention: OpenClaw schreibt ``run.log`` ins state_dir
-  (siehe Welle-3 spike-results §SP-4).
-- Reattach-Status: ``live`` solange weder ``WorkerKilled`` noch ein
-  Mission-Terminal-Event nachfolgt; sonst ``ended``/``killed``.
+- ``log_path`` convention: OpenClaw writes ``run.log`` into state_dir
+  (see the Welle-3 spike results §SP-4).
+- Reattach status: ``live`` as long as neither ``WorkerKilled`` nor a
+  mission-terminal event follows; otherwise ``ended``/``killed``.
 """
 from __future__ import annotations
 
@@ -29,15 +29,15 @@ ReattachStatus = Literal["live", "ended", "killed", "unknown"]
 
 
 def _is_worker_mission(spawn_payload: Any) -> bool:
-    """Detection-Heuristik fuer OpenClaw-Worker.
+    """Detection heuristic for an OpenClaw worker.
 
-    Primaer: ``step["harness"] == "openclaw"`` — das ist der kanonische Marker
-    sobald der Worker-Layer den OpenClaw-Harness ruft.
+    Primary: ``step["harness"] == "openclaw"`` — this is the canonical marker
+    once the worker layer calls the OpenClaw harness.
 
-    Fallback: ``session_id is not None`` UND ``model`` enthaelt einen
-    ``provider/model``-Slash (Provider-Prefix-Konvention von OpenClaw, siehe
-    ``OpenClawHarness.build_spawn_args``). Damit greift die UI auch wenn der
-    Worker-Layer den ``step``-Marker noch nicht setzt.
+    Fallback: ``session_id is not None`` AND ``model`` contains a
+    ``provider/model`` slash (OpenClaw's provider-prefix convention, see
+    ``OpenClawHarness.build_spawn_args``). This way the UI still works even
+    when the worker layer doesn't set the ``step`` marker yet.
     """
     step = getattr(spawn_payload, "step", None) or {}
     if isinstance(step, dict) and step.get("harness") == "openclaw":
@@ -49,9 +49,9 @@ def _is_worker_mission(spawn_payload: Any) -> bool:
 
 
 def _derive_state_dir(worktree: str, session_id: str) -> str:
-    """Reproduziert ``OpenClawHarness._build_spec``-Konvention.
+    """Reproduces the ``OpenClawHarness._build_spec`` convention.
 
-    Gibt einen *forward-slash*-pfad zurueck (UI-friendly auch auf Windows).
+    Returns a *forward-slash* path (UI-friendly even on Windows).
     """
     if not worktree or not session_id:
         return ""
@@ -61,7 +61,7 @@ def _derive_state_dir(worktree: str, session_id: str) -> str:
 
 
 def _derive_log_path(state_dir: str) -> str:
-    """OpenClaw schreibt ``run.log`` ins state_dir (Welle-3 SP-4 Befund)."""
+    """OpenClaw writes ``run.log`` into state_dir (Welle-3 SP-4 finding)."""
     if not state_dir:
         return ""
     return f"{state_dir}/run.log"
@@ -70,23 +70,23 @@ def _derive_log_path(state_dir: str) -> str:
 def extract_worker_missions(
     events: Iterable[EventEnvelope],
 ) -> list[dict[str, Any]]:
-    """Aggregiert OpenClaw-Worker-Snapshots aus einem Event-Stream.
+    """Aggregates OpenClaw worker snapshots from an event stream.
 
-    Idempotent + ohne IO. Die Reihenfolge der Eintraege entspricht der
-    chronologischen Spawn-Reihenfolge.
+    Idempotent + no IO. Entry order matches the
+    chronological spawn order.
 
-    Felder pro Worker:
+    Fields per worker:
         worker_id, model, session_id, state_dir, log_path,
         cost_usd, tokens_used, reattach_status, spawned_ms, ended_ms,
         ended_reason
 
-    Aggregations-Regeln:
-        - ``cost_usd`` = letzter ``WorkerProgress.cost_so_far`` ODER
-          ``WorkerDraftReady.cost_usd`` (was zuletzt kam, gewinnt).
-        - ``tokens_used`` analog ueber ``tokens_so_far`` / ``tokens_used``.
-        - ``reattach_status``: ``killed`` wenn ``WorkerKilled`` gesehen,
-          ``ended`` wenn Mission terminal (APPROVED/FAILED/CANCELLED/
-          TIMED_OUT) ohne explizites Kill, sonst ``live``.
+    Aggregation rules:
+        - ``cost_usd`` = the latest ``WorkerProgress.cost_so_far`` OR
+          ``WorkerDraftReady.cost_usd`` (whichever came last wins).
+        - ``tokens_used`` analogously via ``tokens_so_far`` / ``tokens_used``.
+        - ``reattach_status``: ``killed`` if ``WorkerKilled`` was seen,
+          ``ended`` if the mission is terminal (APPROVED/FAILED/CANCELLED/
+          TIMED_OUT) without an explicit kill, else ``live``.
     """
     workers: dict[str, dict[str, Any]] = {}
     spawn_order: list[str] = []
@@ -148,8 +148,8 @@ def extract_worker_missions(
             w["ended_reason"] = payload.reason
 
         elif et in ("MissionApproved", "MissionFailed", "MissionCancelled", "MissionTimedOut"):
-            # Terminal-State der ganzen Mission — alle live-Worker als ended
-            # markieren (sofern nicht bereits killed).
+            # Terminal state of the whole mission — mark all live workers as
+            # ended (unless already killed).
             mission_terminal_reason = {
                 "MissionApproved": "mission_approved",
                 "MissionFailed": "mission_failed",
