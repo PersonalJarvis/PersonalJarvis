@@ -83,7 +83,7 @@ async def test_execute_returns_honest_failure_when_manager_none() -> None:
     )
     assert result.success is False
     assert result.error is not None
-    assert "Der Hintergrund-Worker ist noch nicht bereit" in result.error
+    assert "Der Hintergrund-Worker ist noch nicht bereit" in result.error  # i18n-allow (matches production error text)
 
 
 @pytest.mark.asyncio
@@ -294,8 +294,8 @@ def test_set_worker_bootstrap_failed_round_trips() -> None:
 @pytest.mark.asyncio
 async def test_execute_short_circuits_on_bootstrap_failed() -> None:
     """When the bootstrap-failed sentinel is set, spawn_worker must
-    return the permanent-failure ack ("konnte nicht initialisiert werden")
-    INSTEAD of the transient "noch nicht bereit" message. The user is
+    return the permanent-failure ack ("konnte nicht initialisiert werden")  # i18n-allow (matches production error text)
+    INSTEAD of the transient "noch nicht bereit" message. The user is  # i18n-allow (matches production error text)
     otherwise told to wait for something that will never happen."""
     brain = build_default_brain(tier="router")
     tool = brain._tools["spawn_worker"]
@@ -307,6 +307,6 @@ async def test_execute_short_circuits_on_bootstrap_failed() -> None:
     )
     assert result.success is False
     assert result.error is not None
-    assert "konnte nicht initialisiert werden" in result.error
+    assert "konnte nicht initialisiert werden" in result.error  # i18n-allow (matches production error text)
     # Make sure we didn't fall through to the transient-failure branch.
-    assert "noch nicht bereit" not in result.error
+    assert "noch nicht bereit" not in result.error  # i18n-allow (matches production error text)
