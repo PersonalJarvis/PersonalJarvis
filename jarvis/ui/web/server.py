@@ -1089,7 +1089,7 @@ class WebServer:
                 _drop_stalled_client()
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning(
-                    "WS-Forward fehlgeschlagen",
+                    "WS forward failed",
                     session_id=session_id,
                     event=type(event).__name__,
                 )
@@ -1123,7 +1123,7 @@ class WebServer:
                     # Recoverable: a malformed frame from a still-connected
                     # client (bad JSON). Notify and keep listening.
                     logger.opt(exception=exc).warning(
-                        "WS-Decode-Fehler",
+                        "WS decode error",
                         session_id=session_id,
                     )
                     await self.bus.publish(
@@ -1156,7 +1156,7 @@ class WebServer:
                 )
             )
         finally:
-            # Unsubscribe zur Memory-Leak-Vermeidung.
+            # Unsubscribe to avoid a memory leak.
             try:
                 self.bus._wildcard_subscribers.remove(_forward)  # type: ignore[attr-defined]
             except ValueError:
@@ -1173,7 +1173,7 @@ class WebServer:
         raw: Any,
         send_lock: asyncio.Lock,
     ) -> None:
-        """Validiert und dispatched eine eingehende WS-Frame."""
+        """Validates and dispatches an incoming WS frame."""
         if not isinstance(raw, dict):
             await self.bus.publish(
                 ErrorOccurred(
@@ -1213,7 +1213,7 @@ class WebServer:
                     )
                 )
         except ValidationError as exc:
-            logger.warning("WS-Frame-Validation", errors=exc.errors())
+            logger.warning("WS frame validation error", errors=exc.errors())
             await self.bus.publish(
                 ErrorOccurred(
                     layer="ui.web.ws",
@@ -1251,8 +1251,8 @@ class WebServer:
             await self._handle_dictation(cmd.payload)
         elif cmd.action == "mission.inject":
             await self._handle_mission_inject(session_id, cmd.payload)
-        # provider_switch/set_state laufen jetzt über REST (POST /api/brain/switch
-        # bzw. POST /api/secrets/{key}). Doppelte Code-Pfade hier entfernt.
+        # provider_switch/set_state now run over REST (POST /api/brain/switch
+        # or POST /api/secrets/{key}). Duplicate code paths removed here.
 
     async def _handle_mission_inject(
         self, session_id: str, payload: dict[str, Any]
