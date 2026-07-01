@@ -422,9 +422,9 @@ class BootstrapRunner:
 def _trim_name(raw: str | None) -> str:
     """Strips trailing junk after the name and capitalizes it.
 
-    Examples:
-        "ruben, aber nenn mich rube" → "Ruben"
-        "Ruben Lütke"                → "Ruben Lütke"
+    Examples (real German voice input the parser must handle):
+        "ruben, aber nenn mich rube" → "Ruben"  # i18n-allow
+        "Ruben Lütke"                → "Ruben Lütke"  # i18n-allow
         "  harald  "                 → "Harald"
     """
     if not raw:
@@ -463,7 +463,7 @@ def _detect_languages(text: str) -> list[str]:
 def _extract_peeves(text: str) -> list[str]:
     """Splits a pet-peeves text into clean fragments.
 
-    "keine Emojis, keine Confirmation-Fragen und kein Small-Talk" →
+    "keine Emojis, keine Confirmation-Fragen und kein Small-Talk" →  # i18n-allow
     ["Emojis", "Confirmation-Fragen", "Small-Talk"]
     """
     fragments = _PEEVE_SPLIT_RE.split(text)
@@ -486,9 +486,9 @@ def _extract_peeves(text: str) -> list[str]:
 def _clean_peeve(fragment: str) -> str:
     """Normalises a single pet-peeve fragment.
 
-    - "keine Emojis" → "Emojis"
+    - "keine Emojis" → "Emojis"  # i18n-allow
     - "no fluff"     → "fluff"
-    - "  und dann "  → "" (empty, dropped)
+    - "  und dann "  → "" (empty, dropped)  # i18n-allow
     """
     s = fragment.strip().strip('"\'.,;:!?')
     if not s:
