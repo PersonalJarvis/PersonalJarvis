@@ -164,9 +164,13 @@ def _build_local_fallback(stt_cfg: Any, language: str | None) -> Any:
     from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
 
     return FasterWhisperProvider(
+        # CPU-safe defaults: a stranger with no NVIDIA GPU is the baseline, not
+        # the maintainer's card. If a real STTConfig is passed its explicit
+        # device/compute_type win; the getattr defaults only bite duck-typed
+        # stubs, and they must presume no GPU (fwhisper still self-heals to CPU).
         model=getattr(stt_cfg, "model", "distil-large-v3"),
-        device=getattr(stt_cfg, "device", "cuda"),
-        compute_type=getattr(stt_cfg, "compute_type", "int8_float16"),
+        device=getattr(stt_cfg, "device", "cpu"),
+        compute_type=getattr(stt_cfg, "compute_type", "int8"),
         language=language,
     )
 

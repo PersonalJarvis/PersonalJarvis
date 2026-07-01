@@ -10,7 +10,7 @@ Steps:
     2. Install Personal Jarvis editable + runtime deps via pip.
     3. Optionally install the ``[desktop]`` extras (Windows + macOS GUI
        users; skipped on headless Linux servers unless ``--with-desktop``).
-    4. Optionally install ``[voice-local]`` extras (faster-whisper, Silero,
+    4. Optionally install ``[local-voice]`` extras (faster-whisper, Silero,
        openWakeWord). Off by default — 1.5 GB model download.
     5. Run the existing first-run wizard (``python -m jarvis --wizard``)
        unless ``--no-wizard``.
@@ -192,8 +192,8 @@ def step_pip_install(*, with_desktop: bool, with_voice_local: bool, dry_run: boo
     if with_desktop:
         plans.append(("desktop extras", pip + ["install", "-e", ".[desktop]"]))
     if with_voice_local:
-        plans.append(("voice-local extras (faster-whisper, Silero, openWakeWord)",
-                      pip + ["install", "-e", ".[voice-local]"]))
+        plans.append(("local-voice extras (faster-whisper, Silero, openWakeWord)",
+                      pip + ["install", "-e", ".[local-voice]"]))
 
     note("this can take a minute — grabbing dependencies")
 
