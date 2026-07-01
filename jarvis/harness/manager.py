@@ -1,7 +1,8 @@
-"""HarnessManager: Entry-Point-Discovery, Health-Check, Dispatch, Parallel.
+"""HarnessManager: entry-point discovery, health check, dispatch, parallel.
 
-Analog zum BrainManager: lazy-load der Plugins via `importlib.metadata.entry_points`,
-Fallback-Chain wenn primary fehlt, `dispatch(name, task)` als Streaming-Iterator.
+Analogous to BrainManager: lazy-loads plugins via `importlib.metadata.entry_points`,
+falls back through a chain when primary is missing, `dispatch(name, task)` as a
+streaming iterator.
 """
 from __future__ import annotations
 

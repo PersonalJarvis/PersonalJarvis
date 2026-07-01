@@ -247,9 +247,9 @@ def recommend_whisper(report: HardwareReport) -> WhisperRecommendation:
                 compute_type="int8",
                 expected_latency_ms=1200,
                 rationale=(
-                    "Keine CUDA-fähige GPU erkannt. CPU-Mode mit 'base' liefert "
-                    "akzeptable Qualität bei ~1s Latenz für 5s Audio. "
-                    "Für bessere Latenz: OpenAI Whisper API als Fallback konfigurieren."
+                    "No CUDA-capable GPU detected. CPU mode with 'base' delivers "
+                    "acceptable quality at ~1s latency for 5s audio. "
+                    "For better latency, configure the OpenAI Whisper API as a fallback."
                 ),
             )
         return WhisperRecommendation(
@@ -259,8 +259,8 @@ def recommend_whisper(report: HardwareReport) -> WhisperRecommendation:
             compute_type="fp16",
             expected_latency_ms=400,
             rationale=(
-                "Wenig lokale Ressourcen. OpenAI Whisper API empfohlen — "
-                "API-Key wird im Setup-Wizard abgefragt."
+                "Limited local resources. OpenAI Whisper API recommended — "
+                "the API key is requested in the setup wizard."
             ),
         )
 
@@ -273,8 +273,8 @@ def recommend_whisper(report: HardwareReport) -> WhisperRecommendation:
             compute_type="int8_float16",
             expected_latency_ms=250,
             rationale=(
-                f"NVIDIA-GPU mit {vram} MB VRAM — läuft distil-large-v3 (multilingual DE+EN) "
-                f"mit ~250ms Latenz. Optimum für lokale Privacy + niedrige Latenz."
+                f"NVIDIA GPU with {vram} MB VRAM — runs distil-large-v3 (multilingual DE+EN) "
+                f"at ~250ms latency. Optimal for local privacy + low latency."
             ),
         )
     if vram >= 4000:
@@ -285,9 +285,9 @@ def recommend_whisper(report: HardwareReport) -> WhisperRecommendation:
             compute_type="int8_float16",
             expected_latency_ms=200,
             rationale=(
-                f"NVIDIA-GPU mit {vram} MB VRAM — distil-small empfohlen "
-                f"(~200ms Latenz, 97% Qualität). Für höhere Präzision später auf "
-                f"distil-large-v3 umschaltbar wenn VRAM frei."
+                f"NVIDIA GPU with {vram} MB VRAM — distil-small recommended "
+                f"(~200ms latency, 97% quality). Switchable to distil-large-v3 later "
+                f"for higher precision once VRAM frees up."
             ),
         )
     return WhisperRecommendation(
@@ -297,8 +297,8 @@ def recommend_whisper(report: HardwareReport) -> WhisperRecommendation:
         compute_type="int8_float16",
         expected_latency_ms=180,
         rationale=(
-            f"NVIDIA-GPU mit nur {vram} MB VRAM — 'base' Modell passt. "
-            f"Qualität reicht für Deutsch/Englisch, Latenz ~180ms."
+            f"NVIDIA GPU with only {vram} MB VRAM — 'base' model fits. "
+            f"Quality is sufficient for German/English, latency ~180ms."
         ),
     )
 
@@ -310,14 +310,14 @@ def recommend_whisper(report: HardwareReport) -> WhisperRecommendation:
 def _format_report(report: HardwareReport, rec: WhisperRecommendation) -> str:
     lines = [
         "╔══════════════════════════════════════════════════════════╗",
-        "║  Jarvis Hardware-Analyse                                 ║",
+        "║  Jarvis Hardware Analysis                                ║",
         "╚══════════════════════════════════════════════════════════╝",
         "",
         f"OS:            {report.os_name} {report.os_version.split()[0] if report.os_version else ''}",
         f"Python:        {report.python_version} ({report.python_executable})",
         f"CPU:           {report.cpu_name}",
         f"               {report.cpu_cores_physical} phys / {report.cpu_cores_logical} log cores",
-        f"RAM:           {report.ram_total_mb} MB total, {report.ram_available_mb} MB frei",
+        f"RAM:           {report.ram_total_mb} MB total, {report.ram_available_mb} MB free",
         "",
     ]
     if report.gpus:
@@ -326,37 +326,37 @@ def _format_report(report: HardwareReport, rec: WhisperRecommendation) -> str:
             if gpu.compute_capability:
                 lines.append(f"               Compute Capability: {gpu.compute_capability}")
     else:
-        lines.append("GPU:           keine NVIDIA-GPU erkannt")
+        lines.append("GPU:           no NVIDIA GPU detected")
 
     lines.extend(
         [
-            f"CUDA Runtime:  {report.cuda_runtime or 'nicht installiert'}",
-            f"PyTorch CUDA:  {'✓ verfügbar' if report.torch_cuda_available else '✗ nicht verfügbar'}",
-            f"ffmpeg:        {report.ffmpeg_version or 'NICHT gefunden — bitte installieren'}",
+            f"CUDA Runtime:  {report.cuda_runtime or 'not installed'}",
+            f"PyTorch CUDA:  {'✓ available' if report.torch_cuda_available else '✗ not available'}",
+            f"ffmpeg:        {report.ffmpeg_version or 'NOT FOUND — please install'}",
             "",
-            "Vorinstallierte Packages:",
+            "Pre-installed packages:",
         ]
     )
     if report.existing_installs:
         for pkg, version in sorted(report.existing_installs.items()):
             lines.append(f"  - {pkg}: {version}")
     else:
-        lines.append("  (keine relevanten Jarvis-Dependencies vorinstalliert)")
+        lines.append("  (no relevant Jarvis dependencies pre-installed)")
 
     lines.extend(
         [
             "",
             "╔══════════════════════════════════════════════════════════╗",
-            "║  Whisper-Empfehlung                                      ║",
+            "║  Whisper Recommendation                                  ║",
             "╚══════════════════════════════════════════════════════════╝",
             "",
             f"Provider:      {rec.provider}",
-            f"Modell:        {rec.model}",
+            f"Model:         {rec.model}",
             f"Device:        {rec.device}",
-            f"Compute-Type:  {rec.compute_type}",
-            f"Latenz (erw.): ~{rec.expected_latency_ms}ms für 5s Audio",
+            f"Compute type:  {rec.compute_type}",
+            f"Latency (est): ~{rec.expected_latency_ms}ms for 5s audio",
             "",
-            "Begründung:",
+            "Rationale:",
             f"  {rec.rationale}",
             "",
         ]

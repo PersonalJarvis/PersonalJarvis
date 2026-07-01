@@ -1,11 +1,12 @@
-﻿"""Contract-Tests: alle aktiven Brain-Provider erfüllen strukturell das Brain-Protocol.
+﻿"""Contract tests: every active Brain provider structurally satisfies the Brain protocol.
 
-Die Provider werden **nicht** instanziiert (würde API-Keys verlangen), sondern
-es wird nur geprüft, dass die Klassen die Pflichtfelder + Methoden haben.
+The providers are **not** instantiated (that would require API keys); instead
+we only check that the classes have the required fields + methods.
 
-Ollama-Provider wurden 2025 via `f646273 chore: Ollama komplett entfernt` aus
-dem Repo entfernt (jarvis.toml-Kommentar: "Ollama-Provider entfernt"). Die
-erwartete Liste wurde damals nicht mit-aktualisiert — hier nachgezogen.
+Ollama providers were removed from the repo in 2025 via commit
+`f646273 chore: Ollama komplett entfernt` (the jarvis.toml comment at the
+time read: "Ollama-Provider entfernt"). The expected list wasn't updated
+along with it back then — caught up here.
 """
 from __future__ import annotations
 
@@ -54,5 +55,5 @@ def test_provider_has_required_attributes(registry, name):
 @pytest.mark.parametrize("name", BRAIN_PROVIDERS)
 def test_provider_name_matches_registration(registry, name):
     cls = registry.get_class(name)
-    # Class-Attr "name" muss dem Entry-Point-Namen entsprechen
+    # Class attr "name" must match the entry-point name
     assert cls.name == name, f"{cls.__name__}.name = {cls.name!r}, Entry-Point = {name!r}"
