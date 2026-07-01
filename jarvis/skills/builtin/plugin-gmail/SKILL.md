@@ -5,11 +5,11 @@ description: Read and send email from the user's connected Gmail inbox.
 when_to_use: Use when the user mentions Gmail, their inbox, or mail and wants to read, search, send, or answer email.
 category: communication
 plugin_id: gmail
-intent_verbs: [lies, lese, schick, sende, antworte, zeig, check]
-intent_objects: [postfach, inbox, gmail, mail, email, e-mail, mails, nachrichten, posteingang]
+intent_verbs: [lies, lese, schick, sende, antworte, zeig, check]  # i18n-allow
+intent_objects: [postfach, inbox, gmail, mail, email, e-mail, mails, nachrichten, posteingang]  # i18n-allow
 triggers:
   - type: voice
-    pattern: "(gmail|postfach|posteingang|meine? mails?|neue mails?)"
+    pattern: "(gmail|postfach|posteingang|meine? mails?|neue mails?)"  # i18n-allow
 requires_tools: [gmail]
 risk_policy:
   default_tier: ask

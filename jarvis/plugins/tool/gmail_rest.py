@@ -31,6 +31,72 @@ _NEEDS_RECONNECT = (
     "please reconnect Gmail in the Plugins view."
 )
 
+# A raw Gmail ``format=full`` message is ~20k+ chars of Received/ARC/DKIM
+# headers, the full MIME part tree and base64 body — feeding it into the model
+# context slowed a voice turn to ~20 s and added no answer value (live bug
+# 2026-07-01 "Was steht alles in meinen E-Mails drin?"). We project a read down
+# to the fields that actually answer a mail question and cap the plain-text body.
+_GMAIL_BODY_CHAR_CAP = 2000
+
+
+def _decode_b64url(data: str) -> str:
+    try:
+        return base64.urlsafe_b64decode(data.encode("ascii")).decode("utf-8", "replace")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _strip_html(html: str) -> str:
+    import re
+
+    text = re.sub(r"<[^>]+>", " ", html)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _find_part_data(payload: dict[str, Any], mime: str) -> str | None:
+    """Depth-first search for the first MIME part of ``mime`` that carries body
+    data, returning the raw base64url string (or ``None``)."""
+    if payload.get("mimeType") == mime:
+        data = (payload.get("body") or {}).get("data")
+        if data:
+            return data
+    for part in payload.get("parts") or []:
+        found = _find_part_data(part, mime)
+        if found:
+            return found
+    return None
+
+
+def _slim_gmail_message(raw: dict[str, Any]) -> dict[str, Any]:
+    """Project a raw Gmail ``format=full`` message to sender/recipients/subject/
+    date/label-state/snippet plus a decoded, length-capped plain-text body.
+    Prefers a ``text/plain`` part; falls back to a stripped ``text/html`` part."""
+    payload = raw.get("payload") or {}
+    headers = {
+        (h.get("name") or "").lower(): h.get("value", "")
+        for h in (payload.get("headers") or [])
+    }
+    plain = _find_part_data(payload, "text/plain")
+    if plain:
+        body = _decode_b64url(plain)
+    else:
+        html = _find_part_data(payload, "text/html")
+        body = _strip_html(_decode_b64url(html)) if html else ""
+    if len(body) > _GMAIL_BODY_CHAR_CAP:
+        body = body[:_GMAIL_BODY_CHAR_CAP] + "… [truncated]"
+    return {
+        "id": raw.get("id"),
+        "threadId": raw.get("threadId"),
+        "labelIds": raw.get("labelIds", []),
+        "from": headers.get("from", ""),
+        "to": headers.get("to", ""),
+        "cc": headers.get("cc", ""),
+        "subject": headers.get("subject", ""),
+        "date": headers.get("date", ""),
+        "snippet": raw.get("snippet", ""),
+        "body": body,
+    }
+
 
 def _default_token_provider() -> str | None:
     from jarvis.marketplace.token_store import TokenStore
@@ -231,4 +297,9 @@ class GmailRestTool:
 
         if isinstance(out, dict) and out.get("error"):
             return ToolResult(success=False, output=None, error=out["error"])
+        # A read returns the whole raw message; slim it before it reaches the
+        # brain's context (list_messages is already just IDs, send returns a tiny
+        # ack — neither needs projecting).
+        if action == "get_message" and isinstance(out, dict):
+            out = _slim_gmail_message(out)
         return ToolResult(success=True, output=out)

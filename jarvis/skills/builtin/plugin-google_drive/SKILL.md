@@ -5,11 +5,11 @@ description: Search, read, and manage files in the user's Google Drive.
 when_to_use: Use when the user mentions Google Drive or wants to search, read, share, or manage Drive files.
 category: productivity
 plugin_id: google_drive
-intent_verbs: [zeig, lies, such, öffne, teil, lade] <!-- i18n-allow -->
-intent_objects: [drive, google-drive, google-drive-datei, google-drive-ordner, gdrive]
+intent_verbs: [zeig, lies, such, öffne, teil, lade]  # i18n-allow
+intent_objects: [drive, google-drive, google-drive-datei, google-drive-ordner, gdrive]  # i18n-allow
 triggers:
   - type: voice
-    pattern: "(google.?drive|gdrive|in (meinem )?drive)"
+    pattern: "(google.?drive|gdrive|in (meinem )?drive)"  # i18n-allow
 requires_tools: [google_drive]
 risk_policy:
   default_tier: monitor

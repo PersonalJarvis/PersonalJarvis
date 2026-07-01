@@ -5,11 +5,11 @@ description: Manage the user's Cloudflare DNS records, zones, and Workers.
 when_to_use: Use when the user mentions Cloudflare or wants to inspect or change DNS records, zones, or Workers.
 category: developer
 plugin_id: cloudflare
-intent_verbs: [zeig, lies, erstell, konfigurier, aktualisier]
-intent_objects: [cloudflare, cloudflare-dns, cloudflare-zone, cloudflare-worker, cloudflare-record]
+intent_verbs: [zeig, lies, erstell, konfigurier, aktualisier]  # i18n-allow
+intent_objects: [cloudflare, cloudflare-dns, cloudflare-zone, cloudflare-worker, cloudflare-record]  # i18n-allow
 triggers:
   - type: voice
-    pattern: "(cloudflare|cloudflare-dns|cloudflare-zone|in cloudflare)"
+    pattern: "(cloudflare|cloudflare-dns|cloudflare-zone|in cloudflare)"  # i18n-allow
 requires_tools: [cloudflare]
 risk_policy:
   default_tier: ask

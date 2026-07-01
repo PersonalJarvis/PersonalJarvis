@@ -185,3 +185,96 @@ def test_risk_tier_for_args_unknown_action_is_conservative():
     # An unrecognised action stays conservative (ask), never silently safe.
     tool = GmailRestTool(access_token_provider=lambda: "x")
     assert tool.risk_tier_for_args({"action": "purge_everything"}) == "ask"
+
+
+# ----------------------------------------------------------------------
+# Read output must be SLIM, not raw MIME (live bug 2026-07-01 "Was steht
+# alles in meinen E-Mails drin?"): get_message with format=full returns
+# ~23k chars of raw headers (ARC-Seal, DKIM), full MIME tree and base64
+# body per message. Feeding that into the model context slowed the turn to
+# ~20 s and added no answer value. Project to sender/subject/date/snippet +
+# a decoded, length-capped plain-text body.
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_message_returns_slim_projection_not_raw_mime():
+    body_text = "Hallo Ruben, hier ist der Kern der Nachricht. " * 5
+    raw_body_b64 = base64.urlsafe_b64encode(body_text.encode("utf-8")).decode("ascii")
+    fat = {
+        "id": "m1",
+        "threadId": "t1",
+        "labelIds": ["UNREAD", "INBOX"],
+        "snippet": "Hallo Ruben, hier ist der Kern",
+        "payload": {
+            "mimeType": "multipart/alternative",
+            "headers": [
+                {"name": "From", "value": "Chef <chef@firma.de>"},
+                {"name": "To", "value": "ruben@example.com"},
+                {"name": "Subject", "value": "Quartalszahlen"},
+                {"name": "Date", "value": "Wed, 01 Jul 2026 12:58:21 +0000"},
+                {"name": "ARC-Seal", "value": "i=1; a=rsa-sha256; " + "A" * 4000},
+                {"name": "DKIM-Signature", "value": "v=1; a=rsa-sha256; " + "B" * 4000},
+            ],
+            "parts": [
+                {"mimeType": "text/plain", "body": {"data": raw_body_b64}},
+                {"mimeType": "text/html", "body": {"data": raw_body_b64}},
+            ],
+        },
+    }
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=fat)
+
+    tool = GmailRestTool(
+        access_token_provider=lambda: "at_123",
+        transport=httpx.MockTransport(handler),
+    )
+    result = await tool.execute({"action": "get_message", "message_id": "m1"}, ctx=None)
+    assert result.success is True
+    out = result.output
+    assert out["from"] == "Chef <chef@firma.de>"
+    assert out["subject"] == "Quartalszahlen"
+    assert out["date"].startswith("Wed, 01 Jul 2026")
+    assert out["snippet"] == "Hallo Ruben, hier ist der Kern"
+    assert "Kern der Nachricht" in out["body"]
+
+    import json as _json
+
+    serialized = _json.dumps(out)
+    # The raw signature noise must be gone entirely.
+    assert "ARC-Seal" not in serialized
+    assert "DKIM-Signature" not in serialized
+    assert "AAAA" not in serialized and "BBBB" not in serialized
+    # And the projection is a fraction of the raw payload.
+    assert len(serialized) < len(_json.dumps(fat)) // 2
+
+
+@pytest.mark.asyncio
+async def test_get_message_caps_a_long_body():
+    long_body = "wort " * 2000  # ~10k chars decoded
+    raw_body_b64 = base64.urlsafe_b64encode(long_body.encode("utf-8")).decode("ascii")
+    fat = {
+        "id": "m2",
+        "threadId": "t2",
+        "labelIds": ["INBOX"],
+        "snippet": "x",
+        "payload": {
+            "mimeType": "text/plain",
+            "headers": [{"name": "Subject", "value": "Long"}],
+            "body": {"data": raw_body_b64},
+        },
+    }
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=fat)
+
+    tool = GmailRestTool(
+        access_token_provider=lambda: "at_123",
+        transport=httpx.MockTransport(handler),
+    )
+    result = await tool.execute({"action": "get_message", "message_id": "m2"}, ctx=None)
+    assert result.success is True
+    body = result.output["body"]
+    assert len(body) <= 2100  # cap (2000) + short truncation marker
+    assert "truncated" in body

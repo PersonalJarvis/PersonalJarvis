@@ -5,11 +5,11 @@ description: Manage the user's Linear issues, projects, and cycles.
 when_to_use: Use when the user mentions Linear or wants to view, create, update, or close Linear issues and cycles.
 category: developer
 plugin_id: linear
-intent_verbs: [zeig, lies, erstell, aktualisier, schließ, zuweis] <!-- i18n-allow -->
-intent_objects: [linear, linear-issue, linear-ticket, linear-projekt, linear-cycle, linear-zyklus]
+intent_verbs: [zeig, lies, erstell, aktualisier, schließ, zuweis]  # i18n-allow
+intent_objects: [linear, linear-issue, linear-ticket, linear-projekt, linear-cycle, linear-zyklus]  # i18n-allow
 triggers:
   - type: voice
-    pattern: "(linear|linear-issue|linear-ticket|in linear)"
+    pattern: "(linear|linear-issue|linear-ticket|in linear)"  # i18n-allow
 requires_tools: [linear]
 risk_policy:
   default_tier: monitor

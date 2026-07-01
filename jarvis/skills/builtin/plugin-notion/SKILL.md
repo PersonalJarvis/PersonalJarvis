@@ -5,11 +5,11 @@ description: Read and edit the user's Notion pages and databases.
 when_to_use: Use when the user mentions Notion or wants to read, search, or edit Notion pages and databases.
 category: productivity
 plugin_id: notion
-intent_verbs: [zeig, lies, erstell, such, aktualisier, ergänz] <!-- i18n-allow -->
-intent_objects: [notion, seite, seiten, page, datenbank, dokument]
+intent_verbs: [zeig, lies, erstell, such, aktualisier, ergänz]  # i18n-allow
+intent_objects: [notion, seite, seiten, page, datenbank, dokument]  # i18n-allow
 triggers:
   - type: voice
-    pattern: "(notion|notion-seite|notion-datenbank)"
+    pattern: "(notion|notion-seite|notion-datenbank)"  # i18n-allow
 requires_tools: [notion]
 risk_policy:
   default_tier: monitor

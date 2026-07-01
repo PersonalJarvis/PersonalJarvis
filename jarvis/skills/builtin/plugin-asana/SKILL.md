@@ -5,11 +5,11 @@ description: Manage the user's Asana tasks and projects.
 when_to_use: Use when the user mentions Asana or wants to view, create, assign, or close Asana tasks and projects.
 category: productivity
 plugin_id: asana
-intent_verbs: [zeig, lies, erstell, zuweis, schließ, aktualisier] <!-- i18n-allow -->
-intent_objects: [asana, asana-task, asana-aufgabe, asana-projekt, asana-team]
+intent_verbs: [zeig, lies, erstell, zuweis, schließ, aktualisier]  # i18n-allow
+intent_objects: [asana, asana-task, asana-aufgabe, asana-projekt, asana-team]  # i18n-allow
 triggers:
   - type: voice
-    pattern: "(asana|asana-task|asana-projekt|in asana)"
+    pattern: "(asana|asana-task|asana-projekt|in asana)"  # i18n-allow
 requires_tools: [asana]
 risk_policy:
   default_tier: monitor

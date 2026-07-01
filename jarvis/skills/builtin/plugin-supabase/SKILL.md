@@ -5,11 +5,11 @@ description: Query and manage the user's Supabase database, tables, and projects
 when_to_use: Use when the user mentions Supabase or wants to query tables, run migrations, or inspect projects.
 category: developer
 plugin_id: supabase
-intent_verbs: [zeig, lies, erstell, migrier, query, abfrag]
-intent_objects: [supabase, supabase-datenbank, supabase-tabelle, supabase-projekt, supabase-migration]
+intent_verbs: [zeig, lies, erstell, migrier, query, abfrag]  # i18n-allow
+intent_objects: [supabase, supabase-datenbank, supabase-tabelle, supabase-projekt, supabase-migration]  # i18n-allow
 triggers:
   - type: voice
-    pattern: "(supabase|supabase-datenbank|supabase-tabelle|in supabase)"
+    pattern: "(supabase|supabase-datenbank|supabase-tabelle|in supabase)"  # i18n-allow
 requires_tools: [supabase]
 risk_policy:
   default_tier: ask
