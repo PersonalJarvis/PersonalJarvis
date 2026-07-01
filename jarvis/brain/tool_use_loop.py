@@ -51,7 +51,7 @@ log = logging.getLogger(__name__)
 # blocks it without executing the tool, and gives the LLM a redirect hint.
 _RESEARCH_KEYWORDS = re.compile(
     r"\b("
-    r"recherchier\w*|analysier\w*|erklaer\w*|erklär\w*|"
+    r"recherchier\w*|analysier\w*|erklaer\w*|erklär\w*|"  # i18n-allow: German input-matching data (research-intent classifier)
     r"untersuch\w*|vergleich\w*|zusammenfass\w*|"
     r"research|analy[sz]e|explain|compare|summari[sz]e"
     r")\b",
@@ -61,7 +61,7 @@ _RESEARCH_KEYWORDS = re.compile(
 _META_DEBUG_KEYWORDS = re.compile(
     r"\b("
     r"api\s*key|provider|brain|text[-\s]*to[-\s]*speech|tts|"
-    r"transkript|transcript|log|bug|debug|fehler|fallback|"
+    r"transkript|transcript|log|bug|debug|fehler|fallback|"  # i18n-allow: German input-matching data (meta/debug-intent classifier)
     r"standardantwort|standardphrase|phrase|jarvis\s+sagt|"
     r"verstehst\s+du\s+was\s+ich\s+meine"
     r")\b",
@@ -70,8 +70,8 @@ _META_DEBUG_KEYWORDS = re.compile(
 
 _INSTRUCTIONAL_QUESTION_RE = re.compile(
     r"^\s*(?:"
-    r"wie\s+(?:kann|koennte|könnte|muss|soll|mach|mache|macht|geht|funktioniert)\s+"
-    r"|was\s+(?:ist|bedeutet|heisst|heißt)\s+"
+    r"wie\s+(?:kann|koennte|könnte|muss|soll|mach|mache|macht|geht|funktioniert)\s+"  # i18n-allow: German input-matching data (instructional-question classifier)
+    r"|was\s+(?:ist|bedeutet|heisst|heißt)\s+"  # i18n-allow: same German input-matching data
     r"|woran\s+erkenne\s+"
     r"|warum\s+"
     r"|how\s+(?:do|can|could|should|would)\s+"
@@ -85,7 +85,7 @@ _INSTRUCTIONAL_QUESTION_RE = re.compile(
 # These utterances must NEVER trigger side-effect tools — the Curator
 # (jarvis/memory/curator/) extracts the facts automatically in the background
 # and merges them into USER.md. Observation 2026-05-05: Gemini-3-Flash-Preview
-# interpreted "Ich heiße Ruben Lütke" as a task and spawned a Phase-6
+# interpreted "Ich heiße Ruben Lütke" as a task and spawned a Phase-6  # i18n-allow: forensic quote of the actual German utterance that triggered this bug
 # worker for a manual USER.md edit (failed with exit_code=1) —
 # a clear tool-choice misfire in weaker models.
 _SELF_IDENTIFICATION_RE = re.compile(
@@ -94,9 +94,9 @@ _SELF_IDENTIFICATION_RE = re.compile(
     r"|mein\s+name\s+(?:ist|lautet)\s+\w+"
     r"|nenn(?:e|en\s+sie)?\s+mich\s+\w+"
     r"|du\s+(?:kannst|darfst|sollst)\s+mich\s+\w+\s+nennen"
-    r"|sie\s+(?:koennen|können|duerfen|dürfen|sollen)\s+mich\s+\w+\s+nennen"
-    r"|meine\s+anrede\s+(?:ist|lautet)\s+\w+"
-    r"|meine\s+pronomen\s+(?:ist|sind|lauten)\s+\w+"
+    r"|sie\s+(?:koennen|können|duerfen|dürfen|sollen)\s+mich\s+\w+\s+nennen"  # i18n-allow: German input-matching data (self-identification classifier)
+    r"|meine\s+anrede\s+(?:ist|lautet)\s+\w+"  # i18n-allow: same German input-matching data
+    r"|meine\s+pronomen\s+(?:ist|sind|lauten)\s+\w+"  # i18n-allow: same German input-matching data
     r"|my\s+name(?:\s+is|'s)\s+\w+"
     r"|call\s+me\s+\w+"
     r"|you\s+(?:can|may|should)\s+call\s+me\s+\w+"
