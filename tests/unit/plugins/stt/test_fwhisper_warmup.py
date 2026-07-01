@@ -68,7 +68,7 @@ def test_warm_up_swallows_inference_failure(monkeypatch) -> None:
 def test_warm_up_is_idempotent_on_model_load(monkeypatch) -> None:
     builds: list[_CountingModel] = []
 
-    def factory(name: str, device: str, compute_type: str) -> _CountingModel:
+    def factory(name: str, device: str, compute_type: str, cpu_threads: int = 0) -> _CountingModel:
         m = _CountingModel()
         builds.append(m)
         return m

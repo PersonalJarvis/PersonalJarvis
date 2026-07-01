@@ -238,7 +238,9 @@ class FasterWhisperProvider:
         model_name = _normalize_model_name(self._model_name)
         device, compute_type = self._device, self._compute_type
         try:
-            self._model = _new_whisper_model(model_name, device, compute_type)
+            self._model = _new_whisper_model(
+                model_name, device, compute_type, self._cpu_threads
+            )
             return
         except Exception as exc:  # noqa: BLE001 — fall back rather than crash boot
             fb_device, fb_ct = "cpu", _cpu_safe_compute_type(compute_type)
@@ -252,7 +254,9 @@ class FasterWhisperProvider:
                 "retrying on cpu/%s.",
                 model_name, device, compute_type, exc, fb_ct,
             )
-        self._model = _new_whisper_model(model_name, fb_device, fb_ct)
+        self._model = _new_whisper_model(
+            model_name, fb_device, fb_ct, self._cpu_threads
+        )
 
     def recover(self) -> None:
         """Self-heal a WEDGED inference engine without an app restart.

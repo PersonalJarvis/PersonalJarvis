@@ -52,7 +52,7 @@ def test_cpu_safe_compute_type_keeps_cpu_compatible() -> None:
 def test_ensure_model_falls_back_to_cpu_safe_on_failure(monkeypatch) -> None:
     calls: list[tuple[str, str, str]] = []
 
-    def fake_factory(model_name: str, device: str, compute_type: str):
+    def fake_factory(model_name: str, device: str, compute_type: str, cpu_threads: int = 0):
         calls.append((model_name, device, compute_type))
         # Simulate a no-CUDA host: cuda / *_float16 unsupported.
         if device == "cuda" or compute_type in ("float16", "int8_float16"):
@@ -76,7 +76,7 @@ def test_ensure_model_falls_back_to_cpu_safe_on_failure(monkeypatch) -> None:
 def test_ensure_model_uses_configured_combo_when_it_works(monkeypatch) -> None:
     calls: list[tuple[str, str, str]] = []
 
-    def fake_factory(model_name: str, device: str, compute_type: str):
+    def fake_factory(model_name: str, device: str, compute_type: str, cpu_threads: int = 0):
         calls.append((model_name, device, compute_type))
         return object()
 
@@ -96,7 +96,7 @@ def test_ensure_model_does_not_retry_when_already_cpu_safe(monkeypatch) -> None:
     # not pointlessly retry the identical combo (which would re-hit the network).
     calls: list[tuple[str, str, str]] = []
 
-    def fake_factory(model_name: str, device: str, compute_type: str):
+    def fake_factory(model_name: str, device: str, compute_type: str, cpu_threads: int = 0):
         calls.append((model_name, device, compute_type))
         raise ValueError("model not found")
 
