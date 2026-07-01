@@ -9,7 +9,7 @@ custom openWakeWord model fires reliably on YOUR voice — the guaranteed path t
 Works alongside the running app (Windows WASAPI shared mode). Cross-platform via
 sounddevice.
 
-usage: python scripts/record_wake_samples.py "Hey Nico" [count]
+usage: python scripts/record_wake_samples.py "Hey Assistant" [count]
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ import wave
 import numpy as np
 import sounddevice as sd
 
-PHRASE = sys.argv[1] if len(sys.argv) > 1 else "Hey Nico"
+PHRASE = sys.argv[1] if len(sys.argv) > 1 else "Hey Assistant"
 COUNT = int(sys.argv[2]) if len(sys.argv) > 2 else 15
 SR = 16000
 DUR = 2.0
