@@ -186,16 +186,16 @@ describe("Sidebar assistant name header", () => {
   });
 
   test("follows a live assistant-name change", () => {
-    useEventStore.setState({ assistantName: "Jarvis" });
+    useEventStore.setState({ assistantName: "Nova" });
     render(<Sidebar />);
-    expect(screen.getByText("Jarvis")).toBeTruthy();
+    expect(screen.getByText("Nova")).toBeTruthy();
 
     act(() => {
       useEventStore.setState({ assistantName: "Athena" });
     });
 
     expect(screen.getByText("Athena")).toBeTruthy();
-    expect(screen.queryByText("Jarvis")).toBeNull();
+    expect(screen.queryByText("Nova")).toBeNull();
   });
 });
 
