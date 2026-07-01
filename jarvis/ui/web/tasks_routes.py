@@ -1,16 +1,16 @@
-"""REST-API fuer die Task-Queue (Phase 5 Capability 4).
+"""REST API for the task queue (Phase 5 Capability 4).
 
 Endpoints:
-- ``POST   /api/tasks``              → TaskSpec anlegen + schedulen.
-- ``GET    /api/tasks``              → Task-Liste, optional ``?state=...``.
-- ``GET    /api/tasks/{id}``         → Full-Task mit Steps-Timeline.
-- ``POST   /api/tasks/{id}/cancel``  → Soft-Cancel (aus Heap entfernen).
-- ``DELETE /api/tasks/{id}``         → Harter Delete (nur Terminal-States).
+- ``POST   /api/tasks``              → create + schedule a TaskSpec.
+- ``GET    /api/tasks``              → task list, optionally ``?state=...``.
+- ``GET    /api/tasks/{id}``         → full task with steps timeline.
+- ``POST   /api/tasks/{id}/cancel``  → soft cancel (remove from the heap).
+- ``DELETE /api/tasks/{id}``         → hard delete (terminal states only).
 
-Der Router erwartet einen ``TaskStore`` + ``TaskScheduler`` auf
-``app.state.task_store`` bzw. ``app.state.task_scheduler`` — die werden
-vom DesktopApp beim Startup gesetzt. Wenn nichts gesetzt ist, antworten
-die Endpoints mit ``503`` (Service Unavailable).
+The router expects a ``TaskStore`` + ``TaskScheduler`` on
+``app.state.task_store`` resp. ``app.state.task_scheduler`` — these are
+set by the DesktopApp at startup. If neither is set, the endpoints answer
+with ``503`` (Service Unavailable).
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 def _require_store(request: Request) -> Any:
     store = getattr(request.app.state, "task_store", None)
     if store is None:
-        raise HTTPException(status_code=503, detail="TaskStore nicht verfuegbar")
+        raise HTTPException(status_code=503, detail="TaskStore not available")
     return store
 
 
@@ -36,7 +36,7 @@ def _optional_scheduler(request: Request) -> Any | None:
 
 
 def _row_to_summary(row: dict[str, Any]) -> dict[str, Any]:
-    """Wandelt einen DB-Row in ein UI-Summary-Dict. Nur flache Keys, keine Steps."""
+    """Converts a DB row into a UI summary dict. Flat keys only, no steps."""
     return {
         "id": row["id"],
         "title": row.get("title") or "",
@@ -57,9 +57,9 @@ def _row_to_summary(row: dict[str, Any]) -> dict[str, Any]:
 
 @router.post("", status_code=201)
 async def create_task(spec: TaskSpec, request: Request) -> dict[str, Any]:
-    """Legt einen Task an. Wenn ein ``TaskScheduler`` verfuegbar ist, laeuft
-    der komplette ``schedule()``-Pfad (inkl. Heap-Push + Wakeup); sonst
-    reiner Store-Insert.
+    """Creates a task. If a ``TaskScheduler`` is available, the complete
+    ``schedule()`` path runs (incl. heap push + wakeup); otherwise it's
+    a plain store insert.
     """
     store = _require_store(request)
     scheduler = _optional_scheduler(request)
@@ -76,7 +76,7 @@ async def list_tasks(
     state: str | None = None,
     limit: int = 100,
 ) -> dict[str, Any]:
-    """Liste aller Tasks, optional nach State gefiltert."""
+    """List of all tasks, optionally filtered by state."""
     store = _require_store(request)
     filter_val: str | list[str] | None
     if state is None or state == "":
@@ -94,13 +94,13 @@ async def list_tasks(
 
 @router.get("/{task_id}")
 async def get_task(task_id: str, request: Request) -> dict[str, Any]:
-    """Full-Task inkl. Steps-Timeline."""
+    """Full task incl. steps timeline."""
     store = _require_store(request)
     task = await store.get(task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail="Task nicht gefunden")
+        raise HTTPException(status_code=404, detail="Task not found")
 
-    # spec_json → dict fuer UI-Convenience
+    # spec_json → dict for UI convenience
     spec_obj = None
     spec_raw = task.get("spec_json")
     if spec_raw:
@@ -117,20 +117,20 @@ async def get_task(task_id: str, request: Request) -> dict[str, Any]:
 
 @router.post("/{task_id}/cancel")
 async def cancel_task(task_id: str, request: Request) -> dict[str, Any]:
-    """Soft-Cancel: entfernt den Task aus dem Heap/Event-Index und setzt
-    State auf ``cancelled``. Bricht **nicht** harte CU-Loops ab — dafuer
-    gibt es den globalen Kill-Switch.
+    """Soft cancel: removes the task from the heap/event index and sets
+    its state to ``cancelled``. Does **not** abort a hard CU loop — that's
+    what the global kill switch is for.
     """
     store = _require_store(request)
     scheduler = _optional_scheduler(request)
-    # 404 fuer Unbekannte
+    # 404 for unknown tasks
     task = await store.get(task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail="Task nicht gefunden")
+        raise HTTPException(status_code=404, detail="Task not found")
     if task["state"] in ("completed", "failed", "cancelled", "interrupted"):
         raise HTTPException(
             status_code=409,
-            detail=f"Task ist bereits final (state={task['state']})",
+            detail=f"Task is already final (state={task['state']})",
         )
 
     if scheduler is not None:
@@ -145,15 +145,15 @@ async def cancel_task(task_id: str, request: Request) -> dict[str, Any]:
 
 @router.delete("/{task_id}")
 async def delete_task(task_id: str, request: Request) -> dict[str, Any]:
-    """Harter Delete — nur erlaubt wenn der Task in einem Terminal-State ist."""
+    """Hard delete — only allowed when the task is in a terminal state."""
     store = _require_store(request)
     task = await store.get(task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail="Task nicht gefunden")
+        raise HTTPException(status_code=404, detail="Task not found")
     if task["state"] not in ("completed", "failed", "cancelled", "interrupted"):
         raise HTTPException(
             status_code=409,
-            detail=f"Task noch aktiv (state={task['state']}) — erst cancellen",
+            detail=f"Task is still active (state={task['state']}) — cancel it first",
         )
     deleted = await store.delete(task_id)
     return {"ok": deleted, "id": task_id}

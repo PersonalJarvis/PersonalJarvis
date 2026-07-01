@@ -1,20 +1,20 @@
-"""REST-API fuer Workflows (Phase 6).
+"""REST API for workflows (Phase 6).
 
 Endpoints:
-- ``GET    /api/workflows``              → Dashboard-Liste (Workflows + Summary).
-- ``POST   /api/workflows``              → WorkflowDef anlegen.
-- ``GET    /api/workflows/{id}``         → Detail inkl. letzter Runs.
-- ``PATCH  /api/workflows/{id}``         → Enable/Disable (partial update).
-- ``DELETE /api/workflows/{id}``         → Entfernen.
-- ``POST   /api/workflows/{id}/run``     → Manuell triggern, body = input dict.
-- ``GET    /api/workflows/runs/{run_id}``→ Run-Detail mit Step-Timeline.
+- ``GET    /api/workflows``              → dashboard list (workflows + summary).
+- ``POST   /api/workflows``              → create a WorkflowDef.
+- ``GET    /api/workflows/{id}``         → detail incl. most recent runs.
+- ``PATCH  /api/workflows/{id}``         → enable/disable (partial update).
+- ``DELETE /api/workflows/{id}``         → remove.
+- ``POST   /api/workflows/{id}/run``     → trigger manually, body = input dict.
+- ``GET    /api/workflows/runs/{run_id}``→ run detail with step timeline.
 
-Erwartet auf ``app.state``:
+Expected on ``app.state``:
 - ``workflow_store``   (WorkflowStore)
 - ``workflow_runner``  (WorkflowRunner)
 
-Fallback: wenn nichts gesetzt ist, geben die Endpoints 503 zurueck — die
-UI zeigt dann einen Empty-State statt zu crashen.
+Fallback: if neither is set, the endpoints return 503 — the UI then shows
+an empty state instead of crashing.
 """
 from __future__ import annotations
 
@@ -30,29 +30,29 @@ router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 
 
 # ----------------------------------------------------------------------
-# State-Accessor
+# State accessor
 # ----------------------------------------------------------------------
 
 def _require_store(request: Request) -> Any:
     store = getattr(request.app.state, "workflow_store", None)
     if store is None:
-        raise HTTPException(status_code=503, detail="WorkflowStore nicht verfuegbar")
+        raise HTTPException(status_code=503, detail="WorkflowStore not available")
     return store
 
 
 def _require_runner(request: Request) -> Any:
     runner = getattr(request.app.state, "workflow_runner", None)
     if runner is None:
-        raise HTTPException(status_code=503, detail="WorkflowRunner nicht verfuegbar")
+        raise HTTPException(status_code=503, detail="WorkflowRunner not available")
     return runner
 
 
 # ----------------------------------------------------------------------
-# Row → UI-Dict
+# Row → UI dict
 # ----------------------------------------------------------------------
 
 def _row_to_summary(row: dict[str, Any]) -> dict[str, Any]:
-    """Flaches Dashboard-Summary — ohne volle Def (sparsam fuer Listen)."""
+    """Flat dashboard summary — without the full def (lean for lists)."""
     def_json = row.get("def_json") or "{}"
     try:
         defs = json.loads(def_json)
@@ -84,8 +84,8 @@ def _row_to_summary(row: dict[str, Any]) -> dict[str, Any]:
 
 @router.get("/integrations")
 async def integrations_status(request: Request) -> dict[str, Any]:
-    """Status der externen Integrationen — UI rendert Setup-Banner wenn
-    etwas fehlt (z.B. Telegram-Bot-Token nicht gesetzt)."""
+    """Status of external integrations — the UI renders a setup banner when
+    something is missing (e.g. the Telegram bot token is not set)."""
     from jarvis.core.config import get_secret
 
     # Telegram
@@ -98,7 +98,7 @@ async def integrations_status(request: Request) -> dict[str, Any]:
         except Exception:  # noqa: BLE001
             chat_id = ""
 
-    # gws-CLI: versuchen, den Pfad aufzuloesen
+    # gws CLI: try to resolve the path
     import shutil
     gws_path = shutil.which("gws")
 
@@ -108,19 +108,19 @@ async def integrations_status(request: Request) -> dict[str, Any]:
             "has_token": bool(token),
             "has_chat_id": bool(chat_id),
             "setup_hint": (
-                "Erstelle einen Bot via @BotFather, setze den Token als "
-                "ENV TELEGRAM_BOT_TOKEN (setx TELEGRAM_BOT_TOKEN <token>) "
-                "und trage die Chat-ID unter [integrations.telegram] in "
-                "jarvis.toml ein."
+                "Create a bot via @BotFather, set the token as "
+                "ENV TELEGRAM_BOT_TOKEN (setx TELEGRAM_BOT_TOKEN <token>), "
+                "and enter the chat ID under [integrations.telegram] in "
+                "jarvis.toml."
             ),
         },
         "gws_cli": {
             "configured": bool(gws_path),
             "path": gws_path,
             "setup_hint": (
-                "Google-Workspace-CLI — wird fuer gmail/calendar/drive-Workflows "
-                "genutzt. Installation + Auth laut gws-Doku; nach Setup "
-                "'gws auth status' testen."
+                "Google Workspace CLI — used for gmail/calendar/drive workflows. "
+                "See the gws docs for installation + auth; after setup, "
+                "test with 'gws auth status'."
             ),
         },
     }
@@ -128,7 +128,7 @@ async def integrations_status(request: Request) -> dict[str, Any]:
 
 @router.get("")
 async def list_workflows(request: Request) -> dict[str, Any]:
-    """Dashboard-Liste: alle Workflows + aggregierte Kennzahlen."""
+    """Dashboard list: all workflows + aggregated metrics."""
     store = _require_store(request)
     rows = await store.list_workflows()
     summaries = [_row_to_summary(r) for r in rows]
@@ -161,7 +161,7 @@ async def create_workflow(
     wf: WorkflowDef,
     request: Request,
 ) -> dict[str, Any]:
-    """Legt einen neuen Workflow an (oder ueberschreibt per ID)."""
+    """Creates a new workflow (or overwrites by ID)."""
     store = _require_store(request)
     wid = await store.upsert_workflow(wf)
     return {"id": wid}
@@ -172,7 +172,7 @@ async def get_workflow(workflow_id: str, request: Request) -> dict[str, Any]:
     store = _require_store(request)
     row = await store.get_workflow(workflow_id)
     if row is None:
-        raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
+        raise HTTPException(status_code=404, detail="Workflow not found")
     summary = _row_to_summary(row)
     try:
         defs = json.loads(row.get("def_json") or "{}")
@@ -189,14 +189,14 @@ async def patch_workflow(
     request: Request,
     payload: dict[str, Any] = Body(...),
 ) -> dict[str, Any]:
-    """Partial Update. Momentan nur ``enabled`` — mehr Felder kommen bei Bedarf."""
+    """Partial update. Currently only ``enabled`` — more fields as needed."""
     store = _require_store(request)
     row = await store.get_workflow(workflow_id)
     if row is None:
-        raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
+        raise HTTPException(status_code=404, detail="Workflow not found")
     if "enabled" in payload:
         await store.set_enabled(workflow_id, bool(payload["enabled"]))
-        # Cron-Workflows: next_run neu berechnen beim Toggle
+        # Cron workflows: recompute next_run on toggle
         if not payload["enabled"]:
             await store.set_next_run(workflow_id, None)
     updated = await store.get_workflow(workflow_id)
@@ -208,7 +208,7 @@ async def delete_workflow(workflow_id: str, request: Request) -> dict[str, Any]:
     store = _require_store(request)
     deleted = await store.delete_workflow(workflow_id)
     if not deleted:
-        raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
+        raise HTTPException(status_code=404, detail="Workflow not found")
     return {"ok": True, "id": workflow_id}
 
 
@@ -218,8 +218,8 @@ async def run_workflow(
     request: Request,
     input_data: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
-    """Triggert einen Workflow-Run manuell. Returnt sofort die Run-ID —
-    der eigentliche Lauf ist Fire-and-Forget, UI polled/WS-streamed."""
+    """Manually triggers a workflow run. Returns the run ID immediately —
+    the actual run is fire-and-forget; the UI polls / streams over WS."""
     _require_store(request)
     runner = _require_runner(request)
     try:
@@ -238,7 +238,7 @@ async def get_run(run_id: str, request: Request) -> dict[str, Any]:
     store = _require_store(request)
     run = await store.get_run(run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail="Run nicht gefunden")
+        raise HTTPException(status_code=404, detail="Run not found")
     return run
 
 

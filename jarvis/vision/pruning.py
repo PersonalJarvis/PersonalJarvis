@@ -1,34 +1,34 @@
-"""Pruning-Helpers fuer den UIAutomation-Tree (ADR-0002).
+"""Pruning helpers for the UIAutomation tree (ADR-0002).
 
-Drei Filter-Stufen, die der `UIATreeSource` in Reihenfolge anwendet:
+Three filter stages that `UIATreeSource` applies in order:
 
-1. `filter_by_depth` — Depth-Limit (Default 6).
-2. `filter_by_role` — Interesting-Role-Whitelist + Name-non-empty.
-3. `filter_on_screen` — BoundingRect mindestens 50 % innerhalb Primary-Monitor.
+1. `filter_by_depth` — depth limit (default 6).
+2. `filter_by_role` — interesting-role whitelist + non-empty name.
+3. `filter_on_screen` — bounding rect at least 50% inside the primary monitor.
 
-Ziel: <= 150 Nodes. Bei Ueberschreitung iteriert `UIATreeSource` mit kleineren
-Depths (6 -> 5 -> 4). Die Helpers selbst sind stateless und arbeiten auf einer
-einfachen RawNode-Dataclass, damit sie ohne pywinauto testbar bleiben.
+Goal: <= 150 nodes. On overflow, `UIATreeSource` iterates with smaller
+depths (6 -> 5 -> 4). The helpers themselves are stateless and operate on a
+simple RawNode dataclass, so they stay testable without pywinauto.
 
-Designziel: reine Python-Funktionen, kein Windows-API-Call — Contract-Test
-laeuft auf beliebigem OS.
+Design goal: pure Python functions, no Windows API calls — the contract
+test runs on any OS.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
 # ---------------------------------------------------------------------------
-# RawNode — intermediate Darstellung waehrend der Traversal.
+# RawNode — intermediate representation during the traversal.
 # ---------------------------------------------------------------------------
 
 @dataclass
 class RawNode:
-    """Zwischenmodell vor dem Pruning. Wird vor Konvertierung zu
-    `jarvis.core.protocols.UIANode` verwendet.
+    """Intermediate model before pruning. Used before conversion to
+    `jarvis.core.protocols.UIANode`.
 
-    Felder entsprechen den Properties, die `UIAElementInfo` liefert — wir
-    bilden bewusst nicht das gesamte Objekt ab, sondern nur, was fuer die
-    Pruning-Filter und die spaetere Serialisierung relevant ist.
+    Fields correspond to the properties `UIAElementInfo` provides — we
+    deliberately do not mirror the whole object, only what's relevant for
+    the pruning filters and the later serialization.
     """
     role: str = ""
     name: str = ""
@@ -45,12 +45,12 @@ class RawNode:
     # focus is verifiable post-hoc). Best-effort per OS; default False.
     is_password: bool = False
     focused: bool = False
-    # Kinder-Indizes werden waehrend der Traversal im Tree-Builder verwaltet.
+    # Child indices are managed by the tree builder during the traversal.
     children: list[int] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
-# Default-Konstanten (ADR-0002)
+# Default constants (ADR-0002)
 # ---------------------------------------------------------------------------
 
 DEFAULT_MAX_DEPTH: int = 6
@@ -71,14 +71,15 @@ DEFAULT_INTERESTING_ROLES: tuple[str, ...] = (
 
 
 # ---------------------------------------------------------------------------
-# Filter
+# Filters
 # ---------------------------------------------------------------------------
 
 def filter_by_depth(nodes: list[RawNode], *, max_depth: int) -> list[RawNode]:
-    """Behaelt nur Nodes mit `depth <= max_depth`.
+    """Keeps only nodes with `depth <= max_depth`.
 
-    Root hat depth=0. Ein max_depth von 6 erlaubt also 7 Ebenen inklusive
-    Root — das entspricht der ADR-0002-Definition ("ab Root-Window").
+    Root has depth=0. A max_depth of 6 thus allows 7 levels including
+    root — that matches the ADR-0002 definition ("starting from the root
+    window").
     """
     return [n for n in nodes if n.depth <= max_depth]
 
@@ -88,12 +89,12 @@ def filter_by_role(
     *,
     interesting_roles: tuple[str, ...] = DEFAULT_INTERESTING_ROLES,
 ) -> list[RawNode]:
-    """Behaelt nur Nodes, deren Role in der Whitelist steht und die einen
-    nicht-leeren Namen haben.
+    """Keeps only nodes whose role is on the whitelist and that have a
+    non-empty name.
 
-    Ausnahme: Nodes mit nicht-leerer AutomationId werden ebenfalls behalten,
-    auch wenn der Name leer ist — die AutomationId ist oft der stabilere
-    Anker fuer Clicks.
+    Exception: nodes with a non-empty AutomationId are also kept even if
+    the name is empty — the AutomationId is often the more stable anchor
+    for clicks.
     """
     kept: list[RawNode] = []
     for node in nodes:
@@ -109,15 +110,15 @@ def rect_overlap_fraction(
     bounds: tuple[int, int, int, int],
     monitor_bounds: tuple[int, int, int, int],
 ) -> float:
-    """Anteil von `bounds` innerhalb `monitor_bounds` (0.0–1.0).
+    """Fraction of `bounds` inside `monitor_bounds` (0.0–1.0).
 
-    Bounds-Format (x, y, w, h). Wenn das Node-Rect 0 Flaeche hat, return 0.0.
+    Bounds format (x, y, w, h). If the node rect has 0 area, returns 0.0.
     """
     bx, by, bw, bh = bounds
     if bw <= 0 or bh <= 0:
         return 0.0
     mx, my, mw, mh = monitor_bounds
-    # Schnittflaeche berechnen
+    # Compute the intersection area
     ix1 = max(bx, mx)
     iy1 = max(by, my)
     ix2 = min(bx + bw, mx + mw)
@@ -135,11 +136,11 @@ def filter_on_screen(
     monitor_bounds: tuple[int, int, int, int],
     min_overlap: float = 0.5,
 ) -> list[RawNode]:
-    """Behaelt nur Nodes, deren BoundingRect mindestens `min_overlap` (Default
-    0.5) innerhalb des Primary-Monitors liegt UND die nicht als `IsOffscreen`
-    markiert sind.
+    """Keeps only nodes whose bounding rect lies at least `min_overlap`
+    (default 0.5) inside the primary monitor AND that are not marked as
+    `IsOffscreen`.
 
-    `monitor_bounds` im selben Format wie `bounds`: (x, y, w, h).
+    `monitor_bounds` uses the same format as `bounds`: (x, y, w, h).
     """
     kept: list[RawNode] = []
     for node in nodes:
@@ -155,24 +156,24 @@ def _remap_parent_indices(
     kept: list[RawNode],
     original: list[RawNode],
 ) -> None:
-    """H1-Fix: Nach Pruning muss ``parent_index`` auf den Index des
-    naechsten erhaltenen Vorfahren **im gepruenten Subset** zeigen —
-    nicht mehr auf den Index in der Original-Liste.
+    """H1 fix: after pruning, ``parent_index`` must point to the index of the
+    nearest surviving ancestor **in the pruned subset** — no longer to the
+    index in the original list.
 
-    Mutiert ``kept`` in-place. Wenn kein Vorfahre ueberlebt hat, wird
-    ``parent_index = -1`` gesetzt (Root bzw. disconnected).
+    Mutates ``kept`` in place. If no ancestor survived, ``parent_index = -1``
+    is set (root or disconnected).
     """
     kept_to_new_idx: dict[int, int] = {id(n): i for i, n in enumerate(kept)}
     for n in kept:
         original_parent = n.parent_index
-        n.parent_index = -1                          # Default falls kein Vorfahre
+        n.parent_index = -1                          # Default if no ancestor survives
         while 0 <= original_parent < len(original):
             parent_node = original[original_parent]
             new_idx = kept_to_new_idx.get(id(parent_node))
             if new_idx is not None:
                 n.parent_index = new_idx
                 break
-            # Vorfahre wurde wegge-prunt → eine Ebene hoch suchen.
+            # Ancestor was pruned away → search one level up.
             original_parent = parent_node.parent_index
 
 
@@ -184,28 +185,28 @@ def prune_tree(
     monitor_bounds: tuple[int, int, int, int] = (0, 0, 1920, 1080),
     min_overlap: float = 0.5,
 ) -> list[RawNode]:
-    """Wendet die drei Filter in kanonischer Reihenfolge an (depth -> role
-    -> on-screen). Returned eine neue Liste, Eingabe bleibt unveraendert.
+    """Applies the three filters in canonical order (depth -> role ->
+    on-screen). Returns a new list; the input is left unchanged.
 
-    Root bleibt immer erhalten (Index 0) — auch wenn er selbst nicht in die
-    Interesting-Roles-Liste faellt. Andernfalls verlieren wir die parent-
-    Hierarchie vollstaendig.
+    Root is always kept (index 0) — even if it doesn't itself fall into the
+    interesting-roles list. Otherwise we'd lose the parent hierarchy
+    entirely.
 
-    H1-Fix: parent_index der verbleibenden Nodes wird auf den Subset-Index
-    remapped (via ``_remap_parent_indices``).
+    H1 fix: the remaining nodes' parent_index is remapped to the subset
+    index (via ``_remap_parent_indices``).
     """
     if not nodes:
         return []
-    # Filter 1: Depth
+    # Filter 1: depth
     after_depth = filter_by_depth(nodes, max_depth=max_depth)
-    # Filter 2: Rolle — Root (depth=0) ist davon ausgenommen.
+    # Filter 2: role — root (depth=0) is exempt from this.
     root = after_depth[0] if after_depth else None
     after_role = [
         n for n in after_depth
         if n is root
         or (n.role in interesting_roles and (n.name or n.automation_id))
     ]
-    # Filter 3: On-Screen — Root bleibt immer erhalten.
+    # Filter 3: on-screen — root is always kept.
     after_screen = [
         n for n in after_role
         if n is root or (
@@ -213,11 +214,10 @@ def prune_tree(
             and rect_overlap_fraction(n.bounds, monitor_bounds) >= min_overlap
         )
     ]
-    # Kept-Liste sind Referenzen auf dieselben Objekte wie in ``nodes`` —
-    # damit wir den Original-Vorfahrencheck via ``is``/``id()`` machen koennen.
-    # Wir machen eine Shallow-Copy, damit der Caller die Original-Liste
-    # behaelt (parent_index-Mutation wirkt sich auf beide aus; das ist
-    # Pragma-Kompromiss — Caller sollte nicht nach prune_tree die Original
-    # erneut nutzen).
+    # The kept list holds references to the same objects as in ``nodes`` —
+    # so we can do the original-ancestor check via ``is``/``id()``.
+    # We make a shallow copy so the caller keeps the original list
+    # (parent_index mutation affects both; that's a pragmatic compromise —
+    # the caller shouldn't reuse the original list after prune_tree).
     _remap_parent_indices(after_screen, nodes)
     return after_screen
